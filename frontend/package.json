@@ -1,0 +1,53 @@
+{
+  "name": "plataforma-escola-saude",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Frontend da plataforma de certificados da Escola da Saúde de Santos",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint . --ext .js,.jsx"
+  },
+  "dependencies": {
+    "@babel/runtime": "^7.27.6",
+    "@headlessui/react": "^2.2.4",
+    "@react-oauth/google": "^0.12.2",
+    "@tailwindcss/forms": "^0.5.10",
+    "@tailwindcss/typography": "^0.5.16",
+    "axios": "^1.9.0",
+    "chart.js": "^4.5.0",
+    "date-fns": "^4.1.0",
+    "file-saver": "^2.0.5",
+    "framer-motion": "^12.18.1",
+    "html5-qrcode": "^2.3.8",
+    "lucide-react": "^0.514.0",
+    "react": "^19.1.0",
+    "react-calendar": "^6.0.0",
+    "react-chartjs-2": "^5.3.0",
+    "react-dom": "^19.1.0",
+    "react-input-mask": "^2.0.4",
+    "react-loading-skeleton": "^3.5.0",
+    "react-modal": "^3.16.3",
+    "react-qr-code": "^2.0.15",
+    "react-router-dom": "^7.6.2",
+    "react-signature-canvas": "^1.1.0-alpha.2",
+    "react-toastify": "^11.0.5",
+    "trim-canvas": "^0.1.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.25.0",
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "@vitejs/plugin-react": "^4.4.1",
+    "autoprefixer": "^10.4.21",
+    "eslint": "^9.25.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.20",
+    "globals": "^16.0.0",
+    "postcss": "^8.5.5",
+    "tailwindcss": "^3.4.1",
+    "vite": "^6.3.5"
+  }
+}

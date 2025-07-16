@@ -1,0 +1,77 @@
+/* 🔄 Skeleton Loader */
+@import 'react-loading-skeleton/dist/skeleton.css';
+
+/* 🚀 TailwindCSS Directives */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ===================================================
+   📸 Estilização do Leitor de QR Code (html5-qrcode)
+=================================================== */
+#leitor-qr #qr-shaded-region > div[style*="background-color: rgb(255, 255, 255)"],
+#leitor-qr #qr-shaded-region *[style*="background-color: rgb(255, 255, 255)"] {
+  display: none !important;
+}
+
+#leitor-qr #qr-shaded-region {
+  background: transparent !important;
+  border: none !important;
+}
+
+#leitor-qr,
+#leitor-qr * {
+  background-color: transparent !important;
+}
+
+#leitor-qr canvas {
+  outline: 2px dashed #4ade80 !important; /* 🟢 Verde Tailwind */
+  outline-offset: -8px;
+}
+
+/* ===================================================
+   🧩 Campos com ícones à esquerda
+=================================================== */
+.campo-com-icone {
+  @apply relative w-full;
+}
+
+.campo-com-icone .icone-esquerda {
+  @apply absolute left-3 top-2.5 text-gray-400 pointer-events-none;
+}
+
+.campo {
+  @apply w-full pl-10 pr-3 py-2 rounded-md border border-gray-300 
+    focus:outline-none focus:ring-2 focus:ring-emerald-500;
+}
+
+textarea.campo {
+  @apply resize-y min-h-[100px];
+}
+
+select.campo,
+input[type="number"].campo {
+  @apply appearance-none;
+}
+
+/* ===================================================
+   🧱 Estilos de Modais (react-modal)
+=================================================== */
+.overlay,
+.overlayTurma {
+  @apply fixed top-0 left-0 right-0 bottom-0 bg-black bg-opacity-60 z-[1000];
+}
+
+.modal,
+.modalTurma {
+  @apply fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 
+    bg-white p-8 rounded-xl shadow-xl max-w-[600px] w-[90%] z-[1001];
+}
+
+/* ModalTurma com z-index mais alto */
+.modalTurma {
+  @apply max-w-[500px] z-[2001];
+}
+.overlayTurma {
+  @apply z-[2000];
+}
