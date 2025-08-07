@@ -3,7 +3,7 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
-const assinaturaRoutes = require("./routes/assinatura.routes");
+const assinaturaRoutes = require("./routes/assinaturaRoutes");
 
 
 // 🌎 Carrega variáveis de ambiente .env
