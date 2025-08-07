@@ -1,8 +1,59 @@
+//ListaInscrito
 import { motion } from "framer-motion";
+import { useState } from "react";
+import { toast } from "react-toastify";
+import { gerarIntervaloDeDatas, formatarParaISO } from "../utils/data";
 
-export default function ListaInscritos({ inscritos = [], turma }) {
+export default function ListaInscritos({
+  inscritos = [],
+  turma,
+  token,
+  presencas = [],
+  carregarPresencas,
+}) {
+  const [confirmando, setConfirmando] = useState(null);
+  const agora = new Date();
+
   const formatarCPF = (cpf) =>
-    cpf.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, "$1.$2.$3-$4");
+    cpf?.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, "$1.$2.$3-$4") || "CPF inválido";
+
+  const dentroDoPrazoDeConfirmacao = (dataRef) => {
+    if (!turma?.horario_fim) return false;
+    const fim = new Date(`${dataRef}T${turma.horario_fim}`);
+    const limite = new Date(fim.getTime() + 48 * 60 * 60 * 1000);
+    return agora < limite;
+  };
+
+  const confirmarPresenca = async (usuario_id, data) => {
+    try {
+      setConfirmando(`${usuario_id}-${data}`);
+      const resposta = await fetch(`http://localhost:3000/api/presencas/confirmar-instrutor`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          usuario_id,
+          turma_id: turma.id,
+          data,
+        }),
+      });
+
+      if (!resposta.ok) throw new Error("Erro ao confirmar presença.");
+
+      toast.success("✅ Presença confirmada com sucesso!");
+      await carregarPresencas();
+    } catch (err) {
+      toast.error("❌ Erro ao confirmar presença.");
+    } finally {
+      setConfirmando(null);
+    }
+  };
+
+  console.log("📋 Inscritos:", inscritos);
+  console.log("📋 Presenças recebidas:", presencas);
+  console.log("📆 Intervalo de datas da turma:", turma?.data_inicio, "→", turma?.data_fim);
 
   return (
     <motion.div
@@ -10,7 +61,6 @@ export default function ListaInscritos({ inscritos = [], turma }) {
       animate={{ opacity: 1, height: "auto" }}
       exit={{ opacity: 0, height: 0 }}
       className="overflow-hidden mt-4"
-      aria-label={`Inscritos da turma ${turma?.nome}`}
     >
       {inscritos.length === 0 ? (
         <div className="flex flex-col items-center py-8">
@@ -20,48 +70,115 @@ export default function ListaInscritos({ inscritos = [], turma }) {
           </p>
         </div>
       ) : (
-        <ul
-          className="divide-y divide-gray-200 dark:divide-gray-700 rounded-xl shadow-sm bg-white dark:bg-gray-900"
-          role="list"
-        >
+        <ul className="space-y-4">
           {inscritos.map((inscrito) => {
-            const statusPresenca = inscrito.presente
-              ? {
-                  texto: "🟡 Presente",
-                  cor: "bg-yellow-200 text-yellow-900 dark:bg-yellow-400 dark:text-black",
-                }
-              : {
-                  texto: "🔴 Faltou",
-                  cor: "bg-red-300 text-red-900 dark:bg-red-500 dark:text-white",
-                };
+            const presencasUsuario = presencas.filter(p => p.usuario_id === inscrito.usuario_id);
+            const datasTurma = gerarIntervaloDeDatas(
+              new Date(turma.data_inicio),
+              new Date(turma.data_fim)
+            );
+
+            console.log(`👤 ${inscrito.nome} (ID ${inscrito.usuario_id})`);
+            console.log("📊 Presenças do usuário:", presencasUsuario);
 
             return (
               <li
                 key={inscrito.usuario_id}
-                role="listitem"
-                tabIndex={0}
-                className="flex flex-col md:flex-row md:items-center justify-between py-3 px-4 gap-2 focus:outline-none focus:ring-2 focus:ring-lousa rounded transition-all"
-                aria-label={`Inscrito: ${inscrito.nome}, ${statusPresenca.texto}`}
+                className="p-4 bg-white dark:bg-zinc-800 rounded-xl shadow"
               >
-                <div>
-                  <span className="font-semibold text-gray-800 dark:text-white">
-                    {inscrito.nome}
-                  </span>
-                  <div className="text-gray-600 dark:text-gray-300 text-sm">
-                    {inscrito.email}
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4">
+                  <div>
+                    <p className="font-semibold text-gray-800 dark:text-white">{inscrito.nome}</p>
+                    <p className="text-sm text-gray-600 dark:text-gray-300">{inscrito.email}</p>
                   </div>
-                </div>
-
-                <div className="flex flex-col items-end">
-                  <span className="text-gray-800 dark:text-gray-100 font-medium">
+                  <span className="text-sm font-medium text-gray-700 dark:text-gray-200 mt-2 sm:mt-0">
                     {formatarCPF(inscrito.cpf)}
                   </span>
-                  <span
-                    className={`mt-1 text-xs px-2 py-1 rounded-full font-bold ${statusPresenca.cor}`}
-                    aria-label={`Status de presença: ${statusPresenca.texto}`}
-                  >
-                    {statusPresenca.texto}
-                  </span>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm text-center">
+                    <thead>
+                      <tr className="text-gray-500 dark:text-gray-300">
+                        <th className="p-2">Data</th>
+                        <th className="p-2">Status</th>
+                        <th className="p-2">Ação</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                    {datasTurma.map((dataObj) => {
+  const dataRef = (() => {
+    try {
+      const d = typeof dataObj === "string" ? new Date(dataObj) : dataObj;
+      if (isNaN(new Date(d).getTime())) return null;
+      return new Date(d).toISOString().split("T")[0];
+    } catch {
+      return null;
+    }
+  })();
+
+  if (!dataRef) return null;
+
+                        const dataFormatada = dataRef.split("-").reverse().join("/");
+                        const p = presencasUsuario.find(p => {
+                          const dataBanco = (p?.data || "").split("T")[0];
+                          return dataBanco === dataRef;
+                        });
+                        const isPresente = p?.presente === true;
+
+                        const inicio = new Date(`${dataRef}T${turma.horario_inicio}`);
+                        const passou60min = agora > new Date(inicio.getTime() + 60 * 60000);
+                        const podeConfirmar = passou60min && dentroDoPrazoDeConfirmacao(dataRef);
+
+                        console.log(`📅 Data: ${dataRef}`);
+                        console.log(`✅ Está presente?`, isPresente);
+                        console.log(`⏱️ Passou 60min?`, passou60min);
+                        console.log(`🔓 Pode confirmar manualmente?`, podeConfirmar);
+
+                        let statusBadge = null;
+
+                        if (isPresente) {
+                          statusBadge = (
+                            <span className="inline-block bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-bold">
+                              ✅ Presente
+                            </span>
+                          );
+                        } else if (!passou60min) {
+                          statusBadge = (
+                            <span className="inline-block bg-yellow-100 text-yellow-800 px-3 py-1 rounded-full text-xs font-bold">
+                              ⏳ Aguardando
+                            </span>
+                          );
+                        } else {
+                          statusBadge = (
+                            <span className="inline-block bg-red-100 text-red-700 px-3 py-1 rounded-full text-xs font-bold">
+                              ❌ Faltou
+                            </span>
+                          );
+                        }
+
+                        return (
+                          <tr key={dataRef} className="border-t border-gray-200 dark:border-gray-700">
+                            <td className="p-2">{dataFormatada}</td>
+                            <td className="p-2">{statusBadge}</td>
+                            <td className="p-2">
+                              {!isPresente && podeConfirmar && (
+                                <button
+                                  disabled={confirmando === `${inscrito.usuario_id}-${dataRef}`}
+                                  onClick={() => confirmarPresenca(inscrito.usuario_id, dataRef)}
+                                  className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded"
+                                >
+                                  {confirmando === `${inscrito.usuario_id}-${dataRef}`
+                                    ? "Confirmando..."
+                                    : "✅ Confirmar presença"}
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               </li>
             );

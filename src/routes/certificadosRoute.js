@@ -5,28 +5,45 @@ const certificadosController = require('../controllers/certificadosController');
 const authMiddleware = require('../auth/authMiddleware');
 const authorizeRoles = require('../auth/authorizeRoles');
 
-// 🧾 1. Listar certificados do usuário autenticado
+// 🧾 1. Listar certificados emitidos do usuário autenticado
 router.get(
   '/usuario',
   authMiddleware,
   certificadosController.listarCertificadosDoUsuario
 );
 
-// 📥 2. Baixar certificado em PDF (usuário dono ou administrador)
+// 🆕 2. Listar certificados elegíveis para participante
 router.get(
-  '/:id/download',
+  '/elegiveis',
   authMiddleware,
-  certificadosController.baixarCertificado
+  certificadosController.listarCertificadosElegiveis
 );
 
-// 📄 3. Gerar certificado (somente administrador)
-router.post(
-  '/',
+// 🆕 3. Listar certificados elegíveis para instrutor
+router.get(
+  '/elegiveis-instrutor',
   authMiddleware,
-  authorizeRoles('administrador'),
+  certificadosController.listarCertificadosInstrutorElegiveis
+);
+
+// 🖨️ 4. Gerar certificado (participante ou instrutor, autenticado)
+router.post(
+  '/gerar',
+  authMiddleware,
   certificadosController.gerarCertificado
 );
 
-router.post("/:id/revalidar", authMiddleware, certificadosController.revalidarCertificado);
+// 📥 5. Baixar certificado PDF (rota pública ou autenticada, como preferir)
+router.get(
+  '/:id/download',
+  certificadosController.baixarCertificado // ← sem authMiddleware se quiser permitir acesso público
+);
+
+// 🔁 6. Revalidar certificado (usuário autenticado)
+router.post(
+  '/:id/revalidar',
+  authMiddleware,
+  certificadosController.revalidarCertificado
+);
 
 module.exports = router;

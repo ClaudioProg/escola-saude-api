@@ -1,7 +1,7 @@
 const db = require("../db");
 
 /**
- * 📆 Lista eventos da agenda geral (modo administradoristrador com filtros)
+ * 📆 Lista eventos da agenda geral (modo administrador com filtros)
  * @route GET /api/agenda?local=&start=&end=
  */
 async function buscarAgenda(req, res) {
@@ -11,18 +11,27 @@ async function buscarAgenda(req, res) {
     SELECT 
       e.id,
       e.titulo,
-      t.data_inicio,
-      t.data_fim,
-      l.nome AS local
+      MIN(t.data_inicio) AS data_inicio,
+      MAX(t.data_fim) AS data_fim,
+      MIN(t.horario_inicio) AS horario_inicio,
+      MAX(t.horario_fim) AS horario_fim,
+      e.local, -- ⬅️ Agora usamos diretamente
+      COALESCE(
+        json_agg(
+          DISTINCT jsonb_build_object('id', u.id, 'nome', u.nome)
+        ) FILTER (WHERE u.id IS NOT NULL),
+        '[]'
+      ) AS instrutores
     FROM eventos e
-    JOIN turmas t ON t.evento_id = e.id
-    LEFT JOIN locais l ON e.local_id = l.id
+    LEFT JOIN turmas t ON t.evento_id = e.id
+    LEFT JOIN evento_instrutor ei ON ei.evento_id = e.id
+    LEFT JOIN usuarios u ON u.id = ei.instrutor_id
     WHERE 1=1
   `;
 
   if (local) {
     params.push(`%${local}%`);
-    query += ` AND l.nome ILIKE $${params.length}`;
+    query += ` AND e.local ILIKE $${params.length}`; // ⬅️ Filtro corrigido aqui também
   }
 
   if (start) {
@@ -34,6 +43,11 @@ async function buscarAgenda(req, res) {
     params.push(end);
     query += ` AND t.data_fim <= $${params.length}`;
   }
+
+  query += `
+    GROUP BY e.id, e.titulo, e.local
+    ORDER BY MIN(t.data_inicio)
+  `;
 
   try {
     const resultado = await db.query(query, params);
@@ -56,25 +70,27 @@ async function buscarAgendaInstrutor(req, res) {
     }
 
     const query = `
-      SELECT 
-        t.id,
-        t.nome,
-        t.data_inicio,
-        t.data_fim,
-        t.horario_inicio,
-        t.horario_fim,
-        t.vagas_total,
-        e.id AS evento_id,
-        e.titulo AS evento_titulo
-      FROM evento_instrutor ei
-      JOIN eventos e ON e.id = ei.evento_id
-      JOIN turmas t ON t.evento_id = e.id
-      WHERE ei.instrutor_id = $1
-      ORDER BY t.data_inicio ASC
+  SELECT 
+  t.id,
+  t.nome AS turma,                            -- ⬅️ Alias para nome da turma
+  t.data_inicio,
+  t.data_fim,
+  t.horario_inicio,
+  t.horario_fim,
+  t.horario_inicio || ' às ' || t.horario_fim AS horario,  -- ⬅️ Cria string pronta para exibir
+  t.vagas_total,
+  json_build_object('id', e.id, 'nome', e.titulo) AS evento
+FROM evento_instrutor ei
+JOIN eventos e ON e.id = ei.evento_id
+JOIN turmas t ON t.evento_id = e.id
+WHERE ei.instrutor_id = $1
+ORDER BY t.data_inicio DESC
     `;
 
     const resultado = await db.query(query, [usuarioId]);
-    res.status(200).json(resultado.rows);
+const turmas = resultado.rows || [];
+
+return res.status(200).json(turmas); 
   } catch (error) {
     console.error("❌ Erro ao buscar agenda do instrutor:", error.message);
     res.status(500).json({ erro: "Erro ao buscar agenda do instrutor." });

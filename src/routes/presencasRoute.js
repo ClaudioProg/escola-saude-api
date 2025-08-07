@@ -58,4 +58,20 @@ router.get(
   presencasController.presencasDetalhadasPorTurma
 );
 
+// 🟢 8. Confirmação de presença pelo instrutor (prazo: 48h após fim)
+router.post(
+  '/confirmar-instrutor',
+  authMiddleware,
+  authorizeRoles('instrutor', 'administrador'), // ✅ permite ambos os perfis
+  presencasController.confirmarPresencaInstrutor
+);
+
+// 🔍 9. Listar todas as presenças para o administrador
+router.get(
+  '/admin/listar-tudo',
+  authMiddleware,
+  authorizeRoles('administrador'),
+  presencasController.listarTodasPresencasParaAdmin
+);
+
 module.exports = router;

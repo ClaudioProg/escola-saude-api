@@ -1,89 +1,76 @@
 const express = require("express");
 const router = express.Router();
 const authMiddleware = require("../auth/authMiddleware");
-const db = require("../db"); // ✅ garantir acesso ao banco
+const db = require("../db");
 const { format } = require("date-fns");
 const { ptBR } = require("date-fns/locale");
+const { contarNaoLidas } = require("../controllers/notificacoesController");
 
+// ✅ GET: Lista notificações do usuário autenticado
 router.get("/", authMiddleware, async (req, res) => {
-  const { id: usuario_id, perfil } = req.usuario;
+  const { id: usuario_id } = req.usuario;
 
   try {
-    const notificacoes = [];
+    const result = await db.query(`
+      SELECT id, mensagem, lida, criado_em
+      FROM notificacoes
+      WHERE usuario_id = $1
+      ORDER BY criado_em DESC
+      LIMIT 20
+    `, [usuario_id]);
 
-    // 1. 📅 Eventos programados próximos
-    const eventosQuery = `
-      SELECT e.titulo, t.id AS turma_id, t.data_inicio
-      FROM turmas t
-      JOIN eventos e ON e.id = t.evento_id
-      JOIN inscricoes i ON i.turma_id = t.id
-      WHERE i.usuario_id = $1
-        AND t.data_inicio BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '2 days'
-      ORDER BY t.data_inicio ASC
-      LIMIT 2
-    `;
-    const { rows: eventos } = await db.query(eventosQuery, [usuario_id]);
-
-    eventos.forEach((ev) => {
-      notificacoes.push({
-        tipo: "evento",
-        mensagem: `📅 Você tem uma aula do evento "${ev.titulo}" em breve.`,
-        data: format(new Date(ev.data_inicio), "dd/MM/yyyy", { locale: ptBR }),
-        link: `/eventos`,
-      });
-    });
-
-    // 2. ⭐ Avaliações recebidas (se instrutor)
-    if (perfil.includes("instrutor")) {
-      const avaliacoesQuery = `
-        SELECT t.evento_id, e.titulo, MAX(a.data_avaliacao) AS data
-        FROM avaliacoes a
-        JOIN turmas t ON t.id = a.turma_id
-        JOIN eventos e ON e.id = t.evento_id
-        WHERE a.instrutor_id = $1
-        GROUP BY t.evento_id, e.titulo
-        ORDER BY data DESC
-        LIMIT 2
-      `;
-      const { rows: avaliacoes } = await db.query(avaliacoesQuery, [usuario_id]);
-
-      avaliacoes.forEach((av) => {
-        notificacoes.push({
-          tipo: "avaliacao",
-          mensagem: `⭐ Você recebeu uma nova avaliação no evento "${av.titulo}".`,
-          data: format(new Date(av.data), "dd/MM/yyyy", { locale: ptBR }),
-          link: `/avaliacoes`,
-        });
-      });
-    }
-
-    // 3. 📜 Certificados emitidos recentemente
-const certificadosQuery = `
-SELECT c.id, e.titulo, c.gerado_em
-FROM certificados c
-JOIN eventos e ON e.id = c.evento_id
-WHERE c.usuario_id = $1
-ORDER BY c.gerado_em DESC
-LIMIT 2
-`;
-const { rows: certificados } = await db.query(certificadosQuery, [usuario_id]);
-
-certificados.forEach((c) => {
-notificacoes.push({
-  tipo: "certificado",
-  mensagem: `📜 Seu certificado do evento "${c.titulo}" está disponível.`,
-  data: format(new Date(c.gerado_em), "dd/MM/yyyy", { locale: ptBR }),
-  link: `/certificados`,
-});
-});
-
-    // 4. 🔄 Ordenar por data (mais recentes primeiro)
-    notificacoes.sort((a, b) => new Date(b.data) - new Date(a.data));
+    const notificacoes = result.rows.map((n) => ({
+      id: n.id,
+      mensagem: n.mensagem,
+      lida: n.lida,
+      data: format(new Date(n.criado_em), "dd/MM/yyyy", { locale: ptBR }),
+    }));
 
     res.status(200).json(notificacoes);
   } catch (err) {
-    console.error("❌ Erro ao carregar notificações:", err.message);
-    res.status(500).json({ erro: "Erro ao carregar notificações." });
+    console.error("❌ Erro ao listar notificações:", err.message);
+    res.status(500).json({ erro: "Erro ao listar notificações." });
+  }
+});
+
+// ✅ PATCH: Marcar uma notificação como lida (apenas se pertencer ao usuário)
+router.patch("/:id/lida", authMiddleware, async (req, res) => {
+  const { id: usuario_id } = req.usuario;
+  const { id: notificacao_id } = req.params;
+
+  try {
+    const { rowCount } = await db.query(`
+      UPDATE notificacoes
+      SET lida = true
+      WHERE id = $1 AND usuario_id = $2
+    `, [notificacao_id, usuario_id]);
+
+    if (rowCount === 0) {
+      return res.status(404).json({ erro: "Notificação não encontrada ou não pertence ao usuário." });
+    }
+
+    res.status(200).json({ sucesso: true, mensagem: "Notificação marcada como lida." });
+  } catch (err) {
+    console.error("❌ Erro ao marcar notificação como lida:", err.message);
+    res.status(500).json({ erro: "Erro ao atualizar notificação." });
+  }
+});
+
+// ✅ GET: Retorna o total de notificações não lidas
+router.get("/nao-lidas/contagem", authMiddleware, async (req, res) => {
+  const { id: usuario_id } = req.usuario;
+
+  try {
+    const { rows } = await db.query(`
+      SELECT COUNT(*) FROM notificacoes
+      WHERE usuario_id = $1 AND lida = false
+    `, [usuario_id]);
+
+    const totalNaoLidas = parseInt(rows[0].count, 10);
+    res.status(200).json({ totalNaoLidas });
+  } catch (err) {
+    console.error("❌ Erro ao contar notificações não lidas:", err.message);
+    res.status(500).json({ erro: "Erro ao contar notificações não lidas." });
   }
 });
 

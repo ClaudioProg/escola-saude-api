@@ -18,7 +18,7 @@ function formatarIdentificador(valor) {
     return `Registro: ${registroFormatado}`;
   }
 
-  return "Identificador inválido";
+  return "";
 }
 
 // Função para retornar data formatada por extenso
@@ -96,61 +96,84 @@ async function gerarPdfCertificado(req, res) {
     }
 
     // Imagem de fundo (caminho correto para a pasta certificados na raiz)
-    const fundo = path.join(__dirname, '..', '..', 'certificados', 'fundo_certificado.png');
+    const fundo = path.join(__dirname, '..', '..', 'certificados', 'fundo_certificado_instrutor.png');
     if (fs.existsSync(fundo)) {
       doc.image(fundo, 0, 0, { width: 842, height: 595 }); // A4 landscape em pts é 842x595
     } else {
       console.log("Arquivo de fundo não encontrado:", fundo);
     }
 
-    // Corpo do certificado
-    doc.moveDown(10);
-    doc.fillColor('#000')
-      .font('AlegreyaSans-Regular')
-      .fontSize(16)
-      .text('A Escola Municipal de Saúde Pública certifica que:', { align: 'center', lineGap: 6 });
+// 🏷️ Título principal
+doc.fillColor('#0b3d2e') // verde lousa
+   .font('BreeSerif')
+   .fontSize(63)
+   .text('CERTIFICADO', { align: 'center' });
 
-    doc.moveDown(1.5);
+// 🏛️ Cabeçalho institucional
+doc.fillColor('black');
+doc.font('AlegreyaSans-Bold').fontSize(20).text('SECRETARIA MUNICIPAL DE SAÚDE', { align: 'center', lineGap: 4 });
+doc.font('AlegreyaSans-Regular').fontSize(15).text('A Escola Municipal de Saúde Pública certifica que:', { align: 'center' });
 
-    doc.font('AlexBrush')
-      .fontSize(48)
-      .fillColor('#000')
-      .text(certificado.nome, { align: 'center' });
+doc.moveDown(2.5);
 
-    doc.font('BreeSerif')
-      .fontSize(18)
-      .text(formatarIdentificador(certificado.cpf), { align: 'center' });
+// 👤 Nome do participante
+const nomeFontName = 'AlexBrush';
+const nomeMaxWidth = 680;
+let nomeFontSize = 45;
+doc.font(nomeFontName);
+while (doc.widthOfString(certificado.nome, { font: nomeFontName, size: nomeFontSize }) > nomeMaxWidth && nomeFontSize > 20) {
+  nomeFontSize -= 1;
+}
+doc.fontSize(nomeFontSize).text(certificado.nome, { align: 'center' });
 
-    doc.moveDown(0.5);
+// 📛 CPF abaixo do nome
+doc.font('BreeSerif').fontSize(16).text(formatarIdentificador(certificado.cpf), 0, doc.y - 5, {
+  align: 'center',
+  width: doc.page.width
+});
 
-    doc.font('AlegreyaSans-Regular')
-      .fontSize(16)
-      .text(`Concluiu o curso "${certificado.curso}", com carga horária de ${certificado.carga_horaria} horas.`, {
-        align: 'center', indent: 30, height: 100, width: 740
-      });
+// ✍️ Texto principal
+const formatarData = (data) => {
+  return new Date(data).toLocaleDateString("pt-BR", {
+    day: "2-digit", month: "2-digit", year: "numeric"
+  });
+};
+let periodoCurso = "";
+if (certificado.data_inicio && certificado.data_fim && certificado.data_inicio !== certificado.data_fim) {
+  periodoCurso = `realizado no período de ${formatarData(certificado.data_inicio)} a ${formatarData(certificado.data_fim)}.`;
+} else if (certificado.data_inicio) {
+  periodoCurso = `realizado em ${formatarData(certificado.data_inicio)}.`;
+}
+const textoCertificado = `Concluiu o curso "${certificado.curso}", com carga horária de ${certificado.carga_horaria} horas, ${periodoCurso}`;
 
-    const formatarData = (data) => {
-      return new Date(data).toLocaleDateString("pt-BR", {
-        day: "2-digit", month: "2-digit", year: "numeric"
-      });
-    };
-    
-    let periodoCurso = "";
-    if (certificado.data_inicio && certificado.data_fim && certificado.data_inicio !== certificado.data_fim) {
-      periodoCurso = `Realizado no período de ${formatarData(certificado.data_inicio)} a ${formatarData(certificado.data_fim)}.`;
-    } else if (certificado.data_inicio) {
-      periodoCurso = `Realizado em ${formatarData(certificado.data_inicio)}.`;
-    }
-    
-    doc.font('AlegreyaSans-Regular')
-      .fontSize(16)
-      .text(periodoCurso, { align: 'center' });
-    
-    doc.moveDown(2);
-    doc.text(`Santos, ${dataHoje()}.`, { align: 'right', width: 700 });
-    
+doc.moveDown(1);
+doc.font('AlegreyaSans-Regular').fontSize(15).text(textoCertificado, 70, doc.y, {
+  align: 'justify',
+  lineGap: 4,
+  width: 680,
+});
 
-    doc.end();
+// 🗓️ Data
+doc.moveDown(1);
+doc.font('AlegreyaSans-Regular').fontSize(14).text(`Santos, ${dataHoje()}.`, 100, doc.y + 10, {
+  align: 'right',
+  width: 680,
+});
+
+// ✍️ Assinatura Rafaella (centralizado)
+const baseY = 470;
+doc.font('AlegreyaSans-Bold').fontSize(20).text("Rafaella Pitol Corrêa", 270, baseY, {
+  align: 'center',
+  width: 300,
+});
+doc.font('AlegreyaSans-Regular').fontSize(14).text("Chefe da Escola da Saúde", 270, baseY + 25, {
+  align: 'center',
+  width: 300,
+});
+
+// Finaliza o PDF
+doc.end();
+
 
     stream.on("finish", () => {
       res.download(caminho, `certificado_${id}.pdf`, () => {
@@ -216,61 +239,83 @@ async function enviarPorEmail(req, res) {
     }
 
     // Imagem de fundo
-    const fundo = path.join(__dirname, '..', '..', 'certificados', 'fundo_certificado.png');
+    const fundo = path.join(__dirname, '..', '..', 'certificados', 'fundo_certificado_instrutor.png');
     if (fs.existsSync(fundo)) {
       doc.image(fundo, 0, 0, { width: 842, height: 595 });
     } else {
       console.log("Arquivo de fundo não encontrado:", fundo);
     }
 
-    // Corpo do certificado
-    doc.moveDown(10);
-    doc.fillColor('#000')
-      .font('AlegreyaSans-Regular')
-      .fontSize(16)
-      .text('A Escola Municipal de Saúde Pública certifica que:', { align: 'center', lineGap: 6 });
+   // 🏷️ Título principal
+doc.fillColor('#0b3d2e') // verde lousa
+.font('BreeSerif')
+.fontSize(63)
+.text('CERTIFICADO', { align: 'center' });
 
-    doc.moveDown(1.5);
+// 🏛️ Cabeçalho institucional
+doc.fillColor('black');
+doc.font('AlegreyaSans-Bold').fontSize(20).text('SECRETARIA MUNICIPAL DE SAÚDE', { align: 'center', lineGap: 4 });
+doc.font('AlegreyaSans-Regular').fontSize(15).text('A Escola Municipal de Saúde Pública certifica que:', { align: 'center' });
 
-    doc.font('AlexBrush')
-      .fontSize(48)
-      .fillColor('#000')
-      .text(certificado.nome, { align: 'center' });
+doc.moveDown(2.5);
 
-    doc.font('BreeSerif')
-      .fontSize(18)
-      .text(formatarIdentificador(certificado.cpf), { align: 'center' });
+// 👤 Nome do participante
+const nomeFontName = 'AlexBrush';
+const nomeMaxWidth = 680;
+let nomeFontSize = 45;
+doc.font(nomeFontName);
+while (doc.widthOfString(certificado.nome, { font: nomeFontName, size: nomeFontSize }) > nomeMaxWidth && nomeFontSize > 20) {
+nomeFontSize -= 1;
+}
+doc.fontSize(nomeFontSize).text(certificado.nome, { align: 'center' });
 
-    doc.moveDown(0.5);
+// 📛 CPF abaixo do nome
+doc.font('BreeSerif').fontSize(16).text(formatarIdentificador(certificado.cpf), 0, doc.y - 5, {
+align: 'center',
+width: doc.page.width
+});
 
-    doc.font('AlegreyaSans-Regular')
-      .fontSize(16)
-      .text(`Concluiu o curso "${certificado.curso}", com carga horária de ${certificado.carga_horaria} horas.`, {
-        align: 'center', indent: 30, height: 100, width: 740
-      });
+// ✍️ Texto principal
+const formatarData = (data) => {
+return new Date(data).toLocaleDateString("pt-BR", {
+ day: "2-digit", month: "2-digit", year: "numeric"
+});
+};
+let periodoCurso = "";
+if (certificado.data_inicio && certificado.data_fim && certificado.data_inicio !== certificado.data_fim) {
+periodoCurso = `realizado no período de ${formatarData(certificado.data_inicio)} a ${formatarData(certificado.data_fim)}.`;
+} else if (certificado.data_inicio) {
+periodoCurso = `realizado em ${formatarData(certificado.data_inicio)}.`;
+}
+const textoCertificado = `Concluiu o curso "${certificado.curso}", com carga horária de ${certificado.carga_horaria} horas, ${periodoCurso}`;
 
-    const formatarData = (data) => {
-      return new Date(data).toLocaleDateString("pt-BR", {
-        day: "2-digit", month: "2-digit", year: "numeric"
-      });
-    };
-    
-    let periodoCurso = "";
-    if (certificado.data_inicio && certificado.data_fim && certificado.data_inicio !== certificado.data_fim) {
-      periodoCurso = `Realizado no período de ${formatarData(certificado.data_inicio)} a ${formatarData(certificado.data_fim)}.`;
-    } else if (certificado.data_inicio) {
-      periodoCurso = `Realizado em ${formatarData(certificado.data_inicio)}.`;
-    }
-    
-    doc.font('AlegreyaSans-Regular')
-      .fontSize(16)
-      .text(periodoCurso, { align: 'center' });
-    
-    doc.moveDown(2);
-    doc.text(`Santos, ${dataHoje()}.`, { align: 'right', width: 700 });
-    
+doc.moveDown(1);
+doc.font('AlegreyaSans-Regular').fontSize(15).text(textoCertificado, 70, doc.y, {
+align: 'justify',
+lineGap: 4,
+width: 680,
+});
 
-    doc.end(); // FINALIZA a geração do PDF e dispara o evento finish no stream
+// 🗓️ Data
+doc.moveDown(1);
+doc.font('AlegreyaSans-Regular').fontSize(14).text(`Santos, ${dataHoje()}.`, 100, doc.y + 10, {
+align: 'right',
+width: 680,
+});
+
+// ✍️ Assinatura Rafaella (centralizado)
+const baseY = 470;
+doc.font('AlegreyaSans-Bold').fontSize(20).text("Rafaella Pitol Corrêa", 270, baseY, {
+align: 'center',
+width: 300,
+});
+doc.font('AlegreyaSans-Regular').fontSize(14).text("Chefe da Escola da Saúde", 270, baseY + 25, {
+align: 'center',
+width: 300,
+});
+
+// Finaliza o PDF
+doc.end();
 
     stream.on("finish", async () => {
       try {
@@ -288,7 +333,16 @@ async function enviarPorEmail(req, res) {
           from: `"Escola da Saúde" <${process.env.EMAIL_REMETENTE}>`,
           to: certificado.email,
           subject: "Seu Certificado",
-          text: "Segue em anexo o seu certificado.",
+          text: `
+Prezado(a) ${certificado.nome},
+
+Seu certificado foi gerado com sucesso referente ao curso "${certificado.curso}", com carga horária de ${certificado.carga_horaria} horas.
+
+Caso tenha dúvidas ou precise de suporte, entre em contato com a equipe da Escola da Saúde.
+
+Atenciosamente,
+Equipe da Escola da Saúde
+`,
           attachments: [
             {
               filename: `certificado.pdf`,

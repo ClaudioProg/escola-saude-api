@@ -35,7 +35,13 @@ export default function MinhasInscricoes() {
       });
       if (!res.ok) throw new Error("Erro ao buscar inscrições");
       const data = await res.json();
-      setInscricoes(data);
+  
+      const inscricoesOrdenadas = data.sort((a, b) => {
+        const dataHoraA = new Date(`${a.data_fim}T${a.horario_fim || "23:59:59"}`);
+        const dataHoraB = new Date(`${b.data_fim}T${b.horario_fim || "23:59:59"}`);
+        return dataHoraB - dataHoraA;
+      });
+      setInscricoes(inscricoesOrdenadas);
       setErro("");
     } catch {
       setErro("Erro ao carregar inscrições");
@@ -44,6 +50,7 @@ export default function MinhasInscricoes() {
       setCarregando(false);
     }
   };
+  
 
   const cancelarInscricao = async (id) => {
     if (!window.confirm("Tem certeza que deseja cancelar sua inscrição?")) return;
@@ -60,10 +67,29 @@ export default function MinhasInscricoes() {
     }
   };
 
-  const obterStatusEvento = (inicio, fim) => {
-    const hoje = new Date();
-    if (hoje < new Date(inicio)) return "Programado";
-    if (hoje > new Date(fim)) return "Encerrado";
+  const obterStatusEvento = (dataInicioISO, dataFimISO, horarioInicio, horarioFim) => {
+    const agora = new Date();
+  
+    const [hIni, mIni, sIni] = (horarioInicio || "00:00:00").split(":").map(Number);
+    const [hFim, mFim, sFim] = (horarioFim || "23:59:59").split(":").map(Number);
+  
+    const inicio = new Date(dataInicioISO);
+    const fim = new Date(dataFimISO);
+  
+    // 🛠 Define horário manualmente
+    inicio.setHours(hIni, mIni, sIni);
+    fim.setHours(hFim, mFim, sFim);
+  
+    console.log("🚦Status:", {
+      agora,
+      inicio,
+      fim,
+      horarioInicio,
+      horarioFim
+    });
+  
+    if (agora < inicio) return "Programado";
+    if (agora > fim) return "Encerrado";
     return "Em andamento";
   };
 
@@ -108,7 +134,7 @@ export default function MinhasInscricoes() {
                 const dataInicio = new Date(item.data_inicio);
                 const dataFim = new Date(item.data_fim);
                 const dataInscricao = new Date(item.data_inscricao);
-                const status = obterStatusEvento(item.data_inicio, item.data_fim);
+                const status = obterStatusEvento(item.data_inicio, item.data_fim, item.horario_inicio, item.horario_fim);
 
                 return (
                   <motion.li

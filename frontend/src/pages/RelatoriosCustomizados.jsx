@@ -39,7 +39,20 @@ export default function RelatoriosCustomizados() {
           headers: { Authorization: `Bearer ${token}` },
         });
         const data = await res.json();
-        setOpcoes(data);
+        setOpcoes({
+          eventos: data.eventos.map((e) => ({
+            value: e.id,
+            label: e.titulo || "Sem título"
+          })),
+          instrutor: data.instrutor.map((i) => ({
+            value: i.id,
+            label: i.nome
+          })),
+          unidades: data.unidades.map((u) => ({
+            value: u.id,
+            label: u.nome
+          })),
+        });
 
         if (perfil.includes("instrutor") || perfil.includes("administrador")) {
           setFiltros((f) => ({ ...f, instrutorId: usuarioId ?? "" }));

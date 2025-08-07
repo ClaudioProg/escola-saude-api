@@ -110,7 +110,6 @@ export default function CertificadosAvulsos() {
           placeholder="CPF ou Registro Funcional"
           value={form.cpf}
           onChange={handleChange}
-          required
           className="border p-2 rounded"
         />
         <input

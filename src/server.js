@@ -72,6 +72,7 @@ const authGoogleRoute          = require('./auth/authGoogle');
 const unidadesRoutes           = require("./routes/unidadesRoutes");
 const usuarioPublicoController = require('./controllers/usuarioPublicoController');
 const certificadosAvulsosRoutes = require("./routes/certificadosAvulsosRoutes");
+const datasEventoRoute          = require('./routes/datasEventoRoute');
 
 // Limite para login
 const loginLimiter = rateLimit({
@@ -112,6 +113,7 @@ app.use('/api/assinatura', assinaturaRoutes);
 app.use('/api/notificacoes', notificacoesRoute);
 app.post('/api/usuarios/recuperar-senha', recuperarSenhaLimiter, usuarioPublicoController.recuperarSenha);
 app.use("/api/certificados-avulsos", certificadosAvulsosRoutes);
+app.use('/api/datas', datasEventoRoute);
 
 // 🔎 Health check
 app.get('/', (req, res) => {
@@ -130,7 +132,7 @@ app.use((err, req, res, next) => {
 });
 
 // 🚀 Inicialização
-const PORT = process.env.PORT || 10000;
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Servidor rodando na porta ${PORT}`);
 });

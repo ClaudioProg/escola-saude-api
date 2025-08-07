@@ -1,21 +1,33 @@
-// src/components/CabecalhoPainel.jsx
 import { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 
-const TITULO_POR_PERFIL = {
-  administrador: "Painel do administradoristrador",
-  instrutor: "Painel do instrutor",
-  usuario: "Painel do Usuário",
+const TITULO_POR_CAMINHO = {
+  "/administrador": "Painel do Administrador",
+  "/instrutor": "Painel do Instrutor",
+  "/avaliacao": "Painel de Avaliações",
+  "/dashboard-analitico": "Painel Analítico",
+  "/minhas-inscricoes": "Painel de Cursos",
+  "/certificados": "Painel de Certificados",
+  "/eventos": "Painel de Eventos",
+  "/scanner": "Registro de Presença",
+  "/perfil": "Perfil do Usuário",
+  "/notificacoes": "Notificações",
+  "/gestor": "Painel do Gestor", // ✅ NOVO
 };
 
-export default function CabecalhoPainel({ perfil = "usuario" }) {
+export default function CabecalhoPainel() {
   const [nome, setNome] = useState("");
+  const location = useLocation();
 
   useEffect(() => {
     const nomeSalvo = localStorage.getItem("nome") || "";
     setNome(nomeSalvo);
   }, []);
 
-  const titulo = TITULO_POR_PERFIL[perfil] || "Painel";
+  // Extrai o primeiro segmento do pathname para casos como /avaliar/:id
+  const caminhoBase = "/" + location.pathname.split("/")[1];
+
+  const titulo = TITULO_POR_CAMINHO[caminhoBase] || "Painel";
 
   return (
     <div

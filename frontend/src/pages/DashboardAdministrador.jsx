@@ -22,6 +22,7 @@ export default function DashboardAdministrador() {
   const [inscritosPorTurma, setInscritosPorTurma] = useState({});
   const [avaliacoesPorTurma, setAvaliacoesPorTurma] = useState({});
   const [eventoExpandido, setEventoExpandido] = useState(null);
+  const [presencasPorTurma, setPresencasPorTurma] = useState({});
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState("");
   const [filtroStatus, setFiltroStatus] = useState("em_andamento");
@@ -57,8 +58,10 @@ export default function DashboardAdministrador() {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
+      console.log("📦 Turmas carregadas para evento", eventoId, data); // 👈 LOG
       setTurmasPorEvento((prev) => ({ ...prev, [eventoId]: data }));
-    } catch {
+    } catch (error) {
+      console.error("❌ Erro ao carregar turmas:", error);
       toast.error("❌ Erro ao carregar turmas.");
     }
   };
@@ -82,11 +85,38 @@ export default function DashboardAdministrador() {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
+      console.log("📊 Avaliações carregadas para turma", turmaId, data); // 👈 LOG
       setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: data }));
-    } catch {
+    } catch (err) {
+      console.error("❌ Erro ao carregar avaliações:", err);
       toast.error("❌ Erro ao carregar avaliações.");
     }
   };
+
+  const carregarPresencas = async (turmaId) => {
+    try {
+      const res = await fetch(`/api/relatorio-presencas/turma/${turmaId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+  
+      if (!res.ok) throw new Error("Erro ao buscar presenças");
+  
+      const data = await res.json();
+      const listaPresencas = Array.isArray(data.lista) ? data.lista : [];
+  
+      console.log("🟢 Presenças recebidas da API:", data); // 👈 LOG COMPLETO
+      console.log("👥 Total de usuários na turma", turmaId, ":", listaPresencas.length);
+  
+      setPresencasPorTurma((prev) => ({
+        ...prev,
+        [turmaId]: listaPresencas,
+      }));
+    } catch (err) {
+      console.error("❌ Erro ao carregar presenças:", err);
+      toast.error("Erro ao carregar presenças da turma.");
+    }
+  };
+
 
   const gerarRelatorioPDF = async (turmaId) => {
     try {
@@ -126,6 +156,7 @@ export default function DashboardAdministrador() {
   const toggleExpandir = (eventoId) => {
     setEventoExpandido(eventoExpandido === eventoId ? null : eventoId);
     carregarTurmas(eventoId);
+    console.log("📂 Expandindo evento:", eventoId);
   };
 
   // 🔄 Padronize as datas para evitar bugs de timezone e inconsistência
@@ -133,13 +164,34 @@ export default function DashboardAdministrador() {
 
   // 🔄 Filtra por status usando datas no formato ISO sempre que possível
   const filtrarPorStatus = (evento) => {
-    const inicioISO = evento.data_inicio?.split("T")[0] || "";
-    const fimISO = evento.data_fim?.split("T")[0] || "";
-    if (filtroStatus === "programado") return inicioISO > hojeISO;
-    if (filtroStatus === "em_andamento") return inicioISO <= hojeISO && fimISO >= hojeISO;
-    if (filtroStatus === "todos") return true;
-    return fimISO < hojeISO;
+    const hoje = new Date();
+    const turmas = turmasPorEvento[evento.id] || [];
+  
+    // Tenta usar data_fim_geral, se existir
+    let dataFim = evento.data_fim_geral ? new Date(evento.data_fim_geral) : null;
+    let dataInicio = evento.data_inicio_geral ? new Date(evento.data_inicio_geral) : null;
+  
+    // Se não houver datas gerais, calcula com base nas turmas
+    if (!dataInicio || !dataFim) {
+      const datasInicio = turmas.map(t => new Date(t.data_inicio)).filter(d => !isNaN(d));
+      const datasFim = turmas.map(t => new Date(t.data_fim)).filter(d => !isNaN(d));
+      if (datasInicio.length > 0) {
+        dataInicio = new Date(Math.min(...datasInicio.map(d => d.getTime())));
+      }
+      if (datasFim.length > 0) {
+        dataFim = new Date(Math.max(...datasFim.map(d => d.getTime())));
+        dataFim.setHours(23, 59, 59, 999); // Garante fim do dia
+      }
+    }
+  
+    if (!dataInicio || !dataFim) return false;
+  
+    if (filtroStatus === "programado") return dataInicio > hoje;
+    if (filtroStatus === "em_andamento") return dataInicio <= hoje && dataFim >= hoje;
+    if (filtroStatus === "encerrado") return dataFim < hoje;
+    return true; // filtroStatus === "todos"
   };
+  
 
   if (carregandoInicial || carregandoPermissao) {
     return <Spinner label="Carregando permissões..." />;
@@ -162,12 +214,12 @@ export default function DashboardAdministrador() {
 
       <div className="flex justify-between items-center bg-lousa text-white px-4 py-2 rounded-xl shadow mb-6">
         <span>Seja bem-vindo(a), <strong>{nome}</strong></span>
-        <span className="font-semibold">Painel do administradoristrador</span>
+        <span className="font-semibold">Painel do administrador</span>
       </div>
 
       <div className="max-w-5xl mx-auto">
         <h2 className="text-2xl font-bold mb-6 text-[#1b4332] text-center dark:text-white">
-          🧑‍💼 Painel do administradoristrador
+          🧑‍💼 Painel do administrador
         </h2>
 
         <div className="flex justify-center gap-4 mb-6 flex-wrap">
@@ -197,17 +249,19 @@ export default function DashboardAdministrador() {
 
         {eventos.filter(filtrarPorStatus).map((evento) => (
           <CardEvento
-            key={evento.id}
-            evento={evento}
-            expandido={eventoExpandido === evento.id}
-            toggleExpandir={toggleExpandir}
-            turmas={turmasPorEvento[evento.id]}
-            carregarInscritos={carregarInscritos}
-            inscritosPorTurma={inscritosPorTurma}
-            carregarAvaliacoes={carregarAvaliacoes}
-            avaliacoesPorTurma={avaliacoesPorTurma}
-            gerarRelatorioPDF={gerarRelatorioPDF}
-          />
+          key={evento.id}
+          evento={evento}
+          expandido={eventoExpandido === evento.id}
+          toggleExpandir={toggleExpandir}
+          turmas={turmasPorEvento[evento.id] || []}
+          carregarInscritos={carregarInscritos}
+          inscritosPorTurma={inscritosPorTurma}
+          carregarAvaliacoes={carregarAvaliacoes}
+          avaliacoesPorTurma={avaliacoesPorTurma}
+          presencasPorTurma={presencasPorTurma} // <-- adicionado
+          carregarPresencas={carregarPresencas}
+          gerarRelatorioPDF={gerarRelatorioPDF}
+        />
         ))}
       </div>
     </div>

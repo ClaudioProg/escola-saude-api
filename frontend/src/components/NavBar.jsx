@@ -38,7 +38,6 @@ export default function Navbar() {
     const saved = localStorage.getItem("darkMode");
     return saved ? JSON.parse(saved) : document.documentElement.classList.contains("dark");
   });
-  const [notificacoes, setNotificacoes] = useState([]);
   
   const [menuusuarioAberto, setMenuusuarioAberto] = useState(false);
   const [menuinstrutorAberto, setMenuinstrutorAberto] = useState(false);
@@ -107,8 +106,9 @@ export default function Navbar() {
 
   const menusUsuario = [
     { label: "Eventos", path: "/eventos", icon: CalendarDays },
-    { label: "Cursos", path: "/minhas-inscricoes", icon: BookOpen },
-    { label: "Certificados", path: "/certificados", icon: FileText },
+    { label: "Meus Cursos", path: "/minhas-inscricoes", icon: BookOpen },
+    { label: "Avaliações Pendentes", path: "/avaliacao", icon: PencilLine },
+    { label: "Meus Certificados", path: "/certificados", icon: FileText },
     { label: "Escanear", path: "/scanner", icon: QrCode },
   ];
 
@@ -120,19 +120,54 @@ export default function Navbar() {
   const menusadministrador = [
     { label: "Painel administrador", path: "/administrador", icon: LayoutDashboard },
     { label: "Agenda", path: "/agenda-administrador", icon: ListChecks },
-    { label: "Dashboard", path: "/dashboard-analitico", icon: BarChart3 },
+    { label: "Dashboard Analítico", path: "/dashboard-analitico", icon: BarChart3 },
     { label: "Relatórios", path: "/relatorios-customizados", icon: ClipboardList },
     { label: "Certificados Avulsos", path: "/certificados-avulsos", icon: FileText },
     { label: "Gestão de Usuários", path: "/gestao-usuarios", icon: Users },
     { label: "Gestão de instrutor", path: "/gestao-instrutor", icon: Presentation },
     { label: "Gestão de Eventos", path: "/gerenciar-eventos", icon: CalendarDays },
-    { label: "Gestão de Presença", path: "/turmas/presencas", icon: QrCode },
+    { label: "Gestão de Presença", path: "/gestao-presenca", icon: QrCode }
    
   ];
 
   const isUsuario = perfil.includes("usuario") || perfil.includes("instrutor") || perfil.includes("administrador");
   const isInstrutor = perfil.includes("instrutor") || perfil.includes("administrador");
   const isAdministrador = perfil.includes("administrador");
+
+  const [notificacoes, setNotificacoes] = useState([]);
+
+  const [totalNaoLidas, setTotalNaoLidas] = useState(0);
+
+// 🔄 Atualiza contador de notificações não lidas
+function atualizarContadorNotificacoes() {
+  const token = localStorage.getItem("token");
+  if (!token) return;
+
+  fetch("/api/notificacoes/nao-lidas/contagem", {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+    .then((res) => res.json())
+    .then((data) => setTotalNaoLidas(data.totalNaoLidas || 0))
+    .catch(() => setTotalNaoLidas(0));
+}
+
+// ⏱️ Atualiza automaticamente a cada 15 segundos
+useEffect(() => {
+  atualizarContadorNotificacoes(); // inicial
+
+  const intervalo = setInterval(() => {
+    atualizarContadorNotificacoes();
+  }, 15000);
+
+  // disponibiliza globalmente para chamada externa
+  window.atualizarContadorNotificacoes = atualizarContadorNotificacoes;
+
+  return () => {
+    clearInterval(intervalo);
+    delete window.atualizarContadorNotificacoes;
+  };
+}, []);
+
 
   return (
     <nav className="w-full bg-lousa text-white shadow-md px-4 py-2 flex items-center justify-between sticky top-0 z-50 border-b border-white/20" role="navigation">
@@ -231,11 +266,11 @@ export default function Navbar() {
           <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
           </svg>
-          {notificacoes.length > 0 && (
-            <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[10px] font-bold px-1.5 rounded-full leading-tight">
-              {notificacoes.length}
-            </span>
-          )}
+          {totalNaoLidas > 0 && (
+  <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[10px] font-bold px-1.5 rounded-full leading-tight">
+    {totalNaoLidas}
+  </span>
+)}
         </button>
 
         {/* ⚙️ Configurações */}

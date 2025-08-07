@@ -30,7 +30,7 @@ export default function Suporte() {
           <details className="bg-white dark:bg-zinc-800 rounded-lg shadow p-4">
             <summary className="cursor-pointer font-medium">Posso alterar minha assinatura depois de salvar?</summary>
             <p className="mt-2 text-sm text-gray-700 dark:text-gray-300">
-              Sim. No seu painel, clique em <strong>“Cadastrar/Alterar Assinatura”</strong> para modificar sua assinatura digital.
+              Sim. Para o instrutor, no seu painel, clique em <strong>“Cadastrar/Alterar Assinatura”</strong> para modificar sua assinatura digital.
             </p>
           </details>
         </div>

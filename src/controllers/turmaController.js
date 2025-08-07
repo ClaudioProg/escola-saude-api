@@ -165,17 +165,15 @@ async function listarTurmasPorEvento(req, res) {
 }
 
 
-// 👨‍🏫 Listar turmas do instrutor autenticado (corrigida)
+// 👨‍🏫 Listar turmas do instrutor autenticado com presença detalhada
 async function listarTurmasDoinstrutor(req, res) {
   try {
     const usuarioId = req.usuario?.id;
-    console.log("ID do instrutor autenticado:", usuarioId);
-
     if (!usuarioId) {
       return res.status(401).json({ erro: "Não autenticado." });
     }
 
-    // 1. Buscar turmas vinculadas ao instrutor
+    // 1. Buscar turmas do instrutor
     const turmasResult = await db.query(`
       SELECT 
         t.id,
@@ -193,10 +191,9 @@ async function listarTurmasDoinstrutor(req, res) {
       WHERE ei.instrutor_id = $1
       ORDER BY t.data_inicio ASC
     `, [usuarioId]);
-
     const turmas = turmasResult.rows;
 
-    // 2. Buscar inscritos por turma
+    // 2. Buscar inscritos
     const inscritosResult = await db.query(`
       SELECT 
         i.turma_id,
@@ -209,35 +206,74 @@ async function listarTurmasDoinstrutor(req, res) {
       WHERE i.turma_id = ANY($1::int[])
     `, [turmas.map(t => t.id)]);
 
-    // 3. Agrupar inscritos por turma
-    const inscritosPorTurma = {};
-    for (const row of inscritosResult.rows) {
-      if (!inscritosPorTurma[row.turma_id]) {
-        inscritosPorTurma[row.turma_id] = [];
-      }
-      inscritosPorTurma[row.turma_id].push({
-        id: row.usuario_id,
-        nome: row.nome,
-        email: row.email,
-        cpf: row.cpf,
-      });
+    // 3. Buscar presenças registradas
+    const presencasResult = await db.query(`
+      SELECT turma_id, usuario_id, data_presenca::date AS data_presenca
+      FROM presencas
+      WHERE turma_id = ANY($1::int[])
+    `, [turmas.map(t => t.id)]);
+
+    // 4. Indexar presenças por turma e usuário
+    const mapaPresencas = {};
+    for (const row of presencasResult.rows) {
+      const chave = `${row.turma_id}-${row.usuario_id}-${row.data_presenca.toISOString().split("T")[0]}`;
+      mapaPresencas[chave] = true;
     }
 
-    // 4. Inserir inscritos no retorno de cada turma
-    const turmasComInscritos = turmas.map((turma) => ({
-      ...turma,
-      inscritos: inscritosPorTurma[turma.id] || [],
-    }));
+    // 5. Função para gerar datas entre início e fim
+    const gerarDatas = (inicio, fim) => {
+      const datas = [];
+      let atual = new Date(inicio);
+      const ultimo = new Date(fim);
+      while (atual <= ultimo) {
+        datas.push(new Date(atual).toISOString().split("T")[0]);
+        atual.setDate(atual.getDate() + 1);
+      }
+      return datas;
+    };
 
-    res.status(200).json(turmasComInscritos);
+    // 6. Montar estrutura de turmas com inscritos e presença
+    const turmasComInscritos = turmas.map((turma) => {
+      const datas = gerarDatas(turma.data_inicio, turma.data_fim);
+      const fimTurma = new Date(turma.data_fim);
+      fimTurma.setDate(fimTurma.getDate() + 2); // +48h para permitir confirmação
+
+      const inscritos = inscritosResult.rows
+        .filter((row) => row.turma_id === turma.id)
+        .map((inscrito) => {
+          const datasPresenca = datas.map((data) => {
+            const hoje = new Date();
+            const dataAula = new Date(data);
+            const chave = `${turma.id}-${inscrito.usuario_id}-${data}`;
+
+            const presente = !!mapaPresencas[chave];
+            const pode_confirmar = !presente && hoje <= fimTurma && dataAula < hoje;
+
+            let status = "aguardando";
+            if (presente) status = "presente";
+            else if (dataAula < hoje) status = "faltou";
+
+            return { data, presente, status, pode_confirmar };
+          });
+
+          return {
+            id: inscrito.usuario_id,
+            nome: inscrito.nome,
+            email: inscrito.email,
+            cpf: inscrito.cpf,
+            datas: datasPresenca,
+          };
+        });
+
+      return { ...turma, inscritos };
+    });
+
+    res.json(turmasComInscritos);
   } catch (error) {
-    console.error("❌ Erro em listarTurmasDoinstrutor:", error.message);
+    console.error("❌ Erro em listarTurmasDoinstrutor:", error);
     res.status(500).json({ erro: "Erro ao buscar turmas do instrutor." });
   }
 }
-
-
-
 
 // 👥 Listar instrutor de uma turma
 async function listarinstrutorDaTurma(req, res) {
@@ -291,10 +327,11 @@ async function obterDetalhesTurma(req, res) {
     const resultado = await db.query(
       `SELECT 
          e.titulo AS titulo_evento,
-         u.nome AS nome_instrutor
+         COALESCE(u.nome, 'Instrutor não definido') AS nome_instrutor
        FROM turmas t
        JOIN eventos e ON t.evento_id = e.id
-       LEFT JOIN usuarios u ON t.instrutor_id = u.id
+       LEFT JOIN evento_instrutor ei ON ei.evento_id = e.id
+       LEFT JOIN usuarios u ON u.id = ei.instrutor_id
        WHERE t.id = $1`,
       [id]
     );
@@ -305,10 +342,11 @@ async function obterDetalhesTurma(req, res) {
 
     res.json(resultado.rows[0]);
   } catch (err) {
-    console.error("Erro ao obter detalhes da turma:", err);
+    console.error("❌ Erro ao obter detalhes da turma:", err);
     res.status(500).json({ erro: "Erro ao obter detalhes da turma." });
   }
 }
+
 
 // 📦 Listar todas as turmas com usuarios (nome, email, CPF, presença)
 async function listarTurmasComusuarios(req, res) {

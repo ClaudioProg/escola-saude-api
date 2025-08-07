@@ -80,7 +80,7 @@ export default function PresencasTurmaExpandida({
                   const presenca = presencas.find(
                     (p) =>
                       String(p.usuario_id) === String(usuarioId) &&
-                      p.data_presenca === dataISO
+                    new Date(p.data_presenca).toISOString().split("T")[0] === dataISO
                   );
                   const estaPresente = presenca?.presente ?? false;
 

@@ -8,7 +8,7 @@ import {
   Users,
 } from "lucide-react";
 
-export default function Menuadministradoristrador() {
+export default function Menuadministrador() {
   const [menuAberto, setMenuAberto] = useState(null);
   const menuRef = useRef();
   const navigate = useNavigate();
@@ -33,14 +33,14 @@ export default function Menuadministradoristrador() {
     <nav
       className="bg-[#1b4332] text-white p-4 rounded-xl shadow-md mb-10 flex flex-col md:flex-row justify-between items-center"
       role="navigation"
-      aria-label="Menu principal do painel administradoristrativo"
+      aria-label="Menu principal do painel administrador"
     >
-      {/* 🔰 Saudação do administradoristrador */}
+      {/* 🔰 Saudação do administrador */}
       <div className="flex justify-between items-center bg-lousa text-white px-4 py-2 rounded-xl shadow mb-6 w-full md:w-auto">
         <span>
           Seja bem-vindo(a), <strong>{nome}</strong>
         </span>
-        <span className="ml-4 font-semibold hidden md:inline">Painel do administradoristrador</span>
+        <span className="ml-4 font-semibold hidden md:inline">Painel do administrador</span>
       </div>
 
       {/* 🔗 Menus de navegação */}
@@ -126,11 +126,11 @@ export default function Menuadministradoristrador() {
           <button
             onClick={() => navigate("/administrador")}
             className="flex items-center gap-2 text-sm hover:underline focus-visible:ring-2 focus-visible:ring-white rounded transition"
-            aria-label="Ir para painel do administradoristrador"
+            aria-label="Ir para painel do administrador"
             tabIndex={0}
           >
             <Users size={16} aria-hidden="true" />
-            administradoristrador
+            administrador
           </button>
         </div>
 

@@ -87,3 +87,24 @@ export function formatarDataHoraBrasileira(dataISO) {
 
   return `${dia}/${mes}/${ano} ${horas}:${minutos}`;
 }
+
+// 📅 Converte para ISO (yyyy-mm-dd) aceitando string BR ou objeto Date
+export function formatarParaISO(data) {
+  if (!data) return "";
+
+  // Se for string dd/mm/aaaa
+  if (typeof data === "string" && data.includes("/")) {
+    const [dia, mes, ano] = data.split("/");
+    if (!dia || !mes || !ano) return "";
+    return `${ano}-${mes.padStart(2, "0")}-${dia.padStart(2, "0")}`;
+  }
+
+  // Se for objeto Date ou string ISO
+  const d = new Date(data);
+  if (isNaN(d.getTime())) return "";
+
+  const ano = d.getFullYear();
+  const mes = String(d.getMonth() + 1).padStart(2, "0");
+  const dia = String(d.getDate()).padStart(2, "0");
+  return `${ano}-${mes}-${dia}`;
+}

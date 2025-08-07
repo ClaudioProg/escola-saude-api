@@ -1,6 +1,7 @@
 const db = require('../db');
-const enviarEmail = require('../utils/email');
-const { formatarDataBR } = require('../utils/data'); // ✅ Novo import
+const { send: enviarEmail } = require('../utils/email');
+const { formatarDataBR } = require('../utils/data');
+const { criarNotificacao } = require('./notificacoesController');
 
 // ➕ Inscrever-se em uma turma
 async function inscreverEmTurma(req, res) {
@@ -53,47 +54,89 @@ async function inscreverEmTurma(req, res) {
       return res.status(500).json({ erro: 'Erro ao registrar inscrição no banco.' });
     }
 
-    const usuarioResult = await db.query('SELECT nome, email FROM usuarios WHERE id = $1', [usuario_id]);
+    // Buscar título do evento e local
     const eventoResult = await db.query(
-      `SELECT e.titulo 
-       FROM eventos e 
-       JOIN turmas t ON t.evento_id = e.id 
-       WHERE t.id = $1`,
-      [turma_id]
+      'SELECT titulo, local FROM eventos WHERE id = $1',
+      [turma.evento_id]
+    );
+    const evento = eventoResult.rows[0];
+    const tituloEvento = evento?.titulo || "Evento";
+    const localEvento = evento?.local || "A definir";
+
+    // ✅ Notificação detalhada
+    const mensagem = `
+✅ Sua inscrição foi confirmada com sucesso no evento "${tituloEvento}".
+
+- Turma: ${turma.nome}
+- Período: ${formatarDataBR(turma.data_inicio)} a ${formatarDataBR(turma.data_fim)}
+- Horário: ${turma.horario_inicio?.slice(0,5)} às ${turma.horario_fim?.slice(0,5)}
+- Carga horária: ${turma.carga_horaria} horas
+- Local: ${localEvento}
+    `.trim();
+
+    await criarNotificacao(
+      usuario_id,
+      mensagem,
+      null,
+      "/eventos"
     );
 
+    // Buscar dados do usuário
+    const usuarioResult = await db.query('SELECT nome, email FROM usuarios WHERE id = $1', [usuario_id]);
+    const usuario = usuarioResult.rows[0];
+
+    if (!usuario || !usuario.email) {
+      console.error('❌ E-mail do usuário não encontrado.');
+      return res.status(400).json({ erro: 'E-mail do usuário não está cadastrado.' });
+    }
+
     const html = `
-      <h2>Olá, ${usuarioResult.rows[0].nome}!</h2>
-      <p>Sua inscrição no evento <strong>${eventoResult.rows[0].titulo}</strong> foi confirmada com sucesso.</p>
-      <p><strong>Turma:</strong> ${turma.nome}<br/>
-      <strong>Período:</strong> ${formatarDataBR(turma.data_inicio)} a ${formatarDataBR(turma.data_fim)}</p>
-      <p>Leve seu QR Code no dia para registrar presença.</p>
-      <p>Atenciosamente,<br/>Equipe da Escola da Saúde</p>`;
+      <h2>Olá, ${usuario.nome}!</h2>
+      <p>Sua inscrição foi confirmada com sucesso.</p>
 
-    await enviarEmail(
-      usuarioResult.rows[0].email,
-      '✅ Inscrição Confirmada – Escola da Saúde',
-      html
-    ).catch((erroEmail) => {
-      console.error('⚠️ Erro ao enviar e-mail de confirmação:', erroEmail.message);
+      <h3>📌 Detalhes da Inscrição</h3>
+      <p>
+        <strong>Evento:</strong> ${tituloEvento}<br/>
+        <strong>Turma:</strong> ${turma.nome}<br/>
+        <strong>Período:</strong> ${formatarDataBR(turma.data_inicio)} a ${formatarDataBR(turma.data_fim)}<br/>
+        <strong>Horário:</strong> ${turma.horario_inicio?.slice(0,5)} às ${turma.horario_fim?.slice(0,5)}<br/>
+        <strong>Carga horária:</strong> ${turma.carga_horaria} horas<br/>
+        <strong>Local:</strong> ${localEvento}
+      </p>
+
+      <p>📍 Em caso de dúvidas, entre em contato com a equipe da Escola da Saúde.</p>
+
+      <p>Atenciosamente,<br/>
+      <strong>Equipe da Escola da Saúde</strong></p>
+    `;
+
+    await enviarEmail({
+      to: usuario.email,
+      subject: '✅ Inscrição Confirmada – Escola da Saúde',
+      text: `Olá, ${usuario.nome}!
+
+Sua inscrição foi confirmada com sucesso no evento "${tituloEvento}".
+
+Turma: ${turma.nome}
+Período: ${formatarDataBR(turma.data_inicio)} a ${formatarDataBR(turma.data_fim)}
+Horário: ${turma.horario_inicio?.slice(0,5)} às ${turma.horario_fim?.slice(0,5)}
+Carga horária: ${turma.carga_horaria} horas
+Local: ${localEvento}
+
+Atenciosamente,
+Equipe da Escola da Saúde`,
+      html: html
     });
 
-    res.status(201).json({
-      mensagem: 'Inscrição realizada com sucesso.',
-      inscricao: result.rows[0],
-      turma: {
-        nome: turma.nome,
-        data_inicio: turma.data_inicio,
-        data_fim: turma.data_fim
-      }
-    });
+    return res.status(201).json({ mensagem: 'Inscrição realizada com sucesso' });
+
   } catch (err) {
-    console.error('❌ Erro geral ao realizar inscrição:', err);
-    res.status(500).json({ erro: 'Erro interno ao realizar inscrição.' });
+    console.error('❌ Erro ao processar inscrição:', err);
+    res.status(500).json({ erro: 'Erro ao processar inscrição.' });
   }
 }
 
-// ❌ Cancelar inscrição (usuário pode cancelar só a própria)
+// ❌ Cancelar inscrição
 async function cancelarMinhaInscricao(req, res) {
   const usuario_id = req.usuario.id;
   const { id } = req.params;
@@ -126,23 +169,25 @@ async function obterMinhasInscricoes(req, res) {
 
     const resultado = await db.query(
       `SELECT 
-        i.id AS inscricao_id, 
-        e.id AS evento_id, 
-        t.id AS turma_id,
-        e.titulo, 
-        e.local,
-        t.data_inicio, 
-        t.data_fim, 
-        i.data_inscricao,
-        string_agg(DISTINCT u.nome, ', ' ORDER BY u.nome) AS instrutor
-      FROM inscricoes i
-      JOIN turmas t ON i.turma_id = t.id
-      JOIN eventos e ON t.evento_id = e.id
-      LEFT JOIN evento_instrutor tp ON t.evento_id = tp.evento_id
-      LEFT JOIN usuarios u ON u.id = tp.instrutor_id
-      WHERE i.usuario_id = $1
-      GROUP BY i.id, e.id, t.id
-      ORDER BY i.data_inscricao DESC`,
+  i.id AS inscricao_id, 
+  e.id AS evento_id, 
+  t.id AS turma_id,
+  e.titulo, 
+  e.local,
+  t.data_inicio, 
+  t.data_fim, 
+  t.horario_inicio,  -- ✅ adicionado
+  t.horario_fim,
+  i.data_inscricao,
+  string_agg(DISTINCT u.nome, ', ' ORDER BY u.nome) AS instrutor
+FROM inscricoes i
+JOIN turmas t ON i.turma_id = t.id
+JOIN eventos e ON t.evento_id = e.id
+LEFT JOIN evento_instrutor tp ON t.evento_id = tp.evento_id
+LEFT JOIN usuarios u ON u.id = tp.instrutor_id
+WHERE i.usuario_id = $1
+GROUP BY i.id, e.id, t.id
+ORDER BY t.data_fim DESC, t.horario_fim DESC NULLS LAST`,
       [usuario_id]
     );
 
@@ -184,9 +229,10 @@ async function listarInscritosPorTurma(req, res) {
   }
 }
 
+// ✅ Exportar
 module.exports = {
   inscreverEmTurma,
   cancelarMinhaInscricao,
   obterMinhasInscricoes,
-  listarInscritosPorTurma
+  listarInscritosPorTurma,
 };

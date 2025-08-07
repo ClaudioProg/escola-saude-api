@@ -22,24 +22,36 @@ export default function AgendaInstrutor() {
   const hojeISO = new Date().toISOString().split("T")[0];
 
   useEffect(() => {
-    if (!carregando && !temAcesso) navigate("/login", { replace: true });
+    if (!carregando && !temAcesso) {
+      console.warn("⚠️ Sem acesso — redirecionando para login...");
+      navigate("/login", { replace: true });
+    }
   }, [carregando, temAcesso, navigate]);
 
   useEffect(() => {
     if (temAcesso) {
       const buscarAgenda = async () => {
         setCarregandoAgenda(true);
+    
         try {
           const token = localStorage.getItem("token");
           const res = await fetch("/api/agenda/instrutor", {
             headers: { Authorization: `Bearer ${token}` },
           });
 
-          if (!res.ok) throw new Error("Erro ao buscar agenda");
+          if (!res.ok) {
+            console.error("❌ Erro HTTP ao buscar agenda:", res.status);
+            throw new Error("Erro ao buscar agenda");
+          }
+
           const data = await res.json();
-          setAgenda(data.sort((a, b) => new Date(a.data) - new Date(b.data)));
+          
+          const agendaOrdenada = data.sort((a, b) => new Date(a.data) - new Date(b.data));
+    
+          setAgenda(agendaOrdenada);
           setErro("");
         } catch (error) {
+          console.error("❌ Erro no fetch da agenda:", error.message);
           setErro("Erro ao carregar agenda");
           toast.error("❌ Erro ao carregar agenda.");
         } finally {
@@ -57,6 +69,15 @@ export default function AgendaInstrutor() {
     return "🔴 Realizado";
   };
 
+  const formatarHorario = (horario) => {
+    if (!horario || typeof horario !== "string") return "";
+  
+    const partes = horario.split(" às ");
+    const inicio = partes[0]?.slice(0, 5) || "";
+    const fim = partes[1]?.slice(0, 5) || "";
+    return `${inicio} às ${fim}`;
+  };
+
   if (carregando) {
     return (
       <div className="p-4 text-center text-gray-700 dark:text-white">
@@ -65,7 +86,10 @@ export default function AgendaInstrutor() {
     );
   }
 
-  if (!temAcesso) return null;
+  if (!temAcesso) {
+    console.warn("🚫 Acesso negado. Não renderizando conteúdo.");
+    return null;
+  }
 
   return (
     <main className="min-h-screen bg-gelo dark:bg-zinc-900 px-2 sm:px-4 py-6 text-black dark:text-white">
@@ -98,8 +122,10 @@ export default function AgendaInstrutor() {
           <ul className="space-y-4">
             <AnimatePresence>
               {agenda.map((item, i) => {
-                const dataISO = item.data.split("T")[0];
+                const dataISO = item.data_referencia?.split("T")[0] || item.data_inicio?.split("T")[0] || "";
                 const status = definirStatus(dataISO);
+
+                console.log(`📌 Evento #${i + 1} | Data: ${item.data} | Status: ${status}`);
 
                 return (
                   <motion.li
@@ -112,12 +138,14 @@ export default function AgendaInstrutor() {
                     className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow border border-green-300 dark:border-green-600 focus:outline-none focus:ring-2 focus:ring-lousa"
                     aria-label={`Aula em ${formatarDataBrasileira(item.data)}`}
                   >
-                    <p className="text-sm text-gray-700 dark:text-gray-200"><strong>📅 Data:</strong> {formatarDataBrasileira(item.data)}</p>
-                    <p className="text-sm text-gray-700 dark:text-gray-200"><strong>🕒 Horário:</strong> {item.horario}</p>
+                    <p className="text-sm text-gray-700 dark:text-gray-200"><strong>📅 Data:</strong> {formatarDataBrasileira(item.data_inicio)} até {formatarDataBrasileira(item.data_fim)}</p>
+                    <p className="text-sm text-gray-700 dark:text-gray-200">
+  <strong>🕒 Horário:</strong> {formatarHorario(item.horario)}
+</p>
                     <p className="text-sm text-gray-700 dark:text-gray-200"><strong>🏫 Turma:</strong> {item.turma}</p>
-                    <p className="text-sm text-gray-700 dark:text-gray-200"><strong>🧾 Evento:</strong> {item.evento}</p>
-                    <p className="text-sm text-gray-600 dark:text-gray-400"><strong>📍 Período:</strong> {formatarDataBrasileira(item.data_inicio)} até {formatarDataBrasileira(item.data_fim)}</p>
+                    <p className="text-sm text-gray-700 dark:text-gray-200"><strong>🧾 Evento:</strong> {item.evento?.nome}</p>
                     <p className={`text-sm font-semibold mt-2 ${
+                      status === "🟢 Programado" ? "text-green-600" :
                       status === "🔴 Realizado" ? "text-red-600" :
                       status === "🟡 Hoje" ? "text-yellow-700" :
                       "text-green-700"

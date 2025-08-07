@@ -55,7 +55,7 @@ async function exportarRelatorios(req, res) {
       SUM(CASE WHEN ps.presente THEN 1 ELSE 0 END) AS presencas
     FROM eventos e
     JOIN turmas t ON t.evento_id = e.id
-    JOIN evento_instrutor ei ON ei.turma_id = t.id
+    JOIN evento_instrutor ei ON ei.evento_id = e.id
     JOIN usuarios u ON u.id = ei.instrutor_id
     LEFT JOIN inscricoes i ON i.turma_id = t.id
     LEFT JOIN presencas ps ON ps.usuario_id = i.usuario_id AND ps.turma_id = t.id
@@ -136,9 +136,10 @@ async function opcoesRelatorios(req, res) {
   try {
     const eventos = await db.query(`SELECT id, titulo FROM eventos ORDER BY titulo`);
     const instrutor = await db.query(`
-      SELECT id, nome FROM usuarios 
-WHERE ARRAY['instrutor']::text[] && string_to_array(perfil, ',')
-ORDER BY nome
+      SELECT DISTINCT u.id, u.nome
+FROM usuarios u
+JOIN evento_instrutor ei ON ei.instrutor_id = u.id
+ORDER BY u.nome
     `);
     const unidades = await db.query(`SELECT id, nome FROM unidades ORDER BY nome`);
     res.json({

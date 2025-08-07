@@ -1,7 +1,9 @@
 const { pool, query } = require('../db');
 
+// 📄 Listar todos os eventos com status e dados agregados
 async function listarEventos(req, res) {
   try {
+    const usuarioId = req.usuario?.id || null;
     const result = await query(`
       SELECT 
         e.*,
@@ -13,58 +15,66 @@ async function listarEventos(req, res) {
           '[]'
         ) AS instrutor,
         (
-           SELECT json_agg(json_build_object(
-    'id', t.id,
-    'nome', t.nome,
-    'data_inicio', t.data_inicio,
-    'data_fim', t.data_fim,
-    'horario_inicio', t.horario_inicio,
-    'horario_fim', t.horario_fim,
-    'vagas_total', t.vagas_total,
-    'inscritos', (
-      SELECT COUNT(*) FROM inscricoes i WHERE i.turma_id = t.id
-    )
-  ))
-  FROM turmas t
-  WHERE t.evento_id = e.id
-) AS turmas,
-        -- Datas consolidadas com base nas turmas
-        (
-          SELECT MIN(t.data_inicio)
+          SELECT json_agg(json_build_object(
+            'id', t.id,
+            'nome', t.nome,
+            'data_inicio', t.data_inicio,
+            'data_fim', t.data_fim,
+            'horario_inicio', t.horario_inicio,
+            'horario_fim', t.horario_fim,
+            'vagas_total', t.vagas_total,
+            'carga_horaria', t.carga_horaria,
+            'inscritos', (
+              SELECT COUNT(*) FROM inscricoes i WHERE i.turma_id = t.id
+            )
+          ))
           FROM turmas t
           WHERE t.evento_id = e.id
-        ) AS data_inicio_geral,
+        ) AS turmas,
+        (SELECT MIN(t.data_inicio) FROM turmas t WHERE t.evento_id = e.id) AS data_inicio_geral,
+        (SELECT MAX(t.data_fim) FROM turmas t WHERE t.evento_id = e.id) AS data_fim_geral,
+        (SELECT MAX(t.horario_fim) FROM turmas t WHERE t.evento_id = e.id) AS horario_fim_geral,
         (
-          SELECT MAX(t.data_fim)
-          FROM turmas t
-          WHERE t.evento_id = e.id
-        ) AS data_fim_geral,
+  CASE
+    WHEN CURRENT_TIMESTAMP < (
+      SELECT MIN(t.data_inicio + t.horario_inicio)
+      FROM turmas t
+      WHERE t.evento_id = e.id
+    ) THEN 'programado'
+    
+    WHEN CURRENT_TIMESTAMP BETWEEN
+      (
+        SELECT MIN(t.data_inicio + t.horario_inicio)
+        FROM turmas t
+        WHERE t.evento_id = e.id
+      )
+      AND
+      (
+        SELECT MAX(t.data_fim + t.horario_fim)
+        FROM turmas t
+        WHERE t.evento_id = e.id
+      )
+    THEN 'andamento'
+    
+    ELSE 'encerrado'
+  END
+) AS status,
         (
-          CASE
-            WHEN CURRENT_DATE < (
-              SELECT MIN(t.data_inicio)
-              FROM turmas t
-              WHERE t.evento_id = e.id
-            ) THEN 'programado'
-            WHEN CURRENT_DATE BETWEEN (
-              SELECT MIN(t.data_inicio)
-              FROM turmas t
-              WHERE t.evento_id = e.id
-            ) AND (
-              SELECT MAX(t.data_fim)
-              FROM turmas t
-              WHERE t.evento_id = e.id
-            ) THEN 'andamento'
-            ELSE 'encerrado'
-          END
-        ) AS status
+          SELECT COUNT(*) > 0
+          FROM inscricoes i
+          JOIN turmas t ON t.id = i.turma_id
+          WHERE i.usuario_id = $1 AND t.evento_id = e.id
+        ) AS ja_inscrito
+    
       FROM eventos e
       LEFT JOIN evento_instrutor ei ON ei.evento_id = e.id
       LEFT JOIN usuarios u ON u.id = ei.instrutor_id
       GROUP BY e.id
-      ORDER BY data_inicio_geral
-    `);
-
+      ORDER BY 
+        (SELECT MAX(t.data_fim) FROM turmas t WHERE t.evento_id = e.id) DESC,
+        (SELECT MAX(t.horario_fim) FROM turmas t WHERE t.evento_id = e.id) DESC
+    `, [usuarioId]);
+     
     res.json(result.rows);
   } catch (err) {
     console.error("❌ Erro ao listar eventos:", err.stack || err.message);
@@ -72,35 +82,63 @@ async function listarEventos(req, res) {
   }
 }
 
-
-// ➕ Criar novo evento
+// ➕ Criar novo evento com logs detalhados
 async function criarEvento(req, res) {
   const {
     titulo, descricao, local, tipo, unidade_id, publico_alvo,
     instrutor = [], turmas = []
   } = req.body;
-  
-  if (!titulo || !local || !tipo || !unidade_id) {
-    return res.status(400).json({ erro: 'Campos obrigatórios não preenchidos' });
+
+  // ✅ Validação completa com logs
+  if (!titulo?.trim()) {
+    console.warn("⚠️ Campo 'titulo' ausente ou vazio.");
+    return res.status(400).json({ erro: "Campo 'titulo' é obrigatório." });
+  }
+  if (!descricao?.trim()) {
+    console.warn("⚠️ Campo 'descricao' ausente ou vazio.");
+    return res.status(400).json({ erro: "Campo 'descricao' é obrigatório." });
+  }
+  if (!local?.trim()) {
+    console.warn("⚠️ Campo 'local' ausente ou vazio.");
+    return res.status(400).json({ erro: "Campo 'local' é obrigatório." });
+  }
+  if (!tipo?.trim()) {
+    console.warn("⚠️ Campo 'tipo' ausente ou vazio.");
+    return res.status(400).json({ erro: "Campo 'tipo' é obrigatório." });
+  }
+  if (!publico_alvo?.trim()) {
+    console.warn("⚠️ Campo 'publico_alvo' ausente ou vazio.");
+    return res.status(400).json({ erro: "Campo 'publico_alvo' é obrigatório." });
+  }
+  if (!unidade_id) {
+    console.warn("⚠️ Campo 'unidade_id' ausente.");
+    return res.status(400).json({ erro: "Campo 'unidade_id' é obrigatório." });
+  }
+  if (!Array.isArray(instrutor) || instrutor.length === 0) {
+    console.warn("⚠️ Lista de instrutor vazia ou inválida.");
+    return res.status(400).json({ erro: "Ao menos um instrutor deve ser selecionado." });
+  }
+  if (!Array.isArray(turmas) || turmas.length === 0) {
+    console.warn("⚠️ Lista de turmas vazia ou inválida.");
+    return res.status(400).json({ erro: "Ao menos uma turma deve ser criada." });
   }
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
-    // Agora só insere os campos realmente existentes
     const eventoResult = await client.query(`
       INSERT INTO eventos (
         titulo, descricao, local, tipo, unidade_id, publico_alvo
-      ) VALUES ($1,$2,$3,$4,$5,$6)
+      )
+      VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING *
-    `, [
-      titulo, descricao, local, tipo, unidade_id, publico_alvo
-    ]);
+    `, [titulo, descricao, local, tipo, unidade_id, publico_alvo]);
 
     const eventoId = eventoResult.rows[0].id;
 
-    // Insere instrutor do evento
+
+    // 🔸 Inserir todos os instrutor
     for (const instrutorId of instrutor) {
       await client.query(`
         INSERT INTO evento_instrutor (evento_id, instrutor_id)
@@ -108,27 +146,33 @@ async function criarEvento(req, res) {
       `, [eventoId, instrutorId]);
     }
 
-    // Insere turmas vinculadas ao evento
-    for (let i = 0; i < turmas.length; i++) {
+    // 🔸 Inserir todas as turmas
+    for (const [index, turma] of turmas.entries()) {
       const {
-        nome, data_inicio, data_fim, horario_inicio,
-        horario_fim, instrutor_id, vagas_total, carga_horaria
-      } = turmas[i];
+        nome, data_inicio, data_fim,
+        horario_inicio, horario_fim,
+        vagas_total, carga_horaria
+      } = turma;
 
-      if (!data_inicio || !data_fim || !horario_inicio || !horario_fim || !vagas_total || !carga_horaria) {
+      if (
+        !nome?.trim() || !data_inicio || !data_fim ||
+        !horario_inicio || !horario_fim ||
+        vagas_total == null || carga_horaria == null
+      ) {
+        console.warn("⚠️ Falha na validação de uma turma:", turma);
         await client.query('ROLLBACK');
         return res.status(400).json({ erro: 'Todos os campos da turma são obrigatórios.' });
       }
-     
 
       await client.query(`
         INSERT INTO turmas (
           evento_id, nome, data_inicio, data_fim,
-          horario_inicio, horario_fim, instrutor_id, vagas_total, carga_horaria
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+          horario_inicio, horario_fim, vagas_total, carga_horaria
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       `, [
         eventoId, nome, data_inicio, data_fim,
-        horario_inicio, horario_fim, instrutor_id, vagas_total, carga_horaria
+        horario_inicio, horario_fim, vagas_total, carga_horaria
       ]);
     }
 
@@ -137,7 +181,7 @@ async function criarEvento(req, res) {
 
   } catch (err) {
     await client.query('ROLLBACK');
-    console.error("❌ Erro ao criar evento:", err.message);
+    console.error("❌ Erro ao criar evento:", err.message, err.stack);
     res.status(500).json({ erro: 'Erro ao criar evento' });
   } finally {
     client.release();
@@ -151,7 +195,6 @@ async function buscarEventoPorId(req, res) {
   const client = await pool.connect();
 
   try {
-    // 📌 Buscar dados do evento
     const eventoResult = await client.query(`
       SELECT *
       FROM eventos
@@ -164,7 +207,6 @@ async function buscarEventoPorId(req, res) {
 
     const evento = eventoResult.rows[0];
 
-    // 👤 Buscar instrutor do evento
     const instrutorResult = await client.query(`
       SELECT u.id, u.nome
       FROM evento_instrutor ei
@@ -172,24 +214,16 @@ async function buscarEventoPorId(req, res) {
       WHERE ei.evento_id = $1
     `, [id]);
 
-    // 📆 Buscar turmas associadas
     const turmasResult = await client.query(`
       SELECT 
-    id,
-    nome,
-    data_inicio,
-    data_fim,
-    horario_inicio,      // <-- CERTO
-    horario_fim,         // <-- CERTO
-    instrutor_id,
-    vagas_total,
-    carga_horaria
-  FROM turmas
-  WHERE evento_id = $1
-  ORDER BY data_inicio
-`, [id]);
+        id, nome, data_inicio, data_fim,
+        horario_inicio, horario_fim,
+        vagas_total, carga_horaria
+      FROM turmas
+      WHERE evento_id = $1
+      ORDER BY data_inicio
+    `, [id]);
 
-    // 🔄 Monta objeto completo
     const eventoCompleto = {
       ...evento,
       instrutor: instrutorResult.rows,
@@ -197,7 +231,6 @@ async function buscarEventoPorId(req, res) {
     };
 
     res.json(eventoCompleto);
-
   } catch (err) {
     console.error('❌ Erro ao buscar evento por ID:', err.message);
     res.status(500).json({ erro: 'Erro ao buscar evento por ID' });
@@ -206,42 +239,65 @@ async function buscarEventoPorId(req, res) {
   }
 }
 
+async function listarDatasDaTurma(req, res) {
+  const turmaId = req.params.id;
 
+  try {
+    const resultado = await db.query(
+      `SELECT data, horario_inicio, horario_fim
+       FROM datas_evento
+       WHERE turma_id = $1
+       ORDER BY data`,
+      [turmaId]
+    );
+
+    res.json(resultado.rows);
+  } catch (erro) {
+    console.error("❌ Erro ao buscar datas da turma:", erro);
+    res.status(500).json({ erro: "Erro ao buscar datas da turma." });
+  }
+}
+
+// 🔄 Atualizar evento com suas turmas e instrutor
 async function atualizarEvento(req, res) {
   const { id } = req.params;
   const {
-    titulo,
-    descricao,
-    local,
-    tipo,
-    unidade_id,
-    publico_alvo,
-    instrutor = [],
-    turmas = []
+    titulo, descricao, local, tipo,
+    unidade_id, publico_alvo,
+    instrutor = [], turmas = []
   } = req.body;
 
-  if (!titulo || !local || !tipo || !unidade_id) {
-    return res.status(400).json({ erro: 'Todos os campos são obrigatórios' });
+  // ✅ Validação dos dados obrigatórios
+  if (
+    !titulo?.trim() || !descricao?.trim() || !local?.trim() || !tipo?.trim() ||
+    !publico_alvo?.trim() || !unidade_id ||
+    !Array.isArray(instrutor) || instrutor.length === 0 ||
+    !Array.isArray(turmas) || turmas.length === 0
+  ) {
+    return res.status(400).json({ erro: 'Todos os campos do evento são obrigatórios.' });
   }
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
-    // Atualiza o evento principal (apenas os campos próprios do evento)
+    // 🔄 Atualizar os dados principais do evento
     const result = await client.query(`
       UPDATE eventos
-      SET titulo = $1, descricao = $2, local = $3, tipo = $4, unidade_id = $5, publico_alvo = $6
+      SET titulo = $1, descricao = $2, local = $3,
+          tipo = $4, unidade_id = $5, publico_alvo = $6
       WHERE id = $7
       RETURNING *
-    `, [
-      titulo, descricao, local, tipo, unidade_id, publico_alvo, id
-    ]);
+    `, [titulo, descricao, local, tipo, unidade_id, publico_alvo, id]);
 
-    // Remove todos os instrutor associados
+    if (result.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ erro: 'Evento não encontrado.' });
+    }
+
+    // 🔄 Atualizar instrutor
     await client.query('DELETE FROM evento_instrutor WHERE evento_id = $1', [id]);
 
-    // Insere os instrutor novamente
     for (const instrutorId of instrutor) {
       await client.query(`
         INSERT INTO evento_instrutor (evento_id, instrutor_id)
@@ -249,30 +305,34 @@ async function atualizarEvento(req, res) {
       `, [id, instrutorId]);
     }
 
-    // Remove todas as turmas associadas ao evento
+    // 🔄 Atualizar turmas
     await client.query('DELETE FROM turmas WHERE evento_id = $1', [id]);
 
-    // Insere as turmas novamente
     for (const turma of turmas) {
       const {
-        nome,
-        data_inicio,
-        data_fim,
-        horario_inicio,
-        horario_fim,
-        instrutor_id,
-        vagas_total,
-        carga_horaria,
+        nome, data_inicio, data_fim,
+        horario_inicio, horario_fim,
+        vagas_total, carga_horaria
       } = turma;
+
+      if (
+        !nome?.trim() || !data_inicio || !data_fim ||
+        !horario_inicio || !horario_fim ||
+        vagas_total == null || carga_horaria == null
+      ) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ erro: 'Todos os campos da turma são obrigatórios.' });
+      }
 
       await client.query(`
         INSERT INTO turmas (
           evento_id, nome, data_inicio, data_fim,
-          horario_inicio, horario_fim, instrutor_id, vagas_total, carga_horaria
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+          horario_inicio, horario_fim, vagas_total, carga_horaria
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       `, [
         id, nome, data_inicio, data_fim,
-        horario_inicio, horario_fim, instrutor_id, vagas_total, carga_horaria
+        horario_inicio, horario_fim, vagas_total, carga_horaria
       ]);
     }
 
@@ -331,33 +391,37 @@ async function excluirEvento(req, res) {
 
 // 📆 Listar turmas de um evento (por ID)
 async function listarTurmasDoEvento(req, res) {
-  const { id } = req.params; // No seu eventosRoute está como /:id/turmas
+  const { id } = req.params;
 
   try {
     const result = await query(`
       SELECT 
-        e.id,
-        e.titulo,
-        e.descricao,
-        t.data_inicio,
-        t.data_fim,
-        e.local,
-        t.vagas_total,
-        t.carga_horaria,
-        COALESCE(array_agg(DISTINCT u.nome) FILTER (WHERE u.nome IS NOT NULL), '{}') AS instrutor
+        t.id, t.nome, t.data_inicio, t.data_fim,
+        t.horario_inicio, t.horario_fim,
+        t.vagas_total, t.carga_horaria,
+        e.titulo, e.descricao, e.local,
+        COALESCE(
+          array_agg(DISTINCT u.nome) 
+          FILTER (WHERE u.nome IS NOT NULL),
+          '{}'
+        ) AS instrutor
       FROM eventos e
-      LEFT JOIN turmas t ON t.evento_id = e.id
-      LEFT JOIN usuarios u ON t.instrutor_id = u.id
-      GROUP BY e.id
+      JOIN turmas t ON t.evento_id = e.id
+      LEFT JOIN evento_instrutor ei ON ei.evento_id = e.id
+      LEFT JOIN usuarios u ON u.id = ei.instrutor_id
+      WHERE e.id = $1
+      GROUP BY t.id, e.id
       ORDER BY t.data_inicio
-    `);
-   
+    `, [id]);
+
     res.json(result.rows);
   } catch (err) {
-    console.error('Erro ao buscar turmas:', err);
+    console.error('❌ Erro ao buscar turmas do evento:', err.message);
     res.status(500).json({ erro: 'Erro ao buscar turmas do evento.' });
   }
 }
+
+
 
 // 📅 Buscar eventos com status (para Agenda Geral)
 async function getAgendaEventos(req, res) {
@@ -369,10 +433,11 @@ async function getAgendaEventos(req, res) {
         MIN(t.data_inicio) AS data_inicio,
         MAX(t.data_fim) AS data_fim,
         CASE 
-          WHEN CURRENT_DATE < MIN(t.data_inicio) THEN 'programado'
-          WHEN CURRENT_DATE BETWEEN MIN(t.data_inicio) AND MAX(t.data_fim) THEN 'andamento'
-          ELSE 'encerrado'
-        END AS status
+  WHEN CURRENT_TIMESTAMP < MIN(t.data_inicio + t.horario_inicio) THEN 'programado'
+  WHEN CURRENT_TIMESTAMP BETWEEN MIN(t.data_inicio + t.horario_inicio)
+                           AND MAX(t.data_fim + t.horario_fim) THEN 'andamento'
+  ELSE 'encerrado'
+END AS status
       FROM eventos e
       JOIN turmas t ON t.evento_id = e.id
       GROUP BY e.id, e.titulo
@@ -391,63 +456,62 @@ async function listarEventosDoinstrutor(req, res) {
   const client = await pool.connect();
 
   try {
-    // 🔍 Buscar eventos em que o usuário atua como instrutor
     const eventosResult = await client.query(`
-      SELECT DISTINCT e.*
-      FROM eventos e
-      JOIN turmas t ON t.evento_id = e.id
-      WHERE t.instrutor_id = $1
-      ORDER BY t.data_inicio
+      SELECT DISTINCT 
+  e.*,
+  CASE 
+    WHEN CURRENT_TIMESTAMP < (
+      SELECT MIN(t.data_inicio + t.horario_inicio)
+      FROM turmas t
+      WHERE t.evento_id = e.id
+    ) THEN 'programado'
+    
+    WHEN CURRENT_TIMESTAMP BETWEEN
+      (
+        SELECT MIN(t.data_inicio + t.horario_inicio)
+        FROM turmas t
+        WHERE t.evento_id = e.id
+      )
+      AND
+      (
+        SELECT MAX(t.data_fim + t.horario_fim)
+        FROM turmas t
+        WHERE t.evento_id = e.id
+      )
+    THEN 'andamento'
+    
+    ELSE 'encerrado'
+  END AS status
+FROM eventos e
+JOIN evento_instrutor ei ON ei.evento_id = e.id
+WHERE ei.instrutor_id = $1
+ORDER BY e.id
     `, [usuarioId]);
 
-    const eventos = await query(`
-      SELECT 
-        e.*,
-        (
-          SELECT json_agg(json_build_object(
-            'id', t.id,
-            'nome', t.nome,
-            'data_inicio', t.data_inicio,
-            'data_fim', t.data_fim,
-            'horario_inicio', t.horario_inicio,
-            'horario_fim', t.horario_fim,
-            'vagas_total', t.vagas_total,
-            'inscritos', (
-              SELECT COUNT(*) FROM inscricoes i WHERE i.turma_id = t.id
-            )
-          ))
-          FROM turmas t
-          WHERE t.evento_id = e.id
-        ) AS turmas
-      FROM eventos e
-      ORDER BY e.data_inicio DESC
-    `);
-    
+
+    const eventos = [];
 
     for (const evento of eventosResult.rows) {
-      // 🔄 Buscar instrutor do evento
+      // 🔄 Buscar turmas do evento
+      const turmasResult = await client.query(`
+        SELECT 
+          t.id, t.nome, t.data_inicio, t.data_fim,
+          t.horario_inicio, t.horario_fim,
+          t.vagas_total, t.carga_horaria,
+          (
+            SELECT COUNT(*) FROM inscricoes i WHERE i.turma_id = t.id
+          ) AS inscritos
+        FROM turmas t
+        WHERE t.evento_id = $1
+        ORDER BY t.data_inicio
+      `, [evento.id]);
+
+      // 👤 Buscar instrutor associado
       const instrutorResult = await client.query(`
         SELECT u.id, u.nome
         FROM evento_instrutor ei
         JOIN usuarios u ON u.id = ei.instrutor_id
         WHERE ei.evento_id = $1
-      `, [evento.id]);
-
-      // 🔄 Buscar turmas do evento
-      const turmasResult = await client.query(`
-        SELECT 
-    id,
-    nome,
-    data_inicio,
-    data_fim,
-    horario_inicio,      // <-- CERTO
-    horario_fim,         // <-- CERTO
-    instrutor_id,
-    vagas_total,
-    carga_horaria
-  FROM turmas
-  WHERE evento_id = $1
-  ORDER BY data_inicio
       `, [evento.id]);
 
       eventos.push({
@@ -458,7 +522,6 @@ async function listarEventosDoinstrutor(req, res) {
     }
 
     res.json(eventos);
-
   } catch (err) {
     console.error("❌ Erro ao buscar eventos do instrutor:", err.message);
     res.status(500).json({ erro: 'Erro ao buscar eventos do instrutor' });
@@ -466,6 +529,7 @@ async function listarEventosDoinstrutor(req, res) {
     client.release();
   }
 }
+
 
 module.exports = {
   listarEventos,
@@ -476,4 +540,5 @@ module.exports = {
   listarTurmasDoEvento,
   getAgendaEventos,
   listarEventosDoinstrutor,
+  listarDatasDaTurma,
 };

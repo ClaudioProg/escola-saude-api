@@ -29,4 +29,12 @@ router.get(
   avaliacoesController.avaliacoesPorEvento
 );
 
+// 📋 4. Listar avaliações pendentes para o próprio usuário
+router.get(
+  '/disponiveis/:usuario_id',
+  authMiddleware,
+  authorizeRoles('administrador', 'instrutor', 'usuario'),
+  avaliacoesController.listarAvaliacoesDisponiveis
+);
+
 module.exports = router;

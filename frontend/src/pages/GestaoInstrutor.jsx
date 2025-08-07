@@ -1,4 +1,3 @@
-// src/pages/Gestaoinstrutor.jsx
 import { useEffect, useState } from "react";
 import { toast } from "react-toastify";
 import { Navigate } from "react-router-dom";
@@ -14,38 +13,34 @@ Modal.setAppElement("#root");
 
 export default function GestaoInstrutor() {
   const { temAcesso, carregando } = useperfilPermitidos(["administrador"]);
-  const [instrutor, setinstrutor] = useState([]);
+  const [instrutor, setInstrutor] = useState([]);
   const [carregandoDados, setCarregandoDados] = useState(true);
   const [erro, setErro] = useState("");
   const [busca, setBusca] = useState("");
-
-  // Modais
+  const [historico, setHistorico] = useState([]);
   const [modalHistoricoAberto, setModalHistoricoAberto] = useState(false);
-  const [modalEdicaoAberto, setModalEdicaoAberto] = useState(false);
-  const [instrutorelecionado, setinstrutorelecionado] = useState(null);
-  const [novoNome, setNovoNome] = useState("");
-  const [novoEmail, setNovoEmail] = useState("");
+  const [instrutorSelecionado, setInstrutorSelecionado] = useState(null);
 
   useEffect(() => {
-    async function carregarinstrutor() {
+    async function carregarInstrutores() {
       try {
         const token = localStorage.getItem("token");
-        const res = await fetch("http://localhost:3000/api/usuarios/instrutor", {
+        const res = await fetch("http://localhost:3000/api/instrutor", {
           headers: { Authorization: `Bearer ${token}` },
         });
-        if (!res.ok) throw new Error("Erro ao buscar instrutor");
+        if (!res.ok) throw new Error("Erro ao buscar instrutores.");
         const data = await res.json();
-        setinstrutor(data);
+        setInstrutor(data);
         setErro("");
       } catch {
-        setErro("Erro ao carregar instrutor.");
-        toast.error("Erro ao carregar instrutor.");
+        setErro("Erro ao carregar instrutores.");
+        toast.error("Erro ao carregar instrutores.");
       } finally {
         setCarregandoDados(false);
       }
     }
 
-    carregarinstrutor();
+    carregarInstrutores();
   }, []);
 
   const filtrados = instrutor.filter((p) =>
@@ -53,44 +48,35 @@ export default function GestaoInstrutor() {
     p.email.toLowerCase().includes(busca.toLowerCase())
   );
 
-  function abrirModalVisualizar(instrutor) {
-    setinstrutorelecionado(instrutor);
+  async function abrirModalVisualizar(instrutor) {
+    setInstrutorSelecionado(instrutor);
     setModalHistoricoAberto(true);
-  }
-
-  function abrirModalEditar(instrutor) {
-    setinstrutorelecionado(instrutor);
-    setNovoNome(instrutor.nome);
-    setNovoEmail(instrutor.email);
-    setModalEdicaoAberto(true);
-  }
-
-  async function salvarEdicao() {
+  
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`http://localhost:3000/api/usuarios/${instrutorelecionado.id}`, {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ nome: novoNome, email: novoEmail }),
+      const res = await fetch(`http://localhost:3000/api/instrutor/${instrutor.id}/eventos-avaliacoes`, {
+        headers: { Authorization: `Bearer ${token}` },
       });
-
-      if (!res.ok) throw new Error("Erro ao atualizar dados");
-
-      toast.success("✅ Dados atualizados com sucesso!");
-      setModalEdicaoAberto(false);
-      setinstrutor((prev) =>
-        prev.map((p) =>
-          p.id === instrutorelecionado.id ? { ...p, nome: novoNome, email: novoEmail } : p
-        )
-      );
+      if (!res.ok) throw new Error("Erro ao buscar histórico.");
+  
+      const data = await res.json();
+  
+      // Aqui o backend já retorna os dados prontos
+      const eventos = data.map(ev => ({
+        id: ev.evento_id,
+        titulo: ev.evento,
+        data_inicio: ev.data_inicio ? new Date(ev.data_inicio) : null,
+        data_fim: ev.data_fim ? new Date(ev.data_fim) : null,
+        nota_media: ev.nota_media !== null ? Number(ev.nota_media) : null,
+      }));
+  
+      setHistorico(eventos);
     } catch {
-      toast.error("❌ Erro ao atualizar instrutor.");
+      toast.error("❌ Erro ao buscar histórico do instrutor.");
+      setHistorico([]);
     }
   }
-
+  
   if (carregando) return <p className="text-center mt-10 text-lousa dark:text-white">Verificando permissões...</p>;
   if (!temAcesso) return <Navigate to="/login" replace />;
 
@@ -120,7 +106,6 @@ export default function GestaoInstrutor() {
       ) : (
         <TabelaInstrutor
           instrutor={filtrados}
-          onEditar={abrirModalEditar}
           onVisualizar={abrirModalVisualizar}
         />
       )}
@@ -133,60 +118,52 @@ export default function GestaoInstrutor() {
         overlayClassName="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-start z-50"
       >
         <h2 className="text-xl font-bold mb-4 text-black dark:text-white">
-          Histórico de {instrutorelecionado?.nome}
+          Histórico de {instrutorSelecionado?.nome}
         </h2>
-        <p className="text-sm dark:text-gray-300">
-          Total de eventos: {instrutorelecionado?.eventosMinistrados?.length ?? 0}
+
+        {historico.length === 0 ? (
+          <p className="text-gray-500 dark:text-gray-300">Nenhum evento encontrado.</p>
+        ) : (
+          <div className="mt-4 max-h-[65vh] overflow-y-auto pr-2">
+  <ul className="space-y-3">
+    {historico.map((evento) => (
+      <li
+        key={evento.id}
+        className="border p-3 rounded-md bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100 shadow-sm"
+      >
+        <p className="font-semibold">{evento.titulo}</p>
+        <p className="text-sm">
+          Data:{" "}
+          {evento.data_inicio
+            ? evento.data_inicio.toLocaleDateString("pt-BR")
+            : "—"}{" "}
+          até{" "}
+          {evento.data_fim
+            ? evento.data_fim.toLocaleDateString("pt-BR")
+            : "—"}
         </p>
-        <ul className="mt-4 list-disc pl-5 text-gray-700 dark:text-gray-200">
-          {instrutorelecionado?.eventosMinistrados?.map((evento, i) => (
-            <li key={i}>{evento}</li>
-          ))}
-        </ul>
+        <p className="text-sm">
+          Média de avaliação:{" "}
+          <strong>
+            {evento.nota_media !== null
+              ? evento.nota_media.toFixed(1)
+              : "N/A"}
+          </strong>
+        </p>
+      </li>
+    ))}
+  </ul>
+</div>
+
+
+        )}
+
         <button
           onClick={() => setModalHistoricoAberto(false)}
           className="mt-6 px-4 py-2 rounded-md bg-zinc-700 hover:bg-zinc-800 text-white font-medium shadow transition-all"
         >
           ❌ Fechar
         </button>
-      </Modal>
-
-      {/* Modal Edição */}
-      <Modal
-        isOpen={modalEdicaoAberto}
-        onRequestClose={() => setModalEdicaoAberto(false)}
-        className="bg-white dark:bg-gray-800 max-w-lg mx-auto mt-24 p-6 rounded-xl shadow-lg outline-none"
-        overlayClassName="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-start z-50"
-      >
-        <h2 className="text-xl font-bold mb-4 text-black dark:text-white">✏️ Editar instrutor</h2>
-        <input
-          type="text"
-          value={novoNome}
-          onChange={(e) => setNovoNome(e.target.value)}
-          className="w-full mb-4 px-4 py-2 border rounded dark:bg-gray-700 dark:text-white"
-          placeholder="Nome"
-        />
-        <input
-          type="email"
-          value={novoEmail}
-          onChange={(e) => setNovoEmail(e.target.value)}
-          className="w-full mb-4 px-4 py-2 border rounded dark:bg-gray-700 dark:text-white"
-          placeholder="Email"
-        />
-        <div className="flex justify-end gap-3">
-          <button
-            onClick={() => setModalEdicaoAberto(false)}
-            className="px-4 py-2 rounded-md bg-gray-500 hover:bg-gray-600 text-white font-medium shadow transition-all"
-          >
-            Cancelar
-          </button>
-          <button
-            onClick={salvarEdicao}
-            className="px-4 py-2 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white font-medium shadow transition-all"
-          >
-            💾 Salvar
-          </button>
-        </div>
       </Modal>
     </main>
   );

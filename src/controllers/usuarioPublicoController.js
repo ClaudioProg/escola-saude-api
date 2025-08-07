@@ -1,7 +1,8 @@
+//usuarioPublicoController.js
 const db = require('../db');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const enviarEmail = require('../utils/email');
+const { send: enviarEmail } = require('../utils/email');
 const formatarPerfil = require('../utils/formatarPerfil');
 
 // 🔐 Cadastro de novo usuário
@@ -235,7 +236,7 @@ async function obterAssinatura(req, res) {
   }
 
   if (!perfil.includes("instrutor") && !perfil.includes("administrador")) {
-    return res.status(403).json({ erro: 'Acesso restrito a instrutor ou administradoristradores.' });
+    return res.status(403).json({ erro: 'Acesso restrito a instrutor ou administradores.' });
   }
 
   try {

@@ -98,7 +98,7 @@ export default function InscritosTurma() {
   return (
     <main className="min-h-screen bg-gelo dark:bg-gray-900 px-2 py-8">
       <Breadcrumbs />
-      <CabecalhoPainel perfil="administradoristrador" saudacao={`Visualização da turma: ${turma?.nome}`} />
+      <CabecalhoPainel perfil="administrador" saudacao={`Visualização da turma: ${turma?.nome}`} />
 
       <motion.div
         initial={{ opacity: 0, y: 16 }}

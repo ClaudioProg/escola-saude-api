@@ -6,16 +6,16 @@ ChartJS.register(BarElement, CategoryScale, LinearScale);
 
 export default function GraficoEventos({ dados }) {
   const data = {
-    labels: ["Realizados", "Programados", "instrutor"], // 🔄 Label atualizado
+    labels: ["Realizados", "Programados", "Instrutor"],
     datasets: [
       {
         label: "Eventos",
         data: [
           dados?.realizados || 0,
-          dados?.programados || 0, // 🔄 Alterado aqui
+          dados?.programados || 0,
           dados?.instrutor || 0,
         ],
-        backgroundColor: "#1f8b4c",
+        backgroundColor: ["#1f8b4c", "#f59e0b", "#3b82f6"], // 💡 Verde, Amarelo, Azul
       },
     ],
   };

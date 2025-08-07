@@ -1,187 +1,245 @@
+// MeusCertificados
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import Skeleton from "react-loading-skeleton";
 import { toast } from "react-toastify";
-import { motion, AnimatePresence } from "framer-motion";
-import { Shield } from "lucide-react";
 import { formatarDataBrasileira } from "../utils/data";
 
 import Breadcrumbs from "../components/Breadcrumbs";
 import CabecalhoPainel from "../components/CabecalhoPainel";
 import NadaEncontrado from "../components/NadaEncontrado";
-import BotaoPrimario from "../components/BotaoPrimario";
 
 export default function MeusCertificados() {
   const [nome, setNome] = useState("");
   const [certificados, setCertificados] = useState([]);
   const [erro, setErro] = useState("");
   const [carregando, setCarregando] = useState(true);
-  const [filtro, setFiltro] = useState("todos");
-  const [busca, setBusca] = useState("");
+  const [gerando, setGerando] = useState(null);
 
-  const navigate = useNavigate();
   const token = localStorage.getItem("token");
 
+  const rawUsuario = localStorage.getItem("usuario");
+  const usuario = (() => {
+    try {
+      const parsed = JSON.parse(rawUsuario || "{}");
+      return {
+        ...parsed,
+        imagem_base64:
+          typeof parsed.imagem_base64 === "string" &&
+          parsed.imagem_base64.startsWith("data:image/")
+            ? parsed.imagem_base64
+            : null,
+      };
+    } catch {
+      return {};
+    }
+  })();
+
+  const possuiAssinatura = !!usuario.imagem_base64;
+
+  console.log(
+    possuiAssinatura
+      ? "🖊️ Assinatura base64 carregada"
+      : "🚫 Usuário sem assinatura (não é instrutor ou administrador)"
+  );
+
   useEffect(() => {
-    const usuario = JSON.parse(localStorage.getItem("usuario"));
     if (usuario?.nome) setNome(usuario.nome);
   }, []);
 
-  useEffect(() => {
+  async function carregarCertificados() {
+    console.info("🔍 Buscando certificados elegíveis...");
     setCarregando(true);
-    fetch("http://localhost:3000/api/certificados/usuario", {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error("Erro ao buscar certificados");
-        return res.json();
-      })
-      .then((data) => {
-        setCertificados(data);
-        setErro("");
-      })
-      .catch(() => {
-        setErro("Erro ao carregar certificados");
-        toast.error("Erro ao carregar certificados");
-      })
-      .finally(() => setCarregando(false));
+  
+    try {
+      const headers = { Authorization: `Bearer ${token}` };
+  
+      // 🔄 Busca participante
+      const resUsuario = await fetch("http://localhost:3000/api/certificados/elegiveis", {
+        headers,
+      });
+  
+      // 🔄 Busca instrutor
+      const resInstrutor = await fetch("http://localhost:3000/api/certificados/elegiveis-instrutor", {
+        headers,
+      });
+  
+      if (!resUsuario.ok || !resInstrutor.ok)
+        throw new Error("Erro ao buscar certificados");
+  
+      const dadosUsuario = await resUsuario.json();
+      const dadosInstrutor = await resInstrutor.json();
+  
+      // 🧩 Adiciona campo identificador de tipo
+      const certificadosComTipo = [
+        ...dadosUsuario.map((c) => ({ ...c, tipo: "usuario" })),
+        ...dadosInstrutor.map((c) => ({ ...c, tipo: "instrutor" })),
+      ];
+      
+      // ✅ Evita duplicação do mesmo certificado por tipo
+      const certificadosUnicos = certificadosComTipo.filter(
+        (item, index, self) =>
+          index ===
+          self.findIndex(
+            (c) =>
+              c.turma_id === item.turma_id &&
+              c.evento_id === item.evento_id &&
+              c.tipo === item.tipo
+          )
+      );
+      
+      setCertificados(certificadosUnicos);
+      setErro("");
+    } catch (erro) {
+      console.error("❌ Erro ao carregar certificados:", erro);
+      setErro("Erro ao carregar certificados");
+      toast.error("Erro ao carregar certificados");
+    } finally {
+      console.info("✅ Finalizado o carregamento dos certificados.");
+      setCarregando(false);
+    }
+  }
+  
+  useEffect(() => {
+    carregarCertificados();
   }, [token]);
 
-  const certificadosFiltrados = certificados
-    .filter((cert) => {
-      const isinstrutor = cert.arquivo_pdf.startsWith("certificado_instrutor");
-      if (filtro === "todos") return true;
-      if (filtro === "usuario") return !isinstrutor;
-      if (filtro === "instrutor") return isinstrutor;
-      return true;
-    })
-    .filter((cert) => cert.titulo.toLowerCase().includes(busca.toLowerCase()));
+  async function gerarCertificado(cert) {
+    try {
+      console.log(`🖱️ Clique para gerar certificado da turma ${cert.turma_id}`);
+      setGerando(cert.turma_id);
 
-  return (
-    <main className="min-h-screen bg-gelo dark:bg-zinc-900 px-2 sm:px-4 py-6">
-      <Breadcrumbs />
-      <CabecalhoPainel nome={nome} perfil="Painel do Usuário" />
+      const tipo = cert.tipo;
 
-      <h1 className="text-2xl font-bold mb-6 text-black dark:text-white text-center">
-        🧾 Meus Certificados
-      </h1>
+      const body = {
+        usuario_id: usuario.id,
+        evento_id: cert.evento_id,
+        turma_id: cert.turma_id,
+        tipo,
+      };
+      
+      // Só adiciona assinatura se for tipo "usuario" e assinatura estiver presente
+      if (tipo === "usuario" && usuario.imagem_base64) {
+        body.assinaturaBase64 = usuario.imagem_base64;
+      }
 
-      {/* Filtro e busca */}
-      <section
-        className="mb-6 flex flex-col md:flex-row items-center justify-center gap-4"
-        aria-label="Filtro e busca de certificados"
+      console.log("🚀 Iniciando geração do certificado para:", body);
+
+      const res = await fetch("http://localhost:3000/api/certificados/gerar", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+
+      console.log("📥 Status da resposta:", res.status);
+      const resultado = await res.json();
+      console.log("📄 Corpo da resposta:", resultado);
+
+      if (!res.ok) throw new Error(resultado.erro || "Erro ao gerar certificado");
+
+      toast.success("🎉 Certificado gerado com sucesso!");
+
+      setCertificados((prev) =>
+        prev.map((c) =>
+          c.turma_id === cert.turma_id && c.evento_id === cert.evento_id
+            ? {
+                ...c,
+                ja_gerado: true,
+                arquivo_pdf: resultado.arquivo,
+                certificado_id: resultado.certificado_id ?? c.certificado_id ?? Date.now(),
+              }
+            : c
+        )
+      );
+    } catch (err) {
+      console.error("❌ Erro ao gerar certificado:", err);
+      toast.error("Erro ao gerar certificado");
+    } finally {
+      console.log(`🏁 Finalizada tentativa de geração (${cert.turma_id})`);
+      setGerando(null);
+    }
+  }
+
+  function renderizarCartao(cert) {
+    const isinstrutor = cert.tipo === "instrutor";
+
+    return (
+      <div
+        key={`${cert.evento_id}-${cert.turma_id}-${cert.tipo}`}
+        className={`rounded-2xl shadow p-4 flex flex-col justify-between border transition 
+          focus:outline-none focus:ring-2 focus:ring-lousa
+          ${isinstrutor ? "bg-yellow-100 border-yellow-400" : "bg-white dark:bg-gray-800"}`}
       >
-        <div className="text-sm flex items-center">
-          <label
-            htmlFor="filtro-certificado"
-            className="mr-2 font-medium text-lousa dark:text-white flex items-center gap-1"
+        <div>
+          <h2
+            className={`text-xl font-bold mb-1 ${
+              isinstrutor ? "text-yellow-900" : "text-lousa dark:text-white"
+            }`}
           >
-            <Shield size={16} /> Filtrar por:
-          </label>
-          <select
-            id="filtro-certificado"
-            value={filtro}
-            onChange={(e) => setFiltro(e.target.value)}
-            className="px-3 py-1 border rounded focus:ring-2 focus:ring-lousa dark:bg-gray-900 dark:text-white"
-            aria-label="Filtrar certificados por tipo"
-          >
-            <option value="todos">Todos</option>
-            <option value="usuario">Somente usuario</option>
-            <option value="instrutor">Somente instrutor</option>
-          </select>
+            {cert.evento}
+          </h2>
+          <p className="text-sm text-gray-700 dark:text-gray-300">
+            Turma: {cert.nome_turma}
+          </p>
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            Período: {formatarDataBrasileira(cert.data_inicio)} até{" "}
+            {formatarDataBrasileira(cert.data_fim)}
+          </p>
+          {isinstrutor && (
+            <span className="inline-block mt-2 px-2 py-1 bg-yellow-400 text-xs font-semibold text-yellow-900 rounded">
+              📣 Instrutor
+            </span>
+          )}
         </div>
 
-        <input
-          type="text"
-          placeholder="🔍 Buscar por título..."
-          value={busca}
-          onChange={(e) => setBusca(e.target.value)}
-          className="px-3 py-1 border rounded text-sm w-full md:w-80 focus:ring-2 focus:ring-lousa dark:bg-gray-900 dark:text-white"
-          aria-label="Buscar certificado por título"
-        />
-      </section>
+        <div className="mt-4 flex justify-center">
+          {cert.ja_gerado && cert.arquivo_pdf && cert.certificado_id ? (
+            <a
+              href={`http://localhost:3000/api/certificados/${cert.certificado_id}/download`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="bg-green-900 hover:bg-green-800 text-white text-sm font-medium py-2 px-4 rounded text-center"
+            >
+              Baixar Certificado
+            </a>
+          ) : (
+            <button
+              onClick={() => gerarCertificado(cert)}
+              disabled={gerando === cert.turma_id}
+              className={`${
+                isinstrutor ? "bg-yellow-500 hover:bg-yellow-600" : "bg-blue-700 hover:bg-blue-800"
+              } text-white text-sm font-medium py-2 px-4 rounded text-center disabled:opacity-60`}
+            >
+              {gerando === cert.turma_id ? "Gerando..." : "Gerar Certificado"}
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
 
-      {/* Lista de certificados */}
-      <section>
-        {carregando ? (
-          <div className="space-y-4">
-            {[...Array(4)].map((_, i) => (
-              <Skeleton
-                key={i}
-                height={92}
-                className="rounded-xl"
-                baseColor="#cbd5e1"
-                highlightColor="#e2e8f0"
-              />
-            ))}
-          </div>
-        ) : erro ? (
-          <p className="text-red-500 text-center mb-6">{erro}</p>
-        ) : certificadosFiltrados.length === 0 ? (
-          <NadaEncontrado
-            mensagem="Nenhum certificado encontrado para o filtro ou busca."
-            sugestao="Verifique os filtros ou tente outra busca."
-          />
-        ) : (
-          <ul className="space-y-4">
-            <AnimatePresence>
-              {certificadosFiltrados.map((cert) => {
-                const dataInicio = new Date(cert.data_inicio);
-                const dataFim = new Date(cert.data_fim);
-                const isinstrutor = cert.arquivo_pdf.startsWith("certificado_instrutor");
+  // ✅ Return principal do componente
+  return (
+    <main className="max-w-4xl mx-auto px-4 py-6">
+      <Breadcrumbs
+        links={[{ href: "/dashboard", rotulo: "Início" }]}
+        atual="Meus Certificados"
+      />
+      <CabecalhoPainel titulo="Meus Certificados" subtitulo={nome ? `Olá, ${nome}` : ""} />
 
-                return (
-                  <motion.li
-                    key={cert.certificado_id}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.25 }}
-                    tabIndex={0}
-                    className={`border p-4 rounded-xl shadow focus:outline-none focus:ring-2 focus:ring-lousa transition
-                      ${isinstrutor ? "bg-yellow-100 border-yellow-400" : "bg-white dark:bg-gray-800"}`}
-                    aria-label={
-                      isinstrutor
-                        ? `Certificado de instrutor: ${cert.titulo}`
-                        : `Certificado de usuario: ${cert.titulo}`
-                    }
-                  >
-                    <h3
-                      className={`text-lg font-semibold ${
-                        isinstrutor ? "text-yellow-900" : "text-lousa dark:text-white"
-                      }`}
-                    >
-                      {cert.titulo}
-                    </h3>
-                    <p className="text-gray-600 text-sm dark:text-gray-200">
-                      Turma: {cert.nome_turma}
-                    </p>
-                    <p className="text-sm text-gray-500 dark:text-gray-300">
-  Período: {formatarDataBrasileira(cert.data_inicio)} até {formatarDataBrasileira(cert.data_fim)}
-</p>
-                    {isinstrutor && (
-                      <span className="inline-block mt-2 px-2 py-1 bg-yellow-400 text-xs font-semibold text-yellow-900 rounded">
-                        📣 instrutor
-                      </span>
-                    )}
-                    <BotaoPrimario
-                      as="a"
-                      href={`http://localhost:3000/api/certificados/${cert.certificado_id}/download`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="mt-3"
-                      aria-label={`Baixar certificado ${cert.titulo}`}
-                      title={`Clique para baixar o certificado de ${cert.titulo}`}
-                    >
-                      Baixar Certificado
-                    </BotaoPrimario>
-                  </motion.li>
-                );
-              })}
-            </AnimatePresence>
-          </ul>
-        )}
-      </section>
+      {carregando ? (
+        <Skeleton count={5} height={100} className="mb-4" />
+      ) : erro ? (
+        <NadaEncontrado mensagem="Não foi possível carregar os certificados." />
+      ) : certificados.length === 0 ? (
+        <NadaEncontrado mensagem="Você ainda não possui certificados disponíveis." />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {certificados.map((cert) => renderizarCartao(cert))}
+        </div>
+      )}
     </main>
   );
 }

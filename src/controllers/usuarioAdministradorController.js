@@ -108,7 +108,7 @@ async function excluirUsuario(req, res) {
   }
 }
 
-// Listar usuários que já atuaram como instrutor
+/// 📋 Listar usuários que já atuaram como instrutor
 async function listarinstrutor(req, res) {
   try {
     const result = await db.query(`
@@ -116,7 +116,9 @@ async function listarinstrutor(req, res) {
         u.id, 
         u.nome, 
         u.email,
-        COUNT(DISTINCT t.id) AS eventos_ministrados,
+
+        COUNT(DISTINCT ei.evento_id) AS eventos_ministrados,
+
         ROUND(AVG(
           CASE a.desempenho_instrutor
             WHEN 'Ótimo' THEN 5
@@ -127,11 +129,16 @@ async function listarinstrutor(req, res) {
             ELSE NULL
           END
         )::numeric, 1) AS media_avaliacao,
+
         CASE WHEN s.id IS NOT NULL THEN true ELSE false END AS possui_assinatura
+
       FROM usuarios u
-      JOIN turmas t ON t.instrutor_id = u.id
-      LEFT JOIN avaliacoes a ON a.turma_id = t.id
+      JOIN evento_instrutor ei ON ei.instrutor_id = u.id
+      JOIN eventos e ON e.id = ei.evento_id
+      LEFT JOIN turmas t ON t.evento_id = e.id
+      LEFT JOIN avaliacoes a ON a.turma_id = t.id AND a.instrutor_id = u.id
       LEFT JOIN assinaturas s ON s.usuario_id = u.id
+
       GROUP BY u.id, u.nome, u.email, s.id
       ORDER BY u.nome
     `);

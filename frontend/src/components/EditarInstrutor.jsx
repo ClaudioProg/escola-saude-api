@@ -81,7 +81,7 @@ export default function EditarInstrutor() {
 
       <div className="flex justify-between items-center bg-lousa text-white px-4 py-2 rounded-xl shadow mb-6">
         <span>Seja bem-vindo(a), <strong>{nomeUsuario}</strong></span>
-        <span className="font-semibold">Painel do administradoristrador</span>
+        <span className="font-semibold">Painel do administrador</span>
       </div>
 
       <motion.div

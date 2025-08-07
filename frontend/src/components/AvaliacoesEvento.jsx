@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 
-// Todos os campos de nota, EXCETO desempenho_instrutor
+// Campos que entram no cálculo da nota do evento
 const CAMPOS_NOTA_EVENTO = [
   "divulgacao_evento", "recepcao", "credenciamento", "material_apoio", "pontualidade",
   "sinalizacao_local", "conteudo_temas", "estrutura_local", "acessibilidade", "limpeza",
@@ -10,67 +10,80 @@ const CAMPOS_NOTA_EVENTO = [
 
 // Conversão enum => número
 function notaEnumParaNumero(valor) {
-  switch ((valor || "").toLowerCase()) {
-    case "ótimo": return 5;
+  const normalizado = (valor || "")
+    .toLowerCase()
+    .normalize("NFD") // separa os acentos
+    .replace(/[\u0300-\u036f]/g, ""); // remove os acentos
+
+  switch (normalizado) {
+    case "otimo": return 5;
     case "bom": return 4;
     case "regular": return 3;
     case "ruim": return 2;
-    case "péssimo": return 1;
+    case "pessimo": return 1;
     default: return null;
   }
 }
 
-// Função para calcular médias no novo padrão
+// Função de cálculo das médias e extração dos comentários
 function calcularMediasAvaliacoes(avaliacoes) {
   if (!avaliacoes || !avaliacoes.length)
-    return { mediaEvento: null, mediainstrutor: null, comentarios: [] };
+    return { mediaEvento: null, mediaInstrutor: null, detalhes: [] };
 
-  // MÉDIA instrutor
-  const notasinstrutor = avaliacoes
+  // Média do instrutor
+  const notasInstrutor = avaliacoes
     .map(a => notaEnumParaNumero(a.desempenho_instrutor))
-    .filter(v => v != null);
-  const mediainstrutor = notasinstrutor.length
-    ? (notasinstrutor.reduce((acc, v) => acc + v, 0) / notasinstrutor.length).toFixed(1)
+    .filter(n => n != null);
+
+  const mediaInstrutor = notasInstrutor.length
+    ? (notasInstrutor.reduce((a, b) => a + b, 0) / notasInstrutor.length).toFixed(1)
     : null;
 
-  // MÉDIA EVENTO (todos os outros campos do tipo nota_enum)
-  const notasEvento = avaliacoes.map(a => {
+  // Média do evento (demais campos)
+  const mediasEventoIndividuais = avaliacoes.map(avaliacao => {
     let soma = 0, qtd = 0;
     for (const campo of CAMPOS_NOTA_EVENTO) {
-      const v = notaEnumParaNumero(a[campo]);
-      if (v != null) {
-        soma += v;
+      const valor = notaEnumParaNumero(avaliacao[campo]);
+      if (valor != null) {
+        soma += valor;
         qtd++;
       }
     }
     return qtd ? soma / qtd : null;
-  }).filter(v => v != null);
-  const mediaEvento = notasEvento.length
-    ? (notasEvento.reduce((acc, v) => acc + v, 0) / notasEvento.length).toFixed(1)
+  }).filter(n => n != null);
+
+  const mediaEvento = mediasEventoIndividuais.length
+    ? (mediasEventoIndividuais.reduce((a, b) => a + b, 0) / mediasEventoIndividuais.length).toFixed(1)
     : null;
 
-  // Comentários
-  const comentarios = avaliacoes
-    .filter(a => a.comentarios_finais && a.comentarios_finais.trim())
+  // Comentários detalhados
+  const detalhes = avaliacoes
+    .filter(a =>
+      a.desempenho_instrutor?.trim() ||
+      a.gostou_mais?.trim() ||
+      a.sugestoes_melhoria?.trim() ||
+      a.comentarios_finais?.trim()
+    )
     .map(a => ({
-      nome: a.nome || a.usuario || null,
-      comentario: a.comentarios_finais,
+      desempenho: a.desempenho_instrutor,
+      gostou: a.gostou_mais,
+      sugestao: a.sugestoes_melhoria,
+      comentario: a.comentarios_finais
     }));
 
-  return { mediaEvento, mediainstrutor, comentarios };
+  return { mediaEvento, mediaInstrutor, detalhes };
 }
 
-/**
- * Exibe as avaliações do evento, incluindo média do evento, média do instrutor e comentários.
- */
+// Componente principal
 export default function AvaliacoesEvento({ avaliacoes }) {
-  const { mediaEvento, mediainstrutor, comentarios } =
-    calcularMediasAvaliacoes(avaliacoes);
+  if (!Array.isArray(avaliacoes)) {
+    return <p className="text-red-500">Erro: avaliações não carregadas corretamente.</p>;
+  }
+
+  const { mediaEvento, mediaInstrutor, detalhes } = calcularMediasAvaliacoes(avaliacoes);
 
   const nenhumaAvaliacao =
-    (!mediaEvento || mediaEvento === "NaN") &&
-    (!mediainstrutor || mediainstrutor === "NaN") &&
-    comentarios.length === 0;
+    !mediaEvento && !mediaInstrutor && detalhes.length === 0;
 
   return (
     <motion.section
@@ -78,12 +91,10 @@ export default function AvaliacoesEvento({ avaliacoes }) {
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.4 }}
-      className="mt-4 text-sm bg-gray-100 dark:bg-gray-800 p-4 rounded-xl shadow-sm"
+      className="mt-4 text-sm bg-gray-100 dark:bg-zinc-800 p-4 rounded-xl shadow-sm"
       aria-label="Avaliações do evento"
-      tabIndex={0}
-      role="region"
     >
-      {/* Cabeçalho */}
+      {/* Título */}
       <div className="flex items-center gap-2 mb-3">
         <span className="text-xl">📝</span>
         <h3 className="font-bold text-[#1b4332] dark:text-green-200 text-base">
@@ -91,7 +102,7 @@ export default function AvaliacoesEvento({ avaliacoes }) {
         </h3>
       </div>
 
-      {/* Caso não existam avaliações */}
+      {/* Nenhuma avaliação */}
       {nenhumaAvaliacao ? (
         <p className="text-gray-500 dark:text-gray-300">
           Nenhuma avaliação registrada.
@@ -99,42 +110,43 @@ export default function AvaliacoesEvento({ avaliacoes }) {
       ) : (
         <>
           {/* Médias */}
-          {mediaEvento && mediaEvento !== "NaN" && (
+          {mediaEvento && (
             <p className="mb-1">
               <strong>Nota média do evento:</strong>{" "}
-              <span className="font-bold text-lousa dark:text-green-300">
-                {mediaEvento}
-              </span>
+              <span className="font-bold text-lousa dark:text-green-300">{mediaEvento}</span>
             </p>
           )}
-          {mediainstrutor && mediainstrutor !== "NaN" && (
-            <p className="mb-2">
-              <strong>Nota média do instrutor:</strong>{" "}
-              <span className="font-bold text-lousa dark:text-green-300">
-                {mediainstrutor}
-              </span>
-            </p>
-          )}
+          {mediaInstrutor && (
+  <p className="mb-3">
+    <strong>Nota média do instrutor:</strong>{" "}
+    <span className="font-bold text-lousa dark:text-green-300">
+      {(parseFloat(mediaInstrutor) * 2).toFixed(1)}
+    </span>
+  </p>
+)}
 
-          {/* Comentários */}
-          {comentarios.length > 0 ? (
-            <ul className="list-disc pl-5 space-y-1 text-gray-700 dark:text-gray-200">
-              {comentarios.map((c, idx) => (
-                <li key={`${idx}-${c.nome ?? "anonimo"}`} tabIndex={0}>
-                  💬 {c.comentario ?? "Comentário anônimo"}
-                  {c.nome && (
-                    <span className="ml-2 text-xs text-gray-500 dark:text-gray-400 italic">
-                      – {c.nome}
-                    </span>
-                  )}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-gray-400 italic mt-2">
-              Nenhum comentário textual enviado.
-            </p>
-          )}
+          {/* Comentários detalhados */}
+          {detalhes.length > 0 && (
+  <div className="mt-4 space-y-3">
+    {detalhes.map((d, idx) => (
+      <div key={idx} className="bg-white dark:bg-zinc-700 p-3 rounded shadow-sm">
+        {/* ⚠️ Nome do avaliador removido */}
+        {d.desempenho && (
+          <p><strong>Desempenho do Instrutor:</strong> {d.desempenho}</p>
+        )}
+        {d.gostou && (
+          <p><strong>O que mais gostou:</strong> {d.gostou}</p>
+        )}
+        {d.sugestao && (
+          <p><strong>Sugestões de melhoria:</strong> {d.sugestao}</p>
+        )}
+        {d.comentario && (
+          <p><strong>Comentários finais:</strong> {d.comentario}</p>
+        )}
+      </div>
+    ))}
+  </div>
+)}
         </>
       )}
     </motion.section>

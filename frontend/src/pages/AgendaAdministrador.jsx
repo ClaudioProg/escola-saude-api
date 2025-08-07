@@ -20,7 +20,7 @@ export default function AgendaEventos() {
   useEffect(() => {
     async function load() {
       try {
-        const res = await fetch("/api/eventos/agenda", {
+        const res = await fetch("/api/agenda", {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!res.ok) throw new Error("Erro ao buscar agenda");
@@ -47,7 +47,7 @@ export default function AgendaEventos() {
 
       <div className="flex justify-between items-center bg-lousa text-white px-4 py-2 rounded-xl shadow mb-6">
         <span>Seja bem-vindo(a), <strong>{nome}</strong></span>
-        <span className="font-semibold">Painel do administradoristrador</span>
+        <span className="font-semibold">Painel do administrador</span>
       </div>
 
       <h1 className="text-2xl sm:text-3xl font-bold text-center mb-6 text-[#1b4332] dark:text-white">

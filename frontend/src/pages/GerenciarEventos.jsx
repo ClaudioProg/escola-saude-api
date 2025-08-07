@@ -69,7 +69,7 @@ export default function GerenciarEventos() {
   const salvarEvento = async (eventoSalvo) => {
     try {
       const turmaInvalida = eventoSalvo.turmas.some(t =>
-        !t.nome || !t.data_inicio || !t.data_fim || !t.horario_inicio || !t.horario_fim || !t.vagas_total
+        !t.nome || !t.data_inicio || !t.data_fim || !t.horario_inicio || !t.horario_fim || !t.vagas_total || !t.carga_horaria
       );
 
       if (turmaInvalida) {
@@ -94,7 +94,7 @@ export default function GerenciarEventos() {
           data_fim: t.data_fim,
           horario_inicio: t.horario_inicio,
           horario_fim: t.horario_fim,
-          vagas: Number(t.vagas_total || 0),
+          vagas_total: Number(t.vagas_total || 0),
           carga_horaria: t.carga_horaria || 0,
         })),
       };

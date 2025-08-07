@@ -72,6 +72,20 @@ export default function Eventos() {
     carregarInscricoes();
   }, [token]);
 
+  async function atualizarEventos() {
+    try {
+      const res = await fetch("http://localhost:3000/api/eventos", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Erro ao atualizar eventos");
+      const data = await res.json();
+      setEventos(data);
+    } catch (e) {
+      console.error("Erro em atualizarEventos():", e);
+      toast.warning("⚠️ Eventos não puderam ser atualizados.");
+    }
+  }
+
   async function carregarTurmas(eventoId) {
     setTurmasVisiveis((prev) => ({ ...prev, [eventoId]: !prev[eventoId] }));
     if (!turmasPorEvento[eventoId] && !carregandoTurmas) {
@@ -94,7 +108,7 @@ export default function Eventos() {
   async function inscrever(turmaId) {
     if (inscrevendo) return;
     setInscrevendo(turmaId);
-
+  
     try {
       const res = await fetch("http://localhost:3000/api/inscricoes", {
         method: "POST",
@@ -104,7 +118,7 @@ export default function Eventos() {
         },
         body: JSON.stringify({ turma_id: turmaId }),
       });
-
+  
       const text = await res.text();
       let data;
       try {
@@ -112,36 +126,61 @@ export default function Eventos() {
       } catch {
         data = {};
       }
-
+  
       if (!res.ok) {
         toast.error(data.erro || `Erro: status ${res.status}`);
-      } else {
-        toast.success("✅ Inscrição realizada com sucesso!");
-        setInscricoesConfirmadas((prev) => [...prev, turmaId]);
-
-        setTurmasPorEvento((prev) => {
-          const novoEstado = { ...prev };
-          const eventoId = Object.keys(prev).find((id) =>
-            prev[id].some((turma) => turma.id === turmaId)
-          );
-          if (eventoId) {
-            novoEstado[eventoId] = prev[eventoId].map((turma) =>
-              turma.id === turmaId
-                ? { ...turma, vagas_disponiveis: turma.vagas_disponiveis - 1 }
-                : turma
-            );
-          }
-          return novoEstado;
-        });
+        setInscrevendo(null); // ✅ IMPORTANTE: desbloqueia o botão mesmo em erro
+        return;
       }
+  
+      toast.success("✅ Inscrição realizada com sucesso!");
+  
+      // Atualiza inscrições confirmadas
+      const res2 = await fetch("http://localhost:3000/api/inscricoes/minhas", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+  
+      if (res2.ok) {
+        const inscricoesUsuario = await res2.json();
+        const novasInscricoes = inscricoesUsuario.map((i) => i.turma_id);
+        setInscricoesConfirmadas(novasInscricoes);
+      } else {
+        toast.warning("⚠️ Não foi possível atualizar inscrições confirmadas.");
+      }
+  
+      // Atualiza eventos para refletir evento.ja_inscrito = true
+      await atualizarEventos();
+  
+      // 🔄 Recarrega as turmas atualizadas do evento
+const eventoId = Object.keys(turmasPorEvento).find((id) =>
+  turmasPorEvento[id].some((t) => Number(t.id) === Number(turmaId))
+);
+
+if (eventoId) {
+  try {
+    const resTurmas = await fetch(`http://localhost:3000/api/turmas/evento/${eventoId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!resTurmas.ok) throw new Error("Erro ao recarregar turmas");
+    const turmasAtualizadas = await resTurmas.json();
+
+    setTurmasPorEvento((prev) => ({
+      ...prev,
+      [eventoId]: turmasAtualizadas,
+    }));
+  } catch (e) {
+    console.warn("⚠️ Não foi possível recarregar turmas do evento após inscrição");
+  }
+}
+  
     } catch (err) {
-      console.error(err);
-      toast.error("Erro ao se inscrever.");
+      console.error("❌ Erro inesperado:", err);
+      toast.error("❌ Erro ao se inscrever.");
     } finally {
-      setInscrevendo(null);
+      setInscrevendo(null); // ✅ SEMPRE desbloqueia, mesmo com erro
     }
   }
-
+  
   const eventosFiltrados = eventos.filter((evento) => {
     const hoje = new Date();
     hoje.setHours(0, 0, 0, 0); // zera hora para evitar erro de fuso
@@ -156,7 +195,12 @@ export default function Eventos() {
   
     if (filtro === "programado") return inicio && inicio > hoje;
     if (filtro === "em andamento") return inicio && fim && inicio <= hoje && fim >= hoje;
-    if (filtro === "encerrado") return fim && fim < hoje;
+    if (filtro === "encerrado") {
+      const inscritoEmAlgumaTurma = evento.turmas?.some((turma) =>
+        inscricoesConfirmadas.includes(turma.id)
+      );
+      return fim && fim < hoje && inscritoEmAlgumaTurma;
+    }
   
     return true;
   });
@@ -191,7 +235,13 @@ export default function Eventos() {
         />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          {eventosFiltrados.map((evento) => (
+          {[...eventosFiltrados]
+  .sort((a, b) => {
+    const dataA = new Date(`${a.data_fim_geral}T${a.horario_fim_geral || "00:00"}`);
+    const dataB = new Date(`${b.data_fim_geral}T${b.horario_fim_geral || "00:00"}`);
+    return dataB - dataA; // mais futuros primeiro
+  })
+  .map((evento) => (
             <div
               key={evento.id}
               className="bg-white dark:bg-neutral-900 rounded-2xl p-5 shadow border border-gray-200 dark:border-gray-700"
@@ -201,8 +251,21 @@ export default function Eventos() {
                 <p className="text-sm text-gray-700 dark:text-gray-300 mb-2">{evento.descricao}</p>
               )}
               <p className="text-sm italic text-gray-600 mt-1">
-                Instrutor(es): {evento.instrutor?.length ? evento.instrutor.join(", ") : "A definir"}
-              </p>
+  Instrutor(es):{" "}
+  <span className="text-gray-800 dark:text-white">
+    {evento.instrutor?.length
+      ? evento.instrutor.map((i) => i.nome).join(", ")
+      : "A definir"}
+  </span>
+</p>
+{evento.publico_alvo && (
+  <p className="text-sm italic text-gray-600 mt-1">
+    Público-alvo:{" "}
+    <span className="text-gray-800 dark:text-white">
+      {evento.publico_alvo}
+    </span>
+  </p>
+)}
 
               <div className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-2 mb-3">
                 <CalendarDays className="w-4 h-4" />
@@ -229,11 +292,13 @@ export default function Eventos() {
               {turmasVisiveis[evento.id] && turmasPorEvento[evento.id] && (
                 <ListaTurmasEvento
                 turmas={turmasPorEvento[evento.id]}
+                eventoId={evento.id}
                 hoje={new Date()}
                 inscricoesConfirmadas={inscricoesConfirmadas}
                 inscrever={inscrever}
                 inscrevendo={inscrevendo}
-                carregarInscritos={() => {}} // <-- por enquanto, funções vazias
+                jaInscritoNoEvento={evento.ja_inscrito} // ✅ aqui
+                carregarInscritos={() => {}}
                 carregarAvaliacoes={() => {}}
                 gerarRelatorioPDF={() => {}}
               />

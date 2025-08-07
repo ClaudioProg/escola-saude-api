@@ -8,10 +8,10 @@ export default function ModalEditarPerfil({ usuario, onFechar, onSalvar }) {
   const perfilDisponiveis = [
     { label: "usuario", value: "usuario" },
     { label: "instrutor", value: "instrutor" },
-    { label: "administradoristrador", value: "administrador" },
+    { label: "administrador", value: "administrador" },
   ];
 
-  const [perfilSelecionados, setPerfilSelecionados] = useState(
+  const [perfilSelecionado, setPerfilSelecionado] = useState(
     usuario.perfil
       ? usuario.perfil
           .split(",")
@@ -23,7 +23,7 @@ export default function ModalEditarPerfil({ usuario, onFechar, onSalvar }) {
   const [salvando, setSalvando] = useState(false);
 
   const togglePerfil = (perfil) => {
-    setPerfilSelecionados([perfil]); // sempre apenas um selecionado
+    setPerfilSelecionado([perfil]); // sempre apenas um selecionado
   };
 
   const salvar = async () => {
@@ -38,14 +38,14 @@ export default function ModalEditarPerfil({ usuario, onFechar, onSalvar }) {
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ perfil: perfilSelecionados }),
+          body: JSON.stringify({ perfil: perfilSelecionado }),
         }
       );
 
       if (!res.ok) throw new Error("Erro ao atualizar perfil");
 
       toast.success("✅ Perfil atualizado com sucesso!");
-      onSalvar(usuario.id, perfilSelecionados);
+      onSalvar(usuario.id, perfilSelecionado);
       onFechar();
     } catch (error) {
       toast.error("❌ Erro ao atualizar perfil");
@@ -70,7 +70,7 @@ export default function ModalEditarPerfil({ usuario, onFechar, onSalvar }) {
               type="radio"
               name="perfil"
               value={perfil.value}
-              checked={perfilSelecionados.includes(perfil.value)}
+              checked={perfilSelecionado.includes(perfil.value)}
               onChange={() => togglePerfil(perfil.value)}
               className="accent-green-700"
             />

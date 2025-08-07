@@ -8,21 +8,17 @@ const perguntas = [
   },
   {
     pergunta: 'Como atualizo meus dados pessoais?',
-    resposta: 'No menu “Perfil”, você pode alterar seu nome, e-mail, senha e assinatura digital.'
+    resposta: 'No menu “Perfil”, você pode alterar seu nome, e-mail, senha e assinatura digital (instrutor).'
   },
   {
     pergunta: 'O certificado não apareceu. O que pode ter acontecido?',
-    resposta: 'Certifique-se de que você compareceu a pelo menos 75% das aulas. Caso contrário, o certificado não é gerado automaticamente.'
+    resposta: 'Certifique-se de que você compareceu a pelo menos 75% das aulas. Caso contrário, o certificado não é gerado.'
   },
   {
     pergunta: 'Como confirmar minha presença em um evento?',
-    resposta: 'Você deve escanear o QR Code da sala utilizando a opção “Escanear” do menu ou o botão disponível na sua turma.'
+    resposta: 'Na tela meus eventos.'
   },
-  {
-    pergunta: 'O sistema mostra que já estou inscrito. Como alterar minha inscrição?',
-    resposta: 'Entre em contato com a equipe da Escola da Saúde para solicitar a alteração manual.'
-  },
-  {
+    {
     pergunta: 'Consigo cancelar minha inscrição em um evento?',
     resposta: 'Sim. Acesse “Minhas Inscrições” e clique em “Cancelar inscrição” (se ainda disponível para o evento).'
   },

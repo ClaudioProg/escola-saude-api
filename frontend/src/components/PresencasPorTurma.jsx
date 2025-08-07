@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import ListaTurmasAdministrador from "../components/ListaTurmasAdministrador";
+import ListaTurmasAdministrador from "./ListaTurmasAdmin";
 import { toast } from "react-toastify";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import NadaEncontrado from "../components/NadaEncontrado";

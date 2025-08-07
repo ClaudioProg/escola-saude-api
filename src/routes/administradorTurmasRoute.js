@@ -5,7 +5,7 @@ const administradorTurmasController = require('../controllers/administradorTurma
 const authMiddleware = require('../auth/authMiddleware');
 const authorizeRoles = require('../auth/authorizeRoles');
 
-// 🧭 Lista todas as turmas com detalhes (apenas para administradoristradores)
+// 🧭 Lista todas as turmas com detalhes (apenas para administradores)
 router.get(
   '/',
   authMiddleware,

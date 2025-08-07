@@ -93,12 +93,13 @@ export default function DashboardAnalitico() {
 
         <select value={tipo} onChange={(e) => setTipo(e.target.value)} className="p-2 rounded border dark:bg-zinc-800 dark:text-white">
           <option value="">Todos os Tipos</option>
-          <option value="congresso">Congresso</option>
-          <option value="curso">Curso</option>
-          <option value="oficina">Oficina</option>
-          <option value="palestra">Palestra</option>
-          <option value="seminario">Seminário</option>
-          <option value="simposio">Simpósio</option>
+          <option value="Congresso">Congresso</option>
+      <option value="Curso">Curso</option>
+      <option value="Oficina">Oficina</option>
+      <option value="Palestra">Palestra</option>
+      <option value="Seminário">Seminário</option>
+      <option value="Simpósio">Simpósio</option>
+      <option value="Outros">Outros</option>
         </select>
 
         {(ano || mes || tipo) && (

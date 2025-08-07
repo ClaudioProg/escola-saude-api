@@ -36,6 +36,8 @@ const Perfil = lazy(() => import("./pages/Perfil"));
 const Ajuda = lazy(() => import("./pages/Ajuda"));
 const Notificacoes = lazy(() => import("./pages/Notificacoes"));
 const AgendaAdministrador = lazy(() => import("./pages/AgendaAdministrador"));
+const Avaliacao = lazy(() => import("./pages/Avaliacao"));
+const GestaoPresencas = lazy(() => import("./pages/GestaoPresenca"));
 
 function LayoutComNavbar({ children }) {
   const location = useLocation();
@@ -75,6 +77,11 @@ export default function App() {
             <Route path="/perfil" element={<PrivateRoute><Perfil /></PrivateRoute>} />
             <Route path="/ajuda" element={<PrivateRoute><Ajuda /></PrivateRoute>} />
             <Route path="/notificacoes" element={<PrivateRoute><Notificacoes /></PrivateRoute>} />
+            <Route path="/avaliacao" element={<PrivateRoute><Avaliacao /></PrivateRoute>} />
+            <Route
+  path="/avaliar/:turmaId"
+  element={<PrivateRoute><Avaliacao /></PrivateRoute>}
+/>
 
             {/* 🧑‍🏫 instrutor/administrador */}
             <Route path="/instrutor" element={<PrivateRoute permitido={["instrutor", "administrador"]}><DashboardInstrutor /></PrivateRoute>} />
@@ -89,8 +96,14 @@ export default function App() {
             <Route path="/historico-certificados" element={<PrivateRoute permitido={["administrador"]}><HistoricoCertificados /></PrivateRoute>} />
             <Route path="/lista-presencas-turma" element={<PrivateRoute permitido={["administrador"]}><ListaPresencasTurma /></PrivateRoute>} />
             <Route path="/relatorios-customizados" element={<PrivateRoute permitido={["administrador"]}><RelatoriosCustomizados /></PrivateRoute>} />
-            <Route path="/turmas/presencas" element={<PrivateRoute permitido={["administrador"]}><PresencasPorTurma /></PrivateRoute>} />
-            <Route path="/turmas/presencas/:id" element={<PrivateRoute permitido={["administrador"]}><ListaPresencasTurma /></PrivateRoute>} />
+            <Route
+  path="/turmas/presencas/:turmaId"
+  element={
+    <PrivateRoute permitido={["instrutor", "administrador"]}>
+      <PresencasPorTurma />
+    </PrivateRoute>
+  }
+/>
             <Route
   path="/agenda-administrador"
   element={
@@ -104,6 +117,15 @@ export default function App() {
     <CertificadosAvulsos />
   </PrivateRoute>
 } />
+
+<Route
+  path="/gestao-presenca"
+  element={
+    <PrivateRoute permitido={["administrador"]}>
+      <GestaoPresencas />
+    </PrivateRoute>
+  }
+/>
 
           </Routes>
         </Suspense>

@@ -1,65 +1,63 @@
-// 📁 src/components/ModalTurma.jsx
 import { useState } from "react";
 import Modal from "react-modal";
 import { CalendarDays, Clock, Hash, Type } from "lucide-react";
 import { toast } from "react-toastify";
-
-// Utilitário para converter Date para ISO (caso precise no futuro)
-// import { converterParaISO } from "../utils/data";
 
 export default function ModalTurma({ isOpen, onClose, onSalvar }) {
   const [dataInicio, setDataInicio] = useState("");
   const [dataFim, setDataFim] = useState("");
   const [horarioInicio, setHorarioInicio] = useState("");
   const [horarioFim, setHorarioFim] = useState("");
-  const [vagas, setVagas] = useState("");
+  const [vagas_total, setVagasTotal] = useState("");
   const [nome, setNome] = useState("");
 
   const handleSalvar = () => {
-    if (!dataInicio || !horarioInicio || !horarioFim || !nome || !vagas) {
+
+    if (
+      !dataInicio ||
+      !horarioInicio ||
+      !horarioFim ||
+      !nome.trim() ||
+      !vagas_total ||
+      Number(vagas_total) <= 0
+    ) {
       toast.warning("Preencha todos os campos obrigatórios.");
       return;
     }
 
-    // Garante datas no formato ISO (yyyy-mm-dd)
-    const dataInicioISO = dataInicio;
-    const dataFimISO = dataFim || dataInicioISO;
+    const dataInicioISO = new Date(dataInicio).toISOString().split("T")[0];
+    const dataFimISO = dataFim ? new Date(dataFim).toISOString().split("T")[0] : dataInicioISO;
 
-    // Cálculo de quantidade de dias
     const inicio = new Date(dataInicioISO);
     const fim = new Date(dataFimISO);
-    const dias = Math.max(
-      1,
-      (fim - inicio) / (1000 * 60 * 60 * 24) + 1
-    );
+    const dias = Math.max(1, (fim - inicio) / (1000 * 60 * 60 * 24) + 1);
 
-    // Cálculo de carga horária
     const [hiHoras, hiMin] = horarioInicio.split(":").map(Number);
     const [hfHoras, hfMin] = horarioFim.split(":").map(Number);
     let horasPorDia = (hfHoras + hfMin / 60) - (hiHoras + hiMin / 60);
 
-    // Desconta 1h de almoço em jornadas >= 8h
     if (horasPorDia >= 8) horasPorDia -= 1;
 
     const cargaHoraria = Math.round(horasPorDia * dias);
 
-    onSalvar({
-      nome,
+    const turmaFinal = {
+      nome: nome.trim(),
       data_inicio: dataInicioISO,
       data_fim: dataFimISO,
       horario_inicio: horarioInicio,
       horario_fim: horarioFim,
-      vagas_total: Number(vagas),
+      vagas_total: Number(vagas_total),
       carga_horaria: cargaHoraria,
-      instrutor_id: null,
-    });
+    };
 
-    // Reseta o formulário ao fechar
+    onSalvar(turmaFinal);
+
+    // Limpa os campos
     setDataInicio("");
     setDataFim("");
     setHorarioInicio("");
     setHorarioFim("");
-    setVagas("");
+    setVagasTotal("");
     setNome("");
   };
 
@@ -132,8 +130,8 @@ export default function ModalTurma({ isOpen, onClose, onSalvar }) {
         <Hash className="absolute left-3 top-3 text-gray-500" size={18} />
         <input
           type="number"
-          value={vagas}
-          onChange={(e) => setVagas(e.target.value)}
+          value={vagas_total}
+          onChange={(e) => setVagasTotal(e.target.value)}
           placeholder="Quantidade de vagas"
           className="w-full pl-10 py-2 border rounded-md shadow-sm"
           min={1}

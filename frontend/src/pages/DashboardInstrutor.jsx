@@ -13,6 +13,7 @@ import autoTable from "jspdf-autotable";
 import useperfilPermitidos from "../hooks/useperfilPermitidos";
 import QRCode from "qrcode";
 import { formatarCPF } from "../utils/data";
+import { formatarDataBrasileira } from "../utils/data";
 
 export default function DashboardInstrutor() {
   const navigate = useNavigate();
@@ -31,7 +32,22 @@ export default function DashboardInstrutor() {
   const [turmaExpandidaAvaliacoes, setTurmaExpandidaAvaliacoes] = useState(null);
   const [modalAssinaturaAberto, setModalAssinaturaAberto] = useState(false);
   const [assinatura, setAssinatura] = useState(null);
+  const [presencasPorTurma, setPresencasPorTurma] = useState({});
 
+  // ✅ MOVIDO PARA CIMA — antes do useEffect
+const carregarPresencas = async (turmaIdRaw) => {
+  const turmaId = parseInt(turmaIdRaw);
+  if (!turmaId || isNaN(turmaId)) return;
+  try {
+    const res = await fetch(`http://localhost:3000/api/relatorio-presencas/turma/${turmaId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await res.json();
+    setPresencasPorTurma((prev) => ({ ...prev, [turmaId]: data }));
+  } catch (err) {
+    toast.error("Erro ao carregar presenças da turma.");
+  }
+};
   useEffect(() => {
     if (!token) {
       toast.error("⚠️ Sessão expirada. Faça login novamente.");
@@ -42,18 +58,25 @@ export default function DashboardInstrutor() {
     fetch("http://localhost:3000/api/agenda/instrutor", {
       headers: { Authorization: `Bearer ${token}` },
     })
-      .then((res) => {
-        if (!res.ok) throw new Error();
+      .then(async (res) => {
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.erro || "Erro ao carregar suas turmas.");
+        }
         return res.json();
       })
       .then((data) => {
         const ordenadas = data.sort((a, b) => new Date(b.data_inicio) - new Date(a.data_inicio));
         setTurmas(ordenadas);
         setErro("");
+
+        ordenadas.forEach((turma) => {
+          if (turma?.id) carregarPresencas(turma.id); // ✅ Agora a função já foi declarada
+        });
       })
-      .catch(() => {
-        setErro("Erro ao carregar suas turmas.");
-        toast.error("Erro ao carregar suas turmas.");
+      .catch((err) => {
+        setErro(err.message);
+        toast.error(`❌ ${err.message}`);
       })
       .finally(() => setCarregando(false));
 
@@ -164,62 +187,94 @@ const turmasFiltradas = turmas.filter((t) => {
         return;
       }
     }
-
+  
     if (!turma || !alunos.length) {
       toast.warning("⚠️ Nenhum inscrito encontrado para esta turma.");
       return;
     }
-
+  
+    // 🧠 Função auxiliar para gerar intervalo de datas
+    const gerarIntervaloDeDatas = (inicio, fim) => {
+      const datas = [];
+      const dataAtual = new Date(inicio);
+      const dataFinal = new Date(fim);
+  
+      while (dataAtual <= dataFinal) {
+        datas.push(new Date(dataAtual));
+        dataAtual.setDate(dataAtual.getDate() + 1);
+      }
+  
+      return datas;
+    };
+  
+    // 🗓️ Gera as datas com base em data_inicio e data_fim da turma
+    const datas = gerarIntervaloDeDatas(turma.data_inicio, turma.data_fim);
+  
     const doc = new jsPDF();
-    doc.setFontSize(14);
-    doc.text(`Lista de Assinatura - ${turma.nome}`, 14, 20);
-
-    autoTable(doc, {
-      startY: 30,
-      head: [["Nome", "CPF", "Assinatura"]],
-      body: alunos.map((a) => [a.nome, formatarCPF(a.cpf), "______________________"]),
+  
+    datas.forEach((data, index) => {
+      if (index > 0) doc.addPage();
+  
+      const dataFormatada = formatarDataBrasileira(data);
+      const horaInicio = turma.horario_inicio?.slice(0, 5) || "";
+      const horaFim = turma.horario_fim?.slice(0, 5) || "";
+  
+      doc.setFontSize(14);
+      doc.text(`Lista de Assinatura - ${turma.evento?.nome} - ${turma.nome}`, 14, 20);
+      doc.text(`Data: ${dataFormatada} | Horário: ${horaInicio} às ${horaFim}`, 14, 28);
+  
+      autoTable(doc, {
+        startY: 30,
+        head: [["Nome", "CPF", "Assinatura"]],
+        body: alunos.map((a) => [a.nome, formatarCPF(a.cpf), "______________________"]),
+      });
     });
-
+  
     doc.save(`lista_assinatura_turma_${turmaId}.pdf`);
     toast.success("📄 Lista de assinatura gerada!");
   };
 
-  const gerarQrCodePresencaPDF = async (turmaId) => {
+  const gerarQrCodePresencaPDF = async (turmaId, nomeEvento = "Evento") => {
     try {
       const turma = turmas.find((t) => t.id === turmaId);
       if (!turma) {
         toast.error("Turma não encontrada.");
         return;
       }
-
+  
       const url = `https://escoladesaude.santos.br/presenca/${turmaId}`;
       const dataUrl = await QRCode.toDataURL(url);
-
+  
       const doc = new jsPDF({ orientation: "landscape" });
-
-      doc.setFontSize(20);
+  
+      doc.setFontSize(24);
       doc.setFont("helvetica", "bold");
-      doc.text(turma.evento, 148, 30, { align: "center" });
-
+      doc.text(nomeEvento, 148, 30, { align: "center" });
+  
+      const usuario = JSON.parse(localStorage.getItem("usuario") || "{}");
+      const nomeInstrutor = usuario?.nome || "Instrutor";
+  
       doc.setFontSize(16);
       doc.setFont("helvetica", "normal");
-      doc.text(`instrutor: ${nome}`, 148, 40, { align: "center" });
-
+      doc.text(`Instrutor: ${nomeInstrutor}`, 148, 40, { align: "center" });
+  
       doc.addImage(dataUrl, "PNG", 98, 50, 100, 100);
-
+  
       doc.setFontSize(12);
       doc.setTextColor(60);
       doc.text("Escaneie este QR Code para confirmar sua presença", 148, 160, { align: "center" });
-
+  
       doc.save(`qr_presenca_turma_${turmaId}.pdf`);
       toast.success("🔳 QR Code gerado!");
-    } catch {
+    } catch (err) {
+      console.error("Erro ao gerar QR Code:", err);
       toast.error("Erro ao gerar QR Code.");
     }
   };
+  
+  
 
-
-  return (
+   return (
     <div className="min-h-screen bg-gelo dark:bg-zinc-900 px-2 sm:px-4 py-6">
       <Breadcrumbs />
       <div className="flex justify-between items-center bg-lousa text-white px-4 py-2 rounded-xl shadow mb-6">
@@ -231,8 +286,6 @@ const turmasFiltradas = turmas.filter((t) => {
         <h2 className="text-2xl font-bold mb-4 text-black dark:text-white text-center">
           📢 Painel do instrutor
         </h2>
-
-        <Notificacoes usuario={usuario} />
 
         {erro && <ErroCarregamento mensagem={erro} />}
 
@@ -290,19 +343,25 @@ const turmasFiltradas = turmas.filter((t) => {
   </button>
 </div>
 
-        <TurmasInstrutor
-          turmas={turmasFiltradas}
-          inscritosPorTurma={inscritosPorTurma}
-          avaliacoesPorTurma={avaliacoesPorTurma}
-          onVerInscritos={carregarInscritos}
-          onVerAvaliacoes={carregarAvaliacoes}
-          token={token}
-          carregando={carregando}
-          turmaExpandidaInscritos={turmaExpandidaInscritos}
-          setTurmaExpandidaInscritos={setTurmaExpandidaInscritos}
-          turmaExpandidaAvaliacoes={turmaExpandidaAvaliacoes}
-          setTurmaExpandidaAvaliacoes={setTurmaExpandidaAvaliacoes}
-        />
+<TurmasInstrutor
+  turmas={turmasFiltradas}
+  inscritosPorTurma={inscritosPorTurma}
+  avaliacoesPorTurma={avaliacoesPorTurma}
+  presencasPorTurma={presencasPorTurma}
+  onVerInscritos={carregarInscritos}
+  onVerAvaliacoes={carregarAvaliacoes}
+  carregarPresencas={carregarPresencas} // ✅ Aqui agora está correto
+  onExportarListaAssinaturaPDF={gerarListaAssinaturaPDF}
+  onExportarQrCodePDF={gerarQrCodePresencaPDF}
+  token={token}
+  carregando={carregando}
+  turmaExpandidaInscritos={turmaExpandidaInscritos}
+  setTurmaExpandidaInscritos={setTurmaExpandidaInscritos}
+  turmaExpandidaAvaliacoes={turmaExpandidaAvaliacoes}
+  setTurmaExpandidaAvaliacoes={setTurmaExpandidaAvaliacoes}
+/>
+
+
 
         <ModalAssinatura
           aberta={modalAssinaturaAberto}

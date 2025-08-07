@@ -16,12 +16,40 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento }) {
   const [local, setLocal] = useState("");
   const [tipo, setTipo] = useState("");
   const [unidadeId, setUnidadeId] = useState("");
-  const [instrutor, setinstrutor] = useState([]);
   const [publicoAlvo, setPublicoAlvo] = useState("");
   const [turmas, setTurmas] = useState([]);
   const [modalTurmaAberto, setModalTurmaAberto] = useState(false);
   const [unidades, setUnidades] = useState([]);
   const [usuarios, setUsuarios] = useState([]);
+  const [instrutorSelecionado, setInstrutorSelecionado] = useState([""]);
+
+  const opcoesInstrutor = usuarios.filter((usuario) => {
+    const perfil = (usuario.perfil || "").toLowerCase();
+    return perfil.includes("instrutor") || perfil.includes("administrador");
+  });
+
+  function handleSelecionarInstrutor(index, valor) {
+    const novaLista = [...instrutorSelecionado];
+    novaLista[index] = valor;
+    setInstrutorSelecionado(novaLista);
+  }
+
+  function adicionarInstrutor() {
+    setInstrutorSelecionado([...instrutorSelecionado, ""]);
+  }
+
+  function removerInstrutor(index) {
+    const novaLista = instrutorSelecionado.filter((_, i) => i !== index);
+    setInstrutorSelecionado(novaLista.length ? novaLista : [""]);
+  }
+
+  function getInstrutorDisponivel(index) {
+    return opcoesInstrutor.filter(
+      (instrutor) =>
+        !instrutorSelecionado.includes(instrutor.id.toString()) ||
+        instrutorSelecionado[index] === instrutor.id.toString()
+    );
+  }
 
   useEffect(() => {
     if (evento) {
@@ -31,17 +59,14 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento }) {
       setTipo(evento.tipo || "");
       setUnidadeId(evento.unidade_id || "");
       setPublicoAlvo(evento.publico_alvo || "");
-      setinstrutor(
-        Array.isArray(evento.instrutor)
-          ? evento.instrutor.map((p) => String(p.id))
-          : []
-      );
-      // Garantia de nomes de campos para turmas antigas
+      setInstrutorSelecionado(evento.instrutor?.map((i) => i.id.toString()) || []);
+
       setTurmas(
         (evento.turmas || []).map((t) => ({
           ...t,
           horario_inicio: t.horario_inicio || t.hora_inicio || "",
           horario_fim: t.horario_fim || t.hora_fim || "",
+          carga_horaria: t.carga_horaria || 0,
         }))
       );
     }
@@ -51,12 +76,12 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento }) {
     const carregarUnidades = async () => {
       try {
         const token = localStorage.getItem("token");
-        const res = await fetch("http://localhost:3000/api/unidades", {
+        const res = await fetch("/api/unidades", {
           headers: { Authorization: `Bearer ${token}` },
         });
         const data = await res.json();
         setUnidades(data);
-      } catch {
+      } catch (err) {
         toast.error("Erro ao carregar unidades.");
       }
     };
@@ -67,300 +92,317 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento }) {
     const carregarUsuarios = async () => {
       try {
         const token = localStorage.getItem("token");
-        const res = await fetch("http://localhost:3000/api/usuarios", {
+        const res = await fetch("/api/usuarios", {
           headers: { Authorization: `Bearer ${token}` },
         });
         const data = await res.json();
         setUsuarios(data);
-      } catch {
+      } catch (err) {
         toast.error("Erro ao carregar usuários.");
       }
     };
     carregarUsuarios();
   }, []);
 
-  const opcoesinstrutorFiltradas = (indiceAtual) => {
-    return usuarios.filter((usuario) => {
-      const perfil = (usuario.perfil || "").split(",").map((p) => p.trim().toLowerCase());
-      const permitido = perfil.includes("instrutor") || perfil.includes("administrador");
-      const jaSelecionado = instrutor.includes(String(usuario.id)) && instrutor[indiceAtual] !== String(usuario.id);
-      return permitido && !jaSelecionado;
-    });
-  };
-
   const handleSubmit = (e) => {
     e.preventDefault();
+
+    const tiposValidos = [
+      "Congresso", "Curso", "Oficina", "Palestra",
+      "Seminário", "Simpósio", "Outros",
+    ];
+
     if (!titulo || !tipo || !unidadeId) {
-      toast.warning("Preencha os campos obrigatórios.");
-      return;
-    }
-    if (!turmas.length) {
-      toast.warning("Adicione pelo menos uma turma antes de salvar.");
+      toast.warning("⚠️ Preencha todos os campos obrigatórios.");
       return;
     }
 
-    // Validação dos campos obrigatórios da turma
+    if (!tiposValidos.includes(tipo)) {
+      toast.error("❌ Tipo de evento inválido.");
+      return;
+    }
+
+    if (!turmas.length) {
+      toast.warning("⚠️ Adicione pelo menos uma turma.");
+      return;
+    }
+
     for (let t of turmas) {
-      if (
-        !t.nome ||
-        !t.data_inicio ||
-        !t.data_fim ||
-        !t.horario_inicio ||
-        !t.horario_fim ||
-        !t.vagas_total ||
-        !t.carga_horaria
-      ) {
-        toast.error("Preencha todos os campos obrigatórios das turmas!");
+      if (!t.nome || !t.data_inicio || !t.data_fim || !t.horario_inicio || !t.horario_fim || !t.vagas_total || !t.carga_horaria) {
+        toast.error("❌ Preencha todos os campos obrigatórios das turmas.");
         return;
       }
     }
 
-    // Enviar sempre campos que o backend espera
-const turmasCompletas = turmas.map((turma) => ({
-  nome: turma.nome,
-  data_inicio: turma.data_inicio,
-  data_fim: turma.data_fim,
-  horario_inicio: turma.horario_inicio,
-  horario_fim: turma.horario_fim,
-  instrutor_id: turma.instrutor_id ?? null,
-  vagas_total: turma.vagas_total,
-  carga_horaria: turma.carga_horaria,
-}));
+    const instrutorValidado = instrutorSelecionado
+      .map((id) => parseInt(id))
+      .filter((id) => !isNaN(id));
 
-// Pega os campos obrigatórios da primeira turma
-const turmaPrincipal = turmas[0] || {};
+    const turmasCompletas = turmas.map((turma) => ({
+      nome: turma.nome,
+      data_inicio: turma.data_inicio,
+      data_fim: turma.data_fim,
+      horario_inicio: turma.horario_inicio,
+      horario_fim: turma.horario_fim,
+      vagas_total: turma.vagas_total,
+      carga_horaria: turma.carga_horaria,
+    }));
 
-onSalvar({
-  id: evento?.id,
-  titulo,
-  descricao,
-  local,
-  tipo,
-  unidade_id: Number(unidadeId),
-  publico_alvo: publicoAlvo,
-  instrutor: instrutor.filter((id) => id && !isNaN(id)).map(Number),
-  turmas: turmasCompletas,
-  // ➕ Adiciona estes campos:
-  data_inicio: turmaPrincipal.data_inicio,
-  data_fim: turmaPrincipal.data_fim,
-  hora_inicio: turmaPrincipal.horario_inicio,
-  hora_fim: turmaPrincipal.horario_fim,
-  vagas_total: turmaPrincipal.vagas_total,
-  carga_horaria: turmaPrincipal.carga_horaria,
-});
+    const turmaPrincipal = turmas[0] || {};
 
-onClose();
-  }
+    const dadosFinal = {
+      titulo,
+      descricao,
+      local,
+      tipo,
+      unidade_id: Number(unidadeId),
+      publico_alvo: publicoAlvo,
+      instrutor: instrutorValidado,
+      turmas: turmasCompletas,
+      data_inicio: turmaPrincipal.data_inicio,
+      data_fim: turmaPrincipal.data_fim,
+      hora_inicio: turmaPrincipal.horario_inicio,
+      hora_fim: turmaPrincipal.horario_fim,
+      vagas_total: turmaPrincipal.vagas_total,
+      carga_horaria: turmaPrincipal.carga_horaria,
+    };
 
-  const adicionarinstrutor = () => setinstrutor((prev) => [...prev, ""]);
+    if (evento?.id) dadosFinal.id = evento.id;
 
-  const podeAdicionarMais =
-    usuarios.filter((u) => {
-      const perfil = (u.perfil || "").split(",").map((p) => p.trim().toLowerCase());
-      return perfil.includes("instrutor") || perfil.includes("administrador");
-    }).length > instrutor.length;
+    onSalvar(dadosFinal);
+    onClose();
+  };
 
   const abrirModalTurma = () => setModalTurmaAberto(true);
 
   return (
     <Modal
-      isOpen={isOpen}
-      onRequestClose={onClose}
-      shouldCloseOnOverlayClick={false}
-      ariaHideApp={false}
-      className="modal"
-      overlayClassName="overlay"
+  isOpen={isOpen}
+  onRequestClose={onClose}
+  shouldCloseOnOverlayClick={false}
+  ariaHideApp={false}
+  className="modal"
+  overlayClassName="overlay"
+>
+  <div className="flex flex-col max-h-[90vh]">
+    {/* Área rolável do formulário */}
+    <form
+      id="form-evento"
+      onSubmit={handleSubmit}
+      className="overflow-y-auto pr-2 space-y-4"
+      style={{ maxHeight: "calc(90vh - 64px)" }}
     >
-      <h2 className="text-xl font-bold mb-6 flex items-center gap-2">
-        <PlusCircle className="text-purple-600" size={20} /> Criar Evento
-      </h2>
-
-      <form onSubmit={handleSubmit} className="space-y-4">
-
-  {/* TÍTULO */}
-  <div className="relative">
-    <FileText className="absolute left-3 top-3 text-gray-500" size={18} />
-    <input
-      value={titulo}
-      onChange={(e) => setTitulo(e.target.value)}
-      placeholder="Título"
-      className="w-full pl-10 py-2 border rounded-md shadow-sm"
-      required
-    />
-  </div>
-
-  {/* DESCRIÇÃO */}
-  <div className="relative">
-    <FileText className="absolute left-3 top-3 text-gray-500" size={18} />
-    <textarea
-      value={descricao}
-      onChange={(e) => setDescricao(e.target.value)}
-      placeholder="Descrição"
-      className="w-full pl-10 py-2 h-24 border rounded-md shadow-sm"
-    />
-  </div>
-
-  {/* PÚBLICO-ALVO */}
-  <div className="relative">
-    <FileText className="absolute left-3 top-3 text-gray-500" size={18} />
-    <input
-      value={publicoAlvo}
-      onChange={(e) => setPublicoAlvo(e.target.value)}
-      placeholder="Público-alvo"
-      className="w-full pl-10 py-2 border rounded-md shadow-sm"
-    />
-  </div>
-
-  {/* instrutor */}
-  {instrutor.map((id, index) => (
-    <div key={index} className="mb-2">
-      <select
-        className="w-full border rounded px-2 py-1"
-        value={id}
-        onChange={(e) => {
-          const novaLista = [...instrutor];
-          novaLista[index] = e.target.value;
-          setinstrutor(novaLista);
-        }}
-      >
-        <option value="">Selecione o instrutor</option>
-        {opcoesinstrutorFiltradas(index).map((usuario) => (
-          <option key={usuario.id} value={usuario.id}>{usuario.nome}</option>
-        ))}
-      </select>
-    </div>
-  ))}
-
-  <div className="flex justify-center">
-    <button
-      type="button"
-      onClick={adicionarinstrutor}
-      disabled={!podeAdicionarMais}
-      className="flex items-center gap-2 bg-teal-700 hover:bg-teal-800 text-white font-semibold px-4 py-2 rounded-full transition"
-    >
-      <PlusCircle size={16} />
-      Adicionar instrutor
-    </button>
-  </div>
-
-  {/* LOCAL */}
-  <div className="relative">
-    <MapPin className="absolute left-3 top-3 text-gray-500" size={18} />
-    <input
-      value={local}
-      onChange={(e) => setLocal(e.target.value)}
-      placeholder="Local"
-      className="w-full pl-10 py-2 border rounded-md shadow-sm"
-      required
-    />
-  </div>
-
-  {/* TIPO */}
-  <div className="relative">
-    <Layers3 className="absolute left-3 top-3 text-gray-500" size={18} />
-    <select
-      value={tipo}
-      onChange={(e) => setTipo(e.target.value)}
-      className="w-full pl-10 py-2 border rounded-md shadow-sm"
-      required
-    >
-      <option value="">Selecione o tipo</option>
-      <option value="Congresso">Congresso</option>
-      <option value="Curso">Curso</option>
-      <option value="Oficina">Oficina</option>
-      <option value="Palestra">Palestra</option>
-      <option value="Seminario">Seminário</option>
-      <option value="Simpósio">Simpósio</option>
-    </select>
-  </div>
-
-  {/* UNIDADE */}
-  <div className="relative">
-    <Layers3 className="absolute left-3 top-3 text-gray-500" size={18} />
-    <select
-      value={unidadeId}
-      onChange={(e) => setUnidadeId(e.target.value)}
-      className="w-full pl-10 py-2 border rounded-md shadow-sm"
-      required
-    >
-      <option value="">Selecione a unidade</option>
-      {unidades.map((u) => (
-        <option key={u.id} value={u.id}>{u.nome}</option>
-      ))}
-    </select>
-  </div>
-
-  {/* TURMAS */}
-  <div>
-    <h3 className="text-md font-semibold mt-4 flex items-center gap-2 text-lousa dark:text-white">
-      <Layers3 size={16} /> Turmas Cadastradas
-    </h3>
-    {turmas.length === 0 ? (
-      <p className="text-sm text-gray-500 mt-1">Nenhuma turma cadastrada.</p>
-    ) : (
-      <div className="mt-2 space-y-2">
-        {turmas.map((t, i) => (
-          <div
-            key={i}
-            className="bg-gray-100 dark:bg-zinc-800 rounded-md p-3 text-sm shadow-sm"
-          >
-            <p className="font-bold">{t.nome}</p>
-            <p>
-              📅 {formatarDataBrasileira(t.data_inicio)} • 🕒 {t.horario_inicio} às {t.horario_fim}
-            </p>
-            <p>👥 {t.vagas_total} vagas • ⏱ {t.carga_horaria}h</p>
-          </div>
-        ))}
+      {/* TÍTULO */}
+      <div className="relative">
+        <FileText className="absolute left-3 top-3 text-gray-500" size={18} />
+        <input
+          value={titulo}
+          onChange={(e) => setTitulo(e.target.value)}
+          placeholder="Título"
+          className="w-full pl-10 py-2 border rounded-md shadow-sm"
+          required
+        />
       </div>
-    )}
-    <div className="flex justify-center mt-3">
+
+      {/* DESCRIÇÃO */}
+      <div className="relative">
+        <FileText className="absolute left-3 top-3 text-gray-500" size={18} />
+        <textarea
+          value={descricao}
+          onChange={(e) => setDescricao(e.target.value)}
+          placeholder="Descrição"
+          className="w-full pl-10 py-2 h-24 border rounded-md shadow-sm"
+        />
+      </div>
+
+      {/* PÚBLICO-ALVO */}
+      <div className="relative">
+        <FileText className="absolute left-3 top-3 text-gray-500" size={18} />
+        <input
+          value={publicoAlvo}
+          onChange={(e) => setPublicoAlvo(e.target.value)}
+          placeholder="Público-alvo"
+          className="w-full pl-10 py-2 border rounded-md shadow-sm"
+        />
+      </div>
+
+      {/* INSTRUTOR */}
+      {instrutorSelecionado.map((valor, index) => (
+        <div key={index} className="mb-2 relative pr-10">
+          <label className="text-sm font-medium text-gray-700 dark:text-white">
+            {index === 0 ? "Selecione o instrutor" : `Instrutor adicional`}
+          </label>
+
+          <div className="flex items-center gap-2">
+            <select
+              value={valor}
+              onChange={(e) => handleSelecionarInstrutor(index, e.target.value)}
+              className="w-full pl-3 py-2 border rounded-md shadow-sm"
+              required={index === 0}
+            >
+              <option value="">Selecione o instrutor</option>
+              {getInstrutorDisponivel(index).map((instrutor) => (
+                <option key={instrutor.id} value={instrutor.id}>
+                  {instrutor.nome}
+                </option>
+              ))}
+            </select>
+
+            {index > 0 && (
+              <button
+                type="button"
+                onClick={() => removerInstrutor(index)}
+                className="text-red-500 hover:text-red-700 font-bold text-lg"
+                title="Remover este instrutor"
+              >
+                ❌
+              </button>
+            )}
+          </div>
+
+          {valor && index === instrutorSelecionado.length - 1 && (
+            <div className="flex justify-center mt-3">
+              <button
+                type="button"
+                onClick={adicionarInstrutor}
+                className="flex items-center gap-2 bg-teal-700 hover:bg-teal-800 text-white font-semibold px-4 py-2 rounded-full transition focus-visible:ring-2 focus-visible:ring-teal-400"
+              >
+                <PlusCircle size={16} />
+                Incluir outro instrutor
+              </button>
+            </div>
+          )}
+        </div>
+      ))}
+
+      {/* LOCAL */}
+      <div className="relative">
+        <MapPin className="absolute left-3 top-3 text-gray-500" size={18} />
+        <input
+          value={local}
+          onChange={(e) => setLocal(e.target.value)}
+          placeholder="Local"
+          className="w-full pl-10 py-2 border rounded-md shadow-sm"
+          required
+        />
+      </div>
+
+      {/* TIPO */}
+      <div className="relative">
+        <Layers3 className="absolute left-3 top-3 text-gray-500" size={18} />
+        <select
+          value={tipo}
+          onChange={(e) => setTipo(e.target.value)}
+          className="w-full pl-10 py-2 border rounded-md shadow-sm"
+          required
+        >
+          <option value="">Selecione o tipo</option>
+          <option value="Congresso">Congresso</option>
+          <option value="Curso">Curso</option>
+          <option value="Oficina">Oficina</option>
+          <option value="Palestra">Palestra</option>
+          <option value="Seminário">Seminário</option>
+          <option value="Simpósio">Simpósio</option>
+          <option value="Outros">Outros</option>
+        </select>
+      </div>
+
+      {/* UNIDADE */}
+      <div className="relative">
+        <Layers3 className="absolute left-3 top-3 text-gray-500" size={18} />
+        <select
+          value={unidadeId}
+          onChange={(e) => setUnidadeId(e.target.value)}
+          className="w-full pl-10 py-2 border rounded-md shadow-sm"
+          required
+        >
+          <option value="">Selecione a unidade</option>
+          {unidades.map((u) => (
+            <option key={u.id} value={u.id}>
+              {u.nome}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* TURMAS */}
+      <div>
+        <h3 className="text-md font-semibold mt-4 flex items-center gap-2 text-lousa dark:text-white">
+          <Layers3 size={16} /> Turmas Cadastradas
+        </h3>
+        {turmas.length === 0 ? (
+          <p className="text-sm text-gray-500 mt-1">Nenhuma turma cadastrada.</p>
+        ) : (
+          <div className="mt-2 space-y-2">
+            {turmas.map((t, i) => (
+              <div
+                key={i}
+                className="bg-gray-100 dark:bg-zinc-800 rounded-md p-3 text-sm shadow-sm"
+              >
+                <p className="font-bold">{t.nome}</p>
+                <p>
+                  📅 {formatarDataBrasileira(t.data_inicio)} • 🕒{" "}
+                  {t.horario_inicio} às {t.horario_fim}
+                </p>
+                <p>
+                  👥 {t.vagas_total} vagas • ⏱ {t.carga_horaria}h
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="flex justify-center mt-3">
+          <button
+            type="button"
+            onClick={abrirModalTurma}
+            className="flex items-center gap-2 bg-teal-700 hover:bg-teal-800 text-white font-semibold px-4 py-2 rounded-full transition focus-visible:ring-2 focus-visible:ring-teal-400"
+            aria-label="Adicionar nova turma"
+            tabIndex={0}
+          >
+            <PlusCircle size={16} />
+            Adicionar Turma
+          </button>
+        </div>
+      </div>
+    </form>
+
+    {/* BOTÕES fixos no rodapé do modal */}
+    <div className="flex justify-end gap-2 border-t mt-4 pt-4 bg-white dark:bg-zinc-900 px-4 py-2 shadow-inner">
       <button
         type="button"
-        onClick={abrirModalTurma}
-        className="flex items-center gap-2 bg-teal-700 hover:bg-teal-800 text-white font-semibold px-4 py-2 rounded-full transition focus-visible:ring-2 focus-visible:ring-teal-400"
-        aria-label="Adicionar nova turma"
-        tabIndex={0}
+        onClick={onClose}
+        className="bg-gray-200 hover:bg-gray-300 px-4 py-2 rounded-md"
       >
-        <PlusCircle size={16} />
-        Adicionar Turma
+        Cancelar
+      </button>
+      <button
+        type="submit"
+        form="form-evento"
+        className="bg-lousa hover:bg-green-800 text-white px-4 py-2 rounded-md font-semibold"
+      >
+        Salvar
       </button>
     </div>
   </div>
 
-  {/* BOTÕES */}
-  <div className="flex justify-end gap-2 pt-4">
-    <button
-      type="button"
-      onClick={onClose}
-      className="bg-gray-200 hover:bg-gray-300 px-4 py-2 rounded-md"
-    >
-      Cancelar
-    </button>
-    <button
-      type="submit"
-      className="bg-lousa hover:bg-green-800 text-white px-4 py-2 rounded-md font-semibold"
-    >
-      Salvar
-    </button>
-  </div>
-</form>
+  {/* MODAL TURMA */}
+  <ModalTurma
+    isOpen={modalTurmaAberto}
+    onClose={() => setModalTurmaAberto(false)}
+    onSalvar={(turma) => {
+      setTurmas((prev) => [
+        ...prev,
+        {
+          ...turma,
+          horario_inicio: turma.horario_inicio || turma.hora_inicio,
+          horario_fim: turma.horario_fim || turma.hora_fim,
+          carga_horaria: turma.carga_horaria,
+        },
+      ]);
+      setModalTurmaAberto(false);
+    }}
+  />
+</Modal>
 
-
-      <ModalTurma
-        isOpen={modalTurmaAberto}
-        onClose={() => setModalTurmaAberto(false)}
-        onSalvar={(turma) => {
-          setTurmas((prev) => [
-            ...prev,
-            {
-              ...turma,
-              horario_inicio: turma.horario_inicio || turma.hora_inicio,
-              horario_fim: turma.horario_fim || turma.hora_fim,
-            },
-          ]);
-          setModalTurmaAberto(false);
-        }}
-      />
-    </Modal>
   );
 }
