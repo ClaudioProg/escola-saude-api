@@ -6,12 +6,12 @@ import Skeleton from "react-loading-skeleton";
 
 import Breadcrumbs from "../components/Breadcrumbs";
 import TabelaUsuarios from "../components/TabelaUsuarios";
-import ModalEditarperfil from "../components/ModalEditarperfil";
-import useperfilPermitidos from "../hooks/useperfilPermitidos";
+import ModalEditarPerfil from "../components/ModalEditarPerfil";
+import usePerfilPermitidos from "../hooks/usePerfilPermitidos";
 import CabecalhoPainel from "../components/CabecalhoPainel";
 
 export default function GestaoUsuarios() {
-  const { temAcesso, carregando } = useperfilPermitidos(["administrador"]);
+  const { temAcesso, carregando } = usePerfilPermitidos(["administrador"]);
   const [usuarios, setUsuarios] = useState([]);
   const [carregandoUsuarios, setCarregandoUsuarios] = useState(true);
   const [erro, setErro] = useState("");
@@ -25,7 +25,7 @@ export default function GestaoUsuarios() {
   async function carregarUsuarios() {
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch("http://localhost:3000/api/usuarios", {
+      const res = await fetch("http://escola-saude-api.onrender.com/api/usuarios", {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) throw new Error("Erro ao buscar usuários");
@@ -43,7 +43,7 @@ export default function GestaoUsuarios() {
   async function salvarperfil(id, perfil) {
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`http://localhost:3000/api/usuarios/${id}/perfil`, {
+      const res = await fetch(`http://escola-saude-api.onrender.com/api/usuarios/${id}/perfil`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -109,7 +109,7 @@ export default function GestaoUsuarios() {
       )}
 
       {usuarioSelecionado && (
-        <ModalEditarperfil
+        <ModalEditarPerfil
           usuario={usuarioSelecionado}
           onFechar={() => setUsuarioSelecionado(null)}
           onSalvar={salvarperfil}

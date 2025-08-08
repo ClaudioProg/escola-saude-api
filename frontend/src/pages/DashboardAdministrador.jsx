@@ -3,7 +3,7 @@ import { useNavigate, Navigate } from "react-router-dom";
 import { toast } from "react-toastify";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import useperfilPermitidos from "../hooks/useperfilPermitidos";
+import usePerfilPermitidos from "../hooks/usePerfilPermitidos";
 
 import Breadcrumbs from "../components/Breadcrumbs";
 import CardEvento from "../components/CardEvento";
@@ -15,7 +15,7 @@ export default function DashboardAdministrador() {
   const [token, setToken] = useState("");
   const [nome, setNome] = useState("");
   const [carregandoInicial, setCarregandoInicial] = useState(true);
-  const { temAcesso, carregando: carregandoPermissao } = useperfilPermitidos(["administrador"]);
+  const { temAcesso, carregando: carregandoPermissao } = usePerfilPermitidos(["administrador"]);
 
   const [eventos, setEventos] = useState([]);
   const [turmasPorEvento, setTurmasPorEvento] = useState({});

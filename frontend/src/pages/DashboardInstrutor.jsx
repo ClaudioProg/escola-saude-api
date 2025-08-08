@@ -10,8 +10,8 @@ import ModalAssinatura from "../components/ModalAssinatura";
 import Notificacoes from "../components/Notificacoes";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import useperfilPermitidos from "../hooks/useperfilPermitidos";
-import QRCode from "qrcode";
+import usePerfilPermitidos from "../hooks/usePerfilPermitidos";
+import { QRCodeCanvas } from "qrcode.react";
 import { formatarCPF } from "../utils/data";
 import { formatarDataBrasileira } from "../utils/data";
 
@@ -20,7 +20,7 @@ export default function DashboardInstrutor() {
   const token = localStorage.getItem("token") || "";
   const usuario = JSON.parse(localStorage.getItem("usuario") || "{}");
   const nome = usuario?.nome || "";
-  const { temAcesso, carregando: carregandoPermissao } = useperfilPermitidos(["instrutor", "administrador"]);
+  const { temAcesso, carregando: carregandoPermissao } = usePerfilPermitidos(["instrutor", "administrador"]);
 
   const [turmas, setTurmas] = useState([]);
   const [erro, setErro] = useState("");
@@ -39,7 +39,7 @@ const carregarPresencas = async (turmaIdRaw) => {
   const turmaId = parseInt(turmaIdRaw);
   if (!turmaId || isNaN(turmaId)) return;
   try {
-    const res = await fetch(`http://localhost:3000/api/relatorio-presencas/turma/${turmaId}`, {
+    const res = await fetch(`http://escola-saude-api.onrender.com/api/relatorio-presencas/turma/${turmaId}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     const data = await res.json();
@@ -55,7 +55,7 @@ const carregarPresencas = async (turmaIdRaw) => {
       return;
     }
 
-    fetch("http://localhost:3000/api/agenda/instrutor", {
+    fetch("http://escola-saude-api.onrender.com/api/agenda/instrutor", {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(async (res) => {
@@ -80,7 +80,7 @@ const carregarPresencas = async (turmaIdRaw) => {
       })
       .finally(() => setCarregando(false));
 
-    fetch("http://localhost:3000/api/assinatura", {
+    fetch("http://escola-saude-api.onrender.com/api/assinatura", {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((res) => res.json())
@@ -96,7 +96,7 @@ const carregarPresencas = async (turmaIdRaw) => {
     }
 
     try {
-      const res = await fetch(`http://localhost:3000/api/inscricoes/turma/${turmaId}`, {
+      const res = await fetch(`http://escola-saude-api.onrender.com/api/inscricoes/turma/${turmaId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
@@ -116,7 +116,7 @@ const carregarPresencas = async (turmaIdRaw) => {
     if (avaliacoesPorTurma[turmaId]) return;
 
     try {
-      const res = await fetch(`http://localhost:3000/api/avaliacoes/turma/${turmaId}`, {
+      const res = await fetch(`http://escola-saude-api.onrender.com/api/avaliacoes/turma/${turmaId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
@@ -146,7 +146,7 @@ const turmasFiltradas = turmas.filter((t) => {
 
   const gerarRelatorioPDF = async (turmaId) => {
     try {
-      const res = await fetch(`http://localhost:3000/api/relatorio-presencas/turma/${turmaId}`, {
+      const res = await fetch(`http://escola-saude-api.onrender.com/api/relatorio-presencas/turma/${turmaId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const alunos = await res.json();
@@ -178,7 +178,7 @@ const turmasFiltradas = turmas.filter((t) => {
   
     if (!alunos) {
       try {
-        const res = await fetch(`http://localhost:3000/api/inscricoes/turma/${turmaId}`, {
+        const res = await fetch(`http://escola-saude-api.onrender.com/api/inscricoes/turma/${turmaId}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         alunos = await res.json();
@@ -243,36 +243,48 @@ const turmasFiltradas = turmas.filter((t) => {
       }
   
       const url = `https://escoladesaude.santos.br/presenca/${turmaId}`;
-      const dataUrl = await QRCode.toDataURL(url);
   
-      const doc = new jsPDF({ orientation: "landscape" });
+      // 👉 Cria um canvas temporário com QRCodeCanvas
+      const canvasContainer = document.createElement("div");
+      const qrCodeElement = (
+        <QRCodeCanvas value={url} size={300} />
+      );
+      import("react-dom").then((ReactDOM) => {
+        ReactDOM.render(qrCodeElement, canvasContainer);
   
-      doc.setFontSize(24);
-      doc.setFont("helvetica", "bold");
-      doc.text(nomeEvento, 148, 30, { align: "center" });
+        setTimeout(() => {
+          const canvas = canvasContainer.querySelector("canvas");
+          const dataUrl = canvas?.toDataURL("image/png");
   
-      const usuario = JSON.parse(localStorage.getItem("usuario") || "{}");
-      const nomeInstrutor = usuario?.nome || "Instrutor";
+          if (!dataUrl) {
+            toast.error("Erro ao gerar imagem do QR Code.");
+            return;
+          }
   
-      doc.setFontSize(16);
-      doc.setFont("helvetica", "normal");
-      doc.text(`Instrutor: ${nomeInstrutor}`, 148, 40, { align: "center" });
+          const doc = new jsPDF({ orientation: "landscape" });
+          doc.setFontSize(24);
+          doc.setFont("helvetica", "bold");
+          doc.text(nomeEvento, 148, 30, { align: "center" });
   
-      doc.addImage(dataUrl, "PNG", 98, 50, 100, 100);
+          const nomeInstrutor = usuario?.nome || "Instrutor";
+          doc.setFontSize(16);
+          doc.setFont("helvetica", "normal");
+          doc.text(`Instrutor: ${nomeInstrutor}`, 148, 40, { align: "center" });
   
-      doc.setFontSize(12);
-      doc.setTextColor(60);
-      doc.text("Escaneie este QR Code para confirmar sua presença", 148, 160, { align: "center" });
+          doc.addImage(dataUrl, "PNG", 98, 50, 100, 100);
+          doc.setFontSize(12);
+          doc.setTextColor(60);
+          doc.text("Escaneie este QR Code para confirmar sua presença", 148, 160, { align: "center" });
   
-      doc.save(`qr_presenca_turma_${turmaId}.pdf`);
-      toast.success("🔳 QR Code gerado!");
+          doc.save(`qr_presenca_turma_${turmaId}.pdf`);
+          toast.success("🔳 QR Code gerado!");
+        }, 500);
+      });
     } catch (err) {
       console.error("Erro ao gerar QR Code:", err);
       toast.error("Erro ao gerar QR Code.");
     }
   };
-  
-  
 
    return (
     <div className="min-h-screen bg-gelo dark:bg-zinc-900 px-2 sm:px-4 py-6">

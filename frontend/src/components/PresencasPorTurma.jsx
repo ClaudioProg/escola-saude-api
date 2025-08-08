@@ -14,7 +14,7 @@ export default function PresencasPorTurma() {
   useEffect(() => {
     async function carregarTurmas() {
       try {
-        const res = await fetch("http://localhost:3000/api/administrador/turmas", {
+        const res = await fetch("http://escola-saude-api.onrender.com/api/administrador/turmas", {
           headers: { Authorization: `Bearer ${token}` },
         });
         const data = await res.json();
@@ -31,7 +31,7 @@ export default function PresencasPorTurma() {
 
   const carregarInscritos = async (turmaId) => {
     try {
-      const res = await fetch(`http://localhost:3000/api/turmas/${turmaId}/inscritos`, {
+      const res = await fetch(`http://escola-saude-api.onrender.com/api/turmas/${turmaId}/inscritos`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
@@ -43,7 +43,7 @@ export default function PresencasPorTurma() {
 
   const carregarAvaliacoes = async (turmaId) => {
     try {
-      const res = await fetch(`http://localhost:3000/api/avaliacoes/turma/${turmaId}`, {
+      const res = await fetch(`http://escola-saude-api.onrender.com/api/avaliacoes/turma/${turmaId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();

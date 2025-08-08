@@ -28,10 +28,25 @@ const app = express();
 const db = require('./db');
 
 // 🌐 Middlewares globais
+const allowedOrigins = [
+  'https://escola-saude-api-frontend.vercel.app',
+  'https://escoladasaude.vercel.app',
+  'http://localhost:5173'
+];
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || '*', // Defina FRONTEND_URL no .env para mais segurança
+  origin: function (origin, callback) {
+    // Permite requests sem origem (ex: servidores internos, health checks)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    } else {
+      return callback(new Error('CORS bloqueado: origem não permitida: ' + origin));
+    }
+  },
   credentials: true,
 }));
+
 app.use(express.json({ limit: '10mb' })); // Protege contra payloads gigantes
 app.use(express.static(path.join(__dirname, 'public')));
 

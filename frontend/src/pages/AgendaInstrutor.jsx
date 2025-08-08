@@ -5,13 +5,13 @@ import { toast } from "react-toastify";
 import { motion, AnimatePresence } from "framer-motion";
 import Skeleton from "react-loading-skeleton";
 
-import useperfilPermitidos from "../hooks/useperfilPermitidos";
+import usePerfilPermitidos from "../hooks/usePerfilPermitidos";
 import Breadcrumbs from "../components/Breadcrumbs";
 import NadaEncontrado from "../components/NadaEncontrado";
 import { formatarDataBrasileira } from "../utils/data"; // ✅
 
 export default function AgendaInstrutor() {
-  const { temAcesso, carregando } = useperfilPermitidos(["administrador", "instrutor"]);
+  const { temAcesso, carregando } = usePerfilPermitidos(["administrador", "instrutor"]);
   const navigate = useNavigate();
   const [agenda, setAgenda] = useState([]);
   const [erro, setErro] = useState("");

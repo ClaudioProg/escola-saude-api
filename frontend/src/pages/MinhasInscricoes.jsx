@@ -30,7 +30,7 @@ export default function MinhasInscricoes() {
   const buscarInscricoes = async () => {
     setCarregando(true);
     try {
-      const res = await fetch("http://localhost:3000/api/inscricoes/minhas", {
+      const res = await fetch("http://escola-saude-api.onrender.com/api/inscricoes/minhas", {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) throw new Error("Erro ao buscar inscrições");
@@ -55,7 +55,7 @@ export default function MinhasInscricoes() {
   const cancelarInscricao = async (id) => {
     if (!window.confirm("Tem certeza que deseja cancelar sua inscrição?")) return;
     try {
-      const res = await fetch(`http://localhost:3000/api/inscricoes/${id}`, {
+      const res = await fetch(`http://escola-saude-api.onrender.com/api/inscricoes/${id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });

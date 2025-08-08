@@ -18,7 +18,7 @@ export default function EditarTurma() {
 
   useEffect(() => {
     setCarregando(true);
-    fetch(`http://localhost:3000/api/turmas/${id}`, {
+    fetch(`http://escola-saude-api.onrender.com/api/turmas/${id}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(res => {
@@ -40,7 +40,7 @@ export default function EditarTurma() {
     setSalvando(true);
     setErro("");
     try {
-      const res = await fetch(`http://localhost:3000/api/turmas/${id}`, {
+      const res = await fetch(`http://escola-saude-api.onrender.com/api/turmas/${id}`, {
         method: "PUT",
         headers: {
           Authorization: `Bearer ${token}`,

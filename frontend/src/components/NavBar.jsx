@@ -66,7 +66,7 @@ export default function Navbar() {
   useEffect(() => {
     const token = localStorage.getItem("token");
     if (token) {
-      fetch("http://localhost:3000/api/notificacoes", {
+      fetch("http://escola-saude-api.onrender.com/api/notificacoes", {
         headers: { Authorization: `Bearer ${token}` },
       })
         .then((res) => res.json())

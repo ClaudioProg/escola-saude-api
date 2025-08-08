@@ -8,7 +8,7 @@ import { GoogleOAuthProvider } from '@react-oauth/google';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import './index.css';
-import './app.css';
+import './App.css';
 
 // 🔐 Google OAuth Client ID do arquivo .env
 const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;

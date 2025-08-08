@@ -28,10 +28,10 @@ export default function InscritosTurma() {
       setCarregando(true);
       try {
         const [turmaRes, inscritosRes] = await Promise.all([
-          fetch(`http://localhost:3000/api/turmas/${id}`, {
+          fetch(`http://escola-saude-api.onrender.com/api/turmas/${id}`, {
             headers: { Authorization: `Bearer ${token}` },
           }),
-          fetch(`http://localhost:3000/api/inscricoes/turma/${id}`, {
+          fetch(`http://escola-saude-api.onrender.com/api/inscricoes/turma/${id}`, {
             headers: { Authorization: `Bearer ${token}` },
           }),
         ]);

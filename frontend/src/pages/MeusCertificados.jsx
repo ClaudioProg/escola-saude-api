@@ -54,12 +54,12 @@ export default function MeusCertificados() {
       const headers = { Authorization: `Bearer ${token}` };
   
       // 🔄 Busca participante
-      const resUsuario = await fetch("http://localhost:3000/api/certificados/elegiveis", {
+      const resUsuario = await fetch("http://escola-saude-api.onrender.com/api/certificados/elegiveis", {
         headers,
       });
   
       // 🔄 Busca instrutor
-      const resInstrutor = await fetch("http://localhost:3000/api/certificados/elegiveis-instrutor", {
+      const resInstrutor = await fetch("http://escola-saude-api.onrender.com/api/certificados/elegiveis-instrutor", {
         headers,
       });
   
@@ -124,7 +124,7 @@ export default function MeusCertificados() {
 
       console.log("🚀 Iniciando geração do certificado para:", body);
 
-      const res = await fetch("http://localhost:3000/api/certificados/gerar", {
+      const res = await fetch("http://escola-saude-api.onrender.com/api/certificados/gerar", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -197,7 +197,7 @@ export default function MeusCertificados() {
         <div className="mt-4 flex justify-center">
           {cert.ja_gerado && cert.arquivo_pdf && cert.certificado_id ? (
             <a
-              href={`http://localhost:3000/api/certificados/${cert.certificado_id}/download`}
+              href={`http://escola-saude-api.onrender.com/api/certificados/${cert.certificado_id}/download`}
               target="_blank"
               rel="noopener noreferrer"
               className="bg-green-900 hover:bg-green-800 text-white text-sm font-medium py-2 px-4 rounded text-center"

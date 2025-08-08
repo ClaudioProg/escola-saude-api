@@ -16,7 +16,7 @@ export default function EditarUsuario() {
   const nomeUsuario = localStorage.getItem("nome") || "";
 
   useEffect(() => {
-    fetch(`http://localhost:3000/api/usuarios/${id}`, {
+    fetch(`http://escola-saude-api.onrender.com/api/usuarios/${id}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(res => res.ok ? res.json() : Promise.reject())
@@ -44,7 +44,7 @@ export default function EditarUsuario() {
     setErro("");
 
     try {
-      const res = await fetch(`http://localhost:3000/api/usuarios/${id}`, {
+      const res = await fetch(`http://escola-saude-api.onrender.com/api/usuarios/${id}`, {
         method: "PUT",
         headers: {
           Authorization: `Bearer ${token}`,

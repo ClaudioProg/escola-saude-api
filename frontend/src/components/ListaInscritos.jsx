@@ -27,7 +27,7 @@ export default function ListaInscritos({
   const confirmarPresenca = async (usuario_id, data) => {
     try {
       setConfirmando(`${usuario_id}-${data}`);
-      const resposta = await fetch(`http://localhost:3000/api/presencas/confirmar-instrutor`, {
+      const resposta = await fetch(`http://escola-saude-api.onrender.com/api/presencas/confirmar-instrutor`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -23,7 +23,7 @@ export default function PresencaManual() {
 
     const carregarInscritos = async () => {
       try {
-        const res = await fetch(`http://localhost:3000/api/turmas/${turmaId}/inscritos`, {
+        const res = await fetch(`http://escola-saude-api.onrender.com/api/turmas/${turmaId}/inscritos`, {
           headers: { Authorization: `Bearer ${token}` },
         });
 
@@ -46,7 +46,7 @@ export default function PresencaManual() {
     const hoje = new Date().toISOString().split("T")[0];
 
     try {
-      const res = await fetch(`http://localhost:3000/api/presencas`, {
+      const res = await fetch(`http://escola-saude-api.onrender.com/api/presencas`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

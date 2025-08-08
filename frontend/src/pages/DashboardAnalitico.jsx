@@ -43,7 +43,7 @@ export default function DashboardAnalitico() {
         if (mes) query.append("mes", mes);
         if (tipo) query.append("tipo", tipo);
 
-        const res = await fetch(`http://localhost:3000/api/dashboard-analitico?${query.toString()}`, {
+        const res = await fetch(`http://escola-saude-api.onrender.com/api/dashboard-analitico?${query.toString()}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
 

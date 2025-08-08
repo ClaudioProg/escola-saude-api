@@ -26,7 +26,7 @@ export default function TurmasInstrutor({
 
   async function confirmarPresencaManual(usuarioId, turmaId, dataReferencia) {
     try {
-      const res = await fetch("http://localhost:3000/api/presencas/confirmar", {
+      const res = await fetch("http://escola-saude-api.onrender.com/api/presencas/confirmar", {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",

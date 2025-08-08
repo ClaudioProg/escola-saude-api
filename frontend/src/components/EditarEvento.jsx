@@ -17,7 +17,7 @@ export default function EditarEvento() {
 
   useEffect(() => {
     setCarregando(true);
-    fetch(`http://localhost:3000/api/eventos/${id}`, {
+    fetch(`http://escola-saude-api.onrender.com/api/eventos/${id}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(res => {
@@ -39,7 +39,7 @@ export default function EditarEvento() {
     setSalvando(true);
     setErro("");
     try {
-      const res = await fetch(`http://localhost:3000/api/eventos/${id}`, {
+      const res = await fetch(`http://escola-saude-api.onrender.com/api/eventos/${id}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -62,7 +62,7 @@ export default function EditarEvento() {
     if (!confirm("Tem certeza que deseja excluir este evento? Esta ação não poderá ser desfeita.")) return;
 
     try {
-      const res = await fetch(`http://localhost:3000/api/eventos/${id}`, {
+      const res = await fetch(`http://escola-saude-api.onrender.com/api/eventos/${id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });

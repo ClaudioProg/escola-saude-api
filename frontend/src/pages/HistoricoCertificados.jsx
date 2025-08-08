@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import TabelaCertificados from "../components/TabelaCertificados";
 import { toast } from "react-toastify";
 import Breadcrumbs from "../components/Breadcrumbs";
-import CabecalhoUsuario from "../components/CabecalhoUsuario";
+import CabecalhoPainel from "../components/CabecalhoPainel";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import NadaEncontrado from "../components/NadaEncontrado";
 
@@ -69,7 +69,7 @@ export default function HistoricoCertificados() {
   return (
     <main className="min-h-screen bg-gelo dark:bg-zinc-900 px-4 py-6 max-w-screen-lg mx-auto">
       <Breadcrumbs trilha={[{ label: "Meus Certificados" }]} />
-      <CabecalhoUsuario titulo="📜 Histórico de Certificados" />
+      <CabecalhoPainel titulo="📜 Histórico de Certificados" />
 
       <h1 className="text-2xl font-bold mb-6 text-center text-lousa dark:text-white">
         📜 Histórico de Certificados

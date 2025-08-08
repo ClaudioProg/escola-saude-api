@@ -13,7 +13,7 @@ export default function ResumoPresencasSimples({ turmaId, token }) {
     const carregarPresencas = async () => {
       try {
         const res = await fetch(
-          `http://localhost:3000/api/relatorio-presencas/turma/${turmaId}`,
+          `http://escola-saude-api.onrender.com/api/relatorio-presencas/turma/${turmaId}`,
           { headers: { Authorization: `Bearer ${token}` } }
         );
         const data = await res.json();

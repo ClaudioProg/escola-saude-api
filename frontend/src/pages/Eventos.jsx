@@ -39,7 +39,7 @@ export default function Eventos() {
     async function carregarEventos() {
       setCarregandoEventos(true);
       try {
-        const res = await fetch("http://localhost:3000/api/eventos", {
+        const res = await fetch("http://escola-saude-api.onrender.com/api/eventos", {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!res.ok) throw new Error();
@@ -59,7 +59,7 @@ export default function Eventos() {
   useEffect(() => {
     async function carregarInscricoes() {
       try {
-        const res = await fetch("http://localhost:3000/api/inscricoes/minhas", {
+        const res = await fetch("http://escola-saude-api.onrender.com/api/inscricoes/minhas", {
           headers: { Authorization: `Bearer ${token}` },
         });
         const inscricoes = await res.json();
@@ -74,7 +74,7 @@ export default function Eventos() {
 
   async function atualizarEventos() {
     try {
-      const res = await fetch("http://localhost:3000/api/eventos", {
+      const res = await fetch("http://escola-saude-api.onrender.com/api/eventos", {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) throw new Error("Erro ao atualizar eventos");
@@ -91,7 +91,7 @@ export default function Eventos() {
     if (!turmasPorEvento[eventoId] && !carregandoTurmas) {
       setCarregandoTurmas(eventoId);
       try {
-        const res = await fetch(`http://localhost:3000/api/turmas/evento/${eventoId}`, {
+        const res = await fetch(`http://escola-saude-api.onrender.com/api/turmas/evento/${eventoId}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!res.ok) throw new Error();
@@ -110,7 +110,7 @@ export default function Eventos() {
     setInscrevendo(turmaId);
   
     try {
-      const res = await fetch("http://localhost:3000/api/inscricoes", {
+      const res = await fetch("http://escola-saude-api.onrender.com/api/inscricoes", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -136,7 +136,7 @@ export default function Eventos() {
       toast.success("✅ Inscrição realizada com sucesso!");
   
       // Atualiza inscrições confirmadas
-      const res2 = await fetch("http://localhost:3000/api/inscricoes/minhas", {
+      const res2 = await fetch("http://escola-saude-api.onrender.com/api/inscricoes/minhas", {
         headers: { Authorization: `Bearer ${token}` },
       });
   
@@ -158,7 +158,7 @@ const eventoId = Object.keys(turmasPorEvento).find((id) =>
 
 if (eventoId) {
   try {
-    const resTurmas = await fetch(`http://localhost:3000/api/turmas/evento/${eventoId}`, {
+    const resTurmas = await fetch(`http://escola-saude-api.onrender.com/api/turmas/evento/${eventoId}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!resTurmas.ok) throw new Error("Erro ao recarregar turmas");

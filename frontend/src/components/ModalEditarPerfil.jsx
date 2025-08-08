@@ -31,7 +31,7 @@ export default function ModalEditarPerfil({ usuario, onFechar, onSalvar }) {
     try {
       const token = localStorage.getItem("token");
       const res = await fetch(
-        `http://localhost:3000/api/usuarios/${usuario.id}/perfil`,
+        `http://escola-saude-api.onrender.com/api/usuarios/${usuario.id}/perfil`,
         {
           method: "PUT",
           headers: {

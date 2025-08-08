@@ -16,7 +16,7 @@ export default function EditarCertificado() {
   const nomeUsuario = localStorage.getItem("nome") || "";
 
   useEffect(() => {
-    fetch(`http://localhost:3000/api/certificados/${id}`, {
+    fetch(`http://escola-saude-api.onrender.com/api/certificados/${id}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(res => res.ok ? res.json() : Promise.reject())
@@ -36,7 +36,7 @@ export default function EditarCertificado() {
     setErro("");
 
     try {
-      const res = await fetch(`http://localhost:3000/api/certificados/${id}`, {
+      const res = await fetch(`http://escola-saude-api.onrender.com/api/certificados/${id}`, {
         method: "PUT",
         headers: {
           Authorization: `Bearer ${token}`,

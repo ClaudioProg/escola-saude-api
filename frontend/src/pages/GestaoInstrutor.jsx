@@ -6,13 +6,13 @@ import Modal from "react-modal";
 
 import Breadcrumbs from "../components/Breadcrumbs";
 import TabelaInstrutor from "../components/TabelaInstrutor";
-import useperfilPermitidos from "../hooks/useperfilPermitidos";
+import usePerfilPermitidos from "../hooks/usePerfilPermitidos";
 import CabecalhoPainel from "../components/CabecalhoPainel";
 
 Modal.setAppElement("#root");
 
 export default function GestaoInstrutor() {
-  const { temAcesso, carregando } = useperfilPermitidos(["administrador"]);
+  const { temAcesso, carregando } = usePerfilPermitidos(["administrador"]);
   const [instrutor, setInstrutor] = useState([]);
   const [carregandoDados, setCarregandoDados] = useState(true);
   const [erro, setErro] = useState("");
@@ -25,7 +25,7 @@ export default function GestaoInstrutor() {
     async function carregarInstrutores() {
       try {
         const token = localStorage.getItem("token");
-        const res = await fetch("http://localhost:3000/api/instrutor", {
+        const res = await fetch("http://escola-saude-api.onrender.com/api/instrutor", {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!res.ok) throw new Error("Erro ao buscar instrutores.");
@@ -54,7 +54,7 @@ export default function GestaoInstrutor() {
   
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`http://localhost:3000/api/instrutor/${instrutor.id}/eventos-avaliacoes`, {
+      const res = await fetch(`http://escola-saude-api.onrender.com/api/instrutor/${instrutor.id}/eventos-avaliacoes`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) throw new Error("Erro ao buscar histórico.");

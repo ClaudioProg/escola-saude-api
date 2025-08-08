@@ -6,11 +6,11 @@ import { Navigate } from "react-router-dom";
 import Breadcrumbs from "../components/Breadcrumbs";
 import CabecalhoPainel from "../components/CabecalhoPainel";
 import Spinner from "../components/Spinner";
-import useperfilPermitidos from "../hooks/useperfilPermitidos";
+import usePerfilPermitidos from "../hooks/usePerfilPermitidos";
 import ListaTurmasAdministrador from "../components/ListaTurmasAdministrador";
 
 export default function PaginaGestaoPresencas() {
-  const { temAcesso, carregando } = useperfilPermitidos(["administrador"]);
+  const { temAcesso, carregando } = usePerfilPermitidos(["administrador"]);
 
   const [eventos, setEventos] = useState([]);
   const [inscritosPorTurma, setInscritosPorTurma] = useState({});

@@ -22,7 +22,7 @@ export default function PresencasPorTurma() {
       if (!turmaId) return;
 
       try {
-        const res = await fetch(`http://localhost:3000/api/relatorio-presencas/turma/${turmaId}`, {
+        const res = await fetch(`http://escola-saude-api.onrender.com/api/relatorio-presencas/turma/${turmaId}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
 
@@ -43,7 +43,7 @@ export default function PresencasPorTurma() {
 
   async function confirmarPresencaManual(usuarioId, turmaId, dataReferencia) {
     try {
-      const res = await fetch("http://localhost:3000/api/presencas/confirmar-manual", {
+      const res = await fetch("http://escola-saude-api.onrender.com/api/presencas/confirmar-manual", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

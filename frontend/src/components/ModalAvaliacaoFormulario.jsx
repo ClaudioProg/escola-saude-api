@@ -78,7 +78,7 @@ export default function ModalAvaliacaoFormulario({ isOpen, onClose, evento, turm
 
     try {
       setEnviando(true);
-      const res = await fetch("http://localhost:3000/api/avaliacoes", {
+      const res = await fetch("http://escola-saude-api.onrender.com/api/avaliacoes", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

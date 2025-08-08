@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import { Pencil, Trash2, PlusCircle } from "lucide-react";
 
 import ModalEvento from "../components/ModalEvento";
-import useperfilPermitidos from "../hooks/useperfilPermitidos";
+import usePerfilPermitidos from "../hooks/usePerfilPermitidos";
 import Breadcrumbs from "../components/Breadcrumbs";
 import NenhumDado from "../components/NenhumDado";
 import SkeletonEvento from "../components/SkeletonEvento";
@@ -14,7 +14,7 @@ import CabecalhoPainel from "../components/CabecalhoPainel";
 
 export default function GerenciarEventos() {
   const token = localStorage.getItem("token") || "";
-  const { temAcesso, carregando: carregandoPermissao } = useperfilPermitidos(["administrador"]);
+  const { temAcesso, carregando: carregandoPermissao } = usePerfilPermitidos(["administrador"]);
 
   const [eventos, setEventos] = useState([]);
   const [eventoSelecionado, setEventoSelecionado] = useState(null);
@@ -27,7 +27,7 @@ export default function GerenciarEventos() {
     const carregarEventos = async () => {
       try {
         setLoading(true);
-        const res = await fetch("http://localhost:3000/api/eventos", {
+        const res = await fetch("http://escola-saude-api.onrender.com/api/eventos", {
           headers: { Authorization: `Bearer ${token}` },
         });
         const data = await res.json();
@@ -54,7 +54,7 @@ export default function GerenciarEventos() {
 
   const excluirEvento = async (eventoId) => {
     try {
-      const res = await fetch(`http://localhost:3000/api/eventos/${eventoId}`, {
+      const res = await fetch(`http://escola-saude-api.onrender.com/api/eventos/${eventoId}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -101,8 +101,8 @@ export default function GerenciarEventos() {
 
       const metodo = eventoSelecionado ? "PUT" : "POST";
       const url = eventoSelecionado
-        ? `http://localhost:3000/api/eventos/${eventoSelecionado.id}`
-        : `http://localhost:3000/api/eventos`;
+        ? `http://escola-saude-api.onrender.com/api/eventos/${eventoSelecionado.id}`
+        : `http://escola-saude-api.onrender.com/api/eventos`;
 
       const res = await fetch(url, {
         method: metodo,

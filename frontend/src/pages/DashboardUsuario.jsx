@@ -22,7 +22,7 @@ export default function DashboardUsuario() {
     if (token) {
       console.log("🔑 Token encontrado, iniciando requisições...");
 
-      fetch("http://localhost:3000/api/dashboard-usuario", {
+      fetch("http://escola-saude-api.onrender.com/api/dashboard-usuario", {
         headers: { Authorization: `Bearer ${token}` },
       })
         .then((res) => res.json())

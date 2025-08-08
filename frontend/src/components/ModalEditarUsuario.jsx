@@ -20,7 +20,7 @@ export default function ModalEditarUsuario({ isOpen, onClose, usuario, onAtualiz
       setSalvando(true);
       const token = localStorage.getItem("token");
 
-      const res = await fetch(`http://localhost:3000/api/usuarios/${usuario.id}`, {
+      const res = await fetch(`http://escola-saude-api.onrender.com/api/usuarios/${usuario.id}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",

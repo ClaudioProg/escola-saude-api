@@ -18,7 +18,7 @@ export default function EditarInstrutor() {
 
   useEffect(() => {
     setCarregando(true);
-    fetch(`http://localhost:3000/api/usuarios/${id}`, {
+    fetch(`http://escola-saude-api.onrender.com/api/usuarios/${id}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(res => {
@@ -41,7 +41,7 @@ export default function EditarInstrutor() {
     setErro("");
 
     try {
-      const res = await fetch(`http://localhost:3000/api/usuarios/${id}`, {
+      const res = await fetch(`http://escola-saude-api.onrender.com/api/usuarios/${id}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",

@@ -25,7 +25,7 @@ export default function HistoricoEventos() {
       setCarregando(true);
       try {
         const token = localStorage.getItem("token");
-        const resposta = await axios.get("http://localhost:3000/api/usuarios/historico", {
+        const resposta = await axios.get("http://escola-saude-api.onrender.com/api/usuarios/historico", {
           headers: { Authorization: `Bearer ${token}` },
         });
         setEventos(resposta.data);
@@ -130,7 +130,7 @@ export default function HistoricoEventos() {
                       {evento.certificado_disponivel && (
                         <BotaoPrimario
                           as="a"
-                          href={`http://localhost:3000/api/certificados/${evento.certificado_id}/download`}
+                          href={`http://escola-saude-api.onrender.com/api/certificados/${evento.certificado_id}/download`}
                           target="_blank"
                           rel="noopener noreferrer"
                           aria-label={`Ver certificado de ${evento.titulo}`}

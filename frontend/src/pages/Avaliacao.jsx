@@ -28,7 +28,7 @@ export default function Avaliacao() {
       }
 
       const res = await fetch(
-        `http://localhost:3000/api/avaliacoes/disponiveis/${usuario.id}`,
+        `http://escola-saude-api.onrender.com/api/avaliacoes/disponiveis/${usuario.id}`,
         {
           headers: { Authorization: `Bearer ${token}` },
         }
