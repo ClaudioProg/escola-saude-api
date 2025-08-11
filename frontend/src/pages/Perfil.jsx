@@ -1,16 +1,19 @@
-import { useEffect, useState } from "react";
+// src/pages/Perfil.jsx
+import { useEffect, useState, useMemo } from "react";
 import { toast } from "react-toastify";
 import Breadcrumbs from "../components/Breadcrumbs";
 import ModalAssinatura from "../components/ModalAssinatura";
+import { apiPatch } from "../services/api";
 
 export default function Perfil() {
   const [usuario, setUsuario] = useState(null);
   const [nome, setNome] = useState("");
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
+  const [salvando, setSalvando] = useState(false);
   const [modalAberto, setModalAberto] = useState(false);
 
-  const token = localStorage.getItem("token");
+  const token = useMemo(() => localStorage.getItem("token"), []);
 
   useEffect(() => {
     try {
@@ -18,15 +21,10 @@ export default function Perfil() {
       if (!dadosString) return;
 
       const dados = JSON.parse(dadosString);
-
-      // Garante que o perfil seja string
+      // perfil pode vir como array; padroniza para string (primeiro perfil)
       const perfilString = Array.isArray(dados.perfil) ? dados.perfil[0] : dados.perfil;
 
-      const usuarioCorrigido = {
-        ...dados,
-        perfil: perfilString
-      };
-
+      const usuarioCorrigido = { ...dados, perfil: perfilString };
       setUsuario(usuarioCorrigido);
       setNome(usuarioCorrigido.nome || "");
       setEmail(usuarioCorrigido.email || "");
@@ -36,38 +34,55 @@ export default function Perfil() {
     }
   }, []);
 
+  const validarEmail = (v) =>
+    !!v && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+
   const salvarAlteracoes = async () => {
     if (!usuario?.id) return;
 
+    if (!nome.trim()) {
+      toast.warn("Informe seu nome.");
+      return;
+    }
+    if (!validarEmail(email)) {
+      toast.warn("Informe um e-mail válido.");
+      return;
+    }
+    if (senha && senha.length < 8) {
+      toast.warn("A nova senha deve ter pelo menos 8 caracteres.");
+      return;
+    }
+
+    const payload = {
+      nome: nome.trim(),
+      email: email.trim(),
+      ...(senha ? { senha } : {}), // só envia se o usuário digitou
+    };
+
     try {
-      const res = await fetch(`/api/usuarios/${usuario.id}`, {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ nome, email, senha }),
-      });
+      setSalvando(true);
+      const atualizado = await apiPatch(`/api/usuarios/${usuario.id}`, payload, { auth: true });
 
-      if (!res.ok) throw new Error("Erro ao salvar alterações.");
-
-      const atualizado = await res.json();
-
-      const perfilString = Array.isArray(atualizado.perfil)
+      // perfil pode voltar como array; normaliza
+      const perfilString = Array.isArray(atualizado?.perfil)
         ? atualizado.perfil[0]
-        : atualizado.perfil;
+        : atualizado?.perfil;
 
-      const atualizadoCorrigido = {
-        ...atualizado,
-        perfil: perfilString,
-      };
+      const atualizadoCorrigido = { ...atualizado, perfil: perfilString };
 
+      // atualiza localStorage
       localStorage.setItem("usuario", JSON.stringify(atualizadoCorrigido));
+      localStorage.setItem("nome", atualizadoCorrigido.nome || nome);
+
       setUsuario(atualizadoCorrigido);
+      setSenha(""); // limpa campo de senha
 
       toast.success("✅ Dados atualizados com sucesso!");
     } catch (err) {
-      toast.error("❌ Não foi possível salvar.");
+      console.error(err);
+      toast.error("❌ Não foi possível salvar as alterações.");
+    } finally {
+      setSalvando(false);
     }
   };
 
@@ -79,6 +94,9 @@ export default function Perfil() {
     );
   }
 
+  const podeGerenciarAssinatura =
+    usuario.perfil === "instrutor" || usuario.perfil === "administrador";
+
   return (
     <main className="max-w-2xl mx-auto px-4 py-8 min-h-screen bg-gelo dark:bg-zinc-900">
       <Breadcrumbs trilha={[{ label: "Painel" }, { label: "Perfil" }]} />
@@ -89,7 +107,10 @@ export default function Perfil() {
 
       <div className="bg-white dark:bg-zinc-800 p-6 rounded-xl shadow space-y-4">
         <div>
-          <label htmlFor="nome" className="block text-sm font-medium text-gray-700 dark:text-gray-200">
+          <label
+            htmlFor="nome"
+            className="block text-sm font-medium text-gray-700 dark:text-gray-200"
+          >
             Nome completo
           </label>
           <input
@@ -103,7 +124,10 @@ export default function Perfil() {
         </div>
 
         <div>
-          <label htmlFor="email" className="block text-sm font-medium text-gray-700 dark:text-gray-200">
+          <label
+            htmlFor="email"
+            className="block text-sm font-medium text-gray-700 dark:text-gray-200"
+          >
             E-mail
           </label>
           <input
@@ -117,7 +141,10 @@ export default function Perfil() {
         </div>
 
         <div>
-          <label htmlFor="senha" className="block text-sm font-medium text-gray-700 dark:text-gray-200">
+          <label
+            htmlFor="senha"
+            className="block text-sm font-medium text-gray-700 dark:text-gray-200"
+          >
             Nova senha (opcional)
           </label>
           <input
@@ -129,18 +156,26 @@ export default function Perfil() {
             className="mt-1 w-full px-4 py-2 border rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-lousa"
             aria-label="Nova senha"
           />
+          {senha && senha.length < 8 && (
+            <p className="text-xs text-red-500 mt-1">
+              A nova senha deve ter pelo menos 8 caracteres.
+            </p>
+          )}
         </div>
 
         <div className="flex flex-col sm:flex-row justify-between gap-4 mt-6">
           <button
             onClick={salvarAlteracoes}
-            className="bg-lousa text-white px-5 py-2 rounded-md hover:bg-green-800 shadow focus:outline-none focus:ring-2 focus:ring-lousa"
+            disabled={salvando}
+            className={`${
+              salvando ? "bg-green-900 cursor-not-allowed" : "bg-lousa hover:bg-green-800"
+            } text-white px-5 py-2 rounded-md shadow focus:outline-none focus:ring-2 focus:ring-lousa`}
             aria-label="Salvar alterações no perfil"
           >
-            💾 Salvar Alterações
+            {salvando ? "Salvando..." : "💾 Salvar Alterações"}
           </button>
 
-          {(usuario.perfil === "instrutor" || usuario.perfil === "administrador") && (
+          {podeGerenciarAssinatura && (
             <button
               onClick={() => setModalAberto(true)}
               className="bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-400"
@@ -152,10 +187,7 @@ export default function Perfil() {
         </div>
       </div>
 
-      <ModalAssinatura
-        isOpen={modalAberto}
-        onClose={() => setModalAberto(false)}
-      />
+      <ModalAssinatura isOpen={modalAberto} onClose={() => setModalAberto(false)} />
     </main>
   );
 }

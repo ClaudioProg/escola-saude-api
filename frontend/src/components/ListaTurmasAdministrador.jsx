@@ -1,4 +1,4 @@
-//ListaTurmasAdministrador
+// ListaTurmasAdministrador
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import AvaliacoesEvento from "./AvaliacoesEvento";
@@ -10,6 +10,7 @@ import {
   formatarCPF,
   formatarParaISO,
 } from "../utils/data";
+import { apiGet, apiPost } from "../services/api"; // ✅ usa serviço centralizado
 
 export default function ListaTurmasAdministrador({
   eventos = [],
@@ -29,16 +30,12 @@ export default function ListaTurmasAdministrador({
   async function carregarPresencas(turmaId) {
     console.log(`🔄 Carregando presenças da turma ${turmaId}...`);
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`/api/presencas/relatorio-presencas/turma/${turmaId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
+      const data = await apiGet(`/api/presencas/relatorio-presencas/turma/${turmaId}`);
       console.log(`✅ Presenças carregadas:`, data);
-
       setPresencasPorTurma((prev) => ({ ...prev, [turmaId]: data }));
     } catch (err) {
       console.error("❌ Erro ao carregar presenças:", err);
+      toast.error("❌ Erro ao carregar presenças.");
     }
   }
 
@@ -49,21 +46,12 @@ export default function ListaTurmasAdministrador({
     if (!confirmado) return;
 
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`/api/presencas/confirmar-simples`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          turma_id: turmaId,
-          usuario_id: usuarioId,
-          data: dataSelecionada,
-        }),
+      await apiPost(`/api/presencas/confirmar-simples`, {
+        turma_id: turmaId,
+        usuario_id: usuarioId,
+        data: dataSelecionada,
       });
 
-      if (!res.ok) throw new Error("Erro ao confirmar presença");
       toast.success("✅ Presença confirmada com sucesso.");
       console.log(`✔️ Presença confirmada para usuário ${usuarioId} em ${dataSelecionada}`);
       await carregarPresencas(turmaId);
@@ -183,11 +171,11 @@ export default function ListaTurmasAdministrador({
                                     const hojeData = formatarParaISO(new Date());
                                     const aindaPodeConfirmarHoje =
                                       dataISO === hojeData &&
-                                      agora <= new Date(`${dataISO}T${turma.horario_fim || "17:00"}`);
+                                      new Date() <= new Date(`${dataISO}T${turma.horario_fim || "17:00"}`);
 
                                     const dataAula = new Date(dataISO);
                                     dataAula.setDate(dataAula.getDate() + 15);
-                                    const dentroDoPrazo = agora <= dataAula;
+                                    const dentroDoPrazo = new Date() <= dataAula;
 
                                     const statusTexto = estaPresente
                                       ? "Presente"

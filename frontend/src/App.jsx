@@ -4,6 +4,7 @@ import { Suspense, lazy } from "react";
 import Navbar from "./components/Navbar";
 import ModalAssinatura from "./components/ModalAssinatura";
 import CertificadosAvulsos from "./pages/CertificadosAvulsos";
+import QRCodesEventosAdmin from "./pages/QRCodesEventosAdmin";
 
 // 🔄 Lazy loading das páginas
 const Login = lazy(() => import("./pages/Login"));
@@ -123,6 +124,15 @@ export default function App() {
   element={
     <PrivateRoute permitido={["administrador"]}>
       <GestaoPresencas />
+    </PrivateRoute>
+  }
+/>
+
+<Route
+  path="/admin/qr-codes"
+  element={
+    <PrivateRoute permitido={["administrador"]}>
+      <QRCodesEventosAdmin />
     </PrivateRoute>
   }
 />

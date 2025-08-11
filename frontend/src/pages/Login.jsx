@@ -1,3 +1,4 @@
+// src/pages/Login.jsx
 import { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { GoogleLogin } from "@react-oauth/google";
@@ -5,6 +6,7 @@ import { toast } from "react-toastify";
 import { LogIn, Eye, EyeOff, User, Lock } from "lucide-react";
 import BotaoPrimario from "../components/BotaoPrimario";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
+import { apiPost } from "../services/api";
 
 export default function Login() {
   const [cpf, setCpf] = useState("");
@@ -12,11 +14,13 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [mostrarSenha, setMostrarSenha] = useState(false);
   const [loadingGoogle, setLoadingGoogle] = useState(false);
-  const navigate = useNavigate();
-  const location = useLocation();
   const [erroCpf, setErroCpf] = useState("");
   const [erroSenha, setErroSenha] = useState("");
 
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // Se já está autenticado e veio para /login, manda pro dashboard
   useEffect(() => {
     const token = localStorage.getItem("token");
     if (location.pathname === "/login" && token) {
@@ -32,8 +36,27 @@ export default function Login() {
       .replace(/(\d{3})(\d{1,2})$/, "$1-$2");
   }
 
-  function validarCPF(cpf) {
-    return /^\d{3}\.\d{3}\.\d{3}-\d{2}$/.test(cpf);
+  function validarCPF(c) {
+    return /^\d{3}\.\d{3}\.\d{3}-\d{2}$/.test(c);
+  }
+
+  function persistirSessao(payload) {
+    // payload esperado: { token, usuario: { nome, perfil, ... } }
+    const { token, usuario } = payload || {};
+    if (!token || !usuario) throw new Error("Resposta de login inválida.");
+
+    // perfil pode vir como array ou string; vamos normalizar p/ array
+    const perfilArray = Array.isArray(usuario.perfil)
+      ? usuario.perfil
+      : typeof usuario.perfil === "string"
+      ? usuario.perfil.split(",").map((p) => p.trim()).filter(Boolean)
+      : [];
+
+    localStorage.clear();
+    localStorage.setItem("token", token);
+    localStorage.setItem("nome", usuario.nome || "");
+    localStorage.setItem("perfil", JSON.stringify(perfilArray)); // ✅ sempre array
+    localStorage.setItem("usuario", JSON.stringify({ ...usuario, perfil: perfilArray }));
   }
 
   async function handleLogin(e) {
@@ -55,61 +78,47 @@ export default function Login() {
     }
 
     setLoading(true);
-
     try {
-      const response = await fetch("https://escola-saude-api.onrender.com/api/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cpf: cpf.replace(/\D/g, ""), senha }),
+      const payload = await apiPost("/api/login", {
+        cpf: cpf.replace(/\D/g, ""),
+        senha,
       });
 
-      const data = await response.json();
-      if (!response.ok) {
-        setSenha("");
-        throw new Error(data.erro || data.message || "Erro ao fazer login.");
-      }
-
-      localStorage.clear();
-      localStorage.setItem("token", data.token);
-      localStorage.setItem("nome", data.usuario.nome);
-      localStorage.setItem("perfil", data.usuario.perfil.join(","));
-      localStorage.setItem("usuario", JSON.stringify(data.usuario));
-
+      persistirSessao(payload);
       toast.success("✅ Login realizado com sucesso!");
       navigate("/dashboard");
-
-    } catch (error) {
-      toast.error(error.message);
+    } catch (err) {
+      // tenta extrair mensagem amigável
+      const msg = err?.message?.startsWith("HTTP ")
+        ? "Erro ao fazer login."
+        : err?.message || "Erro ao fazer login.";
+      setSenha("");
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
   }
 
   async function handleLoginGoogle(credentialResponse) {
+    if (!credentialResponse?.credential) {
+      toast.error("Credencial do Google ausente.");
+      return;
+    }
     setLoadingGoogle(true);
     try {
-      const response = await fetch("https://escola-saude-api.onrender.com/api/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ credential: credentialResponse.credential }),
+      // Se seu backend tem endpoint dedicado, troque para /api/login/google
+      const payload = await apiPost("/api/auth/google", {
+        credential: credentialResponse.credential,
       });
 
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.erro || "Erro ao fazer login com Google.");
-      }
-
-      localStorage.clear();
-      localStorage.setItem("token", data.token);
-      localStorage.setItem("nome", data.usuario.nome);
-      localStorage.setItem("perfil", data.usuario.perfil.join(","));
-      localStorage.setItem("usuario", JSON.stringify(data.usuario));
-
+      persistirSessao(payload);
       toast.success("✅ Login com Google realizado com sucesso!");
       navigate("/dashboard");
-
     } catch (err) {
-      toast.error(err.message);
+      const msg = err?.message?.startsWith("HTTP ")
+        ? "Erro ao fazer login com Google."
+        : err?.message || "Erro ao fazer login com Google.";
+      toast.error(msg);
     } finally {
       setLoadingGoogle(false);
     }
@@ -146,8 +155,9 @@ export default function Login() {
             maxLength={14}
             autoFocus
             autoComplete="username"
-            className={`w-full px-4 py-2 rounded bg-white dark:bg-gray-100 text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-lousa
-              ${erroCpf ? "border border-red-500" : ""}`}
+            className={`w-full px-4 py-2 rounded bg-white dark:bg-gray-100 text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-lousa ${
+              erroCpf ? "border border-red-500" : ""
+            }`}
             aria-label="Digite seu CPF"
             aria-invalid={!!erroCpf}
           />

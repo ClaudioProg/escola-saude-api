@@ -1,4 +1,4 @@
-// src/pages/HistoricoCertificados.jsx
+// 📁 src/pages/HistoricoCertificados.jsx
 import { useEffect, useState } from "react";
 import TabelaCertificados from "../components/TabelaCertificados";
 import { toast } from "react-toastify";
@@ -6,6 +6,9 @@ import Breadcrumbs from "../components/Breadcrumbs";
 import CabecalhoPainel from "../components/CabecalhoPainel";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import NadaEncontrado from "../components/NadaEncontrado";
+import { apiGet, apiPost } from "../services/api";
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
 export default function HistoricoCertificados() {
   const [dados, setDados] = useState([]);
@@ -13,30 +16,52 @@ export default function HistoricoCertificados() {
   const [erro, setErro] = useState("");
 
   useEffect(() => {
-    async function fetchDados() {
-      try {
-        const token = localStorage.getItem("token");
-        const res = await fetch("/api/certificados/historico", {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        if (!res.ok) throw new Error("Erro ao buscar dados");
-
-        const json = await res.json();
-        setDados(json);
-        setErro("");
-      } catch (err) {
-        toast.error("❌ Erro ao carregar histórico de certificados.");
-        setErro("Erro ao carregar dados.");
-      } finally {
-        setCarregando(false);
-      }
-    }
-
-    fetchDados();
+    carregarHistorico();
   }, []);
 
-  const baixar = (id) => {
-    window.open(`/api/certificados/${id}/download`, "_blank");
+  async function carregarHistorico() {
+    try {
+      setCarregando(true);
+      const json = await apiGet("/api/certificados/historico");
+      setDados(Array.isArray(json) ? json : []);
+      setErro("");
+    } catch (err) {
+      toast.error("❌ Erro ao carregar histórico de certificados.");
+      setErro("Erro ao carregar dados.");
+    } finally {
+      setCarregando(false);
+    }
+  }
+
+  // ✅ download com token (sem depender de window.open sem header)
+  const baixar = async (id) => {
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API_BASE_URL}/api/certificados/${id}/download`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        credentials: "include",
+      });
+
+      if (!res.ok) throw new Error("Falha no download");
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      // tenta inferir um nome bacana, fallback genérico
+      const nomeArquivo =
+        res.headers.get("Content-Disposition")?.match(/filename="?([^"]+)"?/)?.[1] ||
+        `certificado_${id}.pdf`;
+      a.href = url;
+      a.download = nomeArquivo;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      toast.error("❌ Não foi possível baixar o certificado.");
+    }
   };
 
   const revalidar = async (id) => {
@@ -44,24 +69,10 @@ export default function HistoricoCertificados() {
     if (!confirmar) return;
 
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`/api/certificados/${id}/revalidar`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (!res.ok) throw new Error("Erro na revalidação.");
-
+      await apiPost(`/api/certificados/${id}/revalidar`);
       toast.success("✅ Certificado revalidado com sucesso!");
-      // Atualiza a lista
-      const atualizados = await fetch("/api/certificados/historico", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const json = await atualizados.json();
-      setDados(json);
-    } catch (err) {
+      await carregarHistorico();
+    } catch {
       toast.error("❌ Erro ao revalidar certificado.");
     }
   };
@@ -82,11 +93,7 @@ export default function HistoricoCertificados() {
       ) : dados.length === 0 ? (
         <NadaEncontrado mensagem="Nenhum certificado encontrado." />
       ) : (
-        <TabelaCertificados
-          dados={dados}
-          onDownload={baixar}
-          onRevalidar={revalidar}
-        />
+        <TabelaCertificados dados={dados} onDownload={baixar} onRevalidar={revalidar} />
       )}
     </main>
   );

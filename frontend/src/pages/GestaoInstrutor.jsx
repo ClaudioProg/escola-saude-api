@@ -1,84 +1,85 @@
-import { useEffect, useState } from "react";
+// 📁 src/pages/GestaoInstrutor.jsx
+import { useEffect, useMemo, useState, Suspense, lazy } from "react";
 import { toast } from "react-toastify";
-import { Navigate } from "react-router-dom";
 import Skeleton from "react-loading-skeleton";
 import Modal from "react-modal";
 
+import { apiGet } from "../services/api";
 import Breadcrumbs from "../components/Breadcrumbs";
 import TabelaInstrutor from "../components/TabelaInstrutor";
-import usePerfilPermitidos from "../hooks/usePerfilPermitidos";
 import CabecalhoPainel from "../components/CabecalhoPainel";
+// (Rota já protegida por <PrivateRoute permitido={["administrador"]}> no App.jsx)
 
 Modal.setAppElement("#root");
 
+// se tiver um Modal separado, dá pra lazy-loadar; aqui o modal é do react-modal embutido
+
 export default function GestaoInstrutor() {
-  const { temAcesso, carregando } = usePerfilPermitidos(["administrador"]);
-  const [instrutor, setInstrutor] = useState([]);
+  const [instrutores, setInstrutores] = useState([]);
   const [carregandoDados, setCarregandoDados] = useState(true);
   const [erro, setErro] = useState("");
   const [busca, setBusca] = useState("");
+
   const [historico, setHistorico] = useState([]);
   const [modalHistoricoAberto, setModalHistoricoAberto] = useState(false);
   const [instrutorSelecionado, setInstrutorSelecionado] = useState(null);
 
   useEffect(() => {
-    async function carregarInstrutores() {
+    (async () => {
       try {
-        const token = localStorage.getItem("token");
-        const res = await fetch("http://escola-saude-api.onrender.com/api/instrutor", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!res.ok) throw new Error("Erro ao buscar instrutores.");
-        const data = await res.json();
-        setInstrutor(data);
+        setCarregandoDados(true);
         setErro("");
-      } catch {
-        setErro("Erro ao carregar instrutores.");
-        toast.error("Erro ao carregar instrutores.");
+        console.log("👩‍🏫 [GestaoInstrutor] GET /api/instrutor ...");
+        const data = await apiGet("/api/instrutor");
+        console.log("✅ Payload /api/instrutor:", data);
+
+        const lista =
+          Array.isArray(data) ? data :
+          Array.isArray(data?.lista) ? data.lista :
+          Array.isArray(data?.instrutores) ? data.instrutores :
+          [];
+
+        setInstrutores(lista);
+      } catch (err) {
+        const msg = err?.message || "Erro ao carregar instrutores.";
+        console.error("❌ /api/instrutor falhou:", err);
+        setErro(msg);
+        setInstrutores([]);
+        toast.error(`❌ ${msg}`);
       } finally {
         setCarregandoDados(false);
       }
-    }
-
-    carregarInstrutores();
+    })();
   }, []);
 
-  const filtrados = instrutor.filter((p) =>
-    p.nome.toLowerCase().includes(busca.toLowerCase()) ||
-    p.email.toLowerCase().includes(busca.toLowerCase())
-  );
+  const normaliza = (s) => (typeof s === "string" ? s.toLowerCase() : "");
+  const filtrados = useMemo(() => {
+    const alvo = normaliza(busca);
+    return (instrutores || []).filter(
+      (p) => normaliza(p?.nome).includes(alvo) || normaliza(p?.email).includes(alvo)
+    );
+  }, [instrutores, busca]);
 
   async function abrirModalVisualizar(instrutor) {
     setInstrutorSelecionado(instrutor);
     setModalHistoricoAberto(true);
-  
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`http://escola-saude-api.onrender.com/api/instrutor/${instrutor.id}/eventos-avaliacoes`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error("Erro ao buscar histórico.");
-  
-      const data = await res.json();
-  
-      // Aqui o backend já retorna os dados prontos
-      const eventos = data.map(ev => ({
+      console.log(`🗂️ [GestaoInstrutor] GET /api/instrutor/${instrutor.id}/eventos-avaliacoes`);
+      const data = await apiGet(`/api/instrutor/${instrutor.id}/eventos-avaliacoes`);
+      const eventos = (Array.isArray(data) ? data : []).map((ev) => ({
         id: ev.evento_id,
         titulo: ev.evento,
         data_inicio: ev.data_inicio ? new Date(ev.data_inicio) : null,
         data_fim: ev.data_fim ? new Date(ev.data_fim) : null,
         nota_media: ev.nota_media !== null ? Number(ev.nota_media) : null,
       }));
-  
       setHistorico(eventos);
-    } catch {
+    } catch (e) {
+      console.error("❌ histórico do instrutor:", e);
       toast.error("❌ Erro ao buscar histórico do instrutor.");
       setHistorico([]);
     }
   }
-  
-  if (carregando) return <p className="text-center mt-10 text-lousa dark:text-white">Verificando permissões...</p>;
-  if (!temAcesso) return <Navigate to="/login" replace />;
 
   return (
     <main className="min-h-screen bg-gelo dark:bg-zinc-900 px-4 py-6 max-w-screen-lg mx-auto">
@@ -104,10 +105,7 @@ export default function GestaoInstrutor() {
       ) : erro ? (
         <p className="text-red-500 text-center">{erro}</p>
       ) : (
-        <TabelaInstrutor
-          instrutor={filtrados}
-          onVisualizar={abrirModalVisualizar}
-        />
+        <TabelaInstrutor instrutor={Array.isArray(filtrados) ? filtrados : []} onVisualizar={abrirModalVisualizar} />
       )}
 
       {/* Modal Histórico */}
@@ -125,37 +123,24 @@ export default function GestaoInstrutor() {
           <p className="text-gray-500 dark:text-gray-300">Nenhum evento encontrado.</p>
         ) : (
           <div className="mt-4 max-h-[65vh] overflow-y-auto pr-2">
-  <ul className="space-y-3">
-    {historico.map((evento) => (
-      <li
-        key={evento.id}
-        className="border p-3 rounded-md bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100 shadow-sm"
-      >
-        <p className="font-semibold">{evento.titulo}</p>
-        <p className="text-sm">
-          Data:{" "}
-          {evento.data_inicio
-            ? evento.data_inicio.toLocaleDateString("pt-BR")
-            : "—"}{" "}
-          até{" "}
-          {evento.data_fim
-            ? evento.data_fim.toLocaleDateString("pt-BR")
-            : "—"}
-        </p>
-        <p className="text-sm">
-          Média de avaliação:{" "}
-          <strong>
-            {evento.nota_media !== null
-              ? evento.nota_media.toFixed(1)
-              : "N/A"}
-          </strong>
-        </p>
-      </li>
-    ))}
-  </ul>
-</div>
-
-
+            <ul className="space-y-3">
+              {historico.map((evento) => (
+                <li
+                  key={evento.id}
+                  className="border p-3 rounded-md bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100 shadow-sm"
+                >
+                <p className="font-semibold">{evento.titulo}</p>
+                <p className="text-sm">
+                  Data: {evento.data_inicio ? evento.data_inicio.toLocaleDateString("pt-BR") : "—"} até{" "}
+                  {evento.data_fim ? evento.data_fim.toLocaleDateString("pt-BR") : "—"}
+                </p>
+                <p className="text-sm">
+                  Média de avaliação: <strong>{evento.nota_media !== null ? evento.nota_media.toFixed(1) : "N/A"}</strong>
+                </p>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
 
         <button

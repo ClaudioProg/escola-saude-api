@@ -1,13 +1,14 @@
-//ListaInscrito
+// 📁 src/components/ListaInscritos.jsx
 import { motion } from "framer-motion";
 import { useState } from "react";
 import { toast } from "react-toastify";
 import { gerarIntervaloDeDatas, formatarParaISO } from "../utils/data";
+import { apiPost } from "../services/api"; // ✅ usar serviço centralizado
 
 export default function ListaInscritos({
   inscritos = [],
   turma,
-  token,
+  token,              // pode continuar recebendo, mas não vamos usar
   presencas = [],
   carregarPresencas,
 }) {
@@ -24,33 +25,31 @@ export default function ListaInscritos({
     return agora < limite;
   };
 
+  // ✅ agora usando /api/... via apiPost (sem CORS)
   const confirmarPresenca = async (usuario_id, data) => {
     try {
       setConfirmando(`${usuario_id}-${data}`);
-      const resposta = await fetch(`http://escola-saude-api.onrender.com/api/presencas/confirmar-instrutor`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          usuario_id,
-          turma_id: turma.id,
-          data,
-        }),
-      });
 
-      if (!resposta.ok) throw new Error("Erro ao confirmar presença.");
+      // manda a data em ISO no início do dia p/ evitar fuso
+      const dataISO = formatarParaISO(`${data}T00:00:00`);
+
+      await apiPost("/api/presencas/confirmar-instrutor", {
+        usuario_id,
+        turma_id: turma.id,
+        data: dataISO,
+      });
 
       toast.success("✅ Presença confirmada com sucesso!");
       await carregarPresencas();
     } catch (err) {
-      toast.error("❌ Erro ao confirmar presença.");
+      console.error("Erro ao confirmar presença:", err);
+      toast.error(err?.message || "❌ Erro ao confirmar presença.");
     } finally {
       setConfirmando(null);
     }
   };
 
+  // logs...
   console.log("📋 Inscritos:", inscritos);
   console.log("📋 Presenças recebidas:", presencas);
   console.log("📆 Intervalo de datas da turma:", turma?.data_inicio, "→", turma?.data_fim);
@@ -72,20 +71,14 @@ export default function ListaInscritos({
       ) : (
         <ul className="space-y-4">
           {inscritos.map((inscrito) => {
-            const presencasUsuario = presencas.filter(p => p.usuario_id === inscrito.usuario_id);
+            const presencasUsuario = presencas.filter((p) => p.usuario_id === inscrito.usuario_id);
             const datasTurma = gerarIntervaloDeDatas(
               new Date(turma.data_inicio),
               new Date(turma.data_fim)
             );
 
-            console.log(`👤 ${inscrito.nome} (ID ${inscrito.usuario_id})`);
-            console.log("📊 Presenças do usuário:", presencasUsuario);
-
             return (
-              <li
-                key={inscrito.usuario_id}
-                className="p-4 bg-white dark:bg-zinc-800 rounded-xl shadow"
-              >
+              <li key={inscrito.usuario_id} className="p-4 bg-white dark:bg-zinc-800 rounded-xl shadow">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4">
                   <div>
                     <p className="font-semibold text-gray-800 dark:text-white">{inscrito.nome}</p>
@@ -106,37 +99,28 @@ export default function ListaInscritos({
                       </tr>
                     </thead>
                     <tbody>
-                    {datasTurma.map((dataObj) => {
-  const dataRef = (() => {
-    try {
-      const d = typeof dataObj === "string" ? new Date(dataObj) : dataObj;
-      if (isNaN(new Date(d).getTime())) return null;
-      return new Date(d).toISOString().split("T")[0];
-    } catch {
-      return null;
-    }
-  })();
+                      {datasTurma.map((dataObj) => {
+                        const dataRef = (() => {
+                          try {
+                            const d = typeof dataObj === "string" ? new Date(dataObj) : dataObj;
+                            if (isNaN(new Date(d).getTime())) return null;
+                            return new Date(d).toISOString().split("T")[0];
+                          } catch {
+                            return null;
+                          }
+                        })();
 
-  if (!dataRef) return null;
+                        if (!dataRef) return null;
 
                         const dataFormatada = dataRef.split("-").reverse().join("/");
-                        const p = presencasUsuario.find(p => {
-                          const dataBanco = (p?.data || "").split("T")[0];
-                          return dataBanco === dataRef;
-                        });
+                        const p = presencasUsuario.find((p) => (p?.data || "").split("T")[0] === dataRef);
                         const isPresente = p?.presente === true;
 
                         const inicio = new Date(`${dataRef}T${turma.horario_inicio}`);
                         const passou60min = agora > new Date(inicio.getTime() + 60 * 60000);
                         const podeConfirmar = passou60min && dentroDoPrazoDeConfirmacao(dataRef);
 
-                        console.log(`📅 Data: ${dataRef}`);
-                        console.log(`✅ Está presente?`, isPresente);
-                        console.log(`⏱️ Passou 60min?`, passou60min);
-                        console.log(`🔓 Pode confirmar manualmente?`, podeConfirmar);
-
                         let statusBadge = null;
-
                         if (isPresente) {
                           statusBadge = (
                             <span className="inline-block bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-bold">

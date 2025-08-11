@@ -1,65 +1,62 @@
+// 📁 src/pages/DashboardAdministrador.jsx
 import { useEffect, useState } from "react";
-import { useNavigate, Navigate } from "react-router-dom";
 import { toast } from "react-toastify";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import usePerfilPermitidos from "../hooks/usePerfilPermitidos";
 
 import Breadcrumbs from "../components/Breadcrumbs";
 import CardEvento from "../components/CardEvento";
 import Spinner from "../components/Spinner";
-import { formatarDataBrasileira } from "../utils/data"; // ✅
+import { formatarDataBrasileira } from "../utils/data"; // (ainda pode ser útil)
+import { apiGet } from "../services/api"; // ✅ usa serviço centralizado
 
 export default function DashboardAdministrador() {
-  const navigate = useNavigate();
-  const [token, setToken] = useState("");
   const [nome, setNome] = useState("");
-  const [carregandoInicial, setCarregandoInicial] = useState(true);
-  const { temAcesso, carregando: carregandoPermissao } = usePerfilPermitidos(["administrador"]);
-
   const [eventos, setEventos] = useState([]);
   const [turmasPorEvento, setTurmasPorEvento] = useState({});
   const [inscritosPorTurma, setInscritosPorTurma] = useState({});
   const [avaliacoesPorTurma, setAvaliacoesPorTurma] = useState({});
-  const [eventoExpandido, setEventoExpandido] = useState(null);
   const [presencasPorTurma, setPresencasPorTurma] = useState({});
+  const [eventoExpandido, setEventoExpandido] = useState(null);
+
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState("");
   const [filtroStatus, setFiltroStatus] = useState("em_andamento");
 
+  // Carrega nome (apenas UI)
   useEffect(() => {
-    const tokenSalvo = localStorage.getItem("token");
-    const nomeSalvo = localStorage.getItem("nome");
-    if (!tokenSalvo) return navigate("/login");
-    setToken(tokenSalvo);
-    setNome(nomeSalvo || "");
-    setCarregandoInicial(false);
-  }, [navigate]);
+    try {
+      const u = JSON.parse(localStorage.getItem("usuario") || "{}");
+      setNome(u?.nome || "");
+    } catch {
+      setNome("");
+    }
+  }, []);
 
+  // Carrega eventos (admin)
   useEffect(() => {
-    if (!token) return;
-    setCarregando(true);
-    fetch("/api/eventos", {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((res) => res.json())
-      .then(setEventos)
-      .catch(() => {
+    (async () => {
+      setCarregando(true);
+      try {
+        // 👇 Não redireciona em 403; mostra erro na tela
+        const data = await apiGet("/api/eventos", { on403: "silent" });
+        setEventos(Array.isArray(data) ? data : []);
+        setErro("");
+      } catch (e) {
+        console.error("❌ Erro ao carregar eventos:", e);
         toast.error("❌ Erro ao carregar eventos");
         setErro("Erro ao carregar eventos");
-      })
-      .finally(() => setCarregando(false));
-  }, [token]);
+      } finally {
+        setCarregando(false);
+      }
+    })();
+  }, []);
 
   const carregarTurmas = async (eventoId) => {
     if (turmasPorEvento[eventoId]) return;
     try {
-      const res = await fetch(`/api/turmas/evento/${eventoId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      console.log("📦 Turmas carregadas para evento", eventoId, data); // 👈 LOG
-      setTurmasPorEvento((prev) => ({ ...prev, [eventoId]: data }));
+      const data = await apiGet(`/api/turmas/evento/${eventoId}`, { on403: "silent" });
+      setTurmasPorEvento((prev) => ({ ...prev, [eventoId]: Array.isArray(data) ? data : [] }));
     } catch (error) {
       console.error("❌ Erro ao carregar turmas:", error);
       toast.error("❌ Erro ao carregar turmas.");
@@ -68,11 +65,8 @@ export default function DashboardAdministrador() {
 
   const carregarInscritos = async (turmaId) => {
     try {
-      const res = await fetch(`/api/inscricoes/turma/${turmaId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      setInscritosPorTurma((prev) => ({ ...prev, [turmaId]: data }));
+      const data = await apiGet(`/api/inscricoes/turma/${turmaId}`, { on403: "silent" });
+      setInscritosPorTurma((prev) => ({ ...prev, [turmaId]: Array.isArray(data) ? data : [] }));
     } catch {
       toast.error("❌ Erro ao carregar inscritos.");
     }
@@ -81,12 +75,8 @@ export default function DashboardAdministrador() {
   const carregarAvaliacoes = async (turmaId) => {
     if (avaliacoesPorTurma[turmaId]) return;
     try {
-      const res = await fetch(`/api/avaliacoes/turma/${turmaId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      console.log("📊 Avaliações carregadas para turma", turmaId, data); // 👈 LOG
-      setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: data }));
+      const data = await apiGet(`/api/avaliacoes/turma/${turmaId}`, { on403: "silent" });
+      setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: Array.isArray(data) ? data : [] }));
     } catch (err) {
       console.error("❌ Erro ao carregar avaliações:", err);
       toast.error("❌ Erro ao carregar avaliações.");
@@ -95,35 +85,20 @@ export default function DashboardAdministrador() {
 
   const carregarPresencas = async (turmaId) => {
     try {
-      const res = await fetch(`/api/relatorio-presencas/turma/${turmaId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-  
-      if (!res.ok) throw new Error("Erro ao buscar presenças");
-  
-      const data = await res.json();
-      const listaPresencas = Array.isArray(data.lista) ? data.lista : [];
-  
-      console.log("🟢 Presenças recebidas da API:", data); // 👈 LOG COMPLETO
-      console.log("👥 Total de usuários na turma", turmaId, ":", listaPresencas.length);
-  
-      setPresencasPorTurma((prev) => ({
-        ...prev,
-        [turmaId]: listaPresencas,
-      }));
+      const data = await apiGet(`/api/relatorio-presencas/turma/${turmaId}`, { on403: "silent" });
+      const lista = Array.isArray(data?.lista) ? data.lista : Array.isArray(data) ? data : [];
+      setPresencasPorTurma((prev) => ({ ...prev, [turmaId]: lista }));
     } catch (err) {
       console.error("❌ Erro ao carregar presenças:", err);
       toast.error("Erro ao carregar presenças da turma.");
     }
   };
 
-
   const gerarRelatorioPDF = async (turmaId) => {
     try {
-      const res = await fetch(`/api/relatorio-presencas/turma/${turmaId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const alunos = await res.json();
+      const data = await apiGet(`/api/relatorio-presencas/turma/${turmaId}`, { on403: "silent" });
+      const alunos = Array.isArray(data?.lista) ? data.lista : Array.isArray(data) ? data : [];
+
       const total = alunos.length;
       const presentes = alunos.filter((a) => a.presente).length;
       const presencaMedia = total ? ((presentes / total) * 100).toFixed(1) : "0.0";
@@ -136,7 +111,7 @@ export default function DashboardAdministrador() {
         head: [["Nome", "CPF", "Presença"]],
         body: alunos.map((a) => [
           a.nome,
-          a.cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4"),
+          (a.cpf || "").replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4"),
           a.presente ? "Sim" : "Não",
         ]),
       });
@@ -156,57 +131,39 @@ export default function DashboardAdministrador() {
   const toggleExpandir = (eventoId) => {
     setEventoExpandido(eventoExpandido === eventoId ? null : eventoId);
     carregarTurmas(eventoId);
-    console.log("📂 Expandindo evento:", eventoId);
   };
 
-  // 🔄 Padronize as datas para evitar bugs de timezone e inconsistência
-  const hojeISO = new Date().toISOString().split("T")[0];
-
-  // 🔄 Filtra por status usando datas no formato ISO sempre que possível
+  // 🔄 Filtrar por status com datas agregadas do evento ou derivadas das turmas
   const filtrarPorStatus = (evento) => {
     const hoje = new Date();
     const turmas = turmasPorEvento[evento.id] || [];
-  
-    // Tenta usar data_fim_geral, se existir
-    let dataFim = evento.data_fim_geral ? new Date(evento.data_fim_geral) : null;
+
     let dataInicio = evento.data_inicio_geral ? new Date(evento.data_inicio_geral) : null;
-  
-    // Se não houver datas gerais, calcula com base nas turmas
+    let dataFim = evento.data_fim_geral ? new Date(evento.data_fim_geral) : null;
+
     if (!dataInicio || !dataFim) {
-      const datasInicio = turmas.map(t => new Date(t.data_inicio)).filter(d => !isNaN(d));
-      const datasFim = turmas.map(t => new Date(t.data_fim)).filter(d => !isNaN(d));
-      if (datasInicio.length > 0) {
-        dataInicio = new Date(Math.min(...datasInicio.map(d => d.getTime())));
-      }
-      if (datasFim.length > 0) {
-        dataFim = new Date(Math.max(...datasFim.map(d => d.getTime())));
-        dataFim.setHours(23, 59, 59, 999); // Garante fim do dia
+      const dsInicio = turmas.map((t) => new Date(t.data_inicio)).filter((d) => !isNaN(d));
+      const dsFim = turmas.map((t) => new Date(t.data_fim)).filter((d) => !isNaN(d));
+      if (dsInicio.length) dataInicio = new Date(Math.min(...dsInicio.map((d) => d.getTime())));
+      if (dsFim.length) {
+        dataFim = new Date(Math.max(...dsFim.map((d) => d.getTime())));
+        dataFim.setHours(23, 59, 59, 999);
       }
     }
-  
+
     if (!dataInicio || !dataFim) return false;
-  
+
     if (filtroStatus === "programado") return dataInicio > hoje;
     if (filtroStatus === "em_andamento") return dataInicio <= hoje && dataFim >= hoje;
     if (filtroStatus === "encerrado") return dataFim < hoje;
-    return true; // filtroStatus === "todos"
+    return true; // "todos"
   };
-  
-
-  if (carregandoInicial || carregandoPermissao) {
-    return <Spinner label="Carregando permissões..." />;
-  }
-
-  if (!temAcesso) return <Navigate to="/login" replace />;
 
   return (
     <div className="min-h-screen px-4 py-10 bg-white dark:bg-zinc-900 text-black dark:text-white relative">
       {carregando && (
         <div className="absolute top-0 left-0 w-full h-1 bg-green-100 z-50">
-          <div
-            className="h-full bg-[#1b4332] animate-pulse w-1/3"
-            aria-label="Carregando eventos"
-          />
+          <div className="h-full bg-[#1b4332] animate-pulse w-1/3" aria-label="Carregando eventos" />
         </div>
       )}
 
@@ -249,19 +206,19 @@ export default function DashboardAdministrador() {
 
         {eventos.filter(filtrarPorStatus).map((evento) => (
           <CardEvento
-          key={evento.id}
-          evento={evento}
-          expandido={eventoExpandido === evento.id}
-          toggleExpandir={toggleExpandir}
-          turmas={turmasPorEvento[evento.id] || []}
-          carregarInscritos={carregarInscritos}
-          inscritosPorTurma={inscritosPorTurma}
-          carregarAvaliacoes={carregarAvaliacoes}
-          avaliacoesPorTurma={avaliacoesPorTurma}
-          presencasPorTurma={presencasPorTurma} // <-- adicionado
-          carregarPresencas={carregarPresencas}
-          gerarRelatorioPDF={gerarRelatorioPDF}
-        />
+            key={evento.id}
+            evento={evento}
+            expandido={eventoExpandido === evento.id}
+            toggleExpandir={toggleExpandir}
+            turmas={turmasPorEvento[evento.id] || []}
+            carregarInscritos={carregarInscritos}
+            inscritosPorTurma={inscritosPorTurma}
+            carregarAvaliacoes={carregarAvaliacoes}
+            avaliacoesPorTurma={avaliacoesPorTurma}
+            presencasPorTurma={presencasPorTurma}
+            carregarPresencas={carregarPresencas}
+            gerarRelatorioPDF={gerarRelatorioPDF}
+          />
         ))}
       </div>
     </div>

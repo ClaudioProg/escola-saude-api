@@ -1,6 +1,6 @@
-// src/pages/HistoricoEventos.jsx
+// 📁 src/pages/HistoricoEventos.jsx
 import { useEffect, useState } from "react";
-import axios from "axios";
+import { useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -11,6 +11,9 @@ import BotaoSecundario from "../components/BotaoSecundario";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import CabecalhoPainel from "../components/CabecalhoPainel";
 import { formatarDataBrasileira } from "../utils/data";
+import { apiGet } from "../services/api";
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
 export default function HistoricoEventos() {
   const [eventos, setEventos] = useState([]);
@@ -19,16 +22,14 @@ export default function HistoricoEventos() {
   const [carregando, setCarregando] = useState(true);
 
   const nome = localStorage.getItem("nome") || "";
+  const navigate = useNavigate();
 
   useEffect(() => {
     async function fetchEventos() {
       setCarregando(true);
       try {
-        const token = localStorage.getItem("token");
-        const resposta = await axios.get("http://escola-saude-api.onrender.com/api/usuarios/historico", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        setEventos(resposta.data);
+        const data = await apiGet("/api/usuarios/historico");
+        setEventos(Array.isArray(data) ? data : []);
         setErro(null);
       } catch {
         setErro("Erro ao carregar histórico");
@@ -41,15 +42,50 @@ export default function HistoricoEventos() {
     fetchEventos();
   }, []);
 
-  const anosDisponiveis = Array.from(new Set(eventos.map(ev =>
-    extrairAno(ev.data_inicio)
-  ))).sort((a, b) => b - a);
+  const anosDisponiveis = Array.from(
+    new Set(
+      eventos
+        .map((ev) => {
+          const d = ev?.data_inicio ? new Date(ev.data_inicio) : null;
+          return d && !isNaN(d) ? d.getFullYear() : null;
+        })
+        .filter(Boolean)
+    )
+  ).sort((a, b) => b - a);
 
-  const eventosFiltrados = anoSelecionado === "todos"
-    ? eventos
-    : eventos.filter(ev =>
-        new Date(ev.data_inicio).getFullYear().toString() === anoSelecionado
-      );
+  const eventosFiltrados =
+    anoSelecionado === "todos"
+      ? eventos
+      : eventos.filter((ev) => {
+          const d = ev?.data_inicio ? new Date(ev.data_inicio) : null;
+          return d && !isNaN(d) && String(d.getFullYear()) === String(anoSelecionado);
+        });
+
+  async function baixarCertificado(id) {
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API_BASE_URL}/api/certificados/${id}/download`, {
+        headers: { Authorization: `Bearer ${token}` },
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error();
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const nomeArquivo =
+        res.headers.get("Content-Disposition")?.match(/filename="?([^"]+)"?/)?.[1] ||
+        `certificado_${id}.pdf`;
+      a.href = url;
+      a.download = nomeArquivo;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      toast.error("❌ Não foi possível baixar o certificado.");
+    }
+  }
 
   return (
     <main className="min-h-screen bg-gelo dark:bg-zinc-900 px-2 sm:px-4 py-6">
@@ -68,7 +104,7 @@ export default function HistoricoEventos() {
         <select
           value={anoSelecionado}
           onChange={(e) => setAnoSelecionado(e.target.value)}
-          className="px-3 py-1 border rounded text-sm"
+          className="px-3 py-1 border rounded text-sm dark:bg-zinc-800 dark:text-white"
           aria-label="Filtrar eventos por ano"
         >
           <option value="todos">Todos</option>
@@ -94,9 +130,9 @@ export default function HistoricoEventos() {
         ) : (
           <ul className="space-y-4" role="list" aria-label="Histórico de eventos">
             <AnimatePresence>
-            {eventosFiltrados.map((evento) => {
-  const dataInicio = formatarDataBrasileira(evento.data_inicio);
-  const dataFim = formatarDataBrasileira(evento.data_fim);
+              {eventosFiltrados.map((evento) => {
+                const dataInicio = formatarDataBrasileira(evento.data_inicio);
+                const dataFim = formatarDataBrasileira(evento.data_fim);
 
                 return (
                   <motion.li
@@ -119,21 +155,16 @@ export default function HistoricoEventos() {
                     <div className="mt-2 flex gap-4 flex-wrap">
                       {!evento.avaliado && (
                         <BotaoSecundario
-                          onClick={() =>
-                            window.location.href = `/avaliar/${evento.evento_id}`
-                          }
+                          onClick={() => navigate(`/avaliar/${evento.evento_id}`)}
                           aria-label={`Avaliar evento ${evento.titulo}`}
                         >
                           Avaliar evento
                         </BotaoSecundario>
                       )}
-                      {evento.certificado_disponivel && (
+                      {evento.certificado_disponivel && evento.certificado_id && (
                         <BotaoPrimario
-                          as="a"
-                          href={`http://escola-saude-api.onrender.com/api/certificados/${evento.certificado_id}/download`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          aria-label={`Ver certificado de ${evento.titulo}`}
+                          onClick={() => baixarCertificado(evento.certificado_id)}
+                          aria-label={`Baixar certificado de ${evento.titulo}`}
                         >
                           Ver Certificado
                         </BotaoPrimario>

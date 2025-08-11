@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+// ✅ src/pages/RelatoriosCustomizados.jsx
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "react-toastify";
 import { saveAs } from "file-saver";
 
+import { apiGet, apiPostFile } from "../services/api";
 import Breadcrumbs from "../components/Breadcrumbs";
 import Select from "../components/Select";
 import DateRangePicker from "../components/DateRangePicker";
@@ -10,16 +12,33 @@ import CabecalhoPainel from "../components/CabecalhoPainel";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import ErroCarregamento from "../components/ErroCarregamento";
 
+function startOfDayISO(d) {
+  const dt = new Date(d);
+  dt.setHours(0, 0, 0, 0);
+  return dt.toISOString();
+}
+function endOfDayISO(d) {
+  const dt = new Date(d);
+  dt.setHours(23, 59, 59, 999);
+  return dt.toISOString();
+}
+
 export default function RelatoriosCustomizados() {
-  const token = localStorage.getItem("token");
-  const perfil = (localStorage.getItem("perfil") || "").toLowerCase();
-  const usuarioId = localStorage.getItem("usuario_id");
+  const perfilRaw = (localStorage.getItem("perfil") || "").toLowerCase();
+  const usuarioObj = (() => {
+    try {
+      return JSON.parse(localStorage.getItem("usuario") || "{}");
+    } catch {
+      return {};
+    }
+  })();
+  const usuarioId = usuarioObj?.id ?? null;
 
   const [filtros, setFiltros] = useState({
     eventoId: "",
     instrutorId: "",
     unidadeId: "",
-    periodo: ["", ""],
+    periodo: ["", ""], // [inicio, fim]
   });
 
   const [opcoes, setOpcoes] = useState({
@@ -32,95 +51,145 @@ export default function RelatoriosCustomizados() {
   const [carregando, setCarregando] = useState(false);
   const [erroCarregamento, setErroCarregamento] = useState(false);
 
+  const podeAutoFiltrarInstrutor = useMemo(
+    () => perfilRaw.includes("instrutor") || perfilRaw.includes("administrador"),
+    [perfilRaw]
+  );
+
+  // Carrega opções (eventos/instrutor/unidades)
   useEffect(() => {
+    let cancelado = false;
+
     async function loadOpts() {
       try {
-        const res = await fetch("/api/relatorios/opcoes", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const data = await res.json();
-        setOpcoes({
-          eventos: data.eventos.map((e) => ({
-            value: e.id,
-            label: e.titulo || "Sem título"
-          })),
-          instrutor: data.instrutor.map((i) => ({
-            value: i.id,
-            label: i.nome
-          })),
-          unidades: data.unidades.map((u) => ({
-            value: u.id,
-            label: u.nome
-          })),
-        });
-
-        if (perfil.includes("instrutor") || perfil.includes("administrador")) {
-          setFiltros((f) => ({ ...f, instrutorId: usuarioId ?? "" }));
-        }
-
         setErroCarregamento(false);
-      } catch {
+        const data = await apiGet("/api/relatorios/opcoes", { on403: "silent" });
+        if (cancelado) return;
+
+        setOpcoes({
+          eventos: (data?.eventos || []).map((e) => ({
+            value: String(e.id),
+            label: e.titulo || e.nome || "Sem título",
+          })),
+          instrutor: (data?.instrutor || []).map((i) => ({
+            value: String(i.id),
+            label: i.nome,
+          })),
+          unidades: (data?.unidades || []).map((u) => ({
+            value: String(u.id),
+            label: u.nome,
+          })),
+        });
+
+        if (podeAutoFiltrarInstrutor && usuarioId) {
+          setFiltros((f) => ({ ...f, instrutorId: String(usuarioId) }));
+        }
+      } catch (err) {
         setErroCarregamento(true);
         toast.error("Erro ao carregar filtros.");
       }
     }
 
     loadOpts();
-  }, [token, perfil, usuarioId]);
+    return () => {
+      cancelado = true;
+    };
+  }, [podeAutoFiltrarInstrutor, usuarioId]);
+
+  const validarPeriodo = () => {
+    const [ini, fim] = filtros.periodo || [];
+    if ((ini && !fim) || (!ini && fim)) {
+      toast.warning("Informe as duas datas do período.");
+      return false;
+    }
+    if (ini && fim) {
+      const dIni = new Date(ini);
+      const dFim = new Date(fim);
+      if (Number.isNaN(dIni.getTime()) || Number.isNaN(dFim.getTime())) {
+        toast.warning("Período inválido.");
+        return false;
+      }
+      if (dIni > dFim) {
+        toast.warning("Data inicial não pode ser maior que a final.");
+        return false;
+      }
+    }
+    return true;
+  };
 
   const buscar = async () => {
+    if (!validarPeriodo()) return;
+
+    const qs = new URLSearchParams();
+    if (filtros.eventoId) qs.append("evento", filtros.eventoId);
+    if (filtros.instrutorId) qs.append("instrutor", filtros.instrutorId);
+    if (filtros.unidadeId) qs.append("unidade", filtros.unidadeId);
+
+    const [ini, fim] = filtros.periodo;
+    if (ini && fim) {
+      qs.append("from", startOfDayISO(ini));
+      qs.append("to", endOfDayISO(fim));
+    }
+
+    setCarregando(true);
     try {
-      const qs = new URLSearchParams();
-      if (filtros.eventoId) qs.append("evento", filtros.eventoId);
-      if (filtros.instrutorId) qs.append("instrutor", filtros.instrutorId);
-      if (filtros.unidadeId) qs.append("unidade", filtros.unidadeId);
-      if (filtros.periodo[0] && filtros.periodo[1]) {
-        qs.append("from", new Date(filtros.periodo[0]).toISOString());
-        qs.append("to", new Date(filtros.periodo[1]).toISOString());
-      }
-
-      setCarregando(true);
-      const res = await fetch(`/api/relatorios?${qs.toString()}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!res.ok) throw new Error("Não foi possível gerar relatório");
-      setDados(await res.json());
+      const res = await apiGet(`/api/relatorios?${qs.toString()}`, { on403: "silent" });
+      setDados(Array.isArray(res) ? res : []);
     } catch (e) {
-      toast.error("❌ " + e.message);
+      toast.error("❌ Não foi possível gerar relatório.");
+      setDados([]);
     } finally {
       setCarregando(false);
     }
   };
 
-  const exportar = (tipo) => {
-    if (!dados.length) return toast.info("Sem dados para exportar");
+  const exportar = async (tipo) => {
+    if (!dados.length) {
+      toast.info("Sem dados para exportar.");
+      return;
+    }
+    if (!["pdf", "excel"].includes(tipo)) {
+      toast.error("Formato inválido.");
+      return;
+    }
+    if (!validarPeriodo()) return;
 
-    const payload = { filtros, formato: tipo };
-
-    fetch(`/api/relatorios/exportar`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
+    const payload = {
+      filtros: {
+        eventoId: filtros.eventoId || null,
+        instrutorId: filtros.instrutorId || null,
+        unidadeId: filtros.unidadeId || null,
+        periodo:
+          filtros.periodo[0] && filtros.periodo[1]
+            ? [startOfDayISO(filtros.periodo[0]), endOfDayISO(filtros.periodo[1])]
+            : null,
       },
-      body: JSON.stringify(payload),
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error();
-        return res.blob();
-      })
-      .then((blob) => {
-        const ext = tipo === "pdf" ? "pdf" : "xlsx";
-        saveAs(blob, `relatorio_custom.${ext}`);
-      })
-      .catch(() => {
-        toast.error("Falha no download");
+      formato: tipo,
+    };
+
+    try {
+      const { blob, filename } = await apiPostFile("/api/relatorios/exportar", payload, {
+        on403: "silent",
       });
+      const ext = tipo === "pdf" ? "pdf" : "xlsx";
+      saveAs(blob, filename || `relatorio_custom.${ext}`);
+    } catch {
+      toast.error("Falha no download.");
+    }
+  };
+
+  const limparFiltros = () => {
+    setFiltros({
+      eventoId: "",
+      instrutorId: podeAutoFiltrarInstrutor && usuarioId ? String(usuarioId) : "",
+      unidadeId: "",
+      periodo: ["", ""],
+    });
+    setDados([]);
   };
 
   return (
-    <main className="p-6">
+    <main className="p-6 bg-gelo dark:bg-zinc-900 min-h-screen text-black dark:text-white">
       <Breadcrumbs trilha={[{ label: "Painel administrador" }, { label: "Relatórios" }]} />
       <CabecalhoPainel titulo="📄 Relatórios Customizados" />
 
@@ -134,18 +203,21 @@ export default function RelatoriosCustomizados() {
               options={opcoes.eventos}
               value={filtros.eventoId}
               onChange={(v) => setFiltros((f) => ({ ...f, eventoId: v }))}
+              placeholder="Selecione..."
             />
             <Select
-              label="instrutor"
+              label="Instrutor"
               options={opcoes.instrutor}
               value={filtros.instrutorId}
               onChange={(v) => setFiltros((f) => ({ ...f, instrutorId: v }))}
+              placeholder="Selecione..."
             />
             <Select
               label="Unidade"
               options={opcoes.unidades}
               value={filtros.unidadeId}
               onChange={(v) => setFiltros((f) => ({ ...f, unidadeId: v }))}
+              placeholder="Selecione..."
             />
             <DateRangePicker
               label="Período"
@@ -154,37 +226,61 @@ export default function RelatoriosCustomizados() {
             />
           </div>
 
-          <div className="flex flex-wrap justify-center gap-4 my-6">
+          <div className="flex flex-wrap gap-3 my-6 items-center">
             <button
               onClick={buscar}
-              className="bg-orange-200 hover:bg-orange-300 text-orange-900 font-semibold py-2 px-4 rounded transition"
+              disabled={carregando}
+              className={`bg-orange-200 hover:bg-orange-300 text-orange-900 font-semibold py-2 px-4 rounded transition ${
+                carregando ? "opacity-70 cursor-not-allowed" : ""
+              }`}
               aria-label="Buscar relatórios"
-              role="button"
             >
-              🔎 Buscar
+              🔎 {carregando ? "Buscando..." : "Buscar"}
             </button>
+
             <button
               onClick={() => exportar("pdf")}
-              className="bg-orange-200 hover:bg-orange-300 text-orange-900 font-semibold py-2 px-4 rounded transition"
+              disabled={!dados.length || carregando}
+              className={`bg-orange-200 hover:bg-orange-300 text-orange-900 font-semibold py-2 px-4 rounded transition ${
+                !dados.length || carregando ? "opacity-60 cursor-not-allowed" : ""
+              }`}
               aria-label="Exportar relatório em PDF"
-              role="button"
             >
               📄 Exportar PDF
             </button>
+
             <button
               onClick={() => exportar("excel")}
-              className="bg-orange-200 hover:bg-orange-300 text-orange-900 font-semibold py-2 px-4 rounded transition"
+              disabled={!dados.length || carregando}
+              className={`bg-orange-200 hover:bg-orange-300 text-orange-900 font-semibold py-2 px-4 rounded transition ${
+                !dados.length || carregando ? "opacity-60 cursor-not-allowed" : ""
+              }`}
               aria-label="Exportar relatório em Excel"
-              role="button"
             >
               📊 Exportar Excel
+            </button>
+
+            <button
+              onClick={limparFiltros}
+              disabled={carregando}
+              className="ml-auto bg-gray-200 hover:bg-gray-300 text-gray-900 font-medium py-2 px-4 rounded transition"
+              aria-label="Limpar filtros"
+            >
+              Limpar filtros
             </button>
           </div>
 
           {carregando ? (
             <CarregandoSkeleton height="220px" />
           ) : (
-            <RelatoriosTabela data={dados} />
+            <>
+              {dados?.length ? (
+                <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">
+                  {dados.length} registro{dados.length > 1 ? "s" : ""} encontrado{dados.length > 1 ? "s" : ""}.
+                </p>
+              ) : null}
+              <RelatoriosTabela data={dados} />
+            </>
           )}
         </>
       )}

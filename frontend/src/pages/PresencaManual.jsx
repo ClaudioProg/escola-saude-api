@@ -2,78 +2,75 @@
 import { useEffect, useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
+
+import { apiGet, apiPost } from "../services/api";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import ErroCarregamento from "../components/ErroCarregamento";
 
 export default function PresencaManual() {
   const [params] = useSearchParams();
   const turmaId = params.get("turma");
+
+  const navigate = useNavigate();
+
   const [inscritos, setInscritos] = useState([]);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState("");
-  const navigate = useNavigate();
-  const token = localStorage.getItem("token");
 
   useEffect(() => {
-    if (!token || !turmaId) {
+    const token = localStorage.getItem("token");
+
+    if (!token) {
       toast.error("❌ Acesso não autorizado.");
-      navigate("/");
+      navigate("/login", { replace: true });
       return;
     }
 
-    const carregarInscritos = async () => {
+    if (!turmaId || Number.isNaN(Number(turmaId))) {
+      setErro("Turma inválida.");
+      setCarregando(false);
+      return;
+    }
+
+    (async () => {
       try {
-        const res = await fetch(`http://escola-saude-api.onrender.com/api/turmas/${turmaId}/inscritos`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-
-        if (!res.ok) throw new Error("Erro na resposta do servidor");
-
-        const data = await res.json();
-        setInscritos(data);
+        setCarregando(true);
+        const data = await apiGet(`/api/turmas/${turmaId}/inscritos`);
+        setInscritos(Array.isArray(data) ? data : []);
+        setErro("");
       } catch (e) {
+        console.error(e);
         toast.error("❌ Erro ao carregar inscritos.");
         setErro("Erro ao carregar inscritos.");
       } finally {
         setCarregando(false);
       }
-    };
-
-    carregarInscritos();
-  }, [token, turmaId, navigate]);
+    })();
+  }, [turmaId, navigate]);
 
   const registrarPresenca = async (usuario_id) => {
-    const hoje = new Date().toISOString().split("T")[0];
+    const hojeISO = new Date().toISOString().split("T")[0];
 
     try {
-      const res = await fetch(`http://escola-saude-api.onrender.com/api/presencas`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          turma_id: turmaId,
-          usuario_id,
-          data: hoje,
-        }),
+      await apiPost(`/api/presencas/confirmar-simples`, {
+        turma_id: Number(turmaId),
+        usuario_id,
+        data_presenca: hojeISO, // 🔒 payload padronizado
       });
 
-      if (res.ok) {
-        toast.success("✅ Presença registrada.");
-        // Atualiza lista para refletir nova presença
-        setInscritos((prev) =>
-          prev.map((i) =>
-            i.usuario_id === usuario_id
-              ? { ...i, data_presenca: [...(i.data_presenca || []), hoje] }
-              : i
-          )
-        );
-      } else {
-        toast.warning("⚠️ Presença já registrada ou erro.");
-      }
-    } catch {
-      toast.error("❌ Erro ao registrar presença.");
+      toast.success("✅ Presença registrada.");
+      // Atualiza a lista localmente
+      setInscritos((prev) =>
+        prev.map((i) => {
+          if (i.usuario_id !== usuario_id) return i;
+          const lista = Array.isArray(i.data_presenca) ? i.data_presenca : [];
+          if (lista.includes(hojeISO)) return i;
+          return { ...i, data_presenca: [...lista, hojeISO] };
+        })
+      );
+    } catch (e) {
+      console.error(e);
+      toast.warning("⚠️ Presença já registrada ou erro no servidor.");
     }
   };
 
@@ -90,9 +87,11 @@ export default function PresencaManual() {
       ) : (
         <ul className="space-y-2">
           {inscritos.map((inscrito) => {
-            const hoje = new Date().toISOString().split("T")[0];
-            const presencas = inscrito.data_presenca || [];
-            const presenteHoje = presencas.includes(hoje);
+            const hojeISO = new Date().toISOString().split("T")[0];
+            const presencas = Array.isArray(inscrito.data_presenca)
+              ? inscrito.data_presenca
+              : [];
+            const presenteHoje = presencas.includes(hojeISO);
 
             return (
               <li
@@ -101,7 +100,7 @@ export default function PresencaManual() {
               >
                 <div className="flex flex-col text-black dark:text-white">
                   <span className="font-medium">
-                    {inscrito.nome} ({inscrito.cpf})
+                    {inscrito.nome} {inscrito.cpf ? `(${inscrito.cpf})` : ""}
                   </span>
                   <span className="text-sm text-gray-600 dark:text-gray-300">
                     {presenteHoje ? "✅ Presente hoje" : "❌ Ausente hoje"}

@@ -4,11 +4,11 @@ import { toast } from "react-toastify";
 import { motion } from "framer-motion";
 import Breadcrumbs from "../components/Breadcrumbs";
 import BotaoPrimario from "../components/BotaoPrimario";
+import { apiGet, apiPut } from "../services/api"; // ✅ serviço centralizado
 
 export default function EditarUsuario() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const token = localStorage.getItem("token");
 
   const [usuario, setUsuario] = useState(null);
   const [erro, setErro] = useState("");
@@ -16,25 +16,30 @@ export default function EditarUsuario() {
   const nomeUsuario = localStorage.getItem("nome") || "";
 
   useEffect(() => {
-    fetch(`http://escola-saude-api.onrender.com/api/usuarios/${id}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(res => res.ok ? res.json() : Promise.reject())
-      .then(setUsuario)
-      .catch(() => setErro("Erro ao carregar dados do usuário."));
-  }, [id, token]);
+    (async () => {
+      try {
+        const data = await apiGet(`/api/usuarios/${id}`);
+        // garante array no perfil
+        const perfil = Array.isArray(data.perfil)
+          ? data.perfil
+          : (typeof data.perfil === "string" ? data.perfil.split(",").map(p => p.trim()) : []);
+        setUsuario({ ...data, perfil });
+      } catch {
+        setErro("Erro ao carregar dados do usuário.");
+      }
+    })();
+  }, [id]);
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
-    if (type === "checkbox") {
-      setUsuario(prev => ({ ...prev, [name]: checked }));
-    } else {
-      setUsuario(prev => ({ ...prev, [name]: value }));
-    }
+    setUsuario((prev) => ({
+      ...prev,
+      [name]: type === "checkbox" ? checked : value,
+    }));
   };
 
   const handlePerfilChange = (e) => {
-    const value = Array.from(e.target.selectedOptions, (option) => option.value);
+    const value = Array.from(e.target.selectedOptions, (o) => o.value);
     setUsuario((prev) => ({ ...prev, perfil: value }));
   };
 
@@ -44,17 +49,7 @@ export default function EditarUsuario() {
     setErro("");
 
     try {
-      const res = await fetch(`http://escola-saude-api.onrender.com/api/usuarios/${id}`, {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(usuario),
-      });
-
-      if (!res.ok) throw new Error();
-
+      await apiPut(`/api/usuarios/${id}`, usuario);
       toast.success("Usuário atualizado com sucesso!");
       setTimeout(() => navigate("/administrador"), 900);
     } catch {
@@ -141,7 +136,7 @@ export default function EditarUsuario() {
             <input
               type="checkbox"
               name="ativo"
-              checked={usuario.ativo || false}
+              checked={!!usuario.ativo}
               onChange={handleChange}
               id="ativo"
             />

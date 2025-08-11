@@ -1,8 +1,10 @@
+// 📁 src/pages/DashboardAnalitico.jsx
 import { useEffect, useState } from "react";
 import { Bar, Pie, Line } from "react-chartjs-2";
 import Skeleton from "react-loading-skeleton";
 import { toast } from "react-toastify";
 import Breadcrumbs from "../components/Breadcrumbs";
+import { apiGet } from "../services/api";
 
 export default function DashboardAnalitico() {
   const [carregando, setCarregando] = useState(true);
@@ -13,15 +15,17 @@ export default function DashboardAnalitico() {
     async function load() {
       setCarregando(true);
       try {
-        const token = localStorage.getItem("token");
-        const query = new URLSearchParams(filtros).toString();
-        const res = await fetch(`/api/dashboard-analitico?${query}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!res.ok) throw new Error("Erro ao carregar dashboard");
-        setDados(await res.json());
+        const query = new URLSearchParams(
+          Object.fromEntries(
+            Object.entries(filtros).filter(([, v]) => v !== "" && v != null)
+          )
+        ).toString();
+
+        const data = await apiGet(`/api/dashboard-analitico${query ? `?${query}` : ""}`);
+        setDados(data || {});
       } catch {
         toast.error("❌ Falha ao obter dados");
+        setDados({});
       } finally {
         setCarregando(false);
       }

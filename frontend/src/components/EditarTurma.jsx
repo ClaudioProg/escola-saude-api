@@ -4,11 +4,11 @@ import { toast } from "react-toastify";
 import { motion } from "framer-motion";
 import Breadcrumbs from "../components/Breadcrumbs";
 import BotaoPrimario from "../components/BotaoPrimario";
+import { apiGet, apiPut } from "../services/api"; // ✅ serviço centralizado
 
 export default function EditarTurma() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const token = localStorage.getItem("token");
   const nome = localStorage.getItem("nome") || "";
 
   const [turma, setTurma] = useState(null);
@@ -18,21 +18,15 @@ export default function EditarTurma() {
 
   useEffect(() => {
     setCarregando(true);
-    fetch(`http://escola-saude-api.onrender.com/api/turmas/${id}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(res => {
-        if (!res.ok) throw new Error();
-        return res.json();
-      })
+    apiGet(`/api/turmas/${id}`)
       .then(setTurma)
       .catch(() => setErro("Erro ao carregar dados da turma."))
       .finally(() => setCarregando(false));
-  }, [id, token]);
+  }, [id]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setTurma(prev => ({ ...prev, [name]: value }));
+    setTurma((prev) => ({ ...prev, [name]: value }));
   };
 
   const handleSubmit = async (e) => {
@@ -40,17 +34,7 @@ export default function EditarTurma() {
     setSalvando(true);
     setErro("");
     try {
-      const res = await fetch(`http://escola-saude-api.onrender.com/api/turmas/${id}`, {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(turma),
-      });
-
-      if (!res.ok) throw new Error();
-
+      await apiPut(`/api/turmas/${id}`, turma);
       toast.success("✅ Turma atualizada com sucesso!");
       setTimeout(() => navigate("/administrador"), 1000);
     } catch {
@@ -75,7 +59,7 @@ export default function EditarTurma() {
   }
 
   if (!turma) {
-    return <p className="p-4 text-center text-red-500">Erro ao carregar turma.</p>;
+    return <p className="p-4 text-center text-red-500">{erro || "Erro ao carregar turma."}</p>;
   }
 
   return (
@@ -107,7 +91,7 @@ export default function EditarTurma() {
               id="nome"
               type="text"
               name="nome"
-              value={turma.nome}
+              value={turma.nome ?? ""}
               onChange={handleChange}
               placeholder="Nome da Turma"
               className="w-full border px-3 py-2 rounded bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-400"
@@ -123,7 +107,7 @@ export default function EditarTurma() {
               id="data_inicio"
               type="date"
               name="data_inicio"
-              value={turma.data_inicio?.slice(0, 10)}
+              value={turma.data_inicio?.slice(0, 10) ?? ""}
               onChange={handleChange}
               className="w-full border px-3 py-2 rounded bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-400"
               required
@@ -138,7 +122,7 @@ export default function EditarTurma() {
               id="data_fim"
               type="date"
               name="data_fim"
-              value={turma.data_fim?.slice(0, 10)}
+              value={turma.data_fim?.slice(0, 10) ?? ""}
               onChange={handleChange}
               className="w-full border px-3 py-2 rounded bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-400"
               required
@@ -153,7 +137,7 @@ export default function EditarTurma() {
               id="vagas_total"
               type="number"
               name="vagas_total"
-              value={turma.vagas_total}
+              value={turma.vagas_total ?? ""}
               onChange={handleChange}
               placeholder="Total de Vagas"
               className="w-full border px-3 py-2 rounded bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-400"

@@ -1,26 +1,22 @@
 // 📁 src/pages/DashboardInstrutor.jsx
 import { useEffect, useState } from "react";
-import { useNavigate, Navigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
 import TurmasInstrutor from "../components/TurmasInstrutor";
 import Breadcrumbs from "../components/Breadcrumbs";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import ErroCarregamento from "../components/ErroCarregamento";
 import ModalAssinatura from "../components/ModalAssinatura";
-import Notificacoes from "../components/Notificacoes";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import usePerfilPermitidos from "../hooks/usePerfilPermitidos";
 import { QRCodeCanvas } from "qrcode.react";
-import { formatarCPF } from "../utils/data";
-import { formatarDataBrasileira } from "../utils/data";
+import { formatarCPF, formatarDataBrasileira } from "../utils/data";
+import { apiGet } from "../services/api"; // ✅ centralizado
 
 export default function DashboardInstrutor() {
   const navigate = useNavigate();
-  const token = localStorage.getItem("token") || "";
   const usuario = JSON.parse(localStorage.getItem("usuario") || "{}");
   const nome = usuario?.nome || "";
-  const { temAcesso, carregando: carregandoPermissao } = usePerfilPermitidos(["instrutor", "administrador"]);
 
   const [turmas, setTurmas] = useState([]);
   const [erro, setErro] = useState("");
@@ -34,59 +30,49 @@ export default function DashboardInstrutor() {
   const [assinatura, setAssinatura] = useState(null);
   const [presencasPorTurma, setPresencasPorTurma] = useState({});
 
-  // ✅ MOVIDO PARA CIMA — antes do useEffect
-const carregarPresencas = async (turmaIdRaw) => {
-  const turmaId = parseInt(turmaIdRaw);
-  if (!turmaId || isNaN(turmaId)) return;
-  try {
-    const res = await fetch(`http://escola-saude-api.onrender.com/api/relatorio-presencas/turma/${turmaId}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const data = await res.json();
-    setPresencasPorTurma((prev) => ({ ...prev, [turmaId]: data }));
-  } catch (err) {
-    toast.error("Erro ao carregar presenças da turma.");
-  }
-};
-  useEffect(() => {
-    if (!token) {
-      toast.error("⚠️ Sessão expirada. Faça login novamente.");
-      navigate("/login");
-      return;
+  // 🔄 Presenças (usa apiGet e caminho relativo)
+  const carregarPresencas = async (turmaIdRaw) => {
+    const turmaId = parseInt(turmaIdRaw);
+    if (!turmaId || isNaN(turmaId)) return;
+    try {
+      const data = await apiGet(`/api/relatorio-presencas/turma/${turmaId}`, { on403: "silent" });
+      setPresencasPorTurma((prev) => ({ ...prev, [turmaId]: data }));
+    } catch {
+      toast.error("Erro ao carregar presenças da turma.");
     }
+  };
 
-    fetch("http://escola-saude-api.onrender.com/api/agenda/instrutor", {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(async (res) => {
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.erro || "Erro ao carregar suas turmas.");
-        }
-        return res.json();
-      })
-      .then((data) => {
-        const ordenadas = data.sort((a, b) => new Date(b.data_inicio) - new Date(a.data_inicio));
+  useEffect(() => {
+    // ❌ Removido: checagem manual de token + navigate('/login')
+    // 🔐 O PrivateRoute já cuida de autenticação/permissão.
+
+    (async () => {
+      try {
+        const data = await apiGet("/api/agenda/instrutor", { on403: "silent" });
+        const ordenadas = (Array.isArray(data) ? data : []).sort(
+          (a, b) => new Date(b.data_inicio) - new Date(a.data_inicio)
+        );
         setTurmas(ordenadas);
         setErro("");
 
         ordenadas.forEach((turma) => {
-          if (turma?.id) carregarPresencas(turma.id); // ✅ Agora a função já foi declarada
+          if (turma?.id) carregarPresencas(turma.id);
         });
-      })
-      .catch((err) => {
-        setErro(err.message);
-        toast.error(`❌ ${err.message}`);
-      })
-      .finally(() => setCarregando(false));
+      } catch (err) {
+        setErro(err?.message || "Erro ao carregar suas turmas.");
+        toast.error(`❌ ${err?.message || "Erro ao carregar suas turmas."}`);
+      } finally {
+        setCarregando(false);
+      }
 
-    fetch("http://escola-saude-api.onrender.com/api/assinatura", {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((res) => res.json())
-      .then((data) => setAssinatura(data.assinatura || null))
-      .catch(() => setAssinatura(null));
-  }, [token]);
+      try {
+        const a = await apiGet("/api/assinatura", { on403: "silent" });
+        setAssinatura(a?.assinatura || null);
+      } catch {
+        setAssinatura(null);
+      }
+    })();
+  }, []); // eslint-disable-line
 
   const carregarInscritos = async (turmaIdRaw) => {
     const turmaId = parseInt(turmaIdRaw);
@@ -94,12 +80,8 @@ const carregarPresencas = async (turmaIdRaw) => {
       toast.error("Erro: Turma inválida.");
       return;
     }
-
     try {
-      const res = await fetch(`http://escola-saude-api.onrender.com/api/inscricoes/turma/${turmaId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
+      const data = await apiGet(`/api/inscricoes/turma/${turmaId}`, { on403: "silent" });
       setInscritosPorTurma((prev) => ({ ...prev, [turmaId]: data }));
     } catch {
       toast.error("Erro ao carregar inscritos.");
@@ -112,49 +94,42 @@ const carregarPresencas = async (turmaIdRaw) => {
       toast.error("Erro: Turma inválida.");
       return;
     }
-
     if (avaliacoesPorTurma[turmaId]) return;
-
     try {
-      const res = await fetch(`http://escola-saude-api.onrender.com/api/avaliacoes/turma/${turmaId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
+      const data = await apiGet(`/api/avaliacoes/turma/${turmaId}`, { on403: "silent" });
       setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: data }));
     } catch {
       toast.error("Erro ao carregar avaliações.");
     }
   };
 
+  // 🔎 Filtro por status
   const hoje = new Date();
-hoje.setHours(0, 0, 0, 0);
+  hoje.setHours(0, 0, 0, 0);
 
-const turmasFiltradas = turmas.filter((t) => {
-  const inicio = new Date(t.data_inicio);
-  const fim = new Date(t.data_fim);
-  inicio.setHours(0, 0, 0, 0);
-  fim.setHours(0, 0, 0, 0);
+  const turmasFiltradas = turmas.filter((t) => {
+    const inicio = new Date(t.data_inicio);
+    const fim = new Date(t.data_fim);
+    inicio.setHours(0, 0, 0, 0);
+    fim.setHours(0, 0, 0, 0);
 
-  if (filtro === "programados") return inicio > hoje;
-  if (filtro === "emAndamento") return inicio <= hoje && fim >= hoje;
-  if (filtro === "realizados") return fim < hoje;
-  return true; // filtro === "todos"
-});
+    if (filtro === "programados") return inicio > hoje;
+    if (filtro === "emAndamento") return inicio <= hoje && fim >= hoje;
+    if (filtro === "realizados") return fim < hoje;
+    return true; // todos
+  });
 
-  if (carregandoPermissao) return <CarregandoSkeleton />;
-  if (!temAcesso) return <Navigate to="/login" replace />;
+  // ❌ Removido: usePerfilPermitidos + <Navigate to="/login" />
+  //    Se quiser, mostre um aviso na própria tela quando o backend retornar 403.
 
+  // 📄 Relatórios
   const gerarRelatorioPDF = async (turmaId) => {
     try {
-      const res = await fetch(`http://escola-saude-api.onrender.com/api/relatorio-presencas/turma/${turmaId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const alunos = await res.json();
-
+      const data = await apiGet(`/api/relatorio-presencas/turma/${turmaId}`, { on403: "silent" });
+      const alunos = Array.isArray(data) ? data : (Array.isArray(data?.lista) ? data.lista : []);
       const doc = new jsPDF();
       doc.setFontSize(16);
       doc.text("Relatório de Presença por Turma", 14, 20);
-
       autoTable(doc, {
         startY: 30,
         head: [["Nome", "CPF", "Presença"]],
@@ -164,7 +139,6 @@ const turmasFiltradas = turmas.filter((t) => {
           aluno.presente ? "✔️ Sim" : "❌ Não",
         ]),
       });
-
       doc.save(`relatorio_turma_${turmaId}.pdf`);
       toast.success("✅ PDF de presença gerado!");
     } catch {
@@ -175,61 +149,52 @@ const turmasFiltradas = turmas.filter((t) => {
   const gerarListaAssinaturaPDF = async (turmaId) => {
     const turma = turmas.find((t) => t.id === turmaId);
     let alunos = inscritosPorTurma[turmaId];
-  
+
     if (!alunos) {
       try {
-        const res = await fetch(`http://escola-saude-api.onrender.com/api/inscricoes/turma/${turmaId}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        alunos = await res.json();
+        alunos = await apiGet(`/api/inscricoes/turma/${turmaId}`, { on403: "silent" });
       } catch {
         toast.error("❌ Erro ao carregar inscritos.");
         return;
       }
     }
-  
-    if (!turma || !alunos.length) {
+
+    if (!turma || !alunos?.length) {
       toast.warning("⚠️ Nenhum inscrito encontrado para esta turma.");
       return;
     }
-  
-    // 🧠 Função auxiliar para gerar intervalo de datas
+
     const gerarIntervaloDeDatas = (inicio, fim) => {
       const datas = [];
-      const dataAtual = new Date(inicio);
-      const dataFinal = new Date(fim);
-  
-      while (dataAtual <= dataFinal) {
-        datas.push(new Date(dataAtual));
-        dataAtual.setDate(dataAtual.getDate() + 1);
+      const d = new Date(inicio);
+      const f = new Date(fim);
+      while (d <= f) {
+        datas.push(new Date(d));
+        d.setDate(d.getDate() + 1);
       }
-  
       return datas;
     };
-  
-    // 🗓️ Gera as datas com base em data_inicio e data_fim da turma
+
     const datas = gerarIntervaloDeDatas(turma.data_inicio, turma.data_fim);
-  
     const doc = new jsPDF();
-  
+
     datas.forEach((data, index) => {
       if (index > 0) doc.addPage();
-  
       const dataFormatada = formatarDataBrasileira(data);
       const horaInicio = turma.horario_inicio?.slice(0, 5) || "";
       const horaFim = turma.horario_fim?.slice(0, 5) || "";
-  
+
       doc.setFontSize(14);
       doc.text(`Lista de Assinatura - ${turma.evento?.nome} - ${turma.nome}`, 14, 20);
       doc.text(`Data: ${dataFormatada} | Horário: ${horaInicio} às ${horaFim}`, 14, 28);
-  
+
       autoTable(doc, {
         startY: 30,
         head: [["Nome", "CPF", "Assinatura"]],
         body: alunos.map((a) => [a.nome, formatarCPF(a.cpf), "______________________"]),
       });
     });
-  
+
     doc.save(`lista_assinatura_turma_${turmaId}.pdf`);
     toast.success("📄 Lista de assinatura gerada!");
   };
@@ -241,52 +206,46 @@ const turmasFiltradas = turmas.filter((t) => {
         toast.error("Turma não encontrada.");
         return;
       }
-  
       const url = `https://escoladesaude.santos.br/presenca/${turmaId}`;
-  
-      // 👉 Cria um canvas temporário com QRCodeCanvas
+
       const canvasContainer = document.createElement("div");
-      const qrCodeElement = (
-        <QRCodeCanvas value={url} size={300} />
-      );
-      import("react-dom").then((ReactDOM) => {
-        ReactDOM.render(qrCodeElement, canvasContainer);
-  
-        setTimeout(() => {
-          const canvas = canvasContainer.querySelector("canvas");
-          const dataUrl = canvas?.toDataURL("image/png");
-  
-          if (!dataUrl) {
-            toast.error("Erro ao gerar imagem do QR Code.");
-            return;
-          }
-  
-          const doc = new jsPDF({ orientation: "landscape" });
-          doc.setFontSize(24);
-          doc.setFont("helvetica", "bold");
-          doc.text(nomeEvento, 148, 30, { align: "center" });
-  
-          const nomeInstrutor = usuario?.nome || "Instrutor";
-          doc.setFontSize(16);
-          doc.setFont("helvetica", "normal");
-          doc.text(`Instrutor: ${nomeInstrutor}`, 148, 40, { align: "center" });
-  
-          doc.addImage(dataUrl, "PNG", 98, 50, 100, 100);
-          doc.setFontSize(12);
-          doc.setTextColor(60);
-          doc.text("Escaneie este QR Code para confirmar sua presença", 148, 160, { align: "center" });
-  
-          doc.save(`qr_presenca_turma_${turmaId}.pdf`);
-          toast.success("🔳 QR Code gerado!");
-        }, 500);
-      });
+      const qrCodeElement = (<QRCodeCanvas value={url} size={300} />);
+      const ReactDOM = await import("react-dom");
+      ReactDOM.render(qrCodeElement, canvasContainer);
+
+      setTimeout(() => {
+        const canvas = canvasContainer.querySelector("canvas");
+        const dataUrl = canvas?.toDataURL("image/png");
+        if (!dataUrl) {
+          toast.error("Erro ao gerar imagem do QR Code.");
+          return;
+        }
+
+        const doc = new jsPDF({ orientation: "landscape" });
+        doc.setFontSize(24);
+        doc.setFont("helvetica", "bold");
+        doc.text(nomeEvento, 148, 30, { align: "center" });
+
+        const nomeInstrutor = usuario?.nome || "Instrutor";
+        doc.setFontSize(16);
+        doc.setFont("helvetica", "normal");
+        doc.text(`Instrutor: ${nomeInstrutor}`, 148, 40, { align: "center" });
+
+        doc.addImage(dataUrl, "PNG", 98, 50, 100, 100);
+        doc.setFontSize(12);
+        doc.setTextColor(60);
+        doc.text("Escaneie este QR Code para confirmar sua presença", 148, 160, { align: "center" });
+
+        doc.save(`qr_presenca_turma_${turmaId}.pdf`);
+        toast.success("🔳 QR Code gerado!");
+      }, 500);
     } catch (err) {
       console.error("Erro ao gerar QR Code:", err);
       toast.error("Erro ao gerar QR Code.");
     }
   };
 
-   return (
+  return (
     <div className="min-h-screen bg-gelo dark:bg-zinc-900 px-2 sm:px-4 py-6">
       <Breadcrumbs />
       <div className="flex justify-between items-center bg-lousa text-white px-4 py-2 rounded-xl shadow mb-6">
@@ -312,77 +271,45 @@ const turmasFiltradas = turmas.filter((t) => {
           </div>
         )}
 
-<div className="flex justify-center gap-4 mb-6 flex-wrap">
-  <button
-    onClick={() => setFiltro("todos")}
-    className={`px-4 py-1 rounded-full text-sm font-medium ${
-      filtro === "todos"
-        ? "bg-[#1b4332] text-white"
-        : "bg-gray-200 dark:bg-gray-700 dark:text-white"
-    }`}
-  >
-    Todos
-  </button>
-  <button
-    onClick={() => setFiltro("programados")}
-    className={`px-4 py-1 rounded-full text-sm font-medium ${
-      filtro === "programados"
-        ? "bg-[#1b4332] text-white"
-        : "bg-gray-200 dark:bg-gray-700 dark:text-white"
-    }`}
-  >
-    Programados
-  </button>
-  <button
-    onClick={() => setFiltro("emAndamento")}
-    className={`px-4 py-1 rounded-full text-sm font-medium ${
-      filtro === "emAndamento"
-        ? "bg-[#1b4332] text-white"
-        : "bg-gray-200 dark:bg-gray-700 dark:text-white"
-    }`}
-  >
-    Em andamento
-  </button>
-  <button
-    onClick={() => setFiltro("realizados")}
-    className={`px-4 py-1 rounded-full text-sm font-medium ${
-      filtro === "realizados"
-        ? "bg-[#1b4332] text-white"
-        : "bg-gray-200 dark:bg-gray-700 dark:text-white"
-    }`}
-  >
-    Realizados
-  </button>
-</div>
+        <div className="flex justify-center gap-4 mb-6 flex-wrap">
+          {[
+            ["todos", "Todos"],
+            ["programados", "Programados"],
+            ["emAndamento", "Em andamento"],
+            ["realizados", "Realizados"],
+          ].map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setFiltro(key)}
+              className={`px-4 py-1 rounded-full text-sm font-medium ${
+                filtro === key ? "bg-[#1b4332] text-white" : "bg-gray-200 dark:bg-gray-700 dark:text-white"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
 
-<TurmasInstrutor
-  turmas={turmasFiltradas}
-  inscritosPorTurma={inscritosPorTurma}
-  avaliacoesPorTurma={avaliacoesPorTurma}
-  presencasPorTurma={presencasPorTurma}
-  onVerInscritos={carregarInscritos}
-  onVerAvaliacoes={carregarAvaliacoes}
-  carregarPresencas={carregarPresencas} // ✅ Aqui agora está correto
-  onExportarListaAssinaturaPDF={gerarListaAssinaturaPDF}
-  onExportarQrCodePDF={gerarQrCodePresencaPDF}
-  token={token}
-  carregando={carregando}
-  turmaExpandidaInscritos={turmaExpandidaInscritos}
-  setTurmaExpandidaInscritos={setTurmaExpandidaInscritos}
-  turmaExpandidaAvaliacoes={turmaExpandidaAvaliacoes}
-  setTurmaExpandidaAvaliacoes={setTurmaExpandidaAvaliacoes}
-/>
-
-
+        <TurmasInstrutor
+          turmas={turmasFiltradas}
+          inscritosPorTurma={inscritosPorTurma}
+          avaliacoesPorTurma={avaliacoesPorTurma}
+          presencasPorTurma={presencasPorTurma}
+          onVerInscritos={carregarInscritos}
+          onVerAvaliacoes={carregarAvaliacoes}
+          carregarPresencas={carregarPresencas}
+          onExportarListaAssinaturaPDF={gerarListaAssinaturaPDF}
+          onExportarQrCodePDF={gerarQrCodePresencaPDF}
+          carregando={carregando}
+          turmaExpandidaInscritos={turmaExpandidaInscritos}
+          setTurmaExpandidaInscritos={setTurmaExpandidaInscritos}
+          turmaExpandidaAvaliacoes={turmaExpandidaAvaliacoes}
+          setTurmaExpandidaAvaliacoes={setTurmaExpandidaAvaliacoes}
+        />
 
         <ModalAssinatura
-          aberta={modalAssinaturaAberto}
-          aoFechar={() => setModalAssinaturaAberto(false)}
-          aoSalvar={() => {
-            toast.success("✍️ Assinatura atualizada com sucesso!");
-            setAssinatura(true);
-            setModalAssinaturaAberto(false);
-          }}
+          isOpen={modalAssinaturaAberto}
+          onClose={() => setModalAssinaturaAberto(false)}
         />
       </div>
     </div>

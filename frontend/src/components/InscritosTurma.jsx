@@ -7,10 +7,10 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import BotaoPrimario from "../components/BotaoPrimario";
 import CabecalhoPainel from "../components/CabecalhoPainel";
+import { apiGet } from "../services/api"; // ✅ serviço centralizado
 
 export default function InscritosTurma() {
   const { id } = useParams(); // ID da turma
-  const token = localStorage.getItem("token");
   const [inscritos, setInscritos] = useState([]);
   const [turma, setTurma] = useState(null);
   const [carregando, setCarregando] = useState(true);
@@ -27,24 +27,13 @@ export default function InscritosTurma() {
     async function fetchInscritos() {
       setCarregando(true);
       try {
-        const [turmaRes, inscritosRes] = await Promise.all([
-          fetch(`http://escola-saude-api.onrender.com/api/turmas/${id}`, {
-            headers: { Authorization: `Bearer ${token}` },
-          }),
-          fetch(`http://escola-saude-api.onrender.com/api/inscricoes/turma/${id}`, {
-            headers: { Authorization: `Bearer ${token}` },
-          }),
+        const [turmaData, inscritosData] = await Promise.all([
+          apiGet(`/api/turmas/${id}`),
+          apiGet(`/api/inscricoes/turma/${id}`),
         ]);
 
-        if (!turmaRes.ok || !inscritosRes.ok) {
-          throw new Error("Erro ao buscar dados.");
-        }
-
-        const turmaData = await turmaRes.json();
-        const inscritosData = await inscritosRes.json();
-
         setTurma(turmaData);
-        setInscritos(inscritosData);
+        setInscritos(Array.isArray(inscritosData) ? inscritosData : []);
       } catch (err) {
         console.error("❌ Erro ao buscar dados da turma:", err);
         setErro("Erro ao carregar inscritos ou turma.");
@@ -55,10 +44,10 @@ export default function InscritosTurma() {
     }
 
     fetchInscritos();
-  }, [id, token]);
+  }, [id]);
 
-  const formatarCPF = (cpf) =>
-    cpf.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, "$1.$2.$3-$4");
+  const formatarCPF = (cpf = "") =>
+    cpf.replace?.(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, "$1.$2.$3-$4") || cpf;
 
   const exportarPDF = () => {
     if (!turma) return;
@@ -69,11 +58,9 @@ export default function InscritosTurma() {
     autoTable(doc, {
       startY: 30,
       head: [["Nome", "CPF", "E-mail"]],
-      body: inscritos.map((i) => [
-        i.nome,
-        formatarCPF(i.cpf),
-        i.email,
-      ]),
+      body: inscritos.map((i) => [i.nome, formatarCPF(i.cpf), i.email]),
+      styles: { fontSize: 10 },
+      headStyles: { fillColor: [27, 67, 50] },
     });
 
     doc.save(`inscritos_turma_${turma.id}.pdf`);

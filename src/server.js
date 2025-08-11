@@ -31,7 +31,8 @@ const db = require('./db');
 const allowedOrigins = [
   'https://escola-saude-api-frontend.vercel.app',
   'https://escoladasaude.vercel.app',
-  'http://localhost:5173'
+  'http://localhost:5173',
+  "http://127.0.0.1:5173"
 ];
 
 app.use(cors({

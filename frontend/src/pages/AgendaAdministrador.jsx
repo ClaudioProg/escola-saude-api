@@ -8,11 +8,10 @@ import { toast } from "react-toastify";
 import Breadcrumbs from "../components/Breadcrumbs";
 import EventoDetalheModal from "../components/EventoDetalheModal";
 import LegendaEventos from "../components/LegendaEventos";
-// ✅ Importe o utilitário para padronizar datas em detalhes
 import { formatarDataBrasileira } from "../utils/data";
+import { apiGet } from "../services/api"; // ✅ serviço centralizado
 
 export default function AgendaEventos() {
-  const token = localStorage.getItem("token");
   const nome = localStorage.getItem("nome") || "";
   const [events, setEvents] = useState([]);
   const [selecionado, setSelecionado] = useState(null);
@@ -20,21 +19,16 @@ export default function AgendaEventos() {
   useEffect(() => {
     async function load() {
       try {
-        const res = await fetch("/api/agenda", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!res.ok) throw new Error("Erro ao buscar agenda");
-        const data = await res.json();
-        setEvents(data);
+        const data = await apiGet("/api/agenda");
+        setEvents(Array.isArray(data) ? data : []);
       } catch (e) {
-        toast.error("❌ " + e.message);
+        toast.error("❌ Não foi possível carregar a agenda.");
       }
     }
     load();
-  }, [token]); // inclua token como dependência para garantir atualização
+  }, []);
 
   const eventosPorData = events.reduce((map, evento) => {
-    // Normaliza para garantir padronização UTC (sem fuso)
     const dia = format(new Date(evento.data_inicio), "yyyy-MM-dd");
     if (!map[dia]) map[dia] = [];
     map[dia].push(evento);
@@ -81,7 +75,7 @@ export default function AgendaEventos() {
                           : "")
                       }
                       onClick={() => setSelecionado(ev)}
-                      className={`w-2 h-2 rounded-full cursor-pointer focus:outline-none focus:ring-2 focus:ring-lousa`}
+                      className="w-2 h-2 rounded-full cursor-pointer focus:outline-none focus:ring-2 focus:ring-lousa"
                       aria-label={`Evento: ${ev.titulo}`}
                       style={{
                         backgroundColor:

@@ -1,6 +1,7 @@
 import Modal from "react-modal";
 import { useState } from "react";
 import { toast } from "react-toastify";
+import { apiPost } from "../services/api"; // ✅ usa serviço centralizado
 
 const opcoes = ["Ótimo", "Bom", "Regular", "Ruim", "Péssimo"];
 
@@ -55,19 +56,14 @@ export default function ModalAvaliacaoFormulario({ isOpen, onClose, evento, turm
   }
 
   async function enviarAvaliacao() {
-    const token = localStorage.getItem("token");
     const usuario = JSON.parse(localStorage.getItem("usuario") || "{}");
-
     if (!usuario?.id) {
       toast.error("Usuário não identificado.");
       return;
     }
 
     const faltando = obrigatorios.filter((campo) => {
-      if (
-        campo === "exposicao_trabalhos" &&
-        !["congresso", "simpósio"].includes(tipo)
-      ) return false;
+      if (campo === "exposicao_trabalhos" && !["congresso", "simpósio"].includes(tipo)) return false;
       return !notas[campo];
     });
 
@@ -78,28 +74,18 @@ export default function ModalAvaliacaoFormulario({ isOpen, onClose, evento, turm
 
     try {
       setEnviando(true);
-      const res = await fetch("http://escola-saude-api.onrender.com/api/avaliacoes", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          evento_id: evento.id,
-          turma_id,
-          ...notas,
-          gostou_mais,
-          sugestoes_melhoria,
-          comentarios_finais,
-        }),
+      await apiPost("/api/avaliacoes", {
+        evento_id: evento.id,
+        turma_id,
+        ...notas,
+        gostou_mais,
+        sugestoes_melhoria,
+        comentarios_finais,
       });
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.erro || "Erro ao enviar avaliação");
-
       toast.success("✅ Avaliação enviada com sucesso!");
-      onClose();
-      if (recarregar) recarregar();
+      onClose?.();
+      recarregar?.();
     } catch (err) {
       console.error(err);
       toast.error("❌ Erro ao enviar avaliação.");
@@ -115,16 +101,17 @@ export default function ModalAvaliacaoFormulario({ isOpen, onClose, evento, turm
       ariaHideApp={false}
       className="modal w-[95%] max-w-2xl max-h-[90vh] overflow-y-auto p-6 bg-white dark:bg-gray-900 rounded-lg shadow-lg"
       overlayClassName="overlay fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
-      >
+    >
       <h2 className="text-2xl font-bold text-lousa dark:text-green-100 mb-4">
-        ✍️ Avaliar: {evento.nome}
+        ✍️ Avaliar: {evento.nome || evento.titulo}
       </h2>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-[60vh] overflow-y-auto pr-2">
         {camposNotas.map(({ chave, rotulo }) => (
           <div key={chave}>
             <label className="block font-medium text-gray-700 dark:text-gray-300 mb-1">
-              {rotulo}{obrigatorios.includes(chave) &&
+              {rotulo}
+              {obrigatorios.includes(chave) &&
                 (chave !== "exposicao_trabalhos" || ["congresso", "simpósio"].includes(tipo))
                 ? " *" : ""}
             </label>

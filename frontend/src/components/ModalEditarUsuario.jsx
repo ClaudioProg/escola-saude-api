@@ -1,14 +1,22 @@
 // 📁 src/components/ModalEditarUsuario.jsx
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Modal from "react-modal";
 import { toast } from "react-toastify";
 import { User, Mail, BadgeAsterisk } from "lucide-react";
+import { apiPut } from "../services/api"; // ✅ serviço centralizado
 
 export default function ModalEditarUsuario({ isOpen, onClose, usuario, onAtualizar }) {
-  const [nome, setNome] = useState(usuario.nome || "");
-  const [email, setEmail] = useState(usuario.email || "");
-  const [cpf, setCpf] = useState(usuario.cpf || "");
+  const [nome, setNome] = useState(usuario?.nome || "");
+  const [email, setEmail] = useState(usuario?.email || "");
+  const [cpf, setCpf] = useState(usuario?.cpf || "");
   const [salvando, setSalvando] = useState(false);
+
+  // 🔄 Sincroniza quando abrir ou quando 'usuario' mudar
+  useEffect(() => {
+    setNome(usuario?.nome || "");
+    setEmail(usuario?.email || "");
+    setCpf(usuario?.cpf || "");
+  }, [usuario, isOpen]);
 
   const handleSalvar = async () => {
     if (!nome || !email || !cpf) {
@@ -18,22 +26,10 @@ export default function ModalEditarUsuario({ isOpen, onClose, usuario, onAtualiz
 
     try {
       setSalvando(true);
-      const token = localStorage.getItem("token");
-
-      const res = await fetch(`http://escola-saude-api.onrender.com/api/usuarios/${usuario.id}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ nome, email, cpf }),
-      });
-
-      if (!res.ok) throw new Error("Erro ao salvar alterações");
-
+      await apiPut(`/api/usuarios/${usuario.id}`, { nome, email, cpf });
       toast.success("✅ Usuário atualizado com sucesso!");
-      onAtualizar(); // Atualiza a lista pai
-      onClose();
+      onAtualizar?.(); // Atualiza a lista pai
+      onClose?.();
     } catch (err) {
       toast.error("❌ Erro ao atualizar o usuário.");
     } finally {
@@ -50,9 +46,7 @@ export default function ModalEditarUsuario({ isOpen, onClose, usuario, onAtualiz
       overlayClassName="overlay"
     >
       <div className="space-y-4">
-        <h2 className="text-xl font-bold text-lousa dark:text-white">
-          ✏️ Editar Usuário
-        </h2>
+        <h2 className="text-xl font-bold text-lousa dark:text-white">✏️ Editar Usuário</h2>
 
         <div className="relative">
           <User className="absolute left-3 top-3 text-gray-500" size={18} />
@@ -88,10 +82,7 @@ export default function ModalEditarUsuario({ isOpen, onClose, usuario, onAtualiz
         </div>
 
         <div className="flex justify-end gap-2 pt-4">
-          <button
-            onClick={onClose}
-            className="bg-gray-300 hover:bg-gray-400 px-4 py-2 rounded-md"
-          >
+          <button onClick={onClose} className="bg-gray-300 hover:bg-gray-400 px-4 py-2 rounded-md">
             Cancelar
           </button>
           <button

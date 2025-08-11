@@ -1,9 +1,11 @@
+// src/pages/Avaliacao.jsx
 import { useEffect, useState } from "react";
 import { toast } from "react-toastify";
 import { motion } from "framer-motion";
 import CabecalhoPainel from "../components/CabecalhoPainel";
 import { formatarDataBrasileira } from "../utils/data";
 import ModalAvaliacaoFormulario from "../components/ModalAvaliacaoFormulario";
+import { apiGet } from "../services/api"; // ✅ serviço centralizado
 
 export default function Avaliacao() {
   const [avaliacoesPendentes, setAvaliacoesPendentes] = useState([]);
@@ -18,26 +20,15 @@ export default function Avaliacao() {
   async function carregarAvaliacoes() {
     try {
       setCarregando(true);
-      const token = localStorage.getItem("token");
       const usuario = JSON.parse(localStorage.getItem("usuario") || "{}");
 
       if (!usuario?.id) {
         toast.error("Usuário não identificado.");
-        setCarregando(false);
         return;
       }
 
-      const res = await fetch(
-        `http://escola-saude-api.onrender.com/api/avaliacoes/disponiveis/${usuario.id}`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
-      );
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.erro || "Erro ao buscar avaliações");
-
-      setAvaliacoesPendentes(data);
+      const data = await apiGet(`/api/avaliacoes/disponiveis/${usuario.id}`);
+      setAvaliacoesPendentes(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error(err);
       toast.error("❌ Erro ao carregar avaliações pendentes.");
@@ -87,7 +78,7 @@ export default function Avaliacao() {
             >
               <div>
                 <p className="font-semibold text-lousa dark:text-green-100">
-                  {a.nome_evento}
+                  {a.nome_evento || a.titulo || a.nome}
                 </p>
                 <p className="text-sm text-gray-600 dark:text-gray-400">
                   Turma #{a.turma_id} — Início:{" "}
@@ -103,7 +94,7 @@ export default function Avaliacao() {
               <button
                 className="mt-3 md:mt-0 bg-lousa dark:bg-green-600 text-white font-semibold px-4 py-2 rounded-md hover:bg-green-700 transition"
                 onClick={() => abrirModal(a)}
-                aria-label={`Avaliar evento ${a.nome_evento}, turma ${a.turma_id}`}
+                aria-label={`Avaliar evento ${a.nome_evento || a.titulo || a.nome}, turma ${a.turma_id}`}
               >
                 📋 Avaliar
               </button>

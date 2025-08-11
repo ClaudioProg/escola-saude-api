@@ -4,11 +4,11 @@ import { toast } from "react-toastify";
 import { motion } from "framer-motion";
 import Breadcrumbs from "../components/Breadcrumbs";
 import BotaoPrimario from "../components/BotaoPrimario";
+import { apiGet, apiPut } from "../services/api"; // ✅ usar serviço centralizado
 
 export default function EditarCertificado() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const token = localStorage.getItem("token");
 
   const [certificado, setCertificado] = useState(null);
   const [erro, setErro] = useState("");
@@ -16,18 +16,20 @@ export default function EditarCertificado() {
   const nomeUsuario = localStorage.getItem("nome") || "";
 
   useEffect(() => {
-    fetch(`http://escola-saude-api.onrender.com/api/certificados/${id}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(res => res.ok ? res.json() : Promise.reject())
-      .then(setCertificado)
-      .catch(() => setErro("Erro ao carregar dados do certificado."));
-  }, [id, token]);
+    (async () => {
+      try {
+        const data = await apiGet(`/api/certificados/${id}`);
+        setCertificado(data);
+      } catch {
+        setErro("Erro ao carregar dados do certificado.");
+      }
+    })();
+  }, [id]);
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
     const newValue = type === "checkbox" ? checked : value;
-    setCertificado(prev => ({ ...prev, [name]: newValue }));
+    setCertificado((prev) => ({ ...prev, [name]: newValue }));
   };
 
   const handleSubmit = async (e) => {
@@ -36,17 +38,7 @@ export default function EditarCertificado() {
     setErro("");
 
     try {
-      const res = await fetch(`http://escola-saude-api.onrender.com/api/certificados/${id}`, {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(certificado),
-      });
-
-      if (!res.ok) throw new Error();
-
+      await apiPut(`/api/certificados/${id}`, certificado);
       toast.success("Certificado atualizado com sucesso!");
       setTimeout(() => navigate("/administrador"), 900);
     } catch {
@@ -94,7 +86,7 @@ export default function EditarCertificado() {
               type="text"
               value={certificado.evento}
               readOnly
-              className="w-full px-3 py-2 rounded bg-gray-100 dark:bg-zinc-700 text-gray-800 dark:text-gray-300 border"
+              className="w-full px-3 py-2 rounded bg-gray-100 dark:bg/zinc-700 text-gray-800 dark:text-gray-300 border"
             />
           </div>
 
@@ -115,7 +107,7 @@ export default function EditarCertificado() {
             <input
               type="number"
               name="carga_horaria"
-              value={certificado.carga_horaria || ""}
+              value={certificado.carga_horaria ?? ""}
               onChange={handleChange}
               className="w-full px-3 py-2 rounded bg-white dark:bg-gray-900 border text-gray-900 dark:text-white"
               required
@@ -146,7 +138,7 @@ export default function EditarCertificado() {
             <input
               type="checkbox"
               name="emitido"
-              checked={certificado.emitido || false}
+              checked={!!certificado.emitido}
               onChange={handleChange}
               id="emitido"
             />

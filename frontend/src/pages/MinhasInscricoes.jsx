@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+// src/pages/MinhasInscricoes.jsx
+import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { gerarLinkGoogleAgenda } from "../utils/gerarLinkGoogleAgenda";
 import Skeleton from "react-loading-skeleton";
@@ -12,86 +13,81 @@ import CabecalhoPainel from "../components/CabecalhoPainel";
 import NadaEncontrado from "../components/NadaEncontrado";
 import BotaoPrimario from "../components/BotaoPrimario";
 import BotaoSecundario from "../components/BotaoSecundario";
+import { apiGet, apiDelete } from "../services/api";
 
 export default function MinhasInscricoes() {
   const [inscricoes, setInscricoes] = useState([]);
   const [erro, setErro] = useState("");
   const [carregando, setCarregando] = useState(true);
+  const [cancelandoId, setCancelandoId] = useState(null);
 
   const navigate = useNavigate();
-  const usuario = JSON.parse(localStorage.getItem("usuario"));
+
+  const usuario = useMemo(() => {
+    try {
+      return JSON.parse(localStorage.getItem("usuario")) || {};
+    } catch {
+      return {};
+    }
+  }, []);
+
   const nome = usuario?.nome || "";
-  const token = localStorage.getItem("token");
 
   useEffect(() => {
     buscarInscricoes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const buscarInscricoes = async () => {
+  async function buscarInscricoes() {
     setCarregando(true);
     try {
-      const res = await fetch("http://escola-saude-api.onrender.com/api/inscricoes/minhas", {
-        headers: { Authorization: `Bearer ${token}` },
+      const data = await apiGet("/api/inscricoes/minhas");
+      // Ordena por data/hora de término (mais próximos do futuro primeiro)
+      const ordenadas = [...data].sort((a, b) => {
+        const aEnd = new Date(`${a.data_fim}T${a.horario_fim || "23:59:59"}`).getTime();
+        const bEnd = new Date(`${b.data_fim}T${b.horario_fim || "23:59:59"}`).getTime();
+        return bEnd - aEnd;
       });
-      if (!res.ok) throw new Error("Erro ao buscar inscrições");
-      const data = await res.json();
-  
-      const inscricoesOrdenadas = data.sort((a, b) => {
-        const dataHoraA = new Date(`${a.data_fim}T${a.horario_fim || "23:59:59"}`);
-        const dataHoraB = new Date(`${b.data_fim}T${b.horario_fim || "23:59:59"}`);
-        return dataHoraB - dataHoraA;
-      });
-      setInscricoes(inscricoesOrdenadas);
+      setInscricoes(ordenadas);
       setErro("");
     } catch {
       setErro("Erro ao carregar inscrições");
-      toast.error("Erro ao carregar inscrições.");
+      toast.error("❌ Erro ao carregar inscrições.");
     } finally {
       setCarregando(false);
     }
-  };
-  
+  }
 
-  const cancelarInscricao = async (id) => {
+  async function cancelarInscricao(id) {
     if (!window.confirm("Tem certeza que deseja cancelar sua inscrição?")) return;
+    setCancelandoId(id);
     try {
-      const res = await fetch(`http://escola-saude-api.onrender.com/api/inscricoes/${id}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error("Erro ao cancelar inscrição.");
-      toast.success("Inscrição cancelada com sucesso.");
-      buscarInscricoes();
+      await apiDelete(`/api/inscricoes/${id}`);
+      toast.success("✅ Inscrição cancelada com sucesso.");
+      await buscarInscricoes();
     } catch (err) {
-      toast.error(err.message);
+      toast.error("❌ Erro ao cancelar inscrição.");
+    } finally {
+      setCancelandoId(null);
     }
-  };
+  }
 
-  const obterStatusEvento = (dataInicioISO, dataFimISO, horarioInicio, horarioFim) => {
-    const agora = new Date();
-  
+  function obterStatusEvento(dataInicioISO, dataFimISO, horarioInicio, horarioFim) {
+    // horários de fallback seguros
     const [hIni, mIni, sIni] = (horarioInicio || "00:00:00").split(":").map(Number);
-    const [hFim, mFim, sFim] = (horarioFim || "23:59:59").split(":").map(Number);
-  
+    const [hFim, mFim, sFim]   = (horarioFim || "23:59:59").split(":").map(Number);
+
     const inicio = new Date(dataInicioISO);
-    const fim = new Date(dataFimISO);
-  
-    // 🛠 Define horário manualmente
-    inicio.setHours(hIni, mIni, sIni);
-    fim.setHours(hFim, mFim, sFim);
-  
-    console.log("🚦Status:", {
-      agora,
-      inicio,
-      fim,
-      horarioInicio,
-      horarioFim
-    });
-  
+    const fim    = new Date(dataFimISO);
+    inicio.setHours(hIni ?? 0, mIni ?? 0, sIni ?? 0, 0);
+    fim.setHours(hFim ?? 23, mFim ?? 59, sFim ?? 59, 999);
+
+    const agora = new Date();
+
     if (agora < inicio) return "Programado";
-    if (agora > fim) return "Encerrado";
+    if (agora > fim)    return "Encerrado";
     return "Em andamento";
-  };
+  }
 
   return (
     <main className="min-h-screen bg-gelo dark:bg-zinc-900 px-2 sm:px-4 py-6">
@@ -133,8 +129,12 @@ export default function MinhasInscricoes() {
               {inscricoes.map((item) => {
                 const dataInicio = new Date(item.data_inicio);
                 const dataFim = new Date(item.data_fim);
-                const dataInscricao = new Date(item.data_inscricao);
-                const status = obterStatusEvento(item.data_inicio, item.data_fim, item.horario_inicio, item.horario_fim);
+                const status = obterStatusEvento(
+                  item.data_inicio,
+                  item.data_fim,
+                  item.horario_inicio,
+                  item.horario_fim
+                );
 
                 return (
                   <motion.li
@@ -157,32 +157,37 @@ export default function MinhasInscricoes() {
                       Instrutor(es):{" "}
                       {item.instrutor ? (
                         <ul className="list-disc list-inside">
-                          {item.instrutor.split(',').map((nome, i) => (
-                            <li key={i}>{nome.trim()}</li>
+                          {item.instrutor.split(",").map((n, i) => (
+                            <li key={i}>{n.trim()}</li>
                           ))}
                         </ul>
                       ) : (
-                        <span className="italic text-gray-500">à definir</span>
+                        <span className="italic text-gray-500">a definir</span>
                       )}
                     </div>
 
                     <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">
-  <strong>Período:</strong><br />
-  {formatarDataBrasileira(item.data_inicio)} até {formatarDataBrasileira(item.data_fim)} – {item.local}
-</p>
+                      <strong>Período:</strong><br />
+                      {formatarDataBrasileira(item.data_inicio)} até {formatarDataBrasileira(item.data_fim)} – {item.local}
+                    </p>
 
-<p className="text-sm text-gray-500 dark:text-gray-400">
-  Inscrição realizada em: {formatarDataBrasileira(item.data_inscricao)}
-</p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      Inscrição realizada em: {formatarDataBrasileira(item.data_inscricao)}
+                    </p>
 
                     <p className="text-sm mt-1 font-semibold flex items-center gap-1">
                       {status === "Encerrado" && <XCircle className="w-4 h-4 text-red-600" />}
                       {status === "Programado" && <Clock className="w-4 h-4 text-yellow-700" />}
                       {status === "Em andamento" && <CheckCircle className="w-4 h-4 text-green-600" />}
-                      <span className={
-                        status === "Encerrado" ? "text-red-600" :
-                        status === "Programado" ? "text-yellow-700" : "text-green-600"
-                      }>
+                      <span
+                        className={
+                          status === "Encerrado"
+                            ? "text-red-600"
+                            : status === "Programado"
+                            ? "text-yellow-700"
+                            : "text-green-600"
+                        }
+                      >
                         Status: {status}
                       </span>
                     </p>
@@ -209,9 +214,9 @@ export default function MinhasInscricoes() {
                         className="w-full sm:w-auto"
                         aria-label="Cancelar inscrição no curso"
                         onClick={() => cancelarInscricao(item.inscricao_id)}
-                        disabled={status !== "Programado"}
+                        disabled={status !== "Programado" || cancelandoId === item.inscricao_id}
                       >
-                        Cancelar Inscrição
+                        {cancelandoId === item.inscricao_id ? "Cancelando..." : "Cancelar Inscrição"}
                       </BotaoPrimario>
                     </div>
                   </motion.li>

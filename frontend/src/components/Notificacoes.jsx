@@ -2,28 +2,23 @@
 import { useEffect, useState } from "react";
 import { CalendarDays, FileText, Star } from "lucide-react";
 import { toast } from "react-toastify";
-import { formatarDataBrasileira } from "../utils/data"; // ✅ Importa o utilitário de datas
+import { formatarDataBrasileira } from "../utils/data";
+import { apiGet } from "../services/api";
 
-export default function Notificacoes({ usuario }) {
+export default function Notificacoes() {
   const [notificacoes, setNotificacoes] = useState([]);
-  const token = localStorage.getItem("token");
 
   useEffect(() => {
     async function carregarNotificacoes() {
       try {
-        const res = await fetch("/api/notificacoes", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!res.ok) throw new Error();
-        const data = await res.json();
+        const data = await apiGet("/api/notificacoes"); // ✅ sem token aqui
         setNotificacoes(data);
       } catch {
         toast.error("❌ Erro ao carregar notificações.");
       }
     }
-
     carregarNotificacoes();
-  }, [token]);
+  }, []); // ✅ não precisa depender de token
 
   if (notificacoes.length === 0) return null;
 

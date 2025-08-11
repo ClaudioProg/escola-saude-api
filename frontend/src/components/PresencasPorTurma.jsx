@@ -1,40 +1,34 @@
+// 📁 src/pages/PresencasPorTurma.jsx
 import { useState, useEffect } from "react";
-import ListaTurmasAdministrador from "./ListaTurmasAdmin";
+import ListaTurmasAdministrador from "./ListaTurmasAdministrador"; // ✅ nome/arquivo consistentes
 import { toast } from "react-toastify";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import NadaEncontrado from "../components/NadaEncontrado";
+import { apiGet } from "../services/api"; // ✅ serviço centralizado
 
 export default function PresencasPorTurma() {
-  const [turmas, setTurmas] = useState([]);
+  const [eventos, setEventos] = useState([]);          // ✅ era "turmas"
   const [inscritosPorTurma, setInscritosPorTurma] = useState({});
   const [avaliacoesPorTurma, setAvaliacoesPorTurma] = useState({});
   const [isLoading, setIsLoading] = useState(true);
-  const token = localStorage.getItem("token");
 
   useEffect(() => {
-    async function carregarTurmas() {
+    async function carregarEventosETurmas() {
       try {
-        const res = await fetch("http://escola-saude-api.onrender.com/api/administrador/turmas", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const data = await res.json();
-        setTurmas(data);
-      } catch (err) {
+        const data = await apiGet("/api/administrador/turmas");
+        setEventos(Array.isArray(data) ? data : []);
+      } catch {
         toast.error("❌ Erro ao carregar turmas");
       } finally {
         setIsLoading(false);
       }
     }
-
-    carregarTurmas();
-  }, [token]);
+    carregarEventosETurmas();
+  }, []);
 
   const carregarInscritos = async (turmaId) => {
     try {
-      const res = await fetch(`http://escola-saude-api.onrender.com/api/turmas/${turmaId}/inscritos`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
+      const data = await apiGet(`/api/turmas/${turmaId}/inscritos`);
       setInscritosPorTurma((prev) => ({ ...prev, [turmaId]: data }));
     } catch {
       toast.error("❌ Erro ao carregar inscritos");
@@ -43,10 +37,7 @@ export default function PresencasPorTurma() {
 
   const carregarAvaliacoes = async (turmaId) => {
     try {
-      const res = await fetch(`http://escola-saude-api.onrender.com/api/avaliacoes/turma/${turmaId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
+      const data = await apiGet(`/api/avaliacoes/turma/${turmaId}`);
       setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: data }));
     } catch {
       toast.error("❌ Erro ao carregar avaliações");
@@ -55,17 +46,15 @@ export default function PresencasPorTurma() {
 
   return (
     <main className="p-4 max-w-6xl mx-auto">
-      <h1 className="text-xl font-bold text-lousa mb-4">
-        📋 Registro Manual de Presenças
-      </h1>
+      <h1 className="text-xl font-bold text-lousa mb-4">📋 Registro Manual de Presenças</h1>
 
       {isLoading ? (
         <CarregandoSkeleton />
-      ) : turmas.length === 0 ? (
+      ) : eventos.length === 0 ? (
         <NadaEncontrado mensagem="Nenhuma turma encontrada." sugestao="Verifique se há eventos cadastrados." />
       ) : (
         <ListaTurmasAdministrador
-          turmas={turmas}
+          eventos={eventos}                     // ✅ passa "eventos"
           hoje={new Date()}
           inscritosPorTurma={inscritosPorTurma}
           avaliacoesPorTurma={avaliacoesPorTurma}

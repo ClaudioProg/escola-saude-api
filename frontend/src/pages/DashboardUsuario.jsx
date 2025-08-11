@@ -2,41 +2,30 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import Breadcrumbs from "../components/Breadcrumbs";
-import {
-  CalendarDays,
-  BookOpen,
-  FileText,
-  Presentation,
-} from "lucide-react";
+import { CalendarDays, BookOpen, FileText, Presentation } from "lucide-react";
 import NadaEncontrado from "../components/NadaEncontrado";
 import GraficoEventos from "../components/GraficoEventos";
 import GraficoAvaliacoes from "../components/GraficoAvaliacoes";
+import { apiGet } from "../services/api"; // ✅ usar serviço centralizado
+import { formatarDataBrasileira } from "../utils/data"; // opcional p/ datas de notificações
 
 export default function DashboardUsuario() {
   const [dados, setDados] = useState(null);
   const [erro, setErro] = useState(false);
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
-
-    if (token) {
-      console.log("🔑 Token encontrado, iniciando requisições...");
-
-      fetch("http://escola-saude-api.onrender.com/api/dashboard-usuario", {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-        .then((res) => res.json())
-        .then((data) => {
-          console.log("📊 Dados recebidos do dashboard:", data);
-          setDados(data);
-        })
-        .catch((err) => {
-          console.error("❌ Erro ao buscar dados do dashboard:", err);
-          setErro(true);
-        });
-    } else {
-      console.warn("⚠️ Nenhum token encontrado no localStorage.");
+    async function carregar() {
+      try {
+        console.log("🔑 Token (automático via apiGet). Buscando dashboard…");
+        const data = await apiGet("/api/dashboard-usuario");
+        console.log("📊 Dados recebidos do dashboard:", data);
+        setDados(data);
+      } catch (err) {
+        console.error("❌ Erro ao buscar dados do dashboard:", err);
+        setErro(true);
+      }
     }
+    carregar();
   }, []);
 
   if (erro) return <NadaEncontrado mensagem="Erro ao carregar o painel." />;
@@ -50,9 +39,7 @@ export default function DashboardUsuario() {
       transition={{ duration: 0.6 }}
     >
       <Breadcrumbs caminho={["Início", "Dashboard"]} />
-      <h1 className="text-2xl font-bold mb-4 text-black dark:text-white">
-        📊 Painel do Usuário
-      </h1>
+      <h1 className="text-2xl font-bold mb-4 text-black dark:text-white">📊 Painel do Usuário</h1>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         <CardInfo icon={BookOpen} titulo="Eventos Concluídos" valor={dados.cursosRealizados} />
@@ -84,9 +71,7 @@ export default function DashboardUsuario() {
             {dados.ultimasNotificacoes.map((n, i) => (
               <li key={i} className="bg-white dark:bg-zinc-800 rounded-md shadow px-4 py-2 text-sm">
                 <p className="font-medium">{String(n.mensagem)}</p>
-                {n.data && (
-                  <p className="text-gray-500 text-xs mt-1">{n.data}</p>
-                )}
+                {n.data && <p className="text-gray-500 text-xs mt-1">{formatarDataBrasileira(n.data)}</p>}
               </li>
             ))}
           </ul>

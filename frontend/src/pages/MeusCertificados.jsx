@@ -1,5 +1,5 @@
-// MeusCertificados
-import { useEffect, useState } from "react";
+// src/pages/MeusCertificados.jsx
+import { useEffect, useState, useMemo } from "react";
 import Skeleton from "react-loading-skeleton";
 import { toast } from "react-toastify";
 import { formatarDataBrasileira } from "../utils/data";
@@ -7,24 +7,25 @@ import { formatarDataBrasileira } from "../utils/data";
 import Breadcrumbs from "../components/Breadcrumbs";
 import CabecalhoPainel from "../components/CabecalhoPainel";
 import NadaEncontrado from "../components/NadaEncontrado";
+import { apiGet, apiPost } from "../services/api";
 
 export default function MeusCertificados() {
   const [nome, setNome] = useState("");
   const [certificados, setCertificados] = useState([]);
   const [erro, setErro] = useState("");
   const [carregando, setCarregando] = useState(true);
-  const [gerando, setGerando] = useState(null);
+  const [gerandoKey, setGerandoKey] = useState(null);
 
-  const token = localStorage.getItem("token");
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
-  const rawUsuario = localStorage.getItem("usuario");
-  const usuario = (() => {
+  // usuário do localStorage, com imagem_base64 validada
+  const usuario = useMemo(() => {
     try {
-      const parsed = JSON.parse(rawUsuario || "{}");
+      const parsed = JSON.parse(localStorage.getItem("usuario") || "{}");
       return {
         ...parsed,
         imagem_base64:
-          typeof parsed.imagem_base64 === "string" &&
+          typeof parsed?.imagem_base64 === "string" &&
           parsed.imagem_base64.startsWith("data:image/")
             ? parsed.imagem_base64
             : null,
@@ -32,150 +33,113 @@ export default function MeusCertificados() {
     } catch {
       return {};
     }
-  })();
-
-  const possuiAssinatura = !!usuario.imagem_base64;
-
-  console.log(
-    possuiAssinatura
-      ? "🖊️ Assinatura base64 carregada"
-      : "🚫 Usuário sem assinatura (não é instrutor ou administrador)"
-  );
+  }, []);
 
   useEffect(() => {
     if (usuario?.nome) setNome(usuario.nome);
-  }, []);
+  }, [usuario?.nome]);
 
   async function carregarCertificados() {
-    console.info("🔍 Buscando certificados elegíveis...");
     setCarregando(true);
-  
     try {
-      const headers = { Authorization: `Bearer ${token}` };
-  
-      // 🔄 Busca participante
-      const resUsuario = await fetch("http://escola-saude-api.onrender.com/api/certificados/elegiveis", {
-        headers,
-      });
-  
-      // 🔄 Busca instrutor
-      const resInstrutor = await fetch("http://escola-saude-api.onrender.com/api/certificados/elegiveis-instrutor", {
-        headers,
-      });
-  
-      if (!resUsuario.ok || !resInstrutor.ok)
-        throw new Error("Erro ao buscar certificados");
-  
-      const dadosUsuario = await resUsuario.json();
-      const dadosInstrutor = await resInstrutor.json();
-  
-      // 🧩 Adiciona campo identificador de tipo
-      const certificadosComTipo = [
-        ...dadosUsuario.map((c) => ({ ...c, tipo: "usuario" })),
-        ...dadosInstrutor.map((c) => ({ ...c, tipo: "instrutor" })),
+      // elegíveis como PARTICIPANTE
+      const dadosUsuario = await apiGet("/api/certificados/elegiveis");
+      // elegíveis como INSTRUTOR
+      const dadosInstrutor = await apiGet("/api/certificados/elegiveis-instrutor");
+
+      const comTipo = [
+        ...(Array.isArray(dadosUsuario) ? dadosUsuario.map((c) => ({ ...c, tipo: "usuario" })) : []),
+        ...(Array.isArray(dadosInstrutor) ? dadosInstrutor.map((c) => ({ ...c, tipo: "instrutor" })) : []),
       ];
-      
-      // ✅ Evita duplicação do mesmo certificado por tipo
-      const certificadosUnicos = certificadosComTipo.filter(
-        (item, index, self) =>
-          index ===
-          self.findIndex(
+
+      // remove duplicatas por (evento_id, turma_id, tipo)
+      const unicos = comTipo.filter(
+        (item, idx, arr) =>
+          idx ===
+          arr.findIndex(
             (c) =>
-              c.turma_id === item.turma_id &&
-              c.evento_id === item.evento_id &&
+              String(c.evento_id) === String(item.evento_id) &&
+              String(c.turma_id) === String(item.turma_id) &&
               c.tipo === item.tipo
           )
       );
-      
-      setCertificados(certificadosUnicos);
+
+      setCertificados(unicos);
       setErro("");
-    } catch (erro) {
-      console.error("❌ Erro ao carregar certificados:", erro);
+    } catch (e) {
       setErro("Erro ao carregar certificados");
-      toast.error("Erro ao carregar certificados");
+      toast.error("❌ Erro ao carregar certificados.");
     } finally {
-      console.info("✅ Finalizado o carregamento dos certificados.");
       setCarregando(false);
     }
   }
-  
+
   useEffect(() => {
     carregarCertificados();
-  }, [token]);
+  }, []);
+
+  function keyDoCert(cert) {
+    return `${cert.evento_id}-${cert.turma_id}-${cert.tipo}`;
+  }
 
   async function gerarCertificado(cert) {
+    const key = keyDoCert(cert);
+    setGerandoKey(key);
+
     try {
-      console.log(`🖱️ Clique para gerar certificado da turma ${cert.turma_id}`);
-      setGerando(cert.turma_id);
-
-      const tipo = cert.tipo;
-
       const body = {
         usuario_id: usuario.id,
         evento_id: cert.evento_id,
         turma_id: cert.turma_id,
-        tipo,
+        tipo: cert.tipo, // "usuario" | "instrutor"
       };
-      
-      // Só adiciona assinatura se for tipo "usuario" e assinatura estiver presente
-      if (tipo === "usuario" && usuario.imagem_base64) {
+
+      // normalmente quem assina é o instrutor/adm
+      if (cert.tipo === "instrutor" && usuario.imagem_base64) {
         body.assinaturaBase64 = usuario.imagem_base64;
       }
 
-      console.log("🚀 Iniciando geração do certificado para:", body);
-
-      const res = await fetch("http://escola-saude-api.onrender.com/api/certificados/gerar", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
-      });
-
-      console.log("📥 Status da resposta:", res.status);
-      const resultado = await res.json();
-      console.log("📄 Corpo da resposta:", resultado);
-
-      if (!res.ok) throw new Error(resultado.erro || "Erro ao gerar certificado");
+      const resultado = await apiPost("/api/certificados/gerar", body);
 
       toast.success("🎉 Certificado gerado com sucesso!");
 
       setCertificados((prev) =>
         prev.map((c) =>
-          c.turma_id === cert.turma_id && c.evento_id === cert.evento_id
+          c.evento_id === cert.evento_id &&
+          c.turma_id === cert.turma_id &&
+          c.tipo === cert.tipo
             ? {
                 ...c,
                 ja_gerado: true,
-                arquivo_pdf: resultado.arquivo,
-                certificado_id: resultado.certificado_id ?? c.certificado_id ?? Date.now(),
+                arquivo_pdf: resultado?.arquivo,
+                certificado_id: resultado?.certificado_id ?? c.certificado_id ?? Date.now(),
               }
             : c
         )
       );
     } catch (err) {
-      console.error("❌ Erro ao gerar certificado:", err);
-      toast.error("Erro ao gerar certificado");
+      toast.error("❌ Erro ao gerar certificado.");
     } finally {
-      console.log(`🏁 Finalizada tentativa de geração (${cert.turma_id})`);
-      setGerando(null);
+      setGerandoKey(null);
     }
   }
 
   function renderizarCartao(cert) {
-    const isinstrutor = cert.tipo === "instrutor";
+    const eInstrutor = cert.tipo === "instrutor";
+    const key = keyDoCert(cert);
+    const gerando = gerandoKey === key;
 
     return (
       <div
-        key={`${cert.evento_id}-${cert.turma_id}-${cert.tipo}`}
+        key={key}
         className={`rounded-2xl shadow p-4 flex flex-col justify-between border transition 
           focus:outline-none focus:ring-2 focus:ring-lousa
-          ${isinstrutor ? "bg-yellow-100 border-yellow-400" : "bg-white dark:bg-gray-800"}`}
+          ${eInstrutor ? "bg-yellow-100 border-yellow-400" : "bg-white dark:bg-gray-800"}`}
       >
         <div>
           <h2
             className={`text-xl font-bold mb-1 ${
-              isinstrutor ? "text-yellow-900" : "text-lousa dark:text-white"
+              eInstrutor ? "text-yellow-900" : "text-lousa dark:text-white"
             }`}
           >
             {cert.evento}
@@ -187,7 +151,7 @@ export default function MeusCertificados() {
             Período: {formatarDataBrasileira(cert.data_inicio)} até{" "}
             {formatarDataBrasileira(cert.data_fim)}
           </p>
-          {isinstrutor && (
+          {eInstrutor && (
             <span className="inline-block mt-2 px-2 py-1 bg-yellow-400 text-xs font-semibold text-yellow-900 rounded">
               📣 Instrutor
             </span>
@@ -195,9 +159,9 @@ export default function MeusCertificados() {
         </div>
 
         <div className="mt-4 flex justify-center">
-          {cert.ja_gerado && cert.arquivo_pdf && cert.certificado_id ? (
+          {cert.ja_gerado && cert.certificado_id ? (
             <a
-              href={`http://escola-saude-api.onrender.com/api/certificados/${cert.certificado_id}/download`}
+              href={`${API_BASE_URL}/api/certificados/${cert.certificado_id}/download`}
               target="_blank"
               rel="noopener noreferrer"
               className="bg-green-900 hover:bg-green-800 text-white text-sm font-medium py-2 px-4 rounded text-center"
@@ -207,12 +171,12 @@ export default function MeusCertificados() {
           ) : (
             <button
               onClick={() => gerarCertificado(cert)}
-              disabled={gerando === cert.turma_id}
+              disabled={gerando}
               className={`${
-                isinstrutor ? "bg-yellow-500 hover:bg-yellow-600" : "bg-blue-700 hover:bg-blue-800"
+                eInstrutor ? "bg-yellow-500 hover:bg-yellow-600" : "bg-blue-700 hover:bg-blue-800"
               } text-white text-sm font-medium py-2 px-4 rounded text-center disabled:opacity-60`}
             >
-              {gerando === cert.turma_id ? "Gerando..." : "Gerar Certificado"}
+              {gerando ? "Gerando..." : "Gerar Certificado"}
             </button>
           )}
         </div>
@@ -220,7 +184,6 @@ export default function MeusCertificados() {
     );
   }
 
-  // ✅ Return principal do componente
   return (
     <main className="max-w-4xl mx-auto px-4 py-6">
       <Breadcrumbs
@@ -237,7 +200,7 @@ export default function MeusCertificados() {
         <NadaEncontrado mensagem="Você ainda não possui certificados disponíveis." />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {certificados.map((cert) => renderizarCartao(cert))}
+          {certificados.map(renderizarCartao)}
         </div>
       )}
     </main>

@@ -4,13 +4,13 @@ import SignatureCanvas from "react-signature-canvas";
 import Modal from "react-modal";
 import { toast } from "react-toastify";
 import Spinner from "./Spinner";
+import { apiGet, apiPost } from "../services/api"; // ✅ usar serviço centralizado
 
 export default function ModalAssinatura({ isOpen, onClose }) {
   const [assinaturaSalva, setAssinaturaSalva] = useState(null);
   const [carregando, setCarregando] = useState(true);
   const [editando, setEditando] = useState(false);
   const sigCanvas = useRef();
-  const token = localStorage.getItem("token");
 
   useEffect(() => {
     if (!isOpen) return;
@@ -18,14 +18,8 @@ export default function ModalAssinatura({ isOpen, onClose }) {
     const fetchAssinatura = async () => {
       setCarregando(true);
       try {
-        const res = await fetch("/api/assinatura", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-
-        if (!res.ok) throw new Error("Erro ao carregar assinatura.");
-
-        const data = await res.json();
-        if (data.assinatura) setAssinaturaSalva(data.assinatura);
+        const data = await apiGet("/api/assinatura");
+        if (data?.assinatura) setAssinaturaSalva(data.assinatura);
       } catch (err) {
         console.error("❌ Erro ao carregar assinatura:", err);
         toast.error("❌ Não foi possível carregar a assinatura.");
@@ -35,10 +29,10 @@ export default function ModalAssinatura({ isOpen, onClose }) {
     };
 
     fetchAssinatura();
-  }, [isOpen, token]);
+  }, [isOpen]);
 
   const salvarAssinatura = async () => {
-    if (sigCanvas.current.isEmpty()) {
+    if (!sigCanvas.current || sigCanvas.current.isEmpty()) {
       toast.warning("⚠️ Faça a assinatura antes de salvar.");
       return;
     }
@@ -46,17 +40,7 @@ export default function ModalAssinatura({ isOpen, onClose }) {
     const assinaturaBase64 = sigCanvas.current.getCanvas().toDataURL("image/png");
 
     try {
-      const res = await fetch("/api/assinatura", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ assinatura: assinaturaBase64 }),
-      });
-
-      if (!res.ok) throw new Error("Erro ao salvar assinatura.");
-
+      await apiPost("/api/assinatura", { assinatura: assinaturaBase64 });
       toast.success("✅ Assinatura salva com sucesso.");
       setAssinaturaSalva(assinaturaBase64);
       setEditando(false);
@@ -68,7 +52,7 @@ export default function ModalAssinatura({ isOpen, onClose }) {
   };
 
   const limparAssinatura = () => {
-    sigCanvas.current.clear();
+    sigCanvas.current?.clear();
   };
 
   return (

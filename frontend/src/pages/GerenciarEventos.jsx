@@ -1,46 +1,57 @@
-// src/pages/GerenciarEventos.jsx
-import { useEffect, useState } from "react";
+// 📁 src/pages/GerenciarEventos.jsx
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "react-toastify";
 import { motion } from "framer-motion";
 import { Pencil, Trash2, PlusCircle } from "lucide-react";
 
+import { apiGet, apiPost, apiPut, apiDelete } from "../services/api";
 import ModalEvento from "../components/ModalEvento";
-import usePerfilPermitidos from "../hooks/usePerfilPermitidos";
 import Breadcrumbs from "../components/Breadcrumbs";
 import NenhumDado from "../components/NenhumDado";
 import SkeletonEvento from "../components/SkeletonEvento";
 import BotaoPrimario from "../components/BotaoPrimario";
 import CabecalhoPainel from "../components/CabecalhoPainel";
+// ⚠️ IMPORTANTE: a rota dessa página deve estar protegida por <PrivateRoute permitido={["administrador"]} />
+// aqui dentro não vamos bloquear por permissão (evita tela branca se o hook atrasar)
 
 export default function GerenciarEventos() {
-  const token = localStorage.getItem("token") || "";
-  const { temAcesso, carregando: carregandoPermissao } = usePerfilPermitidos(["administrador"]);
-
   const [eventos, setEventos] = useState([]);
   const [eventoSelecionado, setEventoSelecionado] = useState(null);
   const [erro, setErro] = useState("");
   const [loading, setLoading] = useState(true);
   const [modalAberto, setModalAberto] = useState(false);
 
+  // 🔄 Carregar eventos ao montar
   useEffect(() => {
-    if (!temAcesso) return;
-    const carregarEventos = async () => {
+    (async () => {
       try {
         setLoading(true);
-        const res = await fetch("http://escola-saude-api.onrender.com/api/eventos", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const data = await res.json();
-        setEventos(data);
+        setErro("");
+        console.log("📡 [GerenciarEventos] GET /api/eventos ...");
+        const data = await apiGet("/api/eventos");
+
+        // aceita vários formatos de payload
+        const lista = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.eventos)
+          ? data.eventos
+          : Array.isArray(data?.lista)
+          ? data.lista
+          : [];
+
+        console.log("✅ eventos recebidos:", lista);
+        setEventos(lista);
       } catch (err) {
-        setErro(err.message);
-        toast.error(`❌ ${err.message}`);
+        const msg = err?.message || "Erro ao carregar eventos";
+        console.error("❌ /api/eventos:", err);
+        setErro(msg);
+        setEventos([]);
+        toast.error(`❌ ${msg}`);
       } finally {
         setLoading(false);
       }
-    };
-    carregarEventos();
-  }, [temAcesso, token]);
+    })();
+  }, []);
 
   const abrirModalCriar = () => {
     setEventoSelecionado(null);
@@ -53,89 +64,75 @@ export default function GerenciarEventos() {
   };
 
   const excluirEvento = async (eventoId) => {
+    if (!window.confirm("Tem certeza que deseja excluir este evento?")) return;
     try {
-      const res = await fetch(`http://escola-saude-api.onrender.com/api/eventos/${eventoId}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error("Erro ao excluir evento.");
+      await apiDelete(`/api/eventos/${eventoId}`);
+      setEventos((prev) => prev.filter((ev) => ev.id !== eventoId));
       toast.success("✅ Evento excluído.");
-      setEventos(eventos.filter((ev) => ev.id !== eventoId));
     } catch (err) {
-      toast.error(`❌ ${err.message}`);
+      console.error("❌ delete evento:", err);
+      toast.error(`❌ ${err?.message || "Erro ao excluir evento."}`);
     }
   };
 
   const salvarEvento = async (eventoSalvo) => {
     try {
-      const turmaInvalida = eventoSalvo.turmas.some(t =>
-        !t.nome || !t.data_inicio || !t.data_fim || !t.horario_inicio || !t.horario_fim || !t.vagas_total || !t.carga_horaria
+      // ✅ validações básicas
+      const turmaInvalida = (eventoSalvo.turmas || []).some(
+        (t) =>
+          !t?.nome ||
+          !t?.data_inicio ||
+          !t?.data_fim ||
+          !t?.horario_inicio ||
+          !t?.horario_fim ||
+          !t?.vagas_total ||
+          !t?.carga_horaria
       );
-
       if (turmaInvalida) {
         toast.error("❌ Há turmas com campos obrigatórios não preenchidos.");
         return;
       }
-
       if (!eventoSalvo.titulo || !eventoSalvo.tipo || !eventoSalvo.unidade_id) {
         toast.warning("⚠️ Preencha todos os campos obrigatórios.");
         return;
       }
 
-      if (eventoSelecionado) {
-        eventoSalvo.id = eventoSelecionado.id;
-      }
-
+      // 🧹 normalização de turmas
       const eventoFinal = {
         ...eventoSalvo,
-        turmas: eventoSalvo.turmas.map((t) => ({
+        turmas: (eventoSalvo.turmas || []).map((t) => ({
           nome: t.nome?.trim() || "",
           data_inicio: t.data_inicio,
           data_fim: t.data_fim,
           horario_inicio: t.horario_inicio,
           horario_fim: t.horario_fim,
           vagas_total: Number(t.vagas_total || 0),
-          carga_horaria: t.carga_horaria || 0,
+          carga_horaria: Number(t.carga_horaria || 0),
         })),
       };
 
-      const metodo = eventoSelecionado ? "PUT" : "POST";
-      const url = eventoSelecionado
-        ? `http://escola-saude-api.onrender.com/api/eventos/${eventoSelecionado.id}`
-        : `http://escola-saude-api.onrender.com/api/eventos`;
+      const isEdicao = Boolean(eventoSelecionado?.id);
+      const endpoint = isEdicao ? `/api/eventos/${eventoSelecionado.id}` : "/api/eventos";
 
-      const res = await fetch(url, {
-        method: metodo,
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(eventoFinal),
-      });
+      const resposta = isEdicao
+        ? await apiPut(endpoint, eventoFinal)
+        : await apiPost(endpoint, eventoFinal);
 
-      if (!res.ok) {
-        const erroAPI = await res.json();
-        throw new Error(erroAPI?.erro || "Erro ao salvar o evento.");
-      }
+      const eventoRetornado = resposta?.evento || resposta;
 
-      const resposta = await res.json();
-      const eventoRetornado = resposta.evento || resposta;
-
-      if (eventoSelecionado) {
-        setEventos(eventos.map((ev) => (ev.id === eventoRetornado.id ? eventoRetornado : ev)));
-      } else {
-        setEventos([...eventos, eventoRetornado]);
-      }
+      setEventos((prev) =>
+        isEdicao
+          ? prev.map((ev) => (ev.id === eventoRetornado.id ? eventoRetornado : ev))
+          : [...prev, eventoRetornado]
+      );
 
       toast.success("✅ Evento salvo com sucesso.");
       setModalAberto(false);
     } catch (err) {
-      toast.error(`❌ ${err.message}`);
+      console.error("❌ salvar evento:", err);
+      toast.error(`❌ ${err?.message || "Erro ao salvar o evento."}`);
     }
   };
-
-  if (carregandoPermissao || loading) return <SkeletonEvento />;
-  if (!temAcesso) return <NenhumDado mensagem="Acesso não autorizado." />;
 
   return (
     <main className="min-h-screen bg-gelo dark:bg-zinc-900 px-4 py-8 max-w-screen-lg mx-auto">
@@ -148,9 +145,11 @@ export default function GerenciarEventos() {
         </BotaoPrimario>
       </div>
 
-      {erro && <p className="text-red-500 text-center mb-4">{erro}</p>}
+      {!!erro && !loading && <p className="text-red-500 text-center mb-4">{erro}</p>}
 
-      {eventos.length === 0 ? (
+      {loading ? (
+        <SkeletonEvento />
+      ) : eventos.length === 0 ? (
         <NenhumDado mensagem="Nenhum evento cadastrado." />
       ) : (
         <ul className="space-y-6">
@@ -161,7 +160,9 @@ export default function GerenciarEventos() {
               animate={{ opacity: 1, y: 0 }}
               className="bg-white dark:bg-zinc-800 p-5 rounded-xl shadow flex justify-between items-center border border-gray-200 dark:border-zinc-700"
             >
-              <span className="font-semibold text-lg text-lousa dark:text-white">{ev.titulo}</span>
+              <span className="font-semibold text-lg text-lousa dark:text-white">
+                {ev.titulo}
+              </span>
               <div className="flex gap-2">
                 <button
                   onClick={() => abrirModalEditar(ev)}

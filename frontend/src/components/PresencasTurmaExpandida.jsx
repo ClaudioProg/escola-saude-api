@@ -1,6 +1,7 @@
 import StatusPresencaBadge from "./StatusPresencaBadge";
 import { toast } from "react-toastify";
-import { formatarDataBrasileira } from "../utils/data"; // ✅ Use o utilitário!
+import { formatarDataBrasileira } from "../utils/data";
+import { apiPost } from "../services/api"; // ✅ serviço centralizado
 
 export default function PresencasTurmaExpandida({
   turma,
@@ -9,7 +10,6 @@ export default function PresencasTurmaExpandida({
   presencas = [],
   carregarPresencas,
 }) {
-  const token = localStorage.getItem("token");
 
   async function confirmarPresenca(dataSelecionada, turmaId, usuarioId, nome) {
     const confirmado = window.confirm(
@@ -18,26 +18,18 @@ export default function PresencasTurmaExpandida({
     if (!confirmado) return;
 
     try {
-      const res = await fetch("/api/presencas/confirmar-simples", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          turma_id: turmaId,
-          usuario_id: usuarioId,
-          data_presenca: dataSelecionada,
-        }),
+      // ⚠️ Se o backend espera "data" (e não "data_presenca"), troque a chave abaixo
+      await apiPost("/api/presencas/confirmar-simples", {
+        turma_id: turmaId,
+        usuario_id: usuarioId,
+        data: dataSelecionada, // <- troque para "data_presenca" se seu backend exigir assim
       });
-
-      if (!res.ok) throw new Error("Erro ao confirmar presença.");
 
       toast.success(
         `✅ Presença confirmada para ${nome} em ${formatarDataBrasileira(dataSelecionada)}.`
       );
       await carregarPresencas(turmaId);
-    } catch (err) {
+    } catch {
       toast.error("❌ Erro ao confirmar presença.");
     }
   }
@@ -71,7 +63,6 @@ export default function PresencasTurmaExpandida({
               </thead>
               <tbody>
                 {datasTurma.map((dataObj) => {
-                  // Permite array de Date OU strings ISO
                   const dataISO =
                     dataObj instanceof Date
                       ? dataObj.toISOString().split("T")[0]
@@ -80,7 +71,7 @@ export default function PresencasTurmaExpandida({
                   const presenca = presencas.find(
                     (p) =>
                       String(p.usuario_id) === String(usuarioId) &&
-                    new Date(p.data_presenca).toISOString().split("T")[0] === dataISO
+                      new Date(p.data_presenca).toISOString().split("T")[0] === dataISO
                   );
                   const estaPresente = presenca?.presente ?? false;
 

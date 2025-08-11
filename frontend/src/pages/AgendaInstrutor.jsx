@@ -1,69 +1,51 @@
-// src/pages/AgendaInstrutor.jsx
+// 📁 src/pages/AgendaInstrutor.jsx
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
 import { motion, AnimatePresence } from "framer-motion";
 import Skeleton from "react-loading-skeleton";
 
-import usePerfilPermitidos from "../hooks/usePerfilPermitidos";
 import Breadcrumbs from "../components/Breadcrumbs";
 import NadaEncontrado from "../components/NadaEncontrado";
-import { formatarDataBrasileira } from "../utils/data"; // ✅
+import { formatarDataBrasileira } from "../utils/data";
+import { apiGet } from "../services/api"; // ✅ serviço centralizado
 
 export default function AgendaInstrutor() {
-  const { temAcesso, carregando } = usePerfilPermitidos(["administrador", "instrutor"]);
-  const navigate = useNavigate();
   const [agenda, setAgenda] = useState([]);
   const [erro, setErro] = useState("");
   const [carregandoAgenda, setCarregandoAgenda] = useState(true);
 
-  const usuario = JSON.parse(localStorage.getItem("usuario"));
+  const usuario = JSON.parse(localStorage.getItem("usuario") || "{}");
   const nome = usuario?.nome || "";
   const hojeISO = new Date().toISOString().split("T")[0];
 
   useEffect(() => {
-    if (!carregando && !temAcesso) {
-      console.warn("⚠️ Sem acesso — redirecionando para login...");
-      navigate("/login", { replace: true });
-    }
-  }, [carregando, temAcesso, navigate]);
+    (async () => {
+      setCarregandoAgenda(true);
+      try {
+        // 👇 Não redireciona em 403; só mostra mensagem
+        const data = await apiGet("/api/agenda/instrutor", { on403: "silent" });
 
-  useEffect(() => {
-    if (temAcesso) {
-      const buscarAgenda = async () => {
-        setCarregandoAgenda(true);
-    
-        try {
-          const token = localStorage.getItem("token");
-          const res = await fetch("/api/agenda/instrutor", {
-            headers: { Authorization: `Bearer ${token}` },
-          });
+        // garante array e ordena por data de referência
+        const arr = Array.isArray(data) ? data : [];
+        const ordenada = arr.sort(
+          (a, b) =>
+            new Date(a.data_referencia || a.data_inicio || 0) -
+            new Date(b.data_referencia || b.data_inicio || 0)
+        );
 
-          if (!res.ok) {
-            console.error("❌ Erro HTTP ao buscar agenda:", res.status);
-            throw new Error("Erro ao buscar agenda");
-          }
-
-          const data = await res.json();
-          
-          const agendaOrdenada = data.sort((a, b) => new Date(a.data) - new Date(b.data));
-    
-          setAgenda(agendaOrdenada);
-          setErro("");
-        } catch (error) {
-          console.error("❌ Erro no fetch da agenda:", error.message);
-          setErro("Erro ao carregar agenda");
-          toast.error("❌ Erro ao carregar agenda.");
-        } finally {
-          setCarregandoAgenda(false);
-        }
-      };
-
-      buscarAgenda();
-    }
-  }, [temAcesso]);
+        setAgenda(ordenada);
+        setErro("");
+      } catch (e) {
+        setErro("Erro ao carregar agenda");
+        toast.error(`❌ ${e?.message || "Erro ao carregar agenda."}`);
+      } finally {
+        setCarregandoAgenda(false);
+      }
+    })();
+  }, []);
 
   const definirStatus = (dataISO) => {
+    if (!dataISO) return "🟢 Programado";
     if (dataISO === hojeISO) return "🟡 Hoje";
     if (dataISO > hojeISO) return "🟢 Programado";
     return "🔴 Realizado";
@@ -71,25 +53,11 @@ export default function AgendaInstrutor() {
 
   const formatarHorario = (horario) => {
     if (!horario || typeof horario !== "string") return "";
-  
     const partes = horario.split(" às ");
     const inicio = partes[0]?.slice(0, 5) || "";
     const fim = partes[1]?.slice(0, 5) || "";
     return `${inicio} às ${fim}`;
   };
-
-  if (carregando) {
-    return (
-      <div className="p-4 text-center text-gray-700 dark:text-white">
-        🔄 Carregando permissões de acesso...
-      </div>
-    );
-  }
-
-  if (!temAcesso) {
-    console.warn("🚫 Acesso negado. Não renderizando conteúdo.");
-    return null;
-  }
 
   return (
     <main className="min-h-screen bg-gelo dark:bg-zinc-900 px-2 sm:px-4 py-6 text-black dark:text-white">
@@ -97,7 +65,7 @@ export default function AgendaInstrutor() {
 
       <div className="flex justify-between items-center bg-lousa text-white px-4 py-2 rounded-xl shadow mb-6">
         <span>Seja bem-vindo(a), <strong>{nome}</strong></span>
-        <span className="font-semibold">Painel do Instrutor</span>
+        <span className="font-semibold">Agenda do Instrutor</span>
       </div>
 
       <h2 className="text-2xl font-bold mb-6 text-center text-[#1b4332] dark:text-white">
@@ -122,10 +90,11 @@ export default function AgendaInstrutor() {
           <ul className="space-y-4">
             <AnimatePresence>
               {agenda.map((item, i) => {
-                const dataISO = item.data_referencia?.split("T")[0] || item.data_inicio?.split("T")[0] || "";
-                const status = definirStatus(dataISO);
-
-                console.log(`📌 Evento #${i + 1} | Data: ${item.data} | Status: ${status}`);
+                const dataIniISO = (item.data_inicio || "").split("T")[0] || "";
+                const dataFimISO = (item.data_fim || "").split("T")[0] || "";
+                const dataRefISO =
+                  (item.data_referencia || dataIniISO || "").split("T")[0] || "";
+                const status = definirStatus(dataRefISO);
 
                 return (
                   <motion.li
@@ -136,20 +105,34 @@ export default function AgendaInstrutor() {
                     transition={{ duration: 0.25 }}
                     tabIndex={0}
                     className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow border border-green-300 dark:border-green-600 focus:outline-none focus:ring-2 focus:ring-lousa"
-                    aria-label={`Aula em ${formatarDataBrasileira(item.data)}`}
+                    aria-label={`Aula de ${formatarDataBrasileira(
+                      item.data_inicio
+                    )} a ${formatarDataBrasileira(item.data_fim)}`}
                   >
-                    <p className="text-sm text-gray-700 dark:text-gray-200"><strong>📅 Data:</strong> {formatarDataBrasileira(item.data_inicio)} até {formatarDataBrasileira(item.data_fim)}</p>
                     <p className="text-sm text-gray-700 dark:text-gray-200">
-  <strong>🕒 Horário:</strong> {formatarHorario(item.horario)}
-</p>
-                    <p className="text-sm text-gray-700 dark:text-gray-200"><strong>🏫 Turma:</strong> {item.turma}</p>
-                    <p className="text-sm text-gray-700 dark:text-gray-200"><strong>🧾 Evento:</strong> {item.evento?.nome}</p>
-                    <p className={`text-sm font-semibold mt-2 ${
-                      status === "🟢 Programado" ? "text-green-600" :
-                      status === "🔴 Realizado" ? "text-red-600" :
-                      status === "🟡 Hoje" ? "text-yellow-700" :
-                      "text-green-700"
-                    }`}>
+                      <strong>📅 Data:</strong> {formatarDataBrasileira(item.data_inicio)} até{" "}
+                      {formatarDataBrasileira(item.data_fim)}
+                    </p>
+                    <p className="text-sm text-gray-700 dark:text-gray-200">
+                      <strong>🕒 Horário:</strong> {formatarHorario(item.horario)}
+                    </p>
+                    <p className="text-sm text-gray-700 dark:text-gray-200">
+                      <strong>🏫 Turma:</strong> {item.turma}
+                    </p>
+                    <p className="text-sm text-gray-700 dark:text-gray-200">
+                      <strong>🧾 Evento:</strong> {item.evento?.nome || item.evento?.titulo}
+                    </p>
+                    <p
+                      className={`text-sm font-semibold mt-2 ${
+                        status === "🟢 Programado"
+                          ? "text-green-600"
+                          : status === "🔴 Realizado"
+                          ? "text-red-600"
+                          : status === "🟡 Hoje"
+                          ? "text-yellow-700"
+                          : "text-green-700"
+                      }`}
+                    >
                       {status}
                     </p>
                   </motion.li>

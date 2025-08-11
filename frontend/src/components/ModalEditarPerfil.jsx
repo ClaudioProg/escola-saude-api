@@ -3,6 +3,7 @@ import { useState } from "react";
 import PropTypes from "prop-types";
 import { toast } from "react-toastify";
 import Modal from "./Modal"; // 🧩 seu modal central reutilizável
+import { apiPut } from "../services/api"; // ✅ serviço centralizado
 
 export default function ModalEditarPerfil({ usuario, onFechar, onSalvar }) {
   const perfilDisponiveis = [
@@ -12,37 +13,27 @@ export default function ModalEditarPerfil({ usuario, onFechar, onSalvar }) {
   ];
 
   const [perfilSelecionado, setPerfilSelecionado] = useState(
-    usuario.perfil
+    Array.isArray(usuario.perfil)
       ? usuario.perfil
-          .split(",")
-          .map((p) => p.trim())
-          .filter((p) => perfilDisponiveis.map((p) => p.value).includes(p))
-      : []
+      : (typeof usuario.perfil === "string"
+          ? usuario.perfil.split(",").map(p => p.trim())
+          : [])
   );
 
   const [salvando, setSalvando] = useState(false);
 
   const togglePerfil = (perfil) => {
-    setPerfilSelecionado([perfil]); // sempre apenas um selecionado
+    // apenas um perfil por vez
+    setPerfilSelecionado([perfil]);
   };
 
   const salvar = async () => {
     setSalvando(true);
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(
-        `http://escola-saude-api.onrender.com/api/usuarios/${usuario.id}/perfil`,
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ perfil: perfilSelecionado }),
-        }
-      );
-
-      if (!res.ok) throw new Error("Erro ao atualizar perfil");
+      await apiPut(`/api/usuarios/${usuario.id}/perfil`, {
+        // se seu backend espera array, mantenha assim; se esperar string, use .join(",")
+        perfil: perfilSelecionado,
+      });
 
       toast.success("✅ Perfil atualizado com sucesso!");
       onSalvar(usuario.id, perfilSelecionado);
@@ -90,9 +81,7 @@ export default function ModalEditarPerfil({ usuario, onFechar, onSalvar }) {
           onClick={salvar}
           disabled={salvando}
           className={`px-4 py-2 rounded text-white text-sm ${
-            salvando
-              ? "bg-green-900 cursor-not-allowed"
-              : "bg-lousa hover:bg-green-800"
+            salvando ? "bg-green-900 cursor-not-allowed" : "bg-lousa hover:bg-green-800"
           }`}
         >
           {salvando ? "Salvando..." : "Salvar"}

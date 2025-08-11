@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
 import { motion } from "framer-motion";
+import { apiPost } from "../services/api"; // ✅ usar serviço centralizado
 
 const CAMPOS_ENUM = [
   { campo: "desempenho_instrutor", label: "Desempenho do Instrutor" },
@@ -32,38 +33,26 @@ export default function AvaliacaoEvento() {
   const [carregando, setCarregando] = useState(false);
 
   function handleChange(campo, valor) {
-    setForm(prev => ({ ...prev, [campo]: valor }));
+    setForm((prev) => ({ ...prev, [campo]: valor }));
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
-    const token = localStorage.getItem("token");
 
     const corpo = {
       ...form,
       turma_id,
-      evento_id: form.evento_id, // opcional, pode ser omitido se já estiver embutido no backend
+      evento_id: form.evento_id, // se o backend já inferir pelo turma_id, pode remover
       comentarios_finais: comentarios,
     };
 
     try {
       setCarregando(true);
-      const res = await fetch("http://escola-saude-api.onrender.com/api/avaliacoes", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(corpo),
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.erro || "Erro ao enviar avaliação");
-
+      await apiPost("/api/avaliacoes", corpo); // ✅ sem URL fixa e sem token manual
       toast.success("✅ Avaliação enviada com sucesso!");
-      navigate("/painel"); // Redireciona para o painel do usuário
+      navigate("/painel");
     } catch (err) {
-      toast.error(`❌ ${err.message}`);
+      toast.error(`❌ ${err.message || "Erro ao enviar avaliação"}`);
     } finally {
       setCarregando(false);
     }
@@ -76,9 +65,7 @@ export default function AvaliacaoEvento() {
       transition={{ duration: 0.4 }}
       className="max-w-3xl mx-auto p-6 bg-white dark:bg-gray-900 rounded-xl shadow-md mt-6"
     >
-      <h2 className="text-2xl font-bold mb-4 text-lousa dark:text-green-200">
-        📝 Avaliação do Evento
-      </h2>
+      <h2 className="text-2xl font-bold mb-4 text-lousa dark:text-green-200">📝 Avaliação do Evento</h2>
 
       <form onSubmit={handleSubmit} className="space-y-5">
         {CAMPOS_ENUM.map(({ campo, label }) => (
@@ -96,7 +83,7 @@ export default function AvaliacaoEvento() {
               <option value="">Selecione</option>
               {OPCOES_NOTA.map((opcao) => (
                 <option key={opcao} value={opcao}>
-                  {opcao.charAt(0).toUpperCase() + opcao.slice(1)}
+                  {opcao}
                 </option>
               ))}
             </select>

@@ -4,6 +4,7 @@ import { toast } from "react-toastify";
 import { motion } from "framer-motion";
 import Breadcrumbs from "../components/Breadcrumbs";
 import BotaoPrimario from "../components/BotaoPrimario";
+import { apiGet, apiPut, apiDelete } from "../services/api"; // ✅ serviço centralizado
 
 export default function EditarEvento() {
   const { id } = useParams();
@@ -12,26 +13,19 @@ export default function EditarEvento() {
   const [carregando, setCarregando] = useState(true);
   const [salvando, setSalvando] = useState(false);
   const navigate = useNavigate();
-  const token = localStorage.getItem("token");
   const nome = localStorage.getItem("nome") || "";
 
   useEffect(() => {
     setCarregando(true);
-    fetch(`http://escola-saude-api.onrender.com/api/eventos/${id}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(res => {
-        if (!res.ok) throw new Error("Erro ao carregar evento");
-        return res.json();
-      })
+    apiGet(`/api/eventos/${id}`)
       .then(setEvento)
       .catch(() => setErro("Erro ao carregar evento."))
       .finally(() => setCarregando(false));
-  }, [id, token]);
+  }, [id]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setEvento(prev => ({ ...prev, [name]: value }));
+    setEvento((prev) => ({ ...prev, [name]: value }));
   };
 
   const handleSubmit = async (e) => {
@@ -39,15 +33,7 @@ export default function EditarEvento() {
     setSalvando(true);
     setErro("");
     try {
-      const res = await fetch(`http://escola-saude-api.onrender.com/api/eventos/${id}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(evento),
-      });
-      if (!res.ok) throw new Error();
+      await apiPut(`/api/eventos/${id}`, evento);
       toast.success("✅ Evento atualizado com sucesso!");
       setTimeout(() => navigate("/administrador"), 900);
     } catch {
@@ -60,15 +46,8 @@ export default function EditarEvento() {
 
   const handleExcluir = async () => {
     if (!confirm("Tem certeza que deseja excluir este evento? Esta ação não poderá ser desfeita.")) return;
-
     try {
-      const res = await fetch(`http://escola-saude-api.onrender.com/api/eventos/${id}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!res.ok) throw new Error();
-
+      await apiDelete(`/api/eventos/${id}`);
       toast.success("🗑️ Evento excluído com sucesso!");
       navigate("/administrador");
     } catch {
@@ -88,8 +67,7 @@ export default function EditarEvento() {
       </div>
     );
 
-  if (erro)
-    return <p className="text-red-500 text-center my-10">{erro}</p>;
+  if (erro) return <p className="text-red-500 text-center my-10">{erro}</p>;
 
   return (
     <main className="min-h-screen bg-gelo dark:bg-gray-900 px-2 py-8">
@@ -137,7 +115,7 @@ export default function EditarEvento() {
               id="data_inicio"
               type="date"
               name="data_inicio"
-              value={evento.data_inicio?.slice(0, 10)}
+              value={evento.data_inicio?.slice(0, 10) || ""}
               onChange={handleChange}
               className="w-full border rounded px-3 py-2 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-400"
               required
@@ -154,7 +132,7 @@ export default function EditarEvento() {
               id="data_fim"
               type="date"
               name="data_fim"
-              value={evento.data_fim?.slice(0, 10)}
+              value={evento.data_fim?.slice(0, 10) || ""}
               onChange={handleChange}
               className="w-full border rounded px-3 py-2 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-400"
               required
