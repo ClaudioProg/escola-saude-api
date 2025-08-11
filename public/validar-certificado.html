@@ -104,7 +104,7 @@
     if (!usuario_id || !evento_id) {
       infoDiv.innerHTML = '<p class="erro">Parâmetros inválidos na URL.</p>';
     } else {
-      fetch(`http://escola-saude-api.onrender.com/api/certificados/validar-certificado?usuario_id=${usuario_id}&evento_id=${evento_id}`)
+      fetch(`https://escola-saude-api.onrender.com/api/certificados/validar-certificado?usuario_id=${usuario_id}&evento_id=${evento_id}`)
         .then(response => response.json())
         .then(data => {
           if (data.valido) {

@@ -1,19 +1,22 @@
+// vite.config.js
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 
 export default defineConfig({
-  // 🔌 Plugins utilizados no build
   plugins: [react()],
 
-  // 🌐 Proxy para desenvolvimento local
+  // Proxy só vale no DEV (localhost). Em produção no Vercel é build estático.
   server: {
     proxy: {
-      '/api': 'http://escola-saude-api.onrender.com', // 🔁 Redireciona chamadas para o backend
+      '/api': {
+        target: process.env.VITE_DEV_PROXY_TARGET || 'https://escola-saude-api.onrender.com',
+        changeOrigin: true,
+        secure: true, // ok porque o certificado do Render é válido
+      },
     },
   },
 
-  // 📦 Correções de importação para evitar 'undefined.createContext'
   resolve: {
     alias: {
       react: path.resolve(__dirname, 'node_modules/react'),
@@ -22,22 +25,14 @@ export default defineConfig({
   },
 
   define: {
-    'process.env': {}, // ⛑️ Evita erros em libs que acessam process.env
+    'process.env': {},
   },
 
-  // 🏗️ Otimização do build: separação de chunks
   build: {
     rollupOptions: {
       output: {
         manualChunks(id) {
-          // 🔍 Divisão personalizada de pacotes da pasta node_modules
-          //if (id.includes('node_modules')) {
-         //   if (id.includes('react')) return 'react-vendor';
-          //  if (id.includes('lucide-react')) return 'icons-vendor';
-         //   if (id.includes('react-router-dom')) return 'router-vendor';
-         //   if (id.includes('axios')) return 'axios-vendor';
-         //   return 'vendor';
-         // }
+          // deixe vazio mesmo; você pode reativar os chunks quando quiser
         },
       },
     },

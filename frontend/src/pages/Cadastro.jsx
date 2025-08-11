@@ -84,7 +84,7 @@ export default function Cadastro() {
     setLoading(true);
 
     try {
-      const response = await fetch("http://escola-saude-api.onrender.com/api/usuarios/cadastro", {
+      const response = await fetch("https://escola-saude-api.onrender.com/api/usuarios/cadastro", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

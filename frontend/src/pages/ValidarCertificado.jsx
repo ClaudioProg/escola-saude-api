@@ -26,7 +26,7 @@ export default function ValidarCertificado() {
       return;
     }
 
-    fetch(`http://escola-saude-api.onrender.com/api/presencas/validar?evento=${evento}&usuario=${usuario}`)
+    fetch(`https://escola-saude-api.onrender.com/api/presencas/validar?evento=${evento}&usuario=${usuario}`)
       .then((res) => res.json())
       .then((data) => {
         if (data.presente) {

@@ -281,7 +281,7 @@ doc.image(imgBuffer, assinaturaX, assinaturaY, { width: assinaturaWidth });
     }
 
     // 📱 QR Code de validação (inalterado)
-    const baseUrl = process.env.BASE_URL || 'http://escola-saude-api.onrender.com';
+    const baseUrl = process.env.BASE_URL || 'https://escola-saude-api.onrender.com';
     const linkValidacao = `${baseUrl}/validar-certificado.html?usuario_id=${usuario_id}&evento_id=${evento_id}`;
     const qrImage = await QRCode.toDataURL(linkValidacao);
 

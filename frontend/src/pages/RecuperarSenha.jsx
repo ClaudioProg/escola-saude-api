@@ -24,7 +24,7 @@ export default function RecuperarSenha() {
     setLoading(true);
     toast.info("⏳ Enviando solicitação...");
     try {
-      const response = await fetch("http://escola-saude-api.onrender.com/api/usuarios/recuperar-senha", {
+      const response = await fetch("https://escola-saude-api.onrender.com/api/usuarios/recuperar-senha", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),

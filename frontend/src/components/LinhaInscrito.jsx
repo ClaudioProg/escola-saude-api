@@ -26,7 +26,7 @@ export default function LinhaInscrito({ inscrito, turma, token }) {
 
     setLoading(true);
     try {
-      const res = await fetch("http://escola-saude-api.onrender.com/api/presencas/registrar", {
+      const res = await fetch("https://escola-saude-api.onrender.com/api/presencas/registrar", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
