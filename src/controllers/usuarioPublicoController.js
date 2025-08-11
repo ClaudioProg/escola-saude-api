@@ -1,39 +1,53 @@
-//usuarioPublicoController.js
-const db = require('../db');
-const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
-const { send: enviarEmail } = require('../utils/email');
-const formatarPerfil = require('../utils/formatarPerfil');
+// 📁 src/controllers/usuarioPublicoController.js
+const db = require("../db");
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
+const { send: enviarEmail } = require("../utils/email");
+// const formatarPerfil = require("../utils/formatarPerfil"); // use se precisar
+
+// Base do Frontend para links de e-mail (Vercel em prod; localhost no dev)
+const FRONTEND_URL_STATIC =
+  process.env.FRONTEND_URL ||
+  (process.env.NODE_ENV === "production" ? "" : "http://localhost:5173");
 
 // 🔐 Cadastro de novo usuário
 async function cadastrarUsuario(req, res) {
   const { nome, cpf, email, senha, perfil } = req.body;
 
   if (!nome || !cpf || !email || !senha) {
-    return res.status(400).json({ erro: 'Todos os campos são obrigatórios.' });
+    return res
+      .status(400)
+      .json({ erro: "Todos os campos são obrigatórios." });
   }
 
-  const senhaForte = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{8,}$/;
+  const senhaForte =
+    /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{8,}$/;
   if (!senhaForte.test(senha)) {
     return res.status(400).json({
-      erro: 'A senha deve conter ao menos 8 caracteres, incluindo letra maiúscula, minúscula, número e símbolo.'
+      erro:
+        "A senha deve conter ao menos 8 caracteres, incluindo letra maiúscula, minúscula, número e símbolo.",
     });
   }
 
   try {
     const existente = await db.query(
-      'SELECT id FROM usuarios WHERE cpf = $1 OR email = $2',
+      "SELECT id FROM usuarios WHERE cpf = $1 OR email = $2",
       [cpf, email]
     );
 
     if (existente.rows.length > 0) {
-      return res.status(400).json({ erro: 'CPF ou e-mail já cadastrado.' });
+      return res
+        .status(400)
+        .json({ erro: "CPF ou e-mail já cadastrado." });
     }
 
     const senhaCriptografada = await bcrypt.hash(senha, 10);
     const perfilFinal = Array.isArray(perfil)
-      ? perfil.map(p => p.toLowerCase().trim()).filter(p => p !== 'usuario').join(',')
-      : perfil.toLowerCase().trim();
+      ? perfil
+          .map((p) => String(p || "").toLowerCase().trim())
+          .filter((p) => p && p !== "usuario")
+          .join(",")
+      : String(perfil || "usuario").toLowerCase().trim();
 
     const result = await db.query(
       `INSERT INTO usuarios (nome, cpf, email, senha, perfil)
@@ -44,11 +58,11 @@ async function cadastrarUsuario(req, res) {
 
     res.status(201).json({
       ...result.rows[0],
-      perfil: perfilFinal.split(',')
+      perfil: perfilFinal ? perfilFinal.split(",") : [],
     });
   } catch (err) {
-    console.error('❌ Erro ao cadastrar usuário:', err);
-    res.status(500).json({ erro: 'Erro ao cadastrar usuário.' });
+    console.error("❌ Erro ao cadastrar usuário:", err);
+    res.status(500).json({ erro: "Erro ao cadastrar usuário." });
   }
 }
 
@@ -57,32 +71,64 @@ async function recuperarSenha(req, res) {
   const { email } = req.body;
 
   if (!email) {
-    return res.status(400).json({ erro: 'E-mail é obrigatório.' });
+    return res.status(400).json({ erro: "E-mail é obrigatório." });
   }
 
   try {
-    const result = await db.query('SELECT id FROM usuarios WHERE email = $1', [email]);
+    const result = await db.query(
+      "SELECT id FROM usuarios WHERE email = $1",
+      [email]
+    );
 
+    // Resposta idempotente (não revela existência de e-mail)
     if (result.rows.length === 0) {
-      return res.status(200).json({ mensagem: 'Se o e-mail estiver cadastrado, enviaremos as instruções.' });
+      return res.status(200).json({
+        mensagem:
+          "Se o e-mail estiver cadastrado, enviaremos as instruções.",
+      });
     }
 
     const usuarioId = result.rows[0].id;
-    const token = jwt.sign({ id: usuarioId }, process.env.JWT_SECRET, { expiresIn: '1h' });
-    const link = `http://localhost:5173/redefinir-senha/${token}`;
 
-    await enviarEmail(email, 'Recuperação de Senha - Escola da Saúde', `
-      <h3>Olá!</h3>
-      <p>Você solicitou a redefinição de senha. Clique no link abaixo para criar uma nova senha:</p>
-      <a href="${link}" target="_blank">Redefinir Senha</a>
-      <p>Este link é válido por 1 hora.</p>
-    `);
+    const token = jwt.sign(
+      { id: usuarioId },
+      process.env.JWT_SECRET,
+      { expiresIn: "1h" }
+    );
 
-    res.status(200).json({ mensagem: 'Se o e-mail estiver cadastrado, enviamos um link de redefinição.' });
+    // Base do link:
+    // 1) usa FRONTEND_URL do ambiente se definido
+    // 2) se produção e não tiver FRONTEND_URL, tenta o origin do request (se confiável)
+    // 3) fallback final (evita quebrar)
+    const reqOrigin = req.headers.origin || "";
+    const baseUrl =
+      FRONTEND_URL_STATIC ||
+      (process.env.NODE_ENV === "production" &&
+      /^https:\/\/.+/i.test(reqOrigin)
+        ? reqOrigin
+        : "https://seu-frontend-no-vercel.vercel.app");
 
+    const safeBase = String(baseUrl).replace(/\/+$/, "");
+    const link = `${safeBase}/redefinir-senha/${token}`;
+
+    await enviarEmail(
+      email,
+      "Recuperação de Senha - Escola da Saúde",
+      `
+        <h3>Olá!</h3>
+        <p>Você solicitou a redefinição de senha. Clique no link abaixo para criar uma nova senha:</p>
+        <p><a href="${link}" target="_blank" rel="noopener noreferrer">Redefinir Senha</a></p>
+        <p>Este link é válido por 1 hora.</p>
+      `
+    );
+
+    res.status(200).json({
+      mensagem:
+        "Se o e-mail estiver cadastrado, enviamos um link de redefinição.",
+    });
   } catch (err) {
-    console.error('❌ Erro ao solicitar recuperação de senha:', err);
-    res.status(500).json({ erro: 'Erro ao processar solicitação.' });
+    console.error("❌ Erro ao solicitar recuperação de senha:", err);
+    res.status(500).json({ erro: "Erro ao processar solicitação." });
   }
 }
 
@@ -91,25 +137,34 @@ async function redefinirSenha(req, res) {
   const { token, novaSenha } = req.body;
 
   if (!token || !novaSenha) {
-    return res.status(400).json({ erro: 'Token e nova senha são obrigatórios.' });
+    return res
+      .status(400)
+      .json({ erro: "Token e nova senha são obrigatórios." });
   }
 
-  const senhaForte = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{8,}$/;
+  const senhaForte =
+    /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{8,}$/;
   if (!senhaForte.test(novaSenha)) {
     return res.status(400).json({
-      erro: 'A nova senha deve conter ao menos 8 caracteres, incluindo letra maiúscula, minúscula, número e símbolo.'
+      erro:
+        "A nova senha deve conter ao menos 8 caracteres, incluindo letra maiúscula, minúscula, número e símbolo.",
     });
   }
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const usuarioId = decoded.id;
+
     const senhaCriptografada = await bcrypt.hash(novaSenha, 10);
-    await db.query('UPDATE usuarios SET senha = $1 WHERE id = $2', [senhaCriptografada, usuarioId]);
-    res.status(200).json({ mensagem: 'Senha atualizada com sucesso.' });
+    await db.query(
+      "UPDATE usuarios SET senha = $1 WHERE id = $2",
+      [senhaCriptografada, usuarioId]
+    );
+
+    res.status(200).json({ mensagem: "Senha atualizada com sucesso." });
   } catch (err) {
-    console.error('❌ Erro ao redefinir senha:', err);
-    res.status(400).json({ erro: 'Token inválido ou expirado.' });
+    console.error("❌ Erro ao redefinir senha:", err);
+    res.status(400).json({ erro: "Token inválido ou expirado." });
   }
 }
 
@@ -118,12 +173,20 @@ async function obterUsuarioPorId(req, res) {
   const { id } = req.params;
   const usuarioLogado = req.usuario;
 
-  if (Number(id) !== Number(usuarioLogado.id) && !usuarioLogado.perfil.includes("administrador")) {
-    return res.status(403).json({ erro: "Sem permissão para acessar este usuário." });
+  if (
+    Number(id) !== Number(usuarioLogado.id) &&
+    !usuarioLogado.perfil.includes("administrador")
+  ) {
+    return res
+      .status(403)
+      .json({ erro: "Sem permissão para acessar este usuário." });
   }
 
   try {
-    const result = await db.query('SELECT id, nome, email FROM usuarios WHERE id = $1', [id]);
+    const result = await db.query(
+      "SELECT id, nome, email FROM usuarios WHERE id = $1",
+      [id]
+    );
 
     if (result.rows.length === 0) {
       return res.status(404).json({ erro: "Usuário não encontrado." });
@@ -141,8 +204,13 @@ async function atualizarUsuario(req, res) {
   const { id } = req.params;
   const usuarioLogado = req.usuario;
 
-  if (Number(id) !== Number(usuarioLogado.id) && !usuarioLogado.perfil.includes("administrador")) {
-    return res.status(403).json({ erro: "Sem permissão para alterar este usuário." });
+  if (
+    Number(id) !== Number(usuarioLogado.id) &&
+    !usuarioLogado.perfil.includes("administrador")
+  ) {
+    return res
+      .status(403)
+      .json({ erro: "Sem permissão para alterar este usuário." });
   }
 
   const { nome, email, senha } = req.body;
@@ -169,7 +237,9 @@ async function atualizarUsuario(req, res) {
   }
 
   valores.push(id);
-  const query = `UPDATE usuarios SET ${campos.join(", ")} WHERE id = $${index}`;
+  const query = `UPDATE usuarios SET ${campos.join(
+    ", "
+  )} WHERE id = $${index}`;
 
   try {
     await db.query(query, valores);
@@ -182,47 +252,55 @@ async function atualizarUsuario(req, res) {
 
 // 🔐 Login do usuário (por CPF e senha)
 async function loginUsuario(req, res) {
-  const { cpf, senha } = req.body; // ✅ Correto: usamos CPF
+  const { cpf, senha } = req.body;
 
   if (!cpf || !senha) {
-    return res.status(400).json({ erro: 'CPF e senha são obrigatórios.' });
+    return res
+      .status(400)
+      .json({ erro: "CPF e senha são obrigatórios." });
   }
 
   try {
-    const result = await db.query('SELECT * FROM usuarios WHERE cpf = $1', [cpf]); // ✅ Busca por CPF
+    const result = await db.query(
+      "SELECT * FROM usuarios WHERE cpf = $1",
+      [cpf]
+    );
     const usuario = result.rows[0];
 
     if (!usuario) {
-      return res.status(401).json({ erro: 'Usuário não encontrado.' });
+      return res.status(401).json({ erro: "Usuário não encontrado." });
     }
 
     const senhaCorreta = await bcrypt.compare(senha, usuario.senha);
     if (!senhaCorreta) {
-      return res.status(401).json({ erro: 'Senha incorreta.' });
+      return res.status(401).json({ erro: "Senha incorreta." });
     }
 
-    const perfilArray = usuario.perfil.split(',').map(p => p.trim().toLowerCase());
+    const perfilArray = String(usuario.perfil || "")
+      .split(",")
+      .map((p) => p.trim().toLowerCase())
+      .filter(Boolean);
 
-const token = jwt.sign(
-  { id: usuario.id, perfil: perfilArray },
-  process.env.JWT_SECRET,
-  { expiresIn: '4h' }
-);
+    const token = jwt.sign(
+      { id: usuario.id, perfil: perfilArray },
+      process.env.JWT_SECRET,
+      { expiresIn: "4h" }
+    );
 
-res.status(200).json({
-  mensagem: 'Login realizado com sucesso.',
-  token,
-  usuario: {
-    id: usuario.id,
-    nome: usuario.nome,
-    cpf: usuario.cpf,
-    email: usuario.email,
-    perfil: perfilArray, // Agora é array em todo lugar!
-  },
-});
+    res.status(200).json({
+      mensagem: "Login realizado com sucesso.",
+      token,
+      usuario: {
+        id: usuario.id,
+        nome: usuario.nome,
+        cpf: usuario.cpf,
+        email: usuario.email,
+        perfil: perfilArray,
+      },
+    });
   } catch (err) {
-    console.error('❌ Erro ao autenticar usuário:', err);
-    res.status(500).json({ erro: 'Erro ao realizar login.' });
+    console.error("❌ Erro ao autenticar usuário:", err);
+    res.status(500).json({ erro: "Erro ao realizar login." });
   }
 }
 
@@ -232,16 +310,18 @@ async function obterAssinatura(req, res) {
   const perfil = req.usuario?.perfil || [];
 
   if (!usuarioId) {
-    return res.status(401).json({ erro: 'Usuário não autenticado.' });
+    return res.status(401).json({ erro: "Usuário não autenticado." });
   }
 
   if (!perfil.includes("instrutor") && !perfil.includes("administrador")) {
-    return res.status(403).json({ erro: 'Acesso restrito a instrutor ou administradores.' });
+    return res
+      .status(403)
+      .json({ erro: "Acesso restrito a instrutor ou administradores." });
   }
 
   try {
     const result = await db.query(
-      'SELECT assinatura FROM usuarios WHERE id = $1',
+      "SELECT assinatura FROM usuarios WHERE id = $1",
       [usuarioId]
     );
 
@@ -252,8 +332,6 @@ async function obterAssinatura(req, res) {
     res.status(500).json({ erro: "Erro ao buscar assinatura." });
   }
 }
-
-
 
 module.exports = {
   cadastrarUsuario,
