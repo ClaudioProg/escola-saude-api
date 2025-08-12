@@ -9,7 +9,7 @@ import { apiPost } from "../services/api";
 import ErroCarregamento from "../components/ErroCarregamento";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL; // ex.: https://escola-saude-api.onrender.com
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL; 
 
 export default function RegistrarPresenca() {
   const navigate = useNavigate();
@@ -25,7 +25,6 @@ export default function RegistrarPresenca() {
   const videoConstraints = useMemo(
     () => ({
       facingMode: { ideal: "environment" },
-      // width/height ideais ajudam em alguns devices
       width: { ideal: 1280 },
       height: { ideal: 720 },
     }),
@@ -33,39 +32,43 @@ export default function RegistrarPresenca() {
   );
 
   useEffect(() => {
-    if (!token) {
-      toast.error("⚠️ Faça login para registrar presença.");
-    }
+    if (!token) toast.error("⚠️ Faça login para registrar presença.");
   }, [token]);
 
   if (!token) return <Navigate to="/login" replace />;
 
+  function ensureLeadingSlash(path) {
+    if (!path) return "/";
+    return path.startsWith("/") ? path : `/${path}`;
+  }
+
   function parseQrPayload(text) {
     // Aceita dois formatos:
-    // 1) URL para endpoint do seu backend (mesmo host de API_BASE_URL)
-    //    ex.: https://escola-saude-api.onrender.com/api/presencas/confirmar-qr?token=XYZ
-    // 2) JSON: { "path": "/api/presencas/confirmar-qr", "payload": { ... } }
+    // 1) URL do backend: https://.../api/presencas/confirmar-qr?token=XYZ
+    // 2) JSON: { "path": "/api/presencas/confirmar-qr", "payload": {...} }
     try {
-      // Tenta URL
       const base = new URL(API_BASE_URL);
       const maybeUrl = new URL(text);
 
-      // Garante mesma origem (evita POST para domínios externos)
       if (maybeUrl.origin !== base.origin) {
-        return { kind: "invalid", reason: "Origem inválida" };
+        return { kind: "invalid", reason: "Origem do QR não corresponde à API oficial." };
       }
 
-      return { kind: "url", path: maybeUrl.pathname + maybeUrl.search };
+      const pathWithQuery = `${maybeUrl.pathname}${maybeUrl.search || ""}`;
+      return { kind: "url", path: ensureLeadingSlash(pathWithQuery) };
     } catch {
-      // Não é URL. Tenta JSON.
       try {
         const parsed = JSON.parse(text);
         if (typeof parsed?.path === "string") {
-          return { kind: "json", path: parsed.path, payload: parsed.payload ?? {} };
+          return {
+            kind: "json",
+            path: ensureLeadingSlash(parsed.path),
+            payload: parsed.payload ?? {},
+          };
         }
-        return { kind: "invalid", reason: "Formato JSON inválido" };
+        return { kind: "invalid", reason: "Formato JSON inválido no QR Code." };
       } catch {
-        return { kind: "invalid", reason: "Conteúdo do QR inválido" };
+        return { kind: "invalid", reason: "Conteúdo do QR Code inválido." };
       }
     }
   }
@@ -81,7 +84,7 @@ export default function RegistrarPresenca() {
     if (lockRef.current) return;
     lockRef.current = true;
 
-    const text = data?.text || data; // libs podem retornar string direta
+    const text = data?.text || data; // libs podem retornar string
     const parsed = parseQrPayload(String(text));
 
     if (parsed.kind === "invalid") {
@@ -94,21 +97,19 @@ export default function RegistrarPresenca() {
       setCarregando(true);
 
       if (parsed.kind === "url") {
-        // Faz POST para o path extraído, usando apiPost (base segura)
-        await apiPost(parsed.path, null); // backend deve inferir tudo pelo token/params
-      } else if (parsed.kind === "json") {
-        // Faz POST com payload explícito
+        await apiPost(parsed.path, null); // backend infere via querystring/token do QR
+      } else {
         await apiPost(parsed.path, parsed.payload);
       }
 
       toast.success("✅ Presença registrada com sucesso!");
       navigate("/meus-certificados");
     } catch (err) {
-      // apiPost já lança em caso de HTTP não OK
-      toast.warning("⚠️ QR Code inválido ou presença já registrada.");
+      const msg =
+        err?.data?.erro || err?.data?.message || err?.message || "QR Code inválido ou presença já registrada.";
+      toast.warning(`⚠️ ${msg}`);
     } finally {
       setCarregando(false);
-      // Libera o lock com um pequeno atraso para evitar re-scan instantâneo
       setTimeout(() => (lockRef.current = false), 500);
     }
   };
@@ -132,7 +133,7 @@ export default function RegistrarPresenca() {
       {erroCamera ? (
         <ErroCarregamento
           titulo="Erro ao acessar a câmera"
-          mensagem="Verifique se o navegador tem permissão para usar a câmera. Em alguns celulares, tente o Chrome/Firefox atualizado."
+          mensagem="Verifique as permissões do navegador. Em celulares, tente Chrome/Firefox atualizados."
         />
       ) : (
         <div className="rounded-xl overflow-hidden border border-lousa w-full">
@@ -151,11 +152,7 @@ export default function RegistrarPresenca() {
       )}
 
       {carregando && (
-        <p
-          className="mt-4 text-lousa dark:text-white animate-pulse"
-          role="status"
-          aria-live="polite"
-        >
+        <p className="mt-4 text-lousa dark:text-white animate-pulse" role="status" aria-live="polite">
           ⏳ Registrando presença...
         </p>
       )}

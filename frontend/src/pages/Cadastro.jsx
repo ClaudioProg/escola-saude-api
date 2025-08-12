@@ -1,3 +1,4 @@
+// 📁 src/pages/Cadastro.jsx
 import { useState, useMemo, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Eye, EyeOff } from "lucide-react";
@@ -5,6 +6,7 @@ import { toast } from "react-toastify";
 import BotaoPrimario from "../components/BotaoPrimario";
 import BotaoSecundario from "../components/BotaoSecundario";
 import Spinner from "../components/Spinner";
+import { apiPost } from "../services/api"; // ✅ usa cliente central
 
 export default function Cadastro() {
   const [nome, setNome] = useState("");
@@ -58,7 +60,12 @@ export default function Cadastro() {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    setErro(""); setErroNome(""); setErroCpf(""); setErroEmail(""); setErroSenha(""); setErroConfirmarSenha("");
+    setErro("");
+    setErroNome("");
+    setErroCpf("");
+    setErroEmail("");
+    setErroSenha("");
+    setErroConfirmarSenha("");
 
     if (!nome) {
       setErroNome("Nome é obrigatório.");
@@ -82,28 +89,27 @@ export default function Cadastro() {
     }
 
     setLoading(true);
-
     try {
-      const response = await fetch("https://escola-saude-api.onrender.com/api/usuarios/cadastro", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          nome,
-          cpf: cpf.replace(/\D/g, ""),
-          email,
-          senha,
-          perfil: "usuario",
-        }),
+      // ✅ agora usa baseURL da env (HTTPS) e tratamento padrão
+      const data = await apiPost("/api/usuarios/cadastro", {
+        nome,
+        cpf: cpf.replace(/\D/g, ""),
+        email,
+        senha,
+        perfil: "usuario",
       });
 
-      const data = await response.json();
-      if (!response.ok) throw new Error(data?.mensagem || "Erro ao criar conta.");
-
       toast.success("✅ Cadastro realizado com sucesso!");
-      setTimeout(() => navigate("/login"), 2200);
+      setTimeout(() => navigate("/login"), 1200);
     } catch (err) {
-      setErro(err.message || "Erro inesperado.");
-      setSenha(""); setConfirmarSenha("");
+      const msg =
+        err?.data?.erro ||
+        err?.data?.message ||
+        err?.message ||
+        "Erro ao criar conta.";
+      setErro(msg);
+      setSenha("");
+      setConfirmarSenha("");
     } finally {
       setLoading(false);
     }
@@ -132,7 +138,10 @@ export default function Cadastro() {
             type="text"
             placeholder="Nome completo"
             value={nome}
-            onChange={(e) => { setNome(e.target.value); setErroNome(""); }}
+            onChange={(e) => {
+              setNome(e.target.value);
+              setErroNome("");
+            }}
             className="w-full px-4 py-2 rounded bg-white text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-lousa focus:outline-none"
             autoComplete="name"
           />
@@ -145,7 +154,10 @@ export default function Cadastro() {
             type="text"
             placeholder="CPF"
             value={cpf}
-            onChange={(e) => { setCpf(aplicarMascaraCPF(e.target.value)); setErroCpf(""); }}
+            onChange={(e) => {
+              setCpf(aplicarMascaraCPF(e.target.value));
+              setErroCpf("");
+            }}
             maxLength={14}
             className="w-full px-4 py-2 rounded bg-white text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-lousa focus:outline-none"
             autoComplete="username"
@@ -159,7 +171,10 @@ export default function Cadastro() {
             type="email"
             placeholder="E-mail"
             value={email}
-            onChange={(e) => { setEmail(e.target.value); setErroEmail(""); }}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              setErroEmail("");
+            }}
             className="w-full px-4 py-2 rounded bg-white text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-lousa focus:outline-none"
             autoComplete="email"
           />
@@ -172,7 +187,10 @@ export default function Cadastro() {
             type={mostrarSenha ? "text" : "password"}
             placeholder="Senha"
             value={senha}
-            onChange={(e) => { setSenha(e.target.value); setErroSenha(""); }}
+            onChange={(e) => {
+              setSenha(e.target.value);
+              setErroSenha("");
+            }}
             className="w-full px-4 py-2 pr-12 rounded bg-white text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-lousa focus:outline-none"
             autoComplete="new-password"
           />
@@ -212,19 +230,32 @@ export default function Cadastro() {
             type="password"
             placeholder="Confirmar senha"
             value={confirmarSenha}
-            onChange={(e) => { setConfirmarSenha(e.target.value); setErroConfirmarSenha(""); }}
+            onChange={(e) => {
+              setConfirmarSenha(e.target.value);
+              setErroConfirmarSenha("");
+            }}
             className="w-full px-4 py-2 rounded bg-white text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-lousa focus:outline-none"
             autoComplete="new-password"
           />
-          {erroConfirmarSenha && <p className="text-red-500 text-xs mt-1">{erroConfirmarSenha}</p>}
+          {erroConfirmarSenha && (
+            <p className="text-red-500 text-xs mt-1">{erroConfirmarSenha}</p>
+          )}
         </div>
 
         {/* Botões */}
-        <BotaoPrimario type="submit" className="w-full flex justify-center items-center gap-2" disabled={loading}>
+        <BotaoPrimario
+          type="submit"
+          className="w-full flex justify-center items-center gap-2"
+          disabled={loading}
+        >
           {loading ? <Spinner pequeno /> : "Cadastrar"}
         </BotaoPrimario>
 
-        <BotaoSecundario type="button" onClick={() => navigate("/login")} className="w-full mt-2">
+        <BotaoSecundario
+          type="button"
+          onClick={() => navigate("/login")}
+          className="w-full mt-2"
+        >
           Voltar para login
         </BotaoSecundario>
 

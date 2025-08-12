@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
 import BotaoPrimario from "../components/BotaoPrimario";
+import { apiPost } from "../services/api"; // ✅ usa cliente central
 
 export default function RedefinirSenha() {
   const { token } = useParams();
@@ -20,20 +21,23 @@ export default function RedefinirSenha() {
     setMensagem("");
 
     if (!novaSenha || !confirmarSenha) {
-      setErro("Preencha todos os campos.");
-      toast.warning("⚠️ Preencha todos os campos.");
+      const msg = "Preencha todos os campos.";
+      setErro(msg);
+      toast.warning(`⚠️ ${msg}`);
       return;
     }
 
     if (novaSenha !== confirmarSenha) {
-      setErro("As senhas não coincidem.");
-      toast.warning("⚠️ As senhas não coincidem.");
+      const msg = "As senhas não coincidem.";
+      setErro(msg);
+      toast.warning(`⚠️ ${msg}`);
       return;
     }
 
     const senhaForte = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{8,}$/;
     if (!senhaForte.test(novaSenha)) {
-      const msg = "A senha deve conter ao menos 8 caracteres, incluindo letra maiúscula, minúscula, número e símbolo.";
+      const msg =
+        "A senha deve conter ao menos 8 caracteres, incluindo letra maiúscula, minúscula, número e símbolo.";
       setErro(msg);
       toast.warning(`⚠️ ${msg}`);
       return;
@@ -42,27 +46,22 @@ export default function RedefinirSenha() {
     setLoading(true);
     toast.info("⏳ Redefinindo senha...");
     try {
-      const response = await fetch("https://escola-saude-api.onrender.com/api/usuarios/redefinir-senha", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token, novaSenha }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.erro || "Erro ao redefinir senha.");
-      }
+      // ✅ agora via baseURL da env (HTTPS) e tratamento padronizado
+      await apiPost("/api/usuarios/redefinir-senha", { token, novaSenha });
 
       setMensagem("Senha redefinida com sucesso! Redirecionando para login...");
       toast.success("✅ Senha redefinida com sucesso!");
       setNovaSenha("");
       setConfirmarSenha("");
-
-      setTimeout(() => navigate("/login"), 2500);
+      setTimeout(() => navigate("/login"), 1500);
     } catch (err) {
-      setErro(err.message);
-      toast.error(`❌ ${err.message}`);
+      const msg =
+        err?.data?.erro ||
+        err?.data?.message ||
+        err?.message ||
+        "Erro ao redefinir senha.";
+      setErro(msg);
+      toast.error(`❌ ${msg}`);
     } finally {
       setLoading(false);
     }

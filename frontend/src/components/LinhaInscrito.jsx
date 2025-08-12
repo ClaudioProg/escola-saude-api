@@ -1,9 +1,11 @@
+// 📁 src/components/LinhaInscrito.jsx
 import { useState } from "react";
 import { toast } from "react-toastify";
 import { motion } from "framer-motion";
 import { CheckCircle, XCircle } from "lucide-react";
 import BotaoSecundario from "./BotaoSecundario";
 import { formatarCPF as formatarCPFUtils } from "../utils/data";
+import { apiPost } from "../services/api"; // ✅ usa cliente central
 
 const hoje = new Date().toISOString().split("T")[0];
 
@@ -17,7 +19,9 @@ export default function LinhaInscrito({ inscrito, turma, token }) {
   const eventoEncerrado = agora > dataFim;
   const dentroPrazoConfirmacao = agora <= limiteConfirmacao;
 
-  const temPresenca = inscrito.data_presenca !== null && inscrito.data_presenca !== undefined;
+  const temPresenca =
+    inscrito.data_presenca !== null && inscrito.data_presenca !== undefined;
+
   const [status, setStatus] = useState(temPresenca ? "presente" : null);
   const [loading, setLoading] = useState(false);
 
@@ -26,30 +30,29 @@ export default function LinhaInscrito({ inscrito, turma, token }) {
 
     setLoading(true);
     try {
-      const res = await fetch("https://escola-saude-api.onrender.com/api/presencas/registrar", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          usuario_id: inscrito.usuario_id,
-          turma_id: turma.id,
-          data: hoje,
-        }),
+      // ✅ usa baseURL do .env e injeta token automaticamente (Authorization)
+      await apiPost("/api/presencas/registrar", {
+        usuario_id: inscrito.usuario_id,
+        turma_id: turma.id,
+        data: hoje,
       });
 
-      const json = await res.json();
-      if (res.status === 201 || res.status === 409) {
+      setStatus("presente");
+      toast.success("✅ Presença confirmada!");
+    } catch (err) {
+      // Trata duplicidade como sucesso (ex.: já registrada) — HTTP 409
+      if (err?.status === 409) {
         setStatus("presente");
-        toast.success("✅ Presença confirmada!");
+        toast.success("✅ Presença já estava confirmada.");
       } else {
         setStatus("faltou");
-        toast.error(`❌ ${json.erro || "Erro ao confirmar presença."}`);
+        const msg =
+          err?.data?.erro ||
+          err?.data?.message ||
+          err?.message ||
+          "Erro ao confirmar presença.";
+        toast.error(`❌ ${msg}`);
       }
-    } catch (e) {
-      setStatus("faltou");
-      toast.error("❌ Erro de rede.");
     } finally {
       setLoading(false);
     }
@@ -73,7 +76,9 @@ export default function LinhaInscrito({ inscrito, turma, token }) {
     }
 
     return (
-      <span className="text-gray-500 text-sm italic dark:text-gray-300">Aguardando</span>
+      <span className="text-gray-500 text-sm italic dark:text-gray-300">
+        Aguardando
+      </span>
     );
   }
 

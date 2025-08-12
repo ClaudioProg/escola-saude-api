@@ -1,7 +1,9 @@
+// 📁 src/components/ResumoPresencasSimples.jsx
 import { useEffect, useState } from "react";
 import Skeleton from "react-loading-skeleton";
 import PropTypes from "prop-types";
 import { motion } from "framer-motion";
+import { apiGet } from "../services/api"; // ✅ usa cliente central
 
 export default function ResumoPresencasSimples({ turmaId, token }) {
   const [total, setTotal] = useState(0);
@@ -10,16 +12,14 @@ export default function ResumoPresencasSimples({ turmaId, token }) {
 
   useEffect(() => {
     let ativo = true;
+
     const carregarPresencas = async () => {
       try {
-        const res = await fetch(
-          `https://escola-saude-api.onrender.com/api/relatorio-presencas/turma/${turmaId}`,
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-        const data = await res.json();
+        // ✅ agora vai via baseURL HTTPS e com Authorization automático
+        const data = await apiGet(`/api/relatorio-presencas/turma/${turmaId}`);
         if (!ativo) return;
-        setTotal(data.length);
-        setPresentes(data.filter((aluno) => aluno.presente).length);
+        setTotal(Array.isArray(data) ? data.length : 0);
+        setPresentes(Array.isArray(data) ? data.filter((aluno) => aluno.presente).length : 0);
       } catch {
         if (ativo) {
           setTotal(0);
@@ -29,11 +29,12 @@ export default function ResumoPresencasSimples({ turmaId, token }) {
         if (ativo) setCarregando(false);
       }
     };
+
     carregarPresencas();
     return () => {
       ativo = false;
     };
-  }, [turmaId, token]);
+  }, [turmaId]); // 🔄 token não é mais necessário aqui
 
   if (carregando) {
     return (
@@ -66,11 +67,7 @@ export default function ResumoPresencasSimples({ turmaId, token }) {
 
   const porcentagem = total > 0 ? Math.round((presentes / total) * 100) : 0;
   const corBarra =
-    porcentagem >= 75
-      ? "bg-green-600"
-      : porcentagem >= 50
-      ? "bg-yellow-500"
-      : "bg-red-500";
+    porcentagem >= 75 ? "bg-green-600" : porcentagem >= 50 ? "bg-yellow-500" : "bg-red-500";
 
   return (
     <motion.div
@@ -97,17 +94,12 @@ export default function ResumoPresencasSimples({ turmaId, token }) {
           transition={{ duration: 0.5 }}
         />
       </div>
-      <progress
-        value={presentes}
-        max={total}
-        className="sr-only"
-        aria-label="Progresso de presença"
-      />
+      <progress value={presentes} max={total} className="sr-only" aria-label="Progresso de presença" />
     </motion.div>
   );
 }
 
 ResumoPresencasSimples.propTypes = {
   turmaId: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
-  token: PropTypes.string.isRequired,
+  token: PropTypes.string, // 🔸 pode remover depois; não é mais usado
 };

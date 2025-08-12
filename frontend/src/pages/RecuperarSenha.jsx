@@ -3,6 +3,7 @@ import { useState } from "react";
 import { toast } from "react-toastify";
 import BotaoPrimario from "../components/BotaoPrimario";
 import BotaoSecundario from "../components/BotaoSecundario";
+import { apiPost } from "../services/api"; // ✅ usa cliente central
 
 export default function RecuperarSenha() {
   const [email, setEmail] = useState("");
@@ -24,23 +25,22 @@ export default function RecuperarSenha() {
     setLoading(true);
     toast.info("⏳ Enviando solicitação...");
     try {
-      const response = await fetch("https://escola-saude-api.onrender.com/api/usuarios/recuperar-senha", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
+      // ✅ baseURL via env e tratamento padrão
+      await apiPost("/api/usuarios/recuperar-senha", { email });
 
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.erro || "Erro ao enviar solicitação.");
-      }
-
-      setMensagem("Se o e-mail estiver cadastrado, você receberá as instruções para redefinir a senha.");
+      setMensagem(
+        "Se o e-mail estiver cadastrado, você receberá as instruções para redefinir a senha."
+      );
       toast.success("✅ Instruções enviadas ao e-mail (se cadastrado).");
       setEmail("");
     } catch (err) {
-      setErro(err.message);
-      toast.error(`❌ ${err.message}`);
+      const msg =
+        err?.data?.erro ||
+        err?.data?.message ||
+        err?.message ||
+        "Erro ao enviar solicitação.";
+      setErro(msg);
+      toast.error(`❌ ${msg}`);
     } finally {
       setLoading(false);
     }

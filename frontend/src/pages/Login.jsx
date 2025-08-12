@@ -20,6 +20,9 @@ export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
 
+  // ✅ só mostra o botão Google se a env existir
+  const hasGoogleClient = !!import.meta.env.VITE_GOOGLE_CLIENT_ID;
+
   // Se já está autenticado e veio para /login, manda pro dashboard
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -41,11 +44,9 @@ export default function Login() {
   }
 
   function persistirSessao(payload) {
-    // payload esperado: { token, usuario: { nome, perfil, ... } }
     const { token, usuario } = payload || {};
     if (!token || !usuario) throw new Error("Resposta de login inválida.");
 
-    // perfil pode vir como array ou string; vamos normalizar p/ array
     const perfilArray = Array.isArray(usuario.perfil)
       ? usuario.perfil
       : typeof usuario.perfil === "string"
@@ -55,7 +56,7 @@ export default function Login() {
     localStorage.clear();
     localStorage.setItem("token", token);
     localStorage.setItem("nome", usuario.nome || "");
-    localStorage.setItem("perfil", JSON.stringify(perfilArray)); // ✅ sempre array
+    localStorage.setItem("perfil", JSON.stringify(perfilArray));
     localStorage.setItem("usuario", JSON.stringify({ ...usuario, perfil: perfilArray }));
   }
 
@@ -83,12 +84,10 @@ export default function Login() {
         cpf: cpf.replace(/\D/g, ""),
         senha,
       });
-
       persistirSessao(payload);
       toast.success("✅ Login realizado com sucesso!");
       navigate("/dashboard");
     } catch (err) {
-      // tenta extrair mensagem amigável
       const msg = err?.message?.startsWith("HTTP ")
         ? "Erro ao fazer login."
         : err?.message || "Erro ao fazer login.";
@@ -106,11 +105,9 @@ export default function Login() {
     }
     setLoadingGoogle(true);
     try {
-      // Se seu backend tem endpoint dedicado, troque para /api/login/google
       const payload = await apiPost("/api/auth/google", {
         credential: credentialResponse.credential,
       });
-
       persistirSessao(payload);
       toast.success("✅ Login com Google realizado com sucesso!");
       navigate("/dashboard");
@@ -211,13 +208,17 @@ export default function Login() {
         <div className="flex justify-center mt-1 mb-4">
           {loadingGoogle ? (
             <CarregandoSkeleton mensagem="Fazendo login com Google..." />
-          ) : (
+          ) : hasGoogleClient ? (
             <div className="scale-90 max-w-xs w-full flex justify-center">
               <GoogleLogin
                 onSuccess={handleLoginGoogle}
                 onError={() => toast.error("Erro no login com Google.")}
               />
             </div>
+          ) : (
+            <small className="text-white/80 text-center block">
+              Login com Google indisponível no momento.
+            </small>
           )}
         </div>
 

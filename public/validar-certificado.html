@@ -1,82 +1,26 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Validação de Certificado</title>
   <style>
-    body {
-      background: #e8f0e3;
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      padding: 40px 20px;
-      text-align: center;
-    }
-
-    .logo {
-      width: 120px;
-      margin-bottom: 20px;
-    }
-
-    .container {
-      background: #2e4b2e;
-      color: white;
-      border-radius: 10px;
-      padding: 30px;
-      box-shadow: 0 0 15px rgba(0,0,0,0.2);
-      max-width: 700px;
-      margin: auto;
-      font-size: 18px;
-      animation: escrever 1.8s ease-in-out;
-    }
-
-    h1 {
-      font-size: 28px;
-      margin-bottom: 20px;
-      color: white;
-    }
-
-    .info p {
-      margin: 10px 0;
-      white-space: pre-wrap;
-    }
-
-    .erro {
-      color: #ffaaaa;
-      font-weight: bold;
-    }
-
-    @keyframes escrever {
-      from {
-        opacity: 0;
-        transform: translateY(-15px);
-      }
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
-    }
-
-    #printButton {
-      margin-top: 30px;
-      background: #4CAF50;
-      color: white;
-      border: none;
-      padding: 10px 20px;
-      font-size: 16px;
-      cursor: pointer;
-      border-radius: 6px;
-    }
-
-    #printButton:hover {
-      background: #45a049;
-    }
+    body { background:#e8f0e3; font-family:'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding:40px 20px; text-align:center; }
+    .logo { width:120px; margin-bottom:20px; }
+    .container { background:#2e4b2e; color:#fff; border-radius:10px; padding:30px; box-shadow:0 0 15px rgba(0,0,0,.2); max-width:700px; margin:auto; font-size:18px; animation:fadeIn .6s ease; }
+    h1 { font-size:28px; margin-bottom:20px; color:#fff; }
+    .info p { margin:10px 0; white-space:pre-wrap; }
+    .erro { color:#ffaaaa; font-weight:bold; }
+    #printButton { margin-top:30px; background:#4CAF50; color:#fff; border:none; padding:10px 20px; font-size:16px; cursor:pointer; border-radius:6px; }
+    #printButton[disabled] { opacity:.6; cursor:not-allowed; }
+    #printButton:hover { background:#45a049; }
+    @keyframes fadeIn { from{opacity:0; transform:translateY(-10px)} to{opacity:1; transform:translateY(0)} }
   </style>
 </head>
 <body>
+  <img src="/logo_escola.png" alt="Logo da Escola da Saúde" class="logo"/>
 
-  <img src="logo_escola.png" alt="Logo da Escola da Saúde" class="logo"/>
-
-  <div class="container">
+  <div class="container" role="region" aria-live="polite">
     <h1>Validação de Certificado</h1>
     <div class="info" id="info">
       <p>Verificando...</p>
@@ -86,47 +30,108 @@
   <button id="printButton" onclick="window.print()">🖨️ Imprimir Certificação</button>
 
   <script>
-    const params = new URLSearchParams(window.location.search);
-    const usuario_id = params.get("usuario_id");
-    const evento_id = params.get("evento_id");
-  
-    const infoDiv = document.getElementById("info");
-  
-    // 📅 Função auxiliar para formatar datas em dd/mm/aaaa
-    function formatarDataBrasileira(dataISO) {
-      if (!dataISO) return "";
-      const partes = dataISO.split("T")[0].split("-");
-      if (partes.length !== 3) return "";
-      const [ano, mes, dia] = partes;
-      return `${dia}/${mes}/${ano}`;
-    }
-  
-    if (!usuario_id || !evento_id) {
-      infoDiv.innerHTML = '<p class="erro">Parâmetros inválidos na URL.</p>';
-    } else {
-      fetch(`https://escola-saude-api.onrender.com/api/certificados/validar-certificado?usuario_id=${usuario_id}&evento_id=${evento_id}`)
-        .then(response => response.json())
-        .then(data => {
-          if (data.valido) {
-            infoDiv.innerHTML = `
-              <p><strong>✅ Certificado válido</strong></p>
-              <p><strong>Nome:</strong> ${data.usuario}</p>
-              <p><strong>CPF:</strong> ${data.cpf}</p>
-              <p><strong>Evento:</strong> ${data.evento}</p>
-              <p><strong>Período:</strong> ${formatarDataBrasileira(data.periodo.inicio)} a ${formatarDataBrasileira(data.periodo.fim)}</p>
-              <p><strong>Emitido em:</strong> ${formatarDataBrasileira(data.gerado_em)}</p>
-            `;
+    (function () {
+      const params = new URLSearchParams(window.location.search);
+      const usuario_id = params.get("usuario_id");
+      const evento_id  = params.get("evento_id");
+
+      // Permite sobrepor a base da API via query (?api_base=https://...).
+      // Padrão: produção HTTPS.
+      const DEFAULT_API_BASE = "https://escola-saude-api.onrender.com";
+      const apiBase = (params.get("api_base") || DEFAULT_API_BASE).replace(/\/+$/,"");
+
+      const infoDiv = document.getElementById("info");
+      const printBtn = document.getElementById("printButton");
+
+      // Acessibilidade: desabilita imprimir enquanto carrega
+      printBtn.disabled = true;
+
+      function formatarDataBrasileira(iso) {
+        if (!iso) return "";
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) return "";
+        return d.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
+      }
+
+      function p(txt, strong=false) {
+        const el = document.createElement("p");
+        if (strong) {
+          const b = document.createElement("strong");
+          b.textContent = txt;
+          el.appendChild(b);
+        } else {
+          el.textContent = txt;
+        }
+        return el;
+      }
+
+      function linhaRotulo(rotulo, valor) {
+        const el = document.createElement("p");
+        const b  = document.createElement("strong");
+        b.textContent = rotulo + ": ";
+        el.appendChild(b);
+        el.appendChild(document.createTextNode(valor || ""));
+        return el;
+      }
+
+      function erro(msg) {
+        infoDiv.innerHTML = "";
+        const el = p(msg);
+        el.className = "erro";
+        infoDiv.appendChild(el);
+        printBtn.disabled = true;
+      }
+
+      if (!usuario_id || !evento_id) {
+        erro("Parâmetros inválidos na URL.");
+        return;
+      }
+
+      // Monta URL segura
+      const url = `${apiBase}/api/certificados/validar-certificado?usuario_id=${encodeURIComponent(usuario_id)}&evento_id=${encodeURIComponent(evento_id)}`;
+
+      // Bloqueia mixed content (se página estiver em https, a API também deve estar)
+      if (location.protocol === "https:" && url.startsWith("http://")) {
+        erro("Não foi possível validar (Mixed Content). Verifique a URL da API (use HTTPS).");
+        return;
+      }
+
+      fetch(url, { credentials: "include" })
+        .then(async (res) => {
+          // Tenta JSON mesmo em erro para capturar mensagem do backend
+          let data = null;
+          try { data = await res.json(); } catch { /* corpo não-JSON */ }
+
+          if (!res.ok) {
+            const msg = (data && (data.erro || data.message)) || `Erro HTTP ${res.status}`;
+            throw new Error(msg);
+          }
+          return data;
+        })
+        .then((data) => {
+          infoDiv.innerHTML = "";
+          if (data && data.valido) {
+            infoDiv.appendChild(p("✅ Certificado válido", true));
+            infoDiv.appendChild(linhaRotulo("Nome", data.usuario || ""));
+            infoDiv.appendChild(linhaRotulo("CPF",  data.cpf || ""));
+            infoDiv.appendChild(linhaRotulo("Evento", data.evento || ""));
+            const periodo = (data.periodo && data.periodo.inicio && data.periodo.fim)
+              ? `${formatarDataBrasileira(data.periodo.inicio)} a ${formatarDataBrasileira(data.periodo.fim)}`
+              : "";
+            infoDiv.appendChild(linhaRotulo("Período", periodo));
+            infoDiv.appendChild(linhaRotulo("Emitido em", formatarDataBrasileira(data.gerado_em)));
+
+            // Libera impressão
+            printBtn.disabled = false;
           } else {
-            infoDiv.innerHTML = '<p class="erro">❌ Certificado não encontrado.</p>';
+            erro("❌ Certificado não encontrado.");
           }
         })
-        .catch(error => {
-          console.error(error);
-          infoDiv.innerHTML = '<p class="erro">Erro ao validar o certificado.</p>';
+        .catch((e) => {
+          console.error(e);
+          erro("Erro ao validar o certificado. Tente novamente mais tarde.");
         });
-    }
+    })();
   </script>
-  
-
 </body>
 </html>
