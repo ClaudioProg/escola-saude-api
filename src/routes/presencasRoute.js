@@ -1,77 +1,127 @@
-const express = require('express');
+// src/routes/presencasRoute.js
+const express = require("express");
 const router = express.Router();
 
-const authMiddleware = require('../auth/authMiddleware');
-const authorizeRoles = require('../auth/authorizeRoles');
-const presencasController = require('../controllers/presencasController');
+const authMiddleware = require("../auth/authMiddleware");
+const db = require("../db");
 
-// 📌 1. Registro de presença normal com data (usuário autenticado)
+// Importa SOMENTE funções realmente exportadas pelo controller
+const {
+  registrarPresenca,
+  confirmarPresencaViaQR,
+  confirmarPresencaSimples,
+  registrarManual,
+  confirmarHojeManual,
+  validarPresenca,
+  presencasDetalhadasPorTurma,
+  confirmarPresencaInstrutor,
+  listarTodasPresencasParaAdmin,
+} = require("../controllers/presencasController");
+
+/** Middleware simples para restringir por perfil */
+function permitirPerfis(...perfisPermitidos) {
+  return (req, res, next) => {
+    const perfil = req?.usuario?.perfil;
+    if (!perfil || !perfisPermitidos.includes(perfil)) {
+      return res.status(403).json({ erro: "Acesso negado." });
+    }
+    next();
+  };
+}
+
+/** -----------------------------
+ *  Rotas públicas (sem auth)
+ *  -----------------------------
+ *  Usado por /validar-certificado.html:
+ *  GET /api/presencas/validar?evento=ID&usuario=ID
+ *  -> { presente: true/false }
+ */
+router.get("/validar", async (req, res) => {
+  try {
+    const evento = req.query.evento || req.query.evento_id;
+    const usuario = req.query.usuario || req.query.usuario_id;
+
+    if (!evento || !usuario) {
+      return res.status(400).json({ presente: false, erro: "Parâmetros ausentes." });
+    }
+
+    const sql = `
+      SELECT 1
+      FROM presencas p
+      JOIN turmas t ON t.id = p.turma_id
+      WHERE p.usuario_id = $1
+        AND t.evento_id = $2
+        AND p.presente = TRUE
+      LIMIT 1
+    `;
+    const { rowCount } = await db.query(sql, [usuario, evento]);
+    return res.json({ presente: rowCount > 0 });
+  } catch (err) {
+    console.error("❌ Erro em GET /api/presencas/validar:", err);
+    return res.status(500).json({ presente: false, erro: "Erro ao validar presença." });
+  }
+});
+
+/** -----------------------------
+ *  Rotas autenticadas
+ *  ----------------------------- */
+
+// 1) Registro de presença (usuário; requer data válida do evento)
+router.post("/", authMiddleware, registrarPresenca);
+
+// 2) Confirmação de presença via QR Code (usuário)
+// (Você usava GET; manteremos GET para compatibilidade)
+router.get("/confirmar/:turma_id", authMiddleware, confirmarPresencaViaQR);
+
+// 3) Confirmação simples (sem QR; aceita data aaaa-mm-dd ou dd/mm/aaaa)
+router.post("/confirmar-simples", authMiddleware, confirmarPresencaSimples);
+
+// 4) Registro manual (admin/instrutor)
 router.post(
-  '/',
+  "/registrar",
   authMiddleware,
-  presencasController.registrarPresenca
+  permitirPerfis("administrador", "instrutor"),
+  registrarManual
 );
 
-// 📲 2. Confirmação de presença via QR Code fixo (usuário autenticado)
-router.get(
-  '/confirmar/:turma_id',
-  authMiddleware,
-  presencasController.confirmarPresencaViaQR
-);
-
-// ✅ 3. Confirmação simples (sem QR, sem data) – autenticado
+// 5) Confirmar manualmente presença no dia atual (admin)
 router.post(
-  '/confirmar-simples',
+  "/manual-confirmacao",
   authMiddleware,
-  presencasController.confirmarPresencaSimples
+  permitirPerfis("administrador"),
+  confirmarHojeManual
 );
 
-// ✍️ 4. Registro manual de presença (administrador ou instrutor)
-router.post(
-  '/registrar',
-  authMiddleware,
-  authorizeRoles('administrador', 'instrutor'),
-  presencasController.registrarManual
-);
-
-// 🗓️ 5. Confirmação manual de presença no dia atual (administrador)
-router.post(
-  '/manual-confirmacao',
-  authMiddleware,
-  authorizeRoles('administrador'),
-  presencasController.confirmarHojeManual
-);
-
-// ✅ 6. Validação de presença (administrador ou instrutor)
+// 6) Validar presença (admin/instrutor)
 router.put(
-  '/validar',
+  "/validar",
   authMiddleware,
-  authorizeRoles('administrador', 'instrutor'),
-  presencasController.validarPresenca
+  permitirPerfis("administrador", "instrutor"),
+  validarPresenca
 );
 
-// 📊 7. Relatório de presenças detalhado por turma (administrador ou instrutor)
+// 7) Relatório detalhado por turma (admin/instrutor)
 router.get(
-  '/relatorio-presencas/turma/:turma_id',
+  "/relatorio-presencas/turma/:turma_id",
   authMiddleware,
-  authorizeRoles('administrador', 'instrutor'),
-  presencasController.presencasDetalhadasPorTurma
+  permitirPerfis("administrador", "instrutor"),
+  presencasDetalhadasPorTurma
 );
 
-// 🟢 8. Confirmação de presença pelo instrutor (prazo: 48h após fim)
+// 8) Confirmar presença como instrutor (até 48h após o fim)
 router.post(
-  '/confirmar-instrutor',
+  "/confirmar-instrutor",
   authMiddleware,
-  authorizeRoles('instrutor', 'administrador'), // ✅ permite ambos os perfis
-  presencasController.confirmarPresencaInstrutor
+  permitirPerfis("instrutor", "administrador"),
+  confirmarPresencaInstrutor
 );
 
-// 🔍 9. Listar todas as presenças para o administrador
+// 9) Listar tudo (painel admin)
 router.get(
-  '/admin/listar-tudo',
+  "/admin/listar-tudo",
   authMiddleware,
-  authorizeRoles('administrador'),
-  presencasController.listarTodasPresencasParaAdmin
+  permitirPerfis("administrador"),
+  listarTodasPresencasParaAdmin
 );
 
 module.exports = router;
