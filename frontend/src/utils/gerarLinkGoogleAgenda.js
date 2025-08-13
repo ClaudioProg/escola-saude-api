@@ -11,9 +11,13 @@
 export function gerarLinkGoogleAgenda({ titulo, dataInicio, dataFim, descricao, local }) {
   const formatarDataLocal = (data) => {
     const d = new Date(data);
-    return isNaN(d.getTime())
-      ? ""
-      : d.toISOString().slice(0, 19).replace(/[-:]/g, ""); // remove ms e fuso
+    const ano = d.getFullYear();
+    const mes = String(d.getMonth() + 1).padStart(2, "0");
+    const dia = String(d.getDate()).padStart(2, "0");
+    const horas = String(d.getHours()).padStart(2, "0");
+    const minutos = String(d.getMinutes()).padStart(2, "0");
+    const segundos = String(d.getSeconds()).padStart(2, "0");
+    return `${ano}${mes}${dia}T${horas}${minutos}${segundos}`;
   };
 
   const inicio = formatarDataLocal(dataInicio);
@@ -29,7 +33,7 @@ export function gerarLinkGoogleAgenda({ titulo, dataInicio, dataFim, descricao, 
   url.searchParams.set("location", local || "");
   url.searchParams.set("sf", "true");
   url.searchParams.set("output", "xml");
-  url.searchParams.set("ctz", "America/Sao_Paulo"); // <- Fuso fixo
+  url.searchParams.set("ctz", "America/Sao_Paulo"); // mantém fuso de Brasília
 
   return url.toString();
 }
