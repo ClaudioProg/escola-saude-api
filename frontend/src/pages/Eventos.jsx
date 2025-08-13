@@ -1,3 +1,4 @@
+// ✅ src/pages/Eventos.jsx
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
@@ -13,7 +14,38 @@ import ListaTurmasEvento from "../components/ListaTurmasEvento";
 import { apiGet, apiPost } from "../services/api";
 
 // ✅ helpers de data SEM fuso (parse local)
-import { toLocalDate, formatarDataBrasileira } from "../utils/data";
+import { toLocalDate } from "../utils/data";
+
+/* ------------------------------------------------------------------ */
+/*  Formatadores 100% “sem Date” para evitar fuso                       */
+/* ------------------------------------------------------------------ */
+const MESES_ABREV_PT = [
+  "jan.", "fev.", "mar.", "abr.", "mai.", "jun.",
+  "jul.", "ago.", "set.", "out.", "nov.", "dez."
+];
+
+// Ex.: "2025-08-24" → "24 de ago. de 2025"
+// Aceita "YYYY-MM-DD" ou "YYYY-MM-DDTHH:mm:ss"
+function formatarDataCurtaSeguro(iso) {
+  if (!iso) return "";
+  const [data] = String(iso).split("T");
+  const partes = data.split("-");
+  if (partes.length !== 3) return "";
+  const [ano, mes, dia] = partes;
+  const idx = Math.max(0, Math.min(11, Number(mes) - 1));
+  return `${String(dia).padStart(2, "0")} de ${MESES_ABREV_PT[idx]} de ${ano}`;
+}
+
+// Ex.: "2025-08-24" → "24/08/2025"
+function formatarDataBRSemFuso(iso) {
+  if (!iso) return "";
+  const [data] = String(iso).split("T");
+  const partes = data.split("-");
+  if (partes.length !== 3) return "";
+  const [ano, mes, dia] = partes;
+  return `${String(dia).padStart(2, "0")}/${String(mes).padStart(2, "0")}/${ano}`;
+}
+/* ------------------------------------------------------------------ */
 
 export default function Eventos() {
   const [eventos, setEventos] = useState([]);
@@ -30,16 +62,6 @@ export default function Eventos() {
   let usuario = {};
   try { usuario = JSON.parse(localStorage.getItem("usuario") || "{}"); } catch {}
   const nome = usuario?.nome || "";
-
-  const formatarDataCurta = (iso) => {
-    const d = toLocalDate(iso);
-    if (!d) return "";
-    return d.toLocaleDateString("pt-BR", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    });
-  };
 
   useEffect(() => {
     async function carregarEventos() {
@@ -117,10 +139,9 @@ export default function Eventos() {
         toast.warning("⚠️ Não foi possível atualizar inscrições confirmadas.");
       }
 
-      // Atualiza eventos (para refletir `ja_inscrito`)
+      // Atualiza eventos e recarrega as turmas do evento dessa turma
       await atualizarEventos();
 
-      // Descobre o evento da turma e recarrega turmas desse evento
       const eventoId = Object.keys(turmasPorEvento).find((id) =>
         (turmasPorEvento[id] || []).some((t) => Number(t.id) === Number(turmaId))
       );
@@ -243,7 +264,7 @@ export default function Eventos() {
                   <CalendarDays className="w-4 h-4" />
                   <span>
                     {evento.data_inicio_geral && evento.data_fim_geral
-                      ? `${formatarDataCurta(evento.data_inicio_geral)} até ${formatarDataCurta(evento.data_fim_geral)}`
+                      ? `${formatarDataCurtaSeguro(evento.data_inicio_geral)} até ${formatarDataCurtaSeguro(evento.data_fim_geral)}`
                       : "Datas a definir"}
                   </span>
                 </div>
