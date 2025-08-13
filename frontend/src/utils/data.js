@@ -2,7 +2,7 @@
 export function formatarDataBrasileira(dataISO) {
   if (!dataISO) return "";
 
-  // Se já for objeto Date, converte pra string ISO
+  // Se já for objeto Date
   if (dataISO instanceof Date) {
     if (isNaN(dataISO.getTime())) return "";
     const dia = String(dataISO.getDate()).padStart(2, "0");
@@ -11,15 +11,22 @@ export function formatarDataBrasileira(dataISO) {
     return `${dia}/${mes}/${ano}`;
   }
 
-  // Se for string, tenta dividir normalmente
+  // Se for string
   if (typeof dataISO === "string") {
-    // Cobre formatos "yyyy-mm-ddTHH:MM:SS" ou só "yyyy-mm-dd"
+    // Caso especial: formato puro "yyyy-mm-dd" → evita fuso
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dataISO)) {
+      const [ano, mes, dia] = dataISO.split("-");
+      return `${dia}/${mes}/${ano}`;
+    }
+
+    // Formato "yyyy-mm-ddTHH:MM:SS"
     const partes = dataISO.split("T")[0].split("-");
     if (partes.length === 3) {
       const [ano, mes, dia] = partes;
       return `${dia}/${mes}/${ano}`;
     }
-    // Se não bate, tenta converter como Date
+
+    // Fallback usando Date
     const d = new Date(dataISO);
     if (isNaN(d.getTime())) return "";
     const dia = String(d.getDate()).padStart(2, "0");
@@ -28,8 +35,7 @@ export function formatarDataBrasileira(dataISO) {
     return `${dia}/${mes}/${ano}`;
   }
 
-  
-  // Caso não seja string nem Date, tenta converter
+  // Caso não seja string nem Date
   try {
     const d = new Date(dataISO);
     if (isNaN(d.getTime())) return "";
@@ -49,11 +55,7 @@ export function gerarIntervaloDeDatas(dataInicio, dataFim) {
   if (isNaN(inicio.getTime()) || isNaN(fim.getTime())) return [];
 
   const datas = [];
-  for (
-    let d = new Date(inicio);
-    d <= fim;
-    d.setDate(d.getDate() + 1)
-  ) {
+  for (let d = new Date(inicio); d <= fim; d.setDate(d.getDate() + 1)) {
     datas.push(new Date(d));
   }
   return datas;
@@ -75,7 +77,13 @@ export function formatarDataHoraBrasileira(dataISO) {
   if (dataISO instanceof Date) {
     d = dataISO;
   } else {
-    d = new Date(dataISO);
+    // Evita problema de fuso para datas puras sem hora
+    if (typeof dataISO === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dataISO)) {
+      const [ano, mes, dia] = dataISO.split("-");
+      d = new Date(Number(ano), Number(mes) - 1, Number(dia), 0, 0, 0);
+    } else {
+      d = new Date(dataISO);
+    }
   }
   if (isNaN(d.getTime())) return "";
 
@@ -99,7 +107,12 @@ export function formatarParaISO(data) {
     return `${ano}-${mes.padStart(2, "0")}-${dia.padStart(2, "0")}`;
   }
 
-  // Se for objeto Date ou string ISO
+  // Se já for string yyyy-mm-dd → retorna direto
+  if (typeof data === "string" && /^\d{4}-\d{2}-\d{2}$/.test(data)) {
+    return data;
+  }
+
+  // Se for objeto Date ou string ISO completa
   const d = new Date(data);
   if (isNaN(d.getTime())) return "";
 

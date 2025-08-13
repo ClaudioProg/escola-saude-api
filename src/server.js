@@ -6,31 +6,31 @@ const path = require("path");
 const fs = require("fs");
 const rateLimit = require("express-rate-limit");
 const compression = require("compression");
+const helmet = require("helmet");
 
 // Rotas
-const assinaturaRoutes = require("./routes/assinaturaRoutes");
-const administradorTurmasRoute   = require("./routes/administradorTurmasRoute");
-const agendaRoute                = require("./routes/agendaRoute");
-const avaliacoesRoute            = require("./routes/avaliacoesRoute");
-const certificadosRoute          = require("./routes/certificadosRoute");
-const certificadosHistoricoRoute = require("./routes/certificadosHistoricoRoutes");
-const certificadosAvulsosRoutes  = require("./routes/certificadosAvulsosRoutes");
-const eventosRoute               = require("./routes/eventosRoute");
-const inscricoesRoute            = require("./routes/inscricoesRoute");
-const loginRoute                 = require("./routes/loginRoute");
-const presencasRoute             = require("./routes/presencasRoute");
-const relatorioPresencasRoute    = require("./routes/relatorioPresencasRoute");
-const turmasRoute                = require("./routes/turmasRoute");
-const instrutorRoute             = require("./routes/instrutorRoutes");
-const relatoriosRoute            = require("./routes/relatoriosRoutes");
-const dashboardAnaliticoRoutes   = require("./routes/dashboardAnaliticoRoutes");
-const dashboardUsuarioRoute      = require("./routes/dashboardUsuarioRoute");
-const notificacoesRoute          = require("./routes/notificacoesRoute");
-const authGoogleRoute            = require("./auth/authGoogle");
-const unidadesRoutes             = require("./routes/unidadesRoutes");
-const usuarioPublicoController   = require("./controllers/usuarioPublicoController");
-const datasEventoRoute           = require("./routes/datasEventoRoute");
-const usuariosRoute              = require("./routes/usuariosRoute");
+const assinaturaRoutes            = require("./routes/assinaturaRoutes");
+const administradorTurmasRoute    = require("./routes/administradorTurmasRoute");
+const agendaRoute                 = require("./routes/agendaRoute");
+const avaliacoesRoute             = require("./routes/avaliacoesRoute");
+const certificadosRoute           = require("./routes/certificadosRoute");
+const certificadosHistoricoRoute  = require("./routes/certificadosHistoricoRoutes");
+const certificadosAvulsosRoutes   = require("./routes/certificadosAvulsosRoutes");
+const eventosRoute                = require("./routes/eventosRoute");
+const inscricoesRoute             = require("./routes/inscricoesRoute");
+const loginRoute                  = require("./routes/loginRoute");
+const presencasRoute              = require("./routes/presencasRoute");
+const relatorioPresencasRoute     = require("./routes/relatorioPresencasRoute");
+const turmasRoute                 = require("./routes/turmasRoute");
+const instrutorRoute              = require("./routes/instrutorRoutes");
+const relatoriosRoute             = require("./routes/relatoriosRoutes");
+const dashboardAnaliticoRoutes    = require("./routes/dashboardAnaliticoRoutes");
+const dashboardUsuarioRoute       = require("./routes/dashboardUsuarioRoute");
+const notificacoesRoute           = require("./routes/notificacoesRoute");
+const authGoogleRoute             = require("./auth/authGoogle");
+const unidadesRoutes              = require("./routes/unidadesRoutes");
+const usuarioPublicoController    = require("./controllers/usuarioPublicoController");
+const datasEventoRoute            = require("./routes/datasEventoRoute");
 
 dotenv.config();
 
@@ -44,8 +44,19 @@ if (process.env.NODE_ENV === "production") {
 
 const app = express();
 
-// 🔧 Render fica atrás de proxy
+// 🔧 Render / Vercel podem ficar atrás de proxy
 app.set("trust proxy", 1);
+
+// 🛡️ Segurança sem quebrar embeds/iframes de outras origens
+app.use(
+  helmet({
+    contentSecurityPolicy: false,          // deixa o frontend controlar se necessário
+    crossOriginEmbedderPolicy: false,      // evita COEP
+    crossOriginOpenerPolicy: false,        // evita COOP
+    crossOriginResourcePolicy: { policy: "cross-origin" }, // permite assets externos
+    hsts: process.env.NODE_ENV === "production" ? undefined : false,
+  })
+);
 
 // 📦 compactação
 app.use(compression());
@@ -60,11 +71,10 @@ require("./db");
 // 🌐 CORS
 // Permite lista do .env (CORS_ORIGINS="https://site1.com,https://site2.com")
 // + localhost em dev + subdomínios vercel (*.vercel.app)
-const fromEnv =
-  (process.env.CORS_ORIGINS || "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+const fromEnv = (process.env.CORS_ORIGINS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 const defaultAllowed = [
   "http://localhost:5173",
@@ -76,34 +86,38 @@ const defaultAllowed = [
 ];
 
 const allowedOrigins = [...defaultAllowed, ...fromEnv];
-
-// Regex para *.vercel.app
 const vercelRegex = /^https:\/\/[a-z0-9-]+\.vercel\.app$/i;
 
-app.use(
-  cors({
-    origin(origin, cb) {
-      // Sem origin: permitir (ex: curl, health, SSR)
-      if (!origin) return cb(null, true);
-      if (
-        allowedOrigins.includes(origin) ||
-        vercelRegex.test(origin)
-      ) {
-        return cb(null, true);
-      }
-      return cb(new Error("CORS bloqueado: " + origin));
-    },
-    credentials: true,
-  })
-);
+const corsOptions = {
+  origin(origin, cb) {
+    // Sem origin: permitir (ex: curl, health, SSR)
+    if (!origin) return cb(null, true);
+    if (allowedOrigins.includes(origin) || vercelRegex.test(origin)) {
+      return cb(null, true);
+    }
+    return cb(new Error("CORS bloqueado: " + origin));
+  },
+  credentials: true,
+  optionsSuccessStatus: 204,
+  maxAge: 60 * 60, // cache preflight 1h
+};
 
-// JSON
+app.use((req, res, next) => {
+  cors(corsOptions)(req, res, (err) => {
+    if (err) {
+      // Responde JSON amigável em bloqueio CORS
+      return res.status(403).json({ erro: String(err.message || err) });
+    }
+    next();
+  });
+});
+
+// 📨 body parsers
 app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true }));
 
-// Static
+// 🗃️ Static
 app.use(express.static(path.join(__dirname, "public")));
-
-// ❌ Removido COOP/COEP: quebram recursos cross-origin em Vercel
 
 // 📝 Logger em dev
 if (process.env.NODE_ENV !== "production") {
@@ -114,7 +128,7 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 // 🧪 Preflight helper (evita 404 em OPTIONS)
-app.options("*", cors());
+app.options("*", cors(corsOptions));
 
 // 🧯 Rate limiters
 const loginLimiter = rateLimit({
@@ -136,7 +150,7 @@ const recuperarSenhaLimiter = rateLimit({
 // 🔐 login
 app.use("/api/login", loginLimiter, loginRoute);
 
-// 📌 Rotas
+// 📌 Rotas da API
 app.use("/api/administrador/turmas", administradorTurmasRoute);
 app.use("/api/agenda", agendaRoute);
 app.use("/api/avaliacoes", avaliacoesRoute);
@@ -148,7 +162,7 @@ app.use("/api/inscricoes", inscricoesRoute);
 app.use("/api/presencas", presencasRoute);
 app.use("/api/relatorio-presencas", relatorioPresencasRoute);
 app.use("/api/turmas", turmasRoute);
-app.use("/api/usuarios", usuariosRoute);
+app.use("/api/usuarios", require("./routes/usuariosRoute"));
 app.use("/api/instrutor", instrutorRoute);
 app.use("/api/relatorios", relatoriosRoute);
 app.use("/api/dashboard-analitico", dashboardAnaliticoRoutes);
@@ -187,8 +201,25 @@ app.use((err, req, res, next) => {
   res.status(500).json({ erro: "Erro interno do servidor" });
 });
 
-// 🚀 start
+// 🚀 start + graceful shutdown
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`🚀 Servidor rodando na porta ${PORT}`);
 });
+
+function shutdown(signal) {
+  console.log(`\n${signal} recebido. Encerrando servidor...`);
+  server.close(() => {
+    console.log("✅ HTTP fechado.");
+    // Se você tiver pool/conexão DB exportada, feche aqui antes do process.exit(0).
+    process.exit(0);
+  });
+  // força encerramento se travar
+  setTimeout(() => {
+    console.warn("⏱️ Forçando shutdown.");
+    process.exit(1);
+  }, 10_000).unref();
+}
+
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));

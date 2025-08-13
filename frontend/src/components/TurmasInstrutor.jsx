@@ -22,15 +22,37 @@ export default function TurmasInstrutor({
   turmaExpandidaAvaliacoes,
   setTurmaExpandidaAvaliacoes,
 }) {
-  const usuario = JSON.parse(localStorage.getItem("usuario") || "{}");
+  // parse seguro do usuário
+  let usuario = {};
+  try {
+    usuario = JSON.parse(localStorage.getItem("usuario") || "{}");
+  } catch {
+    usuario = {};
+  }
+
+  // helpers anti-fuso
+  const toLocalNoon = (ymd) => new Date(`${ymd}T12:00:00`);
+  const ensureYMD = (d) => {
+    if (!d) return "";
+    if (d instanceof Date) {
+      // formata para yyyy-mm-dd sem UTC
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    }
+    // se vier "2025-08-13T00:00:00Z" ou "2025-08-13", pega os 10 primeiros
+    return String(d).slice(0, 10);
+  };
 
   // ✅ Confirmação manual via API central (sem URL hardcoded)
   async function confirmarPresencaManual(usuarioId, turmaId, dataReferencia) {
     try {
+      const dataYMD = ensureYMD(dataReferencia);
       await apiPatch("/api/presencas/confirmar", {
-        usuario_id: usuarioId,
-        turma_id: turmaId,
-        data: dataReferencia,
+        usuario_id: Number(usuarioId),
+        turma_id: Number(turmaId),
+        data: dataYMD,
       });
       toast.success("✅ Presença confirmada!");
       carregarPresencas(turmaId);
@@ -53,9 +75,9 @@ export default function TurmasInstrutor({
 
   // Agrupa turmas por evento
   const eventosAgrupados = {};
-  for (const turma of turmas) {
+  for (const turma of turmas || []) {
     if (!turma || !turma.id || !turma.evento?.id) continue;
-    const eventoId = turma.evento.id;
+    const eventoId = String(turma.evento.id);
     if (!eventosAgrupados[eventoId]) {
       eventosAgrupados[eventoId] = { nome: turma.evento.nome, turmas: [] };
     }
@@ -78,27 +100,42 @@ export default function TurmasInstrutor({
 
             <div className="space-y-4 mt-2">
               {evento.turmas.map((turma) => {
-                const idSeguro = parseInt(turma.id);
+                const idSeguro = Number(turma.id);
+                if (Number.isNaN(idSeguro)) return null;
+
                 const expandindoInscritos = turmaExpandidaInscritos === idSeguro;
                 const expandindoAvaliacoes = turmaExpandidaAvaliacoes === idSeguro;
 
-                const dataInicio = new Date(turma.data_inicio);
-                const dataFim = new Date(turma.data_fim);
+                // 🔒 anti-fuso para cálculo de dias
+                const dataInicioDT = toLocalNoon(ensureYMD(turma.data_inicio));
+                const dataFimDT = toLocalNoon(ensureYMD(turma.data_fim));
+
+                // total de dias (inclusivo)
+                const MS_DIA = 24 * 60 * 60 * 1000;
+                const totalDiasTurma = Math.max(1, Math.round((dataFimDT - dataInicioDT) / MS_DIA) + 1);
+
+                // presença do instrutor
                 const turmaPresencas = presencasPorTurma[idSeguro];
-
                 let statusBadge = null;
+
                 if (Array.isArray(turmaPresencas)) {
-                  const instrutorPresencas = turmaPresencas.find((p) => p.usuario_id === usuario.id);
-                  const presencasInstrutor = instrutorPresencas?.presencas || [];
+                  const uid = Number(usuario?.id);
+                  const instrutorPresencas = turmaPresencas.find(
+                    (p) => Number(p.usuario_id) === uid
+                  );
+                  const presencasInstrutor = Array.isArray(instrutorPresencas?.presencas)
+                    ? instrutorPresencas.presencas
+                    : [];
 
-                  const diasConfirmados = presencasInstrutor.filter((p) => p.presente === true).length;
-                  const totalDiasTurma =
-                    Math.floor((dataFim - dataInicio) / (1000 * 60 * 60 * 24)) + 1;
+                  const diasConfirmados = presencasInstrutor.filter((p) => p?.presente === true).length;
 
+                  // evento encerrado: data_fim + horario_fim < agora
+                  const horarioFim = turma?.horario_fim || "17:00";
                   const agora = new Date();
-                  const eventoEncerrado = new Date(`${turma.data_fim}T${turma.horario_fim}`) < agora;
+                  const fimComHora = new Date(`${ensureYMD(turma.data_fim)}T${horarioFim}`);
+                  const eventoEncerrado = fimComHora < agora;
 
-                  if (diasConfirmados === totalDiasTurma) {
+                  if (diasConfirmados === totalDiasTurma && totalDiasTurma > 0) {
                     statusBadge = (
                       <span className="inline-block bg-green-100 text-green-700 px-3 py-1 mt-2 rounded-full text-xs font-bold">
                         ✅ Presente
@@ -162,6 +199,8 @@ export default function TurmasInstrutor({
                       >
                         🔳 QR Code de Presença
                       </button>
+
+                      {statusBadge}
                     </div>
 
                     <AnimatePresence>
@@ -174,6 +213,7 @@ export default function TurmasInstrutor({
                           className="overflow-hidden mt-4"
                         >
                           {(() => {
+                            // suporta estrutura [ ... ] ou { lista: [...] }
                             const listaPresencas = Array.isArray(presencasPorTurma[idSeguro])
                               ? presencasPorTurma[idSeguro]
                               : presencasPorTurma[idSeguro]?.lista ?? [];

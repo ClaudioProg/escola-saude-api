@@ -9,14 +9,37 @@ import NadaEncontrado from "../components/NadaEncontrado";
 import { formatarDataBrasileira } from "../utils/data";
 import { apiGet } from "../services/api"; // ✅ serviço centralizado
 
+// ---------- helpers anti-fuso ----------
+function todayYMD() {
+  const d = new Date(); // horário local do cliente
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+function ymd(input) {
+  if (!input) return "";
+  const s = String(input);
+  // aceita YYYY-MM-DD e YYYY-MM-DDTHH:mm[:ss]
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : "";
+}
+function toLocalDate(ymdStr) {
+  if (!ymdStr) return null;
+  // fixa meio-dia local para evitar pulo de dia
+  return new Date(`${ymdStr}T12:00:00`);
+}
+// ---------------------------------------
+
 export default function AgendaInstrutor() {
   const [agenda, setAgenda] = useState([]);
   const [erro, setErro] = useState("");
   const [carregandoAgenda, setCarregandoAgenda] = useState(true);
 
-  const usuario = JSON.parse(localStorage.getItem("usuario") || "{}");
+  let usuario = {};
+  try { usuario = JSON.parse(localStorage.getItem("usuario") || "{}"); } catch {}
   const nome = usuario?.nome || "";
-  const hojeISO = new Date().toISOString().split("T")[0];
+  const hojeYMD = todayYMD(); // ✅ local, não UTC
 
   useEffect(() => {
     (async () => {
@@ -25,13 +48,18 @@ export default function AgendaInstrutor() {
         // 👇 Não redireciona em 403; só mostra mensagem
         const data = await apiGet("/api/agenda/instrutor", { on403: "silent" });
 
-        // garante array e ordena por data de referência
+        // garante array e ordena por data de referência (local)
         const arr = Array.isArray(data) ? data : [];
-        const ordenada = arr.sort(
-          (a, b) =>
-            new Date(a.data_referencia || a.data_inicio || 0) -
-            new Date(b.data_referencia || b.data_inicio || 0)
-        );
+        const ordenada = arr.slice().sort((a, b) => {
+          const ay = ymd(a.data_referencia || a.data_inicio);
+          const by = ymd(b.data_referencia || b.data_inicio);
+          const aDT = toLocalDate(ay);
+          const bDT = toLocalDate(by);
+          if (!aDT && !bDT) return 0;
+          if (!aDT) return 1;
+          if (!bDT) return -1;
+          return aDT - bDT;
+        });
 
         setAgenda(ordenada);
         setErro("");
@@ -46,8 +74,9 @@ export default function AgendaInstrutor() {
 
   const definirStatus = (dataISO) => {
     if (!dataISO) return "🟢 Programado";
-    if (dataISO === hojeISO) return "🟡 Hoje";
-    if (dataISO > hojeISO) return "🟢 Programado";
+    // Comparação lexicográfica funciona para yyyy-mm-dd
+    if (dataISO === hojeYMD) return "🟡 Hoje";
+    if (dataISO > hojeYMD) return "🟢 Programado";
     return "🔴 Realizado";
   };
 
@@ -90,10 +119,9 @@ export default function AgendaInstrutor() {
           <ul className="space-y-4">
             <AnimatePresence>
               {agenda.map((item, i) => {
-                const dataIniISO = (item.data_inicio || "").split("T")[0] || "";
-                const dataFimISO = (item.data_fim || "").split("T")[0] || "";
-                const dataRefISO =
-                  (item.data_referencia || dataIniISO || "").split("T")[0] || "";
+                const dataIniISO = ymd(item.data_inicio);
+                const dataFimISO = ymd(item.data_fim);
+                const dataRefISO = ymd(item.data_referencia || dataIniISO);
                 const status = definirStatus(dataRefISO);
 
                 return (

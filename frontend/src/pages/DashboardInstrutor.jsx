@@ -1,4 +1,4 @@
-// 📁 src/pages/DashboardInstrutor.jsx
+// src/pages/DashboardInstrutor.jsx
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
@@ -11,11 +11,38 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { QRCodeCanvas } from "qrcode.react";
 import { formatarCPF, formatarDataBrasileira } from "../utils/data";
-import { apiGet } from "../services/api"; // ✅ centralizado
+import { apiGet } from "../services/api";
+
+// ---------- helpers anti-fuso ----------
+const ymd = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
+const toLocalNoon = (ymdStr) => (ymdStr ? new Date(`${ymdStr}T12:00:00`) : null);
+const todayYMD = () => {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+};
+const rangeDiasYMD = (iniYMD, fimYMD) => {
+  const out = [];
+  const d0 = toLocalNoon(iniYMD);
+  const d1 = toLocalNoon(fimYMD || iniYMD);
+  if (!d0 || !d1) return out;
+  for (let d = new Date(d0); d <= d1; d.setDate(d.getDate() + 1)) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    out.push(`${y}-${m}-${day}`);
+  }
+  return out;
+};
+// ---------------------------------------
 
 export default function DashboardInstrutor() {
   const navigate = useNavigate();
-  const usuario = JSON.parse(localStorage.getItem("usuario") || "{}");
+
+  let usuario = {};
+  try { usuario = JSON.parse(localStorage.getItem("usuario") || "{}"); } catch {}
   const nome = usuario?.nome || "";
 
   const [turmas, setTurmas] = useState([]);
@@ -30,28 +57,33 @@ export default function DashboardInstrutor() {
   const [assinatura, setAssinatura] = useState(null);
   const [presencasPorTurma, setPresencasPorTurma] = useState({});
 
-  // 🔄 Presenças (usa apiGet e caminho relativo)
+  // 🔄 Presenças (rota padronizada + normalização)
   const carregarPresencas = async (turmaIdRaw) => {
     const turmaId = parseInt(turmaIdRaw);
     if (!turmaId || isNaN(turmaId)) return;
     try {
-      const data = await apiGet(`/api/relatorio-presencas/turma/${turmaId}`, { on403: "silent" });
-      setPresencasPorTurma((prev) => ({ ...prev, [turmaId]: data }));
+      const data = await apiGet(`/api/presencas/relatorio-presencas/turma/${turmaId}`, { on403: "silent" });
+      const lista = Array.isArray(data?.lista) ? data.lista : Array.isArray(data) ? data : [];
+      setPresencasPorTurma((prev) => ({ ...prev, [turmaId]: lista }));
     } catch {
       toast.error("Erro ao carregar presenças da turma.");
     }
   };
 
   useEffect(() => {
-    // ❌ Removido: checagem manual de token + navigate('/login')
-    // 🔐 O PrivateRoute já cuida de autenticação/permissão.
-
     (async () => {
       try {
         const data = await apiGet("/api/agenda/instrutor", { on403: "silent" });
-        const ordenadas = (Array.isArray(data) ? data : []).sort(
-          (a, b) => new Date(b.data_inicio) - new Date(a.data_inicio)
-        );
+        const arr = Array.isArray(data) ? data : [];
+        // ordena por data_inicio (meio-dia local) desc
+        const ordenadas = arr.slice().sort((a, b) => {
+          const ad = toLocalNoon(ymd(a.data_inicio));
+          const bd = toLocalNoon(ymd(b.data_inicio));
+          if (!ad && !bd) return 0;
+          if (!ad) return 1;
+          if (!bd) return -1;
+          return bd - ad;
+        });
         setTurmas(ordenadas);
         setErro("");
 
@@ -82,7 +114,7 @@ export default function DashboardInstrutor() {
     }
     try {
       const data = await apiGet(`/api/inscricoes/turma/${turmaId}`, { on403: "silent" });
-      setInscritosPorTurma((prev) => ({ ...prev, [turmaId]: data }));
+      setInscritosPorTurma((prev) => ({ ...prev, [turmaId]: Array.isArray(data) ? data : [] }));
     } catch {
       toast.error("Erro ao carregar inscritos.");
     }
@@ -97,36 +129,30 @@ export default function DashboardInstrutor() {
     if (avaliacoesPorTurma[turmaId]) return;
     try {
       const data = await apiGet(`/api/avaliacoes/turma/${turmaId}`, { on403: "silent" });
-      setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: data }));
+      setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: Array.isArray(data) ? data : [] }));
     } catch {
       toast.error("Erro ao carregar avaliações.");
     }
   };
 
-  // 🔎 Filtro por status
-  const hoje = new Date();
-  hoje.setHours(0, 0, 0, 0);
-
+  // 🔎 Filtro por status (comparação por yyyy-mm-dd)
+  const hoje = todayYMD();
   const turmasFiltradas = turmas.filter((t) => {
-    const inicio = new Date(t.data_inicio);
-    const fim = new Date(t.data_fim);
-    inicio.setHours(0, 0, 0, 0);
-    fim.setHours(0, 0, 0, 0);
+    const di = ymd(t.data_inicio);
+    const df = ymd(t.data_fim);
+    if (!di || !df) return filtro === "todos";
 
-    if (filtro === "programados") return inicio > hoje;
-    if (filtro === "emAndamento") return inicio <= hoje && fim >= hoje;
-    if (filtro === "realizados") return fim < hoje;
+    if (filtro === "programados") return di > hoje;
+    if (filtro === "emAndamento") return di <= hoje && df >= hoje;
+    if (filtro === "realizados") return df < hoje;
     return true; // todos
   });
-
-  // ❌ Removido: usePerfilPermitidos + <Navigate to="/login" />
-  //    Se quiser, mostre um aviso na própria tela quando o backend retornar 403.
 
   // 📄 Relatórios
   const gerarRelatorioPDF = async (turmaId) => {
     try {
-      const data = await apiGet(`/api/relatorio-presencas/turma/${turmaId}`, { on403: "silent" });
-      const alunos = Array.isArray(data) ? data : (Array.isArray(data?.lista) ? data.lista : []);
+      const data = await apiGet(`/api/presencas/relatorio-presencas/turma/${turmaId}`, { on403: "silent" });
+      const alunos = Array.isArray(data?.lista) ? data.lista : Array.isArray(data) ? data : [];
       const doc = new jsPDF();
       doc.setFontSize(16);
       doc.text("Relatório de Presença por Turma", 14, 20);
@@ -164,28 +190,20 @@ export default function DashboardInstrutor() {
       return;
     }
 
-    const gerarIntervaloDeDatas = (inicio, fim) => {
-      const datas = [];
-      const d = new Date(inicio);
-      const f = new Date(fim);
-      while (d <= f) {
-        datas.push(new Date(d));
-        d.setDate(d.getDate() + 1);
-      }
-      return datas;
-    };
+    const di = ymd(turma.data_inicio);
+    const df = ymd(turma.data_fim);
+    const datasYMD = rangeDiasYMD(di, df);
 
-    const datas = gerarIntervaloDeDatas(turma.data_inicio, turma.data_fim);
     const doc = new jsPDF();
 
-    datas.forEach((data, index) => {
+    datasYMD.forEach((diaYMD, index) => {
       if (index > 0) doc.addPage();
-      const dataFormatada = formatarDataBrasileira(data);
+      const dataFormatada = formatarDataBrasileira(diaYMD);
       const horaInicio = turma.horario_inicio?.slice(0, 5) || "";
       const horaFim = turma.horario_fim?.slice(0, 5) || "";
 
       doc.setFontSize(14);
-      doc.text(`Lista de Assinatura - ${turma.evento?.nome} - ${turma.nome}`, 14, 20);
+      doc.text(`Lista de Assinatura - ${turma.evento?.nome || ""} - ${turma.nome || ""}`, 14, 20);
       doc.text(`Data: ${dataFormatada} | Horário: ${horaInicio} às ${horaFim}`, 14, 28);
 
       autoTable(doc, {

@@ -11,8 +11,11 @@ export default function ModalTurma({ isOpen, onClose, onSalvar }) {
   const [vagas_total, setVagasTotal] = useState("");
   const [nome, setNome] = useState("");
 
-  const handleSalvar = () => {
+  // helper: converte "yyyy-mm-dd" para Date local fixando 12:00
+  const toLocalNoon = (ymd) => new Date(`${ymd}T12:00:00`);
 
+  const handleSalvar = () => {
+    // valida campos obrigatórios básicos
     if (
       !dataInicio ||
       !horarioInicio ||
@@ -25,18 +28,43 @@ export default function ModalTurma({ isOpen, onClose, onSalvar }) {
       return;
     }
 
-    const dataInicioISO = new Date(dataInicio).toISOString().split("T")[0];
-    const dataFimISO = dataFim ? new Date(dataFim).toISOString().split("T")[0] : dataInicioISO;
+    // normaliza ISO (já vem yyyy-mm-dd do input type=date)
+    const dataInicioISO = dataInicio; // ✅ já é yyyy-mm-dd
+    const dataFimISO = dataFim || dataInicioISO; // se vazio, assume 1 dia
 
-    const inicio = new Date(dataInicioISO);
-    const fim = new Date(dataFimISO);
-    const dias = Math.max(1, (fim - inicio) / (1000 * 60 * 60 * 24) + 1);
+    // valida ordem das datas (com T12:00:00 para evitar off-by-one)
+    const inicio = toLocalNoon(dataInicioISO);
+    const fim = toLocalNoon(dataFimISO);
+    if (fim < inicio) {
+      toast.error("A data de término não pode ser anterior à data de início.");
+      return;
+    }
 
-    const [hiHoras, hiMin] = horarioInicio.split(":").map(Number);
-    const [hfHoras, hfMin] = horarioFim.split(":").map(Number);
-    let horasPorDia = (hfHoras + hfMin / 60) - (hiHoras + hiMin / 60);
+    // valida horários
+    const [hiHoras = 0, hiMin = 0] = (horarioInicio || "").split(":").map(Number);
+    const [hfHoras = 0, hfMin = 0] = (horarioFim || "").split(":").map(Number);
+    const inicioHoras = hiHoras + (hiMin || 0) / 60;
+    const fimHoras = hfHoras + (hfMin || 0) / 60;
 
-    if (horasPorDia >= 8) horasPorDia -= 1;
+    if (Number.isNaN(inicioHoras) || Number.isNaN(fimHoras)) {
+      toast.error("Informe horários válidos (HH:MM).");
+      return;
+    }
+    if (fimHoras <= inicioHoras) {
+      toast.error("O horário de término deve ser posterior ao horário de início.");
+      return;
+    }
+
+    // dias de duração (inclui ambas as pontas)
+    const MS_DIA = 24 * 60 * 60 * 1000;
+    const dias = Math.max(1, Math.floor((fim - inicio) / MS_DIA) + 1);
+
+    // horas por dia, com pausa de 1h se >= 8h/dia
+    let horasPorDia = fimHoras - inicioHoras;
+    if (horasPorDia >= 8) horasPorDia -= 1; // almoço
+
+    // evita negativo por segurança
+    horasPorDia = Math.max(0, horasPorDia);
 
     const cargaHoraria = Math.round(horasPorDia * dias);
 
@@ -52,7 +80,7 @@ export default function ModalTurma({ isOpen, onClose, onSalvar }) {
 
     onSalvar(turmaFinal);
 
-    // Limpa os campos
+    // limpa os campos
     setDataInicio("");
     setDataFim("");
     setHorarioInicio("");

@@ -12,15 +12,41 @@ import CabecalhoPainel from "../components/CabecalhoPainel";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import ErroCarregamento from "../components/ErroCarregamento";
 
-function startOfDayISO(d) {
-  const dt = new Date(d);
-  dt.setHours(0, 0, 0, 0);
-  return dt.toISOString();
+/* =======================
+   Helpers de data (anti-UTC)
+   ======================= */
+
+// parse "YYYY-MM-DD" em Date local (sem fuso)
+function parseLocalYMD(ymd) {
+  const m = String(ymd || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return new Date(NaN);
+  const y = +m[1], mo = +m[2], d = +m[3];
+  return new Date(y, mo - 1, d, 0, 0, 0, 0);
 }
-function endOfDayISO(d) {
-  const dt = new Date(d);
+
+// formata Date -> "YYYY-MM-DDTHH:mm:ss" (sem Z)
+function toLocalNaiveISO(dt) {
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, "0");
+  const d = String(dt.getDate()).padStart(2, "0");
+  const hh = String(dt.getHours()).padStart(2, "0");
+  const mm = String(dt.getMinutes()).padStart(2, "0");
+  const ss = String(dt.getSeconds()).padStart(2, "0");
+  return `${y}-${m}-${d}T${hh}:${mm}:${ss}`;
+}
+
+function startOfDayLocalISO(dateLike) {
+  const dt = dateLike instanceof Date ? new Date(dateLike) : parseLocalYMD(dateLike);
+  dt.setHours(0, 0, 0, 0);
+  return toLocalNaiveISO(dt);
+}
+
+function endOfDayLocalISO(dateLike) {
+  const dt = dateLike instanceof Date ? new Date(dateLike) : parseLocalYMD(dateLike);
   dt.setHours(23, 59, 59, 999);
-  return dt.toISOString();
+  // arredonda pra segundo cheio (caso backend ignore ms)
+  dt.setMilliseconds(0);
+  return toLocalNaiveISO(dt);
 }
 
 export default function RelatoriosCustomizados() {
@@ -38,7 +64,7 @@ export default function RelatoriosCustomizados() {
     eventoId: "",
     instrutorId: "",
     unidadeId: "",
-    periodo: ["", ""], // [inicio, fim]
+    periodo: ["", ""], // [inicio(YYYY-MM-DD), fim(YYYY-MM-DD)]
   });
 
   const [opcoes, setOpcoes] = useState({
@@ -103,8 +129,8 @@ export default function RelatoriosCustomizados() {
       return false;
     }
     if (ini && fim) {
-      const dIni = new Date(ini);
-      const dFim = new Date(fim);
+      const dIni = parseLocalYMD(ini);
+      const dFim = parseLocalYMD(fim);
       if (Number.isNaN(dIni.getTime()) || Number.isNaN(dFim.getTime())) {
         toast.warning("Período inválido.");
         return false;
@@ -127,8 +153,9 @@ export default function RelatoriosCustomizados() {
 
     const [ini, fim] = filtros.periodo;
     if (ini && fim) {
-      qs.append("from", startOfDayISO(ini));
-      qs.append("to", endOfDayISO(fim));
+      // envia datas locais (sem Z) para evitar “dia anterior” no backend
+      qs.append("from", startOfDayLocalISO(ini));
+      qs.append("to", endOfDayLocalISO(fim));
     }
 
     setCarregando(true);
@@ -161,7 +188,7 @@ export default function RelatoriosCustomizados() {
         unidadeId: filtros.unidadeId || null,
         periodo:
           filtros.periodo[0] && filtros.periodo[1]
-            ? [startOfDayISO(filtros.periodo[0]), endOfDayISO(filtros.periodo[1])]
+            ? [startOfDayLocalISO(filtros.periodo[0]), endOfDayLocalISO(filtros.periodo[1])]
             : null,
       },
       formato: tipo,
@@ -276,7 +303,8 @@ export default function RelatoriosCustomizados() {
             <>
               {dados?.length ? (
                 <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">
-                  {dados.length} registro{dados.length > 1 ? "s" : ""} encontrado{dados.length > 1 ? "s" : ""}.
+                  {dados.length} registro{dados.length > 1 ? "s" : ""} encontrado
+                  {dados.length > 1 ? "s" : ""}.
                 </p>
               ) : null}
               <RelatoriosTabela data={dados} />

@@ -8,11 +8,9 @@ import Breadcrumbs from "../components/Breadcrumbs";
 import TabelaUsuarios from "../components/TabelaUsuarios";
 import CabecalhoPainel from "../components/CabecalhoPainel";
 
-// ⚠️ A rota já está protegida pelo PrivateRoute no App.jsx.
-// Para evitar “tela em branco” por dupla checagem, não usamos usePerfilPermitidos aqui.
-// Se quiser manter, use só para mostrar uma mensagem, nunca para `return null`.
-
 const ModalEditarPerfil = lazy(() => import("../components/ModalEditarPerfil"));
+
+const PERFIS_PERMITIDOS = ["usuario", "instrutor", "administrador"];
 
 export default function GestaoUsuarios() {
   const [usuarios, setUsuarios] = useState([]);
@@ -30,9 +28,7 @@ export default function GestaoUsuarios() {
     try {
       setCarregandoUsuarios(true);
       setErro("");
-      console.log("👥 [GestaoUsuarios] GET /api/usuarios ...");
       const data = await apiGet("/api/usuarios");
-      console.log("✅ Payload /api/usuarios:", data);
 
       const lista =
         Array.isArray(data) ? data :
@@ -42,9 +38,10 @@ export default function GestaoUsuarios() {
 
       setUsuarios(lista);
     } catch (e) {
+      const msg = e?.message || "Erro ao carregar usuários.";
       console.error("❌ /api/usuarios falhou:", e);
-      setErro(e?.message || "Erro ao carregar usuários.");
-      toast.error(e?.message || "Erro ao carregar usuários.");
+      setErro(msg);
+      toast.error(msg);
       setUsuarios([]);
     } finally {
       setCarregandoUsuarios(false);
@@ -52,15 +49,36 @@ export default function GestaoUsuarios() {
   }
 
   async function salvarPerfil(id, perfil) {
+    // normaliza o valor vindo do modal (string ou array)
+    let perfilStr = Array.isArray(perfil) ? perfil[0] : perfil;
+    perfilStr = String(perfilStr ?? "").trim().toLowerCase();
+
+    if (!PERFIS_PERMITIDOS.includes(perfilStr)) {
+      toast.error("Perfil inválido.");
+      return;
+    }
+
     try {
-      const perfilStr = Array.isArray(perfil) ? perfil.join(",") : String(perfil ?? "");
-      await apiPut(`/api/usuarios/${id}/perfil`, { perfil: perfilStr });
+      const resp = await apiPut(`/api/usuarios/${id}/perfil`, { perfil: perfilStr });
+
+      // se a API retornar 204 sem body, o wrapper pode devolver true; trate como sucesso
+      if (resp === true || resp?.ok) {
+        toast.success("✅ Perfil atualizado com sucesso!");
+      } else {
+        // quando vier um JSON com { ok: true, ... }
+        toast.success("✅ Perfil atualizado com sucesso!");
+      }
+
       setUsuarioSelecionado(null);
       await carregarUsuarios();
-      toast.success("✅ Perfil atualizado com sucesso!");
     } catch (err) {
+      // mostra a mensagem real vinda da API se existir
+      const msg =
+        err?.message ||
+        err?.erro ||
+        "❌ Erro ao atualizar perfil.";
       console.error("❌ Erro ao atualizar perfil:", err);
-      toast.error(err?.message || "❌ Erro ao atualizar perfil.");
+      toast.error(msg);
     }
   }
 

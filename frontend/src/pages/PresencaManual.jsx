@@ -1,5 +1,5 @@
 // ✅ src/pages/PresencaManual.jsx
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
 
@@ -7,19 +7,30 @@ import { apiGet, apiPost } from "../services/api";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import ErroCarregamento from "../components/ErroCarregamento";
 
+// helper local yyyy-mm-dd (anti-UTC)
+const hojeLocalISO = () => {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+};
+
 export default function PresencaManual() {
   const [params] = useSearchParams();
   const turmaId = params.get("turma");
-
   const navigate = useNavigate();
 
   const [inscritos, setInscritos] = useState([]);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState("");
 
-  useEffect(() => {
-    const token = localStorage.getItem("token");
+  // calcula uma vez por render
+  const hojeISO = useMemo(() => hojeLocalISO(), []);
 
+  useEffect(() => {
+    // ➜ se sua rota já está protegida por <PrivateRoute>, esta checagem pode sair
+    const token = localStorage.getItem("token");
     if (!token) {
       toast.error("❌ Acesso não autorizado.");
       navigate("/login", { replace: true });
@@ -49,17 +60,17 @@ export default function PresencaManual() {
   }, [turmaId, navigate]);
 
   const registrarPresenca = async (usuario_id) => {
-    const hojeISO = new Date().toISOString().split("T")[0];
-
     try {
       await apiPost(`/api/presencas/confirmar-simples`, {
         turma_id: Number(turmaId),
         usuario_id,
-        data_presenca: hojeISO, // 🔒 payload padronizado
+        // 🔧 padronizado com o resto do app: backend esperando 'data'
+        data: hojeISO,
       });
 
       toast.success("✅ Presença registrada.");
-      // Atualiza a lista localmente
+
+      // atualização otimista
       setInscritos((prev) =>
         prev.map((i) => {
           if (i.usuario_id !== usuario_id) return i;
@@ -87,7 +98,6 @@ export default function PresencaManual() {
       ) : (
         <ul className="space-y-2">
           {inscritos.map((inscrito) => {
-            const hojeISO = new Date().toISOString().split("T")[0];
             const presencas = Array.isArray(inscrito.data_presenca)
               ? inscrito.data_presenca
               : [];

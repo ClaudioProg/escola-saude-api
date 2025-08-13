@@ -7,17 +7,86 @@ import BotaoSecundario from "./BotaoSecundario";
 import { formatarCPF as formatarCPFUtils } from "../utils/data";
 import { apiPost } from "../services/api"; // ✅ usa cliente central
 
-const hoje = new Date().toISOString().split("T")[0];
+/* ===== Helpers de data no fuso local ===== */
 
-export default function LinhaInscrito({ inscrito, turma, token }) {
-  const dataInicio = new Date(turma.data_inicio).toISOString().split("T")[0];
-  const dataFim = new Date(`${turma.data_fim}T${turma.horario_fim}`);
+function isDateOnly(str) {
+  return typeof str === "string" && /^\d{4}-\d{2}-\d{2}$/.test(str);
+}
+
+function toLocalDate(input) {
+  if (!input) return null;
+  if (input instanceof Date) return input;
+
+  if (typeof input === "string") {
+    if (isDateOnly(input)) {
+      const [y, m, d] = input.split("-").map(Number);
+      return new Date(y, m - 1, d); // 00:00 local
+    }
+    return new Date(input); // se vier com hora explícita, deixa o JS interpretar
+  }
+  return new Date(input);
+}
+
+function startOfDayLocal(d) {
+  const dt = toLocalDate(d);
+  if (!dt) return null;
+  return new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
+}
+
+function endOfDayLocal(d) {
+  const dt = toLocalDate(d);
+  if (!dt) return null;
+  return new Date(dt.getFullYear(), dt.getMonth(), dt.getDate(), 23, 59, 59, 999);
+}
+
+function ymdLocalString(d) {
+  // retorna "YYYY-MM-DD" em fuso local
+  const dt = startOfDayLocal(d);
+  if (!dt) return "";
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, "0");
+  const day = String(dt.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/* Monta Date local combinando data_fim + horario_fim */
+function combineDateAndTimeLocal(dateOnly, timeHHmm) {
+  if (!dateOnly) return null;
+  const base = startOfDayLocal(dateOnly);
+  if (!base) return null;
+
+  if (timeHHmm) {
+    const [h, m] = timeHHmm.split(":").map(Number);
+    base.setHours(Number.isFinite(h) ? h : 23, Number.isFinite(m) ? m : 59, 59, 999);
+  } else {
+    base.setHours(23, 59, 59, 999);
+  }
+  return base;
+}
+
+/* ===== Componente ===== */
+
+export default function LinhaInscrito({ inscrito, turma /*, token*/ }) {
+  // hoje como string local (não usar toISOString/UTC)
+  const hojeStr = ymdLocalString(new Date());
+
+  const dataInicioStr = ymdLocalString(turma.data_inicio);
+  const dataFimDate = combineDateAndTimeLocal(turma.data_fim, turma.horario_fim);
   const agora = new Date();
-  const limiteConfirmacao = new Date(dataFim.getTime() + 48 * 60 * 60 * 1000);
 
-  const eventoAindaNaoComecou = hoje < dataInicio;
-  const eventoEncerrado = agora > dataFim;
-  const dentroPrazoConfirmacao = agora <= limiteConfirmacao;
+  // +48h após o término (em horário local)
+  const limiteConfirmacao = dataFimDate
+    ? new Date(dataFimDate.getTime() + 48 * 60 * 60 * 1000)
+    : null;
+
+  // status do evento
+  const eventoAindaNaoComecou =
+    dataInicioStr && hojeStr ? hojeStr < dataInicioStr : false;
+
+  const eventoEncerrado = dataFimDate ? agora > dataFimDate : false;
+
+  const dentroPrazoConfirmacao =
+    limiteConfirmacao ? agora <= limiteConfirmacao : false;
 
   const temPresenca =
     inscrito.data_presenca !== null && inscrito.data_presenca !== undefined;
@@ -30,17 +99,15 @@ export default function LinhaInscrito({ inscrito, turma, token }) {
 
     setLoading(true);
     try {
-      // ✅ usa baseURL do .env e injeta token automaticamente (Authorization)
       await apiPost("/api/presencas/registrar", {
         usuario_id: inscrito.usuario_id,
         turma_id: turma.id,
-        data: hoje,
+        data: hojeStr, // data local (YYYY-MM-DD)
       });
 
       setStatus("presente");
       toast.success("✅ Presença confirmada!");
     } catch (err) {
-      // Trata duplicidade como sucesso (ex.: já registrada) — HTTP 409
       if (err?.status === 409) {
         setStatus("presente");
         toast.success("✅ Presença já estava confirmada.");

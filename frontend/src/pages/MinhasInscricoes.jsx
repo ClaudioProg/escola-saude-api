@@ -15,6 +15,22 @@ import BotaoPrimario from "../components/BotaoPrimario";
 import BotaoSecundario from "../components/BotaoSecundario";
 import { apiGet, apiDelete } from "../services/api";
 
+// ---- helpers anti-fuso: parse local yyyy-mm-dd e monta Date local com hora ----
+function ymd(s) {
+  const m = String(s || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? { y: +m[1], mo: +m[2], d: +m[3] } : null;
+}
+function hms(s, fallback = "00:00:00") {
+  const [hh, mm, ss] = String(s || fallback).split(":").map((n) => parseInt(n, 10) || 0);
+  return { hh, mm, ss };
+}
+function makeLocalDate(yyyy_mm_dd, time = "00:00:00") {
+  const d = ymd(yyyy_mm_dd);
+  const t = hms(time);
+  return d ? new Date(d.y, d.mo - 1, d.d, t.hh, t.mm, t.ss, 0) : new Date(NaN);
+}
+// -----------------------------------------------------------------------------
+
 export default function MinhasInscricoes() {
   const [inscricoes, setInscricoes] = useState([]);
   const [erro, setErro] = useState("");
@@ -24,13 +40,8 @@ export default function MinhasInscricoes() {
   const navigate = useNavigate();
 
   const usuario = useMemo(() => {
-    try {
-      return JSON.parse(localStorage.getItem("usuario")) || {};
-    } catch {
-      return {};
-    }
+    try { return JSON.parse(localStorage.getItem("usuario")) || {}; } catch { return {}; }
   }, []);
-
   const nome = usuario?.nome || "";
 
   useEffect(() => {
@@ -42,10 +53,11 @@ export default function MinhasInscricoes() {
     setCarregando(true);
     try {
       const data = await apiGet("/api/inscricoes/minhas");
-      // Ordena por data/hora de término (mais próximos do futuro primeiro)
-      const ordenadas = [...data].sort((a, b) => {
-        const aEnd = new Date(`${a.data_fim}T${a.horario_fim || "23:59:59"}`).getTime();
-        const bEnd = new Date(`${b.data_fim}T${b.horario_fim || "23:59:59"}`).getTime();
+      const arr = Array.isArray(data) ? data : [];
+      // Ordena pelo término (mais recente primeiro)
+      const ordenadas = [...arr].sort((a, b) => {
+        const aEnd = makeLocalDate(a.data_fim, a.horario_fim || "23:59:59").getTime();
+        const bEnd = makeLocalDate(b.data_fim, b.horario_fim || "23:59:59").getTime();
         return bEnd - aEnd;
       });
       setInscricoes(ordenadas);
@@ -65,7 +77,7 @@ export default function MinhasInscricoes() {
       await apiDelete(`/api/inscricoes/${id}`);
       toast.success("✅ Inscrição cancelada com sucesso.");
       await buscarInscricoes();
-    } catch (err) {
+    } catch {
       toast.error("❌ Erro ao cancelar inscrição.");
     } finally {
       setCancelandoId(null);
@@ -73,17 +85,9 @@ export default function MinhasInscricoes() {
   }
 
   function obterStatusEvento(dataInicioISO, dataFimISO, horarioInicio, horarioFim) {
-    // horários de fallback seguros
-    const [hIni, mIni, sIni] = (horarioInicio || "00:00:00").split(":").map(Number);
-    const [hFim, mFim, sFim]   = (horarioFim || "23:59:59").split(":").map(Number);
-
-    const inicio = new Date(dataInicioISO);
-    const fim    = new Date(dataFimISO);
-    inicio.setHours(hIni ?? 0, mIni ?? 0, sIni ?? 0, 0);
-    fim.setHours(hFim ?? 23, mFim ?? 59, sFim ?? 59, 999);
-
+    const inicio = makeLocalDate(dataInicioISO, horarioInicio || "00:00:00");
+    const fim    = makeLocalDate(dataFimISO,    horarioFim    || "23:59:59");
     const agora = new Date();
-
     if (agora < inicio) return "Programado";
     if (agora > fim)    return "Encerrado";
     return "Em andamento";
@@ -107,13 +111,7 @@ export default function MinhasInscricoes() {
         {carregando ? (
           <div className="space-y-4 max-w-md mx-auto">
             {[...Array(4)].map((_, i) => (
-              <Skeleton
-                key={i}
-                height={110}
-                className="rounded-xl"
-                baseColor="#cbd5e1"
-                highlightColor="#e2e8f0"
-              />
+              <Skeleton key={i} height={110} className="rounded-xl" baseColor="#cbd5e1" highlightColor="#e2e8f0" />
             ))}
           </div>
         ) : erro ? (
@@ -127,14 +125,23 @@ export default function MinhasInscricoes() {
           <ul className="space-y-4 w-full sm:max-w-2xl mx-auto">
             <AnimatePresence>
               {inscricoes.map((item) => {
-                const dataInicio = new Date(item.data_inicio);
-                const dataFim = new Date(item.data_fim);
+                // Datas locais p/ Agenda e status
+                const dataInicioLocal = makeLocalDate(item.data_inicio, item.horario_inicio || "00:00:00");
+                const dataFimLocal    = makeLocalDate(item.data_fim,    item.horario_fim    || "23:59:59");
                 const status = obterStatusEvento(
                   item.data_inicio,
                   item.data_fim,
                   item.horario_inicio,
                   item.horario_fim
                 );
+
+                // Instrutor pode ser string ou array
+                const instrutores = Array.isArray(item.instrutor)
+                  ? item.instrutor.map((i) => i?.nome || String(i)).filter(Boolean)
+                  : String(item.instrutor || "")
+                      .split(",")
+                      .map((n) => n.trim())
+                      .filter(Boolean);
 
                 return (
                   <motion.li
@@ -155,11 +162,9 @@ export default function MinhasInscricoes() {
                     <div className="text-sm italic text-gray-600 dark:text-gray-300 mt-1 flex items-center gap-1">
                       <User className="w-4 h-4" />
                       Instrutor(es):{" "}
-                      {item.instrutor ? (
+                      {instrutores.length ? (
                         <ul className="list-disc list-inside">
-                          {item.instrutor.split(",").map((n, i) => (
-                            <li key={i}>{n.trim()}</li>
-                          ))}
+                          {instrutores.map((n, i) => <li key={i}>{n}</li>)}
                         </ul>
                       ) : (
                         <span className="italic text-gray-500">a definir</span>
@@ -181,11 +186,9 @@ export default function MinhasInscricoes() {
                       {status === "Em andamento" && <CheckCircle className="w-4 h-4 text-green-600" />}
                       <span
                         className={
-                          status === "Encerrado"
-                            ? "text-red-600"
-                            : status === "Programado"
-                            ? "text-yellow-700"
-                            : "text-green-600"
+                          status === "Encerrado" ? "text-red-600"
+                          : status === "Programado" ? "text-yellow-700"
+                          : "text-green-600"
                         }
                       >
                         Status: {status}
@@ -197,8 +200,8 @@ export default function MinhasInscricoes() {
                         as="a"
                         href={gerarLinkGoogleAgenda({
                           titulo: item.titulo,
-                          dataInicio,
-                          dataFim,
+                          dataInicio: dataInicioLocal,
+                          dataFim: dataFimLocal,
                           descricao: `Evento: ${item.titulo} organizado pela Escola da Saúde.`,
                           local: item.local || "Santos/SP",
                         })}

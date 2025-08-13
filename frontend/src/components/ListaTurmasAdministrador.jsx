@@ -72,15 +72,38 @@ export default function ListaTurmasAdministrador({
               📘 Evento: {evento.titulo}
             </h2>
 
-            {(evento.turmas || []).filter(t => t && t.id).map((turma) => {
-              const inicio = new Date(turma.data_inicio);
-              const fim = new Date(turma.data_fim);
-              const hojeISO = hoje.toISOString().split("T")[0];
-              const dentroDoPeriodo = hojeISO >= turma.data_inicio && hojeISO <= turma.data_fim;
-              const eventoJaIniciado = hojeISO >= turma.data_inicio;
+            {(evento.turmas || []).filter((t) => t && t.id).map((turma) => {
+              // ---------- Datas/Horários em nível de turma ----------
+              const hojeISO = formatarParaISO(hoje); // ✅ string yyyy-mm-dd
+              const agora = new Date(); // ok usar horário local atual
+
+              const horarioInicio = turma.horario_inicio || "08:00";
+              const horarioFim = turma.horario_fim || "17:00";
+
+              // ✅ strings com hora => interpretação local, sem UTC
+              const inicioDT = new Date(`${turma.data_inicio}T${horarioInicio}`);
+              const fimDT = new Date(`${turma.data_fim}T${horarioFim}`);
+
+              // Status com data+hora (sem UTC)
+              const status =
+                agora < inicioDT ? "Agendada" : agora > fimDT ? "Realizada" : "Em andamento";
+
+              const statusClasse =
+                status === "Em andamento"
+                  ? "bg-green-100 text-green-700 dark:bg-green-700 dark:text-white"
+                  : status === "Realizada"
+                  ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-700 dark:text-white"
+                  : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300";
+
               const estaExpandida = turmaExpandidaId === turma.id;
+
+              // Intervalo de datas: fixa T12:00:00 para evitar off-by-one
+              const inicio = new Date(`${turma.data_inicio}T12:00:00`);
+              const fim = new Date(`${turma.data_fim}T12:00:00`);
               const datasTurma = gerarIntervaloDeDatas(inicio, fim);
-              const agora = new Date();
+
+              // Limite global para confirmação admin: até 15 dias após o término da turma
+              const fimMais15 = new Date(fimDT.getTime() + 15 * 24 * 60 * 60 * 1000);
 
               return (
                 <motion.div
@@ -92,20 +115,17 @@ export default function ListaTurmasAdministrador({
                   className="border p-4 rounded-2xl bg-white dark:bg-gray-900 shadow-sm flex flex-col mb-6"
                 >
                   <div className="flex justify-between items-center mb-1">
-                    <h4 className="text-md font-semibold text-[#1b4332] dark:text-green-200">{turma.nome}</h4>
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${
-                      dentroDoPeriodo
-                        ? "bg-green-100 text-green-700 dark:bg-green-700 dark:text-white"
-                        : eventoJaIniciado
-                        ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-700 dark:text-white"
-                        : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300"
-                    }`}>
-                      {dentroDoPeriodo ? "Em andamento" : eventoJaIniciado ? "Realizada" : "Agendada"}
+                    <h4 className="text-md font-semibold text-[#1b4332] dark:text-green-200">
+                      {turma.nome}
+                    </h4>
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${statusClasse}`}>
+                      {status}
                     </span>
                   </div>
 
                   <p className="text-sm text-gray-500 dark:text-gray-300">
-                    {formatarDataBrasileira(turma.data_inicio)} a {formatarDataBrasileira(turma.data_fim)}
+                    {formatarDataBrasileira(turma.data_inicio)} a{" "}
+                    {formatarDataBrasileira(turma.data_fim)}
                   </p>
 
                   {modoadministradorPresencas && (
@@ -129,78 +149,120 @@ export default function ListaTurmasAdministrador({
 
                   {modoadministradorPresencas && estaExpandida && (
                     <div className="mt-4">
-                      <div className="font-semibold text-sm mt-4 text-lousa dark:text-white mb-2">Inscritos:</div>
+                      <div className="font-semibold text-sm mt-4 text-lousa dark:text-white mb-2">
+                        Inscritos:
+                      </div>
+
                       {(inscritosPorTurma[turma.id] || []).length === 0 ? (
-                        <p className="text-sm text-gray-600 dark:text-gray-300">Nenhum inscrito encontrado para esta turma.</p>
+                        <p className="text-sm text-gray-600 dark:text-gray-300">
+                          Nenhum inscrito encontrado para esta turma.
+                        </p>
                       ) : (
                         (inscritosPorTurma[turma.id] || []).map((i) => {
                           const usuarioId = i.usuario_id ?? i.id;
+
                           return (
-                            <div key={`${usuarioId}-${refreshKey}`} className="border rounded-lg p-3 mb-4 bg-white dark:bg-gray-800">
+                            <div
+                              key={`${usuarioId}-${refreshKey}`}
+                              className="border rounded-lg p-3 mb-4 bg-white dark:bg-gray-800"
+                            >
                               <div className="font-medium text-sm mb-1">{i.nome}</div>
                               <div className="text-xs text-gray-600 dark:text-gray-300 mb-2">
                                 CPF: {formatarCPF(i.cpf) || "Não informado"}
                               </div>
+
                               <table className="w-full table-fixed text-xs">
                                 <thead>
                                   <tr className="text-left text-gray-600 dark:text-gray-300">
-                                    <th className="py-2 px-2 w-1/3 font-medium whitespace-nowrap">📅 Data</th>
-                                    <th className="py-2 px-2 w-1/3 font-medium whitespace-nowrap">🟡 Situação</th>
-                                    <th className="py-2 px-2 w-1/3 font-medium whitespace-nowrap">✔️ Ações</th>
+                                    <th className="py-2 px-2 w-1/3 font-medium whitespace-nowrap">
+                                      📅 Data
+                                    </th>
+                                    <th className="py-2 px-2 w-1/3 font-medium whitespace-nowrap">
+                                      🟡 Situação
+                                    </th>
+                                    <th className="py-2 px-2 w-1/3 font-medium whitespace-nowrap">
+                                      ✔️ Ações
+                                    </th>
                                   </tr>
                                 </thead>
                                 <tbody>
                                   {datasTurma.map((dataObj) => {
-                                    const dataISO = dataObj.toISOString().slice(0, 10);
+                                    // ✅ extrai yyyy-mm-dd sem UTC
+                                    const dataISO = formatarParaISO(dataObj);
+
                                     const presencasTurma = presencasPorTurma[turma.id];
                                     const listaPresencas = Array.isArray(presencasTurma?.lista)
                                       ? presencasTurma.lista
                                       : [];
 
+                                    // 🔧 Normaliza p.data_presenca para yyyy-mm-dd sem UTC
                                     const presenca = listaPresencas.find((p) => {
-                                      const dataValida = p.data_presenca && !isNaN(new Date(p.data_presenca).getTime());
-                                      const dataFormatada = p.data_presenca;
+                                      const temData = p?.data_presenca;
+                                      // se já vier como 'yyyy-mm-dd', usa direto; se não, normaliza
+                                      const dataNorm =
+                                        typeof temData === "string" && temData.length === 10
+                                          ? temData
+                                          : temData
+                                          ? formatarParaISO(new Date(`${temData}T12:00:00`))
+                                          : null;
+
                                       return (
                                         String(p.usuario_id) === String(usuarioId) &&
-                                        dataValida &&
-                                        dataFormatada === dataISO
+                                        dataNorm === dataISO &&
+                                        p.presente === true
                                       );
                                     });
 
-                                    const estaPresente = presenca?.presente === true;
-                                    const hojeData = formatarParaISO(new Date());
-                                    const aindaPodeConfirmarHoje =
-                                      dataISO === hojeData &&
-                                      new Date() <= new Date(`${dataISO}T${turma.horario_fim || "17:00"}`);
+                                    const estaPresente = Boolean(presenca);
 
-                                    const dataAula = new Date(dataISO);
-                                    dataAula.setDate(dataAula.getDate() + 15);
-                                    const dentroDoPrazo = new Date() <= dataAula;
+                                    // Janela de confirmação admin:
+                                    //  - abre 60 min após o início da aula do dia
+                                    //  - fecha 15 dias após o término da turma
+                                    const inicioAulaDT = new Date(`${dataISO}T${horarioInicio}`);
+                                    const abreJanela = new Date(
+                                      inicioAulaDT.getTime() + 60 * 60 * 1000
+                                    );
+                                    const antesDaJanela = agora < abreJanela;
+                                    const dentroDaJanela =
+                                      agora >= abreJanela && agora <= fimMais15;
 
+                                    // Status visual
                                     const statusTexto = estaPresente
                                       ? "Presente"
-                                      : aindaPodeConfirmarHoje
+                                      : antesDaJanela
                                       ? "Aguardando"
                                       : "Faltou";
 
-                                    const statusClasse = estaPresente
-                                      ? "bg-green-400 text-white"
-                                      : aindaPodeConfirmarHoje
-                                      ? "bg-yellow-300 text-gray-800"
-                                      : "bg-red-400 text-white";
+                                    const statusClasse =
+                                      estaPresente
+                                        ? "bg-green-400 text-white"
+                                        : antesDaJanela
+                                        ? "bg-yellow-300 text-gray-800"
+                                        : "bg-red-400 text-white";
+
+                                    const podeConfirmar = !estaPresente && dentroDaJanela;
 
                                     return (
                                       <tr key={`${usuarioId}-${dataISO}`} className="border-t">
-                                        <td className="py-1 px-2 text-left">{formatarDataBrasileira(dataISO)}</td>
+                                        <td className="py-1 px-2 text-left">
+                                          {formatarDataBrasileira(dataISO)}
+                                        </td>
                                         <td className="py-1 px-2 text-left">
                                           <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${statusClasse}`}>
                                             {statusTexto}
                                           </span>
                                         </td>
                                         <td className="py-1 px-2 text-left">
-                                          {!estaPresente && dentroDoPrazo && (
+                                          {podeConfirmar && !antesDaJanela && (
                                             <button
-                                              onClick={() => confirmarPresenca(dataISO, turma.id, usuarioId, i.nome)}
+                                              onClick={() =>
+                                                confirmarPresenca(
+                                                  dataISO,
+                                                  turma.id,
+                                                  usuarioId,
+                                                  i.nome
+                                                )
+                                              }
                                               className="text-white bg-teal-700 hover:bg-teal-800 text-xs py-1 px-2 rounded"
                                             >
                                               Confirmar

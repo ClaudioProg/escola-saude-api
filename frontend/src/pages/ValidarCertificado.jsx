@@ -15,10 +15,12 @@ export default function ValidarCertificado() {
   const [dataHora, setDataHora] = useState("");
   const [carregando, setCarregando] = useState(true);
 
-  const evento = searchParams.get("evento");
-  const usuario = searchParams.get("usuario");
+  // normaliza parâmetros (evita espaços e null)
+  const evento = (searchParams.get("evento") || "").trim();
+  const usuario = (searchParams.get("usuario") || "").trim();
 
   useEffect(() => {
+    // apenas exibição local do momento da verificação (não usa UTC)
     setDataHora(formatarDataHoraBrasileira(new Date()));
 
     if (!evento || !usuario) {
@@ -30,17 +32,25 @@ export default function ValidarCertificado() {
 
     (async () => {
       try {
+        // suporte a diferentes formatos de resposta do backend
         const data = await apiGet("/api/presencas/validar", {
+          on403: "silent",
           query: { evento, usuario },
         });
-        if (data?.presente) {
+
+        const presente =
+          data?.presente ??
+          data?.ok ??
+          (typeof data?.status === "string" && data.status.toLowerCase() === "ok");
+
+        if (presente) {
           setMensagem("✅ Presença confirmada! Você pode emitir seu certificado.");
           setStatus("sucesso");
         } else {
           setMensagem("❌ Presença ainda não registrada para este evento.");
           setStatus("pendente");
         }
-      } catch {
+      } catch (e) {
         setMensagem("❌ Erro ao validar presença. Tente novamente mais tarde.");
         setStatus("erro");
       } finally {

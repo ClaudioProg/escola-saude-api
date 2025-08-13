@@ -4,6 +4,17 @@ import { toast } from "react-toastify";
 import BotaoPrimario from "../components/BotaoPrimario";
 import { apiGet, apiPost, apiGetFile, API_BASE_URL } from "../services/api";
 
+// helpers anti-fuso: convertem string yyyy-mm-dd sem usar Date()
+function ymdToBR(ymd) {
+  if (!ymd) return "";
+  const m = String(ymd).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return String(ymd);
+  return `${m[3]}/${m[2]}/${m[1]}`;
+}
+function validYMD(s) {
+  return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+}
+
 export default function CertificadosAvulsos() {
   const [form, setForm] = useState({
     nome: "",
@@ -19,13 +30,13 @@ export default function CertificadosAvulsos() {
   const [carregando, setCarregando] = useState(false);
   const [filtro, setFiltro] = useState("todos");
 
-  // 🔍 log estratégico: qual base está ativa em produção?
   useEffect(() => {
     console.log("[CertificadosAvulsos] API_BASE_URL em uso:", API_BASE_URL || "(vazio → relativo)");
   }, []);
 
   function handleChange(e) {
-    setForm({ ...form, [e.target.name]: e.target.value });
+    const { name, value } = e.target;
+    setForm((prev) => ({ ...prev, [name]: value }));
   }
 
   async function carregarCertificados() {
@@ -46,10 +57,42 @@ export default function CertificadosAvulsos() {
 
   async function cadastrarCertificado(e) {
     e.preventDefault();
+    // validações básicas
+    const payload = {
+      nome: form.nome.trim(),
+      cpf: form.cpf.trim(),
+      email: form.email.trim(),
+      curso: form.curso.trim(),
+      carga_horaria: Number(form.carga_horaria),
+      data_inicio: form.data_inicio, // inputs type=date já entregam yyyy-mm-dd
+      data_fim: form.data_fim || form.data_inicio,
+    };
+
+    if (!payload.nome || !payload.email || !payload.curso || !payload.carga_horaria) {
+      toast.warning("Preencha todos os campos obrigatórios.");
+      return;
+    }
+    if (Number.isNaN(payload.carga_horaria) || payload.carga_horaria <= 0) {
+      toast.warning("Informe uma carga horária válida (> 0).");
+      return;
+    }
+    if (payload.data_inicio && !validYMD(payload.data_inicio)) {
+      toast.warning("Data de início inválida.");
+      return;
+    }
+    if (payload.data_fim && !validYMD(payload.data_fim)) {
+      toast.warning("Data de término inválida.");
+      return;
+    }
+    if (payload.data_inicio && payload.data_fim && payload.data_fim < payload.data_inicio) {
+      toast.warning("A data de término não pode ser anterior à data de início.");
+      return;
+    }
+
     setCarregando(true);
     try {
-      console.log("[CertificadosAvulsos] POST /api/certificados-avulsos payload:", form);
-      const novo = await apiPost("/api/certificados-avulsos", form);
+      console.log("[CertificadosAvulsos] POST /api/certificados-avulsos payload:", payload);
+      const novo = await apiPost("/api/certificados-avulsos", payload);
       setLista((prev) => [novo, ...prev]);
       toast.success("✅ Certificado cadastrado.");
       setForm({
@@ -158,6 +201,7 @@ export default function CertificadosAvulsos() {
           value={form.carga_horaria}
           onChange={handleChange}
           required
+          min={1}
           className="border p-2 rounded"
         />
         <input
@@ -225,13 +269,13 @@ export default function CertificadosAvulsos() {
             )}
 
             {listaFiltrada.map((item) => {
-              const formatarData = (data) =>
-                data ? new Date(data).toLocaleDateString("pt-BR") : "";
+              const di = item.data_inicio?.slice(0, 10) || "";
+              const df = item.data_fim?.slice(0, 10) || "";
 
-              const periodo = item.data_inicio
-                ? item.data_fim && item.data_fim !== item.data_inicio
-                  ? `${formatarData(item.data_inicio)} a ${formatarData(item.data_fim)}`
-                  : formatarData(item.data_inicio)
+              const periodo = di
+                ? df && df !== di
+                  ? `${ymdToBR(di)} a ${ymdToBR(df)}`
+                  : ymdToBR(di)
                 : "-";
 
               return (

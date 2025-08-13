@@ -4,30 +4,75 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Validação de Certificado</title>
+
+  <!-- Evita indexação -->
+  <meta name="robots" content="noindex, nofollow"/>
+
   <style>
-    body { background:#e8f0e3; font-family:'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding:40px 20px; text-align:center; }
+    :root {
+      --verde-escuro:#2e4b2e;
+      --verde-botao:#4CAF50;
+      --verde-botao-hover:#45a049;
+      --bg:#e8f0e3;
+      --erro:#ffaaaa;
+      --txt:#ffffff;
+      --sombra:0 0 15px rgba(0,0,0,.2);
+    }
+    html,body { height:100%; }
+    body {
+      background:var(--bg);
+      font-family:'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      padding:40px 20px;
+      text-align:center;
+      color:#111;
+    }
     .logo { width:120px; margin-bottom:20px; }
-    .container { background:#2e4b2e; color:#fff; border-radius:10px; padding:30px; box-shadow:0 0 15px rgba(0,0,0,.2); max-width:700px; margin:auto; font-size:18px; animation:fadeIn .6s ease; }
-    h1 { font-size:28px; margin-bottom:20px; color:#fff; }
+    .container {
+      background:var(--verde-escuro);
+      color:var(--txt);
+      border-radius:10px;
+      padding:30px;
+      box-shadow:var(--sombra);
+      max-width:700px;
+      margin:auto;
+      font-size:18px;
+      animation:fadeIn .6s ease;
+    }
+    h1 { font-size:28px; margin-bottom:20px; color:var(--txt); }
     .info p { margin:10px 0; white-space:pre-wrap; }
-    .erro { color:#ffaaaa; font-weight:bold; }
-    #printButton { margin-top:30px; background:#4CAF50; color:#fff; border:none; padding:10px 20px; font-size:16px; cursor:pointer; border-radius:6px; }
+    .erro { color:var(--erro); font-weight:bold; }
+    #printButton {
+      margin-top:30px; background:var(--verde-botao);
+      color:#fff; border:none; padding:10px 20px;
+      font-size:16px; cursor:pointer; border-radius:6px;
+      transition:background .15s ease;
+    }
     #printButton[disabled] { opacity:.6; cursor:not-allowed; }
-    #printButton:hover { background:#45a049; }
+    #printButton:hover:not([disabled]) { background:var(--verde-botao-hover); }
     @keyframes fadeIn { from{opacity:0; transform:translateY(-10px)} to{opacity:1; transform:translateY(0)} }
+
+    /* Melhorias de impressão */
+    @media print {
+      body { background:#fff; padding:0; }
+      .logo { display:none; }
+      #printButton { display:none !important; }
+      .container { box-shadow:none; border:1px solid #ccc; color:#000; }
+    }
   </style>
 </head>
 <body>
-  <img src="/logo_escola.png" alt="Logo da Escola da Saúde" class="logo"/>
+  <img src="/logo_escola.png" alt="Logotipo da Escola da Saúde" class="logo" />
 
-  <div class="container" role="region" aria-live="polite">
+  <div class="container" role="region" aria-live="polite" aria-atomic="true">
     <h1>Validação de Certificado</h1>
     <div class="info" id="info">
       <p>Verificando...</p>
     </div>
   </div>
 
-  <button id="printButton" onclick="window.print()">🖨️ Imprimir Certificação</button>
+  <button id="printButton" type="button" onclick="window.print()" disabled aria-disabled="true">
+    🖨️ Imprimir Certificação
+  </button>
 
   <script>
     (function () {
@@ -35,26 +80,39 @@
       const usuario_id = params.get("usuario_id");
       const evento_id  = params.get("evento_id");
 
-      // Permite sobrepor a base da API via query (?api_base=https://...).
-      // Padrão: produção HTTPS.
+      // ⛑️ Base da API (permite override por query ?api_base=...)
       const DEFAULT_API_BASE = "https://escola-saude-api.onrender.com";
       const apiBase = (params.get("api_base") || DEFAULT_API_BASE).replace(/\/+$/,"");
 
       const infoDiv = document.getElementById("info");
       const printBtn = document.getElementById("printButton");
 
-      // Acessibilidade: desabilita imprimir enquanto carrega
-      printBtn.disabled = true;
+      // Desabilita imprimir enquanto carrega
+      setPrintEnabled(false);
 
+      function setPrintEnabled(enabled) {
+        printBtn.disabled = !enabled;
+        printBtn.setAttribute("aria-disabled", String(!enabled));
+      }
+
+      // Datas SEM risco de "voltar um dia": usa fuso explícito
       function formatarDataBrasileira(iso) {
         if (!iso) return "";
         const d = new Date(iso);
         if (Number.isNaN(d.getTime())) return "";
-        return d.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
+        try {
+          return new Intl.DateTimeFormat("pt-BR", {
+            timeZone: "America/Sao_Paulo"
+          }).format(d);
+        } catch {
+          // Fallback
+          return d.toLocaleDateString("pt-BR");
+        }
       }
 
-      function p(txt, strong=false) {
+      function p(txt, strong=false, cls="") {
         const el = document.createElement("p");
+        if (cls) el.className = cls;
         if (strong) {
           const b = document.createElement("strong");
           b.textContent = txt;
@@ -74,63 +132,93 @@
         return el;
       }
 
-      function erro(msg) {
-        infoDiv.innerHTML = "";
-        const el = p(msg);
-        el.className = "erro";
-        infoDiv.appendChild(el);
-        printBtn.disabled = true;
+      function limparInfo() {
+        while (infoDiv.firstChild) infoDiv.removeChild(infoDiv.firstChild);
+      }
+
+      function mostrarErro(msg) {
+        limparInfo();
+        infoDiv.appendChild(p(msg, false, "erro"));
+        setPrintEnabled(false);
       }
 
       if (!usuario_id || !evento_id) {
-        erro("Parâmetros inválidos na URL.");
+        mostrarErro("❌ Parâmetros inválidos na URL.");
         return;
       }
 
-      // Monta URL segura
-      const url = `${apiBase}/api/certificados/validar-certificado?usuario_id=${encodeURIComponent(usuario_id)}&evento_id=${encodeURIComponent(evento_id)}`;
+      // Monta URL de forma segura
+      const url = `${apiBase}/api/certificados/validar-certificado?usuario_id=${
+        encodeURIComponent(usuario_id)
+      }&evento_id=${encodeURIComponent(evento_id)}`;
 
-      // Bloqueia mixed content (se página estiver em https, a API também deve estar)
+      // Bloqueia mixed content em produção
       if (location.protocol === "https:" && url.startsWith("http://")) {
-        erro("Não foi possível validar (Mixed Content). Verifique a URL da API (use HTTPS).");
+        mostrarErro("Não foi possível validar (Mixed Content). Use uma URL de API com HTTPS.");
         return;
       }
 
-      fetch(url, { credentials: "include" })
-        .then(async (res) => {
-          // Tenta JSON mesmo em erro para capturar mensagem do backend
+      // Timeout com AbortController (robustez de rede)
+      const controller = new AbortController();
+      const idTimeout = setTimeout(() => controller.abort(), 15000); // 15s
+
+      (async () => {
+        try {
+          const res = await fetch(url, {
+            credentials: "include",
+            signal: controller.signal,
+            // Cabeçalho opcional se backend exigir JSON
+            headers: { "Accept": "application/json" }
+          });
+
           let data = null;
-          try { data = await res.json(); } catch { /* corpo não-JSON */ }
+          try { data = await res.json(); } catch { /* pode não ser JSON */ }
 
           if (!res.ok) {
             const msg = (data && (data.erro || data.message)) || `Erro HTTP ${res.status}`;
             throw new Error(msg);
           }
-          return data;
-        })
-        .then((data) => {
-          infoDiv.innerHTML = "";
-          if (data && data.valido) {
-            infoDiv.appendChild(p("✅ Certificado válido", true));
-            infoDiv.appendChild(linhaRotulo("Nome", data.usuario || ""));
-            infoDiv.appendChild(linhaRotulo("CPF",  data.cpf || ""));
-            infoDiv.appendChild(linhaRotulo("Evento", data.evento || ""));
-            const periodo = (data.periodo && data.periodo.inicio && data.periodo.fim)
-              ? `${formatarDataBrasileira(data.periodo.inicio)} a ${formatarDataBrasileira(data.periodo.fim)}`
-              : "";
-            infoDiv.appendChild(linhaRotulo("Período", periodo));
-            infoDiv.appendChild(linhaRotulo("Emitido em", formatarDataBrasileira(data.gerado_em)));
 
-            // Libera impressão
-            printBtn.disabled = false;
+          limparInfo();
+
+          if (data && (data.valido || data.presente === true)) {
+            infoDiv.appendChild(p("✅ Certificado válido", true));
+            infoDiv.appendChild(linhaRotulo("Nome", data.usuario || data.nome || ""));
+            infoDiv.appendChild(linhaRotulo("CPF", data.cpf || ""));
+            infoDiv.appendChild(linhaRotulo("Evento", data.evento || data.titulo || ""));
+
+            // Período pode vir como objeto {inicio,fim} ou strings
+            let inicio = "", fim = "";
+            if (data.periodo && (data.periodo.inicio || data.periodo.fim)) {
+              inicio = formatarDataBrasileira(data.periodo.inicio);
+              fim    = formatarDataBrasileira(data.periodo.fim);
+            } else if (data.data_inicio || data.data_fim) {
+              inicio = formatarDataBrasileira(data.data_inicio);
+              fim    = formatarDataBrasileira(data.data_fim);
+            }
+            if (inicio || fim) {
+              infoDiv.appendChild(linhaRotulo("Período", `${inicio}${inicio && fim ? " a " : ""}${fim}`));
+            }
+
+            // Data de emissão
+            const emitido = formatarDataBrasileira(data.gerado_em || data.emitido_em);
+            if (emitido) infoDiv.appendChild(linhaRotulo("Emitido em", emitido));
+
+            setPrintEnabled(true);
           } else {
-            erro("❌ Certificado não encontrado.");
+            mostrarErro("❌ Certificado não encontrado ou inválido.");
           }
-        })
-        .catch((e) => {
-          console.error(e);
-          erro("Erro ao validar o certificado. Tente novamente mais tarde.");
-        });
+        } catch (e) {
+          if (e.name === "AbortError") {
+            mostrarErro("⏱️ Tempo de resposta excedido. Tente novamente.");
+          } else {
+            console.error(e);
+            mostrarErro("❌ Erro ao validar o certificado. Tente novamente mais tarde.");
+          }
+        } finally {
+          clearTimeout(idTimeout);
+        }
+      })();
     })();
   </script>
 </body>

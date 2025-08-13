@@ -1,36 +1,43 @@
 // 📁 src/pages/PresencasPorTurma.jsx
 import { useState, useEffect } from "react";
-import ListaTurmasAdministrador from "./ListaTurmasAdministrador"; // ✅ nome/arquivo consistentes
+import ListaTurmasAdministrador from "../components/ListaTurmasAdministrador"; // ✅ caminho correto
 import { toast } from "react-toastify";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import NadaEncontrado from "../components/NadaEncontrado";
-import { apiGet } from "../services/api"; // ✅ serviço centralizado
+import { apiGet } from "../services/api";
 
 export default function PresencasPorTurma() {
-  const [eventos, setEventos] = useState([]);          // ✅ era "turmas"
+  const [eventos, setEventos] = useState([]); // ✅ era "turmas"
   const [inscritosPorTurma, setInscritosPorTurma] = useState({});
   const [avaliacoesPorTurma, setAvaliacoesPorTurma] = useState({});
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    let isMounted = true;
     async function carregarEventosETurmas() {
       try {
         const data = await apiGet("/api/administrador/turmas");
+        if (!isMounted) return;
         setEventos(Array.isArray(data) ? data : []);
-      } catch {
+      } catch (err) {
+        console.error("Erro ao carregar turmas:", err);
         toast.error("❌ Erro ao carregar turmas");
       } finally {
-        setIsLoading(false);
+        if (isMounted) setIsLoading(false);
       }
     }
     carregarEventosETurmas();
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const carregarInscritos = async (turmaId) => {
     try {
       const data = await apiGet(`/api/turmas/${turmaId}/inscritos`);
-      setInscritosPorTurma((prev) => ({ ...prev, [turmaId]: data }));
-    } catch {
+      setInscritosPorTurma((prev) => ({ ...prev, [turmaId]: Array.isArray(data) ? data : [] }));
+    } catch (err) {
+      console.error("Erro ao carregar inscritos:", err);
       toast.error("❌ Erro ao carregar inscritos");
     }
   };
@@ -38,8 +45,9 @@ export default function PresencasPorTurma() {
   const carregarAvaliacoes = async (turmaId) => {
     try {
       const data = await apiGet(`/api/avaliacoes/turma/${turmaId}`);
-      setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: data }));
-    } catch {
+      setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: Array.isArray(data) ? data : [] }));
+    } catch (err) {
+      console.error("Erro ao carregar avaliações:", err);
       toast.error("❌ Erro ao carregar avaliações");
     }
   };
@@ -51,11 +59,14 @@ export default function PresencasPorTurma() {
       {isLoading ? (
         <CarregandoSkeleton />
       ) : eventos.length === 0 ? (
-        <NadaEncontrado mensagem="Nenhuma turma encontrada." sugestao="Verifique se há eventos cadastrados." />
+        <NadaEncontrado
+          mensagem="Nenhuma turma encontrada."
+          sugestao="Verifique se há eventos cadastrados."
+        />
       ) : (
         <ListaTurmasAdministrador
-          eventos={eventos}                     // ✅ passa "eventos"
-          hoje={new Date()}
+          eventos={eventos} // ✅ passa "eventos"
+          hoje={new Date()} // ✅ agora; sem parsing de 'yyyy-mm-dd'
           inscritosPorTurma={inscritosPorTurma}
           avaliacoesPorTurma={avaliacoesPorTurma}
           carregarInscritos={carregarInscritos}

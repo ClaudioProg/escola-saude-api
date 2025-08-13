@@ -1,5 +1,5 @@
 // 📁 src/pages/DashboardAdministrador.jsx
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "react-toastify";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -7,8 +7,13 @@ import autoTable from "jspdf-autotable";
 import Breadcrumbs from "../components/Breadcrumbs";
 import CardEvento from "../components/CardEvento";
 import Spinner from "../components/Spinner";
-import { formatarDataBrasileira } from "../utils/data"; // (ainda pode ser útil)
-import { apiGet } from "../services/api"; // ✅ usa serviço centralizado
+import { apiGet } from "../services/api"; // ✅ centralizado
+
+// ---------- helpers anti-fuso ----------
+const ymd = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
+const toLocalDate = (ymdStr, hhmm = "12:00") =>
+  ymdStr ? new Date(`${ymdStr}T${(hhmm || "12:00").slice(0, 5)}:00`) : null;
+// --------------------------------------
 
 export default function DashboardAdministrador() {
   const [nome, setNome] = useState("");
@@ -38,7 +43,6 @@ export default function DashboardAdministrador() {
     (async () => {
       setCarregando(true);
       try {
-        // 👇 Não redireciona em 403; mostra erro na tela
         const data = await apiGet("/api/eventos", { on403: "silent" });
         setEventos(Array.isArray(data) ? data : []);
         setErro("");
@@ -85,7 +89,8 @@ export default function DashboardAdministrador() {
 
   const carregarPresencas = async (turmaId) => {
     try {
-      const data = await apiGet(`/api/relatorio-presencas/turma/${turmaId}`, { on403: "silent" });
+      // 🔄 padroniza com as outras telas
+      const data = await apiGet(`/api/presencas/relatorio-presencas/turma/${turmaId}`, { on403: "silent" });
       const lista = Array.isArray(data?.lista) ? data.lista : Array.isArray(data) ? data : [];
       setPresencasPorTurma((prev) => ({ ...prev, [turmaId]: lista }));
     } catch (err) {
@@ -96,7 +101,8 @@ export default function DashboardAdministrador() {
 
   const gerarRelatorioPDF = async (turmaId) => {
     try {
-      const data = await apiGet(`/api/relatorio-presencas/turma/${turmaId}`, { on403: "silent" });
+      // 🔄 padroniza com a rota acima
+      const data = await apiGet(`/api/presencas/relatorio-presencas/turma/${turmaId}`, { on403: "silent" });
       const alunos = Array.isArray(data?.lista) ? data.lista : Array.isArray(data) ? data : [];
 
       const total = alunos.length;
@@ -111,12 +117,14 @@ export default function DashboardAdministrador() {
         head: [["Nome", "CPF", "Presença"]],
         body: alunos.map((a) => [
           a.nome,
-          (a.cpf || "").replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4"),
+          (a.cpf || "")
+            .replace(/\D/g, "")
+            .replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4"),
           a.presente ? "Sim" : "Não",
         ]),
       });
 
-      const finalY = doc.lastAutoTable.finalY + 10;
+      const finalY = (doc.lastAutoTable?.finalY || 30) + 10;
       doc.setFontSize(12);
       doc.text(`Total de inscritos: ${total}`, 14, finalY);
       doc.text(`Total de presentes: ${presentes}`, 14, finalY + 6);
@@ -133,31 +141,57 @@ export default function DashboardAdministrador() {
     carregarTurmas(eventoId);
   };
 
-  // 🔄 Filtrar por status com datas agregadas do evento ou derivadas das turmas
+  // 🔄 Filtrar por status com datas agregadas (respeitando hora)
   const filtrarPorStatus = (evento) => {
-    const hoje = new Date();
+    const agora = new Date();
     const turmas = turmasPorEvento[evento.id] || [];
 
-    let dataInicio = evento.data_inicio_geral ? new Date(evento.data_inicio_geral) : null;
-    let dataFim = evento.data_fim_geral ? new Date(evento.data_fim_geral) : null;
+    // se backend já agrega:
+    const diAgg = ymd(evento.data_inicio_geral);
+    const dfAgg = ymd(evento.data_fim_geral);
+    const hiAgg = (evento.horario_inicio_geral || "00:00").slice(0, 5);
+    const hfAgg = (evento.horario_fim_geral || "23:59").slice(0, 5);
 
-    if (!dataInicio || !dataFim) {
-      const dsInicio = turmas.map((t) => new Date(t.data_inicio)).filter((d) => !isNaN(d));
-      const dsFim = turmas.map((t) => new Date(t.data_fim)).filter((d) => !isNaN(d));
-      if (dsInicio.length) dataInicio = new Date(Math.min(...dsInicio.map((d) => d.getTime())));
-      if (dsFim.length) {
-        dataFim = new Date(Math.max(...dsFim.map((d) => d.getTime())));
-        dataFim.setHours(23, 59, 59, 999);
+    let inicioDT = diAgg ? toLocalDate(diAgg, hiAgg) : null;
+    let fimDT = dfAgg ? toLocalDate(dfAgg, hfAgg) : null;
+
+    // se não veio agregado, deriva das turmas (min início, máx fim)
+    if (!inicioDT || !fimDT) {
+      const starts = [];
+      const ends = [];
+      for (const t of turmas) {
+        const di = ymd(t.data_inicio);
+        const df = ymd(t.data_fim);
+        const hi = (t.horario_inicio || "00:00").slice(0, 5);
+        const hf = (t.horario_fim || "23:59").slice(0, 5);
+        const s = di ? toLocalDate(di, hi) : null;
+        const e = df ? toLocalDate(df, hf) : null;
+        if (s) starts.push(s.getTime());
+        if (e) ends.push(e.getTime());
       }
+      if (starts.length) inicioDT = new Date(Math.min(...starts));
+      if (ends.length) fimDT = new Date(Math.max(...ends));
     }
 
-    if (!dataInicio || !dataFim) return false;
+    if (!inicioDT || !fimDT) return filtroStatus === "todos"; // se não deu pra calcular, só mostra em "todos"
 
-    if (filtroStatus === "programado") return dataInicio > hoje;
-    if (filtroStatus === "em_andamento") return dataInicio <= hoje && dataFim >= hoje;
-    if (filtroStatus === "encerrado") return dataFim < hoje;
+    if (filtroStatus === "programado") return inicioDT > agora;
+    if (filtroStatus === "em_andamento") return inicioDT <= agora && fimDT >= agora;
+    if (filtroStatus === "encerrado") return fimDT < agora;
     return true; // "todos"
   };
+
+  // (opcional) ordena eventos por data de início (local)
+  const eventosOrdenados = useMemo(() => {
+    return [...eventos].sort((a, b) => {
+      const aDT = toLocalDate(ymd(a.data_inicio_geral || a.data_inicio || a.data), (a.horario_inicio_geral || a.horario_inicio || "00:00"));
+      const bDT = toLocalDate(ymd(b.data_inicio_geral || b.data_inicio || b.data), (b.horario_inicio_geral || b.horario_inicio || "00:00"));
+      if (!aDT && !bDT) return 0;
+      if (!aDT) return 1;
+      if (!bDT) return -1;
+      return aDT - bDT;
+    });
+  }, [eventos]);
 
   return (
     <div className="min-h-screen px-4 py-10 bg-white dark:bg-zinc-900 text-black dark:text-white relative">
@@ -204,7 +238,7 @@ export default function DashboardAdministrador() {
 
         {erro && <p className="text-red-500 text-center">{erro}</p>}
 
-        {eventos.filter(filtrarPorStatus).map((evento) => (
+        {eventosOrdenados.filter(filtrarPorStatus).map((evento) => (
           <CardEvento
             key={evento.id}
             evento={evento}

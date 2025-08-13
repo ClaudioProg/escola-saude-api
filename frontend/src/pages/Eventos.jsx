@@ -1,4 +1,3 @@
-// src/pages/Eventos.jsx
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
@@ -11,7 +10,10 @@ import NadaEncontrado from "../components/NadaEncontrado";
 import BotaoPrimario from "../components/BotaoPrimario";
 import FiltrosEventos from "../components/FiltrosEventos";
 import ListaTurmasEvento from "../components/ListaTurmasEvento";
-import { apiGet, apiPost } from "../services/api"; // ✅ centralizado
+import { apiGet, apiPost } from "../services/api";
+
+// ✅ helpers de data SEM fuso (parse local)
+import { toLocalDate, formatarDataBrasileira } from "../utils/data";
 
 export default function Eventos() {
   const [eventos, setEventos] = useState([]);
@@ -25,22 +27,26 @@ export default function Eventos() {
   const [filtro, setFiltro] = useState("programado");
 
   const navigate = useNavigate();
-  const usuario = JSON.parse(localStorage.getItem("usuario"));
+  let usuario = {};
+  try { usuario = JSON.parse(localStorage.getItem("usuario") || "{}"); } catch {}
   const nome = usuario?.nome || "";
 
-  const formatarData = (iso) =>
-    new Date(iso).toLocaleDateString("pt-BR", {
+  const formatarDataCurta = (iso) => {
+    const d = toLocalDate(iso);
+    if (!d) return "";
+    return d.toLocaleDateString("pt-BR", {
       day: "2-digit",
       month: "short",
       year: "numeric",
     });
+  };
 
   useEffect(() => {
     async function carregarEventos() {
       setCarregandoEventos(true);
       try {
         const data = await apiGet("/api/eventos");
-        setEventos(data);
+        setEventos(Array.isArray(data) ? data : []);
         setErro("");
       } catch {
         setErro("Erro ao carregar eventos");
@@ -56,7 +62,9 @@ export default function Eventos() {
     async function carregarInscricoes() {
       try {
         const inscricoes = await apiGet("/api/inscricoes/minhas");
-        const idsTurmas = inscricoes.map((i) => i.turma_id);
+        const idsTurmas = (Array.isArray(inscricoes) ? inscricoes : [])
+          .map((i) => Number(i?.turma_id))
+          .filter((n) => Number.isFinite(n));
         setInscricoesConfirmadas(idsTurmas);
       } catch {
         toast.error("Erro ao carregar inscrições do usuário.");
@@ -68,7 +76,7 @@ export default function Eventos() {
   async function atualizarEventos() {
     try {
       const data = await apiGet("/api/eventos");
-      setEventos(data);
+      setEventos(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error("Erro em atualizarEventos():", e);
       toast.warning("⚠️ Eventos não puderam ser atualizados.");
@@ -81,7 +89,7 @@ export default function Eventos() {
       setCarregandoTurmas(eventoId);
       try {
         const turmas = await apiGet(`/api/turmas/evento/${eventoId}`);
-        setTurmasPorEvento((prev) => ({ ...prev, [eventoId]: turmas }));
+        setTurmasPorEvento((prev) => ({ ...prev, [eventoId]: Array.isArray(turmas) ? turmas : [] }));
       } catch {
         toast.error("Erro ao carregar turmas");
       } finally {
@@ -101,7 +109,9 @@ export default function Eventos() {
       // Atualiza inscrições confirmadas
       try {
         const inscricoesUsuario = await apiGet("/api/inscricoes/minhas");
-        const novasInscricoes = inscricoesUsuario.map((i) => i.turma_id);
+        const novasInscricoes = (Array.isArray(inscricoesUsuario) ? inscricoesUsuario : [])
+          .map((i) => Number(i?.turma_id))
+          .filter((n) => Number.isFinite(n));
         setInscricoesConfirmadas(novasInscricoes);
       } catch {
         toast.warning("⚠️ Não foi possível atualizar inscrições confirmadas.");
@@ -118,7 +128,10 @@ export default function Eventos() {
       if (eventoId) {
         try {
           const turmasAtualizadas = await apiGet(`/api/turmas/evento/${eventoId}`);
-          setTurmasPorEvento((prev) => ({ ...prev, [eventoId]: turmasAtualizadas }));
+          setTurmasPorEvento((prev) => ({
+            ...prev,
+            [eventoId]: Array.isArray(turmasAtualizadas) ? turmasAtualizadas : [],
+          }));
         } catch {
           console.warn("⚠️ Não foi possível recarregar turmas do evento após inscrição");
         }
@@ -131,12 +144,13 @@ export default function Eventos() {
     }
   }
 
+  // ✅ filtra usando datas locais (sem UTC)
   const eventosFiltrados = eventos.filter((evento) => {
     const hoje = new Date();
     hoje.setHours(0, 0, 0, 0);
 
-    const inicio = evento.data_inicio_geral ? new Date(evento.data_inicio_geral) : null;
-    const fim = evento.data_fim_geral ? new Date(evento.data_fim_geral) : null;
+    const inicio = evento.data_inicio_geral ? toLocalDate(evento.data_inicio_geral) : null;
+    const fim = evento.data_fim_geral ? toLocalDate(evento.data_fim_geral) : null;
 
     if (inicio) inicio.setHours(0, 0, 0, 0);
     if (fim) fim.setHours(0, 0, 0, 0);
@@ -145,7 +159,10 @@ export default function Eventos() {
     if (filtro === "programado") return inicio && inicio > hoje;
     if (filtro === "em andamento") return inicio && fim && inicio <= hoje && fim >= hoje;
     if (filtro === "encerrado") {
-      const inscritoEmAlgumaTurma = evento.turmas?.some((t) => inscricoesConfirmadas.includes(t.id));
+      // mostra encerrados somente se o usuário participou de alguma turma do evento
+      const inscritoEmAlgumaTurma = (evento.turmas || []).some((t) =>
+        inscricoesConfirmadas.includes(Number(t.id))
+      );
       return fim && fim < hoje && inscritoEmAlgumaTurma;
     }
     return true;
@@ -181,10 +198,15 @@ export default function Eventos() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {[...eventosFiltrados]
+            // ✅ ordena usando local date + horário geral (quando existir)
             .sort((a, b) => {
-              const dataA = new Date(`${a.data_fim_geral}T${a.horario_fim_geral || "00:00"}`);
-              const dataB = new Date(`${b.data_fim_geral}T${b.horario_fim_geral || "00:00"}`);
-              return dataB - dataA;
+              const fimA = toLocalDate(
+                `${a.data_fim_geral || ""}${a.horario_fim_geral ? `T${a.horario_fim_geral}` : ""}`
+              );
+              const fimB = toLocalDate(
+                `${b.data_fim_geral || ""}${b.horario_fim_geral ? `T${b.horario_fim_geral}` : ""}`
+              );
+              return (fimB?.getTime?.() || 0) - (fimA?.getTime?.() || 0);
             })
             .map((evento) => (
               <div
@@ -204,7 +226,7 @@ export default function Eventos() {
                 <p className="text-sm italic text-gray-600 mt-1">
                   Instrutor(es):{" "}
                   <span className="text-gray-800 dark:text-white">
-                    {evento.instrutor?.length
+                    {Array.isArray(evento.instrutor) && evento.instrutor.length
                       ? evento.instrutor.map((i) => i.nome).join(", ")
                       : "A definir"}
                   </span>
@@ -221,7 +243,7 @@ export default function Eventos() {
                   <CalendarDays className="w-4 h-4" />
                   <span>
                     {evento.data_inicio_geral && evento.data_fim_geral
-                      ? `${formatarData(evento.data_inicio_geral)} até ${formatarData(evento.data_fim_geral)}`
+                      ? `${formatarDataCurta(evento.data_inicio_geral)} até ${formatarDataCurta(evento.data_fim_geral)}`
                       : "Datas a definir"}
                   </span>
                 </div>
@@ -243,11 +265,11 @@ export default function Eventos() {
                   <ListaTurmasEvento
                     turmas={turmasPorEvento[evento.id]}
                     eventoId={evento.id}
-                    hoje={new Date()}
+                    hoje={new Date()} // ok usar "agora"; não é parse
                     inscricoesConfirmadas={inscricoesConfirmadas}
                     inscrever={inscrever}
                     inscrevendo={inscrevendo}
-                    jaInscritoNoEvento={evento.ja_inscrito}
+                    jaInscritoNoEvento={!!evento.ja_inscrito}
                     carregarInscritos={() => {}}
                     carregarAvaliacoes={() => {}}
                     gerarRelatorioPDF={() => {}}

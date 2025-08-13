@@ -1,5 +1,5 @@
 // 📁 src/pages/GestaoInstrutor.jsx
-import { useEffect, useMemo, useState, Suspense, lazy } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "react-toastify";
 import Skeleton from "react-loading-skeleton";
 import Modal from "react-modal";
@@ -12,7 +12,17 @@ import CabecalhoPainel from "../components/CabecalhoPainel";
 
 Modal.setAppElement("#root");
 
-// se tiver um Modal separado, dá pra lazy-loadar; aqui o modal é do react-modal embutido
+// ---------- helpers anti-fuso ----------
+function ymd(input) {
+  if (!input) return "";
+  const m = String(input).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : "";
+}
+function ymdToBR(s) {
+  const m = ymd(s).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : "—";
+}
+// --------------------------------------
 
 export default function GestaoInstrutor() {
   const [instrutores, setInstrutores] = useState([]);
@@ -66,12 +76,16 @@ export default function GestaoInstrutor() {
     try {
       console.log(`🗂️ [GestaoInstrutor] GET /api/instrutor/${instrutor.id}/eventos-avaliacoes`);
       const data = await apiGet(`/api/instrutor/${instrutor.id}/eventos-avaliacoes`);
+
+      // ⚠️ Não usamos new Date() aqui; guardamos YMD para render anti-fuso
       const eventos = (Array.isArray(data) ? data : []).map((ev) => ({
         id: ev.evento_id,
         titulo: ev.evento,
-        data_inicio: ev.data_inicio ? new Date(ev.data_inicio) : null,
-        data_fim: ev.data_fim ? new Date(ev.data_fim) : null,
-        nota_media: ev.nota_media !== null ? Number(ev.nota_media) : null,
+        data_inicio_ymd: ymd(ev.data_inicio),
+        data_fim_ymd: ymd(ev.data_fim),
+        nota_media: ev.nota_media !== null && ev.nota_media !== undefined
+          ? Number(ev.nota_media)
+          : null,
       }));
       setHistorico(eventos);
     } catch (e) {
@@ -105,7 +119,10 @@ export default function GestaoInstrutor() {
       ) : erro ? (
         <p className="text-red-500 text-center">{erro}</p>
       ) : (
-        <TabelaInstrutor instrutor={Array.isArray(filtrados) ? filtrados : []} onVisualizar={abrirModalVisualizar} />
+        <TabelaInstrutor
+          instrutor={Array.isArray(filtrados) ? filtrados : []}
+          onVisualizar={abrirModalVisualizar}
+        />
       )}
 
       {/* Modal Histórico */}
@@ -114,6 +131,7 @@ export default function GestaoInstrutor() {
         onRequestClose={() => setModalHistoricoAberto(false)}
         className="bg-white dark:bg-gray-800 max-w-xl mx-auto mt-20 p-6 rounded-xl shadow-lg outline-none"
         overlayClassName="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-start z-50"
+        contentLabel="Histórico do instrutor"
       >
         <h2 className="text-xl font-bold mb-4 text-black dark:text-white">
           Histórico de {instrutorSelecionado?.nome}
@@ -129,14 +147,16 @@ export default function GestaoInstrutor() {
                   key={evento.id}
                   className="border p-3 rounded-md bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100 shadow-sm"
                 >
-                <p className="font-semibold">{evento.titulo}</p>
-                <p className="text-sm">
-                  Data: {evento.data_inicio ? evento.data_inicio.toLocaleDateString("pt-BR") : "—"} até{" "}
-                  {evento.data_fim ? evento.data_fim.toLocaleDateString("pt-BR") : "—"}
-                </p>
-                <p className="text-sm">
-                  Média de avaliação: <strong>{evento.nota_media !== null ? evento.nota_media.toFixed(1) : "N/A"}</strong>
-                </p>
+                  <p className="font-semibold">{evento.titulo}</p>
+                  <p className="text-sm">
+                    Data: {ymdToBR(evento.data_inicio_ymd)} até {ymdToBR(evento.data_fim_ymd)}
+                  </p>
+                  <p className="text-sm">
+                    Média de avaliação:{" "}
+                    <strong>
+                      {evento.nota_media !== null ? evento.nota_media.toFixed(1) : "N/A"}
+                    </strong>
+                  </p>
                 </li>
               ))}
             </ul>

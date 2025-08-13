@@ -24,15 +24,31 @@ export default function ListaPresencasTurma({
     const atual = JSON.stringify(inscritosState);
     const novo = JSON.stringify(inscritosPorTurma);
     if (atual !== novo) setInscritosState(inscritosPorTurma);
-  }, [inscritosPorTurma]);
+  }, [inscritosPorTurma]); // eslint-disable-line
 
+  // ---------- helpers anti-fuso ----------
   const isoDia = (d) => {
-    const date = d instanceof Date ? d : new Date(d);
-    const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    return `${y}-${m}-${day}`;
+    if (!d) return "";
+    if (d instanceof Date && !isNaN(+d)) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    }
+    const s = String(d);
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); // aceita "YYYY-MM-DD" (com ou sem tempo depois)
+    if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+    // fallback: deixa o parse nativo (pode ter timezone explícito)
+    const nd = new Date(s);
+    if (!isNaN(+nd)) {
+      const y = nd.getFullYear();
+      const mo = String(nd.getMonth() + 1).padStart(2, "0");
+      const da = String(nd.getDate()).padStart(2, "0");
+      return `${y}-${mo}-${da}`;
+    }
+    return "";
   };
+  // ---------------------------------------
 
   async function confirmarPresenca(turmaId, usuarioId, dataISO) {
     const confirmar = window.confirm("Deseja realmente confirmar presença deste usuário?");
@@ -41,14 +57,14 @@ export default function ListaPresencasTurma({
     setLoading({ turmaId, usuarioId, data: dataISO });
 
     try {
-      // padronize com o mesmo endpoint/corpo usado no resto do app
+      // padronizado com o restante do app
       await apiPost("/api/presencas/confirmar-simples", {
         turma_id: turmaId,
         usuario_id: usuarioId,
-        data: dataISO, // <- backend esperando 'data'
+        data: dataISO, // backend espera 'data'
       });
 
-      toast.success("✅ Presença confirmada com sucesso.");
+      toast.success("✅ Presença confirmada com sucesso.", { ariaLive: "polite" });
 
       // atualização otimista
       setInscritosState((prev) => {
@@ -60,28 +76,20 @@ export default function ListaPresencasTurma({
 
           // suporta dois formatos: array de presenças ou mapa { 'YYYY-MM-DD': true }
           if (Array.isArray(p.presencas)) {
-            const jaExiste = p.presencas.some(
-              (pp) => isoDia(pp.data_presenca) === dataISO
-            );
+            const jaExiste = p.presencas.some((pp) => isoDia(pp.data_presenca) === dataISO);
             return jaExiste
               ? p
-              : {
-                  ...p,
-                  presencas: [...p.presencas, { data_presenca: dataISO, presente: true }],
-                };
+              : { ...p, presencas: [...p.presencas, { data_presenca: dataISO, presente: true }] };
           }
-          return {
-            ...p,
-            presencas: { ...(p.presencas || {}), [dataISO]: true },
-          };
+          return { ...p, presencas: { ...(p.presencas || {}), [dataISO]: true } };
         });
         return next;
       });
 
-      // sincroniza do servidor, se quiser garantir
+      // sincroniza do servidor (opcional)
       if (carregarInscritos) await carregarInscritos(turmaId);
     } catch (err) {
-      toast.error("❌ " + (err?.message || "Erro ao confirmar presença"));
+      toast.error("❌ " + (err?.message || "Erro ao confirmar presença"), { ariaLive: "assertive" });
     } finally {
       setLoading(null);
     }
@@ -92,7 +100,10 @@ export default function ListaPresencasTurma({
       <main className="min-h-screen bg-gelo dark:bg-zinc-900 px-2 sm:px-4 py-6">
         <Breadcrumbs />
         <CabecalhoPainel titulo="📋 Presenças por Turma" />
-        <NadaEncontrado mensagem="Nenhuma turma encontrada." sugestao="Verifique os filtros ou cadastre uma nova turma." />
+        <NadaEncontrado
+          mensagem="Nenhuma turma encontrada."
+          sugestao="Verifique os filtros ou cadastre uma nova turma."
+        />
       </main>
     );
   }
@@ -123,9 +134,7 @@ export default function ListaPresencasTurma({
               <div className="mt-4">
                 <button
                   className="bg-lousa text-white px-4 py-2 rounded hover:bg-green-900 transition"
-                  onClick={() =>
-                    setTurmaExpandidaId(turmaExpandidaId === turma.id ? null : turma.id)
-                  }
+                  onClick={() => setTurmaExpandidaId(turmaExpandidaId === turma.id ? null : turma.id)}
                 >
                   {turmaExpandidaId === turma.id ? "Recolher Detalhes" : "Ver Detalhes"}
                 </button>
@@ -158,82 +167,88 @@ export default function ListaPresencasTurma({
                             </div>
 
                             <div className="w-full mt-3">
-                              <table className="w-full text-sm">
-                                <thead>
-                                  <tr className="text-gray-600 dark:text-gray-300">
-                                    <th className="text-left">📅 Data</th>
-                                    <th className="text-left">📌 Situação</th>
-                                    <th className="text-left">✔️ Ações</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {datas.map((data) => {
-                                    const dia = isoDia(data);
+                              {datas.length === 0 ? (
+                                <p className="text-xs text-gray-500 dark:text-gray-400">
+                                  Nenhuma data cadastrada para esta pessoa.
+                                </p>
+                              ) : (
+                                <table className="w-full text-sm">
+                                  <thead>
+                                    <tr className="text-gray-600 dark:text-gray-300">
+                                      <th className="text-left">📅 Data</th>
+                                      <th className="text-left">📌 Situação</th>
+                                      <th className="text-left">✔️ Ações</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {datas.map((data) => {
+                                      const dia = isoDia(data);
 
-                                    // checa presença em ambos formatos
-                                    let presente = false;
-                                    if (Array.isArray(pessoa.presencas)) {
-                                      presente = pessoa.presencas.some(
-                                        (pp) => isoDia(pp.data_presenca) === dia && pp.presente === true
+                                      // checa presença nos dois formatos suportados
+                                      let presente = false;
+                                      if (Array.isArray(pessoa.presencas)) {
+                                        presente = pessoa.presencas.some(
+                                          (pp) => isoDia(pp.data_presenca) === dia && pp.presente === true
+                                        );
+                                      } else if (pessoa.presencas && typeof pessoa.presencas === "object") {
+                                        presente = pessoa.presencas[dia] === true;
+                                      }
+
+                                      // status visual
+                                      const inicio = new Date(`${dia}T${turma.horario_inicio || "08:00"}`);
+                                      const passou60 = Date.now() >= inicio.getTime() + 60 * 60 * 1000;
+
+                                      let status = "Aguardando";
+                                      let style = "bg-yellow-300 text-yellow-900";
+                                      let icon = null;
+                                      if (presente) {
+                                        status = "Presente";
+                                        style = "bg-green-400 text-white";
+                                        icon = <CheckCircle size={14} />;
+                                      } else if (passou60) {
+                                        status = "Faltou";
+                                        style = "bg-red-400 text-white";
+                                        icon = <XCircle size={14} />;
+                                      }
+
+                                      // prazo para confirmar (até 48h após o horário_fim)
+                                      const fim = new Date(`${dia}T${turma.horario_fim || "17:00"}`);
+                                      const podeConfirmar =
+                                        modoadministradorPresencas &&
+                                        Date.now() <= fim.getTime() + 48 * 60 * 60 * 1000;
+
+                                      const isLoading =
+                                        loading &&
+                                        loading.turmaId === turma.id &&
+                                        loading.usuarioId === usuarioIdNorm &&
+                                        loading.data === dia;
+
+                                      return (
+                                        <tr key={`${usuarioIdNorm}-${dia}`}>
+                                          <td className="py-1">{formatarDataBrasileira(dia)}</td>
+                                          <td>
+                                            <span className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full font-medium ${style}`}>
+                                              {icon}
+                                              {status}
+                                            </span>
+                                          </td>
+                                          <td>
+                                            {!presente && podeConfirmar && (
+                                              <button
+                                                disabled={isLoading}
+                                                onClick={() => confirmarPresenca(turma.id, usuarioIdNorm, dia)}
+                                                className={`bg-blue-700 text-white text-xs px-3 py-1 rounded ${isLoading ? "opacity-50 cursor-not-allowed" : "hover:bg-blue-800"}`}
+                                              >
+                                                {isLoading ? "Confirmando..." : "Confirmar"}
+                                              </button>
+                                            )}
+                                          </td>
+                                        </tr>
                                       );
-                                    } else if (pessoa.presencas && typeof pessoa.presencas === "object") {
-                                      presente = pessoa.presencas[dia] === true;
-                                    }
-
-                                    // status visual
-                                    const inicio = new Date(`${dia}T${turma.horario_inicio || "08:00"}`);
-                                    const passou60 = Date.now() >= inicio.getTime() + 60 * 60 * 1000;
-
-                                    let status = "Aguardando confirmação";
-                                    let style = "bg-gray-200 text-gray-800";
-                                    let icon = null;
-                                    if (presente) {
-                                      status = "Presente";
-                                      style = "bg-yellow-300 text-yellow-900";
-                                      icon = <CheckCircle size={14} />;
-                                    } else if (passou60) {
-                                      status = "Faltou";
-                                      style = "bg-red-300 text-red-900";
-                                      icon = <XCircle size={14} />;
-                                    }
-
-                                    // prazo para confirmar (até 48h após o horário_fim)
-                                    const fim = new Date(`${dia}T${turma.horario_fim || "17:00"}`);
-                                    const podeConfirmar = Date.now() <= fim.getTime() + 48 * 60 * 60 * 1000;
-
-                                    const isLoading =
-                                      loading &&
-                                      loading.turmaId === turma.id &&
-                                      loading.usuarioId === usuarioIdNorm &&
-                                      loading.data === dia;
-
-                                    return (
-                                      <tr key={dia}>
-                                        <td className="py-1">{formatarDataBrasileira(dia)}</td>
-                                        <td>
-                                          <span className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full font-medium ${style}`}>
-                                            {icon}
-                                            {status}
-                                          </span>
-                                        </td>
-                                        <td>
-                                          {!presente && podeConfirmar && (
-                                            <button
-                                              disabled={isLoading}
-                                              onClick={() =>
-                                                confirmarPresenca(turma.id, usuarioIdNorm, dia)
-                                              }
-                                              className={`bg-blue-700 text-white text-xs px-3 py-1 rounded ${isLoading ? "opacity-50 cursor-not-allowed" : "hover:bg-blue-800"}`}
-                                            >
-                                              {isLoading ? "Confirmando..." : "Confirmar"}
-                                            </button>
-                                          )}
-                                        </td>
-                                      </tr>
-                                    );
-                                  })}
-                                </tbody>
-                              </table>
+                                    })}
+                                  </tbody>
+                                </table>
+                              )}
                             </div>
                           </div>
                         );

@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react";
 import { useParams, Navigate } from "react-router-dom";
 import { toast } from "react-toastify";
-import { parseISO, differenceInMinutes, isBefore } from "date-fns";
+import { differenceInMinutes, isBefore } from "date-fns";
 
 import { apiGet, apiPost } from "../services/api";
 import Breadcrumbs from "../components/Breadcrumbs";
@@ -10,6 +10,22 @@ import CabecalhoPainel from "../components/CabecalhoPainel";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import ErroCarregamento from "../components/ErroCarregamento";
 import { formatarCPF, formatarDataBrasileira } from "../utils/data";
+
+// ---------- helpers de data locais (anti-UTC) ----------
+const ymd = (s) => {
+  const m = String(s || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? { y: +m[1], mo: +m[2], d: +m[3] } : null;
+};
+const hms = (s, fb = "00:00") => {
+  const [hh, mm] = String(s || fb).split(":").map((n) => parseInt(n, 10) || 0);
+  return { hh, mm };
+};
+const makeLocalDate = (ymdStr, hhmm = "00:00") => {
+  const d = ymd(ymdStr);
+  const t = hms(hhmm);
+  return d ? new Date(d.y, d.mo - 1, d.d, t.hh, t.mm, 0, 0) : new Date(NaN);
+};
+// -------------------------------------------------------
 
 export default function PresencasPorTurma() {
   const { turmaId } = useParams(); // /presencas/turma/:turmaId
@@ -32,7 +48,9 @@ export default function PresencasPorTurma() {
       try {
         setCarregando(true);
         const data = await apiGet(`/api/relatorio-presencas/turma/${turmaId}`);
-        setDados(Array.isArray(data) ? data : []);
+        // aceita array direto ou objeto { lista: [...] }
+        const lista = Array.isArray(data?.lista) ? data.lista : Array.isArray(data) ? data : [];
+        setDados(lista);
         setErro("");
       } catch {
         setErro("Erro ao carregar presenças da turma.");
@@ -51,7 +69,8 @@ export default function PresencasPorTurma() {
       await apiPost("/api/presencas/confirmar-simples", {
         turma_id: Number(turma_id),
         usuario_id,
-        data_presenca: data_referencia, // 🔒 padrão
+        // 🔧 unificado com o resto do app
+        data: data_referencia,
       });
 
       toast.success("✅ Presença confirmada!");
@@ -74,11 +93,11 @@ export default function PresencasPorTurma() {
   }
 
   function renderStatus(p) {
-    // calcula relativo ao "agora" a cada render
+    // calcula relativo ao "agora" a cada render, usando datas locais (anti-UTC)
     const agora = new Date();
-    const inicio = parseISO(`${p.data_referencia}T${p.horario_inicio || "00:00"}`);
-    const fim = parseISO(`${p.data_referencia}T${p.horario_fim || "23:59"}`);
-    const expiracao = new Date(fim.getTime() + 48 * 60 * 60 * 1000);
+    const inicio = makeLocalDate(p.data_referencia, p.horario_inicio || "00:00");
+    const fim = makeLocalDate(p.data_referencia, p.horario_fim || "23:59");
+    const expiracao = new Date(fim.getTime() + 48 * 60 * 60 * 1000); // +48h
     const passou60min = differenceInMinutes(agora, inicio) > 60;
 
     if (p.data_presenca || p.presente) {
@@ -110,7 +129,7 @@ export default function PresencasPorTurma() {
             onClick={() =>
               confirmarPresencaManual(p.usuario_id, p.turma_id, p.data_referencia)
             }
-            className={`text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 disabled:opacity-60`}
+            className="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 disabled:opacity-60"
             disabled={loading}
           >
             {loading ? "Confirmando..." : "Confirmar"}
@@ -141,9 +160,9 @@ export default function PresencasPorTurma() {
         <ErroCarregamento mensagem={erro} />
       ) : (
         <div className="space-y-4 max-w-5xl mx-auto">
-          {dados.map((p, i) => (
+          {dados.map((p) => (
             <div
-              key={`${p.usuario_id}-${p.data_referencia}-${i}`}
+              key={`${p.usuario_id}-${p.data_referencia}`}
               className="border border-gray-200 dark:border-gray-600 p-4 rounded-lg bg-white dark:bg-zinc-800 shadow"
             >
               <p className="text-lousa dark:text-white font-semibold">{p.nome}</p>

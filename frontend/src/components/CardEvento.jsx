@@ -4,6 +4,43 @@ import PropTypes from "prop-types";
 import { useEffect } from "react";
 import CardTurma from "./CardTurma";
 
+/* =========================
+   Helpers de Data (fuso local)
+   ========================= */
+
+function isDateOnly(str) {
+  return typeof str === "string" && /^\d{4}-\d{2}-\d{2}$/.test(str);
+}
+
+function toLocalDate(input) {
+  if (!input) return null;
+  if (input instanceof Date) return input;
+
+  if (typeof input === "string") {
+    // "YYYY-MM-DD" → cria Date local (00:00 no fuso local)
+    if (isDateOnly(input)) {
+      const [y, m, d] = input.split("-").map(Number);
+      return new Date(y, m - 1, d);
+    }
+    // Strings com hora:
+    // - Se já tiver timezone (Z ou ±HH:MM), respeita
+    // - Se não tiver, o JS interpreta como local (bom pra nós)
+    return new Date(input);
+  }
+
+  return new Date(input);
+}
+
+function formatarDataLocal(d) {
+  const dt = toLocalDate(d);
+  if (!dt || Number.isNaN(dt.getTime())) return "";
+  return dt.toLocaleDateString("pt-BR");
+}
+
+/* =========================
+   Lógica de notas
+   ========================= */
+
 const CAMPOS_NOTA_EVENTO = [
   "divulgacao_evento",
   "recepcao",
@@ -50,26 +87,34 @@ function calcularMediaEventoViaLista(avaliacoes) {
   return m.toFixed(1);
 }
 
-function getPeriodoEvento(evento, turmas) {
-  if (evento.data_inicio_geral && evento.data_fim_geral) {
-    return `${formatarData(evento.data_inicio_geral)} até ${formatarData(evento.data_fim_geral)}`;
-  }
-  if (Array.isArray(turmas) && turmas.length > 0) {
-    const inicioMin = turmas.reduce((min, t) =>
-      !min || (t.data_inicio && new Date(t.data_inicio) < new Date(min)) ? t.data_inicio : min, null);
-    const fimMax = turmas.reduce((max, t) =>
-      !max || (t.data_fim && new Date(t.data_fim) > new Date(max)) ? t.data_fim : max, null);
-    if (inicioMin && fimMax) return `${formatarData(inicioMin)} até ${formatarData(fimMax)}`;
-  }
-  return "Período não informado";
-}
+/* =========================
+   Datas do evento (sem UTC shift)
+   ========================= */
 
-function formatarData(d) {
-  try {
-    const dt = new Date(d);
-    if (Number.isNaN(dt.getTime())) return "";
-    return dt.toLocaleDateString("pt-BR");
-  } catch { return ""; }
+function getPeriodoEvento(evento, turmas) {
+  // se já veio agregado no evento
+  if (evento.data_inicio_geral && evento.data_fim_geral) {
+    return `${formatarDataLocal(evento.data_inicio_geral)} até ${formatarDataLocal(evento.data_fim_geral)}`;
+  }
+
+  // caso contrário, extrai das turmas
+  if (Array.isArray(turmas) && turmas.length > 0) {
+    const inicioMin = turmas.reduce((min, t) => {
+      const dt = toLocalDate(t?.data_inicio);
+      return (!min || (dt && dt < min)) ? dt : min;
+    }, null);
+
+    const fimMax = turmas.reduce((max, t) => {
+      const dt = toLocalDate(t?.data_fim);
+      return (!max || (dt && dt > max)) ? dt : max;
+    }, null);
+
+    if (inicioMin && fimMax) {
+      return `${formatarDataLocal(inicioMin)} até ${formatarDataLocal(fimMax)}`;
+    }
+  }
+
+  return "Período não informado";
 }
 
 export default function CardEvento({
@@ -207,7 +252,7 @@ export default function CardEvento({
               eventoId={evento.id}
               inscrever={() => {}}
               turma={turma}
-              hoje={new Date()}
+              hoje={new Date()} // ok usar "agora" aqui
               inscritos={inscritosPorTurma?.[turma.id]}
               avaliacoes={avaliacoesPorTurma?.[turma.id]}
               carregarInscritos={carregarInscritos}

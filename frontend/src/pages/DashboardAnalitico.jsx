@@ -1,11 +1,11 @@
 // src/pages/DashboardAnalitico.jsx
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Bar, Pie } from "react-chartjs-2";
 import Skeleton from "react-loading-skeleton";
 import { toast } from "react-toastify";
 import { motion } from "framer-motion";
 import Breadcrumbs from "../components/Breadcrumbs";
-import { apiGet } from "../services/api"; // ✅ centralizado
+import { apiGet } from "../services/api";
 
 import {
   Chart as ChartJS,
@@ -46,7 +46,8 @@ export default function DashboardAnalitico() {
 
         const data = await apiGet(`/api/dashboard-analitico?${qs.toString()}`);
         setDados(data || {});
-      } catch {
+      } catch (e) {
+        console.error(e);
         toast.error("Erro ao carregar dados do painel analítico");
       } finally {
         setCarregando(false);
@@ -60,6 +61,52 @@ export default function DashboardAnalitico() {
     setMes("");
     setTipo("");
   };
+
+  // ---------- helpers ----------
+  const clampPct = (n) => {
+    const v = Number(n);
+    if (Number.isNaN(v)) return 0;
+    return Math.min(100, Math.max(0, v));
+  };
+
+  const evPorMesData = useMemo(() => {
+    const src = dados?.eventosPorMes;
+    if (!src || !Array.isArray(src.labels) || !Array.isArray(src.datasets)) return null;
+    return src; // já no formato chart.js
+  }, [dados]);
+
+  const evPorTipoData = useMemo(() => {
+    const src = dados?.eventosPorTipo;
+    if (!src || !Array.isArray(src.labels) || !Array.isArray(src.datasets)) return null;
+    return src;
+  }, [dados]);
+
+  const presencaPorEventoData = useMemo(() => {
+    const src = dados?.presencaPorEvento;
+    if (!src || !Array.isArray(src.labels) || !Array.isArray(src.datasets)) return null;
+    // garante 0–100 e 1 casa
+    const datasets = src.datasets.map((ds) => ({
+      ...ds,
+      data: (ds.data || []).map((v) => Number(clampPct(v).toFixed(1))),
+    }));
+    return { ...src, datasets };
+  }, [dados]);
+
+  const barPctOptions = useMemo(
+    () => ({
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => `${ctx.parsed.y}%` } } },
+      scales: {
+        y: {
+          beginAtZero: true,
+          max: 100,
+          ticks: { callback: (v) => `${v}%` },
+        },
+      },
+      maintainAspectRatio: false,
+    }),
+    []
+  );
+  // --------------------------------
 
   return (
     <main className="min-h-screen bg-gelo dark:bg-zinc-900 px-4 py-6">
@@ -80,7 +127,7 @@ export default function DashboardAnalitico() {
           <option value="">Todos os Meses</option>
           {[...Array(12)].map((_, i) => (
             <option key={i + 1} value={i + 1}>
-              {new Date(0, i).toLocaleString("pt-BR", { month: "long" }).replace(/^\w/, c => c.toUpperCase())}
+              {new Date(0, i).toLocaleString("pt-BR", { month: "long" }).replace(/^\w/, (c) => c.toUpperCase())}
             </option>
           ))}
         </select>
@@ -115,41 +162,33 @@ export default function DashboardAnalitico() {
         <>
           {/* 🔢 Indicadores */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-            <Indicador titulo="Total de Eventos" valor={dados.totalEventos ?? 0} />
-            <Indicador titulo="Inscritos Únicos" valor={dados.inscritosUnicos ?? 0} />
-            <Indicador titulo="Média de Avaliações" valor={`${Number(dados.mediaAvaliacoes || 0).toFixed(1)} ⭐`} />
-            <Indicador titulo="% Presença Média" valor={`${dados.percentualPresenca ?? 0}%`} />
+            <Indicador titulo="Total de Eventos" valor={dados?.totalEventos ?? 0} />
+            <Indicador titulo="Inscritos Únicos" valor={dados?.inscritosUnicos ?? 0} />
+            <Indicador titulo="Média de Avaliações" valor={`${Number(dados?.mediaAvaliacoes || 0).toFixed(1)} ⭐`} />
+            <Indicador titulo="% Presença Média" valor={`${clampPct(dados?.percentualPresenca ?? 0).toFixed(1)}%`} />
           </div>
 
           {/* 📊 Gráficos */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }} className="bg-white dark:bg-gray-800 rounded-xl shadow p-4">
               <h2 className="text-center font-semibold mb-4">Eventos por Mês</h2>
-              {dados.eventosPorMes && <Bar data={dados.eventosPorMes} />}
+              {evPorMesData ? <Bar data={evPorMesData} /> : <NoData />}
             </motion.div>
 
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }} className="bg-white dark:bg-gray-800 rounded-xl shadow p-4">
               <h2 className="text-center font-semibold mb-4">Eventos por Tipo</h2>
-              {dados.eventosPorTipo && <Pie data={dados.eventosPorTipo} />}
+              {evPorTipoData ? <Pie data={evPorTipoData} /> : <NoData />}
             </motion.div>
           </div>
 
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }} className="bg-white dark:bg-gray-800 rounded-xl shadow p-4 mb-10">
             <h2 className="text-center font-semibold mb-4">Presença por Evento (%)</h2>
-            {dados.presencaPorEvento && (
-              <Bar
-                data={dados.presencaPorEvento}
-                options={{
-                  plugins: { legend: { display: false } },
-                  scales: {
-                    y: {
-                      beginAtZero: true,
-                      max: 100,
-                      ticks: { callback: (value) => `${value}%` },
-                    },
-                  },
-                }}
-              />
+            {presencaPorEventoData ? (
+              <div style={{ height: 320 }}>
+                <Bar data={presencaPorEventoData} options={barPctOptions} />
+              </div>
+            ) : (
+              <NoData />
             )}
           </motion.div>
         </>
@@ -163,6 +202,14 @@ function Indicador({ titulo, valor }) {
     <div className="bg-white dark:bg-gray-800 rounded-xl shadow p-4 text-center">
       <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">{titulo}</p>
       <p className="text-2xl font-bold text-lousa dark:text-white">{valor}</p>
+    </div>
+  );
+}
+
+function NoData() {
+  return (
+    <div className="h-40 flex items-center justify-center text-gray-500 dark:text-gray-300 text-sm italic">
+      Sem dados para exibir.
     </div>
   );
 }
