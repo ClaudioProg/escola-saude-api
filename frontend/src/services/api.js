@@ -1,23 +1,42 @@
 // 📁 src/services/api.js
 
-// 🔧 Base URL vinda do .env (Vite). Ex.: https://escola-saude-api.onrender.com
+// 🔧 Base URL vinda do .env (Vite). Ex.: https://escola-saude-api.onrender.com/api
 const RAW_BASE = (import.meta.env.VITE_API_BASE_URL || "").trim();
-// remove barras finais da base
-export const API_BASE_URL = RAW_BASE.replace(/\/+$/, "");
+// remove barras finais da base (fica sem trailing slash)
+export let API_BASE_URL = RAW_BASE.replace(/\/+$/, "");
 const IS_DEV = !!import.meta.env.DEV;
 
-// ⚠️ Alertas úteis em produção (diagnóstico rápido)
-if (!IS_DEV) {
+/* ──────────────────────────────────────────────────────────────────
+   LOGS DE INICIALIZAÇÃO
+   ────────────────────────────────────────────────────────────────── */
+(() => {
+  const proto = typeof window !== "undefined" ? window.location.protocol : "n/a";
+  const host  = typeof window !== "undefined" ? window.location.host      : "n/a";
+
+  // 🔒 blindagem extra: se vier http:// na base, troca pra https:// SEMPRE
+  if (API_BASE_URL.startsWith("http://")) {
+    API_BASE_URL = API_BASE_URL.replace(/^http:\/\//, "https://");
+  }
+
+  console.info("[API:init] base:", API_BASE_URL || "(vazia)", {
+    protocol: proto,
+    host,
+    env: IS_DEV ? "dev" : "prod",
+  });
+
   if (!API_BASE_URL) {
-    console.warn("[API] VITE_API_BASE_URL não definida em produção. As chamadas irão para caminhos relativos (/api/...). Se você não configurou rewrites no Vercel, isso causará 404.");
+    const msg = "[API:init] VITE_API_BASE_URL vazia.";
+    if (!IS_DEV) throw new Error("VITE_API_BASE_URL ausente em produção.");
+    console.warn(`${msg} Em dev dá pra usar rewrites; em prod causará 404.`);
   }
-  if (API_BASE_URL.startsWith("http://") && window.location.protocol === "https:") {
-    console.error("[API] VITE_API_BASE_URL está em http:// enquanto o site está em https:// → Mixed Content. Use HTTPS na base da API.");
-  }
-}
+})();
+
+/* ────────────────────────────────────────────────────────────────── */
 
 // 🔑 Lê token salvo
-const getToken = () => localStorage.getItem("token");
+const getToken = () => {
+  try { return localStorage.getItem("token"); } catch { return null; }
+};
 
 // 🧾 Headers padrão
 function buildHeaders(auth = true, extra = {}) {
@@ -50,6 +69,21 @@ class ApiError extends Error {
   }
 }
 
+// 🧼 Normalizador de path: garante "/" inicial, remove prefixo "/api"
+function normalizePath(path) {
+  if (!path) return "/";
+  // Se vier URL absoluta, respeita (override da base) e força https
+  if (/^https?:\/\//i.test(path)) return path.replace(/^http:\/\//i, "https://");
+
+  let p = String(path);
+  if (!p.startsWith("/")) p = `/${p}`;
+  // Remove um "/api" inicial para não duplicar com a base
+  p = p.replace(/^\/+api\/?/, "/");
+  // Garante uma única barra inicial
+  p = "/" + p.replace(/^\/+/, "");
+  return p;
+}
+
 // 🛰️ Handler centralizado
 async function handle(res, { on401 = "redirect", on403 = "silent" } = {}) {
   const url = res?.url || "";
@@ -64,15 +98,17 @@ async function handle(res, { on401 = "redirect", on403 = "silent" } = {}) {
   if (IS_DEV) {
     const preview = data ?? text ?? "";
     console[(res.ok ? "log" : "warn")](
-      `🛬 [${status}] ${url}`,
+      `🛬 [resp ${status}] ${url}`,
       typeof preview === "string" ? preview.slice(0, 500) : preview
     );
+  } else if (!res.ok) {
+    console.warn(`🛬 [resp ${status}] ${url}`);
   }
 
   if (status === 401) {
     if (IS_DEV) console.error("⚠️ 401 recebido: limpando sessão");
-    localStorage.clear();
-    if (on401 === "redirect" && !location.pathname.startsWith("/login")) {
+    try { localStorage.clear(); } catch {}
+    if (on401 === "redirect" && typeof window !== "undefined" && !location.pathname.startsWith("/login")) {
       window.location.assign("/login");
     }
     throw new ApiError(data?.erro || data?.message || "Não autorizado (401)", { status, url, data: data ?? text });
@@ -80,7 +116,7 @@ async function handle(res, { on401 = "redirect", on403 = "silent" } = {}) {
 
   if (status === 403) {
     if (IS_DEV) console.warn("🚫 403 recebido: sem permissão");
-    if (on403 === "redirect" && location.pathname !== "/dashboard") {
+    if (on403 === "redirect" && typeof window !== "undefined" && location.pathname !== "/dashboard") {
       window.location.assign("/dashboard");
     }
     throw new ApiError(data?.erro || data?.message || "Sem permissão (403)", { status, url, data: data ?? text });
@@ -96,15 +132,22 @@ async function handle(res, { on401 = "redirect", on403 = "silent" } = {}) {
 
 // 🌐 Fetch centralizado
 async function doFetch(path, { method = "GET", auth = true, headers, query, body, on401, on403 } = {}) {
-  // garante que path tenha barra inicial
-  const safePath = path.startsWith("/") ? path : `/${path}`;
-  // monta URL: se não houver base, usa relativo (ex.: quando usando rewrites no Vercel)
-  const url = `${API_BASE_URL}${safePath}${qs(query)}`;
+  const safePath = normalizePath(path);
+
+  // Monta URL final:
+  const isAbsolute = /^https?:\/\//i.test(safePath);
+  const base = isAbsolute ? "" : (API_BASE_URL || "");
+  let url = `${base}${safePath}${qs(query)}`;
+
+  // 🔒 blindagem final: qualquer URL http:// vira https://
+  if (url.startsWith("http://")) {
+    url = url.replace(/^http:\/\//, "https://");
+  }
 
   const init = {
     method,
     headers: buildHeaders(auth, headers),
-    credentials: "include", // cookies entre domínios
+    credentials: "include",
   };
 
   if (body instanceof FormData) {
@@ -118,24 +161,33 @@ async function doFetch(path, { method = "GET", auth = true, headers, query, body
     init.body = body ? JSON.stringify(body) : undefined;
   }
 
-  if (IS_DEV) {
-    const preview = body instanceof FormData ? "[FormData]" : body;
-    console.log(`🛫 [${method}] ${url}`, { headers: init.headers, body: preview });
-  }
+  const hasAuth = !!init.headers?.Authorization;
+  const headersPreview = { ...init.headers };
+  if (headersPreview.Authorization) headersPreview.Authorization = "Bearer ***";
+  console.log(`🛫 [req ${method}] ${url}`, {
+    auth: auth ? "on" : "off",
+    hasAuthHeader: hasAuth,
+    headers: headersPreview,
+    body: body instanceof FormData ? "[FormData]" : body,
+  });
 
   let res;
+  const t0 = (typeof performance !== "undefined" ? performance.now() : Date.now());
   try {
     res = await fetch(url, init);
   } catch (networkErr) {
-    if (IS_DEV) console.error("🌩️ Erro de rede:", networkErr?.message || networkErr);
+    const t1 = (typeof performance !== "undefined" ? performance.now() : Date.now());
+    console.error(`🌩️ [neterr ${method}] ${url} (${Math.round(t1 - t0)}ms):`, networkErr?.message || networkErr);
     throw new ApiError("Falha de rede ou CORS", { status: 0, url, data: networkErr });
   }
+  const t1 = (typeof performance !== "undefined" ? performance.now() : Date.now());
+  console.log(`⏱️ [time ${method}] ${url} → ${Math.round(t1 - t0)}ms`);
 
   return handle(res, { on401, on403 });
 }
 
 // -------- Métodos HTTP --------
-export async function apiGet(path, opts = {})   { return doFetch(path, { method: "GET",    ...opts }); }
+export async function apiGet(path, opts = {})         { return doFetch(path, { method: "GET",    ...opts }); }
 export async function apiPost(path, body, opts = {})  { return doFetch(path, { method: "POST",  body, ...opts }); }
 export async function apiPut(path, body, opts = {})   { return doFetch(path, { method: "PUT",   body, ...opts }); }
 export async function apiPatch(path, body, opts = {}) { return doFetch(path, { method: "PATCH", body, ...opts }); }
@@ -149,10 +201,13 @@ export async function apiUpload(path, formData, opts = {}) {
 // POST que retorna arquivo (Blob)
 export async function apiPostFile(path, body, opts = {}) {
   const { auth = true, headers, query, on403 = "silent" } = opts;
-  const token = localStorage.getItem("token");
+  const token = getToken();
 
-  const safePath = path.startsWith("/") ? path : `/${path}`;
-  const url = `${API_BASE_URL}${safePath}${qs(query)}`;
+  const safePath = normalizePath(path);
+  const isAbsolute = /^https?:\/\//i.test(safePath);
+  const base = isAbsolute ? "" : (API_BASE_URL || "");
+  let url = `${base}${safePath}${qs(query)}`;
+  if (url.startsWith("http://")) url = url.replace(/^http:\/\//, "https://");
 
   const res = await fetch(url, {
     method: "POST",
@@ -166,7 +221,50 @@ export async function apiPostFile(path, body, opts = {}) {
     body: body ? JSON.stringify(body) : undefined,
   });
 
-  if (res.status === 401) localStorage.clear();
+  if (res.status === 401) try { localStorage.clear(); } catch {}
+  if (res.status === 403 && on403 === "silent") throw new Error("Sem permissão.");
+
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try {
+      const txt = await res.text();
+      msg = txt || msg;
+      const json = JSON.parse(txt);
+      msg = json?.erro || json?.message || msg;
+    } catch {}
+    throw new Error(msg);
+  }
+
+  const blob = await res.blob();
+  const cd = res.headers.get("Content-Disposition") || "";
+  const m = cd.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)["']?/i);
+  const filename = m ? decodeURIComponent(m[1]) : undefined;
+
+  return { blob, filename };
+}
+
+// GET que retorna arquivo (Blob)
+export async function apiGetFile(path, opts = {}) {
+  const { auth = true, headers, query, on403 = "silent" } = opts;
+  const token = getToken();
+
+  const safePath = normalizePath(path);
+  const isAbsolute = /^https?:\/\//i.test(safePath);
+  const base = isAbsolute ? "" : (API_BASE_URL || "");
+  let url = `${base}${safePath}${qs(query)}`;
+  if (url.startsWith("http://")) url = url.replace(/^http:\/\//, "https://");
+
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      ...(auth && token ? { Authorization: `Bearer ${token}` } : {}),
+      Accept: "*/*",
+      ...headers,
+    },
+    credentials: "include",
+  });
+
+  if (res.status === 401) try { localStorage.clear(); } catch {}
   if (res.status === 403 && on403 === "silent") throw new Error("Sem permissão.");
 
   if (!res.ok) {

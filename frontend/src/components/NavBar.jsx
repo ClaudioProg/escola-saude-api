@@ -68,10 +68,9 @@ export default function Navbar() {
   return () => window.removeEventListener("storage", onStorage);
 }, []);
 
-  // ⬇️ REMOVIDO fetch com http://; agora usamos apiGet (HTTPS via VITE_API_BASE_URL)
   const [notificacoes, setNotificacoes] = useState([]);
   useEffect(() => {
-    apiGet("/api/notificacoes")
+    apiGet("/notificacoes")
       .then((data) => setNotificacoes(data || []))
       .catch(() => setNotificacoes([]));
   }, []);
@@ -132,7 +131,7 @@ export default function Navbar() {
   // 🔄 Atualiza contador de notificações não lidas (usa apiGet)
   async function atualizarContadorNotificacoes() {
     try {
-      const data = await apiGet("/api/notificacoes/nao-lidas/contagem");
+      const data = await apiGet("/notificacoes/nao-lidas/contagem");
       setTotalNaoLidas(data?.totalNaoLidas ?? data?.total ?? 0);
     } catch {
       setTotalNaoLidas(0);

@@ -11,9 +11,7 @@ import BotaoSecundario from "../components/BotaoSecundario";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import CabecalhoPainel from "../components/CabecalhoPainel";
 import { formatarDataBrasileira } from "../utils/data";
-import { apiGet } from "../services/api";
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+import { apiGet, apiGetFile } from "../services/api"; // ✅ serviço centralizado
 
 export default function HistoricoEventos() {
   const [eventos, setEventos] = useState([]);
@@ -38,7 +36,6 @@ export default function HistoricoEventos() {
         setCarregando(false);
       }
     }
-
     fetchEventos();
   }, []);
 
@@ -63,21 +60,11 @@ export default function HistoricoEventos() {
 
   async function baixarCertificado(id) {
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`${API_BASE_URL}/api/certificados/${id}/download`, {
-        headers: { Authorization: `Bearer ${token}` },
-        credentials: "include",
-      });
-      if (!res.ok) throw new Error();
-
-      const blob = await res.blob();
+      const { blob, filename } = await apiGetFile(`/api/certificados/${id}/download`);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
-      const nomeArquivo =
-        res.headers.get("Content-Disposition")?.match(/filename="?([^"]+)"?/)?.[1] ||
-        `certificado_${id}.pdf`;
       a.href = url;
-      a.download = nomeArquivo;
+      a.download = filename || `certificado_${id}.pdf`;
       document.body.appendChild(a);
       a.click();
       a.remove();

@@ -6,9 +6,7 @@ import Breadcrumbs from "../components/Breadcrumbs";
 import CabecalhoPainel from "../components/CabecalhoPainel";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import NadaEncontrado from "../components/NadaEncontrado";
-import { apiGet, apiPost } from "../services/api";
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+import { apiGet, apiPost, apiGetFile } from "../services/api"; // ⬅️ usa helpers
 
 export default function HistoricoCertificados() {
   const [dados, setDados] = useState([]);
@@ -25,7 +23,7 @@ export default function HistoricoCertificados() {
       const json = await apiGet("/api/certificados/historico");
       setDados(Array.isArray(json) ? json : []);
       setErro("");
-    } catch (err) {
+    } catch {
       toast.error("❌ Erro ao carregar histórico de certificados.");
       setErro("Erro ao carregar dados.");
     } finally {
@@ -33,28 +31,14 @@ export default function HistoricoCertificados() {
     }
   }
 
-  // ✅ download com token (sem depender de window.open sem header)
+  // ✅ download com token, CORS e HTTPS via serviço centralizado
   const baixar = async (id) => {
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`${API_BASE_URL}/api/certificados/${id}/download`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        credentials: "include",
-      });
-
-      if (!res.ok) throw new Error("Falha no download");
-
-      const blob = await res.blob();
+      const { blob, filename } = await apiGetFile(`/api/certificados/${id}/download`);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
-      // tenta inferir um nome bacana, fallback genérico
-      const nomeArquivo =
-        res.headers.get("Content-Disposition")?.match(/filename="?([^"]+)"?/)?.[1] ||
-        `certificado_${id}.pdf`;
       a.href = url;
-      a.download = nomeArquivo;
+      a.download = filename || `certificado_${id}.pdf`;
       document.body.appendChild(a);
       a.click();
       a.remove();

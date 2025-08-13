@@ -1,7 +1,8 @@
+// 📁 src/pages/CertificadosAvulsos.jsx
 import { useEffect, useState } from "react";
-import axios from "axios";
 import { toast } from "react-toastify";
 import BotaoPrimario from "../components/BotaoPrimario";
+import { apiGet, apiPost, apiGetFile, API_BASE_URL } from "../services/api";
 
 export default function CertificadosAvulsos() {
   const [form, setForm] = useState({
@@ -18,15 +19,23 @@ export default function CertificadosAvulsos() {
   const [carregando, setCarregando] = useState(false);
   const [filtro, setFiltro] = useState("todos");
 
+  // 🔍 log estratégico: qual base está ativa em produção?
+  useEffect(() => {
+    console.log("[CertificadosAvulsos] API_BASE_URL em uso:", API_BASE_URL || "(vazio → relativo)");
+  }, []);
+
   function handleChange(e) {
     setForm({ ...form, [e.target.name]: e.target.value });
   }
 
   async function carregarCertificados() {
     try {
-      const resposta = await axios.get("/api/certificados-avulsos");
-      setLista(resposta.data);
+      console.log("[CertificadosAvulsos] GET /api/certificados-avulsos");
+      const data = await apiGet("/api/certificados-avulsos");
+      setLista(Array.isArray(data) ? data : []);
+      console.log("[CertificadosAvulsos] lista carregada:", data?.length ?? 0);
     } catch (erro) {
+      console.error("[CertificadosAvulsos] erro ao carregar:", erro);
       toast.error("❌ Erro ao carregar certificados.");
     }
   }
@@ -39,8 +48,9 @@ export default function CertificadosAvulsos() {
     e.preventDefault();
     setCarregando(true);
     try {
-      const resposta = await axios.post("/api/certificados-avulsos", form);
-      setLista((prev) => [resposta.data, ...prev]);
+      console.log("[CertificadosAvulsos] POST /api/certificados-avulsos payload:", form);
+      const novo = await apiPost("/api/certificados-avulsos", form);
+      setLista((prev) => [novo, ...prev]);
       toast.success("✅ Certificado cadastrado.");
       setForm({
         nome: "",
@@ -52,6 +62,7 @@ export default function CertificadosAvulsos() {
         data_fim: "",
       });
     } catch (erro) {
+      console.error("[CertificadosAvulsos] erro ao cadastrar:", erro);
       toast.error("❌ Erro ao cadastrar certificado.");
     } finally {
       setCarregando(false);
@@ -60,23 +71,33 @@ export default function CertificadosAvulsos() {
 
   async function enviarPorEmail(id) {
     try {
+      console.log("[CertificadosAvulsos] POST /api/certificados-avulsos/:id/enviar →", id);
       toast.info("📤 Enviando...");
-      await axios.post(`/api/certificados-avulsos/${id}/enviar`);
+      await apiPost(`/api/certificados-avulsos/${id}/enviar`);
       toast.success("✅ E-mail enviado!");
       setLista((prev) =>
-        prev.map((item) =>
-          item.id === id ? { ...item, enviado: true } : item
-        )
+        prev.map((item) => (item.id === id ? { ...item, enviado: true } : item))
       );
     } catch (erro) {
+      console.error("[CertificadosAvulsos] erro ao enviar e-mail:", erro);
       toast.error("❌ Erro ao enviar e-mail.");
     }
   }
 
   async function gerarPDF(id) {
     try {
-      window.open(`/api/certificados-avulsos/${id}/pdf`, "_blank");
+      console.log("[CertificadosAvulsos] GET(BLOB) /api/certificados-avulsos/:id/pdf →", id);
+      const { blob, filename } = await apiGetFile(`/api/certificados-avulsos/${id}/pdf`);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename || `certificado_${id}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
     } catch (erro) {
+      console.error("[CertificadosAvulsos] erro ao gerar PDF:", erro);
       toast.error("❌ Erro ao gerar PDF.");
     }
   }
@@ -92,18 +113,18 @@ export default function CertificadosAvulsos() {
       <h1 className="text-xl font-bold mb-4">Certificados Avulsos</h1>
 
       <form
-  onSubmit={cadastrarCertificado}
-  className="grid gap-4 grid-cols-1 md:grid-cols-2 bg-white p-4 shadow rounded-lg"
->
-  <input
-    type="text"
-    name="nome"
-    placeholder="Nome"
-    value={form.nome}
-    onChange={handleChange}
-    required
-    className="border p-2 rounded col-span-2"
-  />
+        onSubmit={cadastrarCertificado}
+        className="grid gap-4 grid-cols-1 md:grid-cols-2 bg-white p-4 shadow rounded-lg"
+      >
+        <input
+          type="text"
+          name="nome"
+          placeholder="Nome"
+          value={form.nome}
+          onChange={handleChange}
+          required
+          className="border p-2 rounded col-span-2"
+        />
         <input
           type="text"
           name="cpf"
@@ -180,67 +201,66 @@ export default function CertificadosAvulsos() {
         </select>
       </div>
 
-<h2 className="text-lg font-semibold mb-2">Certificados Cadastrados</h2>
+      <h2 className="text-lg font-semibold mb-2">Certificados Cadastrados</h2>
 
-<div className="overflow-x-auto">
-  <table className="w-full text-sm border">
-    <thead>
-      <tr className="bg-gray-100">
-        <th className="p-2 border">Nome</th>
-        <th className="p-2 border">Curso</th>
-        <th className="p-2 border">E-mail</th>
-        <th className="p-2 border">Carga Horária</th>
-        <th className="p-2 border">Período</th>
-        <th className="p-2 border">Ações</th>
-      </tr>
-    </thead>
-    <tbody>
-      {listaFiltrada.length === 0 && (
-        <tr>
-          <td colSpan={6} className="p-4 text-center text-gray-500">
-            Nenhum certificado cadastrado.
-          </td>
-        </tr>
-      )}
-      {listaFiltrada.map((item) => {
-        const formatarData = (data) => {
-          if (!data) return "";
-          return new Date(data).toLocaleDateString("pt-BR");
-        };
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm border">
+          <thead>
+            <tr className="bg-gray-100">
+              <th className="p-2 border">Nome</th>
+              <th className="p-2 border">Curso</th>
+              <th className="p-2 border">E-mail</th>
+              <th className="p-2 border">Carga Horária</th>
+              <th className="p-2 border">Período</th>
+              <th className="p-2 border">Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            {listaFiltrada.length === 0 && (
+              <tr>
+                <td colSpan={6} className="p-4 text-center text-gray-500">
+                  Nenhum certificado cadastrado.
+                </td>
+              </tr>
+            )}
 
-        const periodo = item.data_inicio
-          ? item.data_fim && item.data_fim !== item.data_inicio
-            ? `${formatarData(item.data_inicio)} a ${formatarData(item.data_fim)}`
-            : formatarData(item.data_inicio)
-          : "-";
+            {listaFiltrada.map((item) => {
+              const formatarData = (data) =>
+                data ? new Date(data).toLocaleDateString("pt-BR") : "";
 
-        return (
-          <tr key={item.id} className="border-t">
-            <td className="p-2">{item.nome}</td>
-            <td className="p-2">{item.curso}</td>
-            <td className="p-2">{item.email}</td>
-            <td className="p-2 text-center">{item.carga_horaria}h</td>
-            <td className="p-2 text-center">{periodo}</td>
-            <td className="p-2 flex gap-2 justify-center">
-              <button
-                onClick={() => gerarPDF(item.id)}
-                className="text-blue-600 underline"
-              >
-                PDF
-              </button>
-              <button
-                onClick={() => enviarPorEmail(item.id)}
-                className="text-green-600 underline"
-              >
-                {item.enviado ? "Reenviar" : "Enviar"}
-              </button>
-            </td>
-          </tr>
-        );
-      })}
-    </tbody>
-  </table>
-</div>
+              const periodo = item.data_inicio
+                ? item.data_fim && item.data_fim !== item.data_inicio
+                  ? `${formatarData(item.data_inicio)} a ${formatarData(item.data_fim)}`
+                  : formatarData(item.data_inicio)
+                : "-";
+
+              return (
+                <tr key={item.id} className="border-t">
+                  <td className="p-2">{item.nome}</td>
+                  <td className="p-2">{item.curso}</td>
+                  <td className="p-2">{item.email}</td>
+                  <td className="p-2 text-center">{item.carga_horaria}h</td>
+                  <td className="p-2 text-center">{periodo}</td>
+                  <td className="p-2 flex gap-2 justify-center">
+                    <button
+                      onClick={() => gerarPDF(item.id)}
+                      className="text-blue-600 underline"
+                    >
+                      PDF
+                    </button>
+                    <button
+                      onClick={() => enviarPorEmail(item.id)}
+                      className="text-green-600 underline"
+                    >
+                      {item.enviado ? "Reenviar" : "Enviar"}
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

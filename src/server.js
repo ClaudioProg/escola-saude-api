@@ -30,6 +30,7 @@ const authGoogleRoute            = require("./auth/authGoogle");
 const unidadesRoutes             = require("./routes/unidadesRoutes");
 const usuarioPublicoController   = require("./controllers/usuarioPublicoController");
 const datasEventoRoute           = require("./routes/datasEventoRoute");
+const usuariosRoute              = require("./routes/usuariosRoute");
 
 dotenv.config();
 
@@ -147,6 +148,7 @@ app.use("/api/inscricoes", inscricoesRoute);
 app.use("/api/presencas", presencasRoute);
 app.use("/api/relatorio-presencas", relatorioPresencasRoute);
 app.use("/api/turmas", turmasRoute);
+app.use("/api/usuarios", usuariosRoute);
 app.use("/api/instrutor", instrutorRoute);
 app.use("/api/relatorios", relatoriosRoute);
 app.use("/api/dashboard-analitico", dashboardAnaliticoRoutes);

@@ -8,8 +8,7 @@ import { motion } from "framer-motion";
 import { apiPost } from "../services/api";
 import ErroCarregamento from "../components/ErroCarregamento";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL; 
+import { API_BASE_URL } from "../services/api"
 
 export default function RegistrarPresenca() {
   const navigate = useNavigate();

@@ -8,6 +8,7 @@ import Breadcrumbs from "../components/Breadcrumbs";
 import CabecalhoPainel from "../components/CabecalhoPainel";
 import NadaEncontrado from "../components/NadaEncontrado";
 import { apiGet, apiPost } from "../services/api";
+import { API_BASE_URL } from "../services/api";
 
 export default function MeusCertificados() {
   const [nome, setNome] = useState("");
@@ -16,9 +17,7 @@ export default function MeusCertificados() {
   const [carregando, setCarregando] = useState(true);
   const [gerandoKey, setGerandoKey] = useState(null);
 
-  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
-
-  // usuário do localStorage, com imagem_base64 validada
+   // usuário do localStorage, com imagem_base64 validada
   const usuario = useMemo(() => {
     try {
       const parsed = JSON.parse(localStorage.getItem("usuario") || "{}");
