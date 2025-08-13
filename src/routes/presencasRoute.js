@@ -5,7 +5,7 @@ const router = express.Router();
 const authMiddleware = require("../auth/authMiddleware");
 const db = require("../db");
 
-// Importa SOMENTE funções realmente exportadas pelo controller
+// Importa somente os handlers que pertencem ao controller de presenças
 const {
   registrarPresenca,
   confirmarPresencaViaQR,
@@ -13,7 +13,6 @@ const {
   registrarManual,
   confirmarHojeManual,
   validarPresenca,
-  presencasDetalhadasPorTurma,
   confirmarPresencaInstrutor,
   listarTodasPresencasParaAdmin,
 } = require("../controllers/presencasController");
@@ -29,12 +28,12 @@ function permitirPerfis(...perfisPermitidos) {
   };
 }
 
-/** -----------------------------
- *  Rotas públicas (sem auth)
- *  -----------------------------
- *  Usado por /validar-certificado.html:
- *  GET /api/presencas/validar?evento=ID&usuario=ID
- *  -> { presente: true/false }
+/* -----------------------------
+ * Rotas públicas (sem auth)
+ * -----------------------------
+ * Usado por /validar-certificado.html:
+ * GET /api/presencas/validar?evento=ID&usuario=ID
+ * -> { presente: true/false }
  */
 router.get("/validar", async (req, res) => {
   try {
@@ -62,18 +61,17 @@ router.get("/validar", async (req, res) => {
   }
 });
 
-/** -----------------------------
- *  Rotas autenticadas
- *  ----------------------------- */
+/* -----------------------------
+ * Rotas autenticadas
+ * ----------------------------- */
 
 // 1) Registro de presença (usuário; requer data válida do evento)
 router.post("/", authMiddleware, registrarPresenca);
 
 // 2) Confirmação de presença via QR Code (usuário)
-// (Você usava GET; manteremos GET para compatibilidade)
 router.get("/confirmar/:turma_id", authMiddleware, confirmarPresencaViaQR);
 
-// 3) Confirmação simples (sem QR; aceita data aaaa-mm-dd ou dd/mm/aaaa)
+// 3) Confirmação simples (sem QR; aceita aaaa-mm-dd ou dd/mm/aaaa)
 router.post("/confirmar-simples", authMiddleware, confirmarPresencaSimples);
 
 // 4) Registro manual (admin/instrutor)
@@ -100,15 +98,7 @@ router.put(
   validarPresenca
 );
 
-// 7) Relatório detalhado por turma (admin/instrutor)
-router.get(
-  "/relatorio-presencas/turma/:turma_id",
-  authMiddleware,
-  permitirPerfis("administrador", "instrutor"),
-  presencasDetalhadasPorTurma
-);
-
-// 8) Confirmar presença como instrutor (até 48h após o fim)
+// 7) Confirmar presença como instrutor (até 48h após o fim)
 router.post(
   "/confirmar-instrutor",
   authMiddleware,
@@ -116,7 +106,7 @@ router.post(
   confirmarPresencaInstrutor
 );
 
-// 9) Listar tudo (painel admin)
+// 8) Listar tudo (painel admin)
 router.get(
   "/admin/listar-tudo",
   authMiddleware,
