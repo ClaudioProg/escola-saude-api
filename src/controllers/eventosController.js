@@ -6,73 +6,83 @@ async function listarEventos(req, res) {
     const usuarioId = req.usuario?.id || null;
     const result = await query(`
       SELECT 
-        e.*,
-        COALESCE(
-          json_agg(DISTINCT jsonb_build_object(
-            'id', u.id,
-            'nome', u.nome
-          )) FILTER (WHERE u.id IS NOT NULL),
-          '[]'
-        ) AS instrutor,
-        (
-          SELECT json_agg(json_build_object(
-            'id', t.id,
-            'nome', t.nome,
-            'data_inicio', t.data_inicio,
-            'data_fim', t.data_fim,
-            'horario_inicio', t.horario_inicio,
-            'horario_fim', t.horario_fim,
-            'vagas_total', t.vagas_total,
-            'carga_horaria', t.carga_horaria,
-            'inscritos', (
-              SELECT COUNT(*) FROM inscricoes i WHERE i.turma_id = t.id
-            )
-          ))
-          FROM turmas t
-          WHERE t.evento_id = e.id
-        ) AS turmas,
-        (SELECT MIN(t.data_inicio) FROM turmas t WHERE t.evento_id = e.id) AS data_inicio_geral,
-        (SELECT MAX(t.data_fim) FROM turmas t WHERE t.evento_id = e.id) AS data_fim_geral,
-        (SELECT MAX(t.horario_fim) FROM turmas t WHERE t.evento_id = e.id) AS horario_fim_geral,
-        (
-  CASE
-    WHEN CURRENT_TIMESTAMP < (
-      SELECT MIN(t.data_inicio + t.horario_inicio)
-      FROM turmas t
-      WHERE t.evento_id = e.id
-    ) THEN 'programado'
-    
-    WHEN CURRENT_TIMESTAMP BETWEEN
-      (
+  e.*,
+
+  COALESCE(
+    json_agg(DISTINCT jsonb_build_object(
+      'id', u.id,
+      'nome', u.nome
+    )) FILTER (WHERE u.id IS NOT NULL),
+    '[]'
+  ) AS instrutor,
+
+  (
+    SELECT json_agg(json_build_object(
+      'id', t.id,
+      'nome', t.nome,
+      'data_inicio', t.data_inicio,
+      'data_fim', t.data_fim,
+      'horario_inicio', t.horario_inicio,
+      'horario_fim', t.horario_fim,
+      'vagas_total', t.vagas_total,
+      'carga_horaria', t.carga_horaria,
+      'inscritos', (
+        SELECT COUNT(*) FROM inscricoes i WHERE i.turma_id = t.id
+      )
+    ))
+    FROM turmas t
+    WHERE t.evento_id = e.id
+  ) AS turmas,
+
+  -- 🔹 Agregados por turmas (datas e horas)
+  (SELECT MIN(t.data_inicio)       FROM turmas t WHERE t.evento_id = e.id) AS data_inicio_geral,
+  (SELECT MAX(t.data_fim)          FROM turmas t WHERE t.evento_id = e.id) AS data_fim_geral,
+  (SELECT MIN(t.horario_inicio)    FROM turmas t WHERE t.evento_id = e.id) AS horario_inicio_geral,
+  (SELECT MAX(t.horario_fim)       FROM turmas t WHERE t.evento_id = e.id) AS horario_fim_geral,
+
+  -- 🔹 Conforto para o frontend: inicio/fim completos (timestamp)
+  (SELECT MIN(t.data_inicio + t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id) AS inicio_completo_geral,
+  (SELECT MAX(t.data_fim    + t.horario_fim)    FROM turmas t WHERE t.evento_id = e.id) AS fim_completo_geral,
+
+  -- 🔹 Status considerando data+hora
+  (
+    CASE
+      WHEN CURRENT_TIMESTAMP < (
         SELECT MIN(t.data_inicio + t.horario_inicio)
         FROM turmas t
         WHERE t.evento_id = e.id
-      )
-      AND
-      (
-        SELECT MAX(t.data_fim + t.horario_fim)
-        FROM turmas t
-        WHERE t.evento_id = e.id
-      )
-    THEN 'andamento'
-    
-    ELSE 'encerrado'
-  END
-) AS status,
+      ) THEN 'programado'
+      WHEN CURRENT_TIMESTAMP BETWEEN
         (
-          SELECT COUNT(*) > 0
-          FROM inscricoes i
-          JOIN turmas t ON t.id = i.turma_id
-          WHERE i.usuario_id = $1 AND t.evento_id = e.id
-        ) AS ja_inscrito
-    
-      FROM eventos e
-      LEFT JOIN evento_instrutor ei ON ei.evento_id = e.id
-      LEFT JOIN usuarios u ON u.id = ei.instrutor_id
-      GROUP BY e.id
-      ORDER BY 
-        (SELECT MAX(t.data_fim) FROM turmas t WHERE t.evento_id = e.id) DESC,
-        (SELECT MAX(t.horario_fim) FROM turmas t WHERE t.evento_id = e.id) DESC
+          SELECT MIN(t.data_inicio + t.horario_inicio)
+          FROM turmas t
+          WHERE t.evento_id = e.id
+        )
+        AND
+        (
+          SELECT MAX(t.data_fim + t.horario_fim)
+          FROM turmas t
+          WHERE t.evento_id = e.id
+        )
+      THEN 'andamento'
+      ELSE 'encerrado'
+    END
+  ) AS status,
+
+  -- 🔹 Flag: usuário já inscrito em alguma turma do evento
+  (
+    SELECT COUNT(*) > 0
+    FROM inscricoes i
+    JOIN turmas t ON t.id = i.turma_id
+    WHERE i.usuario_id = $1 AND t.evento_id = e.id
+  ) AS ja_inscrito
+
+FROM eventos e
+LEFT JOIN evento_instrutor ei ON ei.evento_id = e.id
+LEFT JOIN usuarios u         ON u.id  = ei.instrutor_id
+GROUP BY e.id
+ORDER BY 
+  (SELECT MAX(t.data_fim + t.horario_fim) FROM turmas t WHERE t.evento_id = e.id) DESC;
     `, [usuarioId]);
      
     res.json(result.rows);

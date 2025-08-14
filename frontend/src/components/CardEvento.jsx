@@ -91,31 +91,46 @@ function calcularMediaEventoViaLista(avaliacoes) {
    Datas do evento (sem UTC shift)
    ========================= */
 
-function getPeriodoEvento(evento, turmas) {
-  // se já veio agregado no evento
-  if (evento.data_inicio_geral && evento.data_fim_geral) {
-    return `${formatarDataLocal(evento.data_inicio_geral)} até ${formatarDataLocal(evento.data_fim_geral)}`;
-  }
-
-  // caso contrário, extrai das turmas
-  if (Array.isArray(turmas) && turmas.length > 0) {
-    const inicioMin = turmas.reduce((min, t) => {
-      const dt = toLocalDate(t?.data_inicio);
-      return (!min || (dt && dt < min)) ? dt : min;
-    }, null);
-
-    const fimMax = turmas.reduce((max, t) => {
-      const dt = toLocalDate(t?.data_fim);
-      return (!max || (dt && dt > max)) ? dt : max;
-    }, null);
-
-    if (inicioMin && fimMax) {
-      return `${formatarDataLocal(inicioMin)} até ${formatarDataLocal(fimMax)}`;
+   function getPeriodoEvento(evento, turmas) {
+    // 1) Preferir os agregados vindos da API
+    const diAgg = evento?.data_inicio_geral;
+    const dfAgg = evento?.data_fim_geral;
+  
+    const formatarPeriodo = (ini, fim) => {
+      if (!ini || !fim) return "Período não informado";
+      const a = toLocalDate(ini);
+      const b = toLocalDate(fim);
+      if (!a || !b || isNaN(a) || isNaN(b)) return "Período não informado";
+  
+      const sameDay =
+        a.getFullYear() === b.getFullYear() &&
+        a.getMonth() === b.getMonth() &&
+        a.getDate() === b.getDate();
+  
+      // mesmo dia → só uma data
+      if (sameDay) return formatarDataLocal(a);
+      return `${formatarDataLocal(a)} até ${formatarDataLocal(b)}`;
+    };
+  
+    if (diAgg && dfAgg) return formatarPeriodo(diAgg, dfAgg);
+  
+    // 2) Fallback: calcular pelas turmas recebidas no componente
+    if (Array.isArray(turmas) && turmas.length > 0) {
+      const inicioMin = turmas.reduce((min, t) => {
+        const dt = toLocalDate(t?.data_inicio);
+        return (!min || (dt && dt < min)) ? dt : min;
+      }, null);
+  
+      const fimMax = turmas.reduce((max, t) => {
+        const dt = toLocalDate(t?.data_fim);
+        return (!max || (dt && dt > max)) ? dt : max;
+      }, null);
+  
+      return formatarPeriodo(inicioMin, fimMax);
     }
+  
+    return "Período não informado";
   }
-
-  return "Período não informado";
-}
 
 export default function CardEvento({
   evento,
