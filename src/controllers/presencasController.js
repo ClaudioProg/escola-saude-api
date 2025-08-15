@@ -366,15 +366,14 @@ async function listaPresencasTurma(req, res) {
  * GET /api/presencas/turma/:turma_id/detalhes
  * Matriz usuários x datas (true/false)
  * ------------------------------------------------------------------ */
-// 🔁 substitua a função inteira por esta versão robusta
+// ✅ substitua a função inteira por esta
 async function relatorioPresencasPorTurma(req, res) {
   const { turma_id } = req.params;
 
-  // Normaliza qualquer coisa em "YYYY-MM-DD" (ou null se inválido)
+  // Normaliza para "YYYY-MM-DD" sem depender de libs
   const toYMD = (val) => {
     if (!val) return null;
     if (typeof val === "string") {
-      // aceita "YYYY-MM-DD" ou "YYYY-MM-DDTHH:mm:ss..." -> pega os 10 primeiros
       const ymd = val.slice(0, 10);
       return /^\d{4}-\d{2}-\d{2}$/.test(ymd) ? ymd : null;
     }
@@ -384,6 +383,16 @@ async function relatorioPresencasPorTurma(req, res) {
   };
 
   try {
+    // 0) Turma existente + pega evento_id (sem throw)
+    const turmaQ = await db.query(
+      `SELECT id, evento_id FROM turmas WHERE id = $1 LIMIT 1`,
+      [turma_id]
+    );
+    if (turmaQ.rowCount === 0) {
+      return res.status(404).json({ erro: "Turma não encontrada." });
+    }
+    const eventoId = turmaQ.rows[0].evento_id || null;
+
     // 1) Usuários da turma
     const usuariosQ = await db.query(
       `
@@ -397,25 +406,23 @@ async function relatorioPresencasPorTurma(req, res) {
     );
     const usuarios = usuariosQ.rows || [];
 
-    // 2) Datas do evento associado a essa turma
-    const evento_id = await buscarEventoIdDaTurma(turma_id);
-    const datasQ = await db.query(
-      `SELECT data FROM datas_evento WHERE evento_id = $1 ORDER BY data`,
-      [evento_id]
-    );
+    // 2) Datas do calendário do evento (se houver evento_id)
+    let datasArr = [];
+    if (eventoId) {
+      const datasQ = await db.query(
+        `SELECT data FROM datas_evento WHERE evento_id = $1 ORDER BY data`,
+        [eventoId]
+      );
+      datasArr = (datasQ.rows || []).map((r) => toYMD(r.data)).filter(Boolean);
+    } else {
+      datasArr = []; // sem evento_id -> devolve vazio, não 500
+    }
 
-    // Sempre devolver array (pode ser vazio, sem 500)
-    const datasArr = (datasQ.rows || [])
-      .map((r) => toYMD(r.data))
-      .filter(Boolean);
-
-    // 3) Presenças já registradas para a turma
+    // 3) Presenças registradas da turma
     const presQ = await db.query(
       `SELECT usuario_id, data_presenca, presente FROM presencas WHERE turma_id = $1`,
       [turma_id]
     );
-
-    // Index rápido: chave `${usuario_id}|${YYYY-MM-DD}` → boolean
     const presMap = new Map();
     for (const r of presQ.rows || []) {
       const uid = String(r.usuario_id);
@@ -424,15 +431,17 @@ async function relatorioPresencasPorTurma(req, res) {
       presMap.set(`${uid}|${dYMD}`, r.presente === true);
     }
 
-    // 4) Monta matriz usuários × datas
-    const usuariosArr = usuarios.map((u) => {
-      const linhas = datasArr.map((data) => {
+    // 4) Matriz usuários × datas
+    const usuariosArr = usuarios.map((u) => ({
+      id: u.id,
+      nome: u.nome,
+      cpf: u.cpf,
+      presencas: datasArr.map((data) => {
         const key = `${String(u.id)}|${data}`;
         const presente = presMap.has(key) ? !!presMap.get(key) : false;
         return { data, presente };
-      });
-      return { id: u.id, nome: u.nome, cpf: u.cpf, presencas: linhas };
-    });
+      }),
+    }));
 
     return res.json({
       turma_id: Number(turma_id),
