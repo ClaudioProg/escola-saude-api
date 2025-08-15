@@ -15,17 +15,19 @@ const {
   validarPresenca,
   confirmarPresencaInstrutor,
   listarTodasPresencasParaAdmin,
-  // ⬇️ adicionados
+  // ⬇️ leitura/relatórios
   relatorioPresencasPorTurma,
   listaPresencasTurma,
   exportarPresencasPDF,
 } = require("../controllers/presencasController");
 
-/** Middleware simples para restringir por perfil */
+/** Middleware simples para restringir por perfil (case-insensitive, trim) */
 function permitirPerfis(...perfisPermitidos) {
+  const whitelist = perfisPermitidos.map((p) => String(p).trim().toLowerCase());
   return (req, res, next) => {
-    const perfil = req?.usuario?.perfil;
-    if (!perfil || !perfisPermitidos.includes(perfil)) {
+    const perfilRaw = req?.usuario?.perfil;
+    const perfil = String(perfilRaw || "").trim().toLowerCase();
+    if (!perfil || !whitelist.includes(perfil)) {
       return res.status(403).json({ erro: "Acesso negado." });
     }
     next();
