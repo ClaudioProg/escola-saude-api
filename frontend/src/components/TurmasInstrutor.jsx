@@ -115,46 +115,97 @@ export default function TurmasInstrutor({
                 const totalDiasTurma = Math.max(1, Math.round((dataFimDT - dataInicioDT) / MS_DIA) + 1);
 
                 // presença do instrutor
-                const turmaPresencas = presencasPorTurma[idSeguro];
-                let statusBadge = null;
+const turmaPresencas = presencasPorTurma[idSeguro];
+let statusBadge = null;
 
-                if (Array.isArray(turmaPresencas)) {
-                  const uid = Number(usuario?.id);
-                  const instrutorPresencas = turmaPresencas.find(
-                    (p) => Number(p.usuario_id) === uid
-                  );
-                  const presencasInstrutor = Array.isArray(instrutorPresencas?.presencas)
-                    ? instrutorPresencas.presencas
-                    : [];
+const uid = Number(usuario?.id);
+const agora = new Date();
+const horarioFim = turma?.horario_fim || "17:00";
+const fimComHora = new Date(`${ensureYMD(turma.data_fim)}T${horarioFim}`);
+const eventoEncerrado = fimComHora < agora;
 
-                  const diasConfirmados = presencasInstrutor.filter((p) => p?.presente === true).length;
+// 1) Preferir dados detalhados (datas + matrix P/F)
+if (turmaPresencas?.detalhado) {
+  const { datas = [], usuarios = [] } = turmaPresencas.detalhado;
+  const totalDias = datas.length || 0;
 
-                  // evento encerrado: data_fim + horario_fim < agora
-                  const horarioFim = turma?.horario_fim || "17:00";
-                  const agora = new Date();
-                  const fimComHora = new Date(`${ensureYMD(turma.data_fim)}T${horarioFim}`);
-                  const eventoEncerrado = fimComHora < agora;
+  const eu = usuarios.find((u) => Number(u.id) === uid);
+  const presencasInstrutor = Array.isArray(eu?.presencas) ? eu.presencas : [];
+  const diasConfirmados = presencasInstrutor.filter((p) => p?.presente === true).length;
 
-                  if (diasConfirmados === totalDiasTurma && totalDiasTurma > 0) {
-                    statusBadge = (
-                      <span className="inline-block bg-green-100 text-green-700 px-3 py-1 mt-2 rounded-full text-xs font-bold">
-                        ✅ Presente
-                      </span>
-                    );
-                  } else if (!eventoEncerrado) {
-                    statusBadge = (
-                      <span className="inline-block bg-yellow-100 text-yellow-800 px-3 py-1 mt-2 rounded-full text-xs font-bold">
-                        ⏳ Aguardando confirmação
-                      </span>
-                    );
-                  } else {
-                    statusBadge = (
-                      <span className="inline-block bg-red-100 text-red-700 px-3 py-1 mt-2 rounded-full text-xs font-bold">
-                        ❌ Faltou
-                      </span>
-                    );
-                  }
-                }
+  if (totalDias > 0 && diasConfirmados === totalDias) {
+    statusBadge = (
+      <span className="inline-block bg-green-100 text-green-700 px-3 py-1 mt-2 rounded-full text-xs font-bold">
+        ✅ Presente
+      </span>
+    );
+  } else if (!eventoEncerrado) {
+    statusBadge = (
+      <span className="inline-block bg-yellow-100 text-yellow-800 px-3 py-1 mt-2 rounded-full text-xs font-bold">
+        ⏳ Aguardando confirmação
+      </span>
+    );
+  } else {
+    statusBadge = (
+      <span className="inline-block bg-red-100 text-red-700 px-3 py-1 mt-2 rounded-full text-xs font-bold">
+        ❌ Faltou
+      </span>
+    );
+  }
+}
+// 2) Fallback: usar lista compat (tem 'frequencia' e 'presente' calculado)
+else if (Array.isArray(turmaPresencas?.lista)) {
+  const eu = turmaPresencas.lista.find((p) => Number(p.usuario_id) === uid);
+  if (eu?.presente) {
+    statusBadge = (
+      <span className="inline-block bg-green-100 text-green-700 px-3 py-1 mt-2 rounded-full text-xs font-bold">
+        ✅ Presente
+      </span>
+    );
+  } else if (!eventoEncerrado) {
+    statusBadge = (
+      <span className="inline-block bg-yellow-100 text-yellow-800 px-3 py-1 mt-2 rounded-full text-xs font-bold">
+        ⏳ Aguardando confirmação
+      </span>
+    );
+  } else {
+    statusBadge = (
+      <span className="inline-block bg-red-100 text-red-700 px-3 py-1 mt-2 rounded-full text-xs font-bold">
+        ❌ Faltou
+      </span>
+    );
+  }
+}
+// 3) Último fallback: caso ainda seja um array “antigo”
+else if (Array.isArray(turmaPresencas)) {
+  const eu = turmaPresencas.find((p) => Number(p.usuario_id) === uid);
+  const presencasInstrutor = Array.isArray(eu?.presencas) ? eu.presencas : [];
+  const diasConfirmados = presencasInstrutor.filter((p) => p?.presente === true).length;
+  const dataInicioDT = toLocalNoon(ensureYMD(turma.data_inicio));
+  const dataFimDT = toLocalNoon(ensureYMD(turma.data_fim));
+  const MS_DIA = 24 * 60 * 60 * 1000;
+  const totalDiasTurma = Math.max(1, Math.round((dataFimDT - dataInicioDT) / MS_DIA) + 1);
+
+  if (diasConfirmados === totalDiasTurma && totalDiasTurma > 0) {
+    statusBadge = (
+      <span className="inline-block bg-green-100 text-green-700 px-3 py-1 mt-2 rounded-full text-xs font-bold">
+        ✅ Presente
+      </span>
+    );
+  } else if (!eventoEncerrado) {
+    statusBadge = (
+      <span className="inline-block bg-yellow-100 text-yellow-800 px-3 py-1 mt-2 rounded-full text-xs font-bold">
+        ⏳ Aguardando confirmação
+      </span>
+    );
+  } else {
+    statusBadge = (
+      <span className="inline-block bg-red-100 text-red-700 px-3 py-1 mt-2 rounded-full text-xs font-bold">
+        ❌ Faltou
+      </span>
+    );
+  }
+}
 
                 return (
                   <div key={idSeguro} className="border-t pt-4">

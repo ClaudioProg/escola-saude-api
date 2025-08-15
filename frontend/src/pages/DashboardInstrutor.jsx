@@ -57,18 +57,53 @@ export default function DashboardInstrutor() {
   const [assinatura, setAssinatura] = useState(null);
   const [presencasPorTurma, setPresencasPorTurma] = useState({});
 
-  // 🔄 Presenças (rota padronizada + normalização)
-  const carregarPresencas = async (turmaIdRaw) => {
-    const turmaId = parseInt(turmaIdRaw);
-    if (!turmaId || isNaN(turmaId)) return;
-    try {
-      const data = await apiGet(`/api/presencas/relatorio-presencas/turma/${turmaId}`, { on403: "silent" });
-      const lista = Array.isArray(data?.lista) ? data.lista : Array.isArray(data) ? data : [];
-      setPresencasPorTurma((prev) => ({ ...prev, [turmaId]: lista }));
-    } catch {
-      toast.error("Erro ao carregar presenças da turma.");
-    }
-  };
+  // 🔄 Presenças (rota correta + compat legada)
+const carregarPresencas = async (turmaIdRaw) => {
+  const turmaId = parseInt(turmaIdRaw);
+  if (!turmaId || isNaN(turmaId)) return;
+
+  try {
+    console.time("[time GET] /api/presencas/turma/:id/detalhes");
+    const data = await apiGet(`/api/presencas/turma/${turmaId}/detalhes`, { on403: "silent" });
+    console.timeEnd("[time GET] /api/presencas/turma/:id/detalhes");
+
+    // data = { turma_id, datas: ["yyyy-mm-dd", ...], usuarios: [{ id, nome, cpf, presencas: [{data, presente}, ...] }] }
+
+    const datas = Array.isArray(data?.datas) ? data.datas : [];
+    const usuarios = Array.isArray(data?.usuarios) ? data.usuarios : [];
+    const totalDias = datas.length || 0;
+
+    // ✅ lista “legada” (compat): nome, cpf, presente (>=75%), frequencia "NN%"
+    const lista = usuarios.map((u) => {
+      const pres = Array.isArray(u.presencas) ? u.presencas : [];
+      const presentes = pres.filter((p) => p?.presente === true).length;
+      const freq = totalDias > 0 ? Math.round((presentes / totalDias) * 100) : 0;
+      return {
+        usuario_id: u.id,
+        nome: u.nome,
+        cpf: u.cpf,
+        presente: freq >= 75,       // mantém semântica anterior do “badge”
+        frequencia: `${freq}%`,
+      };
+    });
+
+    // Armazena os dois formatos: detalhado e legado
+    setPresencasPorTurma((prev) => ({
+      ...prev,
+      [turmaId]: {
+        detalhado: { datas, usuarios },
+        lista, // compat com código antigo
+      },
+    }));
+
+    console.log("📋 Presenças (detalhado):", { datas, usuarios });
+    console.log("📋 Presenças (lista compat):", lista);
+  } catch (err) {
+    console.error("Falha ao carregar presenças:", err);
+    toast.error("Erro ao carregar presenças da turma.");
+    setPresencasPorTurma((prev) => ({ ...prev, [turmaId]: { detalhado: { datas: [], usuarios: [] }, lista: [] } }));
+  }
+};
 
   useEffect(() => {
     (async () => {
@@ -151,26 +186,37 @@ export default function DashboardInstrutor() {
   // 📄 Relatórios
   const gerarRelatorioPDF = async (turmaId) => {
     try {
-      const data = await apiGet(`/api/presencas/relatorio-presencas/turma/${turmaId}`, { on403: "silent" });
-      const alunos = Array.isArray(data?.lista) ? data.lista : Array.isArray(data) ? data : [];
+      const data = await apiGet(`/api/presencas/turma/${turmaId}/detalhes`, { on403: "silent" });
+  
+      const datas = Array.isArray(data?.datas) ? data.datas : [];
+      const usuarios = Array.isArray(data?.usuarios) ? data.usuarios : [];
+      const totalDias = datas.length || 0;
+  
       const doc = new jsPDF();
       doc.setFontSize(16);
-      doc.text("Relatório de Presença por Turma", 14, 20);
+      doc.text("Relatório de Presenças por Turma (Resumo)", 14, 20);
+  
+      const linhas = usuarios.map((u) => {
+        const presentes = (u.presencas || []).filter((p) => p?.presente === true).length;
+        const freq = totalDias > 0 ? Math.round((presentes / totalDias) * 100) : 0;
+        const atingiu = freq >= 75 ? "✔️" : "❌";
+        return [u.nome, formatarCPF(u.cpf), `${freq}%`, atingiu];
+      });
+  
       autoTable(doc, {
         startY: 30,
-        head: [["Nome", "CPF", "Presença"]],
-        body: alunos.map((aluno) => [
-          aluno.nome,
-          formatarCPF(aluno.cpf),
-          aluno.presente ? "✔️ Sim" : "❌ Não",
-        ]),
+        head: [["Nome", "CPF", "Frequência", "≥ 75%"]],
+        body: linhas,
       });
+  
       doc.save(`relatorio_turma_${turmaId}.pdf`);
       toast.success("✅ PDF de presença gerado!");
-    } catch {
+    } catch (err) {
+      console.error(err);
       toast.error("Erro ao gerar relatório em PDF.");
     }
   };
+  
 
   const gerarListaAssinaturaPDF = async (turmaId) => {
     const turma = turmas.find((t) => t.id === turmaId);
@@ -323,6 +369,7 @@ export default function DashboardInstrutor() {
           setTurmaExpandidaInscritos={setTurmaExpandidaInscritos}
           turmaExpandidaAvaliacoes={turmaExpandidaAvaliacoes}
           setTurmaExpandidaAvaliacoes={setTurmaExpandidaAvaliacoes}
+    
         />
 
         <ModalAssinatura

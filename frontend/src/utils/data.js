@@ -121,3 +121,27 @@ export function formatarParaISO(data) {
   const dia = String(d.getDate()).padStart(2, "0");
   return `${ano}-${mes}-${dia}`;
 }
+
+// ✅ Detecta string "YYYY-MM-DD"
+export function isDateOnly(str) {
+  return typeof str === "string" && /^\d{4}-\d{2}-\d{2}$/.test(str);
+}
+
+// ✅ Converte para Date no fuso local, evitando shift de UTC
+export function toLocalDate(input) {
+  if (!input) return null;
+  if (input instanceof Date) return input;
+
+  if (typeof input === "string") {
+    if (isDateOnly(input)) {
+      const [y, m, d] = input.split("-").map(Number);
+      return new Date(y, m - 1, d); // 00:00 no fuso local
+    }
+    // Strings com hora:
+    // - Se tiver timezone (Z ou ±HH:MM), o JS respeita
+    // - Se não tiver, o JS interpreta como horário local
+    return new Date(input);
+  }
+
+  return new Date(input);
+}

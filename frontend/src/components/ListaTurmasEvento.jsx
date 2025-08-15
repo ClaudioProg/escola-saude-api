@@ -55,7 +55,7 @@ export default function ListaTurmasEvento({
           <CardTurma
             key={turma.id}
             turma={turma}
-            hoje={hoje} {/* ✅ passamos o que vier do pai; nada de default aqui */}
+            hoje={hoje}
             carregarInscritos={carregarInscritos}
             carregarAvaliacoes={carregarAvaliacoes}
             gerarRelatorioPDF={gerarRelatorioPDF}

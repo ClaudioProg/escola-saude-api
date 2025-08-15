@@ -5,7 +5,7 @@ const router = express.Router();
 const authMiddleware = require("../auth/authMiddleware");
 const db = require("../db");
 
-// Importa somente os handlers que pertencem ao controller de presenças
+// Importa os handlers do controller de presenças
 const {
   registrarPresenca,
   confirmarPresencaViaQR,
@@ -15,6 +15,10 @@ const {
   validarPresenca,
   confirmarPresencaInstrutor,
   listarTodasPresencasParaAdmin,
+  // ⬇️ adicionados
+  relatorioPresencasPorTurma,
+  listaPresencasTurma,
+  exportarPresencasPDF,
 } = require("../controllers/presencasController");
 
 /** Middleware simples para restringir por perfil */
@@ -67,6 +71,33 @@ router.get("/validar", async (req, res) => {
 
 // 1) Registro de presença (usuário; requer data válida do evento)
 router.post("/", authMiddleware, registrarPresenca);
+
+// 1.1) Relatório detalhado (datas × usuários)
+//     GET /api/presencas/turma/:turma_id/detalhes
+router.get(
+  "/turma/:turma_id/detalhes",
+  authMiddleware,
+  permitirPerfis("instrutor", "administrador"),
+  relatorioPresencasPorTurma
+);
+
+// 1.2) Frequências (resumo por usuário)
+//     GET /api/presencas/turma/:turma_id/frequencias
+router.get(
+  "/turma/:turma_id/frequencias",
+  authMiddleware,
+  permitirPerfis("instrutor", "administrador"),
+  listaPresencasTurma
+);
+
+// 1.3) PDF de presenças (opcional)
+//     GET /api/presencas/turma/:turma_id/pdf
+router.get(
+  "/turma/:turma_id/pdf",
+  authMiddleware,
+  permitirPerfis("instrutor", "administrador"),
+  exportarPresencasPDF
+);
 
 // 2) Confirmação de presença via QR Code (usuário)
 router.get("/confirmar/:turma_id", authMiddleware, confirmarPresencaViaQR);
