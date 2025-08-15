@@ -9,9 +9,16 @@ const { gerarNotificacoesDeAvaliacao } = require("./notificacoesController");
  * Helpers
  * ------------------------------------------------------------------ */
 async function buscarEventoIdDaTurma(turma_id) {
-  const { rows } = await db.query(`SELECT evento_id FROM turmas WHERE id = $1`, [turma_id]);
-  if (rows.length === 0) throw new Error("Turma não encontrada.");
-  return rows[0].evento_id;
+  const rid = `rid=${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  try {
+    const { rows } = await db.query(`SELECT evento_id FROM turmas WHERE id = $1`, [turma_id]);
+    console.log("📌 [buscarEventoIdDaTurma]", rid, { turma_id, rowCount: rows.length, evento_id: rows[0]?.evento_id });
+    if (rows.length === 0) throw new Error("Turma não encontrada.");
+    return rows[0].evento_id;
+  } catch (e) {
+    console.error("❌ [buscarEventoIdDaTurma]", rid, e?.message);
+    throw e;
+  }
 }
 
 function normalizarDataEntrada(valor) {
@@ -362,15 +369,18 @@ async function listaPresencasTurma(req, res) {
   }
 }
 
-/* ------------------------------------------------------------------ *
- * GET /api/presencas/turma/:turma_id/detalhes
- * Matriz usuários x datas (true/false)
- * ------------------------------------------------------------------ */
-// ✅ substitua a função inteira por esta
+// GET /api/presencas/turma/:turma_id/detalhes
 async function relatorioPresencasPorTurma(req, res) {
   const { turma_id } = req.params;
 
-  // Normaliza para "YYYY-MM-DD" sem depender de libs
+  // ID de correlação para seguir o fluxo nos logs
+  const rid = `rid=${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  const isProd = process.env.NODE_ENV === "production";
+  const log   = (...a) => console.log("📊 [presenças/detalhes]", rid, ...a);
+  const warn  = (...a) => console.warn("⚠️ [presenças/detalhes]", rid, ...a);
+  const errlg = (...a) => console.error("❌ [presenças/detalhes]", rid, ...a);
+
+  // Normaliza para "YYYY-MM-DD"
   const toYMD = (val) => {
     if (!val) return null;
     if (typeof val === "string") {
@@ -383,46 +393,76 @@ async function relatorioPresencasPorTurma(req, res) {
   };
 
   try {
-    // 0) Turma existente + pega evento_id (sem throw)
-    const turmaQ = await db.query(
-      `SELECT id, evento_id FROM turmas WHERE id = $1 LIMIT 1`,
-      [turma_id]
-    );
+    log("⇢ INÍCIO", { turma_id });
+
+    // 0) Turma + evento_id
+    let turmaQ;
+    try {
+      turmaQ = await db.query(`SELECT id, evento_id FROM turmas WHERE id = $1 LIMIT 1`, [turma_id]);
+      log("turmaQ.rowCount:", turmaQ.rowCount, "rows(amostra):", turmaQ.rows?.slice?.(0, 3));
+    } catch (e) {
+      errlg("Erro SQL (turmas):", e?.message);
+      throw e;
+    }
     if (turmaQ.rowCount === 0) {
+      warn("Turma não encontrada:", turma_id);
       return res.status(404).json({ erro: "Turma não encontrada." });
     }
     const eventoId = turmaQ.rows[0].evento_id || null;
+    log("eventoId:", eventoId);
 
     // 1) Usuários da turma
-    const usuariosQ = await db.query(
-      `
-      SELECT u.id, u.nome, u.cpf
-      FROM inscricoes i
-      JOIN usuarios u ON u.id = i.usuario_id
-      WHERE i.turma_id = $1
-      ORDER BY u.nome
-      `,
-      [turma_id]
-    );
-    const usuarios = usuariosQ.rows || [];
-
-    // 2) Datas do calendário do evento (se houver evento_id)
-    let datasArr = [];
-    if (eventoId) {
-      const datasQ = await db.query(
-        `SELECT data FROM datas_evento WHERE evento_id = $1 ORDER BY data`,
-        [eventoId]
+    let usuariosQ;
+    try {
+      usuariosQ = await db.query(
+        `
+        SELECT u.id, u.nome, u.cpf
+        FROM inscricoes i
+        JOIN usuarios u ON u.id = i.usuario_id
+        WHERE i.turma_id = $1
+        ORDER BY u.nome
+        `,
+        [turma_id]
       );
-      datasArr = (datasQ.rows || []).map((r) => toYMD(r.data)).filter(Boolean);
-    } else {
-      datasArr = []; // sem evento_id -> devolve vazio, não 500
+      log("usuariosQ.rowCount:", usuariosQ.rowCount, "amostra:", usuariosQ.rows?.slice?.(0, 5));
+    } catch (e) {
+      errlg("Erro SQL (inscricoes/usuarios):", e?.message);
+      throw e;
     }
 
-    // 3) Presenças registradas da turma
-    const presQ = await db.query(
-      `SELECT usuario_id, data_presenca, presente FROM presencas WHERE turma_id = $1`,
-      [turma_id]
-    );
+    // 2) Datas do calendário do evento (se houver)
+    let datasArr = [];
+    if (eventoId) {
+      try {
+        const datasQ = await db.query(
+          `SELECT data FROM datas_evento WHERE evento_id = $1 ORDER BY data`,
+          [eventoId]
+        );
+        const raw = datasQ.rows || [];
+        datasArr = raw.map((r) => toYMD(r.data)).filter(Boolean);
+        log("datas_evento.count:", raw.length, "datasArr.len:", datasArr.length, "amostra:", datasArr.slice(0, 10));
+      } catch (e) {
+        errlg("Erro SQL (datas_evento):", e?.message);
+        throw e;
+      }
+    } else {
+      warn("Sem evento_id nessa turma → datas=[]");
+      datasArr = [];
+    }
+
+    // 3) Presenças da turma
+    let presQ;
+    try {
+      presQ = await db.query(
+        `SELECT usuario_id, data_presenca, presente FROM presencas WHERE turma_id = $1`,
+        [turma_id]
+      );
+      log("presQ.rowCount:", presQ.rowCount, "amostra:", presQ.rows?.slice?.(0, 10));
+    } catch (e) {
+      errlg("Erro SQL (presencas):", e?.message);
+      throw e;
+    }
+
     const presMap = new Map();
     for (const r of presQ.rows || []) {
       const uid = String(r.usuario_id);
@@ -430,9 +470,10 @@ async function relatorioPresencasPorTurma(req, res) {
       if (!uid || !dYMD) continue;
       presMap.set(`${uid}|${dYMD}`, r.presente === true);
     }
+    log("presMap.size:", presMap.size);
 
     // 4) Matriz usuários × datas
-    const usuariosArr = usuarios.map((u) => ({
+    const usuariosArr = (usuariosQ.rows || []).map((u) => ({
       id: u.id,
       nome: u.nome,
       cpf: u.cpf,
@@ -443,18 +484,24 @@ async function relatorioPresencasPorTurma(req, res) {
       }),
     }));
 
+    log("usuariosArr.len:", usuariosArr.length);
+    log("✓ FIM OK", { turma_id });
+
     return res.json({
       turma_id: Number(turma_id),
       datas: datasArr,
       usuarios: usuariosArr,
     });
   } catch (err) {
-    console.error("❌ Erro ao gerar relatório detalhado:", {
+    errlg("✗ ERRO GERAL", {
       turma_id,
-      erro: err?.message || err,
-      stack: err?.stack,
+      message: err?.message,
+      stack: err?.stack?.split?.("\n")?.slice?.(0, 5)?.join("\n"),
     });
-    return res.status(500).json({ erro: "Erro ao gerar relatório de presenças." });
+    return res.status(500).json({
+      erro: "Erro ao gerar relatório de presenças.",
+      ...(isProd ? {} : { detalhe: err?.message, rid }), // em DEV, devolve pista
+    });
   }
 }
 

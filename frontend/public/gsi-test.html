@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <title>GSI Test</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <script>
+      // Mostra origin e client_id que a página está usando
+      window.addEventListener("load", () => {
+        console.log("[GSI-TEST] origin:", window.location.origin);
+        console.log("[GSI-TEST] client_id:", document
+          .getElementById("g_id_onload")
+          .getAttribute("data-client_id"));
+      });
+      // Callback só para ver se carrega
+      function handleCredentialResponse(r) {
+        console.log("[GSI-TEST] credential recebida:", r && r.credential ? "ok (JWT)" : r);
+        alert("Login OK (JWT recebido no console).");
+      }
+    </script>
+    <script
+      src="https://accounts.google.com/gsi/client"
+      async
+      defer
+      onload="console.log('[GSI-TEST] SDK carregado')"
+      onerror="console.error('[GSI-TEST] ERRO carregando SDK')"
+    ></script>
+  </head>
+  <body>
+    <!-- Cole AQUI o MESMO client_id -->
+    <div id="g_id_onload"
+      data-client_id="73659622214-79kcta8d800n80ol3boj3b00r897k547.apps.googleusercontent.com"
+      data-callback="handleCredentialResponse"
+      data-auto_prompt="false">
+    </div>
+
+    <div class="g_id_signin" data-type="standard"></div>
+  </body>
+</html>

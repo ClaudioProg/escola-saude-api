@@ -1,22 +1,46 @@
 // 📁 src/services/api.js
 
-// 🔧 Base URL vinda do .env (Vite). Ex.: https://escola-saude-api.onrender.com/api
-const RAW_BASE = (import.meta.env.VITE_API_BASE_URL || "").trim();
-// remove barras finais da base (fica sem trailing slash)
-export let API_BASE_URL = RAW_BASE.replace(/\/+$/, "");
+// ───────────────────────────────────────────────────────────────────
+// Helpers de ambiente
+// ───────────────────────────────────────────────────────────────────
 const IS_DEV = !!import.meta.env.DEV;
 
-/* ──────────────────────────────────────────────────────────────────
-   LOGS DE INICIALIZAÇÃO
-   ────────────────────────────────────────────────────────────────── */
+function isLocalHost(h) {
+  return /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(h || "");
+}
+function isHttpUrl(u) { return /^http:\/\//i.test(u || ""); }
+function isHttpsUrl(u) { return /^https:\/\//i.test(u || ""); }
+
+// Decide a base automaticamente:
+//   1) VITE_API_BASE_URL, se preenchida
+//   2) Se estiver em localhost e você quer usar proxy do Vite, use "/api"
+//   3) Caso contrário, "http://localhost:3000/api"
+function computeBase() {
+  const raw = (import.meta.env.VITE_API_BASE_URL || "").trim().replace(/\/+$/, "");
+  if (raw) return raw;
+
+  if (typeof window !== "undefined" && isLocalHost(window.location.host)) {
+    // Se tiver proxy no vite.config.js, prefira "/api"
+    // server: { proxy: { '/api': { target: 'http://localhost:3000' } } }
+    if (import.meta.env.VITE_USE_VITE_PROXY === "1") return "/api";
+    return "http://localhost:3000/api";
+  }
+
+  // Fallback seguro em prod (pode ajustar para sua URL pública)
+  return "https://escola-saude-api.onrender.com/api";
+}
+
+let API_BASE_URL = computeBase();
+
+// 🔒 NÃO force https para localhost (apenas para domínios externos)
+if (isHttpUrl(API_BASE_URL) && !(typeof window !== "undefined" && isLocalHost(new URL(API_BASE_URL).host))) {
+  API_BASE_URL = API_BASE_URL.replace(/^http:\/\//i, "https://");
+}
+
+// Logs de init
 (() => {
   const proto = typeof window !== "undefined" ? window.location.protocol : "n/a";
   const host  = typeof window !== "undefined" ? window.location.host      : "n/a";
-
-  // 🔒 blindagem extra: se vier http:// na base, troca pra https:// SEMPRE
-  if (API_BASE_URL.startsWith("http://")) {
-    API_BASE_URL = API_BASE_URL.replace(/^http:\/\//, "https://");
-  }
 
   console.info("[API:init] base:", API_BASE_URL || "(vazia)", {
     protocol: proto,
@@ -25,20 +49,17 @@ const IS_DEV = !!import.meta.env.DEV;
   });
 
   if (!API_BASE_URL) {
-    const msg = "[API:init] VITE_API_BASE_URL vazia.";
+    const msg = "[API:init] Base vazia.";
     if (!IS_DEV) throw new Error("VITE_API_BASE_URL ausente em produção.");
-    console.warn(`${msg} Em dev dá pra usar rewrites; em prod causará 404.`);
+    console.warn(`${msg} Em dev use proxy do Vite ou .env.local.`);
   }
 })();
 
-/* ────────────────────────────────────────────────────────────────── */
+// ───────────────────────────────────────────────────────────────────
+// Token & headers
+// ───────────────────────────────────────────────────────────────────
+const getToken = () => { try { return localStorage.getItem("token"); } catch { return null; } };
 
-// 🔑 Lê token salvo
-const getToken = () => {
-  try { return localStorage.getItem("token"); } catch { return null; }
-};
-
-// 🧾 Headers padrão
 function buildHeaders(auth = true, extra = {}) {
   const token = getToken();
   return {
@@ -48,7 +69,9 @@ function buildHeaders(auth = true, extra = {}) {
   };
 }
 
-// 🔗 Querystring
+// ───────────────────────────────────────────────────────────────────
+// Querystring
+// ───────────────────────────────────────────────────────────────────
 export function qs(params = {}) {
   const q = new URLSearchParams();
   Object.entries(params || {}).forEach(([k, v]) => {
@@ -58,7 +81,9 @@ export function qs(params = {}) {
   return s ? `?${s}` : "";
 }
 
-// 🧱 Erro enriquecido
+// ───────────────────────────────────────────────────────────────────
+// Erro enriquecido
+// ───────────────────────────────────────────────────────────────────
 class ApiError extends Error {
   constructor(message, { status, url, data } = {}) {
     super(message);
@@ -69,22 +94,21 @@ class ApiError extends Error {
   }
 }
 
-// 🧼 Normalizador de path: garante "/" inicial, remove prefixo "/api"
+// ───────────────────────────────────────────────────────────────────
+// Path normalizer
+// ───────────────────────────────────────────────────────────────────
 function normalizePath(path) {
   if (!path) return "/";
-  // Se vier URL absoluta, respeita (override da base) e força https
-  if (/^https?:\/\//i.test(path)) return path.replace(/^http:\/\//i, "https://");
-
+  if (/^https?:\/\//i.test(path)) return path; // absoluta → respeita
   let p = String(path);
   if (!p.startsWith("/")) p = `/${p}`;
-  // Remove um "/api" inicial para não duplicar com a base
-  p = p.replace(/^\/+api\/?/, "/");
-  // Garante uma única barra inicial
-  p = "/" + p.replace(/^\/+/, "");
-  return p;
+  p = p.replace(/^\/+api\/?/, "/"); // evita duplicar /api
+  return "/" + p.replace(/^\/+/, "");
 }
 
-// 🛰️ Handler centralizado
+// ───────────────────────────────────────────────────────────────────
+// Handler centralizado
+// ───────────────────────────────────────────────────────────────────
 async function handle(res, { on401 = "redirect", on403 = "silent" } = {}) {
   const url = res?.url || "";
   const status = res?.status;
@@ -92,7 +116,6 @@ async function handle(res, { on401 = "redirect", on403 = "silent" } = {}) {
   let data = null;
 
   try { text = await res.text(); } catch {}
-
   try { data = text ? JSON.parse(text) : null; } catch { data = null; }
 
   if (IS_DEV) {
@@ -130,19 +153,23 @@ async function handle(res, { on401 = "redirect", on403 = "silent" } = {}) {
   return data;
 }
 
-// 🌐 Fetch centralizado
+// ───────────────────────────────────────────────────────────────────
+// Fetch centralizado
+// ───────────────────────────────────────────────────────────────────
 async function doFetch(path, { method = "GET", auth = true, headers, query, body, on401, on403 } = {}) {
   const safePath = normalizePath(path);
 
-  // Monta URL final:
+  // Monta URL final
   const isAbsolute = /^https?:\/\//i.test(safePath);
-  const base = isAbsolute ? "" : (API_BASE_URL || "");
-  let url = `${base}${safePath}${qs(query)}`;
+  let url = `${isAbsolute ? "" : API_BASE_URL}${safePath}${qs(query)}`;
 
-  // 🔒 blindagem final: qualquer URL http:// vira https://
-  if (url.startsWith("http://")) {
-    url = url.replace(/^http:\/\//, "https://");
-  }
+  // ⚠️ NÃO subir http → https para localhost
+  try {
+    if (isHttpUrl(url)) {
+      const host = new URL(url).host;
+      if (!isLocalHost(host)) url = url.replace(/^http:\/\//i, "https://");
+    }
+  } catch {}
 
   const init = {
     method,
@@ -186,7 +213,9 @@ async function doFetch(path, { method = "GET", auth = true, headers, query, body
   return handle(res, { on401, on403 });
 }
 
-// -------- Métodos HTTP --------
+// ───────────────────────────────────────────────────────────────────
+// Métodos HTTP
+// ───────────────────────────────────────────────────────────────────
 export async function apiGet(path, opts = {})         { return doFetch(path, { method: "GET",    ...opts }); }
 export async function apiPost(path, body, opts = {})  { return doFetch(path, { method: "POST",  body, ...opts }); }
 export async function apiPut(path, body, opts = {})   { return doFetch(path, { method: "PUT",   body, ...opts }); }
@@ -205,9 +234,13 @@ export async function apiPostFile(path, body, opts = {}) {
 
   const safePath = normalizePath(path);
   const isAbsolute = /^https?:\/\//i.test(safePath);
-  const base = isAbsolute ? "" : (API_BASE_URL || "");
-  let url = `${base}${safePath}${qs(query)}`;
-  if (url.startsWith("http://")) url = url.replace(/^http:\/\//, "https://");
+  let url = `${isAbsolute ? "" : API_BASE_URL}${safePath}${qs(query)}`;
+  try {
+    if (isHttpUrl(url)) {
+      const host = new URL(url).host;
+      if (!isLocalHost(host)) url = url.replace(/^http:\/\//i, "https://");
+    }
+  } catch {}
 
   const res = await fetch(url, {
     method: "POST",
@@ -250,9 +283,13 @@ export async function apiGetFile(path, opts = {}) {
 
   const safePath = normalizePath(path);
   const isAbsolute = /^https?:\/\//i.test(safePath);
-  const base = isAbsolute ? "" : (API_BASE_URL || "");
-  let url = `${base}${safePath}${qs(query)}`;
-  if (url.startsWith("http://")) url = url.replace(/^http:\/\//, "https://");
+  let url = `${isAbsolute ? "" : API_BASE_URL}${safePath}${qs(query)}`;
+  try {
+    if (isHttpUrl(url)) {
+      const host = new URL(url).host;
+      if (!isLocalHost(host)) url = url.replace(/^http:\/\//i, "https://");
+    }
+  } catch {}
 
   const res = await fetch(url, {
     method: "GET",
@@ -285,3 +322,5 @@ export async function apiGetFile(path, opts = {}) {
 
   return { blob, filename };
 }
+
+export { API_BASE_URL }; // opcional, caso queira debugar
