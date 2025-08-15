@@ -366,12 +366,26 @@ async function listaPresencasTurma(req, res) {
  * GET /api/presencas/turma/:turma_id/detalhes
  * Matriz usuários x datas (true/false)
  * ------------------------------------------------------------------ */
+// 🔁 substitua a função inteira por esta versão robusta
 async function relatorioPresencasPorTurma(req, res) {
   const { turma_id } = req.params;
 
+  // Normaliza qualquer coisa em "YYYY-MM-DD" (ou null se inválido)
+  const toYMD = (val) => {
+    if (!val) return null;
+    if (typeof val === "string") {
+      // aceita "YYYY-MM-DD" ou "YYYY-MM-DDTHH:mm:ss..." -> pega os 10 primeiros
+      const ymd = val.slice(0, 10);
+      return /^\d{4}-\d{2}-\d{2}$/.test(ymd) ? ymd : null;
+    }
+    const d = new Date(val);
+    if (isNaN(d.getTime())) return null;
+    return d.toISOString().slice(0, 10);
+  };
+
   try {
-    // Usuários da turma
-    const usuarios = await db.query(
+    // 1) Usuários da turma
+    const usuariosQ = await db.query(
       `
       SELECT u.id, u.nome, u.cpf
       FROM inscricoes i
@@ -381,45 +395,57 @@ async function relatorioPresencasPorTurma(req, res) {
       `,
       [turma_id]
     );
+    const usuarios = usuariosQ.rows || [];
 
-    // Datas do evento dessa turma
+    // 2) Datas do evento associado a essa turma
     const evento_id = await buscarEventoIdDaTurma(turma_id);
-    const datas = await db.query(
+    const datasQ = await db.query(
       `SELECT data FROM datas_evento WHERE evento_id = $1 ORDER BY data`,
       [evento_id]
     );
-    const datasArr = datas.rows.map((d) =>
-      typeof d.data === "string" ? d.data : format(new Date(d.data), "yyyy-MM-dd")
-    );
 
-    // Presenças registradas
-    const pres = await db.query(
+    // Sempre devolver array (pode ser vazio, sem 500)
+    const datasArr = (datasQ.rows || [])
+      .map((r) => toYMD(r.data))
+      .filter(Boolean);
+
+    // 3) Presenças já registradas para a turma
+    const presQ = await db.query(
       `SELECT usuario_id, data_presenca, presente FROM presencas WHERE turma_id = $1`,
       [turma_id]
     );
-    const presArr = pres.rows.map((r) => ({
-      usuario_id: r.usuario_id,
-      data_presenca:
-        typeof r.data_presenca === "string"
-          ? r.data_presenca
-          : format(new Date(r.data_presenca), "yyyy-MM-dd"),
-      presente: r.presente === true,
-    }));
 
-    const usuariosArr = usuarios.rows.map((u) => ({
-      ...u,
-      presencas: datasArr.map((data) => {
-        const hit = presArr.find(
-          (p) => String(p.usuario_id) === String(u.id) && p.data_presenca === data
-        );
-        return { data, presente: hit ? !!hit.presente : false };
-      }),
-    }));
+    // Index rápido: chave `${usuario_id}|${YYYY-MM-DD}` → boolean
+    const presMap = new Map();
+    for (const r of presQ.rows || []) {
+      const uid = String(r.usuario_id);
+      const dYMD = toYMD(r.data_presenca);
+      if (!uid || !dYMD) continue;
+      presMap.set(`${uid}|${dYMD}`, r.presente === true);
+    }
 
-    res.json({ turma_id: Number(turma_id), datas: datasArr, usuarios: usuariosArr });
+    // 4) Monta matriz usuários × datas
+    const usuariosArr = usuarios.map((u) => {
+      const linhas = datasArr.map((data) => {
+        const key = `${String(u.id)}|${data}`;
+        const presente = presMap.has(key) ? !!presMap.get(key) : false;
+        return { data, presente };
+      });
+      return { id: u.id, nome: u.nome, cpf: u.cpf, presencas: linhas };
+    });
+
+    return res.json({
+      turma_id: Number(turma_id),
+      datas: datasArr,
+      usuarios: usuariosArr,
+    });
   } catch (err) {
-    console.error("❌ Erro ao gerar relatório detalhado:", err);
-    res.status(500).json({ erro: "Erro ao gerar relatório de presenças." });
+    console.error("❌ Erro ao gerar relatório detalhado:", {
+      turma_id,
+      erro: err?.message || err,
+      stack: err?.stack,
+    });
+    return res.status(500).json({ erro: "Erro ao gerar relatório de presenças." });
   }
 }
 
