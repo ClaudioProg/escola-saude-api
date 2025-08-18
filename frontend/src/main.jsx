@@ -11,6 +11,8 @@ import "./App.css";
 
 // ▶️ Flags/Helpers
 const IS_DEV = !!import.meta.env.DEV;
+
+// ✅ Lê o Client ID do .env.local
 const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
 function maskClientId(id) {
@@ -19,25 +21,28 @@ function maskClientId(id) {
   return `${p.slice(0, 10)}… (${p.length} chars)`;
 }
 
-// Necessário para acessibilidade do react-modal
+// ♿ Necessário para acessibilidade do react-modal
 Modal.setAppElement("#root");
 
 // 🔎 Logs estratégicos (apenas em dev)
 if (IS_DEV) {
   console.groupCollapsed(
-    `%c[GSI:init]`,
+    "%c[GSI:init]",
     "color:#0ea5e9;font-weight:700",
     "Diagnóstico do Google Sign-In"
   );
   console.log("• window.location.origin:", window.location.origin);
   console.log("• Ambiente:", IS_DEV ? "dev" : "prod");
   console.log("• VITE_GOOGLE_CLIENT_ID:", maskClientId(clientId));
-  if (!clientId) {
-    console.warn(
-      "⚠️  VITE_GOOGLE_CLIENT_ID não definido. O botão de Login com Google não funcionará (403 em accounts.google.com)."
-    );
-  }
   console.groupEnd();
+
+  // Expor o GID globalmente para inspeção no DevTools:
+  // No console, digite: window.__GID
+  try {
+    window.__GID = clientId;
+  } catch (e) {
+    console.warn("Não foi possível expor window.__GID:", e);
+  }
 
   // Escuta erros globais que venham do domínio do Google
   window.addEventListener("error", (ev) => {
@@ -55,6 +60,12 @@ if (IS_DEV) {
   });
 }
 
+if (!clientId) {
+  console.warn(
+    "⚠️  VITE_GOOGLE_CLIENT_ID ausente! Verifique seu .env.local e reinicie o Vite."
+  );
+}
+
 // ✅ Render
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
@@ -67,7 +78,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
             console.info(
               "%c[GSI] onScriptLoadSuccess",
               "color:#16a34a",
-              "SDK do Google carregado com sucesso."
+              "SDK do Google carregada com sucesso."
             );
           }
         }}

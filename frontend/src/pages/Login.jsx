@@ -20,10 +20,10 @@ export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // ✅ só mostra o botão Google se a env existir
+  // ✅ Só mostra o botão Google se a env existir
   const hasGoogleClient = !!import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
-  // Se já está autenticado e veio para /login, manda pro dashboard
+  // 🔁 Redireciona se já estiver logado
   useEffect(() => {
     const token = localStorage.getItem("token");
     if (location.pathname === "/login" && token) {
@@ -47,6 +47,7 @@ export default function Login() {
     const { token, usuario } = payload || {};
     if (!token || !usuario) throw new Error("Resposta de login inválida.");
 
+    // 🔧 Normaliza perfil para array
     const perfilArray = Array.isArray(usuario.perfil)
       ? usuario.perfil
       : typeof usuario.perfil === "string"
@@ -105,6 +106,7 @@ export default function Login() {
     }
     setLoadingGoogle(true);
     try {
+      // Ajuste o endpoint se o seu for diferente
       const payload = await apiPost("/api/auth/google", {
         credential: credentialResponse.credential,
       });
@@ -197,7 +199,7 @@ export default function Login() {
           type="submit"
           className="w-full flex justify-center items-center gap-2 mt-2"
           aria-label="Entrar na plataforma"
-          disabled={loading}
+          disabled={loading || loadingGoogle}
         >
           <LogIn size={16} /> {loading ? "Entrando..." : "Entrar"}
         </BotaoPrimario>
@@ -213,6 +215,13 @@ export default function Login() {
               <GoogleLogin
                 onSuccess={handleLoginGoogle}
                 onError={() => toast.error("Erro no login com Google.")}
+                // ↓ Props explícitas para evitar parâmetros 'undefined' na URL do widget
+                theme="outline"
+                size="large"
+                shape="rectangular"
+                text="signin_with"
+                locale="pt-BR"
+                useOneTap={false}
               />
             </div>
           ) : (
