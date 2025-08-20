@@ -4,7 +4,7 @@ const db = require('../db');
  * 📋 Lista todos os instrutores com suas médias de avaliação
  * @route GET /api/usuarios/instrutor
  */
-async function listarinstrutor(req, res) {
+async function listarInstrutor(req, res) {
   try {
     const result = await db.query(`
       SELECT 
@@ -152,7 +152,7 @@ async function getTurmasComEventoPorInstrutor(req, res) {
 }
 
 module.exports = {
-  listarinstrutor,
+  listarInstrutor,
   getEventosAvaliacoesPorInstrutor,
   getTurmasComEventoPorInstrutor,
 };

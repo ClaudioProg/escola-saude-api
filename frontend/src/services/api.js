@@ -9,7 +9,6 @@ function isLocalHost(h) {
   return /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(h || "");
 }
 function isHttpUrl(u) { return /^http:\/\//i.test(u || ""); }
-function isHttpsUrl(u) { return /^https:\/\//i.test(u || ""); }
 
 // Decide a base automaticamente:
 //   1) VITE_API_BASE_URL, se preenchida
@@ -26,7 +25,7 @@ function computeBase() {
     return "http://localhost:3000/api";
   }
 
-  // Fallback seguro em prod (pode ajustar para sua URL pública)
+  // Fallback seguro em prod (ajuste para sua URL pública, se quiser)
   return "https://escola-saude-api.onrender.com/api";
 }
 
@@ -99,11 +98,25 @@ class ApiError extends Error {
 // ───────────────────────────────────────────────────────────────────
 function normalizePath(path) {
   if (!path) return "/";
-  if (/^https?:\/\//i.test(path)) return path; // absoluta → respeita
-  let p = String(path);
-  if (!p.startsWith("/")) p = `/${p}`;
-  p = p.replace(/^\/+api\/?/, "/"); // evita duplicar /api
-  return "/" + p.replace(/^\/+/, "");
+  if (/^https?:\/\//i.test(path)) return path; // absoluta
+
+  let p = String(path).trim();
+  if (!p.startsWith("/")) p = "/" + p;
+
+  // normaliza múltiplas barras
+  p = p.replace(/\/{2,}/g, "/");
+  return p;
+}
+
+// Garante exatamente um "/api": se nem base nem path têm "/api", adiciona
+function ensureApi(base, path) {
+  const baseNoSlash = base.replace(/\/+$/, "");
+  const hasApiInBase = /\/api$/i.test(baseNoSlash);
+  const hasApiInPath = /^\/api(\/|$)/i.test(path);
+  if (!hasApiInBase && !hasApiInPath) {
+    return baseNoSlash + "/api" + path;
+  }
+  return baseNoSlash + path;
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -161,7 +174,9 @@ async function doFetch(path, { method = "GET", auth = true, headers, query, body
 
   // Monta URL final
   const isAbsolute = /^https?:\/\//i.test(safePath);
-  let url = `${isAbsolute ? "" : API_BASE_URL}${safePath}${qs(query)}`;
+  let url = isAbsolute
+    ? safePath + qs(query)
+    : ensureApi(API_BASE_URL, safePath) + qs(query);
 
   // ⚠️ NÃO subir http → https para localhost
   try {
@@ -205,7 +220,7 @@ async function doFetch(path, { method = "GET", auth = true, headers, query, body
   } catch (networkErr) {
     const t1 = (typeof performance !== "undefined" ? performance.now() : Date.now());
     console.error(`🌩️ [neterr ${method}] ${url} (${Math.round(t1 - t0)}ms):`, networkErr?.message || networkErr);
-    throw new ApiError("Falha de rede ou CORS", { status: 0, url, data: networkErr });
+    throw new ApiError("Falha de rede ou CORS", { status: 0, url: url, data: networkErr });
   }
   const t1 = (typeof performance !== "undefined" ? performance.now() : Date.now());
   console.log(`⏱️ [time ${method}] ${url} → ${Math.round(t1 - t0)}ms`);
@@ -234,7 +249,10 @@ export async function apiPostFile(path, body, opts = {}) {
 
   const safePath = normalizePath(path);
   const isAbsolute = /^https?:\/\//i.test(safePath);
-  let url = `${isAbsolute ? "" : API_BASE_URL}${safePath}${qs(query)}`;
+  let url = isAbsolute
+    ? safePath + qs(query)
+    : ensureApi(API_BASE_URL, safePath) + qs(query);
+
   try {
     if (isHttpUrl(url)) {
       const host = new URL(url).host;
@@ -283,7 +301,10 @@ export async function apiGetFile(path, opts = {}) {
 
   const safePath = normalizePath(path);
   const isAbsolute = /^https?:\/\//i.test(safePath);
-  let url = `${isAbsolute ? "" : API_BASE_URL}${safePath}${qs(query)}`;
+  let url = isAbsolute
+    ? safePath + qs(query)
+    : ensureApi(API_BASE_URL, safePath) + qs(query);
+
   try {
     if (isHttpUrl(url)) {
       const host = new URL(url).host;
@@ -323,4 +344,4 @@ export async function apiGetFile(path, opts = {}) {
   return { blob, filename };
 }
 
-export { API_BASE_URL }; // opcional, caso queira debugar
+export { API_BASE_URL }; // opcional, para debug

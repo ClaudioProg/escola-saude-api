@@ -8,8 +8,6 @@ import Breadcrumbs from "../components/Breadcrumbs";
 import CabecalhoPainel from "../components/CabecalhoPainel";
 import Spinner from "../components/Spinner";
 import ListaTurmasAdministrador from "../components/ListaTurmasAdministrador";
-// ⚠️ IMPORTANTE: proteja a rota desta página com <PrivateRoute permitido={["administrador"]} />
-// Aqui dentro não bloqueamos de novo, para não dar tela branca se o hook atrasar.
 
 export default function PaginaGestaoPresencas() {
   const navigate = useNavigate();
@@ -17,10 +15,10 @@ export default function PaginaGestaoPresencas() {
   const [eventos, setEventos] = useState([]);
   const [inscritosPorTurma, setInscritosPorTurma] = useState({});
   const [avaliacoesPorTurma, setAvaliacoesPorTurma] = useState({});
+  const [presencasPorTurma, setPresencasPorTurma] = useState({}); // 👈 NOVO
   const [carregandoEventos, setCarregandoEventos] = useState(true);
   const [erro, setErro] = useState("");
 
-  // 🔄 Carrega eventos ao montar
   useEffect(() => {
     (async () => {
       try {
@@ -29,8 +27,6 @@ export default function PaginaGestaoPresencas() {
         console.log("🔄 [GestaoPresenca] GET /api/presencas/admin/listar-tudo ...");
 
         const data = await apiGet("/api/presencas/admin/listar-tudo");
-
-        // aceita diferentes formatos de resposta
         const listaEventos = Array.isArray(data?.eventos)
           ? data.eventos
           : Array.isArray(data)
@@ -58,14 +54,7 @@ export default function PaginaGestaoPresencas() {
       console.log(`📥 Carregando inscritos da turma ${turmaId}...`);
       const data = await apiGet(`/api/inscricoes/turma/${turmaId}`);
       const lista = Array.isArray(data) ? data : data?.lista;
-
-      if (!Array.isArray(lista)) {
-        console.warn(`⚠️ Sem lista válida para a turma ${turmaId}`);
-        toast.warn("Nenhum inscrito retornado pela API.");
-        setInscritosPorTurma((prev) => ({ ...prev, [turmaId]: [] }));
-        return;
-      }
-      setInscritosPorTurma((prev) => ({ ...prev, [turmaId]: lista }));
+      setInscritosPorTurma((prev) => ({ ...prev, [turmaId]: Array.isArray(lista) ? lista : [] }));
     } catch (err) {
       console.error("❌ Erro ao carregar inscritos:", err);
       toast.error("Erro ao carregar inscritos.");
@@ -76,13 +65,25 @@ export default function PaginaGestaoPresencas() {
     try {
       console.log(`📥 Carregando avaliações da turma ${turmaId}...`);
       const data = await apiGet(`/api/avaliacoes/turma/${turmaId}`);
-      setAvaliacoesPorTurma((prev) => ({
-        ...prev,
-        [turmaId]: Array.isArray(data) ? data : [],
-      }));
+      setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: Array.isArray(data) ? data : [] }));
     } catch (err) {
       console.error("❌ Erro ao carregar avaliações:", err);
       toast.error("Erro ao carregar avaliações.");
+    }
+  }
+
+  // 👇 NOVO: usa a rota rica /detalhes e guarda { datas, usuarios }
+  async function carregarPresencas(turmaId) {
+    try {
+      console.log(`🔄 Carregando presenças da turma ${turmaId}...`);
+      const data = await apiGet(`/api/presencas/turma/${turmaId}/detalhes`, { on403: "silent" });
+      const datas = Array.isArray(data?.datas) ? data.datas : [];
+      const usuarios = Array.isArray(data?.usuarios) ? data.usuarios : [];
+      setPresencasPorTurma((prev) => ({ ...prev, [turmaId]: { datas, usuarios } }));
+    } catch (err) {
+      console.error("❌ Erro ao carregar presenças:", err);
+      toast.error("Erro ao carregar presenças.");
+      setPresencasPorTurma((prev) => ({ ...prev, [turmaId]: { datas: [], usuarios: [] } }));
     }
   }
 
@@ -101,6 +102,8 @@ export default function PaginaGestaoPresencas() {
           hoje={new Date()}
           carregarInscritos={carregarInscritos}
           carregarAvaliacoes={carregarAvaliacoes}
+          carregarPresencas={carregarPresencas}          // 👈 NOVO (passa p/ a lista)
+          presencasPorTurma={presencasPorTurma}          // 👈 NOVO (estado rico)
           gerarRelatorioPDF={() => {}}
           inscritosPorTurma={inscritosPorTurma}
           avaliacoesPorTurma={avaliacoesPorTurma}

@@ -1,9 +1,9 @@
-// ✅ src/pages/RecuperarSenha.jsx
+// src/pages/RecuperarSenha.jsx
 import { useState } from "react";
 import { toast } from "react-toastify";
 import BotaoPrimario from "../components/BotaoPrimario";
 import BotaoSecundario from "../components/BotaoSecundario";
-import { apiPost } from "../services/api"; // ✅ usa cliente central
+import { apiPost } from "../services/api";
 
 export default function RecuperarSenha() {
   const [email, setEmail] = useState("");
@@ -16,29 +16,23 @@ export default function RecuperarSenha() {
     setMensagem("");
     setErro("");
 
-    if (!email) {
-      setErro("Digite seu e-mail.");
-      toast.warning("⚠️ Digite seu e-mail.");
+    const emailTrim = String(email).trim();
+    if (!emailTrim) {
+      const m = "Digite seu e-mail.";
+      setErro(m);
+      toast.warning("⚠️ " + m);
       return;
     }
 
     setLoading(true);
     toast.info("⏳ Enviando solicitação...");
     try {
-      // ✅ baseURL via env e tratamento padrão
-      await apiPost("/api/usuarios/recuperar-senha", { email });
-
-      setMensagem(
-        "Se o e-mail estiver cadastrado, você receberá as instruções para redefinir a senha."
-      );
-      toast.success("✅ Instruções enviadas ao e-mail (se cadastrado).");
+      await apiPost("/usuarios/recuperar-senha", { email: emailTrim });
+      setMensagem("Se o e-mail estiver cadastrado, você receberá as instruções para redefinir a senha.");
+      toast.success("✅ Instruções enviadas (se cadastrado).");
       setEmail("");
     } catch (err) {
-      const msg =
-        err?.data?.erro ||
-        err?.data?.message ||
-        err?.message ||
-        "Erro ao enviar solicitação.";
+      const msg = err?.data?.erro || err?.data?.message || err?.message || "Erro ao enviar solicitação.";
       setErro(msg);
       toast.error(`❌ ${msg}`);
     } finally {
@@ -47,26 +41,12 @@ export default function RecuperarSenha() {
   }
 
   return (
-    <main
-      className="min-h-screen flex items-center justify-center bg-gelo dark:bg-zinc-900 px-4"
-      aria-label="Tela de recuperação de senha"
-    >
-      <form
-        onSubmit={handleSubmit}
-        className="bg-lousa text-white rounded-2xl shadow-xl p-8 w-full max-w-md space-y-6"
-      >
+    <main className="min-h-screen flex items-center justify-center bg-gelo dark:bg-zinc-900 px-4">
+      <form onSubmit={handleSubmit} className="bg-lousa text-white rounded-2xl shadow-xl p-8 w-full max-w-md space-y-6">
         <h2 className="text-2xl font-bold text-center mb-3">🔐 Recuperar Senha</h2>
 
-        {mensagem && (
-          <p className="text-green-300 text-sm text-center" role="alert">
-            {mensagem}
-          </p>
-        )}
-        {erro && (
-          <p className="text-red-300 text-sm text-center" role="alert">
-            {erro}
-          </p>
-        )}
+        {mensagem && <p className="text-green-300 text-sm text-center" role="alert">{mensagem}</p>}
+        {erro && <p className="text-red-300 text-sm text-center" role="alert">{erro}</p>}
 
         <label htmlFor="email" className="sr-only">E-mail</label>
         <input
@@ -74,30 +54,17 @@ export default function RecuperarSenha() {
           type="email"
           placeholder="Digite seu e-mail cadastrado"
           value={email}
-          onChange={(e) => {
-            setEmail(e.target.value);
-            if (erro) setErro("");
-          }}
+          onChange={(e) => { setEmail(e.target.value); if (erro) setErro(""); }}
           className="w-full px-4 py-2 rounded bg-white text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-lousa"
           autoComplete="email"
           aria-required="true"
         />
 
-        <BotaoPrimario
-          type="submit"
-          disabled={loading}
-          className="w-full"
-          aria-label="Enviar instruções de recuperação de senha"
-        >
+        <BotaoPrimario type="submit" disabled={loading} className="w-full">
           {loading ? "Enviando..." : "Enviar instruções"}
         </BotaoPrimario>
 
-        <BotaoSecundario
-          type="button"
-          onClick={() => window.history.back()}
-          className="w-full"
-          aria-label="Voltar para a tela anterior"
-        >
+        <BotaoSecundario type="button" onClick={() => window.history.back()} className="w-full">
           Voltar
         </BotaoSecundario>
       </form>

@@ -1,14 +1,11 @@
-/* 🔄 Skeleton Loader */
-@import 'react-loading-skeleton/dist/skeleton.css';
-
-/* 🚀 TailwindCSS Directives */
+/* TailwindCSS Directives (devem vir primeiro) */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* ===================================================
-   📸 Estilização do Leitor de QR Code (html5-qrcode)
-=================================================== */
+/* ==========================================
+   Estilização do Leitor de QR Code (html5-qrcode)
+   ========================================== */
 #leitor-qr #qr-shaded-region > div[style*="background-color: rgb(255, 255, 255)"],
 #leitor-qr #qr-shaded-region *[style*="background-color: rgb(255, 255, 255)"] {
   display: none !important;
@@ -25,13 +22,14 @@
 }
 
 #leitor-qr canvas {
-  outline: 2px dashed #4ade80 !important; /* 🟢 Verde Tailwind */
+  /* verde aproximado do Tailwind (emerald-400) */
+  outline: 2px dashed #4ade80 !important;
   outline-offset: -8px;
 }
 
-/* ===================================================
-   🧩 Campos com ícones à esquerda
-=================================================== */
+/* ==========================================
+   Campos com ícones à esquerda
+   ========================================== */
 .campo-com-icone {
   @apply relative w-full;
 }
@@ -54,17 +52,17 @@ input[type="number"].campo {
   @apply appearance-none;
 }
 
-/* ===================================================
-   🧱 Estilos de Modais (react-modal)
-=================================================== */
+/* ==========================================
+   Estilos de Modais (react-modal)
+   ========================================== */
 .overlay,
 .overlayTurma {
-  @apply fixed top-0 left-0 right-0 bottom-0 bg-black bg-opacity-60 z-[1000];
+  @apply fixed inset-0 bg-black bg-opacity-60 z-[1000];
 }
 
 .modal,
 .modalTurma {
-  @apply fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 
+  @apply fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 
     bg-white p-8 rounded-xl shadow-xl max-w-[600px] w-[90%] z-[1001];
 }
 
@@ -74,4 +72,39 @@ input[type="number"].campo {
 }
 .overlayTurma {
   @apply z-[2000];
+}
+
+/* ==========================================
+   Agenda (React Calendar) — layout fluido
+   ========================================== */
+/* --- React Calendar: tornar largo e responsivo --- */
+.react-calendar-custom {
+  width: 100% !important;         /* vence o 350px do CSS padrão */
+  max-width: none !important;
+  font-size: clamp(1rem, 1.1vw, 1.05rem);
+}
+
+/* tiles mais altos para caber as bolinhas */
+.react-calendar-custom .react-calendar__tile {
+  padding: clamp(0.7rem, 1vw, 1rem) clamp(0.4rem, 0.8vw, 0.7rem) !important;
+  border-radius: 0.5rem;
+}
+
+/* navegação um pouco maior */
+.react-calendar-custom .react-calendar__navigation button {
+  padding: clamp(0.35rem, 0.7vw, 0.55rem) !important;
+  font-size: clamp(1rem, 1.2vw, 1.1rem) !important;
+}
+
+/* bolinhas (tamanhos proporcionais) */
+.agenda-dot {
+  display: inline-block;
+  width: clamp(6px, 0.9vw, 12px);
+  height: clamp(6px, 0.9vw, 12px);
+  border-radius: 9999px;
+}
+
+/* reserva altura para as bolinhas mesmo sem eventos (evita pulo) */
+.react-calendar-custom .rc-day-dots {
+  min-height: clamp(10px, 1vw, 14px);
 }

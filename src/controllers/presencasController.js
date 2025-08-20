@@ -111,21 +111,18 @@ async function registrarPresenca(req, res) {
 
   if (!evento_id || !data) {
     return res.status(400).json({ erro: "Evento e data são obrigatórios." });
-    }
+  }
+
   try {
-    // Verifica se a data pertence ao evento
-    const dataOk = await db.query(
-      `SELECT 1 FROM datas_evento WHERE evento_id = $1 AND data = $2`,
-      [evento_id, data]
-    );
-    if (dataOk.rowCount === 0) {
-      return res.status(400).json({ erro: "Data inválida para este evento." });
+    const dataISO = normalizarDataEntrada(data);
+    if (!dataISO) {
+      return res.status(400).json({ erro: "Data inválida. Use aaaa-mm-dd ou dd/mm/aaaa." });
     }
 
     // Descobre a turma do usuário nesse evento
     const insc = await db.query(
       `
-      SELECT i.turma_id
+      SELECT i.turma_id, t.data_inicio, t.data_fim
       FROM inscricoes i
       JOIN turmas t ON t.id = i.turma_id
       WHERE i.usuario_id = $1 AND t.evento_id = $2
@@ -136,8 +133,15 @@ async function registrarPresenca(req, res) {
       return res.status(403).json({ erro: "Você não está inscrito neste evento." });
     }
     const turma_id = insc.rows[0].turma_id;
+    const di = insc.rows[0].data_inicio?.toISOString?.()?.slice(0,10) ?? String(insc.rows[0].data_inicio).slice(0,10);
+    const df = insc.rows[0].data_fim?.toISOString?.()?.slice(0,10) ?? String(insc.rows[0].data_fim).slice(0,10);
 
-    // Upsert na presença
+    // ✅ valida que a data informada pertence ao intervalo da turma (inclusive)
+    if (dataISO < di || dataISO > df) {
+      return res.status(400).json({ erro: "Data fora do período desta turma." });
+    }
+
+    // Upsert presença
     await db.query(
       `
       INSERT INTO presencas (usuario_id, turma_id, data_presenca, presente)
@@ -145,7 +149,7 @@ async function registrarPresenca(req, res) {
       ON CONFLICT (usuario_id, turma_id, data_presenca)
       DO UPDATE SET presente = EXCLUDED.presente
       `,
-      [usuario_id, turma_id, data]
+      [usuario_id, turma_id, dataISO]
     );
 
     await verificarElegibilidadeParaAvaliacao(usuario_id, turma_id);
@@ -175,16 +179,19 @@ async function confirmarPresencaViaQR(req, res) {
       return res.status(403).json({ erro: "Você não está inscrito nesta turma." });
     }
 
-    // Hoje precisa ser uma data do evento
-    const evento_id = await buscarEventoIdDaTurma(turma_id);
-    const hojeISO = new Date().toISOString().split("T")[0];
-
-    const dataOk = await db.query(
-      `SELECT 1 FROM datas_evento WHERE evento_id = $1 AND data = $2`,
-      [evento_id, hojeISO]
+    // Hoje precisa estar no período da turma
+    const t = await db.query(
+      `SELECT data_inicio, data_fim FROM turmas WHERE id = $1`,
+      [turma_id]
     );
-    if (dataOk.rowCount === 0) {
-      return res.status(400).json({ erro: "Hoje não é um dia válido para este evento." });
+    if (t.rowCount === 0) return res.status(404).json({ erro: "Turma não encontrada." });
+
+    const di = t.rows[0].data_inicio.toISOString().slice(0,10);
+    const df = t.rows[0].data_fim.toISOString().slice(0,10);
+    const hojeISO = new Date().toISOString().slice(0,10);
+
+    if (hojeISO < di || hojeISO > df) {
+      return res.status(400).json({ erro: "Hoje não está dentro do período desta turma." });
     }
 
     await db.query(
@@ -220,15 +227,21 @@ async function registrarManual(req, res) {
   }
 
   try {
-    const evento_id = await buscarEventoIdDaTurma(turma_id);
+    const dataISO = normalizarDataEntrada(data_presenca);
+    if (!dataISO) {
+      return res.status(400).json({ erro: "Formato de data inválido. Use aaaa-mm-dd ou dd/mm/aaaa." });
+    }
 
-    // Valida data no calendário do evento
-    const okData = await db.query(
-      `SELECT 1 FROM datas_evento WHERE evento_id = $1 AND data = $2`,
-      [evento_id, data_presenca]
+    const t = await db.query(
+      `SELECT data_inicio, data_fim FROM turmas WHERE id = $1`,
+      [turma_id]
     );
-    if (okData.rowCount === 0) {
-      return res.status(400).json({ erro: "Data inválida para este evento." });
+    if (t.rowCount === 0) return res.status(404).json({ erro: "Turma não encontrada." });
+
+    const di = t.rows[0].data_inicio.toISOString().slice(0,10);
+    const df = t.rows[0].data_fim.toISOString().slice(0,10);
+    if (dataISO < di || dataISO > df) {
+      return res.status(400).json({ erro: "Data fora do período desta turma." });
     }
 
     await db.query(
@@ -238,7 +251,7 @@ async function registrarManual(req, res) {
       ON CONFLICT (usuario_id, turma_id, data_presenca)
       DO UPDATE SET presente = FALSE
       `,
-      [usuario_id, turma_id, data_presenca]
+      [usuario_id, turma_id, dataISO]
     );
 
     await verificarElegibilidadeParaAvaliacao(usuario_id, turma_id);
@@ -324,23 +337,34 @@ async function listaPresencasTurma(req, res) {
   const { turma_id } = req.params;
 
   try {
-    const evento_id = await buscarEventoIdDaTurma(turma_id);
-
-    // total de dias do evento
-    const totRes = await db.query(
-      `SELECT COUNT(*) AS total_dias FROM datas_evento WHERE evento_id = $1`,
-      [evento_id]
+    // Janela da turma
+    const t = await db.query(
+      `SELECT data_inicio::date AS di, data_fim::date AS df FROM turmas WHERE id = $1`,
+      [turma_id]
     );
-    const totalDias = Number(totRes.rows[0].total_dias || 0);
+    if (t.rowCount === 0) return res.status(404).json({ erro: "Turma não encontrada." });
+
+    // total de dias = generate_series entre data_inicio e data_fim (inclusive)
+    const totRes = await db.query(
+      `
+      WITH t AS (
+        SELECT $1::date AS di, $2::date AS df
+      )
+      SELECT COUNT(*) AS total_dias
+      FROM t, generate_series(t.di, t.df, interval '1 day') AS gs;
+      `,
+      [t.rows[0].di, t.rows[0].df]
+    );
+    const totalDias = Number(totRes.rows[0]?.total_dias || 0);
     if (totalDias === 0) {
-      return res.status(400).json({ erro: "Este evento não possui datas cadastradas." });
+      return res.status(400).json({ erro: "Período da turma inválido (0 dias)." });
     }
 
-    // inscritos e presenças
+    // inscritos + presenças (DISTINCT por dia)
     const presencas = await db.query(
       `
       SELECT u.id AS usuario_id, u.nome, u.cpf,
-             COUNT(*) FILTER (WHERE p.presente = TRUE) AS presencas
+             COUNT(DISTINCT p.data_presenca::date) FILTER (WHERE p.presente IS TRUE) AS presencas
       FROM inscricoes i
       JOIN usuarios u ON u.id = i.usuario_id
       LEFT JOIN presencas p ON p.usuario_id = u.id AND p.turma_id = i.turma_id
@@ -352,7 +376,8 @@ async function listaPresencasTurma(req, res) {
     );
 
     const resultado = presencas.rows.map((u) => {
-      const freq = totalDias > 0 ? Number(u.presencas || 0) / totalDias : 0;
+      const pres = Number(u.presencas || 0);
+      const freq = totalDias > 0 ? pres / totalDias : 0;
       return {
         usuario_id: u.usuario_id,
         nome: u.nome,
@@ -373,14 +398,12 @@ async function listaPresencasTurma(req, res) {
 async function relatorioPresencasPorTurma(req, res) {
   const { turma_id } = req.params;
 
-  // ID de correlação para seguir o fluxo nos logs
   const rid = `rid=${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
   const isProd = process.env.NODE_ENV === "production";
   const log   = (...a) => console.log("📊 [presenças/detalhes]", rid, ...a);
   const warn  = (...a) => console.warn("⚠️ [presenças/detalhes]", rid, ...a);
   const errlg = (...a) => console.error("❌ [presenças/detalhes]", rid, ...a);
 
-  // Normaliza para "YYYY-MM-DD"
   const toYMD = (val) => {
     if (!val) return null;
     if (typeof val === "string") {
@@ -395,73 +418,50 @@ async function relatorioPresencasPorTurma(req, res) {
   try {
     log("⇢ INÍCIO", { turma_id });
 
-    // 0) Turma + evento_id
-    let turmaQ;
-    try {
-      turmaQ = await db.query(`SELECT id, evento_id FROM turmas WHERE id = $1 LIMIT 1`, [turma_id]);
-      log("turmaQ.rowCount:", turmaQ.rowCount, "rows(amostra):", turmaQ.rows?.slice?.(0, 3));
-    } catch (e) {
-      errlg("Erro SQL (turmas):", e?.message);
-      throw e;
-    }
+    // 0) Turma (janela)
+    const turmaQ = await db.query(
+      `SELECT id, evento_id, data_inicio::date AS di, data_fim::date AS df FROM turmas WHERE id = $1 LIMIT 1`,
+      [turma_id]
+    );
+    log("turmaQ.rowCount:", turmaQ.rowCount, "rows(amostra):", turmaQ.rows?.slice?.(0, 3));
     if (turmaQ.rowCount === 0) {
       warn("Turma não encontrada:", turma_id);
       return res.status(404).json({ erro: "Turma não encontrada." });
     }
     const eventoId = turmaQ.rows[0].evento_id || null;
-    log("eventoId:", eventoId);
 
     // 1) Usuários da turma
-    let usuariosQ;
-    try {
-      usuariosQ = await db.query(
-        `
-        SELECT u.id, u.nome, u.cpf
-        FROM inscricoes i
-        JOIN usuarios u ON u.id = i.usuario_id
-        WHERE i.turma_id = $1
-        ORDER BY u.nome
-        `,
-        [turma_id]
-      );
-      log("usuariosQ.rowCount:", usuariosQ.rowCount, "amostra:", usuariosQ.rows?.slice?.(0, 5));
-    } catch (e) {
-      errlg("Erro SQL (inscricoes/usuarios):", e?.message);
-      throw e;
-    }
+    const usuariosQ = await db.query(
+      `
+      SELECT u.id, u.nome, u.cpf
+      FROM inscricoes i
+      JOIN usuarios u ON u.id = i.usuario_id
+      WHERE i.turma_id = $1
+      ORDER BY u.nome
+      `,
+      [turma_id]
+    );
+    log("usuariosQ.rowCount:", usuariosQ.rowCount, "amostra:", usuariosQ.rows?.slice?.(0, 5));
 
-    // 2) Datas do calendário do evento (se houver)
-    let datasArr = [];
-    if (eventoId) {
-      try {
-        const datasQ = await db.query(
-          `SELECT data FROM datas_evento WHERE evento_id = $1 ORDER BY data`,
-          [eventoId]
-        );
-        const raw = datasQ.rows || [];
-        datasArr = raw.map((r) => toYMD(r.data)).filter(Boolean);
-        log("datas_evento.count:", raw.length, "datasArr.len:", datasArr.length, "amostra:", datasArr.slice(0, 10));
-      } catch (e) {
-        errlg("Erro SQL (datas_evento):", e?.message);
-        throw e;
-      }
-    } else {
-      warn("Sem evento_id nessa turma → datas=[]");
-      datasArr = [];
-    }
+    // 2) Datas da turma via generate_series
+    const datasQ = await db.query(
+      `
+      WITH t AS (SELECT $1::date AS di, $2::date AS df)
+      SELECT gs::date AS data
+      FROM t, generate_series(t.di, t.df, interval '1 day') AS gs
+      ORDER BY data
+      `,
+      [turmaQ.rows[0].di, turmaQ.rows[0].df]
+    );
+    const datasArr = (datasQ.rows || []).map(r => toYMD(r.data)).filter(Boolean);
+    log("datasArr.len:", datasArr.length, "amostra:", datasArr.slice(0, 10));
 
     // 3) Presenças da turma
-    let presQ;
-    try {
-      presQ = await db.query(
-        `SELECT usuario_id, data_presenca, presente FROM presencas WHERE turma_id = $1`,
-        [turma_id]
-      );
-      log("presQ.rowCount:", presQ.rowCount, "amostra:", presQ.rows?.slice?.(0, 10));
-    } catch (e) {
-      errlg("Erro SQL (presencas):", e?.message);
-      throw e;
-    }
+    const presQ = await db.query(
+      `SELECT usuario_id, data_presenca, presente FROM presencas WHERE turma_id = $1`,
+      [turma_id]
+    );
+    log("presQ.rowCount:", presQ.rowCount, "amostra:", presQ.rows?.slice?.(0, 10));
 
     const presMap = new Map();
     for (const r of presQ.rows || []) {
@@ -491,6 +491,7 @@ async function relatorioPresencasPorTurma(req, res) {
       turma_id: Number(turma_id),
       datas: datasArr,
       usuarios: usuariosArr,
+      evento_id: eventoId,
     });
   } catch (err) {
     errlg("✗ ERRO GERAL", {
@@ -500,7 +501,7 @@ async function relatorioPresencasPorTurma(req, res) {
     });
     return res.status(500).json({
       erro: "Erro ao gerar relatório de presenças.",
-      ...(isProd ? {} : { detalhe: err?.message, rid }), // em DEV, devolve pista
+      ...(isProd ? {} : { detalhe: err?.message, rid }),
     });
   }
 }
@@ -669,30 +670,36 @@ async function confirmarPresencaSimples(req, res) {
 async function verificarElegibilidadeParaAvaliacao(usuario_id, turma_id) {
   try {
     // Turma já terminou?
-    const turmaRes = await db.query(`SELECT data_fim FROM turmas WHERE id = $1`, [turma_id]);
+    const turmaRes = await db.query(
+      `SELECT data_inicio::date AS di, data_fim::date AS df FROM turmas WHERE id = $1`,
+      [turma_id]
+    );
     if (turmaRes.rowCount === 0) return;
-    const dataFim = new Date(turmaRes.rows[0].data_fim);
+    const dataFim = new Date(turmaRes.rows[0].df);
     if (new Date() < dataFim) return;
 
-    // Total de dias da turma = DISTINCT datas_evento do evento
-    const evento_id = await buscarEventoIdDaTurma(turma_id);
+    // Total de dias da turma (intervalo)
     const totRes = await db.query(
-      `SELECT COUNT(*) AS total FROM datas_evento WHERE evento_id = $1`,
-      [evento_id]
+      `
+      WITH t AS (SELECT $1::date AS di, $2::date AS df)
+      SELECT COUNT(*) AS total_datas
+      FROM t, generate_series(t.di, t.df, interval '1 day') AS gs
+      `,
+      [turmaRes.rows[0].di, turmaRes.rows[0].df]
     );
-    const totalDatas = parseInt(totRes.rows[0].total || "0", 10);
+    const totalDatas = parseInt(totRes.rows[0]?.total_datas || "0", 10);
     if (totalDatas === 0) return;
 
-    // Quantos dias presente?
+    // Quantos dias presente? (DISTINCT por dia)
     const presRes = await db.query(
       `
-      SELECT COUNT(DISTINCT data_presenca) AS presentes
+      SELECT COUNT(DISTINCT data_presenca::date) AS presentes
       FROM presencas
       WHERE turma_id = $1 AND usuario_id = $2 AND presente = TRUE
       `,
       [turma_id, usuario_id]
     );
-    const presentes = parseInt(presRes.rows[0].presentes || "0", 10);
+    const presentes = parseInt(presRes.rows[0]?.presentes || "0", 10);
 
     if (presentes / totalDatas >= 0.75) {
       await gerarNotificacoesDeAvaliacao(usuario_id);

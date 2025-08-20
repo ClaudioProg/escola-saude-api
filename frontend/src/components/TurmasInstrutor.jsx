@@ -35,13 +35,11 @@ export default function TurmasInstrutor({
   const ensureYMD = (d) => {
     if (!d) return "";
     if (d instanceof Date) {
-      // formata para yyyy-mm-dd sem UTC
       const y = d.getFullYear();
       const m = String(d.getMonth() + 1).padStart(2, "0");
       const day = String(d.getDate()).padStart(2, "0");
       return `${y}-${m}-${day}`;
     }
-    // se vier "2025-08-13T00:00:00Z" ou "2025-08-13", pega os 10 primeiros
     return String(d).slice(0, 10);
   };
 
@@ -106,106 +104,9 @@ export default function TurmasInstrutor({
                 const expandindoInscritos = turmaExpandidaInscritos === idSeguro;
                 const expandindoAvaliacoes = turmaExpandidaAvaliacoes === idSeguro;
 
-                // 🔒 anti-fuso para cálculo de dias
-                const dataInicioDT = toLocalNoon(ensureYMD(turma.data_inicio));
-                const dataFimDT = toLocalNoon(ensureYMD(turma.data_fim));
-
-                // total de dias (inclusivo)
-                const MS_DIA = 24 * 60 * 60 * 1000;
-                const totalDiasTurma = Math.max(1, Math.round((dataFimDT - dataInicioDT) / MS_DIA) + 1);
-
-                // presença do instrutor
-const turmaPresencas = presencasPorTurma[idSeguro];
-let statusBadge = null;
-
-const uid = Number(usuario?.id);
-const agora = new Date();
-const horarioFim = turma?.horario_fim || "17:00";
-const fimComHora = new Date(`${ensureYMD(turma.data_fim)}T${horarioFim}`);
-const eventoEncerrado = fimComHora < agora;
-
-// 1) Preferir dados detalhados (datas + matrix P/F)
-if (turmaPresencas?.detalhado) {
-  const { datas = [], usuarios = [] } = turmaPresencas.detalhado;
-  const totalDias = datas.length || 0;
-
-  const eu = usuarios.find((u) => Number(u.id) === uid);
-  const presencasInstrutor = Array.isArray(eu?.presencas) ? eu.presencas : [];
-  const diasConfirmados = presencasInstrutor.filter((p) => p?.presente === true).length;
-
-  if (totalDias > 0 && diasConfirmados === totalDias) {
-    statusBadge = (
-      <span className="inline-block bg-green-100 text-green-700 px-3 py-1 mt-2 rounded-full text-xs font-bold">
-        ✅ Presente
-      </span>
-    );
-  } else if (!eventoEncerrado) {
-    statusBadge = (
-      <span className="inline-block bg-yellow-100 text-yellow-800 px-3 py-1 mt-2 rounded-full text-xs font-bold">
-        ⏳ Aguardando confirmação
-      </span>
-    );
-  } else {
-    statusBadge = (
-      <span className="inline-block bg-red-100 text-red-700 px-3 py-1 mt-2 rounded-full text-xs font-bold">
-        ❌ Faltou
-      </span>
-    );
-  }
-}
-// 2) Fallback: usar lista compat (tem 'frequencia' e 'presente' calculado)
-else if (Array.isArray(turmaPresencas?.lista)) {
-  const eu = turmaPresencas.lista.find((p) => Number(p.usuario_id) === uid);
-  if (eu?.presente) {
-    statusBadge = (
-      <span className="inline-block bg-green-100 text-green-700 px-3 py-1 mt-2 rounded-full text-xs font-bold">
-        ✅ Presente
-      </span>
-    );
-  } else if (!eventoEncerrado) {
-    statusBadge = (
-      <span className="inline-block bg-yellow-100 text-yellow-800 px-3 py-1 mt-2 rounded-full text-xs font-bold">
-        ⏳ Aguardando confirmação
-      </span>
-    );
-  } else {
-    statusBadge = (
-      <span className="inline-block bg-red-100 text-red-700 px-3 py-1 mt-2 rounded-full text-xs font-bold">
-        ❌ Faltou
-      </span>
-    );
-  }
-}
-// 3) Último fallback: caso ainda seja um array “antigo”
-else if (Array.isArray(turmaPresencas)) {
-  const eu = turmaPresencas.find((p) => Number(p.usuario_id) === uid);
-  const presencasInstrutor = Array.isArray(eu?.presencas) ? eu.presencas : [];
-  const diasConfirmados = presencasInstrutor.filter((p) => p?.presente === true).length;
-  const dataInicioDT = toLocalNoon(ensureYMD(turma.data_inicio));
-  const dataFimDT = toLocalNoon(ensureYMD(turma.data_fim));
-  const MS_DIA = 24 * 60 * 60 * 1000;
-  const totalDiasTurma = Math.max(1, Math.round((dataFimDT - dataInicioDT) / MS_DIA) + 1);
-
-  if (diasConfirmados === totalDiasTurma && totalDiasTurma > 0) {
-    statusBadge = (
-      <span className="inline-block bg-green-100 text-green-700 px-3 py-1 mt-2 rounded-full text-xs font-bold">
-        ✅ Presente
-      </span>
-    );
-  } else if (!eventoEncerrado) {
-    statusBadge = (
-      <span className="inline-block bg-yellow-100 text-yellow-800 px-3 py-1 mt-2 rounded-full text-xs font-bold">
-        ⏳ Aguardando confirmação
-      </span>
-    );
-  } else {
-    statusBadge = (
-      <span className="inline-block bg-red-100 text-red-700 px-3 py-1 mt-2 rounded-full text-xs font-bold">
-        ❌ Faltou
-      </span>
-    );
-  }
-}
+                // (mantidos os helpers; podem ser usados por filhos/relatórios)
+                toLocalNoon(ensureYMD(turma.data_inicio));
+                toLocalNoon(ensureYMD(turma.data_fim));
 
                 return (
                   <div key={idSeguro} className="border-t pt-4">
@@ -250,8 +151,6 @@ else if (Array.isArray(turmaPresencas)) {
                       >
                         🔳 QR Code de Presença
                       </button>
-
-                      {statusBadge}
                     </div>
 
                     <AnimatePresence>
@@ -264,7 +163,6 @@ else if (Array.isArray(turmaPresencas)) {
                           className="overflow-hidden mt-4"
                         >
                           {(() => {
-                            // suporta estrutura [ ... ] ou { lista: [...] }
                             const listaPresencas = Array.isArray(presencasPorTurma[idSeguro])
                               ? presencasPorTurma[idSeguro]
                               : presencasPorTurma[idSeguro]?.lista ?? [];
@@ -294,23 +192,25 @@ else if (Array.isArray(turmaPresencas)) {
                           className="overflow-hidden mt-4"
                         >
                           {(() => {
-                            const avaliacoesTurma = avaliacoesPorTurma[idSeguro];
-                            if (avaliacoesTurma && Array.isArray(avaliacoesTurma.comentarios)) {
-                              return <AvaliacoesEvento avaliacoes={avaliacoesTurma.comentarios} />;
-                            } else if (avaliacoesTurma === undefined) {
-                              return (
-                                <p className="text-sm text-gray-600 italic dark:text-gray-300">
-                                  Nenhuma avaliação registrada para esta turma.
-                                </p>
-                              );
-                            } else {
-                              return (
-                                <p className="text-red-500">
-                                  Erro: avaliações não carregadas corretamente.
-                                </p>
-                              );
-                            }
-                          })()}
+  const raw = avaliacoesPorTurma[idSeguro];
+
+  // 🔧 normaliza para um único array de comentários
+  const comentarios =
+    Array.isArray(raw) ? raw :
+    Array.isArray(raw?.comentarios) ? raw.comentarios :
+    Array.isArray(raw?.itens) ? raw.itens :
+    Array.isArray(raw?.avaliacoes) ? raw.avaliacoes :
+    [];
+
+  return comentarios.length > 0 ? (
+    <AvaliacoesEvento avaliacoes={comentarios} />
+  ) : (
+    <p className="text-sm text-gray-600 italic dark:text-gray-300">
+      Nenhuma avaliação registrada para esta turma.
+    </p>
+  );
+})()}
+
                         </motion.div>
                       )}
                     </AnimatePresence>

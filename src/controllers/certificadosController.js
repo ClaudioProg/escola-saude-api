@@ -71,8 +71,8 @@ function registerFonts(doc) {
 }
 
 /** 🖼️ desenha imagem se existir (não lança) */
-function safeImage(doc, absPath, opts) {
-  if (fs.existsSync(absPath)) {
+function safeImage(doc, absPath, opts = {}) {
+  if (absPath && fs.existsSync(absPath)) {
     try {
       doc.image(absPath, opts);
       return true;
@@ -85,14 +85,68 @@ function safeImage(doc, absPath, opts) {
   return false;
 }
 
+/** 🔎 tenta resolver o primeiro caminho existente dentre várias opções */
+function resolveFirstExisting(candidates = []) {
+  for (const p of candidates) {
+    try {
+      if (p && fs.existsSync(p)) return p;
+    } catch (_) {}
+  }
+  return null;
+}
+
+/** 🖼️ resolve o fundo certo (com fallbacks por tipo e por pastas comuns) */
+function getFundoPath(tipo) {
+  const nomes = [
+    tipo === "instrutor" ? "fundo_certificado_instrutor.png" : null,
+    "fundo_certificado.png",
+  ].filter(Boolean);
+
+  const envRoot = process.env.CERT_FUNDO_DIR ? [process.env.CERT_FUNDO_DIR] : [];
+  const roots = [
+    ...envRoot,
+    path.resolve(__dirname, "../../certificados"),
+    path.resolve(__dirname, "../../assets"),
+    path.resolve(__dirname, "../../public"),
+    path.resolve(process.cwd(), "certificados"),
+    path.resolve(process.cwd(), "assets"),
+    path.resolve(process.cwd(), "public"),
+  ];
+
+  const candidates = [];
+  for (const nome of nomes) {
+    for (const root of roots) {
+      candidates.push(path.join(root, nome));
+    }
+    candidates.push(path.resolve(__dirname, nome));
+  }
+
+  const found = resolveFirstExisting(candidates);
+  if (!found) {
+    logDev("⚠️ Fundo não encontrado. Procurado (em ordem):", candidates);
+  } else {
+    logDev("✅ Fundo encontrado em:", found);
+  }
+  return found;
+}
+
 /** 🔳 gera dataURL de QRCode (retorna null se falhar) */
 async function tryQRCodeDataURL(texto) {
   try {
-    return await QRCode.toDataURL(texto, { margin: 1, width: 140 }); // tamanho estável
+    return await QRCode.toDataURL(texto, { margin: 1, width: 140 });
   } catch (e) {
     console.warn("⚠️ Falha ao gerar QRCode:", e.message);
     return null;
   }
+}
+
+/** ✅ checa se usuário fez avaliação da turma */
+async function usuarioFezAvaliacao(usuario_id, turma_id) {
+  const q = await db.query(
+    `SELECT 1 FROM avaliacoes WHERE usuario_id = $1 AND turma_id = $2 LIMIT 1`,
+    [usuario_id, turma_id]
+  );
+  return q.rowCount > 0;
 }
 
 /* ========================= Controller ========================= */
@@ -144,7 +198,46 @@ async function gerarCertificado(req, res) {
     const nomeUsuario = pessoa.rows[0].nome;
     const cpfUsuario = formatarCPF(pessoa.rows[0].cpf || "");
 
-    // 🗓️ Datas
+    // ✅ Garantias de negócio (apenas para tipo 'usuario')
+    if (tipo === "usuario") {
+      // 1) turma encerrada (data_fim + horario_fim)
+      const fimStr = data_fim ? String(data_fim).slice(0, 10) : null;
+      const hf =
+        typeof horario_fim === "string" && /^\d{2}:\d{2}/.test(horario_fim)
+          ? horario_fim.slice(0, 5)
+          : "23:59";
+      const fimDT = fimStr ? new Date(`${fimStr}T${hf}:00`) : null;
+      if (fimDT && new Date() < fimDT) {
+        return res.status(400).json({
+          erro: "A turma ainda não encerrou. O certificado só pode ser gerado após o término.",
+        });
+      }
+
+      // 2) presença ≥ 75%
+      const pres = await db.query(
+        `
+        SELECT COUNT(*) FILTER (WHERE presente)::float / NULLIF(COUNT(*),0) AS taxa
+        FROM presencas
+        WHERE usuario_id = $1 AND turma_id = $2
+        `,
+        [usuario_id, turma_id]
+      );
+      const taxa = Number(pres.rows?.[0]?.taxa || 0);
+      if (!(taxa >= 0.75)) {
+        return res.status(403).json({ erro: "Presença insuficiente (mínimo de 75%)." });
+      }
+
+      // 3) avaliação enviada
+      const fez = await usuarioFezAvaliacao(usuario_id, turma_id);
+      if (!fez) {
+        return res.status(403).json({
+          erro: "É necessário enviar a avaliação do evento para liberar o certificado.",
+          proximo_passo: "Preencha a avaliação disponível nas suas notificações.",
+        });
+      }
+    }
+
+    // 🗓️ Datas formatadas
     const dataInicioBR = dataBR(data_inicio);
     const dataFimBR = dataBR(data_fim);
     const dataHojeExtenso = dataExtensoBR(new Date());
@@ -168,11 +261,18 @@ async function gerarCertificado(req, res) {
     // 🖋️ Fontes
     registerFonts(doc);
 
-    // 🖼️ Fundo
-    const nomeFundo =
-      tipo === "instrutor" ? "fundo_certificado_instrutor.png" : "fundo_certificado.png";
-    const fundoPath = path.resolve(__dirname, "../../certificados", nomeFundo);
-    safeImage(doc, fundoPath, { width: 842, height: 595 });
+    // 🖼️ Fundo (full-bleed, antes de qualquer texto)
+    const fundoPath = getFundoPath(tipo);
+    if (fundoPath) {
+      doc.save();
+      doc.image(fundoPath, 0, 0, {
+        width: doc.page.width,
+        height: doc.page.height,
+      });
+      doc.restore();
+    } else {
+      doc.save().rect(0, 0, doc.page.width, doc.page.height).fill("#ffffff").restore();
+    }
 
     // 🏷️ Título
     doc.fillColor("#0b3d2e").font("BreeSerif").fontSize(63).text("CERTIFICADO", {
@@ -237,19 +337,19 @@ async function gerarCertificado(req, res) {
 
     // Assinatura institucional (sempre)
     if (tipo === "instrutor") {
-      doc
-        .font("AlegreyaSans-Bold")
-        .fontSize(20)
-        .text("Rafaella Pitol Corrêa", 270, baseY, { align: "center", width: 300 });
+      doc.font("AlegreyaSans-Bold").fontSize(20).text("Rafaella Pitol Corrêa", 270, baseY, {
+        align: "center",
+        width: 300,
+      });
       doc
         .font("AlegreyaSans-Regular")
         .fontSize(14)
         .text("Chefe da Escola da Saúde", 270, baseY + 25, { align: "center", width: 300 });
     } else {
-      doc
-        .font("AlegreyaSans-Bold")
-        .fontSize(20)
-        .text("Rafaella Pitol Corrêa", 100, baseY, { align: "center", width: 300 });
+      doc.font("AlegreyaSans-Bold").fontSize(20).text("Rafaella Pitol Corrêa", 100, baseY, {
+        align: "center",
+        width: 300,
+      });
       doc
         .font("AlegreyaSans-Regular")
         .fontSize(14)
@@ -301,33 +401,36 @@ async function gerarCertificado(req, res) {
         console.warn("⚠️ Erro ao obter assinatura do instrutor:", e.message);
       }
 
-      doc
-        .font("AlegreyaSans-Bold")
-        .fontSize(20)
-        .text(nomeInstrutor, 440, baseY, { align: "center", width: 300 });
-      doc
-        .font("AlegreyaSans-Regular")
-        .fontSize(14)
-        .text("Instrutor(a)", 440, baseY + 25, { align: "center", width: 300 });
+      doc.font("AlegreyaSans-Bold").fontSize(20).text(nomeInstrutor, 440, baseY, {
+        align: "center",
+        width: 300,
+      });
+      doc.font("AlegreyaSans-Regular").fontSize(14).text("Instrutor(a)", 440, baseY + 25, {
+        align: "center",
+        width: 300,
+      });
     }
 
     // 📱 QR de validação (aponta para o FRONTEND)
     const FRONTEND_BASE_URL =
       process.env.FRONTEND_BASE_URL || "https://escoladasaude.vercel.app";
-    const linkValidacao = `${FRONTEND_BASE_URL}/validar-certificado.html?usuario_id=${encodeURIComponent(
-      usuario_id
-    )}&evento_id=${encodeURIComponent(evento_id)}`;
+    const linkValidacao =
+      `${FRONTEND_BASE_URL}/validar-certificado.html` +
+      `?usuario_id=${encodeURIComponent(usuario_id)}` +
+      `&evento_id=${encodeURIComponent(evento_id)}` +
+      `&turma_id=${encodeURIComponent(turma_id)}`;
     const qrDataURL = await tryQRCodeDataURL(linkValidacao);
     if (qrDataURL) {
       doc.image(qrDataURL, 40, 420, { width: 80 });
-      doc.fillColor("white").fontSize(7).text("Escaneie este QR Code", 40, 510);
+      // Use preto p/ contraste independente do fundo
+      doc.fillColor("#000").fontSize(7).text("Escaneie este QR Code", 40, 510);
       doc.text("para validar o certificado.", 40, 520);
     }
 
     doc.end();
     await finished;
 
-    // ✅ UPSERT no banco (usa colunas — mais portável que nome de constraint)
+    // ✅ UPSERT no banco
     const upsert = await db.query(
       `
       INSERT INTO certificados (usuario_id, evento_id, turma_id, tipo, arquivo_pdf, gerado_em)
@@ -354,7 +457,7 @@ async function gerarCertificado(req, res) {
         const emailUsuario = userRes.rows[0]?.email;
         const nomeUsuarioEmail = userRes.rows[0]?.nome;
         if (emailUsuario) {
-          const { send } = require("../utils/email"); // seu util de e-mail
+          const { send } = require("../utils/email");
           const link = `${FRONTEND_BASE_URL}/meus-certificados`;
           await send({
             to: emailUsuario,
@@ -459,37 +562,54 @@ async function revalidarCertificado(req, res) {
   }
 }
 
-/** 🎓 Certificados elegíveis (aluno) — presença ≥ 75% e turma encerrada */
+/** 🎓 Certificados elegíveis (aluno) — presença ≥ 75%, turma encerrada, e flag de avaliação */
 async function listarCertificadosElegiveis(req, res) {
   try {
     const usuario_id = req.usuario.id;
     const result = await db.query(
       `
+      WITH turmas_ok AS (
+        SELECT 
+          t.id AS turma_id,
+          t.evento_id,
+          t.nome AS nome_turma,
+          t.data_inicio,
+          t.data_fim
+        FROM turmas t
+        WHERE t.id IN (
+          SELECT turma_id FROM presencas
+          WHERE usuario_id = $1
+          GROUP BY turma_id
+          HAVING COUNT(*) FILTER (WHERE presente) * 1.0 / COUNT(*) >= 0.75
+        )
+        AND t.data_fim <= CURRENT_DATE
+      ),
+      aval AS (
+        SELECT DISTINCT turma_id
+        FROM avaliacoes
+        WHERE usuario_id = $1
+      )
       SELECT 
-        t.id AS turma_id,
+        tk.turma_id,
         e.id AS evento_id,
         e.titulo AS evento,
-        t.nome AS nome_turma,
-        t.data_inicio,
-        t.data_fim,
+        tk.nome_turma,
+        tk.data_inicio,
+        tk.data_fim,
         c.id AS certificado_id,
         c.arquivo_pdf,
-        (c.arquivo_pdf IS NOT NULL) AS ja_gerado
-      FROM turmas t
-      JOIN eventos e ON e.id = t.evento_id
+        (c.arquivo_pdf IS NOT NULL) AS ja_gerado,
+        (aval.turma_id IS NOT NULL) AS fez_avaliacao,
+        (aval.turma_id IS NOT NULL) AS pode_gerar
+      FROM turmas_ok tk
+      JOIN eventos e ON e.id = tk.evento_id
       LEFT JOIN certificados c 
         ON c.evento_id = e.id 
-       AND c.turma_id = t.id
+       AND c.turma_id = tk.turma_id
        AND c.usuario_id = $1
        AND c.tipo = 'usuario'
-      WHERE t.id IN (
-        SELECT turma_id FROM presencas
-        WHERE usuario_id = $1
-        GROUP BY turma_id
-        HAVING COUNT(*) FILTER (WHERE presente) * 1.0 / COUNT(*) >= 0.75
-      )
-      AND t.data_fim <= CURRENT_DATE
-      ORDER BY t.data_fim DESC
+      LEFT JOIN aval ON aval.turma_id = tk.turma_id
+      ORDER BY tk.data_fim DESC
       `,
       [usuario_id]
     );

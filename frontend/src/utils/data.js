@@ -1,147 +1,149 @@
-// 📅 Formata data no padrão dd/mm/aaaa
-export function formatarDataBrasileira(dataISO) {
-  if (!dataISO) return "";
+// frontend/src/utils/data.js
 
-  // Se já for objeto Date
-  if (dataISO instanceof Date) {
-    if (isNaN(dataISO.getTime())) return "";
-    const dia = String(dataISO.getDate()).padStart(2, "0");
-    const mes = String(dataISO.getMonth() + 1).padStart(2, "0");
-    const ano = dataISO.getFullYear();
-    return `${dia}/${mes}/${ano}`;
-  }
+// Zona padrão para exibição; usa a do navegador se disponível
+const ZONA_PADRAO =
+  Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Sao_Paulo";
 
-  // Se for string
-  if (typeof dataISO === "string") {
-    // Caso especial: formato puro "yyyy-mm-dd" → evita fuso
-    if (/^\d{4}-\d{2}-\d{2}$/.test(dataISO)) {
-      const [ano, mes, dia] = dataISO.split("-");
-      return `${dia}/${mes}/${ano}`;
-    }
+/* ──────────────────────────────────────────────────────────────
+   DETECÇÃO / PARSE
+   ────────────────────────────────────────────────────────────── */
 
-    // Formato "yyyy-mm-ddTHH:MM:SS"
-    const partes = dataISO.split("T")[0].split("-");
-    if (partes.length === 3) {
-      const [ano, mes, dia] = partes;
-      return `${dia}/${mes}/${ano}`;
-    }
-
-    // Fallback usando Date
-    const d = new Date(dataISO);
-    if (isNaN(d.getTime())) return "";
-    const dia = String(d.getDate()).padStart(2, "0");
-    const mes = String(d.getMonth() + 1).padStart(2, "0");
-    const ano = d.getFullYear();
-    return `${dia}/${mes}/${ano}`;
-  }
-
-  // Caso não seja string nem Date
-  try {
-    const d = new Date(dataISO);
-    if (isNaN(d.getTime())) return "";
-    const dia = String(d.getDate()).padStart(2, "0");
-    const mes = String(d.getMonth() + 1).padStart(2, "0");
-    const ano = d.getFullYear();
-    return `${dia}/${mes}/${ano}`;
-  } catch {
-    return "";
-  }
+export function isDateOnly(str) {
+  return typeof str === "string" && /^\d{4}-\d{2}-\d{2}$/.test(str);
 }
 
-// 📆 Gera array de datas entre dois dias (inclui início e fim)
-export function gerarIntervaloDeDatas(dataInicio, dataFim) {
-  const inicio = new Date(dataInicio);
-  const fim = new Date(dataFim);
-  if (isNaN(inicio.getTime()) || isNaN(fim.getTime())) return [];
+/** Constrói Date no fuso LOCAL do navegador. */
+export function toLocalDate(input) {
+  if (!input) return null;
+  if (input instanceof Date) return isNaN(input) ? null : input;
 
+  if (typeof input === "string") {
+    if (isDateOnly(input)) {
+      const [y, m, d] = input.split("-").map(Number);
+      const dt = new Date(y, m - 1, d, 0, 0, 0, 0);
+      return isNaN(dt) ? null : dt;
+    }
+    const dt = new Date(input); // respeita Z/offset se houver, senão assume local
+    return isNaN(dt) ? null : dt;
+  }
+
+  const dt = new Date(input);
+  return isNaN(dt) ? null : dt;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   FORMATAÇÃO pt-BR (exibição)
+   ────────────────────────────────────────────────────────────── */
+
+export function fmtData(dateIsoUtc, zone = ZONA_PADRAO) {
+  const d = toLocalDate(dateIsoUtc);
+  if (!d) return "";
+  return new Intl.DateTimeFormat("pt-BR", {
+    timeZone: zone,
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(d); // dd/mm/aaaa
+}
+
+export function fmtDataHora(dateIsoUtc, zone = ZONA_PADRAO) {
+  const d = toLocalDate(dateIsoUtc);
+  if (!d) return "";
+  return new Intl.DateTimeFormat("pt-BR", {
+    timeZone: zone,
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(d); // dd/mm/aaaa HH:mm
+}
+
+/* ──────────────────────────────────────────────────────────────
+   CONVERSÕES BR → ISO/UTC (envio para API)
+   ────────────────────────────────────────────────────────────── */
+
+/** "dd/MM/aaaa" -> "YYYY-MM-DD" */
+export function brDateToIsoDate(dataBr) {
+  if (!dataBr || typeof dataBr !== "string") return "";
+  const [dd, mm, yyyy] = dataBr.split("/").map((x) => String(x || "").trim());
+  if (!/^\d{2}$/.test(dd) || !/^\d{2}$/.test(mm) || !/^\d{4}$/.test(yyyy)) return "";
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+/**
+ * "dd/MM/aaaa"+"HH:mm" (hora local do navegador) -> ISO UTC (com 'Z')
+ * Ex.: "18/08/2025","14:30" → "2025-08-18T17:30:00.000Z" (depende do offset vigente)
+ */
+export function brDateTimeToIsoUtc(dataBr, horaBr = "00:00") {
+  const isoDate = brDateToIsoDate(dataBr);
+  if (!isoDate) return null;
+
+  const [y, m, d] = isoDate.split("-").map(Number);
+  const [hh, min] = (horaBr || "00:00").split(":").map((x) => parseInt(x, 10));
+  const local = new Date(y, (m - 1), d, isNaN(hh) ? 0 : hh, isNaN(min) ? 0 : min, 0, 0);
+  return isNaN(local) ? null : local.toISOString(); // ISO UTC com 'Z'
+}
+
+/* ──────────────────────────────────────────────────────────────
+   FUNÇÕES LEGADAS (mantidas) → redirecionam pros helpers padronizados
+   ────────────────────────────────────────────────────────────── */
+
+/** (LEGADO) Formata data no padrão dd/mm/aaaa */
+export function formatarDataBrasileira(dataISO) {
+  // aceita Date, ISO com Z, "YYYY-MM-DD"
+  if (!dataISO) return "";
+  if (typeof dataISO === "string" && isDateOnly(dataISO)) {
+    // evita fuso para data-only
+    const [y, m, d] = dataISO.split("-");
+    return `${d}/${m}/${y}`;
+  }
+  return fmtData(dataISO);
+}
+
+/** (LEGADO) Formata data+hora no padrão dd/mm/aaaa HH:MM */
+export function formatarDataHoraBrasileira(dataISO) {
+  if (!dataISO) return "";
+  return fmtDataHora(dataISO);
+}
+
+/** (LEGADO) Converte para ISO (yyyy-mm-dd) aceitando string BR, Date, ISO */
+export function formatarParaISO(data) {
+  if (!data) return "";
+  if (typeof data === "string" && data.includes("/")) {
+    return brDateToIsoDate(data); // "dd/MM/aaaa" -> "YYYY-MM-DD"
+  }
+  if (typeof data === "string" && isDateOnly(data)) {
+    return data; // já é "YYYY-MM-DD"
+  }
+  const d = toLocalDate(data);
+  if (!d) return "";
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   OUTROS (mantidos)
+   ────────────────────────────────────────────────────────────── */
+
+export function gerarIntervaloDeDatas(dataInicio, dataFim) {
+  const ini = toLocalDate(dataInicio);
+  const fim = toLocalDate(dataFim);
+  if (!ini || !fim) return [];
   const datas = [];
-  for (let d = new Date(inicio); d <= fim; d.setDate(d.getDate() + 1)) {
+  // garanta dia a dia sem mutar "ini" original
+  for (let d = new Date(ini.getFullYear(), ini.getMonth(), ini.getDate()); d <= fim; d.setDate(d.getDate() + 1)) {
     datas.push(new Date(d));
   }
   return datas;
 }
 
-// 🧾 Formata CPF para XXX.XXX.XXX-XX
 export function formatarCPF(cpf) {
   if (!cpf) return "";
   const num = String(cpf).replace(/\D/g, "");
   if (num.length !== 11) return cpf;
   return num.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
-}
-
-// 🕒 Formata data+hora no padrão dd/mm/aaaa HH:MM
-export function formatarDataHoraBrasileira(dataISO) {
-  if (!dataISO) return "";
-
-  let d;
-  if (dataISO instanceof Date) {
-    d = dataISO;
-  } else {
-    // Evita problema de fuso para datas puras sem hora
-    if (typeof dataISO === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dataISO)) {
-      const [ano, mes, dia] = dataISO.split("-");
-      d = new Date(Number(ano), Number(mes) - 1, Number(dia), 0, 0, 0);
-    } else {
-      d = new Date(dataISO);
-    }
-  }
-  if (isNaN(d.getTime())) return "";
-
-  const dia = String(d.getDate()).padStart(2, "0");
-  const mes = String(d.getMonth() + 1).padStart(2, "0");
-  const ano = d.getFullYear();
-  const horas = String(d.getHours()).padStart(2, "0");
-  const minutos = String(d.getMinutes()).padStart(2, "0");
-
-  return `${dia}/${mes}/${ano} ${horas}:${minutos}`;
-}
-
-// 📅 Converte para ISO (yyyy-mm-dd) aceitando string BR ou objeto Date
-export function formatarParaISO(data) {
-  if (!data) return "";
-
-  // Se for string dd/mm/aaaa
-  if (typeof data === "string" && data.includes("/")) {
-    const [dia, mes, ano] = data.split("/");
-    if (!dia || !mes || !ano) return "";
-    return `${ano}-${mes.padStart(2, "0")}-${dia.padStart(2, "0")}`;
-  }
-
-  // Se já for string yyyy-mm-dd → retorna direto
-  if (typeof data === "string" && /^\d{4}-\d{2}-\d{2}$/.test(data)) {
-    return data;
-  }
-
-  // Se for objeto Date ou string ISO completa
-  const d = new Date(data);
-  if (isNaN(d.getTime())) return "";
-
-  const ano = d.getFullYear();
-  const mes = String(d.getMonth() + 1).padStart(2, "0");
-  const dia = String(d.getDate()).padStart(2, "0");
-  return `${ano}-${mes}-${dia}`;
-}
-
-// ✅ Detecta string "YYYY-MM-DD"
-export function isDateOnly(str) {
-  return typeof str === "string" && /^\d{4}-\d{2}-\d{2}$/.test(str);
-}
-
-// ✅ Converte para Date no fuso local, evitando shift de UTC
-export function toLocalDate(input) {
-  if (!input) return null;
-  if (input instanceof Date) return input;
-
-  if (typeof input === "string") {
-    if (isDateOnly(input)) {
-      const [y, m, d] = input.split("-").map(Number);
-      return new Date(y, m - 1, d); // 00:00 no fuso local
-    }
-    // Strings com hora:
-    // - Se tiver timezone (Z ou ±HH:MM), o JS respeita
-    // - Se não tiver, o JS interpreta como horário local
-    return new Date(input);
-  }
-
-  return new Date(input);
 }

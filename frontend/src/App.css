@@ -1,5 +1,5 @@
 /* ============================================
-   🧱 Container principal (opcional se usar Tailwind)
+   Container principal (opcional se usar Tailwind)
 ============================================ */
 #root {
   max-width: 1280px;
@@ -9,7 +9,7 @@
 }
 
 /* ============================================
-   ⚛️ Estilo da logo com animações
+   Estilo da logo com animações
 ============================================ */
 .logo {
   height: 6rem;
@@ -42,23 +42,23 @@
 }
 
 /* ============================================
-   📦 Estilos genéricos
+   Estilos genéricos
 ============================================ */
 .card {
   padding: 2rem;
 }
 
 .read-the-docs {
-  color: #888888;
+  color: #888;
 }
 
 /* ============================================
-   📅 Estilos do react-calendar
+   Estilos do react-calendar
 ============================================ */
 .react-calendar {
   width: 100%;
   max-width: 100%;
-  background-color: #ffffff;
+  background-color: #fff;
   border-radius: 1rem;
   padding: 1rem;
   border: none;
@@ -90,8 +90,8 @@
 }
 
 .react-calendar__tile--active {
-  background-color: #0284c7 !important; /* Tailwind blue-600 */
-  color: #ffffff !important;
+  background-color: #0284c7 !important; /* blue-600 */
+  color: #fff !important;
 }
 
 .react-calendar__navigation {

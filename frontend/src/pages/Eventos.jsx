@@ -62,6 +62,7 @@ export default function Eventos() {
   let usuario = {};
   try { usuario = JSON.parse(localStorage.getItem("usuario") || "{}"); } catch {}
   const nome = usuario?.nome || "";
+  const usuarioId = Number(usuario?.id) || null;
 
   useEffect(() => {
     async function carregarEventos() {
@@ -120,10 +121,37 @@ export default function Eventos() {
     }
   }
 
+  // Helper: obter eventoId a partir de uma turmaId já carregada localmente
+  function findEventoIdByTurmaIdLocal(turmaId) {
+    for (const [evtId, turmas] of Object.entries(turmasPorEvento)) {
+      if ((turmas || []).some((t) => Number(t.id) === Number(turmaId))) {
+        return Number(evtId);
+      }
+    }
+    return null;
+  }
+
   async function inscrever(turmaId) {
     if (inscrevendo) return;
-    setInscrevendo(turmaId);
 
+    // 🔒 Bloqueio client-side: se o usuário for instrutor do evento, não deixa prosseguir
+    const eventoIdLocal = findEventoIdByTurmaIdLocal(turmaId);
+    const eventoReferente =
+      (eventoIdLocal && eventos.find((e) => Number(e.id) === Number(eventoIdLocal))) || null;
+
+    // usa flag do backend se existir; fallback: confere lista de instrutores do evento
+    const ehInstrutor =
+      Boolean(eventoReferente?.ja_instrutor) ||
+      (Array.isArray(eventoReferente?.instrutor) &&
+        usuarioId &&
+        eventoReferente.instrutor.some((i) => Number(i.id) === Number(usuarioId)));
+
+    if (ehInstrutor) {
+      toast.warn("Você é instrutor deste evento e não pode se inscrever como participante.");
+      return;
+    }
+
+    setInscrevendo(turmaId);
     try {
       await apiPost("/api/inscricoes", { turma_id: turmaId });
       toast.success("✅ Inscrição realizada com sucesso!");
@@ -142,7 +170,7 @@ export default function Eventos() {
       // Atualiza eventos e recarrega as turmas do evento dessa turma
       await atualizarEventos();
 
-      const eventoId = Object.keys(turmasPorEvento).find((id) =>
+      const eventoId = eventoIdLocal || Object.keys(turmasPorEvento).find((id) =>
         (turmasPorEvento[id] || []).some((t) => Number(t.id) === Number(turmaId))
       );
 
@@ -158,8 +186,18 @@ export default function Eventos() {
         }
       }
     } catch (err) {
-      console.error("❌ Erro inesperado:", err);
-      toast.error("❌ Erro ao se inscrever.");
+      // Trata respostas do backend, especialmente 409 para instrutor e duplicidade
+      const status = err?.status || err?.response?.status;
+      const msg = err?.data?.erro || err?.message || "Erro ao se inscrever.";
+      if (status === 409) {
+        // Pode ser "instrutor não pode", ou "já inscrito"
+        toast.warn(msg);
+      } else if (status === 400) {
+        toast.error(msg);
+      } else {
+        console.error("❌ Erro inesperado:", err);
+        toast.error("❌ Erro ao se inscrever.");
+      }
     } finally {
       setInscrevendo(null);
     }
@@ -201,7 +239,13 @@ export default function Eventos() {
         🎓 Eventos disponíveis
       </h1>
 
-      <FiltrosEventos filtroAtivo={filtro} onFiltroChange={setFiltro} />
+      <FiltrosEventos
+  filtroAtivo={filtro}
+  onFiltroChange={setFiltro}
+  filtroSelecionado={filtro}        // <- adiciona
+  valorSelecionado={filtro}         // <- adiciona (se o filho repassa para FiltroToggleGroup)
+  onChange={setFiltro}              // <- se o filho usa esta prop genérica
+/>
 
       {carregandoEventos ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -229,75 +273,86 @@ export default function Eventos() {
               );
               return (fimB?.getTime?.() || 0) - (fimA?.getTime?.() || 0);
             })
-            .map((evento) => (
-              <div
-                key={evento.id}
-                className="bg-white dark:bg-neutral-900 rounded-2xl p-5 shadow border border-gray-200 dark:border-gray-700"
-              >
-                <h3 className="text-xl font-semibold text-lousa dark:text-white mb-1">
-                  {evento.titulo}
-                </h3>
-
-                {evento.descricao && (
-                  <p className="text-sm text-gray-700 dark:text-gray-300 mb-2">
-                    {evento.descricao}
-                  </p>
-                )}
-
-                <p className="text-sm italic text-gray-600 mt-1">
-                  Instrutor(es):{" "}
-                  <span className="text-gray-800 dark:text-white">
-                    {Array.isArray(evento.instrutor) && evento.instrutor.length
-                      ? evento.instrutor.map((i) => i.nome).join(", ")
-                      : "A definir"}
-                  </span>
-                </p>
-
-                {evento.publico_alvo && (
-                  <p className="text-sm italic text-gray-600 mt-1">
-                    Público-alvo:{" "}
-                    <span className="text-gray-800 dark:text-white">{evento.publico_alvo}</span>
-                  </p>
-                )}
-
-                <div className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-2 mb-3">
-                  <CalendarDays className="w-4 h-4" />
-                  <span>
-                    {evento.data_inicio_geral && evento.data_fim_geral
-                      ? `${formatarDataCurtaSeguro(evento.data_inicio_geral)} até ${formatarDataCurtaSeguro(evento.data_fim_geral)}`
-                      : "Datas a definir"}
-                  </span>
-                </div>
-
-                <BotaoPrimario
-                  onClick={() => carregarTurmas(evento.id)}
-                  disabled={carregandoTurmas === evento.id}
-                  aria-expanded={!!turmasVisiveis[evento.id]}
-                  aria-controls={`turmas-${evento.id}`}
+            .map((evento) => {
+              const ehInstrutor = Boolean(evento.ja_instrutor);
+              return (
+                <div
+                  key={evento.id}
+                  className="bg-white dark:bg-neutral-900 rounded-2xl p-5 shadow border border-gray-200 dark:border-gray-700"
                 >
-                  {carregandoTurmas === evento.id
-                    ? "Carregando..."
-                    : turmasVisiveis[evento.id]
-                    ? "Ocultar turmas"
-                    : "Ver turmas"}
-                </BotaoPrimario>
+                  <h3 className="text-xl font-semibold text-lousa dark:text-white mb-1">
+                    {evento.titulo}
+                  </h3>
 
-                {turmasVisiveis[evento.id] && turmasPorEvento[evento.id] && (
-                  <ListaTurmasEvento
-                    turmas={turmasPorEvento[evento.id]}
-                    eventoId={evento.id}
-                    hoje={new Date()} // ok usar "agora"; não é parse
-                    inscricoesConfirmadas={inscricoesConfirmadas}
-                    inscrever={inscrever}
-                    inscrevendo={inscrevendo}
-                    jaInscritoNoEvento={!!evento.ja_inscrito}
-                    carregarInscritos={() => {}}
-                    carregarAvaliacoes={() => {}}
-                    gerarRelatorioPDF={() => {}}
-                  />
-                )}
-              </div>
-            ))}
+                  {evento.descricao && (
+                    <p className="text-sm text-gray-700 dark:text-gray-300 mb-2">
+                      {evento.descricao}
+                    </p>
+                  )}
+
+                  {/* Selo/aviso quando o usuário é instrutor do evento */}
+                  {ehInstrutor && (
+                    <div className="mb-2 text-xs font-medium inline-flex items-center gap-2 px-2 py-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 border border-amber-200 dark:border-amber-800">
+                      Você é instrutor deste evento
+                    </div>
+                  )}
+
+                  <p className="text-sm italic text-gray-600 mt-1">
+                    Instrutor(es):{" "}
+                    <span className="text-gray-800 dark:text-white">
+                      {Array.isArray(evento.instrutor) && evento.instrutor.length
+                        ? evento.instrutor.map((i) => i.nome).join(", ")
+                        : "A definir"}
+                    </span>
+                  </p>
+
+                  {evento.publico_alvo && (
+                    <p className="text-sm italic text-gray-600 mt-1">
+                      Público-alvo:{" "}
+                      <span className="text-gray-800 dark:text-white">{evento.publico_alvo}</span>
+                    </p>
+                  )}
+
+                  <div className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-2 mb-3">
+                    <CalendarDays className="w-4 h-4" />
+                    <span>
+                      {evento.data_inicio_geral && evento.data_fim_geral
+                        ? `${formatarDataCurtaSeguro(evento.data_inicio_geral)} até ${formatarDataCurtaSeguro(evento.data_fim_geral)}`
+                        : "Datas a definir"}
+                    </span>
+                  </div>
+
+                  <BotaoPrimario
+                    onClick={() => carregarTurmas(evento.id)}
+                    disabled={carregandoTurmas === evento.id}
+                    aria-expanded={!!turmasVisiveis[evento.id]}
+                    aria-controls={`turmas-${evento.id}`}
+                  >
+                    {carregandoTurmas === evento.id
+                      ? "Carregando..."
+                      : turmasVisiveis[evento.id]
+                      ? "Ocultar turmas"
+                      : "Ver turmas"}
+                  </BotaoPrimario>
+
+                  {turmasVisiveis[evento.id] && turmasPorEvento[evento.id] && (
+                    <ListaTurmasEvento
+                      turmas={turmasPorEvento[evento.id]}
+                      eventoId={evento.id}
+                      hoje={new Date()} // ok usar "agora"; não é parse
+                      inscricoesConfirmadas={inscricoesConfirmadas}
+                      inscrever={inscrever}
+                      inscrevendo={inscrevendo}
+                      jaInscritoNoEvento={!!evento.ja_inscrito}
+                      jaInstrutorDoEvento={!!evento.ja_instrutor}  // <- NOVO (se o componente usar, desabilita CTA)
+                      carregarInscritos={() => {}}
+                      carregarAvaliacoes={() => {}}
+                      gerarRelatorioPDF={() => {}}
+                    />
+                  )}
+                </div>
+              );
+            })}
         </div>
       )}
     </main>

@@ -243,32 +243,38 @@ export default function DashboardInstrutor() {
   };
 
   const carregarAvaliacoes = async (turmaIdRaw) => {
-    const turmaId = parseInt(turmaIdRaw);
-    if (!turmaId || isNaN(turmaId)) {
-      toast.error("Erro: Turma inválida.");
-      return;
+  const turmaId = parseInt(turmaIdRaw);
+  if (!turmaId || isNaN(turmaId)) {
+    toast.error("Erro: Turma inválida.");
+    return;
+  }
+  if (avaliacoesPorTurma[turmaId]) return;
+
+  groupC(`📝 carregarAvaliacoes(turmaId=${turmaId})`, async () => {
+    try {
+      console.time(`[time GET] /api/avaliacoes/turma/${turmaId}`);
+      const data = await apiGet(`/api/avaliacoes/turma/${turmaId}`, { on403: "silent" });
+      console.timeEnd(`[time GET] /api/avaliacoes/turma/${turmaId}`);
+
+      // 🔧 normaliza resposta em UM array
+      const lista =
+        Array.isArray(data) ? data :
+        Array.isArray(data?.comentarios) ? data.comentarios :
+        Array.isArray(data?.itens) ? data.itens :
+        Array.isArray(data?.avaliacoes) ? data.avaliacoes :
+        [];
+
+      setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: lista }));
+      dbg("avaliacoes(normalizadas):", lista.length);
+    } catch (err) {
+      const info = { name: err?.name, message: err?.message, status: err?.status, url: err?.url, data: err?.data };
+      console.error("Erro ao carregar avaliações:", info);
+      toast.error("Erro ao carregar avaliações.");
+      setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: [] }));
     }
-    if (avaliacoesPorTurma[turmaId]) return;
-    groupC(`📝 carregarAvaliacoes(turmaId=${turmaId})`, async () => {
-      try {
-        console.time(`[time GET] /api/avaliacoes/turma/${turmaId}`);
-        const data = await apiGet(`/api/avaliacoes/turma/${turmaId}`, { on403: "silent" });
-        console.timeEnd(`[time GET] /api/avaliacoes/turma/${turmaId}`);
-        setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: Array.isArray(data) ? data : [] }));
-        dbg("avaliacoes:", Array.isArray(data) ? data.length : 0);
-      } catch (err) {
-        const info = {
-          name: err?.name,
-          message: err?.message,
-          status: err?.status,
-          url: err?.url,
-          data: err?.data,
-        };
-        console.error("Erro ao carregar avaliações:", info);
-        toast.error("Erro ao carregar avaliações.");
-      }
-    });
-  };
+  });
+};
+
 
   // 🔎 Filtro por status (comparação por yyyy-mm-dd)
   const hoje = todayYMD();

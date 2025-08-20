@@ -6,7 +6,7 @@ import { toast } from "react-toastify";
 import BotaoPrimario from "../components/BotaoPrimario";
 import BotaoSecundario from "../components/BotaoSecundario";
 import Spinner from "../components/Spinner";
-import { apiPost } from "../services/api"; // ✅ usa cliente central
+import { apiPost } from "../services/api"; // cliente central
 
 export default function Cadastro() {
   const [nome, setNome] = useState("");
@@ -30,21 +30,26 @@ export default function Cadastro() {
     document.getElementById("nome")?.focus();
   }, []);
 
+  // Máscara/validações
   function aplicarMascaraCPF(valor) {
-    return valor
+    return String(valor || "")
       .replace(/\D/g, "")
+      .slice(0, 11)
       .replace(/(\d{3})(\d)/, "$1.$2")
       .replace(/(\d{3})(\d)/, "$1.$2")
       .replace(/(\d{3})(\d{1,2})$/, "$1-$2");
   }
 
-  function validarCPF(cpf) {
-    return /^\d{3}\.\d{3}\.\d{3}-\d{2}$/.test(cpf);
+  function validarCPF(c) {
+    return /^\d{3}\.\d{3}\.\d{3}-\d{2}$/.test(c || "");
   }
 
-  function validarEmail(email) {
-    return /\S+@\S+\.\S+/.test(email);
+  function validarEmail(v) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || "").trim());
   }
+
+  // mesmo critério do backend: 8+ com maiúscula, minúscula, número e símbolo
+  const senhaForteRe = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{8,}$/;
 
   function calcularForcaSenha(s) {
     let score = 0;
@@ -60,6 +65,8 @@ export default function Cadastro() {
 
   async function handleSubmit(e) {
     e.preventDefault();
+    if (loading) return;
+
     setErro("");
     setErroNome("");
     setErroCpf("");
@@ -67,7 +74,11 @@ export default function Cadastro() {
     setErroSenha("");
     setErroConfirmarSenha("");
 
-    if (!nome) {
+    const nomeTrim = nome.trim();
+    const emailTrim = email.trim().toLowerCase();
+    const cpfNum = cpf.replace(/\D/g, "");
+
+    if (!nomeTrim) {
       setErroNome("Nome é obrigatório.");
       return;
     }
@@ -75,12 +86,12 @@ export default function Cadastro() {
       setErroCpf("CPF inválido. Digite no formato 000.000.000-00.");
       return;
     }
-    if (!validarEmail(email)) {
+    if (!validarEmail(emailTrim)) {
       setErroEmail("E-mail inválido.");
       return;
     }
-    if (senha.length < 8) {
-      setErroSenha("Senha deve ter ao menos 8 caracteres.");
+    if (!senhaForteRe.test(senha)) {
+      setErroSenha("A senha precisa ter 8+ caracteres, com maiúscula, minúscula, número e símbolo.");
       return;
     }
     if (senha !== confirmarSenha) {
@@ -90,17 +101,17 @@ export default function Cadastro() {
 
     setLoading(true);
     try {
-      // ✅ agora usa baseURL da env (HTTPS) e tratamento padrão
-      const data = await apiPost("/api/usuarios/cadastro", {
-        nome,
-        cpf: cpf.replace(/\D/g, ""),
-        email,
+      // ❗️use path sem /api (o cliente já garante /api)
+      await apiPost("/usuarios/cadastro", {
+        nome: nomeTrim,
+        cpf: cpfNum,
+        email: emailTrim,
         senha,
         perfil: "usuario",
       });
 
       toast.success("✅ Cadastro realizado com sucesso!");
-      setTimeout(() => navigate("/login"), 1200);
+      setTimeout(() => navigate("/login"), 800);
     } catch (err) {
       const msg =
         err?.data?.erro ||
@@ -124,7 +135,7 @@ export default function Cadastro() {
       >
         <h2 className="text-2xl font-bold text-center">Criar Conta</h2>
 
-        {/* 🔴 Mensagens gerais de erro */}
+        {/* Erro geral */}
         {erro && (
           <p className="text-red-300 text-sm text-center" aria-live="assertive">
             {erro}
@@ -144,6 +155,7 @@ export default function Cadastro() {
             }}
             className="w-full px-4 py-2 rounded bg-white text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-lousa focus:outline-none"
             autoComplete="name"
+            disabled={loading}
           />
           {erroNome && <p className="text-red-500 text-xs mt-1">{erroNome}</p>}
         </div>
@@ -161,6 +173,8 @@ export default function Cadastro() {
             maxLength={14}
             className="w-full px-4 py-2 rounded bg-white text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-lousa focus:outline-none"
             autoComplete="username"
+            inputMode="numeric"
+            disabled={loading}
           />
           {erroCpf && <p className="text-red-500 text-xs mt-1">{erroCpf}</p>}
         </div>
@@ -177,6 +191,7 @@ export default function Cadastro() {
             }}
             className="w-full px-4 py-2 rounded bg-white text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-lousa focus:outline-none"
             autoComplete="email"
+            disabled={loading}
           />
           {erroEmail && <p className="text-red-500 text-xs mt-1">{erroEmail}</p>}
         </div>
@@ -193,19 +208,21 @@ export default function Cadastro() {
             }}
             className="w-full px-4 py-2 pr-12 rounded bg-white text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-lousa focus:outline-none"
             autoComplete="new-password"
+            disabled={loading}
           />
           <button
             type="button"
             onClick={() => setMostrarSenha((v) => !v)}
             className="absolute top-1/2 right-3 transform -translate-y-1/2 text-lousa"
             aria-label={mostrarSenha ? "Ocultar senha" : "Mostrar senha"}
+            disabled={loading}
           >
             {mostrarSenha ? <EyeOff size={20} /> : <Eye size={20} />}
           </button>
           {erroSenha && <p className="text-red-500 text-xs mt-1">{erroSenha}</p>}
         </div>
 
-        {/* Barra de força da senha */}
+        {/* Barra de força */}
         {senha && (
           <div className="mt-2 h-2 bg-gray-300 rounded" aria-label="Força da senha">
             <div
@@ -236,6 +253,7 @@ export default function Cadastro() {
             }}
             className="w-full px-4 py-2 rounded bg-white text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-lousa focus:outline-none"
             autoComplete="new-password"
+            disabled={loading}
           />
           {erroConfirmarSenha && (
             <p className="text-red-500 text-xs mt-1">{erroConfirmarSenha}</p>
@@ -247,6 +265,7 @@ export default function Cadastro() {
           type="submit"
           className="w-full flex justify-center items-center gap-2"
           disabled={loading}
+          aria-busy={loading}
         >
           {loading ? <Spinner pequeno /> : "Cadastrar"}
         </BotaoPrimario>
@@ -255,6 +274,7 @@ export default function Cadastro() {
           type="button"
           onClick={() => navigate("/login")}
           className="w-full mt-2"
+          disabled={loading}
         >
           Voltar para login
         </BotaoSecundario>

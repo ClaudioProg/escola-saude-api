@@ -1,26 +1,24 @@
 const express = require('express');
 const router = express.Router();
 
-// 📁 Importações organizadas (ordem alfabética para facilitar manutenção)
-const administradorTurmasRoute            = require('./administradorTurmasRoute');
-const agendaRoute                 = require('./agendaRoute');
-const authGoogleRoute             = require('./authGoogleRoute');
-const avaliacoesRoute             = require('./avaliacoesRoute');
-const certificadosRoute           = require('./certificadosRoute');
-const certificadosHistoricoRoute  = require('./certificadosHistoricoRoute');
-const dashboardAnaliticoRoute     = require('./dashboardAnaliticoRoute');
-const eventosRoute                = require('./eventosRoute');
-const inscricoesRoute             = require('./inscricoesRoute');
-const loginRoute                  = require('./loginRoute');
-const instrutorRoute           = require('./instrutorRoute');
-const presencasRoute              = require('./presencasRoute');
-const relatorioPresencasRoute     = require('./relatorioPresencasRoute');
-const relatoriosRoute             = require('./relatoriosRoute');
-const turmasRoute                 = require('./turmasRoute');
-const usuariosRoute               = require('./usuariosRoute');
-const notificacoesRoute           = require('./notificacoesRoute');
+const administradorTurmasRoute = require('./administradorTurmasRoute');
+const agendaRoute = require('./agendaRoute');
+const authGoogleRoute = require('./authGoogleRoute');
+const avaliacoesRoute = require('./avaliacoesRoute');
+const certificadosRoute = require('./certificadosRoute');
+const certificadosHistoricoRoute = require('./certificadosHistoricoRoute');
+const dashboardAnaliticoRoute = require('./dashboardAnaliticoRoute');
+const eventosRoute = require('./eventosRoute');
+const inscricoesRoute = require('./inscricoesRoute');
+const loginRoute = require('./loginRoute');
+const instrutorRoute = require('./instrutorRoute');
+const presencasRoute = require('./presencasRoute');
+const relatorioPresencasRoute = require('./relatorioPresencasRoute');
+const relatoriosRoute = require('./relatoriosRoute');
+const turmasRoute = require('./turmasRoute');
+const usuariosRoute = require('./usuariosRoute');
+const notificacoesRoute = require('./notificacoesRoute');
 
-// 📌 Definições de rota base
 router.use('/administrador/turmas', administradorTurmasRoute);
 router.use('/agenda', agendaRoute);
 router.use('/auth', authGoogleRoute);

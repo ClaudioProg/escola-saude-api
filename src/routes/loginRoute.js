@@ -1,18 +1,13 @@
-const express = require('express');
+// 📁 src/routes/authRoute.js
+const express = require("express");
 const router = express.Router();
-const usuarioPublicoController = require('../controllers/usuarioPublicoController');
-
-// ✅ Verifica se a função existe para evitar erro de undefined
-if (typeof usuarioPublicoController.loginUsuario !== 'function') {
-  console.error('❌ Erro: loginUsuario não foi exportado de usuarioPublicoController');
-  throw new Error('Função loginUsuario não encontrada no controller');
-}
+const { loginUsuario } = require("../controllers/loginController");
 
 /**
- * @route POST /api/auth
+ * @route POST /api/usuarios/login
  * @desc Autenticação de usuário (login)
  * @access Público
  */
-router.post('/', usuarioPublicoController.loginUsuario);
+router.post("/", loginUsuario);
 
 module.exports = router;

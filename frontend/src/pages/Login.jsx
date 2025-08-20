@@ -81,7 +81,7 @@ export default function Login() {
 
     setLoading(true);
     try {
-      const payload = await apiPost("/api/login", {
+      const payload = await apiPost("/login", {
         cpf: cpf.replace(/\D/g, ""),
         senha,
       });
@@ -106,8 +106,7 @@ export default function Login() {
     }
     setLoadingGoogle(true);
     try {
-      // Ajuste o endpoint se o seu for diferente
-      const payload = await apiPost("/api/auth/google", {
+      const payload = await apiPost("/auth/google", {
         credential: credentialResponse.credential,
       });
       persistirSessao(payload);
@@ -187,23 +186,36 @@ export default function Login() {
               aria-label={mostrarSenha ? "Ocultar senha" : "Mostrar senha"}
               onClick={() => setMostrarSenha((prev) => !prev)}
               className="absolute top-1/2 right-3 transform -translate-y-1/2 text-lousa"
+              title={mostrarSenha ? "Ocultar senha" : "Mostrar senha"}
             >
               {mostrarSenha ? <EyeOff size={18} /> : <Eye size={18} />}
             </button>
           </div>
           {erroSenha && <p className="text-red-500 text-xs mt-1">{erroSenha}</p>}
+
+          {/* 🔗 Esqueci minha senha */}
+          <div className="mt-2 text-right">
+            <button
+              type="button"
+              onClick={() => navigate("/recuperar-senha")}
+              className="text-sm underline text-white/90 hover:text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-lousa focus:ring-offset-lousa/20 rounded"
+            >
+              Esqueceu sua senha?
+            </button>
+          </div>
         </div>
 
         {/* Entrar */}
         <BotaoPrimario
           type="submit"
-          className="w-full flex justify-center items-center gap-2 mt-2"
+          className="w-full flex justify-center items-center gap-2 mt-1"
           aria-label="Entrar na plataforma"
           disabled={loading || loadingGoogle}
         >
           <LogIn size={16} /> {loading ? "Entrando..." : "Entrar"}
         </BotaoPrimario>
 
+        {/* Separador */}
         <div className="text-center text-sm text-white mt-2">ou</div>
 
         {/* Google */}

@@ -5,13 +5,13 @@ const authMiddleware = require("../auth/authMiddleware");
 const authorizeRoles = require("../auth/authorizeRoles");
 
 const {
-  listarinstrutor,
+  listarInstrutor,
   getEventosAvaliacoesPorInstrutor,
   getTurmasComEventoPorInstrutor, // ✅ incluído
 } = require("../controllers/instrutorController");
 
 // 📋 Listar todos os instrutor (admin)
-router.get("/", authMiddleware, authorizeRoles("administrador"), listarinstrutor);
+router.get("/", authMiddleware, authorizeRoles("administrador"), listarInstrutor);
 
 // 📊 Histórico de eventos com avaliação por instrutor
 router.get(

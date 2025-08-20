@@ -1,11 +1,19 @@
+// 📁 src/routes/turmasRoute.js
 const express = require('express');
 const router = express.Router();
 
 const turmaController = require('../controllers/turmaController');
 const inscricoesController = require('../controllers/inscricoesController');
+const { listarTurmasDoEvento } = require('../controllers/eventosController');
 
 const authMiddleware = require('../auth/authMiddleware');
 const authorizeRoles = require('../auth/authorizeRoles');
+
+/** Bridge: adapta :evento_id → :id para o handler do eventosController */
+const listarTurmasPorEventoBridge = (req, res) => {
+  req.params.id = req.params.evento_id || req.params.id; // normaliza
+  return listarTurmasDoEvento(req, res);
+};
 
 // ➕ Criar nova turma (somente administrador)
 router.post(
@@ -32,10 +40,18 @@ router.delete(
 );
 
 // 📋 Listar turmas de um evento (usuário autenticado)
+//    Usa o handler do eventosController que já inclui `inscritos`
 router.get(
   '/evento/:evento_id',
   authMiddleware,
-  turmaController.listarTurmasPorEvento
+  listarTurmasPorEventoBridge
+);
+
+// Alias opcional compatível com o front (se usado em algum lugar)
+router.get(
+  '/por-evento/:id',
+  authMiddleware,
+  listarTurmasDoEvento
 );
 
 // 📢 Listar turmas atribuídas ao instrutor ou administrador

@@ -1,7 +1,7 @@
  // controllers/relatorioPresencasController.js
 const db = require('../db');
 
-// 📄 Relatório de presenças por turma (corrigido sem uso de datas_evento)
+// 📄 Relatório de presenças por turma 
 async function porTurma(req, res) {
   const { turma_id } = req.params;
 

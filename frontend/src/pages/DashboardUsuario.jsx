@@ -20,7 +20,7 @@ export default function DashboardUsuario() {
         console.log("🔑 Token (automático via apiGet). Buscando dashboard…");
         const data = await apiGet("/dashboard-usuario");
         console.log("📊 Dados recebidos do dashboard:", data);
-        setDados(data);
+        setDados(data || {});
       } catch (err) {
         console.error("❌ Erro ao buscar dados do dashboard:", err);
         setErro(true);
@@ -56,11 +56,11 @@ export default function DashboardUsuario() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="bg-white dark:bg-zinc-800 rounded-md p-4">
             <h3 className="text-center font-bold mb-2">Gráfico de Eventos</h3>
-            <GraficoEventos dados={dados.graficoEventos} />
+            <GraficoEventos dados={dados?.graficoEventos ?? {}} />
           </div>
           <div className="bg-white dark:bg-zinc-800 rounded-md p-4">
             <h3 className="text-center font-bold mb-2">Avaliações Recebidas</h3>
-            <GraficoAvaliacoes dados={dados.graficoAvaliacoes} />
+            <GraficoAvaliacoes dados={dados?.graficoAvaliacoes ?? {}} />
           </div>
         </div>
       </div>
@@ -85,6 +85,13 @@ export default function DashboardUsuario() {
 }
 
 function CardInfo({ icon: Icon, titulo, valor }) {
+  const n = Number(valor);
+  const isNum = Number.isFinite(n);
+
+  const exibicao = /M[eé]dia/i.test(titulo)
+    ? (isNum ? (n * 2).toFixed(1) : "—")     // 0.0–10.0, 1 casa, sem “/5”
+    : (isNum ? n : (valor ?? "—"));
+
   return (
     <motion.div
       className="bg-white dark:bg-zinc-800 rounded-xl shadow p-4 flex flex-col items-center justify-center gap-2 text-center"
@@ -94,7 +101,7 @@ function CardInfo({ icon: Icon, titulo, valor }) {
     >
       <Icon className="w-8 h-8 text-lousa dark:text-white" />
       <p className="text-sm text-gray-500 dark:text-gray-300">{titulo}</p>
-      <p className="text-2xl font-bold text-lousa dark:text-white">{valor}</p>
+      <p className="text-2xl font-bold text-lousa dark:text-white">{exibicao}</p>
     </motion.div>
   );
 }

@@ -1,6 +1,6 @@
 // 📁 src/components/Navbar.jsx
-import { useEffect, useState, useRef } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   CalendarDays,
   ChevronDown,
@@ -19,271 +19,484 @@ import {
   ListChecks,
   PencilLine,
   UserCog,
-  HelpCircle
+  HelpCircle,
+  Menu as MenuIcon,
+  X as CloseIcon,
+  Bell
 } from "lucide-react";
-import { apiGet } from "../services/api"; // ✅ usa serviço de API
+import { apiGet } from "../services/api";
+
+/** Normaliza o perfil vindo do localStorage (string, JSON ou CSV) para array de strings minúsculas */
+function normalizarPerfis(raw) {
+  if (!raw) return ["usuario"];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.map((p) => String(p).toLowerCase());
+  } catch {
+    /* não era JSON */
+  }
+  return String(raw)
+    .split(",")
+    .map((p) => p.replace(/[\[\]"]/g, "").trim().toLowerCase())
+    .filter(Boolean);
+}
+
+/** Item de menu genérico */
+function MenuList({ items, onSelect, activePath }) {
+  return (
+    <div
+      role="menu"
+      className="absolute right-0 top-full mt-2 bg-white text-lousa rounded-xl shadow-xl py-2 w-64 ring-1 ring-black/5"
+    >
+      {items.map(({ label, path, icon: Icon }) => {
+        const active = activePath === path;
+        return (
+          <button
+            key={label}
+            role="menuitem"
+            onClick={() => onSelect(path)}
+            className={`w-full text-left px-4 py-2 flex items-center gap-2 hover:bg-gelo focus:bg-gelo outline-none ${
+              active ? "font-semibold underline" : ""
+            }`}
+          >
+            <Icon size={16} aria-hidden="true" /> {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 export default function Navbar() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const normalizarPerfis = (raw) => {
-   if (!raw) return ["usuario"];
-   try {
-     const parsed = JSON.parse(raw);
-     if (Array.isArray(parsed)) return parsed.map(p => String(p).toLowerCase());
-   } catch { /* não era JSON */ }
-   // fallback: string separada por vírgulas
-   return String(raw)
-     .split(",")
-     .map(p => p.replace(/[\[\]"]/g, "").trim().toLowerCase())
-     .filter(Boolean);
- };
+  // ▶ perfil
+  const [perfil, setPerfil] = useState(() =>
+    normalizarPerfis(localStorage.getItem("perfil"))
+  );
 
- const [perfil, setPerfil] = useState(() => normalizarPerfis(localStorage.getItem("perfil")));
-
+  // ▶ tema
   const [darkMode, setDarkMode] = useState(() => {
     const saved = localStorage.getItem("darkMode");
-    return saved ? JSON.parse(saved) : document.documentElement.classList.contains("dark");
+    return saved
+      ? JSON.parse(saved)
+      : document.documentElement.classList.contains("dark");
   });
-  
-  const [menuusuarioAberto, setMenuusuarioAberto] = useState(false);
-  const [menuinstrutorAberto, setMenuinstrutorAberto] = useState(false);
-  const [menuadministradorAberto, setMenuadministradorAberto] = useState(false);
-  const [configAberto, setConfigAberto] = useState(false);
 
-  const refusuario = useRef();
-  const refinstrutor = useRef();
-  const refadministrador = useRef();
-  const configRef = useRef();
+  // ▶ visibilidades
+  const [menuUsuarioOpen, setMenuUsuarioOpen] = useState(false);
+  const [menuInstrutorOpen, setMenuInstrutorOpen] = useState(false);
+  const [menuAdminOpen, setMenuAdminOpen] = useState(false);
+  const [configOpen, setConfigOpen] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
-  useEffect(() => {
-  setPerfil(normalizarPerfis(localStorage.getItem("perfil")));
-  const onStorage = (e) => {
-    if (e.key === "perfil" || e.key === "usuario") {
-      setPerfil(normalizarPerfis(localStorage.getItem("perfil")));
-    }
-  };
-  window.addEventListener("storage", onStorage);
-  return () => window.removeEventListener("storage", onStorage);
-}, []);
+  // ▶ refs para fechar ao clicar fora
+  const refUsuario = useRef(null);
+  const refInstrutor = useRef(null);
+  const refAdmin = useRef(null);
+  const refConfig = useRef(null);
+  const refMobile = useRef(null);
 
-  const [notificacoes, setNotificacoes] = useState([]);
-  useEffect(() => {
-    apiGet("/notificacoes")
-      .then((data) => setNotificacoes(data || []))
-      .catch(() => setNotificacoes([]));
-  }, []);
+  // ▶ itens de menu
+  const menusUsuario = useMemo(
+    () => [
+      { label: "Eventos", path: "/eventos", icon: CalendarDays },
+      { label: "Meus Cursos", path: "/minhas-inscricoes", icon: BookOpen },
+      { label: "Avaliações Pendentes", path: "/avaliacao", icon: PencilLine },
+      { label: "Meus Certificados", path: "/certificados", icon: FileText },
+      { label: "Escanear", path: "/scanner", icon: QrCode },
+    ],
+    []
+  );
 
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", darkMode);
-    localStorage.setItem("darkMode", JSON.stringify(darkMode));
-  }, [darkMode]);
+  const menusInstrutor = useMemo(
+    () => [
+      { label: "Painel", path: "/instrutor", icon: LayoutDashboard },
+      { label: "Agenda", path: "/agenda-instrutor", icon: CalendarDays },
+    ],
+    []
+  );
 
-  useEffect(() => {
-    const handleClickFora = (e) => {
-      if (refusuario.current && !refusuario.current.contains(e.target)) setMenuusuarioAberto(false);
-      if (refinstrutor.current && !refinstrutor.current.contains(e.target)) setMenuinstrutorAberto(false);
-      if (refadministrador.current && !refadministrador.current.contains(e.target)) setMenuadministradorAberto(false);
-      if (configRef.current && !configRef.current.contains(e.target)) setConfigAberto(false);
-    };
-    document.addEventListener("mousedown", handleClickFora);
-    return () => document.removeEventListener("mousedown", handleClickFora);
-  }, []);
+  const menusAdmin = useMemo(
+    () => [
+      { label: "Painel Administrador", path: "/administrador", icon: LayoutDashboard },
+      { label: "Agenda", path: "/agenda-administrador", icon: ListChecks },
+      { label: "Certificados Avulsos", path: "/certificados-avulsos", icon: FileText },
+      { label: "Dashboard Analítico", path: "/dashboard-analitico", icon: BarChart3 },
+      { label: "QR Code Presença", path: "/admin/qr-codes", icon: QrCode },
+      { label: "Relatórios", path: "/relatorios-customizados", icon: ClipboardList },
+      { label: "Gestão de Usuários", path: "/gestao-usuarios", icon: Users },
+      { label: "Gestão de Instrutor", path: "/gestao-instrutor", icon: Presentation },
+      { label: "Gestão de Eventos", path: "/gerenciar-eventos", icon: CalendarDays },
+      { label: "Gestão de Presença", path: "/gestao-presenca", icon: QrCode },
+    ],
+    []
+  );
 
-  const sair = () => {
-    localStorage.clear();
-    navigate("/login");
-  };
-
-  const menusUsuario = [
-    { label: "Eventos", path: "/eventos", icon: CalendarDays },
-    { label: "Meus Cursos", path: "/minhas-inscricoes", icon: BookOpen },
-    { label: "Avaliações Pendentes", path: "/avaliacao", icon: PencilLine },
-    { label: "Meus Certificados", path: "/certificados", icon: FileText },
-    { label: "Escanear", path: "/scanner", icon: QrCode },
-  ];
-
-  const menusinstrutor = [
-  { label: "Painel", path: "/instrutor", icon: LayoutDashboard },
-  { label: "Agenda", path: "/agenda-instrutor", icon: CalendarDays },
-];
-
-  const menusadministrador = [
-    { label: "Painel administrador", path: "/administrador", icon: LayoutDashboard },
-    { label: "Agenda", path: "/agenda-administrador", icon: ListChecks },
-    { label: "Certificados Avulsos", path: "/certificados-avulsos", icon: FileText },
-    { label: "Dashboard Analítico", path: "/dashboard-analitico", icon: BarChart3 },
-    { label: "QR Code Presença", path: "/admin/qr-codes", icon: QrCode },
-    { label: "Relatórios", path: "/relatorios-customizados", icon: ClipboardList },
-    { label: "Gestão de Usuários", path: "/gestao-usuarios", icon: Users },
-    { label: "Gestão de instrutor", path: "/gestao-instrutor", icon: Presentation },
-    { label: "Gestão de Eventos", path: "/gerenciar-eventos", icon: CalendarDays },
-    { label: "Gestão de Presença", path: "/gestao-presenca", icon: QrCode }
-  ];
-
-  const isUsuario = perfil.includes("usuario") || perfil.includes("instrutor") || perfil.includes("administrador");
+  // ▶ capacidades
+  const isUsuario =
+    perfil.includes("usuario") ||
+    perfil.includes("instrutor") ||
+    perfil.includes("administrador");
   const isInstrutor = perfil.includes("instrutor") || perfil.includes("administrador");
-  const isAdministrador = perfil.includes("administrador");
+  const isAdmin = perfil.includes("administrador");
 
+  // ▶ notificações
   const [totalNaoLidas, setTotalNaoLidas] = useState(0);
 
-  // 🔄 Atualiza contador de notificações não lidas (usa apiGet)
-  async function atualizarContadorNotificacoes() {
+  const atualizarContadorNotificacoes = useCallback(async () => {
     try {
       const data = await apiGet("/notificacoes/nao-lidas/contagem");
       setTotalNaoLidas(data?.totalNaoLidas ?? data?.total ?? 0);
     } catch {
       setTotalNaoLidas(0);
     }
-  }
-
-  // ⏱️ Atualiza automaticamente a cada 15 segundos
-  useEffect(() => {
-    atualizarContadorNotificacoes(); // inicial
-    const intervalo = setInterval(atualizarContadorNotificacoes, 15000);
-
-    // disponibiliza globalmente para chamada externa
-    window.atualizarContadorNotificacoes = atualizarContadorNotificacoes;
-
-    return () => {
-      clearInterval(intervalo);
-      delete window.atualizarContadorNotificacoes;
-    };
   }, []);
 
+  // carregar/atualizar notificações
+  useEffect(() => {
+    atualizarContadorNotificacoes();
+    const id = setInterval(atualizarContadorNotificacoes, 15000);
+    window.atualizarContadorNotificacoes = atualizarContadorNotificacoes;
+    return () => {
+      clearInterval(id);
+      delete window.atualizarContadorNotificacoes;
+    };
+  }, [atualizarContadorNotificacoes]);
+
+  // sincroniza perfil por storage
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key === "perfil" || e.key === "usuario") {
+        setPerfil(normalizarPerfis(localStorage.getItem("perfil")));
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  // tema
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", darkMode);
+    localStorage.setItem("darkMode", JSON.stringify(darkMode));
+  }, [darkMode]);
+
+  // fechar ao clicar fora
+  useEffect(() => {
+    function onDown(ev) {
+      const t = ev.target;
+      const outsides = [
+        [refUsuario, setMenuUsuarioOpen],
+        [refInstrutor, setMenuInstrutorOpen],
+        [refAdmin, setMenuAdminOpen],
+        [refConfig, setConfigOpen],
+        [refMobile, setMobileOpen],
+      ];
+      outsides.forEach(([r, set]) => {
+        if (r.current && !r.current.contains(t)) set(false);
+      });
+    }
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, []);
+
+  // ESC fecha menus
+  useEffect(() => {
+    function onEsc(e) {
+      if (e.key === "Escape") {
+        setMenuUsuarioOpen(false);
+        setMenuInstrutorOpen(false);
+        setMenuAdminOpen(false);
+        setConfigOpen(false);
+        setMobileOpen(false);
+      }
+    }
+    window.addEventListener("keydown", onEsc);
+    return () => window.removeEventListener("keydown", onEsc);
+  }, []);
+
+  // sair
+  const sair = () => {
+    localStorage.clear();
+    navigate("/login");
+  };
+
+  // navegar + fechar dropdowns
+  const go = (path) => {
+    navigate(path);
+    setMenuUsuarioOpen(false);
+    setMenuInstrutorOpen(false);
+    setMenuAdminOpen(false);
+    setConfigOpen(false);
+    setMobileOpen(false);
+  };
+
+  // botão base dropdown
+  const dropBtnBase =
+    "flex items-center gap-1 px-3 py-1 text-sm rounded-xl hover:bg-white hover:text-lousa focus-visible:ring-2 focus-visible:ring-white/60 outline-none";
+
   return (
-    <nav className="w-full bg-lousa text-white shadow-md px-4 py-2 flex items-center justify-between sticky top-0 z-50 border-b border-white/20" role="navigation">
-      <div className="text-xl font-bold cursor-pointer select-none" onClick={() => navigate("/")}>
-        Escola da Saúde
-      </div>
-      <div className="flex gap-3 items-center">
-        {/* MENU USUÁRIO */}
-        {isUsuario && (
-          <div className="relative" ref={refusuario}>
-            <button
-              onClick={() => setMenuusuarioAberto(!menuusuarioAberto)}
-              className="flex items-center gap-1 px-3 py-1 text-sm rounded-xl hover:bg-white hover:text-lousa"
-            >
-              <BookOpen className="w-4 h-4" /> Usuário <ChevronDown className="w-4 h-4" />
-            </button>
-            {menuusuarioAberto && (
-              <div className="absolute right-0 top-full mt-2 bg-white text-lousa rounded-xl shadow-xl py-2 w-60">
-                {menusUsuario.map(({ label, path, icon: Icon }) => (
-                  <button
-                    key={label}
-                    onClick={() => {
-                      navigate(path);
-                      setMenuusuarioAberto(false);
-                    }}
-                    className={`w-full text-left px-4 py-2 hover:underline flex items-center gap-2 ${location.pathname === path ? "font-bold underline" : ""}`}
-                  >
-                    <Icon size={16} /> {label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* MENU INSTRUTOR */}
-        {isInstrutor && (
-          <div className="relative" ref={refinstrutor}>
-            <button
-              onClick={() => setMenuinstrutorAberto(!menuinstrutorAberto)}
-              className="flex items-center gap-1 px-3 py-1 text-sm rounded-xl hover:bg-white hover:text-lousa"
-            >
-              <Presentation className="w-4 h-4" /> Instrutor <ChevronDown className="w-4 h-4" />
-            </button>
-            {menuinstrutorAberto && (
-              <div className="absolute right-0 top-full mt-2 bg-white text-lousa rounded-xl shadow-xl py-2 w-60">
-                {menusinstrutor.map(({ label, path, icon: Icon }) => (
-                  <button
-                    key={label}
-                    onClick={() => {
-                      navigate(path);
-                      setMenuinstrutorAberto(false);
-                    }}
-                    className={`w-full text-left px-4 py-2 hover:underline flex items-center gap-2 ${location.pathname === path ? "font-bold underline" : ""}`}
-                  >
-                    <Icon size={16} /> {label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* MENU ADMINISTRADOR */}
-        {isAdministrador && (
-          <div className="relative" ref={refadministrador}>
-            <button
-              onClick={() => setMenuadministradorAberto(!menuadministradorAberto)}
-              className="flex items-center gap-1 px-3 py-1 text-sm rounded-xl hover:bg-white hover:text-lousa"
-            >
-              <Shield className="w-4 h-4" /> Administrador <ChevronDown className="w-4 h-4" />
-            </button>
-            {menuadministradorAberto && (
-              <div className="absolute right-0 top-full mt-2 bg-white text-lousa rounded-xl shadow-xl py-2 w-64">
-                {menusadministrador.map(({ label, path, icon: Icon }) => (
-                  <button
-                    key={label}
-                    onClick={() => {
-                      navigate(path);
-                      setMenuadministradorAberto(false);
-                    }}
-                    className={`w-full text-left px-4 py-2 hover:underline flex items-center gap-2 ${location.pathname === path ? "font-bold underline" : ""}`}
-                  >
-                    <Icon size={16} /> {label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* 🔔 Notificações */}
+    <nav
+      role="navigation"
+      className="w-full bg-lousa text-white shadow-md px-3 sm:px-4 py-2 sticky top-0 z-50 border-b border-white/20"
+    >
+      <div className="flex items-center justify-between">
+        {/* logo / home */}
         <button
-          onClick={() => navigate("/notificacoes")}
-          className="relative flex items-center justify-center px-3 py-1 rounded-xl hover:bg-white hover:text-lousa"
+          onClick={() => go("/")}
+          className="text-lg sm:text-xl font-bold tracking-tight select-none focus-visible:ring-2 focus-visible:ring-white/60 rounded px-1"
+          aria-label="Ir para a página inicial"
         >
-          <span className="sr-only">Notificações</span>
-          <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-          </svg>
-          {totalNaoLidas > 0 && (
-            <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[10px] font-bold px-1.5 rounded-full leading-tight">
-              {totalNaoLidas}
-            </span>
-          )}
+          Escola da Saúde
         </button>
 
-        {/* ⚙️ Configurações */}
-        <div className="relative" ref={configRef}>
-          <button
-            onClick={() => setConfigAberto(!configAberto)}
-            className="flex items-center gap-1 px-3 py-1 text-sm rounded-xl border border-white hover:bg-white hover:text-lousa"
-          >
-            <UserCog className="w-4 h-4" /> <ChevronDown className="w-4 h-4" />
-          </button>
-          {configAberto && (
-            <div className="absolute right-0 top-full mt-2 bg-white text-lousa rounded-xl shadow-xl py-2 w-52">
-              <button onClick={() => navigate("/perfil")} className="w-full text-left px-4 py-2 hover:underline flex items-center gap-2">
-                <UserCog size={16} /> Atualizar Cadastro
+        {/* ações à direita (desktop) */}
+        <div className="hidden md:flex gap-2 items-center">
+          {/* USUÁRIO */}
+          {isUsuario && (
+            <div className="relative" ref={refUsuario}>
+              <button
+                onClick={() => setMenuUsuarioOpen((v) => !v)}
+                className={dropBtnBase}
+                aria-haspopup="menu"
+                aria-expanded={menuUsuarioOpen}
+              >
+                <BookOpen className="w-4 h-4" aria-hidden="true" /> Usuário
+                <ChevronDown className="w-4 h-4" aria-hidden="true" />
               </button>
-              <button onClick={() => setDarkMode(!darkMode)} className="w-full text-left px-4 py-2 hover:underline flex items-center gap-2">
-                {darkMode ? <Sun size={16} /> : <Moon size={16} />} Modo {darkMode ? "Claro" : "Escuro"}
-              </button>
-              <button onClick={() => navigate("/ajuda")} className="w-full text-left px-4 py-2 hover:underline flex items-center gap-2">
-                <HelpCircle size={16} /> Ajuda / FAQ
-              </button>
-              <button onClick={sair} className="w-full text-left px-4 py-2 text-red-600 hover:underline flex items-center gap-2">
-                <LogOut size={16} /> Sair
-              </button>
+              {menuUsuarioOpen && (
+                <MenuList
+                  items={menusUsuario}
+                  activePath={location.pathname}
+                  onSelect={go}
+                />
+              )}
             </div>
           )}
+
+          {/* INSTRUTOR */}
+          {isInstrutor && (
+            <div className="relative" ref={refInstrutor}>
+              <button
+                onClick={() => setMenuInstrutorOpen((v) => !v)}
+                className={dropBtnBase}
+                aria-haspopup="menu"
+                aria-expanded={menuInstrutorOpen}
+              >
+                <Presentation className="w-4 h-4" aria-hidden="true" /> Instrutor
+                <ChevronDown className="w-4 h-4" aria-hidden="true" />
+              </button>
+              {menuInstrutorOpen && (
+                <MenuList
+                  items={menusInstrutor}
+                  activePath={location.pathname}
+                  onSelect={go}
+                />
+              )}
+            </div>
+          )}
+
+          {/* ADMIN */}
+          {isAdmin && (
+            <div className="relative" ref={refAdmin}>
+              <button
+                onClick={() => setMenuAdminOpen((v) => !v)}
+                className={dropBtnBase}
+                aria-haspopup="menu"
+                aria-expanded={menuAdminOpen}
+              >
+                <Shield className="w-4 h-4" aria-hidden="true" /> Administrador
+                <ChevronDown className="w-4 h-4" aria-hidden="true" />
+              </button>
+              {menuAdminOpen && (
+                <MenuList
+                  items={menusAdmin}
+                  activePath={location.pathname}
+                  onSelect={go}
+                />
+              )}
+            </div>
+          )}
+
+          {/* NOTIFICAÇÕES */}
+          <button
+            onClick={() => go("/notificacoes")}
+            className="relative flex items-center justify-center px-3 py-1 rounded-xl hover:bg-white hover:text-lousa focus-visible:ring-2 focus-visible:ring-white/60 outline-none"
+            aria-label={`Abrir notificações${totalNaoLidas ? `, ${totalNaoLidas} não lidas` : ""}`}
+          >
+            <Bell className="w-5 h-5" aria-hidden="true" />
+            {totalNaoLidas > 0 && (
+              <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[10px] font-bold px-1.5 rounded-full leading-tight">
+                {totalNaoLidas}
+              </span>
+            )}
+          </button>
+
+          {/* CONFIGURAÇÕES */}
+          <div className="relative" ref={refConfig}>
+            <button
+              onClick={() => setConfigOpen((v) => !v)}
+              className="flex items-center gap-1 px-3 py-1 text-sm rounded-xl border border-white/70 hover:bg-white hover:text-lousa focus-visible:ring-2 focus-visible:ring-white/60 outline-none"
+              aria-haspopup="menu"
+              aria-expanded={configOpen}
+            >
+              <UserCog className="w-4 h-4" aria-hidden="true" />
+              <ChevronDown className="w-4 h-4" aria-hidden="true" />
+            </button>
+            {configOpen && (
+              <div
+                role="menu"
+                className="absolute right-0 top-full mt-2 bg-white text-lousa rounded-xl shadow-xl py-2 w-56 ring-1 ring-black/5"
+              >
+                <button
+                  role="menuitem"
+                  onClick={() => go("/perfil")}
+                  className="w-full text-left px-4 py-2 flex items-center gap-2 hover:bg-gelo focus:bg-gelo outline-none"
+                >
+                  <UserCog size={16} aria-hidden="true" /> Atualizar Cadastro
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => setDarkMode((v) => !v)}
+                  className="w-full text-left px-4 py-2 flex items-center gap-2 hover:bg-gelo focus:bg-gelo outline-none"
+                >
+                  {darkMode ? <Sun size={16} aria-hidden="true" /> : <Moon size={16} aria-hidden="true" />}
+                  Modo {darkMode ? "Claro" : "Escuro"}
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => go("/ajuda")}
+                  className="w-full text-left px-4 py-2 flex items-center gap-2 hover:bg-gelo focus:bg-gelo outline-none"
+                >
+                  <HelpCircle size={16} aria-hidden="true" /> Ajuda / FAQ
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={sair}
+                  className="w-full text-left px-4 py-2 flex items-center gap-2 text-red-600 hover:bg-gelo focus:bg-gelo outline-none"
+                >
+                  <LogOut size={16} aria-hidden="true" /> Sair
+                </button>
+              </div>
+            )}
+          </div>
         </div>
+
+        {/* hambúrguer (mobile) */}
+        <button
+          className="md:hidden inline-flex items-center justify-center rounded-lg p-2 hover:bg-white hover:text-lousa focus-visible:ring-2 focus-visible:ring-white/60 outline-none"
+          onClick={() => setMobileOpen((v) => !v)}
+          aria-label={mobileOpen ? "Fechar menu" : "Abrir menu"}
+          aria-expanded={mobileOpen}
+        >
+          {mobileOpen ? <CloseIcon className="w-6 h-6" /> : <MenuIcon className="w-6 h-6" />}
+        </button>
       </div>
+
+      {/* menu deslizante mobile */}
+      {mobileOpen && (
+        <div
+          ref={refMobile}
+          className="md:hidden mt-2 rounded-xl bg-white text-lousa shadow-xl ring-1 ring-black/5 overflow-hidden"
+        >
+          <div className="p-2 grid gap-1">
+            {/* blocos por perfil */}
+            {isUsuario && (
+              <>
+                <div className="px-2 pt-2 pb-1 text-xs font-semibold uppercase text-gray-500">Usuário</div>
+                {menusUsuario.map((m) => (
+                  <button
+                    key={m.path}
+                    onClick={() => go(m.path)}
+                    className={`text-left w-full px-3 py-2 rounded-lg flex items-center gap-2 hover:bg-gelo ${
+                      location.pathname === m.path ? "font-semibold underline" : ""
+                    }`}
+                  >
+                    <m.icon size={16} /> {m.label}
+                  </button>
+                ))}
+                <hr className="my-1" />
+              </>
+            )}
+
+            {isInstrutor && (
+              <>
+                <div className="px-2 pt-2 pb-1 text-xs font-semibold uppercase text-gray-500">Instrutor</div>
+                {menusInstrutor.map((m) => (
+                  <button
+                    key={m.path}
+                    onClick={() => go(m.path)}
+                    className={`text-left w-full px-3 py-2 rounded-lg flex items-center gap-2 hover:bg-gelo ${
+                      location.pathname === m.path ? "font-semibold underline" : ""
+                    }`}
+                  >
+                    <m.icon size={16} /> {m.label}
+                  </button>
+                ))}
+                <hr className="my-1" />
+              </>
+            )}
+
+            {isAdmin && (
+              <>
+                <div className="px-2 pt-2 pb-1 text-xs font-semibold uppercase text-gray-500">Administrador</div>
+                {menusAdmin.map((m) => (
+                  <button
+                    key={m.path}
+                    onClick={() => go(m.path)}
+                    className={`text-left w-full px-3 py-2 rounded-lg flex items-center gap-2 hover:bg-gelo ${
+                      location.pathname === m.path ? "font-semibold underline" : ""
+                    }`}
+                  >
+                    <m.icon size={16} /> {m.label}
+                  </button>
+                ))}
+                <hr className="my-1" />
+              </>
+            )}
+
+            {/* utilidades */}
+            <div className="px-2 pt-2 pb-1 text-xs font-semibold uppercase text-gray-500">Geral</div>
+            <button
+              onClick={() => go("/notificacoes")}
+              className="text-left w-full px-3 py-2 rounded-lg flex items-center gap-2 hover:bg-gelo"
+            >
+              <Bell size={16} />
+              Notificações
+              {totalNaoLidas > 0 && (
+                <span className="ml-auto inline-flex items-center justify-center px-2 rounded-full text-[10px] font-bold bg-red-600 text-white">
+                  {totalNaoLidas}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => go("/perfil")}
+              className="text-left w-full px-3 py-2 rounded-lg flex items-center gap-2 hover:bg-gelo"
+            >
+              <UserCog size={16} /> Atualizar Cadastro
+            </button>
+            <button
+              onClick={() => setDarkMode((v) => !v)}
+              className="text-left w-full px-3 py-2 rounded-lg flex items-center gap-2 hover:bg-gelo"
+            >
+              {darkMode ? <Sun size={16} /> : <Moon size={16} />} Modo {darkMode ? "Claro" : "Escuro"}
+            </button>
+            <button
+              onClick={() => go("/ajuda")}
+              className="text-left w-full px-3 py-2 rounded-lg flex items-center gap-2 hover:bg-gelo"
+            >
+              <HelpCircle size={16} /> Ajuda / FAQ
+            </button>
+            <button
+              onClick={sair}
+              className="text-left w-full px-3 py-2 rounded-lg flex items-center gap-2 text-red-600 hover:bg-gelo"
+            >
+              <LogOut size={16} /> Sair
+            </button>
+          </div>
+        </div>
+      )}
     </nav>
   );
 }

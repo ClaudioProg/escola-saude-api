@@ -1,36 +1,51 @@
-// tailwind.config.js
-
-export default {
-  // 🧠 Define os arquivos onde o Tailwind deve procurar por classes
+// 📁 tailwind.config.js
+/** @type {import('tailwindcss').Config} */
+module.exports = {
   content: ["./index.html", "./src/**/*.{js,jsx,ts,tsx}"],
-
-  // 🌙 Ativa o modo escuro baseado em classe (usando `class="dark"`)
-  darkMode: 'class',
-
+  darkMode: "class",
   theme: {
     extend: {
-      // 🎨 Cores personalizadas (identidade visual da Escola da Saúde)
       colors: {
-        gelo: '#f8f9fa',           // Fundo padrão claro
-        lousa: '#2e5e4e',          // Verde-lousa para destaques
-        textoLousa: '#ffffff',     // Texto claro sobre o fundo verde
-      },
+        gelo: "#f8f9fa",        // Fundo claro
+        lousa: "#2e5e4e",       // Verde institucional
+        textoLousa: "#ffffff",  // Texto claro sobre verde
+        roxo: "#6d28d9",
+        azul: "#2563eb",
+        lilas: "#a78bfa",
+        rosa: "#ec4899",
 
-      // 🔤 Fonte padrão
+        // 🎯 Cores semânticas para status
+        status: {
+          programado: "#22c55e",  // verde-500
+          aguardando: "#facc15", // amarelo-400
+          encerrado: "#ef4444",  // vermelho-500
+        },
+      },
       fontFamily: {
-        sans: ['Inter', 'sans-serif'],
+        sans: ["Inter", "sans-serif"],
       },
-
-      // 📱 Breakpoints extras (opcional)
+      borderRadius: {
+        xl: "1rem",
+        "2xl": "1.25rem", // usado nos Cards e Botões
+      },
+      boxShadow: {
+        suave: "0 2px 8px rgba(0,0,0,0.08)", // sombra clean para cards
+        destaque: "0 4px 12px rgba(0,0,0,0.15)",
+      },
+      minHeight: {
+        card: "12rem", // altura mínima para cards ficarem consistentes
+      },
+      backgroundImage: {
+        "grad-lousa-roxo": "linear-gradient(90deg, #2e5e4e, #6d28d9)",
+        "grad-lousa-azul": "linear-gradient(90deg, #2e5e4e, #2563eb)",
+      },
       screens: {
-        'xs': '475px', // breakpoint adicional útil para responsividade extrema
+        xs: "475px",
       },
     },
   },
-
-  // 🔌 Plugins adicionais (nenhum por enquanto, mas pode incluir forms, typography etc.)
   plugins: [
-    require('@tailwindcss/forms'),
-    require('@tailwindcss/typography'),
+    require("@tailwindcss/forms"),
+    require("@tailwindcss/typography"),
   ],
 };

@@ -5,9 +5,9 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
 import Breadcrumbs from "../components/Breadcrumbs";
-import CardEvento from "../components/CardEvento";
+import CardEventoAdministrador from "../components/CardEventoAdministrador";
 import Spinner from "../components/Spinner";
-import { apiGet } from "../services/api"; // ✅ centralizado
+import { apiGet } from "../services/api";
 
 // ---------- helpers anti-fuso ----------
 const ymd = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
@@ -80,7 +80,7 @@ export default function DashboardAdministrador() {
     if (avaliacoesPorTurma[turmaId]) return;
     try {
       const data = await apiGet(`/api/avaliacoes/turma/${turmaId}`, { on403: "silent" });
-      setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: Array.isArray(data) ? data : [] }));
+      setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: data || {} }));
     } catch (err) {
       console.error("❌ Erro ao carregar avaliações:", err);
       toast.error("❌ Erro ao carregar avaliações.");
@@ -89,9 +89,23 @@ export default function DashboardAdministrador() {
 
   const carregarPresencas = async (turmaId) => {
     try {
-      // 🔄 padroniza com as outras telas
-      const data = await apiGet(`/api/presencas/relatorio-presencas/turma/${turmaId}`, { on403: "silent" });
-      const lista = Array.isArray(data?.lista) ? data.lista : Array.isArray(data) ? data : [];
+      const data = await apiGet(`/api/presencas/turma/${turmaId}/detalhes`, { on403: "silent" });
+      const datas = Array.isArray(data?.datas) ? data.datas : [];
+      const usuarios = Array.isArray(data?.usuarios) ? data.usuarios : [];
+      const totalDias = datas.length || 0;
+
+      const lista = usuarios.map((u) => {
+        const presentes = (u.presencas || []).filter((p) => p?.presente === true).length;
+        const freq = totalDias > 0 ? Math.round((presentes / totalDias) * 100) : 0;
+        return {
+          usuario_id: u.id,
+          nome: u.nome,
+          cpf: u.cpf,
+          presente: freq >= 75,
+          frequencia: `${freq}%`,
+        };
+      });
+
       setPresencasPorTurma((prev) => ({ ...prev, [turmaId]: lista }));
     } catch (err) {
       console.error("❌ Erro ao carregar presenças:", err);
@@ -101,7 +115,6 @@ export default function DashboardAdministrador() {
 
   const gerarRelatorioPDF = async (turmaId) => {
     try {
-      // 🔄 padroniza com a rota acima
       const data = await apiGet(`/api/presencas/relatorio-presencas/turma/${turmaId}`, { on403: "silent" });
       const alunos = Array.isArray(data?.lista) ? data.lista : Array.isArray(data) ? data : [];
 
@@ -141,12 +154,11 @@ export default function DashboardAdministrador() {
     carregarTurmas(eventoId);
   };
 
-  // 🔄 Filtrar por status com datas agregadas (respeitando hora)
+  // Filtrar por status com datas agregadas (respeitando hora)
   const filtrarPorStatus = (evento) => {
     const agora = new Date();
     const turmas = turmasPorEvento[evento.id] || [];
 
-    // se backend já agrega:
     const diAgg = ymd(evento.data_inicio_geral);
     const dfAgg = ymd(evento.data_fim_geral);
     const hiAgg = (evento.horario_inicio_geral || "00:00").slice(0, 5);
@@ -155,7 +167,6 @@ export default function DashboardAdministrador() {
     let inicioDT = diAgg ? toLocalDate(diAgg, hiAgg) : null;
     let fimDT = dfAgg ? toLocalDate(dfAgg, hfAgg) : null;
 
-    // se não veio agregado, deriva das turmas (min início, máx fim)
     if (!inicioDT || !fimDT) {
       const starts = [];
       const ends = [];
@@ -173,15 +184,15 @@ export default function DashboardAdministrador() {
       if (ends.length) fimDT = new Date(Math.max(...ends));
     }
 
-    if (!inicioDT || !fimDT) return filtroStatus === "todos"; // se não deu pra calcular, só mostra em "todos"
+    if (!inicioDT || !fimDT) return filtroStatus === "todos";
 
     if (filtroStatus === "programado") return inicioDT > agora;
     if (filtroStatus === "em_andamento") return inicioDT <= agora && fimDT >= agora;
     if (filtroStatus === "encerrado") return fimDT < agora;
-    return true; // "todos"
+    return true;
   };
 
-  // (opcional) ordena eventos por data de início (local)
+  // Ordena eventos por data de início (local)
   const eventosOrdenados = useMemo(() => {
     return [...eventos].sort((a, b) => {
       const aDT = toLocalDate(ymd(a.data_inicio_geral || a.data_inicio || a.data), (a.horario_inicio_geral || a.horario_inicio || "00:00"));
@@ -239,7 +250,7 @@ export default function DashboardAdministrador() {
         {erro && <p className="text-red-500 text-center">{erro}</p>}
 
         {eventosOrdenados.filter(filtrarPorStatus).map((evento) => (
-          <CardEvento
+          <CardEventoAdministrador
             key={evento.id}
             evento={evento}
             expandido={eventoExpandido === evento.id}

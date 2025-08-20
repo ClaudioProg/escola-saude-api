@@ -1,4 +1,4 @@
-// src/pages/AgendaEventos.jsx
+// src/pages/AgendaAdministrador.jsx
 import { useEffect, useMemo, useState } from "react";
 import Calendar from "react-calendar";
 import "react-calendar/dist/Calendar.css";
@@ -11,24 +11,41 @@ import EventoDetalheModal from "../components/EventoDetalheModal";
 import LegendaEventos from "../components/LegendaEventos";
 import { apiGet } from "../services/api";
 
-// ---- helpers de data (tratam string ISO como "local", sem UTC) ----------------
+/* =========================================================================
+   Helpers de data — tolerantes a strings com timezone (Z, +hh:mm)
+   Trabalham sempre em "hora local" para não deslocar dias.
+   ========================================================================= */
+const stripTZ = (s) =>
+  String(s)
+    .trim()
+    .replace(/\.\d{3,}\s*Z?$/i, "")        // remove .000Z
+    .replace(/([+-]\d{2}:\d{2}|Z)$/i, ""); // remove +03:00 / -03:00 / Z
+
 function toLocalDate(input) {
   if (!input) return null;
   if (input instanceof Date) return input;
-  const s = String(input);
 
-  // Aceita "YYYY-MM-DD" e "YYYY-MM-DDTHH:mm[:ss]" (T ou espaço)
+  const s = stripTZ(input);
   const m = s.match(
     /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/
   );
-  if (!m) return null; // ❗ evita parse nativo que pode usar UTC
+  if (!m) return null;
 
   const [, y, mo, d, hh = "00", mm = "00", ss = "00"] = m;
-  return new Date(Number(y), Number(mo) - 1, Number(d), Number(hh), Number(mm), Number(ss));
+  return new Date(+y, +mo - 1, +d, +hh, +mm, +ss);
 }
 
-function ymd(dateLike) {
-  const d = toLocalDate(dateLike);
+function ymd(val) {
+  if (!val) return null;
+
+  // string: pegue só a cabeça YYYY-MM-DD (antes de T/offset)
+  if (typeof val === "string") {
+    const head = stripTZ(val).slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(head)) return head;
+  }
+
+  // Date ou outros casos: formata manualmente
+  const d = toLocalDate(val);
   if (!d || Number.isNaN(+d)) return null;
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -36,18 +53,29 @@ function ymd(dateLike) {
   return `${y}-${m}-${day}`;
 }
 
+// Gera todos os dias (YYYY-MM-DD) entre início e fim (inclusivo)
+function rangeDiasYMD(iniYMD, fimYMD) {
+  const out = [];
+  if (!iniYMD) return out;
+  const d0 = new Date(`${iniYMD}T12:00:00`);
+  const d1 = new Date(`${(fimYMD || iniYMD)}T12:00:00`);
+  for (let d = new Date(d0); d <= d1; d.setDate(d.getDate() + 1)) {
+    out.push(ymd(d));
+  }
+  return out;
+}
+
 function deriveStatus(ev) {
   const di = ev.data_inicio ?? ev.dataInicio ?? ev.data;
   const df = ev.data_fim ?? ev.data_termino ?? ev.dataTermino ?? ev.data;
 
-  // usa horários se existirem; senão, 00:00 e 23:59
   const hi = (ev.horario_inicio ?? "00:00").slice(0, 5);
   const hf = (ev.horario_fim ?? "23:59").slice(0, 5);
 
   const start = di ? toLocalDate(`${ymd(di)}T${hi}`) : null;
-  const end = df ? toLocalDate(`${ymd(df)}T${hf}`) : null;
-  const agora = new Date();
+  const end   = df ? toLocalDate(`${ymd(df)}T${hf}`) : null;
 
+  const agora = new Date();
   if (start && end) {
     if (isBefore(agora, start)) return "programado";
     if (isWithinInterval(agora, { start, end })) return "andamento";
@@ -55,8 +83,14 @@ function deriveStatus(ev) {
   }
   return ev.status || "programado";
 }
-// -----------------------------------------------------------------------------
 
+// Cores das bolinhas
+const colorByStatus = {
+  programado: "#22c55e",
+  andamento:  "#eab308",
+  encerrado:  "#ef4444",
+};
+/* ========================================================================= */
 
 export default function AgendaEventos() {
   const nome = localStorage.getItem("nome") || "";
@@ -75,16 +109,17 @@ export default function AgendaEventos() {
     })();
   }, []);
 
-  // Agrupa por dia (YYYY-MM-DD) usando datas "locais" e ordena por horário
+  // Agrupa por dia (YYYY-MM-DD) cobrindo todo o intervalo do evento
   const eventosPorData = useMemo(() => {
     const map = {};
     for (const evento of events) {
-      const chave = ymd(evento.data_inicio ?? evento.dataInicio ?? evento.data);
-      if (!chave) continue;
-      (map[chave] ||= []).push(evento);
+      const di = ymd(evento.data_inicio ?? evento.dataInicio ?? evento.data);
+      const df = ymd(evento.data_fim ?? evento.data_termino ?? evento.dataTermino ?? evento.data);
+      for (const dia of rangeDiasYMD(di, df)) {
+        (map[dia] ||= []).push(evento);
+      }
     }
-
-    // ordena por início (data/hora)
+    // ordena por início dentro do dia
     for (const k of Object.keys(map)) {
       map[k].sort((a, b) => {
         const aStart = toLocalDate(
@@ -97,7 +132,6 @@ export default function AgendaEventos() {
         return compareAsc(aStart, bStart);
       });
     }
-
     return map;
   }, [events]);
 
@@ -116,56 +150,37 @@ export default function AgendaEventos() {
         📅 Agenda Geral de Eventos
       </h1>
 
-      <div className="flex justify-center">
-        <div className="bg-white dark:bg-zinc-800 rounded-xl p-4 shadow-md">
+      {/* Largura total, centralizado, cartão responsivo */}
+      <div className="mx-auto w-full max-w-7xl">
+        <div className="bg-white dark:bg-zinc-800 rounded-xl p-4 sm:p-6 shadow-md">
           <Calendar
             locale="pt-BR"
-            className="react-calendar !bg-transparent !text-sm"
+            className="react-calendar react-calendar-custom !bg-transparent"
             prevLabel="‹"
             nextLabel="›"
-            tileClassName="!rounded-lg !p-2 hover:!bg-gray-200 dark:hover:!bg-zinc-700"
+            tileClassName="!rounded-lg hover:!bg-gray-200 dark:hover:!bg-zinc-700"
             navigationLabel={({ date }) =>
               format(date, "MMMM yyyy", { locale: ptBR }).replace(/^\w/, (c) => c.toUpperCase())
             }
             tileContent={({ date }) => {
               const key = format(date, "yyyy-MM-dd");
-              const diaEventos = eventosPorData[key];
-              if (!diaEventos) return null;
+              const diaEventos = eventosPorData[key] || [];
 
               return (
-                <div className="mt-1 flex gap-1 justify-center flex-wrap">
+                <div className="rc-day-dots mt-1 flex gap-1 justify-center flex-wrap">
                   {diaEventos.map((ev) => {
                     const st = deriveStatus(ev);
-                    const inicioStr = ymd(ev.data_inicio ?? ev.dataInicio ?? ev.data);
-                    const fimStr = ymd(ev.data_fim ?? ev.data_termino ?? ev.dataTermino ?? ev.data);
-                    const hi = (ev.horario_inicio ?? "00:00").slice(0,5);
-                    const hf = (ev.horario_fim ?? "23:59").slice(0,5);
-
-                    const inicio = inicioStr ? toLocalDate(`${inicioStr}T${hi}`) : null;
-                    const fim = fimStr ? toLocalDate(`${fimStr}T${hf}`) : null;
-
-                    const tooltip =
-                      ev.titulo +
-                      (inicio
-                        ? ` (${format(inicio, "dd/MM/yyyy HH:mm", { locale: ptBR })}${
-                            fim ? ` – ${format(fim, "dd/MM/yyyy HH:mm", { locale: ptBR })}` : ""
-                          })`
-                        : "");
-
-                    const color =
-                      st === "programado" ? "#22c55e" : st === "andamento" ? "#eab308" : "#ef4444";
-
                     return (
                       <span
-                        key={String(ev.id ?? `${ev.titulo}-${inicioStr}`)}
-                        title={tooltip}
+                        key={`${ev.id ?? ev.titulo}-${key}`}
+                        className="agenda-dot cursor-pointer focus:outline-none focus:ring-2 focus:ring-lousa"
+                        style={{ backgroundColor: colorByStatus[st] || colorByStatus.programado }}
+                        title={ev.titulo}
                         role="button"
                         tabIndex={0}
-                        onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setSelecionado(ev)}
                         onClick={() => setSelecionado(ev)}
-                        className="w-2 h-2 rounded-full cursor-pointer focus:outline-none focus:ring-2 focus:ring-lousa"
+                        onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setSelecionado(ev)}
                         aria-label={`Evento: ${ev.titulo}`}
-                        style={{ backgroundColor: color }}
                       />
                     );
                   })}

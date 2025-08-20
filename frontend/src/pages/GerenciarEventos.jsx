@@ -1,5 +1,6 @@
 // 📁 src/pages/GerenciarEventos.jsx
-import { useEffect, useMemo, useState } from "react";
+/* eslint-disable no-console */
+import { useEffect, useState } from "react";
 import { toast } from "react-toastify";
 import { motion } from "framer-motion";
 import { Pencil, Trash2, PlusCircle } from "lucide-react";
@@ -11,9 +12,202 @@ import NenhumDado from "../components/NenhumDado";
 import SkeletonEvento from "../components/SkeletonEvento";
 import BotaoPrimario from "../components/BotaoPrimario";
 import CabecalhoPainel from "../components/CabecalhoPainel";
-// ⚠️ IMPORTANTE: a rota dessa página deve estar protegida por <PrivateRoute permitido={["administrador"]} />
-// aqui dentro não vamos bloquear por permissão (evita tela branca se o hook atrasar)
 
+/* =============================
+   Helpers
+   ============================= */
+const clean = (obj) =>
+  Object.fromEntries(
+    Object.entries(obj || {}).filter(
+      ([, v]) => v !== undefined && v !== null && !(typeof v === "string" && v.trim() === "")
+    )
+  );
+
+// aceita "YYYY-MM-DD" ou Date → "YYYY-MM-DD"
+const ymd = (s) => {
+  if (!s) return "";
+  if (typeof s === "string") return s.slice(0, 10);
+  if (s instanceof Date && !isNaN(s)) {
+    const y = s.getFullYear();
+    const m = String(s.getMonth() + 1).padStart(2, "0");
+    const d = String(s.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+  return "";
+};
+
+// normaliza "HH:mm[:ss]" → "HH:mm"
+const hhmm = (s) => {
+  if (typeof s !== "string") return "";
+  const v = s.trim();
+  if (/^\d{2}:\d{2}$/.test(v)) return v;
+  if (/^\d{2}:\d{2}:\d{2}$/.test(v)) return v.slice(0, 5);
+  return v ? v.slice(0, 5) : "";
+};
+
+// adiciona segundos se precisar → "HH:mm:ss"
+const addSecs = (h) => {
+  const base = (typeof h === "string" ? h.trim() : "") || "";
+  if (/^\d{2}:\d{2}:\d{2}$/.test(base)) return base;
+  if (/^\d{2}:\d{2}$/.test(base)) return `${base}:00`;
+  return base ? `${base.slice(0, 5)}:00` : "";
+};
+
+// instrutor pode vir como [{id, nome}] ou [id]
+const extractInstrutorIds = (arr) => {
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .map((i) => (typeof i === "object" ? i?.id : i))
+    .filter((x) => Number.isFinite(Number(x)))
+    .map((x) => Number(x));
+};
+
+function normalizeTurmas(turmas = []) {
+  console.log("🧩 normalizeTurmas: in →", turmas);
+  const out = (turmas || []).map((t) => {
+    const vagas = Number.isFinite(Number(t.vagas_total)) ? Number(t.vagas_total) : Number(t.vagas);
+    const vagasOk = Number.isFinite(vagas) && vagas > 0 ? vagas : 1;
+
+    const ch = Number.isFinite(Number(t.carga_horaria)) ? Number(t.carga_horaria) : 1;
+    const nome = (t.nome || "Turma Única").trim();
+
+    const di = ymd(t.data_inicio);
+    const df = ymd(t.data_fim);
+    const hi = hhmm(t.horario_inicio || "08:00");
+    const hf = hhmm(t.horario_fim || "17:00");
+
+    return clean({
+      // ⚠️ não enviar id (o backend apaga e recria no PUT)
+      nome,
+      data_inicio: di,
+      data_fim: df,
+      horario_inicio: hi,
+      horario_fim: hf,
+      vagas_total: vagasOk,
+      carga_horaria: ch > 0 ? ch : 1,
+    });
+  });
+  console.log("🧩 normalizeTurmas: out →", out);
+  return out;
+}
+
+/* =============================
+   Fetch auxiliares
+   ============================= */
+async function fetchTurmasDoEvento(eventoId) {
+  console.log(`🔎 fetchTurmasDoEvento id=${eventoId}`);
+  const urls = [
+    `/api/turmas/por-evento/${eventoId}`,
+    `/api/turmas/evento/${eventoId}`,
+    `/api/eventos/${eventoId}`, // pode vir embutido
+  ];
+  for (const url of urls) {
+    try {
+      console.log("→ tentando:", url);
+      const resp = await apiGet(url);
+      if (Array.isArray(resp)) return resp;
+      if (Array.isArray(resp?.turmas)) return resp.turmas;
+      if (Array.isArray(resp?.lista)) return resp.lista;
+    } catch (e) {
+      console.log("✖️ falhou:", url, e?.message);
+    }
+  }
+  return [];
+}
+
+async function fetchEventoCompleto(eventoId) {
+  try {
+    const resp = await apiGet(`/api/eventos/${eventoId}`);
+    const ev = resp?.evento || resp;
+    if (ev?.id) {
+      console.log("🧴 fetchEventoCompleto OK:", ev);
+      return ev;
+    }
+    console.log("🧴 fetchEventoCompleto shape inesperado:", resp);
+  } catch (e) {
+    console.log("🧴 fetchEventoCompleto erro:", e?.message);
+  }
+  return null;
+}
+
+/* =============================
+   Modo “espelho” para PUT (merge com servidor)
+   ============================= */
+function buildUpdateBody(baseServidor, dadosDoModal) {
+  // 1) Começa do zero e envia SÓ o que o backend aceita no PUT
+  const body = {};
+
+  // 2) Campos simples do evento (whitelist)
+  body.titulo       = (dadosDoModal?.titulo ?? baseServidor?.titulo ?? "").trim();
+  body.descricao    = (dadosDoModal?.descricao ?? baseServidor?.descricao ?? "").trim();
+  body.local        = (dadosDoModal?.local ?? baseServidor?.local ?? "").trim();
+  body.tipo         = (dadosDoModal?.tipo ?? baseServidor?.tipo ?? "").trim();
+  body.unidade_id   = Number(dadosDoModal?.unidade_id ?? baseServidor?.unidade_id);
+  body.publico_alvo = (dadosDoModal?.publico_alvo ?? baseServidor?.publico_alvo ?? "").trim();
+
+  // 3) Instrutor: garantir array de IDs
+  const instrutoresFromModal   = extractInstrutorIds(dadosDoModal?.instrutor);
+  const instrutoresFromServer  = extractInstrutorIds(baseServidor?.instrutor);
+  body.instrutor = instrutoresFromModal.length ? instrutoresFromModal : instrutoresFromServer;
+
+  // 4) Datas/horas gerais (usadas para pré-preencher turmas se necessário)
+  const di = ymd(
+    dadosDoModal?.data_inicio_geral ??
+      dadosDoModal?.data_inicio ??
+      baseServidor?.data_inicio_geral ??
+      baseServidor?.data_inicio
+  );
+  const df = ymd(
+    dadosDoModal?.data_fim_geral ??
+      dadosDoModal?.data_fim ??
+      baseServidor?.data_fim_geral ??
+      baseServidor?.data_fim
+  );
+  const hi = hhmm(
+    dadosDoModal?.horario_inicio_geral ??
+      dadosDoModal?.horario_inicio ??
+      baseServidor?.horario_inicio_geral ??
+      baseServidor?.horario_inicio ??
+      "08:00"
+  );
+  const hf = hhmm(
+    dadosDoModal?.horario_fim_geral ??
+      dadosDoModal?.horario_fim ??
+      baseServidor?.horario_fim_geral ??
+      baseServidor?.horario_fim ??
+      "17:00"
+  );
+
+  // 5) Turmas (obrigatórias no PUT)
+  let turmasFonte = [];
+  if (Array.isArray(dadosDoModal?.turmas) && dadosDoModal.turmas.length > 0) {
+    turmasFonte = dadosDoModal.turmas;
+  } else if (Array.isArray(baseServidor?.turmas) && baseServidor.turmas.length > 0) {
+    turmasFonte = baseServidor.turmas;
+  } else {
+    // cria 1 turma padrão, evita validação quebrar
+    turmasFonte = [
+      {
+        nome: body.titulo || "Turma Única",
+        data_inicio: di,
+        data_fim: df,
+        horario_inicio: hi,
+        horario_fim: hf,
+        vagas_total: 1,
+        carga_horaria: 1,
+      },
+    ];
+  }
+  body.turmas = normalizeTurmas(turmasFonte);
+
+  const final = clean(body);
+  console.log("🪞 buildUpdateBody (espelho) →", final);
+  return final;
+}
+
+/* =============================
+   Página
+   ============================= */
 export default function GerenciarEventos() {
   const [eventos, setEventos] = useState([]);
   const [eventoSelecionado, setEventoSelecionado] = useState(null);
@@ -27,10 +221,8 @@ export default function GerenciarEventos() {
       try {
         setLoading(true);
         setErro("");
-        console.log("📡 [GerenciarEventos] GET /api/eventos ...");
+        console.log("📡 GET /api/eventos");
         const data = await apiGet("/api/eventos");
-
-        // aceita vários formatos de payload
         const lista = Array.isArray(data)
           ? data
           : Array.isArray(data?.eventos)
@@ -38,12 +230,11 @@ export default function GerenciarEventos() {
           : Array.isArray(data?.lista)
           ? data.lista
           : [];
-
-        console.log("✅ eventos recebidos:", lista);
+        console.log("→ recebidos:", lista.length, "exemplo[0]:", lista[0]);
         setEventos(lista);
       } catch (err) {
         const msg = err?.message || "Erro ao carregar eventos";
-        console.error("❌ /api/eventos:", err);
+        console.error("❌ /api/eventos:", msg);
         setErro(msg);
         setEventos([]);
         toast.error(`❌ ${msg}`);
@@ -54,83 +245,134 @@ export default function GerenciarEventos() {
   }, []);
 
   const abrirModalCriar = () => {
+    console.log("➕ abrirModalCriar");
     setEventoSelecionado(null);
     setModalAberto(true);
   };
 
-  const abrirModalEditar = (evento) => {
-    setEventoSelecionado(evento);
+  // garantir turmas ao editar
+  const abrirModalEditar = async (evento) => {
+    console.log("✏️ abrirModalEditar", evento);
+    let turmas = Array.isArray(evento.turmas) ? evento.turmas : [];
+    if (turmas.length === 0 && evento?.id) {
+      turmas = await fetchTurmasDoEvento(evento.id);
+    }
+    setEventoSelecionado({ ...evento, turmas });
     setModalAberto(true);
   };
 
   const excluirEvento = async (eventoId) => {
     if (!window.confirm("Tem certeza que deseja excluir este evento?")) return;
+    console.log("🗑️ DELETE evento id=", eventoId);
     try {
       await apiDelete(`/api/eventos/${eventoId}`);
       setEventos((prev) => prev.filter((ev) => ev.id !== eventoId));
       toast.success("✅ Evento excluído.");
     } catch (err) {
-      console.error("❌ delete evento:", err);
+      console.error("❌ delete evento:", err?.message);
       toast.error(`❌ ${err?.message || "Erro ao excluir evento."}`);
     }
   };
 
-  const salvarEvento = async (eventoSalvo) => {
+  // Recebe os dados do ModalEvento (criar/editar)
+  const salvarEvento = async (dadosDoModal) => {
+    console.log("💾 salvarEvento: dadosDoModal:", dadosDoModal);
+    console.log("💾 salvarEvento: eventoSelecionado:", eventoSelecionado);
+
     try {
-      // ✅ validações básicas
-      const turmaInvalida = (eventoSalvo.turmas || []).some(
-        (t) =>
-          !t?.nome ||
-          !t?.data_inicio ||
-          !t?.data_fim ||
-          !t?.horario_inicio ||
-          !t?.horario_fim ||
-          !t?.vagas_total ||
-          !t?.carga_horaria
-      );
-      if (turmaInvalida) {
-        toast.error("❌ Há turmas com campos obrigatórios não preenchidos.");
-        return;
-      }
-      if (!eventoSalvo.titulo || !eventoSalvo.tipo || !eventoSalvo.unidade_id) {
-        toast.warning("⚠️ Preencha todos os campos obrigatórios.");
-        return;
-      }
-
-      // 🧹 normalização de turmas
-      const eventoFinal = {
-        ...eventoSalvo,
-        turmas: (eventoSalvo.turmas || []).map((t) => ({
-          nome: t.nome?.trim() || "",
-          data_inicio: t.data_inicio,
-          data_fim: t.data_fim,
-          horario_inicio: t.horario_inicio,
-          horario_fim: t.horario_fim,
-          vagas_total: Number(t.vagas_total || 0),
-          carga_horaria: Number(t.carga_horaria || 0),
-        })),
-      };
-
       const isEdicao = Boolean(eventoSelecionado?.id);
-      const endpoint = isEdicao ? `/api/eventos/${eventoSelecionado.id}` : "/api/eventos";
 
-      const resposta = isEdicao
-        ? await apiPut(endpoint, eventoFinal)
-        : await apiPost(endpoint, eventoFinal);
+      if (isEdicao) {
+        // 1) pega o modelo completo do servidor
+        const baseServidor = await fetchEventoCompleto(eventoSelecionado.id);
+        if (!baseServidor) {
+          toast.error("Não foi possível carregar o evento completo para atualizar.");
+          return;
+        }
 
-      const eventoRetornado = resposta?.evento || resposta;
+        // 2) monta o body espelho (merge + normalizações mínimas)
+        const body = buildUpdateBody(baseServidor, dadosDoModal);
 
-      setEventos((prev) =>
-        isEdicao
-          ? prev.map((ev) => (ev.id === eventoRetornado.id ? eventoRetornado : ev))
-          : [...prev, eventoRetornado]
-      );
+        // validações mínimas antes do PUT
+        if (!Array.isArray(body.instrutor) || body.instrutor.length === 0) {
+          toast.error("Selecione ao menos um instrutor.");
+          return;
+        }
+        if (!Array.isArray(body.turmas) || body.turmas.length === 0) {
+          toast.error("Inclua ao menos uma turma com campos obrigatórios.");
+          return;
+        }
+
+        // 3) PUT
+        console.log("➡️ PUT /api/eventos/:id BODY →", body);
+        const resp = await apiPut(`/api/eventos/${eventoSelecionado.id}`, body);
+        console.log("📬 resposta bruta:", resp);
+        const eventoRetornado = resp?.evento || resp;
+
+        // Atualiza a lista local (mantém shape exibido pela listagem)
+        setEventos((prev) => prev.map((ev) => (ev.id === eventoRetornado.id ? { ...ev, ...eventoRetornado } : ev)));
+      } else {
+        // criação
+        const base = {
+          titulo: (dadosDoModal?.titulo || "").trim(),
+          tipo: (dadosDoModal?.tipo || "").trim(),
+          unidade_id: dadosDoModal?.unidade_id,
+          descricao: (dadosDoModal?.descricao || "").trim(),
+          local: (dadosDoModal?.local || "").trim(),
+          publico_alvo: (dadosDoModal?.publico_alvo || "").trim(),
+        };
+
+        // instrutor IDs
+        const instrutores = extractInstrutorIds(dadosDoModal?.instrutor);
+        if (!instrutores.length) {
+          toast.error("Selecione ao menos um instrutor.");
+          return;
+        }
+
+        // datas/horas para compor turmas
+        const di = ymd(dadosDoModal?.data_inicio_geral ?? dadosDoModal?.data_inicio);
+        const df = ymd(dadosDoModal?.data_fim_geral ?? dadosDoModal?.data_fim);
+        const hi = addSecs(dadosDoModal?.horario_inicio_geral ?? dadosDoModal?.horario_inicio ?? "08:00");
+        const hf = addSecs(dadosDoModal?.horario_fim_geral ?? dadosDoModal?.horario_fim ?? "17:00");
+
+        // turmas
+        const turmas = normalizeTurmas(
+          dadosDoModal?.turmas?.length
+            ? dadosDoModal.turmas
+            : [
+                {
+                  nome: base.titulo || "Turma Única",
+                  data_inicio: di,
+                  data_fim: df,
+                  horario_inicio: hi.slice(0, 5),
+                  horario_fim: hf.slice(0, 5),
+                  vagas_total: 1,
+                  carga_horaria: 1,
+                },
+              ]
+        );
+
+        const bodyCreate = clean({
+          ...base,
+          instrutor: instrutores,
+          turmas,
+        });
+
+        console.log("➡️ POST /api/eventos BODY →", bodyCreate);
+        const resp = await apiPost("/api/eventos", bodyCreate);
+        console.log("📬 resposta bruta:", resp);
+        const eventoRetornado = resp?.evento || resp;
+
+        // Acrescenta à lista (mantendo a listagem coerente)
+        setEventos((prev) => [...prev, eventoRetornado]);
+      }
 
       toast.success("✅ Evento salvo com sucesso.");
       setModalAberto(false);
     } catch (err) {
-      console.error("❌ salvar evento:", err);
-      toast.error(`❌ ${err?.message || "Erro ao salvar o evento."}`);
+      console.error("❌ salvar evento:", err?.message, err);
+      if (err?.data) console.log("err.data:", err.data);
+      toast.error(err?.message || "Erro ao salvar o evento.");
     }
   };
 
@@ -160,9 +402,7 @@ export default function GerenciarEventos() {
               animate={{ opacity: 1, y: 0 }}
               className="bg-white dark:bg-zinc-800 p-5 rounded-xl shadow flex justify-between items-center border border-gray-200 dark:border-zinc-700"
             >
-              <span className="font-semibold text-lg text-lousa dark:text-white">
-                {ev.titulo}
-              </span>
+              <span className="font-semibold text-lg text-lousa dark:text-white">{ev.titulo}</span>
               <div className="flex gap-2">
                 <button
                   onClick={() => abrirModalEditar(ev)}

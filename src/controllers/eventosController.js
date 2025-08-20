@@ -1,88 +1,98 @@
+// 📁 src/controllers/eventosController.js
 const { pool, query } = require('../db');
 
 // 📄 Listar todos os eventos com status e dados agregados
 async function listarEventos(req, res) {
   try {
     const usuarioId = req.usuario?.id || null;
+
     const result = await query(`
       SELECT 
-  e.*,
+        e.*,
 
-  COALESCE(
-    json_agg(DISTINCT jsonb_build_object(
-      'id', u.id,
-      'nome', u.nome
-    )) FILTER (WHERE u.id IS NOT NULL),
-    '[]'
-  ) AS instrutor,
+        COALESCE(
+          json_agg(DISTINCT jsonb_build_object(
+            'id', u.id,
+            'nome', u.nome
+          )) FILTER (WHERE u.id IS NOT NULL),
+          '[]'
+        ) AS instrutor,
 
-  (
-    SELECT json_agg(json_build_object(
-      'id', t.id,
-      'nome', t.nome,
-      'data_inicio', t.data_inicio,
-      'data_fim', t.data_fim,
-      'horario_inicio', t.horario_inicio,
-      'horario_fim', t.horario_fim,
-      'vagas_total', t.vagas_total,
-      'carga_horaria', t.carga_horaria,
-      'inscritos', (
-        SELECT COUNT(*) FROM inscricoes i WHERE i.turma_id = t.id
-      )
-    ))
-    FROM turmas t
-    WHERE t.evento_id = e.id
-  ) AS turmas,
-
-  -- 🔹 Agregados por turmas (datas e horas)
-  (SELECT MIN(t.data_inicio)       FROM turmas t WHERE t.evento_id = e.id) AS data_inicio_geral,
-  (SELECT MAX(t.data_fim)          FROM turmas t WHERE t.evento_id = e.id) AS data_fim_geral,
-  (SELECT MIN(t.horario_inicio)    FROM turmas t WHERE t.evento_id = e.id) AS horario_inicio_geral,
-  (SELECT MAX(t.horario_fim)       FROM turmas t WHERE t.evento_id = e.id) AS horario_fim_geral,
-
-  -- 🔹 Conforto para o frontend: inicio/fim completos (timestamp)
-  (SELECT MIN(t.data_inicio + t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id) AS inicio_completo_geral,
-  (SELECT MAX(t.data_fim    + t.horario_fim)    FROM turmas t WHERE t.evento_id = e.id) AS fim_completo_geral,
-
-  -- 🔹 Status considerando data+hora
-  (
-    CASE
-      WHEN CURRENT_TIMESTAMP < (
-        SELECT MIN(t.data_inicio + t.horario_inicio)
-        FROM turmas t
-        WHERE t.evento_id = e.id
-      ) THEN 'programado'
-      WHEN CURRENT_TIMESTAMP BETWEEN
         (
-          SELECT MIN(t.data_inicio + t.horario_inicio)
+          SELECT json_agg(json_build_object(
+            'id', t.id,
+            'nome', t.nome,
+            'data_inicio', t.data_inicio,
+            'data_fim', t.data_fim,
+            'horario_inicio', t.horario_inicio,
+            'horario_fim', t.horario_fim,
+            'vagas_total', t.vagas_total,
+            'carga_horaria', t.carga_horaria,
+            'inscritos', (
+              SELECT COUNT(*) FROM inscricoes i WHERE i.turma_id = t.id
+            )
+          ))
           FROM turmas t
           WHERE t.evento_id = e.id
-        )
-        AND
+        ) AS turmas,
+
+        -- 🔹 Agregados por turmas (datas e horas)
+        (SELECT MIN(t.data_inicio)       FROM turmas t WHERE t.evento_id = e.id) AS data_inicio_geral,
+        (SELECT MAX(t.data_fim)          FROM turmas t WHERE t.evento_id = e.id) AS data_fim_geral,
+        (SELECT MIN(t.horario_inicio)    FROM turmas t WHERE t.evento_id = e.id) AS horario_inicio_geral,
+        (SELECT MAX(t.horario_fim)       FROM turmas t WHERE t.evento_id = e.id) AS horario_fim_geral,
+
+        -- 🔹 Conforto para o frontend: inicio/fim completos (timestamp)
+        (SELECT MIN(t.data_inicio + t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id) AS inicio_completo_geral,
+        (SELECT MAX(t.data_fim    + t.horario_fim)    FROM turmas t WHERE t.evento_id = e.id) AS fim_completo_geral,
+
+        -- 🔹 Status considerando data+hora
         (
-          SELECT MAX(t.data_fim + t.horario_fim)
-          FROM turmas t
-          WHERE t.evento_id = e.id
-        )
-      THEN 'andamento'
-      ELSE 'encerrado'
-    END
-  ) AS status,
+          CASE
+            WHEN CURRENT_TIMESTAMP < (
+              SELECT MIN(t.data_inicio + t.horario_inicio)
+              FROM turmas t
+              WHERE t.evento_id = e.id
+            ) THEN 'programado'
+            WHEN CURRENT_TIMESTAMP BETWEEN
+              (
+                SELECT MIN(t.data_inicio + t.horario_inicio)
+                FROM turmas t
+                WHERE t.evento_id = e.id
+              )
+              AND
+              (
+                SELECT MAX(t.data_fim + t.horario_fim)
+                FROM turmas t
+                WHERE t.evento_id = e.id
+              )
+            THEN 'andamento'
+            ELSE 'encerrado'
+          END
+        ) AS status,
 
-  -- 🔹 Flag: usuário já inscrito em alguma turma do evento
-  (
-    SELECT COUNT(*) > 0
-    FROM inscricoes i
-    JOIN turmas t ON t.id = i.turma_id
-    WHERE i.usuario_id = $1 AND t.evento_id = e.id
-  ) AS ja_inscrito
+        -- 🔹 Flag: usuário já inscrito em alguma turma do evento
+        (
+          SELECT COUNT(*) > 0
+          FROM inscricoes i
+          JOIN turmas t ON t.id = i.turma_id
+          WHERE i.usuario_id = $1 AND t.evento_id = e.id
+        ) AS ja_inscrito,
 
-FROM eventos e
-LEFT JOIN evento_instrutor ei ON ei.evento_id = e.id
-LEFT JOIN usuarios u         ON u.id  = ei.instrutor_id
-GROUP BY e.id
-ORDER BY 
-  (SELECT MAX(t.data_fim + t.horario_fim) FROM turmas t WHERE t.evento_id = e.id) DESC;
+        -- 🔹 Flag: usuário é instrutor deste evento
+        (
+          SELECT COUNT(*) > 0
+          FROM evento_instrutor ei
+          WHERE ei.evento_id = e.id
+            AND ei.instrutor_id = $1
+        ) AS ja_instrutor
+
+      FROM eventos e
+      LEFT JOIN evento_instrutor ei ON ei.evento_id = e.id
+      LEFT JOIN usuarios u         ON u.id  = ei.instrutor_id
+      GROUP BY e.id
+      ORDER BY 
+        (SELECT MAX(t.data_fim + t.horario_fim) FROM turmas t WHERE t.evento_id = e.id) DESC;
     `, [usuarioId]);
      
     res.json(result.rows);
@@ -147,7 +157,6 @@ async function criarEvento(req, res) {
 
     const eventoId = eventoResult.rows[0].id;
 
-
     // 🔸 Inserir todos os instrutor
     for (const instrutorId of instrutor) {
       await client.query(`
@@ -157,7 +166,7 @@ async function criarEvento(req, res) {
     }
 
     // 🔸 Inserir todas as turmas
-    for (const [index, turma] of turmas.entries()) {
+    for (const turma of turmas) {
       const {
         nome, data_inicio, data_fim,
         horario_inicio, horario_fim,
@@ -199,9 +208,10 @@ async function criarEvento(req, res) {
 }
 
 
-// 🔍 Buscar evento por ID
+// 🔍 Buscar evento por ID (inclui flags para o usuário autenticado)
 async function buscarEventoPorId(req, res) {
   const { id } = req.params;
+  const usuarioId = req.usuario?.id || null;
   const client = await pool.connect();
 
   try {
@@ -234,10 +244,28 @@ async function buscarEventoPorId(req, res) {
       ORDER BY data_inicio
     `, [id]);
 
+    // 🔹 Flags para o usuário autenticado
+    const jaInstrutorResult = await client.query(
+      `SELECT COUNT(*) > 0 AS eh
+         FROM evento_instrutor
+        WHERE evento_id = $1 AND instrutor_id = $2`,
+      [id, usuarioId]
+    );
+    const jaInscritoResult = await client.query(
+      `SELECT COUNT(*) > 0 AS eh
+         FROM inscricoes i
+         JOIN turmas t ON t.id = i.turma_id
+        WHERE i.usuario_id = $1
+          AND t.evento_id = $2`,
+      [usuarioId, id]
+    );
+
     const eventoCompleto = {
       ...evento,
       instrutor: instrutorResult.rows,
       turmas: turmasResult.rows,
+      ja_instrutor: Boolean(jaInstrutorResult.rows?.[0]?.eh),
+      ja_inscrito: Boolean(jaInscritoResult.rows?.[0]?.eh),
     };
 
     res.json(eventoCompleto);
@@ -249,35 +277,85 @@ async function buscarEventoPorId(req, res) {
   }
 }
 
+// 📌 Gera as datas da turma 
+//   - default (via intervalo): um registro por dia entre data_inicio e data_fim,
+//     reaproveitando horario_inicio/horario_fim da própria turma.
+//   - via=presencas: lista as datas distintas que realmente têm presença registrada.
 async function listarDatasDaTurma(req, res) {
-  const turmaId = req.params.id;
+  const turmaId = Number(req.params.id);
+  const via = String(req.query.via || "intervalo").toLowerCase();
+
+  if (!Number.isFinite(turmaId)) {
+    return res.status(400).json({ erro: "turma_id inválido" });
+  }
 
   try {
-    const resultado = await db.query(
-      `SELECT data, horario_inicio, horario_fim
-       FROM datas_evento
-       WHERE turma_id = $1
-       ORDER BY data`,
-      [turmaId]
-    );
+    if (via === "presencas") {
+      const sql = `
+        SELECT DISTINCT
+          p.data_presenca::date AS data,
+          COALESCE(t.horario_inicio, '00:00') AS horario_inicio,
+          COALESCE(t.horario_fim,   '23:59')  AS horario_fim
+        FROM presencas p
+        JOIN turmas t ON t.id = p.turma_id
+        WHERE p.turma_id = $1
+        ORDER BY data ASC;
+      `;
+      const { rows } = await query(sql, [turmaId]);
+      return res.json(rows);
+    }
 
-    res.json(resultado.rows);
+    // via=intervalo (default)
+    const sql = `
+      WITH t AS (
+        SELECT
+          data_inicio::date AS di,
+          data_fim::date    AS df,
+          COALESCE(horario_inicio, '00:00') AS hi,
+          COALESCE(horario_fim,   '23:59')  AS hf
+        FROM turmas
+        WHERE id = $1
+      )
+      SELECT
+        gs::date AS data,
+        t.hi     AS horario_inicio,
+        t.hf     AS horario_fim
+      FROM t, generate_series(t.di, t.df, interval '1 day') AS gs
+      ORDER BY data ASC;
+    `;
+    const { rows } = await query(sql, [turmaId]);
+    return res.json(rows);
   } catch (erro) {
     console.error("❌ Erro ao buscar datas da turma:", erro);
-    res.status(500).json({ erro: "Erro ao buscar datas da turma." });
+    return res.status(500).json({ erro: "Erro ao buscar datas da turma.", detalhe: erro.message });
   }
 }
 
-// 🔄 Atualizar evento com suas turmas e instrutor
+// 🔄 Atualizar evento com suas turmas e instrutor (robusto)
 async function atualizarEvento(req, res) {
   const { id } = req.params;
-  const {
+  let {
     titulo, descricao, local, tipo,
     unidade_id, publico_alvo,
     instrutor = [], turmas = []
   } = req.body;
 
-  // ✅ Validação dos dados obrigatórios
+  // ✅ Normalizações defensivas
+  instrutor = Array.isArray(instrutor)
+    ? instrutor.map(i => (typeof i === 'object' ? i.id : i)).filter(Boolean)
+    : [];
+
+  turmas = Array.isArray(turmas) ? turmas.map(t => ({
+    nome: t?.nome?.trim(),
+    data_inicio: t?.data_inicio || null,
+    data_fim: t?.data_fim || null,
+    horario_inicio: t?.horario_inicio || '00:00',
+    horario_fim: t?.horario_fim || '23:59',
+    vagas_total: t?.vagas_total ?? t?.vagas ?? null,
+    carga_horaria: t?.carga_horaria != null ? Number(t.carga_horaria) : null,
+  })) : [];
+
+  // ✅ Validação (após normalizar)
   if (
     !titulo?.trim() || !descricao?.trim() || !local?.trim() || !tipo?.trim() ||
     !publico_alvo?.trim() || !unidade_id ||
@@ -291,7 +369,6 @@ async function atualizarEvento(req, res) {
   try {
     await client.query('BEGIN');
 
-    // 🔄 Atualizar os dados principais do evento
     const result = await client.query(`
       UPDATE eventos
       SET titulo = $1, descricao = $2, local = $3,
@@ -305,9 +382,8 @@ async function atualizarEvento(req, res) {
       return res.status(404).json({ erro: 'Evento não encontrado.' });
     }
 
-    // 🔄 Atualizar instrutor
+    // Instrutores
     await client.query('DELETE FROM evento_instrutor WHERE evento_id = $1', [id]);
-
     for (const instrutorId of instrutor) {
       await client.query(`
         INSERT INTO evento_instrutor (evento_id, instrutor_id)
@@ -315,21 +391,12 @@ async function atualizarEvento(req, res) {
       `, [id, instrutorId]);
     }
 
-    // 🔄 Atualizar turmas
+    // Turmas
     await client.query('DELETE FROM turmas WHERE evento_id = $1', [id]);
+    for (const t of turmas) {
+      const { nome, data_inicio, data_fim, horario_inicio, horario_fim, vagas_total, carga_horaria } = t;
 
-    for (const turma of turmas) {
-      const {
-        nome, data_inicio, data_fim,
-        horario_inicio, horario_fim,
-        vagas_total, carga_horaria
-      } = turma;
-
-      if (
-        !nome?.trim() || !data_inicio || !data_fim ||
-        !horario_inicio || !horario_fim ||
-        vagas_total == null || carga_horaria == null
-      ) {
+      if (!nome || !data_inicio || !data_fim || vagas_total == null || carga_horaria == null) {
         await client.query('ROLLBACK');
         return res.status(400).json({ erro: 'Todos os campos da turma são obrigatórios.' });
       }
@@ -339,11 +406,8 @@ async function atualizarEvento(req, res) {
           evento_id, nome, data_inicio, data_fim,
           horario_inicio, horario_fim, vagas_total, carga_horaria
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      `, [
-        id, nome, data_inicio, data_fim,
-        horario_inicio, horario_fim, vagas_total, carga_horaria
-      ]);
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      `, [id, nome, data_inicio, data_fim, horario_inicio, horario_fim, vagas_total, carga_horaria]);
     }
 
     await client.query('COMMIT');
@@ -351,7 +415,13 @@ async function atualizarEvento(req, res) {
 
   } catch (err) {
     await client.query('ROLLBACK');
-    console.error('❌ Erro ao atualizar evento com turmas:', err.message);
+    console.error({
+      local: 'PUT /api/eventos/:id',
+      message: err.message,
+      detail: err.detail,
+      code: err.code,
+      stack: err.stack
+    });
     res.status(500).json({ erro: 'Erro ao atualizar evento com turmas' });
   } finally {
     client.release();
@@ -387,7 +457,7 @@ async function excluirEvento(req, res) {
     }
 
     await client.query('COMMIT');
-    res.json({ mensagem: 'Evento excluído com sucesso', evento: result.rows[0] });
+    res.json({ mensagem: 'Inscrição excluída com sucesso', evento: result.rows[0] });
 
   } catch (err) {
     await client.query('ROLLBACK');
@@ -398,7 +468,6 @@ async function excluirEvento(req, res) {
   }
 }
 
-
 // 📆 Listar turmas de um evento (por ID)
 async function listarTurmasDoEvento(req, res) {
   const { id } = req.params;
@@ -406,10 +475,21 @@ async function listarTurmasDoEvento(req, res) {
   try {
     const result = await query(`
       SELECT 
-        t.id, t.nome, t.data_inicio, t.data_fim,
-        t.horario_inicio, t.horario_fim,
-        t.vagas_total, t.carga_horaria,
-        e.titulo, e.descricao, e.local,
+        t.id,
+        t.nome,
+        t.data_inicio,
+        t.data_fim,
+        t.horario_inicio,
+        t.horario_fim,
+        t.vagas_total,
+        t.carga_horaria,
+        -- 👇 novo: total de inscritos da turma
+        (SELECT COUNT(*) FROM inscricoes i WHERE i.turma_id = t.id) AS inscritos,
+
+        e.titulo,
+        e.descricao,
+        e.local,
+
         COALESCE(
           array_agg(DISTINCT u.nome) 
           FILTER (WHERE u.nome IS NOT NULL),
@@ -431,8 +511,6 @@ async function listarTurmasDoEvento(req, res) {
   }
 }
 
-
-
 // 📅 Buscar eventos com status (para Agenda Geral)
 async function getAgendaEventos(req, res) {
   try {
@@ -443,11 +521,11 @@ async function getAgendaEventos(req, res) {
         MIN(t.data_inicio) AS data_inicio,
         MAX(t.data_fim) AS data_fim,
         CASE 
-  WHEN CURRENT_TIMESTAMP < MIN(t.data_inicio + t.horario_inicio) THEN 'programado'
-  WHEN CURRENT_TIMESTAMP BETWEEN MIN(t.data_inicio + t.horario_inicio)
-                           AND MAX(t.data_fim + t.horario_fim) THEN 'andamento'
-  ELSE 'encerrado'
-END AS status
+          WHEN CURRENT_TIMESTAMP < MIN(t.data_inicio + t.horario_inicio) THEN 'programado'
+          WHEN CURRENT_TIMESTAMP BETWEEN MIN(t.data_inicio + t.horario_inicio)
+                                   AND MAX(t.data_fim + t.horario_fim) THEN 'andamento'
+          ELSE 'encerrado'
+        END AS status
       FROM eventos e
       JOIN turmas t ON t.evento_id = e.id
       GROUP BY e.id, e.titulo
@@ -462,42 +540,39 @@ END AS status
 
 // 🔎 Listar eventos apenas do instrutor autenticado
 async function listarEventosDoinstrutor(req, res) {
-  const usuarioId = req.user.id;
+  const usuarioId = req.usuario?.id; // 🔁 padronizado
   const client = await pool.connect();
 
   try {
     const eventosResult = await client.query(`
       SELECT DISTINCT 
-  e.*,
-  CASE 
-    WHEN CURRENT_TIMESTAMP < (
-      SELECT MIN(t.data_inicio + t.horario_inicio)
-      FROM turmas t
-      WHERE t.evento_id = e.id
-    ) THEN 'programado'
-    
-    WHEN CURRENT_TIMESTAMP BETWEEN
-      (
-        SELECT MIN(t.data_inicio + t.horario_inicio)
-        FROM turmas t
-        WHERE t.evento_id = e.id
-      )
-      AND
-      (
-        SELECT MAX(t.data_fim + t.horario_fim)
-        FROM turmas t
-        WHERE t.evento_id = e.id
-      )
-    THEN 'andamento'
-    
-    ELSE 'encerrado'
-  END AS status
-FROM eventos e
-JOIN evento_instrutor ei ON ei.evento_id = e.id
-WHERE ei.instrutor_id = $1
-ORDER BY e.id
+        e.*,
+        CASE 
+          WHEN CURRENT_TIMESTAMP < (
+            SELECT MIN(t.data_inicio + t.horario_inicio)
+            FROM turmas t
+            WHERE t.evento_id = e.id
+          ) THEN 'programado'
+          WHEN CURRENT_TIMESTAMP BETWEEN
+            (
+              SELECT MIN(t.data_inicio + t.horario_inicio)
+              FROM turmas t
+              WHERE t.evento_id = e.id
+            )
+            AND
+            (
+              SELECT MAX(t.data_fim + t.horario_fim)
+              FROM turmas t
+              WHERE t.evento_id = e.id
+            )
+          THEN 'andamento'
+          ELSE 'encerrado'
+        END AS status
+      FROM eventos e
+      JOIN evento_instrutor ei ON ei.evento_id = e.id
+      WHERE ei.instrutor_id = $1
+      ORDER BY e.id
     `, [usuarioId]);
-
 
     const eventos = [];
 
