@@ -102,21 +102,28 @@ function normalizePath(path) {
 
   let p = String(path).trim();
   if (!p.startsWith("/")) p = "/" + p;
-
-  // normaliza múltiplas barras
-  p = p.replace(/\/{2,}/g, "/");
   return p;
 }
 
-// Garante exatamente um "/api": se nem base nem path têm "/api", adiciona
+// ✅ Garante exatamente um "/api" sem quebrar o "http://"
+// - Se base termina com /api e path começa com /api -> remove /api do path
+// - Se nenhum tem /api -> adiciona ao path
 function ensureApi(base, path) {
-  const baseNoSlash = base.replace(/\/+$/, "");
-  const hasApiInBase = /\/api$/i.test(baseNoSlash);
-  const hasApiInPath = /^\/api(\/|$)/i.test(path);
-  if (!hasApiInBase && !hasApiInPath) {
-    return baseNoSlash + "/api" + path;
+  const baseNoSlash = String(base || "").replace(/\/+$/, "");
+  let p = String(path || "").trim();
+  if (!p.startsWith("/")) p = "/" + p;
+
+  const baseHasApi = /\/api$/i.test(baseNoSlash);
+  const pathHasApi = /^\/api(\/|$)/i.test(p);
+
+  if (baseHasApi && pathHasApi) {
+    p = p.replace(/^\/api(\/|$)/i, "/");
+  } else if (!baseHasApi && !pathHasApi) {
+    p = "/api" + p;
   }
-  return baseNoSlash + path;
+
+  // 👉 não colapsa barras do protocolo; apenas concatena
+  return baseNoSlash + p;
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -167,8 +174,10 @@ async function handle(res, { on401 = "redirect", on403 = "silent" } = {}) {
 }
 
 // ───────────────────────────────────────────────────────────────────
-// Fetch centralizado
+// Fetch centralizado (com timeout)
 // ───────────────────────────────────────────────────────────────────
+const DEFAULT_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 15000);
+
 async function doFetch(path, { method = "GET", auth = true, headers, query, body, on401, on403 } = {}) {
   const safePath = normalizePath(path);
 
@@ -215,13 +224,28 @@ async function doFetch(path, { method = "GET", auth = true, headers, query, body
 
   let res;
   const t0 = (typeof performance !== "undefined" ? performance.now() : Date.now());
+
+  // ⏱️ timeout com AbortController
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(new Error("timeout")), DEFAULT_TIMEOUT_MS);
+
   try {
-    res = await fetch(url, init);
+    res = await fetch(url, { ...init, signal: controller.signal });
   } catch (networkErr) {
     const t1 = (typeof performance !== "undefined" ? performance.now() : Date.now());
-    console.error(`🌩️ [neterr ${method}] ${url} (${Math.round(t1 - t0)}ms):`, networkErr?.message || networkErr);
-    throw new ApiError("Falha de rede ou CORS", { status: 0, url: url, data: networkErr });
+    const reason = networkErr?.message || networkErr?.name || String(networkErr);
+    console.error(`🌩️ [neterr ${method}] ${url} (${Math.round(t1 - t0)}ms):`, reason);
+    const isTimeout =
+      reason?.toLowerCase?.().includes("timeout") || networkErr?.name === "AbortError";
+    throw new ApiError(isTimeout ? "Tempo de resposta excedido." : "Falha de rede ou CORS", {
+      status: 0,
+      url: url,
+      data: networkErr,
+    });
+  } finally {
+    clearTimeout(timeoutId);
   }
+
   const t1 = (typeof performance !== "undefined" ? performance.now() : Date.now());
   console.log(`⏱️ [time ${method}] ${url} → ${Math.round(t1 - t0)}ms`);
 

@@ -2,18 +2,11 @@
 const express = require('express');
 const router = express.Router();
 
-const turmaController = require('../controllers/turmaController');
+const turmaController = require('../controllers/turmasController'); // <- plural ✔
 const inscricoesController = require('../controllers/inscricoesController');
-const { listarTurmasDoEvento } = require('../controllers/eventosController');
 
 const authMiddleware = require('../auth/authMiddleware');
 const authorizeRoles = require('../auth/authorizeRoles');
-
-/** Bridge: adapta :evento_id → :id para o handler do eventosController */
-const listarTurmasPorEventoBridge = (req, res) => {
-  req.params.id = req.params.evento_id || req.params.id; // normaliza
-  return listarTurmasDoEvento(req, res);
-};
 
 // ➕ Criar nova turma (somente administrador)
 router.post(
@@ -23,12 +16,12 @@ router.post(
   turmaController.criarTurma
 );
 
-// ✏️ Editar turma (somente administrador)
+// ✏️ Editar turma (somente administrador) — usa alias editarTurma
 router.put(
   '/:id',
   authMiddleware,
   authorizeRoles('administrador'),
-  turmaController.editarTurma
+  turmaController.editarTurma // alias de atualizarTurma
 );
 
 // ❌ Excluir turma (somente administrador)
@@ -40,18 +33,14 @@ router.delete(
 );
 
 // 📋 Listar turmas de um evento (usuário autenticado)
-//    Usa o handler do eventosController que já inclui `inscritos`
+//    Usa o handler do próprio turmasController
 router.get(
   '/evento/:evento_id',
   authMiddleware,
-  listarTurmasPorEventoBridge
-);
-
-// Alias opcional compatível com o front (se usado em algum lugar)
-router.get(
-  '/por-evento/:id',
-  authMiddleware,
-  listarTurmasDoEvento
+  (req, res) => {
+    // normaliza o param para o controller (ele espera req.params.evento_id)
+    return turmaController.listarTurmasPorEvento(req, res);
+  }
 );
 
 // 📢 Listar turmas atribuídas ao instrutor ou administrador
@@ -59,17 +48,24 @@ router.get(
   '/instrutor',
   authMiddleware,
   authorizeRoles('administrador', 'instrutor'),
-  turmaController.listarTurmasDoinstrutor
+  turmaController.listarTurmasDoinstrutor // alias OK
 );
 
-// 🔍 Obter detalhes de uma turma (usuário autenticado)
+// 👨‍🏫 Listar instrutor(es) da turma
+router.get(
+  '/:id/instrutores',
+  authMiddleware,
+  turmaController.listarInstrutorDaTurma
+);
+
+// 🔍 Obter detalhes de uma turma
 router.get(
   '/:id/detalhes',
   authMiddleware,
   turmaController.obterDetalhesTurma
 );
 
-// 📋 Listar inscritos de uma turma específica (usuário autenticado)
+// 📋 Listar inscritos de uma turma específica
 router.get(
   '/:turma_id/inscritos',
   authMiddleware,
@@ -81,7 +77,7 @@ router.get(
   '/turmas-com-usuarios',
   authMiddleware,
   authorizeRoles('administrador'),
-  turmaController.listarTurmasComusuarios
+  turmaController.listarTurmasComusuarios // alias OK
 );
 
 module.exports = router;

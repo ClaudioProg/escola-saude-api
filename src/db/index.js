@@ -1,3 +1,4 @@
+// 📁 src/db/index.js
 const { Pool } = require('pg');
 const dotenv = require('dotenv');
 
@@ -16,29 +17,36 @@ const sslOption =
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: sslOption,
+  // max: Number(process.env.PGPOOL_MAX || 10),
+  // idleTimeoutMillis: 30000,
 });
 
-pool.connect()
-  .then((client) => {
-    if (process.env.LOG_DB === 'true') {
-      console.log('🟢 Banco de dados conectado com sucesso!');
-    }
-    client.release();
-  })
-  .catch((err) => {
-    console.error('🔴 Erro ao conectar com o banco de dados:', err.message);
-    process.exit(1);
-  });
+pool.on('error', (err) => {
+  console.error('🔴 Erro inesperado no pool:', err);
+});
 
-const query = (text, params) => {
+// Consulta simples
+async function query(text, params) {
   if (process.env.LOG_SQL === 'true') {
     console.log('🔎 SQL:', text, params || '');
   }
   return pool.query(text, params);
-};
+}
 
-// Exporte ambos!
+// ➕ Pega um client para transações (BEGIN/COMMIT/ROLLBACK)
+async function getClient() {
+  const client = await pool.connect();
+  return client;
+}
+
+// (opcional) Encerrar pool com graça
+function shutdown() {
+  return pool.end();
+}
+
 module.exports = {
   pool,
   query,
+  getClient,  // 👈 agora existe
+  shutdown,   // opcional
 };

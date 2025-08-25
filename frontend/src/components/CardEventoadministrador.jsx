@@ -1,4 +1,4 @@
-// 📁 src/components/CardEventoAdministrador.jsx
+// 📁 src/components/CardEventoadministrador.jsx
 import PropTypes from "prop-types";
 import { useEffect, useMemo } from "react";
 import { CalendarDays, Users, Star, BarChart } from "lucide-react";
@@ -136,7 +136,7 @@ function calcularMediaEventoViaLista(avaliacoes) {
 /* =========================
    Componente
    ========================= */
-export default function CardEventoAdministrador({
+export default function CardEventoadministrador({
   evento,
   expandido,
   toggleExpandir,
@@ -307,7 +307,7 @@ StatCard.propTypes = {
   title: PropTypes.string,
 };
 
-CardEventoAdministrador.propTypes = {
+CardEventoadministrador.propTypes = {
   evento: PropTypes.object.isRequired,
   expandido: PropTypes.bool,
   toggleExpandir: PropTypes.func.isRequired,

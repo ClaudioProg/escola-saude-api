@@ -5,7 +5,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
 import Breadcrumbs from "../components/Breadcrumbs";
-import CardEventoAdministrador from "../components/CardEventoAdministrador";
+import CardEventoadministrador from "../components/CardEventoadministrador";
 import Spinner from "../components/Spinner";
 import { apiGet } from "../services/api";
 
@@ -250,7 +250,7 @@ export default function DashboardAdministrador() {
         {erro && <p className="text-red-500 text-center">{erro}</p>}
 
         {eventosOrdenados.filter(filtrarPorStatus).map((evento) => (
-          <CardEventoAdministrador
+          <CardEventoadministrador
             key={evento.id}
             evento={evento}
             expandido={eventoExpandido === evento.id}

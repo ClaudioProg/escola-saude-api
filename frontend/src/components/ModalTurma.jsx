@@ -1,94 +1,197 @@
-import { useState } from "react";
+// 📁 src/components/ModalTurma.jsx
+import { useEffect, useMemo, useState } from "react";
 import Modal from "react-modal";
-import { CalendarDays, Clock, Hash, Type } from "lucide-react";
+import { CalendarDays, Clock, Hash, Type, PlusCircle, Trash2 } from "lucide-react";
 import { toast } from "react-toastify";
 
-export default function ModalTurma({ isOpen, onClose, onSalvar }) {
-  const [dataInicio, setDataInicio] = useState("");
-  const [dataFim, setDataFim] = useState("");
-  const [horarioInicio, setHorarioInicio] = useState("");
-  const [horarioFim, setHorarioFim] = useState("");
-  const [vagas_total, setVagasTotal] = useState("");
-  const [nome, setNome] = useState("");
+/**
+ * Props:
+ *  - isOpen: boolean
+ *  - onClose: () => void
+ *  - onSalvar: (turmaPayload) => void
+ *  - initialTurma?: {
+ *      nome, vagas_total, carga_horaria?, horario_inicio?, horario_fim?,
+ *      encontros?: [{ data:'YYYY-MM-DD', inicio:'HH:MM', fim:'HH:MM' }],
+ *      datas?: [{ data:'YYYY-MM-DD', horario_inicio:'HH:MM', horario_fim:'HH:MM' }]
+ *    }
+ *  - onExcluir?: () => void
+ */
+export default function ModalTurma({ isOpen, onClose, onSalvar, initialTurma = null, onExcluir }) {
+  /* ===================== helpers ===================== */
+  const hhmm = (s, fallback = "") =>
+    typeof s === "string" && s.includes(":") ? s.slice(0, 5) : fallback;
 
-  // helper: converte "yyyy-mm-dd" para Date local fixando 12:00
-  const toLocalNoon = (ymd) => new Date(`${ymd}T12:00:00`);
-
-  const handleSalvar = () => {
-    // valida campos obrigatórios básicos
-    if (
-      !dataInicio ||
-      !horarioInicio ||
-      !horarioFim ||
-      !nome.trim() ||
-      !vagas_total ||
-      Number(vagas_total) <= 0
-    ) {
-      toast.warning("Preencha todos os campos obrigatórios.");
-      return;
+  const iso = (v) => {
+    if (!v) return "";
+    if (v instanceof Date) return v.toISOString().slice(0, 10);
+    if (typeof v === "string") return v.slice(0, 10);
+    try {
+      return new Date(v).toISOString().slice(0, 10);
+    } catch {
+      return "";
     }
-
-    // normaliza ISO (já vem yyyy-mm-dd do input type=date)
-    const dataInicioISO = dataInicio; // ✅ já é yyyy-mm-dd
-    const dataFimISO = dataFim || dataInicioISO; // se vazio, assume 1 dia
-
-    // valida ordem das datas (com T12:00:00 para evitar off-by-one)
-    const inicio = toLocalNoon(dataInicioISO);
-    const fim = toLocalNoon(dataFimISO);
-    if (fim < inicio) {
-      toast.error("A data de término não pode ser anterior à data de início.");
-      return;
-    }
-
-    // valida horários
-    const [hiHoras = 0, hiMin = 0] = (horarioInicio || "").split(":").map(Number);
-    const [hfHoras = 0, hfMin = 0] = (horarioFim || "").split(":").map(Number);
-    const inicioHoras = hiHoras + (hiMin || 0) / 60;
-    const fimHoras = hfHoras + (hfMin || 0) / 60;
-
-    if (Number.isNaN(inicioHoras) || Number.isNaN(fimHoras)) {
-      toast.error("Informe horários válidos (HH:MM).");
-      return;
-    }
-    if (fimHoras <= inicioHoras) {
-      toast.error("O horário de término deve ser posterior ao horário de início.");
-      return;
-    }
-
-    // dias de duração (inclui ambas as pontas)
-    const MS_DIA = 24 * 60 * 60 * 1000;
-    const dias = Math.max(1, Math.floor((fim - inicio) / MS_DIA) + 1);
-
-    // horas por dia, com pausa de 1h se >= 8h/dia
-    let horasPorDia = fimHoras - inicioHoras;
-    if (horasPorDia >= 8) horasPorDia -= 1; // almoço
-
-    // evita negativo por segurança
-    horasPorDia = Math.max(0, horasPorDia);
-
-    const cargaHoraria = Math.round(horasPorDia * dias);
-
-    const turmaFinal = {
-      nome: nome.trim(),
-      data_inicio: dataInicioISO,
-      data_fim: dataFimISO,
-      horario_inicio: horarioInicio,
-      horario_fim: horarioFim,
-      vagas_total: Number(vagas_total),
-      carga_horaria: cargaHoraria,
-    };
-
-    onSalvar(turmaFinal);
-
-    // limpa os campos
-    setDataInicio("");
-    setDataFim("");
-    setHorarioInicio("");
-    setHorarioFim("");
-    setVagasTotal("");
-    setNome("");
   };
 
+  const calcularCargaHorariaTotal = (arr) => {
+    // soma horas de cada encontro; se >= 8h no dia, desconta 1h (almoço)
+    let horas = 0;
+    for (const e of arr) {
+      const [h1, m1] = hhmm(e.inicio, "00:00").split(":").map(Number);
+      const [h2, m2] = hhmm(e.fim, "00:00").split(":").map(Number);
+      const ini = h1 * 60 + (m1 || 0);
+      const fim = h2 * 60 + (m2 || 0);
+      const diffH = Math.max(0, (fim - ini) / 60);
+      horas += diffH >= 8 ? diffH - 1 : diffH;
+    }
+    return Math.round(horas);
+  };
+
+  // Converte initialTurma.datas -> encontros (para edição)
+  const datasParaEncontros = (t) => {
+    const baseHi = hhmm(t?.horario_inicio, "08:00");
+    const baseHf = hhmm(t?.horario_fim, "17:00");
+    if (!Array.isArray(t?.datas)) return null;
+    const arr = t.datas
+      .map((d) => ({
+        data: iso(d?.data),
+        inicio: hhmm(d?.horario_inicio, baseHi),
+        fim: hhmm(d?.horario_fim, baseHf),
+      }))
+      .filter((x) => x.data);
+    return arr.length ? arr : null;
+  };
+
+  const encontrosDoInitial = (t) => {
+    // 1) se vier encontros
+    if (Array.isArray(t?.encontros) && t.encontros.length) {
+      const baseHi = hhmm(t?.horario_inicio, "08:00");
+      const baseHf = hhmm(t?.horario_fim, "17:00");
+      return t.encontros
+        .map((e) => ({
+          data: iso(e?.data || e),
+          inicio: hhmm(e?.inicio, baseHi),
+          fim: hhmm(e?.fim, baseHf),
+        }))
+        .filter((x) => x.data);
+    }
+    // 2) se vier datas, converte
+    const conv = datasParaEncontros(t);
+    if (conv) return conv;
+
+    // 3) fallback
+    return [{ data: "", inicio: "", fim: "" }];
+  };
+
+  /* ===================== state ===================== */
+  const [nome, setNome] = useState(initialTurma?.nome || "");
+  const [vagasTotal, setVagasTotal] = useState(
+    initialTurma?.vagas_total != null ? String(initialTurma.vagas_total) : ""
+  );
+  // cada encontro no estado: { data:'YYYY-MM-DD', inicio:'HH:MM', fim:'HH:MM' }
+  const [encontros, setEncontros] = useState(encontrosDoInitial(initialTurma));
+
+  // reidrata quando abrir para editar
+  useEffect(() => {
+    if (!isOpen) return;
+    setNome(initialTurma?.nome || "");
+    setVagasTotal(initialTurma?.vagas_total != null ? String(initialTurma.vagas_total) : "");
+    setEncontros(encontrosDoInitial(initialTurma));
+  }, [isOpen, initialTurma]);
+
+  /* ===================== derived ===================== */
+  const encontrosOrdenados = useMemo(
+    () =>
+      [...(encontros || [])]
+        .map((e) => ({ ...e, data: iso(e.data) }))
+        .filter((e) => e.data)
+        .sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : 0)),
+    [encontros]
+  );
+  const data_inicio = encontrosOrdenados[0]?.data || null;
+  const data_fim = encontrosOrdenados.at(-1)?.data || null;
+
+  /* ===================== CRUD encontros ===================== */
+  const addEncontro = () => {
+    const last = encontros[encontros.length - 1] || {};
+    setEncontros((prev) => [
+      ...prev,
+      { data: "", inicio: hhmm(last.inicio, ""), fim: hhmm(last.fim, "") },
+    ]);
+  };
+
+  const removeEncontro = (idx) =>
+    setEncontros((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev));
+
+  const updateEncontro = (idx, field, value) =>
+    setEncontros((prev) => prev.map((e, i) => (i === idx ? { ...e, [field]: value } : e)));
+
+  /* ===================== validação e salvar ===================== */
+  const validar = () => {
+    if (!nome.trim() || !vagasTotal || Number(vagasTotal) <= 0) {
+      toast.warning("Preencha Nome da turma e Quantidade de vagas (>= 1).");
+      return false;
+    }
+    if (!encontrosOrdenados.length) {
+      toast.warning("Inclua pelo menos uma data de encontro.");
+      return false;
+    }
+    for (let i = 0; i < encontrosOrdenados.length; i++) {
+      const e = encontrosOrdenados[i];
+      if (!e.data || !e.inicio || !e.fim) {
+        toast.error(`Preencha data e horários do encontro #${i + 1}.`);
+        return false;
+      }
+      const [h1, m1] = hhmm(e.inicio, "00:00").split(":").map(Number);
+      const [h2, m2] = hhmm(e.fim, "00:00").split(":").map(Number);
+      if (h2 * 60 + (m2 || 0) <= h1 * 60 + (m1 || 0)) {
+        toast.error(`Horários inválidos no encontro #${i + 1}.`);
+        return false;
+      }
+    }
+    return true;
+  };
+
+  const handleSalvar = () => {
+    if (!validar()) return;
+
+    const carga_horaria = calcularCargaHorariaTotal(encontrosOrdenados);
+    const horario_inicio = hhmm(encontrosOrdenados[0]?.inicio, "00:00");
+    const horario_fim = hhmm(encontrosOrdenados[0]?.fim, "00:00");
+
+    // ⚠️ IMPORTANTE: retornamos 'encontros' e também 'datas'
+    const encontrosPayload = encontrosOrdenados.map((e) => ({
+      data: e.data,
+      inicio: hhmm(e.inicio, horario_inicio),
+      fim: hhmm(e.fim, horario_fim),
+    }));
+
+    const datasPayload = encontrosOrdenados.map((e) => ({
+      data: e.data,
+      horario_inicio: hhmm(e.inicio, horario_inicio),
+      horario_fim: hhmm(e.fim, horario_fim),
+    }));
+
+    const payload = {
+      nome: nome.trim(),
+      vagas_total: Number(vagasTotal),
+      carga_horaria,
+      data_inicio,
+      data_fim,
+      horario_inicio,
+      horario_fim,
+      encontros: encontrosPayload, // usado pelo backend atualizado
+      datas: datasPayload,         // compatibilidade com ModalEvento/validação atual
+    };
+
+    onSalvar?.(payload);
+
+    // limpar se for criação (em edição, quem fecha é o pai)
+    setNome("");
+    setVagasTotal("");
+    setEncontros([{ data: "", inicio: "", fim: "" }]);
+  };
+
+  /* ===================== render ===================== */
   return (
     <Modal
       isOpen={isOpen}
@@ -98,8 +201,11 @@ export default function ModalTurma({ isOpen, onClose, onSalvar }) {
       className="modal"
       overlayClassName="overlay"
     >
-      <h2 className="text-xl font-bold mb-4 text-lousa">Nova Turma</h2>
+      <h2 className="text-xl font-bold mb-4 text-lousa">
+        {initialTurma ? "Editar Turma" : "Nova Turma"}
+      </h2>
 
+      {/* Nome */}
       <div className="relative mb-3">
         <Type className="absolute left-3 top-3 text-gray-500" size={18} />
         <input
@@ -111,54 +217,74 @@ export default function ModalTurma({ isOpen, onClose, onSalvar }) {
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-3 mb-3">
-        <div className="relative">
-          <CalendarDays className="absolute left-3 top-3 text-gray-500" size={18} />
-          <input
-            type="date"
-            value={dataInicio}
-            onChange={(e) => setDataInicio(e.target.value)}
-            className="w-full pl-10 py-2 border rounded-md shadow-sm"
-            required
-          />
-        </div>
-        <div className="relative">
-          <CalendarDays className="absolute left-3 top-3 text-gray-500" size={18} />
-          <input
-            type="date"
-            value={dataFim}
-            onChange={(e) => setDataFim(e.target.value)}
-            className="w-full pl-10 py-2 border rounded-md shadow-sm"
-          />
-        </div>
+      {/* Encontros */}
+      <div className="space-y-3">
+        <div className="font-semibold text-sm text-lousa">Encontros</div>
+        {encontros.map((e, idx) => (
+          <div key={idx} className="grid grid-cols-3 gap-3 items-end">
+            <div className="relative">
+              <CalendarDays className="absolute left-3 top-3 text-gray-500" size={18} />
+              <input
+                type="date"
+                value={iso(e.data)}
+                onChange={(ev) => updateEncontro(idx, "data", ev.target.value)}
+                className="w-full pl-10 py-2 border rounded-md shadow-sm"
+                required
+              />
+            </div>
+            <div className="relative">
+              <Clock className="absolute left-3 top-3 text-gray-500" size={18} />
+              <input
+                type="time"
+                value={hhmm(e.inicio, "")}
+                onChange={(ev) => updateEncontro(idx, "inicio", ev.target.value)}
+                className="w-full pl-10 py-2 border rounded-md shadow-sm"
+                required
+              />
+            </div>
+            <div className="relative">
+              <Clock className="absolute left-3 top-3 text-gray-500" size={18} />
+              <div className="flex gap-2">
+                <input
+                  type="time"
+                  value={hhmm(e.fim, "")}
+                  onChange={(ev) => updateEncontro(idx, "fim", ev.target.value)}
+                  className="w-full pl-10 py-2 border rounded-md shadow-sm"
+                  required
+                />
+                {encontros.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeEncontro(idx)}
+                    className="px-3 py-2 bg-red-100 text-red-700 rounded-md hover:bg-red-200"
+                    title="Remover este encontro"
+                  >
+                    ❌
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
 
-        <div className="relative">
-          <Clock className="absolute left-3 top-3 text-gray-500" size={18} />
-          <input
-            type="time"
-            value={horarioInicio}
-            onChange={(e) => setHorarioInicio(e.target.value)}
-            className="w-full pl-10 py-2 border rounded-md shadow-sm"
-            required
-          />
-        </div>
-        <div className="relative">
-          <Clock className="absolute left-3 top-3 text-gray-500" size={18} />
-          <input
-            type="time"
-            value={horarioFim}
-            onChange={(e) => setHorarioFim(e.target.value)}
-            className="w-full pl-10 py-2 border rounded-md shadow-sm"
-            required
-          />
+        <div className="flex justify-center">
+          <button
+            type="button"
+            onClick={addEncontro}
+            className="flex items-center gap-2 bg-teal-700 hover:bg-teal-800 text-white font-semibold px-4 py-2 rounded-full transition"
+          >
+            <PlusCircle size={16} />
+            Adicionar data
+          </button>
         </div>
       </div>
 
-      <div className="relative mb-4">
+      {/* Vagas */}
+      <div className="relative my-4">
         <Hash className="absolute left-3 top-3 text-gray-500" size={18} />
         <input
           type="number"
-          value={vagas_total}
+          value={vagasTotal}
           onChange={(e) => setVagasTotal(e.target.value)}
           placeholder="Quantidade de vagas"
           className="w-full pl-10 py-2 border rounded-md shadow-sm"
@@ -167,19 +293,38 @@ export default function ModalTurma({ isOpen, onClose, onSalvar }) {
         />
       </div>
 
-      <div className="flex justify-end gap-3">
-        <button
-          onClick={onClose}
-          className="bg-gray-200 hover:bg-gray-300 px-4 py-2 rounded-md"
-        >
-          Cancelar
-        </button>
-        <button
-          onClick={handleSalvar}
-          className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md"
-        >
-          Salvar Turma
-        </button>
+      {/* Ações */}
+      <div className="flex justify-between gap-3">
+        {initialTurma && onExcluir ? (
+          <button
+            type="button"
+            className="flex items-center gap-2 bg-red-100 text-red-700 px-3 py-2 rounded-md hover:bg-red-200"
+            onClick={onExcluir}
+            title="Excluir turma"
+          >
+            <Trash2 size={16} />
+            Excluir turma
+          </button>
+        ) : (
+          <span />
+        )}
+
+        <div className="flex gap-3">
+          <button
+            onClick={onClose}
+            className="bg-gray-200 hover:bg-gray-300 px-4 py-2 rounded-md"
+            type="button"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={handleSalvar}
+            className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md"
+            type="button"
+          >
+            Salvar Turma
+          </button>
+        </div>
       </div>
     </Modal>
   );

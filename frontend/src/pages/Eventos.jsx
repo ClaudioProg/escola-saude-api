@@ -13,19 +13,15 @@ import FiltrosEventos from "../components/FiltrosEventos";
 import ListaTurmasEvento from "../components/ListaTurmasEvento";
 import { apiGet, apiPost } from "../services/api";
 
-// ✅ helpers de data SEM fuso (parse local)
-import { toLocalDate } from "../utils/data";
-
 /* ------------------------------------------------------------------ */
-/*  Formatadores 100% “sem Date” para evitar fuso                       */
+/*  Helpers de data/formatadores (sem riscos de fuso)                  */
 /* ------------------------------------------------------------------ */
 const MESES_ABREV_PT = [
   "jan.", "fev.", "mar.", "abr.", "mai.", "jun.",
-  "jul.", "ago.", "set.", "out.", "nov.", "dez."
+  "jul.", "ago.", "set.", "out.", "nov.", "dez.",
 ];
 
-// Ex.: "2025-08-24" → "24 de ago. de 2025"
-// Aceita "YYYY-MM-DD" ou "YYYY-MM-DDTHH:mm:ss"
+// "2025-08-24" → "24 de ago. de 2025"
 function formatarDataCurtaSeguro(iso) {
   if (!iso) return "";
   const [data] = String(iso).split("T");
@@ -36,15 +32,43 @@ function formatarDataCurtaSeguro(iso) {
   return `${String(dia).padStart(2, "0")} de ${MESES_ABREV_PT[idx]} de ${ano}`;
 }
 
-// Ex.: "2025-08-24" → "24/08/2025"
-function formatarDataBRSemFuso(iso) {
-  if (!iso) return "";
-  const [data] = String(iso).split("T");
-  const partes = data.split("-");
-  if (partes.length !== 3) return "";
-  const [ano, mes, dia] = partes;
-  return `${String(dia).padStart(2, "0")}/${String(mes).padStart(2, "0")}/${ano}`;
+// yyy-mm-dd (s.slice)
+const ymd = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
+
+// YYYY-MM-DD de hoje (local)
+const HOJE_ISO = (() => {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+})();
+
+// intervalo simples
+const inRange = (di, df, dia) => !!di && !!df && di <= dia && dia <= df;
+
+// monta range de uma turma usando encontros, quando houver
+function rangeDaTurma(t) {
+  let di = null, df = null;
+  const push = (x) => {
+    const d = ymd(typeof x === "string" ? x : x?.data);
+    if (!d) return;
+    if (!di || d < di) di = d;
+    if (!df || d > df) df = d;
+  };
+
+  if (Array.isArray(t?.encontros) && t.encontros.length) {
+    t.encontros.forEach(push);
+  } else if (Array.isArray(t?.datas) && t.datas.length) {
+    t.datas.forEach(push);
+  } else if (Array.isArray(t?._datas) && t._datas.length) {
+    t._datas.forEach(push);
+  } else {
+    // fallback: campos agregados
+    push(t?.data_inicio);
+    push(t?.data_fim);
+  }
+  return { di, df };
 }
+
 /* ------------------------------------------------------------------ */
 
 export default function Eventos() {
@@ -56,6 +80,8 @@ export default function Eventos() {
   const [inscrevendo, setInscrevendo] = useState(null);
   const [carregandoTurmas, setCarregandoTurmas] = useState(null);
   const [carregandoEventos, setCarregandoEventos] = useState(true);
+
+  // 🔁 'todos' | 'programado' | 'andamento' | 'encerrado'
   const [filtro, setFiltro] = useState("programado");
 
   const navigate = useNavigate();
@@ -64,6 +90,7 @@ export default function Eventos() {
   const nome = usuario?.nome || "";
   const usuarioId = Number(usuario?.id) || null;
 
+  /* -------------------- carregamentos -------------------- */
   useEffect(() => {
     async function carregarEventos() {
       setCarregandoEventos(true);
@@ -139,7 +166,6 @@ export default function Eventos() {
     const eventoReferente =
       (eventoIdLocal && eventos.find((e) => Number(e.id) === Number(eventoIdLocal))) || null;
 
-    // usa flag do backend se existir; fallback: confere lista de instrutores do evento
     const ehInstrutor =
       Boolean(eventoReferente?.ja_instrutor) ||
       (Array.isArray(eventoReferente?.instrutor) &&
@@ -170,9 +196,11 @@ export default function Eventos() {
       // Atualiza eventos e recarrega as turmas do evento dessa turma
       await atualizarEventos();
 
-      const eventoId = eventoIdLocal || Object.keys(turmasPorEvento).find((id) =>
-        (turmasPorEvento[id] || []).some((t) => Number(t.id) === Number(turmaId))
-      );
+      const eventoId =
+        eventoIdLocal ||
+        Object.keys(turmasPorEvento).find((id) =>
+          (turmasPorEvento[id] || []).some((t) => Number(t.id) === Number(turmaId))
+        );
 
       if (eventoId) {
         try {
@@ -186,11 +214,9 @@ export default function Eventos() {
         }
       }
     } catch (err) {
-      // Trata respostas do backend, especialmente 409 para instrutor e duplicidade
       const status = err?.status || err?.response?.status;
       const msg = err?.data?.erro || err?.message || "Erro ao se inscrever.";
       if (status === 409) {
-        // Pode ser "instrutor não pode", ou "já inscrito"
         toast.warn(msg);
       } else if (status === 400) {
         toast.error(msg);
@@ -203,30 +229,90 @@ export default function Eventos() {
     }
   }
 
-  // ✅ filtra usando datas locais (sem UTC)
+  /* ------------------ FILTRO/ORDENAÇÃO (espelhando o admin) ------------------ */
+
+  // 1) decide quais turmas usar para classificar o evento:
+  //    - se já carregamos via /api/turmas/evento/:id -> usa essas
+  //    - senão, usa turmas embutidas em /api/eventos (se houver)
+  function turmasDoEvento(evento) {
+    const carregadas = turmasPorEvento[evento.id];
+    if (Array.isArray(carregadas) && carregadas.length) return carregadas;
+    if (Array.isArray(evento?.turmas) && evento.turmas.length) return evento.turmas;
+    return [];
+  }
+
+  // 2) status do evento
+  function statusDoEvento(evento) {
+    const ts = turmasDoEvento(evento);
+
+    if (ts.length) {
+      let algumAndamento = false;
+      let algumFuturo = false;
+      let todosPassados = true;
+
+      for (const t of ts) {
+        const { di, df } = rangeDaTurma(t);
+        if (inRange(di, df, HOJE_ISO)) algumAndamento = true;
+        if (di && di > HOJE_ISO) algumFuturo = true;
+        if (!(df && df < HOJE_ISO)) todosPassados = false;
+      }
+
+      if (algumAndamento) return "andamento";
+      if (algumFuturo && !todosPassados) return "programado";
+      if (todosPassados) return "encerrado";
+      return "programado"; // fallback conservador
+    }
+
+    // Sem turmas confiáveis → usar intervalo geral
+    const diG = ymd(evento?.data_inicio_geral);
+    const dfG = ymd(evento?.data_fim_geral);
+    if (inRange(diG, dfG, HOJE_ISO)) return "andamento";
+    if (diG && diG > HOJE_ISO) return "programado";
+    if (dfG && dfG < HOJE_ISO) return "encerrado";
+    return "programado";
+  }
+
+  // 3) aplicar filtro atual
   const eventosFiltrados = eventos.filter((evento) => {
-    const hoje = new Date();
-    hoje.setHours(0, 0, 0, 0);
-
-    const inicio = evento.data_inicio_geral ? toLocalDate(evento.data_inicio_geral) : null;
-    const fim = evento.data_fim_geral ? toLocalDate(evento.data_fim_geral) : null;
-
-    if (inicio) inicio.setHours(0, 0, 0, 0);
-    if (fim) fim.setHours(0, 0, 0, 0);
+    const st = statusDoEvento(evento);
 
     if (filtro === "todos") return true;
-    if (filtro === "programado") return inicio && inicio > hoje;
-    if (filtro === "em andamento") return inicio && fim && inicio <= hoje && fim >= hoje;
+
+    if (filtro === "programado") {
+      return st === "programado";
+    }
+
+    if (filtro === "andamento") {
+      return st === "andamento";
+    }
+
     if (filtro === "encerrado") {
-      // mostra encerrados somente se o usuário participou de alguma turma do evento
+      // mostra encerrados só se participou de alguma turma
       const inscritoEmAlgumaTurma = (evento.turmas || []).some((t) =>
         inscricoesConfirmadas.includes(Number(t.id))
       );
-      return fim && fim < hoje && inscritoEmAlgumaTurma;
+      return st === "encerrado" && inscritoEmAlgumaTurma;
     }
+
     return true;
   });
 
+  // 4) ordenar por "fim" consolidado (desc)
+  function keyFim(evento) {
+    const ts = turmasDoEvento(evento);
+    let df = null;
+    if (ts.length) {
+      for (const t of ts) {
+        const r = rangeDaTurma(t);
+        if (r.df && (!df || r.df > df)) df = r.df;
+      }
+    }
+    if (!df) df = ymd(evento?.data_fim_geral) || "0000-00-00";
+    const h = (typeof evento?.horario_fim_geral === "string" && evento.horario_fim_geral.slice(0, 5)) || "23:59";
+    return `${df}T${h}`;
+  }
+
+  /* --------------------------------- UI --------------------------------- */
   return (
     <main className="min-h-screen bg-gelo dark:bg-zinc-900 px-2 sm:px-4 py-6">
       <Breadcrumbs />
@@ -240,12 +326,12 @@ export default function Eventos() {
       </h1>
 
       <FiltrosEventos
-  filtroAtivo={filtro}
-  onFiltroChange={setFiltro}
-  filtroSelecionado={filtro}        // <- adiciona
-  valorSelecionado={filtro}         // <- adiciona (se o filho repassa para FiltroToggleGroup)
-  onChange={setFiltro}              // <- se o filho usa esta prop genérica
-/>
+        filtroAtivo={filtro}
+        onFiltroChange={setFiltro}
+        filtroSelecionado={filtro}
+        valorSelecionado={filtro}
+        onChange={setFiltro}
+      />
 
       {carregandoEventos ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -263,16 +349,7 @@ export default function Eventos() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {[...eventosFiltrados]
-            // ✅ ordena usando local date + horário geral (quando existir)
-            .sort((a, b) => {
-              const fimA = toLocalDate(
-                `${a.data_fim_geral || ""}${a.horario_fim_geral ? `T${a.horario_fim_geral}` : ""}`
-              );
-              const fimB = toLocalDate(
-                `${b.data_fim_geral || ""}${b.horario_fim_geral ? `T${b.horario_fim_geral}` : ""}`
-              );
-              return (fimB?.getTime?.() || 0) - (fimA?.getTime?.() || 0);
-            })
+            .sort((a, b) => (keyFim(b) > keyFim(a) ? 1 : keyFim(b) < keyFim(a) ? -1 : 0))
             .map((evento) => {
               const ehInstrutor = Boolean(evento.ja_instrutor);
               return (
@@ -290,7 +367,6 @@ export default function Eventos() {
                     </p>
                   )}
 
-                  {/* Selo/aviso quando o usuário é instrutor do evento */}
                   {ehInstrutor && (
                     <div className="mb-2 text-xs font-medium inline-flex items-center gap-2 px-2 py-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 border border-amber-200 dark:border-amber-800">
                       Você é instrutor deste evento
@@ -339,12 +415,12 @@ export default function Eventos() {
                     <ListaTurmasEvento
                       turmas={turmasPorEvento[evento.id]}
                       eventoId={evento.id}
-                      hoje={new Date()} // ok usar "agora"; não é parse
+                      hoje={new Date()}
                       inscricoesConfirmadas={inscricoesConfirmadas}
                       inscrever={inscrever}
                       inscrevendo={inscrevendo}
                       jaInscritoNoEvento={!!evento.ja_inscrito}
-                      jaInstrutorDoEvento={!!evento.ja_instrutor}  // <- NOVO (se o componente usar, desabilita CTA)
+                      jaInstrutorDoEvento={!!evento.ja_instrutor}
                       carregarInscritos={() => {}}
                       carregarAvaliacoes={() => {}}
                       gerarRelatorioPDF={() => {}}

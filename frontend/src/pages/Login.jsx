@@ -20,15 +20,11 @@ export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // ✅ Só mostra o botão Google se a env existir
   const hasGoogleClient = !!import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
-  // 🔁 Redireciona se já estiver logado
   useEffect(() => {
     const token = localStorage.getItem("token");
-    if (location.pathname === "/login" && token) {
-      navigate("/dashboard");
-    }
+    if (location.pathname === "/login" && token) navigate("/dashboard");
   }, [navigate, location]);
 
   function aplicarMascaraCPF(valor) {
@@ -47,7 +43,6 @@ export default function Login() {
     const { token, usuario } = payload || {};
     if (!token || !usuario) throw new Error("Resposta de login inválida.");
 
-    // 🔧 Normaliza perfil para array
     const perfilArray = Array.isArray(usuario.perfil)
       ? usuario.perfil
       : typeof usuario.perfil === "string"
@@ -63,6 +58,8 @@ export default function Login() {
 
   async function handleLogin(e) {
     e.preventDefault();
+    if (loading) return;
+
     setErroCpf("");
     setErroSenha("");
 
@@ -81,19 +78,20 @@ export default function Login() {
 
     setLoading(true);
     try {
-      const payload = await apiPost("/login", {
-        cpf: cpf.replace(/\D/g, ""),
-        senha,
-      });
+      // ⚠️ auth:false para NÃO enviar Authorization no login
+      const payload = await apiPost(
+        "/login", // se sua rota for /auth/login, troque aqui
+        { cpf: cpf.replace(/\D/g, ""), senha },
+        { auth: false, on401: "silent" }
+      );
       persistirSessao(payload);
       toast.success("✅ Login realizado com sucesso!");
       navigate("/dashboard");
     } catch (err) {
-      const msg = err?.message?.startsWith("HTTP ")
-        ? "Erro ao fazer login."
-        : err?.message || "Erro ao fazer login.";
+      const serverMsg =
+        err?.data?.erro || err?.data?.message || err?.message || "Erro ao fazer login.";
       setSenha("");
-      toast.error(msg);
+      toast.error(serverMsg);
     } finally {
       setLoading(false);
     }
@@ -104,19 +102,22 @@ export default function Login() {
       toast.error("Credencial do Google ausente.");
       return;
     }
+    if (loadingGoogle) return;
+
     setLoadingGoogle(true);
     try {
-      const payload = await apiPost("/auth/google", {
-        credential: credentialResponse.credential,
-      });
+      const payload = await apiPost(
+        "/auth/google",
+        { credential: credentialResponse.credential },
+        { auth: false, on401: "silent" }
+      );
       persistirSessao(payload);
       toast.success("✅ Login com Google realizado com sucesso!");
       navigate("/dashboard");
     } catch (err) {
-      const msg = err?.message?.startsWith("HTTP ")
-        ? "Erro ao fazer login com Google."
-        : err?.message || "Erro ao fazer login com Google.";
-      toast.error(msg);
+      const serverMsg =
+        err?.data?.erro || err?.data?.message || err?.message || "Erro ao fazer login com Google.";
+      toast.error(serverMsg);
     } finally {
       setLoadingGoogle(false);
     }
@@ -193,7 +194,6 @@ export default function Login() {
           </div>
           {erroSenha && <p className="text-red-500 text-xs mt-1">{erroSenha}</p>}
 
-          {/* 🔗 Esqueci minha senha */}
           <div className="mt-2 text-right">
             <button
               type="button"
@@ -205,7 +205,6 @@ export default function Login() {
           </div>
         </div>
 
-        {/* Entrar */}
         <BotaoPrimario
           type="submit"
           className="w-full flex justify-center items-center gap-2 mt-1"
@@ -215,10 +214,8 @@ export default function Login() {
           <LogIn size={16} /> {loading ? "Entrando..." : "Entrar"}
         </BotaoPrimario>
 
-        {/* Separador */}
         <div className="text-center text-sm text-white mt-2">ou</div>
 
-        {/* Google */}
         <div className="flex justify-center mt-1 mb-4">
           {loadingGoogle ? (
             <CarregandoSkeleton mensagem="Fazendo login com Google..." />
@@ -227,7 +224,6 @@ export default function Login() {
               <GoogleLogin
                 onSuccess={handleLoginGoogle}
                 onError={() => toast.error("Erro no login com Google.")}
-                // ↓ Props explícitas para evitar parâmetros 'undefined' na URL do widget
                 theme="outline"
                 size="large"
                 shape="rectangular"
@@ -243,7 +239,6 @@ export default function Login() {
           )}
         </div>
 
-        {/* Cadastro */}
         <div className="text-center">
           <button
             type="button"

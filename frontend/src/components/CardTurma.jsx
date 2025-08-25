@@ -1,54 +1,57 @@
+// src/componentes/CardTurma
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { motion } from "framer-motion";
 import { Users, CalendarDays } from "lucide-react";
 import { formatarDataBrasileira } from "../utils/data";
 
 /* ===== Helpers de data no fuso local ===== */
-
 function isDateOnly(str) {
   return typeof str === "string" && /^\d{4}-\d{2}-\d{2}$/.test(str);
 }
-
 function toLocalDate(input) {
   if (!input) return null;
   if (input instanceof Date) return input;
-
   if (typeof input === "string") {
     if (isDateOnly(input)) {
       const [y, m, d] = input.split("-").map(Number);
       return new Date(y, m - 1, d); // 00:00 local
     }
-    return new Date(input); // já tem hora → deixa o JS interpretar
+    return new Date(input);
   }
   return new Date(input);
 }
-
 function startOfDayLocal(d) {
   const dt = toLocalDate(d);
   if (!dt) return null;
   return new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
 }
-
 function endOfDayLocal(d) {
   const dt = toLocalDate(d);
   if (!dt) return null;
   return new Date(dt.getFullYear(), dt.getMonth(), dt.getDate(), 23, 59, 59, 999);
 }
+function minutesBetween(hhmmIni, hhmmFim) {
+  if (!hhmmIni || !hhmmFim) return 0;
+  const [h1, m1] = hhmmIni.split(":").map(Number);
+  const [h2, m2] = hhmmFim.split(":").map(Number);
+  if (![h1, m1, h2, m2].every((n) => Number.isFinite(n))) return 0;
+  return (h2 * 60 + m2) - (h1 * 60 + m1);
+}
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
 
-/* ===== Badge de status ===== */
+/* ===== Badge de status (agora com base em datas_turma) ===== */
+function getStatusBadgeByDates(minData, maxData, horarioFimUltimoDia = "23:59") {
+  if (!minData || !maxData) return null;
 
-function getStatusBadge(inicio, fim, horarioFim = "23:59") {
   const agora = new Date();
+  const dataInicio = startOfDayLocal(minData);
+  const dataFim = endOfDayLocal(maxData);
 
-  const dataInicio = startOfDayLocal(inicio);
-  let dataFim = endOfDayLocal(fim);
-
-  if (!dataInicio || !dataFim) return null;
-
-  // aplica horário de fim real no último dia, se fornecido (ex.: 12:00)
-  if (horarioFim) {
-    const [h, m] = horarioFim.split(":").map(Number);
+  if (horarioFimUltimoDia) {
+    const [h, m] = horarioFimUltimoDia.split(":").map(Number);
     dataFim.setHours(Number.isFinite(h) ? h : 23, Number.isFinite(m) ? m : 59, 59, 999);
   }
 
@@ -59,7 +62,6 @@ function getStatusBadge(inicio, fim, horarioFim = "23:59") {
       </span>
     );
   }
-
   if (agora > dataFim) {
     return (
       <span className="ml-2 px-3 py-1 rounded-full text-xs font-bold bg-red-100 text-red-800 border border-red-400">
@@ -67,7 +69,6 @@ function getStatusBadge(inicio, fim, horarioFim = "23:59") {
       </span>
     );
   }
-
   return (
     <span className="ml-2 px-3 py-1 rounded-full text-xs font-bold bg-yellow-100 text-yellow-900 border border-yellow-400">
       Em andamento
@@ -96,37 +97,74 @@ export default function CardTurma({
   const ocupadas = Array.isArray(turma.inscritos) ? turma.inscritos.length : 0;
   const percentual = total > 0 ? Math.round((ocupadas / total) * 100) : 0;
 
-  // 🕒 Cálculo da carga horária diária
-  let cargaHoraria = 0;
-  if (turma.horario_inicio && turma.horario_fim) {
-    try {
-      const [h1, m1] = turma.horario_inicio.split(":").map(Number);
-      const [h2, m2] = turma.horario_fim.split(":").map(Number);
-      const inicioMin = h1 * 60 + m1;
-      const fimMin = h2 * 60 + m2;
-      let totalMin = fimMin - inicioMin;
-      if (totalMin >= 360) totalMin -= 60; // desconta 1h de almoço
-      cargaHoraria = totalMin > 0 ? totalMin / 60 : 0;
-    } catch {
-      cargaHoraria = 0;
+  // ================== NOVO: derivar dados a partir de datas_turma ==================
+  // Espera-se turma.datas: [{ data: 'YYYY-MM-DD', horario_inicio: 'HH:MM', horario_fim: 'HH:MM' }, ...]
+  const {
+    minData,
+    maxData,
+    horasTotal,
+    horarioFimUltimoDia,
+    datasOrdenadas
+  } = useMemo(() => {
+    const arr = Array.isArray(turma.datas) ? [...turma.datas] : [];
+    // normaliza strings e ordena por data
+    arr.sort((a, b) => String(a?.data || "").localeCompare(String(b?.data || "")));
+
+    const first = arr[0];
+    const last = arr[arr.length - 1];
+
+    const minD = first?.data || turma.data_inicio || null;
+    const maxD = last?.data || turma.data_fim || null;
+
+    // soma de horas por dia (com regra do almoço: −1h quando >= 6h)
+    let totalMin = 0;
+    for (const d of arr) {
+      const mins = minutesBetween(d?.horario_inicio, d?.horario_fim);
+      if (mins > 0) {
+        totalMin += mins >= 360 ? (mins - 60) : mins;
+      }
     }
-  }
 
-  // Dias da turma (contagem de dias de calendário, inclusive início/fim)
-  const ini = startOfDayLocal(turma.data_inicio);
-  const fim = startOfDayLocal(turma.data_fim);
-  const diasTurma =
-    ini && fim
-      ? Math.max(1, Math.floor((fim - ini) / 86400000) + 1)
-      : 1;
+    // se não veio `datas` mas há horário_inicio/fim "globais", use como 1 dia
+    if (arr.length === 0 && turma.horario_inicio && turma.horario_fim && minD) {
+      let mins = minutesBetween(turma.horario_inicio, turma.horario_fim);
+      if (mins > 0) totalMin += mins >= 360 ? (mins - 60) : mins;
+    }
 
-  const cargaTotal = cargaHoraria * diasTurma;
+    // horário do último dia para status (prioriza o último item da lista)
+    const hfUltimo =
+      (last?.horario_fim && String(last.horario_fim).slice(0, 5)) ||
+      (turma.horario_fim && String(turma.horario_fim).slice(0, 5)) ||
+      "23:59";
 
+    return {
+      minData: minD,
+      maxData: maxD,
+      horasTotal: totalMin / 60,
+      horarioFimUltimoDia: hfUltimo,
+      datasOrdenadas: arr
+    };
+  }, [turma]);
+
+  // ======= Status (baseado em datas reais) =======
+  const statusBadge = getStatusBadgeByDates(minData, maxData, horarioFimUltimoDia);
+
+  // ======= Texto do período =======
+  const periodoTexto = (minData && maxData)
+    ? `${formatarDataBrasileira(minData)} a ${formatarDataBrasileira(maxData)}`
+    : (minData ? formatarDataBrasileira(minData) : "Datas a definir");
+
+  // ======= Carga horária =======
+  // Se a API já calcular e enviar turma.carga_horaria_real, priorize:
+  const cargaTotal = Number.isFinite(Number(turma.carga_horaria_real))
+    ? Number(turma.carga_horaria_real)
+    : Number.isFinite(horasTotal) ? horasTotal : 0;
+
+  // ======= Bloqueio de inscrição por data real =======
   function bloquearInscricaoPorData() {
-    const fimTurma = endOfDayLocal(turma.data_fim);
+    const fimTurma = endOfDayLocal(maxData || turma.data_fim);
     return fimTurma ? fimTurma < new Date() : false;
   }
-
   const bloquear = bloquearInscricao || bloquearInscricaoPorData();
 
   const corBarra =
@@ -135,6 +173,12 @@ export default function CardTurma({
       : percentual >= 75
       ? "bg-orange-400"
       : "bg-green-600";
+
+  // ======= Prévia de datas (opcional): mostra 3 primeiras quando houver intercaladas =======
+  const previewDatas =
+    datasOrdenadas.length > 1
+      ? datasOrdenadas.slice(0, 3).map((d) => formatarDataBrasileira(d.data)).join(" • ")
+      : null;
 
   return (
     <motion.div
@@ -152,7 +196,7 @@ export default function CardTurma({
             <h4 className="text-base font-bold text-lousa dark:text-white">
               {turma.nome}
             </h4>
-            {getStatusBadge(turma.data_inicio, turma.data_fim, turma.horario_fim)}
+            {statusBadge}
           </div>
 
           {turma.evento_titulo && (
@@ -163,20 +207,26 @@ export default function CardTurma({
 
           <span className="text-xs text-gray-600 dark:text-gray-300 block mb-1">
             <CalendarDays size={14} className="inline mr-1" />
-            {turma.data_inicio && turma.data_fim
-              ? `${formatarDataBrasileira(turma.data_inicio)} a ${formatarDataBrasileira(turma.data_fim)}`
-              : "Datas a definir"}
+            {periodoTexto}
           </span>
 
-          {turma.horario_inicio && turma.horario_fim && (
+          {/* Horários (se o curso tem horários variados por data, é melhor mostrar na lista/previa) */}
+          {turma.horario_inicio && turma.horario_fim && datasOrdenadas.length <= 1 && (
             <span className="text-xs text-gray-600 dark:text-gray-300 block mt-0.5">
               ⏰ Horário: {turma.horario_inicio.slice(0, 5)} às {turma.horario_fim.slice(0, 5)}
             </span>
           )}
 
           <span className="text-xs text-gray-600 dark:text-gray-300 block mt-0.5">
-            Carga horária: {cargaHoraria.toFixed(1)}h/dia • Total: {cargaTotal.toFixed(1)}h
+            Carga horária total: {cargaTotal.toFixed(1)}h
           </span>
+
+          {previewDatas && (
+            <span className="text-xs text-gray-500 dark:text-gray-400 block mt-0.5">
+              📅 Próximas datas: {previewDatas}
+              {datasOrdenadas.length > 3 ? ` +${datasOrdenadas.length - 3}` : ""}
+            </span>
+          )}
 
           {/* Barra de Progresso */}
           <div className="mt-3">

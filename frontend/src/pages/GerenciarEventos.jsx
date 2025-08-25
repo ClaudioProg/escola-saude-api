@@ -14,12 +14,15 @@ import BotaoPrimario from "../components/BotaoPrimario";
 import CabecalhoPainel from "../components/CabecalhoPainel";
 
 /* =============================
-   Helpers
+   Helpers básicos
    ============================= */
 const clean = (obj) =>
   Object.fromEntries(
     Object.entries(obj || {}).filter(
-      ([, v]) => v !== undefined && v !== null && !(typeof v === "string" && v.trim() === "")
+      ([, v]) =>
+        v !== undefined &&
+        v !== null &&
+        !(typeof v === "string" && v.trim() === "")
     )
   );
 
@@ -62,29 +65,98 @@ const extractInstrutorIds = (arr) => {
     .map((x) => Number(x));
 };
 
+/* ======== Helpers p/ encontros/datas ======== */
+const iso = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
+const toEncontroObj = (e, hiFallback = "08:00", hfFallback = "17:00") => {
+  // aceita:
+  //  - string "YYYY-MM-DD"
+  //  - { data, horario_inicio/horario_fim }
+  //  - { data, inicio, fim }
+  if (!e) return null;
+  if (typeof e === "string") {
+    const d = iso(e);
+    return d ? { data: d, inicio: hiFallback, fim: hfFallback } : null;
+  }
+  const data = iso(e.data);
+  const inicio = hhmm(e.inicio || e.horario_inicio || hiFallback);
+  const fim = hhmm(e.fim || e.horario_fim || hfFallback);
+  if (!data) return null;
+  return { data, inicio, fim };
+};
+
+const sortByData = (arr) =>
+  [...arr].sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : 0));
+
+const cargaHorariaFromEncontros = (encs) => {
+  // soma horas de cada encontro; se >=8h em um dia, desconta 1h (almoço)
+  let total = 0;
+  for (const e of encs) {
+    const [h1, m1] = (e.inicio || "00:00").split(":").map(Number);
+    const [h2, m2] = (e.fim || "00:00").split(":").map(Number);
+    const diffH = Math.max(
+      0,
+      (h2 * 60 + (m2 || 0) - (h1 * 60 + (m1 || 0))) / 60
+    );
+    total += diffH >= 8 ? diffH - 1 : diffH;
+  }
+  return Math.round(total);
+};
+
+/**
+ * Normaliza turmas para o payload:
+ *  - inclui `encontros: [{data,inicio,fim}]`
+ *  - se faltar data_inicio/data_fim, deriva do 1º/último encontro
+ *  - se faltar horários, usa do 1º encontro
+ *  - se faltar carga_horaria, calcula a partir dos encontros
+ *  - compatível com formatos antigos: `datas` (array) ou `encontros` como strings
+ */
 function normalizeTurmas(turmas = []) {
   console.log("🧩 normalizeTurmas: in →", turmas);
   const out = (turmas || []).map((t) => {
-    const vagas = Number.isFinite(Number(t.vagas_total)) ? Number(t.vagas_total) : Number(t.vagas);
-    const vagasOk = Number.isFinite(vagas) && vagas > 0 ? vagas : 1;
-
-    const ch = Number.isFinite(Number(t.carga_horaria)) ? Number(t.carga_horaria) : 1;
     const nome = (t.nome || "Turma Única").trim();
 
-    const di = ymd(t.data_inicio);
-    const df = ymd(t.data_fim);
-    const hi = hhmm(t.horario_inicio || "08:00");
-    const hf = hhmm(t.horario_fim || "17:00");
+    // base de horários da turma (fallback p/ encontros)
+    const hiBase = hhmm(t.horario_inicio || "08:00");
+    const hfBase = hhmm(t.horario_fim || "17:00");
+
+    // Converte encontros/datas para o formato alvo
+    const fonte =
+      (Array.isArray(t.encontros) && t.encontros.length
+        ? t.encontros
+        : Array.isArray(t.datas) && t.datas.length
+        ? t.datas
+        : []) || [];
+
+    const encontros = sortByData(
+      (fonte || []).map((e) => toEncontroObj(e, hiBase, hfBase)).filter(Boolean)
+    );
+
+    // Deriva datas/horários quando necessário
+    const di = ymd(t.data_inicio) || encontros[0]?.data || "";
+    const df = ymd(t.data_fim) || encontros.at(-1)?.data || "";
+    const hi = hhmm(t.horario_inicio || encontros[0]?.inicio || "08:00");
+    const hf = hhmm(t.horario_fim || encontros[0]?.fim || "17:00");
+
+    const vagas = Number.isFinite(Number(t.vagas_total))
+      ? Number(t.vagas_total)
+      : Number(t.vagas);
+    const vagasOk = Number.isFinite(vagas) && vagas > 0 ? vagas : 1;
+
+    let ch = Number.isFinite(Number(t.carga_horaria))
+      ? Number(t.carga_horaria)
+      : 0;
+    if (ch <= 0 && encontros.length) ch = cargaHorariaFromEncontros(encontros);
+    if (ch <= 0) ch = 1;
 
     return clean({
-      // ⚠️ não enviar id (o backend apaga e recria no PUT)
       nome,
       data_inicio: di,
       data_fim: df,
       horario_inicio: hi,
       horario_fim: hf,
       vagas_total: vagasOk,
-      carga_horaria: ch > 0 ? ch : 1,
+      carga_horaria: ch,
+      encontros, // 👈 agora vai no payload
     });
   });
   console.log("🧩 normalizeTurmas: out →", out);
@@ -138,19 +210,19 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
   const body = {};
 
   // 2) Campos simples do evento (whitelist)
-  body.titulo       = (dadosDoModal?.titulo ?? baseServidor?.titulo ?? "").trim();
-  body.descricao    = (dadosDoModal?.descricao ?? baseServidor?.descricao ?? "").trim();
-  body.local        = (dadosDoModal?.local ?? baseServidor?.local ?? "").trim();
-  body.tipo         = (dadosDoModal?.tipo ?? baseServidor?.tipo ?? "").trim();
-  body.unidade_id   = Number(dadosDoModal?.unidade_id ?? baseServidor?.unidade_id);
+  body.titulo = (dadosDoModal?.titulo ?? baseServidor?.titulo ?? "").trim();
+  body.descricao = (dadosDoModal?.descricao ?? baseServidor?.descricao ?? "").trim();
+  body.local = (dadosDoModal?.local ?? baseServidor?.local ?? "").trim();
+  body.tipo = (dadosDoModal?.tipo ?? baseServidor?.tipo ?? "").trim();
+  body.unidade_id = Number(dadosDoModal?.unidade_id ?? baseServidor?.unidade_id);
   body.publico_alvo = (dadosDoModal?.publico_alvo ?? baseServidor?.publico_alvo ?? "").trim();
 
   // 3) Instrutor: garantir array de IDs
-  const instrutoresFromModal   = extractInstrutorIds(dadosDoModal?.instrutor);
-  const instrutoresFromServer  = extractInstrutorIds(baseServidor?.instrutor);
+  const instrutoresFromModal = extractInstrutorIds(dadosDoModal?.instrutor);
+  const instrutoresFromServer = extractInstrutorIds(baseServidor?.instrutor);
   body.instrutor = instrutoresFromModal.length ? instrutoresFromModal : instrutoresFromServer;
 
-  // 4) Datas/horas gerais (usadas para pré-preencher turmas se necessário)
+  // 4) Datas/horas gerais (apenas fallback — turmas usam encontros)
   const di = ymd(
     dadosDoModal?.data_inicio_geral ??
       dadosDoModal?.data_inicio ??
@@ -178,14 +250,14 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
       "17:00"
   );
 
-  // 5) Turmas (obrigatórias no PUT)
+  // 5) Turmas (obrigatórias no PUT) — aceita datas OU encontros
   let turmasFonte = [];
   if (Array.isArray(dadosDoModal?.turmas) && dadosDoModal.turmas.length > 0) {
     turmasFonte = dadosDoModal.turmas;
   } else if (Array.isArray(baseServidor?.turmas) && baseServidor.turmas.length > 0) {
     turmasFonte = baseServidor.turmas;
   } else {
-    // cria 1 turma padrão, evita validação quebrar
+    // cria 1 turma padrão (sem encontros), evita validação quebrar
     turmasFonte = [
       {
         nome: body.titulo || "Turma Única",
@@ -195,6 +267,7 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
         horario_fim: hf,
         vagas_total: 1,
         carga_horaria: 1,
+        encontros: [], // vazio
       },
     ];
   }
@@ -215,29 +288,36 @@ export default function GerenciarEventos() {
   const [loading, setLoading] = useState(true);
   const [modalAberto, setModalAberto] = useState(false);
 
+  // 🔁 Centraliza o carregamento para reaproveitar
+  async function recarregarEventos() {
+    try {
+      setErro("");
+      console.log("📡 GET /api/eventos");
+      const data = await apiGet("/api/eventos");
+      const lista = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.eventos)
+        ? data.eventos
+        : Array.isArray(data?.lista)
+        ? data.lista
+        : [];
+      console.log("→ recebidos:", lista.length, "exemplo[0]:", lista[0]);
+      setEventos(lista);
+    } catch (err) {
+      const msg = err?.message || "Erro ao carregar eventos";
+      console.error("❌ /api/eventos:", msg);
+      setErro(msg);
+      setEventos([]);
+      toast.error(`❌ ${msg}`);
+    }
+  }
+
   // 🔄 Carregar eventos ao montar
   useEffect(() => {
     (async () => {
+      setLoading(true);
       try {
-        setLoading(true);
-        setErro("");
-        console.log("📡 GET /api/eventos");
-        const data = await apiGet("/api/eventos");
-        const lista = Array.isArray(data)
-          ? data
-          : Array.isArray(data?.eventos)
-          ? data.eventos
-          : Array.isArray(data?.lista)
-          ? data.lista
-          : [];
-        console.log("→ recebidos:", lista.length, "exemplo[0]:", lista[0]);
-        setEventos(lista);
-      } catch (err) {
-        const msg = err?.message || "Erro ao carregar eventos";
-        console.error("❌ /api/eventos:", msg);
-        setErro(msg);
-        setEventos([]);
-        toast.error(`❌ ${msg}`);
+        await recarregarEventos();
       } finally {
         setLoading(false);
       }
@@ -266,8 +346,11 @@ export default function GerenciarEventos() {
     console.log("🗑️ DELETE evento id=", eventoId);
     try {
       await apiDelete(`/api/eventos/${eventoId}`);
+      // remove localmente para resposta visual imediata
       setEventos((prev) => prev.filter((ev) => ev.id !== eventoId));
       toast.success("✅ Evento excluído.");
+      // e sincroniza com o backend (opcional)
+      await recarregarEventos();
     } catch (err) {
       console.error("❌ delete evento:", err?.message);
       toast.error(`❌ ${err?.message || "Erro ao excluir evento."}`);
@@ -307,10 +390,6 @@ export default function GerenciarEventos() {
         console.log("➡️ PUT /api/eventos/:id BODY →", body);
         const resp = await apiPut(`/api/eventos/${eventoSelecionado.id}`, body);
         console.log("📬 resposta bruta:", resp);
-        const eventoRetornado = resp?.evento || resp;
-
-        // Atualiza a lista local (mantém shape exibido pela listagem)
-        setEventos((prev) => prev.map((ev) => (ev.id === eventoRetornado.id ? { ...ev, ...eventoRetornado } : ev)));
       } else {
         // criação
         const base = {
@@ -329,13 +408,22 @@ export default function GerenciarEventos() {
           return;
         }
 
-        // datas/horas para compor turmas
-        const di = ymd(dadosDoModal?.data_inicio_geral ?? dadosDoModal?.data_inicio);
+        // datas/horas gerais (fallback)
+        const di =
+          ymd(dadosDoModal?.data_inicio_geral ?? dadosDoModal?.data_inicio);
         const df = ymd(dadosDoModal?.data_fim_geral ?? dadosDoModal?.data_fim);
-        const hi = addSecs(dadosDoModal?.horario_inicio_geral ?? dadosDoModal?.horario_inicio ?? "08:00");
-        const hf = addSecs(dadosDoModal?.horario_fim_geral ?? dadosDoModal?.horario_fim ?? "17:00");
+        const hi = hhmm(
+          dadosDoModal?.horario_inicio_geral ??
+            dadosDoModal?.horario_inicio ??
+            "08:00"
+        );
+        const hf = hhmm(
+          dadosDoModal?.horario_fim_geral ??
+            dadosDoModal?.horario_fim ??
+            "17:00"
+        );
 
-        // turmas
+        // turmas (com encontros)
         const turmas = normalizeTurmas(
           dadosDoModal?.turmas?.length
             ? dadosDoModal.turmas
@@ -344,10 +432,11 @@ export default function GerenciarEventos() {
                   nome: base.titulo || "Turma Única",
                   data_inicio: di,
                   data_fim: df,
-                  horario_inicio: hi.slice(0, 5),
-                  horario_fim: hf.slice(0, 5),
+                  horario_inicio: hi,
+                  horario_fim: hf,
                   vagas_total: 1,
                   carga_horaria: 1,
+                  encontros: [], // vazio na criação rápida
                 },
               ]
         );
@@ -361,12 +450,10 @@ export default function GerenciarEventos() {
         console.log("➡️ POST /api/eventos BODY →", bodyCreate);
         const resp = await apiPost("/api/eventos", bodyCreate);
         console.log("📬 resposta bruta:", resp);
-        const eventoRetornado = resp?.evento || resp;
-
-        // Acrescenta à lista (mantendo a listagem coerente)
-        setEventos((prev) => [...prev, eventoRetornado]);
       }
 
+      // sincroniza com o backend e fecha modal
+      await recarregarEventos();
       toast.success("✅ Evento salvo com sucesso.");
       setModalAberto(false);
     } catch (err) {
@@ -427,6 +514,8 @@ export default function GerenciarEventos() {
         onClose={() => setModalAberto(false)}
         onSalvar={salvarEvento}
         evento={eventoSelecionado}
+        // 👇 permite que o Modal também informe quando uma turma foi removida
+        onTurmaRemovida={() => recarregarEventos()}
       />
     </main>
   );

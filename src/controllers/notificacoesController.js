@@ -3,14 +3,16 @@ const db = require("../db");
 const { format } = require("date-fns");
 const { ptBR } = require("date-fns/locale");
 
-// Se seu projeto já tem um util de data no backend, importe aqui.
-// Caso contrário, usamos um fallback local abaixo.
+const IS_DEV = process.env.NODE_ENV !== "production";
+const log = (...a) => IS_DEV && console.log("[notif]", ...a);
+
+/* ------------------------------------------------------------------ */
+/* Utils de data                                                      */
+/* ------------------------------------------------------------------ */
 let formatarDataBR = null;
 try {
-  // Ajuste o caminho se seu util real estiver em outro lugar
   ({ formatarDataBR } = require("../utils/data"));
 } catch {
-  // Fallback simples
   formatarDataBR = (iso) => {
     if (!iso) return "";
     const d = new Date(iso);
@@ -22,38 +24,102 @@ try {
   };
 }
 
-// Caso exista um serviço específico que liste avaliações pendentes:
+/* ------------------------------------------------------------------ */
+/* (Opcional) serviço de avaliações pendentes                         */
+/* ------------------------------------------------------------------ */
 let buscarAvaliacoesPendentes = null;
 try {
   ({ buscarAvaliacoesPendentes } = require("./avaliacoesService"));
 } catch {
-  // Fallback no-ops; se não existir, apenas não gera essas notificações
   buscarAvaliacoesPendentes = async () => [];
 }
 
+/* ------------------------------------------------------------------ */
+/* Descoberta de colunas da tabela `notificacoes` (cache)             */
+/* ------------------------------------------------------------------ */
+let _notifColsCache = null;
+
+async function getNotifColumns() {
+  if (_notifColsCache) return _notifColsCache;
+
+  const q = await db.query(
+    `
+    SELECT column_name
+      FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name   = 'notificacoes'
+    `
+  );
+  const cols = q.rows.map((r) => r.column_name);
+
+  // Flags úteis
+  const has = (c) => cols.includes(c);
+
+  _notifColsCache = {
+    cols,
+    hasMensagem: has("mensagem"),
+    hasCorpo: has("corpo"),
+    hasCriadoEm: has("criado_em"),
+    hasCriadaEm: has("criada_em"),
+    hasTipo: has("tipo"),
+    hasTitulo: has("titulo"),
+    hasTurmaId: has("turma_id"),
+    hasEventoId: has("evento_id"),
+    hasLida: has("lida"),
+    hasUsuarioId: has("usuario_id"),
+  };
+
+  log("colunas notificacoes:", _notifColsCache);
+  return _notifColsCache;
+}
+
 /* ============================================================
- * 📥 Listar notificações não lidas do usuário logado
+ * 📥 Listar notificações NÃO LIDAS do usuário logado
+ *   — compatível com (mensagem/criado_em) OU (corpo/criada_em)
  * ============================================================ */
 async function listarNotificacoes(req, res) {
   try {
     const usuario_id = req.usuario?.id;
     if (!usuario_id) return res.status(401).json({ erro: "Não autorizado" });
 
-    const result = await db.query(
-      `SELECT id, tipo, titulo, mensagem, lida, criado_em
-         FROM notificacoes
-        WHERE usuario_id = $1 AND lida = false
-        ORDER BY criado_em DESC`,
-      [usuario_id]
-    );
+    const meta = await getNotifColumns();
+
+    // monta SELECT conforme colunas existentes
+    const msgExpr = meta.hasMensagem
+      ? "mensagem"
+      : meta.hasCorpo
+      ? "corpo"
+      : "NULL";
+
+    const tsExpr = meta.hasCriadoEm
+      ? "criado_em"
+      : meta.hasCriadaEm
+      ? "criada_em"
+      : "NULL";
+
+    const sql = `
+      SELECT
+        id,
+        ${meta.hasTipo ? "tipo" : "NULL AS tipo"},
+        ${meta.hasTitulo ? "titulo" : "NULL AS titulo"},
+        ${msgExpr} AS msg,
+        ${meta.hasLida ? "lida" : "false AS lida"},
+        ${tsExpr} AS tstamp
+      FROM notificacoes
+      WHERE ${meta.hasUsuarioId ? "usuario_id" : "1"} = $1
+        ${meta.hasLida ? "AND lida = false" : ""}
+      ORDER BY ${tsExpr} DESC NULLS LAST, id DESC
+    `;
+
+    const result = await db.query(sql, [usuario_id]);
 
     const notificacoes = result.rows.map((n) => ({
       id: n.id,
       tipo: n.tipo || null,
       titulo: n.titulo || null,
-      mensagem: n.mensagem,
-      lida: n.lida,
-      data: format(new Date(n.criado_em), "dd/MM/yyyy", { locale: ptBR }),
+      mensagem: n.msg || "",
+      lida: n.lida === true,
+      data: n.tstamp ? format(new Date(n.tstamp), "dd/MM/yyyy", { locale: ptBR }) : "",
     }));
 
     return res.status(200).json(notificacoes);
@@ -64,19 +130,48 @@ async function listarNotificacoes(req, res) {
 }
 
 /* ============================================================
- * 📌 Criar notificação persistente (uso interno)
+ * 📌 Criar notificação (100% aderente ao schema real)
+ *   — Usa apenas colunas existentes (mensagem/corpo, criado_em/criada_em, etc.)
+ *   — Aceita `extra` null/undefined
  * ============================================================ */
-async function criarNotificacao(usuario_id, mensagem, extra = {}) {
-  if (!usuario_id || !mensagem) return;
-
-  const { tipo = null, titulo = null, turma_id = null, evento_id = null } = extra;
-
+async function criarNotificacao(usuario_id, mensagem, extra) {
   try {
-    await db.query(
-      `INSERT INTO notificacoes (usuario_id, tipo, titulo, mensagem, turma_id, evento_id, lida, criado_em)
-       VALUES ($1, $2, $3, $4, $5, $6, false, CURRENT_TIMESTAMP)`,
-      [usuario_id, tipo, titulo, String(mensagem), turma_id, evento_id]
-    );
+    if (!usuario_id || !mensagem) return;
+
+    const meta = await getNotifColumns();
+
+    const data = {
+      // obrigatórios que existam
+      ...(meta.hasUsuarioId ? { usuario_id } : {}),
+      // mensagem/corpo
+      ...(meta.hasMensagem
+        ? { mensagem: String(mensagem) }
+        : meta.hasCorpo
+        ? { corpo: String(mensagem) }
+        : {}),
+      // flags/infos
+      ...(meta.hasLida ? { lida: false } : {}),
+    };
+
+    // normaliza `extra`
+    const safeExtra = extra && typeof extra === "object" ? extra : {};
+    if (meta.hasTipo && safeExtra.tipo !== undefined) data.tipo = safeExtra.tipo;
+    if (meta.hasTitulo && safeExtra.titulo !== undefined) data.titulo = safeExtra.titulo;
+    if (meta.hasTurmaId && safeExtra.turma_id !== undefined) data.turma_id = safeExtra.turma_id;
+    if (meta.hasEventoId && safeExtra.evento_id !== undefined) data.evento_id = safeExtra.evento_id;
+
+    // carimbo de data/hora
+    if (meta.hasCriadoEm) data.criado_em = new Date();
+    else if (meta.hasCriadaEm) data.criada_em = new Date();
+
+    // monta INSERT dinâmico
+    const cols = Object.keys(data);
+    const placeholders = cols.map((_, i) => `$${i + 1}`);
+    const sql = `INSERT INTO notificacoes (${cols.join(", ")}) VALUES (${placeholders.join(", ")})`;
+    const params = cols.map((c) => data[c]);
+
+    await db.query(sql, params);
+    log("notificação criada:", { usuario_id, titulo: data.titulo, tipo: data.tipo });
   } catch (err) {
     console.error("❌ Erro ao criar notificação:", err.message);
   }
@@ -89,6 +184,12 @@ async function contarNaoLidas(req, res) {
   try {
     const usuario_id = req.usuario?.id;
     if (!usuario_id) return res.status(401).json({ erro: "Não autorizado" });
+
+    const meta = await getNotifColumns();
+    if (!meta.hasLida || !meta.hasUsuarioId) {
+      // sem colunas, sem contador
+      return res.json({ totalNaoLidas: 0 });
+    }
 
     const result = await db.query(
       `SELECT COUNT(*) FROM notificacoes WHERE usuario_id = $1 AND lida = false`,
@@ -114,6 +215,11 @@ async function marcarComoLida(req, res) {
     const { id } = req.params;
     if (!id) return res.status(400).json({ erro: "ID inválido." });
 
+    const meta = await getNotifColumns();
+    if (!meta.hasLida || !meta.hasUsuarioId) {
+      return res.status(400).json({ erro: "Tabela de notificações não suporta marcação de leitura." });
+    }
+
     const upd = await db.query(
       `UPDATE notificacoes SET lida = true WHERE id = $1 AND usuario_id = $2`,
       [id, usuario_id]
@@ -136,13 +242,13 @@ async function gerarNotificacoesDeAvaliacao(usuario_id) {
   try {
     const pendentes = await buscarAvaliacoesPendentes(usuario_id);
     for (const av of pendentes) {
-      // Evita duplicar a mesma notificação por turma
-      const existe = await db.query(
+      // evita duplicidade por turma
+      const dup = await db.query(
         `SELECT 1 FROM notificacoes 
-          WHERE usuario_id = $1 AND tipo = 'avaliacao' AND turma_id = $2`,
+         WHERE usuario_id = $1 AND ${await col("tipo")} = 'avaliacao' AND ${await col("turma_id")} = $2`,
         [usuario_id, av.turma_id]
       );
-      if (existe.rowCount > 0) continue;
+      if (dup.rowCount > 0) continue;
 
       const dataInicio = formatarDataBR(av.data_inicio);
       const dataFim = formatarDataBR(av.data_fim);
@@ -152,9 +258,9 @@ async function gerarNotificacoesDeAvaliacao(usuario_id) {
         `Você pode avaliar a turma que participou entre ${dataInicio} e ${dataFim}.`,
         {
           tipo: "avaliacao",
-          titulo: `Avaliação disponível para "${av.nome_evento}"`,
+          titulo: `Avaliação disponível para "${av.nome_evento || av.titulo || "evento"}"`,
           turma_id: av.turma_id,
-          evento_id: av.evento_id || null,
+          evento_id: av.evento_id || null, // será ignorado se a coluna não existir
         }
       );
     }
@@ -163,18 +269,48 @@ async function gerarNotificacoesDeAvaliacao(usuario_id) {
   }
 }
 
+// helper que retorna o nome da coluna se existir, senão uma constante SQL segura
+async function col(name) {
+  const meta = await getNotifColumns();
+  return meta.cols.includes(name) ? name : "NULL";
+}
+
 /* ============================================================
- * 🎓 Notificações de certificado (elegibilidade ≥ 75%)
- *  → Não cria registro em "certificados" aqui; apenas notifica.
+ * 🎓 Notificações de certificado
+ *   — aceita modo direto (pós-geração) e varredura de elegíveis
  * ============================================================ */
-async function gerarNotificacoesDeCertificado(usuario_id) {
+async function gerarNotificacoesDeCertificado(usuario_id, opts = null) {
   try {
-    // Seleciona turmas/evenos em que o usuário foi aluno, a turma já encerrou,
-    // e o usuário atingiu presença >= 75%, e ainda NÃO tem certificado do tipo 'usuario'.
-    //
-    // total_dias_turma: DATE_PART('day', t.data_fim - t.data_inicio) + 1
-    // dias_presentes:   COUNT(DISTINCT p.data_presenca)
-    // presença:         dias_presentes::float / total_dias_turma::float
+    // Modo direto: após gerar certificado
+    if (opts && (opts.turma_id || opts.evento_id || opts.evento_titulo)) {
+      const { turma_id = null, evento_id = null, evento_titulo = "evento" } = opts;
+
+      // checa duplicidade (somente se houver colunas)
+      const meta = await getNotifColumns();
+      if (meta.hasUsuarioId && meta.hasLida && (meta.hasTurmaId || meta.hasEventoId)) {
+        const whereTurma = meta.hasTurmaId ? "COALESCE(turma_id,0) = COALESCE($2,0)" : "1=1";
+        const whereEvento = meta.hasEventoId ? "COALESCE(evento_id,0) = COALESCE($3,0)" : "1=1";
+
+        const dup = await db.query(
+          `SELECT 1 FROM notificacoes
+           WHERE usuario_id = $1 AND ${meta.hasTipo ? "tipo" : "'certificado'"} = 'certificado'
+             AND ${whereTurma}
+             AND ${whereEvento}
+             AND lida = false`,
+          [usuario_id, turma_id, evento_id]
+        );
+        if (dup.rowCount > 0) return;
+      }
+
+      await criarNotificacao(
+        usuario_id,
+        `Seu certificado do evento "${evento_titulo}" está disponível para download.`,
+        { tipo: "certificado", titulo: `Certificado disponível: ${evento_titulo}`, turma_id, evento_id }
+      );
+      return;
+    }
+
+    // Varredura de elegíveis (pode emitir)
     const elegiveis = await db.query(
       `
       SELECT
@@ -187,8 +323,8 @@ async function gerarNotificacoesDeCertificado(usuario_id) {
       JOIN eventos e           ON e.id = t.evento_id
       JOIN inscricoes i        ON i.turma_id = t.id AND i.usuario_id = $1
       LEFT JOIN certificados c ON c.usuario_id = $1 AND c.evento_id = e.id AND c.turma_id = t.id AND c.tipo = 'usuario'
-      WHERE t.data_fim <= CURRENT_DATE            -- turma encerrada
-        AND c.id IS NULL                          -- ainda sem certificado
+      WHERE t.data_fim <= CURRENT_DATE
+        AND c.id IS NULL
         AND (
           (
             SELECT COUNT(DISTINCT p.data_presenca)
@@ -204,15 +340,19 @@ async function gerarNotificacoesDeCertificado(usuario_id) {
     );
 
     for (const row of elegiveis.rows) {
-      // Evita duplicar notificação de certificado para a mesma turma/evento
-      const jaNotificado = await db.query(
+      // se não existe evento_id na tabela de notificações, a checagem por duplicidade cai só em turma_id
+      const meta = await getNotifColumns();
+      const whereTurma = meta.hasTurmaId ? "turma_id = $2" : "1=0"; // se não tiver coluna, não duplica por turma
+      const whereEvento = meta.hasEventoId ? "OR evento_id = $3" : "";
+
+      const dup = await db.query(
         `SELECT 1 FROM notificacoes
-          WHERE usuario_id = $1 AND tipo = 'certificado'
-            AND (turma_id = $2 OR evento_id = $3)
-            AND lida = false`,
+         WHERE usuario_id = $1 AND ${meta.hasTipo ? "tipo" : "'certificado'"} = 'certificado'
+           AND (${whereTurma} ${whereEvento})
+           ${meta.hasLida ? "AND lida = false" : ""}`,
         [usuario_id, row.turma_id, row.evento_id]
       );
-      if (jaNotificado.rowCount > 0) continue;
+      if (dup.rowCount > 0) continue;
 
       await criarNotificacao(
         usuario_id,
@@ -221,12 +361,12 @@ async function gerarNotificacoesDeCertificado(usuario_id) {
           tipo: "certificado",
           titulo: `Certificado disponível: ${row.nome_evento}`,
           turma_id: row.turma_id,
-          evento_id: row.evento_id,
+          evento_id: row.evento_id, // ignorado se a coluna não existir
         }
       );
     }
   } catch (err) {
-    console.error("❌ Erro geral em gerarNotificacoesDeCertificado:", err.message);
+    console.error("❌ Erro em gerarNotificacoesDeCertificado:", err.message);
   }
 }
 
