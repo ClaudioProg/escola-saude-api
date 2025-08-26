@@ -1,4 +1,4 @@
-// src/pages/AgendaAdministrador.jsx
+// 📁 src/pages/AgendaAdministrador.jsx
 import { useEffect, useMemo, useState } from "react";
 import Calendar from "react-calendar";
 import "react-calendar/dist/Calendar.css";
@@ -101,6 +101,15 @@ export default function AgendaEventos() {
     (async () => {
       try {
         const data = await apiGet("/api/agenda");
+        // debug: veja se vem ocorrencias ou turmas/datas
+        if (Array.isArray(data) && data.length) {
+          console.log("[/api/agenda] exemplo:", {
+            id: data[0]?.id,
+            titulo: data[0]?.titulo,
+            ocorrencias: data[0]?.ocorrencias,
+            turmas_datas: data[0]?.turmas?.[0]?.datas,
+          });
+        }
         setEvents(Array.isArray(data) ? data : []);
       } catch (err) {
         console.error(err);
@@ -109,16 +118,45 @@ export default function AgendaEventos() {
     })();
   }, []);
 
-  // Agrupa por dia (YYYY-MM-DD) cobrindo todo o intervalo do evento
+  // 🔑 Estratégia:
+  // 1) usa evento.ocorrencias (se vier)
+  // 2) senão, tenta coletar datas a partir de evento.turmas[].datas[].data
+  // 3) senão, fallback para o intervalo (legado)
   const eventosPorData = useMemo(() => {
     const map = {};
+
     for (const evento of events) {
-      const di = ymd(evento.data_inicio ?? evento.dataInicio ?? evento.data);
-      const df = ymd(evento.data_fim ?? evento.data_termino ?? evento.dataTermino ?? evento.data);
-      for (const dia of rangeDiasYMD(di, df)) {
+      let ocorrencias = [];
+
+      if (Array.isArray(evento.ocorrencias) && evento.ocorrencias.length) {
+        ocorrencias = evento.ocorrencias;
+      } else if (Array.isArray(evento.turmas) && evento.turmas.length) {
+        // extrai datas reais das turmas, se o backend as enviar
+        const bag = new Set();
+        for (const t of evento.turmas) {
+          if (Array.isArray(t.datas) && t.datas.length) {
+            for (const d of t.datas) {
+              const y = ymd(d?.data);
+              if (y) bag.add(y);
+            }
+          }
+        }
+        ocorrencias = Array.from(bag).sort();
+      }
+
+      if (!ocorrencias.length) {
+        // fallback (evita sumir tudo enquanto ajusta backend)
+        ocorrencias = rangeDiasYMD(
+          ymd(evento.data_inicio ?? evento.dataInicio ?? evento.data),
+          ymd(evento.data_fim ?? evento.data_termino ?? evento.dataTermino ?? evento.data)
+        );
+      }
+
+      for (const dia of ocorrencias) {
         (map[dia] ||= []).push(evento);
       }
     }
+
     // ordena por início dentro do dia
     for (const k of Object.keys(map)) {
       map[k].sort((a, b) => {

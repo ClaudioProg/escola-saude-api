@@ -7,7 +7,7 @@ import { apiGet } from "../services/api";
 import Breadcrumbs from "../components/Breadcrumbs";
 import CabecalhoPainel from "../components/CabecalhoPainel";
 import Spinner from "../components/Spinner";
-import ListaTurmasAdministrador from "../components/ListaTurmasAdministrador";
+import ListaTurmasPresenca from "../components/ListaTurmasPresenca";
 
 export default function PaginaGestaoPresencas() {
   const navigate = useNavigate();
@@ -97,7 +97,7 @@ export default function PaginaGestaoPresencas() {
       {carregandoEventos ? (
         <Spinner label="Carregando eventos..." />
       ) : (
-        <ListaTurmasAdministrador
+        <ListaTurmasPresenca
           eventos={eventos}
           hoje={new Date()}
           carregarInscritos={carregarInscritos}

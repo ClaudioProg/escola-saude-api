@@ -110,6 +110,80 @@ function brDateTimeToIsoUtc(dataBr, horaBr = "00:00") {
 }
 
 /* ──────────────────────────────────────────────────────────────────
+   OCORRÊNCIAS DE TURMA (somente dias reais do curso)
+   ────────────────────────────────────────────────────────────────── */
+
+/** Formata Date (UTC) para "YYYY-MM-DD". */
+function _formatYmd(date) {
+  if (!(date instanceof Date) || isNaN(date)) return "";
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(date.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+/** Soma dias em UTC. */
+function _addUtcDays(d, inc = 1) {
+  const nd = new Date(d.getTime());
+  nd.setUTCDate(nd.getUTCDate() + inc);
+  return nd;
+}
+
+/**
+ * Gera lista de ocorrências "YYYY-MM-DD" para uma turma.
+ * Prioridade:
+ * 1) datasEspecificas: array de datas exatas (YYYY-MM-DD) → usa apenas essas
+ * 2) diasSemana: array de números 0..6 (Dom..Sáb) → gera entre início/fim
+ * 3) fallback: intervalo completo [data_inicio..data_fim]
+ */
+function gerarOcorrencias({
+  data_inicio,
+  data_fim,
+  datasEspecificas = [],
+  diasSemana = [],
+}) {
+  // 1) Datas específicas (se vierem, usamos só elas)
+  if (Array.isArray(datasEspecificas) && datasEspecificas.length) {
+    const uniq = new Set(
+      datasEspecificas
+        .map((s) => (isIsoDateOnly(s) ? s : ""))
+        .filter(Boolean)
+    );
+    return Array.from(uniq).sort();
+  }
+
+  // Preparar início/fim
+  const di = isIsoDateOnly(data_inicio)
+    ? dateOnlyToUtcDate(data_inicio)
+    : parseIsoToDate(data_inicio);
+  const df = isIsoDateOnly(data_fim)
+    ? dateOnlyToUtcDate(data_fim)
+    : parseIsoToDate(data_fim);
+
+  if (!(di instanceof Date) || isNaN(di) || !(df instanceof Date) || isNaN(df)) {
+    return [];
+  }
+
+  // 2) Apenas certos dias da semana
+  if (Array.isArray(diasSemana) && diasSemana.length) {
+    const wanted = new Set(diasSemana.map((x) => Number(x)));
+    const out = [];
+    for (let d = new Date(di); d <= df; d = _addUtcDays(d, 1)) {
+      // getUTCDay(): 0..6 = Dom..Sáb
+      if (wanted.has(d.getUTCDay())) out.push(_formatYmd(d));
+    }
+    return out;
+  }
+
+  // 3) Fallback: intervalo completo
+  const out = [];
+  for (let d = new Date(di); d <= df; d = _addUtcDays(d, 1)) {
+    out.push(_formatYmd(d));
+  }
+  return out;
+}
+
+/* ──────────────────────────────────────────────────────────────────
    COMPATIBILIDADE (mantém suas funções antigas)
    ────────────────────────────────────────────────────────────────── */
 
@@ -149,4 +223,7 @@ module.exports = {
 
   // Utils
   isIsoDateOnly,
+
+  // Novo
+  gerarOcorrencias,
 };

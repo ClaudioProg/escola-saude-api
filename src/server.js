@@ -10,7 +10,7 @@ const helmet = require("helmet");
 
 // Rotas
 const assinaturaRoutes            = require("./routes/assinaturaRoutes");
-const administradorTurmasRoute    = require("./routes/administradorTurmasRoute");
+const turmasRouteAdministrador    = require("./routes/turmasRouteAdministrador");
 const agendaRoute                 = require("./routes/agendaRoute");
 const avaliacoesRoute             = require("./routes/avaliacoesRoute");
 const certificadosRoute           = require("./routes/certificadosRoute");
@@ -151,7 +151,7 @@ const recuperarSenhaLimiter = rateLimit({
 app.use("/api/login", loginLimiter, loginRoute);
 
 // 📌 Rotas da API
-app.use("/api/administrador/turmas", administradorTurmasRoute);
+app.use("/api/administrador/turmas", turmasRouteAdministrador);
 app.use("/api/agenda", agendaRoute);
 app.use("/api/avaliacoes", avaliacoesRoute);
 app.use("/api/certificados", certificadosRoute);

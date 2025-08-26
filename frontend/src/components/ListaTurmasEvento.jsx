@@ -27,7 +27,6 @@ const parseHora = (val) => {
     const M = raw.slice(2, 4);
     const hh = String(Math.min(23, Math.max(0, parseInt(H || "0", 10)))).padStart(2, "0");
     const mm = String(Math.min(59, Math.max(0, parseInt(M || "0", 10)))).padStart(2, "0");
-    // Trate "00:00" como indefinido se sua API usa isso como marcador
     return hh === "00" && mm === "00" ? null : `${hh}:${mm}`;
   }
 
@@ -90,6 +89,8 @@ export default function ListaTurmasEvento({
   inscrevendo,
   jaInscritoNoEvento = false,
   jaInstrutorDoEvento = false,
+  /** 👇 novo prop: quando false, esconde o chip interno de status da turma */
+  mostrarStatusTurma = true,
 }) {
   const jaInscritoTurma = (tid) => inscricoesConfirmadas.includes(Number(tid));
 
@@ -122,7 +123,7 @@ export default function ListaTurmasEvento({
 
         const { hi: hiEncontros, hf: hfEncontros } = extrairHorasDeEncontros(encontrosInline);
 
-        // ✅ Horas reais: primeiro tenta nível da turma; se vazio, tenta horas CONSISTENTES dos encontros; senão, indefinido
+        // Horas reais (turma > encontros consistentes > indefinido)
         const hi = parseHora(t.horario_inicio) || hiEncontros || null;
         const hf = parseHora(t.horario_fim)   || hfEncontros || null;
 
@@ -213,15 +214,20 @@ export default function ListaTurmasEvento({
                 </div>
               </div>
 
-              <span
-                className={`text-xs px-2 py-1 rounded-full border ${
-                  lotada
-                    ? "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-200 dark:border-rose-800"
-                    : "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-800"
-                }`}
-              >
-                {lotada ? "Lotada" : "Programado"}
-              </span>
+              {/* 👇 Chip interno de status da TURMA:
+                  - sempre mostrar "Lotada" quando lotada
+                  - esconder "Programado" quando mostrarStatusTurma = false */}
+              {(lotada || mostrarStatusTurma) && (
+                <span
+                  className={`text-xs px-2 py-1 rounded-full border ${
+                    lotada
+                      ? "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-200 dark:border-rose-800"
+                      : "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-800"
+                  }`}
+                >
+                  {lotada ? "Lotada" : "Programado"}
+                </span>
+              )}
             </div>
 
             {/* Barra de vagas */}

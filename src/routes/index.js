@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 
-const administradorTurmasRoute = require('./administradorTurmasRoute');
+const turmasRouteAdministrador = require('./turmasRouteAdministrador');
 const agendaRoute = require('./agendaRoute');
 const authGoogleRoute = require('./authGoogleRoute');
 const avaliacoesRoute = require('./avaliacoesRoute');
@@ -19,7 +19,7 @@ const turmasRoute = require('./turmasRoute');
 const usuariosRoute = require('./usuariosRoute');
 const notificacoesRoute = require('./notificacoesRoute');
 
-router.use('/administrador/turmas', administradorTurmasRoute);
+router.use('/administrador/turmas', turmasRouteAdministrador);
 router.use('/agenda', agendaRoute);
 router.use('/auth', authGoogleRoute);
 router.use('/avaliacoes', avaliacoesRoute);

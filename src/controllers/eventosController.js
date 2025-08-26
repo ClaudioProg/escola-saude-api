@@ -564,33 +564,88 @@ async function excluirEvento(req, res) {
 }
 
 /* =====================================================================
-   📅 Agenda (permanece baseada em intervalo geral)
+   📅 Agenda (OCORRENCIAS apenas de datas reais — sem intervalo)
    ===================================================================== */
-async function getAgendaEventos(req, res) {
-  try {
-    const result = await query(`
-      SELECT 
-        e.id,
-        e.titulo,
-        MIN(t.data_inicio) AS data_inicio,
-        MAX(t.data_fim) AS data_fim,
-        CASE 
-          WHEN CURRENT_TIMESTAMP < MIN(t.data_inicio + t.horario_inicio) THEN 'programado'
-          WHEN CURRENT_TIMESTAMP BETWEEN MIN(t.data_inicio + t.horario_inicio)
-                                   AND MAX(t.data_fim + t.horario_fim) THEN 'andamento'
-          ELSE 'encerrado'
-        END AS status
-      FROM eventos e
-      JOIN turmas t ON t.evento_id = e.id
-      GROUP BY e.id, e.titulo
-    `);
-    res.json(result.rows);
-  } catch (err) {
-    console.error('Erro ao buscar agenda:', err);
-    res.status(500).json({ erro: 'Erro ao buscar agenda' });
+   async function getAgendaEventos(req, res) {
+    try {
+      const sql = `
+        SELECT 
+          e.id,
+          e.titulo,
+  
+          -- datas/horários gerais (usadas no deriveStatus do front)
+          MIN(t.data_inicio)    AS data_inicio,
+          MAX(t.data_fim)       AS data_fim,
+          MIN(t.horario_inicio) AS horario_inicio,
+          MAX(t.horario_fim)    AS horario_fim,
+  
+          CASE 
+            WHEN CURRENT_TIMESTAMP < MIN(t.data_inicio + t.horario_inicio) THEN 'programado'
+            WHEN CURRENT_TIMESTAMP BETWEEN MIN(t.data_inicio + t.horario_inicio)
+                                     AND MAX(t.data_fim + t.horario_fim) THEN 'andamento'
+            ELSE 'encerrado'
+          END AS status,
+  
+          /* 🔹 OCORRENCIAS (YYYY-MM-DD[]) — prioridade:
+                1) datas_turma (datas específicas lançadas)
+                2) presencas (datas registradas)
+                3) senão existir nenhuma das duas → [] (NÃO usa intervalo)
+          */
+          CASE
+            WHEN EXISTS (
+              SELECT 1
+                FROM turmas tx
+                JOIN datas_turma dt ON dt.turma_id = tx.id
+               WHERE tx.evento_id = e.id
+            ) THEN (
+              SELECT json_agg(d ORDER BY d)
+                FROM (
+                  SELECT DISTINCT to_char(dt.data::date, 'YYYY-MM-DD') AS d
+                    FROM turmas tx
+                    JOIN datas_turma dt ON dt.turma_id = tx.id
+                   WHERE tx.evento_id = e.id
+                   ORDER BY 1
+                ) z1
+            )
+            WHEN EXISTS (
+              SELECT 1
+                FROM turmas tx
+                JOIN presencas p ON p.turma_id = tx.id
+               WHERE tx.evento_id = e.id
+            ) THEN (
+              SELECT json_agg(d ORDER BY d)
+                FROM (
+                  SELECT DISTINCT to_char(p.data_presenca::date, 'YYYY-MM-DD') AS d
+                    FROM turmas tx
+                    JOIN presencas p ON p.turma_id = tx.id
+                   WHERE tx.evento_id = e.id
+                   ORDER BY 1
+                ) z2
+            )
+            ELSE '[]'::json
+          END AS ocorrencias
+  
+        FROM eventos e
+        JOIN turmas t ON t.evento_id = e.id
+        GROUP BY e.id, e.titulo
+        ORDER BY MAX(t.data_fim + t.horario_fim) DESC;
+      `;
+  
+      const { rows } = await query(sql, []);
+      // cabeçalho de diagnóstico para você ver nas DevTools de Network
+      res.set('X-Agenda-Handler', 'eventosController:getAgendaEventos@estrita');
+  
+      const out = rows.map(r => ({
+        ...r,
+        ocorrencias: Array.isArray(r.ocorrencias) ? r.ocorrencias : [],
+      }));
+      res.json(out);
+    } catch (err) {
+      console.error('Erro ao buscar agenda:', err);
+      res.status(500).json({ erro: 'Erro ao buscar agenda' });
+    }
   }
-}
-
+  
 /* =====================================================================
    🔎 Listar eventos do instrutor logado (com datas reais)
    ===================================================================== */

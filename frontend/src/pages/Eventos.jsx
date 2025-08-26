@@ -69,8 +69,6 @@ function rangeDaTurma(t) {
   return { di, df };
 }
 
-/* ------------------------------------------------------------------ */
-
 export default function Eventos() {
   const [eventos, setEventos] = useState([]);
   const [turmasPorEvento, setTurmasPorEvento] = useState({});
@@ -81,7 +79,7 @@ export default function Eventos() {
   const [carregandoTurmas, setCarregandoTurmas] = useState(null);
   const [carregandoEventos, setCarregandoEventos] = useState(true);
 
-  // 🔁 'todos' | 'programado' | 'andamento' | 'encerrado'
+  // 'todos' | 'programado' | 'andamento' | 'encerrado'
   const [filtro, setFiltro] = useState("programado");
 
   const navigate = useNavigate();
@@ -148,7 +146,6 @@ export default function Eventos() {
     }
   }
 
-  // Helper: obter eventoId a partir de uma turmaId já carregada localmente
   function findEventoIdByTurmaIdLocal(turmaId) {
     for (const [evtId, turmas] of Object.entries(turmasPorEvento)) {
       if ((turmas || []).some((t) => Number(t.id) === Number(turmaId))) {
@@ -161,7 +158,6 @@ export default function Eventos() {
   async function inscrever(turmaId) {
     if (inscrevendo) return;
 
-    // 🔒 Bloqueio client-side: se o usuário for instrutor do evento, não deixa prosseguir
     const eventoIdLocal = findEventoIdByTurmaIdLocal(turmaId);
     const eventoReferente =
       (eventoIdLocal && eventos.find((e) => Number(e.id) === Number(eventoIdLocal))) || null;
@@ -182,7 +178,6 @@ export default function Eventos() {
       await apiPost("/api/inscricoes", { turma_id: turmaId });
       toast.success("✅ Inscrição realizada com sucesso!");
 
-      // Atualiza inscrições confirmadas
       try {
         const inscricoesUsuario = await apiGet("/api/inscricoes/minhas");
         const novasInscricoes = (Array.isArray(inscricoesUsuario) ? inscricoesUsuario : [])
@@ -193,7 +188,6 @@ export default function Eventos() {
         toast.warning("⚠️ Não foi possível atualizar inscrições confirmadas.");
       }
 
-      // Atualiza eventos e recarrega as turmas do evento dessa turma
       await atualizarEventos();
 
       const eventoId =
@@ -229,11 +223,7 @@ export default function Eventos() {
     }
   }
 
-  /* ------------------ FILTRO/ORDENAÇÃO (espelhando o admin) ------------------ */
-
-  // 1) decide quais turmas usar para classificar o evento:
-  //    - se já carregamos via /api/turmas/evento/:id -> usa essas
-  //    - senão, usa turmas embutidas em /api/eventos (se houver)
+  // Decide quais turmas usar para classificar o evento:
   function turmasDoEvento(evento) {
     const carregadas = turmasPorEvento[evento.id];
     if (Array.isArray(carregadas) && carregadas.length) return carregadas;
@@ -241,7 +231,7 @@ export default function Eventos() {
     return [];
   }
 
-  // 2) status do evento
+  // status do evento
   function statusDoEvento(evento) {
     const ts = turmasDoEvento(evento);
 
@@ -260,10 +250,9 @@ export default function Eventos() {
       if (algumAndamento) return "andamento";
       if (algumFuturo && !todosPassados) return "programado";
       if (todosPassados) return "encerrado";
-      return "programado"; // fallback conservador
+      return "programado";
     }
 
-    // Sem turmas confiáveis → usar intervalo geral
     const diG = ymd(evento?.data_inicio_geral);
     const dfG = ymd(evento?.data_fim_geral);
     if (inRange(diG, dfG, HOJE_ISO)) return "andamento";
@@ -272,32 +261,40 @@ export default function Eventos() {
     return "programado";
   }
 
-  // 3) aplicar filtro atual
+  // chip por status (texto e cor)
+  const chip = {
+    programado: { text: "Programado", cls: "bg-emerald-100 text-emerald-800" },
+    andamento:  { text: "Em andamento", cls: "bg-amber-100 text-amber-800" },
+    encerrado:  { text: "Encerrado", cls: "bg-rose-100 text-rose-800" },
+  };
+
+  // normalização de filtro vindo do componente
+  const setFiltroNormalizado = (valor) => {
+    const v = String(valor || "").toLowerCase().replace(/\s+/g, "_");
+    if (v === "todos") return setFiltro("todos");
+    if (v === "programados" || v === "programado") return setFiltro("programado");
+    if (v === "andamento" || v === "em_andamento") return setFiltro("andamento");
+    if (["encerrado", "finalizado", "concluido", "concluído"].includes(v)) return setFiltro("encerrado");
+    setFiltro("programado");
+  };
+
+  // aplicar filtro atual
   const eventosFiltrados = eventos.filter((evento) => {
     const st = statusDoEvento(evento);
 
     if (filtro === "todos") return true;
-
-    if (filtro === "programado") {
-      return st === "programado";
-    }
-
-    if (filtro === "andamento") {
-      return st === "andamento";
-    }
+    if (filtro === "programado") return st === "programado";
+    if (filtro === "andamento") return st === "andamento";
 
     if (filtro === "encerrado") {
-      // mostra encerrados só se participou de alguma turma
-      const inscritoEmAlgumaTurma = (evento.turmas || []).some((t) =>
-        inscricoesConfirmadas.includes(Number(t.id))
-      );
-      return st === "encerrado" && inscritoEmAlgumaTurma;
+      // ✅ agora mostra TODOS os encerrados (antes exigia participação)
+      return st === "encerrado";
     }
 
     return true;
   });
 
-  // 4) ordenar por "fim" consolidado (desc)
+  // ordenar por "fim" consolidado (desc)
   function keyFim(evento) {
     const ts = turmasDoEvento(evento);
     let df = null;
@@ -327,10 +324,10 @@ export default function Eventos() {
 
       <FiltrosEventos
         filtroAtivo={filtro}
-        onFiltroChange={setFiltro}
+        onFiltroChange={setFiltroNormalizado}
         filtroSelecionado={filtro}
         valorSelecionado={filtro}
-        onChange={setFiltro}
+        onChange={setFiltroNormalizado}
       />
 
       {carregandoEventos ? (
@@ -352,14 +349,22 @@ export default function Eventos() {
             .sort((a, b) => (keyFim(b) > keyFim(a) ? 1 : keyFim(b) < keyFim(a) ? -1 : 0))
             .map((evento) => {
               const ehInstrutor = Boolean(evento.ja_instrutor);
+              const st = statusDoEvento(evento);
+              const chipCfg = chip[st];
+
               return (
                 <div
                   key={evento.id}
                   className="bg-white dark:bg-neutral-900 rounded-2xl p-5 shadow border border-gray-200 dark:border-gray-700"
                 >
-                  <h3 className="text-xl font-semibold text-lousa dark:text-white mb-1">
-                    {evento.titulo}
-                  </h3>
+                  <div className="flex items-start justify-between gap-3">
+                    <h3 className="text-xl font-semibold text-lousa dark:text-white mb-1">
+                      {evento.titulo}
+                    </h3>
+                    <span className={`text-xs px-2 py-1 rounded-full ${chipCfg.cls}`}>
+                      {chipCfg.text}
+                    </span>
+                  </div>
 
                   {evento.descricao && (
                     <p className="text-sm text-gray-700 dark:text-gray-300 mb-2">
@@ -424,6 +429,8 @@ export default function Eventos() {
                       carregarInscritos={() => {}}
                       carregarAvaliacoes={() => {}}
                       gerarRelatorioPDF={() => {}}
+                      // 👉 esconder chip interno de status da turma
+                      mostrarStatusTurma={false}
                     />
                   )}
                 </div>

@@ -255,7 +255,7 @@ async function gerarNotificacoesDeAvaliacao(usuario_id) {
 
       await criarNotificacao(
         usuario_id,
-        `Você pode avaliar a turma que participou entre ${dataInicio} e ${dataFim}.`,
+        `Já está disponível a avaliação do evento "${nomeEvento}" que você participou entre ${dataInicio} e ${dataFim}.`,
         {
           tipo: "avaliacao",
           titulo: `Avaliação disponível para "${av.nome_evento || av.titulo || "evento"}"`,

@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 
-const administradorTurmasController = require('../controllers/administradorTurmasController');
+const turmasControlleradministrador = require('../controllers/turmasControlleradministrador');
 const authMiddleware = require('../auth/authMiddleware');
 const authorizeRoles = require('../auth/authorizeRoles');
 
@@ -10,7 +10,7 @@ router.get(
   '/',
   authMiddleware,
   authorizeRoles('administrador'),
-  administradorTurmasController.listarTurmasadministrador
+  turmasControlleradministrador.listarTurmasadministrador
 );
 
 module.exports = router;
