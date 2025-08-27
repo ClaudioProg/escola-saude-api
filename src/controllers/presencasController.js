@@ -4,6 +4,8 @@ const PDFDocument = require("pdfkit");
 const { format } = require("date-fns");
 const { ptBR } = require("date-fns/locale");
 const { gerarNotificacoesDeAvaliacao } = require("./notificacoesController");
+const jwt = require("jsonwebtoken");
+const PRESENCA_TOKEN_SECRET = process.env.PRESENCA_TOKEN_SECRET || "troque_em_producao";
 
 /* ------------------------------------------------------------------ *
  * Helpers
@@ -161,15 +163,15 @@ async function registrarPresenca(req, res) {
   }
 }
 
-/* ------------------------------------------------------------------ *
- * POST /api/presencas/confirmar-qr/:turma_id
- * Confirma presença via QR (usuário logado)
- * ------------------------------------------------------------------ */
 async function confirmarPresencaViaQR(req, res) {
   const usuario_id = req.usuario?.id;
-  const turma_id = req.params.turma_id;
+  // ✅ agora aceita tanto /confirmar-qr/:turma_id quanto body { turma_id }
+  const turma_id = req.params.turma_id || req.body.turma_id;
 
   try {
+    if (!usuario_id) return res.status(401).json({ erro: "Não autenticado." });
+    if (!turma_id) return res.status(400).json({ erro: "turma_id é obrigatório." });
+
     // Verifica inscrição nessa turma
     const insc = await db.query(
       `SELECT 1 FROM inscricoes WHERE usuario_id = $1 AND turma_id = $2`,
@@ -186,9 +188,9 @@ async function confirmarPresencaViaQR(req, res) {
     );
     if (t.rowCount === 0) return res.status(404).json({ erro: "Turma não encontrada." });
 
-    const di = t.rows[0].data_inicio.toISOString().slice(0,10);
-    const df = t.rows[0].data_fim.toISOString().slice(0,10);
-    const hojeISO = new Date().toISOString().slice(0,10);
+    const di = String(t.rows[0].data_inicio).slice(0, 10);
+    const df = String(t.rows[0].data_fim).slice(0, 10);
+    const hojeISO = new Date().toISOString().slice(0, 10);
 
     if (hojeISO < di || hojeISO > df) {
       return res.status(400).json({ erro: "Hoje não está dentro do período desta turma." });
@@ -206,10 +208,10 @@ async function confirmarPresencaViaQR(req, res) {
 
     await verificarElegibilidadeParaAvaliacao(usuario_id, turma_id);
 
-    res.status(201).json({ mensagem: "Presença registrada com sucesso." });
+    return res.status(201).json({ sucesso: true, mensagem: "Presença registrada com sucesso." });
   } catch (err) {
     console.error("❌ Erro ao confirmar presença via QR:", err);
-    res.status(500).json({ erro: "Erro ao confirmar presença." });
+    return res.status(500).json({ erro: "Erro ao confirmar presença." });
   }
 }
 
@@ -260,6 +262,35 @@ async function registrarManual(req, res) {
   } catch (err) {
     console.error("❌ Erro ao registrar manualmente:", err);
     res.status(500).json({ erro: "Erro ao registrar presença manual." });
+  }
+}
+
+async function confirmarViaToken(req, res) {
+  try {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ erro: "Token ausente." });
+
+    let payload;
+    try {
+      payload = jwt.verify(token, PRESENCA_TOKEN_SECRET); // { turmaId, usuarioId? }
+    } catch (e) {
+      return res.status(400).json({ erro: "Token inválido ou expirado." });
+    }
+
+    // se o token não embute usuário, usa o autenticado
+    const usuario_id = payload.usuarioId || req.usuario?.id;
+    if (!usuario_id) return res.status(401).json({ erro: "Não autenticado." });
+
+    const turma_id = payload.turmaId;
+    if (!turma_id) return res.status(400).json({ erro: "Token sem turma." });
+
+    // Reaproveita a lógica do método acima, chamando via body:
+    req.body.turma_id = turma_id;
+    req.usuario = { id: usuario_id, ...(req.usuario || {}) };
+    return confirmarPresencaViaQR(req, res);
+  } catch (err) {
+    console.error("❌ [confirmarViaToken] erro:", err);
+    return res.status(500).json({ erro: "Erro ao confirmar via token." });
   }
 }
 
@@ -764,6 +795,7 @@ module.exports = {
   confirmarPresencaSimples,
   registrarPresenca,
   confirmarPresencaViaQR,
+  confirmarViaToken,          // 👈 novo
   registrarManual,
   validarPresenca,
   confirmarHojeManual,

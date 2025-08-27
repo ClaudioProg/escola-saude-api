@@ -1,21 +1,22 @@
-// src/routes/presencasRoute.js
+// ✅ src/routes/presencasRoute.js
 const express = require("express");
 const router = express.Router();
 
 const authMiddleware = require("../auth/authMiddleware");
 const db = require("../db");
 
-// Importa os handlers do controller de presenças
+// Handlers do controller
 const {
   registrarPresenca,
   confirmarPresencaViaQR,
+  confirmarViaToken,              // ← novo
   confirmarPresencaSimples,
   registrarManual,
   confirmarHojeManual,
   validarPresenca,
   confirmarPresencaInstrutor,
   listarTodasPresencasParaAdmin,
-  // ⬇️ leitura/relatórios
+  // leitura/relatórios
   relatorioPresencasPorTurma,
   listaPresencasTurma,
   exportarPresencasPDF,
@@ -75,7 +76,6 @@ router.get("/validar", async (req, res) => {
 router.post("/", authMiddleware, registrarPresenca);
 
 // 1.1) Relatório detalhado (datas × usuários)
-//     GET /api/presencas/turma/:turma_id/detalhes
 router.get(
   "/turma/:turma_id/detalhes",
   authMiddleware,
@@ -84,7 +84,6 @@ router.get(
 );
 
 // 1.2) Frequências (resumo por usuário)
-//     GET /api/presencas/turma/:turma_id/frequencias
 router.get(
   "/turma/:turma_id/frequencias",
   authMiddleware,
@@ -92,8 +91,7 @@ router.get(
   listaPresencasTurma
 );
 
-// 1.3) PDF de presenças (opcional)
-//     GET /api/presencas/turma/:turma_id/pdf
+// 1.3) PDF de presenças
 router.get(
   "/turma/:turma_id/pdf",
   authMiddleware,
@@ -101,8 +99,20 @@ router.get(
   exportarPresencasPDF
 );
 
-// 2) Confirmação de presença via QR Code (usuário)
-router.get("/confirmar/:turma_id", authMiddleware, confirmarPresencaViaQR);
+/* ====== Fluxo do QR Code ====== */
+
+// Novo fluxo usado pela página /validar (POST com body { turma_id })
+router.post("/confirmarPresencaViaQR", authMiddleware, confirmarPresencaViaQR);
+
+// Fluxo seguro por token assinado (opcional/recomendado)
+router.post("/confirmar-via-token", authMiddleware, confirmarViaToken);
+
+// Aliases de compatibilidade (legado por params):
+router.post("/confirmar-qr/:turma_id", authMiddleware, confirmarPresencaViaQR);
+router.get("/confirmar-qr/:turma_id", authMiddleware, confirmarPresencaViaQR); // legado GET
+router.get("/confirmar/:turma_id", authMiddleware, confirmarPresencaViaQR);    // legado GET
+
+/* ====== Demais operações ====== */
 
 // 3) Confirmação simples (sem QR; aceita aaaa-mm-dd ou dd/mm/aaaa)
 router.post("/confirmar-simples", authMiddleware, confirmarPresencaSimples);

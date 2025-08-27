@@ -1,4 +1,4 @@
-// src/pages/MeusCertificados.jsx
+// 📁 src/pages/MeusCertificados.jsx
 import { useEffect, useState, useMemo } from "react";
 import Skeleton from "react-loading-skeleton";
 import { toast } from "react-toastify";
@@ -7,8 +7,7 @@ import { formatarDataBrasileira } from "../utils/data";
 import Breadcrumbs from "../components/Breadcrumbs";
 import CabecalhoPainel from "../components/CabecalhoPainel";
 import NadaEncontrado from "../components/NadaEncontrado";
-import { apiGet, apiPost } from "../services/api";
-import { API_BASE_URL } from "../services/api";
+import { apiGet, apiPost, makeApiUrl } from "../services/api"; // 👈 importa makeApiUrl
 
 export default function MeusCertificados() {
   const [nome, setNome] = useState("");
@@ -17,7 +16,7 @@ export default function MeusCertificados() {
   const [carregando, setCarregando] = useState(true);
   const [gerandoKey, setGerandoKey] = useState(null);
 
-   // usuário do localStorage, com imagem_base64 validada
+  // usuário do localStorage, com imagem_base64 validada
   const usuario = useMemo(() => {
     try {
       const parsed = JSON.parse(localStorage.getItem("usuario") || "{}");
@@ -42,9 +41,9 @@ export default function MeusCertificados() {
     setCarregando(true);
     try {
       // elegíveis como PARTICIPANTE
-      const dadosUsuario = await apiGet("/api/certificados/elegiveis");
+      const dadosUsuario = await apiGet("certificados/elegiveis");
       // elegíveis como INSTRUTOR
-      const dadosInstrutor = await apiGet("/api/certificados/elegiveis-instrutor");
+      const dadosInstrutor = await apiGet("certificados/elegiveis-instrutor");
 
       const comTipo = [
         ...(Array.isArray(dadosUsuario) ? dadosUsuario.map((c) => ({ ...c, tipo: "usuario" })) : []),
@@ -98,7 +97,7 @@ export default function MeusCertificados() {
         body.assinaturaBase64 = usuario.imagem_base64;
       }
 
-      const resultado = await apiPost("/api/certificados/gerar", body);
+      const resultado = await apiPost("certificados/gerar", body);
 
       toast.success("🎉 Certificado gerado com sucesso!");
 
@@ -160,7 +159,7 @@ export default function MeusCertificados() {
         <div className="mt-4 flex justify-center">
           {cert.ja_gerado && cert.certificado_id ? (
             <a
-              href={`${API_BASE_URL}/api/certificados/${cert.certificado_id}/download`}
+              href={makeApiUrl(`certificados/${cert.certificado_id}/download`)} // 👈 monta URL correta
               target="_blank"
               rel="noopener noreferrer"
               className="bg-green-900 hover:bg-green-800 text-white text-sm font-medium py-2 px-4 rounded text-center"

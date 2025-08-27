@@ -1,4 +1,5 @@
 // 📁 src/services/api.js
+/* eslint-disable no-console */
 
 // ───────────────────────────────────────────────────────────────────
 // Helpers de ambiente
@@ -11,27 +12,25 @@ function isLocalHost(h) {
 function isHttpUrl(u) { return /^http:\/\//i.test(u || ""); }
 
 // Decide a base automaticamente:
-//   1) VITE_API_BASE_URL, se preenchida
-//   2) Se estiver em localhost e você quer usar proxy do Vite, use "/api"
-//   3) Caso contrário, "http://localhost:3000/api"
+//   1) VITE_API_BASE_URL, se preenchida (com OU sem /api)
+//   2) Se localhost e usando proxy do Vite -> "/api"
+//   3) Caso contrário, localhost:3000/api (dev) ou seu backend em prod
 function computeBase() {
   const raw = (import.meta.env.VITE_API_BASE_URL || "").trim().replace(/\/+$/, "");
   if (raw) return raw;
 
   if (typeof window !== "undefined" && isLocalHost(window.location.host)) {
-    // Se tiver proxy no vite.config.js, prefira "/api"
-    // server: { proxy: { '/api': { target: 'http://localhost:3000' } } }
     if (import.meta.env.VITE_USE_VITE_PROXY === "1") return "/api";
     return "http://localhost:3000/api";
   }
 
-  // Fallback seguro em prod (ajuste para sua URL pública, se quiser)
+  // Fallback seguro em prod
   return "https://escola-saude-api.onrender.com/api";
 }
 
 let API_BASE_URL = computeBase();
 
-// 🔒 NÃO force https para localhost (apenas para domínios externos)
+// 🔒 NÃO force https para localhost (apenas domínios externos)
 if (isHttpUrl(API_BASE_URL) && !(typeof window !== "undefined" && isLocalHost(new URL(API_BASE_URL).host))) {
   API_BASE_URL = API_BASE_URL.replace(/^http:\/\//i, "https://");
 }
@@ -94,12 +93,11 @@ class ApiError extends Error {
 }
 
 // ───────────────────────────────────────────────────────────────────
-// Path normalizer
+// Path / Base normalizers
 // ───────────────────────────────────────────────────────────────────
 function normalizePath(path) {
   if (!path) return "/";
   if (/^https?:\/\//i.test(path)) return path; // absoluta
-
   let p = String(path).trim();
   if (!p.startsWith("/")) p = "/" + p;
   return p;
@@ -122,8 +120,20 @@ function ensureApi(base, path) {
     p = "/api" + p;
   }
 
-  // 👉 não colapsa barras do protocolo; apenas concatena
   return baseNoSlash + p;
+}
+
+// 👉 Helper para montar URL pública (links <a>, downloads etc.)
+export function makeApiUrl(path, query) {
+  const safePath = normalizePath(path);
+  const url = ensureApi(API_BASE_URL, safePath) + qs(query);
+  try {
+    if (isHttpUrl(url)) {
+      const host = new URL(url).host;
+      if (!isLocalHost(host)) return url.replace(/^http:\/\//i, "https://");
+    }
+  } catch {}
+  return url;
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -174,20 +184,17 @@ async function handle(res, { on401 = "redirect", on403 = "silent" } = {}) {
 }
 
 // ───────────────────────────────────────────────────────────────────
-// Fetch centralizado (com timeout)
-// ───────────────────────────────────────────────────────────────────
 const DEFAULT_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 15000);
 
+// Fetch centralizado (com timeout)
 async function doFetch(path, { method = "GET", auth = true, headers, query, body, on401, on403 } = {}) {
   const safePath = normalizePath(path);
 
   // Monta URL final
   const isAbsolute = /^https?:\/\//i.test(safePath);
-  let url = isAbsolute
-    ? safePath + qs(query)
-    : ensureApi(API_BASE_URL, safePath) + qs(query);
+  let url = isAbsolute ? safePath + qs(query) : ensureApi(API_BASE_URL, safePath) + qs(query);
 
-  // ⚠️ NÃO subir http → https para localhost
+  // Upgrade http→https para hosts externos
   try {
     if (isHttpUrl(url)) {
       const host = new URL(url).host;
@@ -273,10 +280,7 @@ export async function apiPostFile(path, body, opts = {}) {
 
   const safePath = normalizePath(path);
   const isAbsolute = /^https?:\/\//i.test(safePath);
-  let url = isAbsolute
-    ? safePath + qs(query)
-    : ensureApi(API_BASE_URL, safePath) + qs(query);
-
+  let url = isAbsolute ? safePath + qs(query) : ensureApi(API_BASE_URL, safePath) + qs(query);
   try {
     if (isHttpUrl(url)) {
       const host = new URL(url).host;
@@ -325,10 +329,7 @@ export async function apiGetFile(path, opts = {}) {
 
   const safePath = normalizePath(path);
   const isAbsolute = /^https?:\/\//i.test(safePath);
-  let url = isAbsolute
-    ? safePath + qs(query)
-    : ensureApi(API_BASE_URL, safePath) + qs(query);
-
+  let url = isAbsolute ? safePath + qs(query) : ensureApi(API_BASE_URL, safePath) + qs(query);
   try {
     if (isHttpUrl(url)) {
       const host = new URL(url).host;
