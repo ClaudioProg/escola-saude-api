@@ -400,7 +400,7 @@ export default function DashboardInstrutor() {
           toast.error("Turma não encontrada.");
           return;
         }
-        const url = `https://escoladesaude.santos.br/presenca/${turmaId}`;
+        const url = `https://escoladasaude.vercel.app/presenca/${turmaId}`;
 
         const canvasContainer = document.createElement("div");
         const qrCodeElement = (<QRCodeCanvas value={url} size={300} />);

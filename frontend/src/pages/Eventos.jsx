@@ -1,4 +1,4 @@
-// ✅ src/pages/Eventos.jsx
+// ✅ src/pages/Eventos.jsx 
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
@@ -127,7 +127,7 @@ export default function Eventos() {
       setEventos(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error("Erro em atualizarEventos():", e);
-      toast.warning("⚠️ Eventos não puderam ser atualizados.");
+      toast.warn("⚠️ Eventos não puderam ser atualizados."); // ← warn
     }
   }
 
@@ -157,27 +157,28 @@ export default function Eventos() {
 
   async function inscrever(turmaId) {
     if (inscrevendo) return;
-
+  
     const eventoIdLocal = findEventoIdByTurmaIdLocal(turmaId);
     const eventoReferente =
       (eventoIdLocal && eventos.find((e) => Number(e.id) === Number(eventoIdLocal))) || null;
-
+  
     const ehInstrutor =
       Boolean(eventoReferente?.ja_instrutor) ||
       (Array.isArray(eventoReferente?.instrutor) &&
         usuarioId &&
         eventoReferente.instrutor.some((i) => Number(i.id) === Number(usuarioId)));
-
+  
     if (ehInstrutor) {
       toast.warn("Você é instrutor deste evento e não pode se inscrever como participante.");
       return;
     }
-
+  
     setInscrevendo(turmaId);
     try {
       await apiPost("/api/inscricoes", { turma_id: turmaId });
       toast.success("✅ Inscrição realizada com sucesso!");
-
+  
+      // Recarrega inscrições do usuário
       try {
         const inscricoesUsuario = await apiGet("/api/inscricoes/minhas");
         const novasInscricoes = (Array.isArray(inscricoesUsuario) ? inscricoesUsuario : [])
@@ -185,17 +186,19 @@ export default function Eventos() {
           .filter((n) => Number.isFinite(n));
         setInscricoesConfirmadas(novasInscricoes);
       } catch {
-        toast.warning("⚠️ Não foi possível atualizar inscrições confirmadas.");
+        toast.warn("⚠️ Não foi possível atualizar inscrições confirmadas."); // ← warn
       }
-
+  
+      // Recarrega eventos
       await atualizarEventos();
-
+  
+      // Recarrega turmas do evento específico
       const eventoId =
         eventoIdLocal ||
         Object.keys(turmasPorEvento).find((id) =>
           (turmasPorEvento[id] || []).some((t) => Number(t.id) === Number(turmaId))
         );
-
+  
       if (eventoId) {
         try {
           const turmasAtualizadas = await apiGet(`/api/turmas/evento/${eventoId}`);
@@ -208,8 +211,22 @@ export default function Eventos() {
         }
       }
     } catch (err) {
-      const status = err?.status || err?.response?.status;
-      const msg = err?.data?.erro || err?.message || "Erro ao se inscrever.";
+      // Normalização do erro (cobre diferentes formatos do seu api.js)
+      const status =
+        err?.status ??
+        err?.response?.status ??
+        err?.data?.status ??
+        err?.response?.data?.status;
+  
+      const serverMsg =
+        err?.data?.erro ??
+        err?.response?.erro ??
+        err?.response?.data?.erro ??
+        err?.data?.message ??
+        err?.response?.data?.message;
+  
+      const msg = serverMsg || err?.message || "Erro ao se inscrever.";
+  
       if (status === 409) {
         toast.warn(msg);
       } else if (status === 400) {
@@ -229,6 +246,14 @@ export default function Eventos() {
     if (Array.isArray(carregadas) && carregadas.length) return carregadas;
     if (Array.isArray(evento?.turmas) && evento.turmas.length) return evento.turmas;
     return [];
+  }
+
+  // verificar se o usuário já tem inscrição em QUALQUER turma deste evento
+  function jaInscritoNoEvento(evento) {
+    const ts = turmasDoEvento(evento);
+    if (!ts.length) return false;
+    const setTurmaIds = new Set(inscricoesConfirmadas);
+    return ts.some((t) => setTurmaIds.has(Number(t.id)));
   }
 
   // status do evento
@@ -287,7 +312,6 @@ export default function Eventos() {
     if (filtro === "andamento") return st === "andamento";
 
     if (filtro === "encerrado") {
-      // ✅ agora mostra TODOS os encerrados (antes exigia participação)
       return st === "encerrado";
     }
 
@@ -417,19 +441,20 @@ export default function Eventos() {
                   </BotaoPrimario>
 
                   {turmasVisiveis[evento.id] && turmasPorEvento[evento.id] && (
+                    // (comentários explicativos acima; evitar comentários dentro da lista de props)
                     <ListaTurmasEvento
                       turmas={turmasPorEvento[evento.id]}
                       eventoId={evento.id}
+                      eventoTipo={evento.tipo}
                       hoje={new Date()}
                       inscricoesConfirmadas={inscricoesConfirmadas}
                       inscrever={inscrever}
                       inscrevendo={inscrevendo}
-                      jaInscritoNoEvento={!!evento.ja_inscrito}
+                      jaInscritoNoEvento={jaInscritoNoEvento(evento)}
                       jaInstrutorDoEvento={!!evento.ja_instrutor}
                       carregarInscritos={() => {}}
                       carregarAvaliacoes={() => {}}
                       gerarRelatorioPDF={() => {}}
-                      // 👉 esconder chip interno de status da turma
                       mostrarStatusTurma={false}
                     />
                   )}

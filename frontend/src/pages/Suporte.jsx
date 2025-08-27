@@ -50,7 +50,7 @@ export default function Suporte() {
         <h2 className="text-xl font-semibold mb-4">📞 Contatos Úteis</h2>
         <ul className="space-y-2 text-sm text-gray-700 dark:text-gray-300">
           <li>
-            💌 <strong>Email:</strong> escoladesaude@santos.sp.gov.br
+            💌 <strong>Email:</strong> escoladasaude@santos.sp.gov.br
           </li>
           <li>
             ☎️ <strong>Telefone:</strong> (13) 3213-5000 - R. 5331
@@ -58,12 +58,12 @@ export default function Suporte() {
           <li>
             🌐 <strong>Site:</strong>{" "}
             <a
-              href="https://escoladesaude.santos.br"
+              href="https://escoladasaude.vercel.app"
               target="_blank"
               rel="noopener noreferrer"
               className="text-blue-700 dark:text-blue-400 underline"
             >
-              escoladesaude.santos.br
+              escoladasaude.vercel.app
             </a>
           </li>
           <li>

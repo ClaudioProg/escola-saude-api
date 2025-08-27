@@ -19,7 +19,7 @@ export async function gerarQrCodePresencaPDF(turma, nomeEvento = "Evento", nomeI
       return;
     }
 
-    const url = `https://escoladesaude.santos.br/presenca/${turma.id}`;
+    const url = `https://escoladasaude.vercel.app/presenca/${turma.id}`;
 
     // Renderiza QR "fora da tela" e extrai como dataURL
     const container = document.createElement("div");

@@ -1,11 +1,11 @@
 // 📁 src/controllers/inscricoesController.js
+/* eslint-disable no-console */
 const db = require('../db');
 const { send: enviarEmail } = require('../utils/email');
 const { formatarDataBR } = require('../utils/data');
 const { criarNotificacao } = require('./notificacoesController');
 
 // ➕ Inscrever-se em uma turma
-// 📁 src/controllers/inscricoesController.js
 async function inscreverEmTurma(req, res) {
   const usuario_id = req.usuario.id;
   const { turma_id } = req.body;
@@ -16,15 +16,39 @@ async function inscreverEmTurma(req, res) {
 
   try {
     // 1) Turma
-    const turmaResult = await db.query('SELECT * FROM turmas WHERE id = $1', [turma_id]);
-    if (turmaResult.rows.length === 0) {
+    const { rows: turmaRows } = await db.query(
+      'SELECT * FROM turmas WHERE id = $1',
+      [turma_id]
+    );
+    if (turmaRows.length === 0) {
       return res.status(404).json({ erro: 'Turma não encontrada.' });
     }
-    const turma = turmaResult.rows[0];
+    const turma = turmaRows[0];
 
-    // 2) Bloqueio: instrutor do evento
+    // 2) Evento (tipo + dados p/ notificação/e-mail)
+const { rows: evRows } = await db.query(
+  `SELECT 
+      id,
+      (tipo::text) AS tipo,                                    -- 👈 enum → texto
+      CASE WHEN tipo::text ILIKE 'congresso' THEN TRUE ELSE FALSE END AS is_congresso,  -- 👈 flag pronta
+      COALESCE(titulo, 'Evento') AS titulo,
+      COALESCE(local,  'A definir') AS local
+   FROM eventos
+   WHERE id = $1`,
+  [turma.evento_id]
+);
+if (evRows.length === 0) {
+  return res.status(404).json({ erro: 'Evento da turma não encontrado.' });
+}
+const evento = evRows[0];
+const isCongresso = !!evento.is_congresso;   // 👈 usa a flag (evita LOWER no JS)
+
+    // 3) Bloqueio: instrutor do evento
     const ehInstrutor = await db.query(
-      `SELECT 1 FROM evento_instrutor WHERE evento_id = $1 AND instrutor_id = $2 LIMIT 1`,
+      `SELECT 1 
+         FROM evento_instrutor 
+        WHERE evento_id = $1 AND instrutor_id = $2 
+        LIMIT 1`,
       [turma.evento_id, usuario_id]
     );
     if (ehInstrutor.rowCount > 0) {
@@ -33,7 +57,7 @@ async function inscreverEmTurma(req, res) {
       });
     }
 
-    // 3) Duplicidade
+    // 4) Duplicidade na MESMA turma
     const duplicado = await db.query(
       'SELECT 1 FROM inscricoes WHERE usuario_id = $1 AND turma_id = $2',
       [usuario_id, turma_id]
@@ -42,8 +66,29 @@ async function inscreverEmTurma(req, res) {
       return res.status(409).json({ erro: 'Usuário já inscrito nesta turma.' });
     }
 
-    // 4) Vagas
-    const { rows: cnt } = await db.query('SELECT COUNT(*) FROM inscricoes WHERE turma_id = $1', [turma_id]);
+    // 5) NOVA REGRA: uma turma por evento (exceto congresso)
+    if (!isCongresso) {
+      const { rows: jaRows } = await db.query(
+        `SELECT 1
+           FROM inscricoes i
+           JOIN turmas t2 ON t2.id = i.turma_id
+          WHERE i.usuario_id = $1
+            AND t2.evento_id = $2
+          LIMIT 1`,
+        [usuario_id, turma.evento_id]
+      );
+      if (jaRows.length > 0) {
+        return res
+          .status(409)
+          .json({ erro: 'Você já está inscrito em uma turma deste evento.' });
+      }
+    }
+
+    // 6) Vagas
+    const { rows: cnt } = await db.query(
+      'SELECT COUNT(*) FROM inscricoes WHERE turma_id = $1',
+      [turma_id]
+    );
     const totalInscritos = parseInt(cnt[0].count, 10);
     const totalVagas = parseInt(turma.vagas_total, 10);
     if (Number.isNaN(totalVagas)) {
@@ -53,42 +98,57 @@ async function inscreverEmTurma(req, res) {
       return res.status(400).json({ erro: 'Turma lotada. Vagas esgotadas.' });
     }
 
-    // 5) Inserir inscrição
-    const insert = await db.query(
-      `INSERT INTO inscricoes (usuario_id, turma_id, data_inscricao) 
-       VALUES ($1, $2, NOW()) 
-       RETURNING *`,
-      [usuario_id, turma_id]
-    );
-    if (insert.rowCount === 0) {
+    // 7) Inserir inscrição (try/catch local para mapear trigger/unique)
+    let insert;
+    try {
+      insert = await db.query(
+        `INSERT INTO inscricoes (usuario_id, turma_id, data_inscricao) 
+         VALUES ($1, $2, NOW()) 
+         RETURNING *`,
+        [usuario_id, turma_id]
+      );
+    } catch (e) {
+      // 🔎 Mapear erros comuns do Postgres
+      if (e?.code === 'P0001') {
+        // P0001 = raise_exception (nosso trigger)
+        return res.status(409).json({
+          erro: 'Você já está inscrito em uma turma deste evento.'
+        });
+      }
+      if (e?.code === '23505') {
+        // unique_violation (caso exista unique(usuario_id,turma_id) ou similar)
+        return res.status(409).json({
+          erro: 'Usuário já inscrito nesta turma.'
+        });
+      }
+      // fallback – logar e propagar para o catch externo
+      console.error('❌ Erro no INSERT (inscrições):', {
+        message: e?.message, detail: e?.detail, code: e?.code, routine: e?.routine
+      });
+      throw e;
+    }
+
+    if (!insert || insert.rowCount === 0) {
       return res.status(500).json({ erro: 'Erro ao registrar inscrição no banco.' });
     }
 
-    // 6) Dados auxiliares (evento + usuário)
-    const { rows: evRows } = await db.query(
-      'SELECT titulo, local FROM eventos WHERE id = $1',
-      [turma.evento_id]
-    );
-    const evento = evRows[0] || {};
-    const tituloEvento = evento.titulo || 'Evento';
-    const localEvento = evento.local || 'A definir';
-
+    // 8) Dados do usuário (para e-mail)
     const { rows: userRows } = await db.query(
       'SELECT nome, email FROM usuarios WHERE id = $1',
       [usuario_id]
     );
     const usuario = userRows[0];
 
-    // 7) Notificação (best-effort)
+    // 9) Notificação (best-effort)
     try {
       const mensagem = `
-✅ Sua inscrição foi confirmada com sucesso no evento "${tituloEvento}".
+✅ Sua inscrição foi confirmada com sucesso no evento "${evento.titulo}".
 
 - Turma: ${turma.nome}
 - Período: ${formatarDataBR(turma.data_inicio)} a ${formatarDataBR(turma.data_fim)}
 - Horário: ${turma.horario_inicio?.slice(0,5)} às ${turma.horario_fim?.slice(0,5)}
 - Carga horária: ${turma.carga_horaria} horas
-- Local: ${localEvento}
+- Local: ${evento.local}
       `.trim();
 
       await criarNotificacao(usuario_id, mensagem, null, "/eventos");
@@ -96,7 +156,7 @@ async function inscreverEmTurma(req, res) {
       console.error('⚠️ Falha ao criar notificação (não bloqueante):', e?.message);
     }
 
-    // 8) E-mail (best-effort)
+    // 10) E-mail (best-effort)
     try {
       if (usuario?.email) {
         const html = `
@@ -104,12 +164,12 @@ async function inscreverEmTurma(req, res) {
           <p>Sua inscrição foi confirmada com sucesso.</p>
           <h3>📌 Detalhes da Inscrição</h3>
           <p>
-            <strong>Evento:</strong> ${tituloEvento}<br/>
+            <strong>Evento:</strong> ${evento.titulo}<br/>
             <strong>Turma:</strong> ${turma.nome}<br/>
             <strong>Período:</strong> ${formatarDataBR(turma.data_inicio)} a ${formatarDataBR(turma.data_fim)}<br/>
             <strong>Horário:</strong> ${turma.horario_inicio?.slice(0,5)} às ${turma.horario_fim?.slice(0,5)}<br/>
             <strong>Carga horária:</strong> ${turma.carga_horaria} horas<br/>
-            <strong>Local:</strong> ${localEvento}
+            <strong>Local:</strong> ${evento.local}
           </p>
           <p>📍 Em caso de dúvidas, entre em contato com a equipe da Escola da Saúde.</p>
           <p>Atenciosamente,<br/><strong>Equipe da Escola da Saúde</strong></p>
@@ -120,13 +180,13 @@ async function inscreverEmTurma(req, res) {
           subject: '✅ Inscrição Confirmada – Escola da Saúde',
           text: `Olá, ${usuario.nome}!
 
-Sua inscrição foi confirmada com sucesso no evento "${tituloEvento}".
+Sua inscrição foi confirmada com sucesso no evento "${evento.titulo}".
 
 Turma: ${turma.nome}
 Período: ${formatarDataBR(turma.data_inicio)} a ${formatarDataBR(turma.data_fim)}
 Horário: ${turma.horario_inicio?.slice(0,5)} às ${turma.horario_fim?.slice(0,5)}
 Carga horária: ${turma.carga_horaria} horas
-Local: ${localEvento}
+Local: ${evento.local}
 
 Atenciosamente,
 Equipe da Escola da Saúde`,
@@ -143,6 +203,18 @@ Equipe da Escola da Saúde`,
     return res.status(201).json({ mensagem: 'Inscrição realizada com sucesso' });
 
   } catch (err) {
+    // 🔁 Segurança: mapeia casos que escaparem do bloco do INSERT
+    if (err?.code === 'P0001' ||
+        (typeof err?.message === 'string' &&
+         err.message.toLowerCase().includes('inscrito em uma turma deste evento'))) {
+      return res.status(409).json({
+        erro: 'Você já está inscrito em uma turma deste evento.'
+      });
+    }
+    if (err?.code === '23505') {
+      return res.status(409).json({ erro: 'Usuário já inscrito nesta turma.' });
+    }
+
     console.error('❌ Erro ao processar inscrição:', {
       message: err?.message,
       detail: err?.detail,
@@ -152,7 +224,6 @@ Equipe da Escola da Saúde`,
     return res.status(500).json({ erro: 'Erro ao processar inscrição.' });
   }
 }
-
 
 // ❌ Cancelar inscrição
 async function cancelarMinhaInscricao(req, res) {
@@ -173,12 +244,12 @@ async function cancelarMinhaInscricao(req, res) {
 
     await db.query('DELETE FROM inscricoes WHERE id = $1', [id]);
 
-    res.json({ mensagem: 'Inscrição cancelada com sucesso.' });
+    return res.json({ mensagem: 'Inscrição cancelada com sucesso.' });
   } catch (err) {
     console.error('❌ Erro ao cancelar inscrição:', {
       message: err?.message, detail: err?.detail, code: err?.code
     });
-    res.status(500).json({ erro: 'Erro ao cancelar inscrição.' });
+    return res.status(500).json({ erro: 'Erro ao cancelar inscrição.' });
   }
 }
 
@@ -211,12 +282,12 @@ async function obterMinhasInscricoes(req, res) {
       [usuario_id]
     );
 
-    res.json(resultado.rows);
+    return res.json(resultado.rows);
   } catch (err) {
     console.error('❌ Erro ao buscar inscrições:', {
       message: err?.message, detail: err?.detail, code: err?.code
     });
-    res.status(500).json({ erro: 'Erro ao buscar inscrições.' });
+    return res.status(500).json({ erro: 'Erro ao buscar inscrições.' });
   }
 }
 
@@ -244,12 +315,12 @@ async function listarInscritosPorTurma(req, res) {
       [turma_id]
     );
 
-    res.json(result.rows);
+    return res.json(result.rows);
   } catch (err) {
     console.error("❌ Erro ao buscar inscritos:", {
       message: err?.message, detail: err?.detail, code: err?.code
     });
-    res.status(500).json({ erro: "Erro ao buscar inscritos." });
+    return res.status(500).json({ erro: "Erro ao buscar inscritos." });
   }
 }
 

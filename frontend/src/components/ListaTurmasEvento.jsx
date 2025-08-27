@@ -83,15 +83,17 @@ const extrairHorasDeEncontros = (encontrosInline) => {
 export default function ListaTurmasEvento({
   turmas = [],
   eventoId,
+  eventoTipo = "",               // 👈 novo: precisamos saber se é congresso
   hoje = new Date(),
-  inscricoesConfirmadas = [],
+  inscricoesConfirmadas = [],    // array de ids de turmas em que o usuário está inscrito
   inscrever,
   inscrevendo,
-  jaInscritoNoEvento = false,
-  jaInstrutorDoEvento = false,
-  /** 👇 novo prop: quando false, esconde o chip interno de status da turma */
+  jaInscritoNoEvento = false,    // 👈 já tem inscrição em alguma turma deste evento?
+  jaInstrutorDoEvento = false,   // 👈 não pode inscrever-se como participante
+  /** 👇 quando false, esconde o chip interno de status da turma */
   mostrarStatusTurma = true,
 }) {
+  const isCongresso = (eventoTipo || "").toLowerCase() === "congresso";
   const jaInscritoTurma = (tid) => inscricoesConfirmadas.includes(Number(tid));
 
   const [expand, setExpand] = useState({});
@@ -101,6 +103,10 @@ export default function ListaTurmasEvento({
     <div id={`turmas-${eventoId}`} className="mt-4 space-y-4">
       {(turmas || []).map((t) => {
         const jaInscrito = jaInscritoTurma(t.id);
+
+        // quando não for congresso e o usuário já tem inscrição em outra turma do evento,
+        // bloquear as demais (exceto a própria onde ele já está inscrito)
+        const bloquearOutras = !isCongresso && jaInscritoNoEvento && !jaInscrito;
 
         const inscritosBrutos = t?.inscritos ?? t?.qtd_inscritos ?? t?.total_inscritos;
         let inscritos = Number.isFinite(Number(inscritosBrutos)) ? Number(inscritosBrutos) : 0;
@@ -131,10 +137,13 @@ export default function ListaTurmasEvento({
         const carregando = Number(inscrevendo) === Number(t.id);
 
         const bloqueadoPorInstrutor = Boolean(jaInstrutorDoEvento);
-        const disabled = bloqueadoPorInstrutor || carregando || jaInscrito || lotada;
+        const disabled =
+          bloqueadoPorInstrutor || carregando || jaInscrito || lotada || bloquearOutras;
+
         const motivo =
           (bloqueadoPorInstrutor && "Você é instrutor deste evento") ||
           (jaInscrito && "Você já está inscrito nesta turma") ||
+          (bloquearOutras && "Você já está inscrito em uma turma deste evento") ||
           (lotada && "Turma lotada") ||
           "";
 
@@ -214,9 +223,7 @@ export default function ListaTurmasEvento({
                 </div>
               </div>
 
-              {/* 👇 Chip interno de status da TURMA:
-                  - sempre mostrar "Lotada" quando lotada
-                  - esconder "Programado" quando mostrarStatusTurma = false */}
+              {/* Chip interno de status da TURMA */}
               {(lotada || mostrarStatusTurma) && (
                 <span
                   className={`text-xs px-2 py-1 rounded-full border ${
@@ -271,6 +278,8 @@ export default function ListaTurmasEvento({
                   ? "Instrutor do evento"
                   : jaInscrito
                   ? "Inscrito"
+                  : bloquearOutras
+                  ? "Indisponível"
                   : lotada
                   ? "Sem vagas"
                   : "Inscrever-se"}
