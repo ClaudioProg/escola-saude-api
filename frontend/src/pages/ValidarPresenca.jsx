@@ -1,8 +1,8 @@
-//src/pages/ValidarPresenca.jsx
+// 📁 src/pages/ValidarPresenca.jsx
 /* eslint-disable no-console */
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { apiPost } from "../services/api";
+import { apiPost, apiGet } from "../services/api";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 
 export default function ValidarPresenca() {
@@ -10,9 +10,10 @@ export default function ValidarPresenca() {
   const { search } = useLocation();
   const [status, setStatus] = useState("loading"); // loading | ok | erro
   const [mensagem, setMensagem] = useState("Validando seu QR Code…");
+  const [detalhe, setDetalhe] = useState("");
 
-  // helper: extrai query param
   const getParam = (name) => new URLSearchParams(search).get(name);
+  const isDebug = getParam("debug") === "1" || getParam("dbg") === "1";
 
   useEffect(() => {
     async function run() {
@@ -23,78 +24,93 @@ export default function ValidarPresenca() {
         return;
       }
       const codigo = decodeURIComponent(bruto).trim();
-      console.log("[Validar] codigo bruto:", codigo);
+      if (isDebug) console.log("[Validar] codigo:", codigo);
 
-      // se 401 → pedir login e voltar
+      const goHome = (ms = 2200) => {
+        if (isDebug) return; // em debug não redireciona
+        setTimeout(() => navigate("/", { replace: true }), ms);
+      };
+
       const handle401 = () => {
+        if (isDebug) {
+          setStatus("erro");
+          setMensagem("Não autenticado (401).");
+          setDetalhe("Faça login e tente novamente.");
+          return;
+        }
         const redirect = `/validar?codigo=${encodeURIComponent(codigo)}`;
         navigate(`/login?redirect=${encodeURIComponent(redirect)}`, { replace: true });
       };
 
       try {
-        // 1) TOKEN (ex.: JWT contém pontos)
+        // 1) TOKEN (tem ponto)
         if (codigo.includes(".")) {
-          const r = await apiPost("/api/presencas/confirmar-via-token", { token: codigo });
-          if (r?.sucesso || r?.ok) {
+          if (isDebug) console.log("[Validar] via TOKEN");
+          const r = await apiPost("presencas/confirmar-via-token", { token: codigo });
+          if (r?.sucesso || r?.ok || r?.mensagem) {
             setStatus("ok");
             setMensagem(r?.mensagem || "Presença confirmada!");
-            return setTimeout(() => navigate("/", { replace: true }), 2200);
+            return goHome();
           }
           throw new Error(r?.mensagem || "Falha ao confirmar via token.");
         }
 
-        // 2) URL (http…) → tenta extrair turma_id
+        // 2) URL → extrair turma_id
+        let turmaId = null;
         if (/^https?:\/\//i.test(codigo)) {
           const url = new URL(codigo);
-          // padrões aceitos:
-          //  - /presenca/:id
-          //  - ?turma_id=123
-          let turmaId = url.searchParams.get("turma_id");
+          turmaId = url.searchParams.get("turma_id");
           if (!turmaId) {
             const parts = url.pathname.split("/").filter(Boolean);
             const i = parts.findIndex((p) => p.toLowerCase() === "presenca");
             if (i >= 0 && parts[i + 1]) turmaId = parts[i + 1];
           }
-          if (!turmaId) throw new Error("Não foi possível identificar a turma no QR.");
-
-          const r = await apiPost("/api/presencas/confirmarPresencaViaQR", {
-            turma_id: Number(turmaId),
-          });
-          if (r?.sucesso || r?.ok) {
-            setStatus("ok");
-            setMensagem(r?.mensagem || "Presença confirmada!");
-            return setTimeout(() => navigate("/", { replace: true }), 2200);
-          }
-          throw new Error(r?.mensagem || "Falha ao confirmar presença (URL).");
         }
 
-        // 3) Numérico puro → trata como turma_id
-        if (/^\d+$/.test(codigo)) {
-          const r = await apiPost("/api/presencas/confirmarPresencaViaQR", {
-            turma_id: Number(codigo),
-          });
-          if (r?.sucesso || r?.ok) {
+        // 3) Numérico puro?
+        if (!turmaId && /^\d+$/.test(codigo)) turmaId = codigo;
+
+        if (!turmaId) throw new Error("Não foi possível identificar a turma no QR.");
+
+        // ---- chamada principal (POST novo) ----
+        if (isDebug) console.log("[Validar] POST confirmarPresencaViaQR turma_id=", turmaId);
+        try {
+          const r = await apiPost("presencas/confirmarPresencaViaQR", { turma_id: Number(turmaId) });
+          if (r?.sucesso || r?.ok || r?.mensagem) {
             setStatus("ok");
             setMensagem(r?.mensagem || "Presença confirmada!");
-            return setTimeout(() => navigate("/", { replace: true }), 2200);
+            return goHome();
           }
-          throw new Error(r?.mensagem || "Falha ao confirmar presença.");
+          throw new Error(r?.mensagem || "Falha ao confirmar (POST).");
+        } catch (e) {
+          // ---- fallback p/ rotas antigas (GET/POST por params) ----
+          if (isDebug) console.warn("[Validar] fallback GET /confirmar-qr/:id", e?.message || e);
+          try {
+            const r2 = await apiGet(`presencas/confirmar-qr/${Number(turmaId)}`);
+            if (r2?.sucesso || r2?.ok || r2?.mensagem) {
+              setStatus("ok");
+              setMensagem(r2?.mensagem || "Presença confirmada!");
+              return goHome();
+            }
+            throw new Error(r2?.mensagem || "Falha no fallback (GET).");
+          } catch (e2) {
+            throw e2;
+          }
         }
-
-        throw new Error("Formato de código não reconhecido.");
       } catch (err) {
-        // se a lib apiPost expõe status:
-        const statusHttp = err?.response?.status || err?.status;
+        const statusHttp = err?.status || err?.response?.status;
         if (statusHttp === 401) return handle401();
-
-        console.error("[Validar] erro:", err);
+        console.error("[Validar] erro final:", err);
         setStatus("erro");
         setMensagem(
-          err?.response?.data?.mensagem ||
+          err?.data?.erro ||
+            err?.response?.data?.mensagem ||
             err?.message ||
-            "Não foi possível confirmar. Verifique horário da turma e se você está logado."
+            "Não foi possível confirmar."
         );
-        setTimeout(() => navigate("/", { replace: true }), 3200);
+        setDetalhe(
+          "Confira: login ativo, CORS do backend, endpoint /presencas, inscrição na turma e janela de datas."
+        );
       }
     }
 
@@ -120,7 +136,8 @@ export default function ValidarPresenca() {
             {status === "ok" ? "Presença confirmada" : "Falha na confirmação"}
           </h1>
           <p className="mt-3 text-gray-700">{mensagem}</p>
-          <p className="mt-6 text-sm text-gray-500">Você será redirecionado…</p>
+          {isDebug && detalhe && <p className="mt-2 text-sm text-gray-500">{detalhe}</p>}
+          {!isDebug && <p className="mt-6 text-sm text-gray-500">Você será redirecionado…</p>}
         </>
       )}
     </div>

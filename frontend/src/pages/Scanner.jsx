@@ -60,7 +60,7 @@ export default function Scanner() {
               setResultado(decodedText);
               toast.success("✅ QR Code lido com sucesso!");
               html5QrCode.stop().then(() => {
-                navigate(`/validar?codigo=${encodeURIComponent(decodedText)}`);
+                navigate(`/validar-presenca?codigo=${encodeURIComponent(decodedText)}`);
               });
             }
           },
