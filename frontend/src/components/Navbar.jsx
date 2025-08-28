@@ -114,6 +114,7 @@ export default function Navbar() {
     () => [
       { label: "Painel", path: "/instrutor", icon: LayoutDashboard },
       { label: "Agenda", path: "/agenda-instrutor", icon: CalendarDays },
+      { label: "QR do Site", path: "/qr-site", icon: QrCode },
     ],
     []
   );

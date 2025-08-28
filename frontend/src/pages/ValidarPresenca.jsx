@@ -5,6 +5,8 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { apiPost, apiGet } from "../services/api";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 
+const JWT_REGEX = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/; // JWT x.y.z
+
 export default function ValidarPresenca() {
   const navigate = useNavigate();
   const { search } = useLocation();
@@ -38,65 +40,72 @@ export default function ValidarPresenca() {
           setDetalhe("Faça login e tente novamente.");
           return;
         }
-        const redirect = `/validar?codigo=${encodeURIComponent(codigo)}`;
+        const redirect = `/validar-presenca?codigo=${encodeURIComponent(codigo)}`;
         navigate(`/login?redirect=${encodeURIComponent(redirect)}`, { replace: true });
       };
 
       try {
-        // 1) TOKEN (tem ponto)
-        if (codigo.includes(".")) {
+        // ─────────────────────────────────────────────────────
+        // 1) QR com URL → extrair turma_id da query ou do path
+        // ─────────────────────────────────────────────────────
+        if (/^https?:\/\//i.test(codigo)) {
+          if (isDebug) console.log("[Validar] via URL");
+          const url = new URL(codigo);
+          let turmaId =
+            url.searchParams.get("turma_id") ||
+            url.searchParams.get("turmaId") ||
+            (() => {
+              const parts = url.pathname.split("/").filter(Boolean);
+              const i = parts.findIndex((p) => p.toLowerCase() === "presenca");
+              return i >= 0 && parts[i + 1] ? parts[i + 1] : parts.at(-1);
+            })();
+
+          if (!/^\d+$/.test(String(turmaId || ""))) {
+            throw new Error("Não foi possível identificar a turma no QR.");
+          }
+
+          // Tenta GET (rota existente no backend)
+          try {
+            const r = await apiGet(`presencas/confirmar/${Number(turmaId)}`);
+            setStatus("ok");
+            setMensagem(r?.mensagem || "Presença confirmada!");
+            return goHome();
+          } catch (e1) {
+            // Fallback para POST (se estiver publicado)
+            if (isDebug) console.warn("[Validar] fallback POST confirmarPresencaViaQR", e1?.message);
+            const r2 = await apiPost("presencas/confirmarPresencaViaQR", {
+              turma_id: Number(turmaId),
+            });
+            setStatus("ok");
+            setMensagem(r2?.mensagem || "Presença confirmada!");
+            return goHome();
+          }
+        }
+
+        // ─────────────────────────────────────────────────────
+        // 2) Número puro → tratar como turma_id
+        // ─────────────────────────────────────────────────────
+        if (/^\d+$/.test(codigo)) {
+          if (isDebug) console.log("[Validar] via ID");
+          const r = await apiGet(`presencas/confirmar/${Number(codigo)}`);
+          setStatus("ok");
+          setMensagem(r?.mensagem || "Presença confirmada!");
+          return goHome();
+        }
+
+        // ─────────────────────────────────────────────────────
+        // 3) JWT x.y.z → confirmar via token
+        // ─────────────────────────────────────────────────────
+        if (JWT_REGEX.test(codigo)) {
           if (isDebug) console.log("[Validar] via TOKEN");
           const r = await apiPost("presencas/confirmar-via-token", { token: codigo });
-          if (r?.sucesso || r?.ok || r?.mensagem) {
-            setStatus("ok");
-            setMensagem(r?.mensagem || "Presença confirmada!");
-            return goHome();
-          }
-          throw new Error(r?.mensagem || "Falha ao confirmar via token.");
+          setStatus("ok");
+          setMensagem(r?.mensagem || "Presença confirmada!");
+          return goHome();
         }
 
-        // 2) URL → extrair turma_id
-        let turmaId = null;
-        if (/^https?:\/\//i.test(codigo)) {
-          const url = new URL(codigo);
-          turmaId = url.searchParams.get("turma_id");
-          if (!turmaId) {
-            const parts = url.pathname.split("/").filter(Boolean);
-            const i = parts.findIndex((p) => p.toLowerCase() === "presenca");
-            if (i >= 0 && parts[i + 1]) turmaId = parts[i + 1];
-          }
-        }
-
-        // 3) Numérico puro?
-        if (!turmaId && /^\d+$/.test(codigo)) turmaId = codigo;
-
-        if (!turmaId) throw new Error("Não foi possível identificar a turma no QR.");
-
-        // ---- chamada principal (POST novo) ----
-        if (isDebug) console.log("[Validar] POST confirmarPresencaViaQR turma_id=", turmaId);
-        try {
-          const r = await apiPost("presencas/confirmarPresencaViaQR", { turma_id: Number(turmaId) });
-          if (r?.sucesso || r?.ok || r?.mensagem) {
-            setStatus("ok");
-            setMensagem(r?.mensagem || "Presença confirmada!");
-            return goHome();
-          }
-          throw new Error(r?.mensagem || "Falha ao confirmar (POST).");
-        } catch (e) {
-          // ---- fallback p/ rotas antigas (GET/POST por params) ----
-          if (isDebug) console.warn("[Validar] fallback GET /confirmar-qr/:id", e?.message || e);
-          try {
-            const r2 = await apiGet(`presencas/confirmar-qr/${Number(turmaId)}`);
-            if (r2?.sucesso || r2?.ok || r2?.mensagem) {
-              setStatus("ok");
-              setMensagem(r2?.mensagem || "Presença confirmada!");
-              return goHome();
-            }
-            throw new Error(r2?.mensagem || "Falha no fallback (GET).");
-          } catch (e2) {
-            throw e2;
-          }
-        }
+        // Caso não bata em nenhum formato
+        throw new Error("Formato de código não reconhecido.");
       } catch (err) {
         const statusHttp = err?.status || err?.response?.status;
         if (statusHttp === 401) return handle401();

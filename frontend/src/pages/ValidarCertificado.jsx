@@ -6,34 +6,34 @@ import BotaoPrimario from "../components/BotaoPrimario";
 import NadaEncontrado from "../components/NadaEncontrado";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import { formatarDataHoraBrasileira } from "../utils/data";
-import { apiGet } from "../services/api"; // ✅ cliente central
+import { apiGet } from "../services/api";
 
 export default function ValidarCertificado() {
   const [searchParams] = useSearchParams();
   const [mensagem, setMensagem] = useState("");
-  const [status, setStatus] = useState(""); // 'sucesso', 'erro', 'pendente'
+  const [detalhe, setDetalhe] = useState("");
+  const [status, setStatus] = useState("loading"); // loading | sucesso | pendente | erro
   const [dataHora, setDataHora] = useState("");
-  const [carregando, setCarregando] = useState(true);
 
-  // normaliza parâmetros (evita espaços e null)
+  // parâmetros
   const evento = (searchParams.get("evento") || "").trim();
   const usuario = (searchParams.get("usuario") || "").trim();
+  const isDebug = (searchParams.get("debug") || "").trim() === "1";
 
   useEffect(() => {
-    // apenas exibição local do momento da verificação (não usa UTC)
     setDataHora(formatarDataHoraBrasileira(new Date()));
 
     if (!evento || !usuario) {
       setMensagem("❌ Link inválido. Parâmetros ausentes.");
       setStatus("erro");
-      setCarregando(false);
       return;
     }
 
     (async () => {
       try {
-        // suporte a diferentes formatos de resposta do backend
-        const data = await apiGet("/api/presencas/validar", {
+        if (isDebug) console.log("[ValidarCertificado] GET /presencas/validar", { evento, usuario });
+
+        const data = await apiGet("presencas/validar", {
           on403: "silent",
           query: { evento, usuario },
         });
@@ -51,29 +51,33 @@ export default function ValidarCertificado() {
           setStatus("pendente");
         }
       } catch (e) {
+        if (isDebug) {
+          console.error("[ValidarCertificado] erro:", e);
+          setDetalhe(
+            (e?.data?.erro || e?.message || String(e)) +
+              " — verifique conexão, CORS e disponibilidade do endpoint."
+          );
+        }
         setMensagem("❌ Erro ao validar presença. Tente novamente mais tarde.");
         setStatus("erro");
-      } finally {
-        setCarregando(false);
       }
     })();
-  }, [evento, usuario]);
+  }, [evento, usuario, isDebug]);
 
   const corMensagem =
     status === "sucesso"
       ? "text-green-700 dark:text-green-400"
       : status === "erro"
       ? "text-red-600 dark:text-red-400"
-      : "text-yellow-700 dark:text-yellow-400";
+      : status === "pendente"
+      ? "text-yellow-700 dark:text-yellow-400"
+      : "text-gray-700 dark:text-gray-300";
 
-  const cardVariants = {
-    hidden: { opacity: 0, y: 24 },
-    visible: { opacity: 1, y: 0, transition: { duration: 0.5 } },
-  };
+  const cardVariants = { hidden: { opacity: 0, y: 24 }, visible: { opacity: 1, y: 0, transition: { duration: 0.5 } } };
 
   return (
     <main
-      className="min-h-screen flex flex-col items-center justify-center bg-white dark:bg-gray-900 p-6 print:p-0 print:min-h-0 relative"
+      className="min-h-screen flex flex-col items-center justify-center bg-white dark:bg-gray-900 p-6 print:p-0 print:min-h-0"
       role="main"
     >
       <motion.section
@@ -82,7 +86,6 @@ export default function ValidarCertificado() {
         variants={cardVariants}
         className="w-full max-w-lg bg-white dark:bg-gray-800 shadow-lg rounded-2xl p-8 print:shadow-none print:bg-white"
         aria-label="Validação de Presença"
-        aria-busy={carregando}
       >
         {/* Cabeçalho */}
         <div className="flex flex-col items-center mb-8" role="banner">
@@ -90,6 +93,7 @@ export default function ValidarCertificado() {
             src="/LogoEscola.png"
             alt="Logotipo da Escola da Saúde de Santos"
             className="h-24 mb-4 drop-shadow print:hidden"
+            onError={(e) => (e.currentTarget.style.display = "none")}
           />
           <h1 className="text-3xl font-bold text-blue-700 dark:text-white print:text-black">
             Escola da Saúde - Santos
@@ -99,25 +103,29 @@ export default function ValidarCertificado() {
           </p>
         </div>
 
-        {carregando ? (
+        {status === "loading" ? (
           <CarregandoSkeleton height="120px" />
         ) : (
           <>
             <p
-              className={`text-xl font-semibold mb-6 text-center transition-colors duration-200 ${
+              className={`text-xl font-semibold mb-6 text-center transition-colors duration-200 ${corMensagem} ${
                 status === "sucesso" ? "animate-pulse" : ""
-              } ${corMensagem}`}
+              }`}
               aria-live="polite"
             >
               {mensagem}
             </p>
 
-            {(status === "erro" || status === "pendente") && (
+            {isDebug && detalhe && (
+              <p className="text-sm text-gray-500 mb-4 break-words">{detalhe}</p>
+            )}
+
+            {status === "pendente" || status === "erro" ? (
               <NadaEncontrado
                 mensagem={mensagem}
                 sugestao="Verifique os dados do certificado ou tente novamente mais tarde."
               />
-            )}
+            ) : null}
 
             {status === "sucesso" && (
               <div className="flex justify-center print:hidden">

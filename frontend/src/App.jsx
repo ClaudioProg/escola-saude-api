@@ -6,6 +6,7 @@ import Navbar from "./components/Navbar";
 import ModalAssinatura from "./components/ModalAssinatura";
 import CertificadosAvulsos from "./pages/CertificadosAvulsos";
 import QRCodesEventosAdmin from "./pages/QRCodesEventosAdmin";
+import QrDoSite from "./pages/QrDoSite";
 
 // 🔄 Lazy loading das páginas
 const Login = lazy(() => import("./pages/Login"));
@@ -124,6 +125,14 @@ export default function App() {
             <Route path="/lista-presencas-turma" element={<PrivateRoute permitido={["administrador"]}><ListaPresencasTurma /></PrivateRoute>} />
             <Route path="/relatorios-customizados" element={<PrivateRoute permitido={["administrador"]}><RelatoriosCustomizados /></PrivateRoute>} />
             <Route
+  path="/qr-site"
+  element={
+    <PrivateRoute perfisUsuario={["instrutor", "administrador"]}>
+      <QrDoSite />
+    </PrivateRoute>
+  }
+/>
+<Route
               path="/turmas/presencas/:turmaId"
               element={
                 <PrivateRoute permitido={["instrutor", "administrador"]}>

@@ -108,32 +108,41 @@ async function listarEventos(req, res) {
         ) AS instrutor,
 
         (
-          SELECT json_agg(
-            json_build_object(
-              'id', t.id,
-              'nome', t.nome,
-              'data_inicio', t.data_inicio,
-              'data_fim', t.data_fim,
-              'horario_inicio', t.horario_inicio,
-              'horario_fim', t.horario_fim,
-              'vagas_total', t.vagas_total,
-              'carga_horaria', t.carga_horaria,
-              'inscritos', (SELECT COUNT(*) FROM inscricoes i WHERE i.turma_id = t.id),
+  SELECT json_agg(
+    json_build_object(
+      'id', t.id,
+      'nome', t.nome,
+      'data_inicio', t.data_inicio,
+      'data_fim', t.data_fim,
+      'horario_inicio', t.horario_inicio,
+      'horario_fim', t.horario_fim,
+      'vagas_total', t.vagas_total,
+      'carga_horaria', t.carga_horaria,
 
-              -- ✅ DATAS reais (datas_turma) ou fallback por presenças; se ambas vazias, devolve []
-              'datas', CASE 
-                         WHEN EXISTS (SELECT 1 FROM datas_turma dt WHERE dt.turma_id = t.id)
-                           THEN ${SQL_JSON_DATAS}
-                         WHEN EXISTS (SELECT 1 FROM presencas p WHERE p.turma_id = t.id)
-                           THEN ${SQL_JSON_DATAS_FALLBACK_PRESENCAS}
-                         ELSE '[]'::json
-                       END
-            )
-            ORDER BY t.data_inicio, t.id
-          )
-          FROM turmas t
-          WHERE t.evento_id = e.id
-        ) AS turmas,
+      -- ✅ contagem “bruta” (retrocompat.)
+      'inscritos', (SELECT COUNT(*) FROM inscricoes i WHERE i.turma_id = t.id),
+
+      -- ✅ contagem efetiva (canceladas fora + status válidos)
+      'inscritos_confirmados',
+  (SELECT COUNT(*) FROM inscricoes i WHERE i.turma_id = t.id),
+
+'vagas_preenchidas',
+  (SELECT COUNT(*) FROM inscricoes i WHERE i.turma_id = t.id),
+
+      -- ✅ datas reais (datas_turma) com fallback por presenças
+      'datas', CASE 
+                WHEN EXISTS (SELECT 1 FROM datas_turma dt WHERE dt.turma_id = t.id)
+                  THEN ${SQL_JSON_DATAS}
+                WHEN EXISTS (SELECT 1 FROM presencas p WHERE p.turma_id = t.id)
+                  THEN ${SQL_JSON_DATAS_FALLBACK_PRESENCAS}
+                ELSE '[]'::json
+              END
+    )
+    ORDER BY t.data_inicio, t.id
+  )
+  FROM turmas t
+  WHERE t.evento_id = e.id
+) AS turmas,
 
         (SELECT MIN(t.data_inicio)    FROM turmas t WHERE t.evento_id = e.id) AS data_inicio_geral,
         (SELECT MAX(t.data_fim)       FROM turmas t WHERE t.evento_id = e.id) AS data_fim_geral,
@@ -297,23 +306,38 @@ async function buscarEventoPorId(req, res) {
     const turmasResult = await client.query(
       `
       SELECT 
-        t.id, t.nome, t.data_inicio, t.data_fim,
-        t.horario_inicio, t.horario_fim,
-        t.vagas_total, t.carga_horaria,
-        (SELECT COUNT(*) FROM inscricoes i WHERE i.turma_id = t.id) AS inscritos,
+  t.id, t.nome, t.data_inicio, t.data_fim,
+  t.horario_inicio, t.horario_fim,
+  t.vagas_total, t.carga_horaria,
 
-        -- ✅ datas reais
-        CASE 
-          WHEN EXISTS (SELECT 1 FROM datas_turma dt WHERE dt.turma_id = t.id)
-            THEN ${SQL_JSON_DATAS}
-          WHEN EXISTS (SELECT 1 FROM presencas p WHERE p.turma_id = t.id)
-            THEN ${SQL_JSON_DATAS_FALLBACK_PRESENCAS}
-          ELSE '[]'::json
-        END AS datas
+  -- retrocompat
+  (SELECT COUNT(*) FROM inscricoes i WHERE i.turma_id = t.id) AS inscritos,
 
-      FROM turmas t
-      WHERE t.evento_id = $1
-      ORDER BY t.data_inicio, t.id
+  -- efetivo + alias usado na página pública
+  (SELECT COUNT(*) FROM inscricoes i
+    WHERE i.turma_id = t.id
+      AND COALESCE(i.cancelada, false) = false
+      AND COALESCE(i.status,'') IN ('confirmada','aprovada','inscrito')
+  ) AS inscritos_confirmados,
+
+  (SELECT COUNT(*) FROM inscricoes i
+    WHERE i.turma_id = t.id
+      AND COALESCE(i.cancelada, false) = false
+      AND COALESCE(i.status,'') IN ('confirmada','aprovada','inscrito')
+  ) AS vagas_preenchidas,
+
+  CASE 
+    WHEN EXISTS (SELECT 1 FROM datas_turma dt WHERE dt.turma_id = t.id)
+      THEN ${SQL_JSON_DATAS}
+    WHEN EXISTS (SELECT 1 FROM presencas p WHERE p.turma_id = t.id)
+      THEN ${SQL_JSON_DATAS_FALLBACK_PRESENCAS}
+    ELSE '[]'::json
+  END AS datas
+
+FROM turmas t
+WHERE t.evento_id = $1
+ORDER BY t.data_inicio, t.id
+
       `,
       [id]
     );
@@ -360,41 +384,52 @@ async function listarTurmasDoEvento(req, res) {
     const result = await query(
       `
       SELECT 
-        t.id,
-        t.nome,
-        t.data_inicio,
-        t.data_fim,
-        t.horario_inicio,
-        t.horario_fim,
-        t.vagas_total,
-        t.carga_horaria,
-        (SELECT COUNT(*) FROM inscricoes i WHERE i.turma_id = t.id) AS inscritos,
+  t.id,
+  t.nome,
+  t.data_inicio,
+  t.data_fim,
+  t.horario_inicio,
+  t.horario_fim,
+  t.vagas_total,
+  t.carga_horaria,
 
-        e.titulo,
-        e.descricao,
-        e.local,
+  (SELECT COUNT(*) FROM inscricoes i WHERE i.turma_id = t.id) AS inscritos,
 
-        COALESCE(
-          array_agg(DISTINCT u.nome) FILTER (WHERE u.nome IS NOT NULL),
-          '{}'
-        ) AS instrutor,
+  (SELECT COUNT(*) FROM inscricoes i
+    WHERE i.turma_id = t.id
+      AND COALESCE(i.cancelada, false) = false
+      AND COALESCE(i.status,'') IN ('confirmada','aprovada','inscrito')
+  ) AS inscritos_confirmados,
 
-        -- ✅ datas reais (com fallback por presenças)
-        CASE 
-          WHEN EXISTS (SELECT 1 FROM datas_turma dt WHERE dt.turma_id = t.id)
-            THEN ${SQL_JSON_DATAS}
-          WHEN EXISTS (SELECT 1 FROM presencas p WHERE p.turma_id = t.id)
-            THEN ${SQL_JSON_DATAS_FALLBACK_PRESENCAS}
-          ELSE '[]'::json
-        END AS datas
+  (SELECT COUNT(*) FROM inscricoes i
+    WHERE i.turma_id = t.id
+      AND COALESCE(i.cancelada, false) = false
+      AND COALESCE(i.status,'') IN ('confirmada','aprovada','inscrito')
+  ) AS vagas_preenchidas,
 
-      FROM eventos e
-      JOIN turmas t ON t.evento_id = e.id
-      LEFT JOIN evento_instrutor ei ON ei.evento_id = e.id
-      LEFT JOIN usuarios u ON u.id = ei.instrutor_id
-      WHERE e.id = $1
-      GROUP BY t.id, e.id
-      ORDER BY t.data_inicio, t.id
+  e.titulo,
+  e.descricao,
+  e.local,
+
+  COALESCE(
+    array_agg(DISTINCT u.nome) FILTER (WHERE u.nome IS NOT NULL),
+    '{}'
+  ) AS instrutor,
+
+  CASE 
+    WHEN EXISTS (SELECT 1 FROM datas_turma dt WHERE dt.turma_id = t.id)
+      THEN ${SQL_JSON_DATAS}
+    WHEN EXISTS (SELECT 1 FROM presencas p WHERE p.turma_id = t.id)
+      THEN ${SQL_JSON_DATAS_FALLBACK_PRESENCAS}
+    ELSE '[]'::json
+  END AS datas
+FROM eventos e
+JOIN turmas t ON t.evento_id = e.id
+LEFT JOIN evento_instrutor ei ON ei.evento_id = e.id
+LEFT JOIN usuarios u ON u.id = ei.instrutor_id
+WHERE e.id = $1
+GROUP BY t.id, e.id
+ORDER BY t.data_inicio, t.id
     `,
       [id]
     );
@@ -649,84 +684,98 @@ async function excluirEvento(req, res) {
 /* =====================================================================
    🔎 Listar eventos do instrutor logado (com datas reais)
    ===================================================================== */
-async function listarEventosDoinstrutor(req, res) {
-  const usuarioId = req.usuario?.id;
-  const client = await pool.connect();
-
-  try {
-    const eventosResult = await client.query(
-      `
-      SELECT DISTINCT 
-        e.*,
-        CASE 
-          WHEN CURRENT_TIMESTAMP < (
-            SELECT MIN(t.data_inicio + t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id
-          ) THEN 'programado'
-          WHEN CURRENT_TIMESTAMP BETWEEN
-            (SELECT MIN(t.data_inicio + t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id)
-            AND
-            (SELECT MAX(t.data_fim + t.horario_fim) FROM turmas t WHERE t.evento_id = e.id)
-          THEN 'andamento'
-          ELSE 'encerrado'
-        END AS status
-      FROM eventos e
-      JOIN evento_instrutor ei ON ei.evento_id = e.id
-      WHERE ei.instrutor_id = $1
-      ORDER BY e.id
-    `,
-      [usuarioId]
-    );
-
-    const eventos = [];
-    for (const evento of eventosResult.rows) {
-      const turmasResult = await client.query(
+   async function listarEventosDoinstrutor(req, res) {
+    const usuarioId = req.usuario?.id;
+    const client = await pool.connect();
+  
+    try {
+      // 1) eventos do instrutor
+      const eventosResult = await client.query(
         `
-        SELECT 
-          t.id, t.nome, t.data_inicio, t.data_fim,
-          t.horario_inicio, t.horario_fim,
-          t.vagas_total, t.carga_horaria,
-          (SELECT COUNT(*) FROM inscricoes i WHERE i.turma_id = t.id) AS inscritos,
-
+        SELECT DISTINCT 
+          e.*,
           CASE 
-            WHEN EXISTS (SELECT 1 FROM datas_turma dt WHERE dt.turma_id = t.id)
-              THEN ${SQL_JSON_DATAS}
-            WHEN EXISTS (SELECT 1 FROM presencas p WHERE p.turma_id = t.id)
-              THEN ${SQL_JSON_DATAS_FALLBACK_PRESENCAS}
-            ELSE '[]'::json
-          END AS datas
-
-        FROM turmas t
-        WHERE t.evento_id = $1
-        ORDER BY t.data_inicio
+            WHEN CURRENT_TIMESTAMP < (
+              SELECT MIN(t.data_inicio + t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id
+            ) THEN 'programado'
+            WHEN CURRENT_TIMESTAMP BETWEEN
+              (SELECT MIN(t.data_inicio + t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id)
+              AND
+              (SELECT MAX(t.data_fim + t.horario_fim) FROM turmas t WHERE t.evento_id = e.id)
+            THEN 'andamento'
+            ELSE 'encerrado'
+          END AS status
+        FROM eventos e
+        JOIN evento_instrutor ei ON ei.evento_id = e.id
+        WHERE ei.instrutor_id = $1
+        ORDER BY e.id
         `,
-        [evento.id]
+        [usuarioId]
       );
-
-      const instrutorResult = await client.query(
-        `
-        SELECT u.id, u.nome
-          FROM evento_instrutor ei
-          JOIN usuarios u ON u.id = ei.instrutor_id
-         WHERE ei.evento_id = $1
-        `,
-        [evento.id]
-      );
-
-      eventos.push({
-        ...evento,
-        instrutor: instrutorResult.rows,
-        turmas: turmasResult.rows.map(r => ({ ...r, datas: r.datas || [] })),
-      });
+  
+      const eventos = [];
+      for (const evento of eventosResult.rows) {
+        // 2) turmas do evento (com as novas contagens)
+        const turmasResult = await client.query(
+          `
+          SELECT 
+            t.id, t.nome, t.data_inicio, t.data_fim,
+            t.horario_inicio, t.horario_fim,
+            t.vagas_total, t.carga_horaria,
+  
+            (SELECT COUNT(*) FROM inscricoes i WHERE i.turma_id = t.id) AS inscritos,
+  
+            (SELECT COUNT(*) FROM inscricoes i
+              WHERE i.turma_id = t.id
+                AND COALESCE(i.cancelada, false) = false
+                AND COALESCE(i.status,'') IN ('confirmada','aprovada','inscrito')
+            ) AS inscritos_confirmados,
+  
+            (SELECT COUNT(*) FROM inscricoes i
+              WHERE i.turma_id = t.id
+                AND COALESCE(i.cancelada, false) = false
+                AND COALESCE(i.status,'') IN ('confirmada','aprovada','inscrito')
+            ) AS vagas_preenchidas,
+  
+            CASE 
+              WHEN EXISTS (SELECT 1 FROM datas_turma dt WHERE dt.turma_id = t.id)
+                THEN ${SQL_JSON_DATAS}
+              WHEN EXISTS (SELECT 1 FROM presencas p WHERE p.turma_id = t.id)
+                THEN ${SQL_JSON_DATAS_FALLBACK_PRESENCAS}
+              ELSE '[]'::json
+            END AS datas
+          FROM turmas t
+          WHERE t.evento_id = $1
+          ORDER BY t.data_inicio
+          `,
+          [evento.id]
+        );
+  
+        const instrutorResult = await client.query(
+          `
+          SELECT u.id, u.nome
+            FROM evento_instrutor ei
+            JOIN usuarios u ON u.id = ei.instrutor_id
+           WHERE ei.evento_id = $1
+          `,
+          [evento.id]
+        );
+  
+        eventos.push({
+          ...evento,
+          instrutor: instrutorResult.rows,
+          turmas: turmasResult.rows.map(r => ({ ...r, datas: r.datas || [] })),
+        });
+      }
+  
+      res.json(eventos);
+    } catch (err) {
+      console.error('❌ Erro ao buscar eventos do instrutor:', err.message);
+      res.status(500).json({ erro: 'Erro ao buscar eventos do instrutor' });
+    } finally {
+      client.release();
     }
-
-    res.json(eventos);
-  } catch (err) {
-    console.error('❌ Erro ao buscar eventos do instrutor:', err.message);
-    res.status(500).json({ erro: 'Erro ao buscar eventos do instrutor' });
-  } finally {
-    client.release();
   }
-}
 
 /* =====================================================================
    📌 Listar datas da turma (endpoint utilitário)

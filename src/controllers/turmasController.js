@@ -190,40 +190,43 @@ async function adicionarInstrutor(req, res) {
 
 /* ===== 📋 Listar turmas por evento (com datas e vagas) ===== */
 // GET /api/eventos/:evento_id/turmas
+// 🔁 SUBSTITUA a função inteira por esta versão
 async function listarTurmasPorEvento(req, res) {
   const { evento_id } = req.params;
 
   try {
-    // (1) Turmas base + vagas
+    // (1) Turmas base do evento
     const turmasResult = await db.query(
       `
       SELECT 
-        t.id,
-        t.nome,
-        t.data_inicio,
+        t.id, 
+        t.nome, 
+        t.data_inicio, 
         t.data_fim,
-        t.vagas_total,
-        e.titulo AS evento_titulo,
-        GREATEST(COALESCE(t.vagas_total,0) - COUNT(i.id), 0) AS vagas_disponiveis
+        t.horario_inicio, 
+        t.horario_fim,
+        t.vagas_total, 
+        t.carga_horaria,
+        e.titulo AS evento_titulo
       FROM turmas t
       JOIN eventos e ON e.id = t.evento_id
-      LEFT JOIN inscricoes i ON i.turma_id = t.id
       WHERE t.evento_id = $1
-      GROUP BY t.id, e.titulo
+      ORDER BY t.data_inicio, t.id
       `,
       [evento_id]
     );
+
     const turmas = turmasResult.rows;
     if (turmas.length === 0) return res.json([]);
 
     const turmaIds = turmas.map((t) => t.id);
 
-    // (2) Datas reais por turma
+    // (2) Datas reais por turma (datas_turma)
     const datasResult = await db.query(
       `
       SELECT turma_id, data::date AS data, 
              to_char(horario_inicio, 'HH24:MI') AS horario_inicio,
-             to_char(horario_fim, 'HH24:MI')   AS horario_fim
+             to_char(horario_fim,   'HH24:MI')   AS horario_fim
       FROM datas_turma
       WHERE turma_id = ANY($1::int[])
       ORDER BY turma_id, data
@@ -241,7 +244,7 @@ async function listarTurmasPorEvento(req, res) {
       });
     }
 
-    // (3) Inscritos por turma
+    // (3) Inscritos por turma (sem cancelada/status — sua tabela não tem)
     const inscritosResult = await db.query(
       `
       SELECT 
@@ -257,6 +260,7 @@ async function listarTurmasPorEvento(req, res) {
       `,
       [turmaIds]
     );
+
     const inscritosPorTurma = {};
     for (const row of inscritosResult.rows) {
       if (!inscritosPorTurma[row.turma_id]) inscritosPorTurma[row.turma_id] = [];
@@ -268,14 +272,20 @@ async function listarTurmasPorEvento(req, res) {
       });
     }
 
-    // (4) Montagem + carga_horaria_real
+    // (4) Montagem + carga_horaria_real + vagas_disponiveis
     const resposta = turmas
       .map((t) => {
         const datas = datasPorTurma[t.id] || [];
         const carga_horaria_real = somaHorasDatas(datas);
-        // recalcular min/max por segurança a partir de datas reais
-        const min = datas[0]?.data || t.data_inicio;
-        const max = datas[datas.length - 1]?.data || t.data_fim;
+
+        // recalcular min/max a partir das datas reais se houver
+        const min = datas[0]?.data || (t.data_inicio ? String(t.data_inicio).slice(0,10) : null);
+        const max = datas[datas.length - 1]?.data || (t.data_fim ? String(t.data_fim).slice(0,10) : null);
+
+        const inscritos = inscritosPorTurma[t.id] || [];
+        const totalInscritos = inscritos.length;
+        const vagas_total = Number.isFinite(Number(t.vagas_total)) ? Number(t.vagas_total) : 0;
+        const vagas_disponiveis = Math.max(0, vagas_total - totalInscritos);
 
         return {
           id: t.id,
@@ -283,15 +293,21 @@ async function listarTurmasPorEvento(req, res) {
           evento_titulo: t.evento_titulo,
           data_inicio: min,
           data_fim: max,
-          vagas_total: t.vagas_total,
-          vagas_disponiveis: Number(t.vagas_disponiveis),
-          datas,
-          carga_horaria_real,
-          inscritos: inscritosPorTurma[t.id] || [],
+          horario_inicio: t.horario_inicio ? String(t.horario_inicio).slice(0,5) : null,
+          horario_fim:   t.horario_fim   ? String(t.horario_fim).slice(0,5)   : null,
+          vagas_total,
+          vagas_disponiveis,
+          carga_horaria: t.carga_horaria,      // se ainda quiser devolver a planejada
+          carga_horaria_real,                  // calculada pelos encontros
+          datas,                               // encontros reais
+          inscritos,                           // lista de inscritos
+          // meta/facilidades:
+          inscritos_confirmados: totalInscritos,
+          vagas_preenchidas: totalInscritos,
         };
       })
       // ordenar pelo mais próximo (min data) asc; ajuste se quiser desc
-      .sort((a, b) => String(a.data_inicio).localeCompare(String(b.data_inicio)));
+      .sort((a, b) => String(a.data_inicio || '').localeCompare(String(b.data_inicio || '')));
 
     return res.json(resposta);
   } catch (err) {

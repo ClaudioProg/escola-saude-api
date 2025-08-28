@@ -108,12 +108,16 @@ export default function ListaTurmasEvento({
         // bloquear as demais (exceto a própria onde ele já está inscrito)
         const bloquearOutras = !isCongresso && jaInscritoNoEvento && !jaInscrito;
 
-        const inscritosBrutos = t?.inscritos ?? t?.qtd_inscritos ?? t?.total_inscritos;
-        let inscritos = Number.isFinite(Number(inscritosBrutos)) ? Number(inscritosBrutos) : 0;
-        if (jaInscrito && inscritos === 0) inscritos = 1;
+        // usa o fallback completo
+const preenchidas = Number(
+  t?.vagas_preenchidas ?? t?.inscritos_confirmados ?? t?.inscritos
+) || 0;
 
-        const vagas = Number.isFinite(Number(t.vagas_total)) ? Number(t.vagas_total) : 0;
-        const perc = toPct(inscritos, vagas);
+// se o usuário já está inscrito mas o backend ainda não marcou, força pelo menos 1
+const inscritos = jaInscrito && preenchidas === 0 ? 1 : preenchidas;
+
+const vagas = Number.isFinite(Number(t.vagas_total)) ? Number(t.vagas_total) : 0;
+const perc = toPct(inscritos, vagas);
 
         const di = (t.data_inicio || "").slice(0, 10);
         const df = (t.data_fim || "").slice(0, 10);
