@@ -428,113 +428,214 @@ async function listarTurmasDoEvento(req, res) {
 /* =====================================================================
    🔄 Atualizar evento (recria turmas e datas_turma)
    ===================================================================== */
-async function atualizarEvento(req, res) {
-  const { id } = req.params;
-  let { titulo, descricao, local, tipo, unidade_id, publico_alvo, instrutor = [], turmas = [] } = req.body;
-
-  instrutor = Array.isArray(instrutor)
-    ? instrutor.map(i => (typeof i === 'object' ? i.id : i)).filter(Boolean)
-    : [];
-
-  if (
-    !titulo?.trim() ||
-    !descricao?.trim() ||
-    !local?.trim() ||
-    !tipo?.trim() ||
-    !publico_alvo?.trim() ||
-    !unidade_id ||
-    !Array.isArray(instrutor) ||
-    instrutor.length === 0 ||
-    !Array.isArray(turmas) ||
-    turmas.length === 0
-  ) {
-    return res.status(400).json({ erro: 'Todos os campos do evento são obrigatórios.' });
-  }
-
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    const result = await client.query(
-      `UPDATE eventos
-          SET titulo = $1, descricao = $2, local = $3,
-              tipo = $4, unidade_id = $5, publico_alvo = $6
-        WHERE id = $7
-        RETURNING *`,
-      [titulo, descricao, local, tipo, unidade_id, publico_alvo, id]
-    );
-
-    if (result.rows.length === 0) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ erro: 'Evento não encontrado.' });
-    }
-
-    await client.query('DELETE FROM evento_instrutor WHERE evento_id = $1', [id]);
-    for (const instrutorId of instrutor) {
+   async function atualizarEvento(req, res) {
+    const eventoId = Number(req.params.id);
+    if (!eventoId) return res.status(400).json({ erro: "EVENTO_ID_INVALIDO" });
+  
+    const {
+      titulo,
+      descricao,
+      local,
+      tipo,
+      unidade_id,
+      publico_alvo,
+      instrutor,   // [ids]
+      turmas       // opcional
+    } = req.body || {};
+  
+    const client = await db.getClient();
+    try {
+      await client.query("BEGIN");
+  
+      // 1) Atualiza campos simples do evento
       await client.query(
-        `INSERT INTO evento_instrutor (evento_id, instrutor_id) VALUES ($1, $2)`,
-        [id, instrutorId]
+        `
+        UPDATE eventos SET
+          titulo = COALESCE($2, titulo),
+          descricao = COALESCE($3, descricao),
+          local = COALESCE($4, local),
+          tipo = COALESCE($5, tipo),
+          unidade_id = COALESCE($6, unidade_id),
+          publico_alvo = COALESCE($7, publico_alvo)
+        WHERE id = $1
+        `,
+        [eventoId, titulo ?? null, descricao ?? null, local ?? null, tipo ?? null, unidade_id ?? null, publico_alvo ?? null]
       );
-    }
-
-    await client.query(
-      `DELETE FROM datas_turma WHERE turma_id IN (SELECT id FROM turmas WHERE evento_id = $1)`,
-      [id]
-    );
-    await client.query('DELETE FROM turmas WHERE evento_id = $1', [id]);
-
-    for (const t of turmas) {
-      const nome = (t?.nome || '').trim();
-      const data_inicio = iso(t?.data_inicio);
-      const data_fim = iso(t?.data_fim);
-      const horario_inicio = hhmm(t?.horario_inicio || '08:00', '08:00');
-      const horario_fim = hhmm(t?.horario_fim || '17:00', '17:00');
-      const vagas_total = t?.vagas_total ?? t?.vagas ?? null;
-      const carga_horaria = t?.carga_horaria != null ? Number(t.carga_horaria) : null;
-
-      if (!nome || !data_inicio || !data_fim || vagas_total == null || carga_horaria == null) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({ erro: 'Todos os campos da turma são obrigatórios.' });
-      }
-
-      const ins = await client.query(
-        `INSERT INTO turmas (
-            evento_id, nome, data_inicio, data_fim,
-            horario_inicio, horario_fim, vagas_total, carga_horaria
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-         RETURNING id`,
-        [id, nome, data_inicio, data_fim, horario_inicio, horario_fim, vagas_total, carga_horaria]
-      );
-      const turmaId = ins.rows[0].id;
-
-      const encontros = normalizeEncontrosEntrada({ ...t, horario_inicio, horario_fim });
-      if (encontros.length) {
-        for (const e of encontros) {
+  
+      // 2) Instrutores (substitui relação inteira se vier array)
+      if (Array.isArray(instrutor)) {
+        await client.query(`DELETE FROM evento_instrutor WHERE evento_id = $1`, [eventoId]);
+        for (const instrutor_id of instrutor) {
           await client.query(
-            `INSERT INTO datas_turma (turma_id, data, horario_inicio, horario_fim)
-             VALUES ($1, $2, $3, $4)`,
-            [turmaId, e.data, e.inicio, e.fim]
+            `INSERT INTO evento_instrutor (evento_id, instrutor_id) VALUES ($1,$2)`,
+            [eventoId, instrutor_id]
           );
         }
       }
+  
+      // 3) Se não vier turmas → encerra (edição só de metadados)
+      if (!Array.isArray(turmas)) {
+        await client.query("COMMIT");
+        return res.json({ ok: true, mensagem: "Evento atualizado (dados gerais)." });
+      }
+  
+      // 4) Mapa das turmas atuais + inscritos
+      const { rows: atuais } = await client.query(
+        `
+        SELECT
+          t.id, t.nome, t.vagas_total,
+          (SELECT COUNT(*)::int FROM inscricoes i WHERE i.turma_id = t.id) AS inscritos
+        FROM turmas t
+        WHERE t.evento_id = $1
+        ORDER BY t.id
+        `,
+        [eventoId]
+      );
+      const mapaAtuais = new Map(atuais.map(t => [t.id, t]));
+  
+      // 5) Conjunto de IDs que permanecerão
+      const idsPayload = new Set(
+        turmas.filter(t => Number.isFinite(Number(t.id))).map(t => Number(t.id))
+      );
+  
+      // 5a) Tentativa de remover turmas com inscritos → bloqueia
+      const remover = atuais.filter(t => !idsPayload.has(t.id));
+      const bloqueadasRemocao = remover.filter(t => (t.inscritos || 0) > 0);
+      if (bloqueadasRemocao.length) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          erro: "TURMA_COM_INSCRITOS",
+          detalhe: "Não é permitido REMOVER turmas que já possuem inscritos.",
+          turmas_bloqueadas: bloqueadasRemocao.map(t => ({
+            id: t.id, nome: t.nome, inscritos: t.inscritos
+          })),
+        });
+      }
+  
+      // 6) Processar cada turma do payload
+      const bloqueios = [];
+      for (const t of turmas) {
+        const id = Number(t.id);
+  
+        // NOVA turma → inserir
+        if (!Number.isFinite(id)) {
+          const nome = String(t.nome || "Turma").trim();
+          const vagas_total = Number(t.vagas_total) || 0;
+          // datas/encontros obrigatórios
+          const baseDatas = Array.isArray(t.datas) ? t.datas
+                          : Array.isArray(t.encontros) ? t.encontros.map(e => ({
+                              data: e.data, horario_inicio: e.inicio, horario_fim: e.fim
+                            }))
+                          : [];
+          if (!baseDatas.length) {
+            bloqueios.push({ id: null, nome, motivo: "TURMA_SEM_DATAS" });
+            continue;
+          }
+          const datasOrdenadas = [...baseDatas].sort((a,b)=>String(a.data).localeCompare(String(b.data)));
+          const data_inicio = datasOrdenadas[0].data;
+          const data_fim    = datasOrdenadas.at(-1).data;
+  
+          const insTurma = await client.query(
+            `INSERT INTO turmas (evento_id, nome, vagas_total, data_inicio, data_fim)
+             VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+            [eventoId, nome, vagas_total || null, data_inicio, data_fim]
+          );
+          const turmaId = insTurma.rows[0].id;
+  
+          // datas_turma
+          for (const d of datasOrdenadas) {
+            await client.query(
+              `INSERT INTO datas_turma (turma_id, data, horario_inicio, horario_fim)
+               VALUES ($1,$2,$3,$4)`,
+              [turmaId, d.data, d.horario_inicio || null, d.horario_fim || null]
+            );
+          }
+          continue;
+        }
+  
+        // Turma existente → validar bloqueios
+        const atual = mapaAtuais.get(id);
+        if (!atual) continue; // id estranho, ignora
+  
+        const inscritos = atual.inscritos || 0;
+  
+        // payload de datas (se vier, considerar tentativa de alterar grade)
+        const veioDatas = Array.isArray(t.datas) || Array.isArray(t.encontros);
+        const vaiDiminuirVagas = Number.isFinite(Number(t.vagas_total)) &&
+                                 Number(t.vagas_total) < inscritos;
+  
+        if (inscritos > 0 && (veioDatas || vaiDiminuirVagas)) {
+          bloqueios.push({
+            id: id,
+            nome: atual.nome,
+            inscritos,
+            motivo: veioDatas ? "ALTERACAO_DE_DATAS" : "DIMINUICAO_DE_VAGAS"
+          });
+          continue;
+        }
+  
+        // Atualizações permitidas: nome e AUMENTO de vagas_total
+        await client.query(
+          `UPDATE turmas
+             SET nome = COALESCE($2, nome),
+                 vagas_total = COALESCE($3, vagas_total)
+           WHERE id = $1`,
+          [id, t.nome ?? null,
+           Number.isFinite(Number(t.vagas_total)) && Number(t.vagas_total) > (atual.vagas_total||0)
+             ? Number(t.vagas_total)
+             : null]
+        );
+  
+        // Se não há inscritos e vieram novas datas → substituir grade
+        if (inscritos === 0 && veioDatas) {
+          const baseDatas = Array.isArray(t.datas) ? t.datas
+                          : t.encontros.map(e => ({ data: e.data, horario_inicio: e.inicio, horario_fim: e.fim }));
+          const ordenadas = [...baseDatas].sort((a,b)=>String(a.data).localeCompare(String(b.data)));
+          const di = ordenadas[0]?.data;
+          const df = ordenadas.at(-1)?.data;
+  
+          await client.query(`DELETE FROM datas_turma WHERE turma_id=$1`, [id]);
+          for (const d of ordenadas) {
+            await client.query(
+              `INSERT INTO datas_turma (turma_id, data, horario_inicio, horario_fim)
+               VALUES ($1,$2,$3,$4)`,
+              [id, d.data, d.horario_inicio || null, d.horario_fim || null]
+            );
+          }
+          if (di && df) {
+            await client.query(
+              `UPDATE turmas SET data_inicio=$2, data_fim=$3 WHERE id=$1`,
+              [id, di, df]
+            );
+          }
+        }
+      }
+  
+      if (bloqueios.length) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          erro: "TURMA_COM_INSCRITOS",
+          detalhe: "Algumas turmas possuem inscritos: não é permitido alterar grade de datas ou reduzir vagas. Você pode renomear a turma ou aumentar vagas, e pode criar novas turmas.",
+          turmas_bloqueadas: bloqueios
+        });
+      }
+  
+      // 7) Remover turmas sem inscritos que saíram do payload
+      for (const t of remover) {
+        await client.query(`DELETE FROM datas_turma WHERE turma_id=$1`, [t.id]);
+        await client.query(`DELETE FROM turmas WHERE id=$1`, [t.id]);
+      }
+  
+      await client.query("COMMIT");
+      return res.json({ ok: true, mensagem: "Evento atualizado com sucesso." });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      console.error("❌ atualizarEvento:", err);
+      return res.status(500).json({ erro: "Erro ao atualizar evento com turmas" });
+    } finally {
+      client.release();
     }
-
-    await client.query('COMMIT');
-    res.json({ mensagem: 'Evento atualizado com sucesso', evento: result.rows[0] });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    console.error({
-      local: 'PUT /api/eventos/:id',
-      message: err.message,
-      detail: err.detail,
-      code: err.code,
-      stack: err.stack,
-    });
-    res.status(500).json({ erro: 'Erro ao atualizar evento com turmas' });
-  } finally {
-    client.release();
   }
-}
 
 /* =====================================================================
    ❌ Excluir evento

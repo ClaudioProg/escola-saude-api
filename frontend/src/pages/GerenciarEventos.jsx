@@ -365,21 +365,21 @@ export default function GerenciarEventos() {
   const salvarEvento = async (dadosDoModal) => {
     console.log("💾 salvarEvento: dadosDoModal:", dadosDoModal);
     console.log("💾 salvarEvento: eventoSelecionado:", eventoSelecionado);
-
+  
     try {
       const isEdicao = Boolean(eventoSelecionado?.id);
-
+  
       if (isEdicao) {
         // 1) tenta pegar o modelo completo do servidor
         let baseServidor = await fetchEventoCompleto(eventoSelecionado.id);
-      
+  
         // 1b) fallback: se falhar/500, monta base mínima com turmas atuais
         if (!baseServidor) {
           const turmasDoEvento =
             Array.isArray(eventoSelecionado?.turmas) && eventoSelecionado.turmas.length
               ? eventoSelecionado.turmas
               : await fetchTurmasDoEvento(eventoSelecionado.id);
-      
+  
           baseServidor = {
             ...eventoSelecionado,
             turmas: turmasDoEvento,
@@ -393,10 +393,10 @@ export default function GerenciarEventos() {
           };
           console.log("🛟 baseServidor (fallback):", baseServidor);
         }
-      
+  
         // 2) body espelho
         const body = buildUpdateBody(baseServidor, dadosDoModal);
-      
+  
         // validações mínimas
         if (!Array.isArray(body.instrutor) || body.instrutor.length === 0) {
           toast.error("Selecione ao menos um instrutor.");
@@ -406,14 +406,49 @@ export default function GerenciarEventos() {
           toast.error("Inclua ao menos uma turma com campos obrigatórios.");
           return;
         }
-      
-        // 3) PUT
+  
+        // 3) PUT principal
         console.log("➡️ PUT /api/eventos/:id BODY →", body);
-        const resp = await apiPut(`/api/eventos/${eventoSelecionado.id}`, body);
-        console.log("📬 resposta bruta:", resp);
+        try {
+          const resp = await apiPut(`/api/eventos/${eventoSelecionado.id}`, body);
+          console.log("📬 resposta bruta:", resp);
+        } catch (err) {
+          // 👇 Tratamento especial: não pode mexer em turmas com inscritos
+          if (err?.status === 409 && err?.data?.erro === "TURMA_COM_INSCRITOS") {
+            console.warn("⚠️ Edição limitada (turmas com inscritos):", err.data);
+            toast.warn(
+              "Este evento tem turmas com inscritos. Vou salvar apenas os dados gerais (título, descrição, local, instrutores)."
+            );
+  
+            const bodyEventOnly = clean({
+              titulo: (dadosDoModal?.titulo ?? baseServidor?.titulo ?? "").trim(),
+              descricao: (dadosDoModal?.descricao ?? baseServidor?.descricao ?? "").trim(),
+              local: (dadosDoModal?.local ?? baseServidor?.local ?? "").trim(),
+              tipo: (dadosDoModal?.tipo ?? baseServidor?.tipo ?? "").trim(),
+              unidade_id: dadosDoModal?.unidade_id ?? baseServidor?.unidade_id,
+              publico_alvo: (dadosDoModal?.publico_alvo ?? baseServidor?.publico_alvo ?? "").trim(),
+              instrutor: extractInstrutorIds(
+                (Array.isArray(dadosDoModal?.instrutor) && dadosDoModal.instrutor.length
+                  ? dadosDoModal.instrutor
+                  : baseServidor?.instrutor) || []
+              ),
+              // ❌ sem turmas aqui!
+            });
+  
+            console.log("➡️ PUT /api/eventos/:id (apenas metadados) →", bodyEventOnly);
+            await apiPut(`/api/eventos/${eventoSelecionado.id}`, bodyEventOnly);
+  
+            await recarregarEventos();
+            toast.success("✅ Dados gerais atualizados. As turmas não foram alteradas porque já possuem inscritos.");
+            setModalAberto(false);
+            return; // encerra fluxo de edição aqui
+          }
+  
+          // outros erros sobem para o catch externo
+          throw err;
+        }
       } else {
-        
-        // criação
+        // ======= CRIAÇÃO =======
         const base = {
           titulo: (dadosDoModal?.titulo || "").trim(),
           tipo: (dadosDoModal?.tipo || "").trim(),
@@ -422,29 +457,20 @@ export default function GerenciarEventos() {
           local: (dadosDoModal?.local || "").trim(),
           publico_alvo: (dadosDoModal?.publico_alvo || "").trim(),
         };
-
+  
         // instrutor IDs
         const instrutores = extractInstrutorIds(dadosDoModal?.instrutor);
         if (!instrutores.length) {
           toast.error("Selecione ao menos um instrutor.");
           return;
         }
-
+  
         // datas/horas gerais (fallback)
-        const di =
-          ymd(dadosDoModal?.data_inicio_geral ?? dadosDoModal?.data_inicio);
+        const di = ymd(dadosDoModal?.data_inicio_geral ?? dadosDoModal?.data_inicio);
         const df = ymd(dadosDoModal?.data_fim_geral ?? dadosDoModal?.data_fim);
-        const hi = hhmm(
-          dadosDoModal?.horario_inicio_geral ??
-            dadosDoModal?.horario_inicio ??
-            "08:00"
-        );
-        const hf = hhmm(
-          dadosDoModal?.horario_fim_geral ??
-            dadosDoModal?.horario_fim ??
-            "17:00"
-        );
-
+        const hi = hhmm(dadosDoModal?.horario_inicio_geral ?? dadosDoModal?.horario_inicio ?? "08:00");
+        const hf = hhmm(dadosDoModal?.horario_fim_geral ?? dadosDoModal?.horario_fim ?? "17:00");
+  
         // turmas (com encontros)
         const turmas = normalizeTurmas(
           dadosDoModal?.turmas?.length
@@ -462,18 +488,18 @@ export default function GerenciarEventos() {
                 },
               ]
         );
-
+  
         const bodyCreate = clean({
           ...base,
           instrutor: instrutores,
           turmas,
         });
-
+  
         console.log("➡️ POST /api/eventos BODY →", bodyCreate);
         const resp = await apiPost("/api/eventos", bodyCreate);
         console.log("📬 resposta bruta:", resp);
       }
-
+  
       // sincroniza com o backend e fecha modal
       await recarregarEventos();
       toast.success("✅ Evento salvo com sucesso.");
