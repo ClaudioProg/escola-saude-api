@@ -1,20 +1,30 @@
-// ✅ src/controllers/notificacoesController.js
+// 📁 src/controllers/notificacoesController.js
 const db = require("../db");
-const { format } = require("date-fns");
-const { ptBR } = require("date-fns/locale");
 
 const IS_DEV = process.env.NODE_ENV !== "production";
 const log = (...a) => IS_DEV && console.log("[notif]", ...a);
 
 /* ------------------------------------------------------------------ */
-/* Utils de data                                                      */
+/* Utils de data (sem 'pulo' de fuso)                                  */
 /* ------------------------------------------------------------------ */
+let toBrDate = null;
 let toBrDateOnlyString = null;
+
 try {
-  // usamos o formatador que NÃO cria Date para "YYYY-MM-DD"
-  ({ toBrDateOnlyString } = require("../utils/data"));
+  ({ toBrDate, toBrDateOnlyString } = require("../utils/data"));
 } catch {
-  // fallback ultra simples caso utils/data não esteja disponível por algum motivo
+  // Fallbacks simples (mantêm o app funcionando, mas prefira utils/data)
+  toBrDate = (v) => {
+    if (!v) return "";
+    const d = new Date(v);
+    if (Number.isNaN(d)) return "";
+    // dd/MM/aaaa com fuso local do servidor
+    return new Intl.DateTimeFormat("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    }).format(d);
+  };
   toBrDateOnlyString = (yyyyMmDd) => {
     if (!yyyyMmDd || typeof yyyyMmDd !== "string") return "";
     const m = /^\d{4}-\d{2}-\d{2}$/.exec(yyyyMmDd);
@@ -42,17 +52,13 @@ let _notifColsCache = null;
 async function getNotifColumns() {
   if (_notifColsCache) return _notifColsCache;
 
-  const q = await db.query(
-    `
+  const q = await db.query(`
     SELECT column_name
       FROM information_schema.columns
      WHERE table_schema = 'public'
        AND table_name   = 'notificacoes'
-    `
-  );
+  `);
   const cols = q.rows.map((r) => r.column_name);
-
-  // Flags úteis
   const has = (c) => cols.includes(c);
 
   _notifColsCache = {
@@ -68,14 +74,17 @@ async function getNotifColumns() {
     hasLida: has("lida"),
     hasUsuarioId: has("usuario_id"),
   };
-
   log("colunas notificacoes:", _notifColsCache);
   return _notifColsCache;
 }
 
+async function col(name) {
+  const meta = await getNotifColumns();
+  return meta.cols.includes(name) ? name : "NULL";
+}
+
 /* ============================================================
  * 📥 Listar notificações NÃO LIDAS do usuário logado
- *   — compatível com (mensagem/criado_em) OU (corpo/criada_em)
  * ============================================================ */
 async function listarNotificacoes(req, res) {
   try {
@@ -84,7 +93,6 @@ async function listarNotificacoes(req, res) {
 
     const meta = await getNotifColumns();
 
-    // monta SELECT conforme colunas existentes
     const msgExpr = meta.hasMensagem
       ? "mensagem"
       : meta.hasCorpo
@@ -118,9 +126,9 @@ async function listarNotificacoes(req, res) {
       tipo: n.tipo || null,
       titulo: n.titulo || null,
       mensagem: n.msg || "",
-      // tstamp é timestamp (com hora) → ok usar Date aqui
       lida: n.lida === true,
-      data: n.tstamp ? format(new Date(n.tstamp), "dd/MM/yyyy", { locale: ptBR }) : "",
+      // ✅ usa util que respeita date-only e formata no TZ correto
+      data: n.tstamp ? toBrDate(n.tstamp) : "",
     }));
 
     return res.status(200).json(notificacoes);
@@ -131,9 +139,7 @@ async function listarNotificacoes(req, res) {
 }
 
 /* ============================================================
- * 📌 Criar notificação (100% aderente ao schema real)
- *   — Usa apenas colunas existentes (mensagem/corpo, criado_em/criada_em, etc.)
- *   — Aceita `extra` null/undefined
+ * 📌 Criar notificação (usa apenas colunas existentes)
  * ============================================================ */
 async function criarNotificacao(usuario_id, mensagem, extra) {
   try {
@@ -142,30 +148,24 @@ async function criarNotificacao(usuario_id, mensagem, extra) {
     const meta = await getNotifColumns();
 
     const data = {
-      // obrigatórios que existam
       ...(meta.hasUsuarioId ? { usuario_id } : {}),
-      // mensagem/corpo
       ...(meta.hasMensagem
         ? { mensagem: String(mensagem) }
         : meta.hasCorpo
         ? { corpo: String(mensagem) }
         : {}),
-      // flags/infos
       ...(meta.hasLida ? { lida: false } : {}),
     };
 
-    // normaliza `extra`
     const safeExtra = extra && typeof extra === "object" ? extra : {};
     if (meta.hasTipo && safeExtra.tipo !== undefined) data.tipo = safeExtra.tipo;
     if (meta.hasTitulo && safeExtra.titulo !== undefined) data.titulo = safeExtra.titulo;
     if (meta.hasTurmaId && safeExtra.turma_id !== undefined) data.turma_id = safeExtra.turma_id;
     if (meta.hasEventoId && safeExtra.evento_id !== undefined) data.evento_id = safeExtra.evento_id;
 
-    // carimbo de data/hora
     if (meta.hasCriadoEm) data.criado_em = new Date();
     else if (meta.hasCriadaEm) data.criada_em = new Date();
 
-    // monta INSERT dinâmico
     const cols = Object.keys(data);
     const placeholders = cols.map((_, i) => `$${i + 1}`);
     const sql = `INSERT INTO notificacoes (${cols.join(", ")}) VALUES (${placeholders.join(", ")})`;
@@ -188,7 +188,6 @@ async function contarNaoLidas(req, res) {
 
     const meta = await getNotifColumns();
     if (!meta.hasLida || !meta.hasUsuarioId) {
-      // sem colunas, sem contador
       return res.json({ totalNaoLidas: 0 });
     }
 
@@ -251,19 +250,18 @@ async function gerarNotificacoesDeAvaliacao(usuario_id) {
       );
       if (dup.rowCount > 0) continue;
 
-      // datas sem hora → NÃO criar Date
       const dataInicio = toBrDateOnlyString(av.data_inicio);
       const dataFim = toBrDateOnlyString(av.data_fim);
       const nomeEvento = av.nome_evento || av.titulo || "evento";
 
       await criarNotificacao(
         usuario_id,
-        `Já está disponível a avaliação do evento "${nomeEvento}" que você participou entre ${dataInicio} e ${dataFim}.`,
+        `Já está disponível a avaliação do evento "${nomeEvento}".`,
         {
           tipo: "avaliacao",
           titulo: `Avaliação disponível para "${nomeEvento}"`,
           turma_id: av.turma_id,
-          evento_id: av.evento_id || null, // será ignorado se a coluna não existir
+          evento_id: av.evento_id || null,
         }
       );
     }
@@ -272,23 +270,14 @@ async function gerarNotificacoesDeAvaliacao(usuario_id) {
   }
 }
 
-// helper que retorna o nome da coluna se existir, senão uma constante SQL segura
-async function col(name) {
-  const meta = await getNotifColumns();
-  return meta.cols.includes(name) ? name : "NULL";
-}
-
 /* ============================================================
  * 🎓 Notificações de certificado
- *   — aceita modo direto (pós-geração) e varredura de elegíveis
  * ============================================================ */
 async function gerarNotificacoesDeCertificado(usuario_id, opts = null) {
   try {
-    // Modo direto: após gerar certificado
     if (opts && (opts.turma_id || opts.evento_id || opts.evento_titulo)) {
       const { turma_id = null, evento_id = null, evento_titulo = "evento" } = opts;
 
-      // checa duplicidade (somente se houver colunas)
       const meta = await getNotifColumns();
       if (meta.hasUsuarioId && meta.hasLida && (meta.hasTurmaId || meta.hasEventoId)) {
         const whereTurma = meta.hasTurmaId ? "COALESCE(turma_id,0) = COALESCE($2,0)" : "1=1";
@@ -299,7 +288,7 @@ async function gerarNotificacoesDeCertificado(usuario_id, opts = null) {
            WHERE usuario_id = $1 AND ${meta.hasTipo ? "tipo" : "'certificado'"} = 'certificado'
              AND ${whereTurma}
              AND ${whereEvento}
-             AND lida = false`,
+             AND ${meta.hasLida ? "lida = false" : "1=1"}`,
           [usuario_id, turma_id, evento_id]
         );
         if (dup.rowCount > 0) return;
@@ -313,39 +302,26 @@ async function gerarNotificacoesDeCertificado(usuario_id, opts = null) {
       return;
     }
 
-    // Varredura de elegíveis (pode emitir)
     const elegiveis = await db.query(
       `
       SELECT
         e.id          AS evento_id,
         e.titulo      AS nome_evento,
-        t.id          AS turma_id,
-        t.data_inicio,
-        t.data_fim
+        t.id          AS turma_id
       FROM turmas t
-      JOIN eventos e           ON e.id = t.evento_id
-      JOIN inscricoes i        ON i.turma_id = t.id AND i.usuario_id = $1
+      JOIN eventos e    ON e.id = t.evento_id
+      JOIN inscricoes i ON i.turma_id = t.id AND i.usuario_id = $1
       LEFT JOIN certificados c ON c.usuario_id = $1 AND c.evento_id = e.id AND c.turma_id = t.id AND c.tipo = 'usuario'
       WHERE t.data_fim <= CURRENT_DATE
         AND c.id IS NULL
-        AND (
-          (
-            SELECT COUNT(DISTINCT p.data_presenca)
-            FROM presencas p
-            WHERE p.usuario_id = $1 AND p.turma_id = t.id AND p.presente = true
-          )::float
-          /
-          NULLIF( (DATE_PART('day', (t.data_fim::timestamp - t.data_inicio::timestamp))::int + 1), 0 )::float
-        ) >= 0.75
       ORDER BY t.data_fim DESC
       `,
       [usuario_id]
     );
 
     for (const row of elegiveis.rows) {
-      // se não existe evento_id na tabela de notificações, a checagem por duplicidade cai só em turma_id
       const meta = await getNotifColumns();
-      const whereTurma = meta.hasTurmaId ? "turma_id = $2" : "1=0"; // se não tiver coluna, não duplica por turma
+      const whereTurma = meta.hasTurmaId ? "turma_id = $2" : "1=0";
       const whereEvento = meta.hasEventoId ? "OR evento_id = $3" : "";
 
       const dup = await db.query(
@@ -364,7 +340,7 @@ async function gerarNotificacoesDeCertificado(usuario_id, opts = null) {
           tipo: "certificado",
           titulo: `Certificado disponível: ${row.nome_evento}`,
           turma_id: row.turma_id,
-          evento_id: row.evento_id, // ignorado se a coluna não existir
+          evento_id: row.evento_id,
         }
       );
     }

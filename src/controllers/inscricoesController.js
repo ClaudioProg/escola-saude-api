@@ -2,7 +2,7 @@
 /* eslint-disable no-console */
 const db = require('../db');
 const { send: enviarEmail } = require('../utils/email');
-const { formatarDataBR } = require('../utils/data');
+const { toBrDateOnlyString } = require('../utils/data'); // ✅ usa formatador sem “pulo”
 const { criarNotificacao } = require('./notificacoesController');
 
 /* ────────────────────────────────────────────────────────────────
@@ -205,35 +205,38 @@ async function inscreverEmTurma(req, res) {
     );
     const usuario = userRows[0];
 
-    // 9) Notificação (best-effort) — usa datas calculadas
+    // 9) Notificação (best-effort) — usa datas calculadas (YYYY-MM-DD -> dd/MM/aaaa)
     try {
-      const dataIni = resumo?.data_inicio ? formatarDataBR(resumo.data_inicio) : '';
-      const dataFim = resumo?.data_fim ? formatarDataBR(resumo.data_fim) : '';
-      const hi = (resumo?.horario_inicio || '').slice(0,5);
-      const hf = (resumo?.horario_fim || '').slice(0,5);
+      const dataIni = resumo?.data_inicio ? toBrDateOnlyString(String(resumo.data_inicio).slice(0,10)) : '';
+      const dataFim = resumo?.data_fim ? toBrDateOnlyString(String(resumo.data_fim).slice(0,10)) : '';
+      const hi = (resumo?.horario_inicio || '08:00').slice(0,5);
+      const hf = (resumo?.horario_fim || '17:00').slice(0,5);
 
-      const mensagem = `
-✅ Sua inscrição foi confirmada com sucesso no evento "${evento.titulo}".
+      const mensagem =
+`✅ Sua inscrição foi confirmada com sucesso no evento "${evento.titulo}".
 
 - Turma: ${turma.nome}
 - Período: ${dataIni}${dataIni && dataFim ? ' a ' : ''}${dataFim}
 - Horário: ${hi} às ${hf}
 - Carga horária: ${turma.carga_horaria} horas
-- Local: ${evento.local}
-      `.trim();
+- Local: ${evento.local}`;
 
-      await criarNotificacao(usuario_id, mensagem, null, "/eventos");
+      await criarNotificacao(
+        usuario_id,
+        mensagem,
+        { tipo: 'inscricao', titulo: `Inscrição confirmada: ${evento.titulo}`, turma_id, evento_id: evento.id }
+      );
     } catch (e) {
       console.error('⚠️ Falha ao criar notificação (não bloqueante):', e?.message);
     }
 
-    // 10) E-mail (best-effort) — usa datas calculadas
+    // 10) E-mail (best-effort) — usa datas calculadas (sem criar Date)
     try {
       if (usuario?.email) {
-        const dataIni = resumo?.data_inicio ? formatarDataBR(resumo.data_inicio) : '';
-        const dataFim = resumo?.data_fim ? formatarDataBR(resumo.data_fim) : '';
-        const hi = (resumo?.horario_inicio || '').slice(0,5);
-        const hf = (resumo?.horario_fim || '').slice(0,5);
+        const dataIni = resumo?.data_inicio ? toBrDateOnlyString(String(resumo.data_inicio).slice(0,10)) : '';
+        const dataFim = resumo?.data_fim ? toBrDateOnlyString(String(resumo.data_fim).slice(0,10)) : '';
+        const hi = (resumo?.horario_inicio || '08:00').slice(0,5);
+        const hf = (resumo?.horario_fim || '17:00').slice(0,5);
 
         const html = `
           <h2>Olá, ${usuario.nome}!</h2>
@@ -345,20 +348,26 @@ async function obterMinhasInscricoes(req, res) {
         e.titulo, 
         e.local,
 
-        /* período calculado */
-        COALESCE(
-          (SELECT MIN(dt.data)::date FROM datas_turma dt WHERE dt.turma_id = t.id),
-          (SELECT MIN(p.data_presenca)::date FROM presencas p WHERE p.turma_id = t.id),
-          t.data_inicio
+        /* 🔹 data_inicio / data_fim SEMPRE como 'YYYY-MM-DD' */
+        to_char(
+          COALESCE(
+            (SELECT MIN(dt.data)::date FROM datas_turma dt WHERE dt.turma_id = t.id),
+            (SELECT MIN(p.data_presenca)::date FROM presencas p WHERE p.turma_id = t.id),
+            t.data_inicio
+          )::date,
+          'YYYY-MM-DD'
         ) AS data_inicio,
 
-        COALESCE(
-          (SELECT MAX(dt.data)::date FROM datas_turma dt WHERE dt.turma_id = t.id),
-          (SELECT MAX(p.data_presenca)::date FROM presencas p WHERE p.turma_id = t.id),
-          t.data_fim
+        to_char(
+          COALESCE(
+            (SELECT MAX(dt.data)::date FROM datas_turma dt WHERE dt.turma_id = t.id),
+            (SELECT MAX(p.data_presenca)::date FROM presencas p WHERE p.turma_id = t.id),
+            t.data_fim
+          )::date,
+          'YYYY-MM-DD'
         ) AS data_fim,
 
-        /* horários calculados (par mais frequente) */
+        /* 🔹 horários como 'HH:MM' */
         COALESCE(
           (
             SELECT to_char(z.hi, 'HH24:MI') FROM (
