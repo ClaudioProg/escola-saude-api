@@ -296,20 +296,35 @@ async function buscarEventoPorId(req, res) {
         horario_fim: toHm(r.horario_fim),
       })).filter(d => d.data);
 
-      // fallback: se não houver datas_turma, tenta presenças; senão [], sem quebrar
+      // fallback: se não houver datas_turma, tenta presenças; se falhar, ignora (sem 500)
       if (datas.length === 0) {
-        const presQ = await client.query(
-          `SELECT DISTINCT (p.data::date) AS d
-             FROM presencas p
-            WHERE p.turma_id = $1
-            ORDER BY d`,
-          [t.id]
-        );
-        datas = presQ.rows.map(r => ({
-          data: toYmd(r.d),
-          horario_inicio,
-          horario_fim,
-        })).filter(d => d.data);
+        try {
+          const presQ = await client.query(
+            `SELECT DISTINCT (p.data::date) AS d
+               FROM presencas p
+              WHERE p.turma_id = $1
+              ORDER BY d`,
+            [t.id]
+          );
+          datas = presQ.rows
+            .map(r => ({ data: toYmd(r.d), horario_inicio, horario_fim }))
+            .filter(d => d.data);
+        } catch (_e1) {
+          try {
+            const presQ = await client.query(
+              `SELECT DISTINCT (p.data_presenca::date) AS d
+                 FROM presencas p
+                WHERE p.turma_id = $1
+                ORDER BY d`,
+              [t.id]
+            );
+            datas = presQ.rows
+              .map(r => ({ data: toYmd(r.d), horario_inicio, horario_fim }))
+              .filter(d => d.data);
+          } catch (_e2) {
+            console.log('ℹ️ Sem fallback por presenças (coluna ausente).');
+          }
+        }
       }
 
       // contagens
@@ -678,64 +693,69 @@ async function excluirEvento(req, res) {
 }
 
 /* =====================================================================
-   📅 Agenda (ocorrências = datas reais)
+   📅 Agenda (ocorrências = datas reais) — com fallback p/ coluna de presenças
    ===================================================================== */
 async function getAgendaEventos(req, res) {
+  const sqlBase = (useDataPresenca = false) => `
+    SELECT 
+      e.id,
+      e.titulo,
+
+      MIN(t.data_inicio)    AS data_inicio,
+      MAX(t.data_fim)       AS data_fim,
+      MIN(t.horario_inicio) AS horario_inicio,
+      MAX(t.horario_fim)    AS horario_fim,
+
+      CASE 
+        WHEN CURRENT_TIMESTAMP < MIN(t.data_inicio + t.horario_inicio) THEN 'programado'
+        WHEN CURRENT_TIMESTAMP BETWEEN MIN(t.data_inicio + t.horario_inicio)
+                                 AND MAX(t.data_fim + t.horario_fim) THEN 'andamento'
+        ELSE 'encerrado'
+      END AS status,
+
+      CASE
+        WHEN EXISTS (
+          SELECT 1 FROM turmas tx JOIN datas_turma dt ON dt.turma_id = tx.id WHERE tx.evento_id = e.id
+        ) THEN (
+          SELECT json_agg(d ORDER BY d)
+            FROM (
+              SELECT DISTINCT to_char(dt.data::date, 'YYYY-MM-DD') AS d
+                FROM turmas tx
+                JOIN datas_turma dt ON dt.turma_id = tx.id
+               WHERE tx.evento_id = e.id
+               ORDER BY 1
+            ) z1
+        )
+        WHEN EXISTS (
+          SELECT 1 FROM turmas tx JOIN presencas p ON p.turma_id = tx.id WHERE tx.evento_id = e.id
+        ) THEN (
+          SELECT json_agg(d ORDER BY d)
+            FROM (
+              SELECT DISTINCT to_char(p.${useDataPresenca ? 'data_presenca' : 'data'}::date, 'YYYY-MM-DD') AS d
+                FROM turmas tx
+                JOIN presencas p ON p.turma_id = tx.id
+               WHERE tx.evento_id = e.id
+               ORDER BY 1
+            ) z2
+        )
+        ELSE '[]'::json
+      END AS ocorrencias
+
+    FROM eventos e
+    JOIN turmas t ON t.evento_id = e.id
+    GROUP BY e.id, e.titulo
+    ORDER BY MAX(t.data_fim + t.horario_fim) DESC NULLS LAST;
+  `;
+
   try {
-    const sql = `
-      SELECT 
-        e.id,
-        e.titulo,
+    let rows;
+    try {
+      ({ rows } = await query(sqlBase(false), [])); // tenta p.data
+    } catch (_e1) {
+      ({ rows } = await query(sqlBase(true), []));  // fallback p.data_presenca
+    }
 
-        MIN(t.data_inicio)    AS data_inicio,
-        MAX(t.data_fim)       AS data_fim,
-        MIN(t.horario_inicio) AS horario_inicio,
-        MAX(t.horario_fim)    AS horario_fim,
-
-        CASE 
-          WHEN CURRENT_TIMESTAMP < MIN(t.data_inicio + t.horario_inicio) THEN 'programado'
-          WHEN CURRENT_TIMESTAMP BETWEEN MIN(t.data_inicio + t.horario_inicio)
-                                   AND MAX(t.data_fim + t.horario_fim) THEN 'andamento'
-          ELSE 'encerrado'
-        END AS status,
-
-        CASE
-          WHEN EXISTS (
-            SELECT 1 FROM turmas tx JOIN datas_turma dt ON dt.turma_id = tx.id WHERE tx.evento_id = e.id
-          ) THEN (
-            SELECT json_agg(d ORDER BY d)
-              FROM (
-                SELECT DISTINCT to_char(dt.data::date, 'YYYY-MM-DD') AS d
-                  FROM turmas tx
-                  JOIN datas_turma dt ON dt.turma_id = tx.id
-                 WHERE tx.evento_id = e.id
-                 ORDER BY 1
-              ) z1
-          )
-          WHEN EXISTS (
-            SELECT 1 FROM turmas tx JOIN presencas p ON p.turma_id = tx.id WHERE tx.evento_id = e.id
-          ) THEN (
-            SELECT json_agg(d ORDER BY d)
-              FROM (
-                SELECT DISTINCT to_char(p.data::date, 'YYYY-MM-DD') AS d
-                  FROM turmas tx
-                  JOIN presencas p ON p.turma_id = tx.id
-                 WHERE tx.evento_id = e.id
-                 ORDER BY 1
-              ) z2
-          )
-          ELSE '[]'::json
-        END AS ocorrencias
-
-      FROM eventos e
-      JOIN turmas t ON t.evento_id = e.id
-      GROUP BY e.id, e.titulo
-      ORDER BY MAX(t.data_fim + t.horario_fim) DESC NULLS LAST;
-    `;
-
-    const { rows } = await query(sql, []);
     res.set('X-Agenda-Handler', 'eventosController:getAgendaEventos@estrita');
-
     const out = rows.map(r => ({
       ...r,
       ocorrencias: Array.isArray(r.ocorrencias) ? r.ocorrencias : [],
@@ -871,7 +891,8 @@ async function listarDatasDaTurma(req, res) {
     }
 
     if (via === 'presencas') {
-      const sql = `
+      // tenta presencas.data; se falhar, tenta presencas.data_presenca
+      const sqlA = `
         SELECT DISTINCT
           to_char(p.data::date, 'YYYY-MM-DD') AS data,
           to_char(t.horario_inicio, 'HH24:MI') AS horario_inicio,
@@ -881,8 +902,28 @@ async function listarDatasDaTurma(req, res) {
         WHERE p.turma_id = $1
         ORDER BY data ASC;
       `;
-      const { rows } = await query(sql, [turmaId]);
-      return res.json(rows);
+      const sqlB = `
+        SELECT DISTINCT
+          to_char(p.data_presenca::date, 'YYYY-MM-DD') AS data,
+          to_char(t.horario_inicio, 'HH24:MI') AS horario_inicio,
+          to_char(t.horario_fim,   'HH24:MI') AS horario_fim
+        FROM presencas p
+        JOIN turmas t ON t.id = p.turma_id
+        WHERE p.turma_id = $1
+        ORDER BY data ASC;
+      `;
+
+      try {
+        const { rows } = await query(sqlA, [turmaId]);
+        return res.json(rows);
+      } catch (_e1) {
+        try {
+          const { rows } = await query(sqlB, [turmaId]);
+          return res.json(rows);
+        } catch (_e2) {
+          return res.json([]); // sem 500
+        }
+      }
     }
 
     const sql = `
