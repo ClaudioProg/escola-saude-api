@@ -1,12 +1,97 @@
-// 📁 src/controllers/inscricoesController.js
 /* eslint-disable no-console */
 const db = require('../db');
 const { send: enviarEmail } = require('../utils/email');
-// ⬇️ importa o formatador seguro para "YYYY-MM-DD"
-const { toBrDateOnlyString } = require('../utils/data');
 const { criarNotificacao } = require('./notificacoesController');
 
-// ➕ Inscrever-se em uma turma
+/* ──────────────────────────────────────────────────────────────
+   Helpers de datas/horários (sem "pulo" de fuso)
+   ────────────────────────────────────────────────────────────── */
+
+/** Normaliza qualquer valor para "YYYY-MM-DD" (string) sem criar Date p/ date-only. */
+function toYmd(value) {
+  if (value == null) return null;
+  if (typeof value === 'string') {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;                 // já YMD
+    if (/^\d{4}-\d{2}-\d{2}T/.test(value)) return value.slice(0, 10);    // ISO → recorta
+  }
+  // fallback (usa UTC para não sofrer fuso)
+  const d = new Date(value);
+  if (isNaN(d)) return null;
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${dd}`;
+}
+
+/** "YYYY-MM-DD" -> "dd/MM/aaaa" (sem criar Date). */
+function ymdToBr(ymd) {
+  if (!ymd || typeof ymd !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return '';
+  const [y, m, d] = ymd.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+/** Monta string de período amigável. */
+function montarPeriodo(inicioYmd, fimYmd) {
+  const a = toYmd(inicioYmd);
+  const b = toYmd(fimYmd);
+  if (a && b) {
+    if (a === b) return ymdToBr(a); // 1 dia só
+    return `${ymdToBr(a)} a ${ymdToBr(b)}`;
+  }
+  if (a) return ymdToBr(a);
+  if (b) return ymdToBr(b);
+  return 'não informado';
+}
+
+/** Formata hora para "HH:mm". Aceita "HH:mm:ss" / "HH:mm". */
+function toHm(h) {
+  if (!h) return '';
+  if (typeof h === 'string') return h.slice(0, 5);
+  // se vier como Date (improvável aqui), usa UTC:
+  const d = new Date(h);
+  if (isNaN(d)) return '';
+  const hh = String(d.getUTCHours()).padStart(2, '0');
+  const mm = String(d.getUTCMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
+/** Retorna {inicioYmd, fimYmd} a partir de datas_turma da turma. */
+async function obterPeriodoDaTurma(turmaId) {
+  const q = await db.query(
+    `SELECT MIN(data) AS di, MAX(data) AS df
+       FROM datas_turma
+      WHERE turma_id = $1`,
+    [turmaId]
+  );
+  const row = q.rows[0] || {};
+  return {
+    inicioYmd: toYmd(row.di),
+    fimYmd: toYmd(row.df),
+  };
+}
+
+/** Retorna horários "moda" da turma (par mais frequente). */
+async function obterHorariosModaDaTurma(turmaId) {
+  const q = await db.query(
+    `SELECT horario_inicio, horario_fim, COUNT(*) AS c
+       FROM datas_turma
+      WHERE turma_id = $1
+   GROUP BY horario_inicio, horario_fim
+   ORDER BY COUNT(*) DESC, horario_inicio NULLS LAST, horario_fim NULLS LAST
+      LIMIT 1`,
+    [turmaId]
+  );
+  const row = q.rows[0];
+  if (!row) return { inicio: '', fim: '' };
+  return {
+    inicio: toHm(row.horario_inicio),
+    fim: toHm(row.horario_fim),
+  };
+}
+
+/* ──────────────────────────────────────────────────────────────
+   ➕ Inscrever-se em uma turma
+   ────────────────────────────────────────────────────────────── */
 async function inscreverEmTurma(req, res) {
   const usuario_id = req.usuario.id;
   const { turma_id } = req.body;
@@ -30,8 +115,8 @@ async function inscreverEmTurma(req, res) {
     const { rows: evRows } = await db.query(
       `SELECT 
           id,
-          (tipo::text) AS tipo,                                    -- 👈 enum → texto
-          CASE WHEN tipo::text ILIKE 'congresso' THEN TRUE ELSE FALSE END AS is_congresso,  -- 👈 flag pronta
+          (tipo::text) AS tipo,
+          CASE WHEN tipo::text ILIKE 'congresso' THEN TRUE ELSE FALSE END AS is_congresso,
           COALESCE(titulo, 'Evento') AS titulo,
           COALESCE(local,  'A definir') AS local
        FROM eventos
@@ -42,7 +127,7 @@ async function inscreverEmTurma(req, res) {
       return res.status(404).json({ erro: 'Evento da turma não encontrado.' });
     }
     const evento = evRows[0];
-    const isCongresso = !!evento.is_congresso;   // 👈 usa a flag (evita LOWER no JS)
+    const isCongresso = !!evento.is_congresso;
 
     // 3) Bloqueio: instrutor do evento
     const ehInstrutor = await db.query(
@@ -99,7 +184,7 @@ async function inscreverEmTurma(req, res) {
       return res.status(400).json({ erro: 'Turma lotada. Vagas esgotadas.' });
     }
 
-    // 7) Inserir inscrição (try/catch local para mapear trigger/unique)
+    // 7) Inserir inscrição
     let insert;
     try {
       insert = await db.query(
@@ -109,20 +194,16 @@ async function inscreverEmTurma(req, res) {
         [usuario_id, turma_id]
       );
     } catch (e) {
-      // 🔎 Mapear erros comuns do Postgres
       if (e?.code === 'P0001') {
-        // P0001 = raise_exception (nosso trigger)
         return res.status(409).json({
           erro: 'Você já está inscrito em uma turma deste evento.'
         });
       }
       if (e?.code === '23505') {
-        // unique_violation (caso exista unique(usuario_id,turma_id) ou similar)
         return res.status(409).json({
           erro: 'Usuário já inscrito nesta turma.'
         });
       }
-      // fallback – logar e propagar para o catch externo
       console.error('❌ Erro no INSERT (inscrições):', {
         message: e?.message, detail: e?.detail, code: e?.code, routine: e?.routine
       });
@@ -140,9 +221,15 @@ async function inscreverEmTurma(req, res) {
     );
     const usuario = userRows[0];
 
-    // 🔤 Helpers de exibição (datas sem hora → seguro, sem criar Date)
-    const periodoStr = `${toBrDateOnlyString(turma.data_inicio)} a ${toBrDateOnlyString(turma.data_fim)}`;
-    const horarioStr = `${(turma.horario_inicio || '').slice(0,5)} às ${(turma.horario_fim || '').slice(0,5)}`;
+    // 8.1) Período da TURMA via datas_turma
+    const { inicioYmd, fimYmd } = await obterPeriodoDaTurma(turma_id);
+    const periodoStr = montarPeriodo(inicioYmd, fimYmd);
+
+    // 8.2) Horários: par mais frequente em datas_turma (fallback: campos da turma)
+    let { inicio: horaIni, fim: horaFim } = await obterHorariosModaDaTurma(turma_id);
+    if (!horaIni && turma.horario_inicio) horaIni = toHm(turma.horario_inicio);
+    if (!horaFim && turma.horario_fim)   horaFim = toHm(turma.horario_fim);
+    const horarioStr = (horaIni && horaFim) ? `${horaIni} às ${horaFim}` : (horaIni || horaFim || '—');
 
     // 9) Notificação (best-effort)
     try {
@@ -204,11 +291,9 @@ Equipe da Escola da Saúde`,
       console.error('⚠️ Falha ao enviar e-mail (não bloqueante):', e?.message);
     }
 
-    // ✅ sucesso independente de notificação/e-mail
     return res.status(201).json({ mensagem: 'Inscrição realizada com sucesso' });
 
   } catch (err) {
-    // 🔁 Segurança: mapeia casos que escaparem do bloco do INSERT
     if (err?.code === 'P0001' ||
         (typeof err?.message === 'string' &&
          err.message.toLowerCase().includes('inscrito em uma turma deste evento'))) {
@@ -230,7 +315,9 @@ Equipe da Escola da Saúde`,
   }
 }
 
-// ❌ Cancelar inscrição
+/* ──────────────────────────────────────────────────────────────
+   ❌ Cancelar inscrição
+   ────────────────────────────────────────────────────────────── */
 async function cancelarMinhaInscricao(req, res) {
   const usuario_id = req.usuario.id;
   const { id } = req.params;
@@ -258,7 +345,9 @@ async function cancelarMinhaInscricao(req, res) {
   }
 }
 
-// 🔍 Minhas inscrições
+/* ──────────────────────────────────────────────────────────────
+   🔍 Minhas inscrições (datas agregadas de datas_turma)
+   ────────────────────────────────────────────────────────────── */
 async function obterMinhasInscricoes(req, res) {
   try {
     const usuario_id = req.usuario.id;
@@ -270,8 +359,10 @@ async function obterMinhasInscricoes(req, res) {
           t.id AS turma_id,
           e.titulo, 
           e.local,
-          t.data_inicio, 
-          t.data_fim, 
+          -- período agregado da turma
+          (SELECT MIN(d.data) FROM datas_turma d WHERE d.turma_id = t.id) AS data_inicio,
+          (SELECT MAX(d.data) FROM datas_turma d WHERE d.turma_id = t.id) AS data_fim,
+          -- horários (mantém campos antigos se existir)
           t.horario_inicio,
           t.horario_fim,
           i.data_inscricao,
@@ -283,11 +374,20 @@ async function obterMinhasInscricoes(req, res) {
         LEFT JOIN usuarios u ON u.id = tp.instrutor_id
         WHERE i.usuario_id = $1
         GROUP BY i.id, e.id, t.id
-        ORDER BY t.data_fim DESC, t.horario_fim DESC NULLS LAST`,
+        ORDER BY 3 DESC, 2 DESC`,
       [usuario_id]
     );
 
-    return res.json(resultado.rows);
+    // normaliza date-only p/ string "YYYY-MM-DD"
+    const rows = resultado.rows.map(r => ({
+      ...r,
+      data_inicio: toYmd(r.data_inicio),
+      data_fim: toYmd(r.data_fim),
+      horario_inicio: toHm(r.horario_inicio) || null,
+      horario_fim: toHm(r.horario_fim) || null,
+    }));
+
+    return res.json(rows);
   } catch (err) {
     console.error('❌ Erro ao buscar inscrições:', {
       message: err?.message, detail: err?.detail, code: err?.code
@@ -296,7 +396,9 @@ async function obterMinhasInscricoes(req, res) {
   }
 }
 
-// 📋 Inscritos por turma
+/* ──────────────────────────────────────────────────────────────
+   📋 Inscritos por turma
+   ────────────────────────────────────────────────────────────── */
 async function listarInscritosPorTurma(req, res) {
   const { turma_id } = req.params;
 
@@ -329,7 +431,9 @@ async function listarInscritosPorTurma(req, res) {
   }
 }
 
-// ✅ Exportar
+/* ──────────────────────────────────────────────────────────────
+   ✅ Exportar
+   ────────────────────────────────────────────────────────────── */
 module.exports = {
   inscreverEmTurma,
   cancelarMinhaInscricao,
