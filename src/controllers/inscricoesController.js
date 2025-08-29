@@ -230,24 +230,26 @@ const mensagem = `
 
 await criarNotificacao(usuario_id, mensagem, null);
 
-// --- E-MAIL
-const html = `
-  <h2>Olá, ${usuario.nome}!</h2>
-  <p>Sua inscrição foi confirmada com sucesso.</p>
-  <h3>📌 Detalhes da Inscrição</h3>
-  <p>
-    <strong>Evento:</strong> ${evento.titulo}<br/>
-    <strong>Turma:</strong> ${turma.nome}<br/>
-    <strong>Período:</strong> ${periodoStr}<br/>
-    <strong>Horário:</strong> ${hi} às ${hf}<br/>
-    <strong>Carga horária:</strong> ${turma.carga_horaria} horas<br/>
-    <strong>Local:</strong> ${evento.local}
-  </p>
-  <p>📍 Em caso de dúvidas, entre em contato com a equipe da Escola da Saúde.</p>
-  <p>Atenciosamente,<br/><strong>Equipe da Escola da Saúde</strong></p>
-`;
+// 10) E-mail (best-effort) — usa periodoStr/hi/hf já calculados acima
+try {
+  if (usuario?.email) {
+    const html = `
+      <h2>Olá, ${usuario.nome}!</h2>
+      <p>Sua inscrição foi confirmada com sucesso.</p>
+      <h3>📌 Detalhes da Inscrição</h3>
+      <p>
+        <strong>Evento:</strong> ${evento.titulo}<br/>
+        <strong>Turma:</strong> ${turma.nome}<br/>
+        <strong>Período:</strong> ${periodoStr}<br/>
+        <strong>Horário:</strong> ${hi} às ${hf}<br/>
+        <strong>Carga horária:</strong> ${turma.carga_horaria} horas<br/>
+        <strong>Local:</strong> ${evento.local}
+      </p>
+      <p>📍 Em caso de dúvidas, entre em contato com a equipe da Escola da Saúde.</p>
+      <p>Atenciosamente,<br/><strong>Equipe da Escola da Saúde</strong></p>
+    `;
 
-const texto = `Olá, ${usuario.nome}!
+    const texto = `Olá, ${usuario.nome}!
 
 Sua inscrição foi confirmada com sucesso no evento "${evento.titulo}".
 
@@ -260,46 +262,17 @@ Local: ${evento.local}
 Atenciosamente,
 Equipe da Escola da Saúde`;
 
-if (usuario?.email) {
-  await enviarEmail({
-    to: usuario.email,
-    subject: '✅ Inscrição Confirmada – Escola da Saúde',
-    text: texto,    // usa periodoStr (com 1 ou 2 pontas)
-    html,
-  });
-} else {
-  console.warn('⚠️ E-mail do usuário ausente — pulando envio.');
-}
-
-      } else {
-        console.warn('⚠️ E-mail do usuário ausente — pulando envio.');
-      }
-    } catch (e) {
-      console.error('⚠️ Falha ao enviar e-mail (não bloqueante):', e?.message);
-    }
-
-    return res.status(201).json({ mensagem: 'Inscrição realizada com sucesso' });
-
-  } catch (err) {
-    if (err?.code === 'P0001' ||
-        (typeof err?.message === 'string' &&
-         err.message.toLowerCase().includes('inscrito em uma turma deste evento'))) {
-      return res.status(409).json({
-        erro: 'Você já está inscrito em uma turma deste evento.'
-      });
-    }
-    if (err?.code === '23505') {
-      return res.status(409).json({ erro: 'Usuário já inscrito nesta turma.' });
-    }
-
-    console.error('❌ Erro ao processar inscrição:', {
-      message: err?.message,
-      detail: err?.detail,
-      code: err?.code,
-      stack: err?.stack
+    await enviarEmail({
+      to: usuario.email,
+      subject: '✅ Inscrição Confirmada – Escola da Saúde',
+      text: texto,
+      html,
     });
-    return res.status(500).json({ erro: 'Erro ao processar inscrição.' });
+  } else {
+    console.warn('⚠️ E-mail do usuário ausente — pulando envio.');
   }
+} catch (e) {
+  console.error('⚠️ Falha ao enviar e-mail (não bloqueante):', e?.message);
 }
 
 /* ────────────────────────────────────────────────────────────────
