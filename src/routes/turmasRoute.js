@@ -4,6 +4,7 @@ const router = express.Router();
 
 const turmaController = require('../controllers/turmasController'); // <- plural ✔
 const inscricoesController = require('../controllers/inscricoesController');
+const eventosController = require('../controllers/eventosController'); // usar listarDatasDaTurma
 
 const authMiddleware = require('../auth/authMiddleware');
 const authorizeRoles = require('../auth/authorizeRoles');
@@ -56,6 +57,16 @@ router.get(
   '/:id/instrutores',
   authMiddleware,
   turmaController.listarInstrutorDaTurma
+);
+
+// 📅 Datas reais da turma (datas_turma/presenças/intervalo)
+//   via=datas      -> lê datas_turma (preferencial)
+//   via=presencas  -> fallback por presenças (data ou data_presenca)
+//   via=intervalo  -> gera 1 dia a 1 dia entre data_inicio e data_fim
+router.get(
+  '/:id/datas',
+  authMiddleware,
+  eventosController.listarDatasDaTurma
 );
 
 // 🔍 Obter detalhes de uma turma

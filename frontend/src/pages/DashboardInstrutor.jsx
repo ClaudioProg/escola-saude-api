@@ -11,7 +11,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { QRCodeCanvas } from "qrcode.react";
 import { formatarCPF, formatarDataBrasileira } from "../utils/data";
-import { apiGet } from "../services/api";
+import { apiGet, apiGetTurmaDatasAuto } from "../services/api"; // ⬅️ import do helper novo
 
 // ---------- helpers anti-fuso ----------
 const ymd = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
@@ -140,7 +140,6 @@ export default function DashboardInstrutor() {
         dbg("📋 detalhado:", { datas, usuarios });
         dbg("📋 lista compat:", lista);
       } catch (err) {
-        // detalha erro conhecido do nosso ApiError
         const info = {
           name: err?.name,
           message: err?.message,
@@ -243,38 +242,37 @@ export default function DashboardInstrutor() {
   };
 
   const carregarAvaliacoes = async (turmaIdRaw) => {
-  const turmaId = parseInt(turmaIdRaw);
-  if (!turmaId || isNaN(turmaId)) {
-    toast.error("Erro: Turma inválida.");
-    return;
-  }
-  if (avaliacoesPorTurma[turmaId]) return;
-
-  groupC(`📝 carregarAvaliacoes(turmaId=${turmaId})`, async () => {
-    try {
-      console.time(`[time GET] /api/avaliacoes/turma/${turmaId}`);
-      const data = await apiGet(`/api/avaliacoes/turma/${turmaId}`, { on403: "silent" });
-      console.timeEnd(`[time GET] /api/avaliacoes/turma/${turmaId}`);
-
-      // 🔧 normaliza resposta em UM array
-      const lista =
-        Array.isArray(data) ? data :
-        Array.isArray(data?.comentarios) ? data.comentarios :
-        Array.isArray(data?.itens) ? data.itens :
-        Array.isArray(data?.avaliacoes) ? data.avaliacoes :
-        [];
-
-      setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: lista }));
-      dbg("avaliacoes(normalizadas):", lista.length);
-    } catch (err) {
-      const info = { name: err?.name, message: err?.message, status: err?.status, url: err?.url, data: err?.data };
-      console.error("Erro ao carregar avaliações:", info);
-      toast.error("Erro ao carregar avaliações.");
-      setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: [] }));
+    const turmaId = parseInt(turmaIdRaw);
+    if (!turmaId || isNaN(turmaId)) {
+      toast.error("Erro: Turma inválida.");
+      return;
     }
-  });
-};
+    if (avaliacoesPorTurma[turmaId]) return;
 
+    groupC(`📝 carregarAvaliacoes(turmaId=${turmaId})`, async () => {
+      try {
+        console.time(`[time GET] /api/avaliacoes/turma/${turmaId}`);
+        const data = await apiGet(`/api/avaliacoes/turma/${turmaId}`, { on403: "silent" });
+        console.timeEnd(`[time GET] /api/avaliacoes/turma/${turmaId}`);
+
+        // 🔧 normaliza resposta em UM array
+        const lista =
+          Array.isArray(data) ? data :
+          Array.isArray(data?.comentarios) ? data.comentarios :
+          Array.isArray(data?.itens) ? data.itens :
+          Array.isArray(data?.avaliacoes) ? data.avaliacoes :
+          [];
+
+        setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: lista }));
+        dbg("avaliacoes(normalizadas):", lista.length);
+      } catch (err) {
+        const info = { name: err?.name, message: err?.message, status: err?.status, url: err?.url, data: err?.data };
+        console.error("Erro ao carregar avaliações:", info);
+        toast.error("Erro ao carregar avaliações.");
+        setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: [] }));
+      }
+    });
+  };
 
   // 🔎 Filtro por status (comparação por yyyy-mm-dd)
   const hoje = todayYMD();
@@ -288,6 +286,47 @@ export default function DashboardInstrutor() {
     if (filtro === "realizados") return df < hoje;
     return true; // todos
   });
+
+  // 🚩 Helper para obter DATAS REAIS da turma (preferindo presenças já carregadas)
+  const getDatasReaisTurma = async (turma) => {
+    const turmaId = turma?.id;
+    if (!turmaId) return [];
+
+    // 1) tenta do cache de presenças (carregado em paralelo no mount)
+    const cache = presencasPorTurma[turmaId]?.detalhado?.datas;
+    if (Array.isArray(cache) && cache.length) {
+      // normaliza para [{data, horario_inicio, horario_fim}]
+      return cache.map((d) => ({
+        data: ymd(d.data) || ymd(d),
+        horario_inicio: d.horario_inicio?.slice?.(0, 5) || turma.horario_inicio?.slice?.(0, 5) || "",
+        horario_fim: d.horario_fim?.slice?.(0, 5) || turma.horario_fim?.slice?.(0, 5) || "",
+      })).filter(x => x.data);
+    }
+
+    // 2) consulta serviço com fallback (datas_turma -> presenças -> intervalo)
+    try {
+      const lista = await apiGetTurmaDatasAuto(turmaId);
+      if (Array.isArray(lista) && lista.length) {
+        return lista.map((d) => ({
+          data: ymd(d.data) || ymd(d),
+          horario_inicio: d.horario_inicio?.slice?.(0, 5) || turma.horario_inicio?.slice?.(0, 5) || "",
+          horario_fim: d.horario_fim?.slice?.(0, 5) || turma.horario_fim?.slice?.(0, 5) || "",
+        })).filter(x => x.data);
+      }
+    } catch (e) {
+      warn("getDatasReaisTurma fallback via intervalo:", e?.message || e);
+    }
+
+    // 3) último caso (evitar “pane visual”): intervalo sequencial
+    const di = ymd(turma.data_inicio);
+    const df = ymd(turma.data_fim);
+    const seq = rangeDiasYMD(di, df);
+    return seq.map((d) => ({
+      data: d,
+      horario_inicio: turma.horario_inicio?.slice?.(0, 5) || "",
+      horario_fim: turma.horario_fim?.slice?.(0, 5) || "",
+    }));
+  };
 
   // 📄 Relatórios
   const gerarRelatorioPDF = async (turmaId) => {
@@ -337,8 +376,8 @@ export default function DashboardInstrutor() {
   const gerarListaAssinaturaPDF = async (turmaId) => {
     groupC(`🖊️ gerarListaAssinaturaPDF(turmaId=${turmaId})`, async () => {
       const turma = turmas.find((t) => t.id === turmaId);
-      let alunos = inscritosPorTurma[turmaId];
 
+      let alunos = inscritosPorTurma[turmaId];
       if (!alunos) {
         try {
           console.time(`[time GET] /api/inscricoes/turma/${turmaId} (lista assinatura)`);
@@ -364,20 +403,27 @@ export default function DashboardInstrutor() {
         return;
       }
 
-      const di = ymd(turma.data_inicio);
-      const df = ymd(turma.data_fim);
-      const datasYMD = rangeDiasYMD(di, df);
+      // ⬇️ usa DATAS REAIS (datas_turma/presenças) com fallback para intervalo
+      const datasReais = await getDatasReaisTurma(turma);
+      if (!Array.isArray(datasReais) || datasReais.length === 0) {
+        toast.error("Não há datas para gerar a lista.");
+        return;
+      }
 
       const doc = new jsPDF();
 
-      datasYMD.forEach((diaYMD, index) => {
+      datasReais.forEach((d, index) => {
         if (index > 0) doc.addPage();
-        const dataFormatada = formatarDataBrasileira(diaYMD);
-        const horaInicio = turma.horario_inicio?.slice(0, 5) || "";
-        const horaFim = turma.horario_fim?.slice(0, 5) || "";
+        const dataFormatada = formatarDataBrasileira(d.data);
+        const horaInicio = d.horario_inicio || turma.horario_inicio?.slice(0, 5) || "";
+        const horaFim = d.horario_fim || turma.horario_fim?.slice(0, 5) || "";
 
         doc.setFontSize(14);
-        doc.text(`Lista de Assinatura - ${turma.evento?.nome || ""} - ${turma.nome || ""}`, 14, 20);
+        doc.text(
+          `Lista de Assinatura - ${turma.evento?.nome || turma.evento?.titulo || ""} - ${turma.nome || ""}`,
+          14,
+          20
+        );
         doc.text(`Data: ${dataFormatada} | Horário: ${horaInicio} às ${horaFim}`, 14, 28);
 
         autoTable(doc, {

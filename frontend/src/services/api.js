@@ -369,4 +369,30 @@ export async function apiGetFile(path, opts = {}) {
   return { blob, filename };
 }
 
+// ───────────────────────────────────────────────────────────────────
+// Helpers específicos de turmas (datas reais)
+// ───────────────────────────────────────────────────────────────────
+
+// GET /turmas/:id/datas?via=datas|presencas|intervalo
+export async function apiGetTurmaDatas(turmaId, via = "datas") {
+  if (!turmaId) throw new Error("turmaId obrigatório");
+  return apiGet(`/turmas/${turmaId}/datas`, { query: { via } });
+}
+
+/**
+ * Busca as datas REAIS da turma com fallback:
+ * 1) datas_turma (via=datas)
+ * 2) presenças (via=presencas) — aceita p.data ou p.data_presenca
+ * 3) intervalo (via=intervalo) — gera 1 dia a 1 dia entre data_inicio e data_fim
+ */
+export async function apiGetTurmaDatasAuto(turmaId) {
+  let out = await apiGetTurmaDatas(turmaId, "datas");
+  if (Array.isArray(out) && out.length) return out;
+
+  out = await apiGetTurmaDatas(turmaId, "presencas");
+  if (Array.isArray(out) && out.length) return out;
+
+  return apiGetTurmaDatas(turmaId, "intervalo");
+}
+
 export { API_BASE_URL }; // opcional, para debug

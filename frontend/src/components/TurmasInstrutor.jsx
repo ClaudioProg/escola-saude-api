@@ -30,17 +30,27 @@ export default function TurmasInstrutor({
     usuario = {};
   }
 
-  // helpers anti-fuso
-  const toLocalNoon = (ymd) => new Date(`${ymd}T12:00:00`);
-  const ensureYMD = (d) => {
-    if (!d) return "";
-    if (d instanceof Date) {
+  // helpers anti-fuso/normalização
+  const ensureYMD = (d) => (typeof d === "string" ? d.slice(0, 10) : "");
+  const toLocalNoon = (ymd) => (ymd ? new Date(`${ymd}T12:00:00`) : null);
+  const rangeDiasYMD = (iniYMD, fimYMD) => {
+    const out = [];
+    const d0 = toLocalNoon(iniYMD);
+    const d1 = toLocalNoon(fimYMD || iniYMD);
+    if (!d0 || !d1) return out;
+    for (let d = new Date(d0); d <= d1; d.setDate(d.getDate() + 1)) {
       const y = d.getFullYear();
       const m = String(d.getMonth() + 1).padStart(2, "0");
       const day = String(d.getDate()).padStart(2, "0");
-      return `${y}-${m}-${day}`;
+      out.push(`${y}-${m}-${day}`);
     }
-    return String(d).slice(0, 10);
+    return out;
+  };
+  const fmtHora = (s) => (typeof s === "string" ? s.slice(0, 5) : "");
+  const brData = (ymd) => {
+    const [y, m, d] = (ymd || "").split("-");
+    if (!y || !m || !d) return ymd || "";
+    return `${d}/${m}/${y}`;
   };
 
   // ✅ Confirmação manual via API central (sem URL hardcoded)
@@ -61,6 +71,49 @@ export default function TurmasInstrutor({
     }
   }
 
+  // 🔎 Obtém DATAS REAIS da turma (ordem crescente)
+  function getDatasReais(turma) {
+    const id = Number(turma?.id);
+    if (!id) return [];
+
+    // 1) Preferir datas carregadas junto com presenças (já têm horários por dia, quando houver)
+    const detalhado = presencasPorTurma?.[id]?.detalhado;
+    const datasFromPres = Array.isArray(detalhado?.datas) ? detalhado.datas : null;
+    if (datasFromPres && datasFromPres.length) {
+      return datasFromPres
+        .map((d) => ({
+          data: ensureYMD(d?.data ?? d),
+          horario_inicio: fmtHora(d?.horario_inicio ?? turma?.horario_inicio),
+          horario_fim: fmtHora(d?.horario_fim ?? turma?.horario_fim),
+        }))
+        .filter((x) => x.data)
+        .sort((a, b) => a.data.localeCompare(b.data));
+    }
+
+    // 2) Depois, usar o que já vem da API do backend (listarEventosDoinstrutor inclui turma.datas)
+    const datasFromTurma = Array.isArray(turma?.datas) ? turma.datas : null;
+    if (datasFromTurma && datasFromTurma.length) {
+      return datasFromTurma
+        .map((d) => ({
+          data: ensureYMD(d?.data ?? d),
+          horario_inicio: fmtHora(d?.horario_inicio ?? turma?.horario_inicio),
+          horario_fim: fmtHora(d?.horario_fim ?? turma?.horario_fim),
+        }))
+        .filter((x) => x.data)
+        .sort((a, b) => a.data.localeCompare(b.data));
+    }
+
+    // 3) Último recurso: intervalo sequencial (evita “vazio” na UI)
+    const di = ensureYMD(turma?.data_inicio);
+    const df = ensureYMD(turma?.data_fim);
+    const seq = rangeDiasYMD(di, df);
+    return seq.map((d) => ({
+      data: d,
+      horario_inicio: fmtHora(turma?.horario_inicio),
+      horario_fim: fmtHora(turma?.horario_fim),
+    }));
+  }
+
   if (carregando) {
     return (
       <ul className="space-y-6">
@@ -77,7 +130,7 @@ export default function TurmasInstrutor({
     if (!turma || !turma.id || !turma.evento?.id) continue;
     const eventoId = String(turma.evento.id);
     if (!eventosAgrupados[eventoId]) {
-      eventosAgrupados[eventoId] = { nome: turma.evento.nome, turmas: [] };
+      eventosAgrupados[eventoId] = { nome: turma.evento.nome || turma.evento.titulo || "Evento", turmas: [] };
     }
     eventosAgrupados[eventoId].turmas.push(turma);
   }
@@ -104,9 +157,8 @@ export default function TurmasInstrutor({
                 const expandindoInscritos = turmaExpandidaInscritos === idSeguro;
                 const expandindoAvaliacoes = turmaExpandidaAvaliacoes === idSeguro;
 
-                // (mantidos os helpers; podem ser usados por filhos/relatórios)
-                toLocalNoon(ensureYMD(turma.data_inicio));
-                toLocalNoon(ensureYMD(turma.data_fim));
+                // Datas reais desta turma
+                const datasReais = getDatasReais(turma);
 
                 return (
                   <div key={idSeguro} className="border-t pt-4">
@@ -114,7 +166,25 @@ export default function TurmasInstrutor({
                       Turma: {turma.nome || `Turma ${turma.id}`}
                     </p>
 
-                    <div className="flex flex-wrap gap-2 mt-2">
+                    {/* 📅 Chips com DATAS REAIS (nada de intervalo sequencial “cheio”) */}
+                    {datasReais.length > 0 && (
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        {datasReais.map((d, idx) => (
+                          <span
+                            key={`${d.data}-${idx}`}
+                            className="px-2 py-1 text-xs rounded-full bg-gray-100 dark:bg-zinc-700 dark:text-white border"
+                            title={`${d.data} ${d.horario_inicio || ""}${d.horario_inicio || d.horario_fim ? " - " : ""}${d.horario_fim || ""}`}
+                          >
+                            📅 {brData(d.data)}
+                            {d.horario_inicio || d.horario_fim ? (
+                              <> · {d.horario_inicio || ""}{d.horario_inicio && d.horario_fim ? "–" : ""}{d.horario_fim || ""}</>
+                            ) : null}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap gap-2 mt-3">
                       <button
                         onClick={() => {
                           onVerInscritos(idSeguro);
@@ -172,6 +242,7 @@ export default function TurmasInstrutor({
                                 inscritos={inscritosPorTurma[idSeguro] || []}
                                 turma={turma}
                                 presencas={listaPresencas}
+                                datas={datasReais} {/* ⬅️ datas reais para o componente filho */}
                                 token={token}
                                 carregarPresencas={() => carregarPresencas(idSeguro)}
                                 confirmarPresencaManual={confirmarPresencaManual}
@@ -192,25 +263,24 @@ export default function TurmasInstrutor({
                           className="overflow-hidden mt-4"
                         >
                           {(() => {
-  const raw = avaliacoesPorTurma[idSeguro];
+                            const raw = avaliacoesPorTurma[idSeguro];
 
-  // 🔧 normaliza para um único array de comentários
-  const comentarios =
-    Array.isArray(raw) ? raw :
-    Array.isArray(raw?.comentarios) ? raw.comentarios :
-    Array.isArray(raw?.itens) ? raw.itens :
-    Array.isArray(raw?.avaliacoes) ? raw.avaliacoes :
-    [];
+                            // 🔧 normaliza para um único array de comentários
+                            const comentarios =
+                              Array.isArray(raw) ? raw :
+                              Array.isArray(raw?.comentarios) ? raw.comentarios :
+                              Array.isArray(raw?.itens) ? raw.itens :
+                              Array.isArray(raw?.avaliacoes) ? raw.avaliacoes :
+                              [];
 
-  return comentarios.length > 0 ? (
-    <AvaliacoesEvento avaliacoes={comentarios} />
-  ) : (
-    <p className="text-sm text-gray-600 italic dark:text-gray-300">
-      Nenhuma avaliação registrada para esta turma.
-    </p>
-  );
-})()}
-
+                            return comentarios.length > 0 ? (
+                              <AvaliacoesEvento avaliacoes={comentarios} />
+                            ) : (
+                              <p className="text-sm text-gray-600 italic dark:text-gray-300">
+                                Nenhuma avaliação registrada para esta turma.
+                              </p>
+                            );
+                          })()}
                         </motion.div>
                       )}
                     </AnimatePresence>
