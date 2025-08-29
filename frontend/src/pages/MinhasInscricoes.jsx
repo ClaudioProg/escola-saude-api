@@ -29,6 +29,13 @@ function makeLocalDate(yyyy_mm_dd, time = "00:00:00") {
   const t = hms(time);
   return d ? new Date(d.y, d.mo - 1, d.d, t.hh, t.mm, t.ss, 0) : new Date(NaN);
 }
+function isValidDate(d) {
+  return d instanceof Date && !Number.isNaN(d.getTime());
+}
+function safeTs(dateIso, time) {
+  const d = makeLocalDate(dateIso, time);
+  return isValidDate(d) ? d.getTime() : 0;
+}
 // -----------------------------------------------------------------------------
 
 export default function MinhasInscricoes() {
@@ -54,10 +61,10 @@ export default function MinhasInscricoes() {
     try {
       const data = await apiGet("/api/inscricoes/minhas");
       const arr = Array.isArray(data) ? data : [];
-      // Ordena pelo término (mais recente primeiro)
+      // Ordena pelo término (mais recente primeiro), com fallback
       const ordenadas = [...arr].sort((a, b) => {
-        const aEnd = makeLocalDate(a.data_fim, a.horario_fim || "23:59:59").getTime();
-        const bEnd = makeLocalDate(b.data_fim, b.horario_fim || "23:59:59").getTime();
+        const aEnd = safeTs(a.data_fim || a.data_inicio, a.horario_fim || a.horario_inicio || "23:59:59");
+        const bEnd = safeTs(b.data_fim || b.data_inicio, b.horario_fim || b.horario_inicio || "23:59:59");
         return bEnd - aEnd;
       });
       setInscricoes(ordenadas);
@@ -87,6 +94,7 @@ export default function MinhasInscricoes() {
   function obterStatusEvento(dataInicioISO, dataFimISO, horarioInicio, horarioFim) {
     const inicio = makeLocalDate(dataInicioISO, horarioInicio || "00:00:00");
     const fim    = makeLocalDate(dataFimISO,    horarioFim    || "23:59:59");
+    if (!isValidDate(inicio) || !isValidDate(fim)) return "Programado";
     const agora = new Date();
     if (agora < inicio) return "Programado";
     if (agora > fim)    return "Encerrado";
@@ -135,13 +143,34 @@ export default function MinhasInscricoes() {
                   item.horario_fim
                 );
 
-                // Instrutor pode ser string ou array
+                // Botão Google Agenda — só se der para montar URL com segurança
+                let agendaHref = null;
+                if (isValidDate(dataInicioLocal) && isValidDate(dataFimLocal)) {
+                  try {
+                    agendaHref = gerarLinkGoogleAgenda({
+                      titulo: item.titulo,
+                      dataInicio: dataInicioLocal,
+                      dataFim: dataFimLocal,
+                      descricao: `Evento: ${item.titulo} organizado pela Escola da Saúde.`,
+                      local: item.local || "Santos/SP",
+                    });
+                  } catch (e) {
+                    console.warn("Agenda: impossível gerar link para", item?.titulo, e?.message);
+                  }
+                }
+
+                // Instrutor pode ser string agregada
                 const instrutores = Array.isArray(item.instrutor)
                   ? item.instrutor.map((i) => i?.nome || String(i)).filter(Boolean)
                   : String(item.instrutor || "")
                       .split(",")
                       .map((n) => n.trim())
                       .filter(Boolean);
+
+                const periodoFmt = [
+                  formatarDataBrasileira(item.data_inicio),
+                  formatarDataBrasileira(item.data_fim),
+                ].filter(Boolean).join(" até ");
 
                 return (
                   <motion.li
@@ -173,7 +202,7 @@ export default function MinhasInscricoes() {
 
                     <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">
                       <strong>Período:</strong><br />
-                      {formatarDataBrasileira(item.data_inicio)} até {formatarDataBrasileira(item.data_fim)} – {item.local}
+                      {periodoFmt} {item.local ? `– ${item.local}` : ""}
                     </p>
 
                     <p className="text-sm text-gray-500 dark:text-gray-400">
@@ -196,22 +225,18 @@ export default function MinhasInscricoes() {
                     </p>
 
                     <div className="flex flex-wrap gap-3 mt-4">
-                      <BotaoSecundario
-                        as="a"
-                        href={gerarLinkGoogleAgenda({
-                          titulo: item.titulo,
-                          dataInicio: dataInicioLocal,
-                          dataFim: dataFimLocal,
-                          descricao: `Evento: ${item.titulo} organizado pela Escola da Saúde.`,
-                          local: item.local || "Santos/SP",
-                        })}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="w-full sm:w-auto"
-                        aria-label="Adicionar curso à Google Agenda"
-                      >
-                        Adicionar ao Google Agenda
-                      </BotaoSecundario>
+                      {agendaHref && (
+                        <BotaoSecundario
+                          as="a"
+                          href={agendaHref}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="w-full sm:w-auto"
+                          aria-label="Adicionar curso à Google Agenda"
+                        >
+                          Adicionar ao Google Agenda
+                        </BotaoSecundario>
+                      )}
 
                       <BotaoPrimario
                         className="w-full sm:w-auto"
