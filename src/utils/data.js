@@ -13,7 +13,13 @@ function isIsoDateOnly(s) {
   return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
 }
 
-/** Tenta parsear uma string ISO (com ou sem Z). Se vier sem Z, o Date assume local do servidor. */
+/**
+ * Tenta parsear uma string ISO (com ou sem Z).
+ * Observação importante do JS:
+ * - "YYYY-MM-DD" → interpretado como **UTC**.
+ * - "YYYY-MM-DDTHH:mm" (sem Z) → interpretado no fuso **local do servidor**.
+ * - Sufixo 'Z' → UTC explícito.
+ */
 function parseIsoToDate(s) {
   if (!s || typeof s !== "string") return null;
   const d = new Date(s);
@@ -50,9 +56,20 @@ function dateOnlyToUtcDate(yyyyMmDd) {
    FORMATAÇÃO pt-BR PARA EXIBIÇÃO (casos em que o backend precise)
    ────────────────────────────────────────────────────────────────── */
 
+/** Formata "YYYY-MM-DD" → "dd/MM/aaaa" sem criar Date (evita shift de fuso). */
+function toBrDateOnlyString(yyyyMmDd) {
+  if (!isIsoDateOnly(yyyyMmDd)) return "";
+  const [y, m, d] = yyyyMmDd.split("-");
+  return `${d}/${m}/${y}`;
+}
+
 /** Formata Date/ISO para dd/MM/aaaa no fuso informado (padrão: America/Sao_Paulo). */
 function toBrDate(input, timeZone = TZ_PADRAO) {
-  let d = input instanceof Date ? input : parseIsoToDate(input);
+  // ✅ Se for "YYYY-MM-DD", não crie Date — formate direto:
+  if (typeof input === "string" && isIsoDateOnly(input)) {
+    return toBrDateOnlyString(input);
+  }
+  const d = input instanceof Date ? input : parseIsoToDate(input);
   if (!d) return "";
   return new Intl.DateTimeFormat("pt-BR", {
     timeZone,
@@ -64,7 +81,11 @@ function toBrDate(input, timeZone = TZ_PADRAO) {
 
 /** Formata Date/ISO para dd/MM/aaaa HH:mm (24h) no fuso informado. */
 function toBrDateTime(input, timeZone = TZ_PADRAO) {
-  let d = input instanceof Date ? input : parseIsoToDate(input);
+  // ⚠️ Se vier só data, não tem HH:mm — formata como data simples para não “voltar um dia”
+  if (typeof input === "string" && isIsoDateOnly(input)) {
+    return toBrDate(input, timeZone);
+  }
+  const d = input instanceof Date ? input : parseIsoToDate(input);
   if (!d) return "";
   return new Intl.DateTimeFormat("pt-BR", {
     timeZone,
@@ -104,7 +125,7 @@ function brDateTimeToIsoUtc(dataBr, horaBr = "00:00") {
   const [y, m, d] = isoDate.split("-").map((x) => parseInt(x, 10));
 
   // Cria Date como LOCAL do servidor (não do usuário), depois converte para UTC via toISOString.
-  const local = new Date(y, (m - 1), d, isNaN(hh) ? 0 : hh, isNaN(min) ? 0 : min, 0, 0);
+  const local = new Date(y, m - 1, d, isNaN(hh) ? 0 : hh, isNaN(min) ? 0 : min, 0, 0);
   if (isNaN(local)) return null;
   return local.toISOString(); // retorna UTC com Z
 }
@@ -190,7 +211,7 @@ function gerarOcorrencias({
 /** (LEGADO) Converte Date ou string ISO para dd/MM/aaaa. */
 function formatarDataBR(dataEntrada) {
   if (!dataEntrada) return "";
-  // Reaproveita toBrDate (usa TZ padrão)
+  // Reaproveita toBrDate (usa TZ padrão) — já trata "YYYY-MM-DD" sem criar Date
   return toBrDate(dataEntrada);
 }
 
@@ -210,8 +231,9 @@ module.exports = {
   dateOnlyToUtcDate,  // "YYYY-MM-DD" -> Date (00:00Z)
 
   // Formatação pt-BR (útil em e-mails/logs do backend)
-  toBrDate,           // Date/ISO -> "dd/MM/aaaa"
-  toBrDateTime,       // Date/ISO -> "dd/MM/aaaa HH:mm"
+  toBrDateOnlyString, // "YYYY-MM-DD" -> "dd/MM/aaaa" sem Date (novo)
+  toBrDate,           // Date/ISO -> "dd/MM/aaaa" (com branch p/ date-only)
+  toBrDateTime,       // Date/ISO -> "dd/MM/aaaa HH:mm" (date-only cai p/ data simples)
 
   // Converters BR <-> ISO date-only
   brDateToIsoDate,    // "dd/MM/aaaa" -> "YYYY-MM-DD"

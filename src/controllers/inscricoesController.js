@@ -2,7 +2,8 @@
 /* eslint-disable no-console */
 const db = require('../db');
 const { send: enviarEmail } = require('../utils/email');
-const { formatarDataBR } = require('../utils/data');
+// ⬇️ importa o formatador seguro para "YYYY-MM-DD"
+const { toBrDateOnlyString } = require('../utils/data');
 const { criarNotificacao } = require('./notificacoesController');
 
 // ➕ Inscrever-se em uma turma
@@ -26,22 +27,22 @@ async function inscreverEmTurma(req, res) {
     const turma = turmaRows[0];
 
     // 2) Evento (tipo + dados p/ notificação/e-mail)
-const { rows: evRows } = await db.query(
-  `SELECT 
-      id,
-      (tipo::text) AS tipo,                                    -- 👈 enum → texto
-      CASE WHEN tipo::text ILIKE 'congresso' THEN TRUE ELSE FALSE END AS is_congresso,  -- 👈 flag pronta
-      COALESCE(titulo, 'Evento') AS titulo,
-      COALESCE(local,  'A definir') AS local
-   FROM eventos
-   WHERE id = $1`,
-  [turma.evento_id]
-);
-if (evRows.length === 0) {
-  return res.status(404).json({ erro: 'Evento da turma não encontrado.' });
-}
-const evento = evRows[0];
-const isCongresso = !!evento.is_congresso;   // 👈 usa a flag (evita LOWER no JS)
+    const { rows: evRows } = await db.query(
+      `SELECT 
+          id,
+          (tipo::text) AS tipo,                                    -- 👈 enum → texto
+          CASE WHEN tipo::text ILIKE 'congresso' THEN TRUE ELSE FALSE END AS is_congresso,  -- 👈 flag pronta
+          COALESCE(titulo, 'Evento') AS titulo,
+          COALESCE(local,  'A definir') AS local
+       FROM eventos
+       WHERE id = $1`,
+      [turma.evento_id]
+    );
+    if (evRows.length === 0) {
+      return res.status(404).json({ erro: 'Evento da turma não encontrado.' });
+    }
+    const evento = evRows[0];
+    const isCongresso = !!evento.is_congresso;   // 👈 usa a flag (evita LOWER no JS)
 
     // 3) Bloqueio: instrutor do evento
     const ehInstrutor = await db.query(
@@ -139,14 +140,18 @@ const isCongresso = !!evento.is_congresso;   // 👈 usa a flag (evita LOWER no 
     );
     const usuario = userRows[0];
 
+    // 🔤 Helpers de exibição (datas sem hora → seguro, sem criar Date)
+    const periodoStr = `${toBrDateOnlyString(turma.data_inicio)} a ${toBrDateOnlyString(turma.data_fim)}`;
+    const horarioStr = `${(turma.horario_inicio || '').slice(0,5)} às ${(turma.horario_fim || '').slice(0,5)}`;
+
     // 9) Notificação (best-effort)
     try {
       const mensagem = `
 ✅ Sua inscrição foi confirmada com sucesso no evento "${evento.titulo}".
 
 - Turma: ${turma.nome}
-- Período: ${formatarDataBR(turma.data_inicio)} a ${formatarDataBR(turma.data_fim)}
-- Horário: ${turma.horario_inicio?.slice(0,5)} às ${turma.horario_fim?.slice(0,5)}
+- Período: ${periodoStr}
+- Horário: ${horarioStr}
 - Carga horária: ${turma.carga_horaria} horas
 - Local: ${evento.local}
       `.trim();
@@ -166,8 +171,8 @@ const isCongresso = !!evento.is_congresso;   // 👈 usa a flag (evita LOWER no 
           <p>
             <strong>Evento:</strong> ${evento.titulo}<br/>
             <strong>Turma:</strong> ${turma.nome}<br/>
-            <strong>Período:</strong> ${formatarDataBR(turma.data_inicio)} a ${formatarDataBR(turma.data_fim)}<br/>
-            <strong>Horário:</strong> ${turma.horario_inicio?.slice(0,5)} às ${turma.horario_fim?.slice(0,5)}<br/>
+            <strong>Período:</strong> ${periodoStr}<br/>
+            <strong>Horário:</strong> ${horarioStr}<br/>
             <strong>Carga horária:</strong> ${turma.carga_horaria} horas<br/>
             <strong>Local:</strong> ${evento.local}
           </p>
@@ -183,8 +188,8 @@ const isCongresso = !!evento.is_congresso;   // 👈 usa a flag (evita LOWER no 
 Sua inscrição foi confirmada com sucesso no evento "${evento.titulo}".
 
 Turma: ${turma.nome}
-Período: ${formatarDataBR(turma.data_inicio)} a ${formatarDataBR(turma.data_fim)}
-Horário: ${turma.horario_inicio?.slice(0,5)} às ${turma.horario_fim?.slice(0,5)}
+Período: ${periodoStr}
+Horário: ${horarioStr}
 Carga horária: ${turma.carga_horaria} horas
 Local: ${evento.local}
 

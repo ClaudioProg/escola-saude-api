@@ -19,6 +19,7 @@ export function toLocalDate(input) {
 
   if (typeof input === "string") {
     if (isDateOnly(input)) {
+      // Evite usar Date para exibição; aqui é apenas para cálculos locais
       const [y, m, d] = input.split("-").map(Number);
       const dt = new Date(y, m - 1, d, 0, 0, 0, 0);
       return isNaN(dt) ? null : dt;
@@ -32,10 +33,25 @@ export function toLocalDate(input) {
 }
 
 /* ──────────────────────────────────────────────────────────────
+   HELPERS DE FORMATAÇÃO
+   ────────────────────────────────────────────────────────────── */
+
+/** "YYYY-MM-DD" → "dd/MM/aaaa" sem criar Date (evita shift). */
+function fmtDateOnlyString(yyyyMmDd) {
+  if (!isDateOnly(yyyyMmDd)) return "";
+  const [y, m, d] = yyyyMmDd.split("-");
+  return `${d}/${m}/${y}`;
+}
+
+/* ──────────────────────────────────────────────────────────────
    FORMATAÇÃO pt-BR (exibição)
    ────────────────────────────────────────────────────────────── */
 
 export function fmtData(dateIsoUtc, zone = ZONA_PADRAO) {
+  // ✅ Se for somente data, formata direto sem Date
+  if (typeof dateIsoUtc === "string" && isDateOnly(dateIsoUtc)) {
+    return fmtDateOnlyString(dateIsoUtc);
+  }
   const d = toLocalDate(dateIsoUtc);
   if (!d) return "";
   return new Intl.DateTimeFormat("pt-BR", {
@@ -47,6 +63,10 @@ export function fmtData(dateIsoUtc, zone = ZONA_PADRAO) {
 }
 
 export function fmtDataHora(dateIsoUtc, zone = ZONA_PADRAO) {
+  // ⚠️ Se for somente data, não há hora — caia para data simples
+  if (typeof dateIsoUtc === "string" && isDateOnly(dateIsoUtc)) {
+    return fmtData(dateIsoUtc, zone);
+  }
   const d = toLocalDate(dateIsoUtc);
   if (!d) return "";
   return new Intl.DateTimeFormat("pt-BR", {
@@ -82,7 +102,7 @@ export function brDateTimeToIsoUtc(dataBr, horaBr = "00:00") {
 
   const [y, m, d] = isoDate.split("-").map(Number);
   const [hh, min] = (horaBr || "00:00").split(":").map((x) => parseInt(x, 10));
-  const local = new Date(y, (m - 1), d, isNaN(hh) ? 0 : hh, isNaN(min) ? 0 : min, 0, 0);
+  const local = new Date(y, m - 1, d, isNaN(hh) ? 0 : hh, isNaN(min) ? 0 : min, 0, 0);
   return isNaN(local) ? null : local.toISOString(); // ISO UTC com 'Z'
 }
 
@@ -95,9 +115,8 @@ export function formatarDataBrasileira(dataISO) {
   // aceita Date, ISO com Z, "YYYY-MM-DD"
   if (!dataISO) return "";
   if (typeof dataISO === "string" && isDateOnly(dataISO)) {
-    // evita fuso para data-only
-    const [y, m, d] = dataISO.split("-");
-    return `${d}/${m}/${y}`;
+    // evita fuso para date-only
+    return fmtDateOnlyString(dataISO);
   }
   return fmtData(dataISO);
 }
@@ -135,7 +154,11 @@ export function gerarIntervaloDeDatas(dataInicio, dataFim) {
   if (!ini || !fim) return [];
   const datas = [];
   // garanta dia a dia sem mutar "ini" original
-  for (let d = new Date(ini.getFullYear(), ini.getMonth(), ini.getDate()); d <= fim; d.setDate(d.getDate() + 1)) {
+  for (
+    let d = new Date(ini.getFullYear(), ini.getMonth(), ini.getDate());
+    d <= fim;
+    d.setDate(d.getDate() + 1)
+  ) {
     datas.push(new Date(d));
   }
   return datas;

@@ -9,7 +9,9 @@ const FRONTEND_URL_STATIC =
   (process.env.FRONTEND_URL && String(process.env.FRONTEND_URL).trim()) ||
   (process.env.NODE_ENV === "production" ? "" : "http://localhost:5173");
 
-// 🔐 util: normalizações
+/* ──────────────────────────────────────────────────────────────
+   🔐 Utils de normalização
+   ────────────────────────────────────────────────────────────── */
 function normEmail(v) {
   return String(v || "").trim().toLowerCase();
 }
@@ -19,15 +21,20 @@ function onlyDigits(v) {
 function normNome(v) {
   return String(v || "").trim();
 }
+/** Array -> CSV sem "usuario"; string/undefined -> "usuario" por padrão */
 function toPerfilString(perfil) {
   if (Array.isArray(perfil)) {
-    return perfil
+    const arr = perfil
       .map((p) => String(p || "").toLowerCase().trim())
-      .filter((p) => p && p !== "usuario")
-      .join(",");
+      .filter((p) => p); // mantemos tudo por enquanto
+    // remove "usuario" da lista, mas garante fallback
+    const semUsuario = arr.filter((p) => p !== "usuario");
+    const finalArr = semUsuario.length ? semUsuario : ["usuario"];
+    return finalArr.join(",");
   }
-  return String(perfil || "usuario").toLowerCase().trim();
+  return String(perfil || "usuario").toLowerCase().trim() || "usuario";
 }
+/** CSV -> array minúsculo, sem vazios */
 function perfilToArray(perfilStr) {
   return String(perfilStr || "")
     .split(",")
@@ -38,7 +45,9 @@ function perfilToArray(perfilStr) {
 // 🔐 Regex de senha forte (mesma do frontend)
 const SENHA_FORTE_RE = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{8,}$/;
 
-// 🔐 Cadastro de novo usuário
+/* ──────────────────────────────────────────────────────────────
+   🔐 Cadastro de novo usuário
+   ────────────────────────────────────────────────────────────── */
 async function cadastrarUsuario(req, res) {
   const nome = normNome(req.body?.nome);
   const cpf = onlyDigits(req.body?.cpf);
@@ -61,13 +70,12 @@ async function cadastrarUsuario(req, res) {
       "SELECT id FROM usuarios WHERE cpf = $1 OR LOWER(email) = LOWER($2)",
       [cpf, email]
     );
-
     if (existente.rows.length > 0) {
       return res.status(400).json({ erro: "CPF ou e-mail já cadastrado." });
     }
 
     const senhaCriptografada = await bcrypt.hash(senha, 10);
-    const perfilFinal = toPerfilString(perfil);
+    const perfilFinal = toPerfilString(perfil); // garante 'usuario' se vier vazio/array só com 'usuario'
 
     const result = await db.query(
       `INSERT INTO usuarios (nome, cpf, email, senha, perfil)
@@ -86,7 +94,9 @@ async function cadastrarUsuario(req, res) {
   }
 }
 
-// 🔐 Recuperação de senha via e-mail (idempotente)
+/* ──────────────────────────────────────────────────────────────
+   🔐 Recuperação de senha (idempotente)
+   ────────────────────────────────────────────────────────────── */
 async function recuperarSenha(req, res) {
   const email = normEmail(req.body?.email);
   if (!email) {
@@ -133,18 +143,16 @@ async function recuperarSenha(req, res) {
         : "https://seu-frontend-no-vercel.vercel.app");
 
     const safeBase = String(baseUrl).replace(/\/+$/, "");
-    // ❗️Se sua página usa /redefinir-senha/:token, mantenha a linha abaixo:
+    // Se sua página usa /redefinir-senha/:token, mantenha a linha abaixo:
     const link = `${safeBase}/redefinir-senha/${encodeURIComponent(token)}`;
     // alternativa com querystring:
     // const link = `${safeBase}/redefinir-senha?token=${encodeURIComponent(token)}`;
 
-    // Envio de e-mail (formato objeto)
     await enviarEmail({
       to: email,
       subject: "Recuperação de Senha - Escola da Saúde",
       text: `Você solicitou a redefinição de senha. Acesse: ${link} (válido por 1h).`,
-      // se seu util suportar html, pode enviar html também
-      // html: `<p>...</p>`
+      // html: `<p>...</p>` // se o util suportar HTML
     });
 
     return res.status(200).json({
@@ -156,7 +164,9 @@ async function recuperarSenha(req, res) {
   }
 }
 
-// 🔐 Redefinição da senha
+/* ──────────────────────────────────────────────────────────────
+   🔐 Redefinição da senha
+   ────────────────────────────────────────────────────────────── */
 async function redefinirSenha(req, res) {
   const token = String(req.body?.token || "");
   const novaSenha = String(req.body?.novaSenha || "");
@@ -199,16 +209,19 @@ async function redefinirSenha(req, res) {
   }
 }
 
-// 🔍 Obter dados do usuário por ID
+/* ──────────────────────────────────────────────────────────────
+   🔍 Obter dados do usuário por ID
+   ────────────────────────────────────────────────────────────── */
 async function obterUsuarioPorId(req, res) {
   const { id } = req.params;
   const usuarioLogado = req.usuario || {};
+  const perfilArr = Array.isArray(usuarioLogado.perfil)
+    ? usuarioLogado.perfil
+    : perfilToArray(usuarioLogado.perfil);
+  const ehAdmin = perfilArr.includes("administrador");
 
-  if (
-    Number(id) !== Number(usuarioLogado.id) &&
-    !Array.isArray(usuarioLogado.perfil) ||
-    (Array.isArray(usuarioLogado.perfil) && !usuarioLogado.perfil.includes("administrador"))
-  ) {
+  // ✅ só permite ver outro usuário se for admin
+  if (Number(id) !== Number(usuarioLogado.id) && !ehAdmin) {
     return res
       .status(403)
       .json({ erro: "Sem permissão para acessar este usuário." });
@@ -231,12 +244,17 @@ async function obterUsuarioPorId(req, res) {
   }
 }
 
-// ✏️ Atualizar nome, email ou senha
+/* ──────────────────────────────────────────────────────────────
+   ✏️ Atualizar nome, email ou senha
+   ────────────────────────────────────────────────────────────── */
 async function atualizarUsuario(req, res) {
   const { id } = req.params;
   const usuarioLogado = req.usuario || {};
+  const perfilArr = Array.isArray(usuarioLogado.perfil)
+    ? usuarioLogado.perfil
+    : perfilToArray(usuarioLogado.perfil);
+  const ehAdmin = perfilArr.includes("administrador");
 
-  const ehAdmin = Array.isArray(usuarioLogado.perfil) && usuarioLogado.perfil.includes("administrador");
   if (Number(id) !== Number(usuarioLogado.id) && !ehAdmin) {
     return res
       .status(403)
@@ -287,7 +305,9 @@ async function atualizarUsuario(req, res) {
   }
 }
 
-// 🔐 Login do usuário (por CPF e senha)
+/* ──────────────────────────────────────────────────────────────
+   🔐 Login (CPF + senha)
+   ────────────────────────────────────────────────────────────── */
 async function loginUsuario(req, res) {
   const cpf = onlyDigits(req.body?.cpf);
   const senha = String(req.body?.senha || "");
@@ -341,16 +361,20 @@ async function loginUsuario(req, res) {
   }
 }
 
-// 🔍 Obter assinatura do usuário autenticado
+/* ──────────────────────────────────────────────────────────────
+   🔍 Obter assinatura do usuário autenticado
+   ────────────────────────────────────────────────────────────── */
 async function obterAssinatura(req, res) {
   const usuarioId = req.usuario?.id;
-  const perfil = req.usuario?.perfil || [];
+  const perfilArr = Array.isArray(req.usuario?.perfil)
+    ? req.usuario.perfil
+    : perfilToArray(req.usuario?.perfil);
 
   if (!usuarioId) {
     return res.status(401).json({ erro: "Usuário não autenticado." });
   }
 
-  if (!perfil.includes("instrutor") && !perfil.includes("administrador")) {
+  if (!perfilArr.includes("instrutor") && !perfilArr.includes("administrador")) {
     return res
       .status(403)
       .json({ erro: "Acesso restrito a instrutor ou administradores." });

@@ -9,18 +9,18 @@ const log = (...a) => IS_DEV && console.log("[notif]", ...a);
 /* ------------------------------------------------------------------ */
 /* Utils de data                                                      */
 /* ------------------------------------------------------------------ */
-let formatarDataBR = null;
+let toBrDateOnlyString = null;
 try {
-  ({ formatarDataBR } = require("../utils/data"));
+  // usamos o formatador que NÃO cria Date para "YYYY-MM-DD"
+  ({ toBrDateOnlyString } = require("../utils/data"));
 } catch {
-  formatarDataBR = (iso) => {
-    if (!iso) return "";
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return "";
-    const dd = String(d.getDate()).padStart(2, "0");
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const yyyy = d.getFullYear();
-    return `${dd}/${mm}/${yyyy}`;
+  // fallback ultra simples caso utils/data não esteja disponível por algum motivo
+  toBrDateOnlyString = (yyyyMmDd) => {
+    if (!yyyyMmDd || typeof yyyyMmDd !== "string") return "";
+    const m = /^\d{4}-\d{2}-\d{2}$/.exec(yyyyMmDd);
+    if (!m) return "";
+    const [y, mo, d] = yyyyMmDd.split("-");
+    return `${d}/${mo}/${y}`;
   };
 }
 
@@ -118,6 +118,7 @@ async function listarNotificacoes(req, res) {
       tipo: n.tipo || null,
       titulo: n.titulo || null,
       mensagem: n.msg || "",
+      // tstamp é timestamp (com hora) → ok usar Date aqui
       lida: n.lida === true,
       data: n.tstamp ? format(new Date(n.tstamp), "dd/MM/yyyy", { locale: ptBR }) : "",
     }));
@@ -250,15 +251,17 @@ async function gerarNotificacoesDeAvaliacao(usuario_id) {
       );
       if (dup.rowCount > 0) continue;
 
-      const dataInicio = formatarDataBR(av.data_inicio);
-      const dataFim = formatarDataBR(av.data_fim);
+      // datas sem hora → NÃO criar Date
+      const dataInicio = toBrDateOnlyString(av.data_inicio);
+      const dataFim = toBrDateOnlyString(av.data_fim);
+      const nomeEvento = av.nome_evento || av.titulo || "evento";
 
       await criarNotificacao(
         usuario_id,
         `Já está disponível a avaliação do evento "${nomeEvento}" que você participou entre ${dataInicio} e ${dataFim}.`,
         {
           tipo: "avaliacao",
-          titulo: `Avaliação disponível para "${av.nome_evento || av.titulo || "evento"}"`,
+          titulo: `Avaliação disponível para "${nomeEvento}"`,
           turma_id: av.turma_id,
           evento_id: av.evento_id || null, // será ignorado se a coluna não existir
         }

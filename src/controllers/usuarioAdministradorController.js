@@ -195,7 +195,7 @@ async function listarInstrutoresCore(req, res) {
       nome: r.nome,
       email: r.email,
       eventosMinistrados: Number(r.eventos_ministrados) || 0,
-      mediaAvaliacao: r.media_avaliacao !== null ? Number(r.media_avalicacao ?? r.media_avaliacao) : null,
+      mediaAvaliacao: r.media_avaliacao !== null ? Number(r.media_avaliacao) : null, // ✅ fix
       possuiAssinatura: !!r.possui_assinatura,
     }));
 
@@ -206,7 +206,7 @@ async function listarInstrutoresCore(req, res) {
   }
 }
 
-/* ===== alias para compatibilidade com nomes usados no router ===== */
+/* ===== aliases para compatibilidade com nomes usados no router ===== */
 const listarInstrutores = listarInstrutoresCore;   // plural
 const listarInstrutor   = listarInstrutoresCore;   // singular
 const listarinstrutor   = listarInstrutoresCore;   // caso o router tenha ficado minúsculo

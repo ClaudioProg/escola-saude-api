@@ -8,11 +8,15 @@ const authMiddleware = require("../auth/authMiddleware");
 const authorizeRoles = require("../auth/authorizeRoles");
 
 /*
-  Montagem típica:
-    app.use('/api/usuarios', router)
+  Montagem típica (no app.js):
+    app.use("/api/usuarios", require("./routes/usuariosRoute"));
 */
 
-// util: valida :id numérico
+// ─────────────────────────────────────────────────────────────
+// Utils
+// ─────────────────────────────────────────────────────────────
+
+// valida :id numérico
 function validarId(req, res, next) {
   const { id } = req.params;
   if (Number.isNaN(Number(id))) {
@@ -21,7 +25,7 @@ function validarId(req, res, next) {
   next();
 }
 
-// util: registra rota protegida apenas se o handler existir
+// registra rota protegida apenas se o handler existir
 function registerIf(fn, registrar) {
   if (typeof fn === "function") {
     registrar();
@@ -31,9 +35,9 @@ function registerIf(fn, registrar) {
   }
 }
 
-// ============================================================
+// ─────────────────────────────────────────────────────────────
 // 🔓 Rotas públicas (sem autenticação)
-// ============================================================
+// ─────────────────────────────────────────────────────────────
 if (typeof usuarioPublicoController?.cadastrarUsuario === "function") {
   router.post("/cadastro", usuarioPublicoController.cadastrarUsuario);
 }
@@ -47,9 +51,9 @@ if (typeof usuarioPublicoController?.redefinirSenha === "function") {
   router.post("/redefinir-senha", usuarioPublicoController.redefinirSenha);
 }
 
-// ============================================================
+// ─────────────────────────────────────────────────────────────
 // 🔒 Rotas protegidas (exigem token válido)
-// ============================================================
+// ─────────────────────────────────────────────────────────────
 
 // 👥 Listar todos (admin)
 registerIf(usuarioAdministradorController?.listarUsuarios, function listarUsuariosRoute() {
@@ -76,13 +80,27 @@ registerIf(listarInstrutoresHandler, function listarInstrutoresRoute() {
 });
 
 // 📝 Atualizar perfil (admin)
-registerIf(usuarioAdministradorController?.atualizarPerfil, function atualizarPerfilRoute() {
+// compat: aceita possíveis nomes de função no controller
+const atualizarPerfilHandler =
+  usuarioAdministradorController?.atualizarPerfil ||
+  usuarioAdministradorController?.atualizarPerfilUsuario ||
+  usuarioAdministradorController?.updatePerfil;
+
+registerIf(atualizarPerfilHandler, function atualizarPerfilRoute() {
+  // ✅ aceita PATCH (REST “parcial”) e PUT (compat com frontend atual)
   router.patch(
     "/:id/perfil",
     authMiddleware,
     authorizeRoles("administrador"),
     validarId,
-    usuarioAdministradorController.atualizarPerfil
+    atualizarPerfilHandler
+  );
+  router.put(
+    "/:id/perfil",
+    authMiddleware,
+    authorizeRoles("administrador"),
+    validarId,
+    atualizarPerfilHandler
   );
 });
 
