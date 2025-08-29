@@ -50,10 +50,10 @@ app.set("trust proxy", 1);
 // 🛡️ Segurança sem quebrar embeds/iframes de outras origens
 app.use(
   helmet({
-    contentSecurityPolicy: false,          // deixa o frontend controlar se necessário
-    crossOriginEmbedderPolicy: false,      // evita COEP
-    crossOriginOpenerPolicy: false,        // evita COOP
-    crossOriginResourcePolicy: { policy: "cross-origin" }, // permite assets externos
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+    crossOriginOpenerPolicy: false,
+    crossOriginResourcePolicy: { policy: "cross-origin" },
     hsts: process.env.NODE_ENV === "production" ? undefined : false,
   })
 );
@@ -68,9 +68,7 @@ if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
 // 🔌 DB (garante conexão/tentativa inicial)
 require("./db");
 
-// 🌐 CORS
-// Permite lista do .env (CORS_ORIGINS="https://site1.com,https://site2.com")
-// + localhost em dev + subdomínios vercel (*.vercel.app)
+/* 🌐 CORS — DEVE vir antes de qualquer rota ou auth */
 const fromEnv = (process.env.CORS_ORIGINS || "")
   .split(",")
   .map((s) => s.trim())
@@ -90,27 +88,29 @@ const vercelRegex = /^https:\/\/[a-z0-9-]+\.vercel\.app$/i;
 
 const corsOptions = {
   origin(origin, cb) {
-    // Sem origin: permitir (ex: curl, health, SSR)
-    if (!origin) return cb(null, true);
+    if (!origin) return cb(null, true); // curl/SSR/health
     if (allowedOrigins.includes(origin) || vercelRegex.test(origin)) {
       return cb(null, true);
     }
+    // rejeita outras origens; o browser bloqueará sem vazar headers
     return cb(new Error("CORS bloqueado: " + origin));
   },
-  credentials: true,
-  optionsSuccessStatus: 204,
-  maxAge: 60 * 60, // cache preflight 1h
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+  exposedHeaders: ["Content-Disposition"],
+  credentials: true, // ok mesmo usando Bearer
+  maxAge: 60 * 60,    // preflight cache 1h
 };
 
+// aplica CORS globalmente
+app.use(cors(corsOptions));
+// ajuda caches/CDNs a variarem por Origin
 app.use((req, res, next) => {
-  cors(corsOptions)(req, res, (err) => {
-    if (err) {
-      // Responde JSON amigável em bloqueio CORS
-      return res.status(403).json({ erro: String(err.message || err) });
-    }
-    next();
-  });
+  res.setHeader("Vary", "Origin");
+  next();
 });
+// responde a TODOS os preflights com os headers CORS já aplicados
+app.options("*", cors(corsOptions), (req, res) => res.sendStatus(204));
 
 // 📨 body parsers
 app.use(express.json({ limit: "10mb" }));
@@ -121,14 +121,11 @@ app.use(express.static(path.join(__dirname, "public")));
 
 // 📝 Logger em dev
 if (process.env.NODE_ENV !== "production") {
-  app.use((req, res, next) => {
+  app.use((req, _res, next) => {
     console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
     next();
   });
 }
-
-// 🧪 Preflight helper (evita 404 em OPTIONS)
-app.options("*", cors(corsOptions));
 
 // 🧯 Rate limiters
 const loginLimiter = rateLimit({
@@ -150,7 +147,7 @@ const recuperarSenhaLimiter = rateLimit({
 // 🔐 login
 app.use("/api/login", loginLimiter, loginRoute);
 
-// 📌 Rotas da API
+/* 📌 Rotas da API (CORS já está aplicado acima) */
 app.use("/api/administrador/turmas", turmasRouteAdministrador);
 app.use("/api/agenda", agendaRoute);
 app.use("/api/avaliacoes", avaliacoesRoute);
@@ -195,10 +192,11 @@ app.use((req, res) => {
   res.status(404).json({ erro: "Rota não encontrada" });
 });
 
-// erro global
-app.use((err, req, res, next) => {
+// erro global (mantém headers CORS, pois CORS já foi aplicado acima)
+app.use((err, req, res, _next) => {
   console.error("Erro inesperado:", err.stack || err.message || err);
-  res.status(500).json({ erro: "Erro interno do servidor" });
+  const status = err.status || 500;
+  res.status(status).json({ erro: err.message || "Erro interno do servidor" });
 });
 
 // 🚀 start + graceful shutdown
@@ -211,10 +209,8 @@ function shutdown(signal) {
   console.log(`\n${signal} recebido. Encerrando servidor...`);
   server.close(() => {
     console.log("✅ HTTP fechado.");
-    // Se você tiver pool/conexão DB exportada, feche aqui antes do process.exit(0).
     process.exit(0);
   });
-  // força encerramento se travar
   setTimeout(() => {
     console.warn("⏱️ Forçando shutdown.");
     process.exit(1);
