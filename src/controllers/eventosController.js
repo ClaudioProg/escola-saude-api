@@ -268,7 +268,7 @@ async function buscarEventoPorId(req, res) {
            FROM datas_turma
           WHERE turma_id = $1
        GROUP BY horario_inicio, horario_fim
-       ORDER BY COUNT(*) DESC, horario_inicio NULLS LAST, horario_fim NULLS LAST
+       ORDER BY c DESC, horario_inicio NULLS LAST, horario_fim NULLS LAST
           LIMIT 1`,
         [t.id]
       );
@@ -296,48 +296,43 @@ async function buscarEventoPorId(req, res) {
         horario_fim: toHm(r.horario_fim),
       })).filter(d => d.data);
 
-      // fallback: se não houver datas_turma, tenta presenças; se falhar, ignora (sem 500)
+      // fallback: se não houver datas_turma, tenta presenças (coluna compatível)
       if (datas.length === 0) {
         try {
-          const presQ = await client.query(
+          // alguns bancos têm p.data; no teu, é p.data_presenca — vamos tentar nessa ordem
+          const presA = await client.query(
             `SELECT DISTINCT (p.data::date) AS d
                FROM presencas p
               WHERE p.turma_id = $1
               ORDER BY d`,
             [t.id]
           );
-          datas = presQ.rows
+          datas = presA.rows
             .map(r => ({ data: toYmd(r.d), horario_inicio, horario_fim }))
             .filter(d => d.data);
-        } catch (_e1) {
-          try {
-            const presQ = await client.query(
-              `SELECT DISTINCT (p.data_presenca::date) AS d
-                 FROM presencas p
-                WHERE p.turma_id = $1
-                ORDER BY d`,
-              [t.id]
-            );
-            datas = presQ.rows
-              .map(r => ({ data: toYmd(r.d), horario_inicio, horario_fim }))
-              .filter(d => d.data);
-          } catch (_e2) {
-            console.log('ℹ️ Sem fallback por presenças (coluna ausente).');
-          }
+        } catch {
+          const presB = await client.query(
+            `SELECT DISTINCT (p.data_presenca::date) AS d
+               FROM presencas p
+              WHERE p.turma_id = $1
+              ORDER BY d`,
+            [t.id]
+          );
+          datas = presB.rows
+            .map(r => ({ data: toYmd(r.d), horario_inicio, horario_fim }))
+            .filter(d => d.data);
         }
       }
 
-      // contagens
+      // contagens — teu esquema NÃO tem status/cancelada
       const inscritosQ = await client.query(
-        `SELECT 
-           COUNT(*)                                   AS total,
-           COUNT(*) FILTER (WHERE COALESCE(cancelada,false)=false AND COALESCE(status,'') IN ('confirmada','aprovada','inscrito')) AS confirmados
-         FROM inscricoes
-         WHERE turma_id = $1`,
+        `SELECT COUNT(*) AS total
+           FROM inscricoes
+          WHERE turma_id = $1`,
         [t.id]
       );
       const inscritos = Number(inscritosQ.rows[0]?.total || 0);
-      const inscritos_confirmados = Number(inscritosQ.rows[0]?.confirmados || 0);
+      const inscritos_confirmados = inscritos; // sem status, tratamos todos como confirmados
       const vagas_preenchidas = inscritos_confirmados;
 
       turmas.push({
@@ -471,8 +466,7 @@ async function atualizarEvento(req, res) {
         local = COALESCE($4, local),
         tipo = COALESCE($5, tipo),
         unidade_id = COALESCE($6, unidade_id),
-        publico_alvo = COALESCE($7, publico_alvo),
-        atualizado_em = NOW()
+        publico_alvo = COALESCE($7, publico_alvo)
       WHERE id = $1
       `,
       [eventoId, titulo ?? null, descricao ?? null, local ?? null, tipo ?? null, unidade_id ?? null, publico_alvo ?? null]
@@ -750,9 +744,9 @@ async function getAgendaEventos(req, res) {
   try {
     let rows;
     try {
-      ({ rows } = await query(sqlBase(false), [])); // tenta p.data
-    } catch (_e1) {
-      ({ rows } = await query(sqlBase(true), []));  // fallback p.data_presenca
+      ({ rows } = await query(sqlBase(false), [])); // tenta p.data (compat)
+    } catch {
+      ({ rows } = await query(sqlBase(true), []));  // fallback p.data_presenca (teu esquema)
     }
 
     res.set('X-Agenda-Handler', 'eventosController:getAgendaEventos@estrita');
@@ -808,12 +802,8 @@ async function listarEventosDoinstrutor(req, res) {
           t.vagas_total, t.carga_horaria,
 
           (SELECT COUNT(*) FROM inscricoes i WHERE i.turma_id = t.id) AS inscritos,
+          (SELECT COUNT(*) FROM inscricoes i WHERE i.turma_id = t.id) AS inscritos_confirmados
 
-          (SELECT COUNT(*) FROM inscricoes i
-            WHERE i.turma_id = t.id
-              AND COALESCE(i.cancelada, false) = false
-              AND COALESCE(i.status,'') IN ('confirmada','aprovada','inscrito')
-          ) AS inscritos_confirmados
         FROM turmas t
         WHERE t.evento_id = $1
         ORDER BY t.data_inicio
@@ -891,7 +881,7 @@ async function listarDatasDaTurma(req, res) {
     }
 
     if (via === 'presencas') {
-      // tenta presencas.data; se falhar, tenta presencas.data_presenca
+      // tenta presencas.data; se falhar, tenta presencas.data_presenca (teu caso)
       const sqlA = `
         SELECT DISTINCT
           to_char(p.data::date, 'YYYY-MM-DD') AS data,
@@ -916,11 +906,11 @@ async function listarDatasDaTurma(req, res) {
       try {
         const { rows } = await query(sqlA, [turmaId]);
         return res.json(rows);
-      } catch (_e1) {
+      } catch {
         try {
           const { rows } = await query(sqlB, [turmaId]);
           return res.json(rows);
-        } catch (_e2) {
+        } catch {
           return res.json([]); // sem 500
         }
       }
