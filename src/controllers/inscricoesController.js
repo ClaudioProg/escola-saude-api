@@ -2,7 +2,7 @@
 /* eslint-disable no-console */
 const db = require('../db');
 const { send: enviarEmail } = require('../utils/email');
-const { toBrDateOnlyString } = require('../utils/data'); // ✅ usa formatador sem “pulo”
+const { formatarDataBR } = require('../utils/data');
 const { criarNotificacao } = require('./notificacoesController');
 
 /* ────────────────────────────────────────────────────────────────
@@ -19,20 +19,20 @@ async function getResumoTurma(turmaId) {
     SELECT
       t.id,
 
-      /* período calculado */
+      /* período calculado - como STRING YYYY-MM-DD */
       COALESCE(
-        (SELECT MIN(dt.data)::date FROM datas_turma dt WHERE dt.turma_id = t.id),
-        (SELECT MIN(p.data_presenca)::date FROM presencas p WHERE p.turma_id = t.id),
-        t.data_inicio
+        (SELECT to_char(MIN(dt.data)::date, 'YYYY-MM-DD') FROM datas_turma dt WHERE dt.turma_id = t.id),
+        (SELECT to_char(MIN(p.data_presenca)::date, 'YYYY-MM-DD') FROM presencas p WHERE p.turma_id = t.id),
+        to_char(t.data_inicio, 'YYYY-MM-DD')
       ) AS data_inicio,
 
       COALESCE(
-        (SELECT MAX(dt.data)::date FROM datas_turma dt WHERE dt.turma_id = t.id),
-        (SELECT MAX(p.data_presenca)::date FROM presencas p WHERE p.turma_id = t.id),
-        t.data_fim
+        (SELECT to_char(MAX(dt.data)::date, 'YYYY-MM-DD') FROM datas_turma dt WHERE dt.turma_id = t.id),
+        (SELECT to_char(MAX(p.data_presenca)::date, 'YYYY-MM-DD') FROM presencas p WHERE p.turma_id = t.id),
+        to_char(t.data_fim, 'YYYY-MM-DD')
       ) AS data_fim,
 
-      /* horários calculados (par mais frequente) */
+      /* horários calculados (par mais frequente) -> HH:MM */
       COALESCE(
         (
           SELECT to_char(z.hi, 'HH24:MI') FROM (
@@ -205,72 +205,72 @@ async function inscreverEmTurma(req, res) {
     );
     const usuario = userRows[0];
 
-    // 9) Notificação (best-effort) — usa datas calculadas (YYYY-MM-DD -> dd/MM/aaaa)
-    try {
-      const dataIni = resumo?.data_inicio ? toBrDateOnlyString(String(resumo.data_inicio).slice(0,10)) : '';
-      const dataFim = resumo?.data_fim ? toBrDateOnlyString(String(resumo.data_fim).slice(0,10)) : '';
-      const hi = (resumo?.horario_inicio || '08:00').slice(0,5);
-      const hf = (resumo?.horario_fim || '17:00').slice(0,5);
+    // Datas legíveis (utils/data já trata "YYYY-MM-DD" sem criar Date)
+const dataIni = resumo?.data_inicio ? formatarDataBR(resumo.data_inicio) : '';
+const dataFim = resumo?.data_fim ? formatarDataBR(resumo.data_fim) : '';
+const hi = (resumo?.horario_inicio || '').slice(0,5);
+const hf = (resumo?.horario_fim || '').slice(0,5);
 
-      const mensagem =
-`✅ Sua inscrição foi confirmada com sucesso no evento "${evento.titulo}".
+// Fallback: se faltar uma das pontas, mostra o que houver; se não houver nada, "a definir"
+const periodoStr =
+  dataIni && dataFim ? `${dataIni} a ${dataFim}` :
+  dataIni || dataFim ? (dataIni || dataFim) :
+  'a definir';
+
+// --- NOTIFICAÇÃO
+const mensagem = `
+✅ Sua inscrição foi confirmada com sucesso no evento "${evento.titulo}".
 
 - Turma: ${turma.nome}
-- Período: ${dataIni}${dataIni && dataFim ? ' a ' : ''}${dataFim}
+- Período: ${periodoStr}
 - Horário: ${hi} às ${hf}
 - Carga horária: ${turma.carga_horaria} horas
-- Local: ${evento.local}`;
+- Local: ${evento.local}
+`.trim();
 
-      await criarNotificacao(
-        usuario_id,
-        mensagem,
-        { tipo: 'inscricao', titulo: `Inscrição confirmada: ${evento.titulo}`, turma_id, evento_id: evento.id }
-      );
-    } catch (e) {
-      console.error('⚠️ Falha ao criar notificação (não bloqueante):', e?.message);
-    }
+await criarNotificacao(usuario_id, mensagem, null);
 
-    // 10) E-mail (best-effort) — usa datas calculadas (sem criar Date)
-    try {
-      if (usuario?.email) {
-        const dataIni = resumo?.data_inicio ? toBrDateOnlyString(String(resumo.data_inicio).slice(0,10)) : '';
-        const dataFim = resumo?.data_fim ? toBrDateOnlyString(String(resumo.data_fim).slice(0,10)) : '';
-        const hi = (resumo?.horario_inicio || '08:00').slice(0,5);
-        const hf = (resumo?.horario_fim || '17:00').slice(0,5);
+// --- E-MAIL
+const html = `
+  <h2>Olá, ${usuario.nome}!</h2>
+  <p>Sua inscrição foi confirmada com sucesso.</p>
+  <h3>📌 Detalhes da Inscrição</h3>
+  <p>
+    <strong>Evento:</strong> ${evento.titulo}<br/>
+    <strong>Turma:</strong> ${turma.nome}<br/>
+    <strong>Período:</strong> ${periodoStr}<br/>
+    <strong>Horário:</strong> ${hi} às ${hf}<br/>
+    <strong>Carga horária:</strong> ${turma.carga_horaria} horas<br/>
+    <strong>Local:</strong> ${evento.local}
+  </p>
+  <p>📍 Em caso de dúvidas, entre em contato com a equipe da Escola da Saúde.</p>
+  <p>Atenciosamente,<br/><strong>Equipe da Escola da Saúde</strong></p>
+`;
 
-        const html = `
-          <h2>Olá, ${usuario.nome}!</h2>
-          <p>Sua inscrição foi confirmada com sucesso.</p>
-          <h3>📌 Detalhes da Inscrição</h3>
-          <p>
-            <strong>Evento:</strong> ${evento.titulo}<br/>
-            <strong>Turma:</strong> ${turma.nome}<br/>
-            <strong>Período:</strong> ${dataIni}${dataIni && dataFim ? ' a ' : ''}${dataFim}<br/>
-            <strong>Horário:</strong> ${hi} às ${hf}<br/>
-            <strong>Carga horária:</strong> ${turma.carga_horaria} horas<br/>
-            <strong>Local:</strong> ${evento.local}
-          </p>
-          <p>📍 Em caso de dúvidas, entre em contato com a equipe da Escola da Saúde.</p>
-          <p>Atenciosamente,<br/><strong>Equipe da Escola da Saúde</strong></p>
-        `;
-
-        await enviarEmail({
-          to: usuario.email,
-          subject: '✅ Inscrição Confirmada – Escola da Saúde',
-          text: `Olá, ${usuario.nome}!
+const texto = `Olá, ${usuario.nome}!
 
 Sua inscrição foi confirmada com sucesso no evento "${evento.titulo}".
 
 Turma: ${turma.nome}
-Período: ${dataIni}${dataIni && dataFim ? ' a ' : ''}${dataFim}
+Período: ${periodoStr}
 Horário: ${hi} às ${hf}
 Carga horária: ${turma.carga_horaria} horas
 Local: ${evento.local}
 
 Atenciosamente,
-Equipe da Escola da Saúde`,
-          html
-        });
+Equipe da Escola da Saúde`;
+
+if (usuario?.email) {
+  await enviarEmail({
+    to: usuario.email,
+    subject: '✅ Inscrição Confirmada – Escola da Saúde',
+    text: texto,    // usa periodoStr (com 1 ou 2 pontas)
+    html,
+  });
+} else {
+  console.warn('⚠️ E-mail do usuário ausente — pulando envio.');
+}
+
       } else {
         console.warn('⚠️ E-mail do usuário ausente — pulando envio.');
       }

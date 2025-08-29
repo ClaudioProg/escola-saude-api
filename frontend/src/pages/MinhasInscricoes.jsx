@@ -36,6 +36,26 @@ function safeTs(dateIso, time) {
   const d = makeLocalDate(dateIso, time);
   return isValidDate(d) ? d.getTime() : 0;
 }
+
+// 🔗 Gera o link direto das STRINGS da API (mais robusto que converter pra Date antes)
+function buildAgendaHref(item) {
+  try {
+    const inicioStr = `${item?.data_inicio ?? ""} ${item?.horario_inicio ?? "00:00"}`.trim();
+    // dataFim é opcional; se vier vazia, a lib assume +90min
+    const fimStr = item?.data_fim ? `${item.data_fim} ${item?.horario_fim ?? "23:59"}`.trim() : undefined;
+
+    return gerarLinkGoogleAgenda({
+      titulo: item?.titulo ?? "",
+      dataInicio: inicioStr,     // passa como string — o util já converte corretamente
+      dataFim: fimStr,           // opcional
+      descricao: `Evento: ${item?.titulo ?? ""} organizado pela Escola da Saúde.`,
+      local: item?.local || "Santos/SP",
+    });
+  } catch (e) {
+    console.warn("[Agenda] Falha ao gerar link:", e?.message, item);
+    return null;
+  }
+}
 // -----------------------------------------------------------------------------
 
 export default function MinhasInscricoes() {
@@ -61,7 +81,6 @@ export default function MinhasInscricoes() {
     try {
       const data = await apiGet("/api/inscricoes/minhas");
       const arr = Array.isArray(data) ? data : [];
-      // Ordena pelo término (mais recente primeiro), com fallback
       const ordenadas = [...arr].sort((a, b) => {
         const aEnd = safeTs(a.data_fim || a.data_inicio, a.horario_fim || a.horario_inicio || "23:59:59");
         const bEnd = safeTs(b.data_fim || b.data_inicio, b.horario_fim || b.horario_inicio || "23:59:59");
@@ -133,7 +152,6 @@ export default function MinhasInscricoes() {
           <ul className="space-y-4 w-full sm:max-w-2xl mx-auto">
             <AnimatePresence>
               {inscricoes.map((item) => {
-                // Datas locais p/ Agenda e status
                 const dataInicioLocal = makeLocalDate(item.data_inicio, item.horario_inicio || "00:00:00");
                 const dataFimLocal    = makeLocalDate(item.data_fim,    item.horario_fim    || "23:59:59");
                 const status = obterStatusEvento(
@@ -143,23 +161,9 @@ export default function MinhasInscricoes() {
                   item.horario_fim
                 );
 
-                // Botão Google Agenda — só se der para montar URL com segurança
-                let agendaHref = null;
-                if (isValidDate(dataInicioLocal) && isValidDate(dataFimLocal)) {
-                  try {
-                    agendaHref = gerarLinkGoogleAgenda({
-                      titulo: item.titulo,
-                      dataInicio: dataInicioLocal,
-                      dataFim: dataFimLocal,
-                      descricao: `Evento: ${item.titulo} organizado pela Escola da Saúde.`,
-                      local: item.local || "Santos/SP",
-                    });
-                  } catch (e) {
-                    console.warn("Agenda: impossível gerar link para", item?.titulo, e?.message);
-                  }
-                }
+                const agendaHref = buildAgendaHref(item);
+                const podeAgendar = Boolean(agendaHref);
 
-                // Instrutor pode ser string agregada
                 const instrutores = Array.isArray(item.instrutor)
                   ? item.instrutor.map((i) => i?.nome || String(i)).filter(Boolean)
                   : String(item.instrutor || "")
@@ -225,18 +229,24 @@ export default function MinhasInscricoes() {
                     </p>
 
                     <div className="flex flex-wrap gap-3 mt-4">
-                      {agendaHref && (
-                        <BotaoSecundario
-                          as="a"
-                          href={agendaHref}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="w-full sm:w-auto"
-                          aria-label="Adicionar curso à Google Agenda"
-                        >
-                          Adicionar ao Google Agenda
-                        </BotaoSecundario>
-                      )}
+                      <BotaoSecundario
+                        as="a"
+                        href={agendaHref || "#"}
+                        onClick={(e) => {
+                          if (!podeAgendar) {
+                            e.preventDefault();
+                            toast.info("Não foi possível gerar o link da Google Agenda para este curso.");
+                          }
+                        }}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={`w-full sm:w-auto ${!podeAgendar ? "opacity-60" : ""}`}
+                        aria-label="Adicionar curso à Google Agenda"
+                        aria-disabled={!podeAgendar}
+                        title={podeAgendar ? "Adicionar ao Google Agenda" : "Datas insuficientes para agendar"}
+                      >
+                        Adicionar ao Google Agenda
+                      </BotaoSecundario>
 
                       <BotaoPrimario
                         className="w-full sm:w-auto"
