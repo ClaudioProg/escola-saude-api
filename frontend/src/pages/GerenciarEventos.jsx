@@ -115,11 +115,9 @@ function normalizeTurmas(turmas = []) {
   const out = (turmas || []).map((t) => {
     const nome = (t.nome || "Turma Única").trim();
 
-    // base de horários da turma (fallback p/ encontros)
     const hiBase = hhmm(t.horario_inicio || "08:00");
     const hfBase = hhmm(t.horario_fim || "17:00");
 
-    // Converte encontros/datas para o formato alvo
     const fonte =
       (Array.isArray(t.encontros) && t.encontros.length
         ? t.encontros
@@ -131,7 +129,6 @@ function normalizeTurmas(turmas = []) {
       (fonte || []).map((e) => toEncontroObj(e, hiBase, hfBase)).filter(Boolean)
     );
 
-    // Deriva datas/horários quando necessário
     const di = ymd(t.data_inicio) || encontros[0]?.data || "";
     const df = ymd(t.data_fim) || encontros.at(-1)?.data || "";
     const hi = hhmm(t.horario_inicio || encontros[0]?.inicio || "08:00");
@@ -142,11 +139,16 @@ function normalizeTurmas(turmas = []) {
       : Number(t.vagas);
     const vagasOk = Number.isFinite(vagas) && vagas > 0 ? vagas : 1;
 
-    let ch = Number.isFinite(Number(t.carga_horaria))
-      ? Number(t.carga_horaria)
-      : 0;
+    let ch = Number.isFinite(Number(t.carga_horaria)) ? Number(t.carga_horaria) : 0;
     if (ch <= 0 && encontros.length) ch = cargaHorariaFromEncontros(encontros);
     if (ch <= 0) ch = 1;
+
+    // 👇 compatibilidade com o backend (turmasController cria/atualiza espera `datas`)
+    const datas = encontros.map((e) => ({
+      data: e.data,
+      horario_inicio: e.inicio,
+      horario_fim: e.fim,
+    }));
 
     return clean({
       nome,
@@ -156,7 +158,8 @@ function normalizeTurmas(turmas = []) {
       horario_fim: hf,
       vagas_total: vagasOk,
       carga_horaria: ch,
-      encontros, // 👈 agora vai no payload
+      encontros, // mantém para o futuro/UX
+      datas,     // ✅ necessário para o backend atual
     });
   });
   console.log("🧩 normalizeTurmas: out →", out);
@@ -166,26 +169,27 @@ function normalizeTurmas(turmas = []) {
 /* =============================
    Fetch auxiliares
    ============================= */
-async function fetchTurmasDoEvento(eventoId) {
-  console.log(`🔎 fetchTurmasDoEvento id=${eventoId}`);
-  const urls = [
-    `/api/turmas/por-evento/${eventoId}`,
-    `/api/turmas/evento/${eventoId}`,
-    `/api/eventos/${eventoId}`, // pode vir embutido
-  ];
-  for (const url of urls) {
-    try {
-      console.log("→ tentando:", url);
-      const resp = await apiGet(url);
-      if (Array.isArray(resp)) return resp;
-      if (Array.isArray(resp?.turmas)) return resp.turmas;
-      if (Array.isArray(resp?.lista)) return resp.lista;
-    } catch (e) {
-      console.log("✖️ falhou:", url, e?.message);
+   async function fetchTurmasDoEvento(eventoId) {
+    console.log(`🔎 fetchTurmasDoEvento id=${eventoId}`);
+    const urls = [
+      `/api/eventos/${eventoId}/turmas`,      // ✅ rota nova
+      `/api/turmas/por-evento/${eventoId}`,   // legados
+      `/api/turmas/evento/${eventoId}`,
+      `/api/eventos/${eventoId}`,             // pode vir embutido
+    ];
+    for (const url of urls) {
+      try {
+        console.log("→ tentando:", url);
+        const resp = await apiGet(url);
+        if (Array.isArray(resp)) return resp;
+        if (Array.isArray(resp?.turmas)) return resp.turmas;
+        if (Array.isArray(resp?.lista)) return resp.lista;
+      } catch (e) {
+        console.log("✖️ falhou:", url, e?.message);
+      }
     }
+    return [];
   }
-  return [];
-}
 
 async function fetchEventoCompleto(eventoId) {
   try {
@@ -366,17 +370,34 @@ export default function GerenciarEventos() {
       const isEdicao = Boolean(eventoSelecionado?.id);
 
       if (isEdicao) {
-        // 1) pega o modelo completo do servidor
-        const baseServidor = await fetchEventoCompleto(eventoSelecionado.id);
+        // 1) tenta pegar o modelo completo do servidor
+        let baseServidor = await fetchEventoCompleto(eventoSelecionado.id);
+      
+        // 1b) fallback: se falhar/500, monta base mínima com turmas atuais
         if (!baseServidor) {
-          toast.error("Não foi possível carregar o evento completo para atualizar.");
-          return;
+          const turmasDoEvento =
+            Array.isArray(eventoSelecionado?.turmas) && eventoSelecionado.turmas.length
+              ? eventoSelecionado.turmas
+              : await fetchTurmasDoEvento(eventoSelecionado.id);
+      
+          baseServidor = {
+            ...eventoSelecionado,
+            turmas: turmasDoEvento,
+            titulo: eventoSelecionado?.titulo || "",
+            descricao: eventoSelecionado?.descricao || "",
+            local: eventoSelecionado?.local || "",
+            tipo: eventoSelecionado?.tipo || "",
+            unidade_id: eventoSelecionado?.unidade_id,
+            publico_alvo: eventoSelecionado?.publico_alvo || "",
+            instrutor: extractInstrutorIds(eventoSelecionado?.instrutor),
+          };
+          console.log("🛟 baseServidor (fallback):", baseServidor);
         }
-
-        // 2) monta o body espelho (merge + normalizações mínimas)
+      
+        // 2) body espelho
         const body = buildUpdateBody(baseServidor, dadosDoModal);
-
-        // validações mínimas antes do PUT
+      
+        // validações mínimas
         if (!Array.isArray(body.instrutor) || body.instrutor.length === 0) {
           toast.error("Selecione ao menos um instrutor.");
           return;
@@ -385,12 +406,13 @@ export default function GerenciarEventos() {
           toast.error("Inclua ao menos uma turma com campos obrigatórios.");
           return;
         }
-
+      
         // 3) PUT
         console.log("➡️ PUT /api/eventos/:id BODY →", body);
         const resp = await apiPut(`/api/eventos/${eventoSelecionado.id}`, body);
         console.log("📬 resposta bruta:", resp);
       } else {
+        
         // criação
         const base = {
           titulo: (dadosDoModal?.titulo || "").trim(),

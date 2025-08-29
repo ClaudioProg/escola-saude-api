@@ -43,6 +43,24 @@ function somaHorasDatas(datas = []) {
   return totalMin / 60;
 }
 
+// moda simples: pega o valor mais frequente; em empate, menor lexical
+function moda(values = []) {
+  const cnt = new Map();
+  for (const v of values) {
+    if (!v) continue;
+    cnt.set(v, (cnt.get(v) || 0) + 1);
+  }
+  let best = null;
+  let bestN = -1;
+  for (const [v, n] of cnt.entries()) {
+    if (n > bestN || (n === bestN && String(v) < String(best))) {
+      best = v;
+      bestN = n;
+    }
+  }
+  return best;
+}
+
 /* ===== 🎯 Criar turma ===== */
 // POST /api/turmas
 async function criarTurma(req, res) {
@@ -190,7 +208,7 @@ async function adicionarInstrutor(req, res) {
 
 /* ===== 📋 Listar turmas por evento (com datas e vagas) ===== */
 // GET /api/eventos/:evento_id/turmas
-// 🔁 SUBSTITUA a função inteira por esta versão
+// Esta função usa datas_turma para período/horários.
 async function listarTurmasPorEvento(req, res) {
   const { evento_id } = req.params;
 
@@ -244,7 +262,7 @@ async function listarTurmasPorEvento(req, res) {
       });
     }
 
-    // (3) Inscritos por turma (sem cancelada/status — sua tabela não tem)
+    // (3) Inscritos por turma
     const inscritosResult = await db.query(
       `
       SELECT 
@@ -272,15 +290,17 @@ async function listarTurmasPorEvento(req, res) {
       });
     }
 
-    // (4) Montagem + carga_horaria_real + vagas_disponiveis
+    // (4) Montagem + carga_horaria_real + vagas_disponiveis (horários por moda)
     const resposta = turmas
       .map((t) => {
         const datas = datasPorTurma[t.id] || [];
         const carga_horaria_real = somaHorasDatas(datas);
 
-        // recalcular min/max a partir das datas reais se houver
         const min = datas[0]?.data || (t.data_inicio ? String(t.data_inicio).slice(0,10) : null);
         const max = datas[datas.length - 1]?.data || (t.data_fim ? String(t.data_fim).slice(0,10) : null);
+
+        const hiModa = moda(datas.map(d => d.horario_inicio).filter(Boolean));
+        const hfModa = moda(datas.map(d => d.horario_fim).filter(Boolean));
 
         const inscritos = inscritosPorTurma[t.id] || [];
         const totalInscritos = inscritos.length;
@@ -293,11 +313,11 @@ async function listarTurmasPorEvento(req, res) {
           evento_titulo: t.evento_titulo,
           data_inicio: min,
           data_fim: max,
-          horario_inicio: t.horario_inicio ? String(t.horario_inicio).slice(0,5) : null,
-          horario_fim:   t.horario_fim   ? String(t.horario_fim).slice(0,5)   : null,
+          horario_inicio: hiModa || (t.horario_inicio ? String(t.horario_inicio).slice(0,5) : null),
+          horario_fim:   hfModa || (t.horario_fim   ? String(t.horario_fim).slice(0,5)   : null),
           vagas_total,
           vagas_disponiveis,
-          carga_horaria: t.carga_horaria,      // se ainda quiser devolver a planejada
+          carga_horaria: t.carga_horaria,      // planejada
           carga_horaria_real,                  // calculada pelos encontros
           datas,                               // encontros reais
           inscritos,                           // lista de inscritos
@@ -306,7 +326,6 @@ async function listarTurmasPorEvento(req, res) {
           vagas_preenchidas: totalInscritos,
         };
       })
-      // ordenar pelo mais próximo (min data) asc; ajuste se quiser desc
       .sort((a, b) => String(a.data_inicio || '').localeCompare(String(b.data_inicio || '')));
 
     return res.json(resposta);
@@ -385,10 +404,10 @@ async function listarTurmasDoInstrutor(req, res) {
       [turmaIds]
     );
 
-    // (4) Presenças (assumindo coluna "data" em presencas)
+    // (4) Presenças (usa coluna data_presenca)
     const presencasResult = await db.query(
       `
-      SELECT turma_id, usuario_id, data::date AS data, presente
+      SELECT turma_id, usuario_id, data_presenca::date AS data, presente
       FROM presencas
       WHERE turma_id = ANY($1::int[])
       `,
@@ -405,11 +424,11 @@ async function listarTurmasDoInstrutor(req, res) {
 
     const turmasComInscritos = turmas.map((turma) => {
       const datas = datasPorTurma[turma.id] || [];
-      const min = datas[0]?.data || turma.data_inicio;
-      const max = datas[datas.length - 1]?.data || turma.data_fim;
+      const min = datas[0]?.data || (turma.data_inicio ? String(turma.data_inicio).slice(0,10) : null);
+      const max = datas[datas.length - 1]?.data || (turma.data_fim ? String(turma.data_fim).slice(0,10) : null);
 
       // fimTurma: até 48h após o último dia (ajuste se necessário)
-      const fimTurma = max ? new Date(`${max}T23:59:59`) : new Date(turma.data_fim);
+      const fimTurma = max ? new Date(`${max}T23:59:59`) : (turma.data_fim ? new Date(turma.data_fim) : new Date());
       fimTurma.setTime(fimTurma.getTime() + 48 * 60 * 60 * 1000);
 
       const inscritos = inscritosResult.rows
@@ -418,7 +437,7 @@ async function listarTurmasDoInstrutor(req, res) {
           const datasPresenca = datas.map((d) => {
             const dataISO = d.data;
             const hoje = new Date();
-            const dataAula = new Date(`${dataISO}T12:00:00`);
+            const dataAula = new Date(`${dataISO}T12:00:00`); // meio-dia evita DST
             const chave = `${turma.id}-${inscrito.usuario_id}-${dataISO}`;
 
             const presente = !!mapaPresencas[chave];
@@ -494,9 +513,6 @@ async function listarInstrutorDaTurma(req, res) {
 }
 
 /* ===== 🗑️ Excluir turma ===== */
-// DELETE /api/turmas/:id
-/* ===== 🗑️ Excluir turma (seguro, com verificação) ===== */
-// DELETE /api/turmas/:id
 async function excluirTurma(req, res) {
   const turmaId = Number(req.params.id);
   if (!turmaId) {
@@ -543,13 +559,11 @@ async function excluirTurma(req, res) {
       await client.query("DELETE FROM inscricoes WHERE turma_id = $1", [turmaId]);
     }
 
-    // 4) Excluir datas_turma (se a tabela existir no esquema atual)
-    // Se seu projeto não usa mais datas_turma, este DELETE será ignorado pelo PG se a tabela não existir.
-    // Caso sua migração tenha removido a tabela, você pode retirar este bloco.
+    // 4) Excluir datas_turma
     try {
       await client.query("DELETE FROM datas_turma WHERE turma_id = $1", [turmaId]);
     } catch (_) {
-      // silencioso: tabela pode não existir em alguns ambientes
+      // silencioso (em algum ambiente legacy a tabela pode não existir)
     }
 
     // 5) Excluir a turma
