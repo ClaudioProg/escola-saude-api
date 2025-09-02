@@ -1,106 +1,117 @@
-// 📁 src/pages/ConfirmarPresenca.jsx
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
-const apiBase =
-  (import.meta.env && import.meta.env.VITE_API_BASE_URL) || "/api";
+const apiBase = (import.meta.env && import.meta.env.VITE_API_BASE_URL) || "/api";
 
 export default function ConfirmarPresenca() {
   const { turmaId: turmaIdParam } = useParams();
   const [sp] = useSearchParams();
+  const location = useLocation();
   const navigate = useNavigate();
 
   const [status, setStatus] = useState("loading"); // loading | ok | error | auth
   const [mensagem, setMensagem] = useState("Processando sua confirmação...");
 
-  const turmaId = useMemo(
-    () => (turmaIdParam ? parseInt(turmaIdParam, 10) : null),
-    [turmaIdParam]
-  );
+  // 1) tenta :turmaId da rota
+  // 2) tenta query ?turma / ?turma_id / ?id
+  // 3) tenta decodificar pathname quebrado: /%2Fpresenca%2F13 -> /presenca/13
+  const turmaId = useMemo(() => {
+    // rota
+    const byParam = turmaIdParam ? parseInt(turmaIdParam, 10) : null;
+    if (byParam) return byParam;
 
-  // aceita ?t=, ?token= ou ?codigo= (compat)
-  const tokenParam = sp.get("t") || sp.get("token") || sp.get("codigo");
+    // query
+    const byQuery =
+      parseInt(sp.get("turma") || sp.get("turma_id") || sp.get("id") || "", 10) || null;
+    if (byQuery) return byQuery;
 
-  // perfil do usuário para decidir retorno
-  const destinoDefault = useMemo(() => {
+    // path possivelmente codificado
     try {
-      const perfil = (JSON.parse(localStorage.getItem("usuario") || "{}")?.perfil || "").toLowerCase();
-      if (perfil === "instrutor" || perfil === "administrador") return "/agenda-instrutor";
-    } catch {}
-    return "/dashboard";
-  }, []);
+      const decoded = decodeURIComponent(location.pathname || "");
+      // normaliza // -> /
+      const norm = decoded.replace(/\/{2,}/g, "/");
+      const m = norm.match(/\/presenca\/(\d+)/);
+      if (m && m[1]) return parseInt(m[1], 10);
+    } catch (_) {}
+    return null;
+  }, [turmaIdParam, sp, location.pathname]);
 
-  // helper POST com bearer e propagando status em caso de erro
+  const tokenParam = sp.get("t") || sp.get("token"); // link com token opcional
+
   async function postJson(url, body) {
-    const jwt = localStorage.getItem("token");
+    const token = localStorage.getItem("token");
     const res = await fetch(`${apiBase}${url}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify(body),
     });
-    let data = {};
-    try { data = await res.json(); } catch {}
+    const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      const err = new Error(
+      const msg =
         data?.erro ||
-          data?.message ||
-          `Erro HTTP ${res.status}${res.statusText ? " - " + res.statusText : ""}`
-      );
-      // propaga status pra chamador poder diferenciar 401
-      err.status = res.status;
-      throw err;
+        data?.message ||
+        `Erro HTTP ${res.status}${res.statusText ? " - " + res.statusText : ""}`;
+      throw new Error(msg);
     }
     return data;
   }
 
-  const executar = useCallback(async () => {
-    // precisa estar autenticado (as rotas são protegidas)
-    const hasAuth = !!localStorage.getItem("token");
-    if (!hasAuth) {
-      setStatus("auth");
-      setMensagem("Você precisa entrar para confirmar a presença.");
-      return;
-    }
-
-    setStatus("loading");
-    setMensagem("Processando sua confirmação...");
-
-    try {
-      if (tokenParam) {
-        // fluxo via token assinado
-        await postJson(`/api/presencas/confirmar-via-token`, { token: tokenParam });
-      } else if (turmaId) {
-        // fluxo via turmaId
-        await postJson(`/api/presencas/confirmarPresencaViaQR`, { turma_id: turmaId });
-      } else {
-        throw Object.assign(new Error("Link inválido."), { status: 400 });
-      }
-      setStatus("ok");
-      setMensagem("Presença registrada com sucesso!");
-      // redireciona suave
-      setTimeout(() => navigate(destinoDefault, { replace: true }), 1800);
-    } catch (e) {
-      if (e?.status === 401) {
+  useEffect(() => {
+    (async () => {
+      // precisa estar autenticado (as rotas exigem auth)
+      const hasAuth = !!localStorage.getItem("token");
+      if (!hasAuth) {
         setStatus("auth");
-        setMensagem("Sua sessão expirou. Entre novamente para confirmar a presença.");
-      } else {
+        setMensagem("Você precisa entrar para confirmar a presença.");
+        // guarda o retorno (já decodificado/normalizado)
+        const back = (() => {
+          try {
+            const dec = decodeURIComponent(window.location.pathname + window.location.search);
+            return encodeURIComponent(dec.replace(/\/{2,}/g, "/"));
+          } catch {
+            return encodeURIComponent(window.location.pathname + window.location.search);
+          }
+        })();
+        setTimeout(() => {
+          navigate(`/login?redirect=${back}`, { replace: true });
+        }, 1200);
+        return;
+      }
+
+      try {
+        // 1) token assinado no link
+        if (tokenParam) {
+          await postJson(`/api/presencas/confirmar-via-token`, { token: tokenParam });
+          setStatus("ok");
+          setMensagem("Presença registrada com sucesso!");
+        } else if (turmaId) {
+          // 2) fluxo com turmaId
+          await postJson(`/api/presencas/confirmarPresencaViaQR`, { turma_id: turmaId });
+          setStatus("ok");
+          setMensagem("Presença registrada com sucesso!");
+        } else {
+          throw new Error("Link inválido. (turma ausente)");
+        }
+      } catch (e) {
         setStatus("error");
         setMensagem(
           e?.message ||
-            "Falha na confirmação. Verifique se a turma está no período correto."
+            "Falha na confirmação. Hoje pode não estar dentro do período da turma."
         );
       }
-    }
-  }, [tokenParam, turmaId, destinoDefault, navigate]);
 
-  useEffect(() => {
-    executar();
-  }, [executar]);
+      // redireciona suave após mostrar a mensagem
+      setTimeout(() => {
+        navigate("/agenda-instrutor", { replace: true });
+      }, 1800);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [turmaId, tokenParam]);
 
-  const corMsg =
+  const color =
     status === "ok"
       ? "text-green-700"
       : status === "error"
@@ -108,20 +119,6 @@ export default function ConfirmarPresenca() {
       : status === "auth"
       ? "text-amber-700"
       : "text-gray-600";
-
-  const titulo =
-    status === "ok"
-      ? "Confirmação concluída"
-      : status === "error"
-      ? "Falha na confirmação"
-      : status === "auth"
-      ? "Autenticação necessária"
-      : "Confirmando presença...";
-
-  const handleLogin = () => {
-    const back = encodeURIComponent(window.location.pathname + window.location.search);
-    navigate(`/login?redirect=${back}`, { replace: true });
-  };
 
   return (
     <main className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-zinc-900 px-4">
@@ -135,10 +132,16 @@ export default function ConfirmarPresenca() {
               : "text-zinc-800 dark:text-white"
           }`}
         >
-          {titulo}
+          {status === "ok"
+            ? "Confirmação concluída"
+            : status === "error"
+            ? "Falha na confirmação"
+            : status === "auth"
+            ? "Autenticação necessária"
+            : "Confirmando presença..."}
         </h1>
 
-        <p className={`mt-3 ${corMsg}`}>{mensagem}</p>
+        <p className={`mt-3 ${color}`}>{mensagem}</p>
 
         {status === "loading" && (
           <div className="mt-6 flex justify-center">
@@ -146,30 +149,12 @@ export default function ConfirmarPresenca() {
           </div>
         )}
 
-        <div className="mt-6 flex gap-2 justify-center">
-          {status === "auth" ? (
-            <button
-              onClick={handleLogin}
-              className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-[#1b4332] text-white hover:bg-[#14532d]"
-            >
-              Fazer login
-            </button>
-          ) : (
-            <button
-              onClick={executar}
-              className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-[#1b4332] text-white hover:bg-[#14532d]"
-            >
-              Tentar novamente
-            </button>
-          )}
-
-          <button
-            onClick={() => navigate(-1)}
-            className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-gray-200 dark:bg-zinc-700 dark:text-white hover:bg-gray-300"
-          >
-            Voltar
-          </button>
-        </div>
+        <button
+          onClick={() => navigate(-1)}
+          className="mt-6 inline-flex items-center justify-center px-4 py-2 rounded-lg bg-[#1b4332] text-white hover:bg-[#14532d]"
+        >
+          Voltar
+        </button>
       </div>
     </main>
   );

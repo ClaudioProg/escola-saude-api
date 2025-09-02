@@ -12,6 +12,7 @@ import autoTable from "jspdf-autotable";
 import { QRCodeCanvas } from "qrcode.react";
 import { formatarCPF, formatarDataBrasileira } from "../utils/data";
 import { apiGet, apiGetTurmaDatasAuto } from "../services/api"; // ⬅️ import do helper novo
+import { createRoot } from "react-dom/client";
 
 // ---------- helpers anti-fuso ----------
 const ymd = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
@@ -521,40 +522,69 @@ const obterDatasReaisSemSequencial = async (turma, estados) => {
           toast.error("Turma não encontrada.");
           return;
         }
-        const url = `https://escoladasaude.vercel.app/presenca/${turmaId}`;
-
-        const canvasContainer = document.createElement("div");
-        const qrCodeElement = (<QRCodeCanvas value={url} size={300} />);
-        const ReactDOM = await import("react-dom");
-        ReactDOM.render(qrCodeElement, canvasContainer);
-
-        setTimeout(() => {
-          const canvas = canvasContainer.querySelector("canvas");
-          const dataUrl = canvas?.toDataURL("image/png");
-          if (!dataUrl) {
-            console.error("QR: canvas sem dataUrl");
-            toast.error("Erro ao gerar imagem do QR Code.");
-            return;
-          }
-
-          const doc = new jsPDF({ orientation: "landscape" });
-          doc.setFontSize(24);
-          doc.setFont("helvetica", "bold");
-          doc.text(nomeEvento, 148, 30, { align: "center" });
-
-          const nomeInstrutor = usuario?.nome || "Instrutor";
-          doc.setFontSize(16);
-          doc.setFont("helvetica", "normal");
-          doc.text(`Instrutor: ${nomeInstrutor}`, 148, 40, { align: "center" });
-
-          doc.addImage(dataUrl, "PNG", 98, 50, 100, 100);
-          doc.setFontSize(12);
-          doc.setTextColor(60);
-          doc.text("Escaneie este QR Code para confirmar sua presença", 148, 160, { align: "center" });
-
-          doc.save(`qr_presenca_turma_${turmaId}.pdf`);
-          toast.success("🔳 QR Code gerado!");
-        }, 500);
+  
+        // ✅ base dinâmica (sem hard-code)
+        const base =
+          (typeof window !== "undefined" && window.location?.origin) ||
+          "https://escoladasaude.vercel.app";
+  
+        const url = `${base.replace(/\/+$/, "")}/presenca?turma=${encodeURIComponent(
+          turmaId
+        )}`;
+  
+        // Render offscreen + limpeza correta
+        const container = document.createElement("div");
+        container.style.position = "fixed";
+        container.style.left = "-99999px";
+        document.body.appendChild(container);
+  
+        const root = createRoot(container);
+        root.render(<QRCodeCanvas value={url} size={300} includeMargin />);
+  
+        // pequeno tick p/ o canvas aparecer
+        await new Promise((r) => setTimeout(r, 50));
+  
+        const canvas = container.querySelector("canvas");
+        const dataUrl = canvas?.toDataURL?.("image/png");
+  
+        // cleanup
+        root.unmount();
+        container.remove();
+  
+        if (!dataUrl) {
+          console.error("QR: canvas sem dataUrl");
+          toast.error("Erro ao gerar imagem do QR Code.");
+          return;
+        }
+  
+        // === PDF (centralizado) ===
+        const doc = new jsPDF({ orientation: "landscape" });
+        const pageW = doc.internal.pageSize.getWidth();
+        const centerX = pageW / 2;
+  
+        doc.setFontSize(24);
+        doc.setFont("helvetica", "bold");
+        doc.text(String(nomeEvento || turma?.nome || "Evento"), centerX, 30, { align: "center" });
+  
+        const nomeInstrutor = usuario?.nome || "Instrutor";
+        doc.setFontSize(16);
+        doc.setFont("helvetica", "normal");
+        doc.text(`Instrutor: ${nomeInstrutor}`, centerX, 40, { align: "center" });
+  
+        const qrW = 110;
+        doc.addImage(dataUrl, "PNG", centerX - qrW / 2, 50, qrW, qrW);
+  
+        doc.setFontSize(12);
+        doc.setTextColor(60);
+        doc.text("Escaneie este QR Code para confirmar sua presença", centerX, 50 + qrW + 14, { align: "center" });
+  
+        // URL visível (útil se a câmera falhar)
+        doc.setFontSize(10);
+        doc.setTextColor(100);
+        doc.text(url, centerX, 50 + qrW + 22, { align: "center" });
+  
+        doc.save(`qr_presenca_turma_${turmaId}.pdf`);
+        toast.success("🔳 QR Code gerado!");
       } catch (err) {
         const info = {
           name: err?.name,
