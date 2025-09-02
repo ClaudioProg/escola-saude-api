@@ -82,6 +82,7 @@ export default function DashboardInstrutor() {
   const [modalAssinaturaAberto, setModalAssinaturaAberto] = useState(false);
   const [assinatura, setAssinatura] = useState(null);
   const [presencasPorTurma, setPresencasPorTurma] = useState({});
+  const [datasPorTurma, setDatasPorTurma] = useState({});
 
   // 🔧 contexto/ambiente (aparece uma vez)
   useEffect(() => {
@@ -317,16 +318,91 @@ export default function DashboardInstrutor() {
       warn("getDatasReaisTurma fallback via intervalo:", e?.message || e);
     }
 
-    // 3) último caso (evitar “pane visual”): intervalo sequencial
-    const di = ymd(turma.data_inicio);
-    const df = ymd(turma.data_fim);
-    const seq = rangeDiasYMD(di, df);
-    return seq.map((d) => ({
-      data: d,
-      horario_inicio: turma.horario_inicio?.slice?.(0, 5) || "",
-      horario_fim: turma.horario_fim?.slice?.(0, 5) || "",
-    }));
+    
+    // 3) NÃO gerar intervalo sequencial
+    return [];
   };
+
+  const carregarDatasPorTurma = async (turmaIdRaw) => {
+    const turmaId = parseInt(turmaIdRaw);
+    if (!turmaId || isNaN(turmaId)) return;
+  
+    try {
+      // 1) tenta serviço dedicado (datas_turma -> fallback interno que NÃO usa intervalo)
+      const lista = await apiGetTurmaDatasAuto(turmaId);
+      const normalizada = Array.isArray(lista)
+        ? lista
+            .map((d) => ({
+              data: ymd(d.data) || ymd(d),
+              horario_inicio: d.horario_inicio?.slice?.(0, 5) || "",
+              horario_fim: d.horario_fim?.slice?.(0, 5) || "",
+            }))
+            .filter((x) => x.data)
+        : [];
+  
+      // 2) se vier vazio, tenta do payload de presenças detalhado (sem intervalo sequencial!)
+      const cache = presencasPorTurma[turmaId]?.detalhado?.datas;
+      const viaPresencas = Array.isArray(cache)
+        ? cache
+            .map((d) => ({
+              data: ymd(d.data) || ymd(d),
+              horario_inicio: d.horario_inicio?.slice?.(0, 5) || "",
+              horario_fim: d.horario_fim?.slice?.(0, 5) || "",
+            }))
+            .filter((x) => x.data)
+        : [];
+  
+      const finais = normalizada.length ? normalizada : viaPresencas;
+  
+      setDatasPorTurma((prev) => ({ ...prev, [turmaId]: finais }));
+    } catch (e) {
+      // não usar intervalo sequencial como fallback
+      console.warn("Falha ao carregar datas reais da turma:", e?.message || e);
+      setDatasPorTurma((prev) => ({ ...prev, [turmaId]: [] }));
+    }
+  };
+
+  // Normaliza item de data
+const normDataItem = (d, turma) => ({
+  data: ymd(d?.data) || ymd(d),
+  horario_inicio: d?.horario_inicio?.slice?.(0,5) || turma?.horario_inicio?.slice?.(0,5) || "",
+  horario_fim: d?.horario_fim?.slice?.(0,5) || turma?.horario_fim?.slice?.(0,5) || "",
+});
+
+// 🔒 Obtém SOMENTE datas reais (datas_turma -> presenças.detalhado -> turma.datas). Nunca gera intervalo!
+const obterDatasReaisSemSequencial = async (turma, estados) => {
+  const turmaId = turma?.id;
+  if (!turmaId) return [];
+
+  // 1) cache do estado (datasPorTurma)
+  const cacheEstado = estados?.datasPorTurma?.[turmaId];
+  if (Array.isArray(cacheEstado) && cacheEstado.length) {
+    return cacheEstado.map(d => normDataItem(d, turma)).filter(x => x.data);
+  }
+
+  // 2) serviço dedicado de datas_turma
+  try {
+    const lista = await apiGetTurmaDatasAuto(turmaId);
+    if (Array.isArray(lista) && lista.length) {
+      return lista.map(d => normDataItem(d, turma)).filter(x => x.data);
+    }
+  } catch (_) {}
+
+  // 3) payload de presenças detalhado
+  const viaPres = estados?.presencasPorTurma?.[turmaId]?.detalhado?.datas;
+  if (Array.isArray(viaPres) && viaPres.length) {
+    return viaPres.map(d => normDataItem(d, turma)).filter(x => x.data);
+  }
+
+  // 4) (opcional) turma.datas no próprio objeto
+  const viaTurma = turma?.datas;
+  if (Array.isArray(viaTurma) && viaTurma.length) {
+    return viaTurma.map(d => normDataItem(d, turma)).filter(x => x.data);
+  }
+
+  // 🚫 nunca gerar intervalo sequencial aqui
+  return [];
+};
 
   // 📄 Relatórios
   const gerarRelatorioPDF = async (turmaId) => {
@@ -403,12 +479,11 @@ export default function DashboardInstrutor() {
         return;
       }
 
-      // ⬇️ usa DATAS REAIS (datas_turma/presenças) com fallback para intervalo
-      const datasReais = await getDatasReaisTurma(turma);
-      if (!Array.isArray(datasReais) || datasReais.length === 0) {
-        toast.error("Não há datas para gerar a lista.");
-        return;
-      }
+      // ⬇️ usa SOMENTE datas reais (sem intervalo sequencial)
+      const datasReais = await obterDatasReaisSemSequencial(
+      turma,
+      { datasPorTurma, presencasPorTurma }
+      );
 
       const doc = new jsPDF();
 
@@ -554,6 +629,8 @@ export default function DashboardInstrutor() {
           setTurmaExpandidaInscritos={setTurmaExpandidaInscritos}
           turmaExpandidaAvaliacoes={turmaExpandidaAvaliacoes}
           setTurmaExpandidaAvaliacoes={setTurmaExpandidaAvaliacoes}
+          datasPorTurma={datasPorTurma}
+          carregarDatasPorTurma={carregarDatasPorTurma}
         />
 
         <ModalAssinatura

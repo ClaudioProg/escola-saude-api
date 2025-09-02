@@ -6,28 +6,37 @@ import Skeleton from "react-loading-skeleton";
 
 import Breadcrumbs from "../components/Breadcrumbs";
 import NadaEncontrado from "../components/NadaEncontrado";
-import { formatarDataBrasileira } from "../utils/data";
-import { apiGet } from "../services/api"; // ✅ serviço centralizado
+// ❌ não vamos usar formatarDataBrasileira aqui para evitar bug de fuso
+// import { formatarDataBrasileira } from "../utils/data";
+import { apiGet } from "../services/api";
 
 // ---------- helpers anti-fuso ----------
+// devolve YYYY-MM-DD do "agora" (horário local)
 function todayYMD() {
-  const d = new Date(); // horário local do cliente
+  const d = new Date();
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
+// extrai YYYY-MM-DD de "2025-09-03" ou "2025-09-03T14:00:00"
 function ymd(input) {
   if (!input) return "";
   const s = String(input);
-  // aceita YYYY-MM-DD e YYYY-MM-DDTHH:mm[:ss]
   const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   return m ? `${m[1]}-${m[2]}-${m[3]}` : "";
 }
+// cria Date no MEIO-DIA local para evitar pulo de dia (usar só p/ ordenar/comparar)
 function toLocalDate(ymdStr) {
   if (!ymdStr) return null;
-  // fixa meio-dia local para evitar pulo de dia
   return new Date(`${ymdStr}T12:00:00`);
+}
+// formata YYYY-MM-DD -> dd/MM/yyyy sem criar Date
+function formatarBRdeYMD(ymdStr) {
+  const s = ymd(ymdStr);
+  if (!s) return "";
+  const [a, m, d] = s.split("-");
+  return `${d}/${m}/${a}`;
 }
 // ---------------------------------------
 
@@ -39,17 +48,16 @@ export default function AgendaInstrutor() {
   let usuario = {};
   try { usuario = JSON.parse(localStorage.getItem("usuario") || "{}"); } catch {}
   const nome = usuario?.nome || "";
-  const hojeYMD = todayYMD(); // ✅ local, não UTC
+  const hojeYMD = todayYMD();
 
   useEffect(() => {
     (async () => {
       setCarregandoAgenda(true);
       try {
-        // 👇 Não redireciona em 403; só mostra mensagem
         const data = await apiGet("/api/agenda/instrutor", { on403: "silent" });
 
-        // garante array e ordena por data de referência (local)
         const arr = Array.isArray(data) ? data : [];
+        // ordena por data de referência usando MEIO-DIA local
         const ordenada = arr.slice().sort((a, b) => {
           const ay = ymd(a.data_referencia || a.data_inicio);
           const by = ymd(b.data_referencia || b.data_inicio);
@@ -74,7 +82,7 @@ export default function AgendaInstrutor() {
 
   const definirStatus = (dataISO) => {
     if (!dataISO) return "🟢 Programado";
-    // Comparação lexicográfica funciona para yyyy-mm-dd
+    // comparação lexicográfica ok para YYYY-MM-DD
     if (dataISO === hojeYMD) return "🟡 Hoje";
     if (dataISO > hojeYMD) return "🟢 Programado";
     return "🔴 Realizado";
@@ -133,13 +141,10 @@ export default function AgendaInstrutor() {
                     transition={{ duration: 0.25 }}
                     tabIndex={0}
                     className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow border border-green-300 dark:border-green-600 focus:outline-none focus:ring-2 focus:ring-lousa"
-                    aria-label={`Aula de ${formatarDataBrasileira(
-                      item.data_inicio
-                    )} a ${formatarDataBrasileira(item.data_fim)}`}
+                    aria-label={`Aula de ${formatarBRdeYMD(dataIniISO)} a ${formatarBRdeYMD(dataFimISO)}`}
                   >
                     <p className="text-sm text-gray-700 dark:text-gray-200">
-                      <strong>📅 Data:</strong> {formatarDataBrasileira(item.data_inicio)} até{" "}
-                      {formatarDataBrasileira(item.data_fim)}
+                      <strong>📅 Data:</strong> {formatarBRdeYMD(dataIniISO)} até {formatarBRdeYMD(dataFimISO)}
                     </p>
                     <p className="text-sm text-gray-700 dark:text-gray-200">
                       <strong>🕒 Horário:</strong> {formatarHorario(item.horario)}

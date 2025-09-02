@@ -52,7 +52,7 @@ function combineDateAndTimeLocal(dateOnly, timeHHmm, fallbackEnd = false) {
   if (!base) return null;
 
   if (timeHHmm) {
-    const [h, m] = timeHHmm.split(":").map(Number);
+    const [h, m] = String(timeHHmm).split(":").map(Number);
     base.setHours(Number.isFinite(h) ? h : 0, Number.isFinite(m) ? m : 0, 0, 0);
   } else if (fallbackEnd) {
     base.setHours(23, 59, 59, 999);
@@ -80,9 +80,10 @@ function generateDateRangeLocal(startDateOnly, endDateOnly) {
 export default function ListaInscritos({
   inscritos = [],
   turma,
-  token,              // pode continuar recebendo, mas não vamos usar
-  presencas = [],
+  token,               // pode continuar recebendo, mas não vamos usar
+  presencas = [],      // espera registros por dia (usuario_id, data, presente)
   carregarPresencas,
+  datas = [],          // ✅ novo: datas reais [{ data, horario_inicio, horario_fim }]
 }) {
   const [confirmando, setConfirmando] = useState(null);
   const agora = new Date();
@@ -90,9 +91,10 @@ export default function ListaInscritos({
   const formatarCPF = (cpf) =>
     cpf?.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, "$1.$2.$3-$4") || "CPF inválido";
 
-  /** Dentro do prazo: até 48h após o término daquele dia (dataRef + horario_fim) */
-  const dentroDoPrazoDeConfirmacao = (dataRef) => {
-    const fimDia = combineDateAndTimeLocal(dataRef, turma?.horario_fim, true);
+  /** Dentro do prazo: até 48h após o término daquele dia (dataRef + horario_fim do dia ou da turma) */
+  const dentroDoPrazoDeConfirmacao = (dataRef, horarioFimDoDia, horarioFimTurma) => {
+    const fimRef = horarioFimDoDia || horarioFimTurma || null;
+    const fimDia = combineDateAndTimeLocal(dataRef, fimRef, true);
     if (!fimDia) return false;
     const limite = new Date(fimDia.getTime() + 48 * 60 * 60 * 1000);
     return agora <= limite;
@@ -122,13 +124,27 @@ export default function ListaInscritos({
     }
   };
 
+  // 🔁 Normaliza as "linhas de datas" que iremos exibir
+  // Se vier "datas" reais do pai, usamos elas; senão, caímos no intervalo sequencial.
+  const linhasDatas = Array.isArray(datas) && datas.length > 0
+    ? datas
+        .map((d) => ({
+          data: isDateOnly(d?.data) ? d.data : ymdLocalString(d?.data),
+          hi: (d?.horario_inicio || turma?.horario_inicio || "").slice(0, 5),
+          hf: (d?.horario_fim || turma?.horario_fim || "").slice(0, 5),
+        }))
+        .filter((x) => x.data)
+        .sort((a, b) => a.data.localeCompare(b.data))
+    : generateDateRangeLocal(turma?.data_inicio, turma?.data_fim).map((d) => ({
+        data: d,
+        hi: (turma?.horario_inicio || "").slice(0, 5),
+        hf: (turma?.horario_fim || "").slice(0, 5),
+      }));
+
   // logs de apoio
   console.log("📋 Inscritos:", inscritos);
   console.log("📋 Presenças recebidas:", presencas);
-  console.log("📆 Intervalo de datas da turma:", turma?.data_inicio, "→", turma?.data_fim);
-
-  // Intervalo de datas da turma no fuso local
-  const datasTurma = generateDateRangeLocal(turma?.data_inicio, turma?.data_fim);
+  console.log("📅 Datas (linhas exibidas):", linhasDatas);
 
   return (
     <motion.div
@@ -147,7 +163,10 @@ export default function ListaInscritos({
       ) : (
         <ul className="space-y-4">
           {inscritos.map((inscrito) => {
-            const presencasUsuario = presencas.filter((p) => p.usuario_id === inscrito.usuario_id);
+            // registros de presença por dia desse usuário
+            const presencasUsuario = Array.isArray(presencas)
+              ? presencas.filter((p) => p.usuario_id === inscrito.usuario_id)
+              : [];
 
             return (
               <li key={inscrito.usuario_id} className="p-4 bg-white dark:bg-zinc-800 rounded-xl shadow">
@@ -166,26 +185,28 @@ export default function ListaInscritos({
                     <thead>
                       <tr className="text-gray-500 dark:text-gray-300">
                         <th className="p-2">Data</th>
+                        <th className="p-2">Horário</th>
                         <th className="p-2">Status</th>
                         <th className="p-2">Ação</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {datasTurma.map((dataRef) => {
-                        const dataBR = dataRef.split("-").reverse().join("/");
+                      {linhasDatas.map(({ data, hi, hf }) => {
+                        const dataBR = data.split("-").reverse().join("/");
+                        const horarioStr = (hi || hf) ? `${hi || ""}${hi && hf ? " – " : ""}${hf || ""}` : "—";
 
                         // presença registrada nesse dia?
                         const p = presencasUsuario.find(
-                          (px) => (px?.data || "").slice(0, 10) === dataRef
+                          (px) => (px?.data || "").slice(0, 10) === data
                         );
                         const isPresente = p?.presente === true;
 
                         // liberação do botão: após 60min do horário de início daquele dia
-                        const inicioDia = combineDateAndTimeLocal(dataRef, turma?.horario_inicio);
+                        const inicioDia = combineDateAndTimeLocal(data, hi);
                         const passou60min =
                           inicioDia ? agora > new Date(inicioDia.getTime() + 60 * 60000) : false;
 
-                        const podeConfirmar = passou60min && dentroDoPrazoDeConfirmacao(dataRef);
+                        const podeConfirmar = passou60min && dentroDoPrazoDeConfirmacao(data, hf, turma?.horario_fim);
 
                         let statusBadge = null;
                         if (isPresente) {
@@ -209,17 +230,18 @@ export default function ListaInscritos({
                         }
 
                         return (
-                          <tr key={dataRef} className="border-t border-gray-200 dark:border-gray-700">
+                          <tr key={data} className="border-t border-gray-200 dark:border-gray-700">
                             <td className="p-2">{dataBR}</td>
+                            <td className="p-2">{horarioStr}</td>
                             <td className="p-2">{statusBadge}</td>
                             <td className="p-2">
                               {!isPresente && podeConfirmar && (
                                 <button
-                                  disabled={confirmando === `${inscrito.usuario_id}-${dataRef}`}
-                                  onClick={() => confirmarPresenca(inscrito.usuario_id, dataRef)}
+                                  disabled={confirmando === `${inscrito.usuario_id}-${data}`}
+                                  onClick={() => confirmarPresenca(inscrito.usuario_id, data)}
                                   className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded"
                                 >
-                                  {confirmando === `${inscrito.usuario_id}-${dataRef}`
+                                  {confirmando === `${inscrito.usuario_id}-${data}`
                                     ? "Confirmando..."
                                     : "✅ Confirmar presença"}
                                 </button>

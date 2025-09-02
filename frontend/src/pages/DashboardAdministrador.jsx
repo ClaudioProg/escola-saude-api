@@ -6,14 +6,23 @@ import autoTable from "jspdf-autotable";
 
 import Breadcrumbs from "../components/Breadcrumbs";
 import CardEventoadministrador from "../components/CardEventoadministrador";
-import Spinner from "../components/Spinner";
+// import Spinner from "../components/Spinner";
 import { apiGet } from "../services/api";
 
-// ---------- helpers anti-fuso ----------
+/* ========= Helpers anti-fuso e formatação ========= */
 const ymd = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
 const toLocalDate = (ymdStr, hhmm = "12:00") =>
   ymdStr ? new Date(`${ymdStr}T${(hhmm || "12:00").slice(0, 5)}:00`) : null;
-// --------------------------------------
+
+const onlyHHmm = (s) => (typeof s === "string" ? s.slice(0, 5) : "");
+const formatarCPF = (v) =>
+  (String(v || "").replace(/\D/g, "").padStart(11, "0") || "")
+    .replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
+const formatarDataBR = (isoYMD) => {
+  const d = ymd(isoYMD);
+  return d ? d.split("-").reverse().join("/") : "";
+};
+/* ================================================== */
 
 export default function DashboardAdministrador() {
   const [nome, setNome] = useState("");
@@ -55,6 +64,8 @@ export default function DashboardAdministrador() {
       }
     })();
   }, []);
+
+  /* ========= Carregadores ========= */
 
   const carregarTurmas = async (eventoId) => {
     if (turmasPorEvento[eventoId]) return;
@@ -113,6 +124,9 @@ export default function DashboardAdministrador() {
     }
   };
 
+  /* ========= PDFs ========= */
+
+  // (1) Relatório de presença (mantido)
   const gerarRelatorioPDF = async (turmaId) => {
     try {
       const data = await apiGet(`/api/presencas/relatorio-presencas/turma/${turmaId}`, { on403: "silent" });
@@ -128,13 +142,7 @@ export default function DashboardAdministrador() {
       autoTable(doc, {
         startY: 30,
         head: [["Nome", "CPF", "Presença"]],
-        body: alunos.map((a) => [
-          a.nome,
-          (a.cpf || "")
-            .replace(/\D/g, "")
-            .replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4"),
-          a.presente ? "Sim" : "Não",
-        ]),
+        body: alunos.map((a) => [a.nome, formatarCPF(a.cpf), a.presente ? "Sim" : "Não"]),
       });
 
       const finalY = (doc.lastAutoTable?.finalY || 30) + 10;
@@ -149,32 +157,84 @@ export default function DashboardAdministrador() {
     }
   };
 
+  // (2) PDF com dados do curso + lista de INSCRITOS (nome/cpf)
+  const gerarPdfInscritosTurma = async (turmaId) => {
+    try {
+      // Garante a lista de inscritos no cache
+      let inscritos = inscritosPorTurma[turmaId];
+      if (!Array.isArray(inscritos)) {
+        const data = await apiGet(`/api/inscricoes/turma/${turmaId}`, { on403: "silent" });
+        inscritos = Array.isArray(data) ? data : [];
+        setInscritosPorTurma((prev) => ({ ...prev, [turmaId]: inscritos }));
+      }
+
+      // Localiza o objeto da turma (procura em todas as listas já carregadas)
+      const todasTurmas = Object.values(turmasPorEvento).flat();
+      const turma = todasTurmas.find((t) => Number(t?.id) === Number(turmaId)) || {};
+
+      const eventoNome =
+        turma?.evento?.nome || turma?.evento?.titulo || turma?.titulo_evento || turma?.nome_evento || "Evento";
+      const turmaNome = turma?.nome || `Turma ${turmaId}`;
+      const di = ymd(turma?.data_inicio);
+      const df = ymd(turma?.data_fim);
+      const hi = onlyHHmm(turma?.horario_inicio);
+      const hf = onlyHHmm(turma?.horario_fim);
+      const vagas = Number(turma?.vagas || turma?.vagas_totais || 0);
+      const qtd = inscritos.length;
+      const perc = vagas > 0 ? Math.round((qtd / vagas) * 100) : null;
+
+      const doc = new jsPDF();
+      doc.setFontSize(16);
+      doc.text(`Lista de Inscritos — ${eventoNome}`, 14, 18);
+      doc.setFontSize(12);
+      doc.text(`${turmaNome}`, 14, 26);
+      if (di || df) doc.text(`Período: ${formatarDataBR(di)} a ${formatarDataBR(df)}`, 14, 32);
+      if (hi || hf) doc.text(`Horário: ${hi} às ${hf}`, 14, 38);
+      if (vagas || vagas === 0) doc.text(`Vagas: ${qtd}${vagas ? ` de ${vagas}` : ""}${perc !== null ? ` (${perc}%)` : ""}`, 14, 44);
+
+      autoTable(doc, {
+        startY: 50,
+        head: [["Nome", "CPF"]],
+        body: inscritos.map((i) => [i?.nome || "—", formatarCPF(i?.cpf)]),
+      });
+
+      doc.save(`inscritos_turma_${turmaId}.pdf`);
+      toast.success("📄 PDF de inscritos gerado!");
+    } catch (e) {
+      console.error(e);
+      toast.error("❌ Erro ao gerar PDF de inscritos.");
+    }
+  };
+
+  /* ========= UI / Lógica ========= */
+
   const toggleExpandir = (eventoId) => {
     setEventoExpandido(eventoExpandido === eventoId ? null : eventoId);
     carregarTurmas(eventoId);
   };
 
-  // Filtrar por status com datas agregadas (respeitando hora)
+  // Filtrar por status com datas agregadas (respeitando hora local)
   const filtrarPorStatus = (evento) => {
     const agora = new Date();
     const turmas = turmasPorEvento[evento.id] || [];
 
     const diAgg = ymd(evento.data_inicio_geral);
     const dfAgg = ymd(evento.data_fim_geral);
-    const hiAgg = (evento.horario_inicio_geral || "00:00").slice(0, 5);
-    const hfAgg = (evento.horario_fim_geral || "23:59").slice(0, 5);
+    const hiAgg = onlyHHmm(evento.horario_inicio_geral || "00:00");
+    const hfAgg = onlyHHmm(evento.horario_fim_geral || "23:59");
 
     let inicioDT = diAgg ? toLocalDate(diAgg, hiAgg) : null;
     let fimDT = dfAgg ? toLocalDate(dfAgg, hfAgg) : null;
 
+    // Fallback para o range real das turmas já carregadas
     if (!inicioDT || !fimDT) {
       const starts = [];
       const ends = [];
       for (const t of turmas) {
         const di = ymd(t.data_inicio);
         const df = ymd(t.data_fim);
-        const hi = (t.horario_inicio || "00:00").slice(0, 5);
-        const hf = (t.horario_fim || "23:59").slice(0, 5);
+        const hi = onlyHHmm(t.horario_inicio || "00:00");
+        const hf = onlyHHmm(t.horario_fim || "23:59");
         const s = di ? toLocalDate(di, hi) : null;
         const e = df ? toLocalDate(df, hf) : null;
         if (s) starts.push(s.getTime());
@@ -185,18 +245,23 @@ export default function DashboardAdministrador() {
     }
 
     if (!inicioDT || !fimDT) return filtroStatus === "todos";
-
     if (filtroStatus === "programado") return inicioDT > agora;
     if (filtroStatus === "em_andamento") return inicioDT <= agora && fimDT >= agora;
     if (filtroStatus === "encerrado") return fimDT < agora;
     return true;
   };
 
-  // Ordena eventos por data de início (local)
+  // Ordena eventos por data de início (LOCAL, com hora)
   const eventosOrdenados = useMemo(() => {
     return [...eventos].sort((a, b) => {
-      const aDT = toLocalDate(ymd(a.data_inicio_geral || a.data_inicio || a.data), (a.horario_inicio_geral || a.horario_inicio || "00:00"));
-      const bDT = toLocalDate(ymd(b.data_inicio_geral || b.data_inicio || b.data), (b.horario_inicio_geral || b.horario_inicio || "00:00"));
+      const aDT = toLocalDate(
+        ymd(a.data_inicio_geral || a.data_inicio || a.data),
+        onlyHHmm(a.horario_inicio_geral || a.horario_inicio || "00:00")
+      );
+      const bDT = toLocalDate(
+        ymd(b.data_inicio_geral || b.data_inicio || b.data),
+        onlyHHmm(b.horario_inicio_geral || b.horario_inicio || "00:00")
+      );
       if (!aDT && !bDT) return 0;
       if (!aDT) return 1;
       if (!bDT) return -1;
@@ -215,7 +280,9 @@ export default function DashboardAdministrador() {
       <Breadcrumbs />
 
       <div className="flex justify-between items-center bg-lousa text-white px-4 py-2 rounded-xl shadow mb-6">
-        <span>Seja bem-vindo(a), <strong>{nome}</strong></span>
+        <span>
+          Seja bem-vindo(a), <strong>{nome}</strong>
+        </span>
         <span className="font-semibold">Painel do administrador</span>
       </div>
 
@@ -262,7 +329,9 @@ export default function DashboardAdministrador() {
             avaliacoesPorTurma={avaliacoesPorTurma}
             presencasPorTurma={presencasPorTurma}
             carregarPresencas={carregarPresencas}
-            gerarRelatorioPDF={gerarRelatorioPDF}
+            // PDFs
+            gerarRelatorioPDF={gerarRelatorioPDF}            // presença
+            gerarPdfInscritosTurma={gerarPdfInscritosTurma}  // infos + inscritos
           />
         ))}
       </div>

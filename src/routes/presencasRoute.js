@@ -9,7 +9,7 @@ const db = require("../db");
 const {
   registrarPresenca,
   confirmarPresencaViaQR,
-  confirmarViaToken,              // ← novo
+  confirmarViaToken,
   confirmarPresencaSimples,
   registrarManual,
   confirmarHojeManual,
@@ -69,7 +69,7 @@ router.get("/validar", async (req, res) => {
 });
 
 /* -----------------------------
- * Rotas autenticadas
+ * Rotas AUTENTICADAS
  * ----------------------------- */
 
 // 1) Registro de presença (usuário; requer data válida do evento)
@@ -101,13 +101,13 @@ router.get(
 
 /* ====== Fluxo do QR Code ====== */
 
-// Novo fluxo usado pela página /validar (POST com body { turma_id })
+// POST com body { turma_id } — usado pela página /presenca/:turma_id
 router.post("/confirmarPresencaViaQR", authMiddleware, confirmarPresencaViaQR);
 
-// Fluxo seguro por token assinado (opcional/recomendado)
+// Fluxo seguro por token assinado (opcional)
 router.post("/confirmar-via-token", authMiddleware, confirmarViaToken);
 
-// Aliases de compatibilidade (legado por params):
+// Aliases de compatibilidade (legado por params)
 router.post("/confirmar-qr/:turma_id", authMiddleware, confirmarPresencaViaQR);
 router.get("/confirmar-qr/:turma_id", authMiddleware, confirmarPresencaViaQR); // legado GET
 router.get("/confirmar/:turma_id", authMiddleware, confirmarPresencaViaQR);    // legado GET
@@ -141,7 +141,13 @@ router.put(
   validarPresenca
 );
 
-// 7) Confirmar presença como instrutor (até 48h após o fim)
+/* ====== Confirmação pelo INSTRUTOR ======
+ * 👉 Esta é a rota que o front está chamando primeiro.
+ * Mantemos a tua rota original "confirmar-instrutor"
+ * e adicionamos aliases compatíveis com camelCase.
+ */
+
+// Rota original (hífens)
 router.post(
   "/confirmar-instrutor",
   authMiddleware,
@@ -149,7 +155,35 @@ router.post(
   confirmarPresencaInstrutor
 );
 
-// 8) Listar tudo (painel admin)
+// Alias camelCase pedido pelo front: /api/presencas/confirmarPresencaInstrutor
+router.post(
+  "/confirmarPresencaInstrutor",
+  authMiddleware,
+  permitirPerfis("instrutor", "administrador"),
+  confirmarPresencaInstrutor
+);
+
+// (Opcional) Outros aliases usados pelo fallback do front:
+router.post(
+  "/confirmar",
+  authMiddleware,
+  permitirPerfis("instrutor", "administrador"),
+  confirmarPresencaInstrutor
+);
+router.post(
+  "/confirmar-manual",
+  authMiddleware,
+  permitirPerfis("instrutor", "administrador"),
+  confirmarPresencaInstrutor
+);
+router.post(
+  "/confirmar_presenca",
+  authMiddleware,
+  permitirPerfis("instrutor", "administrador"),
+  confirmarPresencaInstrutor
+);
+
+/* ====== Admin: listar tudo ====== */
 router.get(
   "/admin/listar-tudo",
   authMiddleware,

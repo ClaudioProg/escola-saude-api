@@ -1,7 +1,7 @@
 // 📁 src/components/CardEventoadministrador.jsx
 import PropTypes from "prop-types";
 import { useEffect, useMemo } from "react";
-import { CalendarDays, Users, Star, BarChart } from "lucide-react";
+import { CalendarDays, Users, Star, BarChart, FileDown } from "lucide-react";
 import BadgeStatus from "./BadgeStatus";
 import CardTurmaadministrador from "./CardTurmaadministrador";
 
@@ -31,6 +31,10 @@ const ymd = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
 const toLocalDateFromYMD = (ymdStr, hhmm = "12:00") =>
   ymdStr ? new Date(`${ymdStr}T${(hhmm || "12:00").slice(0, 5)}:00`) : null;
 
+const formatarCPF = (v) =>
+  (String(v || "").replace(/\D/g, "").padStart(11, "0") || "")
+    .replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
+
 /* =========================
    Período do evento
    ========================= */
@@ -43,7 +47,10 @@ function getPeriodoEvento(evento, turmas) {
     const a = toLocalDate(ini);
     const b = toLocalDate(fim);
     if (!a || !b || isNaN(a) || isNaN(b)) return "Período não informado";
-    const sameDay = a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    const sameDay =
+      a.getFullYear() === b.getFullYear() &&
+      a.getMonth() === b.getMonth() &&
+      a.getDate() === b.getDate();
     if (sameDay) return formatarDataLocal(a);
     return `${formatarDataLocal(a)} até ${formatarDataLocal(b)}`;
   };
@@ -53,11 +60,11 @@ function getPeriodoEvento(evento, turmas) {
   if (Array.isArray(turmas) && turmas.length > 0) {
     const inicioMin = turmas.reduce((min, t) => {
       const dt = toLocalDate(t?.data_inicio);
-      return (!min || (dt && dt < min)) ? dt : min;
+      return !min || (dt && dt < min) ? dt : min;
     }, null);
     const fimMax = turmas.reduce((max, t) => {
       const dt = toLocalDate(t?.data_fim);
-      return (!max || (dt && dt > max)) ? dt : max;
+      return !max || (dt && dt > max) ? dt : max;
     }, null);
     return formatarPeriodo(inicioMin, fimMax);
   }
@@ -78,7 +85,8 @@ function getStatusEvento({ evento, turmas }) {
   let fimDT = dfAgg ? toLocalDateFromYMD(dfAgg, hfAgg) : null;
 
   if (!inicioDT || !fimDT) {
-    const starts = [], ends = [];
+    const starts = [],
+      ends = [];
     (turmas || []).forEach((t) => {
       const di = ymd(t.data_inicio);
       const df = ymd(t.data_fim);
@@ -100,11 +108,20 @@ function getStatusEvento({ evento, turmas }) {
 }
 
 /* =========================
-   Lógica de notas (igual ao CardEvento)
+   Lógica de notas
    ========================= */
 const CAMPOS_NOTA_EVENTO = [
-  "divulgacao_evento","recepcao","credenciamento","material_apoio","pontualidade",
-  "sinalizacao_local","conteudo_temas","estrutura_local","acessibilidade","limpeza","inscricao_online",
+  "divulgacao_evento",
+  "recepcao",
+  "credenciamento",
+  "material_apoio",
+  "pontualidade",
+  "sinalizacao_local",
+  "conteudo_temas",
+  "estrutura_local",
+  "acessibilidade",
+  "limpeza",
+  "inscricao_online",
 ];
 function notaEnumParaNumero(valor) {
   const n = (valor || "")
@@ -112,18 +129,32 @@ function notaEnumParaNumero(valor) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
   switch (n) {
-    case "otimo": return 5; case "bom": return 4; case "regular": return 3; case "ruim": return 2; case "pessimo": return 1;
-    default: return null;
+    case "otimo":
+      return 5;
+    case "bom":
+      return 4;
+    case "regular":
+      return 3;
+    case "ruim":
+      return 2;
+    case "pessimo":
+      return 1;
+    default:
+      return null;
   }
 }
 function calcularMediaEventoViaLista(avaliacoes) {
   if (!Array.isArray(avaliacoes) || avaliacoes.length === 0) return "—";
   const medias = avaliacoes
     .map((av) => {
-      let soma = 0, qtd = 0;
+      let soma = 0,
+        qtd = 0;
       CAMPOS_NOTA_EVENTO.forEach((campo) => {
         const v = notaEnumParaNumero(av[campo]);
-        if (v !== null) { soma += v; qtd++; }
+        if (v !== null) {
+          soma += v;
+          qtd++;
+        }
       });
       return qtd ? soma / qtd : null;
     })
@@ -148,16 +179,27 @@ export default function CardEventoadministrador({
   presencasPorTurma,
   carregarPresencas,
   gerarRelatorioPDF,
+  gerarPdfInscritosTurma, // 👈 novo
 }) {
-  const normalizaArr = (v) => (Array.isArray(v) ? v : (Array.isArray(v?.lista) ? v.lista : []));
+  const normalizaArr = (v) =>
+    Array.isArray(v) ? v : Array.isArray(v?.lista) ? v.lista : [];
 
-  // Estatísticas (mesma lógica, mas só quando expandido)
+  // Estatísticas (só quando expandido)
   const stats = useMemo(() => {
     if (!expandido || !Array.isArray(turmas)) {
-      return { totalInscritos: 0, totalPresentes: 0, presencaMedia: "0", totalAvaliacoes: 0, notaMedia: "—" };
+      return {
+        totalInscritos: 0,
+        totalPresentes: 0,
+        presencaMedia: "0",
+        totalAvaliacoes: 0,
+        notaMedia: "—",
+      };
     }
-    let totalInscritos = 0, totalPresentes = 0, totalAvaliacoes = 0;
-    const mediasDiretas = [], todasAvaliacoes = [];
+    let totalInscritos = 0,
+      totalPresentes = 0,
+      totalAvaliacoes = 0;
+    const mediasDiretas = [],
+      todasAvaliacoes = [];
 
     turmas.forEach((t) => {
       const inscritos = normalizaArr(inscritosPorTurma?.[t.id]);
@@ -167,7 +209,9 @@ export default function CardEventoadministrador({
       totalPresentes += presencas.filter((p) => p?.presente === true).length;
 
       const blocoAval = avaliacoesPorTurma?.[t.id] || {};
-      const avalArr = Array.isArray(blocoAval.avaliacoes) ? blocoAval.avaliacoes : normalizaArr(blocoAval);
+      const avalArr = Array.isArray(blocoAval.avaliacoes)
+        ? blocoAval.avaliacoes
+        : normalizaArr(blocoAval);
       const qtd = Number(blocoAval.total_avaliacoes);
       totalAvaliacoes += Number.isFinite(qtd) ? qtd : avalArr.length;
 
@@ -179,7 +223,9 @@ export default function CardEventoadministrador({
       }
     });
 
-    const presencaMedia = totalInscritos ? ((totalPresentes / totalInscritos) * 100).toFixed(0) : "0";
+    const presencaMedia = totalInscritos
+      ? ((totalPresentes / totalInscritos) * 100).toFixed(0)
+      : "0";
 
     let notaMedia = "—";
     if (mediasDiretas.length > 0) {
@@ -215,17 +261,18 @@ export default function CardEventoadministrador({
       className="bg-white dark:bg-zinc-800 p-6 rounded-2xl shadow-lg mb-6 border border-gray-200 dark:border-zinc-700 transition hover:shadow-2xl"
       aria-labelledby={`evento-${evento.id}-titulo`}
     >
-      {/* TOPO CLEAN (Anexo 1) */}
+      {/* TOPO */}
       <div className="flex justify-between items-start gap-4">
         <div className="min-w-0">
-          <h3 id={`evento-${evento.id}-titulo`} className="text-2xl font-bold text-[#1b4332] dark:text-white truncate">
+          <h3
+            id={`evento-${evento.id}-titulo`}
+            className="text-2xl font-bold text-[#1b4332] dark:text-white truncate"
+          >
             {evento.titulo}
           </h3>
           <div className="text-sm text-gray-700 dark:text-gray-200 flex items-center gap-2 mt-1 mb-1">
             <span className="font-semibold">instrutor:</span>
-            <span className="truncate">
-              {nomeinstrutor}
-            </span>
+            <span className="truncate">{nomeinstrutor}</span>
           </div>
           <p className="text-sm text-gray-600 dark:text-gray-300 flex items-center gap-2 mt-0.5">
             <CalendarDays size={16} aria-hidden="true" />
@@ -247,7 +294,7 @@ export default function CardEventoadministrador({
         </div>
       </div>
 
-      {/* STATS (só quando expandido) */}
+      {/* STATS + TURMAS */}
       {expandido && (
         <>
           <h4 className="sr-only">Estatísticas do evento</h4>
@@ -259,22 +306,52 @@ export default function CardEventoadministrador({
             <StatCard icon={<Star aria-hidden="true" />} label="Nota Média" value={stats.notaMedia} title="Nota média atribuída ao evento" />
           </div>
 
-          {/* LISTA DE TURMAS (com “parte de baixo” do Anexo 2) */}
           {Array.isArray(turmas) && turmas.length > 0 ? (
-            <div id={`evento-${evento.id}-turmas`} className="mt-6 space-y-4">
-              {turmas.map((turma) => (
-                <CardTurmaadministrador
-                  key={turma.id}
-                  turma={turma}
-                  // Passa inscritos para exibir "X de Y vagas" + barra
-                  inscritos={inscritosPorTurma?.[turma.id] || []}
-                  carregarInscritos={carregarInscritos}
-                  carregarAvaliacoes={carregarAvaliacoes}
-                  carregarPresencas={carregarPresencas}
-                  gerarRelatorioPDF={gerarRelatorioPDF}
-                  somenteInfo={true} 
-                />
-              ))}
+            <div id={`evento-${evento.id}-turmas`} className="mt-6 space-y-6">
+              {turmas.map((turma) => {
+                const lista = inscritosPorTurma?.[turma.id] || [];
+                return (
+                  <div key={turma.id} className="space-y-3">
+                    <CardTurmaadministrador
+                      turma={turma}
+                      inscritos={lista}
+                      carregarInscritos={carregarInscritos}
+                      carregarAvaliacoes={carregarAvaliacoes}
+                      carregarPresencas={carregarPresencas}
+                      gerarRelatorioPDF={gerarRelatorioPDF}
+                      somenteInfo={true}
+                    />
+
+                    {/* Lista de inscritos (nome + CPF) + botão PDF */}
+                    <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/40 p-4">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
+                          Inscritos da turma
+                        </p>
+                        <button
+                          onClick={() => gerarPdfInscritosTurma?.(turma.id)}
+                          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium bg-[#1b4332] text-white hover:bg-[#14532d]"
+                        >
+                          <FileDown size={16} /> Gerar PDF (curso + inscritos)
+                        </button>
+                      </div>
+
+                      {lista.length === 0 ? (
+                        <p className="text-xs text-zinc-500 mt-2">Nenhum inscrito.</p>
+                      ) : (
+                        <ul className="mt-3 grid sm:grid-cols-2 gap-y-1 text-sm">
+                          {lista.map((i) => (
+                            <li key={i.id || i.usuario_id || i.cpf}>
+                              {i?.nome || "—"} —{" "}
+                              <span className="text-zinc-500">{formatarCPF(i?.cpf)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <div className="text-gray-500 mt-4">Nenhuma turma cadastrada.</div>
@@ -319,4 +396,5 @@ CardEventoadministrador.propTypes = {
   presencasPorTurma: PropTypes.object,
   carregarPresencas: PropTypes.func,
   gerarRelatorioPDF: PropTypes.func,
+  gerarPdfInscritosTurma: PropTypes.func, // 👈 novo
 };
