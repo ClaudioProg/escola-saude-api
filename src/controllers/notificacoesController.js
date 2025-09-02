@@ -256,7 +256,7 @@ async function gerarNotificacoesDeAvaliacao(usuario_id) {
 
       await criarNotificacao(
         usuario_id,
-        `Já está disponível a avaliação do evento "${nomeEvento}".`,
+        `Já está disponível a avaliação do evento "${nomeEvento}" Acesse o menu Usuário e clique em Certificados Pendentes.`,
         {
           tipo: "avaliacao",
           titulo: `Avaliação disponível para "${nomeEvento}"`,

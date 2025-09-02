@@ -76,53 +76,31 @@
 
   <script>
     (function () {
-      const params = new URLSearchParams(window.location.search);
-      const usuario_id = params.get("usuario_id");
-      const evento_id  = params.get("evento_id");
-
-      // ⛑️ Base da API (permite override por query ?api_base=...)
-      const DEFAULT_API_BASE = "https://escola-saude-api.onrender.com";
-      const apiBase = (params.get("api_base") || DEFAULT_API_BASE).replace(/\/+$/,"");
-
-      const infoDiv = document.getElementById("info");
-      const printBtn = document.getElementById("printButton");
-
-      // Desabilita imprimir enquanto carrega
-      setPrintEnabled(false);
-
-      function setPrintEnabled(enabled) {
-        printBtn.disabled = !enabled;
-        printBtn.setAttribute("aria-disabled", String(!enabled));
-      }
-
-      // Datas SEM risco de "voltar um dia": usa fuso explícito
-      function formatarDataBrasileira(iso) {
-        if (!iso) return "";
-        const d = new Date(iso);
+      // ---------- helpers ----------
+      const isDateOnly = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+      const fmtDateOnlyBR = (ymd) => {
+        if (!isDateOnly(ymd)) return "";
+        const [y, m, d] = ymd.split("-");
+        return `${d}/${m}/${y}`;
+      };
+      function formatarDataBrasileira(input) {
+        if (!input) return "";
+        if (typeof input === "string" && isDateOnly(input)) return fmtDateOnlyBR(input);
+        const d = new Date(input);
         if (Number.isNaN(d.getTime())) return "";
         try {
-          return new Intl.DateTimeFormat("pt-BR", {
-            timeZone: "America/Sao_Paulo"
-          }).format(d);
+          return new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo" }).format(d);
         } catch {
-          // Fallback
           return d.toLocaleDateString("pt-BR");
         }
       }
-
       function p(txt, strong=false, cls="") {
         const el = document.createElement("p");
         if (cls) el.className = cls;
-        if (strong) {
-          const b = document.createElement("strong");
-          b.textContent = txt;
-          el.appendChild(b);
-        } else {
-          el.textContent = txt;
-        }
+        if (strong) { const b = document.createElement("strong"); b.textContent = txt; el.appendChild(b); }
+        else el.textContent = txt;
         return el;
       }
-
       function linhaRotulo(rotulo, valor) {
         const el = document.createElement("p");
         const b  = document.createElement("strong");
@@ -131,92 +109,113 @@
         el.appendChild(document.createTextNode(valor || ""));
         return el;
       }
-
-      function limparInfo() {
-        while (infoDiv.firstChild) infoDiv.removeChild(infoDiv.firstChild);
+      function setPrintEnabled(enabled) {
+        printBtn.disabled = !enabled;
+        printBtn.setAttribute("aria-disabled", String(!enabled));
       }
-
-      function mostrarErro(msg) {
-        limparInfo();
-        infoDiv.appendChild(p(msg, false, "erro"));
-        setPrintEnabled(false);
+      function parseParamsComLegado() {
+        const out = {};
+        const params = new URLSearchParams(window.location.search);
+        // 1) direto da URL
+        out.usuario_id = params.get("usuario_id") || params.get("usuario") || "";
+        out.evento_id  = params.get("evento_id")  || params.get("evento")  || "";
+        // 2) se vier como ?codigo=https://...?... embutido, mescla
+        const codigo = params.get("codigo");
+        if (codigo) {
+          try {
+            const u = new URL(decodeURIComponent(codigo));
+            const inner = new URLSearchParams(u.search);
+            out.usuario_id ||= inner.get("usuario_id") || inner.get("usuario") || "";
+            out.evento_id  ||= inner.get("evento_id")  || inner.get("evento")  || "";
+          } catch {}
+        }
+        // 3) turma_id pode existir, mas é opcional para a validação
+        out.turma_id = params.get("turma_id") || "";
+        // 4) api_base opcional
+        out.api_base = (params.get("api_base") || "").replace(/\/+$/,"");
+        return out;
       }
-
-      if (!usuario_id || !evento_id) {
-        mostrarErro("❌ Parâmetros inválidos na URL.");
+  
+      // ---------- DOM refs ----------
+      const infoDiv  = document.getElementById("info");
+      const printBtn = document.getElementById("printButton");
+      setPrintEnabled(false);
+  
+      // ---------- coleta parâmetros ----------
+      const qp = parseParamsComLegado();
+      if (!qp.usuario_id || !qp.evento_id) {
+        infoDiv.innerHTML = "";
+        infoDiv.appendChild(p("❌ Parâmetros inválidos na URL.", false, "erro"));
         return;
       }
-
-      // Monta URL de forma segura
-      const url = `${apiBase}/api/certificados/validar-certificado?usuario_id=${
-        encodeURIComponent(usuario_id)
-      }&evento_id=${encodeURIComponent(evento_id)}`;
-
-      // Bloqueia mixed content em produção
-      if (location.protocol === "https:" && url.startsWith("http://")) {
-        mostrarErro("Não foi possível validar (Mixed Content). Use uma URL de API com HTTPS.");
-        return;
-      }
-
-      // Timeout com AbortController (robustez de rede)
-      const controller = new AbortController();
-      const idTimeout = setTimeout(() => controller.abort(), 15000); // 15s
-
-      (async () => {
+  
+      // ---------- API base (auto + fallback) ----------
+      const FALLBACK_API = "https://escola-saude-api.onrender.com";
+      const bases = [];
+      if (qp.api_base) bases.push(qp.api_base);
+      bases.push("/api", FALLBACK_API); // tenta mesma origem, depois fallback
+  
+      async function fetchValidacao(base) {
+        const url = `${base.replace(/\/+$/,"")}/api/certificados/validar-certificado` +
+                    `?usuario_id=${encodeURIComponent(qp.usuario_id)}` +
+                    `&evento_id=${encodeURIComponent(qp.evento_id)}`;
+        if (location.protocol === "https:" && url.startsWith("http://")) {
+          throw new Error("mixed-content");
+        }
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 15000);
         try {
-          const res = await fetch(url, {
-            credentials: "include",
-            signal: controller.signal,
-            // Cabeçalho opcional se backend exigir JSON
-            headers: { "Accept": "application/json" }
-          });
-
-          let data = null;
-          try { data = await res.json(); } catch { /* pode não ser JSON */ }
-
-          if (!res.ok) {
-            const msg = (data && (data.erro || data.message)) || `Erro HTTP ${res.status}`;
-            throw new Error(msg);
-          }
-
-          limparInfo();
-
-          if (data && (data.valido || data.presente === true)) {
-            infoDiv.appendChild(p("✅ Certificado válido", true));
-            infoDiv.appendChild(linhaRotulo("Nome", data.usuario || data.nome || ""));
-            infoDiv.appendChild(linhaRotulo("CPF", data.cpf || ""));
-            infoDiv.appendChild(linhaRotulo("Evento", data.evento || data.titulo || ""));
-
-            // Período pode vir como objeto {inicio,fim} ou strings
-            let inicio = "", fim = "";
-            if (data.periodo && (data.periodo.inicio || data.periodo.fim)) {
-              inicio = formatarDataBrasileira(data.periodo.inicio);
-              fim    = formatarDataBrasileira(data.periodo.fim);
-            } else if (data.data_inicio || data.data_fim) {
-              inicio = formatarDataBrasileira(data.data_inicio);
-              fim    = formatarDataBrasileira(data.data_fim);
-            }
-            if (inicio || fim) {
-              infoDiv.appendChild(linhaRotulo("Período", `${inicio}${inicio && fim ? " a " : ""}${fim}`));
-            }
-
-            // Data de emissão
-            const emitido = formatarDataBrasileira(data.gerado_em || data.emitido_em);
-            if (emitido) infoDiv.appendChild(linhaRotulo("Emitido em", emitido));
-
-            setPrintEnabled(true);
-          } else {
-            mostrarErro("❌ Certificado não encontrado ou inválido.");
-          }
-        } catch (e) {
-          if (e.name === "AbortError") {
-            mostrarErro("⏱️ Tempo de resposta excedido. Tente novamente.");
-          } else {
-            console.error(e);
-            mostrarErro("❌ Erro ao validar o certificado. Tente novamente mais tarde.");
-          }
+          const res = await fetch(url, { headers: { Accept: "application/json" }, signal: controller.signal });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data?.erro || data?.message || `HTTP ${res.status}`);
+          return data;
         } finally {
-          clearTimeout(idTimeout);
+          clearTimeout(timer);
+        }
+      }
+  
+      (async () => {
+        let data = null, lastErr = null;
+        for (const base of bases) {
+          try { data = await fetchValidacao(base); break; }
+          catch (e) { lastErr = e; }
+        }
+  
+        infoDiv.innerHTML = "";
+        if (!data) {
+          if (lastErr && lastErr.message === "mixed-content") {
+            infoDiv.appendChild(p("Não foi possível validar (Mixed Content). Use uma URL de API com HTTPS.", false, "erro"));
+          } else {
+            infoDiv.appendChild(p("❌ Erro ao validar o certificado. Tente novamente mais tarde.", false, "erro"));
+          }
+          setPrintEnabled(false);
+          return;
+        }
+  
+        if (data.valido || data.presente === true) {
+          infoDiv.appendChild(p("✅ Certificado válido", true));
+          infoDiv.appendChild(linhaRotulo("Nome",   data.usuario || data.nome || ""));
+          infoDiv.appendChild(linhaRotulo("CPF",    data.cpf || ""));
+          infoDiv.appendChild(linhaRotulo("Evento", data.evento || data.titulo || ""));
+  
+          // período: aceita {inicio,fim} ou data_inicio/data_fim — preserva YYYY-MM-DD sem shift
+          let ini = "", fim = "";
+          if (data.periodo && (data.periodo.inicio || data.periodo.fim)) {
+            ini = formatarDataBrasileira(data.periodo.inicio);
+            fim = formatarDataBrasileira(data.periodo.fim);
+          } else if (data.data_inicio || data.data_fim) {
+            ini = formatarDataBrasileira(data.data_inicio);
+            fim = formatarDataBrasileira(data.data_fim);
+          }
+          if (ini || fim) infoDiv.appendChild(linhaRotulo("Período", `${ini}${ini && fim ? " a " : ""}${fim}`));
+  
+          const emitido = formatarDataBrasileira(data.gerado_em || data.emitido_em);
+          if (emitido) infoDiv.appendChild(linhaRotulo("Emitido em", emitido));
+  
+          setPrintEnabled(true);
+        } else {
+          infoDiv.appendChild(p("❌ Certificado não encontrado ou inválido.", false, "erro"));
+          setPrintEnabled(false);
         }
       })();
     })();

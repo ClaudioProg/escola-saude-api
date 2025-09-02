@@ -580,19 +580,64 @@ async function gerarCertificado(req, res) {
 
     if (tipo === "usuario") {
       try {
-        const userRes = await db.query("SELECT email, nome FROM usuarios WHERE id = $1", [
-          usuario_id,
-        ]);
-        const emailUsuario = userRes.rows[0]?.email;
-        const nomeUsuarioEmail = userRes.rows[0]?.nome;
+        const { rows } = await db.query(
+          "SELECT email, nome FROM usuarios WHERE id = $1",
+          [usuario_id]
+        );
+        const emailUsuario = rows[0]?.email?.trim();
+        const nomeUsuarioEmail = rows[0]?.nome?.trim() || "Aluno(a)";
+    
         if (emailUsuario) {
           const { send } = require("../utils/email");
-          const link = `${FRONTEND_BASE_URL}/meus-certificados`;
+          const titulo = TURMA?.titulo || "evento";
+          const link = `${FRONTEND_BASE_URL}/certificados`;
+    
           await send({
             to: emailUsuario,
-            subject: `🎓 Certificado disponível do evento "${TURMA.titulo}"`,
-            text: `Olá, ${nomeUsuarioEmail}!\n\nSeu certificado do evento "${TURMA.titulo}" já está disponível para download.\n\nAcesse: ${link}\n\nAtenciosamente,\nEquipe da Escola Municipal de Saúde`,
+            subject: `🎓 Certificado disponível do evento "${titulo}"`,
+    
+            // Fallback em texto puro (clientes sem HTML)
+            text: `Olá, ${nomeUsuarioEmail}!
+    
+    Seu certificado do evento "${titulo}" já está disponível para download.
+    
+    Baixe aqui: ${link}
+    
+    Se o botão/link não abrir, copie e cole o endereço acima no seu navegador.
+    
+    Atenciosamente,
+    Equipe da Escola Municipal de Saúde`,
+    
+            // Versão HTML (melhor visualização)
+            html: `
+              <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; line-height:1.6; color:#111;">
+                <p>Olá, ${nomeUsuarioEmail}!</p>
+    
+                <p>
+                  Seu certificado do evento <strong>${titulo}</strong> já está disponível para download.
+                </p>
+    
+                <p>
+                  <a href="${link}"
+                     style="display:inline-block; padding:10px 16px; border-radius:8px; text-decoration:none; background:#1b4332; color:#fff;">
+                    Baixar certificado
+                  </a>
+                </p>
+    
+                <p style="font-size:14px; color:#444;">
+                  Se o botão não funcionar, copie e cole este link no seu navegador:<br>
+                  <a href="${link}" style="color:#1b4332;">${link}</a>
+                </p>
+    
+                <p>
+                  Atenciosamente,<br>
+                  <strong>Equipe da Escola Municipal de Saúde</strong>
+                </p>
+              </div>
+            `,
           });
+        } else {
+          console.warn("⚠️ Usuário sem e-mail cadastrado:", { usuario_id });
         }
       } catch (e) {
         console.warn("⚠️ Envio de e-mail falhou (ignorado):", e.message);

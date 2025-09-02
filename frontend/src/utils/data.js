@@ -12,6 +12,18 @@ export function isDateOnly(str) {
   return typeof str === "string" && /^\d{4}-\d{2}-\d{2}$/.test(str);
 }
 
+// ISO com meia-noite UTC (ex.: 2025-09-16T00:00:00.000Z)
+export function isUtcMidnight(iso) {
+  return (
+    typeof iso === "string" &&
+    /^\d{4}-\d{2}-\d{2}T00:00(?::00(?:\.\d{1,3})?)?Z$/.test(iso)
+  );
+}
+
+export function extractYMD(s) {
+  return typeof s === "string" ? s.slice(0, 10) : "";
+}
+
 /** Constrói Date no fuso LOCAL do navegador. */
 export function toLocalDate(input) {
   if (!input) return null;
@@ -19,7 +31,7 @@ export function toLocalDate(input) {
 
   if (typeof input === "string") {
     if (isDateOnly(input)) {
-      // Evite usar Date para exibição; aqui é apenas para cálculos locais
+      // Para cálculos locais
       const [y, m, d] = input.split("-").map(Number);
       const dt = new Date(y, m - 1, d, 0, 0, 0, 0);
       return isNaN(dt) ? null : dt;
@@ -43,16 +55,29 @@ function fmtDateOnlyString(yyyyMmDd) {
   return `${d}/${m}/${y}`;
 }
 
+/** Normaliza qualquer entrada para um YMD estável no contexto local. */
+function toLocalYMD(input) {
+  if (!input) return "";
+  if (isDateOnly(input)) return input;
+  if (isUtcMidnight(input)) return extractYMD(input);
+  const d = toLocalDate(input);
+  if (!d) return "";
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 /* ──────────────────────────────────────────────────────────────
    FORMATAÇÃO pt-BR (exibição)
    ────────────────────────────────────────────────────────────── */
 
-export function fmtData(dateIsoUtc, zone = ZONA_PADRAO) {
-  // ✅ Se for somente data, formata direto sem Date
-  if (typeof dateIsoUtc === "string" && isDateOnly(dateIsoUtc)) {
-    return fmtDateOnlyString(dateIsoUtc);
+export function fmtData(dateLike, zone = ZONA_PADRAO) {
+  if (typeof dateLike === "string") {
+    if (isDateOnly(dateLike)) return fmtDateOnlyString(dateLike);
+    if (isUtcMidnight(dateLike)) return fmtDateOnlyString(extractYMD(dateLike));
   }
-  const d = toLocalDate(dateIsoUtc);
+  const d = toLocalDate(dateLike);
   if (!d) return "";
   return new Intl.DateTimeFormat("pt-BR", {
     timeZone: zone,
@@ -62,12 +87,14 @@ export function fmtData(dateIsoUtc, zone = ZONA_PADRAO) {
   }).format(d); // dd/mm/aaaa
 }
 
-export function fmtDataHora(dateIsoUtc, zone = ZONA_PADRAO) {
-  // ⚠️ Se for somente data, não há hora — caia para data simples
-  if (typeof dateIsoUtc === "string" && isDateOnly(dateIsoUtc)) {
-    return fmtData(dateIsoUtc, zone);
+export function fmtDataHora(dateLike, zone = ZONA_PADRAO) {
+  // date-only ou midnight UTC -> mostrar só a data
+  if (typeof dateLike === "string") {
+    if (isDateOnly(dateLike) || isUtcMidnight(dateLike)) {
+      return fmtData(dateLike, zone);
+    }
   }
-  const d = toLocalDate(dateIsoUtc);
+  const d = toLocalDate(dateLike);
   if (!d) return "";
   return new Intl.DateTimeFormat("pt-BR", {
     timeZone: zone,
@@ -94,7 +121,7 @@ export function brDateToIsoDate(dataBr) {
 
 /**
  * "dd/MM/aaaa"+"HH:mm" (hora local do navegador) -> ISO UTC (com 'Z')
- * Ex.: "18/08/2025","14:30" → "2025-08-18T17:30:00.000Z" (depende do offset vigente)
+ * Ex.: "18/08/2025","14:30" → "2025-08-18T17:30:00.000Z" (dependendo do offset)
  */
 export function brDateTimeToIsoUtc(dataBr, horaBr = "00:00") {
   const isoDate = brDateToIsoDate(dataBr);
@@ -107,41 +134,33 @@ export function brDateTimeToIsoUtc(dataBr, horaBr = "00:00") {
 }
 
 /* ──────────────────────────────────────────────────────────────
-   FUNÇÕES LEGADAS (mantidas) → redirecionam pros helpers padronizados
+   FUNÇÕES LEGADAS (mantidas) → redirecionam pros helpers
    ────────────────────────────────────────────────────────────── */
 
-/** (LEGADO) Formata data no padrão dd/mm/aaaa */
 export function formatarDataBrasileira(dataISO) {
-  // aceita Date, ISO com Z, "YYYY-MM-DD"
   if (!dataISO) return "";
-  if (typeof dataISO === "string" && isDateOnly(dataISO)) {
-    // evita fuso para date-only
-    return fmtDateOnlyString(dataISO);
+  if (typeof dataISO === "string") {
+    if (isDateOnly(dataISO)) return fmtDateOnlyString(dataISO);
+    if (isUtcMidnight(dataISO)) return fmtDateOnlyString(extractYMD(dataISO));
   }
   return fmtData(dataISO);
 }
 
-/** (LEGADO) Formata data+hora no padrão dd/mm/aaaa HH:MM */
 export function formatarDataHoraBrasileira(dataISO) {
   if (!dataISO) return "";
   return fmtDataHora(dataISO);
 }
 
-/** (LEGADO) Converte para ISO (yyyy-mm-dd) aceitando string BR, Date, ISO */
+/** Converte para ISO (yyyy-mm-dd) aceitando string BR, Date, ISO */
 export function formatarParaISO(data) {
   if (!data) return "";
-  if (typeof data === "string" && data.includes("/")) {
-    return brDateToIsoDate(data); // "dd/MM/aaaa" -> "YYYY-MM-DD"
+  if (typeof data === "string") {
+    if (data.includes("/")) return brDateToIsoDate(data); // "dd/MM/aaaa"
+    if (isDateOnly(data)) return data; // já é YMD
+    if (isUtcMidnight(data)) return extractYMD(data); // meia-noite Z -> YMD
   }
-  if (typeof data === "string" && isDateOnly(data)) {
-    return data; // já é "YYYY-MM-DD"
-  }
-  const d = toLocalDate(data);
-  if (!d) return "";
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  // Qualquer outra coisa cai no cálculo local
+  return toLocalYMD(data);
 }
 
 /* ──────────────────────────────────────────────────────────────
@@ -149,11 +168,14 @@ export function formatarParaISO(data) {
    ────────────────────────────────────────────────────────────── */
 
 export function gerarIntervaloDeDatas(dataInicio, dataFim) {
-  const ini = toLocalDate(dataInicio);
-  const fim = toLocalDate(dataFim);
-  if (!ini || !fim) return [];
+  const ymdIni = toLocalYMD(dataInicio);
+  const ymdFim = toLocalYMD(dataFim);
+  if (!ymdIni || !ymdFim) return [];
+
+  const ini = new Date(`${ymdIni}T00:00:00`);
+  const fim = new Date(`${ymdFim}T00:00:00`);
+
   const datas = [];
-  // garanta dia a dia sem mutar "ini" original
   for (
     let d = new Date(ini.getFullYear(), ini.getMonth(), ini.getDate());
     d <= fim;

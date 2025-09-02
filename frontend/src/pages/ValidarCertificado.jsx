@@ -1,6 +1,6 @@
 // 📁 src/pages/ValidarCertificado.jsx
 import { useSearchParams } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import BotaoPrimario from "../components/BotaoPrimario";
 import NadaEncontrado from "../components/NadaEncontrado";
@@ -15,15 +15,45 @@ export default function ValidarCertificado() {
   const [status, setStatus] = useState("loading"); // loading | sucesso | pendente | erro
   const [dataHora, setDataHora] = useState("");
 
-  // parâmetros
-  const evento = (searchParams.get("evento") || "").trim();
-  const usuario = (searchParams.get("usuario") || "").trim();
-  const isDebug = (searchParams.get("debug") || "").trim() === "1";
+  // 🔎 Extrai parâmetros aceitando variações e o caso legado ?codigo=<URL...>
+  const { eventoId, usuarioId, isDebug } = useMemo(() => {
+    const dbg = (searchParams.get("debug") || "").trim() === "1";
+
+    const pick = (sp, ...keys) => {
+      for (const k of keys) {
+        const v = (sp.get(k) || "").trim();
+        if (v) return v;
+      }
+      return "";
+    };
+
+    let evento = pick(searchParams, "evento", "evento_id");
+    let usuario = pick(searchParams, "usuario", "usuario_id");
+
+    // Se veio ?codigo=https%3A%2F%2F... com params dentro, tenta puxar de lá
+    if ((!evento || !usuario) && searchParams.get("codigo")) {
+      try {
+        const url = new URL(decodeURIComponent(searchParams.get("codigo")));
+        const inner = url.searchParams;
+        evento = evento || pick(inner, "evento", "evento_id");
+        usuario = usuario || pick(inner, "usuario", "usuario_id");
+      } catch {
+        // segue sem travar
+      }
+    }
+
+    return {
+      eventoId: evento,
+      usuarioId: usuario,
+      isDebug: dbg,
+    };
+  }, [searchParams]);
 
   useEffect(() => {
+    // Mostra a data/hora da verificação (sem risco de “voltar um dia”)
     setDataHora(formatarDataHoraBrasileira(new Date()));
 
-    if (!evento || !usuario) {
+    if (!eventoId || !usuarioId) {
       setMensagem("❌ Link inválido. Parâmetros ausentes.");
       setStatus("erro");
       return;
@@ -31,17 +61,29 @@ export default function ValidarCertificado() {
 
     (async () => {
       try {
-        if (isDebug) console.log("[ValidarCertificado] GET /presencas/validar", { evento, usuario });
+        if (isDebug) {
+          console.log("[ValidarCertificado] GET /presencas/validar", {
+            eventoId,
+            usuarioId,
+          });
+        }
 
+        // Envia ambos os nomes de parâmetros para compatibilidade com o backend
         const data = await apiGet("presencas/validar", {
           on403: "silent",
-          query: { evento, usuario },
+          query: {
+            evento: eventoId,
+            usuario: usuarioId,
+            evento_id: eventoId,
+            usuario_id: usuarioId,
+          },
         });
 
         const presente =
           data?.presente ??
           data?.ok ??
-          (typeof data?.status === "string" && data.status.toLowerCase() === "ok");
+          (typeof data?.status === "string" &&
+            data.status.toLowerCase() === "ok");
 
         if (presente) {
           setMensagem("✅ Presença confirmada! Você pode emitir seu certificado.");
@@ -62,7 +104,7 @@ export default function ValidarCertificado() {
         setStatus("erro");
       }
     })();
-  }, [evento, usuario, isDebug]);
+  }, [eventoId, usuarioId, isDebug]);
 
   const corMensagem =
     status === "sucesso"
@@ -73,7 +115,10 @@ export default function ValidarCertificado() {
       ? "text-yellow-700 dark:text-yellow-400"
       : "text-gray-700 dark:text-gray-300";
 
-  const cardVariants = { hidden: { opacity: 0, y: 24 }, visible: { opacity: 1, y: 0, transition: { duration: 0.5 } } };
+  const cardVariants = {
+    hidden: { opacity: 0, y: 24 },
+    visible: { opacity: 1, y: 0, transition: { duration: 0.5 } },
+  };
 
   return (
     <main
@@ -120,12 +165,12 @@ export default function ValidarCertificado() {
               <p className="text-sm text-gray-500 mb-4 break-words">{detalhe}</p>
             )}
 
-            {status === "pendente" || status === "erro" ? (
+            {(status === "pendente" || status === "erro") && (
               <NadaEncontrado
                 mensagem={mensagem}
                 sugestao="Verifique os dados do certificado ou tente novamente mais tarde."
               />
-            ) : null}
+            )}
 
             {status === "sucesso" && (
               <div className="flex justify-center print:hidden">

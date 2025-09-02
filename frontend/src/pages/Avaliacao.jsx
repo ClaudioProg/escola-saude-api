@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { toast } from "react-toastify";
 import { motion } from "framer-motion";
 import CabecalhoPainel from "../components/CabecalhoPainel";
-import { formatarDataBrasileira } from "../utils/data";
+import { formatarDataBrasileira, formatarParaISO } from "../utils/data";
 import ModalAvaliacaoFormulario from "../components/ModalAvaliacaoFormulario";
 import { apiGet } from "../services/api"; // ✅ serviço centralizado
 
@@ -47,6 +47,12 @@ export default function Avaliacao() {
     setAvaliacaoSelecionada(null);
   }
 
+  // 🔒 Formata data com proteção total de fuso/variações de campo
+  function fmtSeguro(valor) {
+    const iso = formatarParaISO(valor);
+    return iso ? formatarDataBrasileira(iso) : "Data não informada";
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 24 }}
@@ -71,35 +77,37 @@ export default function Avaliacao() {
         </p>
       ) : (
         <ul className="space-y-4">
-          {avaliacoesPendentes.map((a, idx) => (
-            <li
-              key={idx}
-              className="border border-gray-300 dark:border-gray-700 p-4 rounded-lg shadow-sm flex flex-col md:flex-row md:items-center md:justify-between bg-gray-50 dark:bg-gray-800"
-            >
-              <div>
-                <p className="font-semibold text-lousa dark:text-green-100">
-                  {a.nome_evento || a.titulo || a.nome}
-                </p>
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Turma #{a.turma_id} — Início:{" "}
-                  <span className="font-medium">
-                    {a.data_inicio ? formatarDataBrasileira(a.data_inicio) : "Data não informada"}
-                  </span>{" "}
-                  - Fim:{" "}
-                  <span className="font-medium">
-                    {a.data_fim ? formatarDataBrasileira(a.data_fim) : "Data não informada"}
-                  </span>
-                </p>
-              </div>
-              <button
-                className="mt-3 md:mt-0 bg-lousa dark:bg-green-600 text-white font-semibold px-4 py-2 rounded-md hover:bg-green-700 transition"
-                onClick={() => abrirModal(a)}
-                aria-label={`Avaliar evento ${a.nome_evento || a.titulo || a.nome}, turma ${a.turma_id}`}
+          {avaliacoesPendentes.map((a, idx) => {
+            // Fallbacks de campos: alguns payloads podem trazer di/df
+            const di = a.data_inicio ?? a.di ?? a.inicio;
+            const df = a.data_fim ?? a.df ?? a.fim;
+
+            return (
+              <li
+                key={idx}
+                className="border border-gray-300 dark:border-gray-700 p-4 rounded-lg shadow-sm flex flex-col md:flex-row md:items-center md:justify-between bg-gray-50 dark:bg-gray-800"
               >
-                📋 Avaliar
-              </button>
-            </li>
-          ))}
+                <div>
+                  <p className="font-semibold text-lousa dark:text-green-100">
+                    {a.nome_evento || a.titulo || a.nome}
+                  </p>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    Turma #{a.turma_id} — Início:{" "}
+                    <span className="font-medium">{fmtSeguro(di)}</span>{" "}
+                    - Fim:{" "}
+                    <span className="font-medium">{fmtSeguro(df)}</span>
+                  </p>
+                </div>
+                <button
+                  className="mt-3 md:mt-0 bg-lousa dark:bg-green-600 text-white font-semibold px-4 py-2 rounded-md hover:bg-green-700 transition"
+                  onClick={() => abrirModal(a)}
+                  aria-label={`Avaliar evento ${a.nome_evento || a.titulo || a.nome}, turma ${a.turma_id}`}
+                >
+                  📋 Avaliar
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
 

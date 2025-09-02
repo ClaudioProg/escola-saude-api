@@ -2,12 +2,12 @@
 import { useEffect, useState, useMemo } from "react";
 import Skeleton from "react-loading-skeleton";
 import { toast } from "react-toastify";
-import { formatarDataBrasileira } from "../utils/data";
+import { formatarDataBrasileira, formatarParaISO } from "../utils/data";
 
 import Breadcrumbs from "../components/Breadcrumbs";
 import CabecalhoPainel from "../components/CabecalhoPainel";
 import NadaEncontrado from "../components/NadaEncontrado";
-import { apiGet, apiPost, makeApiUrl } from "../services/api"; // 👈 importa makeApiUrl
+import { apiGet, apiPost, makeApiUrl } from "../services/api";
 
 export default function MeusCertificados() {
   const [nome, setNome] = useState("");
@@ -122,6 +122,17 @@ export default function MeusCertificados() {
     }
   }
 
+  // 🔒 Formata datas com proteção total (converte p/ ISO date-only e exibe em pt-BR)
+  function periodoSeguro(cert) {
+    const iniRaw = cert.data_inicio ?? cert.di ?? cert.inicio;
+    const fimRaw = cert.data_fim ?? cert.df ?? cert.fim;
+    const iniISO = formatarParaISO(iniRaw);
+    const fimISO = formatarParaISO(fimRaw);
+    const ini = iniISO ? formatarDataBrasileira(iniISO) : "—";
+    const fim = fimISO ? formatarDataBrasileira(fimISO) : "—";
+    return `${ini} até ${fim}`;
+  }
+
   function renderizarCartao(cert) {
     const eInstrutor = cert.tipo === "instrutor";
     const key = keyDoCert(cert);
@@ -140,14 +151,13 @@ export default function MeusCertificados() {
               eInstrutor ? "text-yellow-900" : "text-lousa dark:text-white"
             }`}
           >
-            {cert.evento}
+            {cert.evento || cert.evento_titulo || cert.nome_evento || "Evento"}
           </h2>
           <p className="text-sm text-gray-700 dark:text-gray-300">
-            Turma: {cert.nome_turma}
+            Turma: {cert.nome_turma || cert.turma_nome || `#${cert.turma_id}`}
           </p>
           <p className="text-sm text-gray-500 dark:text-gray-400">
-            Período: {formatarDataBrasileira(cert.data_inicio)} até{" "}
-            {formatarDataBrasileira(cert.data_fim)}
+            Período: {periodoSeguro(cert)}
           </p>
           {eInstrutor && (
             <span className="inline-block mt-2 px-2 py-1 bg-yellow-400 text-xs font-semibold text-yellow-900 rounded">
@@ -159,7 +169,7 @@ export default function MeusCertificados() {
         <div className="mt-4 flex justify-center">
           {cert.ja_gerado && cert.certificado_id ? (
             <a
-              href={makeApiUrl(`certificados/${cert.certificado_id}/download`)} // 👈 monta URL correta
+              href={makeApiUrl(`certificados/${cert.certificado_id}/download`)}
               target="_blank"
               rel="noopener noreferrer"
               className="bg-green-900 hover:bg-green-800 text-white text-sm font-medium py-2 px-4 rounded text-center"

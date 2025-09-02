@@ -1,7 +1,14 @@
+// 📁 src/pages/ConfirmarPresenca.jsx
 import { useEffect, useMemo, useState } from "react";
-import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import {
+  useLocation,
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from "react-router-dom";
 
-const apiBase = (import.meta.env && import.meta.env.VITE_API_BASE_URL) || "/api";
+const apiBase =
+  (import.meta.env && import.meta.env.VITE_API_BASE_URL) || "/api";
 
 export default function ConfirmarPresenca() {
   const { turmaId: turmaIdParam } = useParams();
@@ -12,32 +19,39 @@ export default function ConfirmarPresenca() {
   const [status, setStatus] = useState("loading"); // loading | ok | error | auth
   const [mensagem, setMensagem] = useState("Processando sua confirmação...");
 
-  // 1) tenta :turmaId da rota
-  // 2) tenta query ?turma / ?turma_id / ?id
-  // 3) tenta decodificar pathname quebrado: /%2Fpresenca%2F13 -> /presenca/13
+  // Extrai turmaId de:
+  // 1) /presenca/:turmaId
+  // 2) ?turma / ?turma_id / ?id
+  // 3) pathname possivelmente codificado: "/%2Fpresenca%2F13"
   const turmaId = useMemo(() => {
-    // rota
+    // 1) parámetro da rota
     const byParam = turmaIdParam ? parseInt(turmaIdParam, 10) : null;
-    if (byParam) return byParam;
+    if (Number.isFinite(byParam) && byParam > 0) return byParam;
 
-    // query
-    const byQuery =
-      parseInt(sp.get("turma") || sp.get("turma_id") || sp.get("id") || "", 10) || null;
-    if (byQuery) return byQuery;
+    // 2) querystring
+    const qRaw =
+      sp.get("turma") || sp.get("turma_id") || sp.get("id") || "";
+    const byQuery = parseInt(qRaw, 10);
+    if (Number.isFinite(byQuery) && byQuery > 0) return byQuery;
 
-    // path possivelmente codificado
+    // 3) pathname quebrado/encodado
     try {
       const decoded = decodeURIComponent(location.pathname || "");
-      // normaliza // -> /
       const norm = decoded.replace(/\/{2,}/g, "/");
       const m = norm.match(/\/presenca\/(\d+)/);
-      if (m && m[1]) return parseInt(m[1], 10);
-    } catch (_) {}
+      if (m && m[1]) {
+        const byPath = parseInt(m[1], 10);
+        if (Number.isFinite(byPath) && byPath > 0) return byPath;
+      }
+    } catch {
+      /* no-op */
+    }
     return null;
   }, [turmaIdParam, sp, location.pathname]);
 
-  const tokenParam = sp.get("t") || sp.get("token"); // link com token opcional
+  const tokenParam = sp.get("t") || sp.get("token");
 
+  // Helper POST JSON com bearer do localStorage
   async function postJson(url, body) {
     const token = localStorage.getItem("token");
     const res = await fetch(`${apiBase}${url}`, {
@@ -53,7 +67,9 @@ export default function ConfirmarPresenca() {
       const msg =
         data?.erro ||
         data?.message ||
-        `Erro HTTP ${res.status}${res.statusText ? " - " + res.statusText : ""}`;
+        `Erro HTTP ${res.status}${
+          res.statusText ? " - " + res.statusText : ""
+        }`;
       throw new Error(msg);
     }
     return data;
@@ -61,18 +77,22 @@ export default function ConfirmarPresenca() {
 
   useEffect(() => {
     (async () => {
-      // precisa estar autenticado (as rotas exigem auth)
+      // Exige autenticação
       const hasAuth = !!localStorage.getItem("token");
       if (!hasAuth) {
         setStatus("auth");
         setMensagem("Você precisa entrar para confirmar a presença.");
-        // guarda o retorno (já decodificado/normalizado)
+        // preserva o retorno (decodifica → normaliza → re-encoda)
         const back = (() => {
           try {
-            const dec = decodeURIComponent(window.location.pathname + window.location.search);
+            const dec = decodeURIComponent(
+              window.location.pathname + window.location.search
+            );
             return encodeURIComponent(dec.replace(/\/{2,}/g, "/"));
           } catch {
-            return encodeURIComponent(window.location.pathname + window.location.search);
+            return encodeURIComponent(
+              window.location.pathname + window.location.search
+            );
           }
         })();
         setTimeout(() => {
@@ -82,14 +102,18 @@ export default function ConfirmarPresenca() {
       }
 
       try {
-        // 1) token assinado no link
         if (tokenParam) {
-          await postJson(`/api/presencas/confirmar-via-token`, { token: tokenParam });
+          // Fluxo com token assinado
+          await postJson(`/api/presencas/confirmar-via-token`, {
+            token: tokenParam,
+          });
           setStatus("ok");
           setMensagem("Presença registrada com sucesso!");
         } else if (turmaId) {
-          // 2) fluxo com turmaId
-          await postJson(`/api/presencas/confirmarPresencaViaQR`, { turma_id: turmaId });
+          // Fluxo com turmaId
+          await postJson(`/api/presencas/confirmarPresencaViaQR`, {
+            turma_id: turmaId,
+          });
           setStatus("ok");
           setMensagem("Presença registrada com sucesso!");
         } else {
@@ -103,7 +127,7 @@ export default function ConfirmarPresenca() {
         );
       }
 
-      // redireciona suave após mostrar a mensagem
+      // Redireciona após exibir mensagem
       setTimeout(() => {
         navigate("/agenda-instrutor", { replace: true });
       }, 1800);
@@ -144,7 +168,7 @@ export default function ConfirmarPresenca() {
         <p className={`mt-3 ${color}`}>{mensagem}</p>
 
         {status === "loading" && (
-          <div className="mt-6 flex justify-center">
+          <div className="mt-6 flex justify-center" aria-label="Carregando">
             <span className="h-5 w-5 animate-spin rounded-full border-2 border-gray-300 border-t-transparent" />
           </div>
         )}
