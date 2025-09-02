@@ -5,16 +5,64 @@ const { format } = require("date-fns");
 const { ptBR } = require("date-fns/locale");
 const { gerarNotificacoesDeAvaliacao } = require("./notificacoesController");
 const jwt = require("jsonwebtoken");
-const PRESENCA_TOKEN_SECRET = process.env.PRESENCA_TOKEN_SECRET || "troque_em_producao";
+
+const PRESENCA_TOKEN_SECRET =
+  process.env.PRESENCA_TOKEN_SECRET || "troque_em_producao";
 
 /* ------------------------------------------------------------------ *
- * Helpers
+ * Helpers de data (sempre trabalhando em America/Sao_Paulo)
+ * ------------------------------------------------------------------ */
+const TZ = "America/Sao_Paulo";
+
+/** yyyy-mm-dd do "agora" em America/Sao_Paulo */
+function hojeYMD() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  })
+    .formatToParts(new Date())
+    .reduce((o, p) => ((o[p.type] = p.value), o), {});
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+/** normaliza entrada "dd/mm/aaaa" | "yyyy-mm-dd" -> "yyyy-mm-dd" */
+function normalizarDataEntrada(valor) {
+  if (!valor) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(valor)) return valor;
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(valor)) {
+    const [dd, mm, yyyy] = valor.split("/");
+    return `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
+  }
+  return null;
+}
+
+/** extrai yyyy-mm-dd de uma string/Date */
+function ymd(val) {
+  if (!val) return null;
+  if (typeof val === "string") return val.slice(0, 10);
+  const d = new Date(val);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+}
+
+/** cria Date local fixando 12:00 (evita “pulo” de dia ao formatar) */
+function localDateFromYMD(ymdStr) {
+  return ymdStr ? new Date(`${ymdStr}T12:00:00`) : null;
+}
+
+/* ------------------------------------------------------------------ *
+ * Utils diversos
  * ------------------------------------------------------------------ */
 async function buscarEventoIdDaTurma(turma_id) {
-  const rid = `rid=${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  const rid = `rid=${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 7)}`;
   try {
-    const { rows } = await db.query(`SELECT evento_id FROM turmas WHERE id = $1`, [turma_id]);
-    console.log("📌 [buscarEventoIdDaTurma]", rid, { turma_id, rowCount: rows.length, evento_id: rows[0]?.evento_id });
+    const { rows } = await db.query(
+      `SELECT evento_id FROM turmas WHERE id = $1`,
+      [turma_id]
+    );
     if (rows.length === 0) throw new Error("Turma não encontrada.");
     return rows[0].evento_id;
   } catch (e) {
@@ -23,21 +71,8 @@ async function buscarEventoIdDaTurma(turma_id) {
   }
 }
 
-function normalizarDataEntrada(valor) {
-  if (!valor) return null;
-  // yyyy-mm-dd
-  if (/^\d{4}-\d{2}-\d{2}$/.test(valor)) return valor;
-  // dd/mm/yyyy
-  if (/^\d{2}\/\d{2}\/\d{4}$/.test(valor)) {
-    const [dd, mm, yyyy] = valor.split("/");
-    return `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
-  }
-  return null;
-}
-
 /* ------------------------------------------------------------------ *
- * PATCH /api/presencas/confirmar
- * (Instrutor confirma presença de um aluno numa data)
+ * PATCH /api/presencas/confirmar  (instrutor)
  * Body: { usuario_id, turma_id, data }
  * ------------------------------------------------------------------ */
 async function confirmarPresencaInstrutor(req, res) {
@@ -45,11 +80,13 @@ async function confirmarPresencaInstrutor(req, res) {
   const instrutor_id = req.usuario?.id;
 
   if (!usuario_id || !turma_id || !data) {
-    return res.status(400).json({ erro: "Campos obrigatórios não informados." });
+    return res
+      .status(400)
+      .json({ erro: "Campos obrigatórios não informados." });
   }
 
   try {
-    // 🔐 Garante que este instrutor ministra a turma
+    // garante que este instrutor ministra a turma
     const okInstrutor = await db.query(
       `
       SELECT 1
@@ -60,10 +97,12 @@ async function confirmarPresencaInstrutor(req, res) {
       [turma_id, instrutor_id]
     );
     if (okInstrutor.rowCount === 0) {
-      return res.status(403).json({ erro: "Acesso negado. Você não é instrutor desta turma." });
+      return res
+        .status(403)
+        .json({ erro: "Acesso negado. Você não é instrutor desta turma." });
     }
 
-    // 🕐 Verifica prazo de 48h após horário_fim
+    // prazo 48h após horário_fim do dia confirmado
     const turmaRes = await db.query(
       `SELECT horario_fim FROM turmas WHERE id = $1`,
       [turma_id]
@@ -71,18 +110,22 @@ async function confirmarPresencaInstrutor(req, res) {
     if (turmaRes.rowCount === 0) {
       return res.status(404).json({ erro: "Turma não encontrada." });
     }
-    const horario_fim = turmaRes.rows[0].horario_fim || "23:59:59";
-
+    const horario_fim = (turmaRes.rows[0].horario_fim || "23:59").slice(0, 5);
     const dataISO = normalizarDataEntrada(data);
-    if (!dataISO) return res.status(400).json({ erro: "Data inválida. Use aaaa-mm-dd ou dd/mm/aaaa." });
+    if (!dataISO)
+      return res
+        .status(400)
+        .json({ erro: "Data inválida. Use aaaa-mm-dd ou dd/mm/aaaa." });
 
-    const dataHoraFim = new Date(`${dataISO}T${horario_fim}`);
-    const limite = new Date(dataHoraFim.getTime() + 48 * 60 * 60 * 1000);
+    // construímos limite no fuso BR: yyyy-mm-ddTHH:mm
+    const fimAula = new Date(`${dataISO}T${horario_fim}:00`);
+    const limite = new Date(fimAula.getTime() + 48 * 60 * 60 * 1000);
     if (new Date() > limite) {
-      return res.status(403).json({ erro: "O prazo de 48h para confirmação já expirou." });
+      return res
+        .status(403)
+        .json({ erro: "O prazo de 48h para confirmação já expirou." });
     }
 
-    // ✅ Upsert presença
     await db.query(
       `
       INSERT INTO presencas (usuario_id, turma_id, data_presenca, presente)
@@ -94,8 +137,9 @@ async function confirmarPresencaInstrutor(req, res) {
     );
 
     await verificarElegibilidadeParaAvaliacao(usuario_id, turma_id);
-
-    return res.status(200).json({ mensagem: "Presença confirmada com sucesso." });
+    return res
+      .status(200)
+      .json({ mensagem: "Presença confirmada com sucesso." });
   } catch (err) {
     console.error("❌ Erro ao confirmar presença como instrutor:", err);
     return res.status(500).json({ erro: "Erro ao confirmar presença." });
@@ -103,8 +147,7 @@ async function confirmarPresencaInstrutor(req, res) {
 }
 
 /* ------------------------------------------------------------------ *
- * POST /api/presencas
- * Registra presença do próprio usuário num dia do evento (monitor/usuário)
+ * POST /api/presencas  (aluno/monitor)
  * Body: { evento_id, data }
  * ------------------------------------------------------------------ */
 async function registrarPresenca(req, res) {
@@ -118,13 +161,15 @@ async function registrarPresenca(req, res) {
   try {
     const dataISO = normalizarDataEntrada(data);
     if (!dataISO) {
-      return res.status(400).json({ erro: "Data inválida. Use aaaa-mm-dd ou dd/mm/aaaa." });
+      return res
+        .status(400)
+        .json({ erro: "Data inválida. Use aaaa-mm-dd ou dd/mm/aaaa." });
     }
 
-    // Descobre a turma do usuário nesse evento
+    // turma onde este usuário está inscrito
     const insc = await db.query(
       `
-      SELECT i.turma_id, t.data_inicio, t.data_fim
+      SELECT i.turma_id, t.data_inicio::date AS di, t.data_fim::date AS df
       FROM inscricoes i
       JOIN turmas t ON t.id = i.turma_id
       WHERE i.usuario_id = $1 AND t.evento_id = $2
@@ -132,18 +177,20 @@ async function registrarPresenca(req, res) {
       [usuario_id, evento_id]
     );
     if (insc.rowCount === 0) {
-      return res.status(403).json({ erro: "Você não está inscrito neste evento." });
+      return res
+        .status(403)
+        .json({ erro: "Você não está inscrito neste evento." });
     }
     const turma_id = insc.rows[0].turma_id;
-    const di = insc.rows[0].data_inicio?.toISOString?.()?.slice(0,10) ?? String(insc.rows[0].data_inicio).slice(0,10);
-    const df = insc.rows[0].data_fim?.toISOString?.()?.slice(0,10) ?? String(insc.rows[0].data_fim).slice(0,10);
+    const di = ymd(insc.rows[0].di);
+    const df = ymd(insc.rows[0].df);
 
-    // ✅ valida que a data informada pertence ao intervalo da turma (inclusive)
     if (dataISO < di || dataISO > df) {
-      return res.status(400).json({ erro: "Data fora do período desta turma." });
+      return res
+        .status(400)
+        .json({ erro: "Data fora do período desta turma." });
     }
 
-    // Upsert presença
     await db.query(
       `
       INSERT INTO presencas (usuario_id, turma_id, data_presenca, presente)
@@ -155,7 +202,6 @@ async function registrarPresenca(req, res) {
     );
 
     await verificarElegibilidadeParaAvaliacao(usuario_id, turma_id);
-
     res.status(201).json({ mensagem: "Presença registrada com sucesso." });
   } catch (err) {
     console.error("❌ Erro ao registrar presença:", err);
@@ -163,52 +209,77 @@ async function registrarPresenca(req, res) {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * POST /api/presencas/confirmarPresencaViaQR
+ * Aceita body { turma_id } ou param :turma_id (rotas legadas)
+ * Valida por datas_turma; se vazio, cai no intervalo da turma.
+ * ------------------------------------------------------------------ */
 async function confirmarPresencaViaQR(req, res) {
   const usuario_id = req.usuario?.id;
-  // ✅ agora aceita tanto /confirmar-qr/:turma_id quanto body { turma_id }
-  const turma_id = req.params.turma_id || req.body.turma_id;
+  const turma_id = parseInt(req.params.turma_id || req.body.turma_id, 10);
 
   try {
     if (!usuario_id) return res.status(401).json({ erro: "Não autenticado." });
     if (!turma_id) return res.status(400).json({ erro: "turma_id é obrigatório." });
 
-    // Verifica inscrição nessa turma
+    // precisa estar inscrito na turma
     const insc = await db.query(
       `SELECT 1 FROM inscricoes WHERE usuario_id = $1 AND turma_id = $2`,
       [usuario_id, turma_id]
     );
     if (insc.rowCount === 0) {
-      return res.status(403).json({ erro: "Você não está inscrito nesta turma." });
+      return res
+        .status(403)
+        .json({ erro: "Você não está inscrito nesta turma." });
     }
 
-    // Hoje precisa estar no período da turma
-    const t = await db.query(
-      `SELECT data_inicio, data_fim FROM turmas WHERE id = $1`,
+    // datas reais da turma
+    const datasTurma = await db.query(
+      `SELECT data::date AS d FROM datas_turma WHERE turma_id = $1 ORDER BY data`,
       [turma_id]
     );
-    if (t.rowCount === 0) return res.status(404).json({ erro: "Turma não encontrada." });
 
-    const di = String(t.rows[0].data_inicio).slice(0, 10);
-    const df = String(t.rows[0].data_fim).slice(0, 10);
-    const hojeISO = new Date().toISOString().slice(0, 10);
+    let permitidoHoje = false;
+    const hoje = hojeYMD(); // yyyy-mm-dd em America/Sao_Paulo
 
-    if (hojeISO < di || hojeISO > df) {
-      return res.status(400).json({ erro: "Hoje não está dentro do período desta turma." });
+    if (datasTurma.rowCount > 0) {
+      permitidoHoje = datasTurma.rows.some(
+        (r) => ymd(r.d) === hoje
+      );
+    } else {
+      // fallback: janela da turma
+      const t = await db.query(
+        `SELECT data_inicio::date AS di, data_fim::date AS df FROM turmas WHERE id = $1`,
+        [turma_id]
+      );
+      if (t.rowCount === 0)
+        return res.status(404).json({ erro: "Turma não encontrada." });
+      const di = ymd(t.rows[0].di);
+      const df = ymd(t.rows[0].df);
+      permitidoHoje = hoje >= di && hoje <= df;
+    }
+
+    if (!permitidoHoje) {
+      return res
+        .status(409)
+        .json({ erro: "Hoje não está dentro do período desta turma." });
     }
 
     await db.query(
       `
-      INSERT INTO presencas (usuario_id, turma_id, data_presenca, presente)
-      VALUES ($1, $2, $3, TRUE)
+      INSERT INTO presencas (usuario_id, turma_id, data_presenca, presente, origem)
+      VALUES ($1, $2, $3, TRUE, 'qr')
       ON CONFLICT (usuario_id, turma_id, data_presenca)
-      DO UPDATE SET presente = EXCLUDED.presente
+      DO UPDATE SET presente = EXCLUDED.presente, origem='qr', atualizado_em = NOW()
       `,
-      [usuario_id, turma_id, hojeISO]
+      [usuario_id, turma_id, hoje]
     );
 
     await verificarElegibilidadeParaAvaliacao(usuario_id, turma_id);
 
-    return res.status(201).json({ sucesso: true, mensagem: "Presença registrada com sucesso." });
+    return res
+      .status(201)
+      .json({ sucesso: true, mensagem: "Presença registrada com sucesso." });
   } catch (err) {
     console.error("❌ Erro ao confirmar presença via QR:", err);
     return res.status(500).json({ erro: "Erro ao confirmar presença." });
@@ -216,8 +287,38 @@ async function confirmarPresencaViaQR(req, res) {
 }
 
 /* ------------------------------------------------------------------ *
- * POST /api/presencas/registrar-manual
- * (instrutor/administrador) marca presença como pendente (presente = FALSE)
+ * POST /api/presencas/confirmar-via-token  (token assinado)
+ * Body: { token }
+ * ------------------------------------------------------------------ */
+async function confirmarViaToken(req, res) {
+  try {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ erro: "Token ausente." });
+
+    let payload;
+    try {
+      payload = jwt.verify(token, PRESENCA_TOKEN_SECRET); // { turmaId, usuarioId? }
+    } catch (e) {
+      return res.status(400).json({ erro: "Token inválido ou expirado." });
+    }
+
+    const usuario_id = payload.usuarioId || req.usuario?.id;
+    if (!usuario_id) return res.status(401).json({ erro: "Não autenticado." });
+
+    const turma_id = payload.turmaId;
+    if (!turma_id) return res.status(400).json({ erro: "Token sem turma." });
+
+    req.body.turma_id = turma_id;
+    req.usuario = { id: usuario_id, ...(req.usuario || {}) };
+    return confirmarPresencaViaQR(req, res);
+  } catch (err) {
+    console.error("❌ [confirmarViaToken] erro:", err);
+    return res.status(500).json({ erro: "Erro ao confirmar via token." });
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * POST /api/presencas/registrar-manual (instrutor/admin)
  * Body: { usuario_id, turma_id, data_presenca }
  * ------------------------------------------------------------------ */
 async function registrarManual(req, res) {
@@ -225,23 +326,29 @@ async function registrarManual(req, res) {
   if (!usuario_id || !turma_id || !data_presenca) {
     return res
       .status(400)
-      .json({ erro: "Campos obrigatórios: usuario_id, turma_id, data_presenca." });
+      .json({
+        erro: "Campos obrigatórios: usuario_id, turma_id, data_presenca.",
+      });
   }
 
   try {
     const dataISO = normalizarDataEntrada(data_presenca);
     if (!dataISO) {
-      return res.status(400).json({ erro: "Formato de data inválido. Use aaaa-mm-dd ou dd/mm/aaaa." });
+      return res
+        .status(400)
+        .json({
+          erro: "Formato de data inválido. Use aaaa-mm-dd ou dd/mm/aaaa.",
+        });
     }
 
     const t = await db.query(
-      `SELECT data_inicio, data_fim FROM turmas WHERE id = $1`,
+      `SELECT data_inicio::date AS di, data_fim::date AS df FROM turmas WHERE id = $1`,
       [turma_id]
     );
     if (t.rowCount === 0) return res.status(404).json({ erro: "Turma não encontrada." });
 
-    const di = t.rows[0].data_inicio.toISOString().slice(0,10);
-    const df = t.rows[0].data_fim.toISOString().slice(0,10);
+    const di = ymd(t.rows[0].di);
+    const df = ymd(t.rows[0].df);
     if (dataISO < di || dataISO > df) {
       return res.status(400).json({ erro: "Data fora do período desta turma." });
     }
@@ -257,46 +364,17 @@ async function registrarManual(req, res) {
     );
 
     await verificarElegibilidadeParaAvaliacao(usuario_id, turma_id);
-
-    res.status(201).json({ mensagem: "Presença registrada manualmente como pendente." });
+    res
+      .status(201)
+      .json({ mensagem: "Presença registrada manualmente como pendente." });
   } catch (err) {
     console.error("❌ Erro ao registrar manualmente:", err);
     res.status(500).json({ erro: "Erro ao registrar presença manual." });
   }
 }
 
-async function confirmarViaToken(req, res) {
-  try {
-    const { token } = req.body;
-    if (!token) return res.status(400).json({ erro: "Token ausente." });
-
-    let payload;
-    try {
-      payload = jwt.verify(token, PRESENCA_TOKEN_SECRET); // { turmaId, usuarioId? }
-    } catch (e) {
-      return res.status(400).json({ erro: "Token inválido ou expirado." });
-    }
-
-    // se o token não embute usuário, usa o autenticado
-    const usuario_id = payload.usuarioId || req.usuario?.id;
-    if (!usuario_id) return res.status(401).json({ erro: "Não autenticado." });
-
-    const turma_id = payload.turmaId;
-    if (!turma_id) return res.status(400).json({ erro: "Token sem turma." });
-
-    // Reaproveita a lógica do método acima, chamando via body:
-    req.body.turma_id = turma_id;
-    req.usuario = { id: usuario_id, ...(req.usuario || {}) };
-    return confirmarPresencaViaQR(req, res);
-  } catch (err) {
-    console.error("❌ [confirmarViaToken] erro:", err);
-    return res.status(500).json({ erro: "Erro ao confirmar via token." });
-  }
-}
-
 /* ------------------------------------------------------------------ *
  * PATCH /api/presencas/validar
- * Valida uma presença pendente -> presente = TRUE
  * Body: { usuario_id, turma_id, data_presenca }
  * ------------------------------------------------------------------ */
 async function validarPresenca(req, res) {
@@ -304,7 +382,9 @@ async function validarPresenca(req, res) {
   if (!usuario_id || !turma_id || !data_presenca) {
     return res
       .status(400)
-      .json({ erro: "Campos obrigatórios: usuario_id, turma_id, data_presenca." });
+      .json({
+        erro: "Campos obrigatórios: usuario_id, turma_id, data_presenca.",
+      });
   }
 
   try {
@@ -315,12 +395,16 @@ async function validarPresenca(req, res) {
       [usuario_id, turma_id, data_presenca]
     );
     if (upd.rowCount === 0) {
-      return res.status(404).json({ erro: "Presença não encontrada para validação." });
+      return res
+        .status(404)
+        .json({ erro: "Presença não encontrada para validação." });
     }
 
     await verificarElegibilidadeParaAvaliacao(usuario_id, turma_id);
-
-    res.json({ mensagem: "Presença validada com sucesso.", presenca: upd.rows[0] });
+    res.json({
+      mensagem: "Presença validada com sucesso.",
+      presenca: upd.rows[0],
+    });
   } catch (err) {
     console.error("❌ Erro ao validar presença:", err);
     res.status(500).json({ erro: "Erro ao validar presença." });
@@ -328,8 +412,7 @@ async function validarPresenca(req, res) {
 }
 
 /* ------------------------------------------------------------------ *
- * POST /api/presencas/confirmar-hoje
- * (admin) confirma presença do dia atual
+ * POST /api/presencas/confirmar-hoje  (admin)
  * Body: { usuario_id, turma_id }
  * ------------------------------------------------------------------ */
 async function confirmarHojeManual(req, res) {
@@ -338,7 +421,7 @@ async function confirmarHojeManual(req, res) {
     return res.status(400).json({ erro: "Dados incompletos." });
   }
 
-  const hojeISO = new Date().toISOString().split("T")[0];
+  const hojeISO = hojeYMD(); // TZ BR
 
   try {
     await db.query(
@@ -352,7 +435,6 @@ async function confirmarHojeManual(req, res) {
     );
 
     await verificarElegibilidadeParaAvaliacao(usuario_id, turma_id);
-
     res.status(201).json({ mensagem: "Presença registrada com sucesso." });
   } catch (err) {
     console.error("❌ Erro ao confirmar manualmente:", err);
@@ -362,20 +444,18 @@ async function confirmarHojeManual(req, res) {
 
 /* ------------------------------------------------------------------ *
  * GET /api/presencas/turma/:turma_id/frequencias
- * Lista inscritos da turma com frequência e se atingiu 75%
  * ------------------------------------------------------------------ */
 async function listaPresencasTurma(req, res) {
   const { turma_id } = req.params;
 
   try {
-    // Janela da turma
     const t = await db.query(
       `SELECT data_inicio::date AS di, data_fim::date AS df FROM turmas WHERE id = $1`,
       [turma_id]
     );
     if (t.rowCount === 0) return res.status(404).json({ erro: "Turma não encontrada." });
 
-    // total de dias = generate_series entre data_inicio e data_fim (inclusive)
+    // total de dias do período
     const totRes = await db.query(
       `
       WITH t AS (
@@ -391,7 +471,7 @@ async function listaPresencasTurma(req, res) {
       return res.status(400).json({ erro: "Período da turma inválido (0 dias)." });
     }
 
-    // inscritos + presenças (DISTINCT por dia)
+    // inscritos + presenças (distinct por dia)
     const presencas = await db.query(
       `
       SELECT u.id AS usuario_id, u.nome, u.cpf,
@@ -425,14 +505,18 @@ async function listaPresencasTurma(req, res) {
   }
 }
 
-// GET /api/presencas/turma/:turma_id/detalhes
+/* ------------------------------------------------------------------ *
+ * GET /api/presencas/turma/:turma_id/detalhes
+ * ------------------------------------------------------------------ */
 async function relatorioPresencasPorTurma(req, res) {
   const { turma_id } = req.params;
 
-  const rid = `rid=${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  const rid = `rid=${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 7)}`;
   const isProd = process.env.NODE_ENV === "production";
-  const log   = (...a) => console.log("📊 [presenças/detalhes]", rid, ...a);
-  const warn  = (...a) => console.warn("⚠️ [presenças/detalhes]", rid, ...a);
+  const log = (...a) => console.log("📊 [presenças/detalhes]", rid, ...a);
+  const warn = (...a) => console.warn("⚠️ [presenças/detalhes]", rid, ...a);
   const errlg = (...a) => console.error("❌ [presenças/detalhes]", rid, ...a);
 
   const toYMD = (val) => {
@@ -449,19 +533,16 @@ async function relatorioPresencasPorTurma(req, res) {
   try {
     log("⇢ INÍCIO", { turma_id });
 
-    // 0) Turma (janela)
     const turmaQ = await db.query(
       `SELECT id, evento_id, data_inicio::date AS di, data_fim::date AS df FROM turmas WHERE id = $1 LIMIT 1`,
       [turma_id]
     );
-    log("turmaQ.rowCount:", turmaQ.rowCount, "rows(amostra):", turmaQ.rows?.slice?.(0, 3));
     if (turmaQ.rowCount === 0) {
       warn("Turma não encontrada:", turma_id);
       return res.status(404).json({ erro: "Turma não encontrada." });
     }
     const eventoId = turmaQ.rows[0].evento_id || null;
 
-    // 1) Usuários da turma
     const usuariosQ = await db.query(
       `
       SELECT u.id, u.nome, u.cpf
@@ -472,9 +553,7 @@ async function relatorioPresencasPorTurma(req, res) {
       `,
       [turma_id]
     );
-    log("usuariosQ.rowCount:", usuariosQ.rowCount, "amostra:", usuariosQ.rows?.slice?.(0, 5));
 
-    // 2) Datas da turma via generate_series
     const datasQ = await db.query(
       `
       WITH t AS (SELECT $1::date AS di, $2::date AS df)
@@ -484,15 +563,14 @@ async function relatorioPresencasPorTurma(req, res) {
       `,
       [turmaQ.rows[0].di, turmaQ.rows[0].df]
     );
-    const datasArr = (datasQ.rows || []).map(r => toYMD(r.data)).filter(Boolean);
-    log("datasArr.len:", datasArr.length, "amostra:", datasArr.slice(0, 10));
+    const datasArr = (datasQ.rows || [])
+      .map((r) => toYMD(r.data))
+      .filter(Boolean);
 
-    // 3) Presenças da turma
     const presQ = await db.query(
       `SELECT usuario_id, data_presenca, presente FROM presencas WHERE turma_id = $1`,
       [turma_id]
     );
-    log("presQ.rowCount:", presQ.rowCount, "amostra:", presQ.rows?.slice?.(0, 10));
 
     const presMap = new Map();
     for (const r of presQ.rows || []) {
@@ -501,9 +579,7 @@ async function relatorioPresencasPorTurma(req, res) {
       if (!uid || !dYMD) continue;
       presMap.set(`${uid}|${dYMD}`, r.presente === true);
     }
-    log("presMap.size:", presMap.size);
 
-    // 4) Matriz usuários × datas
     const usuariosArr = (usuariosQ.rows || []).map((u) => ({
       id: u.id,
       nome: u.nome,
@@ -514,9 +590,6 @@ async function relatorioPresencasPorTurma(req, res) {
         return { data, presente };
       }),
     }));
-
-    log("usuariosArr.len:", usuariosArr.length);
-    log("✓ FIM OK", { turma_id });
 
     return res.json({
       turma_id: Number(turma_id),
@@ -539,14 +612,14 @@ async function relatorioPresencasPorTurma(req, res) {
 
 /* ------------------------------------------------------------------ *
  * GET /api/presencas/turma/:turma_id/pdf
- * PDF simplificado com P/F/...
  * ------------------------------------------------------------------ */
 async function exportarPresencasPDF(req, res) {
   const { turma_id } = req.params;
 
   try {
     const turmaRes = await db.query(
-      `SELECT nome, data_inicio, data_fim, horario_inicio FROM turmas WHERE id = $1`,
+      `SELECT nome, data_inicio::date AS di, data_fim::date AS df, horario_inicio
+         FROM turmas WHERE id = $1`,
       [turma_id]
     );
     if (turmaRes.rowCount === 0) {
@@ -554,19 +627,21 @@ async function exportarPresencasPDF(req, res) {
     }
     const turma = turmaRes.rows[0];
 
-    // Datas da turma (intervalo linear)
+    // datas da turma (yyyy-mm-dd) usando generate_series no DB seria ótimo,
+    // mas aqui montamos em memória com segurança:
     const datasTurma = [];
-    let atual = new Date(turma.data_inicio);
-    const fim = new Date(turma.data_fim);
-    while (atual <= fim) {
-      datasTurma.push(format(atual, "yyyy-MM-dd"));
-      atual.setDate(atual.getDate() + 1);
+    for (
+      let d = localDateFromYMD(ymd(turma.di));
+      d <= localDateFromYMD(ymd(turma.df));
+      d.setDate(d.getDate() + 1)
+    ) {
+      datasTurma.push(format(d, "yyyy-MM-dd"));
     }
 
     const agora = new Date();
-    const horarioInicio = turma.horario_inicio || "08:00:00";
+    const horarioInicio = (turma.horario_inicio || "08:00").slice(0, 5);
 
-    // Inscritos
+    // inscritos
     const insc = await db.query(
       `
       SELECT u.id AS usuario_id, u.nome, u.cpf
@@ -578,13 +653,13 @@ async function exportarPresencasPDF(req, res) {
       [turma_id]
     );
 
-    // Presenças
+    // presenças
     const pres = await db.query(
       `SELECT usuario_id, data_presenca, presente FROM presencas WHERE turma_id = $1`,
       [turma_id]
     );
 
-    // Inicia PDF
+    // PDF
     const doc = new PDFDocument({ size: "A4", margin: 50 });
     res.setHeader(
       "Content-Disposition",
@@ -593,20 +668,21 @@ async function exportarPresencasPDF(req, res) {
     res.setHeader("Content-Type", "application/pdf");
     doc.pipe(res);
 
-    // Título
-    doc.fontSize(16).text(`Relatório de Presenças – ${turma.nome}`, { align: "center" });
+    doc.fontSize(16).text(`Relatório de Presenças – ${turma.nome}`, {
+      align: "center",
+    });
     doc.moveDown();
 
-    // Cabeçalho
+    // cabeçalho
     doc.fontSize(12).text("Nome", 50, doc.y, { continued: true });
     doc.text("CPF", 250, doc.y, { continued: true });
     datasTurma.forEach((data) => {
-      const ddmm = format(new Date(data), "dd/MM", { locale: ptBR });
+      const ddmm = format(localDateFromYMD(data), "dd/MM", { locale: ptBR });
       doc.text(ddmm, doc.x + 20, doc.y, { continued: true });
     });
     doc.moveDown();
 
-    // Linhas
+    // linhas
     insc.rows.forEach((inscrito) => {
       doc.text(inscrito.nome, 50, doc.y, { width: 180, continued: true });
       doc.text(inscrito.cpf || "", 250, doc.y, { continued: true });
@@ -615,15 +691,15 @@ async function exportarPresencasPDF(req, res) {
         const hit = pres.rows.find(
           (p) =>
             String(p.usuario_id) === String(inscrito.usuario_id) &&
-            format(new Date(p.data_presenca), "yyyy-MM-dd") === data
+            ymd(p.data_presenca) === data
         );
 
-        let simbolo = "F"; // Faltou
+        let simbolo = "F"; // faltou
         if (hit && hit.presente === true) {
-          simbolo = "P"; // Presente
+          simbolo = "P"; // presente
         } else {
-          // Aguardando confirmação até +60min do início
-          const limite = new Date(`${data}T${horarioInicio}`);
+          // aguardando até +60min do início
+          const limite = new Date(`${data}T${horarioInicio}:00`);
           limite.setMinutes(limite.getMinutes() + 60);
           if (agora < limite) simbolo = "...";
         }
@@ -644,16 +720,16 @@ async function exportarPresencasPDF(req, res) {
 /* ------------------------------------------------------------------ *
  * POST /api/presencas/confirmar-simples
  * Body: { usuario_id, turma_id, data | data_presenca }
- * Admin pode retroagir até 15 dias
  * ------------------------------------------------------------------ */
 async function confirmarPresencaSimples(req, res) {
   const { usuario_id, turma_id } = req.body;
   const perfil = String(req.usuario?.perfil || "").toLowerCase();
 
-  // aceita 'data' ou 'data_presenca'
   const dataInput = req.body.data_presenca || req.body.data;
   if (!usuario_id || !turma_id || !dataInput) {
-    return res.status(400).json({ erro: "Dados obrigatórios não informados." });
+    return res
+      .status(400)
+      .json({ erro: "Dados obrigatórios não informados." });
   }
 
   const dataISO = normalizarDataEntrada(dataInput);
@@ -663,15 +739,15 @@ async function confirmarPresencaSimples(req, res) {
       .json({ erro: "Formato de data inválido. Use aaaa-mm-dd ou dd/mm/aaaa." });
   }
 
-  // Regra de retroatividade (apenas admin)
-  const hoje = new Date();
-  const d = new Date(dataISO);
+  // retroatividade (admin): até 15 dias
+  const hoje = localDateFromYMD(hojeYMD());
+  const d = localDateFromYMD(dataISO);
   const diffDias = Math.floor((hoje - d) / (1000 * 60 * 60 * 24));
   const limite = 15;
   if (perfil === "administrador" && diffDias > limite) {
-    return res
-      .status(403)
-      .json({ erro: `Administradores só podem confirmar presenças retroativas em até ${limite} dias.` });
+    return res.status(403).json({
+      erro: `Administradores só podem confirmar presenças retroativas em até ${limite} dias.`,
+    });
   }
 
   try {
@@ -686,30 +762,31 @@ async function confirmarPresencaSimples(req, res) {
     );
 
     await verificarElegibilidadeParaAvaliacao(usuario_id, turma_id);
-
-    return res.status(200).json({ mensagem: "Presença confirmada com sucesso." });
+    return res
+      .status(200)
+      .json({ mensagem: "Presença confirmada com sucesso." });
   } catch (err) {
     console.error("❌ Erro ao confirmar presença simples:", err);
-    return res.status(500).json({ erro: "Erro interno ao confirmar presença." });
+    return res
+      .status(500)
+      .json({ erro: "Erro interno ao confirmar presença." });
   }
 }
 
 /* ------------------------------------------------------------------ *
- * Após registrar presença, se a turma terminou e o aluno tem ≥ 75%,
- * gera notificação de avaliação disponível.
+ * Pós-presença: notificação de avaliação (≥ 75% e turma encerrada)
  * ------------------------------------------------------------------ */
 async function verificarElegibilidadeParaAvaliacao(usuario_id, turma_id) {
   try {
-    // Turma já terminou?
     const turmaRes = await db.query(
       `SELECT data_inicio::date AS di, data_fim::date AS df FROM turmas WHERE id = $1`,
       [turma_id]
     );
     if (turmaRes.rowCount === 0) return;
-    const dataFim = new Date(turmaRes.rows[0].df);
+
+    const dataFim = localDateFromYMD(ymd(turmaRes.rows[0].df));
     if (new Date() < dataFim) return;
 
-    // Total de dias da turma (intervalo)
     const totRes = await db.query(
       `
       WITH t AS (SELECT $1::date AS di, $2::date AS df)
@@ -721,7 +798,6 @@ async function verificarElegibilidadeParaAvaliacao(usuario_id, turma_id) {
     const totalDatas = parseInt(totRes.rows[0]?.total_datas || "0", 10);
     if (totalDatas === 0) return;
 
-    // Quantos dias presente? (DISTINCT por dia)
     const presRes = await db.query(
       `
       SELECT COUNT(DISTINCT data_presenca::date) AS presentes
@@ -742,7 +818,6 @@ async function verificarElegibilidadeParaAvaliacao(usuario_id, turma_id) {
 
 /* ------------------------------------------------------------------ *
  * GET /api/presencas/admin/listar-tudo
- * Estrutura: { eventos: [{ evento_id, titulo, turmas: [...] }]}
  * ------------------------------------------------------------------ */
 async function listarTodasPresencasParaAdmin(req, res) {
   try {
@@ -795,7 +870,7 @@ module.exports = {
   confirmarPresencaSimples,
   registrarPresenca,
   confirmarPresencaViaQR,
-  confirmarViaToken,          // 👈 novo
+  confirmarViaToken,
   registrarManual,
   validarPresenca,
   confirmarHojeManual,

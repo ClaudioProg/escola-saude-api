@@ -36,16 +36,17 @@ const formatarCPF = (v) =>
     .replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
 
 /* =========================
-   Período do evento
+   Período do evento (corrigido anti-fuso)
    ========================= */
 function getPeriodoEvento(evento, turmas) {
-  const diAgg = evento?.data_inicio_geral;
-  const dfAgg = evento?.data_fim_geral;
+  // Sempre reduz para YYYY-MM-DD e cria data local ao meio-dia
+  const diAggY = ymd(evento?.data_inicio_geral);
+  const dfAggY = ymd(evento?.data_fim_geral);
 
-  const formatarPeriodo = (ini, fim) => {
-    if (!ini || !fim) return "Período não informado";
-    const a = toLocalDate(ini);
-    const b = toLocalDate(fim);
+  const formatarPeriodo = (iniYMD, fimYMD) => {
+    if (!iniYMD || !fimYMD) return "Período não informado";
+    const a = toLocalDateFromYMD(iniYMD, "12:00");
+    const b = toLocalDateFromYMD(fimYMD, "12:00");
     if (!a || !b || isNaN(a) || isNaN(b)) return "Período não informado";
     const sameDay =
       a.getFullYear() === b.getFullYear() &&
@@ -55,18 +56,28 @@ function getPeriodoEvento(evento, turmas) {
     return `${formatarDataLocal(a)} até ${formatarDataLocal(b)}`;
   };
 
-  if (diAgg && dfAgg) return formatarPeriodo(diAgg, dfAgg);
+  if (diAggY && dfAggY) return formatarPeriodo(diAggY, dfAggY);
 
+  // Agrega pelas turmas se não houver datas agregadas
   if (Array.isArray(turmas) && turmas.length > 0) {
-    const inicioMin = turmas.reduce((min, t) => {
-      const dt = toLocalDate(t?.data_inicio);
-      return !min || (dt && dt < min) ? dt : min;
-    }, null);
-    const fimMax = turmas.reduce((max, t) => {
-      const dt = toLocalDate(t?.data_fim);
-      return !max || (dt && dt > max) ? dt : max;
-    }, null);
-    return formatarPeriodo(inicioMin, fimMax);
+    const starts = turmas
+      .map((t) => ymd(t?.data_inicio))
+      .filter(Boolean)
+      .map((d) => toLocalDateFromYMD(d, "12:00")?.getTime())
+      .filter(Boolean);
+    const ends = turmas
+      .map((t) => ymd(t?.data_fim))
+      .filter(Boolean)
+      .map((d) => toLocalDateFromYMD(d, "12:00")?.getTime())
+      .filter(Boolean);
+
+    if (starts.length && ends.length) {
+      const a = new Date(Math.min(...starts));
+      const b = new Date(Math.max(...ends));
+      const aY = `${a.getFullYear()}-${String(a.getMonth() + 1).padStart(2, "0")}-${String(a.getDate()).padStart(2, "0")}`;
+      const bY = `${b.getFullYear()}-${String(b.getMonth() + 1).padStart(2, "0")}-${String(b.getDate()).padStart(2, "0")}`;
+      return formatarPeriodo(aY, bY);
+    }
   }
   return "Período não informado";
 }
@@ -85,8 +96,7 @@ function getStatusEvento({ evento, turmas }) {
   let fimDT = dfAgg ? toLocalDateFromYMD(dfAgg, hfAgg) : null;
 
   if (!inicioDT || !fimDT) {
-    const starts = [],
-      ends = [];
+    const starts = [], ends = [];
     (turmas || []).forEach((t) => {
       const di = ymd(t.data_inicio);
       const df = ymd(t.data_fim);
@@ -129,32 +139,22 @@ function notaEnumParaNumero(valor) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
   switch (n) {
-    case "otimo":
-      return 5;
-    case "bom":
-      return 4;
-    case "regular":
-      return 3;
-    case "ruim":
-      return 2;
-    case "pessimo":
-      return 1;
-    default:
-      return null;
+    case "otimo": return 5;
+    case "bom": return 4;
+    case "regular": return 3;
+    case "ruim": return 2;
+    case "pessimo": return 1;
+    default: return null;
   }
 }
 function calcularMediaEventoViaLista(avaliacoes) {
   if (!Array.isArray(avaliacoes) || avaliacoes.length === 0) return "—";
   const medias = avaliacoes
     .map((av) => {
-      let soma = 0,
-        qtd = 0;
+      let soma = 0, qtd = 0;
       CAMPOS_NOTA_EVENTO.forEach((campo) => {
         const v = notaEnumParaNumero(av[campo]);
-        if (v !== null) {
-          soma += v;
-          qtd++;
-        }
+        if (v !== null) { soma += v; qtd++; }
       });
       return qtd ? soma / qtd : null;
     })
@@ -195,11 +195,8 @@ export default function CardEventoadministrador({
         notaMedia: "—",
       };
     }
-    let totalInscritos = 0,
-      totalPresentes = 0,
-      totalAvaliacoes = 0;
-    const mediasDiretas = [],
-      todasAvaliacoes = [];
+    let totalInscritos = 0, totalPresentes = 0, totalAvaliacoes = 0;
+    const mediasDiretas = [], todasAvaliacoes = [];
 
     turmas.forEach((t) => {
       const inscritos = normalizaArr(inscritosPorTurma?.[t.id]);
