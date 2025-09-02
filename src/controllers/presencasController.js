@@ -102,7 +102,7 @@ async function confirmarPresencaInstrutor(req, res) {
         .json({ erro: "Acesso negado. Você não é instrutor desta turma." });
     }
 
-    // prazo 48h após horário_fim do dia confirmado
+    // prazo 48h após horário_fim do dia confirmado (em horário local)
     const turmaRes = await db.query(
       `SELECT horario_fim FROM turmas WHERE id = $1`,
       [turma_id]
@@ -117,9 +117,12 @@ async function confirmarPresencaInstrutor(req, res) {
         .status(400)
         .json({ erro: "Data inválida. Use aaaa-mm-dd ou dd/mm/aaaa." });
 
-    // construímos limite no fuso BR: yyyy-mm-ddTHH:mm
-    const fimAula = new Date(`${dataISO}T${horario_fim}:00`);
+    // monta a data local e aplica a hora de término
+    const fimAula = localDateFromYMD(dataISO);
+    const [h, m] = horario_fim.split(":").map((n) => parseInt(n, 10) || 0);
+    fimAula.setHours(h, m, 0, 0);
     const limite = new Date(fimAula.getTime() + 48 * 60 * 60 * 1000);
+
     if (new Date() > limite) {
       return res
         .status(403)
@@ -243,9 +246,7 @@ async function confirmarPresencaViaQR(req, res) {
     const hoje = hojeYMD(); // yyyy-mm-dd em America/Sao_Paulo
 
     if (datasTurma.rowCount > 0) {
-      permitidoHoje = datasTurma.rows.some(
-        (r) => ymd(r.d) === hoje
-      );
+      permitidoHoje = datasTurma.rows.some((r) => ymd(r.d) === hoje);
     } else {
       // fallback: janela da turma
       const t = await db.query(
@@ -267,10 +268,10 @@ async function confirmarPresencaViaQR(req, res) {
 
     await db.query(
       `
-      INSERT INTO presencas (usuario_id, turma_id, data_presenca, presente, origem)
-      VALUES ($1, $2, $3, TRUE, 'qr')
+      INSERT INTO presencas (usuario_id, turma_id, data_presenca, presente)
+      VALUES ($1, $2, $3, TRUE)
       ON CONFLICT (usuario_id, turma_id, data_presenca)
-      DO UPDATE SET presente = EXCLUDED.presente, origem='qr', atualizado_em = NOW()
+      DO UPDATE SET presente = EXCLUDED.presente
       `,
       [usuario_id, turma_id, hoje]
     );
@@ -627,8 +628,7 @@ async function exportarPresencasPDF(req, res) {
     }
     const turma = turmaRes.rows[0];
 
-    // datas da turma (yyyy-mm-dd) usando generate_series no DB seria ótimo,
-    // mas aqui montamos em memória com segurança:
+    // datas da turma (yyyy-mm-dd)
     const datasTurma = [];
     for (
       let d = localDateFromYMD(ymd(turma.di));
