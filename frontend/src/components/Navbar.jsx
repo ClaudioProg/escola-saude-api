@@ -16,7 +16,7 @@ import {
   BarChart3,
   Presentation,
   ClipboardList,
-  ListChecks,
+  ListChecks, // ✅ usado em "Minhas Presenças"
   PencilLine,
   UserCog,
   HelpCircle,
@@ -103,6 +103,8 @@ export default function Navbar() {
     () => [
       { label: "Eventos", path: "/eventos", icon: CalendarDays },
       { label: "Meus Cursos", path: "/minhas-inscricoes", icon: BookOpen },
+      // ✅ novo item
+      { label: "Minhas Presenças", path: "/minhas-presencas", icon: ListChecks },
       { label: "Avaliações Pendentes", path: "/avaliacao", icon: PencilLine },
       { label: "Meus Certificados", path: "/certificados", icon: FileText },
       { label: "Escanear", path: "/scanner", icon: QrCode },

@@ -5,7 +5,7 @@ const router = express.Router();
 const authMiddleware = require("../auth/authMiddleware");
 const db = require("../db");
 
-// Handlers do controller
+// Handlers do controller principal
 const {
   registrarPresenca,
   confirmarPresencaViaQR,
@@ -21,6 +21,9 @@ const {
   listaPresencasTurma,
   exportarPresencasPDF,
 } = require("../controllers/presencasController");
+
+// 👇 novo handler vem do controller específico
+const { listarMinhasPresencas } = require("../controllers/minhasPresencasController");
 
 /** Middleware simples para restringir por perfil (case-insensitive, trim) */
 function permitirPerfis(...perfisPermitidos) {
@@ -71,6 +74,11 @@ router.get("/validar", async (req, res) => {
 /* -----------------------------
  * Rotas AUTENTICADAS
  * ----------------------------- */
+
+// 0) 👤 Minhas presenças (usuário autenticado vê a própria frequência/datas)
+router.get("/minhas", authMiddleware, listarMinhasPresencas);
+// Alias opcional
+router.get("/me", authMiddleware, listarMinhasPresencas);
 
 // 1) Registro de presença (usuário; requer data válida do evento)
 router.post("/", authMiddleware, registrarPresenca);

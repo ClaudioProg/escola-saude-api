@@ -1,4 +1,3 @@
-// 📁 src/services/api.js
 /* eslint-disable no-console */
 
 // ───────────────────────────────────────────────────────────────────
@@ -393,6 +392,34 @@ export async function apiGetTurmaDatasAuto(turmaId) {
   if (Array.isArray(out) && out.length) return out;
 
   return apiGetTurmaDatas(turmaId, "intervalo");
+}
+
+// ───────────────────────────────────────────────────────────────────
+// 🆕 APIs de Presenças (usuário / público)
+// ───────────────────────────────────────────────────────────────────
+
+// 👤 Usuário autenticado — retorna todas as turmas com frequência e datas
+export async function apiGetMinhasPresencas(opts = {}) {
+  return apiGet("/presencas/minhas", opts);
+}
+// Alias
+export async function apiGetMePresencas(opts = {}) {
+  return apiGet("/presencas/me", opts);
+}
+
+// 🌐 Validação pública (usado por /validar-certificado.html, não exige auth)
+export async function apiValidarPresencaPublico({ evento, usuario, evento_id, usuario_id } = {}) {
+  const query = {
+    evento: evento ?? evento_id,
+    usuario: usuario ?? usuario_id,
+  };
+  return apiGet("/presencas/validar", { auth: false, query });
+}
+
+// (opcional) Download do PDF de presenças por turma (admin/instrutor)
+export async function apiPresencasTurmaPDF(turmaId) {
+  if (!turmaId) throw new Error("turmaId obrigatório");
+  return apiGetFile(`/presencas/turma/${turmaId}/pdf`);
 }
 
 export { API_BASE_URL }; // opcional, para debug

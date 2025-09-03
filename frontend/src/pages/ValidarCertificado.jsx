@@ -1,6 +1,6 @@
 // 📁 src/pages/ValidarCertificado.jsx
 import { useSearchParams } from "react-router-dom";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import BotaoPrimario from "../components/BotaoPrimario";
 import NadaEncontrado from "../components/NadaEncontrado";
@@ -9,51 +9,44 @@ import { formatarDataHoraBrasileira } from "../utils/data";
 import { apiGet } from "../services/api";
 
 export default function ValidarCertificado() {
-  const [searchParams] = useSearchParams();
+  const [sp] = useSearchParams();
   const [mensagem, setMensagem] = useState("");
   const [detalhe, setDetalhe] = useState("");
   const [status, setStatus] = useState("loading"); // loading | sucesso | pendente | erro
   const [dataHora, setDataHora] = useState("");
 
-  // 🔎 Extrai parâmetros aceitando variações e o caso legado ?codigo=<URL...>
-  const { eventoId, usuarioId, isDebug } = useMemo(() => {
-    const dbg = (searchParams.get("debug") || "").trim() === "1";
+  const isDebug = (sp.get("debug") || "") === "1";
 
-    const pick = (sp, ...keys) => {
-      for (const k of keys) {
-        const v = (sp.get(k) || "").trim();
-        if (v) return v;
-      }
-      return "";
-    };
-
-    let evento = pick(searchParams, "evento", "evento_id");
-    let usuario = pick(searchParams, "usuario", "usuario_id");
-
-    // Se veio ?codigo=https%3A%2F%2F... com params dentro, tenta puxar de lá
-    if ((!evento || !usuario) && searchParams.get("codigo")) {
-      try {
-        const url = new URL(decodeURIComponent(searchParams.get("codigo")));
-        const inner = url.searchParams;
-        evento = evento || pick(inner, "evento", "evento_id");
-        usuario = usuario || pick(inner, "usuario", "usuario_id");
-      } catch {
-        // segue sem travar
-      }
+  // 📦 helper: lê param por vários nomes
+  const getAny = (...keys) => {
+    for (const k of keys) {
+      const v = (sp.get(k) || "").trim();
+      if (v) return v;
     }
+    return "";
+  };
 
-    return {
-      eventoId: evento,
-      usuarioId: usuario,
-      isDebug: dbg,
-    };
-  }, [searchParams]);
+  // 1) tenta direto por query (?usuario, ?usuario_id, ?u / ?evento, ?evento_id, ?e)
+  let usuario = getAny("usuario", "usuario_id", "user_id", "u");
+  let evento  = getAny("evento", "evento_id", "event_id", "e");
+
+  // 2) se veio um “link embrulhado” (?codigo=<url codificada>), extrai de lá
+  if (!usuario || !evento) {
+    const codigo = sp.get("codigo") || sp.get("c") || "";
+    if (codigo) {
+      try {
+        const raw = decodeURIComponent(codigo);
+        const u = new URL(raw);
+        usuario = usuario || u.searchParams.get("usuario") || u.searchParams.get("usuario_id") || u.searchParams.get("u") || "";
+        evento  = evento  || u.searchParams.get("evento")  || u.searchParams.get("evento_id")  || u.searchParams.get("e") || "";
+      } catch { /* ignora */ }
+    }
+  }
 
   useEffect(() => {
-    // Mostra a data/hora da verificação (sem risco de “voltar um dia”)
     setDataHora(formatarDataHoraBrasileira(new Date()));
 
-    if (!eventoId || !usuarioId) {
+    if (!usuario || !evento) {
       setMensagem("❌ Link inválido. Parâmetros ausentes.");
       setStatus("erro");
       return;
@@ -61,32 +54,21 @@ export default function ValidarCertificado() {
 
     (async () => {
       try {
-        if (isDebug) {
-          console.log("[ValidarCertificado] GET /presencas/validar", {
-            eventoId,
-            usuarioId,
-          });
-        }
+        if (isDebug) console.log("[ValidarCertificado] /presencas/validar", { evento, usuario });
 
-        // Envia ambos os nomes de parâmetros para compatibilidade com o backend
+        // ✅ Endpoint único do backend (já existente)
         const data = await apiGet("presencas/validar", {
           on403: "silent",
-          query: {
-            evento: eventoId,
-            usuario: usuarioId,
-            evento_id: eventoId,
-            usuario_id: usuarioId,
-          },
+          query: { evento, usuario },
         });
 
         const presente =
           data?.presente ??
           data?.ok ??
-          (typeof data?.status === "string" &&
-            data.status.toLowerCase() === "ok");
+          (typeof data?.status === "string" && data.status.toLowerCase() === "ok");
 
         if (presente) {
-          setMensagem("✅ Presença confirmada! Você pode emitir seu certificado.");
+          setMensagem("✅ Certificado validado com sucesso! Você pode imprimir esta certificação.");
           setStatus("sucesso");
         } else {
           setMensagem("❌ Presença ainda não registrada para este evento.");
@@ -104,7 +86,8 @@ export default function ValidarCertificado() {
         setStatus("erro");
       }
     })();
-  }, [eventoId, usuarioId, isDebug]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usuario, evento, isDebug]);
 
   const corMensagem =
     status === "sucesso"
@@ -121,10 +104,7 @@ export default function ValidarCertificado() {
   };
 
   return (
-    <main
-      className="min-h-screen flex flex-col items-center justify-center bg-white dark:bg-gray-900 p-6 print:p-0 print:min-h-0"
-      role="main"
-    >
+    <main className="min-h-screen flex flex-col items-center justify-center bg-white dark:bg-gray-900 p-6 print:p-0 print:min-h-0">
       <motion.section
         initial="hidden"
         animate="visible"
@@ -132,7 +112,6 @@ export default function ValidarCertificado() {
         className="w-full max-w-lg bg-white dark:bg-gray-800 shadow-lg rounded-2xl p-8 print:shadow-none print:bg-white"
         aria-label="Validação de Presença"
       >
-        {/* Cabeçalho */}
         <div className="flex flex-col items-center mb-8" role="banner">
           <img
             src="/LogoEscola.png"
@@ -140,11 +119,11 @@ export default function ValidarCertificado() {
             className="h-24 mb-4 drop-shadow print:hidden"
             onError={(e) => (e.currentTarget.style.display = "none")}
           />
-          <h1 className="text-3xl font-bold text-blue-700 dark:text-white print:text-black">
+          <h1 className="text-3xl font-bold text-[#0f4c5c] dark:text-white print:text-black">
             Escola da Saúde - Santos
           </h1>
           <p className="text-gray-600 dark:text-gray-300 print:text-black">
-            Validação de Presença em Evento
+            Validação de Certificado
           </p>
         </div>
 
