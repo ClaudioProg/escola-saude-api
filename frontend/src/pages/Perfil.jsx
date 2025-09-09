@@ -113,7 +113,6 @@ export default function Perfil() {
         setEscolaridadeId(asStr(me.escolaridade_id));
         setDeficienciaId(asStr(me.deficiencia_id));
 
-        // storage
         try {
           const antigo = JSON.parse(localStorage.getItem("usuario") || "{}");
           const novo = { ...antigo, ...me };
@@ -122,7 +121,6 @@ export default function Perfil() {
           setUsuario(novo);
         } catch {}
       } catch (e) {
-        // silencioso (página continua utilizável)
         console.warn("Falha ao buscar perfil:", e?.message || e);
       }
     })();
@@ -144,7 +142,6 @@ export default function Perfil() {
           apiGet("/deficiencias", { on403: "silent" }),
         ]);
 
-        // mantém ordenação local por nome apenas onde não há display_order
         setUnidades((uni || []).sort((a, b) => (a.nome || "").localeCompare(b.nome || "")));
         setCargos((car || []).sort((a, b) => stripPrefixNum(a.nome).localeCompare(stripPrefixNum(b.nome))));
 
@@ -162,6 +159,12 @@ export default function Perfil() {
       }
     })();
   }, []);
+
+  // ⚠️ Perfil incompleto? (usa os estados atuais da tela)
+  const perfilIncompleto = [
+    unidadeId, cargoId, generoId, orientacaoSexualId,
+    corRacaId, escolaridadeId, deficienciaId, dataNascimento,
+  ].some((v) => !String(v || "").trim());
 
   const salvarAlteracoes = async () => {
     if (!usuario?.id) return;
@@ -212,7 +215,6 @@ export default function Perfil() {
       setUsuario(novo);
       setSenha("");
 
-      // estados (sempre string)
       setRegistro(maskRegistro(novo.registro || ""));
       setDataNascimento(toYMD(novo.data_nascimento) || "");
       setUnidadeId(asStr(novo.unidade_id));
@@ -255,6 +257,19 @@ export default function Perfil() {
       </h1>
 
       <div className="bg-white dark:bg-zinc-800 p-6 rounded-xl shadow space-y-6">
+
+        {/* 🔴 AVISO DE PERFIL INCOMPLETO */}
+        {perfilIncompleto && (
+          <div
+            role="alert"
+            aria-live="polite"
+            className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-red-700 text-sm dark:bg-red-900/20 dark:border-red-800 dark:text-red-300"
+          >
+            <strong className="font-medium">Ação necessária:</strong>{" "}
+            Preencha todo o cadastro para ter acesso completo à plataforma.
+          </div>
+        )}
+
         {/* Básicos */}
         <section className="grid grid-cols-1 md:grid-cols-2 gap-5">
           <div className="md:col-span-2">

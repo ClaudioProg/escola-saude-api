@@ -1,4 +1,3 @@
-//frontend/src/services/api.js
 /* eslint-disable no-console */
 
 // ───────────────────────────────────────────────────────────────────
@@ -142,16 +141,7 @@ export function makeApiUrl(path, query) {
 // ───────────────────────────────────────────────────────────────────
 const PERFIL_HEADER = "X-Perfil-Incompleto";
 const PERFIL_FLAG_KEY = "perfil_incompleto";
-
-export function setPerfilIncompletoFlag(val) {
-  try {
-    if (val === null || typeof val === "undefined") {
-      sessionStorage.removeItem(PERFIL_FLAG_KEY);
-    } else {
-      sessionStorage.setItem(PERFIL_FLAG_KEY, val ? "1" : "0");
-    }
-  } catch {}
-}
+const PERFIL_EVENT = "perfil:flag";
 
 export function getPerfilIncompletoFlag() {
   try {
@@ -160,6 +150,31 @@ export function getPerfilIncompletoFlag() {
   } catch {
     return null;
   }
+}
+
+/** Atualiza a flag no sessionStorage e emite evento para a app (mesma aba). */
+export function setPerfilIncompletoFlag(val) {
+  try {
+    const prev = getPerfilIncompletoFlag();
+    if (val === null || typeof val === "undefined") {
+      sessionStorage.removeItem(PERFIL_FLAG_KEY);
+    } else {
+      sessionStorage.setItem(PERFIL_FLAG_KEY, val ? "1" : "0");
+    }
+    // 🔔 notifica apenas se mudou (evita re-renders desnecessários)
+    const next = val === null ? null : !!val;
+    if (typeof window !== "undefined" && prev !== next) {
+      window.dispatchEvent(new CustomEvent(PERFIL_EVENT, { detail: next }));
+    }
+  } catch {}
+}
+
+/** Assina mudanças da flag de perfil (retorna função para desinscrever). */
+export function subscribePerfilFlag(cb) {
+  if (typeof window === "undefined" || typeof cb !== "function") return () => {};
+  const handler = (e) => cb(e.detail);
+  window.addEventListener(PERFIL_EVENT, handler);
+  return () => window.removeEventListener(PERFIL_EVENT, handler);
 }
 
 function syncPerfilHeader(res) {

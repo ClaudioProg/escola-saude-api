@@ -1,7 +1,7 @@
 // 📁 src/components/PrivateRoute.jsx
 import { Navigate, useLocation } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { apiPerfilMe, getPerfilIncompletoFlag } from "../services/api";
+import { apiPerfilMe, getPerfilIncompletoFlag, subscribePerfilFlag } from "../services/api";
 
 const DEBUG = true;
 
@@ -107,6 +107,15 @@ export default function PrivateRoute({
 
   const token = getValidToken();
   const autorizado = temAcesso(perfisUsuario, exigidos);
+
+  // 👂 OUVE mudanças na flag emitidas pelo api.js (sem F5)
+  useEffect(() => {
+    const unsubscribe = subscribePerfilFlag((next) => {
+      DEBUG && console.log("[PR] evento perfil:flag →", next);
+      setPerfilIncompleto(next);
+    });
+    return unsubscribe;
+  }, []);
 
   // 🔎 Checagem do perfil incompleto (NUNCA faz logout por 401 aqui)
   useEffect(() => {
