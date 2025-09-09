@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { toast } from "react-toastify";
 import Breadcrumbs from "../components/Breadcrumbs";
 import ModalAssinatura from "../components/ModalAssinatura";
-import { apiGet, apiPatch, apiPerfilMe } from "../services/api";
+import { apiGet, apiPatch, apiPerfilMe, setPerfilIncompletoFlag } from "../services/api";
 
 export default function Perfil() {
   const [usuario, setUsuario] = useState(null);
@@ -52,15 +52,20 @@ export default function Perfil() {
     return out;
   };
 
+  // 🔧 Corrige fuso: sempre devolve só YYYY-MM-DD, sem usar Date()
   const toYMD = (val) => {
     if (!val) return "";
-    if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
-    const d = new Date(val);
+    const s = String(val);
+    // já vem em yyyy-mm-dd*  -> corta em 10
+    const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (m) return m[1];
+    // fallback: tenta Date, mas retorna apenas yyyy-mm-dd
+    const d = new Date(s);
     if (isNaN(d.getTime())) return "";
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    return `${y}-${m}-${day}`;
+    const y = d.getUTCFullYear();
+    const mth = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(d.getUTCDate()).padStart(2, "0");
+    return `${y}-${mth}-${day}`;
   };
 
   // 1) Hidrata com o que houver no localStorage (mais rápido pra UI)
@@ -191,7 +196,7 @@ export default function Perfil() {
       email: email.trim(),
       ...(senha ? { senha } : {}),
       registro: registro?.trim() || null,
-      data_nascimento: dataNascimento || null,
+      data_nascimento: dataNascimento || null, // já está em YYYY-MM-DD
       unidade_id: unidadeId ? Number(unidadeId) : null,
       cargo_id: cargoId ? Number(cargoId) : null,
       genero_id: generoId ? Number(generoId) : null,
@@ -205,8 +210,10 @@ export default function Perfil() {
       setSalvando(true);
       await apiPatch(`/api/perfil/me`, payload, { auth: true });
 
-      // reconsulta o perfil e reidrata tudo (inclui flag perfil_incompleto)
+      // reconsulta o perfil (também atualiza a flag global via apiPerfilMe)
       const atualizado = await apiPerfilMe({ on401: "silent", on403: "silent" });
+      // reforça o broadcast da flag (caso o caller use a flag para navegação)
+      setPerfilIncompletoFlag(!!atualizado?.perfil_incompleto);
 
       const novo = { ...(JSON.parse(localStorage.getItem("usuario") || "{}")), ...atualizado };
       localStorage.setItem("usuario", JSON.stringify(novo));
@@ -258,8 +265,8 @@ export default function Perfil() {
 
       <div className="bg-white dark:bg-zinc-800 p-6 rounded-xl shadow space-y-6">
 
-        {/* 🔴 AVISO DE PERFIL INCOMPLETO */}
-        {perfilIncompleto && (
+        {/* 🔴/🟢 Avisos de status do cadastro */}
+        {perfilIncompleto ? (
           <div
             role="alert"
             aria-live="polite"
@@ -268,13 +275,21 @@ export default function Perfil() {
             <strong className="font-medium">Ação necessária:</strong>{" "}
             Preencha todo o cadastro para ter acesso completo à plataforma.
           </div>
+        ) : (
+          <div
+            role="status"
+            aria-live="polite"
+            className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-green-800 text-sm dark:bg-green-900/20 dark:border-green-800 dark:text-green-300"
+          >
+            ✅ <strong className="font-medium">Cadastro completo!</strong> Você já tem acesso total à plataforma.
+          </div>
         )}
 
         {/* Básicos */}
         <section className="grid grid-cols-1 md:grid-cols-2 gap-5">
           <div className="md:col-span-2">
             <label htmlFor="nome" className="block text-sm font-medium text-gray-700 dark:text-gray-200">
-              Nome completo
+              Nome completo <span className="text-red-600">*</span>
             </label>
             <input
               id="nome"
@@ -288,7 +303,7 @@ export default function Perfil() {
 
           <div>
             <label htmlFor="email" className="block text-sm font-medium text-gray-700 dark:text-gray-200">
-              E-mail
+              E-mail <span className="text-red-600">*</span>
             </label>
             <input
               id="email"
@@ -342,7 +357,7 @@ export default function Perfil() {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
-              Data de nascimento
+              Data de nascimento <span className="text-red-600">*</span>
             </label>
             <input
               type="date"
@@ -358,7 +373,7 @@ export default function Perfil() {
         <section className="grid grid-cols-1 md:grid-cols-2 gap-5 border-t border-white/10 pt-1">
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
-              Unidade
+              Unidade <span className="text-red-600">*</span>
             </label>
             <select
               value={unidadeId}
@@ -375,7 +390,7 @@ export default function Perfil() {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
-              Escolaridade
+              Escolaridade <span className="text-red-600">*</span>
             </label>
             <select
               value={escolaridadeId}
@@ -395,7 +410,7 @@ export default function Perfil() {
         <section className="grid grid-cols-1 gap-5 border-t border-white/10 pt-1">
           <div className="md:col-span-2">
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
-              Cargo
+              Cargo <span className="text-red-600">*</span>
             </label>
             <select
               value={cargoId}
@@ -415,7 +430,7 @@ export default function Perfil() {
         <section className="grid grid-cols-1 md:grid-cols-2 gap-5 border-t border-white/10 pt-1">
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
-              Gênero
+              Gênero <span className="text-red-600">*</span>
             </label>
             <select
               value={generoId}
@@ -432,7 +447,7 @@ export default function Perfil() {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
-              Orientação sexual
+              Orientação sexual <span className="text-red-600">*</span>
             </label>
             <select
               value={orientacaoSexualId}
@@ -449,7 +464,7 @@ export default function Perfil() {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
-              Cor/raça
+              Cor/raça <span className="text-red-600">*</span>
             </label>
             <select
               value={corRacaId}
@@ -466,7 +481,7 @@ export default function Perfil() {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
-              Deficiência
+              Deficiência <span className="text-red-600">*</span>
             </label>
             <select
               value={deficienciaId}

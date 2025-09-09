@@ -143,6 +143,19 @@ const PERFIL_HEADER = "X-Perfil-Incompleto";
 const PERFIL_FLAG_KEY = "perfil_incompleto";
 const PERFIL_EVENT = "perfil:flag";
 
+// Cross-tab (opcional): BroadcastChannel
+const PERFIL_BC_NAME = "perfil:bc";
+let perfilBC = null;
+function getPerfilBC() {
+  try {
+    if (typeof window === "undefined" || !("BroadcastChannel" in window)) return null;
+    if (!perfilBC) perfilBC = new BroadcastChannel(PERFIL_BC_NAME);
+    return perfilBC;
+  } catch {
+    return null;
+  }
+}
+
 export function getPerfilIncompletoFlag() {
   try {
     const v = sessionStorage.getItem(PERFIL_FLAG_KEY);
@@ -152,7 +165,7 @@ export function getPerfilIncompletoFlag() {
   }
 }
 
-/** Atualiza a flag no sessionStorage e emite evento para a app (mesma aba). */
+/** Atualiza a flag no sessionStorage e emite evento (mesma aba + outras abas). */
 export function setPerfilIncompletoFlag(val) {
   try {
     const prev = getPerfilIncompletoFlag();
@@ -161,20 +174,40 @@ export function setPerfilIncompletoFlag(val) {
     } else {
       sessionStorage.setItem(PERFIL_FLAG_KEY, val ? "1" : "0");
     }
-    // 🔔 notifica apenas se mudou (evita re-renders desnecessários)
+    // 🔔 notifica apenas se mudou
     const next = val === null ? null : !!val;
-    if (typeof window !== "undefined" && prev !== next) {
-      window.dispatchEvent(new CustomEvent(PERFIL_EVENT, { detail: next }));
+    if (prev !== next) {
+      // mesma aba
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent(PERFIL_EVENT, { detail: next }));
+      }
+      // outras abas
+      const bc = getPerfilBC();
+      bc?.postMessage({ type: "perfil_flag", value: next });
     }
   } catch {}
 }
 
 /** Assina mudanças da flag de perfil (retorna função para desinscrever). */
 export function subscribePerfilFlag(cb) {
-  if (typeof window === "undefined" || typeof cb !== "function") return () => {};
+  if (typeof cb !== "function") return () => {};
   const handler = (e) => cb(e.detail);
-  window.addEventListener(PERFIL_EVENT, handler);
-  return () => window.removeEventListener(PERFIL_EVENT, handler);
+  if (typeof window !== "undefined") {
+    window.addEventListener(PERFIL_EVENT, handler);
+  }
+  // cross-tab
+  const bc = getPerfilBC();
+  const bcHandler = (ev) => {
+    if (ev?.data?.type === "perfil_flag") cb(ev.data.value);
+  };
+  bc?.addEventListener?.("message", bcHandler);
+
+  return () => {
+    if (typeof window !== "undefined") {
+      window.removeEventListener(PERFIL_EVENT, handler);
+    }
+    bc?.removeEventListener?.("message", bcHandler);
+  };
 }
 
 function syncPerfilHeader(res) {
@@ -564,7 +597,7 @@ export async function apiPresencasTurmaPDF(turmaId) {
 // 🆕 APIs de Perfil (cadastro obrigatório) — ÚNICAS
 // ───────────────────────────────────────────────────────────────────
 export async function apiPerfilOpcoes(opts = {}) {
-  // sensível → mas mantemos 401 silencioso para não perder a sessão
+  // sensível → 401 silencioso para não perder a sessão
   return apiGet("/perfil/opcoes", { auth: true, on401: "silent", on403: "silent", ...opts });
 }
 
