@@ -501,7 +501,7 @@ async function gerarCertificado(req, res) {
 
     // Assinatura do instrutor (certificado de usuário)
     if (tipo === "usuario") {
-      let nomeInstrutor = "Instrutor(a)";
+      let nomeInstrutor = "Palestrante";
       try {
         const assinaturaInstrutor = await db.query(
           `

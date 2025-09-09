@@ -16,7 +16,7 @@ import {
   BarChart3,
   Presentation,
   ClipboardList,
-  ListChecks, // ✅ usado em "Minhas Presenças"
+  ListChecks,
   PencilLine,
   UserCog,
   HelpCircle,
@@ -26,19 +26,84 @@ import {
 } from "lucide-react";
 import { apiGet } from "../services/api";
 
-/** Normaliza o perfil vindo do localStorage (string, JSON ou CSV) para array de strings minúsculas */
-function normalizarPerfis(raw) {
-  if (!raw) return ["usuario"];
+/* ────────────────────────────────────────────────────────────── */
+/* Helpers de sessão / perfil                                     */
+/* ────────────────────────────────────────────────────────────── */
+function decodeJwtPayload(token) {
   try {
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed.map((p) => String(p).toLowerCase());
+    const [, payloadB64Url] = String(token).split(".");
+    if (!payloadB64Url) return null;
+    let b64 = payloadB64Url.replace(/-/g, "+").replace(/_/g, "/");
+    while (b64.length % 4 !== 0) b64 += "=";
+    return JSON.parse(atob(b64));
   } catch {
-    /* não era JSON */
+    return null;
   }
-  return String(raw)
-    .split(",")
-    .map((p) => p.replace(/[\[\]"]/g, "").trim().toLowerCase())
-    .filter(Boolean);
+}
+
+function getValidToken() {
+  const token = localStorage.getItem("token");
+  if (!token) return null;
+  const payload = decodeJwtPayload(token);
+  if (payload?.exp && Date.now() >= payload.exp * 1000) {
+    // ⚠️ não limpamos aqui para não causar efeitos colaterais;
+    // apenas tratamos como "sem token" para a Navbar.
+    return null;
+  }
+  return token;
+}
+
+/** 🔎 Perfis robusto: lê de 'perfil' e também de 'usuario.perfil/perfis' (string/array/CSV) */
+function getPerfisRobusto() {
+  const out = new Set();
+
+  const rawPerfil = localStorage.getItem("perfil");
+  if (rawPerfil) {
+    try {
+      const parsed = JSON.parse(rawPerfil);
+      if (Array.isArray(parsed)) parsed.forEach(p => out.add(String(p).toLowerCase()));
+      else String(rawPerfil).split(",").forEach(p => out.add(p.replace(/[\[\]"]/g, "").trim().toLowerCase()));
+    } catch {
+      String(rawPerfil).split(",").forEach(p => out.add(p.replace(/[\[\]"]/g, "").trim().toLowerCase()));
+    }
+  }
+
+  try {
+    const rawUser = localStorage.getItem("usuario");
+    if (rawUser) {
+      const u = JSON.parse(rawUser);
+      if (u?.perfil) {
+        if (Array.isArray(u.perfil)) u.perfil.forEach(p => out.add(String(p).toLowerCase()));
+        else out.add(String(u.perfil).toLowerCase());
+      }
+      if (u?.perfis) {
+        if (Array.isArray(u.perfis)) u.perfis.forEach(p => out.add(String(p).toLowerCase()));
+        else String(u.perfis).split(",").forEach(p => out.add(p.replace(/[\[\]"]/g, "").trim().toLowerCase()));
+      }
+    }
+  } catch {}
+
+  if (out.size === 0) out.add("usuario");
+  return Array.from(out).filter(Boolean);
+}
+
+function getUsuarioLS() {
+  try { return JSON.parse(localStorage.getItem("usuario") || "null"); } catch { return null; }
+}
+function getNomeUsuario()  { return getUsuarioLS()?.nome  || ""; }
+function getEmailUsuario() { return getUsuarioLS()?.email || ""; }
+
+/** 🅰️ Iniciais a partir do nome (ou e-mail) */
+function getIniciais(nome, email) {
+  const n = String(nome || "").trim();
+  if (n) {
+    const parts = n.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+  const e = String(email || "").trim();
+  if (e) return (e.split("@")[0].slice(0, 2) || "?").toUpperCase();
+  return "?";
 }
 
 /** Item de menu genérico */
@@ -67,21 +132,26 @@ function MenuList({ items, onSelect, activePath }) {
   );
 }
 
+/* ────────────────────────────────────────────────────────────── */
+/* Componente principal                                           */
+/* ────────────────────────────────────────────────────────────── */
 export default function Navbar() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // ▶ perfil
-  const [perfil, setPerfil] = useState(() =>
-    normalizarPerfis(localStorage.getItem("perfil"))
-  );
+  // ▶ sessão
+  const [token, setToken] = useState(getValidToken());
+
+  // ▶ perfil (robusto) + nome/e-mail
+  const [perfil, setPerfil] = useState(() => getPerfisRobusto());
+  const [nomeUsuario, setNomeUsuario] = useState(() => getNomeUsuario());
+  const [emailUsuario, setEmailUsuario] = useState(() => getEmailUsuario());
+  const iniciais = useMemo(() => getIniciais(nomeUsuario, emailUsuario), [nomeUsuario, emailUsuario]);
 
   // ▶ tema
   const [darkMode, setDarkMode] = useState(() => {
     const saved = localStorage.getItem("darkMode");
-    return saved
-      ? JSON.parse(saved)
-      : document.documentElement.classList.contains("dark");
+    return saved ? JSON.parse(saved) : document.documentElement.classList.contains("dark");
   });
 
   // ▶ visibilidades
@@ -103,7 +173,6 @@ export default function Navbar() {
     () => [
       { label: "Eventos", path: "/eventos", icon: CalendarDays },
       { label: "Meus Cursos", path: "/minhas-inscricoes", icon: BookOpen },
-      // ✅ novo item
       { label: "Minhas Presenças", path: "/minhas-presencas", icon: ListChecks },
       { label: "Avaliações Pendentes", path: "/avaliacao", icon: PencilLine },
       { label: "Meus Certificados", path: "/certificados", icon: FileText },
@@ -149,35 +218,65 @@ export default function Navbar() {
   const [totalNaoLidas, setTotalNaoLidas] = useState(0);
 
   const atualizarContadorNotificacoes = useCallback(async () => {
+    // só consulta com token válido e se a aba estiver visível
+    if (!getValidToken() || document.hidden) return;
     try {
-      const data = await apiGet("/notificacoes/nao-lidas/contagem");
+      const data = await apiGet("/notificacoes/nao-lidas/contagem", { on401: "silent" });
       setTotalNaoLidas(data?.totalNaoLidas ?? data?.total ?? 0);
     } catch {
       setTotalNaoLidas(0);
     }
   }, []);
 
-  // carregar/atualizar notificações
+  // carregar/atualizar notificações (pausado quando sem token)
   useEffect(() => {
-    atualizarContadorNotificacoes();
-    const id = setInterval(atualizarContadorNotificacoes, 15000);
-    window.atualizarContadorNotificacoes = atualizarContadorNotificacoes;
+    let intervalId;
+    const tick = () => atualizarContadorNotificacoes();
+    if (token) {
+      tick();
+      intervalId = setInterval(tick, 30000); // 30s para aliviar tráfego
+    }
+    const onVisibility = () => { if (!document.hidden) tick(); };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    // expoe opcionalmente para chamadas manuais
+    window.atualizarContadorNotificacoes = tick;
     return () => {
-      clearInterval(id);
+      if (intervalId) clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", onVisibility);
       delete window.atualizarContadorNotificacoes;
     };
-  }, [atualizarContadorNotificacoes]);
+  }, [token, atualizarContadorNotificacoes]);
 
-  // sincroniza perfil por storage
+  // sincroniza token/perfil/nome por storage e ao trocar de rota
   useEffect(() => {
+    const refreshFromLS = () => {
+      setToken(getValidToken());
+      setPerfil(getPerfisRobusto());
+      setNomeUsuario(getNomeUsuario());
+      setEmailUsuario(getEmailUsuario());
+    };
     const onStorage = (e) => {
-      if (e.key === "perfil" || e.key === "usuario") {
-        setPerfil(normalizarPerfis(localStorage.getItem("perfil")));
+      if (["perfil", "usuario", "token"].includes(e.key)) {
+        refreshFromLS();
       }
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, []);
+
+  useEffect(() => {
+    // fecha menus quando a rota muda e reavalia perfil/nome
+    setMenuUsuarioOpen(false);
+    setMenuInstrutorOpen(false);
+    setMenuAdminOpen(false);
+    setConfigOpen(false);
+    setMobileOpen(false);
+    setPerfil(getPerfisRobusto());
+    setNomeUsuario(getNomeUsuario());
+    setEmailUsuario(getEmailUsuario());
+    setToken(getValidToken());
+  }, [location.pathname]);
 
   // tema
   useEffect(() => {
@@ -196,9 +295,7 @@ export default function Navbar() {
         [refConfig, setConfigOpen],
         [refMobile, setMobileOpen],
       ];
-      outsides.forEach(([r, set]) => {
-        if (r.current && !r.current.contains(t)) set(false);
-      });
+      outsides.forEach(([r, set]) => { if (r.current && !r.current.contains(t)) set(false); });
     }
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
@@ -237,7 +334,13 @@ export default function Navbar() {
 
   // botão base dropdown
   const dropBtnBase =
-    "flex items-center gap-1 px-3 py-1 text-sm rounded-xl hover:bg-white hover:text-lousa focus-visible:ring-2 focus-visible:ring-white/60 outline-none";
+    "flex items-center gap-2 px-2 py-1 text-sm rounded-xl hover:bg-white hover:text-lousa focus-visible:ring-2 focus-visible:ring-white/60 outline-none";
+
+  // home inteligente: se logado -> dashboard, senão -> login
+  const goHome = () => {
+    const hasToken = !!getValidToken();
+    go(hasToken ? "/dashboard" : "/");
+  };
 
   return (
     <nav
@@ -247,7 +350,7 @@ export default function Navbar() {
       <div className="flex items-center justify-between">
         {/* logo / home */}
         <button
-          onClick={() => go("/")}
+          onClick={goHome}
           className="text-lg sm:text-xl font-bold tracking-tight select-none focus-visible:ring-2 focus-visible:ring-white/60 rounded px-1"
           aria-label="Ir para a página inicial"
         >
@@ -336,15 +439,24 @@ export default function Navbar() {
             )}
           </button>
 
-          {/* CONFIGURAÇÕES */}
+          {/* CONFIGURAÇÕES + AVATAR */}
           <div className="relative" ref={refConfig}>
             <button
               onClick={() => setConfigOpen((v) => !v)}
-              className="flex items-center gap-1 px-3 py-1 text-sm rounded-xl border border-white/70 hover:bg-white hover:text-lousa focus-visible:ring-2 focus-visible:ring-white/60 outline-none"
+              className="flex items-center gap-2 px-2 py-1 text-sm rounded-xl border border-white/70 hover:bg-white hover:text-lousa focus-visible:ring-2 focus-visible:ring-white/60 outline-none"
               aria-haspopup="menu"
               aria-expanded={configOpen}
+              title={nomeUsuario ? `Logado como ${nomeUsuario}` : undefined}
             >
-              <UserCog className="w-4 h-4" aria-hidden="true" />
+              {/* Avatar com iniciais */}
+              <span
+                className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-white text-lousa font-bold text-xs shadow-sm"
+                aria-label={nomeUsuario ? `Avatar de ${nomeUsuario}` : "Avatar"}
+              >
+                {iniciais}
+              </span>
+              <span className="max-w-[12rem] truncate">{nomeUsuario || "Conta"}</span>
+              <UserCog className="w-4 h-4 opacity-90" aria-hidden="true" />
               <ChevronDown className="w-4 h-4" aria-hidden="true" />
             </button>
             {configOpen && (
@@ -404,6 +516,18 @@ export default function Navbar() {
           className="md:hidden mt-2 rounded-xl bg-white text-lousa shadow-xl ring-1 ring-black/5 overflow-hidden"
         >
           <div className="p-2 grid gap-1">
+            {/* Cabeçalho com avatar (mobile) */}
+            <div className="flex items-center gap-2 px-3 py-2">
+              <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-lousa text-white font-bold text-xs">
+                {iniciais}
+              </span>
+              <div className="min-w-0">
+                <div className="text-sm font-semibold truncate">{nomeUsuario || "Conta"}</div>
+                {emailUsuario && <div className="text-xs text-gray-600 truncate">{emailUsuario}</div>}
+              </div>
+            </div>
+            <hr className="my-1" />
+
             {/* blocos por perfil */}
             {isUsuario && (
               <>

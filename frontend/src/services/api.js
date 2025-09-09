@@ -1,3 +1,4 @@
+//frontend/src/services/api.js
 /* eslint-disable no-console */
 
 // ───────────────────────────────────────────────────────────────────
@@ -8,12 +9,11 @@ const IS_DEV = !!import.meta.env.DEV;
 function isLocalHost(h) {
   return /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(h || "");
 }
-function isHttpUrl(u) { return /^http:\/\//i.test(u || ""); }
+function isHttpUrl(u) {
+  return /^http:\/\//i.test(u || "");
+}
 
-// Decide a base automaticamente:
-//   1) VITE_API_BASE_URL, se preenchida (com OU sem /api)
-//   2) Se localhost e usando proxy do Vite -> "/api"
-//   3) Caso contrário, localhost:3000/api (dev) ou seu backend em prod
+// Decide a base automaticamente
 function computeBase() {
   const raw = (import.meta.env.VITE_API_BASE_URL || "").trim().replace(/\/+$/, "");
   if (raw) return raw;
@@ -22,8 +22,6 @@ function computeBase() {
     if (import.meta.env.VITE_USE_VITE_PROXY === "1") return "/api";
     return "http://localhost:3000/api";
   }
-
-  // Fallback seguro em prod
   return "https://escola-saude-api.onrender.com/api";
 }
 
@@ -37,7 +35,7 @@ if (isHttpUrl(API_BASE_URL) && !(typeof window !== "undefined" && isLocalHost(ne
 // Logs de init
 (() => {
   const proto = typeof window !== "undefined" ? window.location.protocol : "n/a";
-  const host  = typeof window !== "undefined" ? window.location.host      : "n/a";
+  const host = typeof window !== "undefined" ? window.location.host : "n/a";
 
   console.info("[API:init] base:", API_BASE_URL || "(vazia)", {
     protocol: proto,
@@ -55,7 +53,13 @@ if (isHttpUrl(API_BASE_URL) && !(typeof window !== "undefined" && isLocalHost(ne
 // ───────────────────────────────────────────────────────────────────
 // Token & headers
 // ───────────────────────────────────────────────────────────────────
-const getToken = () => { try { return localStorage.getItem("token"); } catch { return null; } };
+const getToken = () => {
+  try {
+    return localStorage.getItem("token");
+  } catch {
+    return null;
+  }
+};
 
 function buildHeaders(auth = true, extra = {}) {
   const token = getToken();
@@ -102,9 +106,7 @@ function normalizePath(path) {
   return p;
 }
 
-// ✅ Garante exatamente um "/api" sem quebrar o "http://"
-// - Se base termina com /api e path começa com /api -> remove /api do path
-// - Se nenhum tem /api -> adiciona ao path
+// ✅ Garante exatamente um "/api"
 function ensureApi(base, path) {
   const baseNoSlash = String(base || "").replace(/\/+$/, "");
   let p = String(path || "").trim();
@@ -122,7 +124,7 @@ function ensureApi(base, path) {
   return baseNoSlash + p;
 }
 
-// 👉 Helper para montar URL pública (links <a>, downloads etc.)
+// 👉 Helper para montar URL pública
 export function makeApiUrl(path, query) {
   const safePath = normalizePath(path);
   const url = ensureApi(API_BASE_URL, safePath) + qs(query);
@@ -136,11 +138,64 @@ export function makeApiUrl(path, query) {
 }
 
 // ───────────────────────────────────────────────────────────────────
-// Handler centralizado
+// Perfil incompleto – helpers (ÚNICOS)
 // ───────────────────────────────────────────────────────────────────
-async function handle(res, { on401 = "redirect", on403 = "silent" } = {}) {
+const PERFIL_HEADER = "X-Perfil-Incompleto";
+const PERFIL_FLAG_KEY = "perfil_incompleto";
+
+export function setPerfilIncompletoFlag(val) {
+  try {
+    if (val === null || typeof val === "undefined") {
+      sessionStorage.removeItem(PERFIL_FLAG_KEY);
+    } else {
+      sessionStorage.setItem(PERFIL_FLAG_KEY, val ? "1" : "0");
+    }
+  } catch {}
+}
+
+export function getPerfilIncompletoFlag() {
+  try {
+    const v = sessionStorage.getItem(PERFIL_FLAG_KEY);
+    return v === null ? null : v === "1";
+  } catch {
+    return null;
+  }
+}
+
+function syncPerfilHeader(res) {
+  try {
+    const val = res?.headers?.get?.(PERFIL_HEADER);
+    if (val === "1") setPerfilIncompletoFlag(true);
+    else if (val === "0") setPerfilIncompletoFlag(false);
+    else setPerfilIncompletoFlag(null);
+  } catch {}
+}
+
+// ───────────────────────────────────────────────────────────────────
+function currentPathWithQuery() {
+  if (typeof window === "undefined") return "/";
+  const { pathname, search } = window.location;
+  return pathname + (search || "");
+}
+
+// 🔒 Rota sensível (ex.: perfil) — mantida para futuros usos
+function isSensitiveUrl(u = "") {
+  try {
+    const path = new URL(u, API_BASE_URL).pathname;
+    return /^\/?api\/perfil(\/|$)/i.test(path);
+  } catch {
+    return false;
+  }
+}
+
+// Handler centralizado — recebe contexto da requisição
+async function handle(res, { on401 = "silent", on403 = "silent", hadAuth = false } = {}) {
   const url = res?.url || "";
   const status = res?.status;
+
+  // 🧭 sincroniza flag de perfil (se o backend enviar)
+  syncPerfilHeader(res);
+
   let text = "";
   let data = null;
 
@@ -149,7 +204,7 @@ async function handle(res, { on401 = "redirect", on403 = "silent" } = {}) {
 
   if (IS_DEV) {
     const preview = data ?? text ?? "";
-    console[(res.ok ? "log" : "warn")](
+    console[res.ok ? "log" : "warn"](
       `🛬 [resp ${status}] ${url}`,
       typeof preview === "string" ? preview.slice(0, 500) : preview
     );
@@ -158,20 +213,29 @@ async function handle(res, { on401 = "redirect", on403 = "silent" } = {}) {
   }
 
   if (status === 401) {
-    if (IS_DEV) console.error("⚠️ 401 recebido: limpando sessão");
-    try { localStorage.clear(); } catch {}
-    if (on401 === "redirect" && typeof window !== "undefined" && !location.pathname.startsWith("/login")) {
-      window.location.assign("/login");
+    // 🔐 Só efetua logout/redirecionamento quando explicitamente solicitado
+    if (on401 === "redirect") {
+      try {
+        localStorage.clear();
+        setPerfilIncompletoFlag(null);
+      } catch {}
+      if (typeof window !== "undefined" && !location.pathname.startsWith("/login")) {
+        const next = encodeURIComponent(currentPathWithQuery());
+        window.location.assign(`/login?next=${next}`);
+      }
     }
-    throw new ApiError(data?.erro || data?.message || "Não autorizado (401)", { status, url, data: data ?? text });
+    throw new ApiError(data?.erro || data?.message || "Não autorizado (401)", {
+      status, url, data: data ?? text,
+    });
   }
 
   if (status === 403) {
-    if (IS_DEV) console.warn("🚫 403 recebido: sem permissão");
     if (on403 === "redirect" && typeof window !== "undefined" && location.pathname !== "/dashboard") {
       window.location.assign("/dashboard");
     }
-    throw new ApiError(data?.erro || data?.message || "Sem permissão (403)", { status, url, data: data ?? text });
+    throw new ApiError(data?.erro || data?.message || "Sem permissão (403)", {
+      status, url, data: data ?? text,
+    });
   }
 
   if (!res.ok) {
@@ -186,12 +250,17 @@ async function handle(res, { on401 = "redirect", on403 = "silent" } = {}) {
 const DEFAULT_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 15000);
 
 // Fetch centralizado (com timeout)
-async function doFetch(path, { method = "GET", auth = true, headers, query, body, on401, on403 } = {}) {
+async function doFetch(
+  path,
+  { method = "GET", auth = true, headers, query, body, on401, on403 } = {}
+) {
   const safePath = normalizePath(path);
 
   // Monta URL final
   const isAbsolute = /^https?:\/\//i.test(safePath);
-  let url = isAbsolute ? safePath + qs(query) : ensureApi(API_BASE_URL, safePath) + qs(query);
+  let url = isAbsolute
+    ? safePath + qs(query)
+    : ensureApi(API_BASE_URL, safePath) + qs(query);
 
   // Upgrade http→https para hosts externos
   try {
@@ -218,31 +287,38 @@ async function doFetch(path, { method = "GET", auth = true, headers, query, body
     init.body = body ? JSON.stringify(body) : undefined;
   }
 
-  const hasAuth = !!init.headers?.Authorization;
+  const hadAuth = !!init.headers?.Authorization;
   const headersPreview = { ...init.headers };
   if (headersPreview.Authorization) headersPreview.Authorization = "Bearer ***";
   console.log(`🛫 [req ${method}] ${url}`, {
     auth: auth ? "on" : "off",
-    hasAuthHeader: hasAuth,
+    hasAuthHeader: hadAuth,
     headers: headersPreview,
     body: body instanceof FormData ? "[FormData]" : body,
   });
 
   let res;
-  const t0 = (typeof performance !== "undefined" ? performance.now() : Date.now());
+  const t0 = typeof performance !== "undefined" ? performance.now() : Date.now();
 
   // ⏱️ timeout com AbortController
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(new Error("timeout")), DEFAULT_TIMEOUT_MS);
+  const timeoutId = setTimeout(
+    () => controller.abort(new Error("timeout")),
+    DEFAULT_TIMEOUT_MS
+  );
 
   try {
     res = await fetch(url, { ...init, signal: controller.signal });
   } catch (networkErr) {
-    const t1 = (typeof performance !== "undefined" ? performance.now() : Date.now());
+    const t1 = typeof performance !== "undefined" ? performance.now() : Date.now();
     const reason = networkErr?.message || networkErr?.name || String(networkErr);
-    console.error(`🌩️ [neterr ${method}] ${url} (${Math.round(t1 - t0)}ms):`, reason);
+    console.error(
+      `🌩️ [neterr ${method}] ${url} (${Math.round(t1 - t0)}ms):`,
+      reason
+    );
     const isTimeout =
-      reason?.toLowerCase?.().includes("timeout") || networkErr?.name === "AbortError";
+      reason?.toLowerCase?.().includes("timeout") ||
+      networkErr?.name === "AbortError";
     throw new ApiError(isTimeout ? "Tempo de resposta excedido." : "Falha de rede ou CORS", {
       status: 0,
       url: url,
@@ -252,20 +328,38 @@ async function doFetch(path, { method = "GET", auth = true, headers, query, body
     clearTimeout(timeoutId);
   }
 
-  const t1 = (typeof performance !== "undefined" ? performance.now() : Date.now());
+  const t1 = typeof performance !== "undefined" ? performance.now() : Date.now();
   console.log(`⏱️ [time ${method}] ${url} → ${Math.round(t1 - t0)}ms`);
 
-  return handle(res, { on401, on403 });
+  // Passa o contexto (hadAuth) para o handler
+  return handle(res, { on401, on403, hadAuth });
 }
 
 // ───────────────────────────────────────────────────────────────────
 // Métodos HTTP
 // ───────────────────────────────────────────────────────────────────
-export async function apiGet(path, opts = {})         { return doFetch(path, { method: "GET",    ...opts }); }
-export async function apiPost(path, body, opts = {})  { return doFetch(path, { method: "POST",  body, ...opts }); }
-export async function apiPut(path, body, opts = {})   { return doFetch(path, { method: "PUT",   body, ...opts }); }
-export async function apiPatch(path, body, opts = {}) { return doFetch(path, { method: "PATCH", body, ...opts }); }
-export async function apiDelete(path, opts = {})      { return doFetch(path, { method: "DELETE",       ...opts }); }
+export async function apiGet(path, opts = {}) {
+  return doFetch(path, { method: "GET", ...opts });
+}
+export async function apiPost(path, body, opts = {}) {
+  return doFetch(path, { method: "POST", body, ...opts });
+}
+export async function apiPut(path, body, opts = {}) {
+  return doFetch(path, { method: "PUT", body, ...opts });
+}
+export async function apiPatch(path, body, opts = {}) {
+  return doFetch(path, { method: "PATCH", body, ...opts });
+}
+export async function apiDelete(path, opts = {}) {
+  return doFetch(path, { method: "DELETE", ...opts });
+}
+
+// ✅ Atalhos “públicos” (sem Authorization + não redirecionar em 401)
+export const apiGetPublic = (path, opts = {}) =>
+  apiGet(path, { auth: false, on401: "silent", ...opts });
+
+export const apiPostPublic = (path, body, opts = {}) =>
+  apiPost(path, body, { auth: false, on401: "silent", ...opts });
 
 // Upload multipart
 export async function apiUpload(path, formData, opts = {}) {
@@ -274,7 +368,14 @@ export async function apiUpload(path, formData, opts = {}) {
 
 // POST que retorna arquivo (Blob)
 export async function apiPostFile(path, body, opts = {}) {
-  const { auth = true, headers, query, on403 = "silent" } = opts;
+  const {
+    auth = true,
+    headers,
+    query,
+    on401 = "silent",
+    on403 = "silent",
+  } = opts;
+
   const token = getToken();
 
   const safePath = normalizePath(path);
@@ -299,8 +400,24 @@ export async function apiPostFile(path, body, opts = {}) {
     body: body ? JSON.stringify(body) : undefined,
   });
 
-  if (res.status === 401) try { localStorage.clear(); } catch {}
-  if (res.status === 403 && on403 === "silent") throw new Error("Sem permissão.");
+  syncPerfilHeader(res);
+
+  if (res.status === 401) {
+    if (on401 === "redirect") {
+      try { localStorage.clear(); setPerfilIncompletoFlag(null); } catch {}
+      if (typeof window !== "undefined" && !location.pathname.startsWith("/login")) {
+        const next = encodeURIComponent(currentPathWithQuery());
+        window.location.assign(`/login?next=${next}`);
+      }
+    }
+    throw new Error("Não autorizado (401)");
+  }
+  if (res.status === 403) {
+    if (on403 === "redirect" && typeof window !== "undefined") {
+      window.location.assign("/dashboard");
+    }
+    throw new Error("Sem permissão (403)");
+  }
 
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
@@ -323,7 +440,14 @@ export async function apiPostFile(path, body, opts = {}) {
 
 // GET que retorna arquivo (Blob)
 export async function apiGetFile(path, opts = {}) {
-  const { auth = true, headers, query, on403 = "silent" } = opts;
+  const {
+    auth = true,
+    headers,
+    query,
+    on401 = "silent",
+    on403 = "silent",
+  } = opts;
+
   const token = getToken();
 
   const safePath = normalizePath(path);
@@ -346,8 +470,24 @@ export async function apiGetFile(path, opts = {}) {
     credentials: "include",
   });
 
-  if (res.status === 401) try { localStorage.clear(); } catch {}
-  if (res.status === 403 && on403 === "silent") throw new Error("Sem permissão.");
+  syncPerfilHeader(res);
+
+  if (res.status === 401) {
+    if (on401 === "redirect") {
+      try { localStorage.clear(); setPerfilIncompletoFlag(null); } catch {}
+      if (typeof window !== "undefined" && !location.pathname.startsWith("/login")) {
+        const next = encodeURIComponent(currentPathWithQuery());
+        window.location.assign(`/login?next=${next}`);
+      }
+    }
+    throw new Error("Não autorizado (401)");
+  }
+  if (res.status === 403) {
+    if (on403 === "redirect" && typeof window !== "undefined") {
+      window.location.assign("/dashboard");
+    }
+    throw new Error("Sem permissão (403)");
+  }
 
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
@@ -371,19 +511,11 @@ export async function apiGetFile(path, opts = {}) {
 // ───────────────────────────────────────────────────────────────────
 // Helpers específicos de turmas (datas reais)
 // ───────────────────────────────────────────────────────────────────
-
-// GET /turmas/:id/datas?via=datas|presencas|intervalo
 export async function apiGetTurmaDatas(turmaId, via = "datas") {
   if (!turmaId) throw new Error("turmaId obrigatório");
   return apiGet(`/turmas/${turmaId}/datas`, { query: { via } });
 }
 
-/**
- * Busca as datas REAIS da turma com fallback:
- * 1) datas_turma (via=datas)
- * 2) presenças (via=presencas) — aceita p.data ou p.data_presenca
- * 3) intervalo (via=intervalo) — gera 1 dia a 1 dia entre data_inicio e data_fim
- */
 export async function apiGetTurmaDatasAuto(turmaId) {
   let out = await apiGetTurmaDatas(turmaId, "datas");
   if (Array.isArray(out) && out.length) return out;
@@ -397,29 +529,68 @@ export async function apiGetTurmaDatasAuto(turmaId) {
 // ───────────────────────────────────────────────────────────────────
 // 🆕 APIs de Presenças (usuário / público)
 // ───────────────────────────────────────────────────────────────────
-
-// 👤 Usuário autenticado — retorna todas as turmas com frequência e datas
 export async function apiGetMinhasPresencas(opts = {}) {
   return apiGet("/presencas/minhas", opts);
 }
-// Alias
 export async function apiGetMePresencas(opts = {}) {
   return apiGet("/presencas/me", opts);
 }
-
-// 🌐 Validação pública (usado por /validar-certificado.html, não exige auth)
 export async function apiValidarPresencaPublico({ evento, usuario, evento_id, usuario_id } = {}) {
-  const query = {
-    evento: evento ?? evento_id,
-    usuario: usuario ?? usuario_id,
-  };
-  return apiGet("/presencas/validar", { auth: false, query });
+  const query = { evento: evento ?? evento_id, usuario: usuario ?? usuario_id };
+  // pública (sem token)
+  return apiGet("/presencas/validar", { auth: false, on401: "silent", query });
 }
-
-// (opcional) Download do PDF de presenças por turma (admin/instrutor)
 export async function apiPresencasTurmaPDF(turmaId) {
   if (!turmaId) throw new Error("turmaId obrigatório");
   return apiGetFile(`/presencas/turma/${turmaId}/pdf`);
 }
 
-export { API_BASE_URL }; // opcional, para debug
+// ───────────────────────────────────────────────────────────────────
+// 🆕 APIs de Perfil (cadastro obrigatório) — ÚNICAS
+// ───────────────────────────────────────────────────────────────────
+export async function apiPerfilOpcoes(opts = {}) {
+  // sensível → mas mantemos 401 silencioso para não perder a sessão
+  return apiGet("/perfil/opcoes", { auth: true, on401: "silent", on403: "silent", ...opts });
+}
+
+function inferPerfilIncompleto(me) {
+  const required = [
+    "cargo_id",
+    "unidade_id",
+    "genero_id",
+    "orientacao_sexual_id",
+    "cor_raca_id",
+    "escolaridade_id",
+    "deficiencia_id",
+    "data_nascimento",
+  ];
+  return required.some((k) => me?.[k] === null || me?.[k] === undefined || me?.[k] === "");
+}
+
+export async function apiPerfilMe(opts = {}) {
+  const me = await apiGet("/perfil/me", {
+    auth: true,
+    on401: "silent",
+    on403: "silent",
+    ...opts,
+  });
+  try {
+    const incompleto = typeof me?.perfil_incompleto === "boolean"
+      ? me.perfil_incompleto
+      : inferPerfilIncompleto(me);
+    setPerfilIncompletoFlag(!!incompleto);
+  } catch {}
+  return me;
+}
+
+export async function apiPerfilUpdate(payload, opts = {}) {
+  return apiPut("/perfil/me", payload, {
+    auth: true,
+    on401: "redirect", // token inválido → volta pro login
+    on403: "silent",   // sem permissão → deixa o caller tratar
+    ...opts,
+  });
+}
+
+// ───────────────────────────────────────────────────────────────────
+export { API_BASE_URL };

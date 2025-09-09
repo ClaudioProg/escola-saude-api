@@ -6,11 +6,11 @@ import {
   useLocation,
   useSearchParams,
   useNavigate,
+  Navigate,
 } from "react-router-dom";
 import PrivateRoute from "./components/PrivateRoute";
 import { Suspense, lazy, useEffect } from "react";
 import Navbar from "./components/Navbar";
-import ModalAssinatura from "./components/ModalAssinatura";
 import CertificadosAvulsos from "./pages/CertificadosAvulsos";
 import QRCodesEventosAdmin from "./pages/QRCodesEventosAdmin";
 import QrDoSite from "./pages/QrDoSite";
@@ -55,22 +55,20 @@ const ConfirmarPresenca     = lazy(() => import("./pages/ConfirmarPresenca"));
 function LayoutComNavbar({ children }) {
   const location = useLocation();
 
-  // Rotas públicas (sem navbar)
-  const rotasPublicas = [
-    "/",
-    "/login",
-    "/cadastro",
-    "/validar",                 // legado (presença)
-    "/validar-presenca",        // legado do QR
-    "/validar-certificado",     // 👈 ADICIONADA
-    "/validar-certificado.html",// 👈 ADICIONADA (alias)
-    "/recuperar-senha",
-  ];
+  // Regras de páginas públicas (sem navbar)
+  const isPublicPath = (p) =>
+    p === "/" ||
+    p === "/login" ||
+    p === "/cadastro" ||
+    p === "/recuperar-senha" ||
+    p === "/validar" ||                    // legado
+    p === "/validar-presenca" ||           // legado
+    p === "/validar-certificado" ||
+    p.endsWith(".html") ||                 // alias .html
+    p.startsWith("/redefinir-senha") ||
+    p.startsWith("/presenca");             // tela do QR
 
-  const esconderNavbar =
-    rotasPublicas.includes(location.pathname) ||
-    location.pathname.startsWith("/redefinir-senha") ||
-    location.pathname.startsWith("/presenca");
+  const esconderNavbar = isPublicPath(location.pathname);
 
   return (
     <div className="min-h-screen bg-gelo text-gray-800 font-sans dark:bg-gray-900 dark:text-white">
@@ -80,7 +78,7 @@ function LayoutComNavbar({ children }) {
   );
 }
 
-// Mantém a rota /validar para a validação antiga (presença)
+// Mantém a rota /validar apontando para a página atual
 function ValidarWrapper() {
   return <ValidarCertificado />;
 }
@@ -153,6 +151,10 @@ function ValidarPresencaRouter() {
   );
 }
 
+function NotFound() {
+  return <Navigate to="/login" replace />;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -210,6 +212,9 @@ export default function App() {
             <Route path="/certificados-avulsos" element={<PrivateRoute permitido={["administrador"]}><CertificadosAvulsos /></PrivateRoute>} />
             <Route path="/gestao-presenca" element={<PrivateRoute permitido={["administrador"]}><GestaoPresencas /></PrivateRoute>} />
             <Route path="/admin/qr-codes" element={<PrivateRoute permitido={["administrador"]}><QRCodesEventosAdmin /></PrivateRoute>} />
+
+            {/* 404 */}
+            <Route path="*" element={<NotFound />} />
           </Routes>
         </Suspense>
       </LayoutComNavbar>

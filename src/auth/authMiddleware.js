@@ -1,48 +1,64 @@
-// src/auth/authMiddleware.js
-const jwt = require('jsonwebtoken');
-const db = require('../db'); // ✅ Importa a conexão com o banco
+// 📁 src/auth/authMiddleware.js
+const jwt = require("jsonwebtoken");
+const db = require("../db");
 
-/**
- * 🔐 Middleware para autenticação via token JWT
- * - Verifica se o token está presente e é válido
- * - Decodifica o token e injeta os dados do usuário em `req.usuario`
- * - Injeta a conexão com o banco em `req.db`
- */
+let warned = false; // avisa 1x em dev sobre req.usuario
+
 function authMiddleware(req, res, next) {
-  const authHeader = req.headers.authorization;
-
-  // 🚫 Verifica se o header de autorização está presente e começa com 'Bearer '
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ erro: 'Token de autenticação ausente ou mal formatado.' });
+  const h = req.headers.authorization || "";
+  const m = h.match(/^Bearer\s+(.+)$/i);
+  if (!m) {
+    return res.status(401).json({ erro: "Não autenticado." });
   }
 
-  const token = authHeader.split(' ')[1]; // Extrai apenas o token após 'Bearer'
+  const token = m[1];
 
   try {
-    // ✅ Verifica e decodifica o token
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    // 🔄 Garante que o perfil esteja sempre como array
+    // aceita sub (padrão JWT) ou id
+    const userId = decoded.sub ?? decoded.id;
+    if (!userId) {
+      return res.status(403).json({ erro: "Token inválido: id ausente." });
+    }
+
+    // normaliza perfil -> array
     const perfil = Array.isArray(decoded.perfil)
       ? decoded.perfil
-      : typeof decoded.perfil === 'string'
-        ? decoded.perfil.split(',').map(p => p.trim())
+      : typeof decoded.perfil === "string"
+        ? decoded.perfil.split(",").map((p) => p.trim()).filter(Boolean)
         : [];
 
-    // 🔁 Injeta os dados do usuário e a conexão com o banco na requisição
-    req.usuario = {
-      id: decoded.id,
-      cpf: decoded.cpf,
-      nome: decoded.nome,
+    const user = {
+      id: String(userId),
+      cpf: decoded.cpf ?? null,
+      nome: decoded.nome ?? null,
       perfil,
+      // anexar outros campos do token, se quiser:
+      // email: decoded.email ?? null,
     };
 
-    req.db = db; // ✅ Agora todos os middlewares e controllers autenticados terão acesso ao banco
+    // disponibiliza a conexão do banco
+    req.db = db;
 
-    next(); // 🟢 Libera a requisição para a próxima função
-  } catch (error) {
-    console.error('🔴 Erro ao verificar token JWT:', error.message);
-    return res.status(403).json({ erro: 'Token inválido ou expirado.' });
+    // novo nome (padrão)
+    req.user = user;
+
+    // compatibilidade: antigo nome
+    req.usuario = req.user; // aponta para o MESMO objeto
+
+    if (process.env.NODE_ENV !== "production" && !warned) {
+      warned = true;
+      console.warn(
+        "[authMiddleware] Aviso: `req.usuario` está DEPRECIADO. Use `req.user`. " +
+        "Fornecendo ambos por compatibilidade temporária."
+      );
+    }
+
+    return next();
+  } catch (e) {
+    console.error("🔴 JWT inválido:", e.message);
+    return res.status(403).json({ erro: "Token inválido ou expirado." });
   }
 }
 

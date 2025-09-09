@@ -31,6 +31,10 @@ const authGoogleRoute             = require("./auth/authGoogle");
 const unidadesRoutes              = require("./routes/unidadesRoutes");
 const usuarioPublicoController    = require("./controllers/usuarioPublicoController");
 const datasEventoRoute            = require("./routes/datasEventoRoute");
+// 🆕 Perfil (opções/leitura/atualização do cadastro)
+const perfilRoutes                = require("./routes/perfilRoutes");
+// 🆕➕ Lookups públicos (sem auth)
+const publicLookupsRoutes         = require("./routes/publicLookupsRoutes");
 
 dotenv.config();
 
@@ -97,9 +101,10 @@ const corsOptions = {
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
-  exposedHeaders: ["Content-Disposition"],
-  credentials: true, // ok mesmo usando Bearer
-  maxAge: 60 * 60,    // preflight cache 1h
+  // 🆕 expõe header de perfil incompleto (se usado no frontend)
+  exposedHeaders: ["Content-Disposition", "X-Perfil-Incompleto"],
+  credentials: true,
+  maxAge: 60 * 60,
 };
 
 // aplica CORS globalmente
@@ -115,6 +120,9 @@ app.options("*", cors(corsOptions), (req, res) => res.sendStatus(204));
 // 📨 body parsers
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
+
+// ➕ Endpoints PÚBLICOS de lookups (sem token) — REGISTRAR ANTES das outras rotas
+app.use("/api", publicLookupsRoutes);
 
 // 🗃️ Static
 app.use(express.static(path.join(__dirname, "public")));
@@ -169,6 +177,8 @@ app.use("/api/auth", authGoogleRoute);
 app.use("/api/unidades", unidadesRoutes);
 app.use("/api/assinatura", assinaturaRoutes);
 app.use("/api/datas", datasEventoRoute);
+// 🆕 Rotas de Perfil (opções/me/update)
+app.use("/api/perfil", perfilRoutes);
 
 // recuperação de senha (com limiter)
 app.post(
