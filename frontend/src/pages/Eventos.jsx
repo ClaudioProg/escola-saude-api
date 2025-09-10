@@ -1,4 +1,4 @@
-// ✅ src/pages/Eventos.jsx 
+// ✅ src/pages/Eventos.jsx
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
@@ -69,6 +69,32 @@ function rangeDaTurma(t) {
   return { di, df };
 }
 
+/* ------------------------------------------------------------------ */
+/*  NOVO: helpers para buscar apenas eventos visíveis                  */
+/* ------------------------------------------------------------------ */
+
+// Normaliza respostas diferentes (array puro OU {ok, eventos})
+function extrairListaEventos(res) {
+  if (Array.isArray(res)) return res;
+  if (Array.isArray(res?.eventos)) return res.eventos;
+  if (Array.isArray(res?.data?.eventos)) return res.data.eventos;
+  return [];
+}
+
+// Fallback: filtra client-side chamando /api/eventos/:id/visivel (em paralelo)
+async function filtrarEventosVisiveisClientSide(lista) {
+  const checks = (lista || []).map(async (e) => {
+    try {
+      const r = await apiGet(`/api/eventos/${e.id}/visivel`);
+      return r?.ok ? e : null;
+    } catch {
+      return null;
+    }
+  });
+  const arr = await Promise.all(checks);
+  return arr.filter(Boolean);
+}
+
 export default function Eventos() {
   const [eventos, setEventos] = useState([]);
   const [turmasPorEvento, setTurmasPorEvento] = useState({});
@@ -93,8 +119,16 @@ export default function Eventos() {
     async function carregarEventos() {
       setCarregandoEventos(true);
       try {
-        const data = await apiGet("/api/eventos");
-        setEventos(Array.isArray(data) ? data : []);
+        // 1) Tenta rota filtrada no backend
+        let lista = extrairListaEventos(await apiGet("/api/eventos/para-mim/lista"));
+
+        // 2) Fallback: pega todos e filtra client-side por /:id/visivel
+        if (!Array.isArray(lista) || lista.length === 0) {
+          const todos = extrairListaEventos(await apiGet("/api/eventos"));
+          lista = await filtrarEventosVisiveisClientSide(todos);
+        }
+
+        setEventos(Array.isArray(lista) ? lista : []);
         setErro("");
       } catch {
         setErro("Erro ao carregar eventos");
@@ -123,8 +157,13 @@ export default function Eventos() {
 
   async function atualizarEventos() {
     try {
-      const data = await apiGet("/api/eventos");
-      setEventos(Array.isArray(data) ? data : []);
+      // Mantém mesma lógica da primeira carga
+      let lista = extrairListaEventos(await apiGet("/api/eventos/para-mim/lista"));
+      if (!Array.isArray(lista) || lista.length === 0) {
+        const todos = extrairListaEventos(await apiGet("/api/eventos"));
+        lista = await filtrarEventosVisiveisClientSide(todos);
+      }
+      setEventos(Array.isArray(lista) ? lista : []);
     } catch (e) {
       console.error("Erro em atualizarEventos():", e);
       toast.warn("⚠️ Eventos não puderam ser atualizados."); // ← warn
@@ -136,6 +175,7 @@ export default function Eventos() {
     if (!turmasPorEvento[eventoId] && !carregandoTurmas) {
       setCarregandoTurmas(eventoId);
       try {
+        // Mantém sua rota atual de turmas
         const turmas = await apiGet(`/api/turmas/evento/${eventoId}`);
         setTurmasPorEvento((prev) => ({ ...prev, [eventoId]: Array.isArray(turmas) ? turmas : [] }));
       } catch {
@@ -157,27 +197,27 @@ export default function Eventos() {
 
   async function inscrever(turmaId) {
     if (inscrevendo) return;
-  
+
     const eventoIdLocal = findEventoIdByTurmaIdLocal(turmaId);
     const eventoReferente =
       (eventoIdLocal && eventos.find((e) => Number(e.id) === Number(eventoIdLocal))) || null;
-  
+
     const ehInstrutor =
       Boolean(eventoReferente?.ja_instrutor) ||
       (Array.isArray(eventoReferente?.instrutor) &&
         usuarioId &&
         eventoReferente.instrutor.some((i) => Number(i.id) === Number(usuarioId)));
-  
+
     if (ehInstrutor) {
       toast.warn("Você é instrutor deste evento e não pode se inscrever como participante.");
       return;
     }
-  
+
     setInscrevendo(turmaId);
     try {
       await apiPost("/api/inscricoes", { turma_id: turmaId });
       toast.success("✅ Inscrição realizada com sucesso!");
-  
+
       // Recarrega inscrições do usuário
       try {
         const inscricoesUsuario = await apiGet("/api/inscricoes/minhas");
@@ -188,17 +228,17 @@ export default function Eventos() {
       } catch {
         toast.warn("⚠️ Não foi possível atualizar inscrições confirmadas."); // ← warn
       }
-  
+
       // Recarrega eventos
       await atualizarEventos();
-  
+
       // Recarrega turmas do evento específico
       const eventoId =
         eventoIdLocal ||
         Object.keys(turmasPorEvento).find((id) =>
           (turmasPorEvento[id] || []).some((t) => Number(t.id) === Number(turmaId))
         );
-  
+
       if (eventoId) {
         try {
           const turmasAtualizadas = await apiGet(`/api/turmas/evento/${eventoId}`);
@@ -211,26 +251,36 @@ export default function Eventos() {
         }
       }
     } catch (err) {
-      // Normalização do erro (cobre diferentes formatos do seu api.js)
+      // Normalização do erro
       const status =
         err?.status ??
         err?.response?.status ??
         err?.data?.status ??
         err?.response?.data?.status;
-  
+
       const serverMsg =
         err?.data?.erro ??
         err?.response?.erro ??
         err?.response?.data?.erro ??
         err?.data?.message ??
         err?.response?.data?.message;
-  
+
       const msg = serverMsg || err?.message || "Erro ao se inscrever.";
-  
+
       if (status === 409) {
         toast.warn(msg);
       } else if (status === 400) {
         toast.error(msg);
+      } else if (status === 403 && err?.response?.data?.motivo) {
+        // Motivos esperados: 'SEM_REGISTRO' | 'REGISTRO_NAO_AUTORIZADO'
+        const motivo = err.response.data.motivo;
+        if (motivo === "SEM_REGISTRO") {
+          toast.error("Inscrição bloqueada: informe seu Registro no perfil.");
+        } else if (motivo === "REGISTRO_NAO_AUTORIZADO") {
+          toast.error("Inscrição bloqueada: seu Registro não está autorizado para este curso.");
+        } else {
+          toast.error("Acesso negado para este curso.");
+        }
       } else {
         console.error("❌ Erro inesperado:", err);
         toast.error("❌ Erro ao se inscrever.");
@@ -441,7 +491,6 @@ export default function Eventos() {
                   </BotaoPrimario>
 
                   {turmasVisiveis[evento.id] && turmasPorEvento[evento.id] && (
-                    // (comentários explicativos acima; evitar comentários dentro da lista de props)
                     <ListaTurmasEvento
                       turmas={turmasPorEvento[evento.id]}
                       eventoId={evento.id}

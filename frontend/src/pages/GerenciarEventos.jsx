@@ -1,9 +1,8 @@
-// 📁 src/pages/GerenciarEventos.jsx
 /* eslint-disable no-console */
 import { useEffect, useState } from "react";
 import { toast } from "react-toastify";
 import { motion } from "framer-motion";
-import { Pencil, Trash2, PlusCircle } from "lucide-react";
+import { Pencil, Trash2, PlusCircle, Lock } from "lucide-react";
 
 import { apiGet, apiPost, apiPut, apiDelete } from "../services/api";
 import ModalEvento from "../components/ModalEvento";
@@ -48,14 +47,6 @@ const hhmm = (s) => {
   return v ? v.slice(0, 5) : "";
 };
 
-// adiciona segundos se precisar → "HH:mm:ss"
-const addSecs = (h) => {
-  const base = (typeof h === "string" ? h.trim() : "") || "";
-  if (/^\d{2}:\d{2}:\d{2}$/.test(base)) return base;
-  if (/^\d{2}:\d{2}$/.test(base)) return `${base}:00`;
-  return base ? `${base.slice(0, 5)}:00` : "";
-};
-
 // instrutor pode vir como [{id, nome}] ou [id]
 const extractInstrutorIds = (arr) => {
   if (!Array.isArray(arr)) return [];
@@ -68,10 +59,7 @@ const extractInstrutorIds = (arr) => {
 /* ======== Helpers p/ encontros/datas ======== */
 const iso = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
 const toEncontroObj = (e, hiFallback = "08:00", hfFallback = "17:00") => {
-  // aceita:
-  //  - string "YYYY-MM-DD"
-  //  - { data, horario_inicio/horario_fim }
-  //  - { data, inicio, fim }
+  // aceita string "YYYY-MM-DD" ou objetos com {data,inicio,fim}/{data,horario_inicio,horario_fim}
   if (!e) return null;
   if (typeof e === "string") {
     const d = iso(e);
@@ -88,15 +76,12 @@ const sortByData = (arr) =>
   [...arr].sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : 0));
 
 const cargaHorariaFromEncontros = (encs) => {
-  // soma horas de cada encontro; se >=8h em um dia, desconta 1h (almoço)
+  // soma horas; se >=8h em um dia, desconta 1h (almoço)
   let total = 0;
   for (const e of encs) {
     const [h1, m1] = (e.inicio || "00:00").split(":").map(Number);
     const [h2, m2] = (e.fim || "00:00").split(":").map(Number);
-    const diffH = Math.max(
-      0,
-      (h2 * 60 + (m2 || 0) - (h1 * 60 + (m1 || 0))) / 60
-    );
+    const diffH = Math.max(0, (h2 * 60 + (m2 || 0) - (h1 * 60 + (m1 || 0))) / 60);
     total += diffH >= 8 ? diffH - 1 : diffH;
   }
   return Math.round(total);
@@ -105,13 +90,10 @@ const cargaHorariaFromEncontros = (encs) => {
 /**
  * Normaliza turmas para o payload:
  *  - inclui `encontros: [{data,inicio,fim}]`
- *  - se faltar data_inicio/data_fim, deriva do 1º/último encontro
- *  - se faltar horários, usa do 1º encontro
- *  - se faltar carga_horaria, calcula a partir dos encontros
- *  - compatível com formatos antigos: `datas` (array) ou `encontros` como strings
+ *  - inclui também `datas` (compat atual do backend)
+ *  - preenche faltantes (di/df/hi/hf/carga_horaria)
  */
 function normalizeTurmas(turmas = []) {
-  console.log("🧩 normalizeTurmas: in →", turmas);
   const out = (turmas || []).map((t) => {
     const nome = (t.nome || "Turma Única").trim();
 
@@ -143,7 +125,6 @@ function normalizeTurmas(turmas = []) {
     if (ch <= 0 && encontros.length) ch = cargaHorariaFromEncontros(encontros);
     if (ch <= 0) ch = 1;
 
-    // 👇 compatibilidade com o backend (turmasController cria/atualiza espera `datas`)
     const datas = encontros.map((e) => ({
       data: e.data,
       horario_inicio: e.inicio,
@@ -158,51 +139,45 @@ function normalizeTurmas(turmas = []) {
       horario_fim: hf,
       vagas_total: vagasOk,
       carga_horaria: ch,
-      encontros, // mantém para o futuro/UX
-      datas,     // ✅ necessário para o backend atual
+      encontros,
+      datas,
     });
   });
-  console.log("🧩 normalizeTurmas: out →", out);
   return out;
 }
+
+/* ========= Restrição: normalização de registros ========= */
+const normRegistro = (v) => String(v || "").replace(/\D/g, "").slice(0, 20);
+const normRegistros = (arr) =>
+  Array.from(new Set((arr || []).map(normRegistro).filter(Boolean)));
 
 /* =============================
    Fetch auxiliares
    ============================= */
-   async function fetchTurmasDoEvento(eventoId) {
-    console.log(`🔎 fetchTurmasDoEvento id=${eventoId}`);
-    const urls = [
-      `/api/eventos/${eventoId}/turmas`,      // ✅ rota nova
-      `/api/turmas/por-evento/${eventoId}`,   // legados
-      `/api/turmas/evento/${eventoId}`,
-      `/api/eventos/${eventoId}`,             // pode vir embutido
-    ];
-    for (const url of urls) {
-      try {
-        console.log("→ tentando:", url);
-        const resp = await apiGet(url);
-        if (Array.isArray(resp)) return resp;
-        if (Array.isArray(resp?.turmas)) return resp.turmas;
-        if (Array.isArray(resp?.lista)) return resp.lista;
-      } catch (e) {
-        console.log("✖️ falhou:", url, e?.message);
-      }
-    }
-    return [];
+async function fetchTurmasDoEvento(eventoId) {
+  const urls = [
+    `/api/eventos/${eventoId}/turmas`,      // rota preferencial
+    `/api/turmas/por-evento/${eventoId}`,   // legadas
+    `/api/turmas/evento/${eventoId}`,
+    `/api/eventos/${eventoId}`,             // pode vir embutido
+  ];
+  for (const url of urls) {
+    try {
+      const resp = await apiGet(url);
+      if (Array.isArray(resp)) return resp;
+      if (Array.isArray(resp?.turmas)) return resp.turmas;
+      if (Array.isArray(resp?.lista)) return resp.lista;
+    } catch {}
   }
+  return [];
+}
 
 async function fetchEventoCompleto(eventoId) {
   try {
     const resp = await apiGet(`/api/eventos/${eventoId}`);
     const ev = resp?.evento || resp;
-    if (ev?.id) {
-      console.log("🧴 fetchEventoCompleto OK:", ev);
-      return ev;
-    }
-    console.log("🧴 fetchEventoCompleto shape inesperado:", resp);
-  } catch (e) {
-    console.log("🧴 fetchEventoCompleto erro:", e?.message);
-  }
+    if (ev?.id) return ev;
+  } catch {}
   return null;
 }
 
@@ -210,10 +185,9 @@ async function fetchEventoCompleto(eventoId) {
    Modo “espelho” para PUT (merge com servidor)
    ============================= */
 function buildUpdateBody(baseServidor, dadosDoModal) {
-  // 1) Começa do zero e envia SÓ o que o backend aceita no PUT
   const body = {};
 
-  // 2) Campos simples do evento (whitelist)
+  // — campos simples
   body.titulo = (dadosDoModal?.titulo ?? baseServidor?.titulo ?? "").trim();
   body.descricao = (dadosDoModal?.descricao ?? baseServidor?.descricao ?? "").trim();
   body.local = (dadosDoModal?.local ?? baseServidor?.local ?? "").trim();
@@ -221,12 +195,32 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
   body.unidade_id = Number(dadosDoModal?.unidade_id ?? baseServidor?.unidade_id);
   body.publico_alvo = (dadosDoModal?.publico_alvo ?? baseServidor?.publico_alvo ?? "").trim();
 
-  // 3) Instrutor: garantir array de IDs
+  // — instrutor
   const instrutoresFromModal = extractInstrutorIds(dadosDoModal?.instrutor);
   const instrutoresFromServer = extractInstrutorIds(baseServidor?.instrutor);
   body.instrutor = instrutoresFromModal.length ? instrutoresFromModal : instrutoresFromServer;
 
-  // 4) Datas/horas gerais (apenas fallback — turmas usam encontros)
+  // — restrição
+  const restrito = Boolean(
+    dadosDoModal?.restrito ??
+      (typeof baseServidor?.restrito === "boolean" ? baseServidor.restrito : false)
+  );
+  body.restrito = restrito;
+
+  const modo =
+    restrito
+      ? (dadosDoModal?.restrito_modo ??
+          baseServidor?.restrito_modo ??
+          null)
+      : null;
+  body.restrito_modo = modo;
+
+  if (restrito && modo === "lista_registros") {
+    const regs = normRegistros(dadosDoModal?.registros);
+    if (regs.length) body.registros = regs; // se não vier nada, backend mantém a lista atual
+  }
+
+  // — turmas
   const di = ymd(
     dadosDoModal?.data_inicio_geral ??
       dadosDoModal?.data_inicio ??
@@ -254,14 +248,12 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
       "17:00"
   );
 
-  // 5) Turmas (obrigatórias no PUT) — aceita datas OU encontros
   let turmasFonte = [];
   if (Array.isArray(dadosDoModal?.turmas) && dadosDoModal.turmas.length > 0) {
     turmasFonte = dadosDoModal.turmas;
   } else if (Array.isArray(baseServidor?.turmas) && baseServidor.turmas.length > 0) {
     turmasFonte = baseServidor.turmas;
   } else {
-    // cria 1 turma padrão (sem encontros), evita validação quebrar
     turmasFonte = [
       {
         nome: body.titulo || "Turma Única",
@@ -271,15 +263,13 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
         horario_fim: hf,
         vagas_total: 1,
         carga_horaria: 1,
-        encontros: [], // vazio
+        encontros: [],
       },
     ];
   }
   body.turmas = normalizeTurmas(turmasFonte);
 
-  const final = clean(body);
-  console.log("🪞 buildUpdateBody (espelho) →", final);
-  return final;
+  return clean(body);
 }
 
 /* =============================
@@ -292,11 +282,9 @@ export default function GerenciarEventos() {
   const [loading, setLoading] = useState(true);
   const [modalAberto, setModalAberto] = useState(false);
 
-  // 🔁 Centraliza o carregamento para reaproveitar
   async function recarregarEventos() {
     try {
       setErro("");
-      console.log("📡 GET /api/eventos");
       const data = await apiGet("/api/eventos");
       const lista = Array.isArray(data)
         ? data
@@ -305,7 +293,6 @@ export default function GerenciarEventos() {
         : Array.isArray(data?.lista)
         ? data.lista
         : [];
-      console.log("→ recebidos:", lista.length, "exemplo[0]:", lista[0]);
       setEventos(lista);
     } catch (err) {
       const msg = err?.message || "Erro ao carregar eventos";
@@ -316,7 +303,6 @@ export default function GerenciarEventos() {
     }
   }
 
-  // 🔄 Carregar eventos ao montar
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -329,31 +315,33 @@ export default function GerenciarEventos() {
   }, []);
 
   const abrirModalCriar = () => {
-    console.log("➕ abrirModalCriar");
     setEventoSelecionado(null);
     setModalAberto(true);
   };
 
-  // garantir turmas ao editar
   const abrirModalEditar = async (evento) => {
-    console.log("✏️ abrirModalEditar", evento);
     let turmas = Array.isArray(evento.turmas) ? evento.turmas : [];
     if (turmas.length === 0 && evento?.id) {
       turmas = await fetchTurmasDoEvento(evento.id);
     }
-    setEventoSelecionado({ ...evento, turmas });
+
+    // preserva flags de restrição que vierem do backend
+    const base = (await fetchEventoCompleto(evento.id)) || evento;
+
+    setEventoSelecionado({
+      ...evento,
+      ...base, // assegura restrito/restrito_modo (e possivelmente registros, se backend enviar)
+      turmas,
+    });
     setModalAberto(true);
   };
 
   const excluirEvento = async (eventoId) => {
     if (!window.confirm("Tem certeza que deseja excluir este evento?")) return;
-    console.log("🗑️ DELETE evento id=", eventoId);
     try {
       await apiDelete(`/api/eventos/${eventoId}`);
-      // remove localmente para resposta visual imediata
       setEventos((prev) => prev.filter((ev) => ev.id !== eventoId));
       toast.success("✅ Evento excluído.");
-      // e sincroniza com o backend (opcional)
       await recarregarEventos();
     } catch (err) {
       console.error("❌ delete evento:", err?.message);
@@ -361,25 +349,18 @@ export default function GerenciarEventos() {
     }
   };
 
-  // Recebe os dados do ModalEvento (criar/editar)
   const salvarEvento = async (dadosDoModal) => {
-    console.log("💾 salvarEvento: dadosDoModal:", dadosDoModal);
-    console.log("💾 salvarEvento: eventoSelecionado:", eventoSelecionado);
-  
     try {
       const isEdicao = Boolean(eventoSelecionado?.id);
-  
+
       if (isEdicao) {
-        // 1) tenta pegar o modelo completo do servidor
+        // 1) base completa do servidor (ou fallback)
         let baseServidor = await fetchEventoCompleto(eventoSelecionado.id);
-  
-        // 1b) fallback: se falhar/500, monta base mínima com turmas atuais
         if (!baseServidor) {
           const turmasDoEvento =
             Array.isArray(eventoSelecionado?.turmas) && eventoSelecionado.turmas.length
               ? eventoSelecionado.turmas
               : await fetchTurmasDoEvento(eventoSelecionado.id);
-  
           baseServidor = {
             ...eventoSelecionado,
             turmas: turmasDoEvento,
@@ -390,14 +371,15 @@ export default function GerenciarEventos() {
             unidade_id: eventoSelecionado?.unidade_id,
             publico_alvo: eventoSelecionado?.publico_alvo || "",
             instrutor: extractInstrutorIds(eventoSelecionado?.instrutor),
+            restrito: Boolean(eventoSelecionado?.restrito),
+            restrito_modo: eventoSelecionado?.restrito_modo || null,
           };
-          console.log("🛟 baseServidor (fallback):", baseServidor);
         }
-  
-        // 2) body espelho
+
+        // 2) body espelho (inclui regra de restrição)
         const body = buildUpdateBody(baseServidor, dadosDoModal);
-  
-        // validações mínimas
+
+        // validações rápidas
         if (!Array.isArray(body.instrutor) || body.instrutor.length === 0) {
           toast.error("Selecione ao menos um instrutor.");
           return;
@@ -406,20 +388,17 @@ export default function GerenciarEventos() {
           toast.error("Inclua ao menos uma turma com campos obrigatórios.");
           return;
         }
-  
+
         // 3) PUT principal
-        console.log("➡️ PUT /api/eventos/:id BODY →", body);
         try {
-          const resp = await apiPut(`/api/eventos/${eventoSelecionado.id}`, body);
-          console.log("📬 resposta bruta:", resp);
+          await apiPut(`/api/eventos/${eventoSelecionado.id}`, body);
         } catch (err) {
-          // 👇 Tratamento especial: não pode mexer em turmas com inscritos
+          // turmas com inscritos → salva apenas metadados + regra de restrição
           if (err?.status === 409 && err?.data?.erro === "TURMA_COM_INSCRITOS") {
-            console.warn("⚠️ Edição limitada (turmas com inscritos):", err.data);
             toast.warn(
-              "Este evento tem turmas com inscritos. Vou salvar apenas os dados gerais (título, descrição, local, instrutores)."
+              "Este evento tem turmas com inscritos. Vou salvar apenas os dados gerais e a regra de restrição."
             );
-  
+
             const bodyEventOnly = clean({
               titulo: (dadosDoModal?.titulo ?? baseServidor?.titulo ?? "").trim(),
               descricao: (dadosDoModal?.descricao ?? baseServidor?.descricao ?? "").trim(),
@@ -432,19 +411,29 @@ export default function GerenciarEventos() {
                   ? dadosDoModal.instrutor
                   : baseServidor?.instrutor) || []
               ),
-              // ❌ sem turmas aqui!
+              // 👇 ainda podemos alterar a regra de restrição
+              restrito: Boolean(
+                dadosDoModal?.restrito ??
+                  (typeof baseServidor?.restrito === "boolean" ? baseServidor.restrito : false)
+              ),
+              restrito_modo:
+                (dadosDoModal?.restrito ?? baseServidor?.restrito)
+                  ? (dadosDoModal?.restrito_modo ?? baseServidor?.restrito_modo ?? null)
+                  : null,
+              registros:
+                (dadosDoModal?.restrito ?? baseServidor?.restrito) &&
+                (dadosDoModal?.restrito_modo ?? baseServidor?.restrito_modo) === "lista_registros"
+                  ? normRegistros(dadosDoModal?.registros)
+                  : undefined,
             });
-  
-            console.log("➡️ PUT /api/eventos/:id (apenas metadados) →", bodyEventOnly);
+
             await apiPut(`/api/eventos/${eventoSelecionado.id}`, bodyEventOnly);
-  
+
             await recarregarEventos();
-            toast.success("✅ Dados gerais atualizados. As turmas não foram alteradas porque já possuem inscritos.");
+            toast.success("✅ Dados gerais e restrição atualizados. As turmas não foram alteradas.");
             setModalAberto(false);
-            return; // encerra fluxo de edição aqui
+            return;
           }
-  
-          // outros erros sobem para o catch externo
           throw err;
         }
       } else {
@@ -457,21 +446,18 @@ export default function GerenciarEventos() {
           local: (dadosDoModal?.local || "").trim(),
           publico_alvo: (dadosDoModal?.publico_alvo || "").trim(),
         };
-  
-        // instrutor IDs
+
         const instrutores = extractInstrutorIds(dadosDoModal?.instrutor);
         if (!instrutores.length) {
           toast.error("Selecione ao menos um instrutor.");
           return;
         }
-  
-        // datas/horas gerais (fallback)
+
         const di = ymd(dadosDoModal?.data_inicio_geral ?? dadosDoModal?.data_inicio);
         const df = ymd(dadosDoModal?.data_fim_geral ?? dadosDoModal?.data_fim);
         const hi = hhmm(dadosDoModal?.horario_inicio_geral ?? dadosDoModal?.horario_inicio ?? "08:00");
         const hf = hhmm(dadosDoModal?.horario_fim_geral ?? dadosDoModal?.horario_fim ?? "17:00");
-  
-        // turmas (com encontros)
+
         const turmas = normalizeTurmas(
           dadosDoModal?.turmas?.length
             ? dadosDoModal.turmas
@@ -484,23 +470,33 @@ export default function GerenciarEventos() {
                   horario_fim: hf,
                   vagas_total: 1,
                   carga_horaria: 1,
-                  encontros: [], // vazio na criação rápida
+                  encontros: [],
                 },
               ]
         );
-  
+
+        // ——— regra de restrição na criação
+        const restrito = Boolean(dadosDoModal?.restrito);
+        const restrito_modo = restrito
+          ? (dadosDoModal?.restrito_modo || "todos_servidores")
+          : null;
+        const registros =
+          restrito && restrito_modo === "lista_registros"
+            ? normRegistros(dadosDoModal?.registros)
+            : undefined;
+
         const bodyCreate = clean({
           ...base,
           instrutor: instrutores,
           turmas,
+          restrito,
+          restrito_modo,
+          registros,
         });
-  
-        console.log("➡️ POST /api/eventos BODY →", bodyCreate);
-        const resp = await apiPost("/api/eventos", bodyCreate);
-        console.log("📬 resposta bruta:", resp);
+
+        await apiPost("/api/eventos", bodyCreate);
       }
-  
-      // sincroniza com o backend e fecha modal
+
       await recarregarEventos();
       toast.success("✅ Evento salvo com sucesso.");
       setModalAberto(false);
@@ -537,7 +533,27 @@ export default function GerenciarEventos() {
               animate={{ opacity: 1, y: 0 }}
               className="bg-white dark:bg-zinc-800 p-5 rounded-xl shadow flex justify-between items-center border border-gray-200 dark:border-zinc-700"
             >
-              <span className="font-semibold text-lg text-lousa dark:text-white">{ev.titulo}</span>
+              <div className="flex items-center gap-3">
+                <span className="font-semibold text-lg text-lousa dark:text-white">
+                  {ev.titulo}
+                </span>
+
+                {/* Badge de restrição */}
+                {ev?.restrito && (
+                  <span
+                    title={
+                      ev.restrito_modo === "lista_registros"
+                        ? "Restrito a uma lista de registros"
+                        : "Visível a todos os servidores (com registro cadastrado)"
+                    }
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-amber-100 text-amber-800 border border-amber-300"
+                  >
+                    <Lock size={12} />
+                    {ev.restrito_modo === "lista_registros" ? "Lista" : "Servidores"}
+                  </span>
+                )}
+              </div>
+
               <div className="flex gap-2">
                 <button
                   onClick={() => abrirModalEditar(ev)}
@@ -562,7 +578,7 @@ export default function GerenciarEventos() {
         onClose={() => setModalAberto(false)}
         onSalvar={salvarEvento}
         evento={eventoSelecionado}
-        // 👇 permite que o Modal também informe quando uma turma foi removida
+        // quando o Modal excluir/alterar turmas, podemos recarregar aqui
         onTurmaRemovida={() => recarregarEventos()}
       />
     </main>

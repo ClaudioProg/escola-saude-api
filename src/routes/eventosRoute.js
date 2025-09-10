@@ -1,3 +1,4 @@
+//src/routes/eventosRoute.js
 const express = require('express');
 const router = express.Router();
 
@@ -9,6 +10,23 @@ const authorizeRoles = require('../auth/authorizeRoles');
 router.get('/protegido', authMiddleware, (req, res) => {
   res.json({ mensagem: `Acesso autorizado para o usuário ${req.usuario.cpf}` });
 });
+
+/* ===============================
+   Eventos visíveis por usuário
+   (aplica regra do campo "registro")
+   =============================== */
+// ✅ Lista apenas eventos que o usuário pode ver (vis_reg_tipo)
+router.get('/para-mim/lista', authMiddleware, eventosController.listarEventosParaMim);
+
+// ✅ Checagem rápida de acesso para a página do curso
+router.get('/:id/visivel', authMiddleware, eventosController.verificarVisibilidadeEvento);
+
+// ✅ Detalhes do curso condicionados ao acesso
+router.get('/:id/detalhes', authMiddleware, eventosController.obterDetalhesEventoComRestricao);
+
+/* ===============================
+   Rotas já existentes
+   =============================== */
 
 // 📆 Agenda de eventos (usuário autenticado)
 router.get('/agenda', authMiddleware, eventosController.getAgendaEventos);
@@ -27,7 +45,7 @@ router.post(
   eventosController.criarEvento
 );
 
-// 🔍 Buscar evento por ID (usuário autenticado)
+// 🔍 Buscar evento por ID (usuário autenticado) — sem aplicar regra de visibilidade
 router.get('/:id', authMiddleware, eventosController.buscarEventoPorId);
 
 // ✏️ Atualizar evento (somente administrador)

@@ -1,8 +1,7 @@
-// 📁 src/components/ModalEvento.jsx
 import { useEffect, useState } from "react";
 import Modal from "react-modal";
 import { toast } from "react-toastify";
-import { MapPin, FileText, Layers3, PlusCircle, Trash2 } from "lucide-react";
+import { MapPin, FileText, Layers3, PlusCircle, Trash2, Lock, Unlock } from "lucide-react";
 import ModalTurma from "./ModalTurma";
 import { formatarDataBrasileira } from "../utils/data";
 import { apiGet, apiDelete } from "../services/api";
@@ -11,6 +10,14 @@ import { apiGet, apiDelete } from "../services/api";
 const minDate = (arr) => arr.map((d) => d.data).sort()[0];
 const maxDate = (arr) => arr.map((d) => d.data).sort().slice(-1)[0];
 const hh = (s) => (typeof s === "string" ? s.slice(0, 5) : "");
+
+// normaliza um registro: só dígitos
+const normReg = (s) => String(s || "").replace(/\D/g, "");
+// parseia entrada solta/colada (csv, linhas, etc.) em uma lista de registros normalizados
+const parseRegsBulk = (txt) => {
+  const tokens = String(txt || "").match(/\d+/g) || [];
+  return Array.from(new Set(tokens.map(normReg).filter(Boolean)));
+};
 
 export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurmaRemovida }) {
   const [titulo, setTitulo] = useState("");
@@ -25,6 +32,12 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
   const [usuarios, setUsuarios] = useState([]);
   const [instrutorSelecionado, setInstrutorSelecionado] = useState([""]);
   const [removendoId, setRemovendoId] = useState(null);
+
+  // 🔒 restrição
+  const [restrito, setRestrito] = useState(false);
+  const [restritoModo, setRestritoModo] = useState(""); // 'todos_servidores' | 'lista_registros'
+  const [registroInput, setRegistroInput] = useState("");
+  const [registros, setRegistros] = useState([]); // strings (só dígitos)
 
   // opções de instrutor
   const opcoesInstrutor = usuarios.filter((usuario) => {
@@ -111,6 +124,11 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
           };
         })
       );
+
+      // 🔒 restrição (se vier do backend)
+      setRestrito(!!evento.restrito);
+      setRestritoModo(evento.restrito_modo || "");
+      setRegistros(Array.isArray(evento.registros) ? evento.registros.map(normReg).filter(Boolean) : []);
     } else {
       // reset ao criar novo
       setTitulo("");
@@ -121,6 +139,11 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
       setPublicoAlvo("");
       setInstrutorSelecionado([""]);
       setTurmas([]);
+
+      setRestrito(false);
+      setRestritoModo("");
+      setRegistros([]);
+      setRegistroInput("");
     }
   }, [evento, isOpen]);
 
@@ -147,6 +170,35 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
       }
     })();
   }, []);
+
+  // Ao editar: se houver endpoint de registros, busca a lista
+  useEffect(() => {
+    (async () => {
+      if (!isOpen || !evento?.id) return;
+      try {
+        const data = await apiGet(`/api/eventos/${evento.id}/registros`, { on401: "silent", on403: "silent" });
+        if (Array.isArray(data)) {
+          setRegistros(data.map(normReg).filter(Boolean));
+        }
+      } catch {
+        // endpoint pode não existir; tudo bem
+      }
+    })();
+  }, [isOpen, evento?.id]);
+
+  const addRegistro = () => {
+    const r = normReg(registroInput);
+    if (!r) return;
+    setRegistros((prev) => (prev.includes(r) ? prev : [...prev, r]));
+    setRegistroInput("");
+  };
+  const addRegistrosBulk = (txt) => {
+    const novos = parseRegsBulk(txt);
+    if (!novos.length) return;
+    setRegistros((prev) => Array.from(new Set([...prev, ...novos])));
+    setRegistroInput("");
+  };
+  const removeRegistro = (r) => setRegistros((prev) => prev.filter((x) => x !== r));
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -180,6 +232,18 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
           toast.error("❌ Preencha data, início e fim em todos os encontros.");
           return;
         }
+      }
+    }
+
+    // 🔒 validação de restrição
+    if (restrito) {
+      if (!["todos_servidores", "lista_registros"].includes(restritoModo)) {
+        toast.error("Defina o modo de restrição do evento.");
+        return;
+      }
+      if (restritoModo === "lista_registros" && registros.length === 0) {
+        toast.error("Inclua pelo menos um registro autorizado para este evento.");
+        return;
       }
     }
 
@@ -218,6 +282,7 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
       publico_alvo: publicoAlvo,
       instrutor: instrutorValidado,
       turmas: turmasCompletas,
+
       // campos “espelho” (compatibilidade com fluxos antigos)
       data_inicio: turmaPrincipal.data_inicio,
       data_fim: turmaPrincipal.data_fim,
@@ -225,7 +290,17 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
       hora_fim: turmaPrincipal.horario_fim,
       vagas_total: Number(turmaPrincipal.vagas_total),
       carga_horaria: Number(turmaPrincipal.carga_horaria),
+
       ...(evento?.id ? { id: evento.id } : {}),
+
+      // 🔒 restrição
+      restrito: !!restrito,
+      ...(restrito
+        ? {
+            restrito_modo: restritoModo,
+            ...(restritoModo === "lista_registros" ? { registros } : {}),
+          }
+        : {}),
     };
 
     onSalvar(payload);
@@ -420,6 +495,113 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
             </select>
           </div>
 
+          {/* 🔒 RESTRIÇÃO DE ACESSO */}
+          <fieldset className="border rounded-md p-3">
+            <legend className="px-1 font-semibold flex items-center gap-2">
+              {restrito ? <Lock size={16} /> : <Unlock size={16} />} Visibilidade do evento
+            </legend>
+
+            <label className="inline-flex items-center gap-2 mt-2">
+              <input
+                type="checkbox"
+                checked={restrito}
+                onChange={(e) => {
+                  setRestrito(e.target.checked);
+                  if (!e.target.checked) {
+                    setRestritoModo("");
+                  } else if (!restritoModo) {
+                    setRestritoModo("todos_servidores");
+                  }
+                }}
+              />
+              <span>Evento restrito</span>
+            </label>
+
+            {restrito && (
+              <div className="mt-3 space-y-2">
+                <label className="flex items-center gap-2">
+                  <input
+                    type="radio"
+                    name="restrito_modo"
+                    value="todos_servidores"
+                    checked={restritoModo === "todos_servidores"}
+                    onChange={() => setRestritoModo("todos_servidores")}
+                  />
+                  <span>Todos os servidores (somente quem possui <strong>registro</strong> cadastrado)</span>
+                </label>
+
+                <label className="flex items-center gap-2">
+                  <input
+                    type="radio"
+                    name="restrito_modo"
+                    value="lista_registros"
+                    checked={restritoModo === "lista_registros"}
+                    onChange={() => setRestritoModo("lista_registros")}
+                  />
+                  <span>Apenas a lista específica de registros</span>
+                </label>
+
+                {restritoModo === "lista_registros" && (
+                  <div className="mt-2 space-y-2">
+                    <div className="flex gap-2">
+                      <input
+                        value={registroInput}
+                        onChange={(e) => setRegistroInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            addRegistro();
+                          }
+                        }}
+                        onPaste={(e) => {
+                          const txt = e.clipboardData?.getData("text");
+                          if (txt && /\D/.test(txt)) {
+                            e.preventDefault();
+                            addRegistrosBulk(txt);
+                          }
+                        }}
+                        placeholder="Digite o registro (só números) e Enter"
+                        className="w-full px-3 py-2 border rounded-md"
+                      />
+                      <button
+                        type="button"
+                        onClick={addRegistro}
+                        className="px-3 py-2 rounded-md bg-teal-700 hover:bg-teal-800 text-white"
+                      >
+                        Adicionar
+                      </button>
+                    </div>
+
+                    {registros.length > 0 ? (
+                      <div className="flex flex-wrap gap-2">
+                        {registros.map((r) => (
+                          <span
+                            key={r}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-gray-200 text-gray-800 text-xs"
+                          >
+                            {r}
+                            <button
+                              type="button"
+                              className="ml-1 text-red-600"
+                              title="Remover"
+                              onClick={() => removeRegistro(r)}
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-600">
+                        Você também pode colar uma lista (CSV/planilha). Só os números serão considerados.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </fieldset>
+
           {/* TURMAS */}
           <div>
             <h3 className="text-md font-semibold mt-4 flex items-center gap-2 text-lousa dark:text-white">
@@ -456,23 +638,23 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
 
                       <p className="font-bold pr-28">{t.nome}</p>
                       {qtd > 0 ? (
-  <>
-    <p>
-      📅 {qtd} encontro(s) • {formatarDataBrasileira(di)} a {formatarDataBrasileira(df)}
-    </p>
-    <ul className="mt-1 text-xs text-gray-600 dark:text-gray-300 list-disc list-inside">
-      {t.datas.map((d, idx) => (
-        <li key={idx}>
-          {formatarDataBrasileira(d.data)} — {hh(d.horario_inicio)} às {hh(d.horario_fim)}
-        </li>
-      ))}
-    </ul>
-  </>
-) : (
-  <p>
-    📅 {formatarDataBrasileira(t.data_inicio)} a {formatarDataBrasileira(t.data_fim)}
-  </p>
-)}
+                        <>
+                          <p>
+                            📅 {qtd} encontro(s) • {formatarDataBrasileira(di)} a {formatarDataBrasileira(df)}
+                          </p>
+                          <ul className="mt-1 text-xs text-gray-600 dark:text-gray-300 list-disc list-inside">
+                            {t.datas.map((d, idx) => (
+                              <li key={idx}>
+                                {formatarDataBrasileira(d.data)} — {hh(d.horario_inicio)} às {hh(d.horario_fim)}
+                              </li>
+                            ))}
+                          </ul>
+                        </>
+                      ) : (
+                        <p>
+                          📅 {formatarDataBrasileira(t.data_inicio)} a {formatarDataBrasileira(t.data_fim)}
+                        </p>
+                      )}
                       {hi && hf && (
                         <p>
                           🕒 {hi} às {hf}
@@ -525,7 +707,7 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
         isOpen={modalTurmaAberto}
         onClose={() => setModalTurmaAberto(false)}
         onSalvar={(turma) => {
-          // ModalTurma continua devolvendo "datas" para o estado do modal;
+          // ModalTurma devolve "datas" para o estado do modal;
           // a conversão para "encontros" é feita no handleSubmit.
           const datas = Array.isArray(turma.datas) ? turma.datas : [];
           setTurmas((prev) => [

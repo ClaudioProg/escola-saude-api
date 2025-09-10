@@ -45,11 +45,7 @@ function getValidToken() {
   const token = localStorage.getItem("token");
   if (!token) return null;
   const payload = decodeJwtPayload(token);
-  if (payload?.exp && Date.now() >= payload.exp * 1000) {
-    // ⚠️ não limpamos aqui para não causar efeitos colaterais;
-    // apenas tratamos como "sem token" para a Navbar.
-    return null;
-  }
+  if (payload?.exp && Date.now() >= payload.exp * 1000) return null;
   return token;
 }
 
@@ -181,11 +177,12 @@ export default function Navbar() {
     []
   );
 
+  // 🔁 Removido “QR do Site” daqui (foi para o menu do avatar)
   const menusInstrutor = useMemo(
     () => [
       { label: "Painel", path: "/instrutor", icon: LayoutDashboard },
       { label: "Agenda", path: "/agenda-instrutor", icon: CalendarDays },
-      { label: "QR do Site", path: "/qr-site", icon: QrCode },
+      // { label: "QR do Site", path: "/qr-site", icon: QrCode }, // movido
     ],
     []
   );
@@ -218,7 +215,6 @@ export default function Navbar() {
   const [totalNaoLidas, setTotalNaoLidas] = useState(0);
 
   const atualizarContadorNotificacoes = useCallback(async () => {
-    // só consulta com token válido e se a aba estiver visível
     if (!getValidToken() || document.hidden) return;
     try {
       const data = await apiGet("/notificacoes/nao-lidas/contagem", { on401: "silent" });
@@ -228,18 +224,16 @@ export default function Navbar() {
     }
   }, []);
 
-  // carregar/atualizar notificações (pausado quando sem token)
   useEffect(() => {
     let intervalId;
     const tick = () => atualizarContadorNotificacoes();
     if (token) {
       tick();
-      intervalId = setInterval(tick, 30000); // 30s para aliviar tráfego
+      intervalId = setInterval(tick, 30000);
     }
     const onVisibility = () => { if (!document.hidden) tick(); };
     document.addEventListener("visibilitychange", onVisibility);
 
-    // expoe opcionalmente para chamadas manuais
     window.atualizarContadorNotificacoes = tick;
     return () => {
       if (intervalId) clearInterval(intervalId);
@@ -248,7 +242,7 @@ export default function Navbar() {
     };
   }, [token, atualizarContadorNotificacoes]);
 
-  // sincroniza token/perfil/nome por storage e ao trocar de rota
+  // sincroniza token/perfil/nome
   useEffect(() => {
     const refreshFromLS = () => {
       setToken(getValidToken());
@@ -266,7 +260,6 @@ export default function Navbar() {
   }, []);
 
   useEffect(() => {
-    // fecha menus quando a rota muda e reavalia perfil/nome
     setMenuUsuarioOpen(false);
     setMenuInstrutorOpen(false);
     setMenuAdminOpen(false);
@@ -336,7 +329,7 @@ export default function Navbar() {
   const dropBtnBase =
     "flex items-center gap-2 px-2 py-1 text-sm rounded-xl hover:bg-white hover:text-lousa focus-visible:ring-2 focus-visible:ring-white/60 outline-none";
 
-  // home inteligente: se logado -> dashboard, senão -> login
+  // home inteligente
   const goHome = () => {
     const hasToken = !!getValidToken();
     go(hasToken ? "/dashboard" : "/");
@@ -471,6 +464,16 @@ export default function Navbar() {
                 >
                   <UserCog size={16} aria-hidden="true" /> Atualizar Cadastro
                 </button>
+
+                {/* 👉 Novo: QR do Site dentro do menu do avatar */}
+                <button
+                  role="menuitem"
+                  onClick={() => go("/qr-site")}
+                  className="w-full text-left px-4 py-2 flex items-center gap-2 hover:bg-gelo focus:bg-gelo outline-none"
+                >
+                  <QrCode size={16} aria-hidden="true" /> QR do Site
+                </button>
+
                 <button
                   role="menuitem"
                   onClick={() => setDarkMode((v) => !v)}
@@ -585,6 +588,15 @@ export default function Navbar() {
 
             {/* utilidades */}
             <div className="px-2 pt-2 pb-1 text-xs font-semibold uppercase text-gray-500">Geral</div>
+
+            {/* 👉 Novo no mobile: QR do Site */}
+            <button
+              onClick={() => go("/qr-site")}
+              className="text-left w-full px-3 py-2 rounded-lg flex items-center gap-2 hover:bg-gelo"
+            >
+              <QrCode size={16} /> QR do Site
+            </button>
+
             <button
               onClick={() => go("/notificacoes")}
               className="text-left w-full px-3 py-2 rounded-lg flex items-center gap-2 hover:bg-gelo"

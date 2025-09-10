@@ -1,4 +1,4 @@
-// 📁 src/controllers/eventosController.js
+// ✅ src/controllers/eventoController.js
 /* eslint-disable no-console */
 const { pool, query } = require('../db');
 
@@ -36,32 +36,78 @@ function toHm(v) {
   return `${hh}:${mm}`;
 }
 
-/** Normaliza turmas[].datas / turmas[].encontros vindos do front */
-function normalizeEncontrosEntrada(turma) {
-  const baseHi = hhmm(turma?.horario_inicio || '08:00', '08:00');
-  const baseHf = hhmm(turma?.horario_fim || '17:00', '17:00');
+/* =====================================================================
+   Helpers de restrição
+   ===================================================================== */
+const MODO_TODOS = 'todos_servidores'; // ← "somente servidores"
+const MODO_LISTA = 'lista_registros';
+const ALLOWED_MODOS = new Set([MODO_TODOS, MODO_LISTA]);
 
-  const arr =
-    Array.isArray(turma?.datas) && turma.datas.length
-      ? turma.datas.map(e => ({
-          data: iso(e?.data || ''),
-          inicio: hhmm(e?.horario_inicio, baseHi),
-          fim: hhmm(e?.horario_fim, baseHf),
-        }))
-      : Array.isArray(turma?.encontros) && turma.encontros.length
-      ? turma.encontros.map(e => {
-          if (typeof e === 'string') {
-            return { data: iso(e), inicio: baseHi, fim: baseHf };
-          }
-          return {
-            data: iso(e?.data || ''),
-            inicio: hhmm(e?.inicio, baseHi),
-            fim: hhmm(e?.fim, baseHf),
-          };
-        })
-      : [];
+const normRegistro = (v) => String(v || '').replace(/\D/g, '').slice(0, 20);
 
-  return arr.filter(e => e.data && e.inicio && e.fim);
+function getPerfisFromReq(req) {
+  const raw = req.usuario?.perfil ?? req.usuario?.perfis ?? [];
+  if (Array.isArray(raw)) return raw.map((p) => String(p).toLowerCase());
+  return String(raw).split(',').map((p) => p.replace(/[\[\]"]/g, '').trim().toLowerCase()).filter(Boolean);
+}
+function isAdmin(req) {
+  return getPerfisFromReq(req).includes('administrador');
+}
+function isInstrutorPerfil(req) {
+  const p = getPerfisFromReq(req);
+  return p.includes('instrutor') || p.includes('administrador');
+}
+const getUsuarioId = (req) => (req.user?.id ?? req.usuario?.id ?? null);
+
+/* =====================================================================
+   🔐 Núcleo de checagem por REGISTRO (reuso interno)
+   ===================================================================== */
+async function podeVerPorRegistro({ client, usuarioId, eventoId, req }) {
+  // Admin ou instrutor do evento sempre podem ver
+  if (usuarioId && (isAdmin(req))) return { ok: true };
+
+  const evQ = await client.query(
+    `SELECT id, restrito, restrito_modo FROM eventos WHERE id = $1`,
+    [eventoId]
+  );
+  const evento = evQ.rows[0];
+  if (!evento) return { ok: false, motivo: 'EVENTO_NAO_ENCONTRADO' };
+
+  // Instrutor do evento também pode ver
+  if (usuarioId) {
+    const isInstrutorDoEvento = (await client.query(
+      `SELECT 1 FROM evento_instrutor WHERE evento_id = $1 AND instrutor_id = $2 LIMIT 1`,
+      [eventoId, usuarioId]
+    )).rowCount > 0;
+    if (isInstrutorDoEvento) return { ok: true };
+  }
+
+  // Sem restrição → aparece para qualquer usuário autenticado
+  if (!evento.restrito) return { ok: true };
+
+  // Busca registro do usuário
+  if (!usuarioId) return { ok: false, motivo: 'NAO_AUTENTICADO' };
+  const uQ = await client.query(`SELECT registro FROM usuarios WHERE id = $1`, [usuarioId]);
+  const regNorm = normRegistro(uQ.rows?.[0]?.registro || '');
+
+  if (evento.restrito_modo === MODO_TODOS) {
+    if (regNorm) return { ok: true };
+    return { ok: false, motivo: 'SEM_REGISTRO' };
+  }
+
+  if (evento.restrito_modo === MODO_LISTA) {
+    if (!regNorm) return { ok: false, motivo: 'SEM_REGISTRO' };
+    const hit = await client.query(
+      `SELECT 1 FROM evento_registros WHERE evento_id = $1 AND registro_norm = $2 LIMIT 1`,
+      [eventoId, regNorm]
+    );
+    return hit.rowCount > 0
+      ? { ok: true }
+      : { ok: false, motivo: 'REGISTRO_NAO_AUTORIZADO' };
+  }
+
+  // Modo desconhecido → nega por segurança
+  return { ok: false, motivo: 'MODO_RESTRICAO_INVALIDO' };
 }
 
 /* =====================================================================
@@ -69,10 +115,9 @@ function normalizeEncontrosEntrada(turma) {
    ===================================================================== */
 async function listarEventos(req, res) {
   try {
-    const usuarioId = req.usuario?.id || null;
+    const usuarioId = getUsuarioId(req);
 
-    const result = await query(
-      `
+    const sql = `
       SELECT 
         e.*,
         COALESCE(
@@ -81,7 +126,6 @@ async function listarEventos(req, res) {
           '[]'
         ) AS instrutor,
 
-        -- datas/horários gerais para status (a partir das turmas)
         (SELECT MIN(t.data_inicio)    FROM turmas t WHERE t.evento_id = e.id) AS data_inicio_geral,
         (SELECT MAX(t.data_fim)       FROM turmas t WHERE t.evento_id = e.id) AS data_fim_geral,
         (SELECT MIN(t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id) AS horario_inicio_geral,
@@ -101,7 +145,6 @@ async function listarEventos(req, res) {
           END
         ) AS status,
 
-        -- flags por usuário (se autenticado)
         (
           SELECT COUNT(*) > 0
           FROM inscricoes i
@@ -113,18 +156,19 @@ async function listarEventos(req, res) {
           SELECT COUNT(*) > 0
           FROM evento_instrutor ei
           WHERE ei.evento_id = e.id
-            AND ei.instrutor_id = $1
+            AND ei.instrutor_id = $2
         ) AS ja_instrutor
 
       FROM eventos e
       LEFT JOIN evento_instrutor ei ON ei.evento_id = e.id
       LEFT JOIN usuarios u         ON u.id  = ei.instrutor_id
       GROUP BY e.id
-      ORDER BY (SELECT MAX(t.data_fim + t.horario_fim) FROM turmas t WHERE t.evento_id = e.id) DESC NULLS LAST, e.id DESC;
-    `,
-      [usuarioId]
-    );
+      ORDER BY (SELECT MAX(t.data_fim + t.horario_fim) FROM turmas t WHERE t.evento_id = e.id) DESC NULLS LAST,
+               e.id DESC;
+    `;
 
+    const params = [usuarioId, usuarioId];
+    const result = await query(sql, params);
     res.json(result.rows);
   } catch (err) {
     console.error('❌ Erro ao listar eventos:', err.stack || err.message);
@@ -133,10 +177,109 @@ async function listarEventos(req, res) {
 }
 
 /* =====================================================================
-   ➕ Criar evento (persiste turmas + datas_turma)
+   🆕 Listar eventos "para mim" (aplica regra por registro no SQL)
+   ===================================================================== */
+   async function listarEventosParaMim(req, res) {
+    const usuarioId = req.user?.id ?? req.usuario?.id ?? null;
+    if (!usuarioId) return res.status(401).json({ ok: false, erro: 'NAO_AUTENTICADO' });
+  
+    const client = await pool.connect();
+    try {
+      // registro normalizado do usuário
+      const uQ = await client.query(`SELECT registro FROM usuarios WHERE id = $1`, [usuarioId]);
+      const normRegistro = (v) => String(v || '').replace(/\D/g, '').slice(0, 20);
+      const regNorm = normRegistro(uQ.rows?.[0]?.registro || '');
+  
+      const MODO_TODOS  = 'todos_servidores';
+      const MODO_LISTA  = 'lista_registros';
+  
+      const sql = `
+        WITH base AS (
+          SELECT
+            e.id, e.titulo, e.descricao, e.local, e.tipo, e.unidade_id,
+            e.publico_alvo, e.restrito, e.restrito_modo
+          FROM eventos e
+          WHERE
+               e.restrito = FALSE
+            OR (e.restrito = TRUE  AND e.restrito_modo = $3 AND $4 <> '')             -- "somente servidores"
+            OR (e.restrito = TRUE  AND e.restrito_modo = $5 AND EXISTS (               -- "lista específica"
+                  SELECT 1 FROM evento_registros er
+                   WHERE er.evento_id = e.id AND er.registro_norm = $4
+                ))
+        )
+        SELECT 
+          e.id, e.titulo, e.descricao, e.local, e.tipo, e.unidade_id,
+          e.publico_alvo, e.restrito, e.restrito_modo,
+  
+          /* instrutores do evento */
+          COALESCE((
+            SELECT json_agg(DISTINCT jsonb_build_object('id', u.id, 'nome', u.nome))
+            FROM evento_instrutor ei
+            JOIN usuarios u ON u.id = ei.instrutor_id
+            WHERE ei.evento_id = e.id
+          ), '[]'::json) AS instrutor,
+  
+          /* datas/horários gerais (via turmas) */
+          (SELECT MIN(t.data_inicio)    FROM turmas t WHERE t.evento_id = e.id) AS data_inicio_geral,
+          (SELECT MAX(t.data_fim)       FROM turmas t WHERE t.evento_id = e.id) AS data_fim_geral,
+          (SELECT MIN(t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id) AS horario_inicio_geral,
+          (SELECT MAX(t.horario_fim)    FROM turmas t WHERE t.evento_id = e.id) AS horario_fim_geral,
+  
+          /* status consolidado */
+          (
+            CASE
+              WHEN CURRENT_TIMESTAMP < (
+                SELECT MIN(t.data_inicio + t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id
+              ) THEN 'programado'
+              WHEN CURRENT_TIMESTAMP BETWEEN
+                (SELECT MIN(t.data_inicio + t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id)
+                AND
+                (SELECT MAX(t.data_fim + t.horario_fim) FROM turmas t WHERE t.evento_id = e.id)
+              THEN 'andamento'
+              ELSE 'encerrado'
+            END
+          ) AS status,
+  
+          /* flags por usuário */
+          (
+            SELECT COUNT(*) > 0
+            FROM inscricoes i
+            JOIN turmas t ON t.id = i.turma_id
+            WHERE i.usuario_id = $1 AND t.evento_id = e.id
+          ) AS ja_inscrito,
+  
+          (
+            SELECT COUNT(*) > 0
+            FROM evento_instrutor ei
+            WHERE ei.evento_id = e.id AND ei.instrutor_id = $2
+          ) AS ja_instrutor
+  
+        FROM base e
+        ORDER BY
+          (SELECT MAX(t.data_fim + t.horario_fim) FROM turmas t WHERE t.evento_id = e.id) DESC NULLS LAST,
+          e.id DESC;
+      `;
+  
+      const params = [usuarioId, usuarioId, MODO_TODOS, regNorm, MODO_LISTA];
+      const { rows } = await client.query(sql, params);
+      return res.json({ ok: true, eventos: rows });
+    } catch (err) {
+      console.error('❌ listarEventosParaMim:', err);
+      return res.status(500).json({ ok: false, erro: 'ERRO_INTERNO' });
+    } finally {
+      client.release();
+    }
+  }
+
+/* =====================================================================
+   ➕ Criar evento (persiste turmas + datas_turma + restrição)
    ===================================================================== */
 async function criarEvento(req, res) {
-  const { titulo, descricao, local, tipo, unidade_id, publico_alvo, instrutor = [], turmas = [] } = req.body;
+  const {
+    titulo, descricao, local, tipo, unidade_id, publico_alvo,
+    instrutor = [], turmas = [],
+    restrito = false, restrito_modo = null, registros = []
+  } = req.body || {};
 
   if (!titulo?.trim()) return res.status(400).json({ erro: "Campo 'titulo' é obrigatório." });
   if (!descricao?.trim()) return res.status(400).json({ erro: "Campo 'descricao' é obrigatório." });
@@ -151,18 +294,41 @@ async function criarEvento(req, res) {
     return res.status(400).json({ erro: 'Ao menos uma turma deve ser criada.' });
   }
 
+  // validação da regra de restrição
+  let restritoVal = !!restrito;
+  let modoVal = null;
+  let regList = [];
+  if (restritoVal) {
+    if (!ALLOWED_MODOS.has(String(restrito_modo))) {
+      return res.status(400).json({ erro: "restrito_modo inválido. Use 'todos_servidores' ou 'lista_registros'." });
+    }
+    modoVal = String(restrito_modo);
+    if (modoVal === MODO_LISTA) {
+      if (!Array.isArray(registros) || registros.length === 0) {
+        return res.status(400).json({ erro: "Informe 'registros' quando restrito_modo = 'lista_registros'." });
+      }
+      regList = Array.from(new Set(registros.map(normRegistro).filter(Boolean)));
+      if (regList.length === 0) {
+        return res.status(400).json({ erro: "Registros informados são inválidos." });
+      }
+    }
+  }
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
+    // evento
     const eventoResult = await client.query(
-      `INSERT INTO eventos (titulo, descricao, local, tipo, unidade_id, publico_alvo)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO eventos (titulo, descricao, local, tipo, unidade_id, publico_alvo, restrito, restrito_modo)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
        RETURNING *`,
-      [titulo, descricao, local, tipo, unidade_id, publico_alvo]
+      [titulo, descricao, local, tipo, unidade_id, publico_alvo, restritoVal, modoVal]
     );
-    const eventoId = eventoResult.rows[0].id;
+    const evento = eventoResult.rows[0];
+    const eventoId = evento.id;
 
+    // instrutores
     for (const instrutorId of instrutor) {
       await client.query(
         `INSERT INTO evento_instrutor (evento_id, instrutor_id) VALUES ($1, $2)`,
@@ -170,6 +336,7 @@ async function criarEvento(req, res) {
       );
     }
 
+    // turmas + datas
     for (const t of turmas) {
       const nome = (t?.nome || '').trim();
       const data_inicio = iso(t?.data_inicio);
@@ -192,20 +359,38 @@ async function criarEvento(req, res) {
       );
       const turmaId = turmaIns.rows[0].id;
 
-      const encontros = normalizeEncontrosEntrada({ ...t, horario_inicio, horario_fim });
-      if (encontros.length) {
-        for (const e of encontros) {
-          await client.query(
-            `INSERT INTO datas_turma (turma_id, data, horario_inicio, horario_fim)
-             VALUES ($1, $2, $3, $4)`,
-            [turmaId, e.data, e.inicio, e.fim]
-          );
-        }
+      const baseHi = horario_inicio;
+      const baseHf = horario_fim;
+      const encontros = Array.isArray(t?.datas) && t.datas.length
+        ? t.datas.map(e => ({ data: iso(e?.data || ''), inicio: hhmm(e?.horario_inicio, baseHi), fim: hhmm(e?.horario_fim, baseHf) }))
+        : Array.isArray(t?.encontros) && t.encontros.length
+          ? t.encontros.map(e => (typeof e === 'string'
+              ? { data: iso(e), inicio: baseHi, fim: baseHf }
+              : { data: iso(e?.data || ''), inicio: hhmm(e?.inicio, baseHi), fim: hhmm(e?.fim, baseHf) }))
+          : [];
+
+      for (const e of encontros.filter(x => x.data && x.inicio && x.fim)) {
+        await client.query(
+          `INSERT INTO datas_turma (turma_id, data, horario_inicio, horario_fim)
+           VALUES ($1, $2, $3, $4)`,
+          [turmaId, e.data, e.inicio, e.fim]
+        );
+      }
+    }
+
+    // restrição por lista
+    if (restritoVal && modoVal === MODO_LISTA && regList.length) {
+      for (const r of regList) {
+        await client.query(
+          `INSERT INTO evento_registros (evento_id, registro_norm) VALUES ($1,$2)
+           ON CONFLICT DO NOTHING`,
+          [eventoId, r]
+        );
       }
     }
 
     await client.query('COMMIT');
-    res.status(201).json({ mensagem: 'Evento criado com sucesso', evento: eventoResult.rows[0] });
+    res.status(201).json({ mensagem: 'Evento criado com sucesso', evento });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('❌ Erro ao criar evento:', err.message, err.stack);
@@ -216,22 +401,54 @@ async function criarEvento(req, res) {
 }
 
 /* =====================================================================
-   🔍 Buscar evento por ID (EVENTO COMPLETO — robusto)
+   🔍 Buscar evento por ID (com checagem de visibilidade)
    ===================================================================== */
 async function buscarEventoPorId(req, res) {
   const { id } = req.params;
-  const usuarioId = req.usuario?.id || null;
+  const usuarioId = getUsuarioId(req);
+  const admin = isAdmin(req);
   const client = await pool.connect();
 
   try {
-    // 1) Evento
+    // evento
     const eventoResult = await client.query(`SELECT * FROM eventos WHERE id = $1`, [id]);
     if (eventoResult.rows.length === 0) {
       return res.status(404).json({ erro: 'Evento não encontrado' });
     }
     const evento = eventoResult.rows[0];
 
-    // 2) Instrutores do evento
+    // checagem de visibilidade (se não-admin)
+    if (!admin) {
+      // instrutor deste evento enxerga
+      const isInstrutorDoEvento = usuarioId
+        ? (await client.query(
+            `SELECT 1 FROM evento_instrutor WHERE evento_id=$1 AND instrutor_id=$2 LIMIT 1`,
+            [id, usuarioId]
+          )).rowCount > 0
+        : false;
+
+      if (!isInstrutorDoEvento) {
+        let podeVer = false;
+        if (!evento.restrito) {
+          podeVer = true;
+        } else if (usuarioId) {
+          const { rows } = await client.query(`SELECT registro FROM usuarios WHERE id=$1`, [usuarioId]);
+          const regNorm = normRegistro(rows?.[0]?.registro || '');
+          if (evento.restrito_modo === MODO_TODOS && regNorm) {
+            podeVer = true;
+          } else if (evento.restrito_modo === MODO_LISTA && regNorm) {
+            const hit = await client.query(
+              `SELECT 1 FROM evento_registros WHERE evento_id=$1 AND registro_norm=$2 LIMIT 1`,
+              [id, regNorm]
+            );
+            podeVer = hit.rowCount > 0;
+          }
+        }
+        if (!podeVer) return res.status(403).json({ erro: 'Evento restrito.' });
+      }
+    }
+
+    // instrutores
     const instrutorResult = await client.query(
       `SELECT u.id, u.nome, u.email
          FROM evento_instrutor ei
@@ -241,7 +458,7 @@ async function buscarEventoPorId(req, res) {
       [id]
     );
 
-    // 3) Turmas (dados básicos)
+    // turmas (com datas reais)
     const turmasBase = await client.query(
       `SELECT id, evento_id, nome, data_inicio, data_fim, horario_inicio, horario_fim, vagas_total, carga_horaria
          FROM turmas
@@ -252,7 +469,6 @@ async function buscarEventoPorId(req, res) {
 
     const turmas = [];
     for (const t of turmasBase.rows) {
-      // 3.1) período pelas DATAS reais
       const per = await client.query(
         `SELECT MIN(data) AS di, MAX(data) AS df
            FROM datas_turma
@@ -262,7 +478,6 @@ async function buscarEventoPorId(req, res) {
       const data_inicio = toYmd(per.rows[0]?.di) || toYmd(t.data_inicio);
       const data_fim    = toYmd(per.rows[0]?.df) || toYmd(t.data_fim);
 
-      // 3.2) horários (par mais frequente) ou fallback da própria turma
       const h = await client.query(
         `SELECT horario_inicio, horario_fim, COUNT(*) AS c
            FROM datas_turma
@@ -282,7 +497,6 @@ async function buscarEventoPorId(req, res) {
         horario_fim    = toHm(t.horario_fim);
       }
 
-      // 3.3) datas específicas da turma (lista para UI)
       const datasQ = await client.query(
         `SELECT data, horario_inicio, horario_fim
            FROM datas_turma
@@ -296,10 +510,8 @@ async function buscarEventoPorId(req, res) {
         horario_fim: toHm(r.horario_fim),
       })).filter(d => d.data);
 
-      // fallback: se não houver datas_turma, tenta presenças (coluna compatível)
       if (datas.length === 0) {
         try {
-          // alguns bancos têm p.data; no teu, é p.data_presenca — vamos tentar nessa ordem
           const presA = await client.query(
             `SELECT DISTINCT (p.data::date) AS d
                FROM presencas p
@@ -307,9 +519,7 @@ async function buscarEventoPorId(req, res) {
               ORDER BY d`,
             [t.id]
           );
-          datas = presA.rows
-            .map(r => ({ data: toYmd(r.d), horario_inicio, horario_fim }))
-            .filter(d => d.data);
+          datas = presA.rows.map(r => ({ data: toYmd(r.d), horario_inicio, horario_fim })).filter(d => d.data);
         } catch {
           const presB = await client.query(
             `SELECT DISTINCT (p.data_presenca::date) AS d
@@ -318,22 +528,15 @@ async function buscarEventoPorId(req, res) {
               ORDER BY d`,
             [t.id]
           );
-          datas = presB.rows
-            .map(r => ({ data: toYmd(r.d), horario_inicio, horario_fim }))
-            .filter(d => d.data);
+          datas = presB.rows.map(r => ({ data: toYmd(r.d), horario_inicio, horario_fim })).filter(d => d.data);
         }
       }
 
-      // contagens — teu esquema NÃO tem status/cancelada
       const inscritosQ = await client.query(
-        `SELECT COUNT(*) AS total
-           FROM inscricoes
-          WHERE turma_id = $1`,
+        `SELECT COUNT(*) AS total FROM inscricoes WHERE turma_id = $1`,
         [t.id]
       );
       const inscritos = Number(inscritosQ.rows[0]?.total || 0);
-      const inscritos_confirmados = inscritos; // sem status, tratamos todos como confirmados
-      const vagas_preenchidas = inscritos_confirmados;
 
       turmas.push({
         id: t.id,
@@ -346,13 +549,12 @@ async function buscarEventoPorId(req, res) {
         vagas_total: t.vagas_total,
         carga_horaria: t.carga_horaria,
         inscritos,
-        inscritos_confirmados,
-        vagas_preenchidas,
+        inscritos_confirmados: inscritos,
+        vagas_preenchidas: inscritos,
         datas,
       });
     }
 
-    // 4) flags do usuário logado
     const jaInstrutorResult = await client.query(
       `SELECT COUNT(*) > 0 AS eh
          FROM evento_instrutor
@@ -386,6 +588,54 @@ async function buscarEventoPorId(req, res) {
 }
 
 /* =====================================================================
+   🆕 Checagem rápida de visibilidade (/:id/visivel)
+   ===================================================================== */
+async function verificarVisibilidadeEvento(req, res) {
+  const usuarioId = getUsuarioId(req);
+  if (!usuarioId) return res.status(401).json({ ok: false, erro: 'NAO_AUTENTICADO' });
+
+  const eventoId = Number(req.params.id);
+  if (!Number.isFinite(eventoId)) return res.status(400).json({ ok: false, erro: 'EVENTO_ID_INVALIDO' });
+
+  const client = await pool.connect();
+  try {
+    const r = await podeVerPorRegistro({ client, usuarioId, eventoId, req });
+    if (!r.ok) return res.status(403).json({ ok: false, motivo: r.motivo });
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('ERRO verificarVisibilidadeEvento:', e);
+    return res.status(500).json({ ok: false, erro: 'ERRO_INTERNO' });
+  } finally {
+    client.release();
+  }
+}
+
+/* =====================================================================
+   🆕 Detalhes do evento condicionado ao acesso (/:id/detalhes)
+   ===================================================================== */
+async function obterDetalhesEventoComRestricao(req, res) {
+  const usuarioId = getUsuarioId(req);
+  if (!usuarioId) return res.status(401).json({ ok: false, erro: 'NAO_AUTENTICADO' });
+
+  const eventoId = Number(req.params.id);
+  if (!Number.isFinite(eventoId)) return res.status(400).json({ ok: false, erro: 'EVENTO_ID_INVALIDO' });
+
+  const client = await pool.connect();
+  try {
+    const r = await podeVerPorRegistro({ client, usuarioId, eventoId, req });
+    if (!r.ok) return res.status(403).json({ ok: false, motivo: r.motivo });
+
+    // Reaproveita a resposta detalhada já existente
+    return buscarEventoPorId(req, res);
+  } catch (e) {
+    console.error('ERRO obterDetalhesEventoComRestricao:', e);
+    return res.status(500).json({ ok: false, erro: 'ERRO_INTERNO' });
+  } finally {
+    client.release();
+  }
+}
+
+/* =====================================================================
    📆 Listar turmas de um evento (com datas reais)
    ===================================================================== */
 async function listarTurmasDoEvento(req, res) {
@@ -410,7 +660,6 @@ async function listarTurmasDoEvento(req, res) {
       [id]
     );
 
-    // para cada turma, pega datas_turma (leve e robusto)
     const turmas = [];
     for (const r of result.rows) {
       const datasQ = await query(
@@ -436,22 +685,39 @@ async function listarTurmasDoEvento(req, res) {
 }
 
 /* =====================================================================
-   🔄 Atualizar evento (com regras anti-quebra de inscritos)
+   🔄 Atualizar evento (metadados, restrição e turmas)
    ===================================================================== */
 async function atualizarEvento(req, res) {
   const eventoId = Number(req.params.id);
   if (!eventoId) return res.status(400).json({ erro: 'EVENTO_ID_INVALIDO' });
 
   const {
-    titulo,
-    descricao,
-    local,
-    tipo,
-    unidade_id,
-    publico_alvo,
+    titulo, descricao, local, tipo, unidade_id, publico_alvo,
     instrutor,   // [ids]
-    turmas       // opcional
+    turmas,      // opcional
+    restrito, restrito_modo, registros
   } = req.body || {};
+
+  let restritoSQL = null;
+  let modoSQL = null;
+  let regList = null;
+
+  if (typeof restrito !== 'undefined') restritoSQL = !!restrito;
+  if (typeof restrito_modo !== 'undefined') {
+    if (restritoSQL === true && !ALLOWED_MODOS.has(String(restrito_modo))) {
+      return res.status(400).json({ erro: "restrito_modo inválido. Use 'todos_servidores' ou 'lista_registros'." });
+    }
+    modoSQL = restritoSQL ? String(restrito_modo || '') : null;
+  }
+
+  if (restritoSQL === true && modoSQL === MODO_LISTA) {
+    if (!Array.isArray(registros)) {
+      return res.status(400).json({ erro: "Informe 'registros' (array) quando restrito_modo = 'lista_registros'." });
+    }
+    const norm = Array.from(new Set(registros.map(normRegistro).filter(Boolean)));
+    if (norm.length === 0) return res.status(400).json({ erro: 'Registros inválidos.' });
+    regList = norm;
+  }
 
   const client = await pool.connect();
   try {
@@ -461,18 +727,30 @@ async function atualizarEvento(req, res) {
     await client.query(
       `
       UPDATE eventos SET
-        titulo = COALESCE($2, titulo),
-        descricao = COALESCE($3, descricao),
-        local = COALESCE($4, local),
-        tipo = COALESCE($5, tipo),
-        unidade_id = COALESCE($6, unidade_id),
-        publico_alvo = COALESCE($7, publico_alvo)
+        titulo       = COALESCE($2, titulo),
+        descricao    = COALESCE($3, descricao),
+        local        = COALESCE($4, local),
+        tipo         = COALESCE($5, tipo),
+        unidade_id   = COALESCE($6, unidade_id),
+        publico_alvo = COALESCE($7, publico_alvo),
+        restrito     = COALESCE($8, restrito),
+        restrito_modo= $9
       WHERE id = $1
       `,
-      [eventoId, titulo ?? null, descricao ?? null, local ?? null, tipo ?? null, unidade_id ?? null, publico_alvo ?? null]
+      [
+        eventoId,
+        titulo ?? null,
+        descricao ?? null,
+        local ?? null,
+        tipo ?? null,
+        unidade_id ?? null,
+        publico_alvo ?? null,
+        restritoSQL,
+        typeof modoSQL === 'string' ? (modoSQL || null) : undefined
+      ]
     );
 
-    // 2) Instrutores (substitui relação inteira se vier array)
+    // 2) Instrutores
     if (Array.isArray(instrutor)) {
       await client.query(`DELETE FROM evento_instrutor WHERE evento_id = $1`, [eventoId]);
       for (const instrutor_id of instrutor) {
@@ -483,13 +761,27 @@ async function atualizarEvento(req, res) {
       }
     }
 
-    // 3) Se não vier turmas → encerra (edição só de metadados)
-    if (!Array.isArray(turmas)) {
-      await client.query('COMMIT');
-      return res.json({ ok: true, mensagem: 'Evento atualizado (dados gerais).' });
+    // 2.1) Lista de registros (se for modo lista)
+    if (restritoSQL === true && modoSQL === MODO_LISTA && Array.isArray(regList)) {
+      await client.query(`DELETE FROM evento_registros WHERE evento_id = $1`, [eventoId]);
+      for (const r of regList) {
+        await client.query(
+          `INSERT INTO evento_registros (evento_id, registro_norm) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+          [eventoId, r]
+        );
+      }
+    }
+    // se virou "todos_servidores" ou deixou de ser restrito → limpa tabela de vínculos
+    if ((restritoSQL === true && modoSQL === MODO_TODOS) || restritoSQL === false) {
+      await client.query(`DELETE FROM evento_registros WHERE evento_id = $1`, [eventoId]);
     }
 
-    // 4) Mapa das turmas atuais + inscritos
+    // 3) Edição das turmas (mesma lógica anterior)
+    if (!Array.isArray(turmas)) {
+      await client.query('COMMIT');
+      return res.json({ ok: true, mensagem: 'Evento atualizado (metadados e restrição).' });
+    }
+
     const { rows: atuais } = await client.query(
       `
       SELECT
@@ -502,13 +794,10 @@ async function atualizarEvento(req, res) {
       [eventoId]
     );
     const mapaAtuais = new Map(atuais.map(t => [t.id, t]));
-
-    // 5) Conjunto de IDs que permanecerão
     const idsPayload = new Set(
       turmas.filter(t => Number.isFinite(Number(t.id))).map(t => Number(t.id))
     );
 
-    // 5a) Tentativa de remover turmas com inscritos → bloqueia
     const remover = atuais.filter(t => !idsPayload.has(t.id));
     const bloqueadasRemocao = remover.filter(t => (t.inscritos || 0) > 0);
     if (bloqueadasRemocao.length) {
@@ -516,23 +805,18 @@ async function atualizarEvento(req, res) {
       return res.status(409).json({
         erro: 'TURMA_COM_INSCRITOS',
         detalhe: 'Não é permitido REMOVER turmas que já possuem inscritos.',
-        turmas_bloqueadas: bloqueadasRemocao.map(t => ({
-          id: t.id, nome: t.nome, inscritos: t.inscritos
-        })),
+        turmas_bloqueadas: bloqueadasRemocao.map(t => ({ id: t.id, nome: t.nome, inscritos: t.inscritos })),
       });
     }
 
-    // 6) Processar cada turma do payload
     const bloqueios = [];
     for (const t of turmas) {
       const id = Number(t.id);
 
-      // NOVA turma → inserir
       if (!Number.isFinite(id)) {
         const nome = String(t.nome || 'Turma').trim();
         const vagas_total = Number(t.vagas_total) || 0;
 
-        // datas/encontros obrigatórios
         const baseDatas = Array.isArray(t.datas) ? t.datas
                         : Array.isArray(t.encontros) ? t.encontros.map(e => ({
                             data: e.data, horario_inicio: e.inicio, horario_fim: e.fim
@@ -553,7 +837,6 @@ async function atualizarEvento(req, res) {
         );
         const turmaId = insTurma.rows[0].id;
 
-        // datas_turma
         for (const d of datasOrdenadas) {
           await client.query(
             `INSERT INTO datas_turma (turma_id, data, horario_inicio, horario_fim)
@@ -564,13 +847,11 @@ async function atualizarEvento(req, res) {
         continue;
       }
 
-      // Turma existente → validar bloqueios
       const atual = mapaAtuais.get(id);
-      if (!atual) continue; // id estranho, ignora
+      if (!atual) continue;
 
       const inscritos = atual.inscritos || 0;
 
-      // payload de datas (se vier, considerar tentativa de alterar grade)
       const veioDatas = Array.isArray(t.datas) || Array.isArray(t.encontros);
       const vaiDiminuirVagas = Number.isFinite(Number(t.vagas_total)) &&
                                Number(t.vagas_total) < inscritos;
@@ -585,7 +866,6 @@ async function atualizarEvento(req, res) {
         continue;
       }
 
-      // Atualizações permitidas: nome e AUMENTO de vagas_total
       await client.query(
         `UPDATE turmas
            SET nome = COALESCE($2, nome),
@@ -597,7 +877,6 @@ async function atualizarEvento(req, res) {
            : null]
       );
 
-      // Se não há inscritos e vieram novas datas → substituir grade
       if (inscritos === 0 && veioDatas) {
         const baseDatas = Array.isArray(t.datas) ? t.datas
                         : t.encontros.map(e => ({ data: e.data, horario_inicio: e.inicio, horario_fim: e.fim }));
@@ -626,12 +905,11 @@ async function atualizarEvento(req, res) {
       await client.query('ROLLBACK');
       return res.status(409).json({
         erro: 'TURMA_COM_INSCRITOS',
-        detalhe: 'Algumas turmas possuem inscritos: não é permitido alterar grade de datas ou reduzir vagas. Você pode renomear a turma ou aumentar vagas, e pode criar novas turmas.',
+        detalhe: 'Algumas turmas possuem inscritos: não é permitido alterar grade de datas ou reduzir vagas.',
         turmas_bloqueadas: bloqueios
       });
     }
 
-    // 7) Remover turmas sem inscritos que saíram do payload
     for (const t of remover) {
       await client.query(`DELETE FROM datas_turma WHERE turma_id=$1`, [t.id]);
       await client.query(`DELETE FROM turmas WHERE id=$1`, [t.id]);
@@ -649,7 +927,7 @@ async function atualizarEvento(req, res) {
 }
 
 /* =====================================================================
-   ❌ Excluir evento
+   ❌ Excluir evento (sem cascata, removendo vínculos explicitamente)
    ===================================================================== */
 async function excluirEvento(req, res) {
   const { id } = req.params;
@@ -668,6 +946,7 @@ async function excluirEvento(req, res) {
     );
     await client.query('DELETE FROM turmas WHERE evento_id = $1', [id]);
     await client.query('DELETE FROM evento_instrutor WHERE evento_id = $1', [id]);
+    await client.query('DELETE FROM evento_registros WHERE evento_id = $1', [id]); // 🔒 sem cascata
 
     const result = await client.query('DELETE FROM eventos WHERE id = $1 RETURNING *', [id]);
     if (result.rows.length === 0) {
@@ -676,7 +955,7 @@ async function excluirEvento(req, res) {
     }
 
     await client.query('COMMIT');
-    res.json({ mensagem: 'Inscrição excluída com sucesso', evento: result.rows[0] });
+    res.json({ mensagem: 'Evento excluído com sucesso', evento: result.rows[0] });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('❌ Erro ao excluir evento:', err.message);
@@ -762,10 +1041,10 @@ async function getAgendaEventos(req, res) {
 }
 
 /* =====================================================================
-   🔎 Listar eventos do instrutor (com datas reais)
+   🔎 Listar eventos do instrutor (sem filtro de visibilidade)
    ===================================================================== */
 async function listarEventosDoinstrutor(req, res) {
-  const usuarioId = req.usuario?.id;
+  const usuarioId = getUsuarioId(req);
   const client = await pool.connect();
 
   try {
@@ -881,7 +1160,6 @@ async function listarDatasDaTurma(req, res) {
     }
 
     if (via === 'presencas') {
-      // tenta presencas.data; se falhar, tenta presencas.data_presenca (teu caso)
       const sqlA = `
         SELECT DISTINCT
           to_char(p.data::date, 'YYYY-MM-DD') AS data,
@@ -911,7 +1189,7 @@ async function listarDatasDaTurma(req, res) {
           const { rows } = await query(sqlB, [turmaId]);
           return res.json(rows);
         } catch {
-          return res.json([]); // sem 500
+          return res.json([]);
         }
       }
     }
@@ -943,6 +1221,7 @@ async function listarDatasDaTurma(req, res) {
 
 /* ===================================================================== */
 module.exports = {
+  // existentes
   listarEventos,
   criarEvento,
   buscarEventoPorId,
@@ -952,4 +1231,9 @@ module.exports = {
   getAgendaEventos,
   listarEventosDoinstrutor,
   listarDatasDaTurma,
+
+  // 🆕 novos (para rotas /para-mim/lista, /:id/visivel, /:id/detalhes)
+  listarEventosParaMim,
+  verificarVisibilidadeEvento,
+  obterDetalhesEventoComRestricao,
 };
