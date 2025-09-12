@@ -1,26 +1,22 @@
-// 📁 src/pages/Cadastro.jsx
-import { useState, useMemo, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
-import { Eye, EyeOff } from "lucide-react";
+// ✅ src/pages/Cadastro.jsx
+import { useState, useMemo, useEffect, useRef } from "react";
+import { useNavigate, Link } from "react-router-dom";
+import { Eye, EyeOff, ShieldCheck, HelpCircle } from "lucide-react";
 import { toast } from "react-toastify";
 import BotaoPrimario from "../components/BotaoPrimario";
 import BotaoSecundario from "../components/BotaoSecundario";
 import Spinner from "../components/Spinner";
-import { apiGetPublic, apiPost } from "../services/api"; // ⬅️ usa somente públicas aqui
+import { apiGetPublic, apiPost } from "../services/api";
 
 export default function Cadastro() {
-  // ───────────────────────────────────────────────────────────────
-  // Campos básicos
-  // ───────────────────────────────────────────────────────────────
+  // ───────────────────────────── state básico
   const [nome, setNome] = useState("");
   const [cpf, setCpf] = useState("");
   const [email, setEmail] = useState("");
-  const [registro, setRegistro] = useState("");            // opcional (com máscara)
-  const [dataNascimento, setDataNascimento] = useState(""); // obrigatório (YYYY-MM-DD)
+  const [registro, setRegistro] = useState("");
+  const [dataNascimento, setDataNascimento] = useState("");
 
-  // ───────────────────────────────────────────────────────────────
-  // Seleções obrigatórias (IDs)
-  // ───────────────────────────────────────────────────────────────
+  // selects (IDs string)
   const [unidadeId, setUnidadeId] = useState("");
   const [cargoId, setCargoId] = useState("");
   const [generoId, setGeneroId] = useState("");
@@ -29,7 +25,7 @@ export default function Cadastro() {
   const [escolaridadeId, setEscolaridadeId] = useState("");
   const [deficienciaId, setDeficienciaId] = useState("");
 
-  // Listas
+  // listas
   const [unidades, setUnidades] = useState([]);
   const [cargos, setCargos] = useState([]);
   const [generos, setGeneros] = useState([]);
@@ -38,12 +34,12 @@ export default function Cadastro() {
   const [escolaridades, setEscolaridades] = useState([]);
   const [deficiencias, setDeficiencias] = useState([]);
 
-  // Senha (último bloco)
+  // senha
   const [senha, setSenha] = useState("");
   const [confirmarSenha, setConfirmarSenha] = useState("");
   const [mostrarSenha, setMostrarSenha] = useState(false);
 
-  // Erros
+  // erros
   const [erro, setErro] = useState("");
   const [erroNome, setErroNome] = useState("");
   const [erroCpf, setErroCpf] = useState("");
@@ -53,15 +49,20 @@ export default function Cadastro() {
   const [erroSenha, setErroSenha] = useState("");
   const [erroConfirmarSenha, setErroConfirmarSenha] = useState("");
 
+  // controle
   const [loading, setLoading] = useState(false);
   const [loadingLookups, setLoadingLookups] = useState(true);
   const navigate = useNavigate();
 
+  // honeypot anti-bot
+  const hpRef = useRef(null);
+
+  // foco inicial
   useEffect(() => {
-    document.getElementById("nome")?.focus();
+    document.getElementById("skip-to-form")?.focus();
   }, []);
 
-  // máscara do registro 00.000-0 (aceita digitar só números)
+  // máscara registro 00.000-0
   const maskRegistro = (raw) => {
     const d = String(raw || "").replace(/\D/g, "").slice(0, 6);
     let out = d;
@@ -70,15 +71,12 @@ export default function Cadastro() {
     return out;
   };
 
-  // ───────────────────────────────────────────────────────────────
-  // Lookups: somente rotas públicas (sem Authorization)
-  // ───────────────────────────────────────────────────────────────
+  // lookups públicos
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
         setLoadingLookups(true);
-
         const [uni, car, gen, ori, cr, esc, def] = await Promise.allSettled([
           apiGetPublic("/unidades"),
           apiGetPublic("/cargos"),
@@ -88,30 +86,19 @@ export default function Cadastro() {
           apiGetPublic("/escolaridades"),
           apiGetPublic("/deficiencias"),
         ]);
-
         if (!alive) return;
         const ok = (p) => (p.status === "fulfilled" ? (p.value || []) : []);
 
-        // ordenação local por nome em unidades/cargos
         setUnidades(ok(uni).sort((a, b) => (a.nome || "").localeCompare(b.nome || "")));
         setCargos(ok(car).sort((a, b) => (a.nome || "").localeCompare(b.nome || "")));
-
-        // já vêm na ordem de display_order do backend
         setGeneros(ok(gen));
         setOrientacoes(ok(ori));
         setCoresRacas(ok(cr));
         setEscolaridades(ok(esc));
         setDeficiencias(ok(def));
 
-        if (
-          ok(car).length === 0 &&
-          ok(gen).length === 0 &&
-          ok(ori).length === 0 &&
-          ok(cr).length === 0 &&
-          ok(esc).length === 0 &&
-          ok(def).length === 0
-        ) {
-          toast.warn("Algumas listas não estão disponíveis no servidor local.");
+        if (![ok(car), ok(gen), ok(ori), ok(cr), ok(esc), ok(def)].some((l) => l.length)) {
+          toast.warn("Algumas listas não estão disponíveis no servidor.");
         }
       } catch (e) {
         console.warn("Falha ao carregar listas", e);
@@ -123,9 +110,7 @@ export default function Cadastro() {
     return () => { alive = false; };
   }, []);
 
-  // ───────────────────────────────────────────────────────────────
-  // Máscaras/validações
-  // ───────────────────────────────────────────────────────────────
+  // máscaras/validações
   const aplicarMascaraCPF = (v) =>
     String(v || "")
       .replace(/\D/g, "")
@@ -149,12 +134,16 @@ export default function Cadastro() {
     return Math.min(score, 4);
   }, [senha]);
 
-  // ───────────────────────────────────────────────────────────────
-  // Submit
-  // ───────────────────────────────────────────────────────────────
+  // submit
   async function handleSubmit(e) {
     e.preventDefault();
     if (loading) return;
+
+    // honeypot
+    if (hpRef.current?.value) {
+      toast.error("Falha na validação.");
+      return;
+    }
 
     setErro(""); setErroNome(""); setErroCpf(""); setErroEmail("");
     setErroData(""); setErroPerfil(""); setErroSenha(""); setErroConfirmarSenha("");
@@ -167,12 +156,10 @@ export default function Cadastro() {
     if (!validarCPF(cpf)) { setErroCpf("CPF inválido. Use 000.000.000-00."); return; }
     if (!validarEmail(emailTrim)) { setErroEmail("E-mail inválido."); return; }
     if (!dataNascimento) { setErroData("Data de nascimento é obrigatória."); return; }
-
     if (!unidadeId || !cargoId || !generoId || !orientacaoSexualId || !corRacaId || !escolaridadeId || !deficienciaId) {
       setErroPerfil("Preencha todos os campos de perfil.");
       return;
     }
-
     if (!senhaForteRe.test(senha)) { setErroSenha("A senha precisa ter 8+ caracteres, com maiúscula, minúscula, número e símbolo."); return; }
     if (senha !== confirmarSenha) { setErroConfirmarSenha("As senhas não coincidem."); return; }
 
@@ -189,8 +176,8 @@ export default function Cadastro() {
       cor_raca_id: Number(corRacaId),
       escolaridade_id: Number(escolaridadeId),
       deficiencia_id: Number(deficienciaId),
-      data_nascimento: dataNascimento,
-      registro: registro?.trim() || null, // já pode vir mascarado
+      data_nascimento: dataNascimento, // yyyy-mm-dd
+      registro: registro?.trim() || null,
     };
 
     setLoading(true);
@@ -201,284 +188,387 @@ export default function Cadastro() {
     } catch (err) {
       const msg = err?.data?.erro || err?.data?.message || err?.message || "Erro ao criar conta.";
       setErro(msg);
-      setSenha("");
-      setConfirmarSenha("");
+      setSenha(""); setConfirmarSenha("");
     } finally {
       setLoading(false);
     }
   }
 
-  // ───────────────────────────────────────────────────────────────
-  // UI
-  // ───────────────────────────────────────────────────────────────
+  // ───────────────────────────── UI
   return (
-    <main role="main" className="min-h-screen bg-gelo flex items-center justify-center px-2">
-      <form
-        onSubmit={handleSubmit}
-        className="bg-lousa text-white rounded-2xl shadow-xl p-8 w-full max-w-3xl space-y-4"
-        aria-label="Formulário de Cadastro"
+    <>
+      {/* Skip link para acessibilidade */}
+      <a
+        href="#form-cadastro"
+        id="skip-to-form"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:bg-white focus:text-lousa focus:px-3 focus:py-2 focus:rounded"
       >
-        <h2 className="text-2xl font-bold text-center">Criar Conta</h2>
+        Pular para o formulário
+      </a>
 
-        {erro && <p className="text-red-300 text-sm text-center" aria-live="assertive">{erro}</p>}
-
-        {/* Nome */}
-        <div>
-          <label htmlFor="nome" className="block text-sm mb-1">Nome completo</label>
-          <input
-            id="nome"
-            type="text"
-            placeholder="Nome completo"
-            value={nome}
-            onChange={(e) => { setNome(e.target.value); setErroNome(""); }}
-            className="w-full px-4 py-2 rounded bg-white text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-lousa focus:outline-none"
-            autoComplete="name"
-            disabled={loading}
-          />
-          {erroNome && <p className="text-red-300 text-xs mt-1">{erroNome}</p>}
+      {/* Page Header */}
+      <header
+        role="banner"
+        className="bg-gradient-to-b from-emerald-900 to-emerald-800 text-white"
+      >
+        <div className="max-w-6xl mx-auto px-3 sm:px-6 py-6 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <img
+              src="/logo_escola.png"
+              alt="Escola Municipal de Saúde de Santos"
+              className="w-10 h-10 rounded bg-white p-1 shadow"
+              loading="lazy"
+            />
+            <div>
+              <h1 className="text-xl font-bold leading-tight">Cadastro</h1>
+              <p className="text-sm text-white/90">
+                Crie sua conta para acessar cursos, presenças e certificados.
+              </p>
+            </div>
+          </div>
+          <nav aria-label="breadcrumbs" className="hidden sm:block">
+            <ol className="flex items-center gap-2 text-sm">
+              <li><Link to="/" className="underline">Início</Link></li>
+              <li aria-hidden="true">/</li>
+              <li aria-current="page" className="font-semibold">Cadastro</li>
+            </ol>
+          </nav>
         </div>
+      </header>
 
-        {/* CPF | E-mail */}
-        <section className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div>
-            <label className="block text-sm mb-1">CPF</label>
-            <input
-              type="text"
-              placeholder="000.000.000-00"
-              value={cpf}
-              onChange={(e) => { setCpf(aplicarMascaraCPF(e.target.value)); setErroCpf(""); }}
-              maxLength={14}
-              className="w-full px-4 py-2 rounded bg-white text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-lousa focus:outline-none"
-              autoComplete="username"
-              inputMode="numeric"
-              disabled={loading}
-            />
-            {erroCpf && <p className="text-red-300 text-xs mt-1">{erroCpf}</p>}
+      {/* Main */}
+      <main role="main" className="min-h-[calc(100vh-220px)] bg-gelo dark:bg-zinc-900 flex items-start justify-center px-2 py-8">
+        <form
+          id="form-cadastro"
+          onSubmit={handleSubmit}
+          noValidate
+          className="bg-lousa text-white rounded-2xl shadow-2xl p-6 sm:p-8 w-full max-w-3xl space-y-4"
+          aria-label="Formulário de Cadastro"
+        >
+          <div className="flex items-center gap-2 mb-2">
+            <ShieldCheck className="w-5 h-5" aria-hidden="true" />
+            <h2 className="text-2xl font-bold">Criar Conta</h2>
           </div>
-          <div>
-            <label className="block text-sm mb-1">E-mail</label>
-            <input
-              type="email"
-              placeholder="seu@email.com"
-              value={email}
-              onChange={(e) => { setEmail(e.target.value); setErroEmail(""); }}
-              className="w-full px-4 py-2 rounded bg-white text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-lousa focus:outline-none"
-              autoComplete="email"
-              disabled={loading}
-            />
-            {erroEmail && <p className="text-red-300 text-xs mt-1">{erroEmail}</p>}
-          </div>
-        </section>
 
-        {/* Registro (opcional) | Data de nascimento (obrigatória) */}
-        <section className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-3 border-t border-white/10">
-          <div>
-            <label className="block text-sm mb-1">Registro (Servidores da Prefeitura)</label>
-            <input
-              type="text"
-              placeholder="Ex.: 00.000-0"
-              value={registro}
-              onChange={(e) => setRegistro(maskRegistro(e.target.value))}
-              className="w-full px-4 py-2 rounded bg-white text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-lousa focus:outline-none"
-              disabled={loading}
-            />
-            <p className="text-xs text-white/80 mt-1">Você pode digitar só números (<strong>000000</strong>).</p>
-          </div>
-          <div>
-            <label className="block text-sm mb-1">Data de nascimento</label>
-            <input
-              type="date"
-              value={dataNascimento}
-              onChange={(e) => { setDataNascimento(e.target.value); setErroData(""); }}
-              className="w-full px-4 py-2 rounded bg-white text-gray-800 focus:ring-2 focus:ring-lousa focus:outline-none"
-              disabled={loading}
-            />
-            {erroData && <p className="text-red-300 text-xs mt-1">{erroData}</p>}
-          </div>
-        </section>
+          {erro && (
+            <p className="text-red-300 text-sm text-center" role="alert" aria-live="assertive">
+              {erro}
+            </p>
+          )}
 
-        {/* Unidade | Gênero */}
-        <section className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-3 border-t border-white/10">
-          <div>
-            <label className="block text-sm mb-1">Unidade</label>
-            <select
-              value={unidadeId}
-              onChange={(e) => { setUnidadeId(e.target.value); setErroPerfil(""); }}
-              className="w-full px-4 py-2 rounded bg-white text-gray-800 focus:ring-2 focus:ring-lousa focus:outline-none disabled:opacity-60"
-              disabled={loading || loadingLookups}
-            >
-              <option value="">{loadingLookups ? "Carregando..." : "Selecione…"}</option>
-              {unidades.map((u) => (
-                <option key={u.id} value={u.id}>{u.sigla}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm mb-1">Gênero</label>
-            <select
-              value={generoId}
-              onChange={(e) => { setGeneroId(e.target.value); setErroPerfil(""); }}
-              className="w-full px-4 py-2 rounded bg-white text-gray-800 focus:ring-2 focus:ring-lousa focus:outline-none disabled:opacity-60"
-              disabled={loading || loadingLookups}
-            >
-              <option value="">{loadingLookups ? "Carregando..." : "Selecione…"}</option>
-              {generos.map((g) => <option key={g.id} value={g.id}>{g.nome}</option>)}
-            </select>
-          </div>
-        </section>
+          {/* Grupo: Dados pessoais */}
+          <fieldset className="space-y-3">
+            <legend className="text-sm font-semibold uppercase tracking-wide text-white/90">Dados pessoais</legend>
 
-        {/* Orientação | Cor/raça */}
-        <section className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-3 border-t border-white/10">
-          <div>
-            <label className="block text-sm mb-1">Orientação sexual</label>
-            <select
-              value={orientacaoSexualId}
-              onChange={(e) => { setOrientacaoSexualId(e.target.value); setErroPerfil(""); }}
-              className="w-full px-4 py-2 rounded bg-white text-gray-800 focus:ring-2 focus:ring-lousa focus:outline-none disabled:opacity-60"
-              disabled={loading || loadingLookups}
-            >
-              <option value="">{loadingLookups ? "Carregando..." : "Selecione…"}</option>
-              {orientacoes.map((o) => <option key={o.id} value={o.id}>{o.nome}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm mb-1">Cor/raça</label>
-            <select
-              value={corRacaId}
-              onChange={(e) => { setCorRacaId(e.target.value); setErroPerfil(""); }}
-              className="w-full px-4 py-2 rounded bg-white text-gray-800 focus:ring-2 focus:ring-lousa focus:outline-none disabled:opacity-60"
-              disabled={loading || loadingLookups}
-            >
-              <option value="">{loadingLookups ? "Carregando..." : "Selecione…"}</option>
-              {coresRacas.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
-            </select>
-          </div>
-        </section>
+            <div>
+              <label htmlFor="nome" className="block text-sm mb-1">Nome completo</label>
+              <input
+                id="nome"
+                type="text"
+                placeholder="Nome completo"
+                value={nome}
+                onChange={(e) => { setNome(e.target.value); setErroNome(""); }}
+                className="w-full px-4 py-2 rounded bg-white text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-lousa focus:outline-none"
+                autoComplete="name"
+                required
+                aria-describedby={erroNome ? "erro-nome" : undefined}
+                aria-invalid={!!erroNome}
+              />
+              {erroNome && <p id="erro-nome" className="text-red-300 text-xs mt-1" role="alert">{erroNome}</p>}
+            </div>
 
-        {/* Escolaridade | Deficiência */}
-        <section className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-3 border-t border-white/10">
-          <div>
-            <label className="block text-sm mb-1">Escolaridade</label>
-            <select
-              value={escolaridadeId}
-              onChange={(e) => { setEscolaridadeId(e.target.value); setErroPerfil(""); }}
-              className="w-full px-4 py-2 rounded bg-white text-gray-800 focus:ring-2 focus:ring-lousa focus:outline-none disabled:opacity-60"
-              disabled={loading || loadingLookups}
-            >
-              <option value="">{loadingLookups ? "Carregando..." : "Selecione…"}</option>
-              {escolaridades.map((esc) => <option key={esc.id} value={esc.id}>{esc.nome}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm mb-1">Deficiência</label>
-            <select
-              value={deficienciaId}
-              onChange={(e) => { setDeficienciaId(e.target.value); setErroPerfil(""); }}
-              className="w-full px-4 py-2 rounded bg-white text-gray-800 focus:ring-2 focus:ring-lousa focus:outline-none disabled:opacity-60"
-              disabled={loading || loadingLookups}
-            >
-              <option value="">{loadingLookups ? "Carregando..." : "Selecione…"}</option>
-              {deficiencias.map((d) => <option key={d.id} value={d.id}>{d.nome}</option>)}
-            </select>
-            <p className="text-xs text-white/70 mt-1">Se não possuir, escolha “Não possuo”.</p>
-          </div>
-        </section>
-
-        {/* CARGO — largura total */}
-        <section className="grid grid-cols-1 gap-3 pt-3 border-t border-white/10">
-          <div>
-            <label className="block text-sm mb-1">Cargo</label>
-            <select
-              value={cargoId}
-              onChange={(e) => { setCargoId(e.target.value); setErroPerfil(""); }}
-              className="w-full px-4 py-2 rounded bg-white text-gray-800 focus:ring-2 focus:ring-lousa focus:outline-none disabled:opacity-60"
-              disabled={loading || loadingLookups}
-            >
-              <option value="">{loadingLookups ? "Carregando..." : "Selecione…"}</option>
-              {cargos.map((c) => (
-                <option key={c.id} value={c.id}>{c.nome}</option>
-              ))}
-            </select>
-          </div>
-        </section>
-
-        {erroPerfil && <p className="text-red-300 text-xs">{erroPerfil}</p>}
-
-        {/* SENHA (último) */}
-        <section className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-3 border-t border-white/10">
-          <div className="relative">
-            <label className="block text-sm mb-1">Senha</label>
-            <input
-              type={mostrarSenha ? "text" : "password"}
-              placeholder="Senha forte"
-              value={senha}
-              onChange={(e) => { setSenha(e.target.value); setErroSenha(""); }}
-              className="w-full px-4 py-2 pr-12 rounded bg-white text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-lousa focus:outline-none"
-              autoComplete="new-password"
-              disabled={loading}
-            />
-            <button
-              type="button"
-              onClick={() => setMostrarSenha((v) => !v)}
-              className="absolute top-8 right-3 text-lousa"
-              aria-label={mostrarSenha ? "Ocultar senha" : "Mostrar senha"}
-              disabled={loading}
-            >
-              {mostrarSenha ? <EyeOff size={20} /> : <Eye size={20} />}
-            </button>
-            {erroSenha && <p className="text-red-300 text-xs mt-1">{erroSenha}</p>}
-            {senha && (
-              <div className="mt-2 h-2 bg-gray-300 rounded" aria-label="Força da senha">
-                <div
-                  className={`h-2 rounded transition-all duration-300 ${
-                    forcaSenha === 1 ? "w-1/5 bg-red-500"
-                  : forcaSenha === 2 ? "w-2/5 bg-yellow-500"
-                  : forcaSenha === 3 ? "w-3/5 bg-blue-500"
-                  : "w-full bg-green-500" }`}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label htmlFor="cpf" className="block text-sm mb-1">CPF</label>
+                <input
+                  id="cpf"
+                  type="text"
+                  placeholder="000.000.000-00"
+                  value={cpf}
+                  onChange={(e) => { setCpf(aplicarMascaraCPF(e.target.value)); setErroCpf(""); }}
+                  maxLength={14}
+                  className="w-full px-4 py-2 rounded bg-white text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-lousa focus:outline-none"
+                  autoComplete="username"
+                  inputMode="numeric"
+                  required
+                  aria-describedby={erroCpf ? "erro-cpf" : undefined}
+                  aria-invalid={!!erroCpf}
                 />
+                {erroCpf && <p id="erro-cpf" className="text-red-300 text-xs mt-1" role="alert">{erroCpf}</p>}
               </div>
-            )}
-          </div>
+              <div>
+                <label htmlFor="email" className="block text-sm mb-1">E-mail</label>
+                <input
+                  id="email"
+                  type="email"
+                  placeholder="seu@email.com"
+                  value={email}
+                  onChange={(e) => { setEmail(e.target.value); setErroEmail(""); }}
+                  className="w-full px-4 py-2 rounded bg-white text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-lousa focus:outline-none"
+                  autoComplete="email"
+                  required
+                  aria-describedby={erroEmail ? "erro-email" : undefined}
+                  aria-invalid={!!erroEmail}
+                />
+                {erroEmail && <p id="erro-email" className="text-red-300 text-xs mt-1" role="alert">{erroEmail}</p>}
+              </div>
+            </div>
 
-          <div>
-            <label className="block text-sm mb-1">Confirmar senha</label>
-            <input
-              type="password"
-              placeholder="Confirmar senha"
-              value={confirmarSenha}
-              onChange={(e) => { setConfirmarSenha(e.target.value); setErroConfirmarSenha(""); }}
-              className="w-full px-4 py-2 rounded bg-white text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-lousa focus:outline-none"
-              autoComplete="new-password"
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-3 border-t border-white/10">
+              <div>
+                <label htmlFor="registro" className="block text-sm mb-1">Registro (Servidores da Prefeitura)</label>
+                <input
+                  id="registro"
+                  type="text"
+                  placeholder="Ex.: 00.000-0"
+                  value={registro}
+                  onChange={(e) => setRegistro(maskRegistro(e.target.value))}
+                  className="w-full px-4 py-2 rounded bg-white text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-lousa focus:outline-none"
+                  autoComplete="off"
+                />
+                              </div>
+              <div>
+                <label htmlFor="dataNascimento" className="block text-sm mb-1">Data de nascimento</label>
+                <input
+                  id="dataNascimento"
+                  type="date"
+                  value={dataNascimento}
+                  onChange={(e) => { setDataNascimento(e.target.value); setErroData(""); }}
+                  className="w-full px-4 py-2 rounded bg-white text-gray-800 focus:ring-2 focus:ring-lousa focus:outline-none"
+                  required
+                  aria-describedby={erroData ? "erro-data" : undefined}
+                  aria-invalid={!!erroData}
+                />
+                {erroData && <p id="erro-data" className="text-red-300 text-xs mt-1" role="alert">{erroData}</p>}
+              </div>
+            </div>
+          </fieldset>
+
+          {/* Grupo: Perfil */}
+          <fieldset className="space-y-3 pt-3 border-t border-white/10">
+            <legend className="text-sm font-semibold uppercase tracking-wide text-white/90">Perfil</legend>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm mb-1">Unidade</label>
+                <select
+                  value={unidadeId}
+                  onChange={(e) => { setUnidadeId(e.target.value); setErroPerfil(""); }}
+                  className="w-full px-4 py-2 rounded bg-white text-gray-800 focus:ring-2 focus:ring-lousa focus:outline-none disabled:opacity-60"
+                  disabled={loading || loadingLookups}
+                  required
+                >
+                  <option value="">{loadingLookups ? "Carregando..." : "Selecione…"}</option>
+                  {unidades.map((u) => (
+                    <option key={u.id} value={String(u.id)}>{u.sigla}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm mb-1">Gênero</label>
+                <select
+                  value={generoId}
+                  onChange={(e) => { setGeneroId(e.target.value); setErroPerfil(""); }}
+                  className="w-full px-4 py-2 rounded bg-white text-gray-800 focus:ring-2 focus:ring-lousa focus:outline-none disabled:opacity-60"
+                  disabled={loading || loadingLookups}
+                  required
+                >
+                  <option value="">{loadingLookups ? "Carregando..." : "Selecione…"}</option>
+                  {generos.map((g) => <option key={g.id} value={String(g.id)}>{g.nome}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm mb-1">Orientação sexual</label>
+                <select
+                  value={orientacaoSexualId}
+                  onChange={(e) => { setOrientacaoSexualId(e.target.value); setErroPerfil(""); }}
+                  className="w-full px-4 py-2 rounded bg-white text-gray-800 focus:ring-2 focus:ring-lousa focus:outline-none disabled:opacity-60"
+                  disabled={loading || loadingLookups}
+                  required
+                >
+                  <option value="">{loadingLookups ? "Carregando..." : "Selecione…"}</option>
+                  {orientacoes.map((o) => <option key={o.id} value={String(o.id)}>{o.nome}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm mb-1">Cor/raça</label>
+                <select
+                  value={corRacaId}
+                  onChange={(e) => { setCorRacaId(e.target.value); setErroPerfil(""); }}
+                  className="w-full px-4 py-2 rounded bg-white text-gray-800 focus:ring-2 focus:ring-lousa focus:outline-none disabled:opacity-60"
+                  disabled={loading || loadingLookups}
+                  required
+                >
+                  <option value="">{loadingLookups ? "Carregando..." : "Selecione…"}</option>
+                  {coresRacas.map((c) => <option key={c.id} value={String(c.id)}>{c.nome}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm mb-1">Escolaridade</label>
+                <select
+                  value={escolaridadeId}
+                  onChange={(e) => { setEscolaridadeId(e.target.value); setErroPerfil(""); }}
+                  className="w-full px-4 py-2 rounded bg-white text-gray-800 focus:ring-2 focus:ring-lousa focus:outline-none disabled:opacity-60"
+                  disabled={loading || loadingLookups}
+                  required
+                >
+                  <option value="">{loadingLookups ? "Carregando..." : "Selecione…"}</option>
+                  {escolaridades.map((esc) => <option key={esc.id} value={String(esc.id)}>{esc.nome}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm mb-1">Deficiência</label>
+                <select
+                  value={deficienciaId}
+                  onChange={(e) => { setDeficienciaId(e.target.value); setErroPerfil(""); }}
+                  className="w-full px-4 py-2 rounded bg-white text-gray-800 focus:ring-2 focus:ring-lousa focus:outline-none disabled:opacity-60"
+                  disabled={loading || loadingLookups}
+                  required
+                >
+                  <option value="">{loadingLookups ? "Carregando..." : "Selecione…"}</option>
+                  {deficiencias.map((d) => <option key={d.id} value={String(d.id)}>{d.nome}</option>)}
+                </select>
+                <p className="text-xs text-white/70 mt-1">Se não possuir, escolha “Não possuo”.</p>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm mb-1">Cargo</label>
+              <select
+                value={cargoId}
+                onChange={(e) => { setCargoId(e.target.value); setErroPerfil(""); }}
+                className="w-full px-4 py-2 rounded bg-white text-gray-800 focus:ring-2 focus:ring-lousa focus:outline-none disabled:opacity-60"
+                disabled={loading || loadingLookups}
+                required
+              >
+                <option value="">{loadingLookups ? "Carregando..." : "Selecione…"}</option>
+                {cargos.map((c) => <option key={c.id} value={String(c.id)}>{c.nome}</option>)}
+              </select>
+            </div>
+
+            {erroPerfil && <p className="text-red-300 text-xs" role="alert">{erroPerfil}</p>}
+          </fieldset>
+
+          {/* Grupo: Senha */}
+          <fieldset className="space-y-3 pt-3 border-t border-white/10">
+            <legend className="text-sm font-semibold uppercase tracking-wide text-white/90">Segurança</legend>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="relative">
+                <label htmlFor="senha" className="block text-sm mb-1">Senha</label>
+                <input
+                  id="senha"
+                  type={mostrarSenha ? "text" : "password"}
+                  placeholder="Senha forte"
+                  value={senha}
+                  onChange={(e) => { setSenha(e.target.value); setErroSenha(""); }}
+                  className="w-full px-4 py-2 pr-12 rounded bg-white text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-lousa focus:outline-none"
+                  autoComplete="new-password"
+                  required
+                  aria-describedby={erroSenha ? "erro-senha" : "dica-senha"}
+                  aria-invalid={!!erroSenha}
+                />
+                <button
+                  type="button"
+                  onClick={() => setMostrarSenha((v) => !v)}
+                  className="absolute top-8 right-3 text-lousa"
+                  aria-label={mostrarSenha ? "Ocultar senha" : "Mostrar senha"}
+                >
+                  {mostrarSenha ? <EyeOff size={20} /> : <Eye size={20} />}
+                </button>
+                <p id="dica-senha" className="text-xs text-white/70 mt-1">
+                  Use letras maiúsculas/minúsculas, números e símbolo.
+                </p>
+                {erroSenha && <p id="erro-senha" className="text-red-300 text-xs mt-1" role="alert">{erroSenha}</p>}
+
+                {senha && (
+                  <div className="mt-2 h-2 bg-gray-300 rounded" aria-label="Força da senha">
+                    <div
+                      className={`h-2 rounded transition-all duration-300 ${
+                        forcaSenha === 1 ? "w-1/5 bg-red-500"
+                        : forcaSenha === 2 ? "w-2/5 bg-yellow-500"
+                        : forcaSenha === 3 ? "w-3/5 bg-blue-500"
+                        : "w-full bg-green-500"
+                      }`}
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label htmlFor="confirmarSenha" className="block text-sm mb-1">Confirmar senha</label>
+                <input
+                  id="confirmarSenha"
+                  type="password"
+                  placeholder="Confirmar senha"
+                  value={confirmarSenha}
+                  onChange={(e) => { setConfirmarSenha(e.target.value); setErroConfirmarSenha(""); }}
+                  className="w-full px-4 py-2 rounded bg-white text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-lousa focus:outline-none"
+                  autoComplete="new-password"
+                  required
+                  aria-describedby={erroConfirmarSenha ? "erro-confirma" : undefined}
+                  aria-invalid={!!erroConfirmarSenha}
+                />
+                {erroConfirmarSenha && <p id="erro-confirma" className="text-red-300 text-xs mt-1" role="alert">{erroConfirmarSenha}</p>}
+              </div>
+            </div>
+
+            {/* Honeypot invisível */}
+            <div aria-hidden="true" className="hidden">
+              <label>Deixe em branco</label>
+              <input ref={hpRef} type="text" tabIndex={-1} autoComplete="off" />
+            </div>
+          </fieldset>
+
+          {/* Ações */}
+          <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
+            <BotaoPrimario
+              type="submit"
+              className="w-full flex justify-center items-center gap-2"
+              disabled={loading || loadingLookups}
+              aria-busy={loading}
+            >
+              {loading ? <Spinner pequeno /> : "Cadastrar"}
+            </BotaoPrimario>
+
+            <BotaoSecundario
+              type="button"
+              onClick={() => navigate("/login")}
+              className="w-full"
               disabled={loading}
-            />
-            {erroConfirmarSenha && <p className="text-red-300 text-xs mt-1">{erroConfirmarSenha}</p>}
+            >
+              Voltar para login
+            </BotaoSecundario>
           </div>
-        </section>
 
-        {/* Botões */}
-        <BotaoPrimario
-          type="submit"
-          className="w-full flex justify-center items-center gap-2"
-          disabled={loading || loadingLookups}
-          aria-busy={loading}
-        >
-          {loading ? <Spinner pequeno /> : "Cadastrar"}
-        </BotaoPrimario>
+          <p className="text-xs text-white/80 text-center mt-2 flex items-center justify-center gap-1">
+            <HelpCircle size={14} aria-hidden="true" /> Dúvidas? Veja a{" "}
+            <Link to="/ajuda" className="underline">Central de Ajuda</Link>.
+          </p>
 
-        <BotaoSecundario
-          type="button"
-          onClick={() => navigate("/login")}
-          className="w-full mt-2"
-          disabled={loading}
-        >
-          Voltar para login
-        </BotaoSecundario>
+          <p className="text-xs text-white/70 text-center mt-2">
+            Ao se cadastrar, você concorda com o uso dos seus dados para controle de eventos,
+            presença e certificação.
+          </p>
+        </form>
+      </main>
 
-        <p className="text-xs text-white/70 text-center mt-4">
-          Ao se cadastrar, você concorda com o uso dos seus dados para controle de eventos,
-          presença e certificação.
-        </p>
-      </form>
-    </main>
+      {/* Footer */}
+      <footer role="contentinfo" className="bg-emerald-950 text-white/90">
+        <div className="max-w-6xl mx-auto px-3 sm:px-6 py-6 text-sm flex flex-col sm:flex-row gap-2 sm:gap-6 items-center justify-between">
+          <p>&copy; {new Date().getFullYear()} Escola Municipal de Saúde de Santos</p>
+          <nav aria-label="links de rodapé" className="flex items-center gap-4">
+            <Link to="/politica-privacidade" className="underline">Privacidade</Link>
+            <a href="mailto:escoladasaude@santos.sp.gov.br" className="underline">Contato</a>
+          </nav>
+        </div>
+      </footer>
+    </>
   );
 }

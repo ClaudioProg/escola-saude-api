@@ -6,10 +6,14 @@ import { differenceInMinutes, isBefore } from "date-fns";
 
 import { apiGet, apiPost } from "../services/api";
 import Breadcrumbs from "../components/Breadcrumbs";
-import CabecalhoPainel from "../components/CabecalhoPainel";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import ErroCarregamento from "../components/ErroCarregamento";
 import { formatarCPF, formatarDataBrasileira } from "../utils/data";
+
+// Cabeçalho compacto + rodapé
+import PageHeader from "../components/PageHeader";
+import Footer from "../components/Footer";
+import { CheckSquare } from "lucide-react";
 
 // ---------- helpers de data locais (anti-UTC) ----------
 const ymd = (s) => {
@@ -35,9 +39,9 @@ export default function PresencasPorTurma() {
   const [confirmandoId, setConfirmandoId] = useState(null);
 
   const token = localStorage.getItem("token");
+  if (!token) return <Navigate to="/login" replace />;
 
   useEffect(() => {
-    if (!token) return; // redireciono abaixo
     if (!turmaId || Number.isNaN(Number(turmaId))) {
       setErro("ID da turma inválido.");
       setCarregando(false);
@@ -59,9 +63,7 @@ export default function PresencasPorTurma() {
         setCarregando(false);
       }
     })();
-  }, [token, turmaId]);
-
-  if (!token) return <Navigate to="/login" replace />;
+  }, [turmaId]);
 
   async function confirmarPresencaManual(usuario_id, turma_id, data_referencia) {
     try {
@@ -93,7 +95,7 @@ export default function PresencasPorTurma() {
   }
 
   function renderStatus(p) {
-    // calcula relativo ao "agora" a cada render, usando datas locais (anti-UTC)
+    // calcula relativo ao "agora" usando datas locais (anti-UTC)
     const agora = new Date();
     const inicio = makeLocalDate(p.data_referencia, p.horario_inicio || "00:00");
     const fim = makeLocalDate(p.data_referencia, p.horario_fim || "23:59");
@@ -129,8 +131,9 @@ export default function PresencasPorTurma() {
             onClick={() =>
               confirmarPresencaManual(p.usuario_id, p.turma_id, p.data_referencia)
             }
-            className="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 disabled:opacity-60"
+            className="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-700"
             disabled={loading}
+            aria-label={`Confirmar presença de ${p.nome} em ${formatarDataBrasileira(p.data_referencia)}`}
           >
             {loading ? "Confirmando..." : "Confirmar"}
           </button>
@@ -146,37 +149,49 @@ export default function PresencasPorTurma() {
   }
 
   return (
-    <main className="min-h-screen bg-gelo dark:bg-zinc-900 px-4 py-6">
-      <Breadcrumbs />
-      <CabecalhoPainel titulo="📋 Presenças por Turma" />
+    <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900">
+      {/* 🟧 Cabeçalho (família Presenças) */}
+      <PageHeader title="Presenças por Turma" icon={CheckSquare} variant="laranja" />
 
-      <h1 className="text-2xl font-bold mb-6 text-center text-black dark:text-white">
-        📋 Presenças por Turma
-      </h1>
+      <main role="main" className="flex-1 px-4 py-6">
+        <Breadcrumbs trilha={[{ label: "Painel administrador" }, { label: "Presenças por Turma" }]} />
 
-      {carregando ? (
-        <CarregandoSkeleton texto="Carregando presenças..." />
-      ) : erro ? (
-        <ErroCarregamento mensagem={erro} />
-      ) : (
-        <div className="space-y-4 max-w-5xl mx-auto">
-          {dados.map((p) => (
-            <div
-              key={`${p.usuario_id}-${p.data_referencia}`}
-              className="border border-gray-200 dark:border-gray-600 p-4 rounded-lg bg-white dark:bg-zinc-800 shadow"
-            >
-              <p className="text-lousa dark:text-white font-semibold">{p.nome}</p>
-              <p className="text-sm text-gray-600 dark:text-gray-300 mb-1">
-                CPF: {formatarCPF(p.cpf)}
+        {carregando ? (
+          <CarregandoSkeleton texto="Carregando presenças..." />
+        ) : erro ? (
+          <ErroCarregamento mensagem={erro} />
+        ) : (
+          <section
+            className="space-y-4 max-w-5xl mx-auto"
+            aria-label={`Lista de presenças da turma ${turmaId}`}
+          >
+            {dados.map((p) => (
+              <article
+                key={`${p.usuario_id}-${p.data_referencia}`}
+                className="border border-gray-200 dark:border-gray-600 p-4 rounded-lg bg-white dark:bg-zinc-800 shadow"
+                aria-label={`Registro de ${p.nome}`}
+              >
+                <p className="text-lousa dark:text-white font-semibold">{p.nome}</p>
+                <p className="text-sm text-gray-600 dark:text-gray-300 mb-1">
+                  CPF: {formatarCPF(p.cpf)}
+                </p>
+                <p className="text-sm text-gray-600 dark:text-gray-300">
+                  Data: {formatarDataBrasileira(p.data_referencia)} – {p.horario_inicio} às {p.horario_fim}
+                </p>
+                <div className="mt-2">{renderStatus(p)}</div>
+              </article>
+            ))}
+            {!dados?.length && (
+              <p className="text-sm text-gray-600 dark:text-gray-300 text-center">
+                Nenhum registro encontrado.
               </p>
-              <p className="text-sm text-gray-600 dark:text-gray-300">
-                Data: {formatarDataBrasileira(p.data_referencia)} – {p.horario_inicio} às {p.horario_fim}
-              </p>
-              <div className="mt-2">{renderStatus(p)}</div>
-            </div>
-          ))}
-        </div>
-      )}
-    </main>
+            )}
+          </section>
+        )}
+      </main>
+
+      {/* Rodapé institucional */}
+      <Footer />
+    </div>
   );
 }

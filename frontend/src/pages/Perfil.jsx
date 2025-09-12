@@ -5,6 +5,11 @@ import Breadcrumbs from "../components/Breadcrumbs";
 import ModalAssinatura from "../components/ModalAssinatura";
 import { apiGet, apiPatch, apiPerfilMe, setPerfilIncompletoFlag } from "../services/api";
 
+// Cabeçalho compacto + rodapé institucional
+import PageHeader from "../components/PageHeader";
+import Footer from "../components/Footer";
+import { User } from "lucide-react";
+
 export default function Perfil() {
   const [usuario, setUsuario] = useState(null);
 
@@ -56,10 +61,8 @@ export default function Perfil() {
   const toYMD = (val) => {
     if (!val) return "";
     const s = String(val);
-    // já vem em yyyy-mm-dd*  -> corta em 10
     const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
     if (m) return m[1];
-    // fallback: tenta Date, mas retorna apenas yyyy-mm-dd
     const d = new Date(s);
     if (isNaN(d.getTime())) return "";
     const y = d.getUTCFullYear();
@@ -132,19 +135,19 @@ export default function Perfil() {
     return () => { alive = false; };
   }, []);
 
-  // listas auxiliares
+  // listas auxiliares (padronizadas com /api)
   useEffect(() => {
     (async () => {
       try {
         setCarregandoListas(true);
         const [uni, car, gen, ori, cr, esc, def] = await Promise.all([
-          apiGet("/unidades", { on403: "silent" }),
-          apiGet("/cargos", { on403: "silent" }),
-          apiGet("/generos", { on403: "silent" }),
-          apiGet("/orientacoes-sexuais", { on403: "silent" }),
-          apiGet("/cores-racas", { on403: "silent" }),
-          apiGet("/escolaridades", { on403: "silent" }),
-          apiGet("/deficiencias", { on403: "silent" }),
+          apiGet("/api/unidades", { on403: "silent" }),
+          apiGet("/api/cargos", { on403: "silent" }),
+          apiGet("/api/generos", { on403: "silent" }),
+          apiGet("/api/orientacoes-sexuais", { on403: "silent" }),
+          apiGet("/api/cores-racas", { on403: "silent" }),
+          apiGet("/api/escolaridades", { on403: "silent" }),
+          apiGet("/api/deficiencias", { on403: "silent" }),
         ]);
 
         setUnidades((uni || []).sort((a, b) => (a.nome || "").localeCompare(b.nome || "")));
@@ -212,7 +215,6 @@ export default function Perfil() {
 
       // reconsulta o perfil (também atualiza a flag global via apiPerfilMe)
       const atualizado = await apiPerfilMe({ on401: "silent", on403: "silent" });
-      // reforça o broadcast da flag (caso o caller use a flag para navegação)
       setPerfilIncompletoFlag(!!atualizado?.perfil_incompleto);
 
       const novo = { ...(JSON.parse(localStorage.getItem("usuario") || "{}")), ...atualizado };
@@ -241,10 +243,15 @@ export default function Perfil() {
     }
   };
 
+  // estado inicial de carregamento do localStorage/me
   if (!usuario) {
     return (
-      <div className="p-4 text-center text-gray-600 dark:text-gray-300">
-        🔄 Carregando dados do perfil...
+      <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900">
+        <PageHeader title="Meu Perfil" icon={User} variant="petroleo" />
+        <main role="main" className="flex-1 max-w-3xl mx-auto px-4 py-8">
+          <p className="text-center text-gray-600 dark:text-gray-300">🔄 Carregando dados do perfil...</p>
+        </main>
+        <Footer />
       </div>
     );
   }
@@ -256,273 +263,278 @@ export default function Perfil() {
     ).some((p) => p === "instrutor" || p === "administrador");
 
   return (
-    <main className="max-w-3xl mx-auto px-4 py-8 min-h-screen bg-gelo dark:bg-zinc-900">
-      <Breadcrumbs trilha={[{ label: "Painel" }, { label: "Perfil" }]} />
+    <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900">
+      {/* 🟦 Área de conta/usuário = petróleo */}
+      <PageHeader title="Meu Perfil" icon={User} variant="petroleo" />
 
-      <h1 className="text-2xl font-bold mb-6 text-lousa dark:text-white text-center">
-        👤 Meu Perfil
-      </h1>
+      <main role="main" className="flex-1 max-w-3xl mx-auto px-4 py-8">
+        <Breadcrumbs trilha={[{ label: "Painel" }, { label: "Perfil" }]} />
 
-      <div className="bg-white dark:bg-zinc-800 p-6 rounded-xl shadow space-y-6">
+        <h1 className="sr-only">Meu Perfil</h1>
 
-        {/* 🔴/🟢 Avisos de status do cadastro */}
-        {perfilIncompleto ? (
-          <div
-            role="alert"
-            aria-live="polite"
-            className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-red-700 text-sm dark:bg-red-900/20 dark:border-red-800 dark:text-red-300"
-          >
-            <strong className="font-medium">Ação necessária:</strong>{" "}
-            Preencha todo o cadastro para ter acesso completo à plataforma.
-          </div>
-        ) : (
-          <div
-            role="status"
-            aria-live="polite"
-            className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-green-800 text-sm dark:bg-green-900/20 dark:border-green-800 dark:text-green-300"
-          >
-            ✅ <strong className="font-medium">Cadastro completo!</strong> Você já tem acesso total à plataforma.
-          </div>
-        )}
+        <div className="bg-white dark:bg-zinc-800 p-6 rounded-xl shadow space-y-6">
+          {/* 🔴/🟢 Avisos de status do cadastro */}
+          {perfilIncompleto ? (
+            <div
+              role="alert"
+              aria-live="polite"
+              className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-red-700 text-sm dark:bg-red-900/20 dark:border-red-800 dark:text-red-300"
+            >
+              <strong className="font-medium">Ação necessária:</strong>{" "}
+              Preencha todo o cadastro para ter acesso completo à plataforma.
+            </div>
+          ) : (
+            <div
+              role="status"
+              aria-live="polite"
+              className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-green-800 text-sm dark:bg-green-900/20 dark:border-green-800 dark:text-green-300"
+            >
+              ✅ <strong className="font-medium">Cadastro completo!</strong> Você já tem acesso à plataforma.
+            </div>
+          )}
 
-        {/* Básicos */}
-        <section className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          <div className="md:col-span-2">
-            <label htmlFor="nome" className="block text-sm font-medium text-gray-700 dark:text-gray-200">
-              Nome completo <span className="text-red-600">*</span>
-            </label>
-            <input
-              id="nome"
-              type="text"
-              value={nome}
-              onChange={(e) => setNome(e.target.value)}
-              className="mt-1 w-full px-4 py-2 border rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-lousa"
-              aria-label="Nome completo"
-            />
-          </div>
+          {/* Básicos */}
+          <section className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div className="md:col-span-2">
+              <label htmlFor="nome" className="block text-sm font-medium text-gray-700 dark:text-gray-200">
+                Nome completo <span className="text-red-600">*</span>
+              </label>
+              <input
+                id="nome"
+                type="text"
+                value={nome}
+                onChange={(e) => setNome(e.target.value)}
+                className="mt-1 w-full px-4 py-2 border rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-700"
+                aria-label="Nome completo"
+              />
+            </div>
 
-          <div>
-            <label htmlFor="email" className="block text-sm font-medium text-gray-700 dark:text-gray-200">
-              E-mail <span className="text-red-600">*</span>
-            </label>
-            <input
-              id="email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="mt-1 w-full px-4 py-2 border rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-lousa"
-              aria-label="E-mail"
-            />
-          </div>
+            <div>
+              <label htmlFor="email" className="block text-sm font-medium text-gray-700 dark:text-gray-200">
+                E-mail <span className="text-red-600">*</span>
+              </label>
+              <input
+                id="email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="mt-1 w-full px-4 py-2 border rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-700"
+                autoComplete="email"
+                aria-label="E-mail"
+              />
+            </div>
 
-          <div>
-            <label htmlFor="senha" className="block text-sm font-medium text-gray-700 dark:text-gray-200">
-              Nova senha (opcional)
-            </label>
-            <input
-              id="senha"
-              type="password"
-              value={senha}
-              onChange={(e) => setSenha(e.target.value)}
-              placeholder="Digite para alterar a senha"
-              className="mt-1 w-full px-4 py-2 border rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-lousa"
-              aria-label="Nova senha"
-            />
-            {senha && senha.length < 8 && (
-              <p className="text-xs text-red-500 mt-1">
-                A nova senha deve ter pelo menos 8 caracteres.
+            <div>
+              <label htmlFor="senha" className="block text-sm font-medium text-gray-700 dark:text-gray-200">
+                Nova senha (opcional)
+              </label>
+              <input
+                id="senha"
+                type="password"
+                value={senha}
+                onChange={(e) => setSenha(e.target.value)}
+                placeholder="Digite para alterar a senha"
+                className="mt-1 w-full px-4 py-2 border rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-700"
+                autoComplete="new-password"
+                aria-label="Nova senha"
+                minLength={8}
+              />
+              {senha && senha.length < 8 && (
+                <p className="text-xs text-red-500 mt-1">
+                  A nova senha deve ter pelo menos 8 caracteres.
+                </p>
+              )}
+            </div>
+          </section>
+
+          {/* Registro + Data de nascimento */}
+          <section className="grid grid-cols-1 md:grid-cols-2 gap-5 border-t border-white/10 pt-1">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
+                Registro (Servidores da Prefeitura)
+              </label>
+              <input
+                type="text"
+                value={registro}
+                onChange={(e) => setRegistro(maskRegistro(e.target.value))}
+                className="mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 focus:ring-emerald-700 disabled:opacity-60"
+                placeholder="Ex.: 10.010-1"
+                disabled={salvando}
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
+                Data de nascimento <span className="text-red-600">*</span>
+              </label>
+              <input
+                type="date"
+                value={dataNascimento}
+                onChange={(e) => setDataNascimento(e.target.value)}
+                className="mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 focus:ring-emerald-700 disabled:opacity-60"
+                disabled={salvando}
+              />
+            </div>
+          </section>
+
+          {/* Unidade + Escolaridade */}
+          <section className="grid grid-cols-1 md:grid-cols-2 gap-5 border-t border-white/10 pt-1">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
+                Unidade <span className="text-red-600">*</span>
+              </label>
+              <select
+                value={unidadeId}
+                onChange={(e) => setUnidadeId(e.target.value)}
+                className="mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 focus:ring-emerald-700 disabled:opacity-60"
+                disabled={salvando || carregandoListas}
+              >
+                <option value="">Selecione…</option>
+                {unidades.map((u) => (
+                  <option key={u.id} value={String(u.id)}>{u.sigla}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
+                Escolaridade <span className="text-red-600">*</span>
+              </label>
+              <select
+                value={escolaridadeId}
+                onChange={(e) => setEscolaridadeId(e.target.value)}
+                className="mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 focus:ring-emerald-700 disabled:opacity-60"
+                disabled={salvando || carregandoListas}
+              >
+                <option value="">Selecione…</option>
+                {escolaridades.map((esc) => (
+                  <option key={esc.id} value={String(esc.id)}>{esc.nome}</option>
+                ))}
+              </select>
+            </div>
+          </section>
+
+          {/* Cargo em linha inteira */}
+          <section className="grid grid-cols-1 gap-5 border-t border-white/10 pt-1">
+            <div className="md:col-span-2">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
+                Cargo <span className="text-red-600">*</span>
+              </label>
+              <select
+                value={cargoId}
+                onChange={(e) => setCargoId(e.target.value)}
+                className="mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 focus:ring-emerald-700 disabled:opacity-60"
+                disabled={salvando || carregandoListas}
+              >
+                <option value="">Selecione…</option>
+                {cargos.map((c) => (
+                  <option key={c.id} value={String(c.id)}>{c.nome}</option>
+                ))}
+              </select>
+            </div>
+          </section>
+
+          {/* Demográficos */}
+          <section className="grid grid-cols-1 md:grid-cols-2 gap-5 border-t border-white/10 pt-1">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
+                Gênero <span className="text-red-600">*</span>
+              </label>
+              <select
+                value={generoId}
+                onChange={(e) => setGeneroId(e.target.value)}
+                className="mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 focus:ring-emerald-700 disabled:opacity-60"
+                disabled={salvando || carregandoListas}
+              >
+                <option value="">Selecione…</option>
+                {generos.map((g) => (
+                  <option key={g.id} value={String(g.id)}>{g.nome}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
+                Orientação sexual <span className="text-red-600">*</span>
+              </label>
+              <select
+                value={orientacaoSexualId}
+                onChange={(e) => setOrientacaoSexualId(e.target.value)}
+                className="mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 focus:ring-emerald-700 disabled:opacity-60"
+                disabled={salvando || carregandoListas}
+              >
+                <option value="">Selecione…</option>
+                {orientacoes.map((o) => (
+                  <option key={o.id} value={String(o.id)}>{o.nome}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
+                Cor/raça <span className="text-red-600">*</span>
+              </label>
+              <select
+                value={corRacaId}
+                onChange={(e) => setCorRacaId(e.target.value)}
+                className="mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 focus:ring-emerald-700 disabled:opacity-60"
+                disabled={salvando || carregandoListas}
+              >
+                <option value="">Selecione…</option>
+                {coresRacas.map((c) => (
+                  <option key={c.id} value={String(c.id)}>{c.nome}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
+                Deficiência <span className="text-red-600">*</span>
+              </label>
+              <select
+                value={deficienciaId}
+                onChange={(e) => setDeficienciaId(e.target.value)}
+                className="mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 focus:ring-emerald-700 disabled:opacity-60"
+                disabled={salvando || carregandoListas}
+              >
+                <option value="">Selecione…</option>
+                {deficiencias.map((d) => (
+                  <option key={d.id} value={String(d.id)}>{d.nome}</option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">
+                Se não possuir, escolha “Não possuo”.
               </p>
+            </div>
+          </section>
+
+          <div className="flex flex-col sm:flex-row justify-between gap-5 mt-2">
+            <button
+              onClick={salvarAlteracoes}
+              disabled={salvando}
+              className={`${salvando ? "bg-emerald-900 cursor-not-allowed" : "bg-lousa hover:bg-green-800"} text-white px-5 py-2 rounded-md shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-700`}
+              aria-label="Salvar alterações no perfil"
+            >
+              {salvando ? "Salvando..." : "💾 Salvar Alterações"}
+            </button>
+
+            {podeGerenciarAssinatura && (
+              <button
+                onClick={() => setModalAberto(true)}
+                className="bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-gray-400"
+                aria-label="Gerenciar assinatura digital"
+              >
+                ✍️ Gerenciar Assinatura
+              </button>
             )}
           </div>
-        </section>
-
-        {/* Registro + Data de nascimento */}
-        <section className="grid grid-cols-1 md:grid-cols-2 gap-5 border-t border-white/10 pt-1">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
-              Registro (Servidores da Prefeitura)
-            </label>
-            <input
-              type="text"
-              value={registro}
-              onChange={(e) => setRegistro(maskRegistro(e.target.value))}
-              className="mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 focus:ring-lousa disabled:opacity-60"
-              placeholder="Ex.: 10.010-1"
-              disabled={salvando}
-            />
-            <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">
-              Você pode digitar só números (<strong>100101</strong>).
-            </p>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
-              Data de nascimento <span className="text-red-600">*</span>
-            </label>
-            <input
-              type="date"
-              value={dataNascimento}
-              onChange={(e) => setDataNascimento(e.target.value)}
-              className="mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 focus:ring-lousa disabled:opacity-60"
-              disabled={salvando}
-            />
-          </div>
-        </section>
-
-        {/* Unidade + Escolaridade */}
-        <section className="grid grid-cols-1 md:grid-cols-2 gap-5 border-t border-white/10 pt-1">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
-              Unidade <span className="text-red-600">*</span>
-            </label>
-            <select
-              value={unidadeId}
-              onChange={(e) => setUnidadeId(e.target.value)}
-              className="mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 focus:ring-lousa disabled:opacity-60"
-              disabled={salvando || carregandoListas}
-            >
-              <option value="">Selecione…</option>
-              {unidades.map((u) => (
-                <option key={u.id} value={String(u.id)}>{u.sigla}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
-              Escolaridade <span className="text-red-600">*</span>
-            </label>
-            <select
-              value={escolaridadeId}
-              onChange={(e) => setEscolaridadeId(e.target.value)}
-              className="mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 focus:ring-lousa disabled:opacity-60"
-              disabled={salvando || carregandoListas}
-            >
-              <option value="">Selecione…</option>
-              {escolaridades.map((esc) => (
-                <option key={esc.id} value={String(esc.id)}>{esc.nome}</option>
-              ))}
-            </select>
-          </div>
-        </section>
-
-        {/* Cargo em linha inteira */}
-        <section className="grid grid-cols-1 gap-5 border-t border-white/10 pt-1">
-          <div className="md:col-span-2">
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
-              Cargo <span className="text-red-600">*</span>
-            </label>
-            <select
-              value={cargoId}
-              onChange={(e) => setCargoId(e.target.value)}
-              className="mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 focus:ring-lousa disabled:opacity-60"
-              disabled={salvando || carregandoListas}
-            >
-              <option value="">Selecione…</option>
-              {cargos.map((c) => (
-                <option key={c.id} value={String(c.id)}>{c.nome}</option>
-              ))}
-            </select>
-          </div>
-        </section>
-
-        {/* Demográficos */}
-        <section className="grid grid-cols-1 md:grid-cols-2 gap-5 border-t border-white/10 pt-1">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
-              Gênero <span className="text-red-600">*</span>
-            </label>
-            <select
-              value={generoId}
-              onChange={(e) => setGeneroId(e.target.value)}
-              className="mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 focus:ring-lousa disabled:opacity-60"
-              disabled={salvando || carregandoListas}
-            >
-              <option value="">Selecione…</option>
-              {generos.map((g) => (
-                <option key={g.id} value={String(g.id)}>{g.nome}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
-              Orientação sexual <span className="text-red-600">*</span>
-            </label>
-            <select
-              value={orientacaoSexualId}
-              onChange={(e) => setOrientacaoSexualId(e.target.value)}
-              className="mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 focus:ring-lousa disabled:opacity-60"
-              disabled={salvando || carregandoListas}
-            >
-              <option value="">Selecione…</option>
-              {orientacoes.map((o) => (
-                <option key={o.id} value={String(o.id)}>{o.nome}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
-              Cor/raça <span className="text-red-600">*</span>
-            </label>
-            <select
-              value={corRacaId}
-              onChange={(e) => setCorRacaId(e.target.value)}
-              className="mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 focus:ring-lousa disabled:opacity-60"
-              disabled={salvando || carregandoListas}
-            >
-              <option value="">Selecione…</option>
-              {coresRacas.map((c) => (
-                <option key={c.id} value={String(c.id)}>{c.nome}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
-              Deficiência <span className="text-red-600">*</span>
-            </label>
-            <select
-              value={deficienciaId}
-              onChange={(e) => setDeficienciaId(e.target.value)}
-              className="mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 focus:ring-lousa disabled:opacity-60"
-              disabled={salvando || carregandoListas}
-            >
-              <option value="">Selecione…</option>
-              {deficiencias.map((d) => (
-                <option key={d.id} value={String(d.id)}>{d.nome}</option>
-              ))}
-            </select>
-            <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">
-              Se não possuir, escolha “Não possuo”.
-            </p>
-          </div>
-        </section>
-
-        <div className="flex flex-col sm:flex-row justify-between gap-5 mt-2">
-          <button
-            onClick={salvarAlteracoes}
-            disabled={salvando}
-            className={`${salvando ? "bg-green-900 cursor-not-allowed" : "bg-lousa hover:bg-green-800"} text-white px-5 py-2 rounded-md shadow focus:outline-none focus:ring-2 focus:ring-lousa`}
-            aria-label="Salvar alterações no perfil"
-          >
-            {salvando ? "Salvando..." : "💾 Salvar Alterações"}
-          </button>
-
-          {podeGerenciarAssinatura && (
-            <button
-              onClick={() => setModalAberto(true)}
-              className="bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-400"
-              aria-label="Gerenciar assinatura digital"
-            >
-              ✍️ Gerenciar Assinatura
-            </button>
-          )}
         </div>
-      </div>
 
-      <ModalAssinatura isOpen={modalAberto} onClose={() => setModalAberto(false)} />
-    </main>
+        <ModalAssinatura isOpen={modalAberto} onClose={() => setModalAberto(false)} />
+      </main>
+
+      {/* Rodapé institucional */}
+      <Footer />
+    </div>
   );
 }

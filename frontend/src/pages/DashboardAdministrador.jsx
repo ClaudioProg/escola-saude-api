@@ -6,8 +6,11 @@ import autoTable from "jspdf-autotable";
 
 import Breadcrumbs from "../components/Breadcrumbs";
 import CardEventoadministrador from "../components/CardEventoadministrador";
-// import Spinner from "../components/Spinner";
 import { apiGet } from "../services/api";
+
+// ✅ novos
+import PageHeader from "../components/PageHeader";
+import Footer from "../components/Footer";
 
 /* ========= Helpers anti-fuso e formatação ========= */
 const ymd = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
@@ -190,7 +193,13 @@ export default function DashboardAdministrador() {
       doc.text(`${turmaNome}`, 14, 26);
       if (di || df) doc.text(`Período: ${formatarDataBR(di)} a ${formatarDataBR(df)}`, 14, 32);
       if (hi || hf) doc.text(`Horário: ${hi} às ${hf}`, 14, 38);
-      if (vagas || vagas === 0) doc.text(`Vagas: ${qtd}${vagas ? ` de ${vagas}` : ""}${perc !== null ? ` (${perc}%)` : ""}`, 14, 44);
+      if (vagas || vagas === 0) {
+        doc.text(
+          `Vagas: ${qtd}${vagas ? ` de ${vagas}` : ""}${perc !== null ? ` (${perc}%)` : ""}`,
+          14,
+          44
+        );
+      }
 
       autoTable(doc, {
         startY: 50,
@@ -270,71 +279,80 @@ export default function DashboardAdministrador() {
   }, [eventos]);
 
   return (
-    <div className="min-h-screen px-4 py-10 bg-white dark:bg-zinc-900 text-black dark:text-white relative">
+    <main className="min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
+      {/* barra de carregamento fina no topo */}
       {carregando && (
-        <div className="absolute top-0 left-0 w-full h-1 bg-green-100 z-50">
+        <div className="sticky top-0 left-0 w-full h-1 bg-green-100 z-40">
           <div className="h-full bg-[#1b4332] animate-pulse w-1/3" aria-label="Carregando eventos" />
         </div>
       )}
 
-      <Breadcrumbs />
+      <div className="px-4 py-6">
+        <Breadcrumbs trilha={[{ label: "Início", href: "/" }, { label: "Painel do Administrador" }]} />
 
-      <div className="flex justify-between items-center bg-lousa text-white px-4 py-2 rounded-xl shadow mb-6">
-        <span>
-          Seja bem-vindo(a), <strong>{nome}</strong>
-        </span>
-        <span className="font-semibold">Painel do administrador</span>
+        {/* ✅ PageHeader padronizado */}
+        <PageHeader
+  title="🧑‍💼 Painel do Administrador"
+  subtitle={nome ? `Bem-vindo(a), ${nome}` : "Bem-vindo(a)"}
+  className="mb-6 sm:mb-8"   // ⬅️ adiciona espaço abaixo do header
+/>
+
+        <section className="max-w-5xl mx-auto">
+          {/* Filtros de status (acessível) */}
+          <div className="flex justify-center gap-2 sm:gap-3 mb-6 flex-wrap" role="group" aria-label="Filtros por status do evento">
+            {["todos", "programado", "em_andamento", "encerrado"].map((status) => (
+              <button
+                key={status}
+                onClick={() => setFiltroStatus(status)}
+                className={`px-4 py-1 rounded-full text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-[#1b4332] ${
+                  filtroStatus === status
+                    ? "bg-[#1b4332] text-white"
+                    : "bg-gray-300 text-gray-800 dark:bg-gray-700 dark:text-white"
+                }`}
+                aria-pressed={filtroStatus === status}
+                aria-label={`Filtrar eventos: ${status}`}
+              >
+                {{
+                  todos: "Todos",
+                  programado: "Programados",
+                  em_andamento: "Em andamento",
+                  encerrado: "Encerrados",
+                }[status]}
+              </button>
+            ))}
+          </div>
+
+          {erro && <p className="text-red-500 text-center">{erro}</p>}
+
+          {/* Lista de eventos */}
+          <div className="space-y-4">
+            {eventosOrdenados.filter(filtrarPorStatus).map((evento) => (
+              <CardEventoadministrador
+                key={evento.id}
+                evento={evento}
+                expandido={eventoExpandido === evento.id}
+                toggleExpandir={toggleExpandir}
+                turmas={turmasPorEvento[evento.id] || []}
+                carregarInscritos={carregarInscritos}
+                inscritosPorTurma={inscritosPorTurma}
+                carregarAvaliacoes={carregarAvaliacoes}
+                avaliacoesPorTurma={avaliacoesPorTurma}
+                presencasPorTurma={presencasPorTurma}
+                carregarPresencas={carregarPresencas}
+                // PDFs
+                gerarRelatorioPDF={gerarRelatorioPDF}            // presença
+                gerarPdfInscritosTurma={gerarPdfInscritosTurma}  // infos + inscritos
+              />
+            ))}
+            {eventosOrdenados.filter(filtrarPorStatus).length === 0 && (
+              <p className="text-center text-gray-600 dark:text-gray-300">Nenhum evento encontrado para o filtro selecionado.</p>
+            )}
+          </div>
+        </section>
       </div>
 
-      <div className="max-w-5xl mx-auto">
-        <h2 className="text-2xl font-bold mb-6 text-[#1b4332] text-center dark:text-white">
-          🧑‍💼 Painel do administrador
-        </h2>
-
-        <div className="flex justify-center gap-4 mb-6 flex-wrap">
-          {["todos", "programado", "em_andamento", "encerrado"].map((status) => (
-            <button
-              key={status}
-              onClick={() => setFiltroStatus(status)}
-              className={`px-4 py-1 rounded-full text-sm font-medium transition ${
-                filtroStatus === status
-                  ? "bg-[#1b4332] text-white"
-                  : "bg-gray-300 text-gray-800 dark:bg-gray-700 dark:text-white"
-              }`}
-              aria-pressed={filtroStatus === status}
-              aria-label={`Filtrar eventos: ${status}`}
-            >
-              {{
-                todos: "Todos",
-                programado: "Programados",
-                em_andamento: "Em andamento",
-                encerrado: "Encerrados",
-              }[status]}
-            </button>
-          ))}
-        </div>
-
-        {erro && <p className="text-red-500 text-center">{erro}</p>}
-
-        {eventosOrdenados.filter(filtrarPorStatus).map((evento) => (
-          <CardEventoadministrador
-            key={evento.id}
-            evento={evento}
-            expandido={eventoExpandido === evento.id}
-            toggleExpandir={toggleExpandir}
-            turmas={turmasPorEvento[evento.id] || []}
-            carregarInscritos={carregarInscritos}
-            inscritosPorTurma={inscritosPorTurma}
-            carregarAvaliacoes={carregarAvaliacoes}
-            avaliacoesPorTurma={avaliacoesPorTurma}
-            presencasPorTurma={presencasPorTurma}
-            carregarPresencas={carregarPresencas}
-            // PDFs
-            gerarRelatorioPDF={gerarRelatorioPDF}            // presença
-            gerarPdfInscritosTurma={gerarPdfInscritosTurma}  // infos + inscritos
-          />
-        ))}
-      </div>
-    </div>
+      {/* ✅ Footer global */}
+      <Footer />
+    </main>
   );
 }

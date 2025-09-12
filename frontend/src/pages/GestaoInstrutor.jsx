@@ -7,9 +7,10 @@ import Modal from "react-modal";
 import { apiGet } from "../services/api";
 import Breadcrumbs from "../components/Breadcrumbs";
 import TabelaInstrutor from "../components/TabelaInstrutor";
-import CabecalhoPainel from "../components/CabecalhoPainel";
-// (Rota já protegida por <PrivateRoute permitido={["administrador"]}> no App.jsx)
+import PageHeader from "../components/PageHeader";
+import Footer from "../components/Footer";
 
+// (Rota já protegida por <PrivateRoute permitido={["administrador"]}> no App.jsx)
 Modal.setAppElement("#root");
 
 // ---------- helpers anti-fuso ----------
@@ -39,20 +40,15 @@ export default function GestaoInstrutor() {
       try {
         setCarregandoDados(true);
         setErro("");
-        console.log("👩‍🏫 [GestaoInstrutor] GET /api/instrutor ...");
         const data = await apiGet("/api/instrutor");
-        console.log("✅ Payload /api/instrutor:", data);
-
         const lista =
           Array.isArray(data) ? data :
           Array.isArray(data?.lista) ? data.lista :
           Array.isArray(data?.instrutores) ? data.instrutores :
           [];
-
         setInstrutores(lista);
       } catch (err) {
         const msg = err?.message || "Erro ao carregar instrutores.";
-        console.error("❌ /api/instrutor falhou:", err);
         setErro(msg);
         setInstrutores([]);
         toast.error(`❌ ${msg}`);
@@ -74,64 +70,74 @@ export default function GestaoInstrutor() {
     setInstrutorSelecionado(instrutor);
     setModalHistoricoAberto(true);
     try {
-      console.log(`🗂️ [GestaoInstrutor] GET /api/instrutor/${instrutor.id}/eventos-avaliacoes`);
       const data = await apiGet(`/api/instrutor/${instrutor.id}/eventos-avaliacoes`);
-
-      // ⚠️ Não usamos new Date() aqui; guardamos YMD para render anti-fuso
       const eventos = (Array.isArray(data) ? data : []).map((ev) => ({
         id: ev.evento_id,
         titulo: ev.evento,
         data_inicio_ymd: ymd(ev.data_inicio),
         data_fim_ymd: ymd(ev.data_fim),
-        nota_media: ev.nota_media !== null && ev.nota_media !== undefined
-          ? Number(ev.nota_media)
-          : null,
+        nota_media:
+          ev.nota_media !== null && ev.nota_media !== undefined ? Number(ev.nota_media) : null,
       }));
       setHistorico(eventos);
     } catch (e) {
-      console.error("❌ histórico do instrutor:", e);
       toast.error("❌ Erro ao buscar histórico do instrutor.");
       setHistorico([]);
     }
   }
 
   return (
-    <main className="min-h-screen bg-gelo dark:bg-zinc-900 px-4 py-6 max-w-screen-lg mx-auto">
-      <Breadcrumbs trilha={[{ label: "Painel administrador" }, { label: "Gestão de instrutor" }]} />
-      <CabecalhoPainel titulo="👩‍🏫 Gestão de instrutor" />
+    <main className="min-h-screen bg-gelo dark:bg-zinc-900">
+      <div className="px-2 sm:px-4 py-6 max-w-6xl mx-auto">
+        <Breadcrumbs trilha={[{ label: "Painel administrador" }, { label: "Gestão de instrutor" }]} />
 
-      <div className="mb-6 mt-4">
-        <input
-          type="text"
-          placeholder="🔍 Buscar por nome ou e-mail..."
-          value={busca}
-          onChange={(e) => setBusca(e.target.value)}
-          className="w-full px-4 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-lousa dark:bg-gray-800 dark:text-white"
+        <PageHeader
+          title="👩‍🏫 Gestão de instrutor"
+          subtitle="Pesquise, visualize histórico e acompanhe avaliações dos instrutores."
+          className="mb-5 sm:mb-6"
         />
-      </div>
 
-      {carregandoDados ? (
-        <div className="space-y-4">
-          {[...Array(4)].map((_, i) => (
-            <Skeleton key={i} height={70} className="rounded-lg" />
-          ))}
+        <div className="mb-6">
+          <label htmlFor="busca-instrutor" className="sr-only">
+            Buscar por nome ou e-mail
+          </label>
+          <input
+            id="busca-instrutor"
+            type="text"
+            placeholder="🔍 Buscar por nome ou e-mail..."
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            className="w-full px-4 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-lousa dark:bg-gray-800 dark:text-white"
+            autoComplete="off"
+          />
         </div>
-      ) : erro ? (
-        <p className="text-red-500 text-center">{erro}</p>
-      ) : (
-        <TabelaInstrutor
-          instrutor={Array.isArray(filtrados) ? filtrados : []}
-          onVisualizar={abrirModalVisualizar}
-        />
-      )}
+
+        {carregandoDados ? (
+          <div className="space-y-4" aria-busy="true" aria-live="polite">
+            {[...Array(4)].map((_, i) => (
+              <Skeleton key={i} height={70} className="rounded-lg" />
+            ))}
+          </div>
+        ) : erro ? (
+          <p className="text-red-500 text-center" role="alert">
+            {erro}
+          </p>
+        ) : (
+          <TabelaInstrutor
+            instrutor={Array.isArray(filtrados) ? filtrados : []}
+            onVisualizar={abrirModalVisualizar}
+          />
+        )}
+      </div>
 
       {/* Modal Histórico */}
       <Modal
         isOpen={modalHistoricoAberto}
         onRequestClose={() => setModalHistoricoAberto(false)}
-        className="bg-white dark:bg-gray-800 max-w-xl mx-auto mt-20 p-6 rounded-xl shadow-lg outline-none"
-        overlayClassName="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-start z-50"
+        className="bg-white dark:bg-gray-800 w-[92vw] max-w-xl mx-auto mt-20 p-6 rounded-xl shadow-lg outline-none"
+        overlayClassName="fixed inset-0 bg-black/50 flex justify-center items-start z-50"
         contentLabel="Histórico do instrutor"
+        shouldCloseOnOverlayClick
       >
         <h2 className="text-xl font-bold mb-4 text-black dark:text-white">
           Histórico de {instrutorSelecionado?.nome}
@@ -153,9 +159,7 @@ export default function GestaoInstrutor() {
                   </p>
                   <p className="text-sm">
                     Média de avaliação:{" "}
-                    <strong>
-                      {evento.nota_media !== null ? evento.nota_media.toFixed(1) : "N/A"}
-                    </strong>
+                    <strong>{evento.nota_media !== null ? evento.nota_media.toFixed(1) : "N/A"}</strong>
                   </p>
                 </li>
               ))}
@@ -163,13 +167,17 @@ export default function GestaoInstrutor() {
           </div>
         )}
 
-        <button
-          onClick={() => setModalHistoricoAberto(false)}
-          className="mt-6 px-4 py-2 rounded-md bg-zinc-700 hover:bg-zinc-800 text-white font-medium shadow transition-all"
-        >
-          ❌ Fechar
-        </button>
+        <div className="mt-6 flex justify-end">
+          <button
+            onClick={() => setModalHistoricoAberto(false)}
+            className="px-4 py-2 rounded-md bg-zinc-700 hover:bg-zinc-800 text-white font-medium shadow transition"
+          >
+            ❌ Fechar
+          </button>
+        </div>
       </Modal>
+
+      <Footer />
     </main>
   );
 }

@@ -8,9 +8,13 @@ import Breadcrumbs from "../components/Breadcrumbs";
 import Select from "../components/Select";
 import DateRangePicker from "../components/DateRangePicker";
 import RelatoriosTabela from "../components/RelatoriosTabela";
-import CabecalhoPainel from "../components/CabecalhoPainel";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import ErroCarregamento from "../components/ErroCarregamento";
+
+// 🧩 cabeçalho compacto + rodapé institucional
+import PageHeader from "../components/PageHeader";
+import Footer from "../components/Footer";
+import { BarChart3 } from "lucide-react";
 
 /* =======================
    Helpers de data (anti-UTC)
@@ -44,19 +48,15 @@ function startOfDayLocalISO(dateLike) {
 function endOfDayLocalISO(dateLike) {
   const dt = dateLike instanceof Date ? new Date(dateLike) : parseLocalYMD(dateLike);
   dt.setHours(23, 59, 59, 999);
-  // arredonda pra segundo cheio (caso backend ignore ms)
-  dt.setMilliseconds(0);
+  dt.setMilliseconds(0); // arredonda pra segundo cheio
   return toLocalNaiveISO(dt);
 }
 
 export default function RelatoriosCustomizados() {
   const perfilRaw = (localStorage.getItem("perfil") || "").toLowerCase();
   const usuarioObj = (() => {
-    try {
-      return JSON.parse(localStorage.getItem("usuario") || "{}");
-    } catch {
-      return {};
-    }
+    try { return JSON.parse(localStorage.getItem("usuario") || "{}"); }
+    catch { return {}; }
   })();
   const usuarioId = usuarioObj?.id ?? null;
 
@@ -67,12 +67,7 @@ export default function RelatoriosCustomizados() {
     periodo: ["", ""], // [inicio(YYYY-MM-DD), fim(YYYY-MM-DD)]
   });
 
-  const [opcoes, setOpcoes] = useState({
-    eventos: [],
-    instrutor: [],
-    unidades: [],
-  });
-
+  const [opcoes, setOpcoes] = useState({ eventos: [], instrutor: [], unidades: [] });
   const [dados, setDados] = useState([]);
   const [carregando, setCarregando] = useState(false);
   const [erroCarregamento, setErroCarregamento] = useState(false);
@@ -93,33 +88,22 @@ export default function RelatoriosCustomizados() {
         if (cancelado) return;
 
         setOpcoes({
-          eventos: (data?.eventos || []).map((e) => ({
-            value: String(e.id),
-            label: e.titulo || e.nome || "Sem título",
-          })),
-          instrutor: (data?.instrutor || []).map((i) => ({
-            value: String(i.id),
-            label: i.nome,
-          })),
-          unidades: (data?.unidades || []).map((u) => ({
-            value: String(u.id),
-            label: u.nome,
-          })),
+          eventos: (data?.eventos || []).map((e) => ({ value: String(e.id), label: e.titulo || e.nome || "Sem título" })),
+          instrutor: (data?.instrutor || []).map((i) => ({ value: String(i.id), label: i.nome })),
+          unidades: (data?.unidades || []).map((u) => ({ value: String(u.id), label: u.nome })),
         });
 
         if (podeAutoFiltrarInstrutor && usuarioId) {
           setFiltros((f) => ({ ...f, instrutorId: String(usuarioId) }));
         }
-      } catch (err) {
+      } catch {
         setErroCarregamento(true);
         toast.error("Erro ao carregar filtros.");
       }
     }
 
     loadOpts();
-    return () => {
-      cancelado = true;
-    };
+    return () => { cancelado = true; };
   }, [podeAutoFiltrarInstrutor, usuarioId]);
 
   const validarPeriodo = () => {
@@ -153,7 +137,7 @@ export default function RelatoriosCustomizados() {
 
     const [ini, fim] = filtros.periodo;
     if (ini && fim) {
-      // envia datas locais (sem Z) para evitar “dia anterior” no backend
+      // envia datas locais (sem Z) para evitar shift por fuso
       qs.append("from", startOfDayLocalISO(ini));
       qs.append("to", endOfDayLocalISO(fim));
     }
@@ -162,7 +146,7 @@ export default function RelatoriosCustomizados() {
     try {
       const res = await apiGet(`/api/relatorios?${qs.toString()}`, { on403: "silent" });
       setDados(Array.isArray(res) ? res : []);
-    } catch (e) {
+    } catch {
       toast.error("❌ Não foi possível gerar relatório.");
       setDados([]);
     } finally {
@@ -171,14 +155,8 @@ export default function RelatoriosCustomizados() {
   };
 
   const exportar = async (tipo) => {
-    if (!dados.length) {
-      toast.info("Sem dados para exportar.");
-      return;
-    }
-    if (!["pdf", "excel"].includes(tipo)) {
-      toast.error("Formato inválido.");
-      return;
-    }
+    if (!dados.length) return toast.info("Sem dados para exportar.");
+    if (!["pdf", "excel"].includes(tipo)) return toast.error("Formato inválido.");
     if (!validarPeriodo()) return;
 
     const payload = {
@@ -195,9 +173,7 @@ export default function RelatoriosCustomizados() {
     };
 
     try {
-      const { blob, filename } = await apiPostFile("/api/relatorios/exportar", payload, {
-        on403: "silent",
-      });
+      const { blob, filename } = await apiPostFile("/api/relatorios/exportar", payload, { on403: "silent" });
       const ext = tipo === "pdf" ? "pdf" : "xlsx";
       saveAs(blob, filename || `relatorio_custom.${ext}`);
     } catch {
@@ -216,102 +192,106 @@ export default function RelatoriosCustomizados() {
   };
 
   return (
-    <main className="p-6 bg-gelo dark:bg-zinc-900 min-h-screen text-black dark:text-white">
-      <Breadcrumbs trilha={[{ label: "Painel administrador" }, { label: "Relatórios" }]} />
-      <CabecalhoPainel titulo="📄 Relatórios Customizados" />
+    <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
+      {/* 🟨 Faixa de título para Relatórios (Admin) */}
+      <PageHeader title="Relatórios Customizados" icon={BarChart3} variant="dourado" />
 
-      {erroCarregamento ? (
-        <ErroCarregamento mensagem="Falha ao carregar os filtros disponíveis." />
-      ) : (
-        <>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-            <Select
-              label="Evento"
-              options={opcoes.eventos}
-              value={filtros.eventoId}
-              onChange={(v) => setFiltros((f) => ({ ...f, eventoId: v }))}
-              placeholder="Selecione..."
-            />
-            <Select
-              label="Instrutor"
-              options={opcoes.instrutor}
-              value={filtros.instrutorId}
-              onChange={(v) => setFiltros((f) => ({ ...f, instrutorId: v }))}
-              placeholder="Selecione..."
-            />
-            <Select
-              label="Unidade"
-              options={opcoes.unidades}
-              value={filtros.unidadeId}
-              onChange={(v) => setFiltros((f) => ({ ...f, unidadeId: v }))}
-              placeholder="Selecione..."
-            />
-            <DateRangePicker
-              label="Período"
-              value={filtros.periodo}
-              onChange={(r) => setFiltros((f) => ({ ...f, periodo: r }))}
-            />
-          </div>
+      <main role="main" className="flex-1 p-6">
+        <Breadcrumbs trilha={[{ label: "Painel administrador" }, { label: "Relatórios" }]} />
 
-          <div className="flex flex-wrap gap-3 my-6 items-center">
-            <button
-              onClick={buscar}
-              disabled={carregando}
-              className={`bg-orange-200 hover:bg-orange-300 text-orange-900 font-semibold py-2 px-4 rounded transition ${
-                carregando ? "opacity-70 cursor-not-allowed" : ""
-              }`}
-              aria-label="Buscar relatórios"
-            >
-              🔎 {carregando ? "Buscando..." : "Buscar"}
-            </button>
+        {erroCarregamento ? (
+          <ErroCarregamento mensagem="Falha ao carregar os filtros disponíveis." />
+        ) : (
+          <>
+            {/* 🔎 Filtros */}
+            <section aria-labelledby="filtros-heading" className="mt-2">
+              <h2 id="filtros-heading" className="sr-only">Filtros do relatório</h2>
 
-            <button
-              onClick={() => exportar("pdf")}
-              disabled={!dados.length || carregando}
-              className={`bg-orange-200 hover:bg-orange-300 text-orange-900 font-semibold py-2 px-4 rounded transition ${
-                !dados.length || carregando ? "opacity-60 cursor-not-allowed" : ""
-              }`}
-              aria-label="Exportar relatório em PDF"
-            >
-              📄 Exportar PDF
-            </button>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                <Select label="Evento" options={opcoes.eventos} value={filtros.eventoId} onChange={(v) => setFiltros((f) => ({ ...f, eventoId: v }))} placeholder="Selecione..." />
+                <Select label="Instrutor" options={opcoes.instrutor} value={filtros.instrutorId} onChange={(v) => setFiltros((f) => ({ ...f, instrutorId: v }))} placeholder="Selecione..." />
+                <Select label="Unidade" options={opcoes.unidades} value={filtros.unidadeId} onChange={(v) => setFiltros((f) => ({ ...f, unidadeId: v }))} placeholder="Selecione..." />
+                <DateRangePicker label="Período" value={filtros.periodo} onChange={(r) => setFiltros((f) => ({ ...f, periodo: r }))} />
+              </div>
 
-            <button
-              onClick={() => exportar("excel")}
-              disabled={!dados.length || carregando}
-              className={`bg-orange-200 hover:bg-orange-300 text-orange-900 font-semibold py-2 px-4 rounded transition ${
-                !dados.length || carregando ? "opacity-60 cursor-not-allowed" : ""
-              }`}
-              aria-label="Exportar relatório em Excel"
-            >
-              📊 Exportar Excel
-            </button>
+              <div className="flex flex-wrap gap-3 my-6 items-center">
+                <button
+                  onClick={buscar}
+                  disabled={carregando}
+                  aria-busy={carregando ? "true" : "false"}
+                  className={`inline-flex items-center justify-center rounded-full px-4 py-2 text-sm font-semibold text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-700 transition ${
+                    carregando ? "opacity-80 cursor-not-allowed" : ""
+                  }`}
+                  aria-label="Buscar relatórios"
+                >
+                  🔎 {carregando ? "Buscando..." : "Buscar"}
+                </button>
 
-            <button
-              onClick={limparFiltros}
-              disabled={carregando}
-              className="ml-auto bg-gray-200 hover:bg-gray-300 text-gray-900 font-medium py-2 px-4 rounded transition"
-              aria-label="Limpar filtros"
-            >
-              Limpar filtros
-            </button>
-          </div>
+                <button
+                  onClick={() => exportar("pdf")}
+                  disabled={!dados.length || carregando}
+                  className={`inline-flex items-center justify-center rounded-full px-4 py-2 text-sm font-semibold border border-amber-700 text-amber-800 hover:bg-amber-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-700 transition ${
+                    !dados.length || carregando ? "opacity-60 cursor-not-allowed" : ""
+                  }`}
+                  aria-label="Exportar relatório em PDF"
+                >
+                  📄 Exportar PDF
+                </button>
 
-          {carregando ? (
-            <CarregandoSkeleton height="220px" />
-          ) : (
-            <>
-              {dados?.length ? (
-                <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">
-                  {dados.length} registro{dados.length > 1 ? "s" : ""} encontrado
-                  {dados.length > 1 ? "s" : ""}.
-                </p>
-              ) : null}
-              <RelatoriosTabela data={dados} />
-            </>
-          )}
-        </>
-      )}
-    </main>
+                <button
+                  onClick={() => exportar("excel")}
+                  disabled={!dados.length || carregando}
+                  className={`inline-flex items-center justify-center rounded-full px-4 py-2 text-sm font-semibold border border-amber-700 text-amber-800 hover:bg-amber-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-700 transition ${
+                    !dados.length || carregando ? "opacity-60 cursor-not-allowed" : ""
+                  }`}
+                  aria-label="Exportar relatório em Excel"
+                >
+                  📊 Exportar Excel
+                </button>
+
+                <button
+                  onClick={limparFiltros}
+                  disabled={carregando}
+                  className="ml-auto inline-flex items-center justify-center rounded-full px-4 py-2 text-sm font-medium bg-gray-200 hover:bg-gray-300 text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-gray-400 transition"
+                  aria-label="Limpar filtros"
+                >
+                  Limpar filtros
+                </button>
+              </div>
+            </section>
+
+            {/* 📈 Resultado */}
+            <section aria-labelledby="resultado-heading" className="mt-2">
+              <h2 id="resultado-heading" className="sr-only">Resultados do relatório</h2>
+
+              {carregando ? (
+                <CarregandoSkeleton height="220px" />
+              ) : (
+                <>
+                  {dados?.length ? (
+                    <p className="text-sm text-gray-600 dark:text-gray-300 mb-2" aria-live="polite">
+                      {dados.length} registro{dados.length > 1 ? "s" : ""} encontrado{dados.length > 1 ? "s" : ""}.
+                    </p>
+                  ) : null}
+
+                  {/* ⬇️ Esconde explicitamente as colunas de IDs */}
+                  <RelatoriosTabela
+                    data={dados}
+                    hiddenKeys={[
+                      "evento_id", "eventoId",
+                      "instrutor_id", "instrutorId",
+                      "turma_id", "turmaId",
+                    ]}
+                  />
+                </>
+              )}
+            </section>
+          </>
+        )}
+      </main>
+
+      {/* Rodapé institucional */}
+      <Footer />
+    </div>
   );
 }

@@ -1,12 +1,13 @@
-// 📁 src/pages/AgendaAdministrador.jsx
-import { useEffect, useMemo, useState } from "react";
+// ✅ src/pages/AgendaAdministrador.jsx
+import { useEffect, useMemo, useRef, useState } from "react";
 import Calendar from "react-calendar";
 import "react-calendar/dist/Calendar.css";
 import { format, isAfter, isBefore, isWithinInterval, compareAsc } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { toast } from "react-toastify";
 
-import Breadcrumbs from "../components/Breadcrumbs";
+import PageHeader from "../components/PageHeader";
+import Footer from "../components/Footer";
 import EventoDetalheModal from "../components/EventoDetalheModal";
 import LegendaEventos from "../components/LegendaEventos";
 import { apiGet } from "../services/api";
@@ -92,33 +93,41 @@ const colorByStatus = {
 };
 /* ========================================================================= */
 
-export default function AgendaEventos() {
+export default function AgendaAdministrador() {
   const nome = localStorage.getItem("nome") || "";
   const [events, setEvents] = useState([]);
   const [selecionado, setSelecionado] = useState(null);
+  const [carregando, setCarregando] = useState(true);
+  const [erro, setErro] = useState("");
+  const liveRef = useRef(null);
+
+  async function carregar() {
+    setCarregando(true);
+    setErro("");
+    if (liveRef.current) liveRef.current.textContent = "Carregando agenda…";
+
+    try {
+      const data = await apiGet("/api/agenda");
+      setEvents(Array.isArray(data) ? data : []);
+      if (liveRef.current) {
+        liveRef.current.textContent = Array.isArray(data) && data.length
+          ? `Agenda carregada: ${data.length} evento(s).`
+          : "Nenhum evento encontrado para o período.";
+      }
+    } catch (err) {
+      console.error(err);
+      setErro("Não foi possível carregar a agenda.");
+      toast.error("❌ Não foi possível carregar a agenda.");
+      if (liveRef.current) liveRef.current.textContent = "Falha ao carregar a agenda.";
+    } finally {
+      setCarregando(false);
+    }
+  }
 
   useEffect(() => {
-    (async () => {
-      try {
-        const data = await apiGet("/api/agenda");
-        // debug: veja se vem ocorrencias ou turmas/datas
-        if (Array.isArray(data) && data.length) {
-          console.log("[/api/agenda] exemplo:", {
-            id: data[0]?.id,
-            titulo: data[0]?.titulo,
-            ocorrencias: data[0]?.ocorrencias,
-            turmas_datas: data[0]?.turmas?.[0]?.datas,
-          });
-        }
-        setEvents(Array.isArray(data) ? data : []);
-      } catch (err) {
-        console.error(err);
-        toast.error("❌ Não foi possível carregar a agenda.");
-      }
-    })();
+    carregar();
   }, []);
 
-  // 🔑 Estratégia:
   // 1) usa evento.ocorrencias (se vier)
   // 2) senão, tenta coletar datas a partir de evento.turmas[].datas[].data
   // 3) senão, fallback para o intervalo (legado)
@@ -131,7 +140,6 @@ export default function AgendaEventos() {
       if (Array.isArray(evento.ocorrencias) && evento.ocorrencias.length) {
         ocorrencias = evento.ocorrencias;
       } else if (Array.isArray(evento.turmas) && evento.turmas.length) {
-        // extrai datas reais das turmas, se o backend as enviar
         const bag = new Set();
         for (const t of evento.turmas) {
           if (Array.isArray(t.datas) && t.datas.length) {
@@ -145,7 +153,6 @@ export default function AgendaEventos() {
       }
 
       if (!ocorrencias.length) {
-        // fallback (evita sumir tudo enquanto ajusta backend)
         ocorrencias = rangeDiasYMD(
           ymd(evento.data_inicio ?? evento.dataInicio ?? evento.data),
           ymd(evento.data_fim ?? evento.data_termino ?? evento.dataTermino ?? evento.data)
@@ -174,72 +181,99 @@ export default function AgendaEventos() {
   }, [events]);
 
   return (
-    <main className="min-h-screen bg-gelo dark:bg-gray-900 px-4 py-6 text-gray-800 dark:text-white">
-      <Breadcrumbs trilha={[{ label: "Início" }, { label: "Agenda Geral de Eventos" }]} />
+    <>
+      <PageHeader
+        title="📅 Agenda Geral de Eventos"
+        subtitle="Painel do administrador"
+        leftPill={`Seja bem-vindo(a), ${nome || "administrador(a)"}`}
+        actions={
+          <button
+            type="button"
+            onClick={carregar}
+            disabled={carregando}
+            className={`px-3 py-1.5 text-sm rounded-md border transition
+              ${carregando
+                ? "opacity-60 cursor-not-allowed bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300"
+                : "bg-lousa text-white hover:bg-green-800"}`}
+            aria-label="Atualizar agenda"
+          >
+            {carregando ? "Atualizando…" : "Atualizar"}
+          </button>
+        }
+      />
 
-      <div className="flex justify-between items-center bg-lousa text-white px-4 py-2 rounded-xl shadow mb-6">
-        <span>
-          Seja bem-vindo(a), <strong>{nome}</strong>
-        </span>
-        <span className="font-semibold">Painel do administrador</span>
-      </div>
+      <main className="min-h-screen bg-gelo dark:bg-gray-900 px-3 sm:px-4 py-6 text-gray-900 dark:text-white">
+        {/* Live region acessível */}
+        <p ref={liveRef} className="sr-only" aria-live="polite" />
 
-      <h1 className="text-2xl sm:text-3xl font-bold text-center mb-6 text-[#1b4332] dark:text-white">
-        📅 Agenda Geral de Eventos
-      </h1>
+        <div className="mx-auto w-full max-w-7xl">
+          <div className="bg-white dark:bg-zinc-800 rounded-xl p-3 sm:p-5 shadow-md">
+            {erro ? (
+              <p className="text-red-600 dark:text-red-400 text-center">{erro}</p>
+            ) : (
+              <Calendar
+                locale="pt-BR"
+                className="react-calendar react-calendar-custom !bg-transparent"
+                prevLabel="‹"
+                nextLabel="›"
+                // acessibilidade básica do calendário
+                aria-label="Calendário de eventos"
+                // estilização nos tiles
+                tileClassName="!rounded-lg hover:!bg-gray-200 dark:hover:!bg-zinc-700 focus:!ring-2 focus:!ring-lousa"
+                navigationLabel={({ date }) =>
+                  format(date, "MMMM yyyy", { locale: ptBR }).replace(/^\w/, (c) => c.toUpperCase())
+                }
+                // bolinhas por dia
+                tileContent={({ date }) => {
+                  const key = format(date, "yyyy-MM-dd");
+                  const diaEventos = eventosPorData[key] || [];
 
-      {/* Largura total, centralizado, cartão responsivo */}
-      <div className="mx-auto w-full max-w-7xl">
-        <div className="bg-white dark:bg-zinc-800 rounded-xl p-4 sm:p-6 shadow-md">
-          <Calendar
-            locale="pt-BR"
-            className="react-calendar react-calendar-custom !bg-transparent"
-            prevLabel="‹"
-            nextLabel="›"
-            tileClassName="!rounded-lg hover:!bg-gray-200 dark:hover:!bg-zinc-700"
-            navigationLabel={({ date }) =>
-              format(date, "MMMM yyyy", { locale: ptBR }).replace(/^\w/, (c) => c.toUpperCase())
-            }
-            tileContent={({ date }) => {
-              const key = format(date, "yyyy-MM-dd");
-              const diaEventos = eventosPorData[key] || [];
-
-              return (
-                <div className="rc-day-dots mt-1 flex gap-1 justify-center flex-wrap">
-                  {diaEventos.map((ev) => {
-                    const st = deriveStatus(ev);
-                    return (
-                      <span
-                        key={`${ev.id ?? ev.titulo}-${key}`}
-                        className="agenda-dot cursor-pointer focus:outline-none focus:ring-2 focus:ring-lousa"
-                        style={{ backgroundColor: colorByStatus[st] || colorByStatus.programado }}
-                        title={ev.titulo}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => setSelecionado(ev)}
-                        onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setSelecionado(ev)}
-                        aria-label={`Evento: ${ev.titulo}`}
-                      />
-                    );
-                  })}
-                </div>
-              );
-            }}
-          />
+                  return (
+                    <div className="rc-day-dots mt-1 flex gap-1 justify-center flex-wrap">
+                      {diaEventos.map((ev) => {
+                        const st = deriveStatus(ev);
+                        return (
+                          <span
+                            key={`${ev.id ?? ev.titulo}-${key}`}
+                            className="agenda-dot cursor-pointer focus:outline-none focus:ring-2 focus:ring-lousa"
+                            style={{
+                              backgroundColor: colorByStatus[st] || colorByStatus.programado,
+                              width: 10,
+                              height: 10,
+                              borderRadius: 9999,
+                              display: "inline-block",
+                            }}
+                            title={ev.titulo}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => setSelecionado(ev)}
+                            onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setSelecionado(ev)}
+                            aria-label={`Evento: ${ev.titulo}`}
+                          />
+                        );
+                      })}
+                    </div>
+                  );
+                }}
+              />
+            )}
+          </div>
         </div>
-      </div>
 
-      <div className="mt-6 flex justify-center">
-        <LegendaEventos />
-      </div>
+        <div className="mt-6 flex justify-center">
+          <LegendaEventos />
+        </div>
 
-      {selecionado && (
-        <EventoDetalheModal
-          evento={selecionado}
-          aoFechar={() => setSelecionado(null)}
-          visivel
-        />
-      )}
-    </main>
+        {selecionado && (
+          <EventoDetalheModal
+            evento={selecionado}
+            aoFechar={() => setSelecionado(null)}
+            visivel
+          />
+        )}
+      </main>
+
+      <Footer />
+    </>
   );
 }

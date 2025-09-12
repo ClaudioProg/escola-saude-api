@@ -15,9 +15,22 @@ const hh = (s) => (typeof s === "string" ? s.slice(0, 5) : "");
 const normReg = (s) => String(s || "").replace(/\D/g, "");
 // parseia entrada solta/colada (csv, linhas, etc.) em uma lista de registros normalizados
 const parseRegsBulk = (txt) => {
-  const tokens = String(txt || "").match(/\d+/g) || [];
-  return Array.from(new Set(tokens.map(normReg).filter(Boolean)));
+  const tokens = String(txt || "")
+    .split(/[\s,;|\n\r\t]+/)
+    .map(normReg)
+    .filter(Boolean);
+  return Array.from(new Set(tokens));
 };
+
+// badge simples
+const Badge = ({ children, title }) => (
+  <span
+    title={title}
+    className="ml-2 inline-flex items-center justify-center text-[11px] px-2 py-0.5 rounded-full bg-gray-200 text-gray-700"
+  >
+    {children}
+  </span>
+);
 
 export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurmaRemovida }) {
   const [titulo, setTitulo] = useState("");
@@ -41,10 +54,7 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
 
   // opções de instrutor
   const opcoesInstrutor = usuarios.filter((usuario) => {
-    const perfil = (Array.isArray(usuario.perfil)
-      ? usuario.perfil.join(",")
-      : String(usuario.perfil || "")
-    ).toLowerCase();
+    const perfil = (Array.isArray(usuario.perfil) ? usuario.perfil.join(",") : String(usuario.perfil || "")).toLowerCase();
     return perfil.includes("instrutor") || perfil.includes("administrador");
   });
 
@@ -62,9 +72,7 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
   }
   function getInstrutorDisponivel(index) {
     return opcoesInstrutor.filter(
-      (i) =>
-        !instrutorSelecionado.includes(String(i.id)) ||
-        instrutorSelecionado[index] === String(i.id)
+      (i) => !instrutorSelecionado.includes(String(i.id)) || instrutorSelecionado[index] === String(i.id)
     );
   }
 
@@ -91,13 +99,13 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
       })
       .filter(Boolean);
 
-    // Se já veio "datas" (ex.: de uma criação anterior no próprio modal), mantém.
+    // Se já veio "datas", mantém.
     if (Array.isArray(turma?.datas) && turma.datas.length) return turma.datas;
 
     return fromEnc;
   }
 
-  // Preenche dados ao abrir/editar
+  // Preenche dados ao abrir/editar (objeto base)
   useEffect(() => {
     if (evento) {
       setTitulo(evento.titulo || "");
@@ -106,11 +114,7 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
       setTipo(evento.tipo || "");
       setUnidadeId(evento.unidade_id || "");
       setPublicoAlvo(evento.publico_alvo || "");
-      setInstrutorSelecionado(
-        Array.isArray(evento.instrutor)
-          ? evento.instrutor.map((i) => String(i.id))
-          : []
-      );
+      setInstrutorSelecionado(Array.isArray(evento.instrutor) ? evento.instrutor.map((i) => String(i.id)) : []);
 
       setTurmas(
         (evento.turmas || []).map((t) => {
@@ -125,12 +129,17 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
         })
       );
 
-      // 🔒 restrição (se vier do backend)
-      setRestrito(!!evento.restrito);
-      setRestritoModo(evento.restrito_modo || "");
-      setRegistros(Array.isArray(evento.registros) ? evento.registros.map(normReg).filter(Boolean) : []);
+      const restr = !!evento.restrito;
+      setRestrito(restr);
+      const modo = evento.restrito_modo || (restr ? "todos_servidores" : "");
+      setRestritoModo(modo);
+
+      const lista =
+        (Array.isArray(evento.registros_permitidos) ? evento.registros_permitidos : null) ??
+        (Array.isArray(evento.registros) ? evento.registros : []);
+      setRegistros(Array.from(new Set((lista || []).map(normReg).filter(Boolean))));
+      setRegistroInput("");
     } else {
-      // reset ao criar novo
       setTitulo("");
       setDescricao("");
       setLocal("");
@@ -146,6 +155,26 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
       setRegistroInput("");
     }
   }, [evento, isOpen]);
+
+  // ✅ Ao editar, busca o DETALHE para garantir a lista e contar
+  useEffect(() => {
+    if (!isOpen || !evento?.id) return;
+    (async () => {
+      try {
+        const det = await apiGet(`/api/eventos/${evento.id}`);
+        if (typeof det.restrito === "boolean") setRestrito(!!det.restrito);
+        if (det.restrito_modo) setRestritoModo(det.restrito_modo);
+        const lista = Array.isArray(det.registros_permitidos)
+          ? det.registros_permitidos
+          : Array.isArray(det.registros)
+          ? det.registros
+          : [];
+        setRegistros([...new Set(lista.map(normReg).filter(Boolean))]);
+      } catch {
+        // silencioso: mantém o que veio do objeto base
+      }
+    })();
+  }, [isOpen, evento?.id]);
 
   // Carrega unidades
   useEffect(() => {
@@ -170,21 +199,6 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
       }
     })();
   }, []);
-
-  // Ao editar: se houver endpoint de registros, busca a lista
-  useEffect(() => {
-    (async () => {
-      if (!isOpen || !evento?.id) return;
-      try {
-        const data = await apiGet(`/api/eventos/${evento.id}/registros`, { on401: "silent", on403: "silent" });
-        if (Array.isArray(data)) {
-          setRegistros(data.map(normReg).filter(Boolean));
-        }
-      } catch {
-        // endpoint pode não existir; tudo bem
-      }
-    })();
-  }, [isOpen, evento?.id]);
 
   const addRegistro = () => {
     const r = normReg(registroInput);
@@ -217,7 +231,7 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
       return;
     }
 
-    // validação de turmas + datas (estado do modal usa "datas")
+    // validação de turmas + datas
     for (const t of turmas) {
       if (!t.nome || !Number(t.vagas_total) || !Number.isFinite(Number(t.carga_horaria))) {
         toast.error("❌ Preencha nome, vagas e carga horária de cada turma.");
@@ -249,7 +263,7 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
 
     const instrutorValidado = instrutorSelecionado.map(Number).filter((id) => !Number.isNaN(id));
 
-    // monta turmas para o payload do backend (usa "encontros")
+    // monta turmas para o payload
     const turmasCompletas = turmas.map((t) => {
       const qtd = Array.isArray(t.datas) ? t.datas.length : 0;
       const di = qtd ? minDate(t.datas) : t.data_inicio;
@@ -263,7 +277,6 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
         horario_fim: hh(first.horario_fim || t.horario_fim),
         vagas_total: Number(t.vagas_total),
         carga_horaria: Number(t.carga_horaria),
-        // 🔥 agora enviamos ENCONTROS para o backend
         encontros: t.datas.map((d) => ({
           data: d.data,
           inicio: hh(d.horario_inicio),
@@ -283,7 +296,7 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
       instrutor: instrutorValidado,
       turmas: turmasCompletas,
 
-      // campos “espelho” (compatibilidade com fluxos antigos)
+      // “espelho”
       data_inicio: turmaPrincipal.data_inicio,
       data_fim: turmaPrincipal.data_fim,
       hora_inicio: turmaPrincipal.horario_inicio,
@@ -298,7 +311,7 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
       ...(restrito
         ? {
             restrito_modo: restritoModo,
-            ...(restritoModo === "lista_registros" ? { registros } : {}),
+            ...(restritoModo === "lista_registros" ? { registros_permitidos: registros } : {}),
           }
         : {}),
     };
@@ -309,7 +322,7 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
 
   const abrirModalTurma = () => setModalTurmaAberto(true);
 
-  // 🔥 Remover turma (local e/ou persistida)
+  // 🔥 Remover turma
   async function removerTurma(turma, idx) {
     const nome = turma?.nome || `Turma ${idx + 1}`;
     const ok = window.confirm(
@@ -317,7 +330,6 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
     );
     if (!ok) return;
 
-    // Turma ainda não persistida (sem id): apaga só do estado
     if (!turma?.id) {
       setTurmas((prev) => prev.filter((_, i) => i !== idx));
       toast.info("Turma removida (rascunho).");
@@ -329,14 +341,12 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
       await apiDelete(`/api/turmas/${turma.id}`);
       setTurmas((prev) => prev.filter((t) => t.id !== turma.id));
       toast.success("Turma removida com sucesso.");
-      onTurmaRemovida?.(turma.id); // sincroniza lista fora do modal
+      onTurmaRemovida?.(turma.id);
     } catch (err) {
       const code = err?.data?.erro;
       if (err?.status === 409 || code === "TURMA_COM_REGISTROS") {
         const c = err?.data?.contagens || {};
-        toast.error(
-          `Não é possível excluir: ${c.presencas || 0} presenças / ${c.certificados || 0} certificados.`
-        );
+        toast.error(`Não é possível excluir: ${c.presencas || 0} presenças / ${c.certificados || 0} certificados.`);
       } else if (err?.status === 404) {
         toast.warn("Turma não encontrada. Atualize a página.");
       } else {
@@ -347,6 +357,12 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
       setRemovendoId(null);
     }
   }
+
+  // 🔢 contador para o badge (usa estado se houver; senão, o count do backend)
+  const regCount =
+    Array.isArray(registros) && registros.length > 0
+      ? registros.length
+      : Number(evento?.count_registros_permitidos ?? 0);
 
   return (
     <Modal
@@ -499,6 +515,9 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
           <fieldset className="border rounded-md p-3">
             <legend className="px-1 font-semibold flex items-center gap-2">
               {restrito ? <Lock size={16} /> : <Unlock size={16} />} Visibilidade do evento
+              {restrito && restritoModo === "lista_registros" && regCount > 0 && (
+                <Badge title="Total de registros deste evento">{regCount}</Badge>
+              )}
             </legend>
 
             <label className="inline-flex items-center gap-2 mt-2">
@@ -527,7 +546,9 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
                     checked={restritoModo === "todos_servidores"}
                     onChange={() => setRestritoModo("todos_servidores")}
                   />
-                  <span>Todos os servidores (somente quem possui <strong>registro</strong> cadastrado)</span>
+                  <span>
+                    Todos os servidores (somente quem possui <strong>registro</strong> cadastrado)
+                  </span>
                 </label>
 
                 <label className="flex items-center gap-2">
@@ -538,7 +559,10 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
                     checked={restritoModo === "lista_registros"}
                     onChange={() => setRestritoModo("lista_registros")}
                   />
-                  <span>Apenas a lista específica de registros</span>
+                  <span className="inline-flex items-center">
+                    Apenas a lista específica de registros
+                    {regCount > 0 && <Badge title="Quantidade de registros na lista">{regCount}</Badge>}
+                  </span>
                 </label>
 
                 {restritoModo === "lista_registros" && (
@@ -555,7 +579,7 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
                         }}
                         onPaste={(e) => {
                           const txt = e.clipboardData?.getData("text");
-                          if (txt && /\D/.test(txt)) {
+                          if (txt && /[\s,;|\n\r\t]/.test(txt)) {
                             e.preventDefault();
                             addRegistrosBulk(txt);
                           }
@@ -572,25 +596,28 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
                       </button>
                     </div>
 
-                    {registros.length > 0 ? (
-                      <div className="flex flex-wrap gap-2">
-                        {registros.map((r) => (
-                          <span
-                            key={r}
-                            className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-gray-200 text-gray-800 text-xs"
-                          >
-                            {r}
-                            <button
-                              type="button"
-                              className="ml-1 text-red-600"
-                              title="Remover"
-                              onClick={() => removeRegistro(r)}
+                    {regCount > 0 ? (
+                      <>
+                        <div className="text-xs text-gray-600">{regCount} registro(s) na lista</div>
+                        <div className="flex flex-wrap gap-2">
+                          {registros.map((r) => (
+                            <span
+                              key={r}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-gray-200 text-gray-800 text-xs"
                             >
-                              ×
-                            </button>
-                          </span>
-                        ))}
-                      </div>
+                              {r}
+                              <button
+                                type="button"
+                                className="ml-1 text-red-600"
+                                title="Remover"
+                                onClick={() => removeRegistro(r)}
+                              >
+                                ×
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      </>
                     ) : (
                       <p className="text-xs text-gray-600">
                         Você também pode colar uma lista (CSV/planilha). Só os números serão considerados.
@@ -656,13 +683,9 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
                         </p>
                       )}
                       {hi && hf && (
-                        <p>
-                          🕒 {hi} às {hf}
-                        </p>
+                        <p>🕒 {hi} às {hf}</p>
                       )}
-                      <p>
-                        👥 {t.vagas_total} vagas • ⏱ {t.carga_horaria}h
-                      </p>
+                      <p>👥 {t.vagas_total} vagas • ⏱ {t.carga_horaria}h</p>
                     </div>
                   );
                 })}
@@ -707,23 +730,17 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
         isOpen={modalTurmaAberto}
         onClose={() => setModalTurmaAberto(false)}
         onSalvar={(turma) => {
-          // ModalTurma devolve "datas" para o estado do modal;
-          // a conversão para "encontros" é feita no handleSubmit.
           const datas = Array.isArray(turma.datas) ? turma.datas : [];
           setTurmas((prev) => [
             ...prev,
             {
               ...turma,
               datas,
-              // heranças para compatibilidade visual
+              // espelhos para exibição
               data_inicio: datas.length ? minDate(datas) : turma.data_inicio,
               data_fim: datas.length ? maxDate(datas) : turma.data_fim,
-              horario_inicio: datas.length
-                ? hh(datas[0]?.horario_inicio)
-                : hh(turma.horario_inicio || turma.hora_inicio),
-              horario_fim: datas.length
-                ? hh(datas[0]?.horario_fim)
-                : hh(turma.horario_fim || turma.hora_fim),
+              horario_inicio: datas.length ? hh(datas[0]?.horario_inicio) : hh(turma.horario_inicio || turma.hora_inicio),
+              horario_fim: datas.length ? hh(datas[0]?.horario_fim) : hh(turma.horario_fim || turma.hora_fim),
               carga_horaria: Number(turma.carga_horaria),
               vagas_total: Number(turma.vagas_total),
             },

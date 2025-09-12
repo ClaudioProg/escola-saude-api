@@ -1,4 +1,4 @@
-// src/pages/MinhasInscricoes.jsx
+// ✅ src/pages/MinhasInscricoes.jsx
 import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { gerarLinkGoogleAgenda } from "../utils/gerarLinkGoogleAgenda";
@@ -9,7 +9,8 @@ import { BookOpen, Clock, CheckCircle, XCircle, User } from "lucide-react";
 import { formatarDataBrasileira } from "../utils/data";
 
 import Breadcrumbs from "../components/Breadcrumbs";
-import CabecalhoPainel from "../components/CabecalhoPainel";
+import PageHeader from "../components/PageHeader";
+import Footer from "../components/Footer";
 import NadaEncontrado from "../components/NadaEncontrado";
 import BotaoPrimario from "../components/BotaoPrimario";
 import BotaoSecundario from "../components/BotaoSecundario";
@@ -121,149 +122,179 @@ export default function MinhasInscricoes() {
   }
 
   return (
-    <main className="min-h-screen bg-gelo dark:bg-zinc-900 px-2 sm:px-4 py-6">
-      <Breadcrumbs />
-      <CabecalhoPainel nome={nome} perfil="Painel do Usuário" />
+    <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
+      {/* 🟧 Faixa de título (família Cursos/Inscrições) */}
+      <PageHeader title="Meus Cursos" icon={BookOpen} variant="laranja" />
 
-      <motion.h2
-        className="text-2xl font-bold mb-6 text-black dark:text-white text-center"
-        initial={{ opacity: 0, y: -10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
-      >
-        📚 Meus Cursos
-      </motion.h2>
+      <main role="main" className="flex-1 px-2 sm:px-4 py-6">
+        <Breadcrumbs trilha={[{ label: "Painel do Usuário" }, { label: "Meus Cursos" }]} />
 
-      <section>
-        {carregando ? (
-          <div className="space-y-4 max-w-md mx-auto">
-            {[...Array(4)].map((_, i) => (
-              <Skeleton key={i} height={110} className="rounded-xl" baseColor="#cbd5e1" highlightColor="#e2e8f0" />
-            ))}
-          </div>
-        ) : erro ? (
-          <p className="text-red-500 text-center" aria-live="polite">{erro}</p>
-        ) : inscricoes.length === 0 ? (
-          <NadaEncontrado
-            mensagem="📭 Você ainda não está inscrito em nenhum evento."
-            sugestao="Acesse a página de eventos para se inscrever."
-          />
-        ) : (
-          <ul className="space-y-4 w-full sm:max-w-2xl mx-auto">
-            <AnimatePresence>
-              {inscricoes.map((item) => {
-                const dataInicioLocal = makeLocalDate(item.data_inicio, item.horario_inicio || "00:00:00");
-                const dataFimLocal    = makeLocalDate(item.data_fim,    item.horario_fim    || "23:59:59");
-                const status = obterStatusEvento(
-                  item.data_inicio,
-                  item.data_fim,
-                  item.horario_inicio,
-                  item.horario_fim
-                );
+        <motion.h2
+          className="text-2xl font-bold mb-6 text-center text-lousa dark:text-white"
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+        >
+          📚 Meus Cursos
+        </motion.h2>
 
-                const agendaHref = buildAgendaHref(item);
-                const podeAgendar = Boolean(agendaHref);
+        <section aria-labelledby="lista-inscricoes">
+          <h3 id="lista-inscricoes" className="sr-only">Lista de inscrições do usuário</h3>
 
-                const instrutores = Array.isArray(item.instrutor)
-                  ? item.instrutor.map((i) => i?.nome || String(i)).filter(Boolean)
-                  : String(item.instrutor || "")
-                      .split(",")
-                      .map((n) => n.trim())
-                      .filter(Boolean);
+          {carregando ? (
+            <div className="space-y-4 max-w-md mx-auto" role="status" aria-live="polite">
+              {[...Array(4)].map((_, i) => (
+                <Skeleton
+                  key={i}
+                  height={110}
+                  className="rounded-xl"
+                  baseColor="#cbd5e1"
+                  highlightColor="#e2e8f0"
+                />
+              ))}
+            </div>
+          ) : erro ? (
+            <p className="text-red-600 dark:text-red-400 text-center" aria-live="assertive">
+              {erro}
+            </p>
+          ) : inscricoes.length === 0 ? (
+            <NadaEncontrado
+              mensagem="📭 Você ainda não está inscrito em nenhum evento."
+              sugestao="Acesse a página de eventos para se inscrever."
+            />
+          ) : (
+            <ul className="space-y-4 w-full sm:max-w-2xl mx-auto" role="list">
+              <AnimatePresence>
+                {inscricoes.map((item) => {
+                  const status = obterStatusEvento(
+                    item.data_inicio,
+                    item.data_fim,
+                    item.horario_inicio,
+                    item.horario_fim
+                  );
 
-                const periodoFmt = [
-                  formatarDataBrasileira(item.data_inicio),
-                  formatarDataBrasileira(item.data_fim),
-                ].filter(Boolean).join(" até ");
+                  const agendaHref = buildAgendaHref(item);
+                  const podeAgendar = Boolean(agendaHref);
 
-                return (
-                  <motion.li
-                    key={item.inscricao_id}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.25 }}
-                    tabIndex={0}
-                    className="border p-4 rounded-xl shadow bg-white dark:bg-neutral-900 focus:outline-none focus:ring-2 focus:ring-lousa transition"
-                    aria-label={`Inscrição em ${item.titulo}`}
-                  >
-                    <h3 className="flex items-center gap-2 text-lg font-semibold text-lousa dark:text-white">
-                      <BookOpen className="w-5 h-5" />
-                      {item.titulo}
-                    </h3>
+                  const instrutores = Array.isArray(item.instrutor)
+                    ? item.instrutor.map((i) => i?.nome || String(i)).filter(Boolean)
+                    : String(item.instrutor || "")
+                        .split(",")
+                        .map((n) => n.trim())
+                        .filter(Boolean);
 
-                    <div className="text-sm italic text-gray-600 dark:text-gray-300 mt-1 flex items-center gap-1">
-                      <User className="w-4 h-4" />
-                      Instrutor(es):{" "}
-                      {instrutores.length ? (
-                        <ul className="list-disc list-inside">
-                          {instrutores.map((n, i) => <li key={i}>{n}</li>)}
-                        </ul>
-                      ) : (
-                        <span className="italic text-gray-500">a definir</span>
-                      )}
-                    </div>
+                  const periodoFmt = [
+                    formatarDataBrasileira(item.data_inicio),
+                    formatarDataBrasileira(item.data_fim),
+                  ]
+                    .filter(Boolean)
+                    .join(" até ");
 
-                    <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">
-                      <strong>Período:</strong><br />
-                      {periodoFmt} {item.local ? `– ${item.local}` : ""}
-                    </p>
+                  return (
+                    <motion.li
+                      key={item.inscricao_id}
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.25 }}
+                      tabIndex={0}
+                      className="border p-4 rounded-xl shadow bg-white dark:bg-neutral-900 focus:outline-none focus:ring-2 focus:ring-lousa transition"
+                      aria-label={`Inscrição em ${item.titulo}`}
+                      role="listitem"
+                    >
+                      <h4 className="flex items-center gap-2 text-lg font-semibold text-lousa dark:text-white">
+                        <BookOpen className="w-5 h-5" />
+                        {item.titulo}
+                      </h4>
 
-                    <p className="text-sm text-gray-500 dark:text-gray-400">
-                      Inscrição realizada em: {formatarDataBrasileira(item.data_inscricao)}
-                    </p>
+                      <div className="text-sm italic text-gray-600 dark:text-gray-300 mt-1 flex items-center gap-1">
+                        <User className="w-4 h-4" />
+                        Instrutor(es):{" "}
+                        {instrutores.length ? (
+                          <ul className="list-disc list-inside">
+                            {instrutores.map((n, i) => (
+                              <li key={i}>{n}</li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <span className="italic text-gray-500">a definir</span>
+                        )}
+                      </div>
 
-                    <p className="text-sm mt-1 font-semibold flex items-center gap-1">
-                      {status === "Encerrado" && <XCircle className="w-4 h-4 text-red-600" />}
-                      {status === "Programado" && <Clock className="w-4 h-4 text-yellow-700" />}
-                      {status === "Em andamento" && <CheckCircle className="w-4 h-4 text-green-600" />}
-                      <span
-                        className={
-                          status === "Encerrado" ? "text-red-600"
-                          : status === "Programado" ? "text-yellow-700"
-                          : "text-green-600"
-                        }
-                      >
-                        Status: {status}
-                      </span>
-                    </p>
+                      <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">
+                        <strong>Período:</strong><br />
+                        {periodoFmt} {item.local ? `– ${item.local}` : ""}
+                      </p>
 
-                    <div className="flex flex-wrap gap-3 mt-4">
-                      <BotaoSecundario
-                        as="a"
-                        href={agendaHref || "#"}
-                        onClick={(e) => {
-                          if (!podeAgendar) {
-                            e.preventDefault();
-                            toast.info("Não foi possível gerar o link da Google Agenda para este curso.");
+                      <p className="text-sm text-gray-500 dark:text-gray-400">
+                        Inscrição realizada em: {formatarDataBrasileira(item.data_inscricao)}
+                      </p>
+
+                      <p className="text-sm mt-1 font-semibold flex items-center gap-1">
+                        {status === "Encerrado" && <XCircle className="w-4 h-4 text-red-600" />}
+                        {status === "Programado" && <Clock className="w-4 h-4 text-yellow-700" />}
+                        {status === "Em andamento" && <CheckCircle className="w-4 h-4 text-green-600" />}
+                        <span
+                          className={
+                            status === "Encerrado"
+                              ? "text-red-600"
+                              : status === "Programado"
+                              ? "text-yellow-700"
+                              : "text-green-600"
                           }
-                        }}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={`w-full sm:w-auto ${!podeAgendar ? "opacity-60" : ""}`}
-                        aria-label="Adicionar curso à Google Agenda"
-                        aria-disabled={!podeAgendar}
-                        title={podeAgendar ? "Adicionar ao Google Agenda" : "Datas insuficientes para agendar"}
-                      >
-                        Adicionar ao Google Agenda
-                      </BotaoSecundario>
+                        >
+                          Status: {status}
+                        </span>
+                      </p>
 
-                      <BotaoPrimario
-                        className="w-full sm:w-auto"
-                        aria-label="Cancelar inscrição no curso"
-                        onClick={() => cancelarInscricao(item.inscricao_id)}
-                        disabled={status !== "Programado" || cancelandoId === item.inscricao_id}
-                      >
-                        {cancelandoId === item.inscricao_id ? "Cancelando..." : "Cancelar Inscrição"}
-                      </BotaoPrimario>
-                    </div>
-                  </motion.li>
-                );
-              })}
-            </AnimatePresence>
-          </ul>
-        )}
-      </section>
-    </main>
+                      <div className="flex flex-wrap gap-3 mt-4">
+                        <BotaoSecundario
+                          as="a"
+                          href={agendaHref || "#"}
+                          onClick={(e) => {
+                            if (!podeAgendar) {
+                              e.preventDefault();
+                              toast.info(
+                                "Não foi possível gerar o link da Google Agenda para este curso."
+                              );
+                            }
+                          }}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={`w-full sm:w-auto ${!podeAgendar ? "opacity-60" : ""}`}
+                          aria-label="Adicionar curso à Google Agenda"
+                          aria-disabled={!podeAgendar}
+                          title={
+                            podeAgendar
+                              ? "Adicionar ao Google Agenda"
+                              : "Datas insuficientes para agendar"
+                          }
+                        >
+                          Adicionar ao Google Agenda
+                        </BotaoSecundario>
+
+                        <BotaoPrimario
+                          className="w-full sm:w-auto"
+                          aria-label="Cancelar inscrição no curso"
+                          onClick={() => cancelarInscricao(item.inscricao_id)}
+                          disabled={status !== "Programado" || cancelandoId === item.inscricao_id}
+                        >
+                          {cancelandoId === item.inscricao_id
+                            ? "Cancelando..."
+                            : "Cancelar Inscrição"}
+                        </BotaoPrimario>
+                      </div>
+                    </motion.li>
+                  );
+                })}
+              </AnimatePresence>
+            </ul>
+          )}
+        </section>
+      </main>
+
+      {/* Rodapé institucional */}
+      <Footer />
+    </div>
   );
 }

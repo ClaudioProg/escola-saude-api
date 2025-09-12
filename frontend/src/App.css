@@ -1,40 +1,98 @@
 /* ============================================
-   Container principal (opcional se usar Tailwind)
+   🎨 Tema base (claro/escuro) + tokens
+   - Cor primária: green-900 (#14532d)
+============================================ */
+:root {
+  --brand-50:  #f0fdf4;
+  --brand-100: #dcfce7;
+  --brand-200: #bbf7d0;
+  --brand-300: #86efac;
+  --brand-400: #4ade80;
+  --brand-500: #22c55e;
+  --brand-600: #16a34a;
+  --brand-700: #15803d;
+  --brand-800: #166534;
+  --brand-900: #14532d; /* ✅ verde 900 */
+
+  --bg: #ffffff;
+  --fg: #111827; /* gray-900 */
+  --muted: #6b7280; /* gray-500 */
+  --card: #ffffff;
+  --ring: rgba(20, 83, 45, 0.6); /* ring verde 900 */
+  --shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.dark {
+  --bg: #111827;      /* gray-900 */
+  --fg: #f9fafb;      /* gray-50 */
+  --muted: #9ca3af;   /* gray-400 */
+  --card: #1f2937;    /* gray-800 */
+  --ring: rgba(20, 83, 45, 0.7);
+  --shadow: 0 2px 10px rgba(0,0,0,0.35);
+}
+
+/* Alto contraste do SO */
+@media (forced-colors: active) {
+  :root, .dark {
+    --ring: Highlight;
+  }
+}
+
+/* ============================================
+   Reset acessível de foco (teclado)
+============================================ */
+:focus {
+  outline: none;
+}
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+  border-radius: .5rem;
+}
+
+/* ============================================
+   Container principal (mobile-first)
 ============================================ */
 #root {
   max-width: 1280px;
   margin-inline: auto;
-  padding: 2rem;
+  padding: 1rem;
   text-align: center;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+@media (min-width: 640px) {
+  #root { padding: 1.5rem; }
+}
+@media (min-width: 1024px) {
+  #root { padding: 2rem; }
 }
 
 /* ============================================
-   Estilo da logo com animações
+   Estilo da logo com animações (respeita motion)
 ============================================ */
 .logo {
   height: 6rem;
   padding: 1.5rem;
-  will-change: filter;
-  transition: filter 0.3s ease;
+  will-change: filter, transform;
+  transition: filter 0.3s ease, transform 0.3s ease;
 }
 
 .logo:hover {
-  filter: drop-shadow(0 0 20px rgba(100, 108, 255, 0.67));
+  filter: drop-shadow(0 0 20px rgba(20, 83, 45, 0.45)); /* verde 900 glow */
 }
 
 .logo.react:hover {
-  filter: drop-shadow(0 0 20px rgba(97, 218, 251, 0.67));
+  filter: drop-shadow(0 0 20px rgba(20, 83, 45, 0.55));
 }
 
 @keyframes logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
 }
 
+/* ✨ só anima se o usuário permitir */
 @media (prefers-reduced-motion: no-preference) {
   a:nth-of-type(2) .logo {
     animation: logo-spin 20s linear infinite;
@@ -46,56 +104,154 @@
 ============================================ */
 .card {
   padding: 2rem;
+  background: var(--card);
+  border-radius: 1rem;
+  box-shadow: var(--shadow);
+  text-align: left;
+}
+.read-the-docs {
+  color: var(--muted);
 }
 
-.read-the-docs {
-  color: #888;
+/* Botões genéricos (se usar CSS puro em algum lugar) */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .5rem;
+  padding: .75rem 1rem;
+  border-radius: 1rem;
+  font-weight: 600;
+  background: var(--brand-900);
+  color: #fff;
+  border: none;
+  transition: transform .05s ease, background .2s ease;
 }
+.btn:hover { background: var(--brand-800); }
+.btn:active { transform: scale(0.99); }
+.btn:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
 
 /* ============================================
-   Estilos do react-calendar
+   react-calendar (tema verde 900 + dark mode)
 ============================================ */
 .react-calendar {
   width: 100%;
   max-width: 100%;
-  background-color: #fff;
+  background-color: var(--card);
   border-radius: 1rem;
   padding: 1rem;
   border: none;
-  color: #1f2937; /* gray-800 */
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  color: var(--fg);
+  box-shadow: var(--shadow);
 }
 
-.dark .react-calendar {
-  background-color: #1f2937; /* zinc-800 */
-  color: #f9fafb; /* gray-100 */
-}
-
-.react-calendar__tile {
-  padding: 0.75rem 0.5rem;
-  background: none;
-  border: none;
-  border-radius: 0.5rem;
-  text-align: center;
-  transition: background-color 0.3s ease;
-  color: inherit;
-}
-
-.react-calendar__tile:hover {
-  background-color: #e5e7eb; /* gray-200 */
-}
-
-.dark .react-calendar__tile:hover {
-  background-color: #374151; /* gray-700 */
-}
-
-.react-calendar__tile--active {
-  background-color: #0284c7 !important; /* blue-600 */
-  color: #fff !important;
-}
-
+/* navegação superior */
 .react-calendar__navigation {
   display: flex;
   justify-content: center;
-  margin-bottom: 1rem;
+  align-items: center;
+  margin-bottom: .75rem;
+  gap: .5rem;
+}
+
+.react-calendar__navigation button {
+  background: transparent;
+  border: none;
+  padding: .5rem .75rem;
+  border-radius: .75rem;
+  color: var(--fg);
+  cursor: pointer;
+}
+.react-calendar__navigation button:hover,
+.react-calendar__navigation button:focus-visible {
+  background: color-mix(in oklab, var(--brand-900) 12%, transparent);
+}
+
+/* dias */
+.react-calendar__tile {
+  padding: .65rem .4rem;
+  background: none;
+  border: none;
+  border-radius: .5rem;
+  text-align: center;
+  transition: background-color .2s ease, color .2s ease;
+  color: inherit;
+}
+
+.react-calendar__tile:enabled:hover,
+.react-calendar__tile:enabled:focus-visible {
+  background-color: color-mix(in oklab, var(--brand-900) 10%, transparent);
+}
+
+/* dia ativo (selecionado) */
+.react-calendar__tile--active {
+  background-color: var(--brand-900) !important;
+  color: #fff !important;
+}
+
+/* hoje (realce sutil) */
+.react-calendar__tile--now {
+  box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--brand-900) 45%, transparent);
+  border-radius: .5rem;
+}
+
+/* intervalo (se usar seleção de range) */
+.react-calendar__tile--range {
+  background-color: color-mix(in oklab, var(--brand-900) 18%, transparent);
+  color: #fff;
+}
+.react-calendar__tile--rangeStart,
+.react-calendar__tile--rangeEnd {
+  background-color: var(--brand-900);
+  color: #fff;
+}
+
+/* estados desabilitados */
+.react-calendar__tile:disabled {
+  color: var(--muted);
+  opacity: .6;
+  cursor: not-allowed;
+}
+
+/* dark overrides já cobertos por tokens, mas reforçamos hovers */
+.dark .react-calendar__tile:enabled:hover,
+.dark .react-calendar__tile:enabled:focus-visible {
+  background-color: color-mix(in oklab, var(--brand-900) 20%, transparent);
+}
+
+/* ============================================
+   Acessibilidade extra
+============================================ */
+[role="button"],
+button,
+a.buttonlike {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Melhor target em mobile se necessário */
+@media (max-width: 480px) {
+  .btn { padding: .85rem 1rem; }
+  .card { padding: 1.25rem; }
+}
+
+/* ============================================
+   Modo impressão
+============================================ */
+@media print {
+  #root {
+    max-width: none;
+    padding: 0;
+    text-align: left;
+    color: #000;
+    background: #fff;
+  }
+  .card {
+    box-shadow: none;
+    border: 1px solid #000;
+  }
+  /* evitar animações na impressão */
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
 }

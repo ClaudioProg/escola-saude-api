@@ -1,10 +1,18 @@
-// 📁 src/pages/CertificadosAvulsos.jsx
-import { useEffect, useState } from "react";
+// ✅ src/pages/CertificadosAvulsos.jsx
+import { useEffect, useState, useMemo, useRef } from "react";
 import { toast } from "react-toastify";
-import BotaoPrimario from "../components/BotaoPrimario";
-import { apiGet, apiPost, apiGetFile, API_BASE_URL } from "../services/api";
+import { RefreshCcw, Plus } from "lucide-react";
 
-// helpers anti-fuso: convertem string yyyy-mm-dd sem usar Date()
+import PageHeader from "../components/PageHeader";
+import Footer from "../components/Footer";
+import BotaoPrimario from "../components/BotaoPrimario";
+import CarregandoSkeleton from "../components/CarregandoSkeleton";
+import NadaEncontrado from "../components/NadaEncontrado";
+import { apiGet, apiPost, apiGetFile } from "../services/api";
+
+/* =======================
+   Helpers anti-fuso (YYYY-MM-DD)
+   ======================= */
 function ymdToBR(ymd) {
   if (!ymd) return "";
   const m = String(ymd).match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -14,6 +22,7 @@ function ymdToBR(ymd) {
 function validYMD(s) {
   return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
 }
+const validarEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || "").trim());
 
 export default function CertificadosAvulsos() {
   const [form, setForm] = useState({
@@ -27,53 +36,62 @@ export default function CertificadosAvulsos() {
   });
 
   const [lista, setLista] = useState([]);
-  const [carregando, setCarregando] = useState(false);
+  const [carregando, setCarregando] = useState(true);
+  const [salvando, setSalvando] = useState(false);
   const [filtro, setFiltro] = useState("todos");
+  const [acaoLoading, setAcaoLoading] = useState({ id: null, tipo: null }); // {id, 'pdf' | 'email'}
+  const liveRef = useRef(null); // aria-live para feedback de formulário
 
   useEffect(() => {
-    console.log("[CertificadosAvulsos] API_BASE_URL em uso:", API_BASE_URL || "(vazio → relativo)");
+    carregarCertificados();
   }, []);
+
+  async function carregarCertificados() {
+    try {
+      setCarregando(true);
+      const data = await apiGet("/api/certificados-avulsos", { on403: "silent" });
+      setLista(Array.isArray(data) ? data : []);
+    } catch (erro) {
+      toast.error("❌ Erro ao carregar certificados.");
+      setLista([]);
+    } finally {
+      setCarregando(false);
+    }
+  }
 
   function handleChange(e) {
     const { name, value } = e.target;
     setForm((prev) => ({ ...prev, [name]: value }));
   }
 
-  async function carregarCertificados() {
-    try {
-      console.log("[CertificadosAvulsos] GET /api/certificados-avulsos");
-      const data = await apiGet("/api/certificados-avulsos");
-      setLista(Array.isArray(data) ? data : []);
-      console.log("[CertificadosAvulsos] lista carregada:", data?.length ?? 0);
-    } catch (erro) {
-      console.error("[CertificadosAvulsos] erro ao carregar:", erro);
-      toast.error("❌ Erro ao carregar certificados.");
-    }
-  }
-
-  useEffect(() => {
-    carregarCertificados();
-  }, []);
-
   async function cadastrarCertificado(e) {
     e.preventDefault();
-    // validações básicas
+
+    // normaliza payload
     const payload = {
       nome: form.nome.trim(),
-      cpf: form.cpf.trim(),
+      cpf: form.cpf.trim(), // CPF ou registro funcional
       email: form.email.trim(),
       curso: form.curso.trim(),
       carga_horaria: Number(form.carga_horaria),
-      data_inicio: form.data_inicio, // inputs type=date já entregam yyyy-mm-dd
-      data_fim: form.data_fim || form.data_inicio,
+      data_inicio: form.data_inicio || "",
+      data_fim: form.data_fim || form.data_inicio || "",
     };
 
+    // validações
     if (!payload.nome || !payload.email || !payload.curso || !payload.carga_horaria) {
       toast.warning("Preencha todos os campos obrigatórios.");
+      liveRef.current && (liveRef.current.textContent = "Preencha os campos obrigatórios.");
+      return;
+    }
+    if (!validarEmail(payload.email)) {
+      toast.warning("Informe um e-mail válido.");
+      liveRef.current && (liveRef.current.textContent = "E-mail inválido.");
       return;
     }
     if (Number.isNaN(payload.carga_horaria) || payload.carga_horaria <= 0) {
       toast.warning("Informe uma carga horária válida (> 0).");
+      liveRef.current && (liveRef.current.textContent = "Carga horária inválida.");
       return;
     }
     if (payload.data_inicio && !validYMD(payload.data_inicio)) {
@@ -89,12 +107,11 @@ export default function CertificadosAvulsos() {
       return;
     }
 
-    setCarregando(true);
+    setSalvando(true);
     try {
-      console.log("[CertificadosAvulsos] POST /api/certificados-avulsos payload:", payload);
       const novo = await apiPost("/api/certificados-avulsos", payload);
       setLista((prev) => [novo, ...prev]);
-      toast.success("✅ Certificado cadastrado.");
+      setFiltro("todos");
       setForm({
         nome: "",
         cpf: "",
@@ -104,32 +121,33 @@ export default function CertificadosAvulsos() {
         data_inicio: "",
         data_fim: "",
       });
+      toast.success("✅ Certificado cadastrado.");
+      liveRef.current && (liveRef.current.textContent = "Certificado cadastrado com sucesso.");
     } catch (erro) {
-      console.error("[CertificadosAvulsos] erro ao cadastrar:", erro);
       toast.error("❌ Erro ao cadastrar certificado.");
+      liveRef.current && (liveRef.current.textContent = "Erro ao cadastrar certificado.");
     } finally {
-      setCarregando(false);
+      setSalvando(false);
     }
   }
 
   async function enviarPorEmail(id) {
+    setAcaoLoading({ id, tipo: "email" });
     try {
-      console.log("[CertificadosAvulsos] POST /api/certificados-avulsos/:id/enviar →", id);
-      toast.info("📤 Enviando...");
+      toast.info("📤 Enviando…");
       await apiPost(`/api/certificados-avulsos/${id}/enviar`);
       toast.success("✅ E-mail enviado!");
-      setLista((prev) =>
-        prev.map((item) => (item.id === id ? { ...item, enviado: true } : item))
-      );
-    } catch (erro) {
-      console.error("[CertificadosAvulsos] erro ao enviar e-mail:", erro);
+      setLista((prev) => prev.map((item) => (item.id === id ? { ...item, enviado: true } : item)));
+    } catch {
       toast.error("❌ Erro ao enviar e-mail.");
+    } finally {
+      setAcaoLoading({ id: null, tipo: null });
     }
   }
 
   async function gerarPDF(id) {
+    setAcaoLoading({ id, tipo: "pdf" });
     try {
-      console.log("[CertificadosAvulsos] GET(BLOB) /api/certificados-avulsos/:id/pdf →", id);
       const { blob, filename } = await apiGetFile(`/api/certificados-avulsos/${id}/pdf`);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -139,172 +157,266 @@ export default function CertificadosAvulsos() {
       a.click();
       a.remove();
       window.URL.revokeObjectURL(url);
-    } catch (erro) {
-      console.error("[CertificadosAvulsos] erro ao gerar PDF:", erro);
+    } catch {
       toast.error("❌ Erro ao gerar PDF.");
+    } finally {
+      setAcaoLoading({ id: null, tipo: null });
     }
   }
 
-  const listaFiltrada = lista.filter((item) => {
-    if (filtro === "enviados") return item.enviado === true;
-    if (filtro === "nao-enviados") return item.enviado === false;
-    return true;
-  });
+  const listaFiltrada = useMemo(() => {
+    return (lista || []).filter((item) => {
+      if (filtro === "enviados") return item.enviado === true;
+      if (filtro === "nao-enviados") return item.enviado === false || item.enviado === null;
+      return true;
+    });
+  }, [lista, filtro]);
 
   return (
-    <div className="p-6">
-      <h1 className="text-xl font-bold mb-4">Certificados Avulsos</h1>
+    <>
+      <PageHeader
+        title="Certificados Avulsos"
+        subtitle="Cadastre, gere o PDF e envie por e-mail certificados fora do fluxo automático."
+        breadcrumbs={[
+          { label: "Início", href: "/dashboard" },
+          { label: "Certificados" },
+          { label: "Avulsos", current: true },
+        ]}
+        actions={[
+          {
+            label: "Atualizar",
+            icon: <RefreshCcw className="w-4 h-4" />,
+            onClick: carregarCertificados,
+            variant: "ghost",
+          },
+          {
+            label: "Cadastrar",
+            icon: <Plus className="w-4 h-4" />,
+            form: "form-cert-avulso",
+            type: "submit",
+          },
+        ]}
+      />
 
-      <form
-        onSubmit={cadastrarCertificado}
-        className="grid gap-4 grid-cols-1 md:grid-cols-2 bg-white p-4 shadow rounded-lg"
-      >
-        <input
-          type="text"
-          name="nome"
-          placeholder="Nome"
-          value={form.nome}
-          onChange={handleChange}
-          required
-          className="border p-2 rounded col-span-2"
-        />
-        <input
-          type="text"
-          name="cpf"
-          placeholder="CPF ou Registro Funcional"
-          value={form.cpf}
-          onChange={handleChange}
-          className="border p-2 rounded"
-        />
-        <input
-          type="email"
-          name="email"
-          placeholder="E-mail"
-          value={form.email}
-          onChange={handleChange}
-          required
-          className="border p-2 rounded"
-        />
-        <input
-          type="text"
-          name="curso"
-          placeholder="Curso"
-          value={form.curso}
-          onChange={handleChange}
-          required
-          className="border p-2 rounded"
-        />
-        <input
-          type="number"
-          name="carga_horaria"
-          placeholder="Carga Horária"
-          value={form.carga_horaria}
-          onChange={handleChange}
-          required
-          min={1}
-          className="border p-2 rounded"
-        />
-        <input
-          type="date"
-          name="data_inicio"
-          placeholder="Data Início"
-          value={form.data_inicio}
-          onChange={handleChange}
-          className="border p-2 rounded"
-        />
-        <input
-          type="date"
-          name="data_fim"
-          placeholder="Data Fim"
-          value={form.data_fim}
-          onChange={handleChange}
-          className="border p-2 rounded"
-        />
-        <div className="col-span-2 text-right">
-          <BotaoPrimario type="submit" disabled={carregando}>
-            {carregando ? "Enviando..." : "Cadastrar Certificado"}
-          </BotaoPrimario>
-        </div>
-      </form>
+      <main className="min-h-screen bg-gelo dark:bg-zinc-900 px-3 sm:px-4 py-6">
+        {/* feedback de acessibilidade */}
+        <p ref={liveRef} className="sr-only" aria-live="polite" />
 
-      <hr className="my-6" />
-
-      <div className="mb-4">
-        <label htmlFor="filtro" className="mr-2 font-semibold">
-          Filtrar por envio:
-        </label>
-        <select
-          id="filtro"
-          value={filtro}
-          onChange={(e) => setFiltro(e.target.value)}
-          className="border p-1 rounded"
+        {/* Formulário */}
+        <form
+          id="form-cert-avulso"
+          onSubmit={cadastrarCertificado}
+          className="grid gap-4 grid-cols-1 md:grid-cols-2 bg-white dark:bg-zinc-800 p-4 shadow rounded-xl max-w-5xl mx-auto"
+          aria-label="Cadastro de certificado avulso"
         >
-          <option value="todos">Todos</option>
-          <option value="enviados">Enviados</option>
-          <option value="nao-enviados">Não enviados</option>
-        </select>
-      </div>
+          <div className="md:col-span-2">
+            <label htmlFor="nome" className="block text-sm font-medium text-slate-700 dark:text-slate-200">
+              Nome completo <span className="text-rose-600">*</span>
+            </label>
+            <input
+              id="nome"
+              name="nome"
+              type="text"
+              value={form.nome}
+              onChange={handleChange}
+              required
+              autoComplete="name"
+              className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white"
+            />
+          </div>
 
-      <h2 className="text-lg font-semibold mb-2">Certificados Cadastrados</h2>
+          <div>
+            <label htmlFor="cpf" className="block text-sm font-medium text-slate-700 dark:text-slate-200">
+              CPF / Registro funcional
+            </label>
+            <input
+              id="cpf"
+              name="cpf"
+              type="text"
+              value={form.cpf}
+              onChange={handleChange}
+              className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white"
+              inputMode="numeric"
+              autoComplete="off"
+            />
+          </div>
 
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm border">
-          <thead>
-            <tr className="bg-gray-100">
-              <th className="p-2 border">Nome</th>
-              <th className="p-2 border">Curso</th>
-              <th className="p-2 border">E-mail</th>
-              <th className="p-2 border">Carga Horária</th>
-              <th className="p-2 border">Período</th>
-              <th className="p-2 border">Ações</th>
-            </tr>
-          </thead>
-          <tbody>
-            {listaFiltrada.length === 0 && (
-              <tr>
-                <td colSpan={6} className="p-4 text-center text-gray-500">
-                  Nenhum certificado cadastrado.
-                </td>
-              </tr>
-            )}
+          <div>
+            <label htmlFor="email" className="block text-sm font-medium text-slate-700 dark:text-slate-200">
+              E-mail <span className="text-rose-600">*</span>
+            </label>
+            <input
+              id="email"
+              name="email"
+              type="email"
+              value={form.email}
+              onChange={handleChange}
+              required
+              autoComplete="email"
+              className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white"
+            />
+          </div>
 
-            {listaFiltrada.map((item) => {
-              const di = item.data_inicio?.slice(0, 10) || "";
-              const df = item.data_fim?.slice(0, 10) || "";
+          <div>
+            <label htmlFor="curso" className="block text-sm font-medium text-slate-700 dark:text-slate-200">
+              Curso <span className="text-rose-600">*</span>
+            </label>
+            <input
+              id="curso"
+              name="curso"
+              type="text"
+              value={form.curso}
+              onChange={handleChange}
+              required
+              className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white"
+            />
+          </div>
 
-              const periodo = di
-                ? df && df !== di
-                  ? `${ymdToBR(di)} a ${ymdToBR(df)}`
-                  : ymdToBR(di)
-                : "-";
+          <div>
+            <label htmlFor="carga_horaria" className="block text-sm font-medium text-slate-700 dark:text-slate-200">
+              Carga horária (h) <span className="text-rose-600">*</span>
+            </label>
+            <input
+              id="carga_horaria"
+              name="carga_horaria"
+              type="number"
+              min={1}
+              step="1"
+              value={form.carga_horaria}
+              onChange={handleChange}
+              required
+              className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white"
+            />
+          </div>
 
-              return (
-                <tr key={item.id} className="border-t">
-                  <td className="p-2">{item.nome}</td>
-                  <td className="p-2">{item.curso}</td>
-                  <td className="p-2">{item.email}</td>
-                  <td className="p-2 text-center">{item.carga_horaria}h</td>
-                  <td className="p-2 text-center">{periodo}</td>
-                  <td className="p-2 flex gap-2 justify-center">
-                    <button
-                      onClick={() => gerarPDF(item.id)}
-                      className="text-blue-600 underline"
-                    >
-                      PDF
-                    </button>
-                    <button
-                      onClick={() => enviarPorEmail(item.id)}
-                      className="text-green-600 underline"
-                    >
-                      {item.enviado ? "Reenviar" : "Enviar"}
-                    </button>
-                  </td>
+          <div>
+            <label htmlFor="data_inicio" className="block text-sm font-medium text-slate-700 dark:text-slate-200">
+              Data de início
+            </label>
+            <input
+              id="data_inicio"
+              name="data_inicio"
+              type="date"
+              value={form.data_inicio}
+              onChange={handleChange}
+              className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="data_fim" className="block text-sm font-medium text-slate-700 dark:text-slate-200">
+              Data de término
+            </label>
+            <input
+              id="data_fim"
+              name="data_fim"
+              type="date"
+              value={form.data_fim}
+              onChange={handleChange}
+              className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white"
+            />
+          </div>
+
+          <div className="md:col-span-2 flex justify-end">
+            <BotaoPrimario type="submit" disabled={salvando} aria-busy={salvando}>
+              {salvando ? "Enviando..." : "Cadastrar Certificado"}
+            </BotaoPrimario>
+          </div>
+        </form>
+
+        {/* Filtro */}
+        <section className="max-w-5xl mx-auto mt-6 flex items-center gap-2">
+          <label htmlFor="filtro" className="mr-2 font-semibold text-sm text-lousa dark:text-white">
+            Filtrar por envio:
+          </label>
+          <select
+            id="filtro"
+            value={filtro}
+            onChange={(e) => setFiltro(e.target.value)}
+            className="border p-1 rounded dark:bg-zinc-800 dark:text-white"
+          >
+            <option value="todos">Todos</option>
+            <option value="enviados">Enviados</option>
+            <option value="nao-enviados">Não enviados</option>
+          </select>
+          <span className="text-xs text-gray-600 dark:text-gray-300 ml-2">
+            {listaFiltrada.length} registro{listaFiltrada.length !== 1 ? "s" : ""}
+          </span>
+        </section>
+
+        {/* Tabela */}
+        <section
+          className="max-w-6xl mx-auto mt-3 bg-white dark:bg-zinc-800 rounded-xl shadow overflow-x-auto"
+          aria-label="Lista de certificados avulsos"
+        >
+          {carregando ? (
+            <div className="p-4">
+              <CarregandoSkeleton linhas={4} />
+            </div>
+          ) : listaFiltrada.length === 0 ? (
+            <div className="p-6">
+              <NadaEncontrado mensagem="Nenhum certificado cadastrado." />
+            </div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-100 dark:bg-zinc-700 text-left">
+                  <th className="p-2 border-b">Nome</th>
+                  <th className="p-2 border-b">Curso</th>
+                  <th className="p-2 border-b">E-mail</th>
+                  <th className="p-2 border-b text-center">Carga Horária</th>
+                  <th className="p-2 border-b text-center">Período</th>
+                  <th className="p-2 border-b text-center">Ações</th>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
+              </thead>
+              <tbody>
+                {listaFiltrada.map((item) => {
+                  const di = item.data_inicio?.slice(0, 10) || "";
+                  const df = item.data_fim?.slice(0, 10) || "";
+                  const periodo = di ? (df && df !== di ? `${ymdToBR(di)} a ${ymdToBR(df)}` : ymdToBR(di)) : "—";
+
+                  const isEmailLoading = acaoLoading.id === item.id && acaoLoading.tipo === "email";
+                  const isPdfLoading = acaoLoading.id === item.id && acaoLoading.tipo === "pdf";
+
+                  return (
+                    <tr key={item.id} className="border-t dark:border-zinc-700">
+                      <td className="p-2">{item.nome}</td>
+                      <td className="p-2">{item.curso}</td>
+                      <td className="p-2">{item.email}</td>
+                      <td className="p-2 text-center">{item.carga_horaria}h</td>
+                      <td className="p-2 text-center">{periodo}</td>
+                      <td className="p-2">
+                        <div className="flex gap-3 justify-center">
+                          <button
+                            onClick={() => gerarPDF(item.id)}
+                            disabled={isPdfLoading}
+                            className={`underline ${isPdfLoading ? "opacity-60 cursor-not-allowed" : "text-blue-700 dark:text-blue-300"}`}
+                            aria-label={`Baixar PDF do certificado de ${item.nome}`}
+                            title="Baixar PDF"
+                          >
+                            {isPdfLoading ? "Gerando…" : "PDF"}
+                          </button>
+                          <button
+                            onClick={() => enviarPorEmail(item.id)}
+                            disabled={isEmailLoading}
+                            className={`underline ${isEmailLoading ? "opacity-60 cursor-not-allowed" : "text-green-700 dark:text-green-300"}`}
+                            aria-label={`Enviar certificado de ${item.nome} por e-mail`}
+                            title={item.enviado ? "Reenviar e-mail" : "Enviar e-mail"}
+                          >
+                            {isEmailLoading ? "Enviando…" : item.enviado ? "Reenviar" : "Enviar"}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </section>
+      </main>
+
+      <Footer />
+    </>
   );
 }

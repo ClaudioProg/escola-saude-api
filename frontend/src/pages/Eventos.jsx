@@ -7,6 +7,8 @@ import "react-loading-skeleton/dist/skeleton.css";
 
 import { CalendarDays } from "lucide-react";
 import Breadcrumbs from "../components/Breadcrumbs";
+import PageHeader from "../components/PageHeader";
+import Footer from "../components/Footer";
 import NadaEncontrado from "../components/NadaEncontrado";
 import BotaoPrimario from "../components/BotaoPrimario";
 import FiltrosEventos from "../components/FiltrosEventos";
@@ -166,7 +168,7 @@ export default function Eventos() {
       setEventos(Array.isArray(lista) ? lista : []);
     } catch (e) {
       console.error("Erro em atualizarEventos():", e);
-      toast.warn("⚠️ Eventos não puderam ser atualizados."); // ← warn
+      toast.warn("⚠️ Eventos não puderam ser atualizados.");
     }
   }
 
@@ -226,7 +228,7 @@ export default function Eventos() {
           .filter((n) => Number.isFinite(n));
         setInscricoesConfirmadas(novasInscricoes);
       } catch {
-        toast.warn("⚠️ Não foi possível atualizar inscrições confirmadas."); // ← warn
+        toast.warn("⚠️ Não foi possível atualizar inscrições confirmadas.");
       }
 
       // Recarrega eventos
@@ -356,15 +358,10 @@ export default function Eventos() {
   // aplicar filtro atual
   const eventosFiltrados = eventos.filter((evento) => {
     const st = statusDoEvento(evento);
-
     if (filtro === "todos") return true;
     if (filtro === "programado") return st === "programado";
     if (filtro === "andamento") return st === "andamento";
-
-    if (filtro === "encerrado") {
-      return st === "encerrado";
-    }
-
+    if (filtro === "encerrado") return st === "encerrado";
     return true;
   });
 
@@ -385,133 +382,149 @@ export default function Eventos() {
 
   /* --------------------------------- UI --------------------------------- */
   return (
-    <main className="min-h-screen bg-gelo dark:bg-zinc-900 px-2 sm:px-4 py-6">
-      <Breadcrumbs />
-      <div className="flex justify-between items-center bg-lousa text-white px-4 py-2 rounded-xl shadow mb-6">
-        <span>Seja bem-vindo(a), <strong>{nome}</strong></span>
-        <span className="font-semibold">Painel do Usuário</span>
+    <main className="min-h-screen bg-gelo dark:bg-zinc-900">
+      <div className="px-2 sm:px-4 py-6">
+        <Breadcrumbs />
+
+        {/* Page Header acessível e com respiro */}
+        <PageHeader
+          title="🎓 Eventos disponíveis"
+          subtitle={nome ? `Seja bem-vindo(a), ${nome}` : "Inscreva-se em eventos abertos"}
+          className="mb-5 sm:mb-6"
+        />
+
+        {/* Filtros — separados do header para melhor responsividade */}
+        <section aria-label="Filtros de eventos" className="mb-5">
+          <FiltrosEventos
+            filtroAtivo={filtro}
+            onFiltroChange={setFiltroNormalizado}
+            filtroSelecionado={filtro}
+            valorSelecionado={filtro}
+            onChange={setFiltroNormalizado}
+          />
+        </section>
+
+        {carregandoEventos ? (
+          <div
+            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"
+            aria-busy="true"
+            aria-live="polite"
+          >
+            {[...Array(6)].map((_, i) => (
+              <Skeleton key={i} height={200} className="rounded-xl" />
+            ))}
+          </div>
+        ) : erro ? (
+          <p className="text-red-500 text-center">{erro}</p>
+        ) : eventosFiltrados.length === 0 ? (
+          <NadaEncontrado
+            mensagem="Nenhum evento encontrado para esse filtro."
+            sugestao="Experimente outra opção acima ou aguarde novas turmas."
+          />
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[...eventosFiltrados]
+              .sort((a, b) => (keyFim(b) > keyFim(a) ? 1 : keyFim(b) < keyFim(a) ? -1 : 0))
+              .map((evento) => {
+                const ehInstrutor = Boolean(evento.ja_instrutor);
+                const st = statusDoEvento(evento);
+                const chipCfg = chip[st];
+
+                return (
+                  <article
+                    key={evento.id}
+                    className="bg-white dark:bg-neutral-900 rounded-2xl p-5 shadow border border-gray-200 dark:border-gray-700"
+                    aria-labelledby={`evt-${evento.id}-titulo`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <h3
+                        id={`evt-${evento.id}-titulo`}
+                        className="text-xl font-semibold text-lousa dark:text-white mb-1"
+                      >
+                        {evento.titulo}
+                      </h3>
+                      <span className={`text-xs px-2 py-1 rounded-full ${chipCfg.cls}`} role="status">
+                        {chipCfg.text}
+                      </span>
+                    </div>
+
+                    {evento.descricao && (
+                      <p className="text-sm text-gray-700 dark:text-gray-300 mb-2">
+                        {evento.descricao}
+                      </p>
+                    )}
+
+                    {ehInstrutor && (
+                      <div className="mb-2 text-xs font-medium inline-flex items-center gap-2 px-2 py-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 border border-amber-200 dark:border-amber-800">
+                        Você é instrutor deste evento
+                      </div>
+                    )}
+
+                    <p className="text-sm italic text-gray-600 mt-1">
+                      Instrutor(es):{" "}
+                      <span className="text-gray-800 dark:text-white">
+                        {Array.isArray(evento.instrutor) && evento.instrutor.length
+                          ? evento.instrutor.map((i) => i.nome).join(", ")
+                          : "A definir"}
+                      </span>
+                    </p>
+
+                    {evento.publico_alvo && (
+                      <p className="text-sm italic text-gray-600 mt-1">
+                        Público-alvo:{" "}
+                        <span className="text-gray-800 dark:text-white">{evento.publico_alvo}</span>
+                      </p>
+                    )}
+
+                    <div className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-2 mb-3">
+                      <CalendarDays className="w-4 h-4" aria-hidden="true" />
+                      <span>
+                        {evento.data_inicio_geral && evento.data_fim_geral
+                          ? `${formatarDataCurtaSeguro(evento.data_inicio_geral)} até ${formatarDataCurtaSeguro(evento.data_fim_geral)}`
+                          : "Datas a definir"}
+                      </span>
+                    </div>
+
+                    <BotaoPrimario
+                      onClick={() => carregarTurmas(evento.id)}
+                      disabled={carregandoTurmas === evento.id}
+                      aria-expanded={!!turmasVisiveis[evento.id]}
+                      aria-controls={`turmas-${evento.id}`}
+                    >
+                      {carregandoTurmas === evento.id
+                        ? "Carregando..."
+                        : turmasVisiveis[evento.id]
+                        ? "Ocultar turmas"
+                        : "Ver turmas"}
+                    </BotaoPrimario>
+
+                    {turmasVisiveis[evento.id] && turmasPorEvento[evento.id] && (
+                      <div id={`turmas-${evento.id}`} className="mt-3">
+                        <ListaTurmasEvento
+                          turmas={turmasPorEvento[evento.id]}
+                          eventoId={evento.id}
+                          eventoTipo={evento.tipo}
+                          hoje={new Date()}
+                          inscricoesConfirmadas={inscricoesConfirmadas}
+                          inscrever={inscrever}
+                          inscrevendo={inscrevendo}
+                          jaInscritoNoEvento={jaInscritoNoEvento(evento)}
+                          jaInstrutorDoEvento={!!evento.ja_instrutor}
+                          carregarInscritos={() => {}}
+                          carregarAvaliacoes={() => {}}
+                          gerarRelatorioPDF={() => {}}
+                          mostrarStatusTurma={false}
+                        />
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+          </div>
+        )}
       </div>
 
-      <h1 className="text-2xl font-bold mb-4 text-center text-black dark:text-white">
-        🎓 Eventos disponíveis
-      </h1>
-
-      <FiltrosEventos
-        filtroAtivo={filtro}
-        onFiltroChange={setFiltroNormalizado}
-        filtroSelecionado={filtro}
-        valorSelecionado={filtro}
-        onChange={setFiltroNormalizado}
-      />
-
-      {carregandoEventos ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {[...Array(6)].map((_, i) => (
-            <Skeleton key={i} height={200} className="rounded-xl" />
-          ))}
-        </div>
-      ) : erro ? (
-        <p className="text-red-500 text-center">{erro}</p>
-      ) : eventosFiltrados.length === 0 ? (
-        <NadaEncontrado
-          mensagem="Nenhum evento encontrado para esse filtro."
-          sugestao="Experimente outra opção acima ou aguarde novas turmas."
-        />
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          {[...eventosFiltrados]
-            .sort((a, b) => (keyFim(b) > keyFim(a) ? 1 : keyFim(b) < keyFim(a) ? -1 : 0))
-            .map((evento) => {
-              const ehInstrutor = Boolean(evento.ja_instrutor);
-              const st = statusDoEvento(evento);
-              const chipCfg = chip[st];
-
-              return (
-                <div
-                  key={evento.id}
-                  className="bg-white dark:bg-neutral-900 rounded-2xl p-5 shadow border border-gray-200 dark:border-gray-700"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <h3 className="text-xl font-semibold text-lousa dark:text-white mb-1">
-                      {evento.titulo}
-                    </h3>
-                    <span className={`text-xs px-2 py-1 rounded-full ${chipCfg.cls}`}>
-                      {chipCfg.text}
-                    </span>
-                  </div>
-
-                  {evento.descricao && (
-                    <p className="text-sm text-gray-700 dark:text-gray-300 mb-2">
-                      {evento.descricao}
-                    </p>
-                  )}
-
-                  {ehInstrutor && (
-                    <div className="mb-2 text-xs font-medium inline-flex items-center gap-2 px-2 py-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 border border-amber-200 dark:border-amber-800">
-                      Você é instrutor deste evento
-                    </div>
-                  )}
-
-                  <p className="text-sm italic text-gray-600 mt-1">
-                    Instrutor(es):{" "}
-                    <span className="text-gray-800 dark:text-white">
-                      {Array.isArray(evento.instrutor) && evento.instrutor.length
-                        ? evento.instrutor.map((i) => i.nome).join(", ")
-                        : "A definir"}
-                    </span>
-                  </p>
-
-                  {evento.publico_alvo && (
-                    <p className="text-sm italic text-gray-600 mt-1">
-                      Público-alvo:{" "}
-                      <span className="text-gray-800 dark:text-white">{evento.publico_alvo}</span>
-                    </p>
-                  )}
-
-                  <div className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-2 mb-3">
-                    <CalendarDays className="w-4 h-4" />
-                    <span>
-                      {evento.data_inicio_geral && evento.data_fim_geral
-                        ? `${formatarDataCurtaSeguro(evento.data_inicio_geral)} até ${formatarDataCurtaSeguro(evento.data_fim_geral)}`
-                        : "Datas a definir"}
-                    </span>
-                  </div>
-
-                  <BotaoPrimario
-                    onClick={() => carregarTurmas(evento.id)}
-                    disabled={carregandoTurmas === evento.id}
-                    aria-expanded={!!turmasVisiveis[evento.id]}
-                    aria-controls={`turmas-${evento.id}`}
-                  >
-                    {carregandoTurmas === evento.id
-                      ? "Carregando..."
-                      : turmasVisiveis[evento.id]
-                      ? "Ocultar turmas"
-                      : "Ver turmas"}
-                  </BotaoPrimario>
-
-                  {turmasVisiveis[evento.id] && turmasPorEvento[evento.id] && (
-                    <ListaTurmasEvento
-                      turmas={turmasPorEvento[evento.id]}
-                      eventoId={evento.id}
-                      eventoTipo={evento.tipo}
-                      hoje={new Date()}
-                      inscricoesConfirmadas={inscricoesConfirmadas}
-                      inscrever={inscrever}
-                      inscrevendo={inscrevendo}
-                      jaInscritoNoEvento={jaInscritoNoEvento(evento)}
-                      jaInstrutorDoEvento={!!evento.ja_instrutor}
-                      carregarInscritos={() => {}}
-                      carregarAvaliacoes={() => {}}
-                      gerarRelatorioPDF={() => {}}
-                      mostrarStatusTurma={false}
-                    />
-                  )}
-                </div>
-              );
-            })}
-        </div>
-      )}
+      <Footer />
     </main>
   );
 }

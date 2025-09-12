@@ -1,11 +1,13 @@
-// 📁 src/pages/MeusCertificados.jsx
+// ✅ src/pages/MeusCertificados.jsx
 import { useEffect, useState, useMemo } from "react";
 import Skeleton from "react-loading-skeleton";
 import { toast } from "react-toastify";
+import { Award } from "lucide-react";
 import { formatarDataBrasileira, formatarParaISO } from "../utils/data";
 
 import Breadcrumbs from "../components/Breadcrumbs";
-import CabecalhoPainel from "../components/CabecalhoPainel";
+import PageHeader from "../components/PageHeader";
+import Footer from "../components/Footer";
 import NadaEncontrado from "../components/NadaEncontrado";
 import { apiGet, apiPost, makeApiUrl } from "../services/api";
 
@@ -193,24 +195,30 @@ export default function MeusCertificados() {
   }
 
   return (
-    <main className="max-w-4xl mx-auto px-4 py-6">
-      <Breadcrumbs
-        links={[{ href: "/dashboard", rotulo: "Início" }]}
-        atual="Meus Certificados"
-      />
-      <CabecalhoPainel titulo="Meus Certificados" subtitulo={nome ? `Olá, ${nome}` : ""} />
+    <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
+      {/* 🟪 Faixa de título para Certificados */}
+      <PageHeader title="Meus Certificados" icon={Award} variant="roxo" />
 
-      {carregando ? (
-        <Skeleton count={5} height={100} className="mb-4" />
-      ) : erro ? (
-        <NadaEncontrado mensagem="Não foi possível carregar os certificados." />
-      ) : certificados.length === 0 ? (
-        <NadaEncontrado mensagem="Você ainda não possui certificados disponíveis." />
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {certificados.map(renderizarCartao)}
-        </div>
-      )}
-    </main>
+      <main role="main" className="flex-1 max-w-4xl mx-auto px-4 py-6">
+        <Breadcrumbs trilha={[{ label: "Início", href: "/dashboard" }, { label: "Meus Certificados" }]} />
+
+        {carregando ? (
+          <div role="status" aria-live="polite">
+            <Skeleton count={5} height={100} className="mb-4" />
+          </div>
+        ) : erro ? (
+          <NadaEncontrado mensagem="Não foi possível carregar os certificados." />
+        ) : certificados.length === 0 ? (
+          <NadaEncontrado mensagem="Você ainda não possui certificados disponíveis." />
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {certificados.map(renderizarCartao)}
+          </div>
+        )}
+      </main>
+
+      {/* Rodapé institucional */}
+      <Footer />
+    </div>
   );
 }

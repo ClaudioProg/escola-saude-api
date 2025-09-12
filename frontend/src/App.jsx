@@ -9,13 +9,13 @@ import {
   Navigate,
 } from "react-router-dom";
 import PrivateRoute from "./components/PrivateRoute";
-import { Suspense, lazy, useEffect } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import Navbar from "./components/Navbar";
 import CertificadosAvulsos from "./pages/CertificadosAvulsos";
 import QRCodesEventosAdmin from "./pages/QRCodesEventosAdmin";
 import QrDoSite from "./pages/QrDoSite";
 
-// 🔄 Lazy loading das páginas
+// 🔄 Lazy loading das páginas (sem deps extras)
 const Login                 = lazy(() => import("./pages/Login"));
 const Cadastro              = lazy(() => import("./pages/Cadastro"));
 const ValidarCertificado    = lazy(() => import("./pages/ValidarCertificado"));
@@ -52,28 +52,83 @@ const GestaoPresencas       = lazy(() => import("./pages/GestaoPresenca"));
 // ✅ Página de confirmação via QR (com/sem token)
 const ConfirmarPresenca     = lazy(() => import("./pages/ConfirmarPresenca"));
 
+/* ──────────────────────────────────────────────────────────────
+   A11y: Announcer de mudanças de rota
+   ────────────────────────────────────────────────────────────── */
+   function RouteChangeAnnouncer() {
+  const location = useLocation();
+  const [message, setMessage] = useState("Carregado");
+  useEffect(() => {
+    const path = location.pathname.replace(/^\/+/, "") || "início";
+    setMessage(`Página carregada: ${path}`);
+  }, [location]);
+  return (
+    <div
+      aria-live="polite"
+      aria-atomic="true"
+      className="sr-only"
+    >
+      {message}
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────
+   UX: Scroll para o topo em cada navegação
+   ────────────────────────────────────────────────────────────── */
+function ScrollToTop() {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    try {
+      window.scrollTo({ top: 0, behavior: "instant" });
+    } catch {
+      window.scrollTo(0, 0);
+    }
+  }, [pathname]);
+  return null;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   Layout com Navbar + Skip Link
+   ────────────────────────────────────────────────────────────── */
 function LayoutComNavbar({ children }) {
   const location = useLocation();
 
-  // Regras de páginas públicas (sem navbar)
-  const isPublicPath = (p) =>
-    p === "/" ||
-    p === "/login" ||
-    p === "/cadastro" ||
-    p === "/recuperar-senha" ||
-    p === "/validar" ||                    // legado
-    p === "/validar-presenca" ||           // legado
-    p === "/validar-certificado" ||
-    p.endsWith(".html") ||                 // alias .html
-    p.startsWith("/redefinir-senha") ||
-    p.startsWith("/presenca");             // tela do QR
-
-  const esconderNavbar = isPublicPath(location.pathname);
+  const isPublicPath = useMemo(() => {
+    const p = location.pathname;
+    return (
+      p === "/" ||
+      p === "/login" ||
+      p === "/cadastro" ||
+      p === "/recuperar-senha" ||
+      p === "/validar" ||                    // legado
+      p === "/validar-presenca" ||           // legado
+      p === "/validar-certificado" ||
+      p.endsWith(".html") ||                 // alias .html
+      p.startsWith("/redefinir-senha") ||
+      p.startsWith("/presenca")              // tela do QR
+    );
+  }, [location.pathname]);
 
   return (
-    <div className="min-h-screen bg-gelo text-gray-800 font-sans dark:bg-gray-900 dark:text-white">
-      {!esconderNavbar && <Navbar />}
-      {children}
+    <div className="min-h-screen bg-white text-gray-900 dark:bg-gray-900 dark:text-white">
+      {/* Skip link para acessibilidade */}
+      <a
+        href="#content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:bg-green-900 focus:text-white focus:px-4 focus:py-2 focus:rounded-xl"
+      >
+        Pular para conteúdo
+      </a>
+
+      {!isPublicPath && <Navbar />}
+
+      {/* Announcer + ScrollToTop */}
+      <RouteChangeAnnouncer />
+      <ScrollToTop />
+
+      <main id="content" className="min-h-[70vh]">
+        {children}
+      </main>
     </div>
   );
 }
@@ -92,7 +147,7 @@ function HtmlAliasRedirect() {
     nav(`${semHtml}${loc.search}`, { replace: true });
   }, [loc.pathname, loc.search, nav]);
   return (
-    <div className="min-h-screen flex items-center justify-center">
+    <div className="min-h-[60vh] flex items-center justify-center text-sm text-gray-600 dark:text-gray-300">
       Redirecionando…
     </div>
   );
@@ -112,28 +167,60 @@ function ValidarPresencaRouter() {
 
     try {
       const u = new URL(raw);
+
+      // 1) tenta por querystring
       turmaId =
         u.searchParams.get("turma") ||
         u.searchParams.get("turma_id") ||
         u.searchParams.get("id");
       token = u.searchParams.get("t") || u.searchParams.get("token");
+
+      // 2) tenta extrair do pathname SEM regex
+      if (!turmaId) {
+        const parts = (u.pathname || "").split("/").filter(Boolean);
+        const idx = parts.indexOf("presenca");
+        if (idx >= 0 && parts[idx + 1]) turmaId = parts[idx + 1];
+      }
+
+      // 3) fallback com regex CORRETO (sem barras extras)
       if (!turmaId) {
         const m = (u.pathname || "").match(/\/presenca\/(\d+)/);
         if (m && m[1]) turmaId = m[1];
       }
+
+      // 4) mais uma tentativa com pathname decodificado
       if (!turmaId) {
         const decPath = decodeURIComponent(u.pathname || "");
         const m2 = decPath.match(/\/presenca\/(\d+)/);
         if (m2 && m2[1]) turmaId = m2[1];
       }
     } catch {
-      const dec = (() => { try { return decodeURIComponent(raw); } catch { return raw; }})();
-      const m = dec.match(/\/presenca\/(\d+)/);
-      if (m && m[1]) turmaId = m[1];
+      // Se 'raw' não é URL válida, tenta extrair manualmente
+      const dec = (() => { try { return decodeURIComponent(raw); } catch { return raw; } })();
+
+      // querystring direta (…?turma=123&t=xxx)
       const qs = dec.includes("?") ? dec.split("?")[1] : "";
       const qsp = new URLSearchParams(qs);
       token = qsp.get("t") || qsp.get("token") || token;
-      turmaId = qsp.get("turma") || qsp.get("turma_id") || qsp.get("id") || turmaId;
+      turmaId =
+        qsp.get("turma") ||
+        qsp.get("turma_id") ||
+        qsp.get("id") ||
+        turmaId;
+
+      // path “…/presenca/123” (sem regex → mais robusto)
+      if (!turmaId) {
+        const pathOnly = dec.split("?")[0] || "";
+        const parts = pathOnly.split("/").filter(Boolean);
+        const idx = parts.indexOf("presenca");
+        if (idx >= 0 && parts[idx + 1]) turmaId = parts[idx + 1];
+      }
+
+      // fallback final com REGEX CORRETO
+      if (!turmaId) {
+        const m = dec.match(/\/presenca\/(\d+)/);
+        if (m && m[1]) turmaId = m[1];
+      }
     }
 
     const search = new URLSearchParams();
@@ -155,11 +242,27 @@ function NotFound() {
   return <Navigate to="/login" replace />;
 }
 
+/* ──────────────────────────────────────────────────────────────
+   App
+   ────────────────────────────────────────────────────────────── */
 export default function App() {
   return (
     <BrowserRouter>
       <LayoutComNavbar>
-        <Suspense fallback={<div className="p-4 text-center">Carregando...</div>}>
+        <Suspense
+          fallback={
+            <div className="p-6 flex items-center justify-center">
+              <span
+                role="status"
+                aria-live="polite"
+                className="inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300"
+              >
+                <span className="inline-block h-3 w-3 animate-pulse rounded-full bg-green-900" />
+                Carregando…
+              </span>
+            </div>
+          }
+        >
           <Routes>
             {/* 🌐 públicas */}
             <Route path="/" element={<Login />} />

@@ -1,11 +1,16 @@
-// 📁 src/pages/HistoricoCertificados.jsx
+// ✅ src/pages/HistoricoCertificados.jsx
 import { useEffect, useState } from "react";
 import TabelaCertificados from "../components/TabelaCertificados";
 import { toast } from "react-toastify";
 import Breadcrumbs from "../components/Breadcrumbs";
-import CabecalhoPainel from "../components/CabecalhoPainel";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import NadaEncontrado from "../components/NadaEncontrado";
+
+// 🧩 novo cabeçalho compacto + rodapé institucional
+import PageHeader from "../components/PageHeader";
+import Footer from "../components/Footer";
+import { Award } from "lucide-react";
+
 import { apiGet, apiPost, apiGetFile } from "../services/api"; // ⬅️ usa helpers
 
 export default function HistoricoCertificados() {
@@ -62,23 +67,30 @@ export default function HistoricoCertificados() {
   };
 
   return (
-    <main className="min-h-screen bg-gelo dark:bg-zinc-900 px-4 py-6 max-w-screen-lg mx-auto">
-      <Breadcrumbs trilha={[{ label: "Meus Certificados" }]} />
-      <CabecalhoPainel titulo="📜 Histórico de Certificados" />
+    <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
+      {/* 🟣 Faixa de título para Certificados */}
+      <PageHeader title="Histórico de Certificados" icon={Award} variant="roxo" />
 
-      <h1 className="text-2xl font-bold mb-6 text-center text-lousa dark:text-white">
-        📜 Histórico de Certificados
-      </h1>
+      <main role="main" className="flex-1 px-4 py-6 max-w-screen-lg mx-auto">
+        <Breadcrumbs trilha={[{ label: "Meus Certificados" }, { label: "Histórico" }]} />
 
-      {carregando ? (
-        <CarregandoSkeleton linhas={4} />
-      ) : erro ? (
-        <p className="text-red-500 text-center">{erro}</p>
-      ) : dados.length === 0 ? (
-        <NadaEncontrado mensagem="Nenhum certificado encontrado." />
-      ) : (
-        <TabelaCertificados dados={dados} onDownload={baixar} onRevalidar={revalidar} />
-      )}
-    </main>
+        {carregando ? (
+          <CarregandoSkeleton linhas={4} />
+        ) : erro ? (
+          <p className="text-red-500 text-center" aria-live="polite">
+            {erro}
+          </p>
+        ) : dados.length === 0 ? (
+          <NadaEncontrado mensagem="Nenhum certificado encontrado." />
+        ) : (
+          <section aria-label="Tabela de certificados emitidos">
+            <TabelaCertificados dados={dados} onDownload={baixar} onRevalidar={revalidar} />
+          </section>
+        )}
+      </main>
+
+      {/* Rodapé institucional */}
+      <Footer />
+    </div>
   );
 }

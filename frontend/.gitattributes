@@ -1,26 +1,54 @@
-# Normaliza final de linha para LF (padrão Unix, ideal para projetos Node.js/React)
+# ================================================================
+# Configuração de normalização de final de linha para o projeto
+# ================================================================
+
+# Define como padrão: arquivos de texto terão final de linha LF
 * text=auto eol=lf
 
-# Especificações por tipo de arquivo
-*.js    text eol=lf
-*.jsx   text eol=lf
-*.ts    text eol=lf
-*.tsx   text eol=lf
-*.json  text eol=lf
-*.css   text eol=lf
-*.scss  text eol=lf
-*.html  text eol=lf
-*.md    text eol=lf
-*.yml   text eol=lf
-*.yaml  text eol=lf
+# ----------------------------------------------------------------
+# Linguagens / formatos principais
+# ----------------------------------------------------------------
+*.js     text eol=lf
+*.jsx    text eol=lf
+*.ts     text eol=lf
+*.tsx    text eol=lf
+*.json   text eol=lf
+*.css    text eol=lf
+*.scss   text eol=lf
+*.html   text eol=lf
+*.md     text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
 
+# ----------------------------------------------------------------
+# Arquivos de configuração e scripts
+# ----------------------------------------------------------------
+*.env      text eol=lf
+*.sh       text eol=lf
+*.bat      text eol=crlf   # scripts .bat precisam CRLF no Windows
+*.ps1      text eol=crlf   # PowerShell idem
+
+# ----------------------------------------------------------------
 # Arquivos binários (não normalizar)
-*.png binary
-*.jpg binary
+# ----------------------------------------------------------------
+*.png  binary
+*.jpg  binary
 *.jpeg binary
-*.gif binary
-*.svg binary
-*.ico binary
-*.ttf binary
+*.gif  binary
+*.svg  binary
+*.ico  binary
+*.ttf  binary
 *.woff binary
 *.woff2 binary
+*.eot  binary
+*.zip  binary
+*.pdf  binary
+*.mp4  binary
+*.mov  binary
+
+# ----------------------------------------------------------------
+# GitHub / GitLab específicos
+# ----------------------------------------------------------------
+.gitattributes text eol=lf
+.gitignore    text eol=lf
+.editorconfig text eol=lf

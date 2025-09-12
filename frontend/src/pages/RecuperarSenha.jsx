@@ -1,15 +1,23 @@
-// src/pages/RecuperarSenha.jsx
+// ✅ src/pages/RecuperarSenha.jsx
 import { useState } from "react";
 import { toast } from "react-toastify";
 import BotaoPrimario from "../components/BotaoPrimario";
 import BotaoSecundario from "../components/BotaoSecundario";
 import { apiPost } from "../services/api";
 
+// Cabeçalho compacto + rodapé institucional
+import PageHeader from "../components/PageHeader";
+import Footer from "../components/Footer";
+import { Mail } from "lucide-react";
+
 export default function RecuperarSenha() {
   const [email, setEmail] = useState("");
   const [mensagem, setMensagem] = useState("");
   const [erro, setErro] = useState("");
   const [loading, setLoading] = useState(false);
+
+  const emailValido = (v) =>
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || "").trim());
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -23,16 +31,29 @@ export default function RecuperarSenha() {
       toast.warning("⚠️ " + m);
       return;
     }
+    if (!emailValido(emailTrim)) {
+      const m = "Informe um e-mail válido.";
+      setErro(m);
+      toast.warning("⚠️ " + m);
+      return;
+    }
 
     setLoading(true);
     toast.info("⏳ Enviando solicitação...");
     try {
-      await apiPost("/usuarios/recuperar-senha", { email: emailTrim });
-      setMensagem("Se o e-mail estiver cadastrado, você receberá as instruções para redefinir a senha.");
+      // padronizado com outras rotas: prefixo /api
+      await apiPost("/api/usuarios/recuperar-senha", { email: emailTrim });
+
+      const ok = "Se o e-mail estiver cadastrado, você receberá as instruções para redefinir a senha.";
+      setMensagem(ok);
       toast.success("✅ Instruções enviadas (se cadastrado).");
       setEmail("");
     } catch (err) {
-      const msg = err?.data?.erro || err?.data?.message || err?.message || "Erro ao enviar solicitação.";
+      const msg =
+        err?.data?.erro ||
+        err?.data?.message ||
+        err?.message ||
+        "Erro ao enviar solicitação.";
       setErro(msg);
       toast.error(`❌ ${msg}`);
     } finally {
@@ -41,33 +62,58 @@ export default function RecuperarSenha() {
   }
 
   return (
-    <main className="min-h-screen flex items-center justify-center bg-gelo dark:bg-zinc-900 px-4">
-      <form onSubmit={handleSubmit} className="bg-lousa text-white rounded-2xl shadow-xl p-8 w-full max-w-md space-y-6">
-        <h2 className="text-2xl font-bold text-center mb-3">🔐 Recuperar Senha</h2>
+    <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900">
+      {/* 🟦 Área de conta/usuário = petróleo */}
+      <PageHeader title="Recuperar Senha" icon={Mail} variant="petroleo" />
 
-        {mensagem && <p className="text-green-300 text-sm text-center" role="alert">{mensagem}</p>}
-        {erro && <p className="text-red-300 text-sm text-center" role="alert">{erro}</p>}
+      <main role="main" className="flex-1 flex items-center justify-center px-4">
+        <form
+          onSubmit={handleSubmit}
+          className="bg-lousa text-white rounded-2xl shadow-xl p-8 w-full max-w-md space-y-6"
+          aria-label="Formulário de recuperação de senha"
+        >
+          <h2 className="text-2xl font-bold text-center">🔐 Recuperar Senha</h2>
 
-        <label htmlFor="email" className="sr-only">E-mail</label>
-        <input
-          id="email"
-          type="email"
-          placeholder="Digite seu e-mail cadastrado"
-          value={email}
-          onChange={(e) => { setEmail(e.target.value); if (erro) setErro(""); }}
-          className="w-full px-4 py-2 rounded bg-white text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-lousa"
-          autoComplete="email"
-          aria-required="true"
-        />
+          {(mensagem || erro) && (
+            <div aria-live="polite">
+              {mensagem && (
+                <p className="text-green-300 text-sm text-center" role="alert">
+                  {mensagem}
+                </p>
+              )}
+              {erro && (
+                <p className="text-red-300 text-sm text-center" role="alert">
+                  {erro}
+                </p>
+              )}
+            </div>
+          )}
 
-        <BotaoPrimario type="submit" disabled={loading} className="w-full">
-          {loading ? "Enviando..." : "Enviar instruções"}
-        </BotaoPrimario>
+          <label htmlFor="email" className="sr-only">E-mail</label>
+          <input
+            id="email"
+            type="email"
+            placeholder="Digite seu e-mail cadastrado"
+            value={email}
+            onChange={(e) => { setEmail(e.target.value); if (erro) setErro(""); }}
+            className="w-full px-4 py-2 rounded bg-white text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-emerald-700"
+            autoComplete="email"
+            inputMode="email"
+            aria-required="true"
+          />
 
-        <BotaoSecundario type="button" onClick={() => window.history.back()} className="w-full">
-          Voltar
-        </BotaoSecundario>
-      </form>
-    </main>
+          <BotaoPrimario type="submit" disabled={loading} className="w-full" aria-label="Enviar instruções de recuperação">
+            {loading ? "Enviando..." : "Enviar instruções"}
+          </BotaoPrimario>
+
+          <BotaoSecundario type="button" onClick={() => window.history.back()} className="w-full">
+            Voltar
+          </BotaoSecundario>
+        </form>
+      </main>
+
+      {/* Rodapé institucional */}
+      <Footer />
+    </div>
   );
 }

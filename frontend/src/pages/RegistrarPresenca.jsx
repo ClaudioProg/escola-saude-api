@@ -8,7 +8,12 @@ import { motion } from "framer-motion";
 import { apiPost } from "../services/api";
 import ErroCarregamento from "../components/ErroCarregamento";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
-import { API_BASE_URL } from "../services/api"
+import { API_BASE_URL } from "../services/api";
+
+// 🧩 novo: faixa de título compacta + rodapé institucional
+import PageHeader from "../components/PageHeader";
+import Footer from "../components/Footer";
+import { QrCode } from "lucide-react";
 
 export default function RegistrarPresenca() {
   const navigate = useNavigate();
@@ -119,42 +124,51 @@ export default function RegistrarPresenca() {
   };
 
   return (
-    <motion.main
-      className="p-4 max-w-2xl mx-auto text-center min-h-screen flex flex-col justify-center items-center"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-    >
-      <h1 className="text-2xl font-bold text-lousa mb-2 dark:text-white">📸 Escanear QR Code da Sala</h1>
-      <p className="mb-4 text-gray-700 dark:text-gray-200">
-        Seja bem-vindo(a), <strong>{nome}</strong>. Aponte sua câmera para o QR Code fixado na sala.
-      </p>
+    <div className="flex flex-col min-h-screen bg-gelo dark:bg-neutral-900">
+      {/* 🟧 Faixa compacta e centralizada (família Presenças/QR) */}
+      <PageHeader title="Registrar Presença" icon={QrCode} variant="laranja" />
 
-      {erroCamera ? (
-        <ErroCarregamento
-          titulo="Erro ao acessar a câmera"
-          mensagem="Verifique as permissões do navegador. Em celulares, tente Chrome/Firefox atualizados."
-        />
-      ) : (
-        <div className="rounded-xl overflow-hidden border border-lousa w-full">
-          {carregando ? (
-            <CarregandoSkeleton height="300px" />
-          ) : (
-            <QrScanner
-              delay={500}
-              onError={handleError}
-              onScan={handleScan}
-              style={{ width: "100%", height: "300px" }}
-              constraints={{ video: videoConstraints }}
-            />
-          )}
-        </div>
-      )}
-
-      {carregando && (
-        <p className="mt-4 text-lousa dark:text-white animate-pulse" role="status" aria-live="polite">
-          ⏳ Registrando presença...
+      <motion.main
+        role="main"
+        className="flex-1 p-4 max-w-2xl mx-auto text-center flex flex-col justify-center items-center"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+      >
+        <h1 className="sr-only">Escanear QR Code da Sala</h1>
+        <p className="mb-4 text-gray-700 dark:text-gray-200">
+          Seja bem-vindo(a), <strong>{nome}</strong>. Aponte sua câmera para o QR Code fixado na sala.
         </p>
-      )}
-    </motion.main>
+
+        {erroCamera ? (
+          <ErroCarregamento
+            titulo="Erro ao acessar a câmera"
+            mensagem="Verifique as permissões do navegador. Em celulares, tente Chrome/Firefox atualizados."
+          />
+        ) : (
+          <div className="rounded-xl overflow-hidden border border-lousa w-full" role="region" aria-label="Leitor de QR Code">
+            {carregando ? (
+              <CarregandoSkeleton height="300px" />
+            ) : (
+              <QrScanner
+                delay={500}
+                onError={handleError}
+                onScan={handleScan}
+                style={{ width: "100%", height: "300px" }}
+                constraints={{ video: videoConstraints }}
+              />
+            )}
+          </div>
+        )}
+
+        {carregando && (
+          <p className="mt-4 text-lousa dark:text-white animate-pulse" role="status" aria-live="polite">
+            ⏳ Registrando presença...
+          </p>
+        )}
+      </motion.main>
+
+      {/* Rodapé institucional */}
+      <Footer />
+    </div>
   );
 }

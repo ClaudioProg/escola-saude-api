@@ -1,6 +1,8 @@
+// postcss.config.cjs (CommonJS)
 module.exports = {
   plugins: {
+    "tailwindcss/nesting": {},
     tailwindcss: {},
-    autoprefixer: {},
+    autoprefixer: { grid: "autoplace" },
   },
 };

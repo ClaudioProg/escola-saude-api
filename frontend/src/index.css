@@ -4,107 +4,180 @@
 @tailwind utilities;
 
 /* ==========================================
-   Estilização do Leitor de QR Code (html5-qrcode)
-   ========================================== */
-#leitor-qr #qr-shaded-region > div[style*="background-color: rgb(255, 255, 255)"],
-#leitor-qr #qr-shaded-region *[style*="background-color: rgb(255, 255, 255)"] {
-  display: none !important;
-}
+   Tokens rápidos via CSS vars (opcional)
+========================================== */
+@layer base {
+  :root {
+    --brand-900: #14532d; /* green-900 */
+    --brand-800: #166534;
+    --ring: 0 0 0 2px rgba(20,83,45,.6);
+    --muted: #6b7280;
+  }
+  .dark { --ring: 0 0 0 2px rgba(20,83,45,.75); }
 
-#leitor-qr #qr-shaded-region {
-  background: transparent !important;
-  border: none !important;
-}
+  /* Foco visível global */
+  :focus-visible {
+    outline: 2px solid transparent;
+    box-shadow: var(--ring);
+    border-radius: .625rem;
+  }
 
-#leitor-qr,
-#leitor-qr * {
-  background-color: transparent !important;
-}
-
-#leitor-qr canvas {
-  /* verde aproximado do Tailwind (emerald-400) */
-  outline: 2px dashed #4ade80 !important;
-  outline-offset: -8px;
+  /* Alto contraste do SO */
+  @media (forced-colors: active) {
+    :focus-visible { outline: 2px solid Highlight; box-shadow: none; }
+  }
 }
 
 /* ==========================================
+   Leitor de QR Code (html5-qrcode)
+========================================== */
+#leitor-qr #qr-shaded-region > div[style*="background-color: rgb(255, 255, 255)"],
+#leitor-qr #qr-shaded-region *[style*="background-color: rgb(255, 255, 255)"] { display: none !important; }
+#leitor-qr #qr-shaded-region { background: transparent !important; border: none !important; }
+#leitor-qr, #leitor-qr * { background-color: transparent !important; }
+#leitor-qr canvas { outline: 2px dashed var(--brand-900) !important; outline-offset: -8px; }
+.dark #leitor-qr canvas { outline: 2px dashed #22c55e !important; }
+@media (prefers-reduced-motion: reduce) { #leitor-qr canvas { transition: none !important; } }
+
+/* ==========================================
    Campos com ícones à esquerda
-   ========================================== */
-.campo-com-icone {
-  @apply relative w-full;
-}
+   (usa @layer components; purge-friendly)
+========================================== */
+@layer components {
+  .campo-com-icone { @apply relative w-full; }
+  .campo-com-icone .icone-esquerda { @apply absolute left-3 top-2.5 text-gray-400 pointer-events-none; }
 
-.campo-com-icone .icone-esquerda {
-  @apply absolute left-3 top-2.5 text-gray-400 pointer-events-none;
-}
+  /* Base do @tailwindcss/forms (strategy: "class") */
+  .campo {
+    @apply form-input w-full pl-10 pr-3 py-2 rounded-md border border-gray-300
+           bg-white text-gray-900 placeholder:text-gray-500
+           focus:outline-none focus:ring-2 focus:ring-green-900/60 focus:border-green-900
+           dark:bg-zinc-800 dark:text-gray-100 dark:placeholder:text-gray-400 dark:border-zinc-700
+           disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed
+           aria-[invalid=true]:border-red-500 aria-[invalid=true]:ring-red-500;
+  }
+  select.campo { @apply form-select bg-white dark:bg-zinc-800; }
+  textarea.campo { @apply form-textarea bg-white dark:bg-zinc-800 resize-y min-h-[100px]; }
+  input[type="number"].campo { @apply form-input; }
 
-.campo {
-  @apply w-full pl-10 pr-3 py-2 rounded-md border border-gray-300 
-    focus:outline-none focus:ring-2 focus:ring-emerald-500;
-}
-
-textarea.campo {
-  @apply resize-y min-h-[100px];
-}
-
-select.campo,
-input[type="number"].campo {
-  @apply appearance-none;
+  /* Ícones dentro do campo sem “pular” foco */
+  .campo:focus-visible { box-shadow: var(--ring); }
 }
 
 /* ==========================================
    Estilos de Modais (react-modal)
-   ========================================== */
-.overlay,
-.overlayTurma {
-  @apply fixed inset-0 bg-black bg-opacity-60 z-[1000];
-}
+========================================== */
+@layer components {
+  .overlay { @apply fixed inset-0 bg-black/60 z-[1000] backdrop-blur-[1px]; }
+  .overlayTurma { @apply overlay z-[2000]; }
 
-.modal,
-.modalTurma {
-  @apply fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 
-    bg-white p-8 rounded-xl shadow-xl max-w-[600px] w-[90%] z-[1001];
-}
+  .modal {
+    @apply fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2
+           bg-white p-6 md:p-8 rounded-xl shadow-xl max-w-[600px] w-[92%] z-[1001]
+           dark:bg-zinc-900;
+  }
+  .modalTurma { @apply modal max-w-[500px] z-[2001]; }
 
-/* ModalTurma com z-index mais alto */
-.modalTurma {
-  @apply max-w-[500px] z-[2001];
-}
-.overlayTurma {
-  @apply z-[2000];
+  .modal :focus-visible { box-shadow: var(--ring); }
 }
 
 /* ==========================================
    Agenda (React Calendar) — layout fluido
-   ========================================== */
-/* --- React Calendar: tornar largo e responsivo --- */
-.react-calendar-custom {
-  width: 100% !important;         /* vence o 350px do CSS padrão */
-  max-width: none !important;
-  font-size: clamp(1rem, 1.1vw, 1.05rem);
-}
-
-/* tiles mais altos para caber as bolinhas */
-.react-calendar-custom .react-calendar__tile {
-  padding: clamp(0.7rem, 1vw, 1rem) clamp(0.4rem, 0.8vw, 0.7rem) !important;
-  border-radius: 0.5rem;
-}
-
-/* navegação um pouco maior */
+========================================== */
+.react-calendar-custom { width:100% !important; max-width:none !important; font-size:clamp(1rem,1.1vw,1.05rem); background:transparent; }
+.react-calendar-custom .react-calendar__navigation { display:flex; justify-content:center; align-items:center; margin-bottom:.75rem; gap:.5rem; }
 .react-calendar-custom .react-calendar__navigation button {
-  padding: clamp(0.35rem, 0.7vw, 0.55rem) !important;
-  font-size: clamp(1rem, 1.2vw, 1.1rem) !important;
+  background:transparent; border:none; padding:clamp(.35rem,.7vw,.55rem) !important;
+  font-size:clamp(1rem,1.2vw,1.1rem) !important; border-radius:.75rem; color:inherit;
+}
+.react-calendar-custom .react-calendar__navigation button:hover,
+.react-calendar-custom .react-calendar__navigation button:focus-visible { background:rgba(20,83,45,.12); }
+.react-calendar-custom .react-calendar__tile {
+  padding:clamp(.7rem,1vw,1rem) clamp(.4rem,.8vw,.7rem) !important; border-radius:.5rem; text-align:center;
+  transition:background-color .2s ease, color .2s ease; color:inherit;
+}
+.react-calendar-custom .react-calendar__tile:enabled:hover,
+.react-calendar-custom .react-calendar__tile:enabled:focus-visible { background-color:rgba(20,83,45,.10); }
+@supports (color: color-mix(in oklab, white, black)) {
+  .react-calendar-custom .react-calendar__navigation button:hover,
+  .react-calendar-custom .react-calendar__navigation button:focus-visible {
+    background: color-mix(in oklab, var(--brand-900) 12%, transparent);
+  }
+  .react-calendar-custom .react-calendar__tile:enabled:hover,
+  .react-calendar-custom .react-calendar__tile:enabled:focus-visible {
+    background: color-mix(in oklab, var(--brand-900) 10%, transparent);
+  }
+}
+.react-calendar-custom .react-calendar__tile--active { background-color:var(--brand-900) !important; color:#fff !important; }
+.react-calendar-custom .react-calendar__tile--now { box-shadow: inset 0 0 0 2px rgba(20,83,45,.45); border-radius:.5rem; }
+.react-calendar-custom .react-calendar__tile--range { background-color:rgba(20,83,45,.18); color:#fff; }
+.react-calendar-custom .react-calendar__tile--rangeStart,
+.react-calendar-custom .react-calendar__tile--rangeEnd { background-color:var(--brand-900); color:#fff; }
+.react-calendar-custom .react-calendar__tile:disabled { color:var(--muted); opacity:.6; cursor:not-allowed; }
+.agenda-dot { display:inline-block; width:clamp(6px,.9vw,12px); height:clamp(6px,.9vw,12px); border-radius:9999px; }
+.react-calendar-custom .rc-day-dots { min-height:clamp(10px,1vw,14px); }
+.dark .react-calendar-custom .react-calendar__tile:enabled:hover,
+.dark .react-calendar-custom .react-calendar__tile:enabled:focus-visible { background-color:rgba(20,83,45,.20); }
+
+/* ==========================================
+   Acessibilidade extra / Mobile tweaks
+========================================== */
+@layer utilities { .tap-safe { -webkit-tap-highlight-color: transparent; } }
+@media (max-width:480px){ .modal { @apply w-[94%] p-5; } }
+
+/* ==========================================
+   Impressão
+========================================== */
+@media print {
+  .overlay, .overlayTurma { display:none !important; }
+  .modal, .modalTurma { position:static !important; transform:none !important; box-shadow:none !important; border:1px solid #000; page-break-inside:avoid; }
 }
 
-/* bolinhas (tamanhos proporcionais) */
-.agenda-dot {
-  display: inline-block;
-  width: clamp(6px, 0.9vw, 12px);
-  height: clamp(6px, 0.9vw, 12px);
-  border-radius: 9999px;
+/* === Fix: campos escuros nas telas que não usam .campo === */
+@layer base {
+  /* Força visual claro no tema light */
+  input:not([type="checkbox"]):not([type="radio"]),
+  select, textarea {
+    @apply bg-white text-gray-900 placeholder:text-gray-400 border border-gray-300 rounded-md;
+  }
+  /* Foco consistente */
+  input:not([type="checkbox"]):not([type="radio"]):focus-visible,
+  select:focus-visible, textarea:focus-visible {
+    @apply outline-none ring-2 ring-green-900/60 border-green-900;
+  }
+  /* Estados */
+  input:disabled, select:disabled, textarea:disabled { @apply bg-gray-100 text-gray-500; }
+  /* Tema dark */
+  .dark input:not([type="checkbox"]):not([type="radio"]),
+  .dark select, .dark textarea { @apply bg-zinc-900 text-white border-zinc-700; }
+  ::placeholder { opacity:1; }
+  input[type="date"]::-webkit-calendar-picker-indicator,
+  input[type="time"]::-webkit-calendar-picker-indicator { filter:none; opacity:.9; }
+  :root { color-scheme: light; } /* não force dark nativo */
 }
 
-/* reserva altura para as bolinhas mesmo sem eventos (evita pulo) */
-.react-calendar-custom .rc-day-dots {
-  min-height: clamp(10px, 1vw, 14px);
+/* === React-Toastify: bloco colorido (tema "colored") === */
+.Toastify__toast-container { z-index: 9999 !important; }
+.Toastify__toast {
+  border-radius: .75rem !important;       /* rounded-xl */
+  min-height: 44px !important;
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / .1), 0 4px 6px -4px rgb(0 0 0 / .1) !important;
+  opacity: 1 !important;
+  backdrop-filter: none !important;
+  border: none !important;                /* sem borda */
 }
+/* Texto/ícones sempre brancos no tema colored */
+.Toastify__toast-theme--colored { color:#fff !important; }
+.Toastify__toast-body { display:flex !important; align-items:center !important; color:inherit !important; opacity:1 !important; padding:.5rem .75rem !important; }
+.Toastify__toast-body > div:last-child { display:block !important; color:inherit !important; opacity:1 !important; }
+.Toastify__close-button { color:#fff !important; opacity:.9 !important; }
+
+/* Cores por tipo */
+.Toastify__toast-theme--colored.Toastify__toast--success { background:#16a34a !important; } /* verde */
+.Toastify__toast-theme--colored.Toastify__toast--warning { background:#d97706 !important; } /* amarelo */
+.Toastify__toast-theme--colored.Toastify__toast--error   { background:#dc2626 !important; } /* vermelho */
+.Toastify__toast-theme--colored.Toastify__toast--info    { background:#2563eb !important; } /* azul */
+.Toastify__toast-theme--colored.Toastify__toast--loading { background:#2563eb !important; color:#fff !important; } /* “enviando…” */
+
+.Toastify__spinner { border-color: rgba(255,255,255,.35) !important; border-top-color: #fff !important; }
+.Toastify__progress-bar { background: rgba(255,255,255,.7) !important; }

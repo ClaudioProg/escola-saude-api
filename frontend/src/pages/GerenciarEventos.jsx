@@ -1,4 +1,5 @@
 /* eslint-disable no-console */
+// 📁 src/pages/GerenciarEventos.jsx
 import { useEffect, useState } from "react";
 import { toast } from "react-toastify";
 import { motion } from "framer-motion";
@@ -10,7 +11,8 @@ import Breadcrumbs from "../components/Breadcrumbs";
 import NenhumDado from "../components/NenhumDado";
 import SkeletonEvento from "../components/SkeletonEvento";
 import BotaoPrimario from "../components/BotaoPrimario";
-import CabecalhoPainel from "../components/CabecalhoPainel";
+import PageHeader from "../components/PageHeader";
+import Footer from "../components/Footer";
 
 /* =============================
    Helpers básicos
@@ -508,79 +510,97 @@ export default function GerenciarEventos() {
   };
 
   return (
-    <main className="min-h-screen bg-gelo dark:bg-zinc-900 px-4 py-8 max-w-screen-lg mx-auto">
-      <Breadcrumbs trilha={[{ label: "Painel administrador" }, { label: "Eventos" }]} />
-      <CabecalhoPainel titulo="🛠️ Gerenciar Eventos" />
+    <main className="min-h-screen bg-gelo dark:bg-zinc-900">
+      <div className="px-2 sm:px-4 py-6 max-w-6xl mx-auto">
+        <Breadcrumbs trilha={[{ label: "Painel administrador" }, { label: "Eventos" }]} />
 
-      <div className="flex justify-end mb-6">
-        <BotaoPrimario onClick={abrirModalCriar} className="flex items-center gap-2">
-          <PlusCircle size={18} /> Criar Evento
-        </BotaoPrimario>
-      </div>
+        <PageHeader
+          title="🛠️ Gerenciar Eventos"
+          subtitle="Crie, edite e restrinja a visibilidade dos seus eventos e turmas."
+          className="mb-5 sm:mb-6"
+        />
 
-      {!!erro && !loading && <p className="text-red-500 text-center mb-4">{erro}</p>}
+        <div className="flex justify-end mb-6">
+          <BotaoPrimario
+            onClick={abrirModalCriar}
+            className="flex items-center gap-2"
+            aria-label="Criar novo evento"
+          >
+            <PlusCircle size={18} aria-hidden="true" /> Criar Evento
+          </BotaoPrimario>
+        </div>
 
-      {loading ? (
-        <SkeletonEvento />
-      ) : eventos.length === 0 ? (
-        <NenhumDado mensagem="Nenhum evento cadastrado." />
-      ) : (
-        <ul className="space-y-6">
-          {eventos.map((ev) => (
-            <motion.li
-              key={ev.id || ev.titulo}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="bg-white dark:bg-zinc-800 p-5 rounded-xl shadow flex justify-between items-center border border-gray-200 dark:border-zinc-700"
-            >
-              <div className="flex items-center gap-3">
-                <span className="font-semibold text-lg text-lousa dark:text-white">
-                  {ev.titulo}
-                </span>
+        {!!erro && !loading && (
+          <p className="text-red-500 text-center mb-4" role="alert">
+            {erro}
+          </p>
+        )}
 
-                {/* Badge de restrição */}
-                {ev?.restrito && (
-                  <span
-                    title={
-                      ev.restrito_modo === "lista_registros"
-                        ? "Restrito a uma lista de registros"
-                        : "Visível a todos os servidores (com registro cadastrado)"
-                    }
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-amber-100 text-amber-800 border border-amber-300"
-                  >
-                    <Lock size={12} />
-                    {ev.restrito_modo === "lista_registros" ? "Lista" : "Servidores"}
+        {loading ? (
+          <SkeletonEvento />
+        ) : eventos.length === 0 ? (
+          <NenhumDado mensagem="Nenhum evento cadastrado." />
+        ) : (
+          <ul className="space-y-4 sm:space-y-6">
+            {eventos.map((ev) => (
+              <motion.li
+                key={ev.id || ev.titulo}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-white dark:bg-zinc-800 p-4 sm:p-5 rounded-xl shadow border border-gray-200 dark:border-zinc-700 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="font-semibold text-lg text-lousa dark:text-white">
+                    {ev.titulo}
                   </span>
-                )}
-              </div>
 
-              <div className="flex gap-2">
-                <button
-                  onClick={() => abrirModalEditar(ev)}
-                  className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded flex items-center gap-1"
-                >
-                  <Pencil size={16} /> Editar
-                </button>
-                <button
-                  onClick={() => excluirEvento(ev.id)}
-                  className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded flex items-center gap-1"
-                >
-                  <Trash2 size={16} /> Excluir
-                </button>
-              </div>
-            </motion.li>
-          ))}
-        </ul>
-      )}
+                  {/* Badge de restrição */}
+                  {ev?.restrito && (
+                    <span
+                      title={
+                        ev.restrito_modo === "lista_registros"
+                          ? "Restrito a uma lista de registros"
+                          : "Visível a todos os servidores (com registro cadastrado)"
+                      }
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-amber-100 text-amber-800 border border-amber-300"
+                    >
+                      <Lock size={12} aria-hidden="true" />
+                      {ev.restrito_modo === "lista_registros" ? "Lista" : "Servidores"}
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex gap-2 justify-end">
+                  <button
+                    onClick={() => abrirModalEditar(ev)}
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded flex items-center gap-1"
+                    aria-label={`Editar evento ${ev.titulo}`}
+                  >
+                    <Pencil size={16} aria-hidden="true" /> Editar
+                  </button>
+                  <button
+                    onClick={() => excluirEvento(ev.id)}
+                    className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded flex items-center gap-1"
+                    aria-label={`Excluir evento ${ev.titulo}`}
+                  >
+                    <Trash2 size={16} aria-hidden="true" /> Excluir
+                  </button>
+                </div>
+              </motion.li>
+            ))}
+          </ul>
+        )}
+      </div>
 
       <ModalEvento
         isOpen={modalAberto}
         onClose={() => setModalAberto(false)}
         onSalvar={salvarEvento}
         evento={eventoSelecionado}
-        // quando o Modal excluir/alterar turmas, podemos recarregar aqui
         onTurmaRemovida={() => recarregarEventos()}
       />
+
+      <Footer />
     </main>
   );
 }

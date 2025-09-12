@@ -5,11 +5,19 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { apiPost, apiGet } from "../services/api";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 
+// 🧩 novos componentes (faixa + rodapé)
+import PageHeader from "../components/PageHeader";
+import Footer from "../components/Footer";
+
+// Ícones para header (e acessibilidade se quiser usar depois)
+import { QrCode } from "lucide-react";
+
 const JWT_REGEX = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/; // JWT x.y.z
 
 export default function ValidarPresenca() {
   const navigate = useNavigate();
   const { search } = useLocation();
+
   const [status, setStatus] = useState("loading"); // loading | ok | erro
   const [mensagem, setMensagem] = useState("Validando seu QR Code…");
   const [detalhe, setDetalhe] = useState("");
@@ -18,19 +26,31 @@ export default function ValidarPresenca() {
   const isDebug = getParam("debug") === "1" || getParam("dbg") === "1";
 
   useEffect(() => {
+    let cancelado = false;
+
     async function run() {
+      // Protege contra decodeURIComponent quebrar
       const bruto = getParam("codigo");
       if (!bruto) {
         setStatus("erro");
         setMensagem("Código ausente.");
         return;
       }
-      const codigo = decodeURIComponent(bruto).trim();
+
+      let codigo;
+      try {
+        codigo = decodeURIComponent(bruto).trim();
+      } catch {
+        codigo = (bruto || "").trim();
+      }
+
       if (isDebug) console.log("[Validar] codigo:", codigo);
 
       const goHome = (ms = 2200) => {
         if (isDebug) return; // em debug não redireciona
-        setTimeout(() => navigate("/", { replace: true }), ms);
+        setTimeout(() => {
+          if (!cancelado) navigate("/", { replace: true });
+        }, ms);
       };
 
       const handle401 = () => {
@@ -64,18 +84,18 @@ export default function ValidarPresenca() {
             throw new Error("Não foi possível identificar a turma no QR.");
           }
 
-          // Tenta GET (rota existente no backend)
           try {
             const r = await apiGet(`presencas/confirmar/${Number(turmaId)}`);
+            if (cancelado) return;
             setStatus("ok");
             setMensagem(r?.mensagem || "Presença confirmada!");
             return goHome();
           } catch (e1) {
-            // Fallback para POST (se estiver publicado)
             if (isDebug) console.warn("[Validar] fallback POST confirmarPresencaViaQR", e1?.message);
             const r2 = await apiPost("presencas/confirmarPresencaViaQR", {
               turma_id: Number(turmaId),
             });
+            if (cancelado) return;
             setStatus("ok");
             setMensagem(r2?.mensagem || "Presença confirmada!");
             return goHome();
@@ -88,6 +108,7 @@ export default function ValidarPresenca() {
         if (/^\d+$/.test(codigo)) {
           if (isDebug) console.log("[Validar] via ID");
           const r = await apiGet(`presencas/confirmar/${Number(codigo)}`);
+          if (cancelado) return;
           setStatus("ok");
           setMensagem(r?.mensagem || "Presença confirmada!");
           return goHome();
@@ -99,6 +120,7 @@ export default function ValidarPresenca() {
         if (JWT_REGEX.test(codigo)) {
           if (isDebug) console.log("[Validar] via TOKEN");
           const r = await apiPost("presencas/confirmar-via-token", { token: codigo });
+          if (cancelado) return;
           setStatus("ok");
           setMensagem(r?.mensagem || "Presença confirmada!");
           return goHome();
@@ -124,31 +146,50 @@ export default function ValidarPresenca() {
     }
 
     run();
+    return () => {
+      cancelado = true; // evita state update após unmount
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
 
   return (
-    <div className="max-w-xl mx-auto p-6 text-center">
-      {status === "loading" && (
-        <>
-          <CarregandoSkeleton />
-          <p className="mt-4">{mensagem}</p>
-        </>
-      )}
-      {status !== "loading" && (
-        <>
-          <h1
-            className={`text-2xl font-semibold ${
-              status === "ok" ? "text-green-600" : "text-red-600"
-            }`}
-          >
-            {status === "ok" ? "Presença confirmada" : "Falha na confirmação"}
-          </h1>
-          <p className="mt-3 text-gray-700">{mensagem}</p>
-          {isDebug && detalhe && <p className="mt-2 text-sm text-gray-500">{detalhe}</p>}
-          {!isDebug && <p className="mt-6 text-sm text-gray-500">Você será redirecionado…</p>}
-        </>
-      )}
+    <div className="flex flex-col min-h-screen">
+      {/* 🟧 Faixa compacta e centralizada */}
+      <PageHeader title="Validar Presença" icon={QrCode} variant="laranja" />
+
+      {/* Conteúdo */}
+      <main role="main" className="flex-1">
+        <section
+          aria-live="polite"
+          aria-atomic="true"
+          className="max-w-xl mx-auto p-6 text-center"
+        >
+          {status === "loading" && (
+            <>
+              <CarregandoSkeleton />
+              <p className="mt-4">{mensagem}</p>
+            </>
+          )}
+
+          {status !== "loading" && (
+            <>
+              <h1
+                className={`text-2xl font-semibold ${
+                  status === "ok" ? "text-green-600" : "text-red-600"
+                }`}
+              >
+                {status === "ok" ? "Presença confirmada" : "Falha na confirmação"}
+              </h1>
+              <p className="mt-3 text-gray-700">{mensagem}</p>
+              {isDebug && detalhe && <p className="mt-2 text-sm text-gray-500">{detalhe}</p>}
+              {!isDebug && <p className="mt-6 text-sm text-gray-500">Você será redirecionado…</p>}
+            </>
+          )}
+        </section>
+      </main>
+
+      {/* Rodapé institucional */}
+      <Footer />
     </div>
   );
 }

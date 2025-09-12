@@ -8,6 +8,13 @@ import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import { formatarDataHoraBrasileira } from "../utils/data";
 import { apiGet } from "../services/api";
 
+// 🧩 novos: faixa compacta + rodapé
+import PageHeader from "../components/PageHeader";
+import Footer from "../components/Footer";
+
+// Ícone para o cabeçalho
+import { Award } from "lucide-react";
+
 export default function ValidarCertificado() {
   const [sp] = useSearchParams();
   const [mensagem, setMensagem] = useState("");
@@ -104,69 +111,69 @@ export default function ValidarCertificado() {
   };
 
   return (
-    <main className="min-h-screen flex flex-col items-center justify-center bg-white dark:bg-gray-900 p-6 print:p-0 print:min-h-0">
-      <motion.section
-        initial="hidden"
-        animate="visible"
-        variants={cardVariants}
-        className="w-full max-w-lg bg-white dark:bg-gray-800 shadow-lg rounded-2xl p-8 print:shadow-none print:bg-white"
-        aria-label="Validação de Presença"
-      >
-        <div className="flex flex-col items-center mb-8" role="banner">
-          <img
-            src="/LogoEscola.png"
-            alt="Logotipo da Escola da Saúde de Santos"
-            className="h-24 mb-4 drop-shadow print:hidden"
-            onError={(e) => (e.currentTarget.style.display = "none")}
-          />
-          <h1 className="text-3xl font-bold text-[#0f4c5c] dark:text-white print:text-black">
-            Escola da Saúde - Santos
-          </h1>
-          <p className="text-gray-600 dark:text-gray-300 print:text-black">
-            Validação de Certificado
-          </p>
-        </div>
+    <div className="flex flex-col min-h-screen">
+      {/* 🟨 Faixa de título (certificados = dourado) */}
+      <PageHeader title="Validar Certificado" icon={Award} variant="dourado" />
 
-        {status === "loading" ? (
-          <CarregandoSkeleton height="120px" />
-        ) : (
-          <>
-            <p
-              className={`text-xl font-semibold mb-6 text-center transition-colors duration-200 ${corMensagem} ${
-                status === "sucesso" ? "animate-pulse" : ""
-              }`}
-              aria-live="polite"
-            >
-              {mensagem}
-            </p>
+      <main role="main" className="flex-1">
+        <section
+          aria-label="Validação de Certificado"
+          aria-live="polite"
+          aria-atomic="true"
+          className="min-h-[60vh] flex items-center justify-center p-6 print:p-0 print:min-h-0"
+        >
+          <motion.div
+            initial="hidden"
+            animate="visible"
+            variants={cardVariants}
+            className="w-full max-w-lg bg-white dark:bg-gray-800 shadow-lg rounded-2xl p-8 print:shadow-none print:bg-white"
+          >
+            {/* 🔹 Removido o cabeçalho interno com logo/título para evitar redundância com PageHeader */}
 
-            {isDebug && detalhe && (
-              <p className="text-sm text-gray-500 mb-4 break-words">{detalhe}</p>
+            {status === "loading" ? (
+              <CarregandoSkeleton height="120px" />
+            ) : (
+              <>
+                <p
+                  className={`text-xl font-semibold mb-6 text-center transition-colors duration-200 ${corMensagem} ${
+                    status === "sucesso" ? "animate-pulse" : ""
+                  }`}
+                >
+                  {mensagem}
+                </p>
+
+                {isDebug && detalhe && (
+                  <p className="text-sm text-gray-500 mb-4 break-words">{detalhe}</p>
+                )}
+
+                {(status === "pendente" || status === "erro") && (
+                  <NadaEncontrado
+                    mensagem={mensagem}
+                    sugestao="Verifique os dados do certificado ou tente novamente mais tarde."
+                  />
+                )}
+
+                {status === "sucesso" && (
+                  <div className="flex justify-center print:hidden">
+                    <BotaoPrimario onClick={() => window.print()} aria-label="Imprimir esta página">
+                      🖨️ Imprimir esta página
+                    </BotaoPrimario>
+                  </div>
+                )}
+
+                {dataHora && (
+                  <footer className="mt-10 text-sm text-gray-500 text-center print:mt-20 print:text-black print:text-xs w-full">
+                    Verificação realizada em: <strong>{dataHora}</strong>
+                  </footer>
+                )}
+              </>
             )}
+          </motion.div>
+        </section>
+      </main>
 
-            {(status === "pendente" || status === "erro") && (
-              <NadaEncontrado
-                mensagem={mensagem}
-                sugestao="Verifique os dados do certificado ou tente novamente mais tarde."
-              />
-            )}
-
-            {status === "sucesso" && (
-              <div className="flex justify-center print:hidden">
-                <BotaoPrimario onClick={() => window.print()} aria-label="Imprimir esta página">
-                  🖨️ Imprimir esta página
-                </BotaoPrimario>
-              </div>
-            )}
-
-            {dataHora && (
-              <footer className="mt-10 text-sm text-gray-500 text-center print:mt-20 print:text-black print:text-xs w-full">
-                Verificação realizada em: <strong>{dataHora}</strong>
-              </footer>
-            )}
-          </>
-        )}
-      </motion.section>
-    </main>
+      {/* Rodapé institucional */}
+      <Footer />
+    </div>
   );
 }

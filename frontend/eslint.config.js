@@ -1,51 +1,82 @@
-// 📦 Importações dos presets e plugins necessários
-import js from '@eslint/js';
-import globals from 'globals';
-import reactHooks from 'eslint-plugin-react-hooks';
-import reactRefresh from 'eslint-plugin-react-refresh';
+// 📦 presets e plugins
+import js from "@eslint/js";
+import globals from "globals";
+import reactHooks from "eslint-plugin-react-hooks";
+import reactRefresh from "eslint-plugin-react-refresh";
+import jsxA11y from "eslint-plugin-jsx-a11y";
+
+const isProd = process.env.NODE_ENV === "production";
 
 export default [
-  // 🚫 Ignora arquivos de build
-  { ignores: ['**/dist/**'] },
+  // 🚫 Ignora artefatos de build/cache
+  { ignores: ["**/dist/**", "**/dist-ssr/**", "**/node_modules/**", "**/.vite/**", "**/coverage/**"] },
 
   {
-    // 📁 Arquivos que serão analisados
-    files: ['**/*.{js,jsx}'],
+    // 📁 Arquivos a analisar
+    files: ["**/*.{js,jsx}"],
 
-    // 🌐 Configurações da linguagem
+    // 🌐 Linguagem/ambiente
     languageOptions: {
-      ecmaVersion: 2020,
-      globals: globals.browser,
+      ecmaVersion: "latest",
+      sourceType: "module",
+      globals: {
+        ...globals.browser,
+        ...globals.es2021,
+      },
       parserOptions: {
-        ecmaVersion: 'latest',
         ecmaFeatures: { jsx: true },
-        sourceType: 'module',
       },
     },
 
-    // 🔌 Plugins utilizados
+    // 🔌 Plugins
     plugins: {
-      'react-hooks': reactHooks,
-      'react-refresh': reactRefresh,
+      "react-hooks": reactHooks,
+      "react-refresh": reactRefresh,
+      "jsx-a11y": jsxA11y,
     },
 
-    // ✅ Regras definidas
+    // ⚙️ Settings
+    settings: {
+      react: { version: "detect" },
+    },
+
+    // ✅ Regras
     rules: {
       ...js.configs.recommended.rules,
       ...reactHooks.configs.recommended.rules,
+      ...jsxA11y.configs.recommended.rules,
 
-      // 🔍 Ignora variáveis iniciadas com maiúscula e argumentos com prefixo "_"
-      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z]', argsIgnorePattern: '^_' }],
+      // Vars não usadas: permite Args iniciados com _ e Vars com Maiúscula
+      "no-unused-vars": ["error", { varsIgnorePattern: "^[A-Z]", argsIgnorePattern: "^_", ignoreRestSiblings: true }],
 
-      // ♻️ Garante que apenas componentes sejam exportados em arquivos com HMR (Hot Module Replacement)
-      'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
+      // Console: livre em dev, restrito em prod
+      "no-console": isProd ? ["warn", { allow: ["warn", "error"] }] : "off",
+
+      // HMR do Vite + React
+      "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
     },
+  },
 
-    // ⚛️ Configuração de detecção automática da versão do React
-    settings: {
-      react: {
-        version: 'detect',
+  // 🧪 (Opcional) Testes: relaxa console e globais
+  {
+    files: ["**/*.{test,spec}.{js,jsx}"],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+        ...globals.jest, // troque por globals.node ou vitest se usar Vitest
       },
+    },
+    rules: {
+      "no-console": "off",
+    },
+  },
+
+  // ⚙️ Config files (Node)
+  {
+    files: ["**/*.config.{js,mjs,cjs}", "eslint.config.js", "vite.config.{js,mjs,cjs}"],
+    languageOptions: {
+      sourceType: "module",
+      globals: { ...globals.node },
     },
   },
 ];
