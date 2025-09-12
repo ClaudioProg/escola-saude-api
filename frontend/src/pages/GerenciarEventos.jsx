@@ -209,25 +209,25 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
   );
   body.restrito = restrito;
 
-  const modo =
-    restrito
-      ? (dadosDoModal?.restrito_modo ??
-          baseServidor?.restrito_modo ??
-          null)
-      : null;
+  const modo = restrito
+    ? (dadosDoModal?.restrito_modo ?? baseServidor?.restrito_modo ?? null)
+    : null;
   body.restrito_modo = modo;
 
   if (restrito && modo === "lista_registros") {
-    // lê de ambos os nomes vindos do Modal, com prioridade para registros_permitidos
-    const fonte =
+    // fonte: modal (permissivos nos nomes) OU fallback para o que já existe no servidor
+    const fonteModal =
       Array.isArray(dadosDoModal?.registros_permitidos) ? dadosDoModal.registros_permitidos :
       Array.isArray(dadosDoModal?.registros)            ? dadosDoModal.registros            :
-      [];
-  
+      undefined;
+
+    const fonte = (Array.isArray(fonteModal) && fonteModal.length > 0)
+      ? fonteModal
+      : (Array.isArray(baseServidor?.registros_permitidos) ? baseServidor.registros_permitidos : []);
+
     const regs = normRegistros(fonte);
-  
-    // envie SEMPRE com o nome canônico do backend
     if (regs.length) {
+      // 👉 sempre enviar com o nome canônico esperado pelo backend
       body.registros_permitidos = regs;
     }
   }
@@ -411,6 +411,16 @@ export default function GerenciarEventos() {
               "Este evento tem turmas com inscritos. Vou salvar apenas os dados gerais e a regra de restrição."
             );
 
+            // fonte de registros: modal (ambos nomes) OU fallback: servidor
+            const fonteRegsModal =
+              Array.isArray(dadosDoModal?.registros_permitidos) ? dadosDoModal.registros_permitidos :
+              Array.isArray(dadosDoModal?.registros)            ? dadosDoModal.registros            :
+              undefined;
+
+            const regsEventOnly = (Array.isArray(fonteRegsModal) && fonteRegsModal.length > 0)
+              ? normRegistros(fonteRegsModal)
+              : normRegistros(baseServidor?.registros_permitidos || []);
+
             const bodyEventOnly = clean({
               titulo: (dadosDoModal?.titulo ?? baseServidor?.titulo ?? "").trim(),
               descricao: (dadosDoModal?.descricao ?? baseServidor?.descricao ?? "").trim(),
@@ -432,10 +442,11 @@ export default function GerenciarEventos() {
                 (dadosDoModal?.restrito ?? baseServidor?.restrito)
                   ? (dadosDoModal?.restrito_modo ?? baseServidor?.restrito_modo ?? null)
                   : null,
-              registros:
+              // 👉 nome canônico esperado pelo backend
+              registros_permitidos:
                 (dadosDoModal?.restrito ?? baseServidor?.restrito) &&
                 (dadosDoModal?.restrito_modo ?? baseServidor?.restrito_modo) === "lista_registros"
-                  ? normRegistros(dadosDoModal?.registros)
+                  ? regsEventOnly
                   : undefined,
             });
 
@@ -492,10 +503,16 @@ export default function GerenciarEventos() {
         const restrito_modo = restrito
           ? (dadosDoModal?.restrito_modo || "todos_servidores")
           : null;
-        const registros =
-          restrito && restrito_modo === "lista_registros"
-            ? normRegistros(dadosDoModal?.registros)
-            : undefined;
+
+        // aceita ambos nomes no modal
+        const regsFonte =
+          Array.isArray(dadosDoModal?.registros_permitidos) ? dadosDoModal.registros_permitidos :
+          Array.isArray(dadosDoModal?.registros)            ? dadosDoModal.registros            :
+          undefined;
+
+        const registros = restrito && restrito_modo === "lista_registros"
+          ? normRegistros(regsFonte || [])
+          : undefined;
 
         const bodyCreate = clean({
           ...base,
@@ -503,6 +520,7 @@ export default function GerenciarEventos() {
           turmas,
           restrito,
           restrito_modo,
+          // 👇 nome canônico
           registros_permitidos: registros,
         });
 

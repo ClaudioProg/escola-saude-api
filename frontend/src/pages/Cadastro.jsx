@@ -177,7 +177,7 @@ export default function Cadastro() {
       escolaridade_id: Number(escolaridadeId),
       deficiencia_id: Number(deficienciaId),
       data_nascimento: dataNascimento, // yyyy-mm-dd
-      registro: registro?.trim() || null,
+      registro: registro ? registro.replace(/\D/g, "") : null,
     };
 
     setLoading(true);

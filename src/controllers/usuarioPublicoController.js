@@ -26,8 +26,7 @@ function toPerfilString(perfil) {
   if (Array.isArray(perfil)) {
     const arr = perfil
       .map((p) => String(p || "").toLowerCase().trim())
-      .filter((p) => p); // mantemos tudo por enquanto
-    // remove "usuario" da lista, mas garante fallback
+      .filter((p) => p);
     const semUsuario = arr.filter((p) => p !== "usuario");
     const finalArr = semUsuario.length ? semUsuario : ["usuario"];
     return finalArr.join(",");
@@ -45,6 +44,23 @@ function perfilToArray(perfilStr) {
 // 🔐 Regex de senha forte (mesma do frontend)
 const SENHA_FORTE_RE = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{8,}$/;
 
+/** mesmos campos que vocês checam no frontend/backend para flag de perfil */
+function isPerfilIncompleto(u = {}) {
+  const required = [
+    "cargo_id",
+    "unidade_id",
+    "genero_id",
+    "orientacao_sexual_id",
+    "cor_raca_id",
+    "escolaridade_id",
+    "deficiencia_id",
+    "data_nascimento",
+  ];
+  return required.some(
+    (k) => u[k] === null || u[k] === undefined || u[k] === ""
+  );
+}
+
 /* ──────────────────────────────────────────────────────────────
    🔐 Cadastro de novo usuário
    ────────────────────────────────────────────────────────────── */
@@ -54,6 +70,19 @@ async function cadastrarUsuario(req, res) {
   const email = normEmail(req.body?.email);
   const senha = String(req.body?.senha || "");
   const perfil = req.body?.perfil;
+
+  // campos de perfil
+  const unidade_id = req.body?.unidade_id ?? null;
+  const cargo_id = req.body?.cargo_id ?? null;
+  const genero_id = req.body?.genero_id ?? null;
+  const orientacao_sexual_id = req.body?.orientacao_sexual_id ?? null;
+  const cor_raca_id = req.body?.cor_raca_id ?? null;
+  const escolaridade_id = req.body?.escolaridade_id ?? null;
+  const deficiencia_id = req.body?.deficiencia_id ?? null;
+  const data_nascimento = req.body?.data_nascimento
+    ? String(req.body.data_nascimento).slice(0, 10)
+    : null;
+  const registro = onlyDigits(req.body?.registro) || null;
 
   if (!nome || !cpf || !email || !senha) {
     return res.status(400).json({ erro: "Todos os campos são obrigatórios." });
@@ -75,17 +104,48 @@ async function cadastrarUsuario(req, res) {
     }
 
     const senhaCriptografada = await bcrypt.hash(senha, 10);
-    const perfilFinal = toPerfilString(perfil); // garante 'usuario' se vier vazio/array só com 'usuario'
+    const perfilFinal = toPerfilString(perfil); // garante 'usuario' por padrão
 
-    const result = await db.query(
-      `INSERT INTO usuarios (nome, cpf, email, senha, perfil)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, nome, cpf, email, perfil`,
-      [nome, cpf, email, senhaCriptografada, perfilFinal]
-    );
+    const insertSql = `
+      INSERT INTO usuarios (
+        nome, cpf, email, senha, perfil,
+        unidade_id, cargo_id, genero_id, orientacao_sexual_id,
+        cor_raca_id, escolaridade_id, deficiencia_id,
+        data_nascimento, registro
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+      RETURNING
+        id, nome, cpf, email, perfil,
+        unidade_id, cargo_id, genero_id, orientacao_sexual_id,
+        cor_raca_id, escolaridade_id, deficiencia_id, data_nascimento, registro
+    `;
+
+    const values = [
+      nome,
+      cpf,
+      email,
+      senhaCriptografada,
+      perfilFinal,
+      unidade_id,
+      cargo_id,
+      genero_id,
+      orientacao_sexual_id,
+      cor_raca_id,
+      escolaridade_id,
+      deficiencia_id,
+      data_nascimento,
+      registro,
+    ];
+
+    const result = await db.query(insertSql, values);
+    const row = result.rows[0];
+
+    // Flag para a UI
+    const incompleto = isPerfilIncompleto(row);
+    res.set("X-Perfil-Incompleto", incompleto ? "1" : "0");
 
     return res.status(201).json({
-      ...result.rows[0],
+      ...row,
       perfil: perfilToArray(perfilFinal),
     });
   } catch (err) {
@@ -143,16 +203,12 @@ async function recuperarSenha(req, res) {
         : "https://seu-frontend-no-vercel.vercel.app");
 
     const safeBase = String(baseUrl).replace(/\/+$/, "");
-    // Se sua página usa /redefinir-senha/:token, mantenha a linha abaixo:
     const link = `${safeBase}/redefinir-senha/${encodeURIComponent(token)}`;
-    // alternativa com querystring:
-    // const link = `${safeBase}/redefinir-senha?token=${encodeURIComponent(token)}`;
 
     await enviarEmail({
       to: email,
       subject: "Recuperação de Senha - Escola da Saúde",
       text: `Você solicitou a redefinição de senha. Acesse: ${link} (válido por 1h).`,
-      // html: `<p>...</p>` // se o util suportar HTML
     });
 
     return res.status(200).json({
@@ -204,7 +260,6 @@ async function redefinirSenha(req, res) {
     return res.status(200).json({ mensagem: "Senha atualizada com sucesso." });
   } catch (err) {
     console.error("❌ Erro ao redefinir senha:", err);
-    // jwt.verify pode lançar TokenExpiredError, JsonWebTokenError, etc.
     return res.status(400).json({ erro: "Token inválido ou expirado." });
   }
 }
@@ -220,7 +275,6 @@ async function obterUsuarioPorId(req, res) {
     : perfilToArray(usuarioLogado.perfil);
   const ehAdmin = perfilArr.includes("administrador");
 
-  // ✅ só permite ver outro usuário se for admin
   if (Number(id) !== Number(usuarioLogado.id) && !ehAdmin) {
     return res
       .status(403)
@@ -337,6 +391,10 @@ async function loginUsuario(req, res) {
       console.error("⚠️ JWT_SECRET ausente no ambiente.");
       return res.status(500).json({ erro: "Configuração do servidor ausente." });
     }
+
+    // Flag de perfil incompleto para a UI
+    const incompleto = isPerfilIncompleto(usuario);
+    res.set("X-Perfil-Incompleto", incompleto ? "1" : "0");
 
     const token = jwt.sign(
       { id: usuario.id, perfil: perfilArray },

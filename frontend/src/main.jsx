@@ -152,95 +152,82 @@ function CloseBtn({ closeToast }) {
    Render
    ────────────────────────────────────────────────────────────── */
 const root = ReactDOM.createRoot(document.getElementById("root"));
+
+const AppTree = clientId ? (
+  <GoogleOAuthProvider
+    clientId={clientId}
+    onScriptLoadSuccess={() => {
+      if (IS_DEV) {
+        console.info(
+          "%c[GSI] onScriptLoadSuccess",
+          "color:#16a34a",
+          "SDK do Google carregada com sucesso."
+        );
+      }
+    }}
+    onScriptLoadError={() => {
+      console.error(
+        "[GSI] onScriptLoadError → Falha ao carregar a SDK do Google. Verifique CORS, bloqueadores e rede."
+      );
+    }}
+  >
+    <App />
+    <ToastContainer
+      position="top-right"
+      autoClose={4000}
+      hideProgressBar={false}
+      newestOnTop
+      closeOnClick
+      pauseOnHover
+      draggable
+      theme="colored"
+      closeButton={<CloseBtn />}
+      toastClassName="rounded-xl shadow-lg ring-1 ring-black/10"
+      bodyClassName="text-sm leading-relaxed"
+    />
+  </GoogleOAuthProvider>
+) : (
+  <>
+    <App />
+    <ToastContainer
+      position="top-right"
+      autoClose={4000}
+      hideProgressBar={false}
+      newestOnTop
+      closeOnClick
+      pauseOnHover
+      draggable
+      theme="colored"
+      closeButton={<CloseBtn />}
+      toastClassName="rounded-xl shadow-lg ring-1 ring-black/10"
+      bodyClassName="text-sm leading-relaxed"
+    />
+  </>
+);
+
 root.render(
   <React.StrictMode>
-    <ErrorBoundary>
-      {clientId ? (
-        <GoogleOAuthProvider
-          clientId={clientId}
-          onScriptLoadSuccess={() => {
-            if (IS_DEV) {
-              console.info(
-                "%c[GSI] onScriptLoadSuccess",
-                "color:#16a34a",
-                "SDK do Google carregada com sucesso."
-              );
-            }
-          }}
-          onScriptLoadError={() => {
-            console.error(
-              "[GSI] onScriptLoadError → Falha ao carregar a SDK do Google. Verifique CORS, bloqueadores e rede."
-            );
-          }}
-        >
-          <App />
-          <ToastContainer
-  position="top-right"
-  autoClose={4000}
-  hideProgressBar={false}
-  newestOnTop
-  closeOnClick
-  pauseOnHover
-  draggable
-  theme="colored"               // 👈 fundo por cor do tipo
-  closeButton={<CloseBtn />}
-  toastClassName="rounded-xl shadow-lg ring-1 ring-black/10"
-  bodyClassName="text-sm leading-relaxed"
-/>
-        </GoogleOAuthProvider>
-      ) : (
-        <>
-          <App />
-          <ToastContainer
-  position="top-right"
-  autoClose={4000}
-  hideProgressBar={false}
-  newestOnTop
-  closeOnClick
-  pauseOnHover
-  draggable
-  theme="colored"          // usa as cores por tipo (success, error…)
-  closeButton={<CloseBtn />}
-  toastClassName="rounded-xl shadow-lg ring-1 ring-black/10"
-  bodyClassName="text-sm leading-relaxed"
-/>
-        </>
-      )}
-    </ErrorBoundary>
+    <ErrorBoundary>{AppTree}</ErrorBoundary>
   </React.StrictMode>
 );
 
-//* ──────────────────────────────────────────────────────────────
-//PWA: registro do Service Worker + toasts (apenas produção)
-//────────────────────────────────────────────────────────────── */
+/* ──────────────────────────────────────────────────────────────
+   PWA em produção: sem 'virtual:pwa-register' (compatível com CSP)
+   O VitePWA fará o registro via <script> injetado.
+   Abaixo, só ouvimos quando um SW novo assume controle
+   para exibir um aviso e recarregar a página.
+   ────────────────────────────────────────────────────────────── */
 (function setupPWA() {
-if (!import.meta.env.PROD) return; // só no build
-if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+  if (!import.meta.env.PROD) return;
+  if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
 
-const showReloadToast = (confirm) => {
- const id = toast.info("Atualização disponível — clique para recarregar.", {
-   autoClose: false,
-   closeOnClick: false,
-   draggable: false,
-   onClick: () => { try { confirm(); } finally { toast.dismiss(id); } },
- });
-};
-
-// 👇 monta o nome do módulo sem usar string literal estática
-const PWA_MODULE_ID = ["virtual", "pwa-register"].join(":");
-
-import(/* @vite-ignore */ PWA_MODULE_ID)
- .then(({ registerSW }) => {
-   const updateSW = registerSW({
-     immediate: true,
-     onNeedRefresh() { showReloadToast(() => updateSW(true)); },
-     onOfflineReady() { toast.success("App disponível offline! 🎉"); },
-   });
- })
- .catch((e) => {
-   // Em dev, o virtual module não existe mesmo — ignore.
-   if (import.meta.env.DEV) console.warn("[PWA] registro ignorado:", e?.message || e);
- });
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (reloaded) return;
+    reloaded = true;
+    try {
+      toast.info("Atualização aplicada — recarregando…", { autoClose: 1200 });
+    } catch {}
+    setTimeout(() => window.location.reload(), 1200);
+  });
 })();
-
-  
