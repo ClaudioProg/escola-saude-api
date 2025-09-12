@@ -218,8 +218,18 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
   body.restrito_modo = modo;
 
   if (restrito && modo === "lista_registros") {
-    const regs = normRegistros(dadosDoModal?.registros);
-    if (regs.length) body.registros = regs; // se não vier nada, backend mantém a lista atual
+    // lê de ambos os nomes vindos do Modal, com prioridade para registros_permitidos
+    const fonte =
+      Array.isArray(dadosDoModal?.registros_permitidos) ? dadosDoModal.registros_permitidos :
+      Array.isArray(dadosDoModal?.registros)            ? dadosDoModal.registros            :
+      [];
+  
+    const regs = normRegistros(fonte);
+  
+    // envie SEMPRE com o nome canônico do backend
+    if (regs.length) {
+      body.registros_permitidos = regs;
+    }
   }
 
   // — turmas
@@ -493,7 +503,7 @@ export default function GerenciarEventos() {
           turmas,
           restrito,
           restrito_modo,
-          registros,
+          registros_permitidos: registros,
         });
 
         await apiPost("/api/eventos", bodyCreate);

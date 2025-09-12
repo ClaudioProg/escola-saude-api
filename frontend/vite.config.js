@@ -1,6 +1,7 @@
 // 📁 vite.config.js
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
+import { VitePWA } from 'vite-plugin-pwa';
 import path from 'path';
 
 export default defineConfig(({ mode }) => {
@@ -10,52 +11,76 @@ export default defineConfig(({ mode }) => {
   const proxyTarget =
     env.VITE_DEV_PROXY_TARGET || 'https://escola-saude-api.onrender.com';
 
-  return {
-    plugins: [react()],
+  // Ativa PWA só em produção (ou se VITE_ENABLE_PWA !== 'false')
+  const enablePWA = mode === 'production' && env.VITE_ENABLE_PWA !== 'false';
 
-    // 💡 O proxy só roda em DEV. Em prod (Vercel) o app é estático.
+  return {
+    base: '/', // bom explicitar
+    plugins: [
+      react(),
+      enablePWA &&
+        VitePWA({
+          // 👇 evita import dinâmico "virtual:pwa-register"
+          injectRegister: 'script',
+          registerType: 'autoUpdate',
+
+          // desabilita no dev (por segurança, já que enablePWA só é true em prod)
+          devOptions: { enabled: false },
+
+          // Manifesto mínimo; ajuste como quiser
+          manifest: {
+            name: 'Escola de Saúde',
+            short_name: 'EscolaSaúde',
+            start_url: '/',
+            display: 'standalone',
+            background_color: '#ffffff',
+            theme_color: '#0f766e',
+            icons: [
+              { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+              { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
+              { src: '/icons/maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }
+            ]
+          },
+
+          // workbox (opcional; defaults já são bons)
+          workbox: {
+            clientsClaim: true,
+            skipWaiting: true,
+          },
+        }),
+    ].filter(Boolean),
+
+    // 💡 O proxy só roda em DEV. Em prod (Vercel/Render) o app é estático.
     server: {
-      host: true, // permite acesso via LAN, útil para testar em celular
+      host: true, // permite acesso via LAN
       port: 5173,
       proxy: {
         '/api': {
           target: proxyTarget,
           changeOrigin: true,
-          // Se seu backend estiver em HTTPS com cert válido, deixe secure: true
           secure: true,
-          // Opcional: se precisar remover o prefixo /api no destino
-          // rewrite: (path) => path.replace(/^\/api/, ''),
+          // rewrite: (p) => p.replace(/^\/api/, ''),
         },
       },
     },
 
     resolve: {
       alias: {
-        // 🔧 Evita “duas cópias” de react em monorepos (mantenho, mas poderia remover se não for o caso)
+        // Evita “duas cópias” de react (se não precisa, pode remover)
         react: path.resolve(__dirname, 'node_modules/react'),
         'react-dom': path.resolve(__dirname, 'node_modules/react-dom'),
-        // Exemplos úteis:
         '@': path.resolve(__dirname, 'src'),
       },
     },
 
-    // ❌ Removido o hack de 'process.env': {} — com Vite isso não é necessário e pode confundir.
-    // Use import.meta.env.VITE_*
-
     build: {
-      sourcemap: mode !== 'production', // facilita debugging em dev/staging
-      chunkSizeWarningLimit: 900, // evita aviso chato por libs grandes
+      sourcemap: mode !== 'production',
+      chunkSizeWarningLimit: 900,
       rollupOptions: {
         output: {
-          // Deixe o Vite decidir os chunks; se precisar, descomente o manualChunks abaixo
-          // manualChunks(id) {
-          //   if (id.includes('node_modules')) return 'vendor';
-          // },
+          // manualChunks opcional
         },
       },
-      // Remove console.log em produção (opcional; deixe true se quiser “limpar”)
-      // minify: 'esbuild',
-      // terserOptions/esbuild não é necessário; Vite usa esbuild por padrão
     },
 
     // Garante que só variáveis com VITE_ sejam expostas ao client

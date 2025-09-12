@@ -11,15 +11,23 @@ const minDate = (arr) => arr.map((d) => d.data).sort()[0];
 const maxDate = (arr) => arr.map((d) => d.data).sort().slice(-1)[0];
 const hh = (s) => (typeof s === "string" ? s.slice(0, 5) : "");
 
-// normaliza um registro: só dígitos
+// só dígitos
 const normReg = (s) => String(s || "").replace(/\D/g, "");
-// parseia entrada solta/colada (csv, linhas, etc.) em uma lista de registros normalizados
+
+/**
+ * Extrai TODAS as sequências válidas de 6 dígitos (janela deslizante).
+ * Ex.: "1234567" => ["123456","234567"] — remove duplicados.
+ */
 const parseRegsBulk = (txt) => {
-  const tokens = String(txt || "")
-    .split(/[\s,;|\n\r\t]+/)
-    .map(normReg)
-    .filter(Boolean);
-  return Array.from(new Set(tokens));
+  const runs = String(txt || "").match(/\d+/g) || [];
+  const out = [];
+  for (const run of runs) {
+    const clean = normReg(run);
+    if (clean.length >= 6) {
+      for (let i = 0; i + 6 <= clean.length; i++) out.push(clean.slice(i, i + 6));
+    }
+  }
+  return Array.from(new Set(out.filter((r) => /^\d{6}$/.test(r))));
 };
 
 // badge simples
@@ -50,7 +58,7 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
   const [restrito, setRestrito] = useState(false);
   const [restritoModo, setRestritoModo] = useState(""); // 'todos_servidores' | 'lista_registros'
   const [registroInput, setRegistroInput] = useState("");
-  const [registros, setRegistros] = useState([]); // strings (só dígitos)
+  const [registros, setRegistros] = useState([]); // strings (6 dígitos)
 
   // opções de instrutor
   const opcoesInstrutor = usuarios.filter((usuario) => {
@@ -63,9 +71,7 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
     nova[index] = valor;
     setInstrutorSelecionado(nova);
   }
-  function adicionarInstrutor() {
-    setInstrutorSelecionado((l) => [...l, ""]);
-  }
+  function adicionarInstrutor() { setInstrutorSelecionado((l) => [...l, ""]); }
   function removerInstrutor(index) {
     const nova = instrutorSelecionado.filter((_, i) => i !== index);
     setInstrutorSelecionado(nova.length ? nova : [""]);
@@ -76,11 +82,10 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
     );
   }
 
-  // Converte encontros vindos do backend para o formato "datas" esperado pelo modal
+  // Converte encontros → "datas"
   function encontrosParaDatas(turma) {
     const baseHi = hh(turma.horario_inicio || turma.hora_inicio || "08:00");
     const baseHf = hh(turma.horario_fim || turma.hora_fim || "17:00");
-
     const enc = Array.isArray(turma?.encontros) ? turma.encontros : [];
 
     const fromEnc = enc
@@ -99,13 +104,11 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
       })
       .filter(Boolean);
 
-    // Se já veio "datas", mantém.
     if (Array.isArray(turma?.datas) && turma.datas.length) return turma.datas;
-
     return fromEnc;
   }
 
-  // Preenche dados ao abrir/editar (objeto base)
+  // Preenche ao abrir/editar
   useEffect(() => {
     if (evento) {
       setTitulo(evento.titulo || "");
@@ -131,84 +134,66 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
 
       const restr = !!evento.restrito;
       setRestrito(restr);
-      const modo = evento.restrito_modo || (restr ? "todos_servidores" : "");
+
+      // usa restrito_modo OU vis_reg_tipo do backend pra escolher o modo
+      const modoFromVis = evento.vis_reg_tipo === "lista" ? "lista_registros" : "todos_servidores";
+      const modo = evento.restrito_modo || (restr ? modoFromVis : "");
       setRestritoModo(modo);
 
       const lista =
         (Array.isArray(evento.registros_permitidos) ? evento.registros_permitidos : null) ??
         (Array.isArray(evento.registros) ? evento.registros : []);
-      setRegistros(Array.from(new Set((lista || []).map(normReg).filter(Boolean))));
+      const onlySix = (lista || []).map(normReg).filter((r) => /^\d{6}$/.test(r));
+      setRegistros(Array.from(new Set(onlySix)));
       setRegistroInput("");
     } else {
-      setTitulo("");
-      setDescricao("");
-      setLocal("");
-      setTipo("");
-      setUnidadeId("");
-      setPublicoAlvo("");
-      setInstrutorSelecionado([""]);
-      setTurmas([]);
-
-      setRestrito(false);
-      setRestritoModo("");
-      setRegistros([]);
-      setRegistroInput("");
+      setTitulo(""); setDescricao(""); setLocal(""); setTipo(""); setUnidadeId(""); setPublicoAlvo("");
+      setInstrutorSelecionado([""]); setTurmas([]);
+      setRestrito(false); setRestritoModo(""); setRegistros([]); setRegistroInput("");
     }
   }, [evento, isOpen]);
 
-  // ✅ Ao editar, busca o DETALHE para garantir a lista e contar
+  // Garante a lista ao editar
   useEffect(() => {
     if (!isOpen || !evento?.id) return;
     (async () => {
       try {
         const det = await apiGet(`/api/eventos/${evento.id}`);
         if (typeof det.restrito === "boolean") setRestrito(!!det.restrito);
-        if (det.restrito_modo) setRestritoModo(det.restrito_modo);
+        if (det.restrito_modo || det.vis_reg_tipo) {
+          setRestritoModo(det.restrito_modo || (det.vis_reg_tipo === "lista" ? "lista_registros" : "todos_servidores"));
+        }
         const lista = Array.isArray(det.registros_permitidos)
           ? det.registros_permitidos
           : Array.isArray(det.registros)
           ? det.registros
           : [];
-        setRegistros([...new Set(lista.map(normReg).filter(Boolean))]);
-      } catch {
-        // silencioso: mantém o que veio do objeto base
-      }
+        const parsed = (lista || []).map(normReg).filter((r) => /^\d{6}$/.test(r));
+        setRegistros([...new Set(parsed)]);
+      } catch {}
     })();
   }, [isOpen, evento?.id]);
 
-  // Carrega unidades
-  useEffect(() => {
-    (async () => {
-      try {
-        const data = await apiGet("/api/unidades");
-        setUnidades(Array.isArray(data) ? data : []);
-      } catch {
-        toast.error("Erro ao carregar unidades.");
-      }
-    })();
-  }, []);
+  // Carrega unidades/usuários
+  useEffect(() => { (async () => {
+    try { const data = await apiGet("/api/unidades"); setUnidades(Array.isArray(data) ? data : []); }
+    catch { toast.error("Erro ao carregar unidades."); }
+  })(); }, []);
+  useEffect(() => { (async () => {
+    try { const data = await apiGet("/api/usuarios"); setUsuarios(Array.isArray(data) ? data : []); }
+    catch { toast.error("Erro ao carregar usuários."); }
+  })(); }, []);
 
-  // Carrega usuários
-  useEffect(() => {
-    (async () => {
-      try {
-        const data = await apiGet("/api/usuarios");
-        setUsuarios(Array.isArray(data) ? data : []);
-      } catch {
-        toast.error("Erro ao carregar usuários.");
-      }
-    })();
-  }, []);
-
+  // ➕ registros
   const addRegistro = () => {
-    const r = normReg(registroInput);
-    if (!r) return;
-    setRegistros((prev) => (prev.includes(r) ? prev : [...prev, r]));
+    const novos = parseRegsBulk(registroInput);
+    if (!novos.length) { toast.info("Informe/cole ao menos uma sequência de 6 dígitos."); return; }
+    setRegistros((prev) => Array.from(new Set([...prev, ...novos])));
     setRegistroInput("");
   };
   const addRegistrosBulk = (txt) => {
     const novos = parseRegsBulk(txt);
-    if (!novos.length) return;
+    if (!novos.length) { toast.info("Nenhuma sequência de 6 dígitos encontrada."); return; }
     setRegistros((prev) => Array.from(new Set([...prev, ...novos])));
     setRegistroInput("");
   };
@@ -218,52 +203,35 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
     e.preventDefault();
 
     const tiposValidos = ["Congresso", "Curso", "Oficina", "Palestra", "Seminário", "Simpósio", "Outros"];
-    if (!titulo || !tipo || !unidadeId) {
-      toast.warning("⚠️ Preencha todos os campos obrigatórios.");
-      return;
-    }
-    if (!tiposValidos.includes(tipo)) {
-      toast.error("❌ Tipo de evento inválido.");
-      return;
-    }
-    if (!turmas.length) {
-      toast.warning("⚠️ Adicione pelo menos uma turma.");
-      return;
-    }
+    if (!titulo || !tipo || !unidadeId) { toast.warning("⚠️ Preencha todos os campos obrigatórios."); return; }
+    if (!tiposValidos.includes(tipo)) { toast.error("❌ Tipo de evento inválido."); return; }
+    if (!turmas.length) { toast.warning("⚠️ Adicione pelo menos uma turma."); return; }
 
-    // validação de turmas + datas
     for (const t of turmas) {
       if (!t.nome || !Number(t.vagas_total) || !Number.isFinite(Number(t.carga_horaria))) {
-        toast.error("❌ Preencha nome, vagas e carga horária de cada turma.");
-        return;
+        toast.error("❌ Preencha nome, vagas e carga horária de cada turma."); return;
       }
       if (!Array.isArray(t.datas) || t.datas.length === 0) {
-        toast.error("❌ Cada turma precisa ter ao menos uma data.");
-        return;
+        toast.error("❌ Cada turma precisa ter ao menos uma data."); return;
       }
       for (const d of t.datas) {
         if (!d?.data || !d?.horario_inicio || !d?.horario_fim) {
-          toast.error("❌ Preencha data, início e fim em todos os encontros.");
-          return;
+          toast.error("❌ Preencha data, início e fim em todos os encontros."); return;
         }
       }
     }
 
-    // 🔒 validação de restrição
     if (restrito) {
       if (!["todos_servidores", "lista_registros"].includes(restritoModo)) {
-        toast.error("Defina o modo de restrição do evento.");
-        return;
+        toast.error("Defina o modo de restrição do evento."); return;
       }
       if (restritoModo === "lista_registros" && registros.length === 0) {
-        toast.error("Inclua pelo menos um registro autorizado para este evento.");
-        return;
+        toast.error("Inclua pelo menos um registro (6 dígitos) para este evento."); return;
       }
     }
 
     const instrutorValidado = instrutorSelecionado.map(Number).filter((id) => !Number.isNaN(id));
 
-    // monta turmas para o payload
     const turmasCompletas = turmas.map((t) => {
       const qtd = Array.isArray(t.datas) ? t.datas.length : 0;
       const di = qtd ? minDate(t.datas) : t.data_inicio;
@@ -277,15 +245,17 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
         horario_fim: hh(first.horario_fim || t.horario_fim),
         vagas_total: Number(t.vagas_total),
         carga_horaria: Number(t.carga_horaria),
-        encontros: t.datas.map((d) => ({
-          data: d.data,
-          inicio: hh(d.horario_inicio),
-          fim: hh(d.horario_fim),
-        })),
+        encontros: t.datas.map((d) => ({ data: d.data, inicio: hh(d.horario_inicio), fim: hh(d.horario_fim) })),
       };
     });
 
     const turmaPrincipal = turmasCompletas[0] || {};
+    const regs6 = Array.from(new Set(registros.filter((r) => /^\d{6}$/.test(r))));
+
+    // 🔑 chave do backend: vis_reg_tipo ('todos' | 'lista')
+    const vis_reg_tipo =
+      restrito ? (restritoModo === "lista_registros" ? "lista" : "todos") : "todos";
+
     const payload = {
       titulo,
       descricao,
@@ -308,13 +278,15 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
 
       // 🔒 restrição
       restrito: !!restrito,
-      ...(restrito
-        ? {
-            restrito_modo: restritoModo,
-            ...(restritoModo === "lista_registros" ? { registros_permitidos: registros } : {}),
-          }
-        : {}),
+      restrito_modo: restrito ? (restritoModo || "todos_servidores") : "",
+      vis_reg_tipo, // ✅ alinhar com o que o GET devolve
+      ...(restrito && vis_reg_tipo === "lista" && regs6.length > 0
+        ? { registros_permitidos: regs6 }
+        : {}), // só envia quando realmente precisa
     };
+
+    // debug local (aparece no seu log)
+    console.log("[PUT evento] payload:", payload);
 
     onSalvar(payload);
     onClose();
@@ -358,7 +330,6 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
     }
   }
 
-  // 🔢 contador para o badge (usa estado se houver; senão, o count do backend)
   const regCount =
     Array.isArray(registros) && registros.length > 0
       ? registros.length
@@ -526,11 +497,8 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
                 checked={restrito}
                 onChange={(e) => {
                   setRestrito(e.target.checked);
-                  if (!e.target.checked) {
-                    setRestritoModo("");
-                  } else if (!restritoModo) {
-                    setRestritoModo("todos_servidores");
-                  }
+                  if (!e.target.checked) setRestritoModo("");
+                  else if (!restritoModo) setRestritoModo("todos_servidores");
                 }}
               />
               <span>Evento restrito</span>
@@ -546,9 +514,7 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
                     checked={restritoModo === "todos_servidores"}
                     onChange={() => setRestritoModo("todos_servidores")}
                   />
-                  <span>
-                    Todos os servidores (somente quem possui <strong>registro</strong> cadastrado)
-                  </span>
+                  <span>Todos os servidores (somente quem possui <strong>registro</strong> cadastrado)</span>
                 </label>
 
                 <label className="flex items-center gap-2">
@@ -571,20 +537,14 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
                       <input
                         value={registroInput}
                         onChange={(e) => setRegistroInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            addRegistro();
-                          }
-                        }}
+                        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addRegistro(); } }}
                         onPaste={(e) => {
-                          const txt = e.clipboardData?.getData("text");
-                          if (txt && /[\s,;|\n\r\t]/.test(txt)) {
-                            e.preventDefault();
-                            addRegistrosBulk(txt);
-                          }
+                          const txt = e.clipboardData?.getData("text") || "";
+                          if (!txt) return;
+                          e.preventDefault();
+                          addRegistrosBulk(txt);
                         }}
-                        placeholder="Digite o registro (só números) e Enter"
+                        placeholder="Digite/cole registros (toda sequência de 6 dígitos) e pressione Enter"
                         className="w-full px-3 py-2 border rounded-md"
                       />
                       <button
@@ -619,9 +579,7 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
                         </div>
                       </>
                     ) : (
-                      <p className="text-xs text-gray-600">
-                        Você também pode colar uma lista (CSV/planilha). Só os números serão considerados.
-                      </p>
+                      <p className="text-xs text-gray-600">Pode colar CSV/planilha/texto — extraímos todas as sequências de 6 dígitos.</p>
                     )}
                   </div>
                 )}
@@ -650,7 +608,6 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
                       key={t.id ?? `temp-${i}`}
                       className="bg-gray-100 dark:bg-zinc-800 rounded-md p-3 text-sm shadow-sm relative"
                     >
-                      {/* Botão Remover */}
                       <button
                         type="button"
                         onClick={() => removerTurma(t, i)}
@@ -682,9 +639,7 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
                           📅 {formatarDataBrasileira(t.data_inicio)} a {formatarDataBrasileira(t.data_fim)}
                         </p>
                       )}
-                      {hi && hf && (
-                        <p>🕒 {hi} às {hf}</p>
-                      )}
+                      {hi && hf && <p>🕒 {hi} às {hf}</p>}
                       <p>👥 {t.vagas_total} vagas • ⏱ {t.carga_horaria}h</p>
                     </div>
                   );

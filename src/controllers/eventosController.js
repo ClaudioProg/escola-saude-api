@@ -40,7 +40,7 @@ function toHm(v) {
 /* =====================================================================
    Helpers de restrição
    ===================================================================== */
-const MODO_TODOS = 'todos_servidores'; // ← "somente servidores"
+const MODO_TODOS = 'todos_servidores';
 const MODO_LISTA = 'lista_registros';
 const ALLOWED_MODOS = new Set([MODO_TODOS, MODO_LISTA]);
 
@@ -62,7 +62,7 @@ const getUsuarioId = (req) => (req.user?.id ?? req.usuario?.id ?? null);
    🔐 Núcleo de checagem por REGISTRO (reuso interno)
    ===================================================================== */
 async function podeVerPorRegistro({ client, usuarioId, eventoId, req }) {
-  // Admin ou instrutor do evento sempre podem ver
+  // Admin sempre pode ver
   if (usuarioId && (isAdmin(req))) return { ok: true };
 
   const evQ = await client.query(
@@ -81,10 +81,10 @@ async function podeVerPorRegistro({ client, usuarioId, eventoId, req }) {
     if (isInstrutorDoEvento) return { ok: true };
   }
 
-  // Sem restrição → aparece para qualquer usuário autenticado
+  // Sem restrição
   if (!evento.restrito) return { ok: true };
 
-  // Busca registro do usuário
+  // Com restrição
   if (!usuarioId) return { ok: false, motivo: 'NAO_AUTENTICADO' };
   const uQ = await client.query(`SELECT registro FROM usuarios WHERE id = $1`, [usuarioId]);
   const regNorm = normalizeRegistro(uQ.rows?.[0]?.registro || '');
@@ -105,7 +105,6 @@ async function podeVerPorRegistro({ client, usuarioId, eventoId, req }) {
       : { ok: false, motivo: 'REGISTRO_NAO_AUTORIZADO' };
   }
 
-  // Modo desconhecido → nega por segurança
   return { ok: false, motivo: 'MODO_RESTRICAO_INVALIDO' };
 }
 
@@ -121,15 +120,15 @@ async function listarEventos(req, res) {
         e.*,
 
         /* lista de registros já cadastrados (sempre retornada) */
-COALESCE((
-  SELECT array_agg(er.registro_norm ORDER BY er.registro_norm)
-  FROM evento_registros er
-  WHERE er.evento_id = e.id
-), '{}'::text[]) AS registros_permitidos,
+        COALESCE((
+          SELECT array_agg(er.registro_norm ORDER BY er.registro_norm)
+          FROM evento_registros er
+          WHERE er.evento_id = e.id
+        ), '{}'::text[]) AS registros_permitidos,
 
-/* ✅ nova contagem */
-(SELECT COUNT(*) FROM evento_registros er WHERE er.evento_id = e.id)
-  AS count_registros_permitidos,
+        /* ✅ nova contagem */
+        (SELECT COUNT(*) FROM evento_registros er WHERE er.evento_id = e.id)
+          AS count_registros_permitidos,
 
         COALESCE(
           json_agg(DISTINCT jsonb_build_object('id', u.id, 'nome', u.nome))
@@ -219,15 +218,15 @@ async function listarEventosParaMim(req, res) {
         e.publico_alvo, e.restrito, e.restrito_modo,
 
         /* SEMPRE devolver a lista para UI poder exibir/editar */
-COALESCE((
-  SELECT array_agg(er.registro_norm ORDER BY er.registro_norm)
-  FROM evento_registros er
-  WHERE er.evento_id = e.id
-), '{}'::text[]) AS registros_permitidos,
+        COALESCE((
+          SELECT array_agg(er.registro_norm ORDER BY er.registro_norm)
+          FROM evento_registros er
+          WHERE er.evento_id = e.id
+        ), '{}'::text[]) AS registros_permitidos,
 
-/* ✅ nova contagem */
-(SELECT COUNT(*) FROM evento_registros er WHERE er.evento_id = e.id)
-  AS count_registros_permitidos,
+        /* ✅ nova contagem */
+        (SELECT COUNT(*) FROM evento_registros er WHERE er.evento_id = e.id)
+          AS count_registros_permitidos,
 
         /* instrutores do evento */
         COALESCE((
@@ -478,12 +477,12 @@ async function buscarEventoPorId(req, res) {
     );
 
     // lista de registros (sempre)
-const regsQ = await client.query(
-  `SELECT registro_norm FROM evento_registros WHERE evento_id = $1 ORDER BY registro_norm`,
-  [id]
-);
-const registros_permitidos = regsQ.rows.map(r => r.registro_norm);
-const count_registros_permitidos = regsQ.rowCount; // ✅
+    const regsQ = await client.query(
+      `SELECT registro_norm FROM evento_registros WHERE evento_id = $1 ORDER BY registro_norm`,
+      [id]
+    );
+    const registros_permitidos = regsQ.rows.map(r => r.registro_norm);
+    const count_registros_permitidos = regsQ.rowCount; // ✅
 
     // turmas (com datas reais)
     const turmasBase = await client.query(
@@ -729,27 +728,37 @@ async function atualizarEvento(req, res) {
     registros_permitidos,
   } = req.body || {};
 
-  let restritoSQL = null;
-  let modoSQL = null;
-  let regList = null;
-
-  if (typeof restrito !== 'undefined') restritoSQL = !!restrito;
-  if (typeof restrito_modo !== 'undefined') {
-    if (restritoSQL === true && !ALLOWED_MODOS.has(String(restrito_modo))) {
-      return res.status(400).json({ erro: "restrito_modo inválido. Use 'todos_servidores' ou 'lista_registros'." });
-    }
-    modoSQL = restritoSQL ? String(restrito_modo || '') : null;
-  }
-
-  if (restritoSQL === true && modoSQL === MODO_LISTA) {
-    const input = typeof registros_permitidos !== 'undefined' ? registros_permitidos : registros;
-    regList = normalizeListaRegistros(input);
-    if (regList.length === 0) return res.status(400).json({ erro: 'Registros inválidos.' });
-  }
+  // flags para saber se o cliente tentou mexer na lista
+  const listaFoiEnviada = Object.prototype.hasOwnProperty.call(req.body || {}, 'registros')
+                       || Object.prototype.hasOwnProperty.call(req.body || {}, 'registros_permitidos');
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+
+    // 🔎 estado atual
+    const curQ = await client.query(
+      `SELECT restrito, restrito_modo FROM eventos WHERE id = $1`,
+      [eventoId]
+    );
+    if (curQ.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ erro: 'Evento não encontrado' });
+    }
+    const atual = curQ.rows[0];
+
+    // 🎛️ determina estado final (se não veio no body, mantém o atual)
+    const restritoFinal = (typeof restrito !== 'undefined') ? !!restrito : !!atual.restrito;
+    let modoFinal;
+    if (typeof restrito_modo !== 'undefined') {
+      if (restritoFinal && !ALLOWED_MODOS.has(String(restrito_modo))) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ erro: "restrito_modo inválido. Use 'todos_servidores' ou 'lista_registros'." });
+      }
+      modoFinal = restritoFinal ? String(restrito_modo || '') : null;
+    } else {
+      modoFinal = restritoFinal ? (atual.restrito_modo || null) : null;
+    }
 
     // 1) Atualiza campos simples do evento
     await client.query(
@@ -761,7 +770,7 @@ async function atualizarEvento(req, res) {
         tipo         = COALESCE($5, tipo),
         unidade_id   = COALESCE($6, unidade_id),
         publico_alvo = COALESCE($7, publico_alvo),
-        restrito     = COALESCE($8, restrito),
+        restrito     = $8,
         restrito_modo= $9
       WHERE id = $1
       `,
@@ -773,8 +782,8 @@ async function atualizarEvento(req, res) {
         tipo ?? null,
         unidade_id ?? null,
         publico_alvo ?? null,
-        restritoSQL,
-        typeof modoSQL === 'string' ? (modoSQL || null) : undefined
+        restritoFinal,
+        typeof modoFinal === 'string' ? (modoFinal || null) : null
       ]
     );
 
@@ -789,22 +798,30 @@ async function atualizarEvento(req, res) {
       }
     }
 
-    // 2.1) Lista de registros (se for modo lista)
-    if (restritoSQL === true && modoSQL === MODO_LISTA && Array.isArray(regList)) {
+    // 2.1) Lista de registros
+    if (!restritoFinal || modoFinal === MODO_TODOS) {
+      // sem restrição ou modo "todos" → limpa vínculos
       await client.query(`DELETE FROM evento_registros WHERE evento_id = $1`, [eventoId]);
-      for (const r of regList) {
-        await client.query(
-          `INSERT INTO evento_registros (evento_id, registro_norm) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
-          [eventoId, r]
-        );
+    } else if (modoFinal === MODO_LISTA) {
+      if (listaFoiEnviada) {
+        const input = (typeof registros_permitidos !== 'undefined') ? registros_permitidos : registros;
+        const regList = normalizeListaRegistros(input);
+        if (regList.length === 0) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ erro: 'Registros inválidos.' });
+        }
+        await client.query(`DELETE FROM evento_registros WHERE evento_id = $1`, [eventoId]);
+        for (const r of regList) {
+          await client.query(
+            `INSERT INTO evento_registros (evento_id, registro_norm) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+            [eventoId, r]
+          );
+        }
       }
-    }
-    // se virou "todos_servidores" ou deixou de ser restrito → limpa tabela de vínculos
-    if ((restritoSQL === true && modoSQL === MODO_TODOS) || restritoSQL === false) {
-      await client.query(`DELETE FROM evento_registros WHERE evento_id = $1`, [eventoId]);
+      // se não foi enviada lista e modo continua lista → preserva a atual
     }
 
-    // 3) Edição das turmas (mesma lógica anterior)
+    // 3) Edição das turmas (igual antes)
     if (!Array.isArray(turmas)) {
       await client.query('COMMIT');
       return res.json({ ok: true, mensagem: 'Evento atualizado (metadados e restrição).' });
@@ -875,10 +892,10 @@ async function atualizarEvento(req, res) {
         continue;
       }
 
-      const atual = mapaAtuais.get(id);
-      if (!atual) continue;
+      const atualT = mapaAtuais.get(id);
+      if (!atualT) continue;
 
-      const inscritos = atual.inscritos || 0;
+      const inscritos = atualT.inscritos || 0;
 
       const veioDatas = Array.isArray(t.datas) || Array.isArray(t.encontros);
       const vaiDiminuirVagas = Number.isFinite(Number(t.vagas_total)) &&
@@ -887,7 +904,7 @@ async function atualizarEvento(req, res) {
       if (inscritos > 0 && (veioDatas || vaiDiminuirVagas)) {
         bloqueios.push({
           id: id,
-          nome: atual.nome,
+          nome: atualT.nome,
           inscritos,
           motivo: veioDatas ? 'ALTERACAO_DE_DATAS' : 'DIMINUICAO_DE_VAGAS'
         });
@@ -900,7 +917,7 @@ async function atualizarEvento(req, res) {
                vagas_total = COALESCE($3, vagas_total)
          WHERE id = $1`,
         [id, t.nome ?? null,
-         Number.isFinite(Number(t.vagas_total)) && Number(t.vagas_total) > (atual.vagas_total||0)
+         Number.isFinite(Number(t.vagas_total)) && Number(t.vagas_total) > (atualT.vagas_total||0)
            ? Number(t.vagas_total)
            : null]
       );
@@ -974,7 +991,7 @@ async function excluirEvento(req, res) {
     );
     await client.query('DELETE FROM turmas WHERE evento_id = $1', [id]);
     await client.query('DELETE FROM evento_instrutor WHERE evento_id = $1', [id]);
-    await client.query('DELETE FROM evento_registros WHERE evento_id = $1', [id]); // 🔒 sem cascata
+    await client.query('DELETE FROM evento_registros WHERE evento_id = $1', [id]);
 
     const result = await client.query('DELETE FROM eventos WHERE id = $1 RETURNING *', [id]);
     if (result.rows.length === 0) {
@@ -1093,15 +1110,15 @@ async function listarEventosDoinstrutor(req, res) {
         END AS status,
 
         /* também devolve a lista para UI de edição */
-COALESCE((
-  SELECT array_agg(er.registro_norm ORDER BY er.registro_norm)
-  FROM evento_registros er
-  WHERE er.evento_id = e.id
-), '{}'::text[]) AS registros_permitidos,
+        COALESCE((
+          SELECT array_agg(er.registro_norm ORDER BY er.registro_norm)
+          FROM evento_registros er
+          WHERE er.evento_id = e.id
+        ), '{}'::text[]) AS registros_permitidos,
 
-/* ✅ nova contagem */
-(SELECT COUNT(*) FROM evento_registros er WHERE er.evento_id = e.id)
-  AS count_registros_permitidos,
+        /* ✅ nova contagem */
+        (SELECT COUNT(*) FROM evento_registros er WHERE er.evento_id = e.id)
+          AS count_registros_permitidos
 
       FROM eventos e
       JOIN evento_instrutor ei ON ei.evento_id = e.id
