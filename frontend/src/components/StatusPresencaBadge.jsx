@@ -1,22 +1,25 @@
-// components/StatusPresencaBadge.jsx
-import { CheckCircle, XCircle } from "lucide-react";
+// 📁 src/components/StatusPresencaBadge.jsx
+import PropTypes from "prop-types";
+import { CheckCircle, XCircle, HelpCircle } from "lucide-react";
 
 /**
- * Componente visual para exibir o status de presença.
- * Props:
- * - status: "presente" | "faltou"
+ * Badge que exibe o status de presença.
+ *
+ * @param {string} status - "presente" | "faltou" | outro
+ * @param {string} label  - Texto opcional que substitui o padrão
+ * @param {string} className - Classe extra para o <span>
  */
-export default function StatusPresencaBadge({ status }) {
+export default function StatusPresencaBadge({ status, label, className = "" }) {
   if (status === "presente") {
     return (
       <span
-        className="flex items-center gap-1 bg-yellow-200 text-yellow-900 dark:bg-yellow-400 dark:text-black px-2 py-1 rounded text-xs font-semibold"
-        aria-label="Presente"
+        className={`flex items-center gap-1 bg-green-100 text-green-800 dark:bg-green-600/30 dark:text-green-300 px-2 py-1 rounded text-xs font-semibold ${className}`}
+        aria-label={label || "Presente"}
         aria-live="polite"
         role="status"
       >
-        <CheckCircle size={14} className="text-yellow-800 dark:text-black" />
-        Presente
+        <CheckCircle size={14} className="text-green-700 dark:text-green-300" />
+        {label || "Presente"}
       </span>
     );
   }
@@ -24,16 +27,33 @@ export default function StatusPresencaBadge({ status }) {
   if (status === "faltou") {
     return (
       <span
-        className="flex items-center gap-1 bg-red-300 text-white dark:bg-red-600 dark:text-white px-2 py-1 rounded text-xs font-semibold"
-        aria-label="Faltou"
+        className={`flex items-center gap-1 bg-red-100 text-red-700 dark:bg-red-700/30 dark:text-red-300 px-2 py-1 rounded text-xs font-semibold ${className}`}
+        aria-label={label || "Faltou"}
         aria-live="polite"
         role="status"
       >
-        <XCircle size={14} className="text-white" />
-        Faltou
+        <XCircle size={14} className="text-red-600 dark:text-red-300" />
+        {label || "Faltou"}
       </span>
     );
   }
 
-  return null;
+  // Estado neutro/desconhecido
+  return (
+    <span
+      className={`flex items-center gap-1 bg-gray-200 text-gray-700 dark:bg-zinc-700 dark:text-gray-300 px-2 py-1 rounded text-xs font-semibold ${className}`}
+      aria-label={label || "Indefinido"}
+      aria-live="polite"
+      role="status"
+    >
+      <HelpCircle size={14} className="text-gray-600 dark:text-gray-300" />
+      {label || "Indefinido"}
+    </span>
+  );
 }
+
+StatusPresencaBadge.propTypes = {
+  status: PropTypes.string,
+  label: PropTypes.string,
+  className: PropTypes.string,
+};

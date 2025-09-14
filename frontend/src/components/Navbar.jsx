@@ -1,5 +1,12 @@
 // 📁 src/components/Navbar.jsx
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useCallback,
+  useId,
+} from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   CalendarDays,
@@ -22,7 +29,7 @@ import {
   HelpCircle,
   Menu as MenuIcon,
   X as CloseIcon,
-  Bell
+  Bell,
 } from "lucide-react";
 import { apiGet } from "../services/api";
 
@@ -57,10 +64,14 @@ function getPerfisRobusto() {
   if (rawPerfil) {
     try {
       const parsed = JSON.parse(rawPerfil);
-      if (Array.isArray(parsed)) parsed.forEach(p => out.add(String(p).toLowerCase()));
-      else String(rawPerfil).split(",").forEach(p => out.add(p.replace(/[\[\]"]/g, "").trim().toLowerCase()));
+      if (Array.isArray(parsed)) parsed.forEach((p) => out.add(String(p).toLowerCase()));
+      else String(rawPerfil)
+        .split(",")
+        .forEach((p) => out.add(p.replace(/[\[\]"]/g, "").trim().toLowerCase()));
     } catch {
-      String(rawPerfil).split(",").forEach(p => out.add(p.replace(/[\[\]"]/g, "").trim().toLowerCase()));
+      String(rawPerfil)
+        .split(",")
+        .forEach((p) => out.add(p.replace(/[\[\]"]/g, "").trim().toLowerCase()));
     }
   }
 
@@ -69,12 +80,14 @@ function getPerfisRobusto() {
     if (rawUser) {
       const u = JSON.parse(rawUser);
       if (u?.perfil) {
-        if (Array.isArray(u.perfil)) u.perfil.forEach(p => out.add(String(p).toLowerCase()));
+        if (Array.isArray(u.perfil)) u.perfil.forEach((p) => out.add(String(p).toLowerCase()));
         else out.add(String(u.perfil).toLowerCase());
       }
       if (u?.perfis) {
-        if (Array.isArray(u.perfis)) u.perfis.forEach(p => out.add(String(p).toLowerCase()));
-        else String(u.perfis).split(",").forEach(p => out.add(p.replace(/[\[\]"]/g, "").trim().toLowerCase()));
+        if (Array.isArray(u.perfis)) u.perfis.forEach((p) => out.add(String(p).toLowerCase()));
+        else String(u.perfis)
+          .split(",")
+          .forEach((p) => out.add(p.replace(/[\[\]"]/g, "").trim().toLowerCase()));
       }
     }
   } catch {}
@@ -84,10 +97,18 @@ function getPerfisRobusto() {
 }
 
 function getUsuarioLS() {
-  try { return JSON.parse(localStorage.getItem("usuario") || "null"); } catch { return null; }
+  try {
+    return JSON.parse(localStorage.getItem("usuario") || "null");
+  } catch {
+    return null;
+  }
 }
-function getNomeUsuario()  { return getUsuarioLS()?.nome  || ""; }
-function getEmailUsuario() { return getUsuarioLS()?.email || ""; }
+function getNomeUsuario() {
+  return getUsuarioLS()?.nome || "";
+}
+function getEmailUsuario() {
+  return getUsuarioLS()?.email || "";
+}
 
 /** 🅰️ Iniciais a partir do nome (ou e-mail) */
 function getIniciais(nome, email) {
@@ -103,19 +124,22 @@ function getIniciais(nome, email) {
 }
 
 /** Item de menu genérico */
-function MenuList({ items, onSelect, activePath }) {
+function MenuList({ items, onSelect, activePath, id }) {
   return (
     <div
+      id={id}
       role="menu"
-      className="absolute right-0 top-full mt-2 bg-white text-lousa rounded-xl shadow-xl py-2 w-64 ring-1 ring-black/5"
+      className="absolute right-0 top-full mt-2 bg-white text-lousa rounded-xl shadow-xl py-2 w-64 ring-1 ring-black/5 z-50"
     >
       {items.map(({ label, path, icon: Icon }) => {
         const active = activePath === path;
         return (
           <button
             key={label}
+            type="button"
             role="menuitem"
             onClick={() => onSelect(path)}
+            aria-current={active ? "page" : undefined}
             className={`w-full text-left px-4 py-2 flex items-center gap-2 hover:bg-gelo focus:bg-gelo outline-none ${
               active ? "font-semibold underline" : ""
             }`}
@@ -142,12 +166,17 @@ export default function Navbar() {
   const [perfil, setPerfil] = useState(() => getPerfisRobusto());
   const [nomeUsuario, setNomeUsuario] = useState(() => getNomeUsuario());
   const [emailUsuario, setEmailUsuario] = useState(() => getEmailUsuario());
-  const iniciais = useMemo(() => getIniciais(nomeUsuario, emailUsuario), [nomeUsuario, emailUsuario]);
+  const iniciais = useMemo(
+    () => getIniciais(nomeUsuario, emailUsuario),
+    [nomeUsuario, emailUsuario]
+  );
 
-  // ▶ tema
+  // ▶ tema — lê do 'theme' (aplicado no boot pelo index.html/main.jsx)
   const [darkMode, setDarkMode] = useState(() => {
-    const saved = localStorage.getItem("darkMode");
-    return saved ? JSON.parse(saved) : document.documentElement.classList.contains("dark");
+    const t = localStorage.getItem("theme");
+    if (t === "dark") return true;
+    if (t === "light") return false;
+    return document.documentElement.classList.contains("dark");
   });
 
   // ▶ visibilidades
@@ -164,6 +193,12 @@ export default function Navbar() {
   const refConfig = useRef(null);
   const refMobile = useRef(null);
 
+  // ▶ ids para menus (a11y)
+  const usuarioMenuId = useId();
+  const instrutorMenuId = useId();
+  const adminMenuId = useId();
+  const configMenuId = useId();
+
   // ▶ itens de menu
   const menusUsuario = useMemo(
     () => [
@@ -177,12 +212,11 @@ export default function Navbar() {
     []
   );
 
-  // 🔁 Removido “QR do Site” daqui (foi para o menu do avatar)
+  // 🔁 Removido “QR do Site” daqui (fica no avatar)
   const menusInstrutor = useMemo(
     () => [
       { label: "Painel", path: "/instrutor", icon: LayoutDashboard },
       { label: "Agenda", path: "/agenda-instrutor", icon: CalendarDays },
-      // { label: "QR do Site", path: "/qr-site", icon: QrCode }, // movido
     ],
     []
   );
@@ -217,7 +251,7 @@ export default function Navbar() {
   const atualizarContadorNotificacoes = useCallback(async () => {
     if (!getValidToken() || document.hidden) return;
     try {
-      const data = await apiGet("/notificacoes/nao-lidas/contagem", { on401: "silent" });
+      const data = await apiGet("/api/notificacoes/nao-lidas/contagem", { on401: "silent", on403: "silent" });
       setTotalNaoLidas(data?.totalNaoLidas ?? data?.total ?? 0);
     } catch {
       setTotalNaoLidas(0);
@@ -231,9 +265,12 @@ export default function Navbar() {
       tick();
       intervalId = setInterval(tick, 30000);
     }
-    const onVisibility = () => { if (!document.hidden) tick(); };
+    const onVisibility = () => {
+      if (!document.hidden) tick();
+    };
     document.addEventListener("visibilitychange", onVisibility);
 
+    // opcional: disponibiliza um gancho global
     window.atualizarContadorNotificacoes = tick;
     return () => {
       if (intervalId) clearInterval(intervalId);
@@ -254,6 +291,9 @@ export default function Navbar() {
       if (["perfil", "usuario", "token"].includes(e.key)) {
         refreshFromLS();
       }
+      if (e.key === "theme") {
+        setDarkMode(e.newValue === "dark");
+      }
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
@@ -271,11 +311,19 @@ export default function Navbar() {
     setToken(getValidToken());
   }, [location.pathname]);
 
-  // tema
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", darkMode);
-    localStorage.setItem("darkMode", JSON.stringify(darkMode));
-  }, [darkMode]);
+  // ✅ Alternar tema (aplica classe + persiste em 'theme')
+  const toggleTheme = () => {
+    const next = !darkMode;
+    setDarkMode(next);
+    const root = document.documentElement;
+    if (next) {
+      root.classList.add("dark");
+      localStorage.setItem("theme", "dark");
+    } else {
+      root.classList.remove("dark");
+      localStorage.setItem("theme", "light");
+    }
+  };
 
   // fechar ao clicar fora
   useEffect(() => {
@@ -288,7 +336,9 @@ export default function Navbar() {
         [refConfig, setConfigOpen],
         [refMobile, setMobileOpen],
       ];
-      outsides.forEach(([r, set]) => { if (r.current && !r.current.contains(t)) set(false); });
+      outsides.forEach(([r, set]) => {
+        if (r.current && !r.current.contains(t)) set(false);
+      });
     }
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
@@ -343,6 +393,7 @@ export default function Navbar() {
       <div className="flex items-center justify-between">
         {/* logo / home */}
         <button
+          type="button"
           onClick={goHome}
           className="text-lg sm:text-xl font-bold tracking-tight select-none focus-visible:ring-2 focus-visible:ring-white/60 rounded px-1"
           aria-label="Ir para a página inicial"
@@ -356,16 +407,19 @@ export default function Navbar() {
           {isUsuario && (
             <div className="relative" ref={refUsuario}>
               <button
+                type="button"
                 onClick={() => setMenuUsuarioOpen((v) => !v)}
                 className={dropBtnBase}
                 aria-haspopup="menu"
                 aria-expanded={menuUsuarioOpen}
+                aria-controls={usuarioMenuId}
               >
                 <BookOpen className="w-4 h-4" aria-hidden="true" /> Usuário
                 <ChevronDown className="w-4 h-4" aria-hidden="true" />
               </button>
               {menuUsuarioOpen && (
                 <MenuList
+                  id={usuarioMenuId}
                   items={menusUsuario}
                   activePath={location.pathname}
                   onSelect={go}
@@ -378,16 +432,19 @@ export default function Navbar() {
           {isInstrutor && (
             <div className="relative" ref={refInstrutor}>
               <button
+                type="button"
                 onClick={() => setMenuInstrutorOpen((v) => !v)}
                 className={dropBtnBase}
                 aria-haspopup="menu"
                 aria-expanded={menuInstrutorOpen}
+                aria-controls={instrutorMenuId}
               >
                 <Presentation className="w-4 h-4" aria-hidden="true" /> Instrutor
                 <ChevronDown className="w-4 h-4" aria-hidden="true" />
               </button>
               {menuInstrutorOpen && (
                 <MenuList
+                  id={instrutorMenuId}
                   items={menusInstrutor}
                   activePath={location.pathname}
                   onSelect={go}
@@ -400,16 +457,19 @@ export default function Navbar() {
           {isAdmin && (
             <div className="relative" ref={refAdmin}>
               <button
+                type="button"
                 onClick={() => setMenuAdminOpen((v) => !v)}
                 className={dropBtnBase}
                 aria-haspopup="menu"
                 aria-expanded={menuAdminOpen}
+                aria-controls={adminMenuId}
               >
                 <Shield className="w-4 h-4" aria-hidden="true" /> Administrador
                 <ChevronDown className="w-4 h-4" aria-hidden="true" />
               </button>
               {menuAdminOpen && (
                 <MenuList
+                  id={adminMenuId}
                   items={menusAdmin}
                   activePath={location.pathname}
                   onSelect={go}
@@ -420,25 +480,31 @@ export default function Navbar() {
 
           {/* NOTIFICAÇÕES */}
           <button
+            type="button"
             onClick={() => go("/notificacoes")}
             className="relative flex items-center justify-center px-3 py-1 rounded-xl hover:bg-white hover:text-lousa focus-visible:ring-2 focus-visible:ring-white/60 outline-none"
             aria-label={`Abrir notificações${totalNaoLidas ? `, ${totalNaoLidas} não lidas` : ""}`}
           >
             <Bell className="w-5 h-5" aria-hidden="true" />
             {totalNaoLidas > 0 && (
-              <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[10px] font-bold px-1.5 rounded-full leading-tight">
-                {totalNaoLidas}
-              </span>
+              <>
+                <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[10px] font-bold px-1.5 rounded-full leading-tight">
+                  {totalNaoLidas}
+                </span>
+                <span className="sr-only">{totalNaoLidas} notificações não lidas</span>
+              </>
             )}
           </button>
 
           {/* CONFIGURAÇÕES + AVATAR */}
           <div className="relative" ref={refConfig}>
             <button
+              type="button"
               onClick={() => setConfigOpen((v) => !v)}
               className="flex items-center gap-2 px-2 py-1 text-sm rounded-xl border border-white/70 hover:bg-white hover:text-lousa focus-visible:ring-2 focus-visible:ring-white/60 outline-none"
               aria-haspopup="menu"
               aria-expanded={configOpen}
+              aria-controls={configMenuId}
               title={nomeUsuario ? `Logado como ${nomeUsuario}` : undefined}
             >
               {/* Avatar com iniciais */}
@@ -454,10 +520,12 @@ export default function Navbar() {
             </button>
             {configOpen && (
               <div
+                id={configMenuId}
                 role="menu"
-                className="absolute right-0 top-full mt-2 bg-white text-lousa rounded-xl shadow-xl py-2 w-56 ring-1 ring-black/5"
+                className="absolute right-0 top-full mt-2 bg-white text-lousa rounded-xl shadow-xl py-2 w-56 ring-1 ring-black/5 z-50"
               >
                 <button
+                  type="button"
                   role="menuitem"
                   onClick={() => go("/perfil")}
                   className="w-full text-left px-4 py-2 flex items-center gap-2 hover:bg-gelo focus:bg-gelo outline-none"
@@ -465,8 +533,9 @@ export default function Navbar() {
                   <UserCog size={16} aria-hidden="true" /> Atualizar Cadastro
                 </button>
 
-                {/* 👉 Novo: QR do Site dentro do menu do avatar */}
+                {/* 👉 QR do Site dentro do menu do avatar */}
                 <button
+                  type="button"
                   role="menuitem"
                   onClick={() => go("/qr-site")}
                   className="w-full text-left px-4 py-2 flex items-center gap-2 hover:bg-gelo focus:bg-gelo outline-none"
@@ -475,14 +544,16 @@ export default function Navbar() {
                 </button>
 
                 <button
+                  type="button"
                   role="menuitem"
-                  onClick={() => setDarkMode((v) => !v)}
+                  onClick={toggleTheme}
                   className="w-full text-left px-4 py-2 flex items-center gap-2 hover:bg-gelo focus:bg-gelo outline-none"
                 >
                   {darkMode ? <Sun size={16} aria-hidden="true" /> : <Moon size={16} aria-hidden="true" />}
                   Modo {darkMode ? "Claro" : "Escuro"}
                 </button>
                 <button
+                  type="button"
                   role="menuitem"
                   onClick={() => go("/ajuda")}
                   className="w-full text-left px-4 py-2 flex items-center gap-2 hover:bg-gelo focus:bg-gelo outline-none"
@@ -490,6 +561,7 @@ export default function Navbar() {
                   <HelpCircle size={16} aria-hidden="true" /> Ajuda / FAQ
                 </button>
                 <button
+                  type="button"
                   role="menuitem"
                   onClick={sair}
                   className="w-full text-left px-4 py-2 flex items-center gap-2 text-red-600 hover:bg-gelo focus:bg-gelo outline-none"
@@ -503,10 +575,12 @@ export default function Navbar() {
 
         {/* hambúrguer (mobile) */}
         <button
+          type="button"
           className="md:hidden inline-flex items-center justify-center rounded-lg p-2 hover:bg-white hover:text-lousa focus-visible:ring-2 focus-visible:ring-white/60 outline-none"
           onClick={() => setMobileOpen((v) => !v)}
           aria-label={mobileOpen ? "Fechar menu" : "Abrir menu"}
           aria-expanded={mobileOpen}
+          aria-controls="navbar-mobile-menu"
         >
           {mobileOpen ? <CloseIcon className="w-6 h-6" /> : <MenuIcon className="w-6 h-6" />}
         </button>
@@ -515,6 +589,7 @@ export default function Navbar() {
       {/* menu deslizante mobile */}
       {mobileOpen && (
         <div
+          id="navbar-mobile-menu"
           ref={refMobile}
           className="md:hidden mt-2 rounded-xl bg-white text-lousa shadow-xl ring-1 ring-black/5 overflow-hidden"
         >
@@ -525,8 +600,12 @@ export default function Navbar() {
                 {iniciais}
               </span>
               <div className="min-w-0">
-                <div className="text-sm font-semibold truncate">{nomeUsuario || "Conta"}</div>
-                {emailUsuario && <div className="text-xs text-gray-600 truncate">{emailUsuario}</div>}
+                <div className="text-sm font-semibold truncate">
+                  {nomeUsuario || "Conta"}
+                </div>
+                {emailUsuario && (
+                  <div className="text-xs text-gray-600 truncate">{emailUsuario}</div>
+                )}
               </div>
             </div>
             <hr className="my-1" />
@@ -534,63 +613,87 @@ export default function Navbar() {
             {/* blocos por perfil */}
             {isUsuario && (
               <>
-                <div className="px-2 pt-2 pb-1 text-xs font-semibold uppercase text-gray-500">Usuário</div>
-                {menusUsuario.map((m) => (
-                  <button
-                    key={m.path}
-                    onClick={() => go(m.path)}
-                    className={`text-left w-full px-3 py-2 rounded-lg flex items-center gap-2 hover:bg-gelo ${
-                      location.pathname === m.path ? "font-semibold underline" : ""
-                    }`}
-                  >
-                    <m.icon size={16} /> {m.label}
-                  </button>
-                ))}
+                <div className="px-2 pt-2 pb-1 text-xs font-semibold uppercase text-gray-500">
+                  Usuário
+                </div>
+                {menusUsuario.map((m) => {
+                  const active = location.pathname === m.path;
+                  return (
+                    <button
+                      key={m.path}
+                      type="button"
+                      onClick={() => go(m.path)}
+                      aria-current={active ? "page" : undefined}
+                      className={`text-left w-full px-3 py-2 rounded-lg flex items-center gap-2 hover:bg-gelo ${
+                        active ? "font-semibold underline" : ""
+                      }`}
+                    >
+                      <m.icon size={16} /> {m.label}
+                    </button>
+                  );
+                })}
                 <hr className="my-1" />
               </>
             )}
 
             {isInstrutor && (
               <>
-                <div className="px-2 pt-2 pb-1 text-xs font-semibold uppercase text-gray-500">Instrutor</div>
-                {menusInstrutor.map((m) => (
-                  <button
-                    key={m.path}
-                    onClick={() => go(m.path)}
-                    className={`text-left w-full px-3 py-2 rounded-lg flex items-center gap-2 hover:bg-gelo ${
-                      location.pathname === m.path ? "font-semibold underline" : ""
-                    }`}
-                  >
-                    <m.icon size={16} /> {m.label}
-                  </button>
-                ))}
+                <div className="px-2 pt-2 pb-1 text-xs font-semibold uppercase text-gray-500">
+                  Instrutor
+                </div>
+                {menusInstrutor.map((m) => {
+                  const active = location.pathname === m.path;
+                  return (
+                    <button
+                      key={m.path}
+                      type="button"
+                      onClick={() => go(m.path)}
+                      aria-current={active ? "page" : undefined}
+                      className={`text-left w-full px-3 py-2 rounded-lg flex items-center gap-2 hover:bg-gelo ${
+                        active ? "font-semibold underline" : ""
+                      }`}
+                    >
+                      <m.icon size={16} /> {m.label}
+                    </button>
+                  );
+                })}
                 <hr className="my-1" />
               </>
             )}
 
             {isAdmin && (
               <>
-                <div className="px-2 pt-2 pb-1 text-xs font-semibold uppercase text-gray-500">Administrador</div>
-                {menusAdmin.map((m) => (
-                  <button
-                    key={m.path}
-                    onClick={() => go(m.path)}
-                    className={`text-left w-full px-3 py-2 rounded-lg flex items-center gap-2 hover:bg-gelo ${
-                      location.pathname === m.path ? "font-semibold underline" : ""
-                    }`}
-                  >
-                    <m.icon size={16} /> {m.label}
-                  </button>
-                ))}
+                <div className="px-2 pt-2 pb-1 text-xs font-semibold uppercase text-gray-500">
+                  Administrador
+                </div>
+                {menusAdmin.map((m) => {
+                  const active = location.pathname === m.path;
+                  return (
+                    <button
+                      key={m.path}
+                      type="button"
+                      onClick={() => go(m.path)}
+                      aria-current={active ? "page" : undefined}
+                      className={`text-left w-full px-3 py-2 rounded-lg flex items-center gap-2 hover:bg-gelo ${
+                        active ? "font-semibold underline" : ""
+                      }`}
+                    >
+                      <m.icon size={16} /> {m.label}
+                    </button>
+                  );
+                })}
                 <hr className="my-1" />
               </>
             )}
 
             {/* utilidades */}
-            <div className="px-2 pt-2 pb-1 text-xs font-semibold uppercase text-gray-500">Geral</div>
+            <div className="px-2 pt-2 pb-1 text-xs font-semibold uppercase text-gray-500">
+              Geral
+            </div>
 
-            {/* 👉 Novo no mobile: QR do Site */}
+            {/* 👉 QR do Site */}
             <button
+              type="button"
               onClick={() => go("/qr-site")}
               className="text-left w-full px-3 py-2 rounded-lg flex items-center gap-2 hover:bg-gelo"
             >
@@ -598,8 +701,10 @@ export default function Navbar() {
             </button>
 
             <button
+              type="button"
               onClick={() => go("/notificacoes")}
               className="text-left w-full px-3 py-2 rounded-lg flex items-center gap-2 hover:bg-gelo"
+              aria-label={`Abrir notificações${totalNaoLidas ? `, ${totalNaoLidas} não lidas` : ""}`}
             >
               <Bell size={16} />
               Notificações
@@ -610,24 +715,29 @@ export default function Navbar() {
               )}
             </button>
             <button
+              type="button"
               onClick={() => go("/perfil")}
               className="text-left w-full px-3 py-2 rounded-lg flex items-center gap-2 hover:bg-gelo"
             >
               <UserCog size={16} /> Atualizar Cadastro
             </button>
             <button
-              onClick={() => setDarkMode((v) => !v)}
+              type="button"
+              onClick={toggleTheme}
               className="text-left w-full px-3 py-2 rounded-lg flex items-center gap-2 hover:bg-gelo"
             >
-              {darkMode ? <Sun size={16} /> : <Moon size={16} />} Modo {darkMode ? "Claro" : "Escuro"}
+              {darkMode ? <Sun size={16} /> : <Moon size={16} />} Modo{" "}
+              {darkMode ? "Claro" : "Escuro"}
             </button>
             <button
+              type="button"
               onClick={() => go("/ajuda")}
               className="text-left w-full px-3 py-2 rounded-lg flex items-center gap-2 hover:bg-gelo"
             >
               <HelpCircle size={16} /> Ajuda / FAQ
             </button>
             <button
+              type="button"
               onClick={sair}
               className="text-left w-full px-3 py-2 rounded-lg flex items-center gap-2 text-red-600 hover:bg-gelo"
             >

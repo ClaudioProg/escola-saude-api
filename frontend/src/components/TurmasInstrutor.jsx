@@ -1,5 +1,7 @@
 // 📁 src/components/TurmasInstrutor.jsx
+import PropTypes from "prop-types";
 import { motion, AnimatePresence } from "framer-motion";
+import { useMemo, useState } from "react";
 import AvaliacoesEvento from "./AvaliacoesEvento";
 import { toast } from "react-toastify";
 import { apiPatch, apiPost } from "../services/api";
@@ -35,7 +37,7 @@ function dentroDaJanelaConfirmacao(dataYMD, hIni = "00:00", hFim = "23:59") {
     0
   );
 
-  const abre = new Date(start.getTime() + 60 * 60 * 1000);   // +60min
+  const abre = new Date(start.getTime() + 60 * 60 * 1000);    // +60min
   const fecha = new Date(end.getTime() + 48 * 60 * 60 * 1000); // +48h
   const now = new Date();
   return now >= abre && now <= fecha;
@@ -45,13 +47,18 @@ function dentroDaJanelaConfirmacao(dataYMD, hIni = "00:00", hFim = "23:59") {
 const Badge = ({ children, kind = "waiting" }) => {
   const cls =
     kind === "ok"
-      ? "bg-emerald-100 text-emerald-700"
-      : "bg-amber-100 text-amber-700";
+      ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-600/30 dark:text-emerald-300"
+      : "bg-amber-100 text-amber-700 dark:bg-amber-600/30 dark:text-amber-200";
   return (
     <span className={`px-3 py-[2px] text-xs font-semibold rounded-full ${cls}`}>
       {children}
     </span>
   );
+};
+
+Badge.propTypes = {
+  children: PropTypes.node,
+  kind: PropTypes.oneOf(["ok", "waiting"]),
 };
 
 export default function TurmasInstrutor({
@@ -72,20 +79,33 @@ export default function TurmasInstrutor({
   setTurmaExpandidaAvaliacoes,
   datasPorTurma = {},
   carregarDatasPorTurma,
+  className = "",
 }) {
-  // ✅ confirmação manual via API central
+  const [abrindo, setAbrindo] = useState(null); // feedback leve em botões
+
+  // Agrupa turmas por evento (memoizado)
+  const eventosAgrupados = useMemo(() => {
+    const out = {};
+    for (const t of turmas || []) {
+      if (!t || !t.id || !t.evento?.id) continue;
+      const eventoId = String(t.evento.id);
+      if (!out[eventoId]) out[eventoId] = { nome: t.evento.nome, turmas: [] };
+      out[eventoId].turmas.push(t);
+    }
+    return out;
+  }, [turmas]);
+
+  // ✅ confirmação manual via API central (com mensagens mais claras)
   async function confirmarPresencaManual(usuarioId, turmaId, dataReferencia) {
     const dataYMD = String(dataReferencia).slice(0, 10);
-  
-    // payload compatível com backends que esperam "data" ou "data_presenca"
+
     const payload = {
       usuario_id: Number(usuarioId),
       turma_id: Number(turmaId),
       data: dataYMD,
       data_presenca: dataYMD,
     };
-  
-    // Tentativas em ordem (da mais provável no teu projeto para as genéricas)
+
     const tentativas = [
       { fn: apiPost, url: "/api/presencas/confirmarPresencaInstrutor" },
       { fn: apiPost, url: "/api/presencas/confirmar" },
@@ -93,33 +113,39 @@ export default function TurmasInstrutor({
       { fn: apiPost, url: "/api/presencas/confirmar-manual" },
       { fn: apiPost, url: "/api/presencas/confirmar_presenca" },
     ];
-  
+
     let ultimoErro = null;
-  
-    for (const t of tentativas) {
-      try {
-        await t.fn(t.url, payload, { on403: "silent" });
-        toast.success("✅ Presença confirmada!");
-        await carregarPresencas?.(turmaId);
-        return;
-      } catch (err) {
-        // Se for 404, segue tentando a próxima rota; outros erros param aqui
-        const status = err?.status || err?.response?.status;
-        if (status !== 404) {
-          const msg = err?.data?.erro || err?.data?.message || err?.message || "Erro ao confirmar presença.";
-          toast.error(`❌ ${msg}`);
+
+    try {
+      setAbrindo(`${usuarioId}-${turmaId}-${dataYMD}`);
+      for (const t of tentativas) {
+        try {
+          await t.fn(t.url, payload, { on403: "silent" });
+          toast.success("✅ Presença confirmada!");
+          await carregarPresencas?.(turmaId);
           return;
+        } catch (err) {
+          const status = err?.status || err?.response?.status;
+          // Segue tentando só se 404 (endpoint inexistente)
+          if (status !== 404) {
+            const data = err?.data || err?.response?.data;
+            const msg =
+              data?.erro ||
+              data?.message ||
+              err?.message ||
+              "Erro ao confirmar presença.";
+            toast.error(`❌ ${msg}`);
+            return;
+          }
+          ultimoErro = err;
         }
-        ultimoErro = err;
-        // continua para a próxima tentativa
       }
+      console.error("Nenhuma rota de confirmação encontrada.", ultimoErro);
+      toast.error("❌ Rota não encontrada para confirmar presença. Verifique o endpoint no backend.");
+    } finally {
+      setAbrindo(null);
     }
-  
-    // Se chegou aqui, todas as rotas falharam
-    console.error("Nenhuma rota de confirmação encontrada.", ultimoErro);
-    toast.error("❌ Rota não encontrada para confirmar presença. Verifique o endpoint no backend.");
   }
-  
 
   if (carregando) {
     return (
@@ -131,19 +157,8 @@ export default function TurmasInstrutor({
     );
   }
 
-  // Agrupa turmas por evento
-  const eventosAgrupados = {};
-  for (const turma of turmas || []) {
-    if (!turma || !turma.id || !turma.evento?.id) continue;
-    const eventoId = String(turma.evento.id);
-    if (!eventosAgrupados[eventoId]) {
-      eventosAgrupados[eventoId] = { nome: turma.evento.nome, turmas: [] };
-    }
-    eventosAgrupados[eventoId].turmas.push(turma);
-  }
-
   return (
-    <ul className="space-y-6">
+    <ul className={`space-y-6 ${className}`}>
       <AnimatePresence>
         {Object.entries(eventosAgrupados).map(([eventoId, evento]) => (
           <motion.li
@@ -153,6 +168,7 @@ export default function TurmasInstrutor({
             exit={{ opacity: 0 }}
             transition={{ duration: 0.25 }}
             className="border p-4 rounded-xl bg-white dark:bg-zinc-800 shadow"
+            aria-label={`Evento: ${evento.nome}`}
           >
             <h3 className="text-lg font-semibold text-lousa dark:text-white">{evento.nome}</h3>
 
@@ -166,12 +182,12 @@ export default function TurmasInstrutor({
 
                 // 🔎 datas reais: prioriza turma.datas; depois presenças.detalhado.datas; senão []
                 const datasReais =
-  (Array.isArray(datasPorTurma[idSeguro]) && datasPorTurma[idSeguro].length
-    ? datasPorTurma[idSeguro]
-    : null) ??
-  (Array.isArray(turma?.datas) && turma.datas.length ? turma.datas : null) ??
-  presencasPorTurma[idSeguro]?.detalhado?.datas ??
-  [];
+                  (Array.isArray(datasPorTurma[idSeguro]) && datasPorTurma[idSeguro].length
+                    ? datasPorTurma[idSeguro]
+                    : null) ??
+                  (Array.isArray(turma?.datas) && turma.datas.length ? turma.datas : null) ??
+                  presencasPorTurma[idSeguro]?.detalhado?.datas ??
+                  [];
 
                 return (
                   <div key={idSeguro} className="border-t pt-4">
@@ -180,49 +196,49 @@ export default function TurmasInstrutor({
                     </p>
 
                     {/* Botões de ação */}
-<div className="flex flex-wrap gap-2 mt-2">
-  {/* 👥 Ver inscritos — carrega inscritos, presenças e as DATAS reais */}
-  <button
-    onClick={() => {
-      onVerInscritos?.(idSeguro);
-      carregarPresencas?.(idSeguro);
-      carregarDatasPorTurma?.(idSeguro); // 👈 garante datas_turma
-      setTurmaExpandidaInscritos(expandindoInscritos ? null : idSeguro);
-      setTurmaExpandidaAvaliacoes(null);
-    }}
-    className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
-  >
-    👥 Ver inscritos
-  </button>
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {/* 👥 Ver inscritos */}
+                      <button
+                        onClick={() => {
+                          onVerInscritos?.(idSeguro);
+                          carregarPresencas?.(idSeguro);
+                          carregarDatasPorTurma?.(idSeguro);
+                          setTurmaExpandidaInscritos(expandindoInscritos ? null : idSeguro);
+                          setTurmaExpandidaAvaliacoes(null);
+                        }}
+                        className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700/40"
+                      >
+                        👥 Ver inscritos
+                      </button>
 
-  {/* ⭐ Avaliações — apenas abre avaliações */}
-  <button
-    onClick={() => {
-      onVerAvaliacoes?.(idSeguro);
-      setTurmaExpandidaAvaliacoes(expandindoAvaliacoes ? null : idSeguro);
-      setTurmaExpandidaInscritos(null);
-    }}
-    className="px-3 py-1 bg-purple-600 text-white rounded hover:bg-purple-700 text-sm"
-  >
-    ⭐ Avaliações
-  </button>
+                      {/* ⭐ Avaliações */}
+                      <button
+                        onClick={() => {
+                          onVerAvaliacoes?.(idSeguro);
+                          setTurmaExpandidaAvaliacoes(expandindoAvaliacoes ? null : idSeguro);
+                          setTurmaExpandidaInscritos(null);
+                        }}
+                        className="px-3 py-1 bg-purple-600 text-white rounded hover:bg-purple-700 text-sm focus:outline-none focus:ring-2 focus:ring-purple-700/40"
+                      >
+                        ⭐ Avaliações
+                      </button>
 
-  <button
-    onClick={() => onExportarListaAssinaturaPDF?.(idSeguro)}
-    className="px-3 py-1 bg-gray-700 text-white rounded hover:bg-gray-800 text-sm"
-  >
-    📄 Lista de Presença
-  </button>
+                      <button
+                        onClick={() => onExportarListaAssinaturaPDF?.(idSeguro)}
+                        className="px-3 py-1 bg-gray-700 text-white rounded hover:bg-gray-800 text-sm focus:outline-none focus:ring-2 focus:ring-gray-700/40"
+                      >
+                        📄 Lista de Presença
+                      </button>
 
-  <button
-    onClick={() => onExportarQrCodePDF?.(idSeguro, evento.nome)}
-    className="px-3 py-1 bg-green-700 text-white rounded hover:bg-green-800 text-sm"
-  >
-    🔳 QR Code de Presença
-  </button>
-</div>
+                      <button
+                        onClick={() => onExportarQrCodePDF?.(idSeguro, evento.nome)}
+                        className="px-3 py-1 bg-green-700 text-white rounded hover:bg-green-800 text-sm focus:outline-none focus:ring-2 focus:ring-green-700/40"
+                      >
+                        🔳 QR Code de Presença
+                      </button>
+                    </div>
 
-                    {/* Painel: Inscritos (AGORA com a tabela por aluno — Anexo 2) */}
+                    {/* Painel: Inscritos */}
                     <AnimatePresence>
                       {expandindoInscritos && (
                         <motion.div
@@ -242,7 +258,7 @@ export default function TurmasInstrutor({
                               const nome = aluno?.nome || "—";
                               const cpf = aluno?.cpf || "";
 
-                              // monta mapa de presenças por data para ESTE aluno
+                              // mapa de presenças por data para ESTE aluno
                               const det = presencasPorTurma[idSeguro]?.detalhado || { datas: [], usuarios: [] };
                               const uDet = (det.usuarios || []).find(
                                 (u) => u?.id === usuarioId || u?.usuario_id === usuarioId
@@ -265,7 +281,7 @@ export default function TurmasInstrutor({
                                       <span className="font-medium text-zinc-900 dark:text-white">{nome}</span>
                                       <span className="text-xs text-zinc-500 dark:text-zinc-400">CPF: {cpf}</span>
                                     </div>
-                                    <span className="text-zinc-400 text-sm">abrir</span>
+                                    <AbrirFechar />
                                   </summary>
 
                                   <div className="px-4 pb-4">
@@ -287,6 +303,7 @@ export default function TurmasInstrutor({
 
                                             const presente = !!presMap[dataYMD];
                                             const podeConfirmar = !presente && dentroDaJanelaConfirmacao(dataYMD, hin, hfi);
+                                            const loadingThis = abrindo === `${usuarioId}-${idSeguro}-${dataYMD}`;
 
                                             return (
                                               <tr
@@ -300,7 +317,7 @@ export default function TurmasInstrutor({
                                                   {presente ? (
                                                     <Badge kind="ok">Presente</Badge>
                                                   ) : (
-                                                    <Badge> Aguardando </Badge>
+                                                    <Badge>Aguardando</Badge>
                                                   )}
                                                 </td>
                                                 <td className="py-2 pr-4">
@@ -309,9 +326,10 @@ export default function TurmasInstrutor({
                                                       onClick={() =>
                                                         confirmarPresencaManual(usuarioId, idSeguro, dataYMD)
                                                       }
-                                                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-700"
+                                                      disabled={loadingThis}
+                                                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-emerald-700/40"
                                                     >
-                                                      Confirmar
+                                                      {loadingThis ? "Confirmando..." : "Confirmar"}
                                                     </button>
                                                   ) : (
                                                     <span className="text-xs text-zinc-400">—</span>
@@ -332,7 +350,7 @@ export default function TurmasInstrutor({
                       )}
                     </AnimatePresence>
 
-                    {/* Painel: Avaliações (mantido) */}
+                    {/* Painel: Avaliações */}
                     <AnimatePresence>
                       {expandindoAvaliacoes && (
                         <motion.div
@@ -371,3 +389,70 @@ export default function TurmasInstrutor({
     </ul>
   );
 }
+
+/* Label “abrir/fechar” dinâmico para <summary> */
+function AbrirFechar() {
+  const [open, setOpen] = useState(false);
+  return (
+    <span
+      className="text-zinc-400 text-sm select-none"
+      onMouseDown={(e) => {
+        // sincroniza com o toggle do <summary>
+        requestAnimationFrame(() => setOpen((v) => !v));
+      }}
+      aria-live="polite"
+    >
+      {open ? "fechar" : "abrir"}
+    </span>
+  );
+}
+
+/* ===== PropTypes ===== */
+TurmasInstrutor.propTypes = {
+  turmas: PropTypes.arrayOf(
+    PropTypes.shape({
+      id: PropTypes.oneOfType([PropTypes.number, PropTypes.string]).isRequired,
+      nome: PropTypes.string,
+      evento: PropTypes.shape({
+        id: PropTypes.oneOfType([PropTypes.number, PropTypes.string]).isRequired,
+        nome: PropTypes.string,
+      }),
+      datas: PropTypes.array, // opcional, pode vir do backend
+      horario_inicio: PropTypes.string,
+      horario_fim: PropTypes.string,
+    })
+  ),
+  inscritosPorTurma: PropTypes.object,
+  avaliacoesPorTurma: PropTypes.object,
+  presencasPorTurma: PropTypes.object,
+  onVerInscritos: PropTypes.func,
+  onVerAvaliacoes: PropTypes.func,
+  onExportarListaAssinaturaPDF: PropTypes.func,
+  onExportarQrCodePDF: PropTypes.func,
+  token: PropTypes.any,
+  carregarPresencas: PropTypes.func,
+  carregando: PropTypes.bool,
+  turmaExpandidaInscritos: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  setTurmaExpandidaInscritos: PropTypes.func,
+  turmaExpandidaAvaliacoes: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  setTurmaExpandidaAvaliacoes: PropTypes.func,
+  datasPorTurma: PropTypes.object,
+  carregarDatasPorTurma: PropTypes.func,
+  className: PropTypes.string,
+};
+
+TurmasInstrutor.defaultProps = {
+  turmas: [],
+  inscritosPorTurma: {},
+  avaliacoesPorTurma: {},
+  presencasPorTurma: {},
+  carregarPresencas: undefined,
+  onVerInscritos: undefined,
+  onVerAvaliacoes: undefined,
+  onExportarListaAssinaturaPDF: undefined,
+  onExportarQrCodePDF: undefined,
+  setTurmaExpandidaInscritos: () => {},
+  setTurmaExpandidaAvaliacoes: () => {},
+  carregarDatasPorTurma: undefined,
+  className: "",
+};

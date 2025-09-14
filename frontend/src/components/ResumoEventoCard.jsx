@@ -1,3 +1,4 @@
+// 📁 src/components/ResumoEventoCard.jsx
 import PropTypes from "prop-types";
 import { Users, CheckCircle, Star } from "lucide-react";
 
@@ -22,7 +23,9 @@ export default function ResumoEventoCard({ tipo = "inscritos", titulo, valor }) 
       className={`rounded-xl shadow-sm p-4 flex items-center gap-4 ${cor}`}
       aria-label={`Resumo de ${titulo}`}
     >
-      <div className="bg-white/30 rounded-full p-2">{icone}</div>
+      <div className="bg-white/30 rounded-full p-2 flex items-center justify-center">
+        {icone}
+      </div>
       <div>
         <p className="text-sm font-medium">{titulo}</p>
         <p className="text-xl font-bold">{valor}</p>

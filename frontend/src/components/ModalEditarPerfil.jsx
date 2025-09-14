@@ -1,58 +1,76 @@
-// ModalEditarPerfil.jsx
-import { useState } from "react";
+// 📁 src/components/ModalEditarPerfil.jsx
+import { useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import { toast } from "react-toastify";
-import Modal from "./Modal"; // 🧩 seu modal central reutilizável
-import { apiPut } from "../services/api"; // ✅ serviço centralizado
+import Modal from "./Modal";
+import { apiPut } from "../services/api";
 
-export default function ModalEditarPerfil({ usuario, onFechar, onSalvar }) {
-  const perfilDisponiveis = [
+export default function ModalEditarPerfil({
+  isOpen = true,                  // 👈 agora controlável
+  usuario,
+  onFechar,
+  onSalvar,
+  enviarComoString = false,       // 👈 se seu backend esperar string
+}) {
+  const perfisDisponiveis = [
     { label: "usuario", value: "usuario" },
     { label: "instrutor", value: "instrutor" },
     { label: "administrador", value: "administrador" },
   ];
 
-  const [perfilSelecionado, setPerfilSelecionado] = useState(
-    Array.isArray(usuario.perfil)
-      ? usuario.perfil
-      : (typeof usuario.perfil === "string"
-          ? usuario.perfil.split(",").map(p => p.trim())
-          : [])
-  );
+  // normaliza perfil vindo do backend
+  const perfilInicial = useMemo(() => {
+    if (Array.isArray(usuario?.perfil)) return (usuario.perfil[0] ?? "") || "";
+    if (typeof usuario?.perfil === "string") {
+      const arr = usuario.perfil.split(",").map((p) => p.trim()).filter(Boolean);
+      return arr[0] ?? "";
+    }
+    return "";
+  }, [usuario]);
 
+  const [perfilSelecionado, setPerfilSelecionado] = useState(perfilInicial);
   const [salvando, setSalvando] = useState(false);
 
-  const togglePerfil = (perfil) => {
-    // apenas um perfil por vez
-    setPerfilSelecionado([perfil]);
-  };
+  // re-sincroniza se trocar o usuario prop
+  useEffect(() => {
+    setPerfilSelecionado(perfilInicial);
+  }, [perfilInicial]);
+
+  const mudou = perfilSelecionado !== perfilInicial;
+  const podeSalvar = mudou && !!perfilSelecionado && !salvando;
 
   const salvar = async () => {
+    if (!podeSalvar) return;
     setSalvando(true);
     try {
-      await apiPut(`/api/usuarios/${usuario.id}/perfil`, {
-        // se seu backend espera array, mantenha assim; se esperar string, use .join(",")
-        perfil: perfilSelecionado,
-      });
+      const payloadPerfil = enviarComoString ? perfilSelecionado : [perfilSelecionado];
+
+      await apiPut(`/api/usuarios/${usuario.id}/perfil`, { perfil: payloadPerfil });
 
       toast.success("✅ Perfil atualizado com sucesso!");
-      onSalvar(usuario.id, perfilSelecionado);
-      onFechar();
+      onSalvar?.(usuario.id, payloadPerfil);
+      onFechar?.();
     } catch (error) {
-      toast.error("❌ Erro ao atualizar perfil");
+      const msg =
+        error?.data?.mensagem ||
+        error?.data?.message ||
+        error?.message ||
+        "Erro ao atualizar perfil";
+      toast.error(`❌ ${msg}`);
     } finally {
       setSalvando(false);
     }
   };
 
   return (
-    <Modal open={true} onClose={onFechar}>
+    <Modal open={isOpen} onClose={salvando ? undefined : onFechar}>
       <h2 className="text-lg font-bold mb-4 text-gray-900 dark:text-white">
-        Editar perfil de {usuario.nome}
+        Editar perfil de {usuario?.nome ?? "usuário"}
       </h2>
 
-      <div className="space-y-3 mb-6">
-        {perfilDisponiveis.map((perfil) => (
+      <fieldset className="space-y-3 mb-6">
+        <legend className="sr-only">Selecione um perfil</legend>
+        {perfisDisponiveis.map((perfil) => (
           <label
             key={perfil.value}
             className="flex items-center gap-2 text-sm text-gray-700 dark:text-white"
@@ -61,27 +79,30 @@ export default function ModalEditarPerfil({ usuario, onFechar, onSalvar }) {
               type="radio"
               name="perfil"
               value={perfil.value}
-              checked={perfilSelecionado.includes(perfil.value)}
-              onChange={() => togglePerfil(perfil.value)}
+              checked={perfilSelecionado === perfil.value}
+              onChange={() => setPerfilSelecionado(perfil.value)}
               className="accent-green-700"
+              disabled={salvando}
             />
             {perfil.label}
           </label>
         ))}
-      </div>
+      </fieldset>
 
       <div className="flex justify-end gap-3">
         <button
           onClick={onFechar}
-          className="px-4 py-2 rounded bg-gray-300 hover:bg-gray-400 dark:bg-gray-700 dark:hover:bg-gray-600 text-sm"
+          disabled={salvando}
+          className="px-4 py-2 rounded bg-gray-300 hover:bg-gray-400 disabled:opacity-60
+                     dark:bg-gray-700 dark:hover:bg-gray-600 text-sm"
         >
           Cancelar
         </button>
         <button
           onClick={salvar}
-          disabled={salvando}
+          disabled={!podeSalvar}
           className={`px-4 py-2 rounded text-white text-sm ${
-            salvando ? "bg-green-900 cursor-not-allowed" : "bg-lousa hover:bg-green-800"
+            podeSalvar ? "bg-lousa hover:bg-green-800" : "bg-green-900 opacity-60 cursor-not-allowed"
           }`}
         >
           {salvando ? "Salvando..." : "Salvar"}
@@ -92,7 +113,16 @@ export default function ModalEditarPerfil({ usuario, onFechar, onSalvar }) {
 }
 
 ModalEditarPerfil.propTypes = {
-  usuario: PropTypes.object.isRequired,
+  isOpen: PropTypes.bool,
+  usuario: PropTypes.shape({
+    id: PropTypes.oneOfType([PropTypes.number, PropTypes.string]).isRequired,
+    nome: PropTypes.string,
+    perfil: PropTypes.oneOfType([
+      PropTypes.string,
+      PropTypes.arrayOf(PropTypes.string),
+    ]),
+  }).isRequired,
   onFechar: PropTypes.func.isRequired,
-  onSalvar: PropTypes.func.isRequired,
+  onSalvar: PropTypes.func,          // (id, novoPerfil) => void
+  enviarComoString: PropTypes.bool,
 };

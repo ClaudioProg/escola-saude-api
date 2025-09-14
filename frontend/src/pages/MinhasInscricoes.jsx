@@ -129,16 +129,7 @@ export default function MinhasInscricoes() {
       <main role="main" className="flex-1 px-2 sm:px-4 py-6">
         <Breadcrumbs trilha={[{ label: "Painel do Usuário" }, { label: "Meus Cursos" }]} />
 
-        <motion.h2
-          className="text-2xl font-bold mb-6 text-center text-lousa dark:text-white"
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-        >
-          📚 Meus Cursos
-        </motion.h2>
-
-        <section aria-labelledby="lista-inscricoes">
+               <section aria-labelledby="lista-inscricoes">
           <h3 id="lista-inscricoes" className="sr-only">Lista de inscrições do usuário</h3>
 
           {carregando ? (

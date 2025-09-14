@@ -1,101 +1,106 @@
 // 📁 src/components/LinhaInscrito.jsx
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import PropTypes from "prop-types";
 import { toast } from "react-toastify";
 import { motion } from "framer-motion";
 import { CheckCircle, XCircle } from "lucide-react";
 import BotaoSecundario from "./BotaoSecundario";
 import { formatarCPF as formatarCPFUtils } from "../utils/data";
-import { apiPost } from "../services/api"; // ✅ usa cliente central
+import { apiPost } from "../services/api"; // ✅ cliente central
 
-/* ===== Helpers de data no fuso local ===== */
+/* ======================= Helpers de data (fuso local) ======================= */
+
+const MS = {
+  HOUR: 60 * 60 * 1000,
+  DAY: 24 * 60 * 60 * 1000,
+};
 
 function isDateOnly(str) {
   return typeof str === "string" && /^\d{4}-\d{2}-\d{2}$/.test(str);
 }
-
 function toLocalDate(input) {
   if (!input) return null;
   if (input instanceof Date) return input;
-
   if (typeof input === "string") {
     if (isDateOnly(input)) {
       const [y, m, d] = input.split("-").map(Number);
       return new Date(y, m - 1, d); // 00:00 local
     }
-    return new Date(input); // se vier com hora explícita, deixa o JS interpretar
+    return new Date(input); // deixa o JS interpretar strings com hora/timezone
   }
   return new Date(input);
 }
-
-function startOfDayLocal(d) {
-  const dt = toLocalDate(d);
-  if (!dt) return null;
-  return new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
-}
-
-function endOfDayLocal(d) {
-  const dt = toLocalDate(d);
-  if (!dt) return null;
-  return new Date(dt.getFullYear(), dt.getMonth(), dt.getDate(), 23, 59, 59, 999);
-}
-
 function ymdLocalString(d) {
-  // retorna "YYYY-MM-DD" em fuso local
-  const dt = startOfDayLocal(d);
-  if (!dt) return "";
+  const dt = toLocalDate(d);
+  if (!dt || Number.isNaN(dt.getTime())) return "";
   const y = dt.getFullYear();
   const m = String(dt.getMonth() + 1).padStart(2, "0");
   const day = String(dt.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
-
-/* Monta Date local combinando data_fim + horario_fim */
+function startOfDayLocal(d) {
+  const dt = toLocalDate(d);
+  if (!dt) return null;
+  return new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
+}
 function combineDateAndTimeLocal(dateOnly, timeHHmm) {
+  // junta "YYYY-MM-DD" + "HH:MM" em Date local (termino real do curso)
   if (!dateOnly) return null;
   const base = startOfDayLocal(dateOnly);
   if (!base) return null;
-
-  if (timeHHmm) {
-    const [h, m] = timeHHmm.split(":").map(Number);
-    base.setHours(Number.isFinite(h) ? h : 23, Number.isFinite(m) ? m : 59, 59, 999);
-  } else {
-    base.setHours(23, 59, 59, 999);
-  }
+  const hhmm = typeof timeHHmm === "string" ? timeHHmm.slice(0, 5) : "";
+  const [h, m] = hhmm.split(":").map(Number);
+  base.setHours(Number.isFinite(h) ? h : 23, Number.isFinite(m) ? m : 59, 59, 999);
   return base;
 }
 
-/* ===== Componente ===== */
+/* =============================== Componente =============================== */
 
-export default function LinhaInscrito({ inscrito, turma /*, token*/ }) {
-  // hoje como string local (não usar toISOString/UTC)
-  const hojeStr = ymdLocalString(new Date());
+export default function LinhaInscrito({ inscrito, turma }) {
+  // hoje como string local (YYYY-MM-DD) — evita UTC shift
+  const hojeStr = useMemo(() => ymdLocalString(new Date()), []);
+  const agora = useMemo(() => new Date(), []);
 
-  const dataInicioStr = ymdLocalString(turma.data_inicio);
-  const dataFimDate = combineDateAndTimeLocal(turma.data_fim, turma.horario_fim);
-  const agora = new Date();
+  // datas da turma
+  const dataInicioStr = ymdLocalString(turma?.data_inicio);
+  const fimDate = useMemo(
+    () => combineDateAndTimeLocal(turma?.data_fim, turma?.horario_fim),
+    [turma?.data_fim, turma?.horario_fim]
+  );
 
-  // +48h após o término (em horário local)
-  const limiteConfirmacao = dataFimDate
-    ? new Date(dataFimDate.getTime() + 48 * 60 * 60 * 1000)
-    : null;
+  // janelas de status
+  const eventoAindaNaoComecou = useMemo(() => {
+    return dataInicioStr && hojeStr ? hojeStr < dataInicioStr : false;
+  }, [dataInicioStr, hojeStr]);
 
-  // status do evento
-  const eventoAindaNaoComecou =
-    dataInicioStr && hojeStr ? hojeStr < dataInicioStr : false;
+  const eventoEncerrado = useMemo(() => {
+    return fimDate ? agora > fimDate : false;
+  }, [fimDate, agora]);
 
-  const eventoEncerrado = dataFimDate ? agora > dataFimDate : false;
+  // prazo de confirmação: até 48h após o fim
+  const limiteConfirmacao = useMemo(() => {
+    return fimDate ? new Date(fimDate.getTime() + 48 * MS.HOUR) : null;
+  }, [fimDate]);
 
-  const dentroPrazoConfirmacao =
-    limiteConfirmacao ? agora <= limiteConfirmacao : false;
+  const dentroPrazoConfirmacao = useMemo(() => {
+    return limiteConfirmacao ? agora <= limiteConfirmacao : false;
+  }, [limiteConfirmacao, agora]);
 
-  const temPresenca =
-    inscrito.data_presenca !== null && inscrito.data_presenca !== undefined;
-
+  // status inicial pela presença existente
+  const temPresenca = inscrito?.data_presenca != null;
   const [status, setStatus] = useState(temPresenca ? "presente" : null);
   const [loading, setLoading] = useState(false);
 
-  const confirmarPresenca = async () => {
-    if (status || eventoAindaNaoComecou || !dentroPrazoConfirmacao || loading) return;
+  // sincroniza status caso a lista seja recarregada e a presença chegue depois
+  useEffect(() => {
+    setStatus(inscrito?.data_presenca != null ? "presente" : null);
+  }, [inscrito?.data_presenca]);
+
+  async function confirmarPresenca() {
+    // regras: não confirmar antes de começar; só após encerrar e até 48h; não repetir
+    if (status || eventoAindaNaoComecou || !eventoEncerrado || !dentroPrazoConfirmacao || loading) {
+      return;
+    }
 
     setLoading(true);
     try {
@@ -104,15 +109,15 @@ export default function LinhaInscrito({ inscrito, turma /*, token*/ }) {
         turma_id: turma.id,
         data: hojeStr, // data local (YYYY-MM-DD)
       });
-
       setStatus("presente");
       toast.success("✅ Presença confirmada!");
     } catch (err) {
+      // idempotência amigável
       if (err?.status === 409) {
         setStatus("presente");
         toast.success("✅ Presença já estava confirmada.");
       } else {
-        setStatus("faltou");
+        setStatus((s) => s || "faltou"); // só marca faltou se não houver status
         const msg =
           err?.data?.erro ||
           err?.data?.message ||
@@ -123,71 +128,97 @@ export default function LinhaInscrito({ inscrito, turma /*, token*/ }) {
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   function StatusBadge() {
     if (status === "presente") {
       return (
-        <span className="flex items-center gap-1 bg-green-100 text-green-700 dark:bg-green-700 dark:text-white px-2 py-1 rounded text-xs font-semibold">
-          <CheckCircle size={14} /> Presente
+        <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-800 dark:bg-emerald-700 dark:text-white px-2 py-1 rounded text-xs font-semibold">
+          <CheckCircle size={14} aria-hidden="true" /> Presente
         </span>
       );
     }
-
-    if (status === "faltou" || eventoEncerrado) {
+    if (status === "faltou" || (eventoEncerrado && !dentroPrazoConfirmacao)) {
       return (
-        <span className="flex items-center gap-1 bg-red-100 text-red-700 dark:bg-red-700 dark:text-white px-2 py-1 rounded text-xs font-semibold">
-          <XCircle size={14} /> Faltou
+        <span className="inline-flex items-center gap-1 bg-rose-100 text-rose-700 dark:bg-rose-700 dark:text-white px-2 py-1 rounded text-xs font-semibold">
+          <XCircle size={14} aria-hidden="true" /> Faltou
         </span>
       );
     }
-
     return (
-      <span className="text-gray-500 text-sm italic dark:text-gray-300">
+      <span className="text-gray-600 dark:text-gray-300 text-sm italic">
         Aguardando
       </span>
     );
   }
 
+  const podeConfirmar =
+    !status && eventoEncerrado && dentroPrazoConfirmacao && !eventoAindaNaoComecou;
+
+  const tituloBotao = !eventoEncerrado
+    ? "A confirmação libera após o término da turma."
+    : !dentroPrazoConfirmacao
+    ? "Fora do prazo de 48h para confirmação."
+    : "Confirmar presença";
+
   return (
     <motion.li
-      className="grid grid-cols-5 gap-2 items-center py-2 px-2 border-b dark:border-gray-600"
+      className="grid grid-cols-1 md:grid-cols-5 gap-2 items-center py-2 px-2 border-b dark:border-gray-600"
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0 }}
+      role="row"
+      aria-label={`Inscrito ${inscrito?.nome || ""}`}
     >
       {/* Nome */}
-      <div className="font-medium text-lousa dark:text-white">{inscrito.nome}</div>
+      <div className="font-medium text-emerald-900 dark:text-white break-words" role="cell">
+        {inscrito?.nome || "—"}
+      </div>
 
       {/* CPF */}
-      <div className="text-sm text-gray-600 dark:text-gray-300">
-        {formatarCPFUtils(inscrito.cpf)}
+      <div className="text-sm text-gray-700 dark:text-gray-300" role="cell">
+        {formatarCPFUtils(inscrito?.cpf)}
       </div>
 
       {/* Data da Presença */}
-      <div className="text-sm text-gray-600 dark:text-gray-300">
-        {temPresenca
+      <div className="text-sm text-gray-700 dark:text-gray-300" role="cell">
+        {inscrito?.data_presenca
           ? new Date(inscrito.data_presenca).toLocaleDateString("pt-BR")
-          : "-"}
+          : "—"}
       </div>
 
       {/* Status */}
-      <div>
+      <div role="cell">
         <StatusBadge />
       </div>
 
-      {/* Botão de Ação */}
-      <div>
-        {!status && eventoEncerrado && dentroPrazoConfirmacao && (
-          <BotaoSecundario
-            onClick={confirmarPresenca}
-            disabled={loading}
-            aria-label={`Confirmar presença de ${inscrito.nome}`}
-          >
-            {loading ? "Confirmando..." : "Confirmar presença"}
-          </BotaoSecundario>
-        )}
+      {/* Ação */}
+      <div className="flex justify-end md:justify-start" role="cell">
+        <BotaoSecundario
+          onClick={confirmarPresenca}
+          disabled={!podeConfirmar || loading}
+          aria-label={`Confirmar presença de ${inscrito?.nome || "participante"}`}
+          title={tituloBotao}
+        >
+          {loading ? "Confirmando..." : "Confirmar presença"}
+        </BotaoSecundario>
       </div>
     </motion.li>
   );
 }
+
+LinhaInscrito.propTypes = {
+  inscrito: PropTypes.shape({
+    usuario_id: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+    nome: PropTypes.string,
+    cpf: PropTypes.string,
+    email: PropTypes.string,
+    data_presenca: PropTypes.oneOfType([PropTypes.string, PropTypes.instanceOf(Date)]),
+  }).isRequired,
+  turma: PropTypes.shape({
+    id: PropTypes.oneOfType([PropTypes.number, PropTypes.string]).isRequired,
+    data_inicio: PropTypes.oneOfType([PropTypes.string, PropTypes.instanceOf(Date)]),
+    data_fim: PropTypes.oneOfType([PropTypes.string, PropTypes.instanceOf(Date)]),
+    horario_fim: PropTypes.string, // "HH:MM" (aceita "HH:MM:SS" — será truncado)
+  }).isRequired,
+};

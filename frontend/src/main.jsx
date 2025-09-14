@@ -9,6 +9,30 @@ import "react-toastify/dist/ReactToastify.css";
 import "./index.css";
 import "./App.css";
 
+// ⬇️ Garantir tema ANTES de montar a árvore (default = light)
+(function ensureTheme() {
+  try {
+    // MIGRA: se existir 'darkMode' (true/false), converte e remove
+    const legacy = localStorage.getItem("darkMode");
+    if (legacy !== null) {
+      const next = legacy === "true" ? "dark" : "light";
+      localStorage.setItem("theme", next);
+      localStorage.removeItem("darkMode");
+    }
+
+    const t = localStorage.getItem("theme");
+    const root = document.documentElement;
+
+    if (t === "dark") {
+      root.classList.add("dark");
+    } else {
+      root.classList.remove("dark"); // default claro
+      if (t !== "light") localStorage.setItem("theme", "light"); // opcional: fixa light
+    }
+  } catch {}
+})();
+
+
 // ▶️ Flags/Helpers
 const IS_DEV = !!import.meta.env.DEV;
 

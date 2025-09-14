@@ -1,11 +1,21 @@
-import Modal from "react-modal";
-import { useState } from "react";
+// 📁 src/components/ModalAvaliacaoFormulario.jsx
+import { useMemo, useState } from "react";
 import { toast } from "react-toastify";
-import { apiPost } from "../services/api"; // ✅ usa serviço centralizado
+import Modal from "./Modal"; // ✅ use o Modal da base
+import { apiPost } from "../services/api";
 
-const opcoes = ["Ótimo", "Bom", "Regular", "Ruim", "Péssimo"];
+const OPCOES = ["Ótimo", "Bom", "Regular", "Ruim", "Péssimo"];
 
-const camposNotasBase = [
+// normaliza strings p/ comparações sem acento/caixa
+const norm = (s) =>
+  (s || "")
+    .toString()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+
+const CAMPOS_BASE = [
   { chave: "divulgacao_evento", rotulo: "Divulgação do evento" },
   { chave: "recepcao", rotulo: "Recepção" },
   { chave: "credenciamento", rotulo: "Credenciamento" },
@@ -20,13 +30,13 @@ const camposNotasBase = [
   { chave: "inscricao_online", rotulo: "Inscrição online" },
 ];
 
-const obrigatorios = [
-  "divulgacao_evento", "recepcao", "credenciamento", "material_apoio", "pontualidade",
-  "sinalizacao_local", "conteudo_temas", "estrutura_local", "acessibilidade", "limpeza",
-  "inscricao_online", "exposicao_trabalhos", "desempenho_instrutor"
-];
-
-export default function ModalAvaliacaoFormulario({ isOpen, onClose, evento, turma_id, recarregar }) {
+export default function ModalAvaliacaoFormulario({
+  isOpen,
+  onClose,
+  evento,
+  turma_id,
+  recarregar,
+}) {
   const [comentarios_finais, setComentariosFinais] = useState("");
   const [gostou_mais, setGostouMais] = useState("");
   const [sugestoes_melhoria, setSugestoesMelhoria] = useState("");
@@ -35,39 +45,44 @@ export default function ModalAvaliacaoFormulario({ isOpen, onClose, evento, turm
 
   if (!evento) return null;
 
-  const tipo = (evento.tipo || "").toLowerCase();
+  const tipoNorm = norm(evento.tipo);
+  const isCongresso = tipoNorm === "congresso";
+  const isSimposio = tipoNorm === "simposio"; // cobre “simpósio” e “simposio”
 
-  const camposNotas = [
-    ...camposNotasBase,
-    ...(["congresso", "simpósio"].includes(tipo)
+  const camposNotas = useMemo(() => {
+    const extraSimposioOuCongresso = isCongresso || isSimposio
       ? [{ chave: "exposicao_trabalhos", rotulo: "Exposição de trabalhos" }]
-      : []),
-    ...(tipo === "congresso"
+      : [];
+    const extraCongresso = isCongresso
       ? [
           { chave: "apresentacao_oral_mostra", rotulo: "Apresentação oral na mostra" },
           { chave: "apresentacao_tcrs", rotulo: "Apresentação dos TCRs" },
           { chave: "oficinas", rotulo: "Oficinas" },
         ]
-      : []),
-  ];
+      : [];
+    return [...CAMPOS_BASE, ...extraSimposioOuCongresso, ...extraCongresso];
+  }, [isCongresso, isSimposio]);
 
-  function handleNotaChange(campo, valor) {
+  // obrigatórios dinâmicos
+  const obrigatorios = useMemo(() => {
+    const base = new Set(CAMPOS_BASE.map((c) => c.chave));
+    if (isCongresso || isSimposio) base.add("exposicao_trabalhos");
+    return base;
+  }, [isCongresso, isSimposio]);
+
+  const handleNotaChange = (campo, valor) =>
     setNotas((prev) => ({ ...prev, [campo]: valor }));
-  }
 
-  async function enviarAvaliacao() {
+  const enviarAvaliacao = async () => {
     const usuario = JSON.parse(localStorage.getItem("usuario") || "{}");
     if (!usuario?.id) {
       toast.error("Usuário não identificado.");
       return;
     }
 
-    const faltando = obrigatorios.filter((campo) => {
-      if (campo === "exposicao_trabalhos" && !["congresso", "simpósio"].includes(tipo)) return false;
-      return !notas[campo];
-    });
-
-    if (faltando.length > 0) {
+    // checagem de obrigatórios
+    const faltando = [...obrigatorios].filter((c) => !notas[c]);
+    if (faltando.length) {
       toast.warning("Preencha todos os campos obrigatórios.");
       return;
     }
@@ -82,53 +97,71 @@ export default function ModalAvaliacaoFormulario({ isOpen, onClose, evento, turm
         sugestoes_melhoria,
         comentarios_finais,
       });
-
       toast.success("✅ Avaliação enviada com sucesso!");
       onClose?.();
       recarregar?.();
+      // opcional: limpar estado ao fechar
+      setNotas({});
+      setGostouMais("");
+      setSugestoesMelhoria("");
+      setComentariosFinais("");
     } catch (err) {
       console.error(err);
       toast.error("❌ Erro ao enviar avaliação.");
     } finally {
       setEnviando(false);
     }
-  }
+  };
 
   return (
     <Modal
-      isOpen={isOpen}
-      onRequestClose={onClose}
-      ariaHideApp={false}
-      className="modal w-[95%] max-w-2xl max-h-[90vh] overflow-y-auto p-6 bg-white dark:bg-gray-900 rounded-lg shadow-lg"
-      overlayClassName="overlay fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+      open={isOpen}
+      onClose={onClose}
+      labelledBy="titulo-avaliacao"
+      describedBy="descricao-avaliacao"
+      className="w-[95%] max-w-3xl"
     >
-      <h2 className="text-2xl font-bold text-lousa dark:text-green-100 mb-4">
+      <h2 id="titulo-avaliacao" className="text-2xl font-bold text-lousa dark:text-green-100 mb-4">
         ✍️ Avaliar: {evento.nome || evento.titulo}
       </h2>
+      <p id="descricao-avaliacao" className="sr-only">
+        Formulário de avaliação do evento. Selecione uma opção para cada critério.
+      </p>
 
+      {/* Campos de notas */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-[60vh] overflow-y-auto pr-2">
-        {camposNotas.map(({ chave, rotulo }) => (
-          <div key={chave}>
-            <label className="block font-medium text-gray-700 dark:text-gray-300 mb-1">
-              {rotulo}
-              {obrigatorios.includes(chave) &&
-                (chave !== "exposicao_trabalhos" || ["congresso", "simpósio"].includes(tipo))
-                ? " *" : ""}
-            </label>
-            <select
-              className="w-full border rounded-md px-2 py-1 dark:bg-gray-800 dark:text-white"
-              value={notas[chave] || ""}
-              onChange={(e) => handleNotaChange(chave, e.target.value)}
+        {camposNotas.map(({ chave, rotulo }) => {
+          const obrig = obrigatorios.has(chave);
+          return (
+            <fieldset
+              key={chave}
+              className="border rounded-md p-3 dark:border-gray-700"
+              aria-required={obrig ? "true" : "false"}
             >
-              <option value="">Selecione</option>
-              {opcoes.map((opt) => (
-                <option key={opt} value={opt}>{opt}</option>
-              ))}
-            </select>
-          </div>
-        ))}
+              <legend className="text-sm font-medium text-gray-700 dark:text-gray-200">
+                {rotulo} {obrig ? <span className="text-red-600" title="Obrigatório">*</span> : null}
+              </legend>
+              <div className="mt-2 flex flex-wrap gap-3">
+                {OPCOES.map((opt) => (
+                  <label key={opt} className="inline-flex items-center gap-2 text-sm">
+                    <input
+                      type="radio"
+                      name={chave}
+                      value={opt}
+                      checked={notas[chave] === opt}
+                      onChange={(e) => handleNotaChange(chave, e.target.value)}
+                      className="accent-emerald-600"
+                    />
+                    <span>{opt}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          );
+        })}
       </div>
 
+      {/* Textos livres */}
       <div className="mt-4">
         <label className="block font-medium text-gray-700 dark:text-gray-300 mb-1">
           O que você mais gostou?
@@ -165,17 +198,20 @@ export default function ModalAvaliacaoFormulario({ isOpen, onClose, evento, turm
         />
       </div>
 
-      <div className="flex justify-end mt-6 space-x-3">
+      {/* Ações */}
+      <div className="flex justify-end mt-6 gap-3">
         <button
-          className="px-4 py-2 rounded-md bg-gray-300 dark:bg-gray-600 text-black dark:text-white hover:bg-gray-400"
+          type="button"
           onClick={onClose}
+          className="px-4 py-2 rounded-md bg-gray-300 dark:bg-gray-600 text-black dark:text-white hover:bg-gray-400 disabled:opacity-60"
           disabled={enviando}
         >
           Cancelar
         </button>
         <button
-          className="px-4 py-2 rounded-md bg-green-600 text-white font-semibold hover:bg-green-700"
+          type="button"
           onClick={enviarAvaliacao}
+          className="px-4 py-2 rounded-md bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-60"
           disabled={enviando}
         >
           {enviando ? "Enviando..." : "Enviar Avaliação"}

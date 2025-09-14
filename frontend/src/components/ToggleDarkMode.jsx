@@ -1,21 +1,20 @@
+// 📁 src/components/ToggleDarkMode.jsx
 import { useEffect, useState } from "react";
+import PropTypes from "prop-types";
 
-export default function ToggleDarkMode() {
+export default function ToggleDarkMode({ className = "" }) {
   const [darkMode, setDarkMode] = useState(() => {
-    // Verifica localStorage ou class da raiz
-    return (
-      localStorage.getItem("theme") === "dark" ||
-      (!localStorage.getItem("theme") &&
-        window.matchMedia("(prefers-color-scheme: dark)").matches)
-    );
+    if (typeof window === "undefined") return false; // padrão claro em SSR
+    return localStorage.getItem("theme") === "dark"; // sem prefers-color-scheme
   });
 
   useEffect(() => {
+    const root = document.documentElement;
     if (darkMode) {
-      document.documentElement.classList.add("dark");
+      root.classList.add("dark");
       localStorage.setItem("theme", "dark");
     } else {
-      document.documentElement.classList.remove("dark");
+      root.classList.remove("dark");
       localStorage.setItem("theme", "light");
     }
   }, [darkMode]);
@@ -23,14 +22,17 @@ export default function ToggleDarkMode() {
   return (
     <button
       type="button"
-      onClick={() => setDarkMode((v) => !v)}
-      className="text-sm px-4 py-1.5 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-white hover:scale-105 transition-transform duration-200"
-      aria-pressed={darkMode}
-      aria-label={darkMode ? "Mudar para modo claro" : "Mudar para modo escuro"}
+      onClick={() => setDarkMode(v => !v)}
       role="switch"
-      tabIndex={0}
+      aria-checked={darkMode}
+      aria-label={darkMode ? "Mudar para modo claro" : "Mudar para modo escuro"}
+      className={`text-sm px-4 py-1.5 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-white hover:scale-105 transition-transform duration-200 focus:outline-none focus:ring-2 focus:ring-green-700/40 ${className}`}
     >
-      {darkMode ? "☀️ Modo Claro" : "🌙 Modo Escuro"}
+      <span className="flex items-center gap-2">
+        <span aria-hidden="true">{darkMode ? "☀️" : "🌙"}</span>
+        {darkMode ? "Modo Claro" : "Modo Escuro"}
+      </span>
     </button>
   );
 }
+ToggleDarkMode.propTypes = { className: PropTypes.string };

@@ -1,34 +1,39 @@
-// src/components/ModalAssinatura.jsx
+// 📁 src/components/ModalAssinatura.jsx
 import { useEffect, useRef, useState } from "react";
 import SignatureCanvas from "react-signature-canvas";
-import Modal from "react-modal";
 import { toast } from "react-toastify";
 import Spinner from "./Spinner";
-import { apiGet, apiPost } from "../services/api"; // ✅ usar serviço centralizado
+import Modal from "./Modal"; // ✅ use o seu Modal
+import { apiGet, apiPost } from "../services/api";
 
 export default function ModalAssinatura({ isOpen, onClose }) {
   const [assinaturaSalva, setAssinaturaSalva] = useState(null);
   const [carregando, setCarregando] = useState(true);
+  const [salvando, setSalvando] = useState(false);
   const [editando, setEditando] = useState(false);
-  const sigCanvas = useRef();
+  const sigCanvas = useRef(null);
 
+  // Carrega assinatura quando abrir
   useEffect(() => {
-    if (!isOpen) return;
-
-    const fetchAssinatura = async () => {
+    let ativo = true;
+    const carregar = async () => {
+      if (!isOpen) return;
       setCarregando(true);
+      setEditando(false); // sempre volta pro modo visualização ao abrir
       try {
         const data = await apiGet("/api/assinatura");
-        if (data?.assinatura) setAssinaturaSalva(data.assinatura);
+        if (ativo) setAssinaturaSalva(data?.assinatura || null);
       } catch (err) {
         console.error("❌ Erro ao carregar assinatura:", err);
-        toast.error("❌ Não foi possível carregar a assinatura.");
+        if (ativo) toast.error("❌ Não foi possível carregar a assinatura.");
       } finally {
-        setCarregando(false);
+        if (ativo) setCarregando(false);
       }
     };
-
-    fetchAssinatura();
+    carregar();
+    return () => {
+      ativo = false;
+    };
   }, [isOpen]);
 
   const salvarAssinatura = async () => {
@@ -36,32 +41,35 @@ export default function ModalAssinatura({ isOpen, onClose }) {
       toast.warning("⚠️ Faça a assinatura antes de salvar.");
       return;
     }
-
-    const assinaturaBase64 = sigCanvas.current.getCanvas().toDataURL("image/png");
-
+    setSalvando(true);
     try {
-      await apiPost("/api/assinatura", { assinatura: assinaturaBase64 });
-      toast.success("✅ Assinatura salva com sucesso.");
-      setAssinaturaSalva(assinaturaBase64);
+      const dataUrl = sigCanvas.current.getCanvas().toDataURL("image/png");
+      await apiPost("/api/assinatura", { assinatura: dataUrl });
+      setAssinaturaSalva(dataUrl);
       setEditando(false);
-      sigCanvas.current.clear();
+      sigCanvas.current?.clear();
+      toast.success("✅ Assinatura salva com sucesso.");
     } catch (err) {
       console.error("❌", err);
       toast.error("❌ Erro ao salvar assinatura.");
+    } finally {
+      setSalvando(false);
     }
   };
 
   const limparAssinatura = () => {
-    sigCanvas.current?.clear();
+    if (!sigCanvas.current) return;
+    if (sigCanvas.current.isEmpty()) return;
+    sigCanvas.current.clear();
   };
 
   return (
     <Modal
-      isOpen={isOpen}
-      onRequestClose={onClose}
-      ariaHideApp={false}
-      className="max-w-xl mx-auto mt-10 p-6 bg-white dark:bg-zinc-900 shadow rounded-2xl outline-none"
-      overlayClassName="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+      open={isOpen}
+      onClose={onClose}
+      labelledBy="titulo-assinatura"
+      describedBy="desc-assinatura"
+      className="max-w-xl w-full"
     >
       {carregando ? (
         <div className="text-center py-10">
@@ -69,13 +77,18 @@ export default function ModalAssinatura({ isOpen, onClose }) {
         </div>
       ) : (
         <>
-          <h2 className="text-xl font-bold mb-4 text-lousa dark:text-white">
+          <h2
+            id="titulo-assinatura"
+            className="text-xl font-bold mb-4 text-lousa dark:text-white"
+          >
             ✍️ Assinatura do instrutor
           </h2>
 
           {assinaturaSalva && !editando ? (
-            <div className="mb-4">
-              <p className="font-semibold text-sm text-lousa dark:text-white">Assinatura atual:</p>
+            <div className="mb-4" id="desc-assinatura">
+              <p className="font-semibold text-sm text-lousa dark:text-white">
+                Assinatura atual:
+              </p>
               <img
                 src={assinaturaSalva}
                 alt="Assinatura do instrutor"
@@ -98,18 +111,26 @@ export default function ModalAssinatura({ isOpen, onClose }) {
             </div>
           ) : (
             <>
+              <p id="desc-assinatura" className="sr-only">
+                Desenhe sua assinatura no quadro abaixo usando mouse ou toque.
+              </p>
+
               <SignatureCanvas
                 ref={sigCanvas}
+                penColor="#111827"           // cinza-900
+                minWidth={0.8}
+                maxWidth={2.2}
+                throttle={16}
                 canvasProps={{
                   className:
-                    "border border-gray-400 rounded-md w-full h-32 bg-white dark:bg-gray-100 cursor-crosshair focus:outline-none",
+                    "border border-gray-400 rounded-md w-full h-40 bg-white cursor-crosshair focus:outline-none",
                   "aria-label": "Área para assinar digitalmente",
-                  tabIndex: 0,
                 }}
               />
 
               <div className="flex justify-between mt-4">
                 <button
+                  type="button"
                   onClick={limparAssinatura}
                   className="bg-gray-500 text-white py-1 px-4 rounded hover:bg-gray-600"
                 >
@@ -117,16 +138,20 @@ export default function ModalAssinatura({ isOpen, onClose }) {
                 </button>
                 <div className="flex gap-2">
                   <button
+                    type="button"
                     onClick={onClose}
                     className="bg-gray-600 text-white py-1 px-4 rounded hover:bg-gray-700"
+                    disabled={salvando}
                   >
                     Cancelar
                   </button>
                   <button
+                    type="button"
                     onClick={salvarAssinatura}
-                    className="bg-green-700 text-white py-1 px-4 rounded hover:bg-green-800"
+                    className="bg-green-700 text-white py-1 px-4 rounded hover:bg-green-800 disabled:opacity-60"
+                    disabled={salvando}
                   >
-                    Salvar
+                    {salvando ? "Salvando..." : "Salvar"}
                   </button>
                 </div>
               </div>

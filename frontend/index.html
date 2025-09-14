@@ -2,75 +2,43 @@
 <html lang="pt-BR">
   <head>
     <meta charset="utf-8" />
-
-    <!-- Viewport responsivo + safe areas (iOS) -->
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-
-    <!-- 🏷️ Título e SEO básico -->
     <title>Plataforma - Escola da Saúde</title>
-    <meta
-      name="description"
-      content="Plataforma oficial da Escola da Saúde de Santos para inscrições, presença e certificados de eventos."
-    />
+    <meta name="description" content="Plataforma oficial da Escola da Saúde de Santos para inscrições, presença e certificados de eventos." />
     <meta name="author" content="Escola da Saúde de Santos" />
-
-    <!-- 🎨 Preferência de esquema de cores (para UA e componentes nativos) -->
     <meta name="color-scheme" content="light dark" />
-
-    <!-- 🎨 theme-color (altera cor da barra no Android/Chrome etc.) -->
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#14532d" />
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b1f14" />
 
-    <!-- 📱 iOS PWA (opcional, não quebra se não usar) -->
+    <!-- ⬇️ BOOT DO TEMA (adicionar este bloco) -->
+    <script>
+      try {
+        var t = localStorage.getItem('theme');
+        var root = document.documentElement;
+        if (t === 'dark') {
+          root.classList.add('dark');
+        } else {
+          root.classList.remove('dark');
+          if (t !== 'light') localStorage.setItem('theme', 'light');
+        }
+      } catch (e) {}
+    </script>
+
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-
-    <!-- 🔒 Privacidade de referer um pouco mais rígida (sem quebrar OAuth) -->
     <meta name="referrer" content="strict-origin-when-cross-origin" />
-
-    <!-- ☎️ Evita auto-detecção agressiva de telefone em mobile -->
     <meta name="format-detection" content="telephone=no" />
-
-    <!-- 🎛️ Ícone/Favicon -->
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
-
-    <!-- 🖼️ Manifest PWA (opcional; coloque o arquivo depois) -->
-    <!-- <link rel="manifest" href="/site.webmanifest" crossorigin="anonymous" /> -->
-
-    <!-- ⚡️ Perf: preconnect para fontes e Google OAuth -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="preconnect" href="https://accounts.google.com" />
     <link rel="preconnect" href="https://www.gstatic.com" crossorigin />
-
-    <!-- 🎨 Fonte (Inter) -->
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap"
-      rel="stylesheet"
-    />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
   </head>
 
   <body class="bg-white text-gray-900 dark:bg-gray-900 dark:text-white font-sans min-h-screen">
-    <noscript>
-      <div
-        style="
-          margin: 1rem;
-          padding: 1rem;
-          border-radius: 0.75rem;
-          background: #fff3cd;
-          color: #1f2937;
-          border: 1px solid #f59e0b;
-          font-family: system-ui, -apple-system, Segoe UI, Roboto, Inter, sans-serif;
-        "
-      >
-        Para usar esta plataforma, ative o JavaScript no seu navegador.
-      </div>
-    </noscript>
-
-    <!-- ⚛️ Ponto de montagem da aplicação React -->
+    <noscript>…</noscript>
     <div id="root"></div>
-
-    <!-- 🚀 Entrada Vite/React -->
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

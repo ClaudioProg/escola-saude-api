@@ -1,4 +1,4 @@
-// src/components/BadgeStatus.jsx
+// 📁 src/components/BadgeStatus.jsx
 import PropTypes from "prop-types";
 import { motion } from "framer-motion";
 import {
@@ -28,13 +28,20 @@ function toKey(status) {
   const s = normalize(status);
 
   // em andamento
-  if (["andamento", "em andamento", "ao vivo", "rolando", "in progress"].includes(s)) return "andamento";
+  if (["andamento", "em andamento", "ao vivo", "rolando", "in progress"].includes(s))
+    return "andamento";
 
   // programado
-  if (["programado", "agendado", "previsto", "scheduled"].includes(s)) return "programado";
+  if (["programado", "agendado", "previsto, previsto", "scheduled"].includes(s))
+    return "programado";
 
   // encerrado
-  if (["encerrado", "finalizado", "concluido", "concluído", "done", "finalizado com sucesso"].includes(s)) return "encerrado";
+  if (
+    ["encerrado", "finalizado", "concluido", "concluído", "done", "finalizado com sucesso"].includes(
+      s
+    )
+  )
+    return "encerrado";
 
   // aguardando / pendente
   if (["aguardando", "pendente", "waiting", "to do"].includes(s)) return "aguardando";
@@ -57,56 +64,96 @@ function toKey(status) {
 
 /* =========================================================
    Config por status (label + cor base)
-   Paleta: verde lousa (andamento/ativo), roxo (programado),
-           cinza (encerrado), rosa/vermelho (cancelado),
-           âmbar (aguardando), laranja (suspenso), zinco (rascunho)
+   Padrão institucional (#54):
+   - Programado → VERDE
+   - Em andamento → AMARELO
+   - Encerrado → VERMELHO
    ========================================================= */
 const STATUS_CONFIG = {
-  andamento:  { label: "Em andamento",  color: "teal" },
-  programado: { label: "Programado",     color: "purple" },
-  encerrado:  { label: "Encerrado",      color: "slate" },
-  aguardando: { label: "Aguardando",     color: "amber" },
-  cancelado:  { label: "Cancelado",      color: "rose" },
-  suspenso:   { label: "Suspenso",       color: "orange" },
-  rascunho:   { label: "Rascunho",       color: "zinc" },
-  ativo:      { label: "Ativo",          color: "emerald" },
-  inativo:    { label: "Inativo",        color: "zinc" },
+  andamento: { label: "Em andamento", color: "amber" },   // 🟨
+  programado: { label: "Programado", color: "green" },    // 🟩
+  encerrado: { label: "Encerrado", color: "red" },        // 🟥
+
+  aguardando: { label: "Aguardando", color: "amber" },
+  cancelado: { label: "Cancelado", color: "rose" },
+  suspenso: { label: "Suspenso", color: "orange" },
+  rascunho: { label: "Rascunho", color: "zinc" },
+  ativo: { label: "Ativo", color: "emerald" },
+  inativo: { label: "Inativo", color: "zinc" },
   desconhecido: { label: "Desconhecido", color: "gray" },
 };
 
 /* =========================================================
-   Classes por variante
+   Classes por variante (com dark-mode)
+   - green usa o nosso padrão (verde-900 em contorno/sombra),
+     mantendo readable contrast no "soft".
    ========================================================= */
 function variantClasses(color, variant) {
-  // cores Tailwind mapeadas
   const map = {
-    teal:     { solid: "bg-teal-600 text-white border-teal-700",
-                soft:  "bg-teal-100 text-teal-700 border-teal-200",
-                outline:"text-teal-700 border-teal-400" },
-    emerald:  { solid: "bg-emerald-600 text-white border-emerald-700",
-                soft:  "bg-emerald-100 text-emerald-700 border-emerald-200",
-                outline:"text-emerald-700 border-emerald-400" },
-    purple:   { solid: "bg-purple-600 text-white border-purple-700",
-                soft:  "bg-purple-100 text-purple-700 border-purple-200",
-                outline:"text-purple-700 border-purple-400" },
-    slate:    { solid: "bg-slate-600 text-white border-slate-700",
-                soft:  "bg-slate-100 text-slate-700 border-slate-200",
-                outline:"text-slate-700 border-slate-400" },
-    rose:     { solid: "bg-rose-600 text-white border-rose-700",
-                soft:  "bg-rose-100 text-rose-700 border-rose-200",
-                outline:"text-rose-700 border-rose-400" },
-    amber:    { solid: "bg-amber-500 text-black border-amber-600",
-                soft:  "bg-amber-100 text-amber-800 border-amber-200",
-                outline:"text-amber-700 border-amber-400" },
-    orange:   { solid: "bg-orange-600 text-white border-orange-700",
-                soft:  "bg-orange-100 text-orange-700 border-orange-200",
-                outline:"text-orange-700 border-orange-400" },
-    zinc:     { solid: "bg-zinc-600 text-white border-zinc-700",
-                soft:  "bg-zinc-100 text-zinc-700 border-zinc-200",
-                outline:"text-zinc-700 border-zinc-400" },
-    gray:     { solid: "bg-gray-500 text-white border-gray-600",
-                soft:  "bg-gray-100 text-gray-700 border-gray-200",
-                outline:"text-gray-700 border-gray-400" },
+    green: {
+      solid:
+        "bg-green-600 text-white border-green-700 dark:bg-green-700 dark:border-green-800",
+      soft:
+        "bg-green-100 text-green-800 border-green-200 dark:bg-green-900/30 dark:text-green-200 dark:border-green-800/60",
+      outline:
+        "text-green-800 border-green-400 dark:text-green-200 dark:border-green-600",
+    },
+    amber: {
+      solid:
+        "bg-amber-500 text-black border-amber-600 dark:bg-amber-600 dark:text-black dark:border-amber-700",
+      soft:
+        "bg-amber-100 text-amber-900 border-amber-200 dark:bg-amber-900/30 dark:text-amber-200 dark:border-amber-800/60",
+      outline:
+        "text-amber-800 border-amber-400 dark:text-amber-200 dark:border-amber-600",
+    },
+    red: {
+      solid:
+        "bg-red-600 text-white border-red-700 dark:bg-red-700 dark:border-red-800",
+      soft:
+        "bg-red-100 text-red-800 border-red-200 dark:bg-red-900/30 dark:text-red-200 dark:border-red-800/60",
+      outline:
+        "text-red-700 border-red-400 dark:text-red-200 dark:border-red-600",
+    },
+    rose: {
+      solid:
+        "bg-rose-600 text-white border-rose-700 dark:bg-rose-700 dark:border-rose-800",
+      soft:
+        "bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-900/30 dark:text-rose-200 dark:border-rose-800/60",
+      outline:
+        "text-rose-700 border-rose-400 dark:text-rose-200 dark:border-rose-600",
+    },
+    orange: {
+      solid:
+        "bg-orange-600 text-white border-orange-700 dark:bg-orange-700 dark:border-orange-800",
+      soft:
+        "bg-orange-100 text-orange-800 border-orange-200 dark:bg-orange-900/30 dark:text-orange-200 dark:border-orange-800/60",
+      outline:
+        "text-orange-700 border-orange-400 dark:text-orange-200 dark:border-orange-600",
+    },
+    emerald: {
+      solid:
+        "bg-emerald-600 text-white border-emerald-700 dark:bg-emerald-700 dark:border-emerald-800",
+      soft:
+        "bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-800/60",
+      outline:
+        "text-emerald-700 border-emerald-400 dark:text-emerald-200 dark:border-emerald-600",
+    },
+    zinc: {
+      solid:
+        "bg-zinc-600 text-white border-zinc-700 dark:bg-zinc-700 dark:border-zinc-800",
+      soft:
+        "bg-zinc-100 text-zinc-800 border-zinc-200 dark:bg-zinc-900/30 dark:text-zinc-200 dark:border-zinc-700/60",
+      outline:
+        "text-zinc-700 border-zinc-400 dark:text-zinc-200 dark:border-zinc-600",
+    },
+    gray: {
+      solid:
+        "bg-gray-500 text-white border-gray-600 dark:bg-gray-600 dark:border-gray-700",
+      soft:
+        "bg-gray-100 text-gray-800 border-gray-200 dark:bg-gray-900/30 dark:text-gray-200 dark:border-gray-700/60",
+      outline:
+        "text-gray-700 border-gray-400 dark:text-gray-200 dark:border-gray-600",
+    },
   };
 
   const c = map[color] || map.gray;
@@ -118,9 +165,12 @@ function variantClasses(color, variant) {
    ========================================================= */
 function sizeClasses(size) {
   switch (size) {
-    case "sm": return "text-xs px-2 py-0.5 gap-1";
-    case "lg": return "text-sm px-3.5 py-1.5 gap-2";
-    default:   return "text-xs px-3 py-1 gap-1.5"; // md
+    case "sm":
+      return "text-[11px] px-2 py-0.5 gap-1";
+    case "lg":
+      return "text-sm px-3.5 py-1.5 gap-2";
+    default:
+      return "text-xs px-3 py-1 gap-1.5"; // md
   }
 }
 
@@ -129,16 +179,25 @@ function sizeClasses(size) {
    ========================================================= */
 function StatusIcon({ k }) {
   switch (k) {
-    case "andamento":  return <Clock size={14} />;
-    case "programado": return <CalendarClock size={14} />;
-    case "encerrado":  return <CheckCircle2 size={14} />;
-    case "cancelado":  return <XCircle size={14} />;
-    case "suspenso":   return <PauseCircle size={14} />;
-    case "aguardando": return <CircleAlert size={14} />;
-    case "ativo":      return <CheckCircle2 size={14} />;
-    case "inativo":    return <Circle size={14} />;
-    case "rascunho":   return <Circle size={14} />;
-    default:           return <CircleAlert size={14} />;
+    case "andamento":
+      return <Clock size={14} aria-hidden="true" />;
+    case "programado":
+      return <CalendarClock size={14} aria-hidden="true" />;
+    case "encerrado":
+      return <CheckCircle2 size={14} aria-hidden="true" />;
+    case "cancelado":
+      return <XCircle size={14} aria-hidden="true" />;
+    case "suspenso":
+      return <PauseCircle size={14} aria-hidden="true" />;
+    case "aguardando":
+      return <CircleAlert size={14} aria-hidden="true" />;
+    case "ativo":
+      return <CheckCircle2 size={14} aria-hidden="true" />;
+    case "inativo":
+    case "rascunho":
+      return <Circle size={14} aria-hidden="true" />;
+    default:
+      return <CircleAlert size={14} aria-hidden="true" />;
   }
 }
 
@@ -147,18 +206,24 @@ function StatusIcon({ k }) {
    ========================================================= */
 export default function BadgeStatus({
   status,
-  variant = "soft",      // 'soft' | 'solid' | 'outline'
-  size = "md",           // 'sm' | 'md' | 'lg'
+  variant = "soft", // 'soft' | 'solid' | 'outline'
+  size = "md", // 'sm' | 'md' | 'lg'
   showIcon = true,
-  rounded = "full",      // 'full' | 'md' | 'lg'
+  rounded = "full", // 'full' | 'md' | 'lg'
   className = "",
-  title,                 // tooltip opcional
+  title, // tooltip opcional
 }) {
   const key = toKey(status);
   const { label, color } = STATUS_CONFIG[key] || STATUS_CONFIG.desconhecido;
+
   const base =
-    "inline-flex items-center font-semibold border shadow-sm select-none";
-  const radius = rounded === "full" ? "rounded-full" : rounded === "lg" ? "rounded-lg" : "rounded-md";
+    "inline-flex items-center font-semibold border shadow-sm select-none " +
+    "focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 " +
+    "focus-visible:ring-green-900/50"; // foco consistente com verde-900
+
+  const radius =
+    rounded === "full" ? "rounded-full" : rounded === "lg" ? "rounded-lg" : "rounded-md";
+
   const classes = [
     base,
     sizeClasses(size),
@@ -175,6 +240,7 @@ export default function BadgeStatus({
       className={classes}
       title={title || (typeof status === "string" ? status : label)}
       aria-label={label}
+      role="status"
     >
       {showIcon && <StatusIcon k={key} />}
       <span>{label}</span>

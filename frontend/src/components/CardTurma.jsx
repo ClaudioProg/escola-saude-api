@@ -1,9 +1,10 @@
-// src/componentes/CardTurma
+// 📁 src/componentes/CardTurma.jsx
 import PropTypes from "prop-types";
 import { useState, useMemo } from "react";
 import { motion } from "framer-motion";
 import { Users, CalendarDays } from "lucide-react";
 import { formatarDataBrasileira } from "../utils/data";
+import BadgeStatus from "../components/BadgeStatus";
 
 /* ===== Helpers de data no fuso local ===== */
 function isDateOnly(str) {
@@ -36,16 +37,15 @@ function minutesBetween(hhmmIni, hhmmFim) {
   const [h1, m1] = hhmmIni.split(":").map(Number);
   const [h2, m2] = hhmmFim.split(":").map(Number);
   if (![h1, m1, h2, m2].every((n) => Number.isFinite(n))) return 0;
-  return (h2 * 60 + m2) - (h1 * 60 + m1);
+  return h2 * 60 + m2 - (h1 * 60 + m1);
 }
 function pad2(n) {
   return String(n).padStart(2, "0");
 }
 
-/* ===== Badge de status (agora com base em datas_turma) ===== */
-function getStatusBadgeByDates(minData, maxData, horarioFimUltimoDia = "23:59") {
-  if (!minData || !maxData) return null;
-
+/* ===== Status key (usa datas reais da turma) ===== */
+function getStatusKeyByDates(minData, maxData, horarioFimUltimoDia = "23:59") {
+  if (!minData || !maxData) return "desconhecido";
   const agora = new Date();
   const dataInicio = startOfDayLocal(minData);
   const dataFim = endOfDayLocal(maxData);
@@ -55,25 +55,9 @@ function getStatusBadgeByDates(minData, maxData, horarioFimUltimoDia = "23:59") 
     dataFim.setHours(Number.isFinite(h) ? h : 23, Number.isFinite(m) ? m : 59, 59, 999);
   }
 
-  if (agora < dataInicio) {
-    return (
-      <span className="ml-2 px-3 py-1 rounded-full text-xs font-bold bg-green-100 text-green-800 border border-green-400">
-        Programado
-      </span>
-    );
-  }
-  if (agora > dataFim) {
-    return (
-      <span className="ml-2 px-3 py-1 rounded-full text-xs font-bold bg-red-100 text-red-800 border border-red-400">
-        Encerrado
-      </span>
-    );
-  }
-  return (
-    <span className="ml-2 px-3 py-1 rounded-full text-xs font-bold bg-yellow-100 text-yellow-900 border border-yellow-400">
-      Em andamento
-    </span>
-  );
+  if (agora < dataInicio) return "programado";
+  if (agora > dataFim) return "encerrado";
+  return "andamento";
 }
 
 export default function CardTurma({
@@ -97,15 +81,8 @@ export default function CardTurma({
   const ocupadas = Array.isArray(turma.inscritos) ? turma.inscritos.length : 0;
   const percentual = total > 0 ? Math.round((ocupadas / total) * 100) : 0;
 
-  // ================== NOVO: derivar dados a partir de datas_turma ==================
-  // Espera-se turma.datas: [{ data: 'YYYY-MM-DD', horario_inicio: 'HH:MM', horario_fim: 'HH:MM' }, ...]
-  const {
-    minData,
-    maxData,
-    horasTotal,
-    horarioFimUltimoDia,
-    datasOrdenadas
-  } = useMemo(() => {
+  // ================== Deriva dados a partir de turma.datas ==================
+  const { minData, maxData, horasTotal, horarioFimUltimoDia, datasOrdenadas } = useMemo(() => {
     const arr = Array.isArray(turma.datas) ? [...turma.datas] : [];
     // normaliza strings e ordena por data
     arr.sort((a, b) => String(a?.data || "").localeCompare(String(b?.data || "")));
@@ -120,18 +97,15 @@ export default function CardTurma({
     let totalMin = 0;
     for (const d of arr) {
       const mins = minutesBetween(d?.horario_inicio, d?.horario_fim);
-      if (mins > 0) {
-        totalMin += mins >= 360 ? (mins - 60) : mins;
-      }
+      if (mins > 0) totalMin += mins >= 360 ? mins - 60 : mins;
     }
 
-    // se não veio `datas` mas há horário_inicio/fim "globais", use como 1 dia
+    // fallback: 1 dia com horário global
     if (arr.length === 0 && turma.horario_inicio && turma.horario_fim && minD) {
       let mins = minutesBetween(turma.horario_inicio, turma.horario_fim);
-      if (mins > 0) totalMin += mins >= 360 ? (mins - 60) : mins;
+      if (mins > 0) totalMin += mins >= 360 ? mins - 60 : mins;
     }
 
-    // horário do último dia para status (prioriza o último item da lista)
     const hfUltimo =
       (last?.horario_fim && String(last.horario_fim).slice(0, 5)) ||
       (turma.horario_fim && String(turma.horario_fim).slice(0, 5)) ||
@@ -142,23 +116,27 @@ export default function CardTurma({
       maxData: maxD,
       horasTotal: totalMin / 60,
       horarioFimUltimoDia: hfUltimo,
-      datasOrdenadas: arr
+      datasOrdenadas: arr,
     };
   }, [turma]);
 
-  // ======= Status (baseado em datas reais) =======
-  const statusBadge = getStatusBadgeByDates(minData, maxData, horarioFimUltimoDia);
+  // ======= Status (BadgeStatus) =======
+  const statusKey = getStatusKeyByDates(minData, maxData, horarioFimUltimoDia);
 
   // ======= Texto do período =======
-  const periodoTexto = (minData && maxData)
-    ? `${formatarDataBrasileira(minData)} a ${formatarDataBrasileira(maxData)}`
-    : (minData ? formatarDataBrasileira(minData) : "Datas a definir");
+  const periodoTexto =
+    minData && maxData
+      ? `${formatarDataBrasileira(minData)} a ${formatarDataBrasileira(maxData)}`
+      : minData
+      ? formatarDataBrasileira(minData)
+      : "Datas a definir";
 
   // ======= Carga horária =======
-  // Se a API já calcular e enviar turma.carga_horaria_real, priorize:
   const cargaTotal = Number.isFinite(Number(turma.carga_horaria_real))
     ? Number(turma.carga_horaria_real)
-    : Number.isFinite(horasTotal) ? horasTotal : 0;
+    : Number.isFinite(horasTotal)
+    ? horasTotal
+    : 0;
 
   // ======= Bloqueio de inscrição por data real =======
   function bloquearInscricaoPorData() {
@@ -167,16 +145,13 @@ export default function CardTurma({
   }
   const bloquear = bloquearInscricao || bloquearInscricaoPorData();
 
+  // ======= Barra de progresso (cores com bom contraste) =======
   const corBarra =
-    percentual >= 100
-      ? "bg-red-600"
-      : percentual >= 75
-      ? "bg-orange-400"
-      : "bg-green-600";
+    percentual >= 100 ? "bg-red-600" : percentual >= 75 ? "bg-orange-500" : "bg-green-600";
 
-  // ======= Prévia de datas (opcional): mostra 3 primeiras quando houver intercaladas =======
+  // ======= Prévia de datas (opcional) =======
   const previewDatas =
-    datasOrdenadas.length > 1
+    (datasOrdenadas?.length || 0) > 1
       ? datasOrdenadas.slice(0, 3).map((d) => formatarDataBrasileira(d.data)).join(" • ")
       : null;
 
@@ -186,21 +161,21 @@ export default function CardTurma({
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -10 }}
       layout
-      className="border p-6 mb-5 rounded-2xl bg-white dark:bg-gray-900 shadow transition-all"
+      className="border p-6 mb-5 rounded-2xl bg-white dark:bg-gray-900 shadow transition-all border-gray-200 dark:border-gray-700"
       aria-label={`Cartão da turma ${turma.nome}`}
       tabIndex={0}
     >
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
-        <div className="w-full">
+      <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 mb-4">
+        <div className="w-full min-w-0">
           <div className="flex items-center gap-2 mb-1">
-            <h4 className="text-base font-bold text-lousa dark:text-white">
+            <h4 className="text-base font-bold text-green-900 dark:text-green-200 truncate" title={turma.nome}>
               {turma.nome}
             </h4>
-            {statusBadge}
+            <BadgeStatus status={statusKey} size="sm" variant="soft" />
           </div>
 
           {turma.evento_titulo && (
-            <span className="text-xs text-gray-500 dark:text-gray-400 block mb-1">
+            <span className="text-xs text-gray-500 dark:text-gray-400 block mb-1 truncate" title={turma.evento_titulo}>
               <CalendarDays size={14} className="inline mr-1" /> Evento: {turma.evento_titulo}
             </span>
           )}
@@ -210,8 +185,8 @@ export default function CardTurma({
             {periodoTexto}
           </span>
 
-          {/* Horários (se o curso tem horários variados por data, é melhor mostrar na lista/previa) */}
-          {turma.horario_inicio && turma.horario_fim && datasOrdenadas.length <= 1 && (
+          {/* Horário compacto quando for um único dia */}
+          {turma.horario_inicio && turma.horario_fim && (datasOrdenadas?.length || 0) <= 1 && (
             <span className="text-xs text-gray-600 dark:text-gray-300 block mt-0.5">
               ⏰ Horário: {turma.horario_inicio.slice(0, 5)} às {turma.horario_fim.slice(0, 5)}
             </span>
@@ -229,17 +204,21 @@ export default function CardTurma({
           )}
 
           {/* Barra de Progresso */}
-          <div className="mt-3">
+          <div className="mt-3" aria-label="Progresso de ocupação de vagas">
             <div className="flex justify-between text-xs text-gray-600 dark:text-gray-300 mb-1">
               <span>
                 <Users size={14} className="inline mr-1" />
                 {ocupadas} de {total} vagas preenchidas
               </span>
-              <span className="ml-2 px-2 py-0.5 rounded bg-green-100 text-green-800 text-xs">
+              <span
+                className="ml-2 px-2 py-0.5 rounded bg-green-100 text-green-800 text-xs dark:bg-green-900/30 dark:text-green-200"
+                aria-live="polite"
+              >
                 {percentual}%
               </span>
             </div>
-            <div className="w-full h-2 bg-gray-300 rounded-full overflow-hidden">
+            <div className="w-full h-2 bg-gray-300 dark:bg-gray-700 rounded-full overflow-hidden" role="progressbar"
+                 aria-valuemin={0} aria-valuemax={100} aria-valuenow={percentual}>
               <div className={`h-full ${corBarra}`} style={{ width: `${percentual}%` }} />
             </div>
           </div>
@@ -265,9 +244,10 @@ export default function CardTurma({
             </button>
           ) : (
             <button
-              className="bg-lousa hover:bg-green-800 text-white font-semibold px-4 py-1 rounded-full transition"
+              className="bg-green-900 hover:bg-green-900/90 text-white font-semibold px-4 py-1 rounded-full transition focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-green-900/60"
               onClick={() => inscrever(Number(turma.id))}
               disabled={inscrevendo === Number(turma.id)}
+              aria-busy={inscrevendo === Number(turma.id) || undefined}
             >
               {inscrevendo === Number(turma.id) ? "Inscrevendo..." : "Inscrever-se"}
             </button>

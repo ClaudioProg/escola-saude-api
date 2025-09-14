@@ -1,12 +1,34 @@
+// 📁 src/components/ModalEvento.jsx
 import { useEffect, useState } from "react";
 import Modal from "react-modal";
 import { toast } from "react-toastify";
-import { MapPin, FileText, Layers3, PlusCircle, Trash2, Lock, Unlock } from "lucide-react";
+import {
+  MapPin,
+  FileText,
+  Layers3,
+  PlusCircle,
+  Trash2,
+  Lock,
+  Unlock,
+} from "lucide-react";
 import ModalTurma from "./ModalTurma";
 import { formatarDataBrasileira } from "../utils/data";
 import { apiGet, apiDelete } from "../services/api";
 
-/* utils locais */
+/* =========================
+   Constantes / Utils locais
+   ========================= */
+
+const TIPOS_EVENTO = [
+  "Congresso",
+  "Curso",
+  "Oficina",
+  "Palestra",
+  "Seminário",
+  "Simpósio",
+  "Outros",
+];
+
 const minDate = (arr) => arr.map((d) => d.data).sort()[0];
 const maxDate = (arr) => arr.map((d) => d.data).sort().slice(-1)[0];
 const hh = (s) => (typeof s === "string" ? s.slice(0, 5) : "");
@@ -30,17 +52,93 @@ const parseRegsBulk = (txt) => {
   return Array.from(new Set(out.filter((r) => /^\d{6}$/.test(r))));
 };
 
-// badge simples
-const Badge = ({ children, title }) => (
+// badge simples + acessível
+const Badge = ({ children, title, ariaLabel }) => (
   <span
     title={title}
+    aria-label={ariaLabel || title}
     className="ml-2 inline-flex items-center justify-center text-[11px] px-2 py-0.5 rounded-full bg-gray-200 text-gray-700"
   >
     {children}
   </span>
 );
 
-export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurmaRemovida }) {
+/* Normalização robusta de datas/encontros de uma turma */
+function encontrosParaDatas(turma) {
+  const baseHi = hh(turma.horario_inicio || turma.hora_inicio || "08:00");
+  const baseHf = hh(turma.horario_fim || turma.hora_fim || "17:00");
+  const enc = Array.isArray(turma?.encontros) ? turma.encontros : [];
+
+  const fromEnc = enc
+    .map((e) => {
+      if (typeof e === "string") {
+        const data = e.slice(0, 10);
+        return data ? { data, horario_inicio: baseHi, horario_fim: baseHf } : null;
+      }
+      if (e && typeof e === "object") {
+        const data = e.data?.slice(0, 10);
+        const horario_inicio = hh(e.inicio || e.horario_inicio || baseHi);
+        const horario_fim = hh(e.fim || e.horario_fim || baseHf);
+        return data ? { data, horario_inicio, horario_fim } : null;
+      }
+      return null;
+    })
+    .filter(Boolean);
+
+  if (Array.isArray(turma?.datas) && turma.datas.length) return turma.datas;
+  return fromEnc;
+}
+
+function normalizarDatasTurma(t, hiBase = "08:00", hfBase = "17:00") {
+  const hi = hh(t.horario_inicio || t.hora_inicio || hiBase);
+  const hf = hh(t.horario_fim || t.hora_fim || hfBase);
+
+  const datasRaw =
+    (Array.isArray(t.datas) && t.datas.length && t.datas) || encontrosParaDatas(t) || [];
+
+  const datas = (datasRaw || [])
+    .map((d) => {
+      const data = (d?.data || d || "").slice(0, 10);
+      const horario_inicio = hh(d?.horario_inicio || d?.inicio || hi);
+      const horario_fim = hh(d?.horario_fim || d?.fim || hf);
+      return data && horario_inicio && horario_fim
+        ? { data, horario_inicio, horario_fim }
+        : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.data.localeCompare(b.data));
+
+  return {
+    datas,
+    data_inicio: datas[0]?.data || t.data_inicio,
+    data_fim: datas.at(-1)?.data || t.data_fim,
+    horario_inicio: datas[0]?.horario_inicio || hi,
+    horario_fim: datas[0]?.horario_fim || hf,
+  };
+}
+
+/* Aceita tanto evento.instrutor (array de objetos/ids) quanto evento.instrutores */
+const getInstrutoresIds = (ev) => {
+  const arr = Array.isArray(ev?.instrutores)
+    ? ev.instrutores
+    : Array.isArray(ev?.instrutor)
+    ? ev.instrutor
+    : [];
+  return arr.map((i) => Number(i?.id ?? i)).filter((x) => Number.isFinite(x));
+};
+
+/* =========================
+   Componente
+   ========================= */
+
+export default function ModalEvento({
+  isOpen,
+  onClose,
+  onSalvar,
+  evento,
+  onTurmaRemovida,
+  salvando = false, // opcional: para desabilitar botão "Salvar" se o pai estiver em I/O
+}) {
   const [titulo, setTitulo] = useState("");
   const [descricao, setDescricao] = useState("");
   const [local, setLocal] = useState("");
@@ -62,7 +160,10 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
 
   // opções de instrutor
   const opcoesInstrutor = usuarios.filter((usuario) => {
-    const perfil = (Array.isArray(usuario.perfil) ? usuario.perfil.join(",") : String(usuario.perfil || "")).toLowerCase();
+    const perfil = (Array.isArray(usuario.perfil)
+      ? usuario.perfil.join(",")
+      : String(usuario.perfil || "")
+    ).toLowerCase();
     return perfil.includes("instrutor") || perfil.includes("administrador");
   });
 
@@ -71,41 +172,19 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
     nova[index] = valor;
     setInstrutorSelecionado(nova);
   }
-  function adicionarInstrutor() { setInstrutorSelecionado((l) => [...l, ""]); }
+  function adicionarInstrutor() {
+    setInstrutorSelecionado((l) => [...l, ""]);
+  }
   function removerInstrutor(index) {
     const nova = instrutorSelecionado.filter((_, i) => i !== index);
     setInstrutorSelecionado(nova.length ? nova : [""]);
   }
   function getInstrutorDisponivel(index) {
     return opcoesInstrutor.filter(
-      (i) => !instrutorSelecionado.includes(String(i.id)) || instrutorSelecionado[index] === String(i.id)
+      (i) =>
+        !instrutorSelecionado.includes(String(i.id)) ||
+        instrutorSelecionado[index] === String(i.id)
     );
-  }
-
-  // Converte encontros → "datas"
-  function encontrosParaDatas(turma) {
-    const baseHi = hh(turma.horario_inicio || turma.hora_inicio || "08:00");
-    const baseHf = hh(turma.horario_fim || turma.hora_fim || "17:00");
-    const enc = Array.isArray(turma?.encontros) ? turma.encontros : [];
-
-    const fromEnc = enc
-      .map((e) => {
-        if (typeof e === "string") {
-          const data = e.slice(0, 10);
-          return data ? { data, horario_inicio: baseHi, horario_fim: baseHf } : null;
-        }
-        if (e && typeof e === "object") {
-          const data = e.data?.slice(0, 10);
-          const horario_inicio = hh(e.inicio || e.horario_inicio || baseHi);
-          const horario_fim = hh(e.fim || e.horario_fim || baseHf);
-          return data ? { data, horario_inicio, horario_fim } : null;
-        }
-        return null;
-      })
-      .filter(Boolean);
-
-    if (Array.isArray(turma?.datas) && turma.datas.length) return turma.datas;
-    return fromEnc;
   }
 
   // Preenche ao abrir/editar
@@ -117,17 +196,31 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
       setTipo(evento.tipo || "");
       setUnidadeId(evento.unidade_id || "");
       setPublicoAlvo(evento.publico_alvo || "");
-      setInstrutorSelecionado(Array.isArray(evento.instrutor) ? evento.instrutor.map((i) => String(i.id)) : []);
 
+      // instrutores
+      setInstrutorSelecionado(
+        getInstrutoresIds(evento).map(String).filter(Boolean).length
+          ? getInstrutoresIds(evento).map(String)
+          : [""]
+      );
+
+      // turmas (normalizadas)
       setTurmas(
         (evento.turmas || []).map((t) => {
-          const datas = encontrosParaDatas(t);
+          const n = normalizarDatasTurma(t);
           return {
             ...t,
-            datas,
-            horario_inicio: t.horario_inicio || t.hora_inicio || (datas[0]?.horario_inicio || ""),
-            horario_fim: t.horario_fim || t.hora_fim || (datas[0]?.horario_fim || ""),
-            carga_horaria: t.carga_horaria ?? 0,
+            datas: n.datas,
+            data_inicio: n.data_inicio,
+            data_fim: n.data_fim,
+            horario_inicio: n.horario_inicio,
+            horario_fim: n.horario_fim,
+            carga_horaria: Number.isFinite(Number(t.carga_horaria))
+              ? Number(t.carga_horaria)
+              : 0,
+            vagas_total: Number.isFinite(Number(t.vagas_total))
+              ? Number(t.vagas_total)
+              : 0,
           };
         })
       );
@@ -136,24 +229,38 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
       setRestrito(restr);
 
       // usa restrito_modo OU vis_reg_tipo do backend pra escolher o modo
-      const modoFromVis = evento.vis_reg_tipo === "lista" ? "lista_registros" : "todos_servidores";
+      const modoFromVis =
+        evento.vis_reg_tipo === "lista" ? "lista_registros" : "todos_servidores";
       const modo = evento.restrito_modo || (restr ? modoFromVis : "");
       setRestritoModo(modo);
 
       const lista =
-        (Array.isArray(evento.registros_permitidos) ? evento.registros_permitidos : null) ??
+        (Array.isArray(evento.registros_permitidos)
+          ? evento.registros_permitidos
+          : null) ??
         (Array.isArray(evento.registros) ? evento.registros : []);
-      const onlySix = (lista || []).map(normReg).filter((r) => /^\d{6}$/.test(r));
+      const onlySix = (lista || [])
+        .map(normReg)
+        .filter((r) => /^\d{6}$/.test(r));
       setRegistros(Array.from(new Set(onlySix)));
       setRegistroInput("");
     } else {
-      setTitulo(""); setDescricao(""); setLocal(""); setTipo(""); setUnidadeId(""); setPublicoAlvo("");
-      setInstrutorSelecionado([""]); setTurmas([]);
-      setRestrito(false); setRestritoModo(""); setRegistros([]); setRegistroInput("");
+      setTitulo("");
+      setDescricao("");
+      setLocal("");
+      setTipo("");
+      setUnidadeId("");
+      setPublicoAlvo("");
+      setInstrutorSelecionado([""]);
+      setTurmas([]);
+      setRestrito(false);
+      setRestritoModo("");
+      setRegistros([]);
+      setRegistroInput("");
     }
   }, [evento, isOpen]);
 
-  // Garante a lista ao editar
+  // Garante a lista ao editar (pega dados atuais do backend)
   useEffect(() => {
     if (!isOpen || !evento?.id) return;
     (async () => {
@@ -161,100 +268,154 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
         const det = await apiGet(`/api/eventos/${evento.id}`);
         if (typeof det.restrito === "boolean") setRestrito(!!det.restrito);
         if (det.restrito_modo || det.vis_reg_tipo) {
-          setRestritoModo(det.restrito_modo || (det.vis_reg_tipo === "lista" ? "lista_registros" : "todos_servidores"));
+          setRestritoModo(
+            det.restrito_modo ||
+              (det.vis_reg_tipo === "lista" ? "lista_registros" : "todos_servidores")
+          );
         }
         const lista = Array.isArray(det.registros_permitidos)
           ? det.registros_permitidos
           : Array.isArray(det.registros)
           ? det.registros
           : [];
-        const parsed = (lista || []).map(normReg).filter((r) => /^\d{6}$/.test(r));
+        const parsed = (lista || [])
+          .map(normReg)
+          .filter((r) => /^\d{6}$/.test(r));
         setRegistros([...new Set(parsed)]);
-      } catch {}
+      } catch {
+        /* silencioso */
+      }
     })();
   }, [isOpen, evento?.id]);
 
   // Carrega unidades/usuários
-  useEffect(() => { (async () => {
-    try { const data = await apiGet("/api/unidades"); setUnidades(Array.isArray(data) ? data : []); }
-    catch { toast.error("Erro ao carregar unidades."); }
-  })(); }, []);
-  useEffect(() => { (async () => {
-    try { const data = await apiGet("/api/usuarios"); setUsuarios(Array.isArray(data) ? data : []); }
-    catch { toast.error("Erro ao carregar usuários."); }
-  })(); }, []);
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await apiGet("/api/unidades");
+        setUnidades(Array.isArray(data) ? data : []);
+      } catch {
+        toast.error("Erro ao carregar unidades.");
+      }
+    })();
+  }, []);
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await apiGet("/api/usuarios");
+        setUsuarios(Array.isArray(data) ? data : []);
+      } catch {
+        toast.error("Erro ao carregar usuários.");
+      }
+    })();
+  }, []);
 
   // ➕ registros
   const addRegistro = () => {
     const novos = parseRegsBulk(registroInput);
-    if (!novos.length) { toast.info("Informe/cole ao menos uma sequência de 6 dígitos."); return; }
+    if (!novos.length) {
+      toast.info("Informe/cole ao menos uma sequência de 6 dígitos.");
+      return;
+    }
     setRegistros((prev) => Array.from(new Set([...prev, ...novos])));
     setRegistroInput("");
   };
   const addRegistrosBulk = (txt) => {
     const novos = parseRegsBulk(txt);
-    if (!novos.length) { toast.info("Nenhuma sequência de 6 dígitos encontrada."); return; }
+    if (!novos.length) {
+      toast.info("Nenhuma sequência de 6 dígitos encontrada.");
+      return;
+    }
     setRegistros((prev) => Array.from(new Set([...prev, ...novos])));
     setRegistroInput("");
   };
-  const removeRegistro = (r) => setRegistros((prev) => prev.filter((x) => x !== r));
+  const removeRegistro = (r) =>
+    setRegistros((prev) => prev.filter((x) => x !== r));
 
   const handleSubmit = (e) => {
     e.preventDefault();
 
-    const tiposValidos = ["Congresso", "Curso", "Oficina", "Palestra", "Seminário", "Simpósio", "Outros"];
-    if (!titulo || !tipo || !unidadeId) { toast.warning("⚠️ Preencha todos os campos obrigatórios."); return; }
-    if (!tiposValidos.includes(tipo)) { toast.error("❌ Tipo de evento inválido."); return; }
-    if (!turmas.length) { toast.warning("⚠️ Adicione pelo menos uma turma."); return; }
+    if (!titulo || !tipo || !unidadeId) {
+      toast.warning("⚠️ Preencha todos os campos obrigatórios.");
+      return;
+    }
+    if (!TIPOS_EVENTO.includes(tipo)) {
+      toast.error("❌ Tipo de evento inválido.");
+      return;
+    }
+    if (!turmas.length) {
+      toast.warning("⚠️ Adicione pelo menos uma turma.");
+      return;
+    }
 
+    // validação das turmas
     for (const t of turmas) {
-      if (!t.nome || !Number(t.vagas_total) || !Number.isFinite(Number(t.carga_horaria))) {
-        toast.error("❌ Preencha nome, vagas e carga horária de cada turma."); return;
+      if (
+        !t.nome ||
+        !Number(t.vagas_total) ||
+        !Number.isFinite(Number(t.carga_horaria))
+      ) {
+        toast.error("❌ Preencha nome, vagas e carga horária de cada turma.");
+        return;
       }
       if (!Array.isArray(t.datas) || t.datas.length === 0) {
-        toast.error("❌ Cada turma precisa ter ao menos uma data."); return;
+        toast.error("❌ Cada turma precisa ter ao menos uma data.");
+        return;
       }
       for (const d of t.datas) {
         if (!d?.data || !d?.horario_inicio || !d?.horario_fim) {
-          toast.error("❌ Preencha data, início e fim em todos os encontros."); return;
+          toast.error("❌ Preencha data, início e fim em todos os encontros.");
+          return;
         }
       }
     }
 
     if (restrito) {
       if (!["todos_servidores", "lista_registros"].includes(restritoModo)) {
-        toast.error("Defina o modo de restrição do evento."); return;
+        toast.error("Defina o modo de restrição do evento.");
+        return;
       }
       if (restritoModo === "lista_registros" && registros.length === 0) {
-        toast.error("Inclua pelo menos um registro (6 dígitos) para este evento."); return;
+        toast.error("Inclua pelo menos um registro (6 dígitos) para este evento.");
+        return;
       }
     }
 
-    const instrutorValidado = instrutorSelecionado.map(Number).filter((id) => !Number.isNaN(id));
+    // instrutores
+    const instrutorValidado = instrutorSelecionado
+      .map(Number)
+      .filter((id) => !Number.isNaN(id));
 
+    // normaliza turmas para o payload
     const turmasCompletas = turmas.map((t) => {
-      const qtd = Array.isArray(t.datas) ? t.datas.length : 0;
-      const di = qtd ? minDate(t.datas) : t.data_inicio;
-      const df = qtd ? maxDate(t.datas) : t.data_fim;
-      const first = qtd ? t.datas[0] : {};
+      const n = normalizarDatasTurma(t);
       return {
         nome: t.nome,
-        data_inicio: di,
-        data_fim: df,
-        horario_inicio: hh(first.horario_inicio || t.horario_inicio),
-        horario_fim: hh(first.horario_fim || t.horario_fim),
-        vagas_total: Number(t.vagas_total),
-        carga_horaria: Number(t.carga_horaria),
-        encontros: t.datas.map((d) => ({ data: d.data, inicio: hh(d.horario_inicio), fim: hh(d.horario_fim) })),
+        data_inicio: n.data_inicio,
+        data_fim: n.data_fim,
+        horario_inicio: n.horario_inicio,
+        horario_fim: n.horario_fim,
+        vagas_total: Number(t.vagas_total) || 0,
+        carga_horaria: Number(t.carga_horaria) || 0,
+        encontros: n.datas.map((d) => ({
+          data: d.data,
+          inicio: d.horario_inicio,
+          fim: d.horario_fim,
+        })),
       };
     });
 
     const turmaPrincipal = turmasCompletas[0] || {};
-    const regs6 = Array.from(new Set(registros.filter((r) => /^\d{6}$/.test(r))));
+    const regs6 = Array.from(
+      new Set(registros.filter((r) => /^\d{6}$/.test(r)))
+    );
 
     // 🔑 chave do backend: vis_reg_tipo ('todos' | 'lista')
-    const vis_reg_tipo =
-      restrito ? (restritoModo === "lista_registros" ? "lista" : "todos") : "todos";
+    const vis_reg_tipo = restrito
+      ? restritoModo === "lista_registros"
+        ? "lista"
+        : "todos"
+      : "todos";
 
     const payload = {
       titulo,
@@ -263,29 +424,37 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
       tipo,
       unidade_id: Number(unidadeId),
       publico_alvo: publicoAlvo,
+
+      // instrutores — envie nos dois campos para compatibilidade entre telas
       instrutor: instrutorValidado,
+      instrutores: instrutorValidado,
+
       turmas: turmasCompletas,
 
-      // “espelho”
+      // “espelhos” no nível do evento
       data_inicio: turmaPrincipal.data_inicio,
       data_fim: turmaPrincipal.data_fim,
+      horario_inicio: turmaPrincipal.horario_inicio,
+      horario_fim: turmaPrincipal.horario_fim,
+      // espelhos legacy (se alguma tela ainda usa)
       hora_inicio: turmaPrincipal.horario_inicio,
       hora_fim: turmaPrincipal.horario_fim,
-      vagas_total: Number(turmaPrincipal.vagas_total),
-      carga_horaria: Number(turmaPrincipal.carga_horaria),
+
+      vagas_total: Number(turmaPrincipal.vagas_total) || 0,
+      carga_horaria: Number(turmaPrincipal.carga_horaria) || 0,
 
       ...(evento?.id ? { id: evento.id } : {}),
 
       // 🔒 restrição
       restrito: !!restrito,
-      restrito_modo: restrito ? (restritoModo || "todos_servidores") : "",
-      vis_reg_tipo, // ✅ alinhar com o que o GET devolve
+      restrito_modo: restrito ? restritoModo || "todos_servidores" : "",
+      vis_reg_tipo, // alinhar com o que o GET devolve
       ...(restrito && vis_reg_tipo === "lista" && regs6.length > 0
         ? { registros_permitidos: regs6 }
-        : {}), // só envia quando realmente precisa
+        : {}),
     };
 
-    // debug local (aparece no seu log)
+    // debug local
     console.log("[PUT evento] payload:", payload);
 
     onSalvar(payload);
@@ -318,7 +487,11 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
       const code = err?.data?.erro;
       if (err?.status === 409 || code === "TURMA_COM_REGISTROS") {
         const c = err?.data?.contagens || {};
-        toast.error(`Não é possível excluir: ${c.presencas || 0} presenças / ${c.certificados || 0} certificados.`);
+        toast.error(
+          `Não é possível excluir: ${c.presencas || 0} presenças / ${
+            c.certificados || 0
+          } certificados.`
+        );
       } else if (err?.status === 404) {
         toast.warn("Turma não encontrada. Atualize a página.");
       } else {
@@ -335,6 +508,10 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
       ? registros.length
       : Number(evento?.count_registros_permitidos ?? 0);
 
+  /* =========================
+     Render
+     ========================= */
+
   return (
     <Modal
       isOpen={isOpen}
@@ -343,6 +520,9 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
       ariaHideApp={false}
       className="modal"
       overlayClassName="overlay"
+      contentLabel="Edição de evento"
+      role="dialog"
+      aria-labelledby="modal-evento-titulo"
     >
       <div className="flex flex-col max-h-[90vh]">
         <form
@@ -351,6 +531,10 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
           className="overflow-y-auto pr-2 space-y-4"
           style={{ maxHeight: "calc(90vh - 64px)" }}
         >
+          <h2 id="modal-evento-titulo" className="sr-only">
+            Edição de evento
+          </h2>
+
           {/* TÍTULO */}
           <div className="relative">
             <FileText className="absolute left-3 top-3 text-gray-500" size={18} />
@@ -454,13 +638,11 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
               required
             >
               <option value="">Selecione o tipo</option>
-              <option value="Congresso">Congresso</option>
-              <option value="Curso">Curso</option>
-              <option value="Oficina">Oficina</option>
-              <option value="Palestra">Palestra</option>
-              <option value="Seminário">Seminário</option>
-              <option value="Simpósio">Simpósio</option>
-              <option value="Outros">Outros</option>
+              {TIPOS_EVENTO.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -487,7 +669,12 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
             <legend className="px-1 font-semibold flex items-center gap-2">
               {restrito ? <Lock size={16} /> : <Unlock size={16} />} Visibilidade do evento
               {restrito && restritoModo === "lista_registros" && regCount > 0 && (
-                <Badge title="Total de registros deste evento">{regCount}</Badge>
+                <Badge
+                  title="Total de registros deste evento"
+                  ariaLabel={`Total de registros: ${regCount}`}
+                >
+                  {regCount}
+                </Badge>
               )}
             </legend>
 
@@ -501,7 +688,9 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
                   else if (!restritoModo) setRestritoModo("todos_servidores");
                 }}
               />
-              <span>Evento restrito</span>
+              <span>
+                Evento restrito
+              </span>
             </label>
 
             {restrito && (
@@ -514,7 +703,9 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
                     checked={restritoModo === "todos_servidores"}
                     onChange={() => setRestritoModo("todos_servidores")}
                   />
-                  <span>Todos os servidores (somente quem possui <strong>registro</strong> cadastrado)</span>
+                  <span>
+                    Todos os servidores (somente quem possui <strong>registro</strong> cadastrado)
+                  </span>
                 </label>
 
                 <label className="flex items-center gap-2">
@@ -527,7 +718,14 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
                   />
                   <span className="inline-flex items-center">
                     Apenas a lista específica de registros
-                    {regCount > 0 && <Badge title="Quantidade de registros na lista">{regCount}</Badge>}
+                    {regCount > 0 && (
+                      <Badge
+                        title="Quantidade de registros na lista"
+                        ariaLabel={`Quantidade de registros na lista: ${regCount}`}
+                      >
+                        {regCount}
+                      </Badge>
+                    )}
                   </span>
                 </label>
 
@@ -537,7 +735,12 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
                       <input
                         value={registroInput}
                         onChange={(e) => setRegistroInput(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addRegistro(); } }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            addRegistro();
+                          }
+                        }}
                         onPaste={(e) => {
                           const txt = e.clipboardData?.getData("text") || "";
                           if (!txt) return;
@@ -558,7 +761,19 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
 
                     {regCount > 0 ? (
                       <>
-                        <div className="text-xs text-gray-600">{regCount} registro(s) na lista</div>
+                        <div className="flex items-center justify-between">
+                          <div className="text-xs text-gray-600">
+                            {regCount} registro(s) na lista
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setRegistros([])}
+                            className="text-xs underline text-red-700"
+                            title="Limpar todos os registros"
+                          >
+                            Limpar todos
+                          </button>
+                        </div>
                         <div className="flex flex-wrap gap-2">
                           {registros.map((r) => (
                             <span
@@ -579,7 +794,9 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
                         </div>
                       </>
                     ) : (
-                      <p className="text-xs text-gray-600">Pode colar CSV/planilha/texto — extraímos todas as sequências de 6 dígitos.</p>
+                      <p className="text-xs text-gray-600">
+                        Pode colar CSV/planilha/texto — extraímos todas as sequências de 6 dígitos.
+                      </p>
                     )}
                   </div>
                 )}
@@ -593,7 +810,9 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
               <Layers3 size={16} /> Turmas Cadastradas
             </h3>
             {turmas.length === 0 ? (
-              <p className="text-sm text-gray-500 mt-1">Nenhuma turma cadastrada.</p>
+              <p className="text-sm text-gray-500 mt-1">
+                Nenhuma turma cadastrada.
+              </p>
             ) : (
               <div className="mt-2 space-y-2">
                 {turmas.map((t, i) => {
@@ -624,23 +843,32 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
                       {qtd > 0 ? (
                         <>
                           <p>
-                            📅 {qtd} encontro(s) • {formatarDataBrasileira(di)} a {formatarDataBrasileira(df)}
+                            📅 {qtd} encontro(s) • {formatarDataBrasileira(di)} a{" "}
+                            {formatarDataBrasileira(df)}
                           </p>
                           <ul className="mt-1 text-xs text-gray-600 dark:text-gray-300 list-disc list-inside">
                             {t.datas.map((d, idx) => (
                               <li key={idx}>
-                                {formatarDataBrasileira(d.data)} — {hh(d.horario_inicio)} às {hh(d.horario_fim)}
+                                {formatarDataBrasileira(d.data)} — {hh(d.horario_inicio)} às{" "}
+                                {hh(d.horario_fim)}
                               </li>
                             ))}
                           </ul>
                         </>
                       ) : (
                         <p>
-                          📅 {formatarDataBrasileira(t.data_inicio)} a {formatarDataBrasileira(t.data_fim)}
+                          📅 {formatarDataBrasileira(t.data_inicio)} a{" "}
+                          {formatarDataBrasileira(t.data_fim)}
                         </p>
                       )}
-                      {hi && hf && <p>🕒 {hi} às {hf}</p>}
-                      <p>👥 {t.vagas_total} vagas • ⏱ {t.carga_horaria}h</p>
+                      {hi && hf && (
+                        <p>
+                          🕒 {hi} às {hf}
+                        </p>
+                      )}
+                      <p>
+                        👥 {t.vagas_total} vagas • ⏱ {t.carga_horaria}h
+                      </p>
                     </div>
                   );
                 })}
@@ -673,9 +901,14 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
           <button
             type="submit"
             form="form-evento"
-            className="bg-lousa hover:bg-green-800 text-white px-4 py-2 rounded-md font-semibold"
+            disabled={salvando}
+            className={`px-4 py-2 rounded-md font-semibold text-white ${
+              salvando
+                ? "bg-green-900 cursor-not-allowed"
+                : "bg-lousa hover:bg-green-800"
+            }`}
           >
-            Salvar
+            {salvando ? "Salvando..." : "Salvar"}
           </button>
         </div>
       </div>
@@ -685,19 +918,20 @@ export default function ModalEvento({ isOpen, onClose, onSalvar, evento, onTurma
         isOpen={modalTurmaAberto}
         onClose={() => setModalTurmaAberto(false)}
         onSalvar={(turma) => {
-          const datas = Array.isArray(turma.datas) ? turma.datas : [];
+          const n = normalizarDatasTurma(turma);
           setTurmas((prev) => [
             ...prev,
             {
               ...turma,
-              datas,
-              // espelhos para exibição
-              data_inicio: datas.length ? minDate(datas) : turma.data_inicio,
-              data_fim: datas.length ? maxDate(datas) : turma.data_fim,
-              horario_inicio: datas.length ? hh(datas[0]?.horario_inicio) : hh(turma.horario_inicio || turma.hora_inicio),
-              horario_fim: datas.length ? hh(datas[0]?.horario_fim) : hh(turma.horario_fim || turma.hora_fim),
-              carga_horaria: Number(turma.carga_horaria),
-              vagas_total: Number(turma.vagas_total),
+              // normalizado
+              datas: n.datas,
+              data_inicio: n.data_inicio,
+              data_fim: n.data_fim,
+              horario_inicio: n.horario_inicio,
+              horario_fim: n.horario_fim,
+              // numéricos garantidos
+              carga_horaria: Number(turma.carga_horaria) || 0,
+              vagas_total: Number(turma.vagas_total) || 0,
             },
           ]);
           setModalTurmaAberto(false);

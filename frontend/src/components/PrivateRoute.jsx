@@ -3,7 +3,14 @@ import { Navigate, useLocation } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiPerfilMe, getPerfilIncompletoFlag, subscribePerfilFlag } from "../services/api";
 
-const DEBUG = true;
+const DEBUG =
+  typeof import.meta !== "undefined" && import.meta.env?.VITE_DEBUG_PRIVATE_ROUTE
+    ? String(import.meta.env.VITE_DEBUG_PRIVATE_ROUTE) === "true"
+    : true;
+
+/* ────────────────────────────────────────────────────────────── */
+/* Helpers                                                        */
+/* ────────────────────────────────────────────────────────────── */
 
 /** Decodifica payload JWT lidando com base64url e padding */
 function decodeJwtPayload(token) {
@@ -18,12 +25,17 @@ function decodeJwtPayload(token) {
   }
 }
 
-/** 🔐 Lê e valida token (exp em segundos, se existir) */
+/** 🔐 Lê e valida token (exp/nbf em segundos, se existirem) */
 function getValidToken() {
   const token = localStorage.getItem("token");
   if (!token) return null;
   const payload = decodeJwtPayload(token);
-  if (payload?.exp && Date.now() >= payload.exp * 1000) {
+  const now = Date.now() / 1000;
+  if (payload?.nbf && now < payload.nbf) {
+    DEBUG && console.warn("[PR] Token ainda não é válido (nbf).");
+    return null;
+  }
+  if (payload?.exp && now >= payload.exp) {
     DEBUG && console.warn("[PR] Token expirado — limpando sessão");
     localStorage.clear();
     sessionStorage.removeItem("perfil_incompleto");
@@ -53,18 +65,29 @@ function getPerfisRobusto() {
     const rawUser = localStorage.getItem("usuario");
     if (rawUser) {
       const u = JSON.parse(rawUser);
+      // aceita varios formatos
+      const push = (val) => val && out.add(String(val).toLowerCase());
       if (u?.perfil) {
-        if (Array.isArray(u.perfil)) u.perfil.forEach((p) => out.add(String(p).toLowerCase()));
-        else out.add(String(u.perfil).toLowerCase());
+        if (Array.isArray(u.perfil)) u.perfil.forEach(push);
+        else push(u.perfil);
       }
       if (u?.perfis) {
-        if (Array.isArray(u.perfis)) u.perfis.forEach((p) => out.add(String(p).toLowerCase()));
-        else {
-          String(u.perfis).split(",").forEach((p) => out.add(p.replace(/[\[\]"]/g, "").trim().toLowerCase()));
-        }
+        if (Array.isArray(u.perfis)) u.perfis.forEach(push);
+        else String(u.perfis)
+          .split(",")
+          .forEach((p) => out.add(p.replace(/[\[\]"]/g, "").trim().toLowerCase()));
+      }
+      // suporte opcional a 'roles'
+      if (u?.roles) {
+        if (Array.isArray(u.roles)) u.roles.forEach(push);
+        else String(u.roles)
+          .split(",")
+          .forEach((p) => out.add(p.replace(/[\[\]"]/g, "").trim().toLowerCase()));
       }
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   if (out.size === 0) out.add("usuario");
   return Array.from(out).filter(Boolean);
@@ -78,6 +101,10 @@ function temAcesso(perfisUsuario, perfisExigidos) {
   return perfisExigidos.some((p) => setUser.has(String(p).toLowerCase()));
 }
 
+/* ────────────────────────────────────────────────────────────── */
+/* Componente                                                     */
+/* ────────────────────────────────────────────────────────────── */
+
 export default function PrivateRoute({
   children,
   permitido,
@@ -88,16 +115,23 @@ export default function PrivateRoute({
   const search = location?.search || "";
   const nextParam = encodeURIComponent(path + search);
 
-  // Trate como tela de atualização: /atualizar-cadastro e /perfil
+  // telas que podem receber redirect por perfil incompleto
   const isAtualizarCadastro = path === "/atualizar-cadastro" || path === "/perfil";
 
+  /** Normaliza perfis exigidos (string | string[]) */
   const exigidos = useMemo(() => {
     if (Array.isArray(permitido)) return permitido;
     if (typeof perfilPermitido === "string" && perfilPermitido.trim()) return [perfilPermitido];
     return [];
   }, [permitido, perfilPermitido]);
 
-  const perfisUsuario = useMemo(() => getPerfisRobusto(), []);
+  // ── token
+  const [token, setToken] = useState(getValidToken());
+
+  // ── perfis do usuário (reativo a mudanças de rota, token e storage)
+  const [perfisUsuario, setPerfisUsuario] = useState(() => getPerfisRobusto());
+
+  // ── perfil incompleto
   const [checandoPerfil, setChecandoPerfil] = useState(true);
   const [perfilIncompleto, setPerfilIncompleto] = useState(() => {
     const f = getPerfilIncompletoFlag();
@@ -105,8 +139,42 @@ export default function PrivateRoute({
   });
   const firstLoadRef = useRef(true);
 
-  const token = getValidToken();
-  const autorizado = temAcesso(perfisUsuario, exigidos);
+  // autorizado?
+  const autorizado = useMemo(
+    () => temAcesso(perfisUsuario, exigidos),
+    [perfisUsuario, exigidos]
+  );
+
+  /* ───────────────── listeners/efeitos ───────────────── */
+
+  // Atualiza quando a rota muda (útil quando o app troca perfis em runtime)
+  useEffect(() => {
+    setToken(getValidToken());
+    setPerfisUsuario(getPerfisRobusto());
+  }, [location.pathname]);
+
+  // Ouvinte de storage (outras abas) e também no próprio tab se app lançar o evento manualmente
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (!e.key || ["perfil", "usuario", "token"].includes(e.key)) {
+        DEBUG && console.log("[PR] storage event → atualizar sessão/perfis");
+        setToken(getValidToken());
+        setPerfisUsuario(getPerfisRobusto());
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    // canal manual (útil se app disparar: window.dispatchEvent(new Event("auth:changed")))
+    const onAuthChanged = () => {
+      DEBUG && console.log("[PR] auth:changed → atualizar sessão/perfis");
+      setToken(getValidToken());
+      setPerfisUsuario(getPerfisRobusto());
+    };
+    window.addEventListener("auth:changed", onAuthChanged);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("auth:changed", onAuthChanged);
+    };
+  }, []);
 
   // 👂 OUVE mudanças na flag emitidas pelo api.js (sem F5)
   useEffect(() => {
@@ -117,11 +185,12 @@ export default function PrivateRoute({
     return unsubscribe;
   }, []);
 
-  // 🔎 Checagem do perfil incompleto (NUNCA faz logout por 401 aqui)
+  // 🔎 Checagem do perfil incompleto (NUNCA faz logout por 401/403 aqui)
   useEffect(() => {
     let alive = true;
     (async () => {
-      if (!token) {
+      const tk = getValidToken();
+      if (!tk) {
         DEBUG && console.log("[PR] Sem token, não checa perfil.");
         setChecandoPerfil(false);
         firstLoadRef.current = false;
@@ -133,11 +202,11 @@ export default function PrivateRoute({
         return;
       }
       try {
-        DEBUG && console.log("[PR] Consultando /perfil/me (on401:silent)...");
+        DEBUG && console.log("[PR] Consultando /perfil/me (on401:on403 silent)...");
         const me = await apiPerfilMe({ on401: "silent", on403: "silent" });
         if (!alive) return;
         setPerfilIncompleto(!!me?.perfil_incompleto);
-        DEBUG && console.log("[PR] Perfil incompleto? →", !!me?.perfil_incompleto, me);
+        DEBUG && console.log("[PR] Perfil incompleto? →", !!me?.perfil_incompleto);
       } catch (e) {
         DEBUG && console.warn("[PR] Falha ao consultar perfil (ignorada p/ redirect):", e?.message || e);
       } finally {
@@ -147,22 +216,27 @@ export default function PrivateRoute({
         }
       }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
+    // dependências mínimas: token muda ou primeira carga
   }, [token]);
 
-  // ─────────────────────────────
-  // Decisões (com logs)
-  // ─────────────────────────────
+  /* ───────────────── decisões ───────────────── */
+
+  // 1) Sem token → login
   if (!token) {
     DEBUG && console.warn(`[PR] Redirect → /login (motivo: sem token) ao acessar "${path}"`);
     return <Navigate to={`/login?next=${nextParam}`} replace state={{ from: location }} />;
   }
 
+  // 2) Sem autorização por perfil
   if (!autorizado) {
     DEBUG && console.warn("[PR] Redirect → /dashboard (motivo: sem perfil exigido)", { exigidos, perfisUsuario });
     return <Navigate to="/dashboard" replace />;
   }
 
+  // 3) Aguardando checagem inicial da flag (apenas 1ª vez)
   if (checandoPerfil && perfilIncompleto === null) {
     DEBUG && console.log("[PR] Aguardando 1ª checagem do perfil...");
     return (
@@ -172,17 +246,17 @@ export default function PrivateRoute({
     );
   }
 
-  // Perfil incompleto → força atualização (marca forced:true)
+  // 4) Perfil incompleto → força atualização (marca forced:true), exceto se já estiver lá
   if (perfilIncompleto === true && !isAtualizarCadastro) {
     DEBUG && console.warn("[PR] Redirect → /perfil (motivo: perfil incompleto) a partir de", path);
     const from = location;
     return <Navigate to="/perfil" replace state={{ from, forced: true }} />;
   }
 
-  // Já na tela de atualização e perfil ficou OK:
-  // só volta para a origem se a navegação foi "forçada".
+  // 5) Já na tela de atualização e perfil ficou OK:
+  //    só volta para a origem se a navegação foi "forçada".
   if (isAtualizarCadastro && perfilIncompleto === false && location.state?.forced) {
-    const prev = location.state?.from?.pathname || "/";
+    const prev = location.state?.from?.pathname || "/dashboard";
     DEBUG && console.log("[PR] Perfil completo — voltar para origem forçada:", prev);
     return <Navigate to={prev} replace />;
   }

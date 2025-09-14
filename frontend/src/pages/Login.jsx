@@ -24,13 +24,11 @@ export default function Login() {
 
   const hasGoogleClient = !!import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
-  // guarda (memorizado) um redirect seguro (mesmo host e começa com "/")
   const redirectPath = useMemo(() => {
     try {
       const sp = new URLSearchParams(location.search);
       const raw = sp.get("redirect") || "";
       if (!raw) return null;
-      // evita URLs externas
       if (raw.startsWith("/") && !raw.startsWith("//")) return raw;
       return null;
     } catch {
@@ -65,7 +63,6 @@ export default function Login() {
       ? usuario.perfil.split(",").map((p) => p.trim()).filter(Boolean)
       : [];
 
-    // mantemos somente o essencial para evitar resíduos
     localStorage.clear();
     localStorage.setItem("token", token);
     localStorage.setItem("nome", usuario.nome || "");
@@ -95,9 +92,8 @@ export default function Login() {
 
     setLoading(true);
     try {
-      // ⚠️ auth:false para NÃO enviar Authorization no login
       const payload = await apiPost(
-        "/login", // ajuste para /auth/login se necessário
+        "/login",
         { cpf: cpf.replace(/\D/g, ""), senha },
         { auth: false, on401: "silent" }
       );
@@ -240,13 +236,17 @@ export default function Login() {
             </div>
           </div>
 
+          {/* ⬇️ Botão de alto contraste */}
           <BotaoPrimario
             type="submit"
             className="w-full flex justify-center items-center gap-2 mt-1"
             aria-label="Entrar na plataforma"
             disabled={loading || loadingGoogle}
+            loading={loading}
+            cor="amareloOuro"
+            leftIcon={<LogIn size={16} />}
           >
-            <LogIn size={16} /> {loading ? "Entrando..." : "Entrar"}
+            {loading ? "Entrando..." : "Entrar"}
           </BotaoPrimario>
 
           <div className="text-center text-sm text-white mt-2">ou</div>
@@ -297,7 +297,6 @@ export default function Login() {
         </form>
       </main>
 
-      {/* Rodapé institucional em página pública também, para consistência visual */}
       <Footer />
     </div>
   );

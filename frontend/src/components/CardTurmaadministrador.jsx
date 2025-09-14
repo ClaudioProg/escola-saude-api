@@ -21,7 +21,7 @@ function getStatusByDateTime({ inicioISO, fimISO, hIni, hFim, agora }) {
   const now = agora ?? new Date();
   if (now < start) return "programado";
   if (now > end) return "encerrado";
-  return "em andamento";
+  return "andamento"; // 👈 chave esperada pelo BadgeStatus
 }
 function clamp(n, mi, ma) {
   if (!Number.isFinite(n)) return 0;
@@ -41,7 +41,7 @@ export default function CardTurmaadministrador({
   gerarRelatorioPDF,
   navigate,
   onExpandirOuRecolher,
-  somenteInfo = false,               // 👈 NOVO
+  somenteInfo = false,
 }) {
   if (!turma) return null;
 
@@ -58,8 +58,8 @@ export default function CardTurmaadministrador({
       : new Date();
 
   const statusKey = getStatusByDateTime({ inicioISO, fimISO, hIni, hFim, agora });
-  const eventoJaIniciado = ["em andamento", "encerrado"].includes(statusKey);
-  const dentroDoPeriodo  = statusKey === "em andamento";
+  const eventoJaIniciado = ["andamento", "encerrado"].includes(statusKey);
+  const dentroDoPeriodo  = statusKey === "andamento";
 
   // Ocupação
   const vagasTotais   = Number(turma.vagas_totais ?? turma.vagas_total ?? turma.vagas ?? turma.capacidade ?? 0);
@@ -82,7 +82,10 @@ export default function CardTurmaadministrador({
       {/* Cabeçalho */}
       <div className="flex items-start justify-between gap-3 mb-2">
         <div className="min-w-0">
-          <h4 className="text-[1.05rem] leading-6 font-semibold text-[#1b4332] dark:text-green-200 truncate">
+          <h4
+            className="text-[1.05rem] leading-6 font-semibold text-green-900 dark:text-green-200 truncate"
+            title={turma.nome || "Turma"}
+          >
             {turma.nome || "Turma"}
           </h4>
 
@@ -116,13 +119,21 @@ export default function CardTurmaadministrador({
 
       {/* Ocupação */}
       {vagasTotais > 0 && (
-        <div className="mt-2">
+        <div className="mt-2" aria-label="Progresso de ocupação de vagas">
           <div className="flex items-center justify-between text-xs text-gray-600 dark:text-gray-300 mb-1">
             <span>{qtdInscritos} de {vagasTotais} vagas preenchidas</span>
-            <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200">{pct}%</span>
+            <span className="px-2 py-0.5 rounded-full bg-green-100 text-green-800 border border-green-200 dark:bg-green-900/30 dark:text-green-200 dark:border-green-800/60">
+              {pct}%
+            </span>
           </div>
-          <div className="h-2 rounded-full bg-gray-200 dark:bg-zinc-700 overflow-hidden">
-            <div className="h-full bg-emerald-600" style={{ width: `${pct}%` }} aria-hidden="true" />
+          <div
+            className="h-2 rounded-full bg-gray-200 dark:bg-zinc-700 overflow-hidden"
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={pct}
+          >
+            <div className="h-full bg-green-600" style={{ width: `${pct}%` }} aria-hidden="true" />
           </div>
         </div>
       )}
@@ -176,5 +187,5 @@ CardTurmaadministrador.propTypes = {
   gerarRelatorioPDF: PropTypes.func,
   navigate: PropTypes.func,
   onExpandirOuRecolher: PropTypes.func,
-  somenteInfo: PropTypes.bool,        // 👈 NOVO
+  somenteInfo: PropTypes.bool,
 };

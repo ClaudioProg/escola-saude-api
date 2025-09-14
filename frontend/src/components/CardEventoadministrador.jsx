@@ -32,8 +32,11 @@ const toLocalDateFromYMD = (ymdStr, hhmm = "12:00") =>
   ymdStr ? new Date(`${ymdStr}T${(hhmm || "12:00").slice(0, 5)}:00`) : null;
 
 const formatarCPF = (v) =>
-  (String(v || "").replace(/\D/g, "").padStart(11, "0") || "")
-    .replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
+  (String(v ?? "")
+    .replace(/\D/g, "")
+    .slice(0, 11)
+    .padStart(11, "0") || ""
+  ).replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
 
 /* =========================
    Período do evento (corrigido anti-fuso)
@@ -52,8 +55,7 @@ function getPeriodoEvento(evento, turmas) {
       a.getFullYear() === b.getFullYear() &&
       a.getMonth() === b.getMonth() &&
       a.getDate() === b.getDate();
-    if (sameDay) return formatarDataLocal(a);
-    return `${formatarDataLocal(a)} até ${formatarDataLocal(b)}`;
+    return sameDay ? formatarDataLocal(a) : `${formatarDataLocal(a)} até ${formatarDataLocal(b)}`;
   };
 
   if (diAggY && dfAggY) return formatarPeriodo(diAggY, dfAggY);
@@ -74,8 +76,12 @@ function getPeriodoEvento(evento, turmas) {
     if (starts.length && ends.length) {
       const a = new Date(Math.min(...starts));
       const b = new Date(Math.max(...ends));
-      const aY = `${a.getFullYear()}-${String(a.getMonth() + 1).padStart(2, "0")}-${String(a.getDate()).padStart(2, "0")}`;
-      const bY = `${b.getFullYear()}-${String(b.getMonth() + 1).padStart(2, "0")}-${String(b.getDate()).padStart(2, "0")}`;
+      const aY = `${a.getFullYear()}-${String(a.getMonth() + 1).padStart(2, "0")}-${String(
+        a.getDate()
+      ).padStart(2, "0")}`;
+      const bY = `${b.getFullYear()}-${String(b.getMonth() + 1).padStart(2, "0")}-${String(
+        b.getDate()
+      ).padStart(2, "0")}`;
       return formatarPeriodo(aY, bY);
     }
   }
@@ -96,7 +102,8 @@ function getStatusEvento({ evento, turmas }) {
   let fimDT = dfAgg ? toLocalDateFromYMD(dfAgg, hfAgg) : null;
 
   if (!inicioDT || !fimDT) {
-    const starts = [], ends = [];
+    const starts = [];
+    const ends = [];
     (turmas || []).forEach((t) => {
       const di = ymd(t.data_inicio);
       const df = ymd(t.data_fim);
@@ -114,7 +121,7 @@ function getStatusEvento({ evento, turmas }) {
   if (!inicioDT || !fimDT) return "desconhecido";
   if (agora < inicioDT) return "programado";
   if (agora > fimDT) return "encerrado";
-  return "em andamento";
+  return "andamento"; // 🔧 retorna 'andamento' para casar com BadgeStatus
 }
 
 /* =========================
@@ -134,32 +141,42 @@ const CAMPOS_NOTA_EVENTO = [
   "inscricao_online",
 ];
 function notaEnumParaNumero(valor) {
-  const n = (valor || "")
+  const n = String(valor || "")
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
   switch (n) {
-    case "otimo": return 5;
-    case "bom": return 4;
-    case "regular": return 3;
-    case "ruim": return 2;
-    case "pessimo": return 1;
-    default: return null;
+    case "otimo":
+      return 5;
+    case "bom":
+      return 4;
+    case "regular":
+      return 3;
+    case "ruim":
+      return 2;
+    case "pessimo":
+      return 1;
+    default:
+      return null;
   }
 }
 function calcularMediaEventoViaLista(avaliacoes) {
   if (!Array.isArray(avaliacoes) || avaliacoes.length === 0) return "—";
   const medias = avaliacoes
     .map((av) => {
-      let soma = 0, qtd = 0;
-      CAMPOS_NOTA_EVENTO.forEach((campo) => {
-        const v = notaEnumParaNumero(av[campo]);
-        if (v !== null) { soma += v; qtd++; }
-      });
+      let soma = 0,
+        qtd = 0;
+      for (const campo of CAMPOS_NOTA_EVENTO) {
+        const v = notaEnumParaNumero(av?.[campo]);
+        if (v != null) {
+          soma += v;
+          qtd += 1;
+        }
+      }
       return qtd ? soma / qtd : null;
     })
     .filter((v) => v != null);
-  if (medias.length === 0) return "—";
+  if (!medias.length) return "—";
   const m = medias.reduce((a, v) => a + v, 0) / medias.length;
   return m.toFixed(1);
 }
@@ -181,8 +198,7 @@ export default function CardEventoadministrador({
   gerarRelatorioPDF,
   gerarPdfInscritosTurma, // 👈 novo
 }) {
-  const normalizaArr = (v) =>
-    Array.isArray(v) ? v : Array.isArray(v?.lista) ? v.lista : [];
+  const normalizaArr = (v) => (Array.isArray(v) ? v : Array.isArray(v?.lista) ? v.lista : []);
 
   // Estatísticas (só quando expandido)
   const stats = useMemo(() => {
@@ -195,10 +211,13 @@ export default function CardEventoadministrador({
         notaMedia: "—",
       };
     }
-    let totalInscritos = 0, totalPresentes = 0, totalAvaliacoes = 0;
-    const mediasDiretas = [], todasAvaliacoes = [];
+    let totalInscritos = 0,
+      totalPresentes = 0,
+      totalAvaliacoes = 0;
+    const mediasDiretas = [],
+      todasAvaliacoes = [];
 
-    turmas.forEach((t) => {
+    for (const t of turmas) {
       const inscritos = normalizaArr(inscritosPorTurma?.[t.id]);
       totalInscritos += inscritos.length;
 
@@ -206,9 +225,7 @@ export default function CardEventoadministrador({
       totalPresentes += presencas.filter((p) => p?.presente === true).length;
 
       const blocoAval = avaliacoesPorTurma?.[t.id] || {};
-      const avalArr = Array.isArray(blocoAval.avaliacoes)
-        ? blocoAval.avaliacoes
-        : normalizaArr(blocoAval);
+      const avalArr = Array.isArray(blocoAval.avaliacoes) ? blocoAval.avaliacoes : normalizaArr(blocoAval);
       const qtd = Number(blocoAval.total_avaliacoes);
       totalAvaliacoes += Number.isFinite(qtd) ? qtd : avalArr.length;
 
@@ -218,17 +235,15 @@ export default function CardEventoadministrador({
       } else {
         todasAvaliacoes.push(...avalArr);
       }
-    });
+    }
 
-    const presencaMedia = totalInscritos
-      ? ((totalPresentes / totalInscritos) * 100).toFixed(0)
-      : "0";
+    const presencaMedia = totalInscritos ? ((totalPresentes / totalInscritos) * 100).toFixed(0) : "0";
 
     let notaMedia = "—";
-    if (mediasDiretas.length > 0) {
+    if (mediasDiretas.length) {
       const m = mediasDiretas.reduce((a, v) => a + v, 0) / mediasDiretas.length;
       notaMedia = m.toFixed(1);
-    } else if (todasAvaliacoes.length > 0) {
+    } else if (todasAvaliacoes.length) {
       notaMedia = calcularMediaEventoViaLista(todasAvaliacoes);
     }
     return { totalInscritos, totalPresentes, presencaMedia, totalAvaliacoes, notaMedia };
@@ -237,19 +252,23 @@ export default function CardEventoadministrador({
   // Precarrega blocos ao expandir
   useEffect(() => {
     if (!expandido || !Array.isArray(turmas)) return;
-    turmas.forEach((turma) => {
+    for (const turma of turmas) {
       if (!inscritosPorTurma?.[turma.id]) carregarInscritos?.(turma.id);
       if (!avaliacoesPorTurma?.[turma.id]) carregarAvaliacoes?.(turma.id);
       if (!presencasPorTurma?.[turma.id]) carregarPresencas?.(turma.id);
-    });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expandido, turmas]);
 
-  const nomeinstrutor = Array.isArray(evento.instrutor)
-    ? evento.instrutor.map((i) => i?.nome).filter(Boolean).join(", ")
-    : typeof evento.instrutor === "object" && evento.instrutor?.nome
-    ? evento.instrutor.nome
-    : "—";
+  const nomeinstrutor = useMemo(() => {
+    if (Array.isArray(evento.instrutor)) {
+      return evento.instrutor.map((i) => i?.nome).filter(Boolean).join(", ") || "—";
+    }
+    if (typeof evento.instrutor === "object" && evento.instrutor?.nome) {
+      return evento.instrutor.nome;
+    }
+    return "—";
+  }, [evento]);
 
   const statusEvento = getStatusEvento({ evento, turmas });
 
@@ -263,13 +282,16 @@ export default function CardEventoadministrador({
         <div className="min-w-0">
           <h3
             id={`evento-${evento.id}-titulo`}
-            className="text-2xl font-bold text-[#1b4332] dark:text-white truncate"
+            className="text-2xl font-bold text-green-900 dark:text-green-200 truncate"
+            title={evento.titulo}
           >
             {evento.titulo}
           </h3>
           <div className="text-sm text-gray-700 dark:text-gray-200 flex items-center gap-2 mt-1 mb-1">
-            <span className="font-semibold">instrutor:</span>
-            <span className="truncate">{nomeinstrutor}</span>
+            <span className="font-semibold">Instrutor:</span>
+            <span className="truncate" title={nomeinstrutor}>
+              {nomeinstrutor}
+            </span>
           </div>
           <p className="text-sm text-gray-600 dark:text-gray-300 flex items-center gap-2 mt-0.5">
             <CalendarDays size={16} aria-hidden="true" />
@@ -277,14 +299,14 @@ export default function CardEventoadministrador({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <BadgeStatus status={statusEvento} size="sm" variant="soft" />
           <button
             onClick={() => toggleExpandir(evento.id)}
             aria-label={expandido ? "Recolher detalhes do evento" : "Ver detalhes do evento"}
             aria-expanded={expandido}
             aria-controls={`evento-${evento.id}-turmas`}
-            className="text-sm px-4 py-1 bg-[#1b4332] text-white rounded-full hover:bg-[#14532d] transition focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#14532d]"
+            className="text-sm px-4 py-1 bg-green-900 text-white rounded-full hover:bg-green-900/90 transition focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-green-900/60"
           >
             {expandido ? "Recolher" : "Ver Turmas"}
           </button>
@@ -298,9 +320,19 @@ export default function CardEventoadministrador({
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mt-6">
             <StatCard icon={<Users aria-hidden="true" />} label="Inscritos" value={stats.totalInscritos} />
             <StatCard icon={<Users aria-hidden="true" />} label="Presentes" value={stats.totalPresentes} />
-            <StatCard icon={<BarChart aria-hidden="true" />} label="Presença Média" value={`${stats.presencaMedia}%`} title="Presença média nas turmas" />
+            <StatCard
+              icon={<BarChart aria-hidden="true" />}
+              label="Presença Média"
+              value={`${stats.presencaMedia}%`}
+              title="Presença média nas turmas"
+            />
             <StatCard icon={<Star aria-hidden="true" />} label="Avaliações" value={stats.totalAvaliacoes} />
-            <StatCard icon={<Star aria-hidden="true" />} label="Nota Média" value={stats.notaMedia} title="Nota média atribuída ao evento" />
+            <StatCard
+              icon={<Star aria-hidden="true" />}
+              label="Nota Média"
+              value={stats.notaMedia}
+              title="Nota média atribuída ao evento (escala 1–5)"
+            />
           </div>
 
           {Array.isArray(turmas) && turmas.length > 0 ? (
@@ -316,18 +348,18 @@ export default function CardEventoadministrador({
                       carregarAvaliacoes={carregarAvaliacoes}
                       carregarPresencas={carregarPresencas}
                       gerarRelatorioPDF={gerarRelatorioPDF}
-                      somenteInfo={true}
+                      somenteInfo
                     />
 
                     {/* Lista de inscritos (nome + CPF) + botão PDF */}
                     <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/40 p-4">
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between gap-2">
                         <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
                           Inscritos da turma
                         </p>
                         <button
                           onClick={() => gerarPdfInscritosTurma?.(turma.id)}
-                          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium bg-[#1b4332] text-white hover:bg-[#14532d]"
+                          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium bg-green-900 text-white hover:bg-green-900/90 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-green-900/60"
                         >
                           <FileDown size={16} /> Gerar PDF (curso + inscritos)
                         </button>
@@ -351,7 +383,7 @@ export default function CardEventoadministrador({
               })}
             </div>
           ) : (
-            <div className="text-gray-500 mt-4">Nenhuma turma cadastrada.</div>
+            <div className="text-gray-600 dark:text-gray-300 mt-4">Nenhuma turma cadastrada.</div>
           )}
         </>
       )}
@@ -359,6 +391,9 @@ export default function CardEventoadministrador({
   );
 }
 
+/* =========================
+   UI: Cartão de estatística
+   ========================= */
 function StatCard({ icon, label, value, title }) {
   return (
     <div
@@ -369,7 +404,7 @@ function StatCard({ icon, label, value, title }) {
         {icon}
         <span className="text-sm">{label}</span>
       </div>
-      <div className="text-xl font-bold text-[#1b4332] dark:text-white">{value}</div>
+      <div className="text-xl font-bold text-green-900 dark:text-green-200">{value}</div>
     </div>
   );
 }

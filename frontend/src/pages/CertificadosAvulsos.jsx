@@ -6,6 +6,7 @@ import { RefreshCcw, Plus } from "lucide-react";
 import PageHeader from "../components/PageHeader";
 import Footer from "../components/Footer";
 import BotaoPrimario from "../components/BotaoPrimario";
+import BotaoSecundario from "../components/BotaoSecundario"; // ⬅️ novo
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import NadaEncontrado from "../components/NadaEncontrado";
 import { apiGet, apiPost, apiGetFile } from "../services/api";
@@ -182,20 +183,28 @@ export default function CertificadosAvulsos() {
           { label: "Certificados" },
           { label: "Avulsos", current: true },
         ]}
-        actions={[
-          {
-            label: "Atualizar",
-            icon: <RefreshCcw className="w-4 h-4" />,
-            onClick: carregarCertificados,
-            variant: "ghost",
-          },
-          {
-            label: "Cadastrar",
-            icon: <Plus className="w-4 h-4" />,
-            form: "form-cert-avulso",
-            type: "submit",
-          },
-        ]}
+        // ⬇️ actions agora recebe React nodes (não objetos)
+        actions={
+          <div className="flex gap-2">
+            <BotaoSecundario
+              variant="outline"
+              cor="azulPetroleo"
+              leftIcon={<RefreshCcw className="w-4 h-4" />}
+              onClick={carregarCertificados}
+            >
+              Atualizar
+            </BotaoSecundario>
+
+            <BotaoPrimario
+              cor="amareloOuro"
+              leftIcon={<Plus className="w-4 h-4" />}
+              form="form-cert-avulso"
+              type="submit"
+            >
+              Cadastrar
+            </BotaoPrimario>
+          </div>
+        }
       />
 
       <main className="min-h-screen bg-gelo dark:bg-zinc-900 px-3 sm:px-4 py-6">

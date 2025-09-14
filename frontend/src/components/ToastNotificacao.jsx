@@ -1,42 +1,39 @@
+// 📁 src/components/toastNotificacao.js
 import { toast } from "react-toastify";
 import { CheckCircle, XCircle, Info, AlertTriangle } from "lucide-react";
 
-// 🔔 Notificação de sucesso
-export function toastSucesso(mensagem = "Ação concluída com sucesso!") {
-  toast.success(mensagem, {
-    icon: <CheckCircle size={20} className="text-green-600" />,
+/**
+ * Helper genérico para criar toasts.
+ */
+function toastCustom(type, mensagem, icon, autoClose = 5000, theme = "light") {
+  toast[type](mensagem, {
+    icon,
     position: "top-right",
-    autoClose: 4000,
-    theme: "light",
+    autoClose,
+    closeOnClick: true,
+    pauseOnHover: true,
+    draggable: true,
+    hideProgressBar: false,
+    theme,
   });
+}
+
+// 🔔 Notificação de sucesso
+export function toastSucesso(mensagem = "Ação concluída com sucesso!", autoClose = 4000, theme = "light") {
+  toastCustom("success", mensagem, <CheckCircle size={20} className="text-green-600" />, autoClose, theme);
 }
 
 // ❌ Notificação de erro
-export function toastErro(mensagem = "Ocorreu um erro ao processar.") {
-  toast.error(mensagem, {
-    icon: <XCircle size={20} className="text-red-600" />,
-    position: "top-right",
-    autoClose: 5000,
-    theme: "light",
-  });
+export function toastErro(mensagem = "Ocorreu um erro ao processar.", autoClose = 5000, theme = "light") {
+  toastCustom("error", mensagem, <XCircle size={20} className="text-red-600" />, autoClose, theme);
 }
 
 // ⚠️ Notificação de aviso
-export function toastAlerta(mensagem = "Atenção! Verifique os dados.") {
-  toast.warn(mensagem, {
-    icon: <AlertTriangle size={20} className="text-yellow-600" />,
-    position: "top-right",
-    autoClose: 5000,
-    theme: "light",
-  });
+export function toastAlerta(mensagem = "Atenção! Verifique os dados.", autoClose = 5000, theme = "light") {
+  toastCustom("warn", mensagem, <AlertTriangle size={20} className="text-yellow-600" />, autoClose, theme);
 }
 
 // ℹ️ Notificação informativa
-export function toastInfo(mensagem = "Informação útil.") {
-  toast.info(mensagem, {
-    icon: <Info size={20} className="text-blue-600" />,
-    position: "top-right",
-    autoClose: 5000,
-    theme: "light",
-  });
+export function toastInfo(mensagem = "Informação útil.", autoClose = 5000, theme = "light") {
+  toastCustom("info", mensagem, <Info size={20} className="text-blue-600" />, autoClose, theme);
 }

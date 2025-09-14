@@ -1,6 +1,7 @@
 // 📁 src/components/ListaTurmasPresenca.jsx
 /* eslint-disable no-console */
 import { useState } from "react";
+import PropTypes from "prop-types";
 import { motion, AnimatePresence } from "framer-motion";
 import BotaoPrimario from "./BotaoPrimario";
 import { toast } from "react-toastify";
@@ -46,37 +47,44 @@ export default function ListaTurmasPresenca({
     try {
       // Detalhes (usuarios, e eventualmente datas)
       const detalhes = await apiGet(`/api/presencas/turma/${turmaId}/detalhes`, { on403: "silent" });
-  
+
       const usuarios = Array.isArray(detalhes?.usuarios) ? detalhes.usuarios : [];
       let datas = [];
-  
-      const pickDate = (x) =>
-        typeof x?.data === "string"
-          ? x.data.slice(0, 10)
-          : typeof x === "string"
-          ? x.slice(0, 10)
-          : null;
-  
+
+      const pickDate = (x) => {
+        if (!x) return null;
+        if (x instanceof Date) {
+          const y = x.getFullYear();
+          const m = String(x.getMonth() + 1).padStart(2, "0");
+          const d = String(x.getDate()).padStart(2, "0");
+          return `${y}-${m}-${d}`;
+        }
+        if (typeof x?.data === "string") return x.data.slice(0, 10);
+        if (x?.data instanceof Date) return pickDate(x.data);
+        if (typeof x === "string") return x.slice(0, 10);
+        return null;
+      };
+
       // 1) Tenta SEMPRE as "datas reais" (tabela datas_turma)
       try {
         const viaDatas = await apiGet(`/api/datas/turma/${turmaId}?via=datas`);
         const arr = Array.isArray(viaDatas) ? viaDatas : [];
         datas = arr.map(pickDate).filter(Boolean);
-      } catch (e) {
+      } catch {
         /* silencioso */
       }
-  
+
       // 2) Se ainda não houver, pega as datas distintas já lançadas em presenças
       if (!datas.length) {
         try {
           const viaPres = await apiGet(`/api/datas/turma/${turmaId}?via=presencas`);
           const arr2 = Array.isArray(viaPres) ? viaPres : [];
           datas = arr2.map(pickDate).filter(Boolean);
-        } catch (e) {
+        } catch {
           /* silencioso */
         }
       }
-  
+
       // 3) Último recurso: o que veio de /detalhes (pode ser intervalo)
       if (!datas.length) {
         const arr3 = Array.isArray(detalhes?.datas) ? detalhes.datas : [];
@@ -84,10 +92,10 @@ export default function ListaTurmasPresenca({
           .map((d) => (typeof d === "string" ? d.slice(0, 10) : null))
           .filter(Boolean);
       }
-  
+
       // normaliza
       datas = Array.from(new Set(datas)).sort();
-  
+
       setPresencasPorTurma((prev) => ({ ...prev, [turmaId]: { datas, usuarios } }));
     } catch (err) {
       console.error("❌ Erro ao carregar presenças:", err);
@@ -95,7 +103,7 @@ export default function ListaTurmasPresenca({
       setPresencasPorTurma((prev) => ({ ...prev, [turmaId]: { datas: [], usuarios: [] } }));
     }
   }
-  
+
   async function confirmarPresenca(dataSelecionada, turmaId, usuarioId, nome) {
     const confirmado = window.confirm(
       `Confirmar presença de ${nome} em ${formatarDataBrasileira(dataSelecionada)}?`
@@ -179,14 +187,14 @@ export default function ListaTurmasPresenca({
   function montarDatasGrade(turma, bloco, datasFallback) {
     const baseHi = hhmm(turma.horario_inicio, "08:00");
     const baseHf = hhmm(turma.horario_fim, "17:00");
-  
+
     // ✅ 1) se carregamos datas reais, use-as primeiro
     if (Array.isArray(bloco?.datas) && bloco.datas.length) {
       return bloco.datas
         .map((d) => ({ dataISO: ymd(d), hi: baseHi, hf: baseHf }))
         .filter((x) => x.dataISO);
     }
-  
+
     // 2) se a turma já veio com encontros/datas inline
     if (Array.isArray(turma?.datas) && turma.datas.length) {
       return turma.datas
@@ -197,7 +205,7 @@ export default function ListaTurmasPresenca({
         }))
         .filter((x) => x.dataISO);
     }
-  
+
     if (Array.isArray(turma?.encontros) && turma.encontros.length) {
       return turma.encontros
         .map((e) => {
@@ -212,7 +220,7 @@ export default function ListaTurmasPresenca({
         })
         .filter(Boolean);
     }
-  
+
     // 3) só se nada acima existir: intervalo contínuo
     return (datasFallback || []).map((d) => ({
       dataISO: formatarParaISO(d),
@@ -220,7 +228,7 @@ export default function ListaTurmasPresenca({
       hf: baseHf,
     }));
   }
-  
+
   return (
     <div className="grid grid-cols-1 gap-8">
       <AnimatePresence>
@@ -251,15 +259,17 @@ export default function ListaTurmasPresenca({
                   const inicioValido = inicioDT && !Number.isNaN(inicioDT.getTime());
                   const fimValido = fimDT && !Number.isNaN(fimDT.getTime());
 
+                  // 🔁 status padronizado com o resto do app
                   let status = "Desconhecido";
                   if (inicioValido && fimValido) {
-                    status = agora < inicioDT ? "Agendada" : agora > fimDT ? "Realizada" : "Em andamento";
+                    status =
+                      agora < inicioDT ? "Programado" : agora > fimDT ? "Encerrado" : "Em andamento";
                   }
 
                   const statusClasse =
                     status === "Em andamento"
                       ? "bg-green-100 text-green-700 dark:bg-green-700 dark:text-white"
-                      : status === "Realizada"
+                      : status === "Encerrado"
                       ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-700 dark:text-white"
                       : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300";
 
@@ -285,15 +295,22 @@ export default function ListaTurmasPresenca({
                       exit={{ opacity: 0 }}
                       transition={{ duration: 0.2 }}
                       className="border p-4 rounded-2xl bg-white dark:bg-gray-900 shadow-sm flex flex-col mb-6"
+                      aria-labelledby={`turma-${turma.id}-titulo`}
                     >
                       <div className="flex justify-between items-center mb-1 gap-2">
-                        <h4 className="text-md font-semibold text-[#1b4332] dark:text-green-200">
+                        <h4
+                          id={`turma-${turma.id}-titulo`}
+                          className="text-md font-semibold text-[#1b4332] dark:text-green-200"
+                        >
                           {turma.nome}
                         </h4>
 
                         <div className="flex items-center gap-2">
                           {/* Status */}
-                          <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${statusClasse}`}>
+                          <span
+                            className={`text-xs px-2 py-0.5 rounded-full font-bold ${statusClasse}`}
+                            aria-label={`Status da turma: ${status}`}
+                          >
                             {status}
                           </span>
 
@@ -306,6 +323,12 @@ export default function ListaTurmasPresenca({
                               title="Remover turma"
                               className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-3 py-1.5 text-xs
                                          hover:bg-red-50 active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed"
+                              aria-disabled={removendoId === turma.id}
+                              aria-label={
+                                removendoId === turma.id
+                                  ? "Removendo turma…"
+                                  : `Remover turma ${turma.nome}`
+                              }
                             >
                               <Trash2 size={14} />
                               {removendoId === turma.id ? "Removendo..." : "Remover"}
@@ -331,6 +354,8 @@ export default function ListaTurmasPresenca({
                               }
                               setTurmaExpandidaId(novaTurma);
                             }}
+                            aria-expanded={estaExpandida}
+                            aria-controls={`turma-${turma.id}-detalhes`}
                           >
                             {estaExpandida ? "Recolher Detalhes" : "Ver Detalhes"}
                           </BotaoPrimario>
@@ -338,7 +363,7 @@ export default function ListaTurmasPresenca({
                       )}
 
                       {modoadministradorPresencas && estaExpandida && (
-                        <div className="mt-4">
+                        <div id={`turma-${turma.id}-detalhes`} className="mt-4">
                           <div className="font-semibold text-sm mt-4 text-lousa dark:text-white mb-2">
                             Inscritos:
                           </div>
@@ -369,13 +394,13 @@ export default function ListaTurmasPresenca({
                                   <table className="w-full table-fixed text-xs">
                                     <thead>
                                       <tr className="text-left text-gray-600 dark:text-gray-300">
-                                        <th className="py-2 px-2 w-1/3 font-medium whitespace-nowrap">
+                                        <th scope="col" className="py-2 px-2 w-1/3 font-medium whitespace-nowrap">
                                           📅 Data
                                         </th>
-                                        <th className="py-2 px-2 w-1/3 font-medium whitespace-nowrap">
+                                        <th scope="col" className="py-2 px-2 w-1/3 font-medium whitespace-nowrap">
                                           🟡 Situação
                                         </th>
-                                        <th className="py-2 px-2 w-1/3 font-medium whitespace-nowrap">
+                                        <th scope="col" className="py-2 px-2 w-1/3 font-medium whitespace-nowrap">
                                           ✔️ Ações
                                         </th>
                                       </tr>
@@ -402,7 +427,8 @@ export default function ListaTurmasPresenca({
                                         const now = new Date();
 
                                         // limite global para confirmação admin: até 15 dias após o término (se válido)
-                                        const fimDTLocal = df ? new Date(`${df}T${hf}:00`) : null;
+                                        const hfSeguro = hhmm(turma.horario_fim, "23:59");
+                                        const fimDTLocal = df ? new Date(`${df}T${hfSeguro}:00`) : null;
                                         const fimMais15 =
                                           fimDTLocal ? new Date(fimDTLocal.getTime() + 15 * 24 * 60 * 60 * 1000) : null;
 
@@ -432,6 +458,7 @@ export default function ListaTurmasPresenca({
                                             <td className="py-1 px-2 text-left">
                                               <span
                                                 className={`text-xs font-bold px-2 py-0.5 rounded-full ${statusClasse}`}
+                                                aria-label={`Status em ${formatarDataBrasileira(dataISO)}: ${statusTexto}`}
                                               >
                                                 {statusTexto}
                                               </span>
@@ -448,11 +475,12 @@ export default function ListaTurmasPresenca({
                                                     )
                                                   }
                                                   className="text-white bg-teal-700 hover:bg-teal-800 text-xs py-1 px-2 rounded"
+                                                  aria-label={`Confirmar presença de ${i.nome} em ${formatarDataBrasileira(dataISO)}`}
                                                 >
                                                   Confirmar
                                                 </button>
                                               ) : (
-                                                <span className="text-gray-400 text-xs">—</span>
+                                                <span className="text-gray-400 text-xs" aria-hidden="true">—</span>
                                               )}
                                             </td>
                                           </tr>
@@ -475,3 +503,35 @@ export default function ListaTurmasPresenca({
     </div>
   );
 }
+
+ListaTurmasPresenca.propTypes = {
+  eventos: PropTypes.arrayOf(
+    PropTypes.shape({
+      id: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+      evento_id: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+      titulo: PropTypes.string,
+      turmas: PropTypes.arrayOf(
+        PropTypes.shape({
+          id: PropTypes.oneOfType([PropTypes.number, PropTypes.string]).isRequired,
+          nome: PropTypes.string,
+          data_inicio: PropTypes.string,
+          data_fim: PropTypes.string,
+          horario_inicio: PropTypes.string,
+          horario_fim: PropTypes.string,
+          encontros: PropTypes.array,
+          datas: PropTypes.array,
+        })
+      ),
+    })
+  ),
+  hoje: PropTypes.instanceOf(Date),
+  carregarInscritos: PropTypes.func.isRequired,
+  carregarAvaliacoes: PropTypes.func.isRequired,
+  gerarRelatorioPDF: PropTypes.func,
+  inscritosPorTurma: PropTypes.object.isRequired,
+  avaliacoesPorTurma: PropTypes.object,
+  navigate: PropTypes.func,
+  modoadministradorPresencas: PropTypes.bool,
+  onTurmaRemovida: PropTypes.func,
+  mostrarBotaoRemover: PropTypes.bool,
+};

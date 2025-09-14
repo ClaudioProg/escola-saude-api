@@ -102,13 +102,27 @@ export default function RecuperarSenha() {
             aria-required="true"
           />
 
-          <BotaoPrimario type="submit" disabled={loading} className="w-full" aria-label="Enviar instruções de recuperação">
-            {loading ? "Enviando..." : "Enviar instruções"}
-          </BotaoPrimario>
+          <BotaoPrimario
+  type="submit"
+  className="w-full"
+  aria-label="Enviar instruções de recuperação"
+  disabled={loading}
+  loading={loading}
+  cor="amareloOuro"
+  leftIcon={<Mail size={16} />}
+>
+  {loading ? "Enviando..." : "Enviar instruções"}
+</BotaoPrimario>
 
-          <BotaoSecundario type="button" onClick={() => window.history.back()} className="w-full">
-            Voltar
-          </BotaoSecundario>
+<BotaoSecundario
+  type="button"
+  onClick={() => window.history.back()}
+  className="w-full"
+  variant="outline"
+  cor="azulPetroleo"
+>
+  Voltar
+</BotaoSecundario>
         </form>
       </main>
 
