@@ -9,6 +9,21 @@ import Spinner from "../components/Spinner";
 import { apiGetPublic, apiPost } from "../services/api";
 
 export default function Cadastro() {
+  // ───────────────────────────── refs para foco
+  const refNome = useRef(null);
+  const refCpf = useRef(null);
+  const refEmail = useRef(null);
+  const refData = useRef(null);
+  const refUnidade = useRef(null);
+  const refGenero = useRef(null);
+  const refOrientacao = useRef(null);
+  const refCorRaca = useRef(null);
+  const refEscolaridade = useRef(null);
+  const refDeficiencia = useRef(null);
+  const refCargo = useRef(null);
+  const refSenha = useRef(null);
+  const refConfirmar = useRef(null);
+
   // ───────────────────────────── state básico
   const [nome, setNome] = useState("");
   const [cpf, setCpf] = useState("");
@@ -60,6 +75,7 @@ export default function Cadastro() {
   // foco inicial
   useEffect(() => {
     document.getElementById("skip-to-form")?.focus();
+    refNome.current?.focus();
   }, []);
 
   // máscara registro 00.000-0
@@ -89,7 +105,7 @@ export default function Cadastro() {
         if (!alive) return;
         const ok = (p) => (p.status === "fulfilled" ? (p.value || []) : []);
 
-        setUnidades(ok(uni).sort((a, b) => (a.nome || "").localeCompare(b.nome || "")));
+        setUnidades(ok(uni).sort((a, b) => (a.sigla || a.nome || "").localeCompare(b.sigla || b.nome || "")));
         setCargos(ok(car).sort((a, b) => (a.nome || "").localeCompare(b.nome || "")));
         setGeneros(ok(gen));
         setOrientacoes(ok(ori));
@@ -97,7 +113,7 @@ export default function Cadastro() {
         setEscolaridades(ok(esc));
         setDeficiencias(ok(def));
 
-        if (![ok(car), ok(gen), ok(ori), ok(cr), ok(esc), ok(def)].some((l) => l.length)) {
+        if (![ok(car), ok(gen), ok(ori), ok(cr), ok(esc), ok(def)].every((l) => l.length)) {
           toast.warn("Algumas listas não estão disponíveis no servidor.");
         }
       } catch (e) {
@@ -134,6 +150,46 @@ export default function Cadastro() {
     return Math.min(score, 4);
   }, [senha]);
 
+  // helper: joga erros do servidor nos campos certos e foca no primeiro
+  function aplicarErrosServidor(fields = {}) {
+    // limpa tudo antes
+    setErroNome("");
+    setErroCpf("");
+    setErroEmail("");
+    setErroData("");
+    setErroPerfil("");
+    setErroSenha("");
+    setErroConfirmarSenha("");
+
+    let focou = false;
+    const focar = (ref) => { if (!focou) { ref?.current?.focus(); focou = true; } };
+
+    if (fields.nome) { setErroNome(fields.nome); focar(refNome); }
+    if (fields.cpf)  { setErroCpf(fields.cpf); focar(refCpf); }
+    if (fields.email){ setErroEmail(fields.email); focar(refEmail); }
+    if (fields.data_nascimento) { setErroData(fields.data_nascimento); focar(refData); }
+    if (fields.senha || fields.novaSenha) { setErroSenha(fields.senha || fields.novaSenha); focar(refSenha); }
+
+    // perfil complementar
+    const algumPerfilErro =
+      fields.unidade_id || fields.genero_id || fields.orientacao_sexual_id ||
+      fields.cor_raca_id || fields.escolaridade_id || fields.deficiencia_id ||
+      fields.cargo_id;
+
+    if (algumPerfilErro) {
+      setErroPerfil("Revise os campos de perfil destacados.");
+      if (fields.unidade_id) focar(refUnidade);
+      else if (fields.genero_id) focar(refGenero);
+      else if (fields.orientacao_sexual_id) focar(refOrientacao);
+      else if (fields.cor_raca_id) focar(refCorRaca);
+      else if (fields.escolaridade_id) focar(refEscolaridade);
+      else if (fields.deficiencia_id) focar(refDeficiencia);
+      else if (fields.cargo_id) focar(refCargo);
+    }
+
+    // confirma senha não vem do servidor — fica no cliente
+  }
+
   // submit
   async function handleSubmit(e) {
     e.preventDefault();
@@ -152,16 +208,17 @@ export default function Cadastro() {
     const emailTrim = email.trim().toLowerCase();
     const cpfNum = cpf.replace(/\D/g, "");
 
-    if (!nomeTrim) { setErroNome("Nome é obrigatório."); return; }
-    if (!validarCPF(cpf)) { setErroCpf("CPF inválido. Use 000.000.000-00."); return; }
-    if (!validarEmail(emailTrim)) { setErroEmail("E-mail inválido."); return; }
-    if (!dataNascimento) { setErroData("Data de nascimento é obrigatória."); return; }
+    if (!nomeTrim) { setErroNome("Nome é obrigatório."); refNome.current?.focus(); return; }
+    if (!validarCPF(cpf)) { setErroCpf("CPF inválido. Use 000.000.000-00."); refCpf.current?.focus(); return; }
+    if (!validarEmail(emailTrim)) { setErroEmail("E-mail inválido."); refEmail.current?.focus(); return; }
+    if (!dataNascimento) { setErroData("Data de nascimento é obrigatória."); refData.current?.focus(); return; }
     if (!unidadeId || !cargoId || !generoId || !orientacaoSexualId || !corRacaId || !escolaridadeId || !deficienciaId) {
       setErroPerfil("Preencha todos os campos de perfil.");
+      (refUnidade.current || refGenero.current || refOrientacao.current || refCorRaca.current || refEscolaridade.current || refDeficiencia.current || refCargo.current)?.focus();
       return;
     }
-    if (!senhaForteRe.test(senha)) { setErroSenha("A senha precisa ter 8+ caracteres, com maiúscula, minúscula, número e símbolo."); return; }
-    if (senha !== confirmarSenha) { setErroConfirmarSenha("As senhas não coincidem."); return; }
+    if (!senhaForteRe.test(senha)) { setErroSenha("A senha precisa ter 8+ caracteres, com maiúscula, minúscula, número e símbolo."); refSenha.current?.focus(); return; }
+    if (senha !== confirmarSenha) { setErroConfirmarSenha("As senhas não coincidem."); refConfirmar.current?.focus(); return; }
 
     const payload = {
       nome: nomeTrim,
@@ -186,7 +243,19 @@ export default function Cadastro() {
       toast.success("✅ Cadastro realizado com sucesso!");
       setTimeout(() => navigate("/login"), 800);
     } catch (err) {
-      const msg = err?.data?.erro || err?.data?.message || err?.message || "Erro ao criar conta.";
+      // Normaliza estrutura de erro
+      const data = err?.data || {};
+      const msg = data?.erro || data?.message || err?.message || "Erro ao criar conta.";
+      const fields = data?.fields || {};
+
+      // Alguns casos frequentes do backend mapeados em UX:
+      if (fields?.cpf || /cpf/i.test(msg)) setErroCpf(fields.cpf || "CPF já cadastrado.");
+      if (fields?.email || /e-?mail/i.test(msg)) setErroEmail(fields.email || "E-mail já cadastrado.");
+
+      // Aplica erros por campo (e foca no primeiro)
+      aplicarErrosServidor(fields);
+
+      // Mensagem geral no topo
       setErro(msg);
       setSenha(""); setConfirmarSenha("");
     } finally {
@@ -264,6 +333,7 @@ export default function Cadastro() {
               <label htmlFor="nome" className="block text-sm mb-1">Nome completo</label>
               <input
                 id="nome"
+                ref={refNome}
                 type="text"
                 placeholder="Nome completo"
                 value={nome}
@@ -282,6 +352,7 @@ export default function Cadastro() {
                 <label htmlFor="cpf" className="block text-sm mb-1">CPF</label>
                 <input
                   id="cpf"
+                  ref={refCpf}
                   type="text"
                   placeholder="000.000.000-00"
                   value={cpf}
@@ -300,6 +371,7 @@ export default function Cadastro() {
                 <label htmlFor="email" className="block text-sm mb-1">E-mail</label>
                 <input
                   id="email"
+                  ref={refEmail}
                   type="email"
                   placeholder="seu@email.com"
                   value={email}
@@ -326,11 +398,12 @@ export default function Cadastro() {
                   className="w-full px-4 py-2 rounded bg-white text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-lousa focus:outline-none"
                   autoComplete="off"
                 />
-                              </div>
+              </div>
               <div>
                 <label htmlFor="dataNascimento" className="block text-sm mb-1">Data de nascimento</label>
                 <input
                   id="dataNascimento"
+                  ref={refData}
                   type="date"
                   value={dataNascimento}
                   onChange={(e) => { setDataNascimento(e.target.value); setErroData(""); }}
@@ -352,6 +425,7 @@ export default function Cadastro() {
               <div>
                 <label className="block text-sm mb-1">Unidade</label>
                 <select
+                  ref={refUnidade}
                   value={unidadeId}
                   onChange={(e) => { setUnidadeId(e.target.value); setErroPerfil(""); }}
                   className="w-full px-4 py-2 rounded bg-white text-gray-800 focus:ring-2 focus:ring-lousa focus:outline-none disabled:opacity-60"
@@ -360,13 +434,14 @@ export default function Cadastro() {
                 >
                   <option value="">{loadingLookups ? "Carregando..." : "Selecione…"}</option>
                   {unidades.map((u) => (
-                    <option key={u.id} value={String(u.id)}>{u.sigla}</option>
+                    <option key={u.id} value={String(u.id)}>{u.sigla || u.nome}</option>
                   ))}
                 </select>
               </div>
               <div>
                 <label className="block text-sm mb-1">Gênero</label>
                 <select
+                  ref={refGenero}
                   value={generoId}
                   onChange={(e) => { setGeneroId(e.target.value); setErroPerfil(""); }}
                   className="w-full px-4 py-2 rounded bg-white text-gray-800 focus:ring-2 focus:ring-lousa focus:outline-none disabled:opacity-60"
@@ -383,6 +458,7 @@ export default function Cadastro() {
               <div>
                 <label className="block text-sm mb-1">Orientação sexual</label>
                 <select
+                  ref={refOrientacao}
                   value={orientacaoSexualId}
                   onChange={(e) => { setOrientacaoSexualId(e.target.value); setErroPerfil(""); }}
                   className="w-full px-4 py-2 rounded bg-white text-gray-800 focus:ring-2 focus:ring-lousa focus:outline-none disabled:opacity-60"
@@ -396,6 +472,7 @@ export default function Cadastro() {
               <div>
                 <label className="block text-sm mb-1">Cor/raça</label>
                 <select
+                  ref={refCorRaca}
                   value={corRacaId}
                   onChange={(e) => { setCorRacaId(e.target.value); setErroPerfil(""); }}
                   className="w-full px-4 py-2 rounded bg-white text-gray-800 focus:ring-2 focus:ring-lousa focus:outline-none disabled:opacity-60"
@@ -412,6 +489,7 @@ export default function Cadastro() {
               <div>
                 <label className="block text-sm mb-1">Escolaridade</label>
                 <select
+                  ref={refEscolaridade}
                   value={escolaridadeId}
                   onChange={(e) => { setEscolaridadeId(e.target.value); setErroPerfil(""); }}
                   className="w-full px-4 py-2 rounded bg-white text-gray-800 focus:ring-2 focus:ring-lousa focus:outline-none disabled:opacity-60"
@@ -425,6 +503,7 @@ export default function Cadastro() {
               <div>
                 <label className="block text-sm mb-1">Deficiência</label>
                 <select
+                  ref={refDeficiencia}
                   value={deficienciaId}
                   onChange={(e) => { setDeficienciaId(e.target.value); setErroPerfil(""); }}
                   className="w-full px-4 py-2 rounded bg-white text-gray-800 focus:ring-2 focus:ring-lousa focus:outline-none disabled:opacity-60"
@@ -441,6 +520,7 @@ export default function Cadastro() {
             <div>
               <label className="block text-sm mb-1">Cargo</label>
               <select
+                ref={refCargo}
                 value={cargoId}
                 onChange={(e) => { setCargoId(e.target.value); setErroPerfil(""); }}
                 className="w-full px-4 py-2 rounded bg-white text-gray-800 focus:ring-2 focus:ring-lousa focus:outline-none disabled:opacity-60"
@@ -464,6 +544,7 @@ export default function Cadastro() {
                 <label htmlFor="senha" className="block text-sm mb-1">Senha</label>
                 <input
                   id="senha"
+                  ref={refSenha}
                   type={mostrarSenha ? "text" : "password"}
                   placeholder="Senha forte"
                   value={senha}
@@ -505,6 +586,7 @@ export default function Cadastro() {
                 <label htmlFor="confirmarSenha" className="block text-sm mb-1">Confirmar senha</label>
                 <input
                   id="confirmarSenha"
+                  ref={refConfirmar}
                   type="password"
                   placeholder="Confirmar senha"
                   value={confirmarSenha}

@@ -9,6 +9,9 @@ const authorizeRoles = require("../auth/authorizeRoles");
 
 /*
   Montagem típica (no app.js):
+    // se quiser que /api/perfil/me funcione:
+    app.use("/api", require("./routes/usuariosRoute"));
+    // caminho “clássico” deste router:
     app.use("/api/usuarios", require("./routes/usuariosRoute"));
 */
 
@@ -55,6 +58,22 @@ if (typeof usuarioPublicoController?.redefinirSenha === "function") {
 // 🔒 Rotas protegidas (exigem token válido)
 // ─────────────────────────────────────────────────────────────
 
+// ✅ Meu perfil (inclui CPF) — sob este router:
+// - GET  /me
+// - PATCH /me
+// e aliases legíveis:
+// - GET  /perfil/me
+// - PATCH /perfil/me
+registerIf(usuarioPublicoController?.obterPerfilMe, function obterPerfilMeRoute() {
+  router.get("/me", authMiddleware, usuarioPublicoController.obterPerfilMe);
+  router.get("/perfil/me", authMiddleware, usuarioPublicoController.obterPerfilMe);
+});
+
+registerIf(usuarioPublicoController?.atualizarPerfilMe, function atualizarPerfilMeRoute() {
+  router.patch("/me", authMiddleware, usuarioPublicoController.atualizarPerfilMe);
+  router.patch("/perfil/me", authMiddleware, usuarioPublicoController.atualizarPerfilMe);
+});
+
 // 👥 Listar todos (admin)
 registerIf(usuarioAdministradorController?.listarUsuarios, function listarUsuariosRoute() {
   router.get(
@@ -79,15 +98,14 @@ registerIf(listarInstrutoresHandler, function listarInstrutoresRoute() {
   );
 });
 
-// 📝 Atualizar perfil (admin)
-// compat: aceita possíveis nomes de função no controller
+// 📝 Atualizar perfil (admin) por :id
 const atualizarPerfilHandler =
   usuarioAdministradorController?.atualizarPerfil ||
   usuarioAdministradorController?.atualizarPerfilUsuario ||
   usuarioAdministradorController?.updatePerfil;
 
 registerIf(atualizarPerfilHandler, function atualizarPerfilRoute() {
-  // ✅ aceita PATCH (REST “parcial”) e PUT (compat com frontend atual)
+  // aceita PATCH (REST “parcial”) e PUT (compat)
   router.patch(
     "/:id/perfil",
     authMiddleware,
@@ -114,7 +132,7 @@ registerIf(usuarioPublicoController?.obterUsuarioPorId, function obterUsuarioPor
   );
 });
 
-// 🔄 Atualizar dados do usuário (próprio ou admin)
+// 🔄 Atualizar dados básicos do usuário (próprio ou admin) por :id
 registerIf(usuarioPublicoController?.atualizarUsuario, function atualizarUsuarioRoute() {
   router.patch(
     "/:id",
