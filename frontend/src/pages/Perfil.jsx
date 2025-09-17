@@ -1,5 +1,5 @@
 // 📁 src/pages/Perfil.jsx
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "react-toastify";
 import Breadcrumbs from "../components/Breadcrumbs";
 import ModalAssinatura from "../components/ModalAssinatura";
@@ -15,9 +15,10 @@ export default function Perfil() {
 
   // básicos
   const [nome, setNome] = useState("");
+  const [cpf, setCpf] = useState("");                      // ✅ visível (read-only)
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
-  const [registro, setRegistro] = useState("");             // (opcional) com máscara
+  const [registro, setRegistro] = useState("");            // (opcional) com máscara
   const [dataNascimento, setDataNascimento] = useState(""); // YYYY-MM-DD
 
   // selects (IDs) — SEMPRE STRINGS
@@ -43,10 +44,46 @@ export default function Perfil() {
   const [modalAberto, setModalAberto] = useState(false);
   const [carregandoListas, setCarregandoListas] = useState(true);
 
+  // erros por campo
+  const [eNome, setENome] = useState("");
+  const [eEmail, setEEmail] = useState("");
+  const [eSenha, setESenha] = useState("");
+  const [eRegistro, setERegistro] = useState("");
+  const [eData, setEData] = useState("");
+  const [eUnidade, setEUnidade] = useState("");
+  const [eCargo, setECargo] = useState("");
+  const [eGenero, setEGenero] = useState("");
+  const [eOrientacao, setEOrientacao] = useState("");
+  const [eCor, setECor] = useState("");
+  const [eEscolaridade, setEEscolaridade] = useState("");
+  const [eDeficiencia, setEDeficiencia] = useState("");
+
+  // refs para foco
+  const rNome = useRef(null);
+  const rEmail = useRef(null);
+  const rSenha = useRef(null);
+  const rRegistro = useRef(null);
+  const rData = useRef(null);
+  const rUnidade = useRef(null);
+  const rCargo = useRef(null);
+  const rGenero = useRef(null);
+  const rOrientacao = useRef(null);
+  const rCor = useRef(null);
+  const rEscolaridade = useRef(null);
+  const rDeficiencia = useRef(null);
+
   // helpers
   const stripPrefixNum = (s) => String(s || "").replace(/^\d+\s*-\s*/, "");
   const validarEmail = (v) => !!v && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
   const asStr = (v) => (v === null || v === undefined ? "" : String(v));
+
+  const aplicarMascaraCPF = (v) =>
+    String(v || "")
+      .replace(/\D/g, "")
+      .slice(0, 11)
+      .replace(/(\d{3})(\d)/, "$1.$2")
+      .replace(/(\d{3})(\d)/, "$1.$2")
+      .replace(/(\d{3})(\d{1,2})$/, "$1-$2");
 
   // máscara de registro (aceita só números também): 00.000-0
   const maskRegistro = (raw) => {
@@ -83,6 +120,7 @@ export default function Perfil() {
 
       setUsuario(u);
       setNome(u.nome || "");
+      setCpf(aplicarMascaraCPF(u.cpf || ""));               // ✅ carrega CPF
       setEmail(u.email || "");
       setRegistro(maskRegistro(u.registro || ""));
       setDataNascimento(toYMD(u.data_nascimento) || "");
@@ -108,7 +146,13 @@ export default function Perfil() {
         const me = await apiPerfilMe({ on401: "silent", on403: "silent" });
         if (!alive || !me) return;
 
+        // 🔒 preserva CPF se a API não devolver
+        let antigo = {};
+        try { antigo = JSON.parse(localStorage.getItem("usuario") || "{}"); } catch {}
+        const cpfFinal = me.cpf ?? antigo.cpf ?? "";
+
         setNome(me.nome || "");
+        setCpf(aplicarMascaraCPF(cpfFinal));                // ✅ não zera mais o CPF
         setEmail(me.email || "");
         setRegistro(maskRegistro(me.registro || ""));
         setDataNascimento(toYMD(me.data_nascimento) || "");
@@ -121,9 +165,9 @@ export default function Perfil() {
         setEscolaridadeId(asStr(me.escolaridade_id));
         setDeficienciaId(asStr(me.deficiencia_id));
 
+        // 👇 regrava no LS preservando o CPF antigo quando necessário
         try {
-          const antigo = JSON.parse(localStorage.getItem("usuario") || "{}");
-          const novo = { ...antigo, ...me };
+          const novo = { ...antigo, ...me, cpf: me.cpf ?? antigo.cpf };
           localStorage.setItem("usuario", JSON.stringify(novo));
           localStorage.setItem("nome", novo.nome || "");
           setUsuario(novo);
@@ -174,32 +218,50 @@ export default function Perfil() {
     corRacaId, escolaridadeId, deficienciaId, dataNascimento,
   ].some((v) => !String(v || "").trim());
 
+  // limpar erros
+  const clearErrors = () => {
+    setENome(""); setEEmail(""); setESenha(""); setERegistro(""); setEData("");
+    setEUnidade(""); setECargo(""); setEGenero(""); setEOrientacao(""); setECor(""); setEEscolaridade(""); setEDeficiencia("");
+  };
+
+  // aplica erros do servidor e foca no primeiro
+  const aplicarErrosServidor = (fields = {}) => {
+    clearErrors();
+    let focou = false;
+    const focar = (ref) => { if (!focou && ref?.current) { ref.current.scrollIntoView({ behavior: "smooth", block: "center" }); ref.current.focus(); focou = true; } };
+
+    if (fields.nome) { setENome(fields.nome); focar(rNome); }
+    if (fields.email) { setEEmail(fields.email); focar(rEmail); }
+    if (fields.senha || fields.novaSenha) { setESenha(fields.senha || fields.novaSenha); focar(rSenha); }
+    if (fields.registro) { setERegistro(fields.registro); focar(rRegistro); }
+    if (fields.data_nascimento) { setEData(fields.data_nascimento); focar(rData); }
+
+    if (fields.unidade_id) { setEUnidade(fields.unidade_id); focar(rUnidade); }
+    if (fields.cargo_id) { setECargo(fields.cargo_id); focar(rCargo); }
+    if (fields.genero_id) { setEGenero(fields.genero_id); focar(rGenero); }
+    if (fields.orientacao_sexual_id) { setEOrientacao(fields.orientacao_sexual_id); focar(rOrientacao); }
+    if (fields.cor_raca_id) { setECor(fields.cor_raca_id); focar(rCor); }
+    if (fields.escolaridade_id) { setEEscolaridade(fields.escolaridade_id); focar(rEscolaridade); }
+    if (fields.deficiencia_id) { setEDeficiencia(fields.deficiencia_id); focar(rDeficiencia); }
+  };
+
   const salvarAlteracoes = async () => {
     if (!usuario?.id) return;
 
-    if (!nome.trim()) {
-      toast.warn("Informe seu nome.");
-      return;
-    }
-    if (!validarEmail(email)) {
-      toast.warn("Informe um e-mail válido.");
-      return;
-    }
-    if (senha && senha.length < 8) {
-      toast.warn("A nova senha deve ter pelo menos 8 caracteres.");
-      return;
-    }
-    if (dataNascimento && !/^\d{4}-\d{2}-\d{2}$/.test(dataNascimento)) {
-      toast.warn("Data de nascimento inválida.");
-      return;
-    }
+    clearErrors();
+
+    // validações rápidas no cliente
+    if (!nome.trim()) { setENome("Informe seu nome."); rNome.current?.focus(); return; }
+    if (!validarEmail(email)) { setEEmail("E-mail inválido."); rEmail.current?.focus(); return; }
+    if (senha && senha.length < 8) { setESenha("A nova senha deve ter pelo menos 8 caracteres."); rSenha.current?.focus(); return; }
+    if (dataNascimento && !/^\d{4}-\d{2}-\d{2}$/.test(dataNascimento)) { setEData("Data inválida (use YYYY-MM-DD)."); rData.current?.focus(); return; }
 
     const payload = {
       nome: nome.trim(),
-      email: email.trim(),
+      email: email.trim().toLowerCase(),
       ...(senha ? { senha } : {}),
       registro: registro?.trim() || null,
-      data_nascimento: dataNascimento || null, // já está em YYYY-MM-DD
+      data_nascimento: dataNascimento || null,
       unidade_id: unidadeId ? Number(unidadeId) : null,
       cargo_id: cargoId ? Number(cargoId) : null,
       genero_id: generoId ? Number(generoId) : null,
@@ -207,15 +269,16 @@ export default function Perfil() {
       cor_raca_id: corRacaId ? Number(corRacaId) : null,
       escolaridade_id: escolaridadeId ? Number(escolaridadeId) : null,
       deficiencia_id: deficienciaId ? Number(deficienciaId) : null,
+      // ⚠️ cpf NÃO vai no payload (imutável aqui)
     };
 
     try {
       setSalvando(true);
-      await apiPatch(`/api/perfil/me`, payload, { auth: true });
+      const resp = await apiPatch(`/api/perfil/me`, payload, { auth: true });
 
       // reconsulta o perfil (também atualiza a flag global via apiPerfilMe)
       const atualizado = await apiPerfilMe({ on401: "silent", on403: "silent" });
-      setPerfilIncompletoFlag(!!atualizado?.perfil_incompleto);
+      setPerfilIncompletoFlag(!!atualizado?.perfil_incompleto || !!resp?.perfilIncompleto);
 
       const novo = { ...(JSON.parse(localStorage.getItem("usuario") || "{}")), ...atualizado };
       localStorage.setItem("usuario", JSON.stringify(novo));
@@ -224,6 +287,7 @@ export default function Perfil() {
       setUsuario(novo);
       setSenha("");
 
+      setCpf(aplicarMascaraCPF(novo.cpf ?? cpf ?? ""));     // ✅ mantém sincronizado / preserva atual
       setRegistro(maskRegistro(novo.registro || ""));
       setDataNascimento(toYMD(novo.data_nascimento) || "");
       setUnidadeId(asStr(novo.unidade_id));
@@ -237,7 +301,11 @@ export default function Perfil() {
       toast.success("✅ Dados atualizados com sucesso!");
     } catch (err) {
       console.error(err);
-      toast.error("❌ Não foi possível salvar as alterações.");
+      const data = err?.data || {};
+      const fields = data?.fields || {};
+      const msg = data?.erro || data?.message || "Não foi possível salvar as alterações.";
+      aplicarErrosServidor(fields);
+      toast.error(`❌ ${msg}`);
     } finally {
       setSalvando(false);
     }
@@ -301,12 +369,33 @@ export default function Perfil() {
               </label>
               <input
                 id="nome"
+                ref={rNome}
                 type="text"
                 value={nome}
-                onChange={(e) => setNome(e.target.value)}
-                className="mt-1 w-full px-4 py-2 border rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-700"
+                onChange={(e) => { setNome(e.target.value); setENome(""); }}
+                className={`mt-1 w-full px-4 py-2 border rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 ${eNome ? "border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"}`}
                 aria-label="Nome completo"
+                aria-invalid={!!eNome}
+                aria-describedby={eNome ? "erro-nome" : undefined}
               />
+              {eNome && <p id="erro-nome" className="text-xs text-red-500 mt-1">{eNome}</p>}
+            </div>
+
+            {/* ✅ CPF visível (somente leitura) */}
+            <div>
+              <label htmlFor="cpf" className="block text-sm font-medium text-gray-700 dark:text-gray-200">
+                CPF
+              </label>
+              <input
+                id="cpf"
+                type="text"
+                value={cpf}
+                readOnly
+                placeholder="—"
+                className="mt-1 w-full px-4 py-2 border rounded-md bg-gray-100 dark:bg-zinc-700/60 dark:text-white text-gray-700 cursor-not-allowed"
+                aria-label="CPF"
+              />
+              <p className="text-xs text-gray-500 mt-1">O CPF não pode ser alterado nesta tela.</p>
             </div>
 
             <div>
@@ -315,13 +404,17 @@ export default function Perfil() {
               </label>
               <input
                 id="email"
+                ref={rEmail}
                 type="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="mt-1 w-full px-4 py-2 border rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-700"
+                onChange={(e) => { setEmail(e.target.value); setEEmail(""); }}
+                className={`mt-1 w-full px-4 py-2 border rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 ${eEmail ? "border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"}`}
                 autoComplete="email"
                 aria-label="E-mail"
+                aria-invalid={!!eEmail}
+                aria-describedby={eEmail ? "erro-email" : undefined}
               />
+              {eEmail && <p id="erro-email" className="text-xs text-red-500 mt-1">{eEmail}</p>}
             </div>
 
             <div>
@@ -330,20 +423,19 @@ export default function Perfil() {
               </label>
               <input
                 id="senha"
+                ref={rSenha}
                 type="password"
                 value={senha}
-                onChange={(e) => setSenha(e.target.value)}
+                onChange={(e) => { setSenha(e.target.value); setESenha(""); }}
                 placeholder="Digite para alterar a senha"
-                className="mt-1 w-full px-4 py-2 border rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-700"
+                className={`mt-1 w-full px-4 py-2 border rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 ${eSenha ? "border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"}`}
                 autoComplete="new-password"
                 aria-label="Nova senha"
                 minLength={8}
+                aria-invalid={!!eSenha}
+                aria-describedby={eSenha ? "erro-senha" : undefined}
               />
-              {senha && senha.length < 8 && (
-                <p className="text-xs text-red-500 mt-1">
-                  A nova senha deve ter pelo menos 8 caracteres.
-                </p>
-              )}
+              {eSenha && <p id="erro-senha" className="text-xs text-red-500 mt-1">{eSenha}</p>}
             </div>
           </section>
 
@@ -354,13 +446,17 @@ export default function Perfil() {
                 Registro (Servidores da Prefeitura)
               </label>
               <input
+                ref={rRegistro}
                 type="text"
                 value={registro}
-                onChange={(e) => setRegistro(maskRegistro(e.target.value))}
-                className="mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 focus:ring-emerald-700 disabled:opacity-60"
+                onChange={(e) => { setRegistro(maskRegistro(e.target.value)); setERegistro(""); }}
+                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${eRegistro ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"} disabled:opacity-60`}
                 placeholder="Ex.: 10.010-1"
                 disabled={salvando}
+                aria-invalid={!!eRegistro}
+                aria-describedby={eRegistro ? "erro-registro" : undefined}
               />
+              {eRegistro && <p id="erro-registro" className="text-xs text-red-500 mt-1">{eRegistro}</p>}
             </div>
 
             <div>
@@ -368,12 +464,16 @@ export default function Perfil() {
                 Data de nascimento <span className="text-red-600">*</span>
               </label>
               <input
+                ref={rData}
                 type="date"
                 value={dataNascimento}
-                onChange={(e) => setDataNascimento(e.target.value)}
-                className="mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 focus:ring-emerald-700 disabled:opacity-60"
+                onChange={(e) => { setDataNascimento(e.target.value); setEData(""); }}
+                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${eData ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"} disabled:opacity-60`}
                 disabled={salvando}
+                aria-invalid={!!eData}
+                aria-describedby={eData ? "erro-data" : undefined}
               />
+              {eData && <p id="erro-data" className="text-xs text-red-500 mt-1">{eData}</p>}
             </div>
           </section>
 
@@ -384,16 +484,20 @@ export default function Perfil() {
                 Unidade <span className="text-red-600">*</span>
               </label>
               <select
+                ref={rUnidade}
                 value={unidadeId}
-                onChange={(e) => setUnidadeId(e.target.value)}
-                className="mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 focus:ring-emerald-700 disabled:opacity-60"
+                onChange={(e) => { setUnidadeId(e.target.value); setEUnidade(""); }}
+                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${eUnidade ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"} disabled:opacity-60`}
                 disabled={salvando || carregandoListas}
+                aria-invalid={!!eUnidade}
+                aria-describedby={eUnidade ? "erro-unidade" : undefined}
               >
                 <option value="">Selecione…</option>
                 {unidades.map((u) => (
                   <option key={u.id} value={String(u.id)}>{u.sigla}</option>
                 ))}
               </select>
+              {eUnidade && <p id="erro-unidade" className="text-xs text-red-500 mt-1">{eUnidade}</p>}
             </div>
 
             <div>
@@ -401,16 +505,20 @@ export default function Perfil() {
                 Escolaridade <span className="text-red-600">*</span>
               </label>
               <select
+                ref={rEscolaridade}
                 value={escolaridadeId}
-                onChange={(e) => setEscolaridadeId(e.target.value)}
-                className="mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 focus:ring-emerald-700 disabled:opacity-60"
+                onChange={(e) => { setEscolaridadeId(e.target.value); setEEscolaridade(""); }}
+                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${eEscolaridade ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"} disabled:opacity-60`}
                 disabled={salvando || carregandoListas}
+                aria-invalid={!!eEscolaridade}
+                aria-describedby={eEscolaridade ? "erro-escolaridade" : undefined}
               >
                 <option value="">Selecione…</option>
                 {escolaridades.map((esc) => (
                   <option key={esc.id} value={String(esc.id)}>{esc.nome}</option>
                 ))}
               </select>
+              {eEscolaridade && <p id="erro-escolaridade" className="text-xs text-red-500 mt-1">{eEscolaridade}</p>}
             </div>
           </section>
 
@@ -421,16 +529,20 @@ export default function Perfil() {
                 Cargo <span className="text-red-600">*</span>
               </label>
               <select
+                ref={rCargo}
                 value={cargoId}
-                onChange={(e) => setCargoId(e.target.value)}
-                className="mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 focus:ring-emerald-700 disabled:opacity-60"
+                onChange={(e) => { setCargoId(e.target.value); setECargo(""); }}
+                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${eCargo ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"} disabled:opacity-60`}
                 disabled={salvando || carregandoListas}
+                aria-invalid={!!eCargo}
+                aria-describedby={eCargo ? "erro-cargo" : undefined}
               >
                 <option value="">Selecione…</option>
                 {cargos.map((c) => (
                   <option key={c.id} value={String(c.id)}>{c.nome}</option>
                 ))}
               </select>
+              {eCargo && <p id="erro-cargo" className="text-xs text-red-500 mt-1">{eCargo}</p>}
             </div>
           </section>
 
@@ -441,16 +553,20 @@ export default function Perfil() {
                 Gênero <span className="text-red-600">*</span>
               </label>
               <select
+                ref={rGenero}
                 value={generoId}
-                onChange={(e) => setGeneroId(e.target.value)}
-                className="mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 focus:ring-emerald-700 disabled:opacity-60"
+                onChange={(e) => { setGeneroId(e.target.value); setEGenero(""); }}
+                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${eGenero ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"} disabled:opacity-60`}
                 disabled={salvando || carregandoListas}
+                aria-invalid={!!eGenero}
+                aria-describedby={eGenero ? "erro-genero" : undefined}
               >
                 <option value="">Selecione…</option>
                 {generos.map((g) => (
                   <option key={g.id} value={String(g.id)}>{g.nome}</option>
                 ))}
               </select>
+              {eGenero && <p id="erro-genero" className="text-xs text-red-500 mt-1">{eGenero}</p>}
             </div>
 
             <div>
@@ -458,16 +574,20 @@ export default function Perfil() {
                 Orientação sexual <span className="text-red-600">*</span>
               </label>
               <select
+                ref={rOrientacao}
                 value={orientacaoSexualId}
-                onChange={(e) => setOrientacaoSexualId(e.target.value)}
-                className="mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 focus:ring-emerald-700 disabled:opacity-60"
+                onChange={(e) => { setOrientacaoSexualId(e.target.value); setEOrientacao(""); }}
+                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${eOrientacao ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"} disabled:opacity-60`}
                 disabled={salvando || carregandoListas}
+                aria-invalid={!!eOrientacao}
+                aria-describedby={eOrientacao ? "erro-orientacao" : undefined}
               >
                 <option value="">Selecione…</option>
                 {orientacoes.map((o) => (
                   <option key={o.id} value={String(o.id)}>{o.nome}</option>
                 ))}
               </select>
+              {eOrientacao && <p id="erro-orientacao" className="text-xs text-red-500 mt-1">{eOrientacao}</p>}
             </div>
 
             <div>
@@ -475,16 +595,20 @@ export default function Perfil() {
                 Cor/raça <span className="text-red-600">*</span>
               </label>
               <select
+                ref={rCor}
                 value={corRacaId}
-                onChange={(e) => setCorRacaId(e.target.value)}
-                className="mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 focus:ring-emerald-700 disabled:opacity-60"
+                onChange={(e) => { setCorRacaId(e.target.value); setECor(""); }}
+                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${eCor ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"} disabled:opacity-60`}
                 disabled={salvando || carregandoListas}
+                aria-invalid={!!eCor}
+                aria-describedby={eCor ? "erro-cor" : undefined}
               >
                 <option value="">Selecione…</option>
                 {coresRacas.map((c) => (
                   <option key={c.id} value={String(c.id)}>{c.nome}</option>
                 ))}
               </select>
+              {eCor && <p id="erro-cor" className="text-xs text-red-500 mt-1">{eCor}</p>}
             </div>
 
             <div>
@@ -492,16 +616,20 @@ export default function Perfil() {
                 Deficiência <span className="text-red-600">*</span>
               </label>
               <select
+                ref={rDeficiencia}
                 value={deficienciaId}
-                onChange={(e) => setDeficienciaId(e.target.value)}
-                className="mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 focus:ring-emerald-700 disabled:opacity-60"
+                onChange={(e) => { setDeficienciaId(e.target.value); setEDeficiencia(""); }}
+                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${eDeficiencia ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"} disabled:opacity-60`}
                 disabled={salvando || carregandoListas}
+                aria-invalid={!!eDeficiencia}
+                aria-describedby={eDeficiencia ? "erro-deficiencia" : undefined}
               >
                 <option value="">Selecione…</option>
                 {deficiencias.map((d) => (
                   <option key={d.id} value={String(d.id)}>{d.nome}</option>
                 ))}
               </select>
+              {eDeficiencia && <p id="erro-deficiencia" className="text-xs text-red-500 mt-1">{eDeficiencia}</p>}
               <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">
                 Se não possuir, escolha “Não possuo”.
               </p>

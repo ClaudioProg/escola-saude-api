@@ -31,10 +31,15 @@ const authGoogleRoute             = require("./auth/authGoogle");
 const unidadesRoutes              = require("./routes/unidadesRoutes");
 const usuarioPublicoController    = require("./controllers/usuarioPublicoController");
 const datasEventoRoute            = require("./routes/datasEventoRoute");
+
 // 🆕 Perfil (opções/leitura/atualização do cadastro)
 const perfilRoutes                = require("./routes/perfilRoutes");
+
 // 🆕➕ Lookups públicos (sem auth)
 const publicLookupsRoutes         = require("./routes/publicLookupsRoutes");
+
+// 🧑‍💼 Usuários (público/admin)
+const usuariosRoute               = require("./routes/usuariosRoute");
 
 dotenv.config();
 
@@ -96,7 +101,6 @@ const corsOptions = {
     if (allowedOrigins.includes(origin) || vercelRegex.test(origin)) {
       return cb(null, true);
     }
-    // rejeita outras origens; o browser bloqueará sem vazar headers
     return cb(new Error("CORS bloqueado: " + origin));
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -167,7 +171,10 @@ app.use("/api/inscricoes", inscricoesRoute);
 app.use("/api/presencas", presencasRoute);
 app.use("/api/relatorio-presencas", relatorioPresencasRoute);
 app.use("/api/turmas", turmasRoute);
-app.use("/api/usuarios", require("./routes/usuariosRoute"));
+
+// 👤 Usuários (público/admin) — mantém caminho clássico
+app.use("/api/usuarios", usuariosRoute);
+
 app.use("/api/instrutor", instrutorRoute);
 app.use("/api/relatorios", relatoriosRoute);
 app.use("/api/dashboard-analitico", dashboardAnaliticoRoutes);
@@ -177,8 +184,12 @@ app.use("/api/auth", authGoogleRoute);
 app.use("/api/unidades", unidadesRoutes);
 app.use("/api/assinatura", assinaturaRoutes);
 app.use("/api/datas", datasEventoRoute);
+
 // 🆕 Rotas de Perfil (opções/me/update)
+// principal (como já estava)
 app.use("/api/perfil", perfilRoutes);
+// alias adicional para compatibilidade com chamadas em /api/usuarios/perfil/*
+app.use("/api/usuarios/perfil", perfilRoutes);
 
 // recuperação de senha (com limiter)
 app.post(
