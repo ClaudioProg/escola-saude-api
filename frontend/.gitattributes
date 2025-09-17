@@ -25,8 +25,10 @@
 # ----------------------------------------------------------------
 *.env      text eol=lf
 *.sh       text eol=lf
-*.bat      text eol=crlf   # scripts .bat precisam CRLF no Windows
-*.ps1      text eol=crlf   # PowerShell idem
+# scripts .bat precisam CRLF no Windows
+*.bat      text eol=crlf
+# PowerShell idem
+*.ps1      text eol=crlf
 
 # ----------------------------------------------------------------
 # Arquivos binários (não normalizar)

@@ -108,7 +108,9 @@ async function atualizarUsuario(req, res) {
     res.json({ ...u, perfil: toPerfilArray(u.perfil) });
   } catch (err) {
     console.error("❌ Erro ao atualizar usuário:", err);
-    res.status(500).json({ erro: "Erro ao atualizar usuário." });
+    const payload = traduzPgError(err);
+    const isClientErr = ["23505", "23514", "23503"].includes(err?.code);
+    return res.status(isClientErr ? 400 : 500).json(payload);
   }
 }
 
