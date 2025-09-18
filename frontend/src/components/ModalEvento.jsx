@@ -1,6 +1,5 @@
 // 📁 src/components/ModalEvento.jsx
 import { useEffect, useState } from "react";
-import Modal from "react-modal";
 import { toast } from "react-toastify";
 import {
   MapPin,
@@ -11,6 +10,7 @@ import {
   Lock,
   Unlock,
 } from "lucide-react";
+import ModalBase from "./ModalBase";            // ⬅️ usa o ModalBase com portal
 import ModalTurma from "./ModalTurma";
 import { formatarDataBrasileira } from "../utils/data";
 import { apiGet, apiDelete } from "../services/api";
@@ -137,10 +137,11 @@ export default function ModalEvento({
   onSalvar,
   evento,
   onTurmaRemovida,
-  salvando = false, // opcional: para desabilitar botão "Salvar" se o pai estiver em I/O
+  salvando = false,
 }) {
   const [titulo, setTitulo] = useState("");
-  const [descricao, setDescricao] = useState("");
+  const [Descricao, setDescricao] = useState("");
+  const [descricao, setDescricaoState] = useState(""); // compat p/ manter nome antigo
   const [local, setLocal] = useState("");
   const [tipo, setTipo] = useState("");
   const [unidadeId, setUnidadeId] = useState("");
@@ -192,6 +193,7 @@ export default function ModalEvento({
     if (evento) {
       setTitulo(evento.titulo || "");
       setDescricao(evento.descricao || "");
+      setDescricaoState(evento.descricao || "");
       setLocal(evento.local || "");
       setTipo(evento.tipo || "");
       setUnidadeId(evento.unidade_id || "");
@@ -247,6 +249,7 @@ export default function ModalEvento({
     } else {
       setTitulo("");
       setDescricao("");
+      setDescricaoState("");
       setLocal("");
       setTipo("");
       setUnidadeId("");
@@ -512,431 +515,402 @@ export default function ModalEvento({
      Render
      ========================= */
 
-  return (
-    <Modal
-      isOpen={isOpen}
-      onRequestClose={onClose}
-      shouldCloseOnOverlayClick={false}
-      ariaHideApp={false}
-      className="modal"
-      overlayClassName="overlay"
-      contentLabel="Edição de evento"
-      role="dialog"
-      aria-labelledby="modal-evento-titulo"
-    >
-      <div className="flex flex-col max-h-[90vh]">
-        <form
-          id="form-evento"
-          onSubmit={handleSubmit}
-          className="overflow-y-auto pr-2 space-y-4"
-          style={{ maxHeight: "calc(90vh - 64px)" }}
-        >
-          <h2 id="modal-evento-titulo" className="sr-only">
-            Edição de evento
-          </h2>
-
-          {/* TÍTULO */}
-          <div className="relative">
-            <FileText className="absolute left-3 top-3 text-gray-500" size={18} />
-            <input
-              value={titulo}
-              onChange={(e) => setTitulo(e.target.value)}
-              placeholder="Título"
-              className="w-full pl-10 py-2 border rounded-md shadow-sm"
-              required
-            />
+     return (
+      <ModalBase
+        isOpen={isOpen}
+        onClose={onClose}
+        level={0}                 // ⬅️ pai (evento) fica abaixo do filho (turma)
+        maxWidth="max-w-3xl"
+      >
+        {/* card com cantos arredondados e body rolável */}
+        <div className="grid grid-rows-[auto,1fr,auto] max-h-[90vh] rounded-2xl overflow-hidden">
+          {/* HEADER */}
+          <div className="p-5 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
+            <h2 id="modal-evento-titulo" className="text-xl font-semibold">
+              {evento?.id ? "Editar Evento" : "Novo Evento"}
+            </h2>
           </div>
-
-          {/* DESCRIÇÃO */}
-          <div className="relative">
-            <FileText className="absolute left-3 top-3 text-gray-500" size={18} />
-            <textarea
-              value={descricao}
-              onChange={(e) => setDescricao(e.target.value)}
-              placeholder="Descrição"
-              className="w-full pl-10 py-2 h-24 border rounded-md shadow-sm"
-            />
-          </div>
-
-          {/* PÚBLICO-ALVO */}
-          <div className="relative">
-            <FileText className="absolute left-3 top-3 text-gray-500" size={18} />
-            <input
-              value={publicoAlvo}
-              onChange={(e) => setPublicoAlvo(e.target.value)}
-              placeholder="Público-alvo"
-              className="w-full pl-10 py-2 border rounded-md shadow-sm"
-            />
-          </div>
-
-          {/* INSTRUTOR(ES) */}
-          {instrutorSelecionado.map((valor, index) => (
-            <div key={index} className="mb-2 relative pr-10">
-              <label className="text-sm font-medium text-gray-700 dark:text-white">
-                {index === 0 ? "Selecione o instrutor" : `Instrutor adicional`}
-              </label>
-              <div className="flex items-center gap-2">
-                <select
-                  value={valor}
-                  onChange={(e) => handleSelecionarInstrutor(index, e.target.value)}
-                  className="w-full pl-3 py-2 border rounded-md shadow-sm"
-                  required={index === 0}
-                >
-                  <option value="">Selecione o instrutor</option>
-                  {getInstrutorDisponivel(index).map((i) => (
-                    <option key={i.id} value={i.id}>
-                      {i.nome}
-                    </option>
-                  ))}
-                </select>
-                {index > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => removerInstrutor(index)}
-                    className="text-red-500 hover:text-red-700 font-bold text-lg"
-                    title="Remover este instrutor"
-                  >
-                    ❌
-                  </button>
-                )}
+    
+          {/* BODY (rolável) */}
+          <div className="p-5 overflow-y-auto bg-white dark:bg-zinc-900">
+            <form
+              id="form-evento"
+              onSubmit={handleSubmit}
+              className="space-y-4"
+              aria-labelledby="modal-evento-titulo"
+              role="form"
+            >
+              {/* TÍTULO */}
+              <div className="relative">
+                <FileText className="absolute left-3 top-3 text-gray-500" size={18} />
+                <input
+                  value={titulo}
+                  onChange={(e) => setTitulo(e.target.value)}
+                  placeholder="Título"
+                  className="w-full pl-10 py-2 border rounded-md shadow-sm"
+                  required
+                />
               </div>
-
-              {valor && index === instrutorSelecionado.length - 1 && (
-                <div className="flex justify-center mt-3">
-                  <button
-                    type="button"
-                    onClick={adicionarInstrutor}
-                    className="flex items-center gap-2 bg-teal-700 hover:bg-teal-800 text-white font-semibold px-4 py-2 rounded-full transition focus-visible:ring-2 focus-visible:ring-teal-400"
-                  >
-                    <PlusCircle size={16} />
-                    Incluir outro instrutor
-                  </button>
-                </div>
-              )}
-            </div>
-          ))}
-
-          {/* LOCAL */}
-          <div className="relative">
-            <MapPin className="absolute left-3 top-3 text-gray-500" size={18} />
-            <input
-              value={local}
-              onChange={(e) => setLocal(e.target.value)}
-              placeholder="Local"
-              className="w-full pl-10 py-2 border rounded-md shadow-sm"
-              required
-            />
-          </div>
-
-          {/* TIPO */}
-          <div className="relative">
-            <Layers3 className="absolute left-3 top-3 text-gray-500" size={18} />
-            <select
-              value={tipo}
-              onChange={(e) => setTipo(e.target.value)}
-              className="w-full pl-10 py-2 border rounded-md shadow-sm"
-              required
-            >
-              <option value="">Selecione o tipo</option>
-              {TIPOS_EVENTO.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* UNIDADE */}
-          <div className="relative">
-            <Layers3 className="absolute left-3 top-3 text-gray-500" size={18} />
-            <select
-              value={unidadeId}
-              onChange={(e) => setUnidadeId(e.target.value)}
-              className="w-full pl-10 py-2 border rounded-md shadow-sm"
-              required
-            >
-              <option value="">Selecione a unidade</option>
-              {unidades.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.nome}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* 🔒 RESTRIÇÃO DE ACESSO */}
-          <fieldset className="border rounded-md p-3">
-            <legend className="px-1 font-semibold flex items-center gap-2">
-              {restrito ? <Lock size={16} /> : <Unlock size={16} />} Visibilidade do evento
-              {restrito && restritoModo === "lista_registros" && regCount > 0 && (
-                <Badge
-                  title="Total de registros deste evento"
-                  ariaLabel={`Total de registros: ${regCount}`}
-                >
-                  {regCount}
-                </Badge>
-              )}
-            </legend>
-
-            <label className="inline-flex items-center gap-2 mt-2">
-              <input
-                type="checkbox"
-                checked={restrito}
-                onChange={(e) => {
-                  setRestrito(e.target.checked);
-                  if (!e.target.checked) setRestritoModo("");
-                  else if (!restritoModo) setRestritoModo("todos_servidores");
-                }}
-              />
-              <span>
-                Evento restrito
-              </span>
-            </label>
-
-            {restrito && (
-              <div className="mt-3 space-y-2">
-                <label className="flex items-center gap-2">
-                  <input
-                    type="radio"
-                    name="restrito_modo"
-                    value="todos_servidores"
-                    checked={restritoModo === "todos_servidores"}
-                    onChange={() => setRestritoModo("todos_servidores")}
-                  />
-                  <span>
-                    Todos os servidores (somente quem possui <strong>registro</strong> cadastrado)
-                  </span>
-                </label>
-
-                <label className="flex items-center gap-2">
-                  <input
-                    type="radio"
-                    name="restrito_modo"
-                    value="lista_registros"
-                    checked={restritoModo === "lista_registros"}
-                    onChange={() => setRestritoModo("lista_registros")}
-                  />
-                  <span className="inline-flex items-center">
-                    Apenas a lista específica de registros
-                    {regCount > 0 && (
-                      <Badge
-                        title="Quantidade de registros na lista"
-                        ariaLabel={`Quantidade de registros na lista: ${regCount}`}
-                      >
-                        {regCount}
-                      </Badge>
-                    )}
-                  </span>
-                </label>
-
-                {restritoModo === "lista_registros" && (
-                  <div className="mt-2 space-y-2">
-                    <div className="flex gap-2">
-                      <input
-                        value={registroInput}
-                        onChange={(e) => setRegistroInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            addRegistro();
-                          }
-                        }}
-                        onPaste={(e) => {
-                          const txt = e.clipboardData?.getData("text") || "";
-                          if (!txt) return;
-                          e.preventDefault();
-                          addRegistrosBulk(txt);
-                        }}
-                        placeholder="Digite/cole registros (toda sequência de 6 dígitos) e pressione Enter"
-                        className="w-full px-3 py-2 border rounded-md"
-                      />
+    
+              {/* DESCRIÇÃO */}
+              <div className="relative">
+                <FileText className="absolute left-3 top-3 text-gray-500" size={18} />
+                <textarea
+                  value={descricao}
+                  onChange={(e) => setDescricaoState(e.target.value)}
+                  placeholder="Descrição"
+                  className="w-full pl-10 py-2 h-24 border rounded-md shadow-sm"
+                />
+              </div>
+    
+              {/* PÚBLICO-ALVO */}
+              <div className="relative">
+                <FileText className="absolute left-3 top-3 text-gray-500" size={18} />
+                <input
+                  value={publicoAlvo}
+                  onChange={(e) => setPublicoAlvo(e.target.value)}
+                  placeholder="Público-alvo"
+                  className="w-full pl-10 py-2 border rounded-md shadow-sm"
+                />
+              </div>
+    
+              {/* INSTRUTOR(ES) */}
+              {instrutorSelecionado.map((valor, index) => (
+                <div key={index} className="mb-2 relative pr-10">
+                  <label className="text-sm font-medium text-gray-700 dark:text-white">
+                    {index === 0 ? "Selecione o instrutor" : `Instrutor adicional`}
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={valor}
+                      onChange={(e) => handleSelecionarInstrutor(index, e.target.value)}
+                      className="w-full pl-3 py-2 border rounded-md shadow-sm"
+                      required={index === 0}
+                    >
+                      <option value="">Selecione o instrutor</option>
+                      {getInstrutorDisponivel(index).map((i) => (
+                        <option key={i.id} value={i.id}>{i.nome}</option>
+                      ))}
+                    </select>
+                    {index > 0 && (
                       <button
                         type="button"
-                        onClick={addRegistro}
-                        className="px-3 py-2 rounded-md bg-teal-700 hover:bg-teal-800 text-white"
+                        onClick={() => removerInstrutor(index)}
+                        className="text-red-500 hover:text-red-700 font-bold text-lg"
+                        title="Remover este instrutor"
                       >
-                        Adicionar
+                        ❌
+                      </button>
+                    )}
+                  </div>
+    
+                  {valor && index === instrutorSelecionado.length - 1 && (
+                    <div className="flex justify-center mt-3">
+                      <button
+                        type="button"
+                        onClick={adicionarInstrutor}
+                        className="flex items-center gap-2 bg-teal-700 hover:bg-teal-800 text-white font-semibold px-4 py-2 rounded-full transition focus-visible:ring-2 focus-visible:ring-teal-400"
+                      >
+                        <PlusCircle size={16} />
+                        Incluir outro instrutor
                       </button>
                     </div>
-
-                    {regCount > 0 ? (
-                      <>
-                        <div className="flex items-center justify-between">
-                          <div className="text-xs text-gray-600">
-                            {regCount} registro(s) na lista
-                          </div>
+                  )}
+                </div>
+              ))}
+    
+              {/* LOCAL */}
+              <div className="relative">
+                <MapPin className="absolute left-3 top-3 text-gray-500" size={18} />
+                <input
+                  value={local}
+                  onChange={(e) => setLocal(e.target.value)}
+                  placeholder="Local"
+                  className="w-full pl-10 py-2 border rounded-md shadow-sm"
+                  required
+                />
+              </div>
+    
+              {/* TIPO */}
+              <div className="relative">
+                <Layers3 className="absolute left-3 top-3 text-gray-500" size={18} />
+                <select
+                  value={tipo}
+                  onChange={(e) => setTipo(e.target.value)}
+                  className="w-full pl-10 py-2 border rounded-md shadow-sm"
+                  required
+                >
+                  <option value="">Selecione o tipo</option>
+                  {TIPOS_EVENTO.map((t) => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+              </div>
+    
+              {/* UNIDADE */}
+              <div className="relative">
+                <Layers3 className="absolute left-3 top-3 text-gray-500" size={18} />
+                <select
+                  value={unidadeId}
+                  onChange={(e) => setUnidadeId(e.target.value)}
+                  className="w-full pl-10 py-2 border rounded-md shadow-sm"
+                  required
+                >
+                  <option value="">Selecione a unidade</option>
+                  {unidades.map((u) => (
+                    <option key={u.id} value={u.id}>{u.nome}</option>
+                  ))}
+                </select>
+              </div>
+    
+              {/* 🔒 RESTRIÇÃO DE ACESSO */}
+              <fieldset className="border rounded-md p-4 mt-2">
+                <legend className="px-1 font-semibold flex items-center gap-2">
+                  {restrito ? <Lock size={16} /> : <Unlock size={16} />} Visibilidade do evento
+                  {restrito && restritoModo === "lista_registros" && regCount > 0 && (
+                    <Badge title="Total de registros deste evento" ariaLabel={`Total de registros: ${regCount}`}>
+                      {regCount}
+                    </Badge>
+                  )}
+                </legend>
+    
+                <label className="inline-flex items-center gap-2 mt-2">
+                  <input
+                    type="checkbox"
+                    checked={restrito}
+                    onChange={(e) => {
+                      setRestrito(e.target.checked);
+                      if (!e.target.checked) setRestritoModo("");
+                      else if (!restritoModo) setRestritoModo("todos_servidores");
+                    }}
+                  />
+                  <span>Evento restrito</span>
+                </label>
+    
+                {restrito && (
+                  <div className="mt-3 space-y-2">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="restrito_modo"
+                        value="todos_servidores"
+                        checked={restritoModo === "todos_servidores"}
+                        onChange={() => setRestritoModo("todos_servidores")}
+                      />
+                      <span>
+                        Todos os servidores (somente quem possui <strong>registro</strong> cadastrado)
+                      </span>
+                    </label>
+    
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="restrito_modo"
+                        value="lista_registros"
+                        checked={restritoModo === "lista_registros"}
+                        onChange={() => setRestritoModo("lista_registros")}
+                      />
+                      <span className="inline-flex items-center">
+                        Apenas a lista específica de registros
+                        {regCount > 0 && (
+                          <Badge title="Quantidade de registros na lista" ariaLabel={`Quantidade de registros na lista: ${regCount}`}>
+                            {regCount}
+                          </Badge>
+                        )}
+                      </span>
+                    </label>
+    
+                    {restritoModo === "lista_registros" && (
+                      <div className="mt-2 space-y-2">
+                        <div className="flex gap-2">
+                          <input
+                            value={registroInput}
+                            onChange={(e) => setRegistroInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") { e.preventDefault(); addRegistro(); }
+                            }}
+                            onPaste={(e) => {
+                              const txt = e.clipboardData?.getData("text") || "";
+                              if (!txt) return;
+                              e.preventDefault();
+                              addRegistrosBulk(txt);
+                            }}
+                            placeholder="Digite/cole registros (toda sequência de 6 dígitos) e pressione Enter"
+                            className="w-full px-3 py-2 border rounded-md"
+                          />
                           <button
                             type="button"
-                            onClick={() => setRegistros([])}
-                            className="text-xs underline text-red-700"
-                            title="Limpar todos os registros"
+                            onClick={addRegistro}
+                            className="px-3 py-2 rounded-md bg-teal-700 hover:bg-teal-800 text-white"
                           >
-                            Limpar todos
+                            Adicionar
                           </button>
                         </div>
-                        <div className="flex flex-wrap gap-2">
-                          {registros.map((r) => (
-                            <span
-                              key={r}
-                              className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-gray-200 text-gray-800 text-xs"
-                            >
-                              {r}
+    
+                        {regCount > 0 ? (
+                          <>
+                            <div className="flex items-center justify-between">
+                              <div className="text-xs text-gray-600">{regCount} registro(s) na lista</div>
                               <button
                                 type="button"
-                                className="ml-1 text-red-600"
-                                title="Remover"
-                                onClick={() => removeRegistro(r)}
+                                onClick={() => setRegistros([])}
+                                className="text-xs underline text-red-700"
+                                title="Limpar todos os registros"
                               >
-                                ×
+                                Limpar todos
                               </button>
-                            </span>
-                          ))}
-                        </div>
-                      </>
-                    ) : (
-                      <p className="text-xs text-gray-600">
-                        Pode colar CSV/planilha/texto — extraímos todas as sequências de 6 dígitos.
-                      </p>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {registros.map((r) => (
+                                <span
+                                  key={r}
+                                  className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-gray-200 text-gray-800 text-xs"
+                                >
+                                  {r}
+                                  <button
+                                    type="button"
+                                    className="ml-1 text-red-600"
+                                    title="Remover"
+                                    onClick={() => removeRegistro(r)}
+                                  >
+                                    ×
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                          </>
+                        ) : (
+                          <p className="text-xs text-gray-600">
+                            Pode colar CSV/planilha/texto — extraímos todas as sequências de 6 dígitos.
+                          </p>
+                        )}
+                      </div>
                     )}
                   </div>
                 )}
+              </fieldset>
+    
+              {/* TURMAS */}
+              <div>
+                <h3 className="text-md font-semibold mt-4 flex items-center gap-2 text-lousa dark:text-white">
+                  <Layers3 size={16} /> Turmas Cadastradas
+                </h3>
+                {turmas.length === 0 ? (
+                  <p className="text-sm text-gray-500 mt-1">Nenhuma turma cadastrada.</p>
+                ) : (
+                  <div className="mt-2 space-y-2">
+                    {turmas.map((t, i) => {
+                      const qtd = Array.isArray(t.datas) ? t.datas.length : 0;
+                      const di = qtd ? minDate(t.datas) : t.data_inicio;
+                      const df = qtd ? maxDate(t.datas) : t.data_fim;
+                      const first = qtd ? t.datas[0] : null;
+                      const hi = first ? hh(first.horario_inicio) : hh(t.horario_inicio);
+                      const hf = first ? hh(first.horario_fim) : hh(t.horario_fim);
+                      return (
+                        <div
+                          key={t.id ?? `temp-${i}`}
+                          className="bg-gray-100 dark:bg-zinc-800 rounded-md p-3 text-sm shadow-sm relative"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => removerTurma(t, i)}
+                            disabled={removendoId === t.id}
+                            title="Remover turma"
+                            className="absolute right-2 top-2 inline-flex items-center gap-2 rounded-lg border border-red-200 px-3 py-1.5 text-xs
+                                       hover:bg-red-50 active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed"
+                          >
+                            <Trash2 size={14} />
+                            {removendoId === t.id ? "Removendo..." : "Remover"}
+                          </button>
+    
+                          <p className="font-bold pr-28">{t.nome}</p>
+                          {qtd > 0 ? (
+                            <>
+                              <p>
+                                📅 {qtd} encontro(s) • {formatarDataBrasileira(di)} a {formatarDataBrasileira(df)}
+                              </p>
+                              <ul className="mt-1 text-xs text-gray-600 dark:text-gray-300 list-disc list-inside">
+                                {t.datas.map((d, idx) => (
+                                  <li key={idx}>
+                                    {formatarDataBrasileira(d.data)} — {hh(d.horario_inicio)} às {hh(d.horario_fim)}
+                                  </li>
+                                ))}
+                              </ul>
+                            </>
+                          ) : (
+                            <p>
+                              📅 {formatarDataBrasileira(t.data_inicio)} a {formatarDataBrasileira(t.data_fim)}
+                            </p>
+                          )}
+                          {hi && hf && <p>🕒 {hi} às {hf}</p>}
+                          <p>👥 {t.vagas_total} vagas • ⏱ {t.carga_horaria}h</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                <div className="flex justify-center mt-3">
+                  <button
+                    type="button"
+                    onClick={abrirModalTurma}
+                    className="flex items-center gap-2 bg-teal-700 hover:bg-teal-800 text-white font-semibold px-4 py-2 rounded-full transition focus-visible:ring-2 focus-visible:ring-teal-400"
+                    aria-label="Adicionar nova turma"
+                    tabIndex={0}
+                  >
+                    <PlusCircle size={16} />
+                    Adicionar Turma
+                  </button>
+                </div>
               </div>
-            )}
-          </fieldset>
-
-          {/* TURMAS */}
-          <div>
-            <h3 className="text-md font-semibold mt-4 flex items-center gap-2 text-lousa dark:text-white">
-              <Layers3 size={16} /> Turmas Cadastradas
-            </h3>
-            {turmas.length === 0 ? (
-              <p className="text-sm text-gray-500 mt-1">
-                Nenhuma turma cadastrada.
-              </p>
-            ) : (
-              <div className="mt-2 space-y-2">
-                {turmas.map((t, i) => {
-                  const qtd = Array.isArray(t.datas) ? t.datas.length : 0;
-                  const di = qtd ? minDate(t.datas) : t.data_inicio;
-                  const df = qtd ? maxDate(t.datas) : t.data_fim;
-                  const first = qtd ? t.datas[0] : null;
-                  const hi = first ? hh(first.horario_inicio) : hh(t.horario_inicio);
-                  const hf = first ? hh(first.horario_fim) : hh(t.horario_fim);
-                  return (
-                    <div
-                      key={t.id ?? `temp-${i}`}
-                      className="bg-gray-100 dark:bg-zinc-800 rounded-md p-3 text-sm shadow-sm relative"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => removerTurma(t, i)}
-                        disabled={removendoId === t.id}
-                        title="Remover turma"
-                        className="absolute right-2 top-2 inline-flex items-center gap-2 rounded-lg border border-red-200 px-3 py-1.5 text-xs
-                                   hover:bg-red-50 active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed"
-                      >
-                        <Trash2 size={14} />
-                        {removendoId === t.id ? "Removendo..." : "Remover"}
-                      </button>
-
-                      <p className="font-bold pr-28">{t.nome}</p>
-                      {qtd > 0 ? (
-                        <>
-                          <p>
-                            📅 {qtd} encontro(s) • {formatarDataBrasileira(di)} a{" "}
-                            {formatarDataBrasileira(df)}
-                          </p>
-                          <ul className="mt-1 text-xs text-gray-600 dark:text-gray-300 list-disc list-inside">
-                            {t.datas.map((d, idx) => (
-                              <li key={idx}>
-                                {formatarDataBrasileira(d.data)} — {hh(d.horario_inicio)} às{" "}
-                                {hh(d.horario_fim)}
-                              </li>
-                            ))}
-                          </ul>
-                        </>
-                      ) : (
-                        <p>
-                          📅 {formatarDataBrasileira(t.data_inicio)} a{" "}
-                          {formatarDataBrasileira(t.data_fim)}
-                        </p>
-                      )}
-                      {hi && hf && (
-                        <p>
-                          🕒 {hi} às {hf}
-                        </p>
-                      )}
-                      <p>
-                        👥 {t.vagas_total} vagas • ⏱ {t.carga_horaria}h
-                      </p>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            <div className="flex justify-center mt-3">
+            </form>
+          </div>
+    
+          {/* FOOTER arredondado */}
+          <div className="p-4 border-t border-zinc-200 dark:border-zinc-800 bg-gray-50 dark:bg-zinc-800 rounded-b-2xl">
+            <div className="flex justify-end gap-2">
               <button
                 type="button"
-                onClick={abrirModalTurma}
-                className="flex items-center gap-2 bg-teal-700 hover:bg-teal-800 text-white font-semibold px-4 py-2 rounded-full transition focus-visible:ring-2 focus-visible:ring-teal-400"
-                aria-label="Adicionar nova turma"
-                tabIndex={0}
+                onClick={onClose}
+                className="bg-gray-200 hover:bg-gray-300 px-4 py-2 rounded-md"
               >
-                <PlusCircle size={16} />
-                Adicionar Turma
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                form="form-evento"
+                disabled={salvando}
+                className={`px-4 py-2 rounded-md font-semibold text-white ${
+                  salvando ? "bg-green-900 cursor-not-allowed" : "bg-lousa hover:bg-green-800"
+                }`}
+              >
+                {salvando ? "Salvando..." : "Salvar"}
               </button>
             </div>
           </div>
-        </form>
-
-        {/* Rodapé do modal */}
-        <div className="flex justify-end gap-2 border-t mt-4 pt-4 bg-white dark:bg-zinc-900 px-4 py-2 shadow-inner">
-          <button
-            type="button"
-            onClick={onClose}
-            className="bg-gray-200 hover:bg-gray-300 px-4 py-2 rounded-md"
-          >
-            Cancelar
-          </button>
-          <button
-            type="submit"
-            form="form-evento"
-            disabled={salvando}
-            className={`px-4 py-2 rounded-md font-semibold text-white ${
-              salvando
-                ? "bg-green-900 cursor-not-allowed"
-                : "bg-lousa hover:bg-green-800"
-            }`}
-          >
-            {salvando ? "Salvando..." : "Salvar"}
-          </button>
         </div>
-      </div>
-
-      {/* MODAL TURMA */}
-      <ModalTurma
-        isOpen={modalTurmaAberto}
-        onClose={() => setModalTurmaAberto(false)}
-        onSalvar={(turma) => {
-          const n = normalizarDatasTurma(turma);
-          setTurmas((prev) => [
-            ...prev,
-            {
-              ...turma,
-              // normalizado
-              datas: n.datas,
-              data_inicio: n.data_inicio,
-              data_fim: n.data_fim,
-              horario_inicio: n.horario_inicio,
-              horario_fim: n.horario_fim,
-              // numéricos garantidos
-              carga_horaria: Number(turma.carga_horaria) || 0,
-              vagas_total: Number(turma.vagas_total) || 0,
-            },
-          ]);
-          setModalTurmaAberto(false);
-        }}
-      />
-    </Modal>
-  );
-}
+    
+        {/* MODAL TURMA (fora do form e com level maior) */}
+        <ModalTurma
+          isOpen={modalTurmaAberto}
+          onClose={() => setModalTurmaAberto(false)}
+          onSalvar={(turma) => {
+            const n = normalizarDatasTurma(turma);
+            setTurmas((prev) => [
+              ...prev,
+              {
+                ...turma,
+                datas: n.datas,
+                data_inicio: n.data_inicio,
+                data_fim: n.data_fim,
+                horario_inicio: n.horario_inicio,
+                horario_fim: n.horario_fim,
+                carga_horaria: Number(turma.carga_horaria) || 0,
+                vagas_total: Number(turma.vagas_total) || 0,
+              },
+            ]);
+            setModalTurmaAberto(false);
+          }}
+        />
+      </ModalBase>
+    );
+  }    

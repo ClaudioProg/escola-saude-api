@@ -9,53 +9,56 @@ import {
   Navigate,
 } from "react-router-dom";
 import PrivateRoute from "./components/PrivateRoute";
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import Navbar from "./components/Navbar";
 import CertificadosAvulsos from "./pages/CertificadosAvulsos";
 import QRCodesEventosAdmin from "./pages/QRCodesEventosAdmin";
 import QrDoSite from "./pages/QrDoSite";
 
 // 🔄 Lazy loading das páginas (sem deps extras)
-const Login                 = lazy(() => import("./pages/Login"));
-const Cadastro              = lazy(() => import("./pages/Cadastro"));
-const ValidarCertificado    = lazy(() => import("./pages/ValidarCertificado"));
-const HistoricoEventos      = lazy(() => import("./pages/HistoricoEventos"));
-const RecuperarSenha        = lazy(() => import("./pages/RecuperarSenha"));
-const RedefinirSenha        = lazy(() => import("./pages/RedefinirSenha"));
-const Scanner               = lazy(() => import("./pages/Scanner"));
+const Login                  = lazy(() => import("./pages/Login"));
+const Cadastro               = lazy(() => import("./pages/Cadastro"));
+const ValidarCertificado     = lazy(() => import("./pages/ValidarCertificado"));
+const HistoricoEventos       = lazy(() => import("./pages/HistoricoEventos"));
+const RecuperarSenha         = lazy(() => import("./pages/RecuperarSenha"));
+const RedefinirSenha         = lazy(() => import("./pages/RedefinirSenha"));
+const Scanner                = lazy(() => import("./pages/Scanner"));
 
-const Eventos               = lazy(() => import("./pages/Eventos"));
-const MinhasPresencas       = lazy(() => import("./pages/MinhasPresencas"));
-const MeusCertificados      = lazy(() => import("./pages/MeusCertificados"));
-const MinhasInscricoes      = lazy(() => import("./pages/MinhasInscricoes"));
-const DashboardUsuario      = lazy(() => import("./pages/DashboardUsuario"));
+const Eventos                = lazy(() => import("./pages/Eventos"));
+const MinhasPresencas        = lazy(() => import("./pages/MinhasPresencas"));
+const MeusCertificados       = lazy(() => import("./pages/MeusCertificados"));
+const MinhasInscricoes       = lazy(() => import("./pages/MinhasInscricoes"));
+const DashboardUsuario       = lazy(() => import("./pages/DashboardUsuario"));
 
-const DashboardInstrutor    = lazy(() => import("./pages/DashboardInstrutor"));
-const AgendaInstrutor       = lazy(() => import("./pages/AgendaInstrutor"));
+const DashboardInstrutor     = lazy(() => import("./pages/DashboardInstrutor"));
+const AgendaInstrutor        = lazy(() => import("./pages/AgendaInstrutor"));
 
-const DashboardAdministrador= lazy(() => import("./pages/DashboardAdministrador"));
-const DashboardAnalitico    = lazy(() => import("./pages/DashboardAnalitico"));
-const GestaoInstrutor       = lazy(() => import("./pages/GestaoInstrutor"));
-const RelatoriosCustomizados= lazy(() => import("./pages/RelatoriosCustomizados"));
-const ListaPresencasTurma   = lazy(() => import("./pages/ListaPresencasTurma"));
-const HistoricoCertificados = lazy(() => import("./pages/HistoricoCertificados"));
-const GestaoUsuarios        = lazy(() => import("./pages/GestaoUsuarios"));
-const GerenciarEventos      = lazy(() => import("./pages/GerenciarEventos"));
-const PresencasPorTurma     = lazy(() => import("./pages/PresencasPorTurma"));
-const Perfil                = lazy(() => import("./pages/Perfil"));
-const Ajuda                 = lazy(() => import("./pages/Ajuda"));
-const Notificacoes          = lazy(() => import("./pages/Notificacoes"));
-const AgendaAdministrador   = lazy(() => import("./pages/AgendaAdministrador"));
-const Avaliacao             = lazy(() => import("./pages/Avaliacao"));
-const GestaoPresencas       = lazy(() => import("./pages/GestaoPresenca"));
+const DashboardAdministrador = lazy(() => import("./pages/DashboardAdministrador"));
+const DashboardAnalitico     = lazy(() => import("./pages/DashboardAnalitico"));
+const GestaoInstrutor        = lazy(() => import("./pages/GestaoInstrutor"));
+const RelatoriosCustomizados = lazy(() => import("./pages/RelatoriosCustomizados"));
+const ListaPresencasTurma    = lazy(() => import("./pages/ListaPresencasTurma"));
+const HistoricoCertificados  = lazy(() => import("./pages/HistoricoCertificados"));
+const GestaoUsuarios         = lazy(() => import("./pages/GestaoUsuarios"));
+const GerenciarEventos       = lazy(() => import("./pages/GerenciarEventos"));
+const PresencasPorTurma      = lazy(() => import("./pages/PresencasPorTurma"));
+const Perfil                 = lazy(() => import("./pages/Perfil"));
+const Ajuda                  = lazy(() => import("./pages/Ajuda"));
+const Notificacoes           = lazy(() => import("./pages/Notificacoes"));
+const AgendaAdministrador    = lazy(() => import("./pages/AgendaAdministrador"));
+const Avaliacao              = lazy(() => import("./pages/Avaliacao"));
+const GestaoPresencas        = lazy(() => import("./pages/GestaoPresenca"));
 
 // ✅ Página de confirmação via QR (com/sem token)
-const ConfirmarPresenca     = lazy(() => import("./pages/ConfirmarPresenca"));
+const ConfirmarPresenca      = lazy(() => import("./pages/ConfirmarPresenca"));
+
+// 🆕 Manual do Usuário
+const ManualUsuario          = lazy(() => import("./pages/usuario/Manual"));
 
 /* ──────────────────────────────────────────────────────────────
    A11y: Announcer de mudanças de rota
    ────────────────────────────────────────────────────────────── */
-   function RouteChangeAnnouncer() {
+function RouteChangeAnnouncer() {
   const location = useLocation();
   const [message, setMessage] = useState("Carregado");
   useEffect(() => {
@@ -63,11 +66,7 @@ const ConfirmarPresenca     = lazy(() => import("./pages/ConfirmarPresenca"));
     setMessage(`Página carregada: ${path}`);
   }, [location]);
   return (
-    <div
-      aria-live="polite"
-      aria-atomic="true"
-      className="sr-only"
-    >
+    <div aria-live="polite" aria-atomic="true" className="sr-only">
       {message}
     </div>
   );
@@ -168,37 +167,37 @@ function ValidarPresencaRouter() {
     try {
       const u = new URL(raw);
 
-      // 1) tenta por querystring
+      // 1) querystring
       turmaId =
         u.searchParams.get("turma") ||
         u.searchParams.get("turma_id") ||
         u.searchParams.get("id");
       token = u.searchParams.get("t") || u.searchParams.get("token");
 
-      // 2) tenta extrair do pathname SEM regex
+      // 2) extrair do pathname sem regex
       if (!turmaId) {
         const parts = (u.pathname || "").split("/").filter(Boolean);
         const idx = parts.indexOf("presenca");
         if (idx >= 0 && parts[idx + 1]) turmaId = parts[idx + 1];
       }
 
-      // 3) fallback com regex CORRETO (sem barras extras)
+      // 3) fallback regex
       if (!turmaId) {
         const m = (u.pathname || "").match(/\/presenca\/(\d+)/);
         if (m && m[1]) turmaId = m[1];
       }
 
-      // 4) mais uma tentativa com pathname decodificado
+      // 4) pathname decodificado
       if (!turmaId) {
         const decPath = decodeURIComponent(u.pathname || "");
         const m2 = decPath.match(/\/presenca\/(\d+)/);
         if (m2 && m2[1]) turmaId = m2[1];
       }
     } catch {
-      // Se 'raw' não é URL válida, tenta extrair manualmente
+      // String simples
       const dec = (() => { try { return decodeURIComponent(raw); } catch { return raw; } })();
 
-      // querystring direta (…?turma=123&t=xxx)
+      // querystring direta
       const qs = dec.includes("?") ? dec.split("?")[1] : "";
       const qsp = new URLSearchParams(qs);
       token = qsp.get("t") || qsp.get("token") || token;
@@ -208,7 +207,7 @@ function ValidarPresencaRouter() {
         qsp.get("id") ||
         turmaId;
 
-      // path “…/presenca/123” (sem regex → mais robusto)
+      // path “…/presenca/123”
       if (!turmaId) {
         const pathOnly = dec.split("?")[0] || "";
         const parts = pathOnly.split("/").filter(Boolean);
@@ -216,7 +215,7 @@ function ValidarPresencaRouter() {
         if (idx >= 0 && parts[idx + 1]) turmaId = parts[idx + 1];
       }
 
-      // fallback final com REGEX CORRETO
+      // fallback final com regex
       if (!turmaId) {
         const m = dec.match(/\/presenca\/(\d+)/);
         if (m && m[1]) turmaId = m[1];
@@ -297,6 +296,25 @@ export default function App() {
             <Route path="/notificacoes" element={<PrivateRoute><Notificacoes /></PrivateRoute>} />
             <Route path="/avaliacao" element={<PrivateRoute><Avaliacao /></PrivateRoute>} />
             <Route path="/avaliar/:turmaId" element={<PrivateRoute><Avaliacao /></PrivateRoute>} />
+
+            {/* 🆕 Manual do Usuário */}
+            <Route
+              path="/usuario/manual"
+              element={
+                <PrivateRoute>
+                  <ManualUsuario />
+                </PrivateRoute>
+              }
+            />
+            {/* alias curto opcional */}
+            <Route
+              path="/manual"
+              element={
+                <PrivateRoute>
+                  <ManualUsuario />
+                </PrivateRoute>
+              }
+            />
 
             {/* 🧑‍🏫 / 🛠️ */}
             <Route path="/instrutor" element={<PrivateRoute permitido={["instrutor", "administrador"]}><DashboardInstrutor /></PrivateRoute>} />

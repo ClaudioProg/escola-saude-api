@@ -99,17 +99,40 @@ export default function MinhasInscricoes() {
 
   async function cancelarInscricao(id) {
     if (!window.confirm("Tem certeza que deseja cancelar sua inscrição?")) return;
+  
     setCancelandoId(id);
     try {
-      await apiDelete(`/api/inscricoes/${id}`);
+      const res = await apiDelete(`/api/inscricoes/${id}`);
+  
+      // se seu apiDelete já lança em !ok, pode remover este if
+      if (res?.ok === false) {
+        const status = res.status ?? 0;
+        const data = res.data ?? {};
+        const msg = data?.mensagem || data?.message || res.statusText || "Falha desconhecida";
+        toast.error(`❌ Erro ao cancelar inscrição (${status}). ${msg}`);
+        if (status === 401) {
+          toast.info("Sua sessão pode ter expirado. Abra no navegador padrão e refaça o login.");
+        }
+        return;
+      }
+  
       toast.success("✅ Inscrição cancelada com sucesso.");
       await buscarInscricoes();
-    } catch {
-      toast.error("❌ Erro ao cancelar inscrição.");
+    } catch (err) {
+      // tenta extrair status/mensagem se vier de axios/fetch
+      const status = err?.status || err?.response?.status || 0;
+      const data = err?.data || err?.response?.data || {};
+      const msg = data?.mensagem || data?.message || err?.message || "Sem conexão";
+      toast.error(`❌ Erro ao cancelar inscrição${status ? ` (${status})` : ""}. ${msg}`);
+  
+      if (status === 401) {
+        toast.info("Dica: ao abrir pelo WhatsApp, toque no menu ••• e escolha “Abrir no navegador”.");
+      }
     } finally {
       setCancelandoId(null);
     }
   }
+  
 
   function obterStatusEvento(dataInicioISO, dataFimISO, horarioInicio, horarioFim) {
     const inicio = makeLocalDate(dataInicioISO, horarioInicio || "00:00:00");

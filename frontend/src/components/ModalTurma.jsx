@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { CalendarDays, Clock, Hash, Type, PlusCircle, Trash2 } from "lucide-react";
 import { toast } from "react-toastify";
-import Modal from "./Modal"; // ✅ modal reutilizável e acessível
+import ModalBase from "./ModalBase"; // ⬅️ portal + z-index empilhável
 
 /**
  * Props:
@@ -237,146 +237,155 @@ export default function ModalTurma({ isOpen, onClose, onSalvar, initialTurma = n
 
   /* ===================== render ===================== */
   return (
-    <Modal open={isOpen} onClose={onClose}>
-      <h2 className="text-xl font-bold mb-2 text-lousa dark:text-white">
-        {initialTurma ? "Editar Turma" : "Nova Turma"}
-      </h2>
-
-      {/* Resumo rápido */}
-      <div className="text-xs text-gray-600 dark:text-gray-300 mb-3">
-        {data_inicio && data_fim ? (
-          <>
-            {encontrosOrdenados.length} encontro(s) • {data_inicio.split("-").reverse().join("/")}
-            {" a "}
-            {data_fim.split("-").reverse().join("/")} • Carga estimada:{" "}
-            <strong>{carga_horaria_preview}h</strong>
-          </>
-        ) : (
-          <>Defina as datas para ver a carga horária estimada</>
-        )}
-      </div>
-
-      {/* Nome */}
-      <div className="relative mb-3">
-        <Type className="absolute left-3 top-3 text-gray-500" size={18} />
-        <input
-          type="text"
-          value={nome}
-          onChange={(e) => setNome(e.target.value)}
-          placeholder="Nome da turma"
-          className="w-full pl-10 py-2 border rounded-md shadow-sm dark:bg-zinc-800 dark:text-white"
-        />
-      </div>
-
-      {/* Encontros */}
-      <div className="space-y-3">
-        <div className="font-semibold text-sm text-lousa dark:text-white">Encontros</div>
-        {encontros.map((e, idx) => (
-          <div key={idx} className="grid grid-cols-3 gap-3 items-end">
-            <div className="relative">
-              <CalendarDays className="absolute left-3 top-3 text-gray-500" size={18} />
-              <input
-                type="date"
-                value={isoDay(e.data)}
-                onChange={(ev) => updateEncontro(idx, "data", ev.target.value)}
-                className="w-full pl-10 py-2 border rounded-md shadow-sm dark:bg-zinc-800 dark:text-white"
-                required
-              />
-            </div>
-            <div className="relative">
-              <Clock className="absolute left-3 top-3 text-gray-500" size={18} />
-              <input
-                type="time"
-                value={hhmm(e.inicio, "")}
-                onChange={(ev) => updateEncontro(idx, "inicio", ev.target.value)}
-                className="w-full pl-10 py-2 border rounded-md shadow-sm dark:bg-zinc-800 dark:text-white"
-                required
-              />
-            </div>
-            <div className="relative">
-              <Clock className="absolute left-3 top-3 text-gray-500" size={18} />
-              <div className="flex gap-2">
-                <input
-                  type="time"
-                  value={hhmm(e.fim, "")}
-                  onChange={(ev) => updateEncontro(idx, "fim", ev.target.value)}
-                  className="w-full pl-10 py-2 border rounded-md shadow-sm dark:bg-zinc-800 dark:text-white"
-                  required
-                />
-                {encontros.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => removeEncontro(idx)}
-                    className="px-3 py-2 bg-red-100 text-red-700 rounded-md hover:bg-red-200 dark:bg-red-900/20 dark:text-red-300 dark:hover:bg-red-900/30"
-                    title="Remover este encontro"
-                  >
-                    ❌
-                  </button>
-                )}
+    <ModalBase isOpen={isOpen} onClose={onClose} level={1} maxWidth="max-w-2xl">
+      {/* Grid: header / body / footer */}
+      <div className="grid grid-rows-[auto,1fr,auto] max-h-[85vh] rounded-2xl overflow-hidden">
+        {/* HEADER */}
+        <div className="p-5 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
+          <h2 className="text-xl font-bold text-lousa dark:text-white">
+            {initialTurma ? "Editar Turma" : "Nova Turma"}
+          </h2>
+          <div className="text-xs text-gray-600 dark:text-gray-300 mt-1">
+            {data_inicio && data_fim ? (
+              <>
+                {encontrosOrdenados.length} encontro(s) • {data_inicio.split("-").reverse().join("/")}
+                {" a "}
+                {data_fim.split("-").reverse().join("/")} • Carga estimada:{" "}
+                <strong>{carga_horaria_preview}h</strong>
+              </>
+            ) : (
+              <>Defina as datas para ver a carga horária estimada</>
+            )}
+          </div>
+        </div>
+  
+        {/* BODY */}
+        <div className="p-5 overflow-y-auto bg-white dark:bg-zinc-900">
+          {/* Nome */}
+          <div className="relative mb-4">
+            <Type className="absolute left-3 top-3 text-gray-500" size={18} />
+            <input
+              type="text"
+              value={nome}
+              onChange={(e) => setNome(e.target.value)}
+              placeholder="Nome da turma"
+              className="w-full pl-10 py-2 border rounded-md shadow-sm dark:bg-zinc-800 dark:text-white"
+            />
+          </div>
+  
+          {/* Encontros */}
+          <div className="space-y-3">
+            <div className="font-semibold text-sm text-lousa dark:text-white">Encontros</div>
+            {encontros.map((e, idx) => (
+              <div key={idx} className="grid grid-cols-3 gap-3 items-end">
+                <div className="relative">
+                  <CalendarDays className="absolute left-3 top-3 text-gray-500" size={18} />
+                  <input
+                    type="date"
+                    value={isoDay(e.data)}
+                    onChange={(ev) => updateEncontro(idx, "data", ev.target.value)}
+                    className="w-full pl-10 py-2 border rounded-md shadow-sm dark:bg-zinc-800 dark:text-white"
+                    required
+                  />
+                </div>
+                <div className="relative">
+                  <Clock className="absolute left-3 top-3 text-gray-500" size={18} />
+                  <input
+                    type="time"
+                    value={hhmm(e.inicio, "")}
+                    onChange={(ev) => updateEncontro(idx, "inicio", ev.target.value)}
+                    className="w-full pl-10 py-2 border rounded-md shadow-sm dark:bg-zinc-800 dark:text-white"
+                    required
+                  />
+                </div>
+                <div className="relative">
+                  <Clock className="absolute left-3 top-3 text-gray-500" size={18} />
+                  <div className="flex gap-2">
+                    <input
+                      type="time"
+                      value={hhmm(e.fim, "")}
+                      onChange={(ev) => updateEncontro(idx, "fim", ev.target.value)}
+                      className="w-full pl-10 py-2 border rounded-md shadow-sm dark:bg-zinc-800 dark:text-white"
+                      required
+                    />
+                    {encontros.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeEncontro(idx)}
+                        className="px-3 py-2 bg-red-100 text-red-700 rounded-md hover:bg-red-200 dark:bg-red-900/20 dark:text-red-300 dark:hover:bg-red-900/30"
+                        title="Remover este encontro"
+                      >
+                        ❌
+                      </button>
+                    )}
+                  </div>
+                </div>
               </div>
+            ))}
+  
+            <div className="flex justify-center">
+              <button
+                type="button"
+                onClick={addEncontro}
+                className="flex items-center gap-2 bg-teal-700 hover:bg-teal-800 text-white font-semibold px-4 py-2 rounded-full transition"
+              >
+                <PlusCircle size={16} />
+                Adicionar data
+              </button>
             </div>
           </div>
-        ))}
-
-        <div className="flex justify-center">
-          <button
-            type="button"
-            onClick={addEncontro}
-            className="flex items-center gap-2 bg-teal-700 hover:bg-teal-800 text-white font-semibold px-4 py-2 rounded-full transition"
-          >
-            <PlusCircle size={16} />
-            Adicionar data
-          </button>
+  
+          {/* Vagas */}
+          <div className="relative mt-5">
+            <Hash className="absolute left-3 top-3 text-gray-500" size={18} />
+            <input
+              type="number"
+              value={vagasTotal}
+              onChange={(e) => setVagasTotal(e.target.value)}
+              placeholder="Quantidade de vagas"
+              className="w-full pl-10 py-2 border rounded-md shadow-sm dark:bg-zinc-800 dark:text-white"
+              min={1}
+              required
+            />
+          </div>
+        </div>
+  
+        {/* FOOTER */}
+        <div className="p-4 border-t border-zinc-200 dark:border-zinc-800 bg-gray-50 dark:bg-zinc-800 rounded-b-2xl">
+          <div className="flex justify-between gap-3">
+            {initialTurma?.id && onExcluir ? (
+              <button
+                type="button"
+                className="flex items-center gap-2 bg-red-100 text-red-700 px-3 py-2 rounded-md hover:bg-red-200 dark:bg-red-900/20 dark:text-red-300"
+                onClick={onExcluir}
+                title="Excluir turma"
+              >
+                <Trash2 size={16} />
+                Excluir turma
+              </button>
+            ) : (
+              <span />
+            )}
+  
+            <div className="flex gap-3">
+              <button
+                onClick={onClose}
+                className="bg-gray-200 hover:bg-gray-300 px-4 py-2 rounded-md dark:bg-zinc-700 dark:hover:bg-zinc-600 dark:text-white"
+                type="button"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSalvar}
+                className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md"
+                type="button"
+              >
+                Salvar Turma
+              </button>
+            </div>
+          </div>
         </div>
       </div>
-
-      {/* Vagas */}
-      <div className="relative my-4">
-        <Hash className="absolute left-3 top-3 text-gray-500" size={18} />
-        <input
-          type="number"
-          value={vagasTotal}
-          onChange={(e) => setVagasTotal(e.target.value)}
-          placeholder="Quantidade de vagas"
-          className="w-full pl-10 py-2 border rounded-md shadow-sm dark:bg-zinc-800 dark:text-white"
-          min={1}
-          required
-        />
-      </div>
-
-      {/* Ações */}
-      <div className="flex justify-between gap-3">
-        {initialTurma?.id && onExcluir ? (
-          <button
-            type="button"
-            className="flex items-center gap-2 bg-red-100 text-red-700 px-3 py-2 rounded-md hover:bg-red-200 dark:bg-red-900/20 dark:text-red-300"
-            onClick={onExcluir}
-            title="Excluir turma"
-          >
-            <Trash2 size={16} />
-            Excluir turma
-          </button>
-        ) : (
-          <span />
-        )}
-
-        <div className="flex gap-3">
-          <button
-            onClick={onClose}
-            className="bg-gray-200 hover:bg-gray-300 px-4 py-2 rounded-md dark:bg-zinc-700 dark:hover:bg-zinc-600 dark:text-white"
-            type="button"
-          >
-            Cancelar
-          </button>
-          <button
-            onClick={handleSalvar}
-            className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md"
-            type="button"
-          >
-            Salvar Turma
-          </button>
-        </div>
-      </div>
-    </Modal>
+    </ModalBase>
   );
 }

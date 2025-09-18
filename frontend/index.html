@@ -10,7 +10,7 @@
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#14532d" />
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b1f14" />
 
-    <!-- ⬇️ BOOT DO TEMA (adicionar este bloco) -->
+    <!-- ⬇️ BOOT DO TEMA (executa antes de renderizar o app) -->
     <script>
       try {
         var t = localStorage.getItem('theme');
@@ -28,6 +28,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     <meta name="format-detection" content="telephone=no" />
+
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -37,8 +38,14 @@
   </head>
 
   <body class="bg-white text-gray-900 dark:bg-gray-900 dark:text-white font-sans min-h-screen">
-    <noscript>…</noscript>
+    <noscript>É necessário habilitar JavaScript para usar esta aplicação.</noscript>
+
+    <!-- Raiz do app -->
     <div id="root"></div>
+
+    <!-- ⬇️ Raiz para PORTAIS (modais, drawers, etc.) -->
+    <div id="modal-root"></div>
+
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

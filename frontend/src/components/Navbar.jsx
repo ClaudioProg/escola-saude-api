@@ -207,6 +207,7 @@ export default function Navbar() {
       { label: "Minhas Presenças", path: "/minhas-presencas", icon: ListChecks },
       { label: "Avaliações Pendentes", path: "/avaliacao", icon: PencilLine },
       { label: "Meus Certificados", path: "/certificados", icon: FileText },
+      { label: "Manual do Usuário", path: "/usuario/manual", icon: BookOpen },
       { label: "Escanear", path: "/scanner", icon: QrCode },
     ],
     []
