@@ -623,14 +623,20 @@ export default function Cadastro() {
 
           {/* Ações */}
           <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
-            <BotaoPrimario
-              type="submit"
-              className="w-full flex justify-center items-center gap-2"
-              disabled={loading || loadingLookups}
-              aria-busy={loading}
-            >
-              {loading ? <Spinner pequeno /> : "Cadastrar"}
-            </BotaoPrimario>
+          <BotaoPrimario
+  type="submit"
+  className="
+    w-full flex justify-center items-center gap-2
+    !bg-[#FA8072] hover:!bg-[#f56c5b] active:!bg-[#e66a5f]
+    !text-white transition-colors
+    focus-visible:!ring-2 focus-visible:!ring-[#FA8072]/60
+    disabled:opacity-60 disabled:cursor-not-allowed
+  "
+  disabled={loading || loadingLookups}
+  aria-busy={loading}
+>
+  {loading ? <Spinner pequeno /> : "Cadastrar"}
+</BotaoPrimario>
 
             <BotaoSecundario
               type="button"

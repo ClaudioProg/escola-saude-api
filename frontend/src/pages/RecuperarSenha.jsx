@@ -117,9 +117,14 @@ export default function RecuperarSenha() {
 <BotaoSecundario
   type="button"
   onClick={() => window.history.back()}
-  className="w-full"
   variant="outline"
-  cor="azulPetroleo"
+  className="
+    w-full
+    !border-[#A7F3D0] !text-[#A7F3D0]
+    hover:!bg-[#A7F3D0] hover:!text-[#064E3B]
+    focus-visible:!ring-2 focus-visible:!ring-[#A7F3D0]/60
+    disabled:opacity-60 disabled:cursor-not-allowed
+  "
 >
   Voltar
 </BotaoSecundario>
