@@ -3,11 +3,10 @@ import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { GoogleLogin } from "@react-oauth/google";
 import { toast } from "react-toastify";
-import { LogIn, Eye, EyeOff, User, Lock } from "lucide-react";
+import { LogIn, Eye, EyeOff, User, Lock, AlertTriangle } from "lucide-react";
 
 import BotaoPrimario from "../components/BotaoPrimario";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
-import Footer from "../components/Footer";
 import { apiPost } from "../services/api";
 
 export default function Login() {
@@ -18,6 +17,7 @@ export default function Login() {
   const [loadingGoogle, setLoadingGoogle] = useState(false);
   const [erroCpf, setErroCpf] = useState("");
   const [erroSenha, setErroSenha] = useState("");
+  const [capsLockOn, setCapsLockOn] = useState(false);
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -35,6 +35,10 @@ export default function Login() {
       return null;
     }
   }, [location.search]);
+
+  useEffect(() => {
+    document.title = "Entrar — Escola da Saúde";
+  }, []);
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -137,21 +141,30 @@ export default function Login() {
   }
 
   return (
-    <div className="flex flex-col min-h-screen bg-gelo">
-      <main className="flex-1 flex flex-col items-center justify-center px-3">
-        <img
-          src="/logo_escola.png"
-          alt="Logotipo da Escola Municipal de Saúde Pública de Santos"
-          className="w-32 mb-7 drop-shadow-xl"
-          loading="lazy"
-        />
+    <div className="min-h-screen bg-gradient-to-b from-gelo to-gelo/70 dark:from-zinc-900 dark:to-zinc-900 flex items-center justify-center px-3 py-10">
+      <main className="w-full max-w-md">
+        {/* Marca/Logotipo */}
+        <div className="flex items-center justify-center mb-6">
+          <img
+            src="/logo_escola.png"
+            alt="Logotipo da Escola Municipal de Saúde Pública de Santos"
+            className="w-28 drop-shadow-xl"
+            loading="lazy"
+          />
+        </div>
 
+        {/* Cartão de Login */}
         <form
           onSubmit={handleLogin}
-          className="bg-lousa text-white rounded-2xl shadow-xl p-8 w-full max-w-md space-y-6"
+          className="bg-lousa text-white rounded-2xl shadow-2xl p-7 md:p-8 space-y-6"
           aria-label="Formulário de Login"
         >
-          <h2 className="text-2xl font-bold text-center mb-2">Acessar Plataforma</h2>
+          <header className="text-center">
+            <h1 className="text-2xl font-bold">Acessar Plataforma</h1>
+            <p className="text-white/80 text-sm mt-1">
+              Entre com seu CPF e senha ou utilize sua conta Google.
+            </p>
+          </header>
 
           {/* CPF */}
           <div>
@@ -167,11 +180,16 @@ export default function Login() {
                 setCpf(aplicarMascaraCPF(e.target.value));
                 if (erroCpf) setErroCpf("");
               }}
+              onPaste={(e) => {
+                e.preventDefault();
+                const text = (e.clipboardData.getData("text") || "").trim();
+                setCpf(aplicarMascaraCPF(text));
+              }}
               placeholder="000.000.000-00"
               maxLength={14}
               autoFocus
               autoComplete="username"
-              className={`w-full px-4 py-2 rounded bg-white dark:bg-gray-100 text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-lousa ${
+              className={`w-full px-4 py-2.5 rounded bg-white dark:bg-gray-100 text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-lousa ${
                 erroCpf ? "border border-red-500" : ""
               }`}
               aria-label="Digite seu CPF"
@@ -201,12 +219,15 @@ export default function Login() {
                   setSenha(e.target.value);
                   if (erroSenha) setErroSenha("");
                 }}
+                onKeyUp={(e) => setCapsLockOn(e.getModifierState?.("CapsLock"))}
                 placeholder="Digite sua senha"
                 autoComplete="current-password"
-                className="w-full px-4 py-2 rounded bg-white dark:bg-gray-100 text-gray-800 placeholder-gray-400 pr-14 focus:ring-2 focus:ring-lousa"
+                className="w-full px-4 py-2.5 rounded bg-white dark:bg-gray-100 text-gray-800 placeholder-gray-400 pr-14 focus:ring-2 focus:ring-lousa"
                 aria-label="Digite sua senha"
                 aria-invalid={!!erroSenha}
-                aria-describedby={erroSenha ? "erro-senha" : undefined}
+                aria-describedby={
+                  erroSenha || capsLockOn ? "erro-senha aviso-caps" : undefined
+                }
               />
               <button
                 type="button"
@@ -219,9 +240,19 @@ export default function Login() {
                 {mostrarSenha ? <EyeOff size={18} /> : <Eye size={18} />}
               </button>
             </div>
+
             {erroSenha && (
               <p id="erro-senha" className="text-red-200 text-xs mt-1" role="alert">
                 {erroSenha}
+              </p>
+            )}
+            {capsLockOn && !erroSenha && (
+              <p
+                id="aviso-caps"
+                className="text-amber-200 text-[11px] mt-1 flex items-center gap-1"
+                role="status"
+              >
+                <AlertTriangle size={12} /> Atenção: Caps Lock está ativado.
               </p>
             )}
 
@@ -236,10 +267,10 @@ export default function Login() {
             </div>
           </div>
 
-          {/* ⬇️ Botão de alto contraste */}
+          {/* Ação principal */}
           <BotaoPrimario
             type="submit"
-            className="w-full flex justify-center items-center gap-2 mt-1"
+            className="w-full flex justify-center items-center gap-2"
             aria-label="Entrar na plataforma"
             disabled={loading || loadingGoogle}
             loading={loading}
@@ -251,6 +282,7 @@ export default function Login() {
 
           <div className="text-center text-sm text-white mt-2">ou</div>
 
+          {/* Google */}
           <div className="flex justify-center mt-1 mb-2">
             {loadingGoogle ? (
               <CarregandoSkeleton mensagem="Fazendo login com Google..." />
@@ -276,7 +308,8 @@ export default function Login() {
 
           {redirectPath && (
             <p className="text-[11px] text-center text-white/70">
-              Após o login, você será levado para: <span className="font-semibold">{redirectPath}</span>
+              Após o login, você será levado para:{" "}
+              <span className="font-semibold">{redirectPath}</span>
             </p>
           )}
 
@@ -290,14 +323,12 @@ export default function Login() {
             </button>
           </div>
 
-          <p className="text-xs text-center text-white/70 mt-4">
-            Ao continuar, você concorda com o uso dos seus dados para fins de controle de eventos,
-            presença e certificação, conforme a política institucional da Escola da Saúde.
+          <p className="text-[11px] text-center text-white/70">
+            Ao continuar, você concorda com o uso dos seus dados para fins de controle de
+            eventos, presença e certificação, conforme a política institucional da Escola da Saúde.
           </p>
         </form>
       </main>
-
-      <Footer />
     </div>
   );
 }
