@@ -48,12 +48,17 @@ const Notificacoes           = lazy(() => import("./pages/Notificacoes"));
 const AgendaAdministrador    = lazy(() => import("./pages/AgendaAdministrador"));
 const Avaliacao              = lazy(() => import("./pages/Avaliacao"));
 const GestaoPresencas        = lazy(() => import("./pages/GestaoPresenca"));
+const CancelarInscricoesAdmin= lazy(() => import("./pages/CancelarInscricoesAdmin"));
 
 // ✅ Página de confirmação via QR (com/sem token)
 const ConfirmarPresenca      = lazy(() => import("./pages/ConfirmarPresenca"));
 
 // 🆕 Manual do Usuário
 const ManualUsuario          = lazy(() => import("./pages/usuario/Manual"));
+
+// 🆕 Páginas públicas novas
+const AjudaCadastro          = lazy(() => import("./pages/AjudaCadastro"));
+const Privacidade        = lazy(() => import("./pages/Privacidade"));
 
 /* ──────────────────────────────────────────────────────────────
    A11y: Announcer de mudanças de rota
@@ -103,9 +108,11 @@ function LayoutComNavbar({ children }) {
       p === "/validar" ||                    // legado
       p === "/validar-presenca" ||           // legado
       p === "/validar-certificado" ||
-      p.endsWith(".html") ||                 // alias .html
+      p === "/ajuda/cadastro" ||            // 🆕 público
+      p === "/privacidade" ||               // 🆕 público
+      p.endsWith(".html") ||                // alias .html
       p.startsWith("/redefinir-senha") ||
-      p.startsWith("/presenca")              // tela do QR
+      p.startsWith("/presenca")             // tela do QR
     );
   }, [location.pathname]);
 
@@ -268,6 +275,12 @@ export default function App() {
             <Route path="/login" element={<Login />} />
             <Route path="/cadastro" element={<Cadastro />} />
 
+            {/* 🆕 públicas novas */}
+            <Route path="/ajuda/cadastro" element={<AjudaCadastro />} />
+            <Route path="/ajuda/cadastro.html" element={<HtmlAliasRedirect />} />
+            <Route path="/privacidade" element={<Privacidade />} />
+            <Route path="/privacidade.html" element={<HtmlAliasRedirect />} />
+
             {/* Certificado (nova) */}
             <Route path="/validar-certificado" element={<ValidarCertificado />} />
             <Route path="/validar-certificado.html" element={<HtmlAliasRedirect />} />
@@ -333,6 +346,14 @@ export default function App() {
             <Route path="/certificados-avulsos" element={<PrivateRoute permitido={["administrador"]}><CertificadosAvulsos /></PrivateRoute>} />
             <Route path="/gestao-presenca" element={<PrivateRoute permitido={["administrador"]}><GestaoPresencas /></PrivateRoute>} />
             <Route path="/admin/qr-codes" element={<PrivateRoute permitido={["administrador"]}><QRCodesEventosAdmin /></PrivateRoute>} />
+            <Route
+  path="/admin/cancelar-inscricoes"
+  element={
+    <PrivateRoute permitido={["administrador"]}>
+      <CancelarInscricoesAdmin />
+    </PrivateRoute>
+  }
+/>
 
             {/* 404 */}
             <Route path="*" element={<NotFound />} />

@@ -9,17 +9,14 @@ const authorizeRoles = require("../auth/authorizeRoles");
 
 /*
   Montagem típica (no app.js):
-    // se quiser que /api/perfil/me funcione:
-    app.use("/api", require("./routes/usuariosRoute"));
-    // caminho “clássico” deste router:
-    app.use("/api/usuarios", require("./routes/usuariosRoute"));
+    // Você JÁ monta as rotas de perfil separadamente em server.js:
+    // app.use("/api/perfil", require("./routes/perfilRoutes"));
+    // app.use("/api/usuarios/perfil", require("./routes/perfilRoutes"));
 */
 
 // ─────────────────────────────────────────────────────────────
 // Utils
 // ─────────────────────────────────────────────────────────────
-
-// valida :id numérico
 function validarId(req, res, next) {
   const { id } = req.params;
   if (Number.isNaN(Number(id))) {
@@ -28,13 +25,12 @@ function validarId(req, res, next) {
   next();
 }
 
-// registra rota protegida apenas se o handler existir
-function registerIf(fn, registrar) {
+function registerIf(fn, registrar, rotaDescrita) {
   if (typeof fn === "function") {
     registrar();
   } else {
-    const nome = registrar._name || "rota-desconhecida";
-    console.warn(`⚠️  Rota '${nome}' não registrada: handler ausente no controller.`);
+    const nomeFn = registrar?.name || rotaDescrita || "rota-desconhecida";
+    console.warn(`⚠️  Rota '${nomeFn}' não registrada: handler ausente no controller.`);
   }
 }
 
@@ -57,22 +53,10 @@ if (typeof usuarioPublicoController?.redefinirSenha === "function") {
 // ─────────────────────────────────────────────────────────────
 // 🔒 Rotas protegidas (exigem token válido)
 // ─────────────────────────────────────────────────────────────
-
-// ✅ Meu perfil (inclui CPF) — sob este router:
-// - GET  /me
-// - PATCH /me
-// e aliases legíveis:
-// - GET  /perfil/me
-// - PATCH /perfil/me
-registerIf(usuarioPublicoController?.obterPerfilMe, function obterPerfilMeRoute() {
-  router.get("/me", authMiddleware, usuarioPublicoController.obterPerfilMe);
-  router.get("/perfil/me", authMiddleware, usuarioPublicoController.obterPerfilMe);
-});
-
-registerIf(usuarioPublicoController?.atualizarPerfilMe, function atualizarPerfilMeRoute() {
-  router.patch("/me", authMiddleware, usuarioPublicoController.atualizarPerfilMe);
-  router.patch("/perfil/me", authMiddleware, usuarioPublicoController.atualizarPerfilMe);
-});
+// ⚠️ Removido: /me e /perfil/me
+// Esses endpoints já são servidos por perfilRoutes montadas em server.js:
+//  - /api/perfil/me
+//  - /api/usuarios/perfil/me
 
 // 👥 Listar todos (admin)
 registerIf(usuarioAdministradorController?.listarUsuarios, function listarUsuariosRoute() {
@@ -84,7 +68,7 @@ registerIf(usuarioAdministradorController?.listarUsuarios, function listarUsuari
   );
 });
 
-// 👨‍🏫 Listar instrutores (admin) — opcional
+// 👨‍🏫 Listar instrutores (admin) — com fallback de nome
 const listarInstrutoresHandler =
   usuarioAdministradorController?.listarInstrutores ||
   usuarioAdministradorController?.listarinstrutor;
@@ -105,7 +89,6 @@ const atualizarPerfilHandler =
   usuarioAdministradorController?.updatePerfil;
 
 registerIf(atualizarPerfilHandler, function atualizarPerfilRoute() {
-  // aceita PATCH (REST “parcial”) e PUT (compat)
   router.patch(
     "/:id/perfil",
     authMiddleware,

@@ -300,34 +300,99 @@ async function getResumoTurma(turmaId) {
   }
   
 /* ────────────────────────────────────────────────────────────────
-   ❌ Cancelar inscrição
+   ❌ Cancelar inscrição (usuário cancela a PRÓPRIA, por turmaId)
    ──────────────────────────────────────────────────────────────── */
-async function cancelarMinhaInscricao(req, res) {
-  const usuario_id = req.usuario.id;
-  const { id } = req.params;
-
-  try {
-    const result = await db.query('SELECT * FROM inscricoes WHERE id = $1', [id]);
-    const inscricao = result.rows[0];
-
-    if (!inscricao) {
-      return res.status(404).json({ erro: 'Inscrição não encontrada.' });
+   async function cancelarMinhaInscricao(req, res) {
+    // compat: req.user (novo) ou req.usuario (legado)
+    const usuarioId = Number(req.user?.id || req.usuario?.id);
+    const turmaId   = Number(req.params.turmaId || req.params.id); // id legado (ver rota antiga)
+  
+    if (!usuarioId || !turmaId) {
+      return res.status(400).json({ erro: "Parâmetros inválidos." });
     }
-
-    if (inscricao.usuario_id !== usuario_id && !req.usuario.perfil?.includes('administrador')) {
-      return res.status(403).json({ erro: 'Você não tem permissão para cancelar esta inscrição.' });
+  
+    try {
+      // Confere se existe inscrição desse usuário nessa turma
+      const sel = await db.query(
+        `SELECT id FROM inscricoes WHERE usuario_id = $1 AND turma_id = $2`,
+        [usuarioId, turmaId]
+      );
+      if (!sel.rowCount) {
+        return res
+          .status(404)
+          .json({ erro: "Inscrição não encontrada para este usuário nesta turma." });
+      }
+  
+      await db.query("BEGIN");
+  
+      // (opcional) remove presenças do usuário nessa turma
+      await db.query(
+        `DELETE FROM presencas WHERE usuario_id = $1 AND turma_id = $2`,
+        [usuarioId, turmaId]
+      );
+  
+      // remove a inscrição
+      await db.query(
+        `DELETE FROM inscricoes WHERE usuario_id = $1 AND turma_id = $2`,
+        [usuarioId, turmaId]
+      );
+  
+      await db.query("COMMIT");
+  
+      return res.json({ mensagem: "Inscrição cancelada com sucesso." });
+    } catch (err) {
+      await db.query("ROLLBACK");
+      console.error("❌ Erro ao cancelar inscrição (minha):", {
+        message: err?.message, detail: err?.detail, code: err?.code
+      });
+      return res.status(500).json({ erro: "Erro ao cancelar inscrição." });
     }
-
-    await db.query('DELETE FROM inscricoes WHERE id = $1', [id]);
-
-    return res.json({ mensagem: 'Inscrição cancelada com sucesso.' });
-  } catch (err) {
-    console.error('❌ Erro ao cancelar inscrição:', {
-      message: err?.message, detail: err?.detail, code: err?.code
-    });
-    return res.status(500).json({ erro: 'Erro ao cancelar inscrição.' });
   }
-}
+  
+  /* ────────────────────────────────────────────────────────────────
+     ❌ Cancelar inscrição (ADMIN cancela de QUALQUER usuário)
+     ──────────────────────────────────────────────────────────────── */
+  async function cancelarInscricaoAdmin(req, res) {
+    const usuarioId = Number(req.params.usuarioId);
+    const turmaId   = Number(req.params.turmaId);
+  
+    if (!usuarioId || !turmaId) {
+      return res.status(400).json({ erro: "Parâmetros inválidos." });
+    }
+  
+    try {
+      const sel = await db.query(
+        `SELECT id FROM inscricoes WHERE usuario_id = $1 AND turma_id = $2`,
+        [usuarioId, turmaId]
+      );
+      if (!sel.rowCount) {
+        return res.status(404).json({ erro: "Inscrição não encontrada." });
+      }
+  
+      await db.query("BEGIN");
+  
+      await db.query(
+        `DELETE FROM presencas WHERE usuario_id = $1 AND turma_id = $2`,
+        [usuarioId, turmaId]
+      );
+  
+      await db.query(
+        `DELETE FROM inscricoes WHERE usuario_id = $1 AND turma_id = $2`,
+        [usuarioId, turmaId]
+      );
+  
+      await db.query("COMMIT");
+  
+      return res.json({ mensagem: "Inscrição cancelada (admin)." });
+    } catch (err) {
+      await db.query("ROLLBACK");
+      console.error("❌ Erro ao cancelar inscrição (admin):", {
+        message: err?.message, detail: err?.detail, code: err?.code
+      });
+      return res.status(500).json({ erro: "Erro ao cancelar inscrição." });
+    }
+  }
+  
 
 /* ────────────────────────────────────────────────────────────────
    🔍 Minhas inscrições (com período/horário calculados)
@@ -463,6 +528,7 @@ async function listarInscritosPorTurma(req, res) {
 module.exports = {
   inscreverEmTurma,
   cancelarMinhaInscricao,
+  cancelarInscricaoAdmin,
   obterMinhasInscricoes,
   listarInscritosPorTurma,
 };

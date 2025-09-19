@@ -17,7 +17,10 @@ const certificadosRoute           = require("./routes/certificadosRoute");
 const certificadosHistoricoRoute  = require("./routes/certificadosHistoricoRoutes");
 const certificadosAvulsosRoutes   = require("./routes/certificadosAvulsosRoutes");
 const eventosRoute                = require("./routes/eventosRoute");
+
+// 🔁 CORRIGIDO: nome do arquivo no plural
 const inscricoesRoute             = require("./routes/inscricoesRoute");
+
 const loginRoute                  = require("./routes/loginRoute");
 const presencasRoute              = require("./routes/presencasRoute");
 const relatorioPresencasRoute     = require("./routes/relatorioPresencasRoute");
@@ -167,7 +170,10 @@ app.use("/api/certificados", certificadosRoute);
 app.use("/api/certificados-historico", certificadosHistoricoRoute);
 app.use("/api/certificados-avulsos", certificadosAvulsosRoutes);
 app.use("/api/eventos", eventosRoute);
+
+// 🔗 Inscrições (inclui DELETE /inscricoes/minha/:turmaId e admin)
 app.use("/api/inscricoes", inscricoesRoute);
+
 app.use("/api/presencas", presencasRoute);
 app.use("/api/relatorio-presencas", relatorioPresencasRoute);
 app.use("/api/turmas", turmasRoute);
@@ -186,7 +192,6 @@ app.use("/api/assinatura", assinaturaRoutes);
 app.use("/api/datas", datasEventoRoute);
 
 // 🆕 Rotas de Perfil (opções/me/update)
-// principal (como já estava)
 app.use("/api/perfil", perfilRoutes);
 // alias adicional para compatibilidade com chamadas em /api/usuarios/perfil/*
 app.use("/api/usuarios/perfil", perfilRoutes);

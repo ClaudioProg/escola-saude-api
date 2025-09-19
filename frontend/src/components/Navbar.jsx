@@ -30,6 +30,7 @@ import {
   Menu as MenuIcon,
   X as CloseIcon,
   Bell,
+  XCircle,
 } from "lucide-react";
 import { apiGet } from "../services/api";
 
@@ -234,6 +235,7 @@ export default function Navbar() {
       { label: "Gestão de Instrutor", path: "/gestao-instrutor", icon: Presentation },
       { label: "Gestão de Eventos", path: "/gerenciar-eventos", icon: CalendarDays },
       { label: "Gestão de Presença", path: "/gestao-presenca", icon: QrCode },
+      { label: "Cancelar Inscrições", path: "/admin/cancelar-inscricoes", icon: XCircle },
     ],
     []
   );

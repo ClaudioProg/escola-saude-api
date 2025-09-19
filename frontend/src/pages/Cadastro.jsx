@@ -158,7 +158,6 @@ export default function Cadastro() {
 
   // helper: joga erros do servidor nos campos certos e foca no primeiro
   function aplicarErrosServidor(fields = {}) {
-    // limpa tudo antes
     setErroNome("");
     setErroCpf("");
     setErroEmail("");
@@ -171,15 +170,14 @@ export default function Cadastro() {
     const focar = (ref) => { if (!focou) { ref?.current?.focus(); focou = true; } };
 
     if (fields.nome) {
-  setErroNome(fields.nome || "Digite o nome completo (mínimo 12 caracteres).");
-  focar(refNome);
-}
+      setErroNome(fields.nome || "Digite o nome completo (mínimo 12 caracteres).");
+      focar(refNome);
+    }
     if (fields.cpf)  { setErroCpf(fields.cpf); focar(refCpf); }
     if (fields.email){ setErroEmail(fields.email); focar(refEmail); }
     if (fields.data_nascimento) { setErroData(fields.data_nascimento); focar(refData); }
     if (fields.senha || fields.novaSenha) { setErroSenha(fields.senha || fields.novaSenha); focar(refSenha); }
 
-    // perfil complementar
     const algumPerfilErro =
       fields.unidade_id || fields.genero_id || fields.orientacao_sexual_id ||
       fields.cor_raca_id || fields.escolaridade_id || fields.deficiencia_id ||
@@ -202,7 +200,6 @@ export default function Cadastro() {
     e.preventDefault();
     if (loading) return;
 
-    // honeypot
     if (hpRef.current?.value) {
       toast.error("Falha na validação.");
       return;
@@ -217,10 +214,10 @@ export default function Cadastro() {
 
     if (!nomeTrim) { setErroNome("Nome é obrigatório."); refNome.current?.focus(); return; }
     if (nomeTrim.length < 12) {
-  setErroNome("Digite o nome completo (mínimo 12 caracteres).");
-  refNome.current?.focus();
-  return;
-}
+      setErroNome("Digite o nome completo (mínimo 12 caracteres).");
+      refNome.current?.focus();
+      return;
+    }
     if (!validarCPF(cpf)) { setErroCpf("CPF inválido. Use 000.000.000-00."); refCpf.current?.focus(); return; }
     if (!validarEmail(emailTrim)) { setErroEmail("E-mail inválido."); refEmail.current?.focus(); return; }
     if (!dataNascimento) { setErroData("Data de nascimento é obrigatória."); refData.current?.focus(); return; }
@@ -245,8 +242,7 @@ export default function Cadastro() {
       cor_raca_id: Number(corRacaId),
       escolaridade_id: Number(escolaridadeId),
       deficiencia_id: Number(deficienciaId),
-      data_nascimento: dataNascimento, // yyyy-mm-dd
-      // enviar MASCARADO ou null (o backend também mascara/valida)
+      data_nascimento: dataNascimento,
       registro: registro ? registro : null,
     };
 
@@ -256,19 +252,15 @@ export default function Cadastro() {
       toast.success("✅ Cadastro realizado com sucesso!");
       setTimeout(() => navigate("/login"), 800);
     } catch (error) {
-      // Normaliza estrutura de erro (fetch/axios)
       const data = error?.response?.data || error?.data || {};
       const msg = data?.message || data?.erro || error?.message || "Erro ao criar conta.";
       const fields = data?.fieldErrors || data?.fields || {};
 
-      // Mapeia e aplica erros por campo (com foco)
       aplicarErrosServidor(fields);
 
-      // Mensagens específicas comuns
       if (fields?.cpf || /cpf/i.test(msg)) setErroCpf(fields.cpf || "CPF já cadastrado.");
       if (fields?.email || /e-?mail/i.test(msg)) setErroEmail(fields.email || "E-mail já cadastrado.");
 
-      // Mensagem geral no topo
       setErro(msg);
       setSenha(""); setConfirmarSenha("");
     } finally {
@@ -279,7 +271,6 @@ export default function Cadastro() {
   // ───────────────────────────── UI
   return (
     <>
-      {/* Skip link para acessibilidade */}
       <a
         href="#form-cadastro"
         id="skip-to-form"
@@ -288,11 +279,7 @@ export default function Cadastro() {
         Pular para o formulário
       </a>
 
-      {/* Page Header */}
-      <header
-        role="banner"
-        className="bg-gradient-to-b from-emerald-900 to-emerald-800 text-white"
-      >
+      <header role="banner" className="bg-gradient-to-b from-emerald-900 to-emerald-800 text-white">
         <div className="max-w-6xl mx-auto px-3 sm:px-6 py-6 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <img
@@ -318,7 +305,6 @@ export default function Cadastro() {
         </div>
       </header>
 
-      {/* Main */}
       <main role="main" className="min-h-[calc(100vh-220px)] bg-gelo dark:bg-zinc-900 flex items-start justify-center px-2 py-8">
         <form
           id="form-cadastro"
@@ -623,20 +609,20 @@ export default function Cadastro() {
 
           {/* Ações */}
           <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
-          <BotaoPrimario
-  type="submit"
-  className="
-    w-full flex justify-center items-center gap-2
-    !bg-[#FA8072] hover:!bg-[#f56c5b] active:!bg-[#e66a5f]
-    !text-white transition-colors
-    focus-visible:!ring-2 focus-visible:!ring-[#FA8072]/60
-    disabled:opacity-60 disabled:cursor-not-allowed
-  "
-  disabled={loading || loadingLookups}
-  aria-busy={loading}
->
-  {loading ? <Spinner pequeno /> : "Cadastrar"}
-</BotaoPrimario>
+            <BotaoPrimario
+              type="submit"
+              className="
+                w-full flex justify-center items-center gap-2
+                !bg-[#FA8072] hover:!bg-[#f56c5b] active:!bg-[#e66a5f]
+                !text-white transition-colors
+                focus-visible:!ring-2 focus-visible:!ring-[#FA8072]/60
+                disabled:opacity-60 disabled:cursor-not-allowed
+              "
+              disabled={loading || loadingLookups}
+              aria-busy={loading}
+            >
+              {loading ? <Spinner pequeno /> : "Cadastrar"}
+            </BotaoPrimario>
 
             <BotaoSecundario
               type="button"
@@ -648,9 +634,27 @@ export default function Cadastro() {
             </BotaoSecundario>
           </div>
 
-          <p className="text-xs text-white/80 text-center mt-2 flex items-center justify-center gap-1">
-            <HelpCircle size={14} aria-hidden="true" /> Dúvidas? Veja a{" "}
-            <Link to="/ajuda" className="underline">Central de Ajuda</Link>.
+          {/* 🔗 Links públicos em nova aba */}
+          <p className="text-xs text-white/80 text-center mt-2 flex flex-wrap items-center justify-center gap-2">
+            <HelpCircle size={14} aria-hidden="true" />
+            Dúvidas?
+            <a
+              href="/ajuda/cadastro"
+              target="_blank"
+              rel="noreferrer"
+              className="underline underline-offset-2 hover:opacity-90"
+            >
+              Central de Ajuda
+            </a>
+            <span>•</span>
+            <a
+              href="/privacidade"
+              target="_blank"
+              rel="noreferrer"
+              className="underline underline-offset-2 hover:opacity-90"
+            >
+              Privacidade
+            </a>
           </p>
 
           <p className="text-xs text-white/70 text-center mt-2">
@@ -661,15 +665,13 @@ export default function Cadastro() {
       </main>
 
       {/* Footer */}
-      <footer role="contentinfo" className="bg-emerald-950 text-white/90">
-        <div className="max-w-6xl mx-auto px-3 sm:px-6 py-6 text-sm flex flex-col sm:flex-row gap-2 sm:gap-6 items-center justify-between">
-          <p>&copy; {new Date().getFullYear()} Escola Municipal de Saúde de Santos</p>
-          <nav aria-label="links de rodapé" className="flex items-center gap-4">
-            <Link to="/politica-privacidade" className="underline">Privacidade</Link>
-            <a href="mailto:escoladasaude@santos.sp.gov.br" className="underline">Contato</a>
-          </nav>
-        </div>
-      </footer>
+<footer role="contentinfo" className="bg-emerald-950 text-white/90">
+  <div className="max-w-6xl mx-auto px-3 sm:px-6 py-6 text-sm
+                  flex flex-col items-center justify-center text-center gap-2">
+    <p>&copy; {new Date().getFullYear()} Escola Municipal de Saúde de Santos</p>
+    <nav aria-label="links de rodapé" className="flex items-center gap-4 justify-center"></nav>
+  </div>
+</footer>
     </>
   );
 }
