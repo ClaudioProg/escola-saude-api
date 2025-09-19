@@ -9,14 +9,50 @@ import {
   RefreshCw,
 } from "lucide-react";
 import Skeleton from "react-loading-skeleton";
+import "react-loading-skeleton/dist/skeleton.css";
 
-import PageHeader from "../components/PageHeader";
 import Footer from "../components/Footer";
 import NadaEncontrado from "../components/NadaEncontrado";
 import GraficoEventos from "../components/GraficoEventos";
 import GraficoAvaliacoes from "../components/GraficoAvaliacoes";
 import { apiGet } from "../services/api";
 import { formatarDataBrasileira } from "../utils/data";
+
+/* ───────────── Hero centralizado (sem breadcrumbs) ───────────── */
+function DashboardHero({ onRefresh, carregando }) {
+  return (
+    <header className="bg-gradient-to-br from-fuchsia-900 via-violet-800 to-indigo-700 text-white">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 flex flex-col items-center text-center gap-3">
+        <div className="inline-flex items-center gap-2">
+          <span className="text-2xl">📊</span>
+          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
+            Painel do Usuário
+          </h1>
+        </div>
+        <p className="text-sm text-white/90">
+          Acompanhe suas atividades, certificados e avaliações.
+        </p>
+
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={carregando}
+          className={[
+            "inline-flex items-center gap-2 px-4 py-2 rounded-full font-semibold",
+            "bg-white/10 hover:bg-white/20 border border-white/20",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70",
+            carregando ? "opacity-60 cursor-not-allowed" : "",
+          ].join(" ")}
+          aria-label="Atualizar painel do usuário"
+          title="Atualizar"
+        >
+          <RefreshCw className="w-4 h-4" />
+          {carregando ? "Atualizando…" : "Atualizar"}
+        </button>
+      </div>
+    </header>
+  );
+}
 
 export default function DashboardUsuario() {
   const [dados, setDados] = useState(null);
@@ -31,6 +67,10 @@ export default function DashboardUsuario() {
       return "";
     }
   })();
+
+  function setLive(msg) {
+    if (liveRef.current) liveRef.current.textContent = msg;
+  }
 
   async function carregar() {
     try {
@@ -55,37 +95,15 @@ export default function DashboardUsuario() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function setLive(msg) {
-    if (liveRef.current) liveRef.current.textContent = msg;
-  }
-
   return (
-    <>
-      <PageHeader
-        title="📊 Painel do Usuário"
-        subtitle={usuarioNome ? `Bem-vindo(a), ${usuarioNome}` : "Acompanhe suas atividades, certificados e avaliações"}
-        actions={
-          <button
-            type="button"
-            onClick={carregar}
-            disabled={carregando}
-            className={`inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md transition border
-              ${carregando
-                ? "opacity-60 cursor-not-allowed bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300"
-                : "bg-lousa text-white hover:bg-green-800"}`}
-            aria-label="Atualizar painel do usuário"
-            title="Atualizar"
-          >
-            <RefreshCw className="w-4 h-4" />
-            {carregando ? "Atualizando…" : "Atualizar"}
-          </button>
-        }
-      />
+    <main className="min-h-screen bg-gelo dark:bg-zinc-900">
+      {/* 💜 Header centralizado */}
+      <DashboardHero onRefresh={carregar} carregando={carregando} />
 
-      <main className="min-h-screen bg-gelo dark:bg-zinc-900 px-3 sm:px-4 py-6">
-        {/* Live region para leitores de tela */}
-        <p ref={liveRef} className="sr-only" aria-live="polite" />
+      {/* Live region para leitores de tela */}
+      <p ref={liveRef} className="sr-only" aria-live="polite" />
 
+      <div className="px-3 sm:px-4 py-6">
         {erro && !carregando && <NadaEncontrado mensagem={erro} />}
 
         {carregando ? (
@@ -106,6 +124,13 @@ export default function DashboardUsuario() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4 }}
           >
+            {/* 👇 saudação pequena (opcional) */}
+            {usuarioNome && (
+              <p className="text-center text-sm text-slate-600 dark:text-slate-300 mb-4">
+                Bem-vindo(a), <span className="font-medium">{usuarioNome}</span>
+              </p>
+            )}
+
             {/* Cards de KPI */}
             <section
               aria-label="Indicadores rápidos"
@@ -123,11 +148,17 @@ export default function DashboardUsuario() {
             <section className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="bg-white dark:bg-zinc-800 rounded-xl p-4 shadow">
                 <h2 className="text-center font-semibold mb-2">Gráfico de Eventos</h2>
-                <GraficoEventos dados={dados?.graficoEventos ?? {}} aria-label="Gráfico de eventos do usuário" />
+                <GraficoEventos
+                  dados={dados?.graficoEventos ?? {}}
+                  aria-label="Gráfico de eventos do usuário"
+                />
               </div>
               <div className="bg-white dark:bg-zinc-800 rounded-xl p-4 shadow">
                 <h2 className="text-center font-semibold mb-2">Avaliações Recebidas</h2>
-                <GraficoAvaliacoes dados={dados?.graficoAvaliacoes ?? {}} aria-label="Gráfico de avaliações do usuário" />
+                <GraficoAvaliacoes
+                  dados={dados?.graficoAvaliacoes ?? {}}
+                  aria-label="Gráfico de avaliações do usuário"
+                />
               </div>
             </section>
 
@@ -162,10 +193,10 @@ export default function DashboardUsuario() {
         ) : (
           <NadaEncontrado mensagem="Sem dados para exibir." />
         )}
-      </main>
+      </div>
 
       <Footer />
-    </>
+    </main>
   );
 }
 

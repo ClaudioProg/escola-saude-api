@@ -5,7 +5,6 @@ const router = express.Router();
 const authMiddleware = require("../auth/authMiddleware");
 const db = require("../db");
 
-// Handlers do controller principal
 const {
   registrarPresenca,
   confirmarPresencaViaQR,
@@ -20,10 +19,11 @@ const {
   relatorioPresencasPorTurma,
   listaPresencasTurma,
   exportarPresencasPDF,
+  obterMinhasPresencas, // ← vamos usar este
 } = require("../controllers/presencasController");
 
-// 👇 novo handler vem do controller específico
-const { listarMinhasPresencas } = require("../controllers/minhasPresencasController");
+// ❌ REMOVIDO: não vamos usar um segundo controller para “minhas”
+// const { listarMinhasPresencas } = require("../controllers/minhasPresencasController");
 
 /** Middleware simples para restringir por perfil (case-insensitive, trim) */
 function permitirPerfis(...perfisPermitidos) {
@@ -38,13 +38,9 @@ function permitirPerfis(...perfisPermitidos) {
   };
 }
 
-/* -----------------------------
+/* ----------------------------- *
  * Rotas públicas (sem auth)
- * -----------------------------
- * Usado por /validar-certificado.html:
- * GET /api/presencas/validar?evento=ID&usuario=ID
- * -> { presente: true/false }
- */
+ * ----------------------------- */
 router.get("/validar", async (req, res) => {
   try {
     const evento = req.query.evento || req.query.evento_id;
@@ -71,16 +67,15 @@ router.get("/validar", async (req, res) => {
   }
 });
 
-/* -----------------------------
+/* ----------------------------- *
  * Rotas AUTENTICADAS
  * ----------------------------- */
 
-// 0) 👤 Minhas presenças (usuário autenticado vê a própria frequência/datas)
-router.get("/minhas", authMiddleware, listarMinhasPresencas);
-// Alias opcional
-router.get("/me", authMiddleware, listarMinhasPresencas);
+// 0) 👤 Minhas presenças
+router.get("/minhas", authMiddleware, obterMinhasPresencas);
+router.get("/me", authMiddleware, obterMinhasPresencas);
 
-// 1) Registro de presença (usuário; requer data válida do evento)
+// 1) Registro de presença
 router.post("/", authMiddleware, registrarPresenca);
 
 // 1.1) Relatório detalhado (datas × usuários)
@@ -99,7 +94,7 @@ router.get(
   listaPresencasTurma
 );
 
-// 1.3) PDF de presenças
+// 1.3) PDF
 router.get(
   "/turma/:turma_id/pdf",
   authMiddleware,
@@ -109,40 +104,23 @@ router.get(
 
 /* ====== Fluxo do QR Code ====== */
 
-// POST com body { turma_id } — usado pela página /presenca/:turmaId
 router.post("/confirmarPresencaViaQR", authMiddleware, confirmarPresencaViaQR);
-
-// Alias em kebab-case (mais comum)
 router.post("/confirmar-presenca-qr", authMiddleware, confirmarPresencaViaQR);
-
-// Alias com variação de caixa (robustez)
 router.post("/confirmarPresencaViaQr", authMiddleware, confirmarPresencaViaQR);
-
-// Fluxo seguro por token assinado (opcional)
 router.post("/confirmar-via-token", authMiddleware, confirmarViaToken);
-
-// Aliases de compatibilidade (legado por params)
 router.post("/confirmar-qr/:turma_id", authMiddleware, confirmarPresencaViaQR);
-
-// Legado GET com :turma_id (ainda suportado)
 router.get("/confirmar-qr/:turma_id", authMiddleware, confirmarPresencaViaQR);
-
-// Legado GET com querystring (?turma_id=...) — garante compatibilidade máxima
 router.get("/confirmar-qr", authMiddleware, (req, res, next) => {
   const id = req.query.turma_id || req.query.turmaId || req.query.id;
   if (id) req.params.turma_id = id;
   return confirmarPresencaViaQR(req, res, next);
 });
-
-// Legado GET alternativo
 router.get("/confirmar/:turma_id", authMiddleware, confirmarPresencaViaQR);
 
 /* ====== Demais operações ====== */
 
-// 3) Confirmação simples (sem QR; aceita aaaa-mm-dd ou dd/mm/aaaa)
 router.post("/confirmar-simples", authMiddleware, confirmarPresencaSimples);
 
-// 4) Registro manual (admin/instrutor)
 router.post(
   "/registrar",
   authMiddleware,
@@ -150,7 +128,6 @@ router.post(
   registrarManual
 );
 
-// 5) Confirmar manualmente presença no dia atual (admin)
 router.post(
   "/manual-confirmacao",
   authMiddleware,
@@ -158,7 +135,6 @@ router.post(
   confirmarHojeManual
 );
 
-// 6) Validar presença (admin/instrutor)
 router.put(
   "/validar",
   authMiddleware,
@@ -166,10 +142,7 @@ router.put(
   validarPresenca
 );
 
-/* ====== Confirmação pelo INSTRUTOR ======
- * Mantemos a tua rota original "confirmar-instrutor"
- * e adicionamos aliases compatíveis com camelCase.
- */
+/* ====== Confirmação pelo INSTRUTOR ====== */
 router.post(
   "/confirmar-instrutor",
   authMiddleware,
@@ -182,7 +155,6 @@ router.post(
   permitirPerfis("instrutor", "administrador"),
   confirmarPresencaInstrutor
 );
-// Aliases adicionais usados por clientes legados
 router.post(
   "/confirmar",
   authMiddleware,
@@ -209,5 +181,8 @@ router.get(
   permitirPerfis("administrador"),
   listarTodasPresencasParaAdmin
 );
+
+// ❌ REMOVIDO (duplicado e inválido):
+// router.get("/minhas", auth, ctrl.obterMinhasPresencas);
 
 module.exports = router;

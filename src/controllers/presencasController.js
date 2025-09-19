@@ -873,6 +873,209 @@ async function listarTodasPresencasParaAdmin(req, res) {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * GET /api/presencas/minhas
+ * Retorna, por turma do usuário logado:
+ * - total_encontros, presentes, ausencias
+ * - datas.presentes[], datas.ausencias[] (YYYY-MM-DD)
+ * - frequencia (%), status, elegivel_avaliacao
+ * - periodo: data_inicio/data_fim + horarios (mais frequentes)
+ * ------------------------------------------------------------------ */
+async function obterMinhasPresencas(req, res) {
+  const usuario_id = req.usuario?.id;
+  if (!usuario_id) return res.status(401).json({ erro: "Não autenticado." });
+
+  try {
+    const sql = `
+      WITH minhas_turmas AS (
+        SELECT
+          t.id AS turma_id,
+          t.nome AS turma_nome,
+          t.evento_id,
+          e.titulo AS evento_titulo,
+          t.data_inicio::date AS di_raw,
+          t.data_fim::date     AS df_raw,
+          t.horario_inicio,
+          t.horario_fim
+        FROM inscricoes i
+        JOIN turmas t  ON t.id = i.turma_id
+        JOIN eventos e ON e.id = t.evento_id
+        WHERE i.usuario_id = $1
+      ),
+      datas_base AS (
+        -- 1) Preferir datas_turma
+        SELECT
+          mt.turma_id,
+          (dt.data::date) AS d
+        FROM minhas_turmas mt
+        JOIN datas_turma dt ON dt.turma_id = mt.turma_id
+
+        UNION ALL
+
+        -- 2) Fallback: janela di..df quando NÃO existem datas_turma
+        SELECT
+          mt.turma_id,
+          gs::date AS d
+        FROM minhas_turmas mt
+        LEFT JOIN datas_turma dt ON dt.turma_id = mt.turma_id
+        CROSS JOIN LATERAL generate_series(mt.di_raw, mt.df_raw, interval '1 day') AS gs
+        WHERE dt.turma_id IS NULL
+      ),
+      horarios_calc AS (
+        SELECT
+          mt.turma_id,
+          -- hora mais frequente em datas_turma; se nulo, cai para colunas da turma
+          (
+            SELECT to_char(x.hi, 'HH24:MI') FROM (
+              SELECT dt.horario_inicio AS hi, COUNT(*) c
+              FROM datas_turma dt
+              WHERE dt.turma_id = mt.turma_id
+              GROUP BY dt.horario_inicio
+              ORDER BY COUNT(*) DESC, hi
+              LIMIT 1
+            ) x
+          ) AS hi_freq,
+          (
+            SELECT to_char(x.hf, 'HH24:MI') FROM (
+              SELECT dt.horario_fim AS hf, COUNT(*) c
+              FROM datas_turma dt
+              WHERE dt.turma_id = mt.turma_id
+              GROUP BY dt.horario_fim
+              ORDER BY COUNT(*) DESC, hf
+              LIMIT 1
+            ) x
+          ) AS hf_freq
+        FROM minhas_turmas mt
+      ),
+      pres AS (
+        SELECT p.turma_id, p.data_presenca::date AS d, BOOL_OR(p.presente) AS presente
+        FROM presencas p
+        WHERE p.usuario_id = $1
+        GROUP BY p.turma_id, p.data_presenca::date
+      ),
+            agregada AS (
+        SELECT
+          mt.turma_id,
+          mt.turma_nome,
+          mt.evento_id,
+          mt.evento_titulo,
+
+          -- período real com base nas datas
+          MIN(db.d) AS di,
+          MAX(db.d) AS df,
+
+          -- horários
+          COALESCE(hc.hi_freq, to_char(mt.horario_inicio, 'HH24:MI'), '08:00') AS hi,
+          COALESCE(hc.hf_freq, to_char(mt.horario_fim, 'HH24:MI'), '17:00') AS hf,
+
+          -- totais
+          COUNT(*) AS total_encontros,
+          COUNT(*) FILTER (WHERE db.d <= CURRENT_DATE) AS realizados,
+
+          -- presenças (todas e só passadas)
+          COUNT(*) FILTER (WHERE p.presente IS TRUE) AS presentes_total,
+          COUNT(*) FILTER (WHERE p.presente IS TRUE AND db.d <= CURRENT_DATE) AS presentes_passados,
+
+          -- ausências só contam datas passadas/hoje sem presença
+          COUNT(*) FILTER (
+            WHERE (db.d <= CURRENT_DATE) AND COALESCE(p.presente, FALSE) IS NOT TRUE
+          ) AS ausencias,
+
+          -- arrays de datas
+          ARRAY_AGG( to_char(db.d, 'YYYY-MM-DD') ORDER BY db.d )
+            FILTER (WHERE p.presente IS TRUE) AS datas_presentes,
+
+          ARRAY_AGG( to_char(db.d, 'YYYY-MM-DD') ORDER BY db.d )
+            FILTER (WHERE (db.d <= CURRENT_DATE) AND COALESCE(p.presente, FALSE) IS NOT TRUE)
+            AS datas_ausentes
+        FROM minhas_turmas mt
+        JOIN datas_base   db ON db.turma_id = mt.turma_id
+        LEFT JOIN pres     p ON p.turma_id  = mt.turma_id AND p.d = db.d
+        LEFT JOIN horarios_calc hc ON hc.turma_id = mt.turma_id
+        GROUP BY
+          mt.turma_id, mt.turma_nome, mt.evento_id, mt.evento_titulo,
+          hc.hi_freq, hc.hf_freq, mt.horario_inicio, mt.horario_fim
+      )
+      SELECT
+        turma_id,
+        turma_nome,
+        evento_id,
+        evento_titulo,
+        to_char(di, 'YYYY-MM-DD') AS data_inicio,
+        to_char(df, 'YYYY-MM-DD') AS data_fim,
+        hi AS horario_inicio,
+        hf AS horario_fim,
+        total_encontros,
+        realizados,
+        presentes_passados,
+        ausencias,
+        -- frequência ATUAL (base nos encontros já realizados)
+        ROUND(
+          CASE WHEN realizados > 0
+               THEN (presentes_passados::numeric / realizados) * 100
+               ELSE 0 END, 1
+        ) AS frequencia_atual,
+        -- frequência TOTAL (informativa; base no total da turma)
+        ROUND(
+          CASE WHEN total_encontros > 0
+               THEN (presentes_passados::numeric / total_encontros) * 100
+               ELSE 0 END, 1
+        ) AS frequencia_total,
+        CASE
+          WHEN CURRENT_DATE < to_date(to_char(di,'YYYY-MM-DD'),'YYYY-MM-DD') THEN 'agendado'
+          WHEN CURRENT_DATE > to_date(to_char(df,'YYYY-MM-DD'),'YYYY-MM-DD') THEN 'encerrado'
+          ELSE 'andamento'
+        END AS status,
+        (CURRENT_DATE > to_date(to_char(df,'YYYY-MM-DD'),'YYYY-MM-DD'))
+          AND (presentes_passados::numeric / NULLIF(total_encontros,0) >= 0.75) AS elegivel_avaliacao,
+        COALESCE(datas_presentes, '{}') AS datas_presentes,
+        COALESCE(datas_ausentes,  '{}') AS datas_ausentes
+      FROM agregada
+      ORDER BY df DESC, turma_id DESC
+    `;
+
+    const { rows } = await db.query(sql, [usuario_id]);
+
+    const payload = {
+      usuario_id,
+      total_turmas: rows.length,
+      turmas: rows.map(r => ({
+        turma_id: r.turma_id,
+        turma_nome: r.turma_nome,
+        evento_id: r.evento_id,
+        evento_titulo: r.evento_titulo,
+        periodo: {
+          data_inicio: r.data_inicio,
+          data_fim: r.data_fim,
+          horario_inicio: r.horario_inicio,
+          horario_fim: r.horario_fim,
+        },
+        total_encontros: Number(r.total_encontros) || 0,
+        encontros_realizados: Number(r.realizados) || 0,
+        presentes: Number(r.presentes_passados) || 0,
+        ausencias: Number(r.ausencias) || 0, // já é só do passado
+        frequencia: Number(r.frequencia_atual) || 0, // base nos realizados
+        frequencia_total: Number(r.frequencia_total) || 0,
+        status: r.status,
+        elegivel_avaliacao: !!r.elegivel_avaliacao,
+        datas: {
+          presentes: r.datas_presentes || [],
+          ausencias: r.datas_ausentes || [],
+        },
+        base: {
+          atual: Number(r.realizados) || 0,
+          total: Number(r.total_encontros) || 0,
+        },
+      })),
+    };
+
+    return res.json(payload);
+  } catch (err) {
+    console.error("❌ [obterMinhasPresencas]", err);
+    return res.status(500).json({ erro: "Erro ao carregar suas presenças." });
+  }
+}
+
 module.exports = {
   confirmarPresencaInstrutor,
   confirmarPresencaSimples,
@@ -886,4 +1089,5 @@ module.exports = {
   relatorioPresencasPorTurma,
   exportarPresencasPDF,
   listarTodasPresencasParaAdmin,
+  obterMinhasPresencas,
 };

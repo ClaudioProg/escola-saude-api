@@ -7,13 +7,11 @@ import { CalendarDays, Clock3 } from "lucide-react";
 /* ========================== Helpers ========================== */
 
 const clamp = (n, a = 0, b = 100) => Math.max(a, Math.min(b, n));
-
 const toPct = (num, den) => {
   const n = Number(num) || 0;
   const d = Number(den) || 0;
   return d <= 0 ? 0 : clamp(Math.round((n / d) * 100));
 };
-
 const pad = (s) => (typeof s === "string" ? s.padStart(2, "0") : s);
 
 // "0800" → "08:00"; "8:0" → "08:00"; "08:00:00" → "08:00"
@@ -40,7 +38,7 @@ const parseHora = (val) => {
   return hh === "00" && mm === "00" ? null : `${hh}:${mm}`;
 };
 
-// YYYY-MM-DD (LOCAL) a partir de Date/ISO/"YYYY-MM-DD"/obj {data}
+// YYYY-MM-DD (LOCAL) a partir de Date
 const ymdLocal = (d) => {
   if (!(d instanceof Date)) return "";
   const y = d.getFullYear();
@@ -118,9 +116,12 @@ export default function ListaTurmasEvento({
   jaInscritoNoEvento = false,
   jaInstrutorDoEvento = false,
   mostrarStatusTurma = true,
+  /** 🆕 controla se mostra “realizados/total” quando há encontros */
+  exibirRealizadosTotal = false,
 }) {
   const isCongresso = (eventoTipo || "").toLowerCase() === "congresso";
   const jaInscritoTurma = (tid) => inscricoesConfirmadas.includes(Number(tid));
+  const HOJE_ISO = ymdLocal(hoje);
 
   // (mantido pra futura expansão se quiser abrir/fechar blocos)
   const [expand, setExpand] = useState({});
@@ -153,6 +154,7 @@ export default function ListaTurmasEvento({
         const encontros = (encontrosInline || []).map((d) => isoDiaLocal(d)).filter(Boolean);
         const encontrosOrdenados = [...encontros].sort(); // YYYY-MM-DD ordena lexicograficamente
         const qtdEncontros = encontrosOrdenados.length;
+        const realizados = encontrosOrdenados.filter((d) => d <= HOJE_ISO).length;
 
         // Horários reais (turma > encontros consistentes > indefinido)
         const { hi: hiEncontros, hf: hfEncontros } = extrairHorasDeEncontros(encontrosInline);
@@ -216,16 +218,35 @@ export default function ListaTurmasEvento({
                 <div className="mt-2 text-center">
                   {qtdEncontros > 0 ? (
                     <>
-                      <div className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">
-                        {qtdEncontros} encontro{qtdEncontros > 1 ? "s" : ""}:
+                      <div className="flex items-center justify-center gap-2 mb-1">
+                        <div className="text-xs font-medium text-gray-600 dark:text-gray-300">
+                          {qtdEncontros} encontro{qtdEncontros > 1 ? "s" : ""}:
+                        </div>
+
+                        {exibirRealizadosTotal && (
+                          <span
+                            className="text-[11px] px-2 py-0.5 rounded-full 
+                                       bg-emerald-50 text-emerald-700 border border-emerald-200
+                                       dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-800"
+                            title="Encontros já realizados até hoje"
+                            aria-label={`Realizados: ${realizados} de ${qtdEncontros}`}
+                          >
+                            {realizados}/{qtdEncontros} realizados
+                          </span>
+                        )}
                       </div>
+
                       <div className="flex flex-wrap gap-2 justify-center">
                         {encontrosOrdenados.map((d, idx) => (
                           <span
                             key={idx}
-                            className="px-2 py-1 text-xs rounded-full 
-                                       bg-indigo-50 text-indigo-700 border border-indigo-200
-                                       dark:bg-indigo-900/30 dark:text-indigo-200 dark:border-indigo-700"
+                            className={[
+                              "px-2 py-1 text-xs rounded-full border",
+                              d <= HOJE_ISO
+                                ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-800"
+                                : "bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-200 dark:border-indigo-700",
+                            ].join(" ")}
+                            title={d <= HOJE_ISO ? "Já ocorreu" : "Ainda por ocorrer"}
                           >
                             {br(d)}
                           </span>
@@ -351,4 +372,6 @@ ListaTurmasEvento.propTypes = {
   jaInscritoNoEvento: PropTypes.bool,
   jaInstrutorDoEvento: PropTypes.bool,
   mostrarStatusTurma: PropTypes.bool,
+  /** 🆕 quando true, mostra o badge “realizados/total” */
+  exibirRealizadosTotal: PropTypes.bool,
 };

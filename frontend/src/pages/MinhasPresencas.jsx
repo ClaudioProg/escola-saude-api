@@ -19,10 +19,9 @@ import { formatarDataBrasileira } from "../utils/data";
 
 const CERT_THRESHOLD = 75;
 
-/* ───────────────── Header hero com variantes de cor ───────────────── */
+/* ───────────────── Header hero ───────────────── */
 function HeaderHero({ onRefresh, variant = "sky" }) {
   const variants = {
-    // use estes nas outras páginas para variar o visual:
     sky: "from-sky-900 via-sky-800 to-sky-700",
     violet: "from-violet-900 via-violet-800 to-violet-700",
     amber: "from-amber-900 via-amber-800 to-amber-700",
@@ -97,7 +96,6 @@ function ProgressBar({ value = 0, threshold = CERT_THRESHOLD }) {
 
 /* ───────────────── util: descobrir datas de ausência ───────────────── */
 function extrairTodasAsDatas(t) {
-  // fontes comuns
   const cand =
     t?.datas?.todas ||
     t?.datas?.encontros ||
@@ -108,11 +106,10 @@ function extrairTodasAsDatas(t) {
 
   if (Array.isArray(cand) && cand.length) return cand;
 
-  // varre qualquer array “com cara de data” dentro de t.datas (exceto presentes/ausencias)
   const out = new Set();
   if (t?.datas && typeof t.datas === "object") {
     for (const [k, v] of Object.entries(t.datas)) {
-      if (k === "presentes" || k === "ausencias") continue;
+      if (k === "presentes" || k === "ausencias" || k === "ausentes") continue;
       if (Array.isArray(v)) {
         v.forEach((x) => {
           if (typeof x === "string" && /^\d{4}-\d{2}-\d{2}$/.test(x)) out.add(x);
@@ -203,30 +200,32 @@ export default function MinhasPresencas() {
               t.status === "encerrado" ? "success" : "default";
 
             const total = Number(t.total_encontros || 0);
+            const realizados = Number(t.encontros_realizados ?? t?.base?.atual ?? 0);
             const presentes = Number(t.presentes || 0);
-            const ausenciasCalc = Math.max(0, total - presentes);
             const ausencias = Number(
-              typeof t.ausencias === "number" ? t.ausencias : ausenciasCalc
+              typeof t.ausencias === "number" ? t.ausencias : Math.max(0, realizados - presentes)
             );
 
-            const freqRaw = typeof t.frequencia === "number"
-              ? t.frequencia
-              : total > 0 ? (presentes / total) * 100 : 0;
-            const freq = Math.max(0, Math.min(100, freqRaw));
+            // frequência já vem do backend (base: realizados)
+            const freq = Math.max(0, Math.min(100, Number(t.frequencia || 0)));
 
             const meets75 =
               (t.elegivel_avaliacao === true) ||
               (freq >= CERT_THRESHOLD && String(t.status).toLowerCase() === "encerrado");
 
-            // ► derivar datas de ausência
-            let datasAusencias = Array.isArray(t?.datas?.ausencias) ? t.datas.ausencias : null;
+            // ► datas de ausência (aceita 'ausentes' ou 'ausencias')
+            let datasAusencias = Array.isArray(t?.datas?.ausentes)
+              ? t.datas.ausentes
+              : Array.isArray(t?.datas?.ausencias)
+                ? t.datas.ausencias
+                : null;
+
             const todasDatas = extrairTodasAsDatas(t);
             if ((!datasAusencias || !datasAusencias.length) && todasDatas?.length) {
               const presentesSet = new Set((t?.datas?.presentes || []).map(String));
               datasAusencias = todasDatas.filter((d) => !presentesSet.has(String(d)));
             }
 
-            // último fallback textual se temos contagem mas não a(s) data(s)
             const precisaFallbackTexto =
               (!datasAusencias || datasAusencias.length === 0) && ausencias > 0;
 
@@ -271,14 +270,19 @@ export default function MinhasPresencas() {
                 </div>
 
                 <div className="mt-4 grid grid-cols-3 gap-3">
+                  {/* Encontros realizados/total */}
                   <div className="rounded-xl bg-slate-50 dark:bg-slate-800/60 p-3 text-center">
-                    <div className="text-xs text-slate-500 dark:text-slate-300">Total encontros</div>
-                    <div className="text-lg font-semibold text-slate-900 dark:text-slate-100">{total}</div>
+                    <div className="text-xs text-slate-500 dark:text-slate-300">Encontros</div>
+                    <div className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+                      {realizados}/{total}
+                    </div>
                   </div>
+
                   <div className="rounded-xl bg-emerald-50 dark:bg-emerald-900/30 p-3 text-center">
                     <div className="text-xs text-emerald-700 dark:text-emerald-200">Presentes</div>
                     <div className="text-lg font-semibold text-emerald-800 dark:text-emerald-100">{presentes}</div>
                   </div>
+
                   <div className="rounded-xl bg-rose-50 dark:bg-rose-900/30 p-3 text-center">
                     <div className="text-xs text-rose-700 dark:text-rose-200">Ausências</div>
                     <div className="text-lg font-semibold text-rose-800 dark:text-rose-100">{ausencias}</div>
@@ -294,7 +298,9 @@ export default function MinhasPresencas() {
                   </div>
                   <ProgressBar value={freq} threshold={CERT_THRESHOLD} />
                   <div className="mt-1 text-xs text-slate-500 dark:text-slate-400" aria-live="polite">
-                    {freq >= CERT_THRESHOLD ? "Requisito de 75% atendido." : "Atenção: frequência abaixo de 75%."}
+                    {freq >= CERT_THRESHOLD
+                      ? `Requisito de 75% atendido (base: ${realizados} encontro${realizados === 1 ? "" : "s"} realizados).`
+                      : `Atenção: frequência abaixo de 75% (base: ${realizados} encontro${realizados === 1 ? "" : "s"} realizados).`}
                   </div>
                 </div>
 
