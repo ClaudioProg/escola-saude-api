@@ -155,7 +155,121 @@ async function buscarAgendaInstrutor(req, res) {
   }
 }
 
+/**
+ * 🗓️ Agenda do usuário autenticado — somente eventos em que está inscrito
+ * Suporta filtros opcionais ?start=YYYY-MM-DD&end=YYYY-MM-DD
+ * @route GET /api/agenda/minha
+ */
+async function buscarAgendaMinha(req, res) {
+  try {
+    const usuarioId = req.usuario?.id;
+    if (!usuarioId) {
+      return res.status(401).json({ erro: "Usuário não autenticado." });
+    }
+
+    const { start, end } = req.query;
+    const params = [Number(usuarioId)];
+    let whereExtra = "";
+
+    if (start) {
+      params.push(start);
+      whereExtra += ` AND t.data_inicio >= $${params.length}`;
+    }
+    if (end) {
+      params.push(end);
+      whereExtra += ` AND t.data_fim <= $${params.length}`;
+    }
+
+    const sql = `
+      SELECT 
+        e.id,
+        e.titulo,
+        e.local,
+
+        -- intervalo consolidado das SUAS turmas
+        MIN(t.data_inicio)    AS data_inicio,
+        MAX(t.data_fim)       AS data_fim,
+        MIN(t.horario_inicio) AS horario_inicio,
+        MAX(t.horario_fim)    AS horario_fim,
+
+        CASE 
+          WHEN CURRENT_TIMESTAMP < MIN(t.data_inicio + t.horario_inicio) THEN 'programado'
+          WHEN CURRENT_TIMESTAMP BETWEEN MIN(t.data_inicio + t.horario_inicio)
+                                   AND MAX(t.data_fim + t.horario_fim) THEN 'andamento'
+          ELSE 'encerrado'
+        END AS status,
+
+        COALESCE(
+          json_agg(
+            DISTINCT jsonb_build_object('id', u.id, 'nome', u.nome)
+          ) FILTER (WHERE u.id IS NOT NULL),
+          '[]'
+        ) AS instrutores,
+
+        -- 🔹 OCORRÊNCIAS apenas das turmas nas quais o usuário está inscrito
+        CASE
+          WHEN EXISTS (
+            SELECT 1
+              FROM turmas tx
+              JOIN inscricoes i2 ON i2.turma_id = tx.id AND i2.usuario_id = $1
+              JOIN datas_turma dt ON dt.turma_id = tx.id
+             WHERE tx.evento_id = e.id
+          ) THEN (
+            SELECT json_agg(d ORDER BY d)
+              FROM (
+                SELECT DISTINCT to_char(dt.data::date, 'YYYY-MM-DD') AS d
+                  FROM turmas tx
+                  JOIN inscricoes i2 ON i2.turma_id = tx.id AND i2.usuario_id = $1
+                  JOIN datas_turma dt ON dt.turma_id = tx.id
+                 WHERE tx.evento_id = e.id
+                 ORDER BY 1
+              ) z1
+          )
+          WHEN EXISTS (
+            SELECT 1
+              FROM turmas tx
+              JOIN presencas p ON p.turma_id = tx.id
+             WHERE tx.evento_id = e.id
+               AND p.usuario_id = $1
+          ) THEN (
+            SELECT json_agg(d ORDER BY d)
+              FROM (
+                SELECT DISTINCT to_char(p.data_presenca::date, 'YYYY-MM-DD') AS d
+                  FROM turmas tx
+                  JOIN presencas p ON p.turma_id = tx.id
+                 WHERE tx.evento_id = e.id
+                   AND p.usuario_id = $1
+                 ORDER BY 1
+              ) z2
+          )
+          ELSE '[]'::json
+        END AS ocorrencias
+
+      FROM eventos e
+      JOIN turmas t                 ON t.evento_id = e.id
+      JOIN inscricoes i             ON i.turma_id = t.id AND i.usuario_id = $1
+      LEFT JOIN evento_instrutor ei ON ei.evento_id = e.id
+      LEFT JOIN usuarios u          ON u.id = ei.instrutor_id
+      ${whereExtra}
+      GROUP BY e.id, e.titulo, e.local
+      ORDER BY MIN(t.data_inicio)
+    `;
+
+    const resultado = await db.query(sql, params);
+    const rows = (resultado.rows || []).map(r => ({
+      ...r,
+      ocorrencias: Array.isArray(r.ocorrencias) ? r.ocorrencias : [],
+    }));
+    res.set("X-Agenda-Handler", "agendaController:buscarAgendaMinha");
+    return res.status(200).json(rows);
+  } catch (error) {
+    console.error("❌ Erro ao buscar minha agenda:", error);
+    return res.status(500).json({ erro: "Erro ao carregar sua agenda." });
+  }
+}
+
 module.exports = {
   buscarAgenda,
   buscarAgendaInstrutor,
+  buscarAgendaMinha, // 🆕 export
 };

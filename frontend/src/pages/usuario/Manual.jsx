@@ -1,36 +1,62 @@
 // 📁 src/pages/usuario/Manual.jsx
-import { BookOpen } from "lucide-react";
-import Breadcrumbs from "../../components/Breadcrumbs";
-import PageHeader from "../../components/PageHeader";
+import { useEffect } from "react";
+import { BookOpen, Printer } from "lucide-react";
 import Footer from "../../components/Footer";
+import BotaoPrimario from "../../components/BotaoPrimario";
+
+/* ───────────────── Hero padronizado ───────────────── */
+function HeaderHero({ variant = "amber" }) {
+  const variants = {
+    sky: "from-sky-900 via-sky-800 to-sky-700",
+    violet: "from-violet-900 via-violet-800 to-violet-700",
+    amber: "from-amber-900 via-amber-800 to-amber-700",
+    rose: "from-rose-900 via-rose-800 to-rose-700",
+    teal: "from-teal-900 via-teal-800 to-teal-700",
+    indigo: "from-indigo-900 via-indigo-800 to-indigo-700",
+  };
+  const grad = variants[variant] ?? variants.amber;
+
+  return (
+    <header className={`bg-gradient-to-br ${grad} text-white`}>
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 flex flex-col items-center text-center gap-3">
+        <div className="inline-flex items-center gap-2">
+          <BookOpen className="w-5 h-5" aria-hidden="true" />
+          <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">
+            Manual do Usuário
+          </h1>
+        </div>
+        <p className="text-sm text-white/90">
+          Orientações para acesso, inscrições, presenças, avaliações e certificados.
+        </p>
+        <BotaoPrimario
+          onClick={() => window.print()}
+          variante="secundario"
+          icone={<Printer className="w-4 h-4" />}
+          aria-label="Imprimir manual"
+        >
+          Imprimir
+        </BotaoPrimario>
+      </div>
+    </header>
+  );
+}
 
 export default function Manual() {
+  useEffect(() => {
+    document.title = "Manual do Usuário | Escola da Saúde";
+  }, []);
+
   return (
-    <>
-      {/* Header padrão da aplicação */}
-      <PageHeader
-        icon={BookOpen}
-        title="Manual do Usuário"
-        subtitle="Plataforma de Certificados"
-      />
+    <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900">
+      {/* 🟨 Hero (esta página usa 'amber') */}
+      <HeaderHero variant="amber" />
 
-      <main className="max-w-4xl mx-auto px-4 py-8">
-        <Breadcrumbs
-          items={[
-            { label: "Usuário", href: "/usuario" },
-            { label: "Manual", href: "/usuario/manual" },
-          ]}
-        />
-
+      <main className="flex-1 max-w-6xl mx-auto px-4 sm:px-6 py-8">
         <p className="text-gray-700 dark:text-gray-300 mb-6">
           <strong>Escola da Saúde – Secretaria Municipal de Saúde de Santos</strong>
         </p>
 
-        {/* 
-          ⚙️ Tipografia:
-          - Remove marcadores e recuos de <ul>/<ol>
-          - Mantém o restante do estilo da classe `prose`
-        */}
+        {/* Tipografia do manual (sem marcadores) */}
         <article
           className="
             prose dark:prose-invert max-w-none
@@ -206,8 +232,7 @@ export default function Manual() {
         </article>
       </main>
 
-      {/* Footer padrão da aplicação */}
       <Footer />
-    </>
+    </div>
   );
 }

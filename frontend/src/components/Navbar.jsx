@@ -205,9 +205,13 @@ export default function Navbar() {
     () => [
       { label: "Eventos", path: "/eventos", icon: CalendarDays },
       { label: "Meus Cursos", path: "/minhas-inscricoes", icon: BookOpen },
+      { label: "Agenda", path: "/agenda", icon: CalendarDays },
       { label: "Minhas Presenças", path: "/minhas-presencas", icon: ListChecks },
+      { label: "Teste do Curso", path: "/teste", icon: ClipboardList },
       { label: "Avaliações Pendentes", path: "/avaliacao", icon: PencilLine },
       { label: "Meus Certificados", path: "/certificados", icon: FileText },
+      { label: "Agendamento de Sala", path: "/agendamento-sala", icon: CalendarDays },
+      { label: "Solicitar Curso", path: "/solicitar-curso", icon: Presentation },
       { label: "Manual do Usuário", path: "/usuario/manual", icon: BookOpen },
       { label: "Escanear", path: "/scanner", icon: QrCode },
     ],

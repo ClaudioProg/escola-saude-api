@@ -29,6 +29,10 @@ const MinhasPresencas        = lazy(() => import("./pages/MinhasPresencas"));
 const MeusCertificados       = lazy(() => import("./pages/MeusCertificados"));
 const MinhasInscricoes       = lazy(() => import("./pages/MinhasInscricoes"));
 const DashboardUsuario       = lazy(() => import("./pages/DashboardUsuario"));
+const Teste                  = lazy(() => import("./pages/Teste"));              // 🆕
+const AgendamentoSala        = lazy(() => import("./pages/AgendamentoSala"));    // 🆕
+const SolicitacaoCurso       = lazy(() => import("./pages/SolicitacaoCurso"));    // 🆕
+const AgendaUsuario          = lazy(() => import("./pages/AgendaUsuario")); // 🆕
 
 const DashboardInstrutor     = lazy(() => import("./pages/DashboardInstrutor"));
 const AgendaInstrutor        = lazy(() => import("./pages/AgendaInstrutor"));
@@ -309,6 +313,11 @@ export default function App() {
             <Route path="/notificacoes" element={<PrivateRoute><Notificacoes /></PrivateRoute>} />
             <Route path="/avaliacao" element={<PrivateRoute><Avaliacao /></PrivateRoute>} />
             <Route path="/avaliar/:turmaId" element={<PrivateRoute><Avaliacao /></PrivateRoute>} />
+            <Route path="/teste" element={<PrivateRoute><Teste /></PrivateRoute>} />
+            <Route path="/agendamento-sala" element={<PrivateRoute><AgendamentoSala /></PrivateRoute>} />
+            <Route path="/solicitar-curso" element={<PrivateRoute><SolicitacaoCurso /></PrivateRoute>} />
+            <Route path="/agenda" element={<PrivateRoute><AgendaUsuario /></PrivateRoute>} />
+            
 
             {/* 🆕 Manual do Usuário */}
             <Route

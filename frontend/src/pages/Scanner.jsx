@@ -1,64 +1,140 @@
 // 📁 frontend/src/pages/Scanner.jsx
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Html5Qrcode } from "html5-qrcode";
 import { useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
 import { motion } from "framer-motion";
-import { CheckCircle, QrCode } from "lucide-react"; // ⬅️ ícone para PageHeader
+import { CheckCircle, QrCode, RefreshCw, Repeat } from "lucide-react";
+
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import ErroCarregamento from "../components/ErroCarregamento";
-
-// ⬇️ novos componentes globais
-import PageHeader from "../components/PageHeader";
 import Footer from "../components/Footer";
+import BotaoPrimario from "../components/BotaoPrimario";
+
+/* ───────────────── Hero padronizado ───────────────── */
+function HeaderHero({ onRestart, onToggleCamera, variant = "orange" }) {
+  const variants = {
+    sky: "from-sky-900 via-sky-800 to-sky-700",
+    violet: "from-violet-900 via-violet-800 to-violet-700",
+    amber: "from-amber-900 via-amber-800 to-amber-700",
+    rose: "from-rose-900 via-rose-800 to-rose-700",
+    teal: "from-teal-900 via-teal-800 to-teal-700",
+    indigo: "from-indigo-900 via-indigo-800 to-indigo-700",
+    orange: "from-orange-900 via-orange-800 to-orange-700", // 🔶 família presenças/QR
+  };
+  const grad = variants[variant] ?? variants.orange;
+
+  return (
+    <header className={`bg-gradient-to-br ${grad} text-white`}>
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 flex flex-col items-center text-center gap-3">
+        <div className="inline-flex items-center gap-2">
+          <QrCode className="w-5 h-5" aria-hidden="true" />
+          <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">
+            Escanear QR Code
+          </h1>
+        </div>
+        <p className="text-sm text-white/90">
+          Aponte a câmera para o QR Code fixado na sala. A leitura é automática.
+        </p>
+
+        <div className="flex flex-wrap gap-2 justify-center">
+          <BotaoPrimario
+            onClick={onRestart}
+            variante="secundario"
+            icone={<RefreshCw className="w-4 h-4" />}
+            aria-label="Reiniciar leitor"
+          >
+            Reiniciar leitor
+          </BotaoPrimario>
+          <BotaoPrimario
+            onClick={onToggleCamera}
+            variante="secundario"
+            icone={<Repeat className="w-4 h-4" />}
+            aria-label="Alternar câmera"
+          >
+            Alternar câmera
+          </BotaoPrimario>
+        </div>
+      </div>
+    </header>
+  );
+}
 
 export default function Scanner() {
   const [resultado, setResultado] = useState(null);
   const [detectado, setDetectado] = useState(false);
   const [erro, setErro] = useState(false);
   const [iniciando, setIniciando] = useState(true);
-  const [handoff, setHandoff] = useState(false); // overlay de transição
+  const [handoff, setHandoff] = useState(false);
+
+  // câmera selecionada: deviceId (string) OU { facingMode: "environment" | "user" }
+  const [cameraConfig, setCameraConfig] = useState({ facingMode: "environment" });
 
   const navigate = useNavigate();
+
   const html5QrCodeRef = useRef(null);
   const timeoutRef = useRef(null);
-  const processedRef = useRef(false);   // garante 1 leitura
+  const processedRef = useRef(false);
   const mountedRef = useRef(true);
+  const devicesRef = useRef([]); // lista de câmeras disponíveis
 
   useEffect(() => {
     mountedRef.current = true;
-    const timeout = setTimeout(() => setIniciando(false), 300);
-    return () => { mountedRef.current = false; clearTimeout(timeout); };
+    const t = setTimeout(() => setIniciando(false), 300);
+    return () => {
+      mountedRef.current = false;
+      clearTimeout(t);
+    };
   }, []);
 
-  useEffect(() => {
-    if (iniciando) return;
-
-    const iniciarLeitor = async () => {
+  // util: parar e limpar câmera
+  const stopCamera = useMemo(
+    () => async () => {
+      if (!html5QrCodeRef.current) return;
       try {
-        await new Promise((r) => setTimeout(r, 100));
+        await html5QrCodeRef.current.stop();
+      } catch {}
+      try {
+        await html5QrCodeRef.current.clear();
+      } catch {}
+      html5QrCodeRef.current = null;
+    },
+    []
+  );
 
+  // (re)iniciar com base no cameraConfig atual
+  const startCamera = useMemo(
+    () => async () => {
+      try {
+        await new Promise((r) => setTimeout(r, 80)); // pequeno delay
         const el = document.getElementById("leitor-qr");
         if (!el) throw new Error("Elemento 'leitor-qr' não encontrado.");
 
-        // para/limpa instância anterior
-        if (html5QrCodeRef.current) {
-          try { await html5QrCodeRef.current.stop(); } catch {}
-          try { await html5QrCodeRef.current.clear(); } catch {}
-        }
+        // encerra instância anterior
+        await stopCamera();
 
         const html5QrCode = new Html5Qrcode("leitor-qr");
         html5QrCodeRef.current = html5QrCode;
 
-        // preferir facingMode com fallback para getCameras()
-        let cameraConfig = { facingMode: "environment" };
+        // tenta descobrir câmeras (para suportar alternância)
         try {
           const devices = await Html5Qrcode.getCameras();
-          if (devices && devices.length) {
-            const back = devices.find(d => (d.label || "").toLowerCase().includes("back"));
-            cameraConfig = back ? back.id : devices[0].id;
+          if (Array.isArray(devices) && devices.length) {
+            devicesRef.current = devices;
+            // se o config atual é facingMode, tenta escolher a traseira pelo label
+            if (cameraConfig?.facingMode) {
+              const back = devices.find((d) =>
+                (d.label || "").toLowerCase().includes("back")
+              );
+              if (back) {
+                // preferir id da traseira no mobile
+                setCameraConfig(back.id);
+              }
+            }
           }
-        } catch {}
+        } catch {
+          // sem getCameras não bloqueia
+        }
 
         const onSuccess = async (decodedText) => {
           if (!decodedText || processedRef.current) return;
@@ -69,31 +145,33 @@ export default function Scanner() {
           setResultado(decodedText);
           toast.success("✅ QR Code lido com sucesso!");
 
-          // mostra overlay e encerra câmera antes de navegar
           setHandoff(true);
-
-          const stop = (async () => { try { await html5QrCode.stop(); } catch {} })();
-          await Promise.race([stop, new Promise(r => setTimeout(r, 600))]);
-          try { await html5QrCode.clear(); } catch {}
-          html5QrCodeRef.current = null;
+          // encerra câmera antes de navegar
+          const stop = stopCamera();
+          await Promise.race([stop, new Promise((r) => setTimeout(r, 600))]);
 
           setTimeout(() => {
             if (!mountedRef.current) return;
-            navigate(`/validar-presenca?codigo=${encodeURIComponent(decodedText)}`, { replace: true });
+            navigate(
+              `/validar-presenca?codigo=${encodeURIComponent(decodedText)}`,
+              { replace: true }
+            );
           }, 50);
         };
 
-        const onError = () => {}; // silencia ruído de leitura
+        const onError = () => {}; // reduz ruído
 
-        await html5QrCode.start(
-          cameraConfig,
-          { fps: 10, qrbox: 250 },
-          onSuccess,
-          onError
-        );
+        const configArg =
+          typeof cameraConfig === "string"
+            ? { deviceId: { exact: cameraConfig } }
+            : cameraConfig; // { facingMode: ... }
+
+        await html5QrCode.start(configArg, { fps: 10, qrbox: 250 }, onSuccess, onError);
 
         timeoutRef.current = setTimeout(() => {
-          if (!processedRef.current) toast.error("⚠️ Nenhum QR Code detectado. Tente novamente.");
+          if (!processedRef.current) {
+            toast.error("⚠️ Nenhum QR Code detectado. Tente novamente.");
+          }
         }, 20000);
 
         setErro(false);
@@ -102,14 +180,24 @@ export default function Scanner() {
         setErro(true);
         toast.error("❌ Erro ao iniciar o scanner.");
       }
-    };
+    },
+    [cameraConfig, navigate, stopCamera]
+  );
 
-    iniciarLeitor();
+  // ciclo de vida da câmera
+  useEffect(() => {
+    if (iniciando) return;
+    processedRef.current = false;
+    setResultado(null);
+    setDetectado(false);
+    setHandoff(false);
+    startCamera();
 
-    // pausa a câmera quando a aba perde foco (evita travar UI)
     const onVis = async () => {
       if (document.hidden && html5QrCodeRef.current) {
-        try { await html5QrCodeRef.current.stop(); } catch {}
+        try {
+          await html5QrCodeRef.current.stop();
+        } catch {}
       }
     };
     document.addEventListener("visibilitychange", onVis);
@@ -118,20 +206,48 @@ export default function Scanner() {
       document.removeEventListener("visibilitychange", onVis);
       clearTimeout(timeoutRef.current);
       processedRef.current = false;
-      if (html5QrCodeRef.current) {
-        html5QrCodeRef.current
-          .stop()
-          .then(() => html5QrCodeRef.current?.clear())
-          .catch(() => {});
-        html5QrCodeRef.current = null;
-      }
+      stopCamera();
     };
-  }, [iniciando, navigate]);
+  }, [iniciando, startCamera, stopCamera]);
+
+  // ações do hero
+  const handleRestart = async () => {
+    processedRef.current = false;
+    setResultado(null);
+    setDetectado(false);
+    setHandoff(false);
+    await startCamera();
+  };
+
+  const handleToggleCamera = async () => {
+    const list = devicesRef.current || [];
+    if (list.length >= 2) {
+      // alterna entre a atual e a outra
+      const currentId = typeof cameraConfig === "string" ? cameraConfig : null;
+      if (currentId) {
+        const idx = list.findIndex((d) => d.id === currentId);
+        const next = list[(idx + 1) % list.length];
+        setCameraConfig(next?.id || { facingMode: "environment" });
+      } else {
+        // estava em facingMode: escolhe a primeira id
+        setCameraConfig(list[0].id);
+      }
+    } else {
+      // sem múltiplas: alterna facingMode
+      const fm = cameraConfig?.facingMode === "user" ? "environment" : "user";
+      setCameraConfig({ facingMode: fm });
+    }
+    // reinicia automaticamente via useEffect
+  };
 
   return (
     <div className="flex flex-col min-h-screen bg-gelo dark:bg-neutral-900">
-      {/* 🟧 Faixa compacta e centralizada (mantendo família “presenças/QR” em laranja) */}
-      <PageHeader title="Escanear QR Code" icon={QrCode} variant="laranja" />
+      {/* 🔶 Hero laranja (padronizado) */}
+      <HeaderHero
+        onRestart={handleRestart}
+        onToggleCamera={handleToggleCamera}
+        variant="orange"
+      />
 
       <main role="main" className="flex-1">
         <motion.div
@@ -145,7 +261,7 @@ export default function Scanner() {
             className="text-gray-700 dark:text-gray-300 mb-4 max-w-md mx-auto"
             aria-live="polite"
           >
-            Aponte a câmera para o QR Code fixado na sala. A leitura será automática e sua presença será registrada.
+            Se solicitado, permita o acesso à câmera do dispositivo.
           </p>
 
           {erro ? (
@@ -193,7 +309,6 @@ export default function Scanner() {
         </motion.div>
       </main>
 
-      {/* Rodapé institucional */}
       <Footer />
     </div>
   );

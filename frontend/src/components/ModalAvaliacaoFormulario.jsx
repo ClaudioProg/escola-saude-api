@@ -1,13 +1,19 @@
 // 📁 src/components/ModalAvaliacaoFormulario.jsx
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef, useEffect } from "react";
 import { toast } from "react-toastify";
-import Modal from "./Modal"; // ✅ use o Modal da base
+import Modal from "./Modal";
 import { apiPost } from "../services/api";
 
-const OPCOES = ["Ótimo", "Bom", "Regular", "Ruim", "Péssimo"];
+const OPCOES = [
+  { label: "Ótimo", value: "Ótimo", nota: 5 },
+  { label: "Bom", value: "Bom", nota: 4 },
+  { label: "Regular", value: "Regular", nota: 3 },
+  { label: "Ruim", value: "Ruim", nota: 2 },
+  { label: "Péssimo", value: "Péssimo", nota: 1 },
+];
+const LABELS_VALIDAS = new Set(OPCOES.map((o) => o.value));
 
-// normaliza strings p/ comparações sem acento/caixa
-const norm = (s) =>
+const NORM = (s) =>
   (s || "")
     .toString()
     .normalize("NFD")
@@ -15,6 +21,7 @@ const norm = (s) =>
     .toLowerCase()
     .trim();
 
+/* ───────────────── Campos ───────────────── */
 const CAMPOS_BASE = [
   { chave: "divulgacao_evento", rotulo: "Divulgação do evento" },
   { chave: "recepcao", rotulo: "Recepção" },
@@ -30,6 +37,32 @@ const CAMPOS_BASE = [
   { chave: "inscricao_online", rotulo: "Inscrição online" },
 ];
 
+// Condicionais (visuais; não obrigatórios; fora da média)
+const COND_SIMPOSIO_OU_CONGRESSO = [
+  { chave: "exposicao_trabalhos", rotulo: "Exposição de trabalhos" },
+];
+const COND_CONGRESSO = [
+  { chave: "apresentacao_oral_mostra", rotulo: "Apresentação oral na mostra" },
+  { chave: "apresentacao_tcrs", rotulo: "Apresentação dos TCRs" },
+  { chave: "oficinas", rotulo: "Oficinas" },
+];
+
+// Obrigatórios (fixos, conforme sua regra)
+const OBRIGATORIOS = new Set([
+  "desempenho_instrutor",
+  "divulgacao_evento",
+  "recepcao",
+  "credenciamento",
+  "material_apoio",
+  "pontualidade",
+  "sinalizacao_local",
+  "conteudo_temas",
+  "estrutura_local",
+  "acessibilidade",
+  "limpeza",
+  "inscricao_online",
+]); // ⚠️ sem 'exposicao_trabalhos'
+
 export default function ModalAvaliacaoFormulario({
   isOpen,
   onClose,
@@ -37,81 +70,89 @@ export default function ModalAvaliacaoFormulario({
   turma_id,
   recarregar,
 }) {
+  // Hooks no topo
   const [comentarios_finais, setComentariosFinais] = useState("");
   const [gostou_mais, setGostouMais] = useState("");
   const [sugestoes_melhoria, setSugestoesMelhoria] = useState("");
   const [notas, setNotas] = useState({});
   const [enviando, setEnviando] = useState(false);
+  const primeiroCampoRef = useRef(null);
 
-  if (!evento) return null;
-
-  const tipoNorm = norm(evento.tipo);
+  // Derivados
+  const tipoNorm = NORM(evento?.tipo);
   const isCongresso = tipoNorm === "congresso";
-  const isSimposio = tipoNorm === "simposio"; // cobre “simpósio” e “simposio”
+  const isSimposio = tipoNorm === "simposio" || tipoNorm === "simpósio";
 
   const camposNotas = useMemo(() => {
-    const extraSimposioOuCongresso = isCongresso || isSimposio
-      ? [{ chave: "exposicao_trabalhos", rotulo: "Exposição de trabalhos" }]
-      : [];
-    const extraCongresso = isCongresso
-      ? [
-          { chave: "apresentacao_oral_mostra", rotulo: "Apresentação oral na mostra" },
-          { chave: "apresentacao_tcrs", rotulo: "Apresentação dos TCRs" },
-          { chave: "oficinas", rotulo: "Oficinas" },
-        ]
-      : [];
-    return [...CAMPOS_BASE, ...extraSimposioOuCongresso, ...extraCongresso];
+    const extras = [];
+    if (isCongresso || isSimposio) extras.push(...COND_SIMPOSIO_OU_CONGRESSO);
+    if (isCongresso) extras.push(...COND_CONGRESSO);
+    return [...CAMPOS_BASE, ...extras];
   }, [isCongresso, isSimposio]);
 
-  // obrigatórios dinâmicos
-  const obrigatorios = useMemo(() => {
-    const base = new Set(CAMPOS_BASE.map((c) => c.chave));
-    if (isCongresso || isSimposio) base.add("exposicao_trabalhos");
-    return base;
-  }, [isCongresso, isSimposio]);
+  useEffect(() => {
+    if (isOpen) {
+      setNotas({});
+      setGostouMais("");
+      setSugestoesMelhoria("");
+      setComentariosFinais("");
+      setTimeout(() => primeiroCampoRef.current?.focus(), 30);
+    }
+  }, [isOpen, evento?.id, turma_id]);
 
-  const handleNotaChange = (campo, valor) =>
-    setNotas((prev) => ({ ...prev, [campo]: valor }));
+  if (!isOpen || !evento) return null;
 
-  const enviarAvaliacao = async () => {
+  const handleNotaChange = (campo, valorLabel) =>
+    setNotas((prev) => ({ ...prev, [campo]: valorLabel })); // 👈 envia string (“Ótimo”, …)
+
+  async function enviarAvaliacao() {
     const usuario = JSON.parse(localStorage.getItem("usuario") || "{}");
     if (!usuario?.id) {
       toast.error("Usuário não identificado.");
       return;
     }
 
-    // checagem de obrigatórios
-    const faltando = [...obrigatorios].filter((c) => !notas[c]);
+    // checar obrigatórios: precisa existir e ser uma label válida
+    const faltando = [...OBRIGATORIOS].filter(
+      (c) => !notas[c] || !LABELS_VALIDAS.has(String(notas[c]))
+    );
     if (faltando.length) {
-      toast.warning("Preencha todos os campos obrigatórios.");
+      toast.warning("Preencha todas as notas obrigatórias.");
       return;
     }
 
     try {
       setEnviando(true);
-      await apiPost("/api/avaliacoes", {
-        evento_id: evento.id,
-        turma_id,
-        ...notas,
+
+      // payload com strings (compatível com seu controller e com a tabela)
+      const payload = {
+        evento_id: Number(evento.evento_id ?? evento.id),
+        turma_id: Number(turma_id),
         gostou_mais,
         sugestoes_melhoria,
         comentarios_finais,
-      });
+      };
+
+      for (const { chave } of [
+        ...CAMPOS_BASE,
+        ...COND_SIMPOSIO_OU_CONGRESSO,
+        ...COND_CONGRESSO,
+      ]) {
+        if (notas[chave]) payload[chave] = String(notas[chave]);
+      }
+
+      await apiPost("/api/avaliacoes", payload);
+
       toast.success("✅ Avaliação enviada com sucesso!");
       onClose?.();
       recarregar?.();
-      // opcional: limpar estado ao fechar
-      setNotas({});
-      setGostouMais("");
-      setSugestoesMelhoria("");
-      setComentariosFinais("");
     } catch (err) {
       console.error(err);
       toast.error("❌ Erro ao enviar avaliação.");
     } finally {
       setEnviando(false);
     }
-  };
+  }
 
   return (
     <Modal
@@ -121,8 +162,11 @@ export default function ModalAvaliacaoFormulario({
       describedBy="descricao-avaliacao"
       className="w-[95%] max-w-3xl"
     >
-      <h2 id="titulo-avaliacao" className="text-2xl font-bold text-lousa dark:text-green-100 mb-4">
-        ✍️ Avaliar: {evento.nome || evento.titulo}
+      <h2
+        id="titulo-avaliacao"
+        className="text-2xl font-bold text-lousa dark:text-green-100 mb-4"
+      >
+        ✍️ Avaliar: {evento?.nome || evento?.titulo || "Evento"}
       </h2>
       <p id="descricao-avaliacao" className="sr-only">
         Formulário de avaliação do evento. Selecione uma opção para cada critério.
@@ -130,8 +174,8 @@ export default function ModalAvaliacaoFormulario({
 
       {/* Campos de notas */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-[60vh] overflow-y-auto pr-2">
-        {camposNotas.map(({ chave, rotulo }) => {
-          const obrig = obrigatorios.has(chave);
+        {camposNotas.map(({ chave, rotulo }, idx) => {
+          const obrig = OBRIGATORIOS.has(chave);
           return (
             <fieldset
               key={chave}
@@ -139,20 +183,29 @@ export default function ModalAvaliacaoFormulario({
               aria-required={obrig ? "true" : "false"}
             >
               <legend className="text-sm font-medium text-gray-700 dark:text-gray-200">
-                {rotulo} {obrig ? <span className="text-red-600" title="Obrigatório">*</span> : null}
+                {rotulo}{" "}
+                {obrig ? (
+                  <span className="text-red-600" title="Obrigatório">
+                    *
+                  </span>
+                ) : null}
               </legend>
+
               <div className="mt-2 flex flex-wrap gap-3">
-                {OPCOES.map((opt) => (
-                  <label key={opt} className="inline-flex items-center gap-2 text-sm">
+                {OPCOES.map(({ label, value, nota }) => (
+                  <label key={value} className="inline-flex items-center gap-2 text-sm">
                     <input
+                      ref={idx === 0 && value === "Ótimo" ? primeiroCampoRef : undefined}
                       type="radio"
                       name={chave}
-                      value={opt}
-                      checked={notas[chave] === opt}
+                      value={value}
+                      checked={String(notas[chave]) === value}
                       onChange={(e) => handleNotaChange(chave, e.target.value)}
                       className="accent-emerald-600"
                     />
-                    <span>{opt}</span>
+                    <span>
+                      {label} <span className="text-xs text-gray-500">({nota})</span>
+                    </span>
                   </label>
                 ))}
               </div>

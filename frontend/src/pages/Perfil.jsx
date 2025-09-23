@@ -1,24 +1,72 @@
 // 📁 src/pages/Perfil.jsx
 import { useEffect, useRef, useState } from "react";
 import { toast } from "react-toastify";
-import Breadcrumbs from "../components/Breadcrumbs";
+// 🔁 removido Breadcrumbs e PageHeader para usar o hero padronizado
 import ModalAssinatura from "../components/ModalAssinatura";
 import { apiGet, apiPatch, apiPerfilMe, setPerfilIncompletoFlag } from "../services/api";
-
-// Cabeçalho compacto + rodapé institucional
-import PageHeader from "../components/PageHeader";
 import Footer from "../components/Footer";
-import { User } from "lucide-react";
+import BotaoPrimario from "../components/BotaoPrimario";
+import { User, Save, Edit } from "lucide-react";
+
+/* ───────────────── Hero padronizado ───────────────── */
+function HeaderHero({ onSave, onAssinatura, podeGerenciarAssinatura = false, salvando = false, variant = "petroleo" }) {
+  const variants = {
+    sky: "from-sky-900 via-sky-800 to-sky-700",
+    violet: "from-violet-900 via-violet-800 to-violet-700",
+    amber: "from-amber-900 via-amber-800 to-amber-700",
+    rose: "from-rose-900 via-rose-800 to-rose-700",
+    teal: "from-teal-900 via-teal-800 to-teal-700",
+    indigo: "from-indigo-900 via-indigo-800 to-indigo-700",
+    petroleo: "from-slate-900 via-teal-900 to-slate-800",
+  };
+  const grad = variants[variant] ?? variants.petroleo;
+
+  return (
+    <header className={`bg-gradient-to-br ${grad} text-white`}>
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 flex flex-col items-center text-center gap-3">
+        <div className="inline-flex items-center gap-2">
+          <User className="w-5 h-5" aria-hidden="true" />
+          <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">Meu Perfil</h1>
+        </div>
+        <p className="text-sm text-white/90">
+          Atualize seus dados pessoais e preferências. CPF fica visível e não pode ser alterado aqui.
+        </p>
+
+        <div className="flex flex-wrap gap-2 justify-center">
+          <BotaoPrimario
+            onClick={onSave}
+            disabled={salvando}
+            aria-label="Salvar alterações no perfil"
+            icone={<Save className="w-4 h-4" />}
+          >
+            {salvando ? "Salvando..." : "Salvar alterações"}
+          </BotaoPrimario>
+
+          {podeGerenciarAssinatura && (
+            <BotaoPrimario
+              onClick={onAssinatura}
+              variante="secundario"
+              aria-label="Gerenciar assinatura digital"
+              icone={<Edit className="w-4 h-4" />}
+            >
+              Gerenciar assinatura
+            </BotaoPrimario>
+          )}
+        </div>
+      </div>
+    </header>
+  );
+}
 
 export default function Perfil() {
   const [usuario, setUsuario] = useState(null);
 
   // básicos
   const [nome, setNome] = useState("");
-  const [cpf, setCpf] = useState("");                      // ✅ visível (read-only)
+  const [cpf, setCpf] = useState(""); // ✅ visível (read-only)
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
-  const [registro, setRegistro] = useState("");            // (opcional) com máscara
+  const [registro, setRegistro] = useState(""); // (opcional) com máscara
   const [dataNascimento, setDataNascimento] = useState(""); // YYYY-MM-DD
 
   // selects (IDs) — SEMPRE STRINGS
@@ -120,7 +168,7 @@ export default function Perfil() {
 
       setUsuario(u);
       setNome(u.nome || "");
-      setCpf(aplicarMascaraCPF(u.cpf || ""));               // ✅ carrega CPF
+      setCpf(aplicarMascaraCPF(u.cpf || "")); // ✅ carrega CPF
       setEmail(u.email || "");
       setRegistro(maskRegistro(u.registro || ""));
       setDataNascimento(toYMD(u.data_nascimento) || "");
@@ -148,11 +196,13 @@ export default function Perfil() {
 
         // 🔒 preserva CPF se a API não devolver
         let antigo = {};
-        try { antigo = JSON.parse(localStorage.getItem("usuario") || "{}"); } catch {}
+        try {
+          antigo = JSON.parse(localStorage.getItem("usuario") || "{}");
+        } catch {}
         const cpfFinal = me.cpf ?? antigo.cpf ?? "";
 
         setNome(me.nome || "");
-        setCpf(aplicarMascaraCPF(cpfFinal));                // ✅ não zera mais o CPF
+        setCpf(aplicarMascaraCPF(cpfFinal)); // ✅ não zera mais o CPF
         setEmail(me.email || "");
         setRegistro(maskRegistro(me.registro || ""));
         setDataNascimento(toYMD(me.data_nascimento) || "");
@@ -176,7 +226,9 @@ export default function Perfil() {
         console.warn("Falha ao buscar perfil:", e?.message || e);
       }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, []);
 
   // listas auxiliares (padronizadas com /api)
@@ -214,35 +266,93 @@ export default function Perfil() {
 
   // ⚠️ Perfil incompleto? (usa os estados atuais da tela)
   const perfilIncompleto = [
-    unidadeId, cargoId, generoId, orientacaoSexualId,
-    corRacaId, escolaridadeId, deficienciaId, dataNascimento,
+    unidadeId,
+    cargoId,
+    generoId,
+    orientacaoSexualId,
+    corRacaId,
+    escolaridadeId,
+    deficienciaId,
+    dataNascimento,
   ].some((v) => !String(v || "").trim());
 
   // limpar erros
   const clearErrors = () => {
-    setENome(""); setEEmail(""); setESenha(""); setERegistro(""); setEData("");
-    setEUnidade(""); setECargo(""); setEGenero(""); setEOrientacao(""); setECor(""); setEEscolaridade(""); setEDeficiencia("");
+    setENome("");
+    setEEmail("");
+    setESenha("");
+    setERegistro("");
+    setEData("");
+    setEUnidade("");
+    setECargo("");
+    setEGenero("");
+    setEOrientacao("");
+    setECor("");
+    setEEscolaridade("");
+    setEDeficiencia("");
   };
 
   // aplica erros do servidor e foca no primeiro
   const aplicarErrosServidor = (fields = {}) => {
     clearErrors();
     let focou = false;
-    const focar = (ref) => { if (!focou && ref?.current) { ref.current.scrollIntoView({ behavior: "smooth", block: "center" }); ref.current.focus(); focou = true; } };
+    const focar = (ref) => {
+      if (!focou && ref?.current) {
+        ref.current.scrollIntoView({ behavior: "smooth", block: "center" });
+        ref.current.focus();
+        focou = true;
+      }
+    };
 
-    if (fields.nome) { setENome(fields.nome); focar(rNome); }
-    if (fields.email) { setEEmail(fields.email); focar(rEmail); }
-    if (fields.senha || fields.novaSenha) { setESenha(fields.senha || fields.novaSenha); focar(rSenha); }
-    if (fields.registro) { setERegistro(fields.registro); focar(rRegistro); }
-    if (fields.data_nascimento) { setEData(fields.data_nascimento); focar(rData); }
+    if (fields.nome) {
+      setENome(fields.nome);
+      focar(rNome);
+    }
+    if (fields.email) {
+      setEEmail(fields.email);
+      focar(rEmail);
+    }
+    if (fields.senha || fields.novaSenha) {
+      setESenha(fields.senha || fields.novaSenha);
+      focar(rSenha);
+    }
+    if (fields.registro) {
+      setERegistro(fields.registro);
+      focar(rRegistro);
+    }
+    if (fields.data_nascimento) {
+      setEData(fields.data_nascimento);
+      focar(rData);
+    }
 
-    if (fields.unidade_id) { setEUnidade(fields.unidade_id); focar(rUnidade); }
-    if (fields.cargo_id) { setECargo(fields.cargo_id); focar(rCargo); }
-    if (fields.genero_id) { setEGenero(fields.genero_id); focar(rGenero); }
-    if (fields.orientacao_sexual_id) { setEOrientacao(fields.orientacao_sexual_id); focar(rOrientacao); }
-    if (fields.cor_raca_id) { setECor(fields.cor_raca_id); focar(rCor); }
-    if (fields.escolaridade_id) { setEEscolaridade(fields.escolaridade_id); focar(rEscolaridade); }
-    if (fields.deficiencia_id) { setEDeficiencia(fields.deficiencia_id); focar(rDeficiencia); }
+    if (fields.unidade_id) {
+      setEUnidade(fields.unidade_id);
+      focar(rUnidade);
+    }
+    if (fields.cargo_id) {
+      setECargo(fields.cargo_id);
+      focar(rCargo);
+    }
+    if (fields.genero_id) {
+      setEGenero(fields.genero_id);
+      focar(rGenero);
+    }
+    if (fields.orientacao_sexual_id) {
+      setEOrientacao(fields.orientacao_sexual_id);
+      focar(rOrientacao);
+    }
+    if (fields.cor_raca_id) {
+      setECor(fields.cor_raca_id);
+      focar(rCor);
+    }
+    if (fields.escolaridade_id) {
+      setEEscolaridade(fields.escolaridade_id);
+      focar(rEscolaridade);
+    }
+    if (fields.deficiencia_id) {
+      setEDeficiencia(fields.deficiencia_id);
+      focar(rDeficiencia);
+    }
   };
 
   const salvarAlteracoes = async () => {
@@ -251,10 +361,26 @@ export default function Perfil() {
     clearErrors();
 
     // validações rápidas no cliente
-    if (!nome.trim()) { setENome("Informe seu nome."); rNome.current?.focus(); return; }
-    if (!validarEmail(email)) { setEEmail("E-mail inválido."); rEmail.current?.focus(); return; }
-    if (senha && senha.length < 8) { setESenha("A nova senha deve ter pelo menos 8 caracteres."); rSenha.current?.focus(); return; }
-    if (dataNascimento && !/^\d{4}-\d{2}-\d{2}$/.test(dataNascimento)) { setEData("Data inválida (use YYYY-MM-DD)."); rData.current?.focus(); return; }
+    if (!nome.trim()) {
+      setENome("Informe seu nome.");
+      rNome.current?.focus();
+      return;
+    }
+    if (!validarEmail(email)) {
+      setEEmail("E-mail inválido.");
+      rEmail.current?.focus();
+      return;
+    }
+    if (senha && senha.length < 8) {
+      setESenha("A nova senha deve ter pelo menos 8 caracteres.");
+      rSenha.current?.focus();
+      return;
+    }
+    if (dataNascimento && !/^\d{4}-\d{2}-\d{2}$/.test(dataNascimento)) {
+      setEData("Data inválida (use YYYY-MM-DD).");
+      rData.current?.focus();
+      return;
+    }
 
     const payload = {
       nome: nome.trim(),
@@ -287,7 +413,7 @@ export default function Perfil() {
       setUsuario(novo);
       setSenha("");
 
-      setCpf(aplicarMascaraCPF(novo.cpf ?? cpf ?? ""));     // ✅ mantém sincronizado / preserva atual
+      setCpf(aplicarMascaraCPF(novo.cpf ?? cpf ?? "")); // ✅ mantém sincronizado / preserva atual
       setRegistro(maskRegistro(novo.registro || ""));
       setDataNascimento(toYMD(novo.data_nascimento) || "");
       setUnidadeId(asStr(novo.unidade_id));
@@ -311,11 +437,23 @@ export default function Perfil() {
     }
   };
 
+  const podeGerenciarAssinatura =
+    (Array.isArray(usuario?.perfil)
+      ? usuario.perfil.map((p) => String(p).toLowerCase())
+      : [String(usuario?.perfil || "").toLowerCase()]
+    ).some((p) => p === "instrutor" || p === "administrador");
+
   // estado inicial de carregamento do localStorage/me
   if (!usuario) {
     return (
       <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900">
-        <PageHeader title="Meu Perfil" icon={User} variant="petroleo" />
+        <HeaderHero
+          onSave={salvarAlteracoes}
+          onAssinatura={() => setModalAberto(true)}
+          podeGerenciarAssinatura={false}
+          salvando={true}
+          variant="petroleo"
+        />
         <main role="main" className="flex-1 max-w-3xl mx-auto px-4 py-8">
           <p className="text-center text-gray-600 dark:text-gray-300">🔄 Carregando dados do perfil...</p>
         </main>
@@ -324,20 +462,18 @@ export default function Perfil() {
     );
   }
 
-  const podeGerenciarAssinatura =
-    (Array.isArray(usuario.perfil)
-      ? usuario.perfil.map((p) => String(p).toLowerCase())
-      : [String(usuario.perfil || "").toLowerCase()]
-    ).some((p) => p === "instrutor" || p === "administrador");
-
   return (
     <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900">
-      {/* 🟦 Área de conta/usuário = petróleo */}
-      <PageHeader title="Meu Perfil" icon={User} variant="petroleo" />
+      {/* 🟦 Hero petróleo (área de conta/usuário) */}
+      <HeaderHero
+        onSave={salvarAlteracoes}
+        onAssinatura={() => setModalAberto(true)}
+        podeGerenciarAssinatura={podeGerenciarAssinatura}
+        salvando={salvando}
+        variant="petroleo"
+      />
 
       <main role="main" className="flex-1 max-w-3xl mx-auto px-4 py-8">
-        <Breadcrumbs trilha={[{ label: "Painel" }, { label: "Perfil" }]} />
-
         <h1 className="sr-only">Meu Perfil</h1>
 
         <div className="bg-white dark:bg-zinc-800 p-6 rounded-xl shadow space-y-6">
@@ -372,8 +508,13 @@ export default function Perfil() {
                 ref={rNome}
                 type="text"
                 value={nome}
-                onChange={(e) => { setNome(e.target.value); setENome(""); }}
-                className={`mt-1 w-full px-4 py-2 border rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 ${eNome ? "border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"}`}
+                onChange={(e) => {
+                  setNome(e.target.value);
+                  setENome("");
+                }}
+                className={`mt-1 w-full px-4 py-2 border rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 ${
+                  eNome ? "border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"
+                }`}
                 aria-label="Nome completo"
                 aria-invalid={!!eNome}
                 aria-describedby={eNome ? "erro-nome" : undefined}
@@ -407,8 +548,13 @@ export default function Perfil() {
                 ref={rEmail}
                 type="email"
                 value={email}
-                onChange={(e) => { setEmail(e.target.value); setEEmail(""); }}
-                className={`mt-1 w-full px-4 py-2 border rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 ${eEmail ? "border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"}`}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  setEEmail("");
+                }}
+                className={`mt-1 w-full px-4 py-2 border rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 ${
+                  eEmail ? "border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"
+                }`}
                 autoComplete="email"
                 aria-label="E-mail"
                 aria-invalid={!!eEmail}
@@ -426,9 +572,14 @@ export default function Perfil() {
                 ref={rSenha}
                 type="password"
                 value={senha}
-                onChange={(e) => { setSenha(e.target.value); setESenha(""); }}
+                onChange={(e) => {
+                  setSenha(e.target.value);
+                  setESenha("");
+                }}
                 placeholder="Digite para alterar a senha"
-                className={`mt-1 w-full px-4 py-2 border rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 ${eSenha ? "border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"}`}
+                className={`mt-1 w-full px-4 py-2 border rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 ${
+                  eSenha ? "border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"
+                }`}
                 autoComplete="new-password"
                 aria-label="Nova senha"
                 minLength={8}
@@ -449,8 +600,13 @@ export default function Perfil() {
                 ref={rRegistro}
                 type="text"
                 value={registro}
-                onChange={(e) => { setRegistro(maskRegistro(e.target.value)); setERegistro(""); }}
-                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${eRegistro ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"} disabled:opacity-60`}
+                onChange={(e) => {
+                  setRegistro(maskRegistro(e.target.value));
+                  setERegistro("");
+                }}
+                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${
+                  eRegistro ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"
+                } disabled:opacity-60`}
                 placeholder="Ex.: 10.010-1"
                 disabled={salvando}
                 aria-invalid={!!eRegistro}
@@ -467,8 +623,13 @@ export default function Perfil() {
                 ref={rData}
                 type="date"
                 value={dataNascimento}
-                onChange={(e) => { setDataNascimento(e.target.value); setEData(""); }}
-                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${eData ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"} disabled:opacity-60`}
+                onChange={(e) => {
+                  setDataNascimento(e.target.value);
+                  setEData("");
+                }}
+                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${
+                  eData ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"
+                } disabled:opacity-60`}
                 disabled={salvando}
                 aria-invalid={!!eData}
                 aria-describedby={eData ? "erro-data" : undefined}
@@ -486,15 +647,22 @@ export default function Perfil() {
               <select
                 ref={rUnidade}
                 value={unidadeId}
-                onChange={(e) => { setUnidadeId(e.target.value); setEUnidade(""); }}
-                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${eUnidade ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"} disabled:opacity-60`}
+                onChange={(e) => {
+                  setUnidadeId(e.target.value);
+                  setEUnidade("");
+                }}
+                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${
+                  eUnidade ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"
+                } disabled:opacity-60`}
                 disabled={salvando || carregandoListas}
                 aria-invalid={!!eUnidade}
                 aria-describedby={eUnidade ? "erro-unidade" : undefined}
               >
                 <option value="">Selecione…</option>
                 {unidades.map((u) => (
-                  <option key={u.id} value={String(u.id)}>{u.sigla}</option>
+                  <option key={u.id} value={String(u.id)}>
+                    {u.sigla}
+                  </option>
                 ))}
               </select>
               {eUnidade && <p id="erro-unidade" className="text-xs text-red-500 mt-1">{eUnidade}</p>}
@@ -507,15 +675,22 @@ export default function Perfil() {
               <select
                 ref={rEscolaridade}
                 value={escolaridadeId}
-                onChange={(e) => { setEscolaridadeId(e.target.value); setEEscolaridade(""); }}
-                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${eEscolaridade ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"} disabled:opacity-60`}
+                onChange={(e) => {
+                  setEscolaridadeId(e.target.value);
+                  setEEscolaridade("");
+                }}
+                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${
+                  eEscolaridade ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"
+                } disabled:opacity-60`}
                 disabled={salvando || carregandoListas}
                 aria-invalid={!!eEscolaridade}
                 aria-describedby={eEscolaridade ? "erro-escolaridade" : undefined}
               >
                 <option value="">Selecione…</option>
                 {escolaridades.map((esc) => (
-                  <option key={esc.id} value={String(esc.id)}>{esc.nome}</option>
+                  <option key={esc.id} value={String(esc.id)}>
+                    {esc.nome}
+                  </option>
                 ))}
               </select>
               {eEscolaridade && <p id="erro-escolaridade" className="text-xs text-red-500 mt-1">{eEscolaridade}</p>}
@@ -531,15 +706,22 @@ export default function Perfil() {
               <select
                 ref={rCargo}
                 value={cargoId}
-                onChange={(e) => { setCargoId(e.target.value); setECargo(""); }}
-                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${eCargo ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"} disabled:opacity-60`}
+                onChange={(e) => {
+                  setCargoId(e.target.value);
+                  setECargo("");
+                }}
+                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${
+                  eCargo ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"
+                } disabled:opacity-60`}
                 disabled={salvando || carregandoListas}
                 aria-invalid={!!eCargo}
                 aria-describedby={eCargo ? "erro-cargo" : undefined}
               >
                 <option value="">Selecione…</option>
                 {cargos.map((c) => (
-                  <option key={c.id} value={String(c.id)}>{c.nome}</option>
+                  <option key={c.id} value={String(c.id)}>
+                    {c.nome}
+                  </option>
                 ))}
               </select>
               {eCargo && <p id="erro-cargo" className="text-xs text-red-500 mt-1">{eCargo}</p>}
@@ -555,15 +737,22 @@ export default function Perfil() {
               <select
                 ref={rGenero}
                 value={generoId}
-                onChange={(e) => { setGeneroId(e.target.value); setEGenero(""); }}
-                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${eGenero ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"} disabled:opacity-60`}
+                onChange={(e) => {
+                  setGeneroId(e.target.value);
+                  setEGenero("");
+                }}
+                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${
+                  eGenero ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"
+                } disabled:opacity-60`}
                 disabled={salvando || carregandoListas}
                 aria-invalid={!!eGenero}
                 aria-describedby={eGenero ? "erro-genero" : undefined}
               >
                 <option value="">Selecione…</option>
                 {generos.map((g) => (
-                  <option key={g.id} value={String(g.id)}>{g.nome}</option>
+                  <option key={g.id} value={String(g.id)}>
+                    {g.nome}
+                  </option>
                 ))}
               </select>
               {eGenero && <p id="erro-genero" className="text-xs text-red-500 mt-1">{eGenero}</p>}
@@ -576,15 +765,22 @@ export default function Perfil() {
               <select
                 ref={rOrientacao}
                 value={orientacaoSexualId}
-                onChange={(e) => { setOrientacaoSexualId(e.target.value); setEOrientacao(""); }}
-                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${eOrientacao ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"} disabled:opacity-60`}
+                onChange={(e) => {
+                  setOrientacaoSexualId(e.target.value);
+                  setEOrientacao("");
+                }}
+                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${
+                  eOrientacao ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"
+                } disabled:opacity-60`}
                 disabled={salvando || carregandoListas}
                 aria-invalid={!!eOrientacao}
                 aria-describedby={eOrientacao ? "erro-orientacao" : undefined}
               >
                 <option value="">Selecione…</option>
                 {orientacoes.map((o) => (
-                  <option key={o.id} value={String(o.id)}>{o.nome}</option>
+                  <option key={o.id} value={String(o.id)}>
+                    {o.nome}
+                  </option>
                 ))}
               </select>
               {eOrientacao && <p id="erro-orientacao" className="text-xs text-red-500 mt-1">{eOrientacao}</p>}
@@ -597,15 +793,22 @@ export default function Perfil() {
               <select
                 ref={rCor}
                 value={corRacaId}
-                onChange={(e) => { setCorRacaId(e.target.value); setECor(""); }}
-                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${eCor ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"} disabled:opacity-60`}
+                onChange={(e) => {
+                  setCorRacaId(e.target.value);
+                  setECor("");
+                }}
+                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${
+                  eCor ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"
+                } disabled:opacity-60`}
                 disabled={salvando || carregandoListas}
                 aria-invalid={!!eCor}
                 aria-describedby={eCor ? "erro-cor" : undefined}
               >
                 <option value="">Selecione…</option>
                 {coresRacas.map((c) => (
-                  <option key={c.id} value={String(c.id)}>{c.nome}</option>
+                  <option key={c.id} value={String(c.id)}>
+                    {c.nome}
+                  </option>
                 ))}
               </select>
               {eCor && <p id="erro-cor" className="text-xs text-red-500 mt-1">{eCor}</p>}
@@ -618,21 +821,26 @@ export default function Perfil() {
               <select
                 ref={rDeficiencia}
                 value={deficienciaId}
-                onChange={(e) => { setDeficienciaId(e.target.value); setEDeficiencia(""); }}
-                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${eDeficiencia ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"} disabled:opacity-60`}
+                onChange={(e) => {
+                  setDeficienciaId(e.target.value);
+                  setEDeficiencia("");
+                }}
+                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${
+                  eDeficiencia ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"
+                } disabled:opacity-60`}
                 disabled={salvando || carregandoListas}
                 aria-invalid={!!eDeficiencia}
                 aria-describedby={eDeficiencia ? "erro-deficiencia" : undefined}
               >
                 <option value="">Selecione…</option>
                 {deficiencias.map((d) => (
-                  <option key={d.id} value={String(d.id)}>{d.nome}</option>
+                  <option key={d.id} value={String(d.id)}>
+                    {d.nome}
+                  </option>
                 ))}
               </select>
               {eDeficiencia && <p id="erro-deficiencia" className="text-xs text-red-500 mt-1">{eDeficiencia}</p>}
-              <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">
-                Se não possuir, escolha “Não possuo”.
-              </p>
+              <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">Se não possuir, escolha “Não possuo”.</p>
             </div>
           </section>
 
@@ -640,7 +848,9 @@ export default function Perfil() {
             <button
               onClick={salvarAlteracoes}
               disabled={salvando}
-              className={`${salvando ? "bg-emerald-900 cursor-not-allowed" : "bg-lousa hover:bg-green-800"} text-white px-5 py-2 rounded-md shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-700`}
+              className={`${
+                salvando ? "bg-emerald-900 cursor-not-allowed" : "bg-lousa hover:bg-green-800"
+              } text-white px-5 py-2 rounded-md shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-700`}
               aria-label="Salvar alterações no perfil"
             >
               {salvando ? "Salvando..." : "💾 Salvar Alterações"}

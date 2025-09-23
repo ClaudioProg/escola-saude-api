@@ -1,24 +1,73 @@
 // ✅ src/pages/MeusCertificados.jsx
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { motion } from "framer-motion";
 import Skeleton from "react-loading-skeleton";
 import { toast } from "react-toastify";
-import { Award } from "lucide-react";
+import { Award, RefreshCw } from "lucide-react";
 import { formatarDataBrasileira, formatarParaISO } from "../utils/data";
-
-import Breadcrumbs from "../components/Breadcrumbs";
-import PageHeader from "../components/PageHeader";
 import Footer from "../components/Footer";
 import NadaEncontrado from "../components/NadaEncontrado";
+import BotaoPrimario from "../components/BotaoPrimario";
 import { apiGet, apiPost, makeApiUrl } from "../services/api";
 
+/* ───────────────── Hero padronizado (igual ao MinhasPresencas) ───────────────── */
+function HeaderHero({ onRefresh, variant = "teal", nome = "" }) {
+  const variants = {
+    sky: "from-sky-900 via-sky-800 to-sky-700",
+    violet: "from-violet-900 via-violet-800 to-violet-700",
+    amber: "from-amber-900 via-amber-800 to-amber-700",
+    rose: "from-rose-900 via-rose-800 to-rose-700",
+    teal: "from-teal-900 via-teal-800 to-teal-700",
+    indigo: "from-indigo-900 via-indigo-800 to-indigo-700",
+  };
+  const grad = variants[variant] ?? variants.teal;
+
+  return (
+    <header className={`bg-gradient-to-br ${grad} text-white`}>
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 flex flex-col items-center text-center gap-3">
+        <div className="inline-flex items-center gap-2">
+          <Award className="w-5 h-5" aria-hidden="true" />
+          <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">
+            Meus Certificados
+          </h1>
+        </div>
+        <p className="text-sm text-white/90">
+          {nome ? `Bem-vindo(a), ${nome}. ` : ""}
+          Gere e baixe seus certificados como participante e como instrutor.
+        </p>
+        <BotaoPrimario
+          onClick={onRefresh}
+          variante="secundario"
+          icone={<RefreshCw className="w-4 h-4" />}
+          aria-label="Atualizar certificados"
+        >
+          Atualizar
+        </BotaoPrimario>
+      </div>
+    </header>
+  );
+}
+
+/* ───────────────── Util: período seguro (date-only) ───────────────── */
+function periodoSeguro(cert) {
+  const iniRaw = cert.data_inicio ?? cert.di ?? cert.inicio;
+  const fimRaw = cert.data_fim ?? cert.df ?? cert.fim;
+  const iniISO = formatarParaISO(iniRaw);
+  const fimISO = formatarParaISO(fimRaw);
+  const ini = iniISO ? formatarDataBrasileira(iniISO) : "—";
+  const fim = fimISO ? formatarDataBrasileira(fimISO) : "—";
+  return `${ini} até ${fim}`;
+}
+
+/* ───────────────── Página ───────────────── */
 export default function MeusCertificados() {
-  const [nome, setNome] = useState("");
   const [certificados, setCertificados] = useState([]);
   const [erro, setErro] = useState("");
   const [carregando, setCarregando] = useState(true);
   const [gerandoKey, setGerandoKey] = useState(null);
+  const liveRef = useRef(null);
 
-  // usuário do localStorage, com imagem_base64 validada
+  // usuário do localStorage, com imagem_base64 validada (para assinatura de instrutor)
   const usuario = useMemo(() => {
     try {
       const parsed = JSON.parse(localStorage.getItem("usuario") || "{}");
@@ -34,14 +83,20 @@ export default function MeusCertificados() {
       return {};
     }
   }, []);
+  const nome = usuario?.nome || "";
 
   useEffect(() => {
-    if (usuario?.nome) setNome(usuario.nome);
-  }, [usuario?.nome]);
+    document.title = "Certificados | Escola da Saúde";
+    carregarCertificados();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function carregarCertificados() {
-    setCarregando(true);
     try {
+      setCarregando(true);
+      setErro("");
+      if (liveRef.current) liveRef.current.textContent = "Carregando certificados…";
+
       // elegíveis como PARTICIPANTE
       const dadosUsuario = await apiGet("certificados/elegiveis");
       // elegíveis como INSTRUTOR
@@ -65,18 +120,20 @@ export default function MeusCertificados() {
       );
 
       setCertificados(unicos);
-      setErro("");
+      if (liveRef.current) {
+        liveRef.current.textContent = unicos.length
+          ? `Foram encontrados ${unicos.length} certificado(s) elegível(is).`
+          : "Nenhum certificado elegível encontrado.";
+      }
     } catch (e) {
+      console.error(e);
       setErro("Erro ao carregar certificados");
       toast.error("❌ Erro ao carregar certificados.");
+      if (liveRef.current) liveRef.current.textContent = "Falha ao carregar certificados.";
     } finally {
       setCarregando(false);
     }
   }
-
-  useEffect(() => {
-    carregarCertificados();
-  }, []);
 
   function keyDoCert(cert) {
     return `${cert.evento_id}-${cert.turma_id}-${cert.tipo}`;
@@ -118,51 +175,58 @@ export default function MeusCertificados() {
         )
       );
     } catch (err) {
+      console.error(err);
       toast.error("❌ Erro ao gerar certificado.");
     } finally {
       setGerandoKey(null);
     }
   }
 
-  // 🔒 Formata datas com proteção total (converte p/ ISO date-only e exibe em pt-BR)
-  function periodoSeguro(cert) {
-    const iniRaw = cert.data_inicio ?? cert.di ?? cert.inicio;
-    const fimRaw = cert.data_fim ?? cert.df ?? cert.fim;
-    const iniISO = formatarParaISO(iniRaw);
-    const fimISO = formatarParaISO(fimRaw);
-    const ini = iniISO ? formatarDataBrasileira(iniISO) : "—";
-    const fim = fimISO ? formatarDataBrasileira(fimISO) : "—";
-    return `${ini} até ${fim}`;
-  }
+  // Particiona por tipo
+  const certificadosUsuario = useMemo(
+    () => certificados.filter((c) => c.tipo === "usuario"),
+    [certificados]
+  );
+  const certificadosInstrutor = useMemo(
+    () => certificados.filter((c) => c.tipo === "instrutor"),
+    [certificados]
+  );
 
-  function renderizarCartao(cert) {
+  // Cartões
+  function CartaoCertificado({ cert }) {
     const eInstrutor = cert.tipo === "instrutor";
     const key = keyDoCert(cert);
     const gerando = gerandoKey === key;
 
     return (
-      <div
+      <motion.li
         key={key}
-        className={`rounded-2xl shadow p-4 flex flex-col justify-between border transition 
-          focus:outline-none focus:ring-2 focus:ring-lousa
-          ${eInstrutor ? "bg-yellow-100 border-yellow-400" : "bg-white dark:bg-gray-800"}`}
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.25 }}
+        className={`rounded-2xl border shadow-sm p-4 flex flex-col justify-between transition
+          ${eInstrutor
+            ? "bg-yellow-50 border-yellow-200 dark:bg-yellow-900/20 dark:border-yellow-800"
+            : "bg-white border-gray-200 dark:bg-zinc-900 dark:border-zinc-700"}`}
       >
         <div>
-          <h2
-            className={`text-xl font-bold mb-1 ${
-              eInstrutor ? "text-yellow-900" : "text-lousa dark:text-white"
+          <h3
+            className={`text-lg font-bold mb-1 ${
+              eInstrutor ? "text-yellow-900 dark:text-yellow-200" : "text-lousa dark:text-green-100"
             }`}
           >
             {cert.evento || cert.evento_titulo || cert.nome_evento || "Evento"}
-          </h2>
+          </h3>
+
           <p className="text-sm text-gray-700 dark:text-gray-300">
             Turma: {cert.nome_turma || cert.turma_nome || `#${cert.turma_id}`}
           </p>
           <p className="text-sm text-gray-500 dark:text-gray-400">
             Período: {periodoSeguro(cert)}
           </p>
+
           {eInstrutor && (
-            <span className="inline-block mt-2 px-2 py-1 bg-yellow-400 text-xs font-semibold text-yellow-900 rounded">
+            <span className="inline-block mt-2 px-2 py-1 bg-yellow-400 text-[11px] font-semibold text-yellow-900 rounded">
               📣 Instrutor
             </span>
           )}
@@ -174,7 +238,7 @@ export default function MeusCertificados() {
               href={makeApiUrl(`certificados/${cert.certificado_id}/download`)}
               target="_blank"
               rel="noopener noreferrer"
-              className="bg-green-900 hover:bg-green-800 text-white text-sm font-medium py-2 px-4 rounded text-center"
+              className="bg-green-700 hover:bg-green-800 text-white text-sm font-medium py-2 px-4 rounded text-center"
             >
               Baixar Certificado
             </a>
@@ -182,42 +246,76 @@ export default function MeusCertificados() {
             <button
               onClick={() => gerarCertificado(cert)}
               disabled={gerando}
-              className={`${
-                eInstrutor ? "bg-yellow-500 hover:bg-yellow-600" : "bg-blue-700 hover:bg-blue-800"
-              } text-white text-sm font-medium py-2 px-4 rounded text-center disabled:opacity-60`}
+              className={`text-white text-sm font-medium py-2 px-4 rounded text-center disabled:opacity-60
+                ${eInstrutor ? "bg-yellow-500 hover:bg-yellow-600" : "bg-blue-700 hover:bg-blue-800"}`}
+              aria-label={eInstrutor ? "Gerar certificado de instrutor" : "Gerar certificado de participante"}
             >
               {gerando ? "Gerando..." : "Gerar Certificado"}
             </button>
           )}
         </div>
-      </div>
+      </motion.li>
     );
   }
 
+  /* ─────────────── Render ─────────────── */
   return (
     <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
-      {/* 🟪 Faixa de título para Certificados */}
-      <PageHeader title="Meus Certificados" icon={Award} variant="roxo" />
+      <HeaderHero onRefresh={carregarCertificados} variant="teal" nome={nome} />
 
-      <main role="main" className="flex-1 max-w-4xl mx-auto px-4 py-6">
-        <Breadcrumbs trilha={[{ label: "Início", href: "/dashboard" }, { label: "Meus Certificados" }]} />
+      <main role="main" className="flex-1 max-w-6xl mx-auto px-4 sm:px-6 py-6">
+        {/* feedback acessível */}
+        <p ref={liveRef} className="sr-only" aria-live="polite" />
 
         {carregando ? (
-          <div role="status" aria-live="polite">
-            <Skeleton count={5} height={100} className="mb-4" />
+          <div role="status" aria-live="polite" className="grid gap-4 sm:grid-cols-2">
+            {[...Array(4)].map((_, i) => (
+              <Skeleton key={i} height={110} className="rounded-xl" />
+            ))}
           </div>
         ) : erro ? (
           <NadaEncontrado mensagem="Não foi possível carregar os certificados." />
         ) : certificados.length === 0 ? (
           <NadaEncontrado mensagem="Você ainda não possui certificados disponíveis." />
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {certificados.map(renderizarCartao)}
+          <div className="space-y-8">
+            {/* Seção: Participante */}
+            {certificadosUsuario.length > 0 && (
+              <section aria-labelledby="sec-participante">
+                <h2
+                  id="sec-participante"
+                  className="text-base font-semibold text-slate-700 dark:text-slate-200 mb-3"
+                >
+                  Como participante
+                </h2>
+                <ul className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {certificadosUsuario.map((c) => (
+                    <CartaoCertificado key={keyDoCert(c)} cert={c} />
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {/* Seção: Instrutor */}
+            {certificadosInstrutor.length > 0 && (
+              <section aria-labelledby="sec-instrutor">
+                <h2
+                  id="sec-instrutor"
+                  className="text-base font-semibold text-slate-700 dark:text-slate-200 mb-3"
+                >
+                  Como instrutor
+                </h2>
+                <ul className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {certificadosInstrutor.map((c) => (
+                    <CartaoCertificado key={keyDoCert(c)} cert={c} />
+                  ))}
+                </ul>
+              </section>
+            )}
           </div>
         )}
       </main>
 
-      {/* Rodapé institucional */}
       <Footer />
     </div>
   );
