@@ -32,7 +32,7 @@ const DashboardUsuario       = lazy(() => import("./pages/DashboardUsuario"));
 const Teste                  = lazy(() => import("./pages/Teste"));              // 🆕
 const AgendamentoSala        = lazy(() => import("./pages/AgendamentoSala"));    // 🆕
 const SolicitacaoCurso       = lazy(() => import("./pages/SolicitacaoCurso"));    // 🆕
-const AgendaUsuario          = lazy(() => import("./pages/AgendaUsuario")); // 🆕
+const AgendaUsuario          = lazy(() => import("./pages/AgendaUsuario"));      // 🆕
 
 const DashboardInstrutor     = lazy(() => import("./pages/DashboardInstrutor"));
 const AgendaInstrutor        = lazy(() => import("./pages/AgendaInstrutor"));
@@ -62,7 +62,7 @@ const ManualUsuario          = lazy(() => import("./pages/usuario/Manual"));
 
 // 🆕 Páginas públicas novas
 const AjudaCadastro          = lazy(() => import("./pages/AjudaCadastro"));
-const Privacidade        = lazy(() => import("./pages/Privacidade"));
+const Privacidade            = lazy(() => import("./pages/Privacidade"));
 
 /* ──────────────────────────────────────────────────────────────
    A11y: Announcer de mudanças de rota
@@ -79,6 +79,44 @@ function RouteChangeAnnouncer() {
       {message}
     </div>
   );
+}
+
+/* ──────────────────────────────────────────────────────────────
+   ✅ Hotfix global: destrava scroll preso ao trocar de rota
+   ────────────────────────────────────────────────────────────── */
+function ScrollUnlockOnRouteChange() {
+  const location = useLocation();
+  useEffect(() => {
+    const unlock = () => {
+      const html = document.documentElement;
+      const body = document.body;
+
+      [html, body].forEach((el) => {
+        if (!el) return;
+        el.style.overflow = "";
+        el.style.touchAction = "";
+        el.classList.remove("overflow-hidden", "modal-open", "no-scroll");
+      });
+
+      // se algum modal fixou o body
+      if (body && body.style.position === "fixed") {
+        const top = parseInt(body.style.top || "0", 10) || 0;
+        body.style.position = "";
+        body.style.top = "";
+        try {
+          window.scrollTo({ top: -top, behavior: "instant" });
+        } catch {
+          window.scrollTo(0, -top);
+        }
+      }
+    };
+
+    // roda imediatamente e no próximo tick (para libs que mexem tardiamente)
+    unlock();
+    const t = setTimeout(unlock, 0);
+    return () => clearTimeout(t);
+  }, [location.key]);
+  return null;
 }
 
 /* ──────────────────────────────────────────────────────────────
@@ -132,8 +170,9 @@ function LayoutComNavbar({ children }) {
 
       {!isPublicPath && <Navbar />}
 
-      {/* Announcer + ScrollToTop */}
+      {/* Announcer + Scroll Unlock + ScrollToTop */}
       <RouteChangeAnnouncer />
+      <ScrollUnlockOnRouteChange /> {/* ✅ destrava scroll a cada navegação */}
       <ScrollToTop />
 
       <main id="content" className="min-h-[70vh]">
@@ -317,7 +356,6 @@ export default function App() {
             <Route path="/agendamento-sala" element={<PrivateRoute><AgendamentoSala /></PrivateRoute>} />
             <Route path="/solicitar-curso" element={<PrivateRoute><SolicitacaoCurso /></PrivateRoute>} />
             <Route path="/agenda" element={<PrivateRoute><AgendaUsuario /></PrivateRoute>} />
-            
 
             {/* 🆕 Manual do Usuário */}
             <Route
@@ -356,13 +394,13 @@ export default function App() {
             <Route path="/gestao-presenca" element={<PrivateRoute permitido={["administrador"]}><GestaoPresencas /></PrivateRoute>} />
             <Route path="/admin/qr-codes" element={<PrivateRoute permitido={["administrador"]}><QRCodesEventosAdmin /></PrivateRoute>} />
             <Route
-  path="/admin/cancelar-inscricoes"
-  element={
-    <PrivateRoute permitido={["administrador"]}>
-      <CancelarInscricoesAdmin />
-    </PrivateRoute>
-  }
-/>
+              path="/admin/cancelar-inscricoes"
+              element={
+                <PrivateRoute permitido={["administrador"]}>
+                  <CancelarInscricoesAdmin />
+                </PrivateRoute>
+              }
+            />
 
             {/* 404 */}
             <Route path="*" element={<NotFound />} />

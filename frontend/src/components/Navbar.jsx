@@ -35,6 +35,21 @@ import {
 import { apiGet } from "../services/api";
 
 /* ────────────────────────────────────────────────────────────── */
+/* 🎨 Tema sazonal do NAVBAR (jul–dez)                            */
+/* ────────────────────────────────────────────────────────────── */
+function getNavThemeForMonth(month /* 1-12 */) {
+  const themes = {
+    7:  "bg-yellow-600",                                     // Julho – Amarelo
+    8:  "bg-amber-600",                                      // Agosto – Dourado
+    9:  "bg-gradient-to-r from-yellow-600 to-emerald-800",   // Setembro – Amarelo/Verde
+    10: "bg-pink-700",                                       // Outubro – Rosa
+    11: "bg-gradient-to-r from-blue-700 to-purple-700",      // Novembro – Azul/Roxo
+    12: "bg-red-700",                                        // Dezembro – Vermelho
+  };
+  return themes[month] || null;
+}
+
+/* ────────────────────────────────────────────────────────────── */
 /* Helpers de sessão / perfil                                     */
 /* ────────────────────────────────────────────────────────────── */
 function decodeJwtPayload(token) {
@@ -57,7 +72,7 @@ function getValidToken() {
   return token;
 }
 
-/** 🔎 Perfis robusto: lê de 'perfil' e também de 'usuario.perfil/perfis' (string/array/CSV) */
+/** 🔎 Perfis robusto */
 function getPerfisRobusto() {
   const out = new Set();
 
@@ -111,7 +126,7 @@ function getEmailUsuario() {
   return getUsuarioLS()?.email || "";
 }
 
-/** 🅰️ Iniciais a partir do nome (ou e-mail) */
+/** 🅰️ Iniciais */
 function getIniciais(nome, email) {
   const n = String(nome || "").trim();
   if (n) {
@@ -122,6 +137,31 @@ function getIniciais(nome, email) {
   const e = String(email || "").trim();
   if (e) return (e.split("@")[0].slice(0, 2) || "?").toUpperCase();
   return "?";
+}
+
+/* 🧯 Destrava qualquer lock de scroll (overflow/position fix) */
+function unlockScroll() {
+  const html = document.documentElement;
+  const body = document.body;
+
+  [html, body].forEach((el) => {
+    if (!el) return;
+    el.style.overflow = "";
+    el.style.touchAction = "";
+    el.classList.remove("overflow-hidden", "no-scroll", "modal-open");
+  });
+
+  // se algum modal/overlay deixou o body fixo
+  if (body && body.style.position === "fixed") {
+    const prevTop = parseInt(body.style.top || "0", 10) || 0;
+    body.style.position = "";
+    body.style.top = "";
+    try {
+      window.scrollTo({ top: -prevTop, behavior: "instant" });
+    } catch {
+      window.scrollTo(0, -prevTop);
+    }
+  }
 }
 
 /** Item de menu genérico */
@@ -172,7 +212,7 @@ export default function Navbar() {
     [nomeUsuario, emailUsuario]
   );
 
-  // ▶ tema — lê do 'theme' (aplicado no boot pelo index.html/main.jsx)
+  // ▶ tema
   const [darkMode, setDarkMode] = useState(() => {
     const t = localStorage.getItem("theme");
     if (t === "dark") return true;
@@ -187,14 +227,14 @@ export default function Navbar() {
   const [configOpen, setConfigOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  // ▶ refs para fechar ao clicar fora
+  // ▶ refs
   const refUsuario = useRef(null);
   const refInstrutor = useRef(null);
   const refAdmin = useRef(null);
   const refConfig = useRef(null);
   const refMobile = useRef(null);
 
-  // ▶ ids para menus (a11y)
+  // ▶ ids (a11y)
   const usuarioMenuId = useId();
   const instrutorMenuId = useId();
   const adminMenuId = useId();
@@ -218,7 +258,6 @@ export default function Navbar() {
     []
   );
 
-  // 🔁 Removido “QR do Site” daqui (fica no avatar)
   const menusInstrutor = useMemo(
     () => [
       { label: "Painel", path: "/instrutor", icon: LayoutDashboard },
@@ -276,8 +315,6 @@ export default function Navbar() {
       if (!document.hidden) tick();
     };
     document.addEventListener("visibilitychange", onVisibility);
-
-    // opcional: disponibiliza um gancho global
     window.atualizarContadorNotificacoes = tick;
     return () => {
       if (intervalId) clearInterval(intervalId);
@@ -307,18 +344,21 @@ export default function Navbar() {
   }, []);
 
   useEffect(() => {
+    // fecha tudo ao trocar de rota + destrava scroll
     setMenuUsuarioOpen(false);
     setMenuInstrutorOpen(false);
     setMenuAdminOpen(false);
     setConfigOpen(false);
     setMobileOpen(false);
+    unlockScroll();
+
     setPerfil(getPerfisRobusto());
     setNomeUsuario(getNomeUsuario());
     setEmailUsuario(getEmailUsuario());
     setToken(getValidToken());
   }, [location.pathname]);
 
-  // ✅ Alternar tema (aplica classe + persiste em 'theme')
+  // ✅ Alternar tema
   const toggleTheme = () => {
     const next = !darkMode;
     setDarkMode(next);
@@ -343,15 +383,20 @@ export default function Navbar() {
         [refConfig, setConfigOpen],
         [refMobile, setMobileOpen],
       ];
+      let fechouAlgo = false;
       outsides.forEach(([r, set]) => {
-        if (r.current && !r.current.contains(t)) set(false);
+        if (r.current && !r.current.contains(t)) {
+          set(false);
+          fechouAlgo = true;
+        }
       });
+      if (fechouAlgo) unlockScroll();
     }
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, []);
 
-  // ESC fecha menus
+  // ESC fecha menus + destrava
   useEffect(() => {
     function onEsc(e) {
       if (e.key === "Escape") {
@@ -360,6 +405,7 @@ export default function Navbar() {
         setMenuAdminOpen(false);
         setConfigOpen(false);
         setMobileOpen(false);
+        unlockScroll();
       }
     }
     window.addEventListener("keydown", onEsc);
@@ -369,6 +415,7 @@ export default function Navbar() {
   // sair
   const sair = () => {
     localStorage.clear();
+    unlockScroll();
     navigate("/login");
   };
 
@@ -380,6 +427,7 @@ export default function Navbar() {
     setMenuAdminOpen(false);
     setConfigOpen(false);
     setMobileOpen(false);
+    unlockScroll();
   };
 
   // botão base dropdown
@@ -392,10 +440,16 @@ export default function Navbar() {
     go(hasToken ? "/dashboard" : "/");
   };
 
+  // 🎯 aplica cor sazonal (ou lousa)
+  const now = new Date();
+  const month = now.getMonth() + 1; // 1-12
+  const navBgSeasonal = getNavThemeForMonth(month);
+  const navBg = navBgSeasonal || "bg-lousa";
+
   return (
     <nav
       role="navigation"
-      className="w-full bg-lousa text-white shadow-md px-3 sm:px-4 py-2 sticky top-0 z-50 border-b border-white/20"
+      className={`w-full ${navBg} text-white shadow-md px-3 sm:px-4 py-2 sticky top-0 z-50 border-b border-white/20`}
     >
       <div className="flex items-center justify-between">
         {/* logo / home */}
@@ -514,7 +568,6 @@ export default function Navbar() {
               aria-controls={configMenuId}
               title={nomeUsuario ? `Logado como ${nomeUsuario}` : undefined}
             >
-              {/* Avatar com iniciais */}
               <span
                 className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-white text-lousa font-bold text-xs shadow-sm"
                 aria-label={nomeUsuario ? `Avatar de ${nomeUsuario}` : "Avatar"}
@@ -540,7 +593,6 @@ export default function Navbar() {
                   <UserCog size={16} aria-hidden="true" /> Atualizar Cadastro
                 </button>
 
-                {/* 👉 QR do Site dentro do menu do avatar */}
                 <button
                   type="button"
                   role="menuitem"
@@ -584,7 +636,13 @@ export default function Navbar() {
         <button
           type="button"
           className="md:hidden inline-flex items-center justify-center rounded-lg p-2 hover:bg-white hover:text-lousa focus-visible:ring-2 focus-visible:ring-white/60 outline-none"
-          onClick={() => setMobileOpen((v) => !v)}
+          onClick={() => {
+            setMobileOpen((v) => {
+              const next = !v;
+              if (!next) unlockScroll();
+              return next;
+            });
+          }}
           aria-label={mobileOpen ? "Fechar menu" : "Abrir menu"}
           aria-expanded={mobileOpen}
           aria-controls="navbar-mobile-menu"
@@ -598,7 +656,7 @@ export default function Navbar() {
         <div
           id="navbar-mobile-menu"
           ref={refMobile}
-          className="md:hidden mt-2 rounded-xl bg-white text-lousa shadow-xl ring-1 ring-black/5 overflow-hidden"
+          className="md:hidden mt-2 rounded-xl bg-white text-lousa shadow-xl ring-1 ring-black/5 max-h-[70vh] overflow-auto"
         >
           <div className="p-2 grid gap-1">
             {/* Cabeçalho com avatar (mobile) */}
@@ -698,7 +756,6 @@ export default function Navbar() {
               Geral
             </div>
 
-            {/* 👉 QR do Site */}
             <button
               type="button"
               onClick={() => go("/qr-site")}
