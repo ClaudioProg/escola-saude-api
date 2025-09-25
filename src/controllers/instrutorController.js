@@ -151,8 +151,45 @@ async function getTurmasComEventoPorInstrutor(req, res) {
   }
 }
 
+async function getMinhasTurmasInstrutor(req, res) {
+  try {
+    const usuarioId = req.user?.id ?? req.usuario?.id; // ✅ usa req.user por padrão
+    if (!usuarioId) {
+      return res.status(401).json({ erro: "Usuário não autenticado." });
+    }
+
+    const sql = `
+      SELECT 
+        t.id, t.nome, t.data_inicio, t.data_fim, t.horario_inicio, t.horario_fim,
+        e.id AS evento_id, e.titulo AS evento_nome, e.local AS evento_local
+      FROM evento_instrutor ei
+      JOIN eventos e ON e.id = ei.evento_id
+      JOIN turmas  t ON t.evento_id = e.id
+      WHERE ei.instrutor_id = $1
+      ORDER BY t.data_inicio DESC
+    `;
+    const { rows } = await db.query(sql, [Number(usuarioId)]);
+
+    const turmas = rows.map(r => ({
+      id: r.id,
+      nome: r.nome,
+      data_inicio: r.data_inicio,
+      data_fim: r.data_fim,
+      horario_inicio: r.horario_inicio,
+      horario_fim: r.horario_fim,
+      evento: { id: r.evento_id, nome: r.evento_nome, local: r.evento_local },
+    }));
+
+    res.json(turmas);
+  } catch (err) {
+    console.error("❌ Erro ao buscar turmas do instrutor:", err.message);
+    res.status(500).json({ erro: "Erro ao buscar turmas do instrutor." });
+  }
+}
+
 module.exports = {
   listarInstrutor,
   getEventosAvaliacoesPorInstrutor,
   getTurmasComEventoPorInstrutor,
+  getMinhasTurmasInstrutor,   // ✅ exportar
 };

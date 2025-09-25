@@ -42,7 +42,7 @@ export default function Login() {
 
   useEffect(() => {
     const token = localStorage.getItem("token");
-    if (location.pathname === "/login" && token) navigate("/dashboard", { replace: true });
+    if (location.pathname === "/login" && token) navigate("/", { replace: true });
   }, [navigate, location]);
 
   function aplicarMascaraCPF(valor) {
@@ -103,7 +103,7 @@ export default function Login() {
       );
       persistirSessao(payload);
       toast.success("✅ Login realizado com sucesso!");
-      navigate(redirectPath || "/dashboard", { replace: true });
+      navigate(redirectPath || "/", { replace: true });
     } catch (err) {
       const serverMsg =
         err?.data?.erro || err?.data?.message || err?.message || "Erro ao fazer login.";
@@ -130,7 +130,7 @@ export default function Login() {
       );
       persistirSessao(payload);
       toast.success("✅ Login com Google realizado com sucesso!");
-      navigate(redirectPath || "/dashboard", { replace: true });
+      navigate(redirectPath || "/", { replace: true });
     } catch (err) {
       const serverMsg =
         err?.data?.erro || err?.data?.message || err?.message || "Erro ao fazer login com Google.";

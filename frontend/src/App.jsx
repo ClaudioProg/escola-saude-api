@@ -31,7 +31,7 @@ const MinhasInscricoes       = lazy(() => import("./pages/MinhasInscricoes"));
 const DashboardUsuario       = lazy(() => import("./pages/DashboardUsuario"));
 const Teste                  = lazy(() => import("./pages/Teste"));              // 🆕
 const AgendamentoSala        = lazy(() => import("./pages/AgendamentoSala"));    // 🆕
-const SolicitacaoCurso       = lazy(() => import("./pages/SolicitacaoCurso"));    // 🆕
+const SolicitacaoCurso       = lazy(() => import("./pages/SolicitacaoCurso"));   // 🆕
 const AgendaUsuario          = lazy(() => import("./pages/AgendaUsuario"));      // 🆕
 
 const DashboardInstrutor     = lazy(() => import("./pages/DashboardInstrutor"));
@@ -63,6 +63,9 @@ const ManualUsuario          = lazy(() => import("./pages/usuario/Manual"));
 // 🆕 Páginas públicas novas
 const AjudaCadastro          = lazy(() => import("./pages/AjudaCadastro"));
 const Privacidade            = lazy(() => import("./pages/Privacidade"));
+
+// 🆕 Home pós-login (portal da Escola)
+const HomeEscola             = lazy(() => import("./pages/HomeEscola"));
 
 /* ──────────────────────────────────────────────────────────────
    A11y: Announcer de mudanças de rota
@@ -98,7 +101,6 @@ function ScrollUnlockOnRouteChange() {
         el.classList.remove("overflow-hidden", "modal-open", "no-scroll");
       });
 
-      // se algum modal fixou o body
       if (body && body.style.position === "fixed") {
         const top = parseInt(body.style.top || "0", 10) || 0;
         body.style.position = "";
@@ -111,7 +113,6 @@ function ScrollUnlockOnRouteChange() {
       }
     };
 
-    // roda imediatamente e no próximo tick (para libs que mexem tardiamente)
     unlock();
     const t = setTimeout(unlock, 0);
     return () => clearTimeout(t);
@@ -143,7 +144,7 @@ function LayoutComNavbar({ children }) {
   const isPublicPath = useMemo(() => {
     const p = location.pathname;
     return (
-      p === "/" ||
+      // ⚠️ removido "/" para exibir Navbar e proteger a HomeEscola
       p === "/login" ||
       p === "/cadastro" ||
       p === "/recuperar-senha" ||
@@ -172,7 +173,7 @@ function LayoutComNavbar({ children }) {
 
       {/* Announcer + Scroll Unlock + ScrollToTop */}
       <RouteChangeAnnouncer />
-      <ScrollUnlockOnRouteChange /> {/* ✅ destrava scroll a cada navegação */}
+      <ScrollUnlockOnRouteChange />
       <ScrollToTop />
 
       <main id="content" className="min-h-[70vh]">
@@ -314,7 +315,6 @@ export default function App() {
         >
           <Routes>
             {/* 🌐 públicas */}
-            <Route path="/" element={<Login />} />
             <Route path="/login" element={<Login />} />
             <Route path="/cadastro" element={<Cadastro />} />
 
@@ -342,7 +342,15 @@ export default function App() {
             <Route path="/scanner" element={<Scanner />} />
 
             {/* 🔐 protegidas */}
-            <Route path="/dashboard" element={<PrivateRoute><DashboardUsuario /></PrivateRoute>} />
+            {/* Início pós-login → HomeEscola */}
+            <Route path="/" element={<PrivateRoute><HomeEscola /></PrivateRoute>} />
+
+            {/* Painel do Usuário (novo caminho) */}
+            <Route path="/usuario/dashboard" element={<PrivateRoute><DashboardUsuario /></PrivateRoute>} />
+
+            {/* Legado: /dashboard → redireciona */}
+            <Route path="/dashboard" element={<PrivateRoute><Navigate to="/usuario/dashboard" replace /></PrivateRoute>} />
+
             <Route path="/eventos" element={<PrivateRoute><Eventos /></PrivateRoute>} />
             <Route path="/minhas-presencas" element={<PrivateRoute><MinhasPresencas /></PrivateRoute>} />
             <Route path="/certificados" element={<PrivateRoute><MeusCertificados /></PrivateRoute>} />
@@ -366,7 +374,6 @@ export default function App() {
                 </PrivateRoute>
               }
             />
-            {/* alias curto opcional */}
             <Route
               path="/manual"
               element={

@@ -243,6 +243,7 @@ export default function Navbar() {
   // ▶ itens de menu
   const menusUsuario = useMemo(
     () => [
+      { label: "Painel do Usuário", path: "/usuario/dashboard", icon: LayoutDashboard }, // 🆕 primeiro item
       { label: "Eventos", path: "/eventos", icon: CalendarDays },
       { label: "Meus Cursos", path: "/minhas-inscricoes", icon: BookOpen },
       { label: "Agenda", path: "/agenda", icon: CalendarDays },
@@ -434,10 +435,9 @@ export default function Navbar() {
   const dropBtnBase =
     "flex items-center gap-2 px-2 py-1 text-sm rounded-xl hover:bg-white hover:text-lousa focus-visible:ring-2 focus-visible:ring-white/60 outline-none";
 
-  // home inteligente
+  // home: sempre para "/" (HomeEscola); rota é protegida e o guard cuida do login
   const goHome = () => {
-    const hasToken = !!getValidToken();
-    go(hasToken ? "/dashboard" : "/");
+    go("/");
   };
 
   // 🎯 aplica cor sazonal (ou lousa)

@@ -12,7 +12,7 @@ import EventoDetalheModal from "../components/EventoDetalheModal";
 import LegendaEventos from "../components/LegendaEventos";
 import { apiGet } from "../services/api";
 
-/* ───────────────── HeaderHero (gradiente retangular, colado na navbar) ───────────────── */
+/* ───────────────── HeaderHero ───────────────── */
 function HeaderHero({ onRefresh, carregando = false, variant = "emerald", nome = "" }) {
   const variants = {
     emerald: "from-emerald-900 via-emerald-800 to-emerald-700",
@@ -34,9 +34,7 @@ function HeaderHero({ onRefresh, carregando = false, variant = "emerald", nome =
           </h1>
         </div>
 
-        <p className="text-sm text-white/90">
-          Seus eventos e turmas inscritas.
-        </p>
+        <p className="text-sm text-white/90">Seus eventos e turmas inscritas.</p>
 
         <div className="flex flex-wrap items-center justify-center gap-3">
           <span className="px-3 py-1 rounded-full text-xs bg-white/10 backdrop-blur">
@@ -48,9 +46,7 @@ function HeaderHero({ onRefresh, carregando = false, variant = "emerald", nome =
             onClick={onRefresh}
             disabled={carregando}
             className={`inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md transition
-              ${carregando
-                ? "opacity-60 cursor-not-allowed bg-white/20"
-                : "bg-green-600 hover:bg-green-700"} text-white`}
+              ${carregando ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-green-600 hover:bg-green-700"} text-white`}
             aria-label="Atualizar agenda"
           >
             <RefreshCw className="w-4 h-4" />
@@ -62,24 +58,31 @@ function HeaderHero({ onRefresh, carregando = false, variant = "emerald", nome =
   );
 }
 
+/* ───────────────── MiniStat ───────────────── */
+function MiniStat({ value, label, color, bordered = true }) {
+  return (
+    <div
+      className={`flex-1 min-w-[170px] ${bordered ? "border rounded-2xl" : ""} p-4 text-center`}
+      style={{ borderColor: "rgba(0,0,0,0.08)" }}
+    >
+      <div className="text-3xl font-extrabold" style={{ color }}>{value}</div>
+      <div className="text-[11px] tracking-wide uppercase text-gray-500">{label}</div>
+    </div>
+  );
+}
+
 /* =========================================================================
-   Helpers de data — tolerantes a strings com timezone (Z, +hh:mm)
-   Trabalham sempre em "hora local" para não deslocar dias.
+   Helpers de data
    ========================================================================= */
 const stripTZ = (s) =>
-  String(s)
-    .trim()
-    .replace(/\.\d{3,}\s*Z?$/i, "")
-    .replace(/([+-]\d{2}:\d{2}|Z)$/i, "");
+  String(s).trim().replace(/\.\d{3,}\s*Z?$/i, "").replace(/([+-]\d{2}:\d{2}|Z)$/i, "");
 
 function toLocalDate(input) {
   if (!input) return null;
   if (input instanceof Date) return input;
 
   const s = stripTZ(input);
-  const m = s.match(
-    /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/
-  );
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/);
   if (!m) return null;
 
   const [, y, mo, d, hh = "00", mm = "00", ss = "00"] = m;
@@ -133,9 +136,9 @@ function deriveStatus(ev) {
 }
 
 const colorByStatus = {
-  programado: "#22c55e", // verde
-  andamento:  "#eab308", // amarelo
-  encerrado:  "#ef4444", // vermelho
+  programado: "#22c55e",
+  andamento:  "#eab308",
+  encerrado:  "#ef4444",
 };
 /* ========================================================================= */
 
@@ -153,7 +156,7 @@ export default function AgendaUsuario() {
     if (liveRef.current) liveRef.current.textContent = "Carregando sua agenda…";
 
     try {
-      // 👉 backend retorna SOMENTE eventos nos quais o usuário (token) está inscrito
+      // backend retorna somente eventos nos quais o usuário está inscrito
       const data = await apiGet("/api/agenda/minha", { on401: "silent", on403: "silent" });
       const arr = Array.isArray(data) ? data : [];
       setEvents(arr);
@@ -176,6 +179,19 @@ export default function AgendaUsuario() {
     carregar();
   }, []);
 
+  // 👉 ministats (conta por status)
+  const stats = useMemo(() => {
+    let p = 0, a = 0, r = 0;
+    for (const ev of events) {
+      const st = deriveStatus(ev);
+      if (st === "programado") p++;
+      else if (st === "andamento") a++;
+      else r++;
+    }
+    return { programados: p, andamento: a, realizados: r };
+  }, [events]);
+
+  // mapa dia->eventos (datas reais preferencialmente)
   const eventosPorData = useMemo(() => {
     const map = {};
 
@@ -230,6 +246,13 @@ export default function AgendaUsuario() {
 
       <main className="min-h-screen bg-gelo dark:bg-gray-900 px-3 sm:px-4 py-6 text-gray-900 dark:text-white">
         <p ref={liveRef} className="sr-only" aria-live="polite" />
+
+        {/* Ministats com borda (mesmo padrão do painel/agenda do instrutor) */}
+        <div className="max-w-6xl mx-auto grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+          <MiniStat value={stats.programados} label="Programados" color="#22c55e" />
+          <MiniStat value={stats.andamento}   label="Em andamento" color="#eab308" />
+          <MiniStat value={stats.realizados}  label="Realizados"  color="#ef4444" />
+        </div>
 
         <div className="mx-auto w-full max-w-7xl">
           <div className="bg-white dark:bg-zinc-800 rounded-xl p-3 sm:p-5 shadow-md">

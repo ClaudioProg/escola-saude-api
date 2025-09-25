@@ -1,200 +1,360 @@
 // ✅ src/pages/AgendaInstrutor.jsx
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import Calendar from "react-calendar";
+import "react-calendar/dist/Calendar.css";
+import { format, isAfter, isBefore, isWithinInterval, compareAsc } from "date-fns";
+import { ptBR } from "date-fns/locale";
 import { toast } from "react-toastify";
-import { motion, AnimatePresence } from "framer-motion";
-import Skeleton from "react-loading-skeleton";
+import { CalendarDays, RefreshCw } from "lucide-react";
 
-import PageHeader from "../components/PageHeader";
 import Footer from "../components/Footer";
-import NadaEncontrado from "../components/NadaEncontrado";
+import EventoDetalheModal from "../components/EventoDetalheModal"; // 👈 modal com detalhes
 import { apiGet } from "../services/api";
 
-// ---------- helpers anti-fuso ----------
-function todayYMD() {
-  const d = new Date();
+/* ───────── Header (cor própria desta página) ───────── */
+function HeaderHero({ onRefresh, carregando = false, nome = "" }) {
+  return (
+    <header className="bg-gradient-to-br from-cyan-900 via-cyan-800 to-cyan-700 text-white">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 flex flex-col items-center text-center gap-3">
+        <div className="inline-flex items-center gap-2">
+          <CalendarDays className="w-5 h-5" aria-hidden="true" />
+          <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">Agenda do Instrutor</h1>
+        </div>
+        <p className="text-sm text-white/90">Seus encontros, aulas e eventos onde você é o instrutor.</p>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <span className="px-3 py-1 rounded-full text-xs bg-white/10 backdrop-blur">
+            Bem-vindo(a), {nome || "instrutor(a)"}
+          </span>
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={carregando}
+            className={`inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md transition
+              ${carregando ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-green-600 hover:bg-green-700"} text-white`}
+            aria-label="Atualizar agenda"
+          >
+            <RefreshCw className="w-4 h-4" />
+            {carregando ? "Atualizando…" : "Atualizar"}
+          </button>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+/* ───────── helpers de data (tolerantes) ───────── */
+const stripTZ = (s) => String(s).trim().replace(/\.\d{3,}\s*Z?$/i, "").replace(/([+-]\d{2}:\d{2}|Z)$/i, "");
+const hh = (s, fb = "00:00") => (typeof s === "string" && /^\d{2}:\d{2}/.test(s) ? s.slice(0, 5) : fb);
+
+function toLocalDate(input) {
+  if (!input) return null;
+  if (input instanceof Date) return input;
+  const s = stripTZ(input);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (!m) return null;
+  const [, y, mo, d, H = "00", M = "00", S = "00"] = m;
+  return new Date(+y, +mo - 1, +d, +H, +M, +S);
+}
+function ymd(val) {
+  if (!val) return null;
+  if (typeof val === "string") {
+    const head = stripTZ(val).slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(head)) return head;
+  }
+  const d = toLocalDate(val);
+  if (!d || Number.isNaN(+d)) return null;
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
-function ymd(input) {
-  if (!input) return "";
-  const s = String(input);
-  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  return m ? `${m[1]}-${m[2]}-${m[3]}` : "";
+function rangeDiasYMD(iniYMD, fimYMD) {
+  const out = [];
+  if (!iniYMD) return out;
+  const d0 = new Date(`${iniYMD}T12:00:00`);
+  const d1 = new Date(`${(fimYMD || iniYMD)}T12:00:00`);
+  for (let d = new Date(d0); d <= d1; d.setDate(d.getDate() + 1)) out.push(ymd(d));
+  return out;
 }
-function toLocalDate(ymdStr) {
-  if (!ymdStr) return null;
-  return new Date(`${ymdStr}T12:00:00`);
+function deriveStatus(ev) {
+  const di = ev.data_inicio ?? ev.dataInicio ?? ev.data;
+  const df = ev.data_fim ?? ev.data_termino ?? ev.dataTermino ?? ev.data;
+  const hi = hh(ev.horario_inicio, "00:00");
+  const hf = hh(ev.horario_fim, "23:59");
+  const start = di ? toLocalDate(`${ymd(di)}T${hi}`) : null;
+  const end = df ? toLocalDate(`${ymd(df)}T${hf}`) : null;
+  const now = new Date();
+  if (start && end) {
+    if (isBefore(now, start)) return "programado";
+    if (isWithinInterval(now, { start, end })) return "andamento";
+    if (isAfter(now, end)) return "encerrado";
+  }
+  return ev.status || "programado";
 }
-function formatarBRdeYMD(ymdStr) {
-  const s = ymd(ymdStr);
-  if (!s) return "";
-  const [a, m, d] = s.split("-");
-  return `${d}/${m}/${a}`;
+const colorByStatus = { programado: "#22c55e", andamento: "#eab308", encerrado: "#ef4444" };
+
+/* ───────── mini stat ───────── */
+function MiniStat({ value, label, color, bordered = true }) {
+  return (
+    <div className={`flex-1 min-w-[170px] ${bordered ? "border rounded-2xl" : ""} p-4 text-center`} style={{ borderColor: "rgba(0,0,0,0.08)" }}>
+      <div className="text-3xl font-extrabold" style={{ color }}>{value}</div>
+      <div className="text-[11px] tracking-wide uppercase text-gray-500">{label}</div>
+    </div>
+  );
 }
-// ---------------------------------------
 
-export default function AgendaInstrutor() {
-  const [agenda, setAgenda] = useState([]);
-  const [erro, setErro] = useState("");
-  const [carregandoAgenda, setCarregandoAgenda] = useState(true);
-  const liveRef = useRef(null);
-
-  let usuario = {};
-  try { usuario = JSON.parse(localStorage.getItem("usuario") || "{}"); } catch {}
-  const nome = usuario?.nome || "";
-  const hojeYMD = todayYMD();
-
-  async function carregarAgenda() {
-    setCarregandoAgenda(true);
-    try {
-      if (liveRef.current) liveRef.current.textContent = "Carregando agenda…";
-
-      const data = await apiGet("/api/agenda/instrutor", { on403: "silent" });
-      const arr = Array.isArray(data) ? data : [];
-
-      const ordenada = arr.slice().sort((a, b) => {
-        const ay = ymd(a.data_referencia || a.data_inicio);
-        const by = ymd(b.data_referencia || b.data_inicio);
-        const aDT = toLocalDate(ay);
-        const bDT = toLocalDate(by);
-        if (!aDT && !bDT) return 0;
-        if (!aDT) return 1;
-        if (!bDT) return -1;
-        return aDT - bDT;
-      });
-
-      setAgenda(ordenada);
-      setErro("");
-
-      if (liveRef.current) {
-        liveRef.current.textContent =
-          ordenada.length
-            ? `Foram encontradas ${ordenada.length} aulas/eventos.`
-            : "Nenhuma aula agendada.";
-      }
-    } catch (e) {
-      setErro("Erro ao carregar agenda");
-      toast.error(`❌ ${e?.message || "Erro ao carregar agenda."}`);
-      if (liveRef.current) liveRef.current.textContent = "Falha ao carregar agenda.";
-    } finally {
-      setCarregandoAgenda(false);
+/* ───────── normalização robusta (preserva local/instrutores) ───────── */
+function normalizeFromAPI(raw) {
+  let arr = [];
+  if (Array.isArray(raw)) arr = raw;
+  else if (raw && typeof raw === "object") {
+    for (const k of ["agenda", "eventos", "items", "dados", "results", "lista", "turmas", "data"]) {
+      if (Array.isArray(raw[k])) { arr = raw[k]; break; }
     }
   }
 
-  useEffect(() => {
-    carregarAgenda();
-  }, []);
+  const out = [];
 
-  const definirStatus = (dataISO) => {
-    if (!dataISO) return "🟢 Programado";
-    if (dataISO === hojeYMD) return "🟡 Hoje";
-    if (dataISO > hojeYMD) return "🟢 Programado";
-    return "🔴 Realizado";
+  const fromTurma = (t, parentEvt = null) => {
+    const ocorrencias = [];
+    const datas = Array.isArray(t?.datas) ? t.datas : [];
+    const encontros = Array.isArray(t?.encontros) ? t.encontros : [];
+    if (datas.length) {
+      for (const d of datas) {
+        const y = ymd(d?.data || d);
+        if (!y) continue;
+        ocorrencias.push({
+          data: y,
+          horario_inicio: hh(d?.horario_inicio, hh(t?.horario_inicio, "00:00")),
+          horario_fim: hh(d?.horario_fim, hh(t?.horario_fim, "23:59")),
+        });
+      }
+    } else if (encontros.length) {
+      for (const e of encontros) {
+        const y = ymd(typeof e === "string" ? e : e?.data);
+        if (!y) continue;
+        ocorrencias.push({
+          data: y,
+          horario_inicio: hh(e?.inicio || e?.horario_inicio, hh(t?.horario_inicio, "00:00")),
+          horario_fim: hh(e?.fim || e?.horario_fim, hh(t?.horario_fim, "23:59")),
+        });
+      }
+    }
+
+    out.push({
+      id: t?.id,
+      titulo: t?.evento?.nome || t?.evento?.titulo || t?.nome || parentEvt?.titulo || "Turma",
+      data_inicio: t?.data_inicio || parentEvt?.data_inicio,
+      data_fim: t?.data_fim || parentEvt?.data_fim,
+      horario_inicio: t?.horario_inicio || parentEvt?.horario_inicio,
+      horario_fim: t?.horario_fim || parentEvt?.horario_fim,
+      local: parentEvt?.local || t?.local || t?.evento?.local || null,                 // 👈 preserva local
+      instrutores: parentEvt?.instrutores || t?.instrutores || [],                     // 👈 preserva instrutores
+      ocorrencias,
+      _turma: t,
+    });
   };
 
-  const formatarHorario = (horario) => {
-    if (!horario || typeof horario !== "string") return "";
-    const partes = horario.split(" às ");
-    const inicio = partes[0]?.slice(0, 5) || "";
-    const fim = partes[1]?.slice(0, 5) || "";
-    return `${inicio} às ${fim}`;
-  };
+  for (const item of arr) {
+    if (!item) continue;
+
+    // 1) evento rico com turmas → preserva metadados do evento no filho
+    if (Array.isArray(item?.turmas) && item.turmas.length) {
+      const parentEvt = {
+        titulo: item?.titulo || item?.nome,
+        local: item?.local || null,
+        instrutores: Array.isArray(item?.instrutores) ? item.instrutores : [],
+        data_inicio: item?.data_inicio,
+        data_fim: item?.data_fim,
+        horario_inicio: item?.horario_inicio,
+        horario_fim: item?.horario_fim,
+      };
+      for (const t of item.turmas) fromTurma(t, parentEvt);
+      continue;
+    }
+
+    // 2) item já é uma turma
+    if (item?.datas || item?.encontros || item?.evento) {
+      fromTurma(item);
+      continue;
+    }
+
+    // 3) evento com ocorrências próprias
+    const ocorrencias = [];
+    const lista = Array.isArray(item?.ocorrencias) ? item.ocorrencias : Array.isArray(item?.datas) ? item.datas : [];
+    for (const d of lista) {
+      const y = ymd(d?.data || d);
+      if (!y) continue;
+      ocorrencias.push({
+        data: y,
+        horario_inicio: hh(d?.horario_inicio, hh(item?.horario_inicio, "00:00")),
+        horario_fim: hh(d?.horario_fim, hh(item?.horario_fim, "23:59")),
+      });
+    }
+    out.push({
+      id: item?.id,
+      titulo: item?.titulo || item?.nome || "Evento",
+      data_inicio: item?.data_inicio,
+      data_fim: item?.data_fim,
+      horario_inicio: item?.horario_inicio,
+      horario_fim: item?.horario_fim,
+      local: item?.local || null,
+      instrutores: Array.isArray(item?.instrutores) ? item.instrutores : [],
+      ocorrencias,
+      _raw: item,
+    });
+  }
+  return out;
+}
+
+/* ───────── Página ───────── */
+export default function AgendaInstrutor() {
+  const usuario = (() => { try { return JSON.parse(localStorage.getItem("usuario") || "{}"); } catch { return {}; } })();
+  const nome = usuario?.nome || "";
+
+  const [events, setEvents] = useState([]);
+  const [selecionado, setSelecionado] = useState(null);
+  const [carregando, setCarregando] = useState(true);
+  const [erro, setErro] = useState("");
+  const liveRef = useRef(null);
+
+  async function carregar() {
+    setCarregando(true);
+    setErro("");
+    if (liveRef.current) liveRef.current.textContent = "Carregando sua agenda…";
+
+    // 👉 tenta primeiro o endpoint rico que criamos no backend
+    const endpoints = [
+      "/api/agenda/instrutor/agenda", // PRIORIDADE
+      "/api/agenda/instrutor",
+      "/agenda/instrutor",
+      "/api/agenda/minha-instrutor",
+    ];
+
+    try {
+      let norm = [];
+      for (const url of endpoints) {
+        try {
+          const data = await apiGet(url, { on401: "silent", on403: "silent" });
+          const n = normalizeFromAPI(data);
+          if (n.length) { norm = n; break; }
+          if (Array.isArray(data) && data.length) { norm = normalizeFromAPI(data); break; }
+        } catch { /* tenta o próximo */ }
+      }
+
+      setEvents(norm);
+      if (liveRef.current) {
+        liveRef.current.textContent = norm.length ? `Agenda carregada: ${norm.length} item(ns).` : "Nenhum evento/encontro localizado.";
+      }
+    } catch (err) {
+      console.error(err);
+      setErro("Não foi possível carregar sua agenda.");
+      toast.error("❌ Não foi possível carregar sua agenda.");
+      if (liveRef.current) liveRef.current.textContent = "Falha ao carregar sua agenda.";
+    } finally {
+      setCarregando(false);
+    }
+  }
+
+  useEffect(() => { carregar(); }, []);
+
+  const eventosPorData = useMemo(() => {
+    const map = {};
+    for (const ev of events) {
+      const occ = Array.isArray(ev.ocorrencias) ? ev.ocorrencias : [];
+      const dias = occ.length > 0 ? occ.map((o) => ymd(o?.data || o)).filter(Boolean)
+                                  : rangeDiasYMD(ymd(ev.data_inicio), ymd(ev.data_fim));
+      for (const dia of dias) (map[dia] ||= []).push(ev);
+    }
+    for (const k of Object.keys(map)) {
+      map[k].sort((a, b) => {
+        const aStart = toLocalDate(`${ymd(a.data_inicio || k)}T${hh(a.horario_inicio, "00:00")}`);
+        const bStart = toLocalDate(`${ymd(b.data_inicio || k)}T${hh(b.horario_inicio, "00:00")}`);
+        if (!aStart || !bStart) return 0;
+        return compareAsc(aStart, bStart);
+      });
+    }
+    return map;
+  }, [events]);
+
+  const stats = useMemo(() => {
+    let p = 0, a = 0, r = 0;
+    for (const ev of events) {
+      const st = deriveStatus(ev);
+      if (st === "programado") p++;
+      else if (st === "andamento") a++;
+      else r++;
+    }
+    return { programados: p, andamento: a, realizados: r };
+  }, [events]);
 
   return (
     <>
-      <PageHeader
-        title="🗓️ Minha Agenda de Aulas / Eventos"
-        subtitle="Agenda do Instrutor"
-        leftPill={`Seja bem-vindo(a), ${nome || "instrutor(a)"}`}
-        actions={
-          <button
-            type="button"
-            onClick={carregarAgenda}
-            disabled={carregandoAgenda}
-            className={`px-3 py-1.5 text-sm rounded-md border transition
-              ${carregandoAgenda
-                ? "opacity-60 cursor-not-allowed bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300"
-                : "bg-lousa text-white hover:bg-green-800"}`}
-            aria-label="Atualizar agenda"
-          >
-            {carregandoAgenda ? "Atualizando…" : "Atualizar"}
-          </button>
-        }
-      />
+      <HeaderHero onRefresh={carregar} carregando={carregando} nome={nome} />
 
-      <main className="min-h-screen bg-gelo dark:bg-zinc-900 px-2 sm:px-4 py-6 text-black dark:text-white">
-        {/* feedback acessível */}
+      <main className="min-h-screen bg-gelo dark:bg-gray-900 px-3 sm:px-4 py-6 text-gray-900 dark:text-white">
         <p ref={liveRef} className="sr-only" aria-live="polite" />
 
-        <section>
-          {carregandoAgenda ? (
-            <div className="space-y-4">
-              {[...Array(4)].map((_, i) => (
-                <Skeleton key={i} height={110} className="rounded-xl" />
-              ))}
-            </div>
-          ) : erro ? (
-            <p className="text-red-500 text-center">{erro}</p>
-          ) : agenda.length === 0 ? (
-            <NadaEncontrado
-              mensagem="Nenhuma aula agendada no momento."
-              sugestao="Acesse seus eventos para mais opções."
-            />
-          ) : (
-            <ul className="space-y-4">
-              <AnimatePresence>
-                {agenda.map((item, i) => {
-                  const dataIniISO = ymd(item.data_inicio);
-                  const dataFimISO = ymd(item.data_fim);
-                  const dataRefISO = ymd(item.data_referencia || dataIniISO);
-                  const status = definirStatus(dataRefISO);
+        <div className="max-w-6xl mx-auto grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+          <MiniStat value={stats.programados} label="Programados" color="#22c55e" />
+          <MiniStat value={stats.andamento}   label="Em andamento" color="#eab308" />
+          <MiniStat value={stats.realizados}  label="Realizados"  color="#ef4444" />
+        </div>
 
+        <div className="mx-auto w-full max-w-7xl">
+          <div className="bg-white dark:bg-zinc-800 rounded-xl p-3 sm:p-5 shadow-md">
+            {erro ? (
+              <p className="text-red-600 dark:text-red-400 text-center">{erro}</p>
+            ) : (
+              <Calendar
+                locale="pt-BR"
+                className="react-calendar react-calendar-custom !bg-transparent"
+                prevLabel="‹"
+                nextLabel="›"
+                aria-label="Calendário dos meus eventos"
+                tileClassName="!rounded-lg hover:!bg-gray-200 dark:hover:!bg-zinc-700 focus:!ring-2 focus:!ring-lousa"
+                navigationLabel={({ date }) =>
+                  format(date, "MMMM yyyy", { locale: ptBR }).replace(/^\w/, (c) => c.toUpperCase())
+                }
+                tileContent={({ date }) => {
+                  const key = format(date, "yyyy-MM-dd");
+                  const diaEventos = eventosPorData[key] || [];
                   return (
-                    <motion.li
-                      key={i}
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0 }}
-                      transition={{ duration: 0.25 }}
-                      tabIndex={0}
-                      className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow border border-green-300 dark:border-green-600 focus:outline-none focus:ring-2 focus:ring-lousa"
-                      aria-label={`Aula de ${formatarBRdeYMD(dataIniISO)} a ${formatarBRdeYMD(dataFimISO)}`}
-                    >
-                      <p className="text-sm text-gray-700 dark:text-gray-200">
-                        <strong>📅 Data:</strong> {formatarBRdeYMD(dataIniISO)} até {formatarBRdeYMD(dataFimISO)}
-                      </p>
-                      <p className="text-sm text-gray-700 dark:text-gray-200">
-                        <strong>🕒 Horário:</strong> {formatarHorario(item.horario)}
-                      </p>
-                      <p className="text-sm text-gray-700 dark:text-gray-200">
-                        <strong>🏫 Turma:</strong> {item.turma}
-                      </p>
-                      <p className="text-sm text-gray-700 dark:text-gray-200">
-                        <strong>🧾 Evento:</strong> {item.evento?.nome || item.evento?.titulo}
-                      </p>
-                      <p
-                        className={`text-sm font-semibold mt-2 ${
-                          status === "🟢 Programado"
-                            ? "text-green-600"
-                            : status === "🔴 Realizado"
-                            ? "text-red-600"
-                            : status === "🟡 Hoje"
-                            ? "text-yellow-700"
-                            : "text-green-700"
-                        }`}
-                      >
-                        {status}
-                      </p>
-                    </motion.li>
+                    <div className="rc-day-dots mt-1 flex gap-1 justify-center flex-wrap">
+                      {diaEventos.map((ev, idx) => {
+                        const st = deriveStatus(ev);
+                        return (
+                          <span
+                            key={`${ev.id ?? ev.titulo}-${key}-${idx}`}
+                            className="agenda-dot cursor-pointer focus:outline-none focus:ring-2 focus:ring-lousa"
+                            style={{ backgroundColor: colorByStatus[st] || colorByStatus.programado,
+                                     width: 10, height: 10, borderRadius: 9999, display: "inline-block" }}
+                            title={ev.titulo}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => setSelecionado(ev)}                          // 👈 abre modal
+                            onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setSelecionado(ev)}
+                            aria-label={`Evento: ${ev.titulo}`}
+                          />
+                        );
+                      })}
+                    </div>
                   );
-                })}
-              </AnimatePresence>
-            </ul>
-          )}
-        </section>
+                }}
+              />
+            )}
+          </div>
+        </div>
       </main>
+
+      {/* 👇 modal com os detalhes completos (local + instrutores inclusos) */}
+      {selecionado && (
+        <EventoDetalheModal
+          evento={selecionado}
+          aoFechar={() => setSelecionado(null)}
+          visivel
+        />
+      )}
 
       <Footer />
     </>

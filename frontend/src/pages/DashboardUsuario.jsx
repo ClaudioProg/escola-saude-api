@@ -1,12 +1,12 @@
-// ✅ src/pages/DashboardUsuario.jsx
+// ✅ src/pages/DashboardUsuario.jsx (versão PARTICIPANTE)
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   CalendarDays,
   BookOpen,
   FileText,
-  Presentation,
   RefreshCw,
+  ClipboardList,
 } from "lucide-react";
 import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
@@ -14,23 +14,23 @@ import "react-loading-skeleton/dist/skeleton.css";
 import Footer from "../components/Footer";
 import NadaEncontrado from "../components/NadaEncontrado";
 import GraficoEventos from "../components/GraficoEventos";
-import GraficoAvaliacoes from "../components/GraficoAvaliacoes";
+// ❌ removido: GraficoAvaliacoes (era para instrutor)
 import { apiGet } from "../services/api";
 import { formatarDataBrasileira } from "../utils/data";
 
 /* ───────────── Hero centralizado (sem breadcrumbs) ───────────── */
 function DashboardHero({ onRefresh, carregando }) {
   return (
-    <header className="bg-gradient-to-br from-fuchsia-900 via-violet-800 to-indigo-700 text-white">
+    <header className="bg-gradient-to-br from-emerald-700 via-emerald-600 to-emerald-500 text-white">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 flex flex-col items-center text-center gap-3">
         <div className="inline-flex items-center gap-2">
-          <span className="text-2xl">📊</span>
+          <span className="text-2xl">🎯</span>
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
             Painel do Usuário
           </h1>
         </div>
         <p className="text-sm text-white/90">
-          Acompanhe suas atividades, certificados e avaliações.
+          Acompanhe suas inscrições, presenças e certificados.
         </p>
 
         <button
@@ -77,7 +77,7 @@ export default function DashboardUsuario() {
       setCarregando(true);
       setErro("");
       setLive("Carregando seu painel…");
-      const data = await apiGet("/dashboard-usuario");
+      const data = await apiGet("/dashboard-usuario"); // mantém seu endpoint
       setDados(data || {});
       setLive("Painel atualizado.");
     } catch (err) {
@@ -95,9 +95,35 @@ export default function DashboardUsuario() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ── Mapeia campos com tolerância a nomes alternativos vindos do backend
+  const concluidos =
+    Number(dados?.cursosRealizados ?? dados?.concluidos ?? 0) || 0;
+
+  const inscricoesAtuais =
+    Number(dados?.inscricoesAtuais ?? dados?.inscricoesAtivas ?? 0) || 0;
+
+  const proximosEventos =
+    Number(dados?.proximosEventos ?? dados?.proximos ?? 0) || 0;
+
+  const certificadosDisponiveis =
+    Number(
+      dados?.certificadosDisponiveis ??
+        dados?.certificadosEmitidos ??
+        dados?.certificados ??
+        0
+    ) || 0;
+
+  const avaliacoesPendentes =
+    Number(
+      dados?.avaliacoesPendentes ??
+        dados?.pendenciasAvaliacao ??
+        dados?.notificacoesAvaliacao ??
+        0
+    ) || 0;
+
   return (
     <main className="min-h-screen bg-gelo dark:bg-zinc-900">
-      {/* 💜 Header centralizado */}
+      {/* 💚 Header centralizado */}
       <DashboardHero onRefresh={carregar} carregando={carregando} />
 
       {/* Live region para leitores de tela */}
@@ -113,7 +139,6 @@ export default function DashboardUsuario() {
                 <Skeleton key={i} height={110} className="rounded-xl" />
               ))}
             </div>
-            <Skeleton height={320} className="rounded-xl" />
             <Skeleton height={320} className="rounded-xl" />
             <Skeleton height={120} className="rounded-xl" />
           </div>
@@ -131,33 +156,25 @@ export default function DashboardUsuario() {
               </p>
             )}
 
-            {/* Cards de KPI */}
+            {/* Cards de KPI (somente PARTICIPANTE) */}
             <section
               aria-label="Indicadores rápidos"
               className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
             >
-              <CardInfo icon={BookOpen} titulo="Eventos Concluídos" valor={dados.cursosRealizados} />
-              <CardInfo icon={Presentation} titulo="Eventos como Instrutor" valor={dados.eventosinstrutor} />
-              <CardInfo icon={CalendarDays} titulo="Inscrições em Andamento" valor={dados.inscricoesAtuais} />
-              <CardInfo icon={CalendarDays} titulo="Próximos eventos" valor={dados.proximosEventos} />
-              <CardInfo icon={FileText} titulo="Certificados Emitidos" valor={dados.certificadosEmitidos} />
-              <CardInfo icon={FileText} titulo="Média de Avaliação Recebida" valor={dados.mediaAvaliacao} media10 />
+              <CardInfo icon={BookOpen} titulo="Eventos Concluídos" valor={concluidos} />
+              <CardInfo icon={ClipboardList} titulo="Inscrições em Andamento" valor={inscricoesAtuais} />
+              <CardInfo icon={CalendarDays} titulo="Próximos eventos" valor={proximosEventos} />
+              <CardInfo icon={FileText} titulo="Certificados Disponíveis" valor={certificadosDisponiveis} />
+              <CardInfo icon={CalendarDays} titulo="Avaliações Pendentes" valor={avaliacoesPendentes} />
             </section>
 
-            {/* Gráficos */}
-            <section className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Gráfico de Eventos (participante) */}
+            <section className="mt-8 grid grid-cols-1 gap-4">
               <div className="bg-white dark:bg-zinc-800 rounded-xl p-4 shadow">
                 <h2 className="text-center font-semibold mb-2">Gráfico de Eventos</h2>
                 <GraficoEventos
                   dados={dados?.graficoEventos ?? {}}
                   aria-label="Gráfico de eventos do usuário"
-                />
-              </div>
-              <div className="bg-white dark:bg-zinc-800 rounded-xl p-4 shadow">
-                <h2 className="text-center font-semibold mb-2">Avaliações Recebidas</h2>
-                <GraficoAvaliacoes
-                  dados={dados?.graficoAvaliacoes ?? {}}
-                  aria-label="Gráfico de avaliações do usuário"
                 />
               </div>
             </section>
@@ -201,17 +218,9 @@ export default function DashboardUsuario() {
 }
 
 /* ---------- UI ---------- */
-function CardInfo({ icon: Icon, titulo, valor, media10 = false }) {
+function CardInfo({ icon: Icon, titulo, valor }) {
   const n = Number(valor);
-  const isNum = Number.isFinite(n);
-  let exibicao = "—";
-
-  if (media10) {
-    // back-end costuma enviar média 0–5; exibimos 0.0–10.0
-    exibicao = isNum ? (n * 2).toFixed(1) : "—";
-  } else {
-    exibicao = isNum ? n : (valor ?? "—");
-  }
+  const exibicao = Number.isFinite(n) ? n : (valor ?? "—");
 
   return (
     <motion.div
@@ -225,7 +234,6 @@ function CardInfo({ icon: Icon, titulo, valor, media10 = false }) {
       <Icon className="w-8 h-8 text-lousa dark:text-white" aria-hidden="true" />
       <p className="text-sm text-gray-600 dark:text-gray-300">{titulo}</p>
       <p className="text-2xl font-bold text-lousa dark:text-white">{exibicao}</p>
-      {media10 && <span className="text-xs text-gray-500 dark:text-gray-400">escala 0–10</span>}
     </motion.div>
   );
 }

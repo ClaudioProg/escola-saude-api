@@ -1,4 +1,4 @@
-// ✅ src/components/TurmasInstrutor.jsx (abas por DATA + ministats por dia)
+// ✅ src/components/TurmasInstrutor.jsx (abas por DATA + ministats com animação + Aguardando)
 import PropTypes from "prop-types";
 import { motion, AnimatePresence } from "framer-motion";
 import { useMemo, useState } from "react";
@@ -7,16 +7,8 @@ import { toast } from "react-toastify";
 import { apiPatch, apiPost } from "../services/api";
 import { formatarCPF } from "../utils/data";
 import {
-  Users,
-  Star,
-  FileText,
-  QrCode,
-  CalendarDays,
-  Clock,
-  MapPin,
-  CheckCircle2,
-  AlertCircle,
-  XCircle,
+  Users, Star, FileText, QrCode, CalendarDays, Clock, MapPin,
+  CheckCircle2, AlertCircle, XCircle,
 } from "lucide-react";
 
 /* ===== Helpers ===== */
@@ -24,9 +16,7 @@ const ymd = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
 const hhmm = (s) => (typeof s === "string" ? s.slice(0, 5) : "");
 const hojeYMD = () => {
   const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-    d.getDate()
-  ).padStart(2, "0")}`;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 const toLocalDateFromYMDTime = (dateOnly, timeHHmm = "12:00") =>
   dateOnly ? new Date(`${dateOnly}T${(hhmm(timeHHmm) || "12:00")}:00`) : null;
@@ -41,41 +31,36 @@ function statusFromTurma(t) {
   return "encerrado";
 }
 
-/** Abre 60min após início; fecha 48h após término do dia */
+/** +60min do início; até +48h do fim */
 function dentroDaJanelaConfirmacao(dataYMD, hIni = "00:00", hFim = "23:59") {
   if (!dataYMD) return false;
   const start = toLocalDateFromYMDTime(dataYMD, hhmm(hIni) || "00:00");
   const end = toLocalDateFromYMDTime(dataYMD, hhmm(hFim) || "23:59");
   if (!start || !end || Number.isNaN(start) || Number.isNaN(end)) return false;
-  const abre = new Date(start.getTime() + 60 * 60 * 1000); // +60min
-  const fecha = new Date(end.getTime() + 48 * 60 * 60 * 1000); // +48h
+  const abre = new Date(start.getTime() + 60 * 60 * 1000);
+  const fecha = new Date(end.getTime() + 48 * 60 * 60 * 1000);
   const now = new Date();
   return now >= abre && now <= fecha;
 }
 
-/* Chips de status */
+/* Chips */
 const CHIP_STYLES = {
-  programado:
-    "bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-900/25 dark:text-emerald-200 dark:border-emerald-800",
-  andamento:
-    "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-900/25 dark:text-amber-200 dark:border-amber-800",
-  encerrado:
-    "bg-rose-100 text-rose-900 border-rose-300 dark:bg-rose-900/25 dark:text-rose-200 dark:border-rose-800",
+  programado: "bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-900/25 dark:text-emerald-200 dark:border-emerald-800",
+  andamento: "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-900/25 dark:text-amber-200 dark:border-amber-800",
+  encerrado: "bg-rose-100 text-rose-900 border-rose-300 dark:bg-rose-900/25 dark:text-rose-200 dark:border-rose-800",
 };
 const CHIP_TEXT = { programado: "Programado", andamento: "Em andamento", encerrado: "Encerrado" };
 
 /* Badges */
 const Badge = ({ children, kind = "waiting" }) => {
   const cls =
-    kind === "ok"
-      ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-600/30 dark:text-emerald-300"
-      : kind === "absent"
-      ? "bg-rose-100 text-rose-700 dark:bg-rose-600/30 dark:text-rose-200"
-      : "bg-amber-100 text-amber-700 dark:bg-amber-600/30 dark:text-amber-200";
+    kind === "ok" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-600/30 dark:text-emerald-300"
+    : kind === "absent" ? "bg-rose-100 text-rose-700 dark:bg-rose-600/30 dark:text-rose-200"
+    : "bg-amber-100 text-amber-700 dark:bg-amber-600/30 dark:text-amber-200";
   return <span className={`px-2.5 py-[2px] text-xs font-semibold rounded-full ${cls}`}>{children}</span>;
 };
 
-/* Mini-stat (número grande + rótulo pequeno) */
+/* Mini-stat (número grande + rótulo pequeno) com “pulse” quando muda */
 function pctColor(p) {
   if (p >= 90) return "text-sky-600 dark:text-sky-400";
   if (p >= 76) return "text-emerald-600 dark:text-emerald-400";
@@ -84,49 +69,61 @@ function pctColor(p) {
 }
 const MiniStat = ({ number, label, className = "" }) => (
   <div className="min-w-[64px] text-right">
-    <div className={`leading-none font-extrabold text-2xl sm:text-3xl ${className}`}>{number}</div>
+    <motion.div
+      key={String(number)} // re-render -> anima
+      initial={{ scale: 0.9, y: -2, opacity: 0.6 }}
+      animate={{ scale: 1, y: 0, opacity: 1 }}
+      transition={{ type: "spring", stiffness: 320, damping: 20 }}
+      className={`leading-none font-extrabold text-2xl sm:text-3xl ${className}`}
+    >
+      {number}
+    </motion.div>
     <div className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">{label}</div>
   </div>
 );
 
+/* =================================================================== */
+
 export default function TurmasInstrutor({
-  turmas,
-  inscritosPorTurma,
-  avaliacoesPorTurma,
-  presencasPorTurma,
+  turmas = [],
+  inscritosPorTurma = {},
+  avaliacoesPorTurma = {},
+  presencasPorTurma = {},
   onVerInscritos,
   onVerAvaliacoes,
   onExportarListaAssinaturaPDF,
   onExportarQrCodePDF,
-  token,
+  token = null,
   carregarPresencas,
   carregando = false,
-  turmaExpandidaInscritos,
-  setTurmaExpandidaInscritos,
-  turmaExpandidaAvaliacoes,
-  setTurmaExpandidaAvaliacoes,
+  turmaExpandidaInscritos = null,
+  setTurmaExpandidaInscritos = () => {},
+  turmaExpandidaAvaliacoes = null,
+  setTurmaExpandidaAvaliacoes = () => {},
   datasPorTurma = {},
   carregarDatasPorTurma,
   className = "",
-}) {
+} = {}) {
   const [abrindo, setAbrindo] = useState(null);
   const [dataAtivaPorTurma, setDataAtivaPorTurma] = useState({}); // { [turmaId]: "YYYY-MM-DD" }
 
-  // Agrupar por evento
+  /* Agrupar por evento */
   const eventosAgrupados = useMemo(() => {
     const out = {};
     for (const t of turmas || []) {
-      if (!t || !t.id || !t.evento?.id) continue;
-      const eventoId = String(t.evento.id);
-      const eventoNome = t.evento.nome || t.evento.titulo || "Evento";
-      const eventoLocal = t.local || t.evento.local || "";
-      if (!out[eventoId]) out[eventoId] = { nome: eventoNome, local: eventoLocal, turmas: [] };
-      out[eventoId].turmas.push(t);
+    if (!t || !t.id) continue;
+    const evId = t?.evento?.id ?? t?.evento_id ?? t?.eventoId;
+    if (!evId) continue; // sem evento, ignora com segurança
+    const eventoId = String(evId);
+    const eventoNome = t?.evento?.nome || t?.evento?.titulo || t?.titulo_evento || "Evento";
+    const eventoLocal = t?.local || t?.evento?.local || "";
+    if (!out[eventoId]) out[eventoId] = { nome: eventoNome, local: eventoLocal, turmas: [] };
+    out[eventoId].turmas.push(t);
     }
     return out;
   }, [turmas]);
 
-  // confirmação manual
+  /* Confirmação manual */
   async function confirmarPresencaManual(usuarioId, turmaId, dataReferencia) {
     const dataYMD = String(dataReferencia).slice(0, 10);
     const payload = { usuario_id: Number(usuarioId), turma_id: Number(turmaId), data: dataYMD, data_presenca: dataYMD };
@@ -156,7 +153,6 @@ export default function TurmasInstrutor({
           ultimoErro = err;
         }
       }
-      console.error("Nenhuma rota de confirmação encontrada.", ultimoErro);
       toast.error("❌ Rota não encontrada para confirmar presença. Verifique o backend.");
     } finally {
       setAbrindo(null);
@@ -179,9 +175,7 @@ export default function TurmasInstrutor({
         {Object.entries(eventosAgrupados).map(([eventoId, evento]) => (
           <motion.li
             key={eventoId}
-            initial={{ opacity: 0, y: 18 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
+            initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
             transition={{ duration: 0.22 }}
             className="rounded-2xl overflow-hidden border border-gray-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 shadow-sm"
             aria-label={`Evento: ${evento.nome}`}
@@ -211,35 +205,35 @@ export default function TurmasInstrutor({
                 const st = statusFromTurma(turma);
                 const chipCls = `inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 rounded-full border ${CHIP_STYLES[st]}`;
 
-                // Datas reais
+                // Datas reais (deduplicadas + ordenadas)
                 const datasReais =
-                  (Array.isArray(datasPorTurma[idSeguro]) && datasPorTurma[idSeguro].length
-                    ? datasPorTurma[idSeguro]
-                    : null) ??
+                  (Array.isArray(datasPorTurma[idSeguro]) && datasPorTurma[idSeguro].length ? datasPorTurma[idSeguro] : null) ??
                   (Array.isArray(turma?.datas) && turma.datas.length ? turma.datas : null) ??
-                  presencasPorTurma[idSeguro]?.detalhado?.datas ??
-                  [];
+                  presencasPorTurma[idSeguro]?.detalhado?.datas ?? [];
 
-                const datas = (datasReais || [])
-                  .map((d) => {
-                    const dataYMD = ymd(d?.data) || ymd(d);
-                    return dataYMD
-                      ? {
-                          data: dataYMD,
-                          horario_inicio: hhmm(d?.horario_inicio) || hhmm(turma?.horario_inicio),
-                          horario_fim: hhmm(d?.horario_fim) || hhmm(turma?.horario_fim),
-                        }
-                      : null;
-                  })
-                  .filter(Boolean);
+                const datas = Array.from(
+                  new Map(
+                    (datasReais || [])
+                      .map((d) => {
+                        const data = ymd(d?.data) || ymd(d);
+                        if (!data) return null;
+                        const inicio = hhmm(d?.horario_inicio) || hhmm(turma?.horario_inicio) || "";
+                        const fim = hhmm(d?.horario_fim) || hhmm(turma?.horario_fim) || "";
+                        const key = `${data}|${inicio}|${fim}`;
+                        return [key, { data, horario_inicio: inicio, horario_fim: fim }];
+                      })
+                      .filter(Boolean)
+                  ).values()
+                ).sort((a, b) => {
+                  const A = toLocalDateFromYMDTime(a.data, a.horario_inicio) || new Date(`${a.data}T00:00:00`);
+                  const B = toLocalDateFromYMDTime(b.data, b.horario_inicio) || new Date(`${b.data}T00:00:00`);
+                  return A - B;
+                });
 
                 const dataAtiva = dataAtivaPorTurma[idSeguro] || (datas[0]?.data ?? null);
 
                 return (
-                  <section
-                    key={idSeguro}
-                    className="rounded-xl ring-1 ring-gray-200 dark:ring-zinc-700 bg-gray-50/50 dark:bg-zinc-900/30"
-                  >
+                  <section key={idSeguro} className="rounded-xl ring-1 ring-gray-200 dark:ring-zinc-700 bg-gray-50/50 dark:bg-zinc-900/30">
                     {/* Info + chips */}
                     <div className="px-4 py-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                       <div className="min-w-0">
@@ -250,8 +244,7 @@ export default function TurmasInstrutor({
                           {turma?.data_inicio && turma?.data_fim && (
                             <span className="inline-flex items-center gap-1">
                               <CalendarDays className="w-3.5 h-3.5" />
-                              {ymd(turma.data_inicio).split("-").reverse().join("/")} →{" "}
-                              {ymd(turma.data_fim).split("-").reverse().join("/")}
+                              {ymd(turma.data_inicio).split("-").reverse().join("/")} → {ymd(turma.data_fim).split("-").reverse().join("/")}
                             </span>
                           )}
                           {(turma?.horario_inicio || turma?.horario_fim) && (
@@ -311,7 +304,7 @@ export default function TurmasInstrutor({
                       </button>
                     </div>
 
-                    {/* Painel: Inscritos — ABAS POR DATA + MINISTATS */}
+                    {/* Painel: Inscritos — ABAS POR DATA + MINISTATS (com “Aguardando”) */}
                     <AnimatePresence>
                       {expandindoInscritos && (
                         <motion.div
@@ -349,9 +342,9 @@ export default function TurmasInstrutor({
                               return <p className="text-sm text-gray-600 italic dark:text-gray-300">Nenhuma data registrada para esta turma.</p>;
                             }
 
-                            // tabs de datas
                             return (
                               <div className="space-y-4">
+                                {/* Tabs de datas */}
                                 <div className="flex flex-wrap gap-2 mb-2">
                                   {datas.map((d) => {
                                     const active = (dataAtivaPorTurma[idSeguro] || datas[0].data) === d.data;
@@ -361,7 +354,8 @@ export default function TurmasInstrutor({
                                         type="button"
                                         onClick={() => setDataAtivaPorTurma((p) => ({ ...p, [idSeguro]: d.data }))}
                                         className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition
-                                          ${active ? "bg-violet-700 text-white border-violet-700" : "bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-100 border-zinc-300 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800"}`}
+                                          ${active ? "bg-violet-700 text-white border-violet-700"
+                                            : "bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-100 border-zinc-300 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800"}`}
                                         aria-pressed={active}
                                       >
                                         {d.data.split("-").reverse().join("/")} · {d.horario_inicio}–{d.horario_fim}
@@ -370,7 +364,7 @@ export default function TurmasInstrutor({
                                   })}
                                 </div>
 
-                                {/* Tabela da data ativa + MINISTATS */}
+                                {/* Conteúdo da data ativa */}
                                 {(() => {
                                   const d = datas.find((x) => x.data === (dataAtivaPorTurma[idSeguro] || datas[0].data)) || datas[0];
                                   if (!d) return null;
@@ -380,21 +374,19 @@ export default function TurmasInstrutor({
                                   const now = new Date();
                                   const antesDaJanela = abreJanela ? now < abreJanela : true;
 
-                                  // === RESUMO (inscritos/presentes/faltas/%)
+                                  // === RESUMO por data
                                   const totalInscritos = mapaUsuarios.size;
-                                  let presentes = 0, faltas = 0;
+                                  let presentes = 0, faltas = 0, aguardando = 0;
                                   for (const u of mapaUsuarios.values()) {
                                     const pr = !!u.presencas.get(d.data);
                                     if (pr) presentes += 1;
-                                    else if (!antesDaJanela) faltas += 1; // virou falta ao passar +1h
+                                    else if (antesDaJanela) aguardando += 1;
+                                    else faltas += 1;
                                   }
                                   const pct = totalInscritos > 0 ? Math.round((presentes / totalInscritos) * 100) : 0;
 
                                   return (
-                                    <section
-                                      key={d.data}
-                                      className="rounded-xl bg-white dark:bg-zinc-900/40 ring-1 ring-zinc-200 dark:ring-zinc-800"
-                                    >
+                                    <section className="rounded-xl bg-white dark:bg-zinc-900/40 ring-1 ring-zinc-200 dark:ring-zinc-800">
                                       <header className="px-4 py-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                                         <div className="flex items-center gap-3">
                                           <CalendarDays className="w-4 h-4 text-zinc-600 dark:text-zinc-300" />
@@ -407,11 +399,12 @@ export default function TurmasInstrutor({
                                           </div>
                                         </div>
 
-                                        {/* Ministats à direita */}
+                                        {/* Ministats */}
                                         <div className="ml-0 sm:ml-auto flex flex-wrap gap-4">
                                           <MiniStat number={totalInscritos} label="inscritos" className="text-zinc-700 dark:text-zinc-100" />
                                           <MiniStat number={presentes} label="presentes" className="text-emerald-600 dark:text-emerald-400" />
                                           <MiniStat number={faltas} label="faltas" className="text-rose-600 dark:text-rose-400" />
+                                          <MiniStat number={aguardando} label="aguardando" className="text-amber-600 dark:text-amber-400" />
                                           <MiniStat number={`${pct}%`} label="presença" className={pctColor(pct)} />
                                         </div>
                                       </header>
@@ -498,15 +491,11 @@ export default function TurmasInstrutor({
                           {(() => {
                             const raw = avaliacoesPorTurma[idSeguro];
                             const comentarios =
-                              Array.isArray(raw)
-                                ? raw
-                                : Array.isArray(raw?.comentarios)
-                                ? raw.comentarios
-                                : Array.isArray(raw?.itens)
-                                ? raw.itens
-                                : Array.isArray(raw?.avaliacoes)
-                                ? raw.avaliacoes
-                                : [];
+                              Array.isArray(raw) ? raw
+                              : Array.isArray(raw?.comentarios) ? raw.comentarios
+                              : Array.isArray(raw?.itens) ? raw.itens
+                              : Array.isArray(raw?.avaliacoes) ? raw.avaliacoes
+                              : [];
                             return comentarios.length > 0 ? (
                               <AvaliacoesEvento avaliacoes={comentarios} />
                             ) : (
@@ -529,7 +518,7 @@ export default function TurmasInstrutor({
   );
 }
 
-/* ===== PropTypes / defaults (inalterados) ===== */
+/* ===== PropTypes ===== */
 TurmasInstrutor.propTypes = {
   turmas: PropTypes.arrayOf(
     PropTypes.shape({
@@ -566,19 +555,4 @@ TurmasInstrutor.propTypes = {
   datasPorTurma: PropTypes.object,
   carregarDatasPorTurma: PropTypes.func,
   className: PropTypes.string,
-};
-TurmasInstrutor.defaultProps = {
-  turmas: [],
-  inscritosPorTurma: {},
-  avaliacoesPorTurma: {},
-  presencasPorTurma: {},
-  carregarPresencas: undefined,
-  onVerInscritos: undefined,
-  onVerAvaliacoes: undefined,
-  onExportarListaAssinaturaPDF: undefined,
-  onExportarQrCodePDF: undefined,
-  setTurmaExpandidaInscritos: () => {},
-  setTurmaExpandidaAvaliacoes: () => {},
-  carregarDatasPorTurma: undefined,
-  className: "",
 };

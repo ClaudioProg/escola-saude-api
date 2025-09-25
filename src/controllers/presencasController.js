@@ -551,43 +551,54 @@ async function listaPresencasTurma(req, res) {
 async function relatorioPresencasPorTurma(req, res) {
   const { turma_id } = req.params;
 
-  const rid = `rid=${Date.now().toString(36)}-${Math.random()
-    .toString(36)
-    .slice(2, 7)}`;
+  const rid = `rid=${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  const strict = String(req.query.strict || "").trim() === "1";
   const isProd = process.env.NODE_ENV === "production";
-  const log = (...a) => console.log("📊 [presenças/detalhes]", rid, ...a);
-  const warn = (...a) => console.warn("⚠️ [presenças/detalhes]", rid, ...a);
+  const log   = (...a) => console.log("📊 [presenças/detalhes]", rid, ...a);
+  const warn  = (...a) => console.warn("⚠️ [presenças/detalhes]", rid, ...a);
   const errlg = (...a) => console.error("❌ [presenças/detalhes]", rid, ...a);
 
   try {
     log("⇢ INÍCIO", { turma_id });
 
+    // Tenta achar a turma (apenas para obter evento_id)
     const turmaQ = await db.query(
       `SELECT id, evento_id FROM turmas WHERE id = $1 LIMIT 1`,
       [turma_id]
     );
+
+    // Se NÃO existir: permissivo (200 vazio) ou estrito (404)
     if (turmaQ.rowCount === 0) {
       warn("Turma não encontrada:", turma_id);
-      return res.status(404).json({ erro: "Turma não encontrada." });
+      if (strict) {
+        return res.status(404).json({ erro: "Turma não encontrada." });
+      }
+      return res.status(200).json({
+        turma_id: Number(turma_id),
+        evento_id: null,
+        datas: [],
+        usuarios: [],
+      });
     }
+
     const eventoId = turmaQ.rows[0].evento_id || null;
 
-    // datas reais da turma (ordenadas)
-    const datasArr = await obterDatasDaTurma(turma_id);
+    // Datas reais da turma (ordenadas; já tolerante a ausência)
+    const datasArr = await obterDatasDaTurma(turma_id); // ['YYYY-MM-DD', ...]
 
-    // inscritos
+    // Inscritos
     const usuariosQ = await db.query(
       `
       SELECT u.id, u.nome, u.cpf
-      FROM inscricoes i
-      JOIN usuarios u ON u.id = i.usuario_id
-      WHERE i.turma_id = $1
-      ORDER BY u.nome
+        FROM inscricoes i
+        JOIN usuarios u ON u.id = i.usuario_id
+       WHERE i.turma_id = $1
+       ORDER BY u.nome
       `,
       [turma_id]
     );
 
-    // presenças TRUE
+    // Presenças TRUE mapeadas por (usuario|data)
     const presMap = await mapearPresencasTrue(turma_id);
 
     const usuariosArr = usuariosQ.rows.map((u) => {
@@ -595,10 +606,9 @@ async function relatorioPresencasPorTurma(req, res) {
       const presencas = datasArr.map((data) => {
         const presente = !!presMap.get(`${String(u.id)}|${data}`);
         if (presente) presentesDatas.push(data);
-        return { data, presente };
+        return { data, presente }; // mantém formato amigável ao frontend
       });
 
-      // ausências = todas as datas - presentes
       const presentesSet = new Set(presentesDatas);
       const ausenciasDatas = datasArr.filter((d) => !presentesSet.has(d));
 
@@ -614,9 +624,9 @@ async function relatorioPresencasPorTurma(req, res) {
 
     return res.json({
       turma_id: Number(turma_id),
+      evento_id: eventoId,
       datas: datasArr,
       usuarios: usuariosArr,
-      evento_id: eventoId,
     });
   } catch (err) {
     errlg("✗ ERRO GERAL", {
