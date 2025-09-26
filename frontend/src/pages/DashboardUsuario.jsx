@@ -14,7 +14,6 @@ import "react-loading-skeleton/dist/skeleton.css";
 import Footer from "../components/Footer";
 import NadaEncontrado from "../components/NadaEncontrado";
 import GraficoEventos from "../components/GraficoEventos";
-// ❌ removido: GraficoAvaliacoes (era para instrutor)
 import { apiGet } from "../services/api";
 import { formatarDataBrasileira } from "../utils/data";
 
@@ -54,6 +53,89 @@ function DashboardHero({ onRefresh, carregando }) {
   );
 }
 
+/* ───────────── helpers de nota ───────────── */
+const ymd = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
+const hojeYMD = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate()
+  ).padStart(2, "0")}`;
+};
+const isPastOrToday = (dYMD) => !!dYMD && ymd(dYMD) <= hojeYMD();
+
+/**
+ * Tenta calcular a nota (0–10) a partir de diferentes formatos de payload.
+ * Regras:
+ * - considerar SOMENTE encontros que já aconteceram (data <= hoje)
+ * - nota = (presenças / encontros_passados) * 10
+ * - 1 casa decimal
+ */
+function calcularNotaParticipacao(dados) {
+  // 1) Se o backend já enviar pronto
+  const notaDireta = Number(dados?.nota);
+  if (Number.isFinite(notaDireta)) {
+    return Math.max(0, Math.min(10, Number(notaDireta.toFixed(1))));
+  }
+
+  // 2) Contadores simples (encontros e presenças até hoje)
+  const presencasAteHoje = Number(dados?.presencasAteHoje ?? dados?.presencas_passadas);
+  const encontrosAteHoje = Number(dados?.encontrosAteHoje ?? dados?.encontros_passados);
+  if (Number.isFinite(presencasAteHoje) && Number.isFinite(encontrosAteHoje) && encontrosAteHoje > 0) {
+    const nota = (presencasAteHoje / encontrosAteHoje) * 10;
+    return Math.max(0, Math.min(10, Number(nota.toFixed(1))));
+  }
+
+  // 3) Derivar de coleções comuns
+  // Procuramos por estruturas que contenham turmas/inscrições com `datas` e `presencas`
+  const colecoesPossiveis = [
+    dados?.inscricoes,
+    dados?.minhasInscricoes,
+    dados?.turmasInscrito,
+    dados?.eventosInscrito,
+    dados?.detalhesInscricoes,
+  ].filter(Array.isArray);
+
+  let encontrosPassados = 0;
+  let totalPresencas = 0;
+
+  for (const colecao of colecoesPossiveis) {
+    for (const item of colecao) {
+      // datas: [{data, horario_inicio, horario_fim}] OU array de strings "YYYY-MM-DD"
+      const datas = Array.isArray(item?.datas)
+        ? item.datas.map((d) => (typeof d === "string" ? { data: ymd(d) } : { data: ymd(d.data) }))
+        : [];
+
+      // presencas: [{data_presenca, presente}] ou [{data, presente}]
+      const presencas = Array.isArray(item?.presencas)
+        ? item.presencas.map((p) => ({
+            data: ymd(p.data_presenca ?? p.data),
+            presente: !!p.presente,
+          }))
+        : [];
+
+      const setPresencas = new Map();
+      presencas.forEach((p) => {
+        if (p.data) setPresencas.set(p.data, p.presente === true);
+      });
+
+      for (const d of datas) {
+        const dia = ymd(d.data);
+        if (!dia || !isPastOrToday(dia)) continue; // só conta o que já passou
+        encontrosPassados += 1;
+        if (setPresencas.get(dia) === true) totalPresencas += 1;
+      }
+    }
+  }
+
+  if (encontrosPassados > 0) {
+    const nota = (totalPresencas / encontrosPassados) * 10;
+    return Math.max(0, Math.min(10, Number(nota.toFixed(1))));
+  }
+
+  // 4) Sem dados suficientes
+  return null;
+}
+
 export default function DashboardUsuario() {
   const [dados, setDados] = useState(null);
   const [carregando, setCarregando] = useState(true);
@@ -77,7 +159,7 @@ export default function DashboardUsuario() {
       setCarregando(true);
       setErro("");
       setLive("Carregando seu painel…");
-      const data = await apiGet("/dashboard-usuario"); // mantém seu endpoint
+      const data = await apiGet("/dashboard-usuario");
       setDados(data || {});
       setLive("Painel atualizado.");
     } catch (err) {
@@ -95,31 +177,17 @@ export default function DashboardUsuario() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Mapeia campos com tolerância a nomes alternativos vindos do backend
-  const concluidos =
-    Number(dados?.cursosRealizados ?? dados?.concluidos ?? 0) || 0;
-
-  const inscricoesAtuais =
-    Number(dados?.inscricoesAtuais ?? dados?.inscricoesAtivas ?? 0) || 0;
-
-  const proximosEventos =
-    Number(dados?.proximosEventos ?? dados?.proximos ?? 0) || 0;
-
+  // ── KPIs tolerantes
+  const concluidos = Number(dados?.cursosRealizados ?? dados?.concluidos ?? 0) || 0;
+  const inscricoesAtuais = Number(dados?.inscricoesAtuais ?? dados?.inscricoesAtivas ?? 0) || 0;
+  const proximosEventos = Number(dados?.proximosEventos ?? dados?.proximos ?? 0) || 0;
   const certificadosDisponiveis =
-    Number(
-      dados?.certificadosDisponiveis ??
-        dados?.certificadosEmitidos ??
-        dados?.certificados ??
-        0
-    ) || 0;
-
+    Number(dados?.certificadosDisponiveis ?? dados?.certificadosEmitidos ?? dados?.certificados ?? 0) || 0;
   const avaliacoesPendentes =
-    Number(
-      dados?.avaliacoesPendentes ??
-        dados?.pendenciasAvaliacao ??
-        dados?.notificacoesAvaliacao ??
-        0
-    ) || 0;
+    Number(dados?.avaliacoesPendentes ?? dados?.pendenciasAvaliacao ?? dados?.notificacoesAvaliacao ?? 0) || 0;
+
+  const nota = calcularNotaParticipacao(dados); // 👈 nova nota (0–10, 1 casa)
+  const notaExibicao = nota == null ? "—" : nota.toFixed(1);
 
   return (
     <main className="min-h-screen bg-gelo dark:bg-zinc-900">
@@ -166,6 +234,8 @@ export default function DashboardUsuario() {
               <CardInfo icon={CalendarDays} titulo="Próximos eventos" valor={proximosEventos} />
               <CardInfo icon={FileText} titulo="Certificados Disponíveis" valor={certificadosDisponiveis} />
               <CardInfo icon={CalendarDays} titulo="Avaliações Pendentes" valor={avaliacoesPendentes} />
+              {/* 🆕 6º KPI: Nota */}
+              <CardInfo icon={ClipboardList} titulo="Nota de Participação" valor={notaExibicao} />
             </section>
 
             {/* Gráfico de Eventos (participante) */}
@@ -184,7 +254,7 @@ export default function DashboardUsuario() {
               <h2 className="text-lg font-semibold text-lousa dark:text-white mb-2">
                 ✨ Últimas Notificações
               </h2>
-              {Array.isArray(dados.ultimasNotificacoes) && dados.ultimasNotificacoes.length > 0 ? (
+              {Array.isArray(dados?.ultimasNotificacoes) && dados.ultimasNotificacoes.length > 0 ? (
                 <ul className="space-y-2">
                   {dados.ultimasNotificacoes.map((n, i) => (
                     <li
@@ -220,7 +290,7 @@ export default function DashboardUsuario() {
 /* ---------- UI ---------- */
 function CardInfo({ icon: Icon, titulo, valor }) {
   const n = Number(valor);
-  const exibicao = Number.isFinite(n) ? n : (valor ?? "—");
+  const exibicao = Number.isFinite(n) ? valor : (valor ?? "—");
 
   return (
     <motion.div
@@ -230,6 +300,7 @@ function CardInfo({ icon: Icon, titulo, valor }) {
       transition={{ duration: 0.35 }}
       tabIndex={-1}
       aria-label={`${titulo}: ${exibicao}`}
+      title={titulo === "Nota de Participação" && exibicao !== "—" ? `Nota calculada sobre encontros já realizados (0–10)` : undefined}
     >
       <Icon className="w-8 h-8 text-lousa dark:text-white" aria-hidden="true" />
       <p className="text-sm text-gray-600 dark:text-gray-300">{titulo}</p>

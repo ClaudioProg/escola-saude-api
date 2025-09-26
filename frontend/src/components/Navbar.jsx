@@ -263,6 +263,9 @@ export default function Navbar() {
     () => [
       { label: "Painel", path: "/instrutor", icon: LayoutDashboard },
       { label: "Agenda", path: "/agenda-instrutor", icon: CalendarDays },
+      { label: "Presença", path: "/instrutor/presenca", icon: QrCode },
+      { label: "Certificados", path: "/instrutor/certificados", icon: FileText },
+      { label: "Avaliação", path: "/instrutor/avaliacao", icon: PencilLine },
     ],
     []
   );

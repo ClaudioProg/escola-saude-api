@@ -36,6 +36,9 @@ const AgendaUsuario          = lazy(() => import("./pages/AgendaUsuario"));     
 
 const DashboardInstrutor     = lazy(() => import("./pages/DashboardInstrutor"));
 const AgendaInstrutor        = lazy(() => import("./pages/AgendaInstrutor"));
+const InstrutorPresenca       = lazy(() => import("./pages/InstrutorPresenca"));
+const CertificadosInstrutor   = lazy(() => import("./pages/CertificadosInstrutor"));
+const AvaliacaoInstrutor      = lazy(() => import("./pages/AvaliacaoInstrutor"));
 
 const DashboardAdministrador = lazy(() => import("./pages/DashboardAdministrador"));
 const DashboardAnalitico     = lazy(() => import("./pages/DashboardAnalitico"));
@@ -386,6 +389,34 @@ export default function App() {
             {/* 🧑‍🏫 / 🛠️ */}
             <Route path="/instrutor" element={<PrivateRoute permitido={["instrutor", "administrador"]}><DashboardInstrutor /></PrivateRoute>} />
             <Route path="/agenda-instrutor" element={<PrivateRoute permitido={["instrutor", "administrador"]}><AgendaInstrutor /></PrivateRoute>} />
+            <Route path="/qr-site" element={<PrivateRoute permitido={["instrutor", "administrador"]}><QrDoSite /></PrivateRoute>} />
+            <Route path="/turmas/presencas/:turmaId" element={<PrivateRoute permitido={["instrutor", "administrador"]}><PresencasPorTurma /></PrivateRoute>} />
+            <Route
+  path="/instrutor/presenca"
+  element={
+    <PrivateRoute permitido={["instrutor", "administrador"]}>
+      <InstrutorPresenca />
+    </PrivateRoute>
+  }
+/>
+
+<Route
+  path="/instrutor/certificados"
+  element={
+    <PrivateRoute permitido={["instrutor", "administrador"]}>
+      <CertificadosInstrutor />
+    </PrivateRoute>
+  }
+/>
+
+<Route
+  path="/instrutor/avaliacao"
+  element={
+    <PrivateRoute permitido={["instrutor", "administrador"]}>
+      <AvaliacaoInstrutor />
+    </PrivateRoute>
+  }
+/>
             <Route path="/administrador" element={<PrivateRoute permitido={["administrador"]}><DashboardAdministrador /></PrivateRoute>} />
             <Route path="/dashboard-analitico" element={<PrivateRoute permitido={["administrador"]}><DashboardAnalitico /></PrivateRoute>} />
             <Route path="/gerenciar-eventos" element={<PrivateRoute permitido={["administrador"]}><GerenciarEventos /></PrivateRoute>} />
@@ -394,8 +425,6 @@ export default function App() {
             <Route path="/historico-certificados" element={<PrivateRoute permitido={["administrador"]}><HistoricoCertificados /></PrivateRoute>} />
             <Route path="/lista-presencas-turma" element={<PrivateRoute permitido={["administrador"]}><ListaPresencasTurma /></PrivateRoute>} />
             <Route path="/relatorios-customizados" element={<PrivateRoute permitido={["administrador"]}><RelatoriosCustomizados /></PrivateRoute>} />
-            <Route path="/qr-site" element={<PrivateRoute permitido={["instrutor", "administrador"]}><QrDoSite /></PrivateRoute>} />
-            <Route path="/turmas/presencas/:turmaId" element={<PrivateRoute permitido={["instrutor", "administrador"]}><PresencasPorTurma /></PrivateRoute>} />
             <Route path="/agenda-administrador" element={<PrivateRoute permitido={["administrador"]}><AgendaAdministrador /></PrivateRoute>} />
             <Route path="/certificados-avulsos" element={<PrivateRoute permitido={["administrador"]}><CertificadosAvulsos /></PrivateRoute>} />
             <Route path="/gestao-presenca" element={<PrivateRoute permitido={["administrador"]}><GestaoPresencas /></PrivateRoute>} />

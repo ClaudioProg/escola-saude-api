@@ -1,705 +1,387 @@
-// ✅ src/pages/DashboardInstrutor.jsx
-import { useEffect, useRef, useState } from "react";
+// ✅ src/pages/DashboardInstrutor.jsx (DASHBOARD)
+import { useEffect, useMemo, useRef, useState } from "react";
+import { motion } from "framer-motion";
+import Skeleton from "react-loading-skeleton";
+import "react-loading-skeleton/dist/skeleton.css";
 import { toast } from "react-toastify";
-import TurmasInstrutor from "../components/TurmasInstrutor";
-import CarregandoSkeleton from "../components/CarregandoSkeleton";
-import ErroCarregamento from "../components/ErroCarregamento";
-import ModalAssinatura from "../components/ModalAssinatura";
+import {
+  RefreshCw,
+  Presentation,
+  CalendarDays,
+  BarChart3,
+  Star,
+  Users,
+} from "lucide-react";
+
 import Footer from "../components/Footer";
+import { apiGet } from "../services/api";
 
-import { formatarCPF, formatarDataBrasileira } from "../utils/data";
-import { apiGet, apiGetTurmaDatasAuto } from "../services/api";
-import { RefreshCw, PenLine, Presentation } from "lucide-react";
+/* ───────────── Chart.js ───────────── */
+import {
+  Chart as ChartJS,
+  BarElement,
+  CategoryScale,
+  LinearScale,
+  Tooltip,
+  Legend,
+  PointElement,
+  LineElement,
+} from "chart.js";
+import { Bar, Line } from "react-chartjs-2";
+ChartJS.register(BarElement, CategoryScale, LinearScale, Tooltip, Legend, PointElement, LineElement);
 
-/* ───────────────────────────── HeaderHero ───────────────────────────── */
-function HeaderHero({
-  nome = "",
-  carregando = false,
-  onRefresh,
-  onAbrirAssinatura,
-  mostrarBotaoAssinatura = false,
-  variant = "indigo",
-}) {
-  const variants = {
-    indigo: "from-indigo-900 via-violet-800 to-fuchsia-700",
-    emerald: "from-emerald-900 via-emerald-800 to-emerald-700",
-    cyan: "from-cyan-900 via-cyan-800 to-cyan-700",
-    fuchsia: "from-fuchsia-900 via-fuchsia-800 to-fuchsia-700",
-    amber: "from-amber-900 via-amber-800 to-amber-700",
-    slate: "from-slate-900 via-slate-800 to-slate-700",
-  };
-  const grad = variants[variant] ?? variants.indigo;
+/* ───────────── Helpers ───────────── */
+const ymd = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
+const hojeYMD = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+const isHoje = (d) => ymd(d) === hojeYMD();
+const isProximosDias = (d, dias = 7) => {
+  const base = new Date(hojeYMD());
+  const alvo = new Date(`${ymd(d)}T12:00:00`);
+  const diff = (alvo - base) / (1000 * 60 * 60 * 24);
+  return diff > 0 && diff <= dias;
+};
+const clampPct = (n) => Math.min(100, Math.max(0, Number(n) || 0));
 
+/* ───────────── Header/Hero ───────────── */
+function DashboardHero({ onRefresh, carregando }) {
   return (
-    <header className={`bg-gradient-to-br ${grad} text-white`}>
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 flex flex-col items-center text-center gap-3">
+    <header className="bg-gradient-to-br from-indigo-900 via-violet-800 to-fuchsia-700 text-white">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 flex flex-col items-center text-center gap-3">
         <div className="inline-flex items-center gap-2">
-          <Presentation className="w-5 h-5" aria-hidden="true" />
-          <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">Painel do Instrutor</h1>
+          <Presentation className="w-6 h-6" />
+          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
+            Painel do Instrutor
+          </h1>
         </div>
-
-        <div className="flex flex-wrap items-center justify-center gap-2">
-          <p className="text-sm text-white/90">
-            {nome ? `Bem-vindo(a), ${nome}` : "Gerencie suas turmas, presenças e relatórios"}
-          </p>
-
-          {mostrarBotaoAssinatura && (
-            <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold bg-amber-100/95 text-amber-900 border border-amber-300 shadow-sm">
-              ⚠︎ Sem assinatura cadastrada
-            </span>
-          )}
-        </div>
-
-        <div className="flex flex-wrap items-center justify-center gap-2">
-          <button
-            type="button"
-            onClick={onRefresh}
-            disabled={carregando}
-            className={`inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md transition
-              ${carregando ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-green-600 hover:bg-green-700"} text-white`}
-            aria-label="Atualizar painel do instrutor"
-            title="Atualizar"
-          >
-            <RefreshCw className="w-4 h-4" />
-            {carregando ? "Atualizando…" : "Atualizar"}
-          </button>
-
-          {mostrarBotaoAssinatura && (
-            <button
-              type="button"
-              onClick={onAbrirAssinatura}
-              className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md bg-amber-500 text-white hover:bg-amber-600"
-              aria-label="Cadastrar ou alterar assinatura"
-              title="Cadastrar/Alterar Assinatura"
-            >
-              <PenLine className="w-4 h-4" />
-              Assinatura
-            </button>
-          )}
-        </div>
+        <p className="text-sm text-white/90">
+          Visão geral das suas turmas, presenças e avaliações.
+        </p>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={carregando}
+          className={[
+            "inline-flex items-center gap-2 px-4 py-2 rounded-full font-semibold",
+            "bg-white/10 hover:bg-white/20 border border-white/20",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70",
+            carregando ? "opacity-60 cursor-not-allowed" : "",
+          ].join(" ")}
+          aria-label="Atualizar painel do instrutor"
+          title="Atualizar"
+        >
+          <RefreshCw className="w-4 h-4" />
+          {carregando ? "Atualizando…" : "Atualizar"}
+        </button>
       </div>
     </header>
   );
 }
 
-/* ----------------- helpers anti-fuso ----------------- */
-const ymd = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
-const toLocalNoon = (ymdStr) => (ymdStr ? new Date(`${ymdStr}T12:00:00`) : null);
-const todayYMD = () => {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-};
-const hhmm = (v, fb = "") =>
-  typeof v === "string" && /^\d{2}:\d{2}/.test(v) ? v.slice(0, 5) : fb;
-
-/* ----------------- SW Cache (sessionStorage) ----------------- */
-// 🔁 nova chave de cache, separada da agenda
-const CACHE_KEY = "cache:instrutor:minhas-turmas:v1";
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5min
-function readCache() {
-  try {
-    const raw = sessionStorage.getItem(CACHE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return parsed && Array.isArray(parsed.turmas) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-function writeCache(turmas) {
-  try {
-    sessionStorage.setItem(CACHE_KEY, JSON.stringify({ turmas, ts: Date.now() }));
-  } catch {}
-}
-
-/* ----------------- Timeout + Abort (anticorrida) ----------------- */
-const FETCH_TIMEOUT_MS = 15000; // 15s
-function withTimeout(promise, ms = FETCH_TIMEOUT_MS) {
-  let t;
-  return Promise.race([
-    promise,
-    new Promise((_, rej) => {
-      t = setTimeout(() => rej(new Error("TIMEOUT_FETCH_TURMAS")), ms);
-    }),
-  ]).finally(() => clearTimeout(t));
-}
-
-/* ---------- normalização do item vindo da API ---------- */
-function normalizeTurma(t) {
-  if (!t) return t;
-
-  const data_inicio =
-    ymd(t.data_inicio || t.dataInicio || t.inicio || t.data) || null;
-  const data_fim =
-    ymd(t.data_fim || t.dataFim || t.fim || t.data_termino || t.dataTermino || t.data) || null;
-
-  const evento =
-    (t.evento && t.evento.id && t.evento) ||
-    (t.evento_id && {
-      id: t.evento_id,
-      nome:
-        t.evento_nome ||
-        t.evento_titulo ||
-        t.titulo_evento ||
-        t.nome_evento ||
-        t.titulo ||
-        "Evento",
-      local: t.local_evento || t.local || undefined,
-    }) ||
-    undefined;
-
-  const horario_inicio = hhmm(t.horario_inicio || t.hora_inicio || t.horainicio, "");
-  const horario_fim = hhmm(t.horario_fim || t.hora_fim || t.horafim, "");
-
-  const datas =
-    Array.isArray(t.datas) ? t.datas :
-    Array.isArray(t.encontros) ? t.encontros :
-    t.datas_turma || [];
-
-  return {
-    ...t,
-    data_inicio,
-    data_fim,
-    evento,
-    horario_inicio,
-    horario_fim,
-    datas,
-  };
-}
-
-/* ===================================================================== */
-
+/* ───────────── Página ───────────── */
 export default function DashboardInstrutor() {
-  const liveRef = useRef(null);
-
-  let usuario = {};
-  try {
-    usuario = JSON.parse(localStorage.getItem("usuario") || "{}");
-  } catch {}
-  const nome = usuario?.nome || "";
-
-  const [turmas, setTurmas] = useState([]);
-  const [erro, setErro] = useState("");
   const [carregando, setCarregando] = useState(true);
-  const [filtro, setFiltro] = useState("todos");
-  const [inscritosPorTurma, setInscritosPorTurma] = useState({});
-  const [avaliacoesPorTurma, setAvaliacoesPorTurma] = useState({});
-  const [turmaExpandidaInscritos, setTurmaExpandidaInscritos] = useState(null);
-  const [turmaExpandidaAvaliacoes, setTurmaExpandidaAvaliacoes] = useState(null);
-  const [modalAssinaturaAberto, setModalAssinaturaAberto] = useState(false);
-  const [assinatura, setAssinatura] = useState(null);
-  const [presencasPorTurma, setPresencasPorTurma] = useState({});
-  const [datasPorTurma, setDatasPorTurma] = useState({});
+  const [erro, setErro] = useState("");
+  const [kpi, setKpi] = useState({
+    totalTurmas: 0,
+    aulasHoje: 0,
+    proximasAulas: 0,
+    presencaMediaGeral: 0, // %
+    notaMediaGeral: 0,     // 0–10
+    totalAvaliacoes: 0,
+  });
 
-  const inFlightRef = useRef(0);
-  const abortRef = useRef(null);
+  const [seriePresencaTurma, setSeriePresencaTurma] = useState({ labels: [], datasets: [] });
+  const [serieNotaEvento, setSerieNotaEvento] = useState({ labels: [], datasets: [] });
+  const [serieCargaProximos, setSerieCargaProximos] = useState({ labels: [], datasets: [] });
 
-  const beginLoad = () => {
-    inFlightRef.current += 1;
-    setCarregando(true);
-  };
-  const endLoad = () => {
-    inFlightRef.current = Math.max(0, inFlightRef.current - 1);
-    if (inFlightRef.current === 0) setCarregando(false);
-  };
+  const liveRef = useRef(null);
+  const setLive = (m) => { if (liveRef.current) liveRef.current.textContent = m; };
 
-  useEffect(() => {
-    return () => {
-      try {
-        abortRef.current?.abort?.();
-      } catch {}
-      inFlightRef.current = 0;
-      setCarregando(false);
-    };
-  }, []);
+  const usuarioId = (() => {
+    try { return Number(JSON.parse(localStorage.getItem("usuario") || "{}")?.id) || null; }
+    catch { return null; }
+  })();
 
-  const setLive = (msg) => {
-    if (liveRef.current) liveRef.current.textContent = msg;
-  };
+  async function carregar() {
+    try {
+      setCarregando(true);
+      setErro("");
+      setLive("Carregando dados do painel…");
 
-  const ordenar = (arr) =>
-    arr
-      .slice()
-      .sort((a, b) => {
-        const ad = toLocalNoon(ymd(a.data_inicio));
-        const bd = toLocalNoon(ymd(b.data_inicio));
-        if (!ad && !bd) return 0;
-        if (!ad) return 1;
-        if (!bd) return -1;
-        return bd - ad; // mais recentes primeiro
+      // 1) Turmas do instrutor
+      const turmas = await apiGet("/api/instrutor/minhas/turmas", { on403: "silent" }).catch(() => []);
+      const turmasArr = Array.isArray(turmas) ? turmas : [];
+      const totalTurmas = turmasArr.length;
+
+      // 2) Eventos + notas médias (0–10 já ajustado no seu controller)
+      let notasEventos = [];
+      if (usuarioId) {
+        const ev = await apiGet(`/api/instrutor/${usuarioId}/eventos-avaliacoes`, { on403: "silent" }).catch(() => []);
+        notasEventos = Array.isArray(ev) ? ev : [];
+      }
+
+      // 3) Presenças por turma (concorrência limitada)
+      const limit = 6; // pega as 6 turmas mais recentes para gráfico/estatística (evita muitas chamadas)
+      const turmasOrdenadas = turmasArr
+        .slice()
+        .sort((a, b) => (new Date(ymd(b.data_inicio || b.data_fim)) - new Date(ymd(a.data_inicio || a.data_fim))))
+        .slice(0, limit);
+
+      const fetchPresenca = async (tid) => {
+        const det = await apiGet(`/presencas/turma/${tid}/detalhes`, { on403: "silent" }).catch(() => null);
+        const datas = Array.isArray(det?.datas) ? det.datas : [];
+        const usuarios = Array.isArray(det?.usuarios) ? det.usuarios : [];
+        // só encontros passados
+        const passados = datas.filter((d) => ymd(d?.data) <= hojeYMD());
+        const totalEncontrosPassados = passados.length;
+        let presentesTotal = 0;
+        if (totalEncontrosPassados > 0) {
+          for (const u of usuarios) {
+            const pres = Array.isArray(u.presencas) ? u.presencas : [];
+            const set = new Map(pres.map((p) => [ymd(p.data_presenca || p.data), !!p.presente]));
+            for (const d of passados) {
+              if (set.get(ymd(d?.data)) === true) presentesTotal += 1;
+            }
+          }
+        }
+        const totalPossiveis = totalEncontrosPassados * usuarios.length;
+        const pct = totalPossiveis > 0 ? Math.round((presentesTotal / totalPossiveis) * 1000) / 10 : 0; // 1 casa
+        return { turmaId: tid, pct, datas, usuarios };
+      };
+
+      // concorrência simples
+      const chunks = [];
+      for (let i = 0; i < turmasOrdenadas.length; i += 3) chunks.push(turmasOrdenadas.slice(i, i + 3));
+      const presPorTurma = [];
+      for (const grupo of chunks) {
+        const res = await Promise.allSettled(grupo.map((t) => fetchPresenca(Number(t.id))));
+        res.forEach((r) => { if (r.status === "fulfilled" && r.value) presPorTurma.push(r.value); });
+      }
+
+      // KPIs derivados
+      const aulasHoje = turmasArr.reduce((acc, t) => {
+        const dI = ymd(t?.data_inicio), dF = ymd(t?.data_fim);
+        // se tiver "datas" (encontros reais), conta os iguais a hoje
+        const dts = Array.isArray(t?.datas) ? t.datas : [];
+        if (dts.length) {
+          return acc + dts.filter((d) => isHoje(ymd(d?.data || d))).length;
+        }
+        // fallback por intervalo
+        if (dI && dF && isHoje(dI) || isHoje(dF)) return acc + 1;
+        return acc;
+      }, 0);
+
+      const proximasAulas = turmasArr.reduce((acc, t) => {
+        const dts = Array.isArray(t?.datas) ? t.datas : [];
+        if (!dts.length) return acc;
+        return acc + dts.filter((d) => isProximosDias(ymd(d?.data || d), 7)).length;
+      }, 0);
+
+      const presGeral = (() => {
+        if (!presPorTurma.length) return 0;
+        const media = presPorTurma.reduce((s, it) => s + (Number(it.pct) || 0), 0) / presPorTurma.length;
+        return Math.round(clampPct(media) * 10) / 10;
+      })();
+
+      const notaMediaGeral = (() => {
+        if (!notasEventos.length) return 0;
+        const vs = notasEventos.map((e) => Number(e?.nota_media)).filter((x) => Number.isFinite(x));
+        if (!vs.length) return 0;
+        const m = vs.reduce((a, b) => a + b, 0) / vs.length;
+        return Math.round(m * 10) / 10; // 1 casa
+      })();
+
+      // Total de avaliações (aproximação: eventos com nota média possuem avaliações)
+      const totalAvaliacoes = notasEventos.length;
+
+      setKpi({
+        totalTurmas,
+        aulasHoje,
+        proximasAulas,
+        presencaMediaGeral: presGeral,
+        notaMediaGeral,
+        totalAvaliacoes,
       });
 
-  async function fetchTurmas({ showSpinner = true } = {}) {
-    if (showSpinner || inFlightRef.current === 0) {
-      beginLoad();
-      setLive("Carregando suas turmas…");
-    }
+      // Séries: Presença por Turma (top N)
+      const labelsPres = turmasOrdenadas.map((t) => String(t?.nome || `Turma ${t?.id}`));
+      const mapPct = new Map(presPorTurma.map((x) => [String(x.turmaId), x.pct]));
+      const dataPres = turmasOrdenadas.map((t) => Number(mapPct.get(String(t.id)) || 0));
+      setSeriePresencaTurma({
+        labels: labelsPres,
+        datasets: [{ label: "% Presença média", data: dataPres }],
+      });
 
-    try {
-      try {
-        abortRef.current?.abort?.();
-      } catch {}
-      const ctrl = new AbortController();
-      abortRef.current = ctrl;
+      // Séries: Nota por Evento
+      const labelsNota = notasEventos.map((e) => String(e?.evento || `Evento ${e?.evento_id}`));
+      const dataNota = notasEventos.map((e) => Number(e?.nota_media || 0));
+      setSerieNotaEvento({
+        labels: labelsNota,
+        datasets: [{ label: "Nota média (0–10)", data: dataNota }],
+      });
 
-      // 🔄 novo endpoint dedicado ao instrutor autenticado
-      const data = await withTimeout(
-        apiGet("/api/instrutor/minhas/turmas", { on403: "silent", signal: ctrl.signal })
-      );
-
-      const arr = Array.isArray(data) ? data : [];
-      const normalizadas = ordenar(
-        arr.map(normalizeTurma).filter((t) => t && t.id && t.evento?.id)
-      );
-
-      setTurmas(normalizadas);
-      setErro("");
-      writeCache(normalizadas);
-
-      // pré-carrega presenças silenciosamente
-      Promise.allSettled(
-        normalizadas
-          .filter((t) => t?.id)
-          .map((t) => carregarPresencas(t.id, { silent: true }))
-      );
-    } catch (err) {
-      if (err?.name === "AbortError") return;
-      if (err?.message === "TIMEOUT_FETCH_TURMAS") {
-        const cached = readCache();
-        if (cached?.turmas?.length) {
-          setTurmas(ordenar(cached.turmas));
-          toast.warn("⏱️ Conexão lenta — exibindo dados em cache.");
-        } else {
-          setTurmas([]);
-          toast.error("⏱️ Tempo excedido ao carregar suas turmas.");
+      // Série: Carga de aulas nos próximos 14 dias (contagem por dia)
+      const prox14 = (() => {
+        const mapa = new Map();
+        const hoje = new Date(hojeYMD());
+        for (let i = 0; i < 14; i++) {
+          const d = new Date(hoje); d.setDate(d.getDate() + i);
+          const key = d.toISOString().slice(0, 10);
+          mapa.set(key, 0);
         }
-      } else {
-        console.error("Erro ao carregar turmas:", {
-          name: err?.name,
-          message: err?.message,
-          status: err?.status,
-          url: err?.url,
-          data: err?.data,
-        });
-        setErro(err?.message || "Erro ao carregar suas turmas.");
-        toast.error(`❌ ${err?.message || "Erro ao carregar suas turmas."}`);
+        for (const t of turmasArr) {
+          const dts = Array.isArray(t?.datas) ? t.datas : [];
+          for (const d of dts) {
+            const k = ymd(d?.data || d);
+            if (mapa.has(k)) mapa.set(k, mapa.get(k) + 1);
+          }
+        }
+        const labels = Array.from(mapa.keys());
+        const values = labels.map((k) => mapa.get(k));
+        return { labels, values };
+      })();
+      setSerieCargaProximos({
+        labels: prox14.labels,
+        datasets: [{ label: "Aulas agendadas", data: prox14.values }],
+      });
 
-        const cached = readCache();
-        if (cached?.turmas?.length) setTurmas(ordenar(cached.turmas));
-      }
+      setLive("Painel atualizado.");
+    } catch (e) {
+      console.error(e);
+      setErro("Não foi possível carregar o painel do instrutor.");
+      toast.error("Erro ao carregar painel do instrutor.");
+      setKpi({ totalTurmas: 0, aulasHoje: 0, proximasAulas: 0, presencaMediaGeral: 0, notaMediaGeral: 0, totalAvaliacoes: 0 });
+      setSeriePresencaTurma({ labels: [], datasets: [] });
+      setSerieNotaEvento({ labels: [], datasets: [] });
+      setSerieCargaProximos({ labels: [], datasets: [] });
+      setLive("Falha ao carregar o painel.");
     } finally {
-      endLoad();
-      setLive("Turmas atualizadas.");
-    }
-
-    // assinatura (não prende o spinner)
-    try {
-      const a = await apiGet("/assinatura", { on403: "silent" });
-      setAssinatura(a?.assinatura || null);
-    } catch {
-      setAssinatura(null);
+      setCarregando(false);
     }
   }
 
-  useEffect(() => {
-    const cached = readCache();
-    if (cached?.turmas?.length) {
-      setTurmas(ordenar(cached.turmas));
-      setCarregando(false);
-      setLive("Turmas do cache exibidas.");
-    }
-    fetchTurmas({ showSpinner: !cached });
+  useEffect(() => { carregar(); /* eslint-disable-next-line */ }, []);
 
-    const onVis = () => {
-      if (document.hidden) return;
-      const c = readCache();
-      const tooOld = !c || !c.ts || Date.now() - c.ts > CACHE_TTL_MS;
-      if (tooOld) fetchTurmas({ showSpinner: false });
-    };
-    document.addEventListener("visibilitychange", onVis);
-    return () => document.removeEventListener("visibilitychange", onVis);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const barPctOptions = useMemo(() => ({
+    plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => `${ctx.parsed.y}%` } } },
+    scales: { y: { beginAtZero: true, max: 100, ticks: { callback: (v) => `${v}%` } } },
+    maintainAspectRatio: false,
+  }), []);
 
-  /* --------- APIs auxiliares --------- */
-  const carregarPresencas = async (turmaIdRaw, { silent = false } = {}) => {
-    const turmaId = parseInt(turmaIdRaw);
-    if (!turmaId || isNaN(turmaId)) return;
+  const barNotaOptions = useMemo(() => ({
+    plugins: { legend: { display: false } },
+    scales: { y: { beginAtZero: true, max: 10 } },
+    maintainAspectRatio: false,
+  }), []);
 
-    try {
-      const data = await apiGet(`/presencas/turma/${turmaId}/detalhes`, {
-        on403: "silent",
-      });
-      const datas = Array.isArray(data?.datas) ? data.datas : [];
-      const usuarios = Array.isArray(data?.usuarios) ? data.usuarios : [];
-      const totalDias = datas.length || 0;
+  const lineOptions = useMemo(() => ({
+    plugins: { legend: { display: false } },
+    scales: { y: { beginAtZero: true } },
+    maintainAspectRatio: false,
+  }), []);
 
-      const lista = usuarios.map((u) => {
-        const pres = Array.isArray(u.presencas) ? u.presencas : [];
-        const presentes = pres.filter((p) => p?.presente === true).length;
-        const freq = totalDias > 0 ? Math.round((presentes / totalDias) * 100) : 0;
-        return {
-          usuario_id: u.id,
-          nome: u.nome,
-          cpf: u.cpf,
-          presente: freq >= 75,
-          frequencia: `${freq}%`,
-        };
-      });
-
-      setPresencasPorTurma((prev) => ({
-        ...prev,
-        [turmaId]: { detalhado: { datas, usuarios }, lista },
-      }));
-    } catch (err) {
-      if (err?.status === 404) {
-        if (!silent) toast.warn("Turma não encontrada ou sem dados de presença.");
-        setPresencasPorTurma((prev) => ({
-          ...prev,
-          [turmaId]: { detalhado: { datas: [], usuarios: [] }, lista: [] },
-        }));
-        return;
-      }
-      if (!silent) toast.error("Erro ao carregar presenças da turma.");
-      setPresencasPorTurma((prev) => ({
-        ...prev,
-        [turmaId]: { detalhado: { datas: [], usuarios: [] }, lista: [] },
-      }));
-    }
-  };
-
-  const carregarInscritos = async (turmaIdRaw) => {
-    const turmaId = parseInt(turmaIdRaw);
-    if (!turmaId || isNaN(turmaId)) {
-      toast.error("Erro: Turma inválida.");
-      return;
-    }
-    try {
-      const data = await apiGet(`/inscricoes/turma/${turmaId}`, {
-        on403: "silent",
-      });
-      setInscritosPorTurma((prev) => ({
-        ...prev,
-        [turmaId]: Array.isArray(data) ? data : [],
-      }));
-    } catch {
-      toast.error("Erro ao carregar inscritos.");
-    }
-  };
-
-  const carregarAvaliacoes = async (turmaIdRaw) => {
-    const turmaId = parseInt(turmaIdRaw);
-    if (!turmaId || isNaN(turmaId)) {
-      toast.error("Erro: Turma inválida.");
-      return;
-    }
-    if (avaliacoesPorTurma[turmaId]) return;
-    try {
-      const data = await apiGet(`/avaliacoes/turma/${turmaId}`, {
-        on403: "silent",
-      });
-      const lista =
-        Array.isArray(data) ? data :
-        Array.isArray(data?.comentarios) ? data.comentarios :
-        Array.isArray(data?.itens) ? data.itens :
-        Array.isArray(data?.avaliacoes) ? data.avaliacoes : [];
-      setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: lista }));
-    } catch {
-      toast.error("Erro ao carregar avaliações.");
-      setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: [] }));
-    }
-  };
-
-  const hoje = todayYMD();
-  const turmasFiltradas = turmas.filter((t) => {
-    const di = ymd(t.data_inicio);
-    const df = ymd(t.data_fim);
-    if (!di || !df) return filtro === "todos";
-    if (filtro === "programados") return di > hoje;
-    if (filtro === "emAndamento") return di <= hoje && df >= hoje;
-    if (filtro === "realizados") return df < hoje;
-    return true;
-  });
-
-  const normDataItem = (d, turma) => ({
-    data: ymd(d?.data) || ymd(d),
-    horario_inicio:
-      d?.horario_inicio?.slice?.(0, 5) || turma?.horario_inicio?.slice?.(0, 5) || "",
-    horario_fim:
-      d?.horario_fim?.slice?.(0, 5) || turma?.horario_fim?.slice?.(0, 5) || "",
-  });
-
-  const obterDatasReaisSemSequencial = async (turma, estados) => {
-    const turmaId = turma?.id;
-    if (!turmaId) return [];
-    const cacheEstado = estados?.datasPorTurma?.[turmaId];
-    if (Array.isArray(cacheEstado) && cacheEstado.length) {
-      return cacheEstado.map((d) => normDataItem(d, turma)).filter((x) => x.data);
-    }
-    try {
-      const lista = await apiGetTurmaDatasAuto(turmaId);
-      if (Array.isArray(lista) && lista.length) {
-        return lista.map((d) => normDataItem(d, turma)).filter((x) => x.data);
-      }
-    } catch {}
-    const viaPres = estados?.presencasPorTurma?.[turmaId]?.detalhado?.datas;
-    if (Array.isArray(viaPres) && viaPres.length) {
-      return viaPres.map((d) => normDataItem(d, turma)).filter((x) => x.data);
-    }
-    const viaTurma = turma?.datas;
-    if (Array.isArray(viaTurma) && viaTurma.length) {
-      return viaTurma.map((d) => normDataItem(d, turma)).filter((x) => x.data);
-    }
-    return [];
-  };
-
-  const carregarDatasPorTurma = async (turmaIdRaw) => {
-    const turmaId = parseInt(turmaIdRaw);
-    if (!turmaId || isNaN(turmaId)) return;
-    try {
-      const lista = await apiGetTurmaDatasAuto(turmaId);
-      const normalizada = Array.isArray(lista)
-        ? lista
-            .map((d) => ({
-              data: ymd(d.data) || ymd(d),
-              horario_inicio: d.horario_inicio?.slice?.(0, 5) || "",
-              horario_fim: d.horario_fim?.slice?.(0, 5) || "",
-            }))
-            .filter((x) => x.data)
-        : [];
-      const cache = presencasPorTurma[turmaId]?.detalhado?.datas || [];
-      const viaPresencas = Array.isArray(cache)
-        ? cache
-            .map((d) => ({
-              data: ymd(d.data) || ymd(d),
-              horario_inicio: d.horario_inicio?.slice?.(0, 5) || "",
-              horario_fim: d.horario_fim?.slice?.(0, 5) || "",
-            }))
-            .filter((x) => x.data)
-        : [];
-      const finais = normalizada.length ? normalizada : viaPresencas;
-      setDatasPorTurma((prev) => ({ ...prev, [turmaId]: finais }));
-    } catch {
-      setDatasPorTurma((prev) => ({ ...prev, [turmaId]: [] }));
-    }
-  };
-
-  /* --------- PDFs --------- */
-  const gerarRelatorioPDF = async (turmaId) => {
-    try {
-      const [{ default: jsPDF }, auto] = await Promise.all([
-        import("jspdf"),
-        import("jspdf-autotable"),
-      ]);
-      const autoTable = auto.default;
-
-      const data = await apiGet(`/presencas/turma/${turmaId}/detalhes`, { on403: "silent" });
-      const datas = Array.isArray(data?.datas) ? data.datas : [];
-      const usuarios = Array.isArray(data?.usuarios) ? data.usuarios : [];
-      const totalDias = datas.length || 0;
-
-      const doc = new jsPDF();
-      doc.setFontSize(16);
-      doc.text("Relatório de Presenças por Turma (Resumo)", 14, 20);
-
-      const linhas = usuarios.map((u) => {
-        const presentes = (u.presencas || []).filter((p) => p?.presente === true).length;
-        const freq = totalDias > 0 ? Math.round((presentes / totalDias) * 100) : 0;
-        const atingiu = freq >= 75 ? "✔️" : "❌";
-        return [u.nome, formatarCPF(u.cpf), `${freq}%`, atingiu];
-      });
-
-      autoTable(doc, { startY: 30, head: [["Nome","CPF","Frequência","≥ 75%"]], body: linhas });
-      doc.save(`relatorio_turma_${turmaId}.pdf`);
-      toast.success("✅ PDF de presença gerado!");
-    } catch (e) {
-      console.error(e);
-      toast.error("Erro ao gerar relatório em PDF.");
-    }
-  };
-
-  const gerarListaAssinaturaPDF = async (turmaId) => {
-    try {
-      const [{ default: jsPDF }, auto] = await Promise.all([
-        import("jspdf"),
-        import("jspdf-autotable"),
-      ]);
-      const autoTable = auto.default;
-
-      const turma = turmas.find((t) => t.id === turmaId);
-      let alunos = inscritosPorTurma[turmaId];
-      if (!alunos) {
-        alunos = await apiGet(`/inscricoes/turma/${turmaId}`, { on403: "silent" });
-      }
-      if (!turma || !alunos?.length) {
-        toast.warning("⚠️ Nenhum inscrito encontrado para esta turma.");
-        return;
-      }
-
-      const datasReais = await obterDatasReaisSemSequencial(turma, { datasPorTurma, presencasPorTurma });
-      const doc = new jsPDF();
-      datasReais.forEach((d, index) => {
-        if (index > 0) doc.addPage();
-        const dataFormatada = formatarDataBrasileira(d.data);
-        const horaInicio = d.horario_inicio || turma.horario_inicio?.slice(0, 5) || "";
-        const horaFim = d.horario_fim || turma.horario_fim?.slice(0, 5) || "";
-        doc.setFontSize(14);
-        doc.text(
-          `Lista de Assinatura - ${turma.evento?.nome || turma.evento?.titulo || ""} - ${turma.nome || ""}`,
-          14, 20
-        );
-        doc.text(`Data: ${dataFormatada} | Horário: ${horaInicio} às ${horaFim}`, 14, 28);
-        autoTable(doc, {
-          startY: 30,
-          head: [["Nome", "CPF", "Assinatura"]],
-          body: alunos.map((a) => [a.nome, formatarCPF(a.cpf), "______________________"]),
-        });
-      });
-      doc.save(`lista_assinatura_turma_${turmaId}.pdf`);
-      toast.success("📄 Lista de assinatura gerada!");
-    } catch (e) {
-      console.error(e);
-      toast.error("Erro ao gerar lista de assinatura.");
-    }
-  };
-
-  const gerarQrCodePresencaPDF = async (turmaId, nomeEvento = "Evento") => {
-    try {
-      const [{ default: jsPDF }, { QRCodeCanvas }] = await Promise.all([
-        import("jspdf"),
-        import("qrcode.react"),
-      ]);
-      const { createRoot } = await import("react-dom/client");
-
-      const turma = turmas.find((t) => t.id === turmaId);
-      if (!turma) {
-        toast.error("Turma não encontrada.");
-        return;
-      }
-      const base =
-        (typeof window !== "undefined" && window.location?.origin) ||
-        "https://escoladasaude.vercel.app";
-      const url = `${base.replace(/\/+$/, "")}/presenca?turma=${encodeURIComponent(turmaId)}`;
-
-      const container = document.createElement("div");
-      container.style.position = "fixed";
-      container.style.left = "-99999px";
-      document.body.appendChild(container);
-      const root = createRoot(container);
-      root.render(<QRCodeCanvas value={url} size={300} includeMargin />);
-      await new Promise((r) => setTimeout(r, 60));
-      const canvas = container.querySelector("canvas");
-      const dataUrl = canvas?.toDataURL?.("image/png");
-      root.unmount();
-      container.remove();
-      if (!dataUrl) {
-        toast.error("Erro ao gerar imagem do QR Code.");
-        return;
-      }
-
-      const doc = new jsPDF({ orientation: "landscape" });
-      const pageW = doc.internal.pageSize.getWidth();
-      const centerX = pageW / 2;
-
-      doc.setFontSize(24);
-      doc.setFont("helvetica", "bold");
-      doc.text(String(nomeEvento || turma?.nome || "Evento"), centerX, 30, { align: "center" });
-
-      const nomeInstrutor = usuario?.nome || "Instrutor";
-      doc.setFontSize(16);
-      doc.setFont("helvetica", "normal");
-      doc.text(`Instrutor: ${nomeInstrutor}`, centerX, 40, { align: "center" });
-
-      const qrW = 110;
-      doc.addImage(dataUrl, "PNG", centerX - qrW / 2, 50, qrW, qrW);
-      doc.setFontSize(12);
-      doc.setTextColor(60);
-      doc.text("Escaneie este QR Code para confirmar sua presença", centerX, 50 + qrW + 14, { align: "center" });
-      doc.setFontSize(10);
-      doc.setTextColor(100);
-      doc.text(url, centerX, 50 + qrW + 22, { align: "center" });
-
-      doc.save(`qr_presenca_turma_${turmaId}.pdf`);
-      toast.success("🔳 QR Code gerado!");
-    } catch (e) {
-      console.error(e);
-      toast.error("Erro ao gerar QR Code.");
-    }
-  };
-
-  /* -------------------------------- UI -------------------------------- */
   return (
     <>
-      <HeaderHero
-        nome={nome}
-        carregando={carregando}
-        onRefresh={() => fetchTurmas({ showSpinner: true })}
-        onAbrirAssinatura={() => setModalAssinaturaAberto(true)}
-        mostrarBotaoAssinatura={!assinatura}
-        variant="indigo"
-      />
+      <DashboardHero onRefresh={carregar} carregando={carregando} />
 
-      <main className="min-h-screen bg-gelo dark:bg-zinc-900 px-2 sm:px-4 py-6">
+      <main className="min-h-screen bg-gelo dark:bg-zinc-900 px-3 sm:px-4 py-6">
         <p ref={liveRef} className="sr-only" aria-live="polite" />
 
-        <div className="max-w-6xl mx-auto">
-          {erro && <ErroCarregamento mensagem={erro} />}
-
-          {/* Filtros */}
-          <div className="flex justify-center gap-2 sm:gap-3 mb-6 flex-wrap">
-            {[
-              ["todos", "Todos"],
-              ["programados", "Programados"],
-              ["emAndamento", "Em andamento"],
-              ["realizados", "Realizados"],
-            ].map(([key, label]) => (
-              <button
-                key={key}
-                onClick={() => setFiltro(key)}
-                className={`px-4 py-1 rounded-full text-sm font-medium focus:outline-none focus:ring-2 focus:ring-lousa
-                  ${filtro === key ? "bg-violet-800 text-white" : "bg-gray-200 dark:bg-gray-700 dark:text-white"}`}
-                aria-pressed={filtro === key}
-              >
-                {label}
-              </button>
-            ))}
+        {/* KPIs */}
+        {carregando ? (
+          <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {[...Array(6)].map((_, i) => <Skeleton key={i} height={110} className="rounded-xl" />)}
           </div>
+        ) : (
+          <motion.section
+            className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+            initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}
+            aria-label="Indicadores do instrutor"
+          >
+            <KPI icon={Presentation} titulo="Minhas Turmas" valor={kpi.totalTurmas} />
+            <KPI icon={CalendarDays} titulo="Aulas Hoje" valor={kpi.aulasHoje} />
+            <KPI icon={CalendarDays} titulo="Próximas 7 dias" valor={kpi.proximasAulas} />
+            <KPI icon={Users} titulo="% Presença Média" valor={`${kpi.presencaMediaGeral.toFixed(1)}%`} />
+            <KPI icon={Star} titulo="Nota Média (0–10)" valor={kpi.notaMediaGeral.toFixed(1)} />
+            <KPI icon={BarChart3} titulo="Eventos Avaliados" valor={kpi.totalAvaliacoes} />
+          </motion.section>
+        )}
 
-          {/* Lista de turmas */}
-          {carregando && turmasFiltradas.length === 0 ? (
-            <CarregandoSkeleton linhas={4} />
-          ) : (
-            <TurmasInstrutor
-              turmas={turmasFiltradas}
-              inscritosPorTurma={inscritosPorTurma}
-              avaliacoesPorTurma={avaliacoesPorTurma}
-              presencasPorTurma={presencasPorTurma}
-              onVerInscritos={carregarInscritos}
-              onVerAvaliacoes={carregarAvaliacoes}
-              carregarPresencas={carregarPresencas}
-              onExportarListaAssinaturaPDF={gerarListaAssinaturaPDF}
-              onExportarQrCodePDF={gerarQrCodePresencaPDF}
-              carregando={carregando}
-              turmaExpandidaInscritos={turmaExpandidaInscritos}
-              setTurmaExpandidaInscritos={setTurmaExpandidaInscritos}
-              turmaExpandidaAvaliacoes={turmaExpandidaAvaliacoes}
-              setTurmaExpandidaAvaliacoes={setTurmaExpandidaAvaliacoes}
-              datasPorTurma={datasPorTurma}
-              carregarDatasPorTurma={carregarDatasPorTurma}
-            />
-          )}
+        {/* Gráficos */}
+        <section className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
+          <ChartCard title="% Presença média por Turma">
+            {carregando ? (
+              <Skeleton height={320} className="rounded-xl" />
+            ) : seriePresencaTurma.labels.length ? (
+              <div style={{ height: 320 }}>
+                <Bar data={seriePresencaTurma} options={barPctOptions} />
+              </div>
+            ) : <NoData />}
+          </ChartCard>
 
-          <ModalAssinatura
-            isOpen={modalAssinaturaAberto}
-            onClose={() => setModalAssinaturaAberto(false)}
-          />
-        </div>
+          <ChartCard title="Nota média por Evento">
+            {carregando ? (
+              <Skeleton height={320} className="rounded-xl" />
+            ) : serieNotaEvento.labels.length ? (
+              <div style={{ height: 320 }}>
+                <Bar data={serieNotaEvento} options={barNotaOptions} />
+              </div>
+            ) : <NoData />}
+          </ChartCard>
+        </section>
+
+        <section className="max-w-6xl mx-auto mt-6">
+          <ChartCard title="Aulas agendadas nos próximos 14 dias">
+            {carregando ? (
+              <Skeleton height={320} className="rounded-xl" />
+            ) : serieCargaProximos.labels.length ? (
+              <div style={{ height: 320 }}>
+                <Line data={serieCargaProximos} options={lineOptions} />
+              </div>
+            ) : <NoData />}
+          </ChartCard>
+        </section>
       </main>
 
       <Footer />
     </>
+  );
+}
+
+/* ───────────── UI helpers ───────────── */
+function KPI({ icon: Icon, titulo, valor }) {
+  return (
+    <motion.div
+      className="bg-white dark:bg-zinc-800 rounded-xl shadow p-4 flex flex-col items-center justify-center gap-2 text-center"
+      initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}
+      tabIndex={-1} aria-label={`${titulo}: ${valor}`}
+    >
+      <Icon className="w-7 h-7 text-lousa dark:text-white" aria-hidden="true" />
+      <p className="text-sm text-gray-600 dark:text-gray-300">{titulo}</p>
+      <p className="text-2xl font-bold text-lousa dark:text-white">{valor}</p>
+    </motion.div>
+  );
+}
+
+function ChartCard({ title, children }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}
+      className="bg-white dark:bg-gray-800 rounded-xl shadow p-4"
+    >
+      <h2 className="text-center font-semibold mb-4">{title}</h2>
+      {children}
+    </motion.div>
+  );
+}
+
+function NoData() {
+  return (
+    <div className="h-40 flex items-center justify-center text-gray-500 dark:text-gray-300 text-sm italic">
+      Sem dados para exibir.
+    </div>
   );
 }

@@ -1,4 +1,4 @@
-// ✅ src/pages/MeusCertificados.jsx (somente PARTICIPANTE)
+// ✅ src/pages/CertificadosInstrutor.jsx (somente INSTRUTOR)
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import Skeleton from "react-loading-skeleton";
@@ -10,8 +10,8 @@ import NadaEncontrado from "../components/NadaEncontrado";
 import BotaoPrimario from "../components/BotaoPrimario";
 import { apiGet, apiPost, makeApiUrl } from "../services/api";
 
-/* ───────────────── Hero ───────────────── */
-function HeaderHero({ onRefresh, variant = "teal", nome = "" }) {
+/* ───────────────── Hero (instrutor) ───────────────── */
+function HeaderHero({ onRefresh, variant = "amber", nome = "" }) {
   const variants = {
     sky: "from-sky-900 via-sky-800 to-sky-700",
     violet: "from-violet-900 via-violet-800 to-violet-700",
@@ -20,7 +20,7 @@ function HeaderHero({ onRefresh, variant = "teal", nome = "" }) {
     teal: "from-teal-900 via-teal-800 to-teal-700",
     indigo: "from-indigo-900 via-indigo-800 to-indigo-700",
   };
-  const grad = variants[variant] ?? variants.teal;
+  const grad = variants[variant] ?? variants.amber;
 
   return (
     <header className={`bg-gradient-to-br ${grad} text-white`}>
@@ -28,12 +28,12 @@ function HeaderHero({ onRefresh, variant = "teal", nome = "" }) {
         <div className="inline-flex items-center gap-2">
           <Award className="w-5 h-5" aria-hidden="true" />
           <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">
-            Meus Certificados
+            Certificados de Instrutor
           </h1>
         </div>
         <p className="text-sm text-white/90">
           {nome ? `Bem-vindo(a), ${nome}. ` : ""}
-          Gere e baixe seus certificados como <strong>participante</strong>.
+          Gere e baixe seus certificados como <strong>instrutor/palestrante</strong>.
         </p>
         <BotaoPrimario
           onClick={onRefresh}
@@ -60,16 +60,25 @@ function periodoSeguro(cert) {
 }
 
 /* ───────────────── Página ───────────────── */
-export default function MeusCertificados() {
+export default function CertificadosInstrutor() {
   const [certificados, setCertificados] = useState([]);
   const [erro, setErro] = useState("");
   const [carregando, setCarregando] = useState(true);
   const [gerandoKey, setGerandoKey] = useState(null);
   const liveRef = useRef(null);
 
+  // usuário do localStorage, com imagem_base64 validada (para assinar certificado como instrutor)
   const usuario = useMemo(() => {
     try {
-      return JSON.parse(localStorage.getItem("usuario") || "{}") || {};
+      const parsed = JSON.parse(localStorage.getItem("usuario") || "{}");
+      return {
+        ...parsed,
+        imagem_base64:
+          typeof parsed?.imagem_base64 === "string" &&
+          parsed.imagem_base64.startsWith("data:image/")
+            ? parsed.imagem_base64
+            : null,
+      };
     } catch {
       return {};
     }
@@ -77,7 +86,7 @@ export default function MeusCertificados() {
   const nome = usuario?.nome || "";
 
   useEffect(() => {
-    document.title = "Certificados | Escola da Saúde";
+    document.title = "Certificados do Instrutor | Escola da Saúde";
     carregarCertificados();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -88,15 +97,15 @@ export default function MeusCertificados() {
       setErro("");
       if (liveRef.current) liveRef.current.textContent = "Carregando certificados…";
 
-      // ✅ Somente PARTICIPANTE
-      const dadosUsuario = await apiGet("certificados/elegiveis");
-
-      const lista = Array.isArray(dadosUsuario) ? dadosUsuario : [];
+      // ✅ Somente INSTRUTOR
+      const dadosInstrutor = await apiGet("certificados/elegiveis-instrutor");
+      const lista = Array.isArray(dadosInstrutor) ? dadosInstrutor : [];
 
       // remove duplicatas por (evento_id, turma_id)
       const unicos = lista.filter(
         (item, idx, arr) =>
-          idx === arr.findIndex(
+          idx ===
+          arr.findIndex(
             (c) =>
               String(c.evento_id) === String(item.evento_id) &&
               String(c.turma_id) === String(item.turma_id)
@@ -106,13 +115,13 @@ export default function MeusCertificados() {
       setCertificados(unicos);
       if (liveRef.current) {
         liveRef.current.textContent = unicos.length
-          ? `Foram encontrados ${unicos.length} certificado(s) elegível(is).`
-          : "Nenhum certificado elegível encontrado.";
+          ? `Foram encontrados ${unicos.length} certificado(s) elegível(is) como instrutor.`
+          : "Nenhum certificado de instrutor elegível encontrado.";
       }
     } catch (e) {
       console.error(e);
-      setErro("Erro ao carregar certificados");
-      toast.error("❌ Erro ao carregar certificados.");
+      setErro("Erro ao carregar certificados de instrutor");
+      toast.error("❌ Erro ao carregar certificados de instrutor.");
       if (liveRef.current) liveRef.current.textContent = "Falha ao carregar certificados.";
     } finally {
       setCarregando(false);
@@ -120,7 +129,7 @@ export default function MeusCertificados() {
   }
 
   function keyDoCert(cert) {
-    return `${cert.evento_id}-${cert.turma_id}`;
+    return `${cert.evento_id}-${cert.turma_id}-instrutor`;
   }
 
   async function gerarCertificado(cert) {
@@ -132,12 +141,17 @@ export default function MeusCertificados() {
         usuario_id: usuario.id,
         evento_id: cert.evento_id,
         turma_id: cert.turma_id,
-        tipo: "usuario", // ✅ somente participante
+        tipo: "instrutor", // ✅ fixo
       };
+
+      // se o instrutor tiver assinatura já salva, envia para sair no PDF
+      if (usuario.imagem_base64) {
+        body.assinaturaBase64 = usuario.imagem_base64;
+      }
 
       const resultado = await apiPost("certificados/gerar", body);
 
-      toast.success("🎉 Certificado gerado com sucesso!");
+      toast.success("🎉 Certificado de instrutor gerado com sucesso!");
 
       setCertificados((prev) =>
         prev.map((c) =>
@@ -146,20 +160,21 @@ export default function MeusCertificados() {
                 ...c,
                 ja_gerado: true,
                 arquivo_pdf: resultado?.arquivo,
-                certificado_id: resultado?.certificado_id ?? c.certificado_id ?? Date.now(),
+                certificado_id:
+                  resultado?.certificado_id ?? c.certificado_id ?? Date.now(),
               }
             : c
         )
       );
     } catch (err) {
       console.error(err);
-      toast.error("❌ Erro ao gerar certificado.");
+      toast.error("❌ Erro ao gerar certificado de instrutor.");
     } finally {
       setGerandoKey(null);
     }
   }
 
-  /* Cartão de certificado (participante) */
+  /* Cartão de certificado (instrutor) */
   function CartaoCertificado({ cert }) {
     const key = keyDoCert(cert);
     const gerando = gerandoKey === key;
@@ -171,19 +186,23 @@ export default function MeusCertificados() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.25 }}
         className="rounded-2xl border shadow-sm p-4 flex flex-col justify-between transition
-                   bg-white border-gray-200 dark:bg-zinc-900 dark:border-zinc-700"
+                   bg-yellow-50 border-yellow-200 dark:bg-yellow-900/20 dark:border-yellow-800"
       >
         <div>
-          <h3 className="text-lg font-bold mb-1 text-lousa dark:text-green-100">
+          <h3 className="text-lg font-bold mb-1 text-yellow-900 dark:text-yellow-200">
             {cert.evento || cert.evento_titulo || cert.nome_evento || "Evento"}
           </h3>
 
-          <p className="text-sm text-gray-700 dark:text-gray-300">
+          <p className="text-sm text-gray-800 dark:text-gray-200">
             Turma: {cert.nome_turma || cert.turma_nome || `#${cert.turma_id}`}
           </p>
-          <p className="text-sm text-gray-500 dark:text-gray-400">
+          <p className="text-sm text-gray-600 dark:text-gray-300">
             Período: {periodoSeguro(cert)}
           </p>
+
+          <span className="inline-block mt-2 px-2 py-1 bg-yellow-400 text-[11px] font-semibold text-yellow-900 rounded">
+            📣 Instrutor
+          </span>
         </div>
 
         <div className="mt-4 flex justify-center">
@@ -200,8 +219,8 @@ export default function MeusCertificados() {
             <button
               onClick={() => gerarCertificado(cert)}
               disabled={gerando}
-              className="text-white text-sm font-medium py-2 px-4 rounded text-center disabled:opacity-60 bg-blue-700 hover:bg-blue-800"
-              aria-label="Gerar certificado de participante"
+              className="text-white text-sm font-medium py-2 px-4 rounded text-center disabled:opacity-60 bg-yellow-500 hover:bg-yellow-600"
+              aria-label="Gerar certificado de instrutor"
             >
               {gerando ? "Gerando..." : "Gerar Certificado"}
             </button>
@@ -214,7 +233,7 @@ export default function MeusCertificados() {
   /* ─────────────── Render ─────────────── */
   return (
     <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
-      <HeaderHero onRefresh={carregarCertificados} variant="teal" nome={nome} />
+      <HeaderHero onRefresh={carregarCertificados} variant="amber" nome={nome} />
 
       <main role="main" className="flex-1 max-w-6xl mx-auto px-4 sm:px-6 py-6">
         {/* feedback acessível */}
@@ -227,16 +246,16 @@ export default function MeusCertificados() {
             ))}
           </div>
         ) : erro ? (
-          <NadaEncontrado mensagem="Não foi possível carregar os certificados." />
+          <NadaEncontrado mensagem="Não foi possível carregar os certificados de instrutor." />
         ) : certificados.length === 0 ? (
-          <NadaEncontrado mensagem="Você ainda não possui certificados disponíveis." />
+          <NadaEncontrado mensagem="Você ainda não possui certificados de instrutor disponíveis." />
         ) : (
-          <section aria-labelledby="sec-participante">
+          <section aria-labelledby="sec-instrutor">
             <h2
-              id="sec-participante"
+              id="sec-instrutor"
               className="text-base font-semibold text-slate-700 dark:text-slate-200 mb-3"
             >
-              Como participante
+              Como instrutor
             </h2>
             <ul className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {certificados.map((c) => (
