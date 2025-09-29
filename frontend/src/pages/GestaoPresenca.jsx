@@ -1,14 +1,64 @@
+/* eslint-disable no-console */
 // 📁 src/pages/GestaoPresenca.jsx
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "react-toastify";
 import { useNavigate } from "react-router-dom";
+import { ClipboardCheck, RefreshCcw } from "lucide-react";
 
 import { apiGet } from "../services/api";
-import Breadcrumbs from "../components/Breadcrumbs";
-import PageHeader from "../components/PageHeader";
 import Footer from "../components/Footer";
 import Spinner from "../components/Spinner";
 import ListaTurmasPresenca from "../components/ListaTurmasPresenca";
+
+/* ---------------- HeaderHero (verde-azulado, título central, altura média) ---------------- */
+function HeaderHero({ onAtualizar, atualizando }) {
+  return (
+    <header
+      className="relative isolate overflow-hidden bg-gradient-to-br from-teal-900 via-emerald-800 to-green-700 text-white"
+      role="banner"
+    >
+      {/* glow sutil */}
+      <div
+        className="pointer-events-none absolute inset-0 opacity-70"
+        style={{
+          background:
+            "radial-gradient(55% 55% at 50% 0%, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.05) 32%, rgba(255,255,255,0) 60%)",
+        }}
+        aria-hidden="true"
+      />
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-10 md:py-12 min-h-[150px] sm:min-h-[180px]">
+        <div className="flex flex-col items-center text-center gap-3 sm:gap-4">
+          <div className="inline-flex items-center justify-center gap-2">
+            <ClipboardCheck className="w-6 h-6" />
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
+              Gestão de presenças
+            </h1>
+          </div>
+
+          <p className="text-sm sm:text-base text-white/90 max-w-2xl">
+            Visualize turmas, consulte inscritos e acompanhe presenças com segurança.
+          </p>
+
+          <div className="mt-2 sm:mt-3 flex flex-wrap items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={onAtualizar}
+              disabled={atualizando}
+              className={`inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition
+                ${atualizando ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-white/15 hover:bg-white/25"} text-white`}
+              aria-label="Atualizar lista de eventos"
+              aria-busy={atualizando ? "true" : "false"}
+            >
+              <RefreshCcw className="w-4 h-4" />
+              {atualizando ? "Atualizando…" : "Atualizar"}
+            </button>
+          </div>
+        </div>
+      </div>
+      <div className="absolute bottom-0 left-0 right-0 h-px bg-white/25" aria-hidden="true" />
+    </header>
+  );
+}
 
 export default function PaginaGestaoPresencas() {
   const navigate = useNavigate();
@@ -19,76 +69,107 @@ export default function PaginaGestaoPresencas() {
   const [presencasPorTurma, setPresencasPorTurma] = useState({});
   const [carregandoEventos, setCarregandoEventos] = useState(true);
   const [erro, setErro] = useState("");
+  const liveRef = useRef(null);
+
+  const setLive = (msg) => {
+    if (liveRef.current) liveRef.current.textContent = msg;
+  };
+
+  async function carregarEventos() {
+    try {
+      setCarregandoEventos(true);
+      setErro("");
+      setLive("Carregando eventos…");
+      const data = await apiGet("/api/presencas/admin/listar-tudo", { on403: "silent" });
+      const listaEventos = Array.isArray(data?.eventos)
+        ? data.eventos
+        : Array.isArray(data)
+        ? data
+        : Array.isArray(data?.lista)
+        ? data.lista
+        : [];
+      setEventos(listaEventos);
+      setLive(`Eventos carregados: ${listaEventos.length}.`);
+    } catch (err) {
+      const msg = err?.message || "Erro ao carregar eventos.";
+      setErro(msg);
+      toast.error(msg);
+      setEventos([]);
+      setLive("Falha ao carregar eventos.");
+    } finally {
+      setCarregandoEventos(false);
+    }
+  }
 
   useEffect(() => {
-    (async () => {
-      try {
-        setCarregandoEventos(true);
-        setErro("");
-        const data = await apiGet("/api/presencas/admin/listar-tudo");
-        const listaEventos = Array.isArray(data?.eventos)
-          ? data.eventos
-          : Array.isArray(data)
-          ? data
-          : Array.isArray(data?.lista)
-          ? data.lista
-          : [];
-        setEventos(listaEventos);
-      } catch (err) {
-        const msg = err?.message || "Erro ao carregar eventos.";
-        setErro(msg);
-        toast.error(msg);
-        setEventos([]);
-      } finally {
-        setCarregandoEventos(false);
-      }
-    })();
+    carregarEventos();
   }, []);
 
   async function carregarInscritos(turmaId) {
     try {
-      const data = await apiGet(`/api/inscricoes/turma/${turmaId}`);
+      setLive(`Carregando inscritos da turma ${turmaId}…`);
+      const data = await apiGet(`/api/inscricoes/turma/${turmaId}`, { on403: "silent" });
       const lista = Array.isArray(data) ? data : data?.lista;
       setInscritosPorTurma((prev) => ({ ...prev, [turmaId]: Array.isArray(lista) ? lista : [] }));
-    } catch (err) {
+      setLive(`Inscritos da turma ${turmaId} carregados.`);
+    } catch {
       toast.error("Erro ao carregar inscritos.");
+      setLive("Falha ao carregar inscritos.");
     }
   }
 
   async function carregarAvaliacoes(turmaId) {
     try {
-      const data = await apiGet(`/api/avaliacoes/turma/${turmaId}`);
+      setLive(`Carregando avaliações da turma ${turmaId}…`);
+      const data = await apiGet(`/api/avaliacoes/turma/${turmaId}`, { on403: "silent" });
       setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: Array.isArray(data) ? data : [] }));
-    } catch (err) {
+      setLive("Avaliações carregadas.");
+    } catch {
       toast.error("Erro ao carregar avaliações.");
+      setLive("Falha ao carregar avaliações.");
     }
   }
 
   // usa /detalhes e guarda {datas, usuarios}
   async function carregarPresencas(turmaId) {
     try {
+      setLive(`Carregando presenças da turma ${turmaId}…`);
       const data = await apiGet(`/api/presencas/turma/${turmaId}/detalhes`, { on403: "silent" });
       const datas = Array.isArray(data?.datas) ? data.datas : [];
       const usuarios = Array.isArray(data?.usuarios) ? data.usuarios : [];
       setPresencasPorTurma((prev) => ({ ...prev, [turmaId]: { datas, usuarios } }));
-    } catch (err) {
+      setLive("Presenças carregadas.");
+    } catch {
       toast.error("Erro ao carregar presenças.");
       setPresencasPorTurma((prev) => ({ ...prev, [turmaId]: { datas: [], usuarios: [] } }));
+      setLive("Falha ao carregar presenças.");
     }
   }
 
+  const anyLoading = carregandoEventos;
+
   return (
-    <main className="min-h-screen bg-gelo dark:bg-zinc-900">
-      <div className="px-2 sm:px-4 py-6 max-w-6xl mx-auto">
-        <Breadcrumbs trilha={[{ label: "Painel administrador" }, { label: "Gestão de presenças" }]} />
+    <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
+      {/* live region acessível */}
+      <p ref={liveRef} className="sr-only" aria-live="polite" />
 
-        {/* Page header com respiro consistente */}
-        <PageHeader
-          title="📋 Gestão de presenças"
-          subtitle="Visualize turmas, consulte inscritos e acompanhe presenças com segurança."
-          className="mb-5 sm:mb-6"
-        />
+      {/* Header hero */}
+      <HeaderHero onAtualizar={carregarEventos} atualizando={carregandoEventos} />
 
+      {/* barra de progresso fina quando carregando */}
+      {anyLoading && (
+        <div
+          className="sticky top-0 left-0 w-full h-1 bg-emerald-100 z-40"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="Carregando dados"
+        >
+          <div className="h-full bg-emerald-700 animate-pulse w-1/3" />
+        </div>
+      )}
+
+      <main className="flex-1 max-w-6xl mx-auto px-3 sm:px-4 py-6">
         {erro && (
           <p className="text-center text-red-600 dark:text-red-400 mb-4" role="alert" aria-live="assertive">
             {erro}
@@ -114,9 +195,9 @@ export default function PaginaGestaoPresencas() {
             modoadministradorPresencas
           />
         )}
-      </div>
+      </main>
 
       <Footer />
-    </main>
+    </div>
   );
 }

@@ -3,17 +3,51 @@ import { useEffect, useState, useMemo, useRef } from "react";
 import { toast } from "react-toastify";
 import { RefreshCcw, Plus } from "lucide-react";
 
-import PageHeader from "../components/PageHeader";
 import Footer from "../components/Footer";
 import BotaoPrimario from "../components/BotaoPrimario";
-import BotaoSecundario from "../components/BotaoSecundario"; // ⬅️ novo
+import BotaoSecundario from "../components/BotaoSecundario";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import NadaEncontrado from "../components/NadaEncontrado";
 import { apiGet, apiPost, apiGetFile } from "../services/api";
 
-/* =======================
-   Helpers anti-fuso (YYYY-MM-DD)
-   ======================= */
+/* ---------------- HeaderHero (novo) ---------------- */
+function HeaderHero({ onRefresh, onSubmitClick, carregando }) {
+  return (
+    <header className="bg-gradient-to-br from-amber-900 via-orange-700 to-rose-600 text-white" role="banner">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 text-center flex flex-col items-center gap-3">
+        <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">Certificados Avulsos</h1>
+        <p className="text-sm text-white/90">
+          Cadastre, gere o PDF e envie por e-mail certificados fora do fluxo automático.
+        </p>
+        <div className="flex items-center gap-2">
+          <BotaoSecundario
+            variant="outline"
+            cor="azulPetroleo"
+            leftIcon={<RefreshCcw className="w-4 h-4" />}
+            onClick={onRefresh}
+            disabled={carregando}
+            aria-label="Atualizar lista de certificados"
+          >
+            {carregando ? "Atualizando…" : "Atualizar"}
+          </BotaoSecundario>
+
+          <BotaoPrimario
+            cor="amareloOuro"
+            leftIcon={<Plus className="w-4 h-4" />}
+            form="form-cert-avulso"
+            type="submit"
+            onClick={onSubmitClick}
+            aria-label="Cadastrar novo certificado"
+          >
+            Cadastrar
+          </BotaoPrimario>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+/* ===================== Helpers de data/email ===================== */
 function ymdToBR(ymd) {
   if (!ymd) return "";
   const m = String(ymd).match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -41,7 +75,11 @@ export default function CertificadosAvulsos() {
   const [salvando, setSalvando] = useState(false);
   const [filtro, setFiltro] = useState("todos");
   const [acaoLoading, setAcaoLoading] = useState({ id: null, tipo: null }); // {id, 'pdf' | 'email'}
-  const liveRef = useRef(null); // aria-live para feedback de formulário
+  const liveRef = useRef(null); // aria-live
+
+  const setLive = (msg) => {
+    if (liveRef.current) liveRef.current.textContent = msg;
+  };
 
   useEffect(() => {
     carregarCertificados();
@@ -50,11 +88,18 @@ export default function CertificadosAvulsos() {
   async function carregarCertificados() {
     try {
       setCarregando(true);
+      setLive("Carregando certificados…");
       const data = await apiGet("/api/certificados-avulsos", { on403: "silent" });
       setLista(Array.isArray(data) ? data : []);
+      setLive(
+        Array.isArray(data) && data.length
+          ? `Foram carregados ${data.length} certificado(s).`
+          : "Nenhum certificado encontrado."
+      );
     } catch (erro) {
       toast.error("❌ Erro ao carregar certificados.");
       setLista([]);
+      setLive("Falha ao carregar certificados.");
     } finally {
       setCarregando(false);
     }
@@ -82,29 +127,32 @@ export default function CertificadosAvulsos() {
     // validações
     if (!payload.nome || !payload.email || !payload.curso || !payload.carga_horaria) {
       toast.warning("Preencha todos os campos obrigatórios.");
-      liveRef.current && (liveRef.current.textContent = "Preencha os campos obrigatórios.");
+      setLive("Preencha os campos obrigatórios.");
       return;
     }
     if (!validarEmail(payload.email)) {
       toast.warning("Informe um e-mail válido.");
-      liveRef.current && (liveRef.current.textContent = "E-mail inválido.");
+      setLive("E-mail inválido.");
       return;
     }
     if (Number.isNaN(payload.carga_horaria) || payload.carga_horaria <= 0) {
       toast.warning("Informe uma carga horária válida (> 0).");
-      liveRef.current && (liveRef.current.textContent = "Carga horária inválida.");
+      setLive("Carga horária inválida.");
       return;
     }
     if (payload.data_inicio && !validYMD(payload.data_inicio)) {
       toast.warning("Data de início inválida.");
+      setLive("Data de início inválida.");
       return;
     }
     if (payload.data_fim && !validYMD(payload.data_fim)) {
       toast.warning("Data de término inválida.");
+      setLive("Data de término inválida.");
       return;
     }
     if (payload.data_inicio && payload.data_fim && payload.data_fim < payload.data_inicio) {
       toast.warning("A data de término não pode ser anterior à data de início.");
+      setLive("A data de término não pode ser anterior à data de início.");
       return;
     }
 
@@ -123,10 +171,10 @@ export default function CertificadosAvulsos() {
         data_fim: "",
       });
       toast.success("✅ Certificado cadastrado.");
-      liveRef.current && (liveRef.current.textContent = "Certificado cadastrado com sucesso.");
+      setLive("Certificado cadastrado com sucesso.");
     } catch (erro) {
       toast.error("❌ Erro ao cadastrar certificado.");
-      liveRef.current && (liveRef.current.textContent = "Erro ao cadastrar certificado.");
+      setLive("Erro ao cadastrar certificado.");
     } finally {
       setSalvando(false);
     }
@@ -165,57 +213,60 @@ export default function CertificadosAvulsos() {
     }
   }
 
+  const enviados = useMemo(() => (lista || []).filter((i) => i.enviado === true).length, [lista]);
+  const naoEnviados = useMemo(
+    () => (lista || []).filter((i) => i.enviado === false || i.enviado == null).length,
+    [lista]
+  );
+
   const listaFiltrada = useMemo(() => {
     return (lista || []).filter((item) => {
       if (filtro === "enviados") return item.enviado === true;
-      if (filtro === "nao-enviados") return item.enviado === false || item.enviado === null;
+      if (filtro === "nao-enviados") return item.enviado === false || item.enviado == null;
       return true;
     });
   }, [lista, filtro]);
 
   return (
-    <>
-      <PageHeader
-        title="Certificados Avulsos"
-        subtitle="Cadastre, gere o PDF e envie por e-mail certificados fora do fluxo automático."
-        breadcrumbs={[
-          { label: "Início", href: "/dashboard" },
-          { label: "Certificados" },
-          { label: "Avulsos", current: true },
-        ]}
-        // ⬇️ actions agora recebe React nodes (não objetos)
-        actions={
-          <div className="flex gap-2">
-            <BotaoSecundario
-              variant="outline"
-              cor="azulPetroleo"
-              leftIcon={<RefreshCcw className="w-4 h-4" />}
-              onClick={carregarCertificados}
-            >
-              Atualizar
-            </BotaoSecundario>
-
-            <BotaoPrimario
-              cor="amareloOuro"
-              leftIcon={<Plus className="w-4 h-4" />}
-              form="form-cert-avulso"
-              type="submit"
-            >
-              Cadastrar
-            </BotaoPrimario>
-          </div>
-        }
+    <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
+      <HeaderHero
+        onRefresh={carregarCertificados}
+        onSubmitClick={() => document.getElementById("form-cert-avulso")?.requestSubmit()}
+        carregando={carregando}
       />
 
-      <main className="min-h-screen bg-gelo dark:bg-zinc-900 px-3 sm:px-4 py-6">
+      {/* barra de carregamento fina no topo */}
+      {carregando && (
+        <div className="sticky top-0 left-0 w-full h-1 bg-amber-100 z-40" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-label="Carregando dados">
+          <div className="h-full bg-rose-600 animate-pulse w-1/3" />
+        </div>
+      )}
+
+      <main className="flex-1 max-w-6xl mx-auto px-3 sm:px-4 py-6">
         {/* feedback de acessibilidade */}
         <p ref={liveRef} className="sr-only" aria-live="polite" />
+
+        {/* KPIs rápidos */}
+        <section className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
+          <div className="bg-white dark:bg-zinc-800 rounded-xl shadow p-4 text-center">
+            <p className="text-xs text-gray-600 dark:text-gray-300">Total</p>
+            <p className="text-2xl font-bold">{lista.length}</p>
+          </div>
+          <div className="bg-white dark:bg-zinc-800 rounded-xl shadow p-4 text-center">
+            <p className="text-xs text-gray-600 dark:text-gray-300">Enviados</p>
+            <p className="text-2xl font-bold">{enviados}</p>
+          </div>
+          <div className="bg-white dark:bg-zinc-800 rounded-xl shadow p-4 text-center">
+            <p className="text-xs text-gray-600 dark:text-gray-300">Não enviados</p>
+            <p className="text-2xl font-bold">{naoEnviados}</p>
+          </div>
+        </section>
 
         {/* Formulário */}
         <form
           id="form-cert-avulso"
           onSubmit={cadastrarCertificado}
-          className="grid gap-4 grid-cols-1 md:grid-cols-2 bg-white dark:bg-zinc-800 p-4 shadow rounded-xl max-w-5xl mx-auto"
+          className="grid gap-4 grid-cols-1 md:grid-cols-2 bg-white dark:bg-zinc-800 p-4 shadow rounded-xl"
           aria-label="Cadastro de certificado avulso"
         >
           <div className="md:col-span-2">
@@ -230,7 +281,7 @@ export default function CertificadosAvulsos() {
               onChange={handleChange}
               required
               autoComplete="name"
-              className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white"
+              className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
             />
           </div>
 
@@ -244,7 +295,7 @@ export default function CertificadosAvulsos() {
               type="text"
               value={form.cpf}
               onChange={handleChange}
-              className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white"
+              className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
               inputMode="numeric"
               autoComplete="off"
             />
@@ -262,7 +313,7 @@ export default function CertificadosAvulsos() {
               onChange={handleChange}
               required
               autoComplete="email"
-              className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white"
+              className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
             />
           </div>
 
@@ -277,7 +328,7 @@ export default function CertificadosAvulsos() {
               value={form.curso}
               onChange={handleChange}
               required
-              className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white"
+              className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
             />
           </div>
 
@@ -294,7 +345,7 @@ export default function CertificadosAvulsos() {
               value={form.carga_horaria}
               onChange={handleChange}
               required
-              className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white"
+              className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
             />
           </div>
 
@@ -308,7 +359,7 @@ export default function CertificadosAvulsos() {
               type="date"
               value={form.data_inicio}
               onChange={handleChange}
-              className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white"
+              className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
             />
           </div>
 
@@ -322,7 +373,7 @@ export default function CertificadosAvulsos() {
               type="date"
               value={form.data_fim}
               onChange={handleChange}
-              className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white"
+              className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
             />
           </div>
 
@@ -333,8 +384,8 @@ export default function CertificadosAvulsos() {
           </div>
         </form>
 
-        {/* Filtro */}
-        <section className="max-w-5xl mx-auto mt-6 flex items-center gap-2">
+        {/* Filtros + contagem */}
+        <section className="max-w-6xl mx-auto mt-6 flex items-center gap-2 flex-wrap">
           <label htmlFor="filtro" className="mr-2 font-semibold text-sm text-lousa dark:text-white">
             Filtrar por envio:
           </label>
@@ -342,13 +393,13 @@ export default function CertificadosAvulsos() {
             id="filtro"
             value={filtro}
             onChange={(e) => setFiltro(e.target.value)}
-            className="border p-1 rounded dark:bg-zinc-800 dark:text-white"
+            className="border p-1 rounded dark:bg-zinc-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
           >
             <option value="todos">Todos</option>
             <option value="enviados">Enviados</option>
             <option value="nao-enviados">Não enviados</option>
           </select>
-          <span className="text-xs text-gray-600 dark:text-gray-300 ml-2">
+          <span className="text-xs text-gray-600 dark:text-gray-300 ml-2" aria-live="polite">
             {listaFiltrada.length} registro{listaFiltrada.length !== 1 ? "s" : ""}
           </span>
         </section>
@@ -391,7 +442,7 @@ export default function CertificadosAvulsos() {
                     <tr key={item.id} className="border-t dark:border-zinc-700">
                       <td className="p-2">{item.nome}</td>
                       <td className="p-2">{item.curso}</td>
-                      <td className="p-2">{item.email}</td>
+                      <td className="p-2 break-all">{item.email}</td>
                       <td className="p-2 text-center">{item.carga_horaria}h</td>
                       <td className="p-2 text-center">{periodo}</td>
                       <td className="p-2">
@@ -426,6 +477,6 @@ export default function CertificadosAvulsos() {
       </main>
 
       <Footer />
-    </>
+    </div>
   );
 }

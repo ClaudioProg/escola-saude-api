@@ -1,57 +1,57 @@
-// 📁 src/instrutorController.js
 /* eslint-disable no-console */
+// 📁 src/instrutorController.js
 const db = require("../db");
 
 /**
- * 🔢 Helper SQL: mapeia desempenho (texto/numérico) → nota 1..5
- * - Lida com textos: Ótimo/Excelente/Muito bom = 5; Bom = 4; Regular/Médio = 3; Ruim = 2; Péssimo/Muito ruim = 1
- * - Lida com valores '1'..'5' gravados como texto
+ * 🔢 Helper SQL seguro p/ coluna enum -> nota 1..5 (numeric)
+ * - SEMPRE castea o enum para text antes de comparar/converter
+ * - Aceita "1..5" (com vírgula/ponto), e textos comuns (ótimo, bom, etc.)
  */
 const SQL_MAP_NOTA = `
   CASE
-    /* numérico salvo como texto */
-    WHEN a.desempenho_instrutor IN ('5','4','3','2','1') THEN a.desempenho_instrutor::numeric
-    /* textos (tolerando variações comuns) */
-    WHEN a.desempenho_instrutor ILIKE 'ótimo' OR a.desempenho_instrutor ILIKE 'otimo'
-      OR a.desempenho_instrutor ILIKE 'excelente' OR a.desempenho_instrutor ILIKE 'muito bom'
-      THEN 5
-    WHEN a.desempenho_instrutor ILIKE 'bom' THEN 4
-    WHEN a.desempenho_instrutor ILIKE 'regular' OR a.desempenho_instrutor ILIKE 'médio'
-      OR a.desempenho_instrutor ILIKE 'medio'
-      THEN 3
-    WHEN a.desempenho_instrutor ILIKE 'ruim' THEN 2
-    WHEN a.desempenho_instrutor ILIKE 'péssimo' OR a.desempenho_instrutor ILIKE 'pessimo'
-      OR a.desempenho_instrutor ILIKE 'muito ruim'
-      THEN 1
+    WHEN a.desempenho_instrutor IS NULL THEN NULL
+    /* números "1..5" (com opcional ,00 ou .00 e espaços) */
+    WHEN trim(a.desempenho_instrutor::text) ~ '^[1-5](?:[\\.,]0+)?$'
+      THEN REPLACE(trim(a.desempenho_instrutor::text), ',', '.')::numeric
+    /* textos (lowercase simplificado) */
+    WHEN lower(a.desempenho_instrutor::text) IN ('ótimo','otimo','excelente','muito bom') THEN 5
+    WHEN lower(a.desempenho_instrutor::text) = 'bom' THEN 4
+    WHEN lower(a.desempenho_instrutor::text) IN ('regular','médio','medio') THEN 3
+    WHEN lower(a.desempenho_instrutor::text) = 'ruim' THEN 2
+    WHEN lower(a.desempenho_instrutor::text) IN ('péssimo','pessimo','muito ruim') THEN 1
     ELSE NULL
   END
 `;
 
 /**
- * 📋 Lista todos os instrutores com suas médias de avaliação e contadores
- * @route GET /api/usuarios/instrutor
- *
- * Observações:
- * - Usa COALESCE(a.palestrante_id, a.instrutor_id) para compatibilidade.
- * - Conta eventos distintos em que a pessoa foi instrutor.
- * - Média usa mapeamento robusto (texto/numérico) para desempenho do instrutor.
+ * 📋 Lista instrutores com médias/contadores
+ * - NÃO usa mais a.palestrante_id/instrutor_id nas avaliações.
+ * - Liga por evento_instrutor → turmas → avaliacoes (a.turma_id).
  */
 async function listarInstrutor(req, res) {
   try {
     const sql = `
+      WITH av_por_instrutor AS (
+        SELECT
+          ei.instrutor_id,
+          ${SQL_MAP_NOTA} AS nota
+        FROM evento_instrutor ei
+        JOIN turmas t          ON t.evento_id = ei.evento_id
+        LEFT JOIN avaliacoes a ON a.turma_id = t.id
+      )
       SELECT 
         u.id, 
         u.nome, 
         u.email,
 
-        /* Quantos eventos distintos a pessoa ministrou */
+        /* Eventos distintos ministrados */
         (
           SELECT COUNT(DISTINCT ei.evento_id)
           FROM evento_instrutor ei
           WHERE ei.instrutor_id = u.id
         ) AS "eventosMinistrados",
 
-        /* Total de turmas vinculadas a esses eventos (informativo) */
+        /* Turmas ligadas a esses eventos (informativo) */
         (
           SELECT COUNT(*)
           FROM evento_instrutor ei2
@@ -59,19 +59,19 @@ async function listarInstrutor(req, res) {
           WHERE ei2.instrutor_id = u.id
         ) AS "turmasVinculadas",
 
-        /* Total de respostas recebidas (desempenho_instrutor preenchido) */
+        /* Total de respostas com nota válida */
         (
-          SELECT COUNT(*)
-          FROM avaliacoes a2
-          WHERE COALESCE(a2.palestrante_id, a2.instrutor_id) = u.id
-            AND (
-              ${SQL_MAP_NOTA.replaceAll("a.", "a2.")}
-            ) IS NOT NULL
+          SELECT COUNT(av.nota)
+          FROM av_por_instrutor av
+          WHERE av.instrutor_id = u.id
+            AND av.nota IS NOT NULL
         ) AS "totalRespostas",
 
-        /* Média geral de desempenho (1..5) */
-        ROUND(AVG(
-          ${SQL_MAP_NOTA}
+        /* Média geral 1..5 (2 casas) */
+        ROUND((
+          SELECT AVG(av.nota)
+          FROM av_por_instrutor av
+          WHERE av.instrutor_id = u.id
         )::numeric, 2) AS media_avaliacao,
 
         /* Possui assinatura? */
@@ -79,12 +79,7 @@ async function listarInstrutor(req, res) {
 
       FROM usuarios u
       LEFT JOIN assinaturas s ON s.usuario_id = u.id
-      LEFT JOIN avaliacoes a ON COALESCE(a.palestrante_id, a.instrutor_id) = u.id
-
-      /* Pelo menos um desses perfis */
-      WHERE string_to_array(u.perfil, ',') && ARRAY['instrutor', 'administrador']
-
-      GROUP BY u.id, u.nome, u.email, s.imagem_base64
+      WHERE string_to_array(u.perfil, ',') && ARRAY['instrutor','administrador']
       ORDER BY u.nome;
     `;
     const { rows } = await db.query(sql);
@@ -96,14 +91,8 @@ async function listarInstrutor(req, res) {
 }
 
 /**
- * 📊 Lista eventos ministrados por um instrutor com período, média e total de respostas
+ * 📊 Eventos ministrados por instrutor (período, média e total de respostas)
  * @route GET /api/instrutor/:id/eventos-avaliacoes
- *
- * Retorna por evento:
- *  - evento_id, evento (título)
- *  - data_inicio (mín) / data_fim (máx) das turmas do evento
- *  - nota_media (1..5, 1 casa)
- *  - total_respostas (quantas avaliações desse instrutor nesse evento)
  */
 async function getEventosAvaliacoesPorInstrutor(req, res) {
   const { id } = req.params;
@@ -113,11 +102,10 @@ async function getEventosAvaliacoesPorInstrutor(req, res) {
         SELECT
           e.id AS evento_id,
           ${SQL_MAP_NOTA} AS nota
-        FROM eventos e
-        JOIN turmas t           ON t.evento_id = e.id
-        JOIN evento_instrutor ei ON ei.evento_id = e.id
-        LEFT JOIN avaliacoes a   ON a.turma_id = t.id
-                                AND COALESCE(a.palestrante_id, a.instrutor_id) = ei.instrutor_id
+        FROM evento_instrutor ei
+        JOIN eventos e         ON e.id = ei.evento_id
+        JOIN turmas  t         ON t.evento_id = e.id
+        LEFT JOIN avaliacoes a ON a.turma_id = t.id
         WHERE ei.instrutor_id = $1
       )
       SELECT 
@@ -125,13 +113,12 @@ async function getEventosAvaliacoesPorInstrutor(req, res) {
         e.titulo AS evento,
         MIN(t.data_inicio) AS data_inicio,
         MAX(t.data_fim)    AS data_fim,
-        /* média 1 casa (já em escala 1..5) */
         ROUND(AVG(r.nota)::numeric, 1) AS nota_media,
         COUNT(r.nota) AS total_respostas
-      FROM eventos e
-      JOIN turmas t           ON t.evento_id = e.id
-      JOIN evento_instrutor ei ON ei.evento_id = e.id
-      LEFT JOIN respostas r    ON r.evento_id = e.id
+      FROM evento_instrutor ei
+      JOIN eventos e ON e.id = ei.evento_id
+      JOIN turmas  t ON t.evento_id = e.id
+      LEFT JOIN respostas r ON r.evento_id = e.id
       WHERE ei.instrutor_id = $1
       GROUP BY e.id, e.titulo
       ORDER BY MIN(t.data_inicio) DESC NULLS LAST;
@@ -145,7 +132,7 @@ async function getEventosAvaliacoesPorInstrutor(req, res) {
 }
 
 /**
- * 📚 Lista turmas vinculadas a um instrutor (com nome do evento)
+ * 📚 Turmas vinculadas ao instrutor (com dados do evento)
  * @route GET /api/instrutor/:id/turmas
  */
 async function getTurmasComEventoPorInstrutor(req, res) {
@@ -197,7 +184,7 @@ async function getTurmasComEventoPorInstrutor(req, res) {
  */
 async function getMinhasTurmasInstrutor(req, res) {
   try {
-    const usuarioId = req.user?.id ?? req.usuario?.id; // usa req.user por padrão
+    const usuarioId = req.user?.id ?? req.usuario?.id;
     if (!usuarioId) {
       return res.status(401).json({ erro: "Usuário não autenticado." });
     }

@@ -1,13 +1,13 @@
+/* eslint-disable no-console */
 // 📁 src/pages/GestaoInstrutor.jsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "react-toastify";
 import Skeleton from "react-loading-skeleton";
 import Modal from "react-modal";
+import { RefreshCcw, Search, GraduationCap } from "lucide-react";
 
 import { apiGet } from "../services/api";
-import Breadcrumbs from "../components/Breadcrumbs";
 import TabelaInstrutor from "../components/TabelaInstrutor";
-import PageHeader from "../components/PageHeader";
 import Footer from "../components/Footer";
 
 // (Rota já protegida por <PrivateRoute permitido={["administrador"]}> no App.jsx)
@@ -25,6 +25,74 @@ function ymdToBR(s) {
 }
 // --------------------------------------
 
+/* ---------------- HeaderHero (roxo, título central e altura média) ---------------- */
+function HeaderHero({ onRefresh, carregando, busca, setBusca }) {
+  const inputRef = useRef(null);
+  return (
+    <header
+      className="relative isolate overflow-hidden bg-gradient-to-br from-fuchsia-900 via-violet-800 to-indigo-700 text-white"
+      role="banner"
+    >
+      <div
+        className="pointer-events-none absolute inset-0 opacity-60"
+        style={{
+          background:
+            "radial-gradient(55% 55% at 50% 0%, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.05) 30%, rgba(255,255,255,0) 60%)",
+        }}
+        aria-hidden="true"
+      />
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-9 min-h-[150px] sm:min-h-[170px]">
+        <div className="flex flex-col items-center text-center gap-3">
+          <div className="inline-flex items-center justify-center gap-2">
+            <GraduationCap className="w-6 h-6" />
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
+              Gestão de Instrutor
+            </h1>
+          </div>
+
+          <p className="text-sm sm:text-base text-white/90 max-w-2xl">
+            Pesquise, visualize histórico e acompanhe avaliações dos instrutores.
+          </p>
+
+          {/* Ações / Busca inline para mobile */}
+          <div className="mt-3 flex w-full max-w-xl flex-col sm:flex-row gap-2">
+            <div className="relative flex-1">
+              <label htmlFor="busca-instrutor" className="sr-only">
+                Buscar por nome ou e-mail
+              </label>
+              <input
+                id="busca-instrutor"
+                ref={inputRef}
+                type="text"
+                placeholder="Buscar por nome ou e-mail…"
+                value={busca}
+                onChange={(e) => setBusca(e.target.value)}
+                className="w-full px-4 py-2 pl-10 rounded-md bg-white/95 text-slate-900 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-white/60"
+                autoComplete="off"
+              />
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-600" aria-hidden="true" />
+            </div>
+
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={carregando}
+              className={`inline-flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition
+                ${carregando ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-white/15 hover:bg-white/25"} text-white`}
+              aria-label="Atualizar lista de instrutores"
+              aria-busy={carregando ? "true" : "false"}
+            >
+              <RefreshCcw className="w-4 h-4" />
+              {carregando ? "Atualizando…" : "Atualizar"}
+            </button>
+          </div>
+        </div>
+      </div>
+      <div className="absolute bottom-0 left-0 right-0 h-px bg-white/25" aria-hidden="true" />
+    </header>
+  );
+}
+
 export default function GestaoInstrutor() {
   const [instrutores, setInstrutores] = useState([]);
   const [carregandoDados, setCarregandoDados] = useState(true);
@@ -35,28 +103,34 @@ export default function GestaoInstrutor() {
   const [modalHistoricoAberto, setModalHistoricoAberto] = useState(false);
   const [instrutorSelecionado, setInstrutorSelecionado] = useState(null);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        setCarregandoDados(true);
-        setErro("");
-        const data = await apiGet("/api/instrutor");
-        const lista =
-          Array.isArray(data) ? data :
-          Array.isArray(data?.lista) ? data.lista :
-          Array.isArray(data?.instrutores) ? data.instrutores :
-          [];
-        setInstrutores(lista);
-      } catch (err) {
-        const msg = err?.message || "Erro ao carregar instrutores.";
-        setErro(msg);
-        setInstrutores([]);
-        toast.error(`❌ ${msg}`);
-      } finally {
-        setCarregandoDados(false);
-      }
-    })();
-  }, []);
+  const liveRef = useRef(null);
+  const setLive = (msg) => liveRef.current && (liveRef.current.textContent = msg);
+
+  async function carregarInstrutores() {
+    try {
+      setCarregandoDados(true);
+      setErro("");
+      setLive("Carregando instrutores…");
+      const data = await apiGet("/api/instrutor", { on403: "silent" });
+      const lista =
+        Array.isArray(data) ? data :
+        Array.isArray(data?.lista) ? data.lista :
+        Array.isArray(data?.instrutores) ? data.instrutores :
+        [];
+      setInstrutores(lista);
+      setLive(`Instrutores carregados: ${lista.length}.`);
+    } catch (err) {
+      const msg = err?.message || "Erro ao carregar instrutores.";
+      setErro(msg);
+      setInstrutores([]);
+      toast.error(`❌ ${msg}`);
+      setLive("Falha ao carregar instrutores.");
+    } finally {
+      setCarregandoDados(false);
+    }
+  }
+
+  useEffect(() => { carregarInstrutores(); }, []);
 
   const normaliza = (s) => (typeof s === "string" ? s.toLowerCase() : "");
   const filtrados = useMemo(() => {
@@ -70,7 +144,8 @@ export default function GestaoInstrutor() {
     setInstrutorSelecionado(instrutor);
     setModalHistoricoAberto(true);
     try {
-      const data = await apiGet(`/api/instrutor/${instrutor.id}/eventos-avaliacoes`);
+      setLive(`Carregando histórico de ${instrutor?.nome}…`);
+      const data = await apiGet(`/api/instrutor/${instrutor.id}/eventos-avaliacoes`, { on403: "silent" });
       const eventos = (Array.isArray(data) ? data : []).map((ev) => ({
         id: ev.evento_id,
         titulo: ev.evento,
@@ -80,38 +155,29 @@ export default function GestaoInstrutor() {
           ev.nota_media !== null && ev.nota_media !== undefined ? Number(ev.nota_media) : null,
       }));
       setHistorico(eventos);
+      setLive("Histórico carregado.");
     } catch (e) {
       toast.error("❌ Erro ao buscar histórico do instrutor.");
       setHistorico([]);
+      setLive("Falha ao carregar histórico.");
     }
   }
 
   return (
-    <main className="min-h-screen bg-gelo dark:bg-zinc-900">
-      <div className="px-2 sm:px-4 py-6 max-w-6xl mx-auto">
-        <Breadcrumbs trilha={[{ label: "Painel administrador" }, { label: "Gestão de instrutor" }]} />
+    <main className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
+      {/* Live region acessível */}
+      <p ref={liveRef} className="sr-only" aria-live="polite" />
 
-        <PageHeader
-          title="👩‍🏫 Gestão de instrutor"
-          subtitle="Pesquise, visualize histórico e acompanhe avaliações dos instrutores."
-          className="mb-5 sm:mb-6"
-        />
+      {/* Header hero roxo */}
+      <HeaderHero
+        onRefresh={carregarInstrutores}
+        carregando={carregandoDados}
+        busca={busca}
+        setBusca={setBusca}
+      />
 
-        <div className="mb-6">
-          <label htmlFor="busca-instrutor" className="sr-only">
-            Buscar por nome ou e-mail
-          </label>
-          <input
-            id="busca-instrutor"
-            type="text"
-            placeholder="🔍 Buscar por nome ou e-mail..."
-            value={busca}
-            onChange={(e) => setBusca(e.target.value)}
-            className="w-full px-4 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-lousa dark:bg-gray-800 dark:text-white"
-            autoComplete="off"
-          />
-        </div>
-
+      {/* Conteúdo */}
+      <div className="px-3 sm:px-4 py-6 max-w-6xl mx-auto w-full">
         {carregandoDados ? (
           <div className="space-y-4" aria-busy="true" aria-live="polite">
             {[...Array(4)].map((_, i) => (
@@ -123,10 +189,17 @@ export default function GestaoInstrutor() {
             {erro}
           </p>
         ) : (
-          <TabelaInstrutor
-            instrutor={Array.isArray(filtrados) ? filtrados : []}
-            onVisualizar={abrirModalVisualizar}
-          />
+          <section aria-label="Tabela de instrutores">
+            <TabelaInstrutor
+              instrutor={Array.isArray(filtrados) ? filtrados : []}
+              onVisualizar={abrirModalVisualizar}
+            />
+            {!filtrados.length && (
+              <p className="mt-4 text-center text-sm text-gray-600 dark:text-gray-300">
+                Nenhum instrutor corresponde à busca.
+              </p>
+            )}
+          </section>
         )}
       </div>
 

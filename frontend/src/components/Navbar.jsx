@@ -261,7 +261,7 @@ export default function Navbar() {
 
   const menusInstrutor = useMemo(
     () => [
-      { label: "Painel", path: "/instrutor", icon: LayoutDashboard },
+      { label: "Painel do Instrutor", path: "/instrutor", icon: LayoutDashboard },
       { label: "Agenda", path: "/agenda-instrutor", icon: CalendarDays },
       { label: "Presença", path: "/instrutor/presenca", icon: QrCode },
       { label: "Certificados", path: "/instrutor/certificados", icon: FileText },
@@ -272,10 +272,10 @@ export default function Navbar() {
 
   const menusAdmin = useMemo(
     () => [
-      { label: "Painel Administrador", path: "/administrador", icon: LayoutDashboard },
+      { label: "Painel do Administrador", path: "/dashboard-analitico", icon: BarChart3 },
+      { label: "Visão Geral", path: "/administrador", icon: LayoutDashboard },
       { label: "Agenda", path: "/agenda-administrador", icon: ListChecks },
       { label: "Certificados Avulsos", path: "/certificados-avulsos", icon: FileText },
-      { label: "Dashboard Analítico", path: "/dashboard-analitico", icon: BarChart3 },
       { label: "QR Code Presença", path: "/admin/qr-codes", icon: QrCode },
       { label: "Relatórios", path: "/relatorios-customizados", icon: ClipboardList },
       { label: "Gestão de Usuários", path: "/gestao-usuarios", icon: Users },

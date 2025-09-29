@@ -2,15 +2,50 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Calendar from "react-calendar";
 import "react-calendar/dist/Calendar.css";
-import { format, isAfter, isBefore, isWithinInterval, compareAsc } from "date-fns";
+import { format, isAfter, isBefore, isWithinInterval, compareAsc, startOfMonth, endOfMonth } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { toast } from "react-toastify";
 
-import PageHeader from "../components/PageHeader";
 import Footer from "../components/Footer";
 import EventoDetalheModal from "../components/EventoDetalheModal";
 import LegendaEventos from "../components/LegendaEventos";
 import { apiGet } from "../services/api";
+
+/* ========= HeaderHero (novo) ========= */
+function HeaderHero({ nome, carregando, onRefresh, onHoje }) {
+  return (
+    <header className="bg-gradient-to-br from-sky-900 via-cyan-700 to-teal-600 text-white" role="banner">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 text-center flex flex-col items-center gap-3">
+        <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">
+          Agenda Geral de Eventos
+        </h1>
+        <p className="text-sm text-white/90">
+          {nome ? `Bem-vindo(a), ${nome}.` : "Bem-vindo(a)."} Visualize e consulte os eventos por dia.
+        </p>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onHoje}
+            className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md transition bg-white/15 hover:bg-white/25 text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+            aria-label="Ir para a data de hoje no calendário"
+          >
+            Hoje
+          </button>
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={carregando}
+            className={`inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70
+              ${carregando ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-white/15 hover:bg-white/25"} text-white`}
+            aria-label="Atualizar agenda"
+          >
+            {carregando ? "Atualizando…" : "Atualizar"}
+          </button>
+        </div>
+      </div>
+    </header>
+  );
+}
 
 /* =========================================================================
    Helpers de data — tolerantes a strings com timezone (Z, +hh:mm)
@@ -99,26 +134,29 @@ export default function AgendaAdministrador() {
   const [selecionado, setSelecionado] = useState(null);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState("");
+  const [viewDate, setViewDate] = useState(new Date()); // controla mês visível
+
   const liveRef = useRef(null);
+  const setLive = (msg) => { if (liveRef.current) liveRef.current.textContent = msg; };
 
   async function carregar() {
     setCarregando(true);
     setErro("");
-    if (liveRef.current) liveRef.current.textContent = "Carregando agenda…";
+    setLive("Carregando agenda…");
 
     try {
       const data = await apiGet("/api/agenda");
       setEvents(Array.isArray(data) ? data : []);
-      if (liveRef.current) {
-        liveRef.current.textContent = Array.isArray(data) && data.length
+      setLive(
+        Array.isArray(data) && data.length
           ? `Agenda carregada: ${data.length} evento(s).`
-          : "Nenhum evento encontrado para o período.";
-      }
+          : "Nenhum evento encontrado para o período."
+      );
     } catch (err) {
       console.error(err);
       setErro("Não foi possível carregar a agenda.");
       toast.error("❌ Não foi possível carregar a agenda.");
-      if (liveRef.current) liveRef.current.textContent = "Falha ao carregar a agenda.";
+      setLive("Falha ao carregar a agenda.");
     } finally {
       setCarregando(false);
     }
@@ -180,38 +218,63 @@ export default function AgendaAdministrador() {
     return map;
   }, [events]);
 
-  return (
-    <>
-      <PageHeader
-        title="📅 Agenda Geral de Eventos"
-        subtitle="Painel do administrador"
-        leftPill={`Seja bem-vindo(a), ${nome || "administrador(a)"}`}
-        actions={
-          <button
-            type="button"
-            onClick={carregar}
-            disabled={carregando}
-            className={`px-3 py-1.5 text-sm rounded-md border transition
-              ${carregando
-                ? "opacity-60 cursor-not-allowed bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300"
-                : "bg-lousa text-white hover:bg-green-800"}`}
-            aria-label="Atualizar agenda"
-          >
-            {carregando ? "Atualizando…" : "Atualizar"}
-          </button>
-        }
-      />
+  // Contagem de eventos do mês atual visível (UX/feedback)
+  const contagemMes = useMemo(() => {
+    const ini = startOfMonth(viewDate);
+    const fim = endOfMonth(viewDate);
+    let total = 0;
+    for (const [dia, lista] of Object.entries(eventosPorData)) {
+      const d = toLocalDate(`${dia}T12:00:00`);
+      if (d && d >= ini && d <= fim) {
+        total += Array.isArray(lista) ? lista.length : 0;
+      }
+    }
+    return total;
+  }, [eventosPorData, viewDate]);
 
-      <main className="min-h-screen bg-gelo dark:bg-gray-900 px-3 sm:px-4 py-6 text-gray-900 dark:text-white">
+  // Handlers auxiliares
+  const irParaHoje = () => setViewDate(new Date());
+
+  return (
+    <div className="flex flex-col min-h-screen bg-gelo dark:bg-gray-900 text-black dark:text-white">
+      {/* Header novo */}
+      <HeaderHero nome={nome} carregando={carregando} onRefresh={carregar} onHoje={irParaHoje} />
+
+      {/* barra de carregamento fina no topo */}
+      {carregando && (
+        <div className="sticky top-0 left-0 w-full h-1 bg-cyan-100 z-40" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-label="Carregando agenda">
+          <div className="h-full bg-cyan-600 animate-pulse w-1/3" />
+        </div>
+      )}
+
+      <main className="flex-1 max-w-7xl mx-auto px-3 sm:px-4 py-6">
         {/* Live region acessível */}
         <p ref={liveRef} className="sr-only" aria-live="polite" />
 
-        <div className="mx-auto w-full max-w-7xl">
-          <div className="bg-white dark:bg-zinc-800 rounded-xl p-3 sm:p-5 shadow-md">
-            {erro ? (
-              <p className="text-red-600 dark:text-red-400 text-center">{erro}</p>
-            ) : (
+        <section className="bg-white dark:bg-zinc-800 rounded-xl p-3 sm:p-5 shadow-md">
+          {erro ? (
+            <p className="text-red-600 dark:text-red-400 text-center">{erro}</p>
+          ) : (
+            <>
+              {/* Info de mês e total de eventos (a11y) */}
+              <div className="flex items-center justify-between mb-3 text-sm text-gray-600 dark:text-gray-300">
+                <span>
+                  Mês visível:{" "}
+                  <strong className="text-gray-900 dark:text-white">
+                    {format(viewDate, "MMMM 'de' yyyy", { locale: ptBR }).replace(/^\w/, (c) => c.toUpperCase())}
+                  </strong>
+                </span>
+                <span aria-live="polite">
+                  {contagemMes} evento(s) neste mês
+                </span>
+              </div>
+
               <Calendar
+                value={viewDate}
+                onActiveStartDateChange={({ activeStartDate }) => setViewDate(activeStartDate || new Date())}
+                onViewChange={({ activeStartDate }) => setViewDate(activeStartDate || new Date())}
+                onClickMonth={(dt) => setViewDate(dt)}
+                onClickDay={(dt) => setViewDate(dt)}
                 locale="pt-BR"
                 className="react-calendar react-calendar-custom !bg-transparent"
                 prevLabel="‹"
@@ -219,7 +282,7 @@ export default function AgendaAdministrador() {
                 // acessibilidade básica do calendário
                 aria-label="Calendário de eventos"
                 // estilização nos tiles
-                tileClassName="!rounded-lg hover:!bg-gray-200 dark:hover:!bg-zinc-700 focus:!ring-2 focus:!ring-lousa"
+                tileClassName="!rounded-lg hover:!bg-gray-200 dark:hover:!bg-zinc-700 focus:!ring-2 focus:!ring-cyan-500"
                 navigationLabel={({ date }) =>
                   format(date, "MMMM yyyy", { locale: ptBR }).replace(/^\w/, (c) => c.toUpperCase())
                 }
@@ -235,7 +298,7 @@ export default function AgendaAdministrador() {
                         return (
                           <span
                             key={`${ev.id ?? ev.titulo}-${key}`}
-                            className="agenda-dot cursor-pointer focus:outline-none focus:ring-2 focus:ring-lousa"
+                            className="agenda-dot cursor-pointer focus:outline-none focus:ring-2 focus:ring-cyan-500"
                             style={{
                               backgroundColor: colorByStatus[st] || colorByStatus.programado,
                               width: 10,
@@ -256,9 +319,9 @@ export default function AgendaAdministrador() {
                   );
                 }}
               />
-            )}
-          </div>
-        </div>
+            </>
+          )}
+        </section>
 
         <div className="mt-6 flex justify-center">
           <LegendaEventos />
@@ -274,6 +337,6 @@ export default function AgendaAdministrador() {
       </main>
 
       <Footer />
-    </>
+    </div>
   );
 }

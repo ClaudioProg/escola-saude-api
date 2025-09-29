@@ -1,16 +1,40 @@
-// 📁 src/pages/DashboardAdministrador.jsx
-import { useEffect, useMemo, useState } from "react";
+// ✅ src/pages/DashboardAdministrador.jsx
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "react-toastify";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
-import Breadcrumbs from "../components/Breadcrumbs";
 import CardEventoadministrador from "../components/CardEventoadministrador";
+import Footer from "../components/Footer";
 import { apiGet } from "../services/api";
 
-// ✅ novos
-import PageHeader from "../components/PageHeader";
-import Footer from "../components/Footer";
+/* ========= HeaderHero (novo) ========= */
+function HeaderHero({ nome, carregando, onRefresh }) {
+  return (
+    <header className="bg-gradient-to-br from-rose-900 via-pink-700 to-orange-600 text-white" role="banner">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 text-center flex flex-col items-center gap-3">
+        <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">
+          Painel do Administrador
+        </h1>
+        <p className="text-sm text-white/90">
+          {nome ? `Bem-vindo(a), ${nome}.` : "Bem-vindo(a)."} Gerencie eventos, turmas, inscrições, presenças e avaliações.
+        </p>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={carregando}
+            className={`inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70
+              ${carregando ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-white/15 hover:bg-white/25"} text-white`}
+            aria-label="Atualizar lista de eventos"
+          >
+            {carregando ? "Atualizando…" : "Atualizar"}
+          </button>
+        </div>
+      </div>
+    </header>
+  );
+}
 
 /* ========= Helpers anti-fuso e formatação ========= */
 const ymd = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
@@ -40,6 +64,11 @@ export default function DashboardAdministrador() {
   const [erro, setErro] = useState("");
   const [filtroStatus, setFiltroStatus] = useState("em_andamento");
 
+  const liveRef = useRef(null);
+  const setLive = (msg) => {
+    if (liveRef.current) liveRef.current.textContent = msg;
+  };
+
   // Carrega nome (apenas UI)
   useEffect(() => {
     try {
@@ -51,21 +80,27 @@ export default function DashboardAdministrador() {
   }, []);
 
   // Carrega eventos (admin)
+  async function carregarEventos() {
+    setCarregando(true);
+    try {
+      setLive("Carregando eventos…");
+      const data = await apiGet("/api/eventos", { on403: "silent" });
+      setEventos(Array.isArray(data) ? data : []);
+      setErro("");
+      setLive("Eventos atualizados.");
+    } catch (e) {
+      console.error("❌ Erro ao carregar eventos:", e);
+      toast.error("❌ Erro ao carregar eventos");
+      setErro("Erro ao carregar eventos");
+      setLive("Falha ao carregar eventos.");
+    } finally {
+      setCarregando(false);
+    }
+  }
+
   useEffect(() => {
-    (async () => {
-      setCarregando(true);
-      try {
-        const data = await apiGet("/api/eventos", { on403: "silent" });
-        setEventos(Array.isArray(data) ? data : []);
-        setErro("");
-      } catch (e) {
-        console.error("❌ Erro ao carregar eventos:", e);
-        toast.error("❌ Erro ao carregar eventos");
-        setErro("Erro ao carregar eventos");
-      } finally {
-        setCarregando(false);
-      }
-    })();
+    carregarEventos();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* ========= Carregadores ========= */
@@ -90,10 +125,11 @@ export default function DashboardAdministrador() {
     }
   };
 
+  // ⚠️ Admin deve usar o endpoint que retorna TODAS as respostas da turma
   const carregarAvaliacoes = async (turmaId) => {
     if (avaliacoesPorTurma[turmaId]) return;
     try {
-      const data = await apiGet(`/api/avaliacoes/turma/${turmaId}`, { on403: "silent" });
+      const data = await apiGet(`/api/avaliacoes/turma/${turmaId}/all`, { on403: "silent" });
       setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: data || {} }));
     } catch (err) {
       console.error("❌ Erro ao carregar avaliações:", err);
@@ -278,39 +314,45 @@ export default function DashboardAdministrador() {
     });
   }, [eventos]);
 
+  const eventosFiltrados = useMemo(
+    () => eventosOrdenados.filter(filtrarPorStatus),
+    [eventosOrdenados, filtroStatus, turmasPorEvento]
+  );
+
   return (
-    <main className="min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
+    <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
+      {/* Header novo */}
+      <HeaderHero nome={nome} carregando={carregando} onRefresh={carregarEventos} />
+
       {/* barra de carregamento fina no topo */}
       {carregando && (
-        <div className="sticky top-0 left-0 w-full h-1 bg-green-100 z-40">
-          <div className="h-full bg-[#1b4332] animate-pulse w-1/3" aria-label="Carregando eventos" />
+        <div className="sticky top-0 left-0 w-full h-1 bg-pink-100 z-40" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-label="Carregando eventos">
+          <div className="h-full bg-pink-600 animate-pulse w-1/3" />
         </div>
       )}
 
-      <div className="px-4 py-6">
-        <Breadcrumbs trilha={[{ label: "Início", href: "/" }, { label: "Painel do Administrador" }]} />
+      <main className="flex-1 max-w-6xl mx-auto px-3 sm:px-4 py-6">
+        {/* Live region acessível */}
+        <p ref={liveRef} className="sr-only" aria-live="polite" />
 
-        {/* ✅ PageHeader padronizado */}
-        <PageHeader
-  title="🧑‍💼 Painel do Administrador"
-  subtitle={nome ? `Bem-vindo(a), ${nome}` : "Bem-vindo(a)"}
-  className="mb-6 sm:mb-8"   // ⬅️ adiciona espaço abaixo do header
-/>
-
-        <section className="max-w-5xl mx-auto">
-          {/* Filtros de status (acessível) */}
-          <div className="flex justify-center gap-2 sm:gap-3 mb-6 flex-wrap" role="group" aria-label="Filtros por status do evento">
+        {/* Filtros de status (acessível) */}
+        <section className="bg-white dark:bg-gray-800 rounded-xl shadow p-3 sm:p-4 mb-6">
+          <div className="flex justify-center gap-2 sm:gap-3 flex-wrap" role="group" aria-label="Filtros por status do evento">
             {["todos", "programado", "em_andamento", "encerrado"].map((status) => (
               <button
                 key={status}
                 onClick={() => setFiltroStatus(status)}
-                className={`px-4 py-1 rounded-full text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-[#1b4332] ${
-                  filtroStatus === status
-                    ? "bg-[#1b4332] text-white"
-                    : "bg-gray-300 text-gray-800 dark:bg-gray-700 dark:text-white"
-                }`}
+                className={`px-4 py-2 rounded-full text-sm font-medium transition focus:outline-none focus-visible:ring-2 focus-visible:ring-pink-500
+                  ${filtroStatus === status
+                    ? "bg-pink-600 text-white"
+                    : "bg-gray-200 text-gray-900 hover:bg-gray-300 dark:bg-gray-700 dark:text-white"}`}
                 aria-pressed={filtroStatus === status}
-                aria-label={`Filtrar eventos: ${status}`}
+                aria-label={`Filtrar eventos: ${{
+                  todos: "Todos",
+                  programado: "Programados",
+                  em_andamento: "Em andamento",
+                  encerrado: "Encerrados",
+                }[status]}`}
               >
                 {{
                   todos: "Todos",
@@ -321,38 +363,44 @@ export default function DashboardAdministrador() {
               </button>
             ))}
           </div>
-
-          {erro && <p className="text-red-500 text-center">{erro}</p>}
-
-          {/* Lista de eventos */}
-          <div className="space-y-4">
-            {eventosOrdenados.filter(filtrarPorStatus).map((evento) => (
-              <CardEventoadministrador
-                key={evento.id}
-                evento={evento}
-                expandido={eventoExpandido === evento.id}
-                toggleExpandir={toggleExpandir}
-                turmas={turmasPorEvento[evento.id] || []}
-                carregarInscritos={carregarInscritos}
-                inscritosPorTurma={inscritosPorTurma}
-                carregarAvaliacoes={carregarAvaliacoes}
-                avaliacoesPorTurma={avaliacoesPorTurma}
-                presencasPorTurma={presencasPorTurma}
-                carregarPresencas={carregarPresencas}
-                // PDFs
-                gerarRelatorioPDF={gerarRelatorioPDF}            // presença
-                gerarPdfInscritosTurma={gerarPdfInscritosTurma}  // infos + inscritos
-              />
-            ))}
-            {eventosOrdenados.filter(filtrarPorStatus).length === 0 && (
-              <p className="text-center text-gray-600 dark:text-gray-300">Nenhum evento encontrado para o filtro selecionado.</p>
-            )}
-          </div>
         </section>
-      </div>
 
-      {/* ✅ Footer global */}
+        {erro && (
+          <div className="bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-200 rounded-xl p-4 mb-4" role="alert">
+            {erro}
+          </div>
+        )}
+
+        {/* Lista de eventos */}
+        <section className="space-y-4">
+          {eventosFiltrados.map((evento) => (
+            <CardEventoadministrador
+              key={evento.id}
+              evento={evento}
+              expandido={eventoExpandido === evento.id}
+              toggleExpandir={toggleExpandir}
+              turmas={turmasPorEvento[evento.id] || []}
+              carregarInscritos={carregarInscritos}
+              inscritosPorTurma={inscritosPorTurma}
+              carregarAvaliacoes={carregarAvaliacoes}
+              avaliacoesPorTurma={avaliacoesPorTurma}
+              presencasPorTurma={presencasPorTurma}
+              carregarPresencas={carregarPresencas}
+              // PDFs
+              gerarRelatorioPDF={gerarRelatorioPDF}            // presença
+              gerarPdfInscritosTurma={gerarPdfInscritosTurma}  // infos + inscritos
+            />
+          ))}
+
+          {!carregando && eventosFiltrados.length === 0 && (
+            <p className="text-center text-gray-600 dark:text-gray-300">
+              Nenhum evento encontrado para o filtro selecionado.
+            </p>
+          )}
+        </section>
+      </main>
+
       <Footer />
-    </main>
+    </div>
   );
 }

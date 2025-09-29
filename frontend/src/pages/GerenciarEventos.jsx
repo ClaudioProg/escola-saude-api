@@ -1,17 +1,15 @@
 /* eslint-disable no-console */
 // 📁 src/pages/GerenciarEventos.jsx
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "react-toastify";
 import { motion } from "framer-motion";
-import { Pencil, Trash2, PlusCircle, Lock } from "lucide-react";
+import { Pencil, Trash2, PlusCircle, Lock, RefreshCcw, Wrench } from "lucide-react";
 
 import { apiGet, apiPost, apiPut, apiDelete } from "../services/api";
 import ModalEvento from "../components/ModalEvento";
-import Breadcrumbs from "../components/Breadcrumbs";
 import NenhumDado from "../components/NenhumDado";
 import SkeletonEvento from "../components/SkeletonEvento";
 import BotaoPrimario from "../components/BotaoPrimario";
-import PageHeader from "../components/PageHeader";
 import Footer from "../components/Footer";
 
 /* =============================
@@ -61,7 +59,6 @@ const extractInstrutorIds = (arr) => {
 /* ======== Helpers p/ encontros/datas ======== */
 const iso = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
 const toEncontroObj = (e, hiFallback = "08:00", hfFallback = "17:00") => {
-  // aceita string "YYYY-MM-DD" ou objetos com {data,inicio,fim}/{data,horario_inicio,horario_fim}
   if (!e) return null;
   if (typeof e === "string") {
     const d = iso(e);
@@ -158,14 +155,14 @@ const normRegistros = (arr) =>
    ============================= */
 async function fetchTurmasDoEvento(eventoId) {
   const urls = [
-    `/api/eventos/${eventoId}/turmas`,      // rota preferencial
-    `/api/turmas/por-evento/${eventoId}`,   // legadas
+    `/api/eventos/${eventoId}/turmas`,
+    `/api/turmas/por-evento/${eventoId}`,
     `/api/turmas/evento/${eventoId}`,
-    `/api/eventos/${eventoId}`,             // pode vir embutido
+    `/api/eventos/${eventoId}`,
   ];
   for (const url of urls) {
     try {
-      const resp = await apiGet(url);
+      const resp = await apiGet(url, { on403: "silent" });
       if (Array.isArray(resp)) return resp;
       if (Array.isArray(resp?.turmas)) return resp.turmas;
       if (Array.isArray(resp?.lista)) return resp.lista;
@@ -176,7 +173,7 @@ async function fetchTurmasDoEvento(eventoId) {
 
 async function fetchEventoCompleto(eventoId) {
   try {
-    const resp = await apiGet(`/api/eventos/${eventoId}`);
+    const resp = await apiGet(`/api/eventos/${eventoId}`, { on403: "silent" });
     const ev = resp?.evento || resp;
     if (ev?.id) return ev;
   } catch {}
@@ -189,7 +186,7 @@ async function fetchEventoCompleto(eventoId) {
 function buildUpdateBody(baseServidor, dadosDoModal) {
   const body = {};
 
-  // — campos simples
+  // campos simples
   body.titulo = (dadosDoModal?.titulo ?? baseServidor?.titulo ?? "").trim();
   body.descricao = (dadosDoModal?.descricao ?? baseServidor?.descricao ?? "").trim();
   body.local = (dadosDoModal?.local ?? baseServidor?.local ?? "").trim();
@@ -197,12 +194,12 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
   body.unidade_id = Number(dadosDoModal?.unidade_id ?? baseServidor?.unidade_id);
   body.publico_alvo = (dadosDoModal?.publico_alvo ?? baseServidor?.publico_alvo ?? "").trim();
 
-  // — instrutor
+  // instrutor
   const instrutoresFromModal = extractInstrutorIds(dadosDoModal?.instrutor);
   const instrutoresFromServer = extractInstrutorIds(baseServidor?.instrutor);
   body.instrutor = instrutoresFromModal.length ? instrutoresFromModal : instrutoresFromServer;
 
-  // — restrição
+  // restrição
   const restrito = Boolean(
     dadosDoModal?.restrito ??
       (typeof baseServidor?.restrito === "boolean" ? baseServidor.restrito : false)
@@ -215,7 +212,6 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
   body.restrito_modo = modo;
 
   if (restrito && modo === "lista_registros") {
-    // fonte: modal (permissivos nos nomes) OU fallback para o que já existe no servidor
     const fonteModal =
       Array.isArray(dadosDoModal?.registros_permitidos) ? dadosDoModal.registros_permitidos :
       Array.isArray(dadosDoModal?.registros)            ? dadosDoModal.registros            :
@@ -226,13 +222,10 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
       : (Array.isArray(baseServidor?.registros_permitidos) ? baseServidor.registros_permitidos : []);
 
     const regs = normRegistros(fonte);
-    if (regs.length) {
-      // 👉 sempre enviar com o nome canônico esperado pelo backend
-      body.registros_permitidos = regs;
-    }
+    if (regs.length) body.registros_permitidos = regs; // nome canônico
   }
 
-  // — turmas
+  // turmas (com fallback)
   const di = ymd(
     dadosDoModal?.data_inicio_geral ??
       dadosDoModal?.data_inicio ??
@@ -284,6 +277,70 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
   return clean(body);
 }
 
+/* ---------------- HeaderHero (azul, título central e altura média) ---------------- */
+function HeaderHero({ onCriar, onAtualizar, atualizando }) {
+  return (
+    <header
+      className="relative isolate overflow-hidden bg-gradient-to-br from-sky-900 via-blue-800 to-indigo-700 text-white"
+      role="banner"
+    >
+      {/* glow sutil */}
+      <div
+        className="pointer-events-none absolute inset-0 opacity-60"
+        style={{
+          background:
+            "radial-gradient(55% 55% at 50% 0%, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.05) 30%, rgba(255,255,255,0) 60%)",
+        }}
+        aria-hidden="true"
+      />
+
+      {/* ⬇️ altura “média” */}
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-7 sm:py-8 md:py-9 min-h-[140px] sm:min-h-[170px]">
+        <div className="flex flex-col items-center text-center gap-2.5 sm:gap-3">
+          <div className="inline-flex items-center justify-center gap-2">
+            <Wrench className="w-6 h-6" />
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
+              Gerenciar Eventos
+            </h1>
+          </div>
+
+          <p className="text-sm sm:text-base text-white/90 max-w-2xl">
+            Crie, edite e restrinja a visibilidade dos seus eventos e turmas.
+          </p>
+
+          <div className="mt-2.5 sm:mt-3.5 flex flex-wrap items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={onAtualizar}
+              disabled={atualizando}
+              className={`inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition
+                ${atualizando ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-white/15 hover:bg-white/25"} text-white`}
+              aria-label="Atualizar lista de eventos"
+              aria-busy={atualizando ? "true" : "false"}
+            >
+              <RefreshCcw className="w-4 h-4" />
+              {atualizando ? "Atualizando…" : "Atualizar"}
+            </button>
+
+            <button
+              type="button"
+              onClick={onCriar}
+              className="inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-semibold bg-amber-400 text-slate-900 hover:bg-amber-300 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-400"
+              aria-label="Criar novo evento"
+            >
+              <PlusCircle className="w-5 h-5" />
+              Criar Evento
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* linha sutil de separação na base */}
+      <div className="absolute bottom-0 left-0 right-0 h-px bg-white/25" aria-hidden="true" />
+    </header>
+  );
+}
+
 /* =============================
    Página
    ============================= */
@@ -293,11 +350,15 @@ export default function GerenciarEventos() {
   const [erro, setErro] = useState("");
   const [loading, setLoading] = useState(true);
   const [modalAberto, setModalAberto] = useState(false);
+  const liveRef = useRef(null); // aria-live
+
+  const setLive = (msg) => { if (liveRef.current) liveRef.current.textContent = msg; };
 
   async function recarregarEventos() {
     try {
       setErro("");
-      const data = await apiGet("/api/eventos");
+      setLive("Carregando eventos…");
+      const data = await apiGet("/api/eventos", { on403: "silent" });
       const lista = Array.isArray(data)
         ? data
         : Array.isArray(data?.eventos)
@@ -306,12 +367,14 @@ export default function GerenciarEventos() {
         ? data.lista
         : [];
       setEventos(lista);
+      setLive(`Eventos carregados: ${lista.length}.`);
     } catch (err) {
       const msg = err?.message || "Erro ao carregar eventos";
       console.error("❌ /api/eventos:", msg);
       setErro(msg);
       setEventos([]);
       toast.error(`❌ ${msg}`);
+      setLive("Falha ao carregar eventos.");
     }
   }
 
@@ -336,13 +399,11 @@ export default function GerenciarEventos() {
     if (turmas.length === 0 && evento?.id) {
       turmas = await fetchTurmasDoEvento(evento.id);
     }
-
-    // preserva flags de restrição que vierem do backend
     const base = (await fetchEventoCompleto(evento.id)) || evento;
 
     setEventoSelecionado({
       ...evento,
-      ...base, // assegura restrito/restrito_modo (e possivelmente registros, se backend enviar)
+      ...base,
       turmas,
     });
     setModalAberto(true);
@@ -366,7 +427,6 @@ export default function GerenciarEventos() {
       const isEdicao = Boolean(eventoSelecionado?.id);
 
       if (isEdicao) {
-        // 1) base completa do servidor (ou fallback)
         let baseServidor = await fetchEventoCompleto(eventoSelecionado.id);
         if (!baseServidor) {
           const turmasDoEvento =
@@ -388,7 +448,6 @@ export default function GerenciarEventos() {
           };
         }
 
-        // 2) body espelho (inclui regra de restrição)
         const body = buildUpdateBody(baseServidor, dadosDoModal);
 
         // validações rápidas
@@ -401,17 +460,14 @@ export default function GerenciarEventos() {
           return;
         }
 
-        // 3) PUT principal
         try {
           await apiPut(`/api/eventos/${eventoSelecionado.id}`, body);
         } catch (err) {
-          // turmas com inscritos → salva apenas metadados + regra de restrição
           if (err?.status === 409 && err?.data?.erro === "TURMA_COM_INSCRITOS") {
             toast.warn(
               "Este evento tem turmas com inscritos. Vou salvar apenas os dados gerais e a regra de restrição."
             );
 
-            // fonte de registros: modal (ambos nomes) OU fallback: servidor
             const fonteRegsModal =
               Array.isArray(dadosDoModal?.registros_permitidos) ? dadosDoModal.registros_permitidos :
               Array.isArray(dadosDoModal?.registros)            ? dadosDoModal.registros            :
@@ -433,7 +489,6 @@ export default function GerenciarEventos() {
                   ? dadosDoModal.instrutor
                   : baseServidor?.instrutor) || []
               ),
-              // 👇 ainda podemos alterar a regra de restrição
               restrito: Boolean(
                 dadosDoModal?.restrito ??
                   (typeof baseServidor?.restrito === "boolean" ? baseServidor.restrito : false)
@@ -442,7 +497,6 @@ export default function GerenciarEventos() {
                 (dadosDoModal?.restrito ?? baseServidor?.restrito)
                   ? (dadosDoModal?.restrito_modo ?? baseServidor?.restrito_modo ?? null)
                   : null,
-              // 👉 nome canônico esperado pelo backend
               registros_permitidos:
                 (dadosDoModal?.restrito ?? baseServidor?.restrito) &&
                 (dadosDoModal?.restrito_modo ?? baseServidor?.restrito_modo) === "lista_registros"
@@ -460,7 +514,7 @@ export default function GerenciarEventos() {
           throw err;
         }
       } else {
-        // ======= CRIAÇÃO =======
+        // criação
         const base = {
           titulo: (dadosDoModal?.titulo || "").trim(),
           tipo: (dadosDoModal?.tipo || "").trim(),
@@ -498,13 +552,11 @@ export default function GerenciarEventos() {
               ]
         );
 
-        // ——— regra de restrição na criação
         const restrito = Boolean(dadosDoModal?.restrito);
         const restrito_modo = restrito
           ? (dadosDoModal?.restrito_modo || "todos_servidores")
           : null;
 
-        // aceita ambos nomes no modal
         const regsFonte =
           Array.isArray(dadosDoModal?.registros_permitidos) ? dadosDoModal.registros_permitidos :
           Array.isArray(dadosDoModal?.registros)            ? dadosDoModal.registros            :
@@ -520,8 +572,7 @@ export default function GerenciarEventos() {
           turmas,
           restrito,
           restrito_modo,
-          // 👇 nome canônico
-          registros_permitidos: registros,
+          registros_permitidos: registros, // canônico
         });
 
         await apiPost("/api/eventos", bodyCreate);
@@ -537,27 +588,28 @@ export default function GerenciarEventos() {
     }
   };
 
+  const anyLoading = loading;
+
   return (
-    <main className="min-h-screen bg-gelo dark:bg-zinc-900">
-      <div className="px-2 sm:px-4 py-6 max-w-6xl mx-auto">
-        <Breadcrumbs trilha={[{ label: "Painel administrador" }, { label: "Eventos" }]} />
+    <main className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
+      {/* live region acessível */}
+      <p ref={liveRef} className="sr-only" aria-live="polite" />
 
-        <PageHeader
-          title="🛠️ Gerenciar Eventos"
-          subtitle="Crie, edite e restrinja a visibilidade dos seus eventos e turmas."
-          className="mb-5 sm:mb-6"
-        />
+      {/* Header hero (título central e ações) */}
+      <HeaderHero
+        onCriar={abrirModalCriar}
+        onAtualizar={recarregarEventos}
+        atualizando={anyLoading}
+      />
 
-        <div className="flex justify-end mb-6">
-          <BotaoPrimario
-            onClick={abrirModalCriar}
-            className="flex items-center gap-2"
-            aria-label="Criar novo evento"
-          >
-            <PlusCircle size={18} aria-hidden="true" /> Criar Evento
-          </BotaoPrimario>
+      {/* barra de carregamento fina no topo */}
+      {anyLoading && (
+        <div className="sticky top-0 left-0 w-full h-1 bg-blue-100 z-40" role="progressbar" aria-label="Carregando dados">
+          <div className="h-full bg-blue-700 animate-pulse w-1/3" />
         </div>
+      )}
 
+      <div className="px-2 sm:px-4 py-6 max-w-6xl mx-auto w-full">
         {!!erro && !loading && (
           <p className="text-red-500 text-center mb-4" role="alert">
             {erro}
