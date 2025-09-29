@@ -1,40 +1,52 @@
+// 📁 src/controllers/avaliacoesController.js
+/* eslint-disable no-console */
 const db = require("../db");
 const { gerarNotificacoesDeCertificado } = require("./notificacoesController");
 
 // ---------------------------- Utils ----------------------------
 
-// Converte enum de nota para número (5..1)
+// Converte enum/valor textual para número (5..1)
 function notaEnumParaNumero(valor) {
-  const v = (valor || "")
-    .toString()
-    .trim()
+  if (valor == null) return null;
+  const raw = String(valor).trim();
+
+  // se já veio número (ou texto "1".."5")
+  const n = Number(raw.replace(",", "."));
+  if (Number.isFinite(n) && n >= 1 && n <= 5) return n;
+
+  // normaliza para comparar textos
+  const v = raw
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, ""); // remove acentos
+
   switch (v) {
     case "otimo":
+    case "excelente":
+    case "muito bom":
       return 5;
     case "bom":
       return 4;
     case "regular":
+    case "medio":
+    case "médio":
       return 3;
     case "ruim":
       return 2;
     case "pessimo":
+    case "péssimo":
+    case "muito ruim":
       return 1;
     default:
       return null;
   }
 }
 
-// Formata Date/string para "YYYY-MM-DD" SEM usar UTC/ISO (evita voltar 1 dia)
+// Formata Date/string para "YYYY-MM-DD" SEM UTC/ISO (evita voltar 1 dia)
 function toYMDLocal(dateLike) {
   if (!dateLike) return "";
-  let d =
-    dateLike instanceof Date ? dateLike : new Date(dateLike); // PG costuma devolver Date
+  const d = dateLike instanceof Date ? dateLike : new Date(dateLike);
   if (Number.isNaN(d.getTime())) return "";
-
-  // usa horário local
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
@@ -47,7 +59,6 @@ function gerarIntervaloYMD(inicioLike, fimLike) {
   const fim = fimLike instanceof Date ? new Date(fimLike) : new Date(fimLike);
   if (Number.isNaN(ini.getTime()) || Number.isNaN(fim.getTime())) return [];
 
-  // zera horas para usar calendário local
   ini.setHours(0, 0, 0, 0);
   fim.setHours(0, 0, 0, 0);
 
@@ -118,7 +129,7 @@ async function enviarAvaliacao(req, res) {
     comentarios_finais,
   } = req.body;
 
-  const usuario_id = req.usuario?.id;
+  const usuario_id = req.user?.id ?? req.usuario?.id;
 
   if (!usuario_id) {
     return res.status(401).json({ erro: "Não autenticado." });
@@ -219,7 +230,7 @@ async function enviarAvaliacao(req, res) {
       ]
     );
 
-    // 🔔 Tenta gerar certificado + notificação (se elegível), sem quebrar o fluxo
+    // 🔔 Gera notificação/certificado se elegível (best-effort)
     try {
       await gerarNotificacoesDeCertificado(usuario_id);
     } catch (e) {
@@ -291,8 +302,85 @@ async function listarAvaliacoesDisponiveis(req, res) {
 }
 
 /**
- * 📊 Avaliações de uma turma – Painel do instrutor
- * @route GET /api/avaliacoes/turma/:turma_id
+ * 🧑‍🏫 Avaliações da turma **do instrutor logado** (para a página do instrutor)
+ * @route GET /api/avaliacoes/turma/:turma_id/** */
+ 
+// src/controllers/avaliacoesController.js
+async function listarPorTurmaParaInstrutor(req, res) {
+  const user = req.user ?? req.usuario ?? {};
+  const usuarioId = Number(user.id);
+  const perfis = Array.isArray(user.perfil)
+    ? user.perfil.map(String)
+    : String(user.perfil || "").split(",").map(s => s.trim()).filter(Boolean);
+
+  const { turma_id } = req.params;
+
+  if (!usuarioId) return res.status(401).json({ erro: "Não autenticado." });
+  if (!turma_id || Number.isNaN(Number(turma_id))) {
+    return res.status(400).json({ erro: "ID de turma inválido" });
+  }
+
+  try {
+    const isAdmin = perfis.includes("administrador");
+
+    // Só exige vínculo se NÃO for admin
+    if (!isAdmin) {
+      const chk = await db.query(
+        `SELECT 1
+           FROM turmas t
+          WHERE t.id = $2
+            AND EXISTS (
+                  SELECT 1
+                    FROM evento_instrutor ei
+                   WHERE ei.evento_id = t.evento_id
+                     AND ei.instrutor_id = $1
+                 )
+          LIMIT 1`,
+        [usuarioId, Number(turma_id)]
+      );
+      if (chk.rowCount === 0) {
+        return res.status(403).json({ erro: "Acesso negado à turma." });
+      }
+    }
+
+    const { rows } = await db.query(
+      `SELECT
+         id,
+         turma_id,
+         usuario_id,
+         desempenho_instrutor,
+         divulgacao_evento, recepcao, credenciamento, material_apoio,
+         pontualidade, sinalizacao_local, conteudo_temas,
+         estrutura_local, acessibilidade, limpeza, inscricao_online,
+         exposicao_trabalhos, apresentacao_oral_mostra, apresentacao_tcrs, oficinas,
+         gostou_mais, sugestoes_melhoria, comentarios_finais,
+         data_avaliacao
+       FROM avaliacoes
+      WHERE turma_id = $1
+      ORDER BY id DESC`,
+      [Number(turma_id)]
+    );
+
+    // headers de debug
+    res.setHeader("X-Debug-User", String(usuarioId));
+    res.setHeader("X-Debug-Perfis", perfis.join(","));
+    res.setHeader("X-Debug-Avaliacoes-Count", String(rows.length));
+
+    // log rápido no server (remover depois)
+    console.log(`[avaliacoes] turma=${turma_id} rows=${rows.length}`);
+
+    return res.json(rows);
+  } catch (err) {
+    console.error("❌ listarPorTurmaParaInstrutor:", err);
+    return res.status(500).json({ erro: "Erro ao buscar avaliações da turma." });
+  }
+}
+
+/**
+ * 📊 Avaliações de uma turma – Painel do administrador (todas as respostas)
+ * @route GET /api/avaliacoes/turma/:turma_id/all
+ *
+ * Mantido para uso administrativo/analítico (retorna objeto com agregados).
  */
 async function avaliacoesPorTurma(req, res) {
   const { turma_id } = req.params;
@@ -302,7 +390,7 @@ async function avaliacoesPorTurma(req, res) {
   }
 
   try {
-    // 📊 Todas as avaliações
+    // 📊 Todas as avaliações da turma (sem filtro de instrutor)
     const result = await db.query(
       `SELECT u.nome,
               a.desempenho_instrutor,
@@ -360,7 +448,7 @@ async function avaliacoesPorTurma(req, res) {
     );
     const total_inscritos = inscritosRes.rows[0]?.total ?? 0;
 
-    // 🗓️ Datas da turma (intervalo em YMD)
+    // 🗓️ Datas da turma
     const turmaRes = await db.query(
       `SELECT data_inicio, data_fim FROM turmas WHERE id = $1`,
       [Number(turma_id)]
@@ -372,7 +460,7 @@ async function avaliacoesPorTurma(req, res) {
     const datasTurma = gerarIntervaloYMD(data_inicio, data_fim);
     const totalDias = datasTurma.length;
 
-    // ✅ Presenças (formata data_presenca em YMD local — sem UTC)
+    // ✅ Presenças (datas em YMD local)
     const presencasRes = await db.query(
       `SELECT usuario_id, data_presenca
          FROM presencas
@@ -399,9 +487,7 @@ async function avaliacoesPorTurma(req, res) {
     }
 
     const presenca_media =
-      total_inscritos > 0
-        ? Math.round((total_presentes / total_inscritos) * 100)
-        : 0;
+      total_inscritos > 0 ? Math.round((total_presentes / total_inscritos) * 100) : 0;
 
     return res.json({
       turma_id: Number(turma_id),
@@ -496,6 +582,7 @@ async function avaliacoesPorEvento(req, res) {
 module.exports = {
   enviarAvaliacao,
   listarAvaliacoesDisponiveis,
-  avaliacoesPorTurma,
-  avaliacoesPorEvento,
+  listarPorTurmaParaInstrutor, // ✅ para página do Instrutor
+  avaliacoesPorTurma,          // (admin) todas as respostas da turma
+  avaliacoesPorEvento,         // (admin) agregado por evento
 };

@@ -12,6 +12,25 @@ import NadaEncontrado from "../components/NadaEncontrado";
 import { apiGet } from "../services/api";
 import { formatarDataBrasileira } from "../utils/data";
 
+/* ---------------------- Debug helpers (logs) ---------------------- */
+const DEBUG = true;
+const log = {
+  info: (...a) => DEBUG && console.info("[AvalInstrutor]", ...a),
+  warn: (...a) => DEBUG && console.warn("[AvalInstrutor]", ...a),
+  error: (...a) => DEBUG && console.error("[AvalInstrutor]", ...a),
+  table: (data, ...a) => DEBUG && console.table?.(data, ...a),
+  group(title) {
+    if (!DEBUG) return { end: () => {} };
+    console.groupCollapsed(`📊 ${title}`);
+    return { end: () => console.groupEnd() };
+  },
+  time(label) {
+    if (!DEBUG) return { end: () => {} };
+    console.time(label);
+    return { end: () => console.timeEnd(label) };
+  },
+};
+
 /* ----------------------- Config dos campos ----------------------- */
 const CAMPOS_OBJETIVOS = [
   "divulgacao_evento",
@@ -97,7 +116,7 @@ function HeaderHero({ onRefresh, carregando }) {
 export default function AvaliacaoInstrutor() {
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState("");
-  const [eventos, setEventos] = useState([]); // [{evento:{id,titulo}, turmas:[...] , periodo}]
+  const [eventos, setEventos] = useState([]); // [{id,titulo,turmas[],di,df}]
   const [eventoId, setEventoId] = useState("");
   const [cacheAval, setCacheAval] = useState({}); // eventoId -> {respostas, agregados}
   const liveRef = useRef(null);
@@ -114,14 +133,26 @@ export default function AvaliacaoInstrutor() {
   }, []);
 
   async function carregarEventos() {
+    const g = log.group("Carregar eventos/turmas do instrutor");
+    const t = log.time("⏱ eventos");
     try {
       setCarregando(true);
       setErro("");
       if (liveRef.current) liveRef.current.textContent = "Carregando seus eventos…";
 
-      // suas turmas com evento
       const turmas = await apiGet("/api/instrutor/minhas/turmas");
       const arr = Array.isArray(turmas) ? turmas : [];
+
+      log.info("Turmas recebidas:", arr.length);
+      if (arr.length) {
+        log.table(arr.map(x => ({
+          turma_id: x.id,
+          turma: x.nome,
+          evento_id: x?.evento?.id ?? x.evento_id,
+          evento: x?.evento?.nome ?? x.evento_nome,
+          di: x.data_inicio, df: x.data_fim
+        })));
+      }
 
       // agrupa por evento
       const byEvento = new Map();
@@ -142,7 +173,6 @@ export default function AvaliacaoInstrutor() {
           id: t.id, nome: t.nome,
           data_inicio: t.data_inicio, data_fim: t.data_fim,
         });
-        // período agreg.
         slot.di = !slot.di || (t.data_inicio && t.data_inicio < slot.di) ? t.data_inicio : slot.di;
         slot.df = !slot.df || (t.data_fim && t.data_fim > slot.df) ? t.data_fim : slot.df;
       }
@@ -150,6 +180,13 @@ export default function AvaliacaoInstrutor() {
       const lista = Array.from(byEvento.values()).sort(
         (a, b) => new Date(b.di || 0) - new Date(a.di || 0)
       );
+
+      log.info("Eventos agregados:", lista.length);
+      if (lista.length) {
+        log.table(lista.map(e => ({
+          evento_id: e.id, evento: e.titulo, turmas: e.turmas.length, di: e.di, df: e.df
+        })));
+      }
 
       setEventos(lista);
       if (!lista.length) {
@@ -159,49 +196,72 @@ export default function AvaliacaoInstrutor() {
       }
       if (liveRef.current) liveRef.current.textContent = "Eventos atualizados.";
     } catch (e) {
-      console.error(e);
+      log.error("Erro ao carregar eventos:", e);
       setErro("Erro ao carregar seus eventos.");
       toast.error("❌ Erro ao carregar eventos do instrutor.");
     } finally {
-      setCarregando(false);
+      t.end(); g.end(); setCarregando(false);
     }
   }
 
   // carrega avaliações de todas as turmas do evento selecionado
   async function carregarAvaliacoesDoEvento(id) {
     const ev = eventos.find((x) => String(x.id) === String(id));
-    if (!ev) return { respostas: [] };
+    if (!ev) {
+      log.warn("Evento não encontrado no estado:", id);
+      return { respostas: [] };
+    }
 
+    const g = log.group(`Carregar avaliações do evento ${ev.titulo} (#${ev.id})`);
+    const t = log.time("⏱ avaliações");
     try {
       setCarregando(true);
       if (liveRef.current) liveRef.current.textContent = "Carregando avaliações…";
 
       const respostas = [];
-      // busca paralela das turmas
+      log.info("Turmas do evento:", ev.turmas?.length || 0);
+      if (ev.turmas?.length) {
+        log.table(ev.turmas.map(t => ({ turma_id: t.id, turma: t.nome })));
+      }
+
       await Promise.all(
         (ev.turmas || []).map(async (t) => {
           try {
-            const r = await apiGet(`/avaliacoes/turma/${t.id}`, { on403: "silent" });
+            const resp = await apiGet(`/api/avaliacoes/turma/${t.id}`);
             const lista =
-              Array.isArray(r) ? r :
-              Array.isArray(r?.avaliacoes) ? r.avaliacoes :
-              Array.isArray(r?.itens) ? r.itens :
-              Array.isArray(r?.comentarios) ? r.comentarios : [];
-            // anexa metadados da turma
-            lista.forEach((item) => respostas.push({ ...item, __turmaId: t.id, __turmaNome: t.nome }));
-          } catch {
-            // ignora turma sem avaliações
+              Array.isArray(resp) ? resp :
+              Array.isArray(resp?.avaliacoes) ? resp.avaliacoes :
+              Array.isArray(resp?.itens) ? resp.itens :
+              Array.isArray(resp?.comentarios) ? resp.comentarios : [];
+
+            log.info(`Turma #${t.id} (${t.nome}) → respostas:`, lista.length);
+            if (lista.length) {
+              respostas.push(...lista.map(item => ({ ...item, __turmaId: t.id, __turmaNome: t.nome })));
+            }
+          } catch (e) {
+            log.warn(`Falha ao buscar turma #${t.id} (${t.nome})`, e);
           }
         })
       );
 
+      log.info("Total de respostas agregadas do evento:", respostas.length);
+      if (respostas.length) {
+        log.table(respostas.map(r => ({
+          id: r.id, turma_id: r.turma_id ?? r.__turmaId, user: r.usuario_id, instrutor: r.desempenho_instrutor
+        })));
+      }
+
       const agregados = agregarRespostas(respostas);
+      log.info("Média destaque (desempenho_instrutor):", agregados.estrelaMedia);
+      log.info("Resumo de médias por critério:");
+      log.table( Object.entries(agregados.medias || {}).map(([k,v]) => ({ campo: k, media: v })) );
+
       const payload = { respostas, agregados };
       setCacheAval((prev) => ({ ...prev, [String(id)]: payload }));
       if (liveRef.current) liveRef.current.textContent = "Avaliações carregadas.";
       return payload;
     } finally {
-      setCarregando(false);
+      t.end(); g.end(); setCarregando(false);
     }
   }
 
@@ -244,7 +304,6 @@ export default function AvaliacaoInstrutor() {
         .map((s) => s.trim());
     }
 
-    // métrica destaque (desempenho_instrutor)
     const estrelaMedia = medias.desempenho_instrutor ?? null;
 
     return { total, dist, medias, textos, estrelaMedia };
@@ -259,7 +318,11 @@ export default function AvaliacaoInstrutor() {
 
   useEffect(() => {
     if (!eventoId) return;
-    if (cacheAval[String(eventoId)]) return;
+    if (cacheAval[String(eventoId)]) {
+      log.info("Cache HIT para evento", eventoId);
+      return;
+    }
+    log.info("Evento selecionado:", eventoId, "→ carregando avaliações…");
     carregarAvaliacoesDoEvento(eventoId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventoId]);
@@ -268,6 +331,7 @@ export default function AvaliacaoInstrutor() {
   return (
     <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
       <HeaderHero onRefresh={() => {
+        log.info("Atualizar manual → invalidando cache do evento", eventoId);
         setCacheAval((p) => {
           const cp = { ...p }; delete cp[String(eventoId)]; return cp;
         });
@@ -324,10 +388,14 @@ export default function AvaliacaoInstrutor() {
           >
             {/* KPIs */}
             <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <KPI titulo="Total de Respostas" valor={avalAtual.total || 0} icon={ClipboardList} />
+              <KPI titulo="Total de Respostas" valor={avalAtual.agregados?.total || 0} icon={ClipboardList} />
               <KPI
                 titulo="Desempenho do Instrutor (média)"
-                valor={avalAtual.estrelaMedia != null ? `${avalAtual.estrelaMedia.toFixed(2)} / 5 ⭐` : "—"}
+                valor={
+                  avalAtual.agregados?.estrelaMedia != null
+                    ? `${avalAtual.agregados.estrelaMedia.toFixed(2)} / 5 ⭐`
+                    : "—"
+                }
                 icon={BarChart3}
               />
               <KPI
@@ -349,8 +417,8 @@ export default function AvaliacaoInstrutor() {
                   <CampoBarra
                     key={c}
                     nome={labelDoCampo(c)}
-                    media={avalAtual.medias?.[c]}
-                    dist={avalAtual.dist?.[c]}
+                    media={avalAtual.agregados?.medias?.[c]}
+                    dist={avalAtual.agregados?.dist?.[c]}
                   />
                 ))}
               </div>
@@ -358,9 +426,9 @@ export default function AvaliacaoInstrutor() {
 
             {/* Textos qualitativos */}
             <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <QuadroComentarios titulo="O que mais gostou" itens={avalAtual.textos?.gostou_mais} />
-              <QuadroComentarios titulo="Sugestões de melhoria" itens={avalAtual.textos?.sugestoes_melhoria} />
-              <QuadroComentarios titulo="Comentários finais" itens={avalAtual.textos?.comentarios_finais} />
+              <QuadroComentarios titulo="O que mais gostou" itens={avalAtual.agregados?.textos?.gostou_mais} />
+              <QuadroComentarios titulo="Sugestões de melhoria" itens={avalAtual.agregados?.textos?.sugestoes_melhoria} />
+              <QuadroComentarios titulo="Comentários finais" itens={avalAtual.agregados?.textos?.comentarios_finais} />
             </section>
           </motion.div>
         )}

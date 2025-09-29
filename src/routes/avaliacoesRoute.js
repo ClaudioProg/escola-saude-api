@@ -1,40 +1,58 @@
-const express = require('express');
+// 📁 src/routes/avaliacoesRoute.js
+const express = require("express");
 const router = express.Router();
 
-const authMiddleware = require('../auth/authMiddleware');
-const authorizeRoles = require('../auth/authorizeRoles');
-const avaliacoesController = require('../controllers/avaliacoesController');
+const authMiddleware = require("../auth/authMiddleware");
+const authorizeRoles = require("../auth/authorizeRoles");
 
-// 📝 1. Enviar avaliação (usuario, instrutor ou administrador)
+const {
+  enviarAvaliacao,
+  listarAvaliacoesDisponiveis,
+  listarPorTurmaParaInstrutor, // ✅ novo (para a página do instrutor)
+  avaliacoesPorTurma,          // ✅ admin: todas as respostas da turma
+  avaliacoesPorEvento,         // ✅ admin: agregado por evento
+} = require("../controllers/avaliacoesController");
+
+// 📝 1) Enviar avaliação (usuario, instrutor ou administrador)
 router.post(
-  '/',
+  "/",
   authMiddleware,
-  authorizeRoles('administrador', 'instrutor', 'usuario'),
-  avaliacoesController.enviarAvaliacao
+  authorizeRoles("administrador", "instrutor", "usuario"),
+  enviarAvaliacao
 );
 
-// 📊 2. Listar avaliações por turma (instrutor ou administrador)
+// 📊 2) (Instrutor) Listar avaliações da turma APENAS para o instrutor logado
+//     Obs.: Admin também pode acessar **se** for instrutor do evento (caso prático).
 router.get(
-  '/turma/:turma_id',
+  "/turma/:turma_id",
   authMiddleware,
-  authorizeRoles('administrador', 'instrutor'),
-  avaliacoesController.avaliacoesPorTurma
+  authorizeRoles("instrutor", "administrador"),
+  listarPorTurmaParaInstrutor
 );
 
-// 🧾 3. Listar avaliações por evento (apenas administrador)
+// 📊 2b) (Admin) Listar TODAS as avaliações da turma (sem filtro de instrutor)
+//      Use esta rota para painéis administrativos/analíticos.
 router.get(
-  '/evento/:evento_id',
+  "/turma/:turma_id/all",
   authMiddleware,
-  authorizeRoles('administrador'),
-  avaliacoesController.avaliacoesPorEvento
+  authorizeRoles("administrador"),
+  avaliacoesPorTurma
 );
 
-// 📋 4. Listar avaliações pendentes para o próprio usuário
+// 🧾 3) (Admin) Agregado de avaliações por evento
 router.get(
-  '/disponiveis/:usuario_id',
+  "/evento/:evento_id",
   authMiddleware,
-  authorizeRoles('administrador', 'instrutor', 'usuario'),
-  avaliacoesController.listarAvaliacoesDisponiveis
+  authorizeRoles("administrador"),
+  avaliacoesPorEvento
+);
+
+// 📋 4) (Usuário) Listar avaliações pendentes para o próprio usuário
+router.get(
+  "/disponiveis/:usuario_id",
+  authMiddleware,
+  authorizeRoles("administrador", "instrutor", "usuario"),
+  listarAvaliacoesDisponiveis
 );
 
 module.exports = router;

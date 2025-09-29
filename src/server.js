@@ -12,7 +12,7 @@ const helmet = require("helmet");
 const assinaturaRoutes            = require("./routes/assinaturaRoutes");
 const turmasRouteAdministrador    = require("./routes/turmasRouteAdministrador");
 const agendaRoute                 = require("./routes/agendaRoute");
-const avaliacoesRoute             = require("./routes/avaliacoesRoute");
+const avaliacoesRoute            = require("./routes/avaliacoesRoute"); // ✅ plural
 const certificadosRoute           = require("./routes/certificadosRoute");
 const certificadosHistoricoRoute  = require("./routes/certificadosHistoricoRoutes");
 const certificadosAvulsosRoutes   = require("./routes/certificadosAvulsosRoutes");
@@ -25,7 +25,7 @@ const loginRoute                  = require("./routes/loginRoute");
 const presencasRoute              = require("./routes/presencasRoute");
 const relatorioPresencasRoute     = require("./routes/relatorioPresencasRoute");
 const turmasRoute                 = require("./routes/turmasRoute");
-const instrutorRoute              = require("./routes/instrutorRoutes");
+const instrutorRoute              = require("./routes/instrutorRoutes");   // ✅ confere com arquivo
 const relatoriosRoute             = require("./routes/relatoriosRoutes");
 const dashboardAnaliticoRoutes    = require("./routes/dashboardAnaliticoRoutes");
 const dashboardUsuarioRoute       = require("./routes/dashboardUsuarioRoute");
@@ -108,7 +108,6 @@ const corsOptions = {
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
-  // 🆕 expõe header de perfil incompleto (se usado no frontend)
   exposedHeaders: ["Content-Disposition", "X-Perfil-Incompleto"],
   credentials: true,
   maxAge: 60 * 60,
@@ -165,7 +164,10 @@ app.use("/api/login", loginLimiter, loginRoute);
 /* 📌 Rotas da API (CORS já está aplicado acima) */
 app.use("/api/administrador/turmas", turmasRouteAdministrador);
 app.use("/api/agenda", agendaRoute);
+
+// ✅ Avaliações (inclui rota do instrutor `/turma/:id` e admin `/turma/:id/all`)
 app.use("/api/avaliacoes", avaliacoesRoute);
+
 app.use("/api/certificados", certificadosRoute);
 app.use("/api/certificados-historico", certificadosHistoricoRoute);
 app.use("/api/certificados-avulsos", certificadosAvulsosRoutes);
@@ -181,7 +183,9 @@ app.use("/api/turmas", turmasRoute);
 // 👤 Usuários (público/admin) — mantém caminho clássico
 app.use("/api/usuarios", usuariosRoute);
 
+// 👨‍🏫 Instrutor (minhas turmas + admin endpoints)
 app.use("/api/instrutor", instrutorRoute);
+
 app.use("/api/relatorios", relatoriosRoute);
 app.use("/api/dashboard-analitico", dashboardAnaliticoRoutes);
 app.use("/api/dashboard-usuario", dashboardUsuarioRoute);

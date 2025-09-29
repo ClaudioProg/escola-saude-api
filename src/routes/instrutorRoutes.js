@@ -9,10 +9,11 @@ const {
   listarInstrutor,
   getEventosAvaliacoesPorInstrutor,
   getTurmasComEventoPorInstrutor,
-  getMinhasTurmasInstrutor,          // ✅ importar
+  getMinhasTurmasInstrutor,
 } = require("../controllers/instrutorController");
 
-// 👇👇 PRIMEIRO as rotas estáticas / específicas
+// 🚦 Rotas específicas primeiro (evita conflito com :id)
+
 // 🔐 Turmas do instrutor autenticado (sem :id)
 router.get(
   "/minhas/turmas",
@@ -21,10 +22,15 @@ router.get(
   getMinhasTurmasInstrutor
 );
 
-// 📋 Listar todos os instrutores (admin)
-router.get("/", authMiddleware, authorizeRoles("administrador"), listarInstrutor);
+// 📋 Listar todos os instrutores (apenas admin)
+router.get(
+  "/",
+  authMiddleware,
+  authorizeRoles("administrador"),
+  listarInstrutor
+);
 
-// 📊 Histórico de eventos + avaliações por instrutor (admin)
+// 📊 Histórico de eventos + avaliações por instrutor (apenas admin)
 router.get(
   "/:id/eventos-avaliacoes",
   authMiddleware,
@@ -32,7 +38,7 @@ router.get(
   getEventosAvaliacoesPorInstrutor
 );
 
-// 📚 Turmas com dados completos do evento por instrutor (admin)
+// 📚 Turmas vinculadas a um instrutor, com dados do evento (apenas admin)
 router.get(
   "/:id/turmas",
   authMiddleware,
