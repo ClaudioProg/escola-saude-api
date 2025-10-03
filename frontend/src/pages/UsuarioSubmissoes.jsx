@@ -266,6 +266,12 @@ export default function UsuarioSubmissoes() {
     [selecionada]
   );
 
+  // 🔗 URL do modelo POR CHAMADA (download público)
+  const modeloBannerUrl = useMemo(() => {
+    const id = selecionada?.chamada?.id;
+    return id ? `/api/chamadas/${id}/modelo-banner` : null;
+  }, [selecionada]);
+
   const validar = () => {
     if (!form.titulo || form.titulo.length > limites.titulo) return "Título é obrigatório e deve respeitar o limite.";
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(form.inicio_experiencia)) return "Início da experiência deve estar no formato AAAA-MM.";
@@ -512,7 +518,8 @@ export default function UsuarioSubmissoes() {
                 Período aceito: <strong>
                   {labelPeriodoMesAno(
                     selecionada.chamada.periodo_experiencia_inicio,
-                   Selecionada.chamada?.periodo_experiencia_fim
+                    /* 👇 bug fix: 'Selecionada' → 'selecionada' */
+                    selecionada.chamada?.periodo_experiencia_fim
                   )}
                 </strong>
                 {" · "}Prazo: <strong>{fmtDataHora(selecionada.chamada.prazo_final_br)}</strong>
@@ -595,12 +602,18 @@ export default function UsuarioSubmissoes() {
               <div className="text-sm text-zinc-600 dark:text-zinc-300">
                 {selecionada.chamada.aceita_poster ? (
                   <>
-                    Aceita pôster (.ppt/.pptx).{" "}
-                    {selecionada.chamada.link_modelo_poster ? (
-                      <a className="inline-flex items-center gap-1 underline decoration-dotted" href={selecionada.chamada.link_modelo_poster} target="_blank" rel="noreferrer">
-                        Baixar modelo <ExternalLink className="h-3 w-3" />
+                    Aceita pôster (.ppt/.pptx).
+                    {" "}
+                    {modeloBannerUrl && (
+                      <a
+                        className="inline-flex items-center gap-1 underline decoration-dotted"
+                        href={modeloBannerUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Baixar modelo (se disponível) <ExternalLink className="h-3 w-3" />
                       </a>
-                    ) : null}
+                    )}
                   </>
                 ) : (
                   <>Esta chamada não exige pôster.</>
@@ -728,11 +741,11 @@ export default function UsuarioSubmissoes() {
 
                   <div className="text-sm text-zinc-600 dark:text-zinc-300">
                     {posterFile ? <span className="font-medium">{posterFile.name}</span> : "Formatos aceitos: .ppt / .pptx (até 50MB)."}
-                    {selecionada.chamada.link_modelo_poster && (
+                    {modeloBannerUrl && (
                       <>
                         {" "}|{" "}
-                        <a className="inline-flex items-center gap-1 underline decoration-dotted" href={selecionada.chamada.link_modelo_poster} target="_blank" rel="noreferrer">
-                          Baixar modelo <ExternalLink className="h-3 w-3" />
+                        <a className="inline-flex items-center gap-1 underline decoration-dotted" href={modeloBannerUrl} target="_blank" rel="noreferrer">
+                          Baixar modelo (se disponível) <ExternalLink className="h-3 w-3" />
                         </a>
                       </>
                     )}
