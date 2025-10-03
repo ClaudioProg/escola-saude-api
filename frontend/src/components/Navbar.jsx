@@ -31,6 +31,9 @@ import {
   X as CloseIcon,
   Bell,
   XCircle,
+  PlusCircle,
+  FolderOpenDot,
+  History,
 } from "lucide-react";
 import { apiGet } from "../services/api";
 
@@ -39,12 +42,12 @@ import { apiGet } from "../services/api";
 /* ────────────────────────────────────────────────────────────── */
 function getNavThemeForMonth(month /* 1-12 */) {
   const themes = {
-    7:  "bg-yellow-600",                                     // Julho – Amarelo
-    8:  "bg-amber-600",                                      // Agosto – Dourado
-    9:  "bg-gradient-to-r from-yellow-600 to-emerald-800",   // Setembro – Amarelo/Verde
-    10: "bg-pink-700",                                       // Outubro – Rosa
-    11: "bg-gradient-to-r from-blue-700 to-purple-700",      // Novembro – Azul/Roxo
-    12: "bg-red-700",                                        // Dezembro – Vermelho
+    7:  "bg-yellow-600",
+    8:  "bg-amber-600",
+    9:  "bg-gradient-to-r from-yellow-600 to-emerald-800",
+    10: "bg-pink-700",
+    11: "bg-gradient-to-r from-blue-700 to-purple-700",
+    12: "bg-red-700",
   };
   return themes[month] || null;
 }
@@ -59,11 +62,8 @@ function decodeJwtPayload(token) {
     let b64 = payloadB64Url.replace(/-/g, "+").replace(/_/g, "/");
     while (b64.length % 4 !== 0) b64 += "=";
     return JSON.parse(atob(b64));
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
-
 function getValidToken() {
   const token = localStorage.getItem("token");
   if (!token) return null;
@@ -71,11 +71,8 @@ function getValidToken() {
   if (payload?.exp && Date.now() >= payload.exp * 1000) return null;
   return token;
 }
-
-/** 🔎 Perfis robusto */
 function getPerfisRobusto() {
   const out = new Set();
-
   const rawPerfil = localStorage.getItem("perfil");
   if (rawPerfil) {
     try {
@@ -90,7 +87,6 @@ function getPerfisRobusto() {
         .forEach((p) => out.add(p.replace(/[\[\]"]/g, "").trim().toLowerCase()));
     }
   }
-
   try {
     const rawUser = localStorage.getItem("usuario");
     if (rawUser) {
@@ -107,26 +103,12 @@ function getPerfisRobusto() {
       }
     }
   } catch {}
-
   if (out.size === 0) out.add("usuario");
   return Array.from(out).filter(Boolean);
 }
-
-function getUsuarioLS() {
-  try {
-    return JSON.parse(localStorage.getItem("usuario") || "null");
-  } catch {
-    return null;
-  }
-}
-function getNomeUsuario() {
-  return getUsuarioLS()?.nome || "";
-}
-function getEmailUsuario() {
-  return getUsuarioLS()?.email || "";
-}
-
-/** 🅰️ Iniciais */
+function getUsuarioLS() { try { return JSON.parse(localStorage.getItem("usuario") || "null"); } catch { return null; } }
+function getNomeUsuario() { return getUsuarioLS()?.nome || ""; }
+function getEmailUsuario() { return getUsuarioLS()?.email || ""; }
 function getIniciais(nome, email) {
   const n = String(nome || "").trim();
   if (n) {
@@ -138,39 +120,30 @@ function getIniciais(nome, email) {
   if (e) return (e.split("@")[0].slice(0, 2) || "?").toUpperCase();
   return "?";
 }
-
-/* 🧯 Destrava qualquer lock de scroll (overflow/position fix) */
 function unlockScroll() {
   const html = document.documentElement;
   const body = document.body;
-
   [html, body].forEach((el) => {
     if (!el) return;
     el.style.overflow = "";
     el.style.touchAction = "";
     el.classList.remove("overflow-hidden", "no-scroll", "modal-open");
   });
-
-  // se algum modal/overlay deixou o body fixo
   if (body && body.style.position === "fixed") {
     const prevTop = parseInt(body.style.top || "0", 10) || 0;
     body.style.position = "";
     body.style.top = "";
-    try {
-      window.scrollTo({ top: -prevTop, behavior: "instant" });
-    } catch {
-      window.scrollTo(0, -prevTop);
-    }
+    try { window.scrollTo({ top: -prevTop, behavior: "instant" }); } catch { window.scrollTo(0, -prevTop); }
   }
 }
 
-/** Item de menu genérico */
+/** Item de menu simples (lista plana) */
 function MenuList({ items, onSelect, activePath, id }) {
   return (
     <div
       id={id}
       role="menu"
-      className="absolute right-0 top-full mt-2 bg-white text-lousa rounded-xl shadow-xl py-2 w-64 ring-1 ring-black/5 z-50"
+      className="absolute right-0 top-full mt-2 bg-white text-lousa rounded-xl shadow-xl py-2 w-72 ring-1 ring-black/5 z-50"
     >
       {items.map(({ label, path, icon: Icon }) => {
         const active = activePath === path;
@@ -200,19 +173,12 @@ export default function Navbar() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // ▶ sessão
   const [token, setToken] = useState(getValidToken());
-
-  // ▶ perfil (robusto) + nome/e-mail
   const [perfil, setPerfil] = useState(() => getPerfisRobusto());
   const [nomeUsuario, setNomeUsuario] = useState(() => getNomeUsuario());
   const [emailUsuario, setEmailUsuario] = useState(() => getEmailUsuario());
-  const iniciais = useMemo(
-    () => getIniciais(nomeUsuario, emailUsuario),
-    [nomeUsuario, emailUsuario]
-  );
+  const iniciais = useMemo(() => getIniciais(nomeUsuario, emailUsuario), [nomeUsuario, emailUsuario]);
 
-  // ▶ tema
   const [darkMode, setDarkMode] = useState(() => {
     const t = localStorage.getItem("theme");
     if (t === "dark") return true;
@@ -220,30 +186,26 @@ export default function Navbar() {
     return document.documentElement.classList.contains("dark");
   });
 
-  // ▶ visibilidades
   const [menuUsuarioOpen, setMenuUsuarioOpen] = useState(false);
   const [menuInstrutorOpen, setMenuInstrutorOpen] = useState(false);
   const [menuAdminOpen, setMenuAdminOpen] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  // ▶ refs
   const refUsuario = useRef(null);
   const refInstrutor = useRef(null);
   const refAdmin = useRef(null);
   const refConfig = useRef(null);
   const refMobile = useRef(null);
 
-  // ▶ ids (a11y)
   const usuarioMenuId = useId();
   const instrutorMenuId = useId();
   const adminMenuId = useId();
   const configMenuId = useId();
 
-  // ▶ itens de menu
   const menusUsuario = useMemo(
     () => [
-      { label: "Painel do Usuário", path: "/usuario/dashboard", icon: LayoutDashboard }, // 🆕 primeiro item
+      { label: "Painel do Usuário", path: "/usuario/dashboard", icon: LayoutDashboard },
       { label: "Eventos", path: "/eventos", icon: CalendarDays },
       { label: "Meus Cursos", path: "/minhas-inscricoes", icon: BookOpen },
       { label: "Agenda", path: "/agenda", icon: CalendarDays },
@@ -253,6 +215,7 @@ export default function Navbar() {
       { label: "Meus Certificados", path: "/certificados", icon: FileText },
       { label: "Agendamento de Sala", path: "/agendamento-sala", icon: CalendarDays },
       { label: "Solicitar Curso", path: "/solicitar-curso", icon: Presentation },
+      { label: "Submissão de Trabalhos", path: "/submissoes", icon: Presentation },
       { label: "Manual do Usuário", path: "/usuario/manual", icon: BookOpen },
       { label: "Escanear", path: "/scanner", icon: QrCode },
     ],
@@ -270,24 +233,32 @@ export default function Navbar() {
     []
   );
 
+  // ADMIN — lista plana (sem submenus)
   const menusAdmin = useMemo(
     () => [
-      { label: "Painel do Administrador", path: "/dashboard-analitico", icon: BarChart3 },
-      { label: "Visão Geral", path: "/administrador", icon: LayoutDashboard },
-      { label: "Agenda", path: "/agenda-administrador", icon: ListChecks },
-      { label: "Certificados Avulsos", path: "/certificados-avulsos", icon: FileText },
-      { label: "QR Code Presença", path: "/admin/qr-codes", icon: QrCode },
-      { label: "Relatórios", path: "/relatorios-customizados", icon: ClipboardList },
-      { label: "Gestão de Usuários", path: "/gestao-usuarios", icon: Users },
-      { label: "Gestão de Instrutor", path: "/gestao-instrutor", icon: Presentation },
-      { label: "Gestão de Eventos", path: "/gerenciar-eventos", icon: CalendarDays },
-      { label: "Gestão de Presença", path: "/gestao-presenca", icon: QrCode },
-      { label: "Cancelar Inscrições", path: "/admin/cancelar-inscricoes", icon: XCircle },
+      // “soltos”
+      { label: "Painel Administrador",  path: "/dashboard-analitico",    icon: BarChart3 },
+      { label: "Visão Geral",           path: "/administrador",          icon: LayoutDashboard },
+      { label: "Agenda",                path: "/agenda-administrador",   icon: ListChecks },
+      { label: "Certificados Avulsos",  path: "/certificados-avulsos",   icon: FileText },
+      { label: "QR Code Presença",      path: "/admin/qr-codes",         icon: QrCode },
+      // relatórios
+      { label: "Relatórios Customizados", path: "/relatorios-customizados", icon: ClipboardList },
+      { label: "Histórico de Certificados", path: "/historico-certificados", icon: History },
+      // trabalhos
+      { label: "Criar Submissão de Trabalho",         path: "/admin/chamadas/new",     icon: PlusCircle },
+      { label: "Avaliar Submissão de Trabalho", path: "__open_submissions_prompt__", icon: FolderOpenDot },
+      // gestão
+      { label: "Gestão de Usuários",    path: "/gestao-usuarios",        icon: Users },
+      { label: "Gestão de Instrutor",   path: "/gestao-instrutor",       icon: Presentation },
+      { label: "Gestão de Eventos",     path: "/gerenciar-eventos",      icon: CalendarDays },
+      { label: "Gestão de Presença",    path: "/gestao-presenca",        icon: QrCode },
+      { label: "Cancelar Inscrições",   path: "/admin/cancelar-inscricoes", icon: XCircle },
     ],
     []
   );
 
-  // ▶ capacidades
+  // capacidades
   const isUsuario =
     perfil.includes("usuario") ||
     perfil.includes("instrutor") ||
@@ -295,29 +266,20 @@ export default function Navbar() {
   const isInstrutor = perfil.includes("instrutor") || perfil.includes("administrador");
   const isAdmin = perfil.includes("administrador");
 
-  // ▶ notificações
+  // notificações
   const [totalNaoLidas, setTotalNaoLidas] = useState(0);
-
   const atualizarContadorNotificacoes = useCallback(async () => {
     if (!getValidToken() || document.hidden) return;
     try {
       const data = await apiGet("/api/notificacoes/nao-lidas/contagem", { on401: "silent", on403: "silent" });
       setTotalNaoLidas(data?.totalNaoLidas ?? data?.total ?? 0);
-    } catch {
-      setTotalNaoLidas(0);
-    }
+    } catch { setTotalNaoLidas(0); }
   }, []);
-
   useEffect(() => {
     let intervalId;
     const tick = () => atualizarContadorNotificacoes();
-    if (token) {
-      tick();
-      intervalId = setInterval(tick, 30000);
-    }
-    const onVisibility = () => {
-      if (!document.hidden) tick();
-    };
+    if (token) { tick(); intervalId = setInterval(tick, 30000); }
+    const onVisibility = () => { if (!document.hidden) tick(); };
     document.addEventListener("visibilitychange", onVisibility);
     window.atualizarContadorNotificacoes = tick;
     return () => {
@@ -327,7 +289,6 @@ export default function Navbar() {
     };
   }, [token, atualizarContadorNotificacoes]);
 
-  // sincroniza token/perfil/nome
   useEffect(() => {
     const refreshFromLS = () => {
       setToken(getValidToken());
@@ -336,44 +297,31 @@ export default function Navbar() {
       setEmailUsuario(getEmailUsuario());
     };
     const onStorage = (e) => {
-      if (["perfil", "usuario", "token"].includes(e.key)) {
-        refreshFromLS();
-      }
-      if (e.key === "theme") {
-        setDarkMode(e.newValue === "dark");
-      }
+      if (["perfil", "usuario", "token"].includes(e.key)) refreshFromLS();
+      if (e.key === "theme") setDarkMode(e.newValue === "dark");
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, []);
-
   useEffect(() => {
-    // fecha tudo ao trocar de rota + destrava scroll
     setMenuUsuarioOpen(false);
     setMenuInstrutorOpen(false);
     setMenuAdminOpen(false);
     setConfigOpen(false);
     setMobileOpen(false);
     unlockScroll();
-
     setPerfil(getPerfisRobusto());
     setNomeUsuario(getNomeUsuario());
     setEmailUsuario(getEmailUsuario());
     setToken(getValidToken());
   }, [location.pathname]);
 
-  // ✅ Alternar tema
   const toggleTheme = () => {
     const next = !darkMode;
     setDarkMode(next);
     const root = document.documentElement;
-    if (next) {
-      root.classList.add("dark");
-      localStorage.setItem("theme", "dark");
-    } else {
-      root.classList.remove("dark");
-      localStorage.setItem("theme", "light");
-    }
+    if (next) { root.classList.add("dark"); localStorage.setItem("theme", "dark"); }
+    else { root.classList.remove("dark"); localStorage.setItem("theme", "light"); }
   };
 
   // fechar ao clicar fora
@@ -399,8 +347,6 @@ export default function Navbar() {
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, []);
-
-  // ESC fecha menus + destrava
   useEffect(() => {
     function onEsc(e) {
       if (e.key === "Escape") {
@@ -416,16 +362,22 @@ export default function Navbar() {
     return () => window.removeEventListener("keydown", onEsc);
   }, []);
 
-  // sair
   const sair = () => {
     localStorage.clear();
     unlockScroll();
     navigate("/login");
   };
 
-  // navegar + fechar dropdowns
-  const go = (path) => {
-    navigate(path);
+  // ação especial do item “Abrir Submissões por Chamada…”
+  const handleAdminSelect = (path) => {
+    if (path === "__open_submissions_prompt__") {
+      const id = window.prompt("Informe o ID da chamada para abrir as submissões:");
+      if (!id) return;
+      if (!/^\d+$/.test(id)) { alert("ID inválido."); return; }
+      navigate(`/admin/chamadas/${id}/submissoes`);
+    } else {
+      navigate(path);
+    }
     setMenuUsuarioOpen(false);
     setMenuInstrutorOpen(false);
     setMenuAdminOpen(false);
@@ -434,18 +386,15 @@ export default function Navbar() {
     unlockScroll();
   };
 
-  // botão base dropdown
+  const go = (path) => handleAdminSelect(path); // reusa o mesmo close/unlock
+
   const dropBtnBase =
     "flex items-center gap-2 px-2 py-1 text-sm rounded-xl hover:bg-white hover:text-lousa focus-visible:ring-2 focus-visible:ring-white/60 outline-none";
 
-  // home: sempre para "/" (HomeEscola); rota é protegida e o guard cuida do login
-  const goHome = () => {
-    go("/");
-  };
+  const goHome = () => { go("/"); };
 
-  // 🎯 aplica cor sazonal (ou lousa)
   const now = new Date();
-  const month = now.getMonth() + 1; // 1-12
+  const month = now.getMonth() + 1;
   const navBgSeasonal = getNavThemeForMonth(month);
   const navBg = navBgSeasonal || "bg-lousa";
 
@@ -517,7 +466,7 @@ export default function Navbar() {
             </div>
           )}
 
-          {/* ADMIN */}
+          {/* ADMIN — lista plana, sem submenus */}
           {isAdmin && (
             <div className="relative" ref={refAdmin}>
               <button
@@ -536,7 +485,7 @@ export default function Navbar() {
                   id={adminMenuId}
                   items={menusAdmin}
                   activePath={location.pathname}
-                  onSelect={go}
+                  onSelect={handleAdminSelect}
                 />
               )}
             </div>
@@ -678,7 +627,6 @@ export default function Navbar() {
             </div>
             <hr className="my-1" />
 
-            {/* blocos por perfil */}
             {isUsuario && (
               <>
                 <div className="px-2 pt-2 pb-1 text-xs font-semibold uppercase text-gray-500">
@@ -734,13 +682,15 @@ export default function Navbar() {
                 <div className="px-2 pt-2 pb-1 text-xs font-semibold uppercase text-gray-500">
                   Administrador
                 </div>
+
                 {menusAdmin.map((m) => {
                   const active = location.pathname === m.path;
+                  const onClick = () => handleAdminSelect(m.path);
                   return (
                     <button
-                      key={m.path}
+                      key={m.label}
                       type="button"
-                      onClick={() => go(m.path)}
+                      onClick={onClick}
                       aria-current={active ? "page" : undefined}
                       className={`text-left w-full px-3 py-2 rounded-lg flex items-center gap-2 hover:bg-gelo ${
                         active ? "font-semibold underline" : ""
@@ -750,6 +700,7 @@ export default function Navbar() {
                     </button>
                   );
                 })}
+
                 <hr className="my-1" />
               </>
             )}
@@ -758,7 +709,6 @@ export default function Navbar() {
             <div className="px-2 pt-2 pb-1 text-xs font-semibold uppercase text-gray-500">
               Geral
             </div>
-
             <button
               type="button"
               onClick={() => go("/qr-site")}
@@ -766,7 +716,6 @@ export default function Navbar() {
             >
               <QrCode size={16} /> QR do Site
             </button>
-
             <button
               type="button"
               onClick={() => go("/notificacoes")}
@@ -793,8 +742,7 @@ export default function Navbar() {
               onClick={toggleTheme}
               className="text-left w-full px-3 py-2 rounded-lg flex items-center gap-2 hover:bg-gelo"
             >
-              {darkMode ? <Sun size={16} /> : <Moon size={16} />} Modo{" "}
-              {darkMode ? "Claro" : "Escuro"}
+              {darkMode ? <Sun size={16} /> : <Moon size={16} />} Modo {darkMode ? "Claro" : "Escuro"}
             </button>
             <button
               type="button"

@@ -7,6 +7,7 @@ import {
   useSearchParams,
   useNavigate,
   Navigate,
+  useParams, // ⬅️ movido para o topo
 } from "react-router-dom";
 import PrivateRoute from "./components/PrivateRoute";
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
@@ -29,10 +30,10 @@ const MinhasPresencas        = lazy(() => import("./pages/MinhasPresencas"));
 const MeusCertificados       = lazy(() => import("./pages/MeusCertificados"));
 const MinhasInscricoes       = lazy(() => import("./pages/MinhasInscricoes"));
 const DashboardUsuario       = lazy(() => import("./pages/DashboardUsuario"));
-const Teste                  = lazy(() => import("./pages/Teste"));              // 🆕
-const AgendamentoSala        = lazy(() => import("./pages/AgendamentoSala"));    // 🆕
-const SolicitacaoCurso       = lazy(() => import("./pages/SolicitacaoCurso"));   // 🆕
-const AgendaUsuario          = lazy(() => import("./pages/AgendaUsuario"));      // 🆕
+const Teste                  = lazy(() => import("./pages/Teste"));
+const AgendamentoSala        = lazy(() => import("./pages/AgendamentoSala"));
+const SolicitacaoCurso       = lazy(() => import("./pages/SolicitacaoCurso"));
+const AgendaUsuario          = lazy(() => import("./pages/AgendaUsuario"));
 
 const DashboardInstrutor     = lazy(() => import("./pages/DashboardInstrutor"));
 const AgendaInstrutor        = lazy(() => import("./pages/AgendaInstrutor"));
@@ -69,6 +70,14 @@ const Privacidade            = lazy(() => import("./pages/Privacidade"));
 
 // 🆕 Home pós-login (portal da Escola)
 const HomeEscola             = lazy(() => import("./pages/HomeEscola"));
+
+/* 🆕 PÁGINAS DE SUBMISSÕES DE TRABALHOS */
+// Admin – criar/editar chamada
+const AdminChamadaForm       = lazy(() => import("./pages/AdminChamadaForm"));
+// Usuário – submeter e acompanhar
+const UsuarioSubmissoes      = lazy(() => import("./pages/UsuarioSubmissoes"));
+// Admin – listar/avaliar/responder
+const AdminSubmissoesResposta = lazy(() => import("./pages/AdminSubmissoesResposta"));
 
 /* ──────────────────────────────────────────────────────────────
    A11y: Announcer de mudanças de rota
@@ -147,18 +156,17 @@ function LayoutComNavbar({ children }) {
   const isPublicPath = useMemo(() => {
     const p = location.pathname;
     return (
-      // ⚠️ removido "/" para exibir Navbar e proteger a HomeEscola
       p === "/login" ||
       p === "/cadastro" ||
       p === "/recuperar-senha" ||
-      p === "/validar" ||                    // legado
-      p === "/validar-presenca" ||           // legado
+      p === "/validar" ||
+      p === "/validar-presenca" ||
       p === "/validar-certificado" ||
-      p === "/ajuda/cadastro" ||            // 🆕 público
-      p === "/privacidade" ||               // 🆕 público
-      p.endsWith(".html") ||                // alias .html
+      p === "/ajuda/cadastro" ||
+      p === "/privacidade" ||
+      p.endsWith(".html") ||
       p.startsWith("/redefinir-senha") ||
-      p.startsWith("/presenca")             // tela do QR
+      p.startsWith("/presenca")
     );
   }, [location.pathname]);
 
@@ -295,6 +303,16 @@ function NotFound() {
   return <Navigate to="/login" replace />;
 }
 
+/* ─────────── Wrappers para rotas com :id (submissões) ─────────── */
+function AdminChamadaFormWrapper() {
+  const { id } = useParams();
+  return <AdminChamadaForm chamadaId={id} />;
+}
+function AdminSubmissoesRespostaWrapper() {
+  const { id } = useParams();
+  return <AdminSubmissoesResposta chamadaId={id} />;
+}
+
 /* ──────────────────────────────────────────────────────────────
    App
    ────────────────────────────────────────────────────────────── */
@@ -369,54 +387,27 @@ export default function App() {
             <Route path="/agenda" element={<PrivateRoute><AgendaUsuario /></PrivateRoute>} />
 
             {/* 🆕 Manual do Usuário */}
-            <Route
-              path="/usuario/manual"
-              element={
-                <PrivateRoute>
-                  <ManualUsuario />
-                </PrivateRoute>
-              }
-            />
-            <Route
-              path="/manual"
-              element={
-                <PrivateRoute>
-                  <ManualUsuario />
-                </PrivateRoute>
-              }
-            />
+            <Route path="/usuario/manual" element={<PrivateRoute><ManualUsuario /></PrivateRoute>} />
+            <Route path="/manual" element={<PrivateRoute><ManualUsuario /></PrivateRoute>} />
 
             {/* 🧑‍🏫 / 🛠️ */}
             <Route path="/instrutor" element={<PrivateRoute permitido={["instrutor", "administrador"]}><DashboardInstrutor /></PrivateRoute>} />
             <Route path="/agenda-instrutor" element={<PrivateRoute permitido={["instrutor", "administrador"]}><AgendaInstrutor /></PrivateRoute>} />
             <Route path="/qr-site" element={<PrivateRoute permitido={["instrutor", "administrador"]}><QrDoSite /></PrivateRoute>} />
             <Route path="/turmas/presencas/:turmaId" element={<PrivateRoute permitido={["instrutor", "administrador"]}><PresencasPorTurma /></PrivateRoute>} />
-            <Route
-  path="/instrutor/presenca"
-  element={
-    <PrivateRoute permitido={["instrutor", "administrador"]}>
-      <InstrutorPresenca />
-    </PrivateRoute>
-  }
-/>
+            <Route path="/instrutor/presenca" element={<PrivateRoute permitido={["instrutor", "administrador"]}><InstrutorPresenca /></PrivateRoute>} />
+            <Route path="/instrutor/certificados" element={<PrivateRoute permitido={["instrutor", "administrador"]}><CertificadosInstrutor /></PrivateRoute>} />
+            <Route path="/instrutor/avaliacao" element={<PrivateRoute permitido={["instrutor", "administrador"]}><AvaliacaoInstrutor /></PrivateRoute>} />
 
-<Route
-  path="/instrutor/certificados"
-  element={
-    <PrivateRoute permitido={["instrutor", "administrador"]}>
-      <CertificadosInstrutor />
-    </PrivateRoute>
-  }
-/>
+            {/* 🆕 ROTAS DE SUBMISSÕES DE TRABALHOS */}
+            {/* Usuário: submeter e acompanhar */}
+            <Route path="/submissoes" element={<PrivateRoute><UsuarioSubmissoes /></PrivateRoute>} />
+            {/* Admin: criar/editar chamada */}
+            <Route path="/admin/chamadas/new" element={<PrivateRoute permitido={["administrador"]}><AdminChamadaForm /></PrivateRoute>} />
+            <Route path="/admin/chamadas/:id" element={<PrivateRoute permitido={["administrador"]}><AdminChamadaFormWrapper /></PrivateRoute>} />
+            {/* Admin: ver/avaliar/responder submissões */}
+            <Route path="/admin/chamadas/:id/submissoes" element={<PrivateRoute permitido={["administrador"]}><AdminSubmissoesRespostaWrapper /></PrivateRoute>} />
 
-<Route
-  path="/instrutor/avaliacao"
-  element={
-    <PrivateRoute permitido={["instrutor", "administrador"]}>
-      <AvaliacaoInstrutor />
-    </PrivateRoute>
-  }
-/>
             <Route path="/administrador" element={<PrivateRoute permitido={["administrador"]}><DashboardAdministrador /></PrivateRoute>} />
             <Route path="/dashboard-analitico" element={<PrivateRoute permitido={["administrador"]}><DashboardAnalitico /></PrivateRoute>} />
             <Route path="/gerenciar-eventos" element={<PrivateRoute permitido={["administrador"]}><GerenciarEventos /></PrivateRoute>} />
@@ -429,14 +420,7 @@ export default function App() {
             <Route path="/certificados-avulsos" element={<PrivateRoute permitido={["administrador"]}><CertificadosAvulsos /></PrivateRoute>} />
             <Route path="/gestao-presenca" element={<PrivateRoute permitido={["administrador"]}><GestaoPresencas /></PrivateRoute>} />
             <Route path="/admin/qr-codes" element={<PrivateRoute permitido={["administrador"]}><QRCodesEventosAdmin /></PrivateRoute>} />
-            <Route
-              path="/admin/cancelar-inscricoes"
-              element={
-                <PrivateRoute permitido={["administrador"]}>
-                  <CancelarInscricoesAdmin />
-                </PrivateRoute>
-              }
-            />
+            <Route path="/admin/cancelar-inscricoes" element={<PrivateRoute permitido={["administrador"]}><CancelarInscricoesAdmin /></PrivateRoute>} />
 
             {/* 404 */}
             <Route path="*" element={<NotFound />} />

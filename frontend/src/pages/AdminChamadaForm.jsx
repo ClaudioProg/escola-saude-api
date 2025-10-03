@@ -1,0 +1,849 @@
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  Settings2, Save, Plus, Trash2, Pencil, Eye, EyeOff,
+  CheckCircle2, XCircle, X, Loader2, FileText
+} from "lucide-react";
+import Footer from "../components/Footer";
+import {
+  datetimeLocalToBrWall, wallToDatetimeLocal, isIsoWithTz, isWallDateTime,
+  isoToDatetimeLocalInZone, fmtWallDateTime, fmtDataHora
+} from "../utils/data";
+import { apiGet, apiPost, apiPut, apiDelete, apiUpload as apiUploadSvc } from "../services/api";
+import { useParams } from "react-router-dom";
+
+/* ─── utils ─── */
+const pad2 = (n) => String(n).padStart(2, "0");
+const nowLocalDatetimeLocal = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+};
+const toCodigo = (s) =>
+  (s || "")
+    .normalize("NFD").replace(/\p{Diacritic}/gu, "")
+    .toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "")
+    .slice(0, 30) || "LINHA";
+
+/** Formata bytes em KB/MB/GB legível */
+const formatBytes = (bytes) => {
+  if (!Number.isFinite(bytes) || bytes < 0) return "";
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${(bytes / Math.pow(k, i)).toFixed(i === 0 ? 0 : 2)} ${sizes[i]}`;
+};
+
+/* 🔢 Limites globais (UI) e compat backend */
+const LIMIT_MIN = 1;
+const LIMIT_MAX = 5000;
+const BACKEND_MIN = 50;
+const BACKEND_MAX = 20000;
+const clampUi = (n) => Math.max(LIMIT_MIN, Math.min(LIMIT_MAX, Number(n) || LIMIT_MIN));
+const enforceBackend = (n) => Math.max(BACKEND_MIN, Math.min(BACKEND_MAX, Number(n) || BACKEND_MIN));
+
+/* ─── UI helpers ─── */
+const Card = ({ children }) => (
+  <div className="rounded-2xl border bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:p-6">{children}</div>
+);
+const Field = ({ label, hint, error, children }) => (
+  <div className="mb-4">
+    {label && <label className="mb-1 block text-sm font-medium text-zinc-800 dark:text-zinc-100">{label}</label>}
+    {children}
+    {hint && <div className="mt-1 text-xs text-zinc-500">{hint}</div>}
+    {error && <div className="mt-1 text-xs text-red-600">{error}</div>}
+  </div>
+);
+const Badge = ({ children, tone = "indigo" }) => {
+  const tones = {
+    indigo: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-200",
+    emerald: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200",
+    rose: "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200",
+    zinc: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200",
+  };
+  return <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs ${tones[tone]}`}>{children}</span>;
+};
+const Counter = ({ value, max }) => {
+  const len = (value || "").length;
+  const over = max ? len > max : false;
+  return <span className={`text-xs ${over ? "text-red-600" : "text-zinc-500"}`}>{len}{max ? `/${max}` : ""}</span>;
+};
+
+/* ─── Modal ─── */
+function Modal({ open, onClose, title, children, footer }) {
+  useEffect(() => {
+    function onKey(e) { if (e.key === "Escape") onClose?.(); }
+    if (open) document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4" aria-modal="true" role="dialog">
+          <motion.div initial={{ y: 12, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 12, opacity: 0 }}
+            className="relative w-full max-w-4xl overflow-hidden rounded-2xl border bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-900">
+            <div className="flex items-center justify-between bg-gradient-to-r from-indigo-600 to-teal-600 px-4 py-3 text-white">
+              <div className="flex items-center gap-2">
+                <FileText className="h-5 w-5" />
+                <h3 className="text-lg font-semibold">{title}</h3>
+                <Badge tone="emerald">Admin</Badge>
+              </div>
+              <button onClick={onClose} className="rounded-xl p-2 hover:bg-white/10" aria-label="Fechar">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="max-h-[75vh] overflow-y-auto p-4 sm:p-6">{children}</div>
+
+            <div className="flex items-center justify-end gap-3 border-t bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900/50">
+              {footer}
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+/* ─── Header ─── */
+function HeaderHero() {
+  return (
+    <motion.header initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}
+      className="w-full bg-indigo-600 text-white dark:bg-indigo-700">
+      <div className="mx-auto max-w-screen-xl px-4 py-6 text-center sm:px-6 lg:px-8">
+        <div className="mx-auto flex max-w-3xl flex-col items-center gap-3">
+          <Settings2 className="h-10 w-10" aria-hidden="true" />
+          <div>
+            <h1 className="text-2xl font-bold leading-tight sm:text-3xl">Submissão de Trabalhos — Administração</h1>
+            <p className="mt-1 text-sm opacity-90 sm:text-base">
+              Gerencie as chamadas abertas, edite, publique/despublique e exclua. Criação/Edição em modal com visual mais agradável.
+            </p>
+          </div>
+        </div>
+      </div>
+    </motion.header>
+  );
+}
+
+/* ─── Painel ─── */
+function ChamadasPainel({ onEditar, onNova, refreshSignal }) {
+  const [lista, setLista] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+  const [filtro, setFiltro] = useState("abertas");
+  const [mutatingId, setMutatingId] = useState(null);
+
+  const load = useCallback(async () => {
+    setErr(""); setLoading(true);
+    try {
+      const rows = await apiGet("admin/chamadas");
+      setLista(Array.isArray(rows) ? rows : []);
+    } catch (e) {
+      setErr(e?.message || "Falha ao carregar chamadas.");
+    } finally { setLoading(false); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (refreshSignal !== undefined) load(); }, [refreshSignal, load]);
+
+  const visiveis = useMemo(() => {
+    if (filtro === "todas") return lista;
+    if (filtro === "encerradas") return lista.filter((c) => c.dentro_prazo === false);
+    return lista.filter((c) => c.dentro_prazo === true);
+  }, [lista, filtro]);
+
+  const publicar = async (id, valor) => {
+    setMutatingId(id);
+    try {
+      await apiPut(`admin/chamadas/${id}/publicar`, { publicado: !!valor });
+      setLista((xs) => xs.map((c) => (c.id === id ? { ...c, publicado: !!valor } : c)));
+    } catch (e) {
+      alert(e?.message || "Erro ao alterar publicação.");
+    } finally { setMutatingId(null); }
+  };
+  const excluir = async (id) => {
+    if (!confirm("Confirma excluir esta chamada? Esta ação não pode ser desfeita.")) return;
+    setMutatingId(id);
+    try { await apiDelete(`admin/chamadas/${id}`); setLista((xs) => xs.filter((c) => c.id !== id)); }
+    catch (e) { alert(e?.message || "Erro ao excluir chamada."); }
+    finally { setMutatingId(null); }
+  };
+
+  const renderPrazo = (valor) => {
+    if (!valor) return "—";
+    if (isWallDateTime(valor)) return fmtWallDateTime(valor);
+    if (isIsoWithTz(valor)) return fmtDataHora(valor, "America/Sao_Paulo");
+    return String(valor);
+  };
+
+  return (
+    <Card>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          {["abertas", "encerradas", "todas"].map((key) => (
+            <button key={key} onClick={() => setFiltro(key)}
+              className={`rounded-xl px-3 py-1.5 text-sm ${filtro === key ? "bg-indigo-600 text-white" : "bg-zinc-100 dark:bg-zinc-800"}`}>
+              {key[0].toUpperCase() + key.slice(1)}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={load} className="rounded-xl border px-3 py-1.5 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800">Recarregar</button>
+          <button onClick={onNova} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-1.5 text-white hover:bg-indigo-700">
+            <Plus className="h-4 w-4" /> Nova chamada
+          </button>
+        </div>
+      </div>
+
+      {err && <div className="mb-3 text-sm text-red-600">{err}</div>}
+      {loading ? (
+        <div className="text-sm text-zinc-600">Carregando…</div>
+      ) : visiveis.length === 0 ? (
+        <div className="text-sm text-zinc-600">Nenhuma chamada no filtro atual.</div>
+      ) : (
+        <div className="grid gap-2">
+          {visiveis.map((c) => (
+            <div key={c.id} className="flex flex-col gap-2 rounded-xl border p-3 text-sm dark:border-zinc-800 md:flex-row md:items-center md:justify-between">
+              <div className="min-w-0">
+                <div className="truncate font-medium">{c.titulo}</div>
+                <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+                  {c.publicado ? (
+                    <Badge tone="emerald"><CheckCircle2 className="mr-1 h-3 w-3" />Publicado</Badge>
+                  ) : (
+                    <Badge tone="zinc"><XCircle className="mr-1 h-3 w-3" />Rascunho</Badge>
+                  )}
+                  {c.dentro_prazo ? (
+                    <Badge tone="indigo">Aberta</Badge>
+                  ) : (
+                    <Badge tone="rose">Encerrada</Badge>
+                  )}
+                  <span>Prazo: {renderPrazo(c.prazo_final_br)}</span>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+                        onClick={() => onEditar?.(c.id)} title="Editar">
+                  <Pencil className="h-4 w-4" /> Editar
+                </button>
+
+                {c.publicado ? (
+                  <button disabled={mutatingId === c.id}
+                          className="inline-flex items-center gap-1 rounded-lg bg-zinc-100 px-2.5 py-1.5 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700"
+                          onClick={() => publicar(c.id, false)} title="Despublicar">
+                    <EyeOff className="h-4 w-4" /> Despublicar
+                  </button>
+                ) : (
+                  <button disabled={mutatingId === c.id}
+                          className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1.5 text-white hover:bg-indigo-700"
+                          onClick={() => publicar(c.id, true)} title="Publicar">
+                    <Eye className="h-4 w-4" /> Publicar
+                  </button>
+                )}
+
+                <button disabled={mutatingId === c.id}
+                        className="inline-flex items-center gap-1 rounded-lg bg-rose-600 px-2.5 py-1.5 text-white hover:bg-rose-700"
+                        onClick={() => excluir(c.id)} title="Excluir">
+                  <Trash2 className="h-4 w-4" /> Excluir
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/* ─── Modal Criar/Editar ─── */
+function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
+  const isEdit = !!chamadaId;
+  const [form, setForm] = useState({
+    titulo: "",
+    descricao_markdown: "",
+    periodo_experiencia_inicio: "2023-01",
+    periodo_experiencia_fim: "2025-07",
+    prazo_final_br: nowLocalDatetimeLocal(),
+    aceita_poster: true,
+    link_modelo_poster: "",
+    max_coautores: 10,
+    publicado: false,
+    linhas: [],
+    criterios: [],
+    criterios_orais: [],
+    limites: { titulo: 100, introducao: 2000, objetivos: 1000, metodo: 1500, resultados: 1500, consideracoes: 1000 },
+    criterios_outros: "",
+    oral_outros: "",
+    premiacao_texto: "",
+    disposicoes_finais_texto: "",
+  });
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const [infoOk, setInfoOk] = useState("");
+  const abortRef = useRef(null);
+
+  // 🎯 modelo de banner (POR CHAMADA)
+  const [modeloMeta, setModeloMeta] = useState(null);
+  const [modeloBusy, setModeloBusy] = useState(false);
+  const [modeloErr, setModeloErr] = useState("");
+  const [modeloOk, setModeloOk] = useState("");
+
+  const inputBase =
+    "w-full rounded-xl border px-3 py-2 ring-offset-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-800";
+
+  const update = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const updateLim = (k, v) => setForm((f) => ({ ...f, limites: { ...f.limites, [k]: Number(v) || 0 } }));
+
+  const validar = () => {
+    const { periodo_experiencia_inicio: ini, periodo_experiencia_fim: fim, limites } = form;
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(ini) || !/^\d{4}-(0[1-9]|1[0-2])$/.test(fim)) return "Períodos devem estar no formato AAAA-MM.";
+    if (ini > fim) return "Período inicial não pode ser maior que o final.";
+    for (const [k, v] of Object.entries(limites)) {
+      const n = Number(v);
+      if (!Number.isInteger(n) || n < LIMIT_MIN || n > LIMIT_MAX) return `Limite inválido para ${k}: ${LIMIT_MIN} a ${LIMIT_MAX}.`;
+    }
+    return "";
+  };
+
+  // carrega para edição + meta do modelo da CHAMADA
+  useEffect(() => {
+    if (!open) return;
+    setErr("");
+    setInfoOk("");
+    if (!isEdit) {
+      setForm((prev) => ({ ...prev, titulo: "", linhas: [], criterios: [], criterios_orais: [] }));
+      setModeloMeta(null);
+    }
+    (async () => {
+      try {
+        if (isEdit) {
+          setLoading(true);
+          abortRef.current?.abort?.();
+          abortRef.current = new AbortController();
+          const r = await apiGet(`chamadas/${chamadaId}`, { signal: abortRef.current.signal });
+          const c = r?.chamada || {};
+          const prazoInput =
+            wallToDatetimeLocal(c.prazo_final_br || "") ||
+            (isIsoWithTz(c.prazo_final_br) ? isoToDatetimeLocalInZone(c.prazo_final_br, "America/Sao_Paulo") : "") ||
+            nowLocalDatetimeLocal();
+          setForm({
+            titulo: c.titulo || "",
+            descricao_markdown: c.descricao_markdown || "",
+            periodo_experiencia_inicio: c.periodo_experiencia_inicio || "2023-01",
+            periodo_experiencia_fim: c.periodo_experiencia_fim || "2025-07",
+            prazo_final_br: prazoInput,
+            aceita_poster: !!c.aceita_poster,
+            link_modelo_poster: c.link_modelo_poster || "",
+            max_coautores: Number(c.max_coautores) || 10,
+            publicado: !!c.publicado,
+            linhas: (r?.linhas || []).map((l) => ({ nome: l.nome || "", descricao: l.descricao || "" })),
+            criterios: r?.criterios || [],
+            criterios_orais: r?.criterios_orais || [],
+            limites: {
+              titulo: Number(r?.limites?.titulo ?? 100),
+              introducao: Number(r?.limites?.introducao ?? 2000),
+              objetivos: Number(r?.limites?.objetivos ?? 1000),
+              metodo: Number(r?.limites?.metodo ?? 1500),
+              resultados: Number(r?.limites?.resultados ?? 1500),
+              consideracoes: Number(r?.limites?.consideracoes ?? 1000),
+            },
+            criterios_outros: r?.criterios_outros || "",
+            oral_outros: r?.oral_outros || "",
+            premiacao_texto: r?.premiacao_texto || "",
+            disposicoes_finais_texto: r?.disposicoes_finais_texto || "",
+          });
+
+          // meta do modelo POR CHAMADA (pré-carrega logo no modo edição)
+          try {
+            const meta = await apiGet(`admin/chamadas/${chamadaId}/modelo-banner`);
+            setModeloMeta(meta || null);
+          } catch {
+            setModeloMeta(null);
+          }
+        }
+      } catch (e) {
+        setErr(e?.message || "Falha ao carregar a chamada para edição.");
+      } finally { setLoading(false); }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, isEdit, chamadaId]);
+
+  const onSave = async () => {
+    setErr("");
+    setInfoOk("");
+    if (modeloBusy) {
+      setErr("Aguarde terminar o envio do modelo de banner antes de salvar.");
+      return;
+    }
+    const ver = validar();
+    if (ver) { setErr(ver); return; }
+    setSaving(true);
+    try {
+      const criteriosNorm = (form.criterios || []).map((c) => ({
+        titulo: c.titulo,
+        escala_min: Number(c.escala_min) || 1,
+        escala_max: Number(c.escala_max) || 5,
+        peso: Number(c.peso) || 1,
+      }));
+      const criteriosOraisNorm = (form.criterios_orais || []).map((c) => ({
+        titulo: c.titulo,
+        escala_min: Number(c.escala_min) || 1,
+        escala_max: Number(c.escala_max) || 3,
+        peso: Number(c.peso) || 1,
+      }));
+
+      const payload = {
+        titulo: form.titulo,
+        descricao_markdown: form.descricao_markdown,
+        periodo_experiencia_inicio: form.periodo_experiencia_inicio,
+        periodo_experiencia_fim: form.periodo_experiencia_fim,
+        prazo_final_br: datetimeLocalToBrWall(form.prazo_final_br),
+        aceita_poster: !!form.aceita_poster,
+        link_modelo_poster: form.link_modelo_poster,
+        max_coautores: Number(form.max_coautores) || 0,
+        publicado: !!form.publicado,
+        linhas: (form.linhas || []).map((l) => ({ codigo: toCodigo(l.nome), nome: l.nome || "", descricao: l.descricao || "" })),
+        criterios: criteriosNorm,
+        criterios_orais: criteriosOraisNorm,
+        limites: {
+          titulo: enforceBackend(clampUi(form.limites.titulo)),
+          introducao: enforceBackend(clampUi(form.limites.introducao)),
+          objetivos: enforceBackend(clampUi(form.limites.objetivos)),
+          metodo: enforceBackend(clampUi(form.limites.metodo)),
+          resultados: enforceBackend(clampUi(form.limites.resultados)),
+          consideracoes: enforceBackend(clampUi(form.limites.consideracoes)),
+        },
+        criterios_outros: form.criterios_outros || "",
+        oral_outros: form.oral_outros || "",
+        premiacao_texto: form.premiacao_texto || "",
+        disposicoes_finais_texto: form.disposicoes_finais_texto || "",
+      };
+
+      let savedId = chamadaId || null;
+      if (isEdit) {
+        await apiPut(`admin/chamadas/${chamadaId}`, payload);
+        setInfoOk("Alterações salvas.");
+        onSaved?.(savedId);
+        onClose?.();
+      } else {
+        const r = await apiPost("admin/chamadas", payload);
+        if (r?.id) savedId = r.id;
+
+        // mantém modal aberto e vira para modo edição
+        setInfoOk("Chamada criada. Agora você já pode importar o modelo (.pptx).");
+        onSaved?.(savedId);
+
+        // pequeno “warmup”: busca meta do modelo e perfis para forçar refresh do auth
+        try {
+          await apiGet(`admin/chamadas/${savedId}/modelo-banner`);
+        } catch {}
+        try {
+          await apiGet("perfil/me");
+        } catch {}
+      }
+    } catch (e) {
+      const msg = e?.message || e?.response?.data?.error || "Erro ao salvar a chamada. Revise os campos.";
+      setErr(msg);
+      console.error("Salvar chamada — erro:", e);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // util: espera ms
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // 📤 importar modelo de banner (.pptx) com retry anti-CORS/401
+  const onImportModelo = async (file) => {
+    if (!file) return;
+    setModeloErr("");
+    setModeloOk("");
+    setInfoOk("");
+    setModeloBusy(true);
+    try {
+      if (!isEdit) throw new Error("Salve a chamada para habilitar o upload do modelo.");
+      if (!/\.pptx?$/i.test(file.name)) throw new Error("Envie arquivo .pptx");
+      if (file.size > 50 * 1024 * 1024) throw new Error("Arquivo muito grande (máx 50MB).");
+
+      const tryOnce = async () => {
+        await apiUploadSvc(`admin/chamadas/${chamadaId}/modelo-banner`, file, { fieldName: "banner" });
+        const meta = await apiGet(`admin/chamadas/${chamadaId}/modelo-banner`);
+        setModeloMeta(meta || null);
+      };
+
+      const attempts = [0, 400, 1000]; // backoff
+      let lastErr = null;
+      for (let i = 0; i < attempts.length; i++) {
+        try {
+          if (i > 0) setInfoOk(`Conexão instável, tentando novamente (${i + 1}/${attempts.length})…`);
+          await tryOnce();
+          lastErr = null;
+          break;
+        } catch (e) {
+          lastErr = e;
+          // se for 401/403 ou TypeError (Failed to fetch), tenta “esquentar” auth e repetir
+          const msg = String(e?.message || "");
+          const status = e?.status || e?.response?.status;
+          if (status === 401 || status === 403 || /Failed to fetch|CORS/i.test(msg)) {
+            try { await apiGet("perfil/me"); } catch {}
+            await sleep(attempts[i]);
+            continue;
+          }
+          // outros erros não adiantam retry
+          break;
+        }
+      }
+      if (lastErr) throw lastErr;
+
+      setModeloOk("Modelo importado com sucesso.");
+      setInfoOk("");
+    } catch (e) {
+      setModeloErr(e?.message || "Falha ao importar o modelo.");
+    } finally {
+      setModeloBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={isEdit ? "Editar chamada" : "Nova chamada"}
+      footer={
+        <>
+          {(err || infoOk) && (
+            <span className={`mr-auto text-sm ${err ? "text-red-600" : "text-emerald-600"}`}>
+              {err || infoOk}
+            </span>
+          )}
+          <button onClick={onClose} className="rounded-xl px-4 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800">Cancelar</button>
+          <button onClick={onSave} disabled={saving || modeloBusy}
+            className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-zinc-400 dark:disabled:bg-zinc-700">
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} {saving ? "Salvando..." : "Salvar"}
+          </button>
+        </>
+      }
+    >
+      {loading ? (
+        <div className="flex items-center gap-2 text-sm text-zinc-600">
+          <Loader2 className="h-4 w-4 animate-spin" /> Carregando…
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-8">
+          {/* 1) Gerais */}
+          <section id="s1" className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <h2 className="sm:col-span-3 mb-2 text-base font-semibold">Informações gerais</h2>
+            <div className="sm:col-span-3">
+              <Field label={<span>Título da chamada <Counter value={form.titulo} max={200} /></span>}>
+                <input className={`${inputBase} text-lg sm:text-xl`} value={form.titulo}
+                  onChange={(e) => update("titulo", e.target.value)} maxLength={200} required aria-required="true" />
+              </Field>
+            </div>
+            <Field label="Período da experiência — início (AAAA-MM)">
+              <input type="month" className={inputBase} value={form.periodo_experiencia_inicio}
+                onChange={(e) => update("periodo_experiencia_inicio", e.target.value)} required aria-required="true" />
+            </Field>
+            <Field label="Período da experiência — fim (AAAA-MM)">
+              <input type="month" className={inputBase} value={form.periodo_experiencia_fim}
+                onChange={(e) => update("periodo_experiencia_fim", e.target.value)} required aria-required="true" />
+            </Field>
+          </section>
+
+          {/* 2) Prazo */}
+          <section id="s2" className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <h2 className="sm:col-span-2 mb-2 text-base font-semibold">Prazo para submissão</h2>
+            <Field label="Prazo final (Brasília)">
+              <input type="datetime-local" className={inputBase} value={form.prazo_final_br}
+                onChange={(e) => update("prazo_final_br", e.target.value)} required aria-required="true" />
+            </Field>
+          </section>
+
+          {/* 3) Normas / Linhas / Limites */}
+          <section id="s3" className="grid grid-cols-1 gap-4">
+            <h2 className="mb-2 text-base font-semibold">Normas para submissão dos trabalhos</h2>
+
+            {/* Linhas */}
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <h3 className="font-medium">Linhas temáticas</h3>
+                <button
+                  type="button"
+                  onClick={() => update("linhas", [...form.linhas, { nome: "", descricao: "" }])}
+                  className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700 focus:ring-2 focus:ring-indigo-500"
+                >
+                  <Plus className="h-4 w-4" /> adicionar linha
+                </button>
+              </div>
+              <div className="grid gap-3">
+                {form.linhas.map((l, i) => (
+                  <div key={i} className="grid gap-2">
+                    <input className={inputBase} placeholder="Nome da linha temática" value={l.nome}
+                      onChange={(e) => { const arr = [...form.linhas]; arr[i] = { ...arr[i], nome: e.target.value }; update("linhas", arr); }}
+                      aria-label="Nome da linha temática" />
+                    <div className="flex gap-2">
+                      <textarea className={`${inputBase} flex-1 min-h-[110px] rounded-2xl`} placeholder="Descrição (opcional)" value={l.descricao || ""}
+                        onChange={(e) => { const arr = [...form.linhas]; arr[i] = { ...arr[i], descricao: e.target.value }; update("linhas", arr); }}
+                        aria-label="Descrição da linha temática" />
+                      <button type="button"
+                        onClick={() => update("linhas", form.linhas.filter((_, j) => j !== i))}
+                        className="inline-flex items-center gap-2 rounded-xl bg-zinc-100 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+                        aria-label={`Remover linha temática ${i + 1}`}>
+                        <Trash2 className="h-4 w-4" /> Remover
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Limites */}
+            <div>
+              <h3 className="mb-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">Limites de caracteres da submissão</h3>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                {[
+                  ["titulo", "Título da experiência"],
+                  ["introducao", "Introdução com justificativa"],
+                  ["objetivos", "Objetivos"],
+                  ["metodo", "Método/Descrição da prática"],
+                  ["resultados", "Resultados/Impactos"],
+                  ["consideracoes", "Considerações finais"],
+                ].map(([key, rot]) => (
+                  <Field
+                    key={key}
+                    label={rot}
+                    hint={`(mín. ${LIMIT_MIN} • máx. ${LIMIT_MAX}) — valores abaixo de 50 serão salvos como 50 (regra temporária)`}
+                  >
+                    <input
+                      type="number"
+                      min={LIMIT_MIN}
+                      max={LIMIT_MAX}
+                      className={inputBase}
+                      value={form.limites[key]}
+                      onChange={(e) => updateLim(key, e.target.value)}
+                      aria-label={`Limite de caracteres para ${rot}`}
+                    />
+                  </Field>
+                ))}
+              </div>
+            </div>
+
+            {/* Markdown normas */}
+            <Field label="Descrição/Normas (Markdown)">
+              <textarea className={`${inputBase} min-h-[180px] rounded-2xl`}
+                value={form.descricao_markdown}
+                onChange={(e) => update("descricao_markdown", e.target.value)}
+                required aria-required="true" />
+            </Field>
+          </section>
+
+          {/* 4) Autores */}
+          <section id="s4" className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <h2 className="sm:col-span-2 mb-2 text-base font-semibold">Limite de autores e coautores</h2>
+            <Field label="Máximo de coautores">
+              <input type="number" min={0} className={inputBase}
+                value={form.max_coautores}
+                onChange={(e) => update("max_coautores", e.target.value)} />
+            </Field>
+          </section>
+
+          {/* 5) Critérios escrita */}
+          <section id="s5" className="grid grid-cols-1 gap-4">
+            <h2 className="mb-2 text-base font-semibold">Critérios de avaliação — escrita</h2>
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <h3 className="font-medium">Critérios</h3>
+                <button
+                  type="button"
+                  onClick={() => update("criterios", [...form.criterios, { titulo: "", escala_min: 1, escala_max: 5, peso: 1 }])}
+                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-sm text-white hover:bg-emerald-700 focus:ring-2 focus:ring-emerald-500"
+                >
+                  <Plus className="h-4 w-4" /> adicionar critério
+                </button>
+              </div>
+              <div className="grid gap-3">
+                {form.criterios.map((c, i) => (
+                  <div key={i} className="grid gap-2 sm:grid-cols-2">
+                    <input className={inputBase} placeholder="Título do critério" value={c.titulo}
+                      onChange={(e) => { const arr = [...form.criterios]; arr[i] = { ...arr[i], titulo: e.target.value }; update("criterios", arr); }}
+                      aria-label="Título do critério (escrita)" />
+                    <div className="grid grid-cols-3 gap-2">
+                      <Field label="Mín.">
+                        <input className={inputBase} type="number" value={c.escala_min ?? 1}
+                          onChange={(e) => { const arr = [...form.criterios]; arr[i] = { ...arr[i], escala_min: Number(e.target.value) || 1 }; update("criterios", arr); }} />
+                      </Field>
+                      <Field label="Máx.">
+                        <input className={inputBase} type="number" value={c.escala_max ?? 5}
+                          onChange={(e) => { const arr = [...form.criterios]; arr[i] = { ...arr[i], escala_max: Number(e.target.value) || 5 }; update("criterios", arr); }} />
+                      </Field>
+                      <Field label="Peso">
+                        <input className={inputBase} type="number" step="0.1" value={c.peso ?? 1}
+                          onChange={(e) => { const arr = [...form.criterios]; arr[i] = { ...arr[i], peso: Number(e.target.value) || 1 }; update("criterios", arr); }} />
+                      </Field>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <Field label="Outros critérios (escrita)">
+              <textarea className={`${inputBase} min-h-[100px] rounded-2xl`} value={form.criterios_outros}
+                onChange={(e) => update("criterios_outros", e.target.value)} placeholder="Complementos da avaliação escrita..." />
+            </Field>
+          </section>
+
+          {/* 6) Critérios oral */}
+          <section id="s6" className="grid grid-cols-1 gap-4">
+            <h2 className="mb-2 text-base font-semibold">Apresentação oral</h2>
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <h3 className="font-medium">Critérios — apresentação oral</h3>
+                <button
+                  type="button"
+                  onClick={() => update("criterios_orais", [...form.criterios_orais, { titulo: "", escala_min: 1, escala_max: 3, peso: 1 }])}
+                  className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-3 py-2 text-sm text-white hover:bg-amber-700 focus:ring-2 focus:ring-amber-500"
+                >
+                  <Plus className="h-4 w-4" /> adicionar critério
+                </button>
+              </div>
+              <div className="grid gap-3">
+                {form.criterios_orais.map((c, i) => (
+                  <div key={i} className="grid gap-2 sm:grid-cols-2">
+                    <input className={inputBase} placeholder="Título do critério" value={c.titulo}
+                      onChange={(e) => { const arr = [...form.criterios_orais]; arr[i] = { ...arr[i], titulo: e.target.value }; update("criterios_orais", arr); }}
+                      aria-label="Título do critério (oral)" />
+                    <div className="grid grid-cols-3 gap-2">
+                      <Field label="Mín.">
+                        <input className={inputBase} type="number" value={c.escala_min ?? 1}
+                          onChange={(e) => { const arr = [...form.criterios_orais]; arr[i] = { ...arr[i], escala_min: Number(e.target.value) || 1 }; update("criterios_orais", arr); }} />
+                      </Field>
+                      <Field label="Máx.">
+                        <input className={inputBase} type="number" value={c.escala_max ?? 3}
+                          onChange={(e) => { const arr = [...form.criterios_orais]; arr[i] = { ...arr[i], escala_max: Number(e.target.value) || 3 }; update("criterios_orais", arr); }} />
+                      </Field>
+                      <Field label="Peso">
+                        <input className={inputBase} type="number" step="0.1" value={c.peso ?? 1}
+                          onChange={(e) => { const arr = [...form.criterios_orais]; arr[i] = { ...arr[i], peso: Number(e.target.value) || 1 }; update("criterios_orais", arr); }} />
+                      </Field>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <Field label="Outros critérios (oral)">
+              <textarea className={`${inputBase} min-h-[100px] rounded-2xl`} value={form.oral_outros}
+                onChange={(e) => update("oral_outros", e.target.value)} placeholder="Complementos da avaliação oral..." />
+            </Field>
+          </section>
+
+          {/* 7) Premiação */}
+          <section id="s7" className="grid grid-cols-1 gap-4">
+            <h2 className="mb-2 text-base font-semibold">Premiação</h2>
+            <Field label="Texto da premiação">
+              <textarea className={`${inputBase} min-h-[120px] rounded-2xl`} value={form.premiacao_texto}
+                onChange={(e) => update("premiacao_texto", e.target.value)} placeholder="Descreva regras e formato da premiação..." />
+            </Field>
+          </section>
+
+          {/* 8) Formulário eletrônico para submissão */}
+          <section id="s8" className="grid grid-cols-1 gap-4">
+            <h2 className="mb-2 text-base font-semibold">Formulário eletrônico para submissão</h2>
+
+            <Field label="Aceita pôster (.ppt/.pptx)">
+              <label className="inline-flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="rounded border-zinc-300"
+                  checked={form.aceita_poster}
+                  onChange={(e) => update("aceita_poster", e.target.checked)}
+                />
+                Aceitar envio de pôster no ato da submissão
+              </label>
+            </Field>
+
+            {/* Importar modelo POR CHAMADA */}
+            <Field label="Modelo de banner">
+              <div className="flex flex-col items-center justify-center gap-3">
+                <label
+                  className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm text-white ${
+                    isEdit && !modeloBusy ? "bg-emerald-600 hover:bg-emerald-700 cursor-pointer" : "bg-zinc-400 cursor-not-allowed"
+                  }`}
+                  title={isEdit ? "Importar modelo (.pptx)" : "Salve a chamada para habilitar o upload"}
+                >
+                  <input
+                    type="file"
+                    accept=".ppt,.pptx,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                    className="hidden"
+                    disabled={!isEdit || modeloBusy}
+                    onChange={(e) => onImportModelo(e.target.files?.[0] || null)}
+                  />
+                  {modeloBusy ? "Enviando…" : "Importar modelo (.pptx)"}
+                </label>
+
+                <div className="mt-1 text-center text-xs text-zinc-500">
+                  Esse arquivo será usado por outras telas para gerar/exportar o banner da <strong>chamada atual</strong>.
+                  {modeloMeta?.exists === true && (
+                    <>
+                      {" "}<strong>Modelo disponível</strong>
+                      {modeloMeta.filename ? ` — ${modeloMeta.filename}` : ""}
+                      {Number.isFinite(modeloMeta?.size) ? ` (${formatBytes(modeloMeta.size)})` : ""}
+                      {modeloMeta.mtime ? ` — atualizado em ${new Date(modeloMeta.mtime).toLocaleString()}` : ""}
+                    </>
+                  )}
+                  {modeloMeta?.exists === false && (<span className="text-rose-600"> Nenhum modelo importado ainda para esta chamada.</span>)}
+                </div>
+
+                {modeloOk && <div className="text-center text-xs text-emerald-600">{modeloOk}</div>}
+                {modeloErr && <div className="text-center text-xs text-rose-600">{modeloErr}</div>}
+                {infoOk && !modeloOk && !modeloErr && <div className="text-center text-xs text-emerald-600">{infoOk}</div>}
+              </div>
+            </Field>
+
+          </section>
+
+          {/* 9) Disposições finais */}
+          <section id="s9" className="grid grid-cols-1 gap-4">
+            <h2 className="mb-2 text-base font-semibold">Disposições finais</h2>
+            <Field label="Texto das disposições finais">
+              <textarea className={`${inputBase} min-h-[120px] rounded-2xl`} value={form.disposicoes_finais_texto}
+                onChange={(e) => update("disposicoes_finais_texto", e.target.value)} placeholder="Informe as disposições finais..." />
+            </Field>
+          </section>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+/* ─── Página principal ─── */
+export default function AdminChamadaForm() {
+  const params = useParams();
+  const routeId = params?.chamadaId;
+
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [refreshSignal, setRefreshSignal] = useState(0);
+
+  useEffect(() => { if (routeId) { setEditingId(routeId); setModalOpen(true); } }, [routeId]);
+
+  const openNovo = () => { setEditingId(null); setModalOpen(true); };
+  const openEditar = (id) => { setEditingId(id); setModalOpen(true); };
+  const onSaved = (savedId) => {
+    setRefreshSignal((x) => x + 1);
+    if (savedId) setEditingId(savedId);  // ativa modo edição p/ importar modelo
+  };
+
+  return (
+    <div className="flex min-h-screen flex-col bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
+      <HeaderHero />
+      <main className="mx-auto w-full max-w-screen-xl p-4 sm:px-6 lg:px-8">
+        <div className="mb-6">
+          <ChamadasPainel onEditar={openEditar} onNova={openNovo} refreshSignal={refreshSignal} />
+        </div>
+      </main>
+      <Footer />
+
+      <AddEditChamadaModal open={modalOpen} onClose={() => setModalOpen(false)} chamadaId={editingId} onSaved={onSaved} />
+    </div>
+  );
+}

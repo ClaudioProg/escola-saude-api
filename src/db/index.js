@@ -17,15 +17,12 @@ const sslOption =
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: sslOption,
-  // max: Number(process.env.PGPOOL_MAX || 10),
-  // idleTimeoutMillis: 30000,
 });
 
 pool.on('error', (err) => {
   console.error('🔴 Erro inesperado no pool:', err);
 });
 
-// Consulta simples
 async function query(text, params) {
   if (process.env.LOG_SQL === 'true') {
     console.log('🔎 SQL:', text, params || '');
@@ -33,20 +30,82 @@ async function query(text, params) {
   return pool.query(text, params);
 }
 
-// ➕ Pega um client para transações (BEGIN/COMMIT/ROLLBACK)
 async function getClient() {
   const client = await pool.connect();
   return client;
 }
 
-// (opcional) Encerrar pool com graça
 function shutdown() {
   return pool.end();
 }
 
+/* ──────────────────────────────────────────────────────────────
+   Adapter tipo pg-promise: any / one / oneOrNone / none / tx
+   ────────────────────────────────────────────────────────────── */
+function makeExec(clientOrPool) {
+  const exec = async (text, params) => {
+    if (clientOrPool.query) return clientOrPool.query(text, params);
+    return query(text, params);
+  };
+
+  return {
+    query: (t, p) => exec(t, p),
+
+    any: async (t, p) => {
+      const { rows } = await exec(t, p);
+      return rows;
+    },
+
+    one: async (t, p) => {
+      const { rows } = await exec(t, p);
+      if (rows.length !== 1) {
+        throw new Error(`Expected one row, got ${rows.length}`);
+      }
+      return rows[0];
+    },
+
+    oneOrNone: async (t, p) => {
+      const { rows } = await exec(t, p);
+      if (rows.length === 0) return null;
+      if (rows.length > 1) {
+        throw new Error(`Expected at most one row, got ${rows.length}`);
+      }
+      return rows[0];
+    },
+
+    none: async (t, p) => {
+      await exec(t, p);
+      return null;
+    },
+  };
+}
+
+// Instância “global” estilo db do pg-promise
+const db = {
+  ...makeExec(pool),
+
+  // Transação estilo db.tx(async (t) => { ... })
+  tx: async (cb) => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const t = makeExec(client);
+      const result = await cb(t);
+      await client.query('COMMIT');
+      return result;
+    } catch (err) {
+      try { await client.query('ROLLBACK'); } catch {}
+      throw err;
+    } finally {
+      client.release();
+    }
+  },
+};
+
 module.exports = {
   pool,
   query,
-  getClient,  // 👈 agora existe
-  shutdown,   // opcional
+  getClient,
+  shutdown,
+  db, // 👈 use isto nas rotas
 };

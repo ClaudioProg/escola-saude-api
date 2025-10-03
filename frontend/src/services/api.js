@@ -384,7 +384,7 @@ async function doFetch(
 }
 
 // ───────────────────────────────────────────────────────────────────
-// Métodos HTTP
+// Métodos HTTP (exports nomeados)
 // ───────────────────────────────────────────────────────────────────
 export async function apiGet(path, opts = {}) {
   return doFetch(path, { method: "GET", ...opts });
@@ -409,9 +409,19 @@ export const apiGetPublic = (path, opts = {}) =>
 export const apiPostPublic = (path, body, opts = {}) =>
   apiPost(path, body, { auth: false, on401: "silent", ...opts });
 
-// Upload multipart
-export async function apiUpload(path, formData, opts = {}) {
-  return doFetch(path, { method: "POST", body: formData, ...opts });
+// Upload multipart (aceita FormData OU File/Blob)
+export async function apiUpload(path, formDataOrFile, opts = {}) {
+  let fd;
+  if (formDataOrFile instanceof FormData) {
+    fd = formDataOrFile;
+  } else if (formDataOrFile instanceof Blob) {
+    const fieldName = opts.fieldName || "file"; // pode trocar por "poster" onde precisar
+    fd = new FormData();
+    fd.append(fieldName, formDataOrFile);
+  } else {
+    throw new Error("apiUpload: passe um FormData ou File/Blob.");
+  }
+  return doFetch(path, { method: "POST", body: fd, ...opts });
 }
 
 // POST que retorna arquivo (Blob)
@@ -641,4 +651,19 @@ export async function apiPerfilUpdate(payload, opts = {}) {
 }
 
 // ───────────────────────────────────────────────────────────────────
+// Compat: facade estilo axios + default export
+// ───────────────────────────────────────────────────────────────────
 export { API_BASE_URL };
+
+export const api = {
+  get: (path, opts) => apiGet(path, opts),
+  post: (path, body, opts) => apiPost(path, body, opts),
+  put: (path, body, opts) => apiPut(path, body, opts),
+  patch: (path, body, opts) => apiPatch(path, body, opts),
+  delete: (path, opts) => apiDelete(path, opts),
+  upload: (path, formDataOrFile, opts) => apiUpload(path, formDataOrFile, opts),
+  request: ({ url, method = "GET", data, ...opts } = {}) =>
+    doFetch(url, { method, body: data, ...opts }),
+};
+
+export default api;

@@ -349,11 +349,123 @@ async function gerarNotificacoesDeCertificado(usuario_id, opts = null) {
   }
 }
 
-module.exports = {
-  listarNotificacoes,
-  criarNotificacao,
-  contarNaoLidas,
-  marcarComoLida,
-  gerarNotificacoesDeAvaliacao,
-  gerarNotificacoesDeCertificado,
-};
+/* ============================================================
+ * 📣 Notificações — Submissões de Trabalhos
+ * ============================================================ */
+
+/**
+ * Autor foi bem-sucedido ao criar uma submissão.
+ */
+async function notificarSubmissaoCriada({ usuario_id, chamada_titulo, trabalho_titulo, submissao_id }) {
+  try {
+    await criarNotificacao(
+      usuario_id,
+      `Sua submissão "${trabalho_titulo}" foi enviada para a chamada "${chamada_titulo}".`,
+      {
+        tipo: "submissao",
+        titulo: `Submissão criada: ${trabalho_titulo}`,
+        // Mantemos compat: sem turma/evento aqui
+      }
+    );
+  } catch (err) {
+    console.error("❌ notificarSubmissaoCriada:", err.message);
+  }
+}
+
+/**
+ * Autor atualizou/enviou pôster (PPT/PPTX).
+ */
+async function notificarPosterAtualizado({ usuario_id, chamada_titulo, trabalho_titulo, arquivo_nome }) {
+  try {
+    await criarNotificacao(
+      usuario_id,
+      `O pôster "${arquivo_nome}" foi anexado/atualizado na submissão "${trabalho_titulo}" da chamada "${chamada_titulo}".`,
+      {
+        tipo: "submissao",
+        titulo: `Pôster anexado: ${trabalho_titulo}`,
+      }
+    );
+  } catch (err) {
+    console.error("❌ notificarPosterAtualizado:", err.message);
+  }
+}
+
+/**
+ * Mudança de status de uma submissão para o autor.
+ * status: 'submetido' | 'em_avaliacao' | 'aprovado_exposicao' | 'aprovado_oral' | 'reprovado'
+ */
+async function notificarStatusSubmissao({ usuario_id, chamada_titulo, trabalho_titulo, status }) {
+  try {
+    const mapaTit = {
+      submetido: "Submissão enviada",
+      em_avaliacao: "Em avaliação",
+      aprovado_exposicao: "Selecionado para Exposição (banner)",
+      aprovado_oral: "Selecionado para Apresentação Oral",
+      reprovado: "Não selecionado",
+    };
+    const mapaMsg = {
+      submetido: `Sua submissão "${trabalho_titulo}" foi enviada e aguarda avaliação na chamada "${chamada_titulo}".`,
+      em_avaliacao: `Sua submissão "${trabalho_titulo}" está em avaliação na chamada "${chamada_titulo}".`,
+      aprovado_exposicao: `Parabéns! O trabalho "${trabalho_titulo}" foi selecionado para **Exposição** na chamada "${chamada_titulo}".`,
+      aprovado_oral: `Parabéns! O trabalho "${trabalho_titulo}" foi selecionado para **Apresentação Oral** na chamada "${chamada_titulo}".`,
+      reprovado: `O trabalho "${trabalho_titulo}" não foi selecionado na chamada "${chamada_titulo}".`,
+    };
+
+    await criarNotificacao(
+      usuario_id,
+      mapaMsg[status] || `Status atualizado: ${status} — "${trabalho_titulo}"`,
+      {
+        tipo: "submissao",
+        titulo: mapaTit[status] || `Status: ${status}`,
+      }
+    );
+  } catch (err) {
+    console.error("❌ notificarStatusSubmissao:", err.message);
+  }
+}
+
+/**
+ * Após rodar a classificação de uma CHAMADA (top 40/ top 6 por linha),
+ * notifica automaticamente cada autor pelo status final definido.
+ * (chame essa função depois de consolidar a classificação)
+ */
+async function notificarClassificacaoDaChamada(chamada_id) {
+  try {
+    // Busca consolidado com autor + status
+    const result = await db.query(`
+      SELECT s.id AS submissao_id,
+             s.usuario_id,
+             s.titulo AS trabalho_titulo,
+             s.status,
+             c.titulo AS chamada_titulo
+      FROM trabalhos_submissoes s
+      JOIN trabalhos_chamadas c ON c.id = s.chamada_id
+      WHERE s.chamada_id = $1
+    `, [chamada_id]);
+
+    for (const row of result.rows) {
+      await notificarStatusSubmissao({
+        usuario_id: row.usuario_id,
+        chamada_titulo: row.chamada_titulo,
+        trabalho_titulo: row.trabalho_titulo,
+        status: row.status,
+      });
+    }
+  } catch (err) {
+    console.error("❌ notificarClassificacaoDaChamada:", err.message);
+  }
+}
+
+/* ───────────────── Exports (acréscimo) ───────────────── */
+module.exports.notificarSubmissaoCriada = notificarSubmissaoCriada;
+module.exports.notificarPosterAtualizado = notificarPosterAtualizado;
+module.exports.notificarStatusSubmissao = notificarStatusSubmissao;
+module.exports.notificarClassificacaoDaChamada = notificarClassificacaoDaChamada;
+
+/* ───────────────── Exports existentes ───────────────── */
+module.exports.listarNotificacoes = listarNotificacoes;
+module.exports.criarNotificacao = criarNotificacao;
+module.exports.contarNaoLidas = contarNaoLidas;
+module.exports.marcarComoLida = marcarComoLida;
+module.exports.gerarNotificacoesDeAvaliacao = gerarNotificacoesDeAvaliacao;
+module.exports.gerarNotificacoesDeCertificado = gerarNotificacoesDeCertificado;

@@ -4,16 +4,25 @@
 // - Quando precisar Date, construir SEMPRE com new Date(y, m-1, d, hh, mm, ss, ms) (local).
 // - Exibição com Intl.DateTimeFormat("pt-BR") respeitando timeZone.
 // - Conversões para API: normalizar para YMD estável e/ou ISO UTC ("Z") quando houver hora.
+// - Prazo de chamada (parede de Brasília) trafega como string "YYYY-MM-DD HH:mm[:ss]" (SEM fuso).
 
 // Zona padrão para exibição; usa a do navegador se disponível
 export const ZONA_PADRAO =
-  (Intl.DateTimeFormat().resolvedOptions?.().timeZone) || "America/Sao_Paulo";
+  (typeof Intl !== "undefined" &&
+    Intl.DateTimeFormat().resolvedOptions &&
+    Intl.DateTimeFormat().resolvedOptions().timeZone) ||
+  "America/Sao_Paulo";
 
 /* ──────────────────────────────────────────────────────────────
    DETECÇÃO / PARSE
    ────────────────────────────────────────────────────────────── */
 export function isDateOnly(str) {
   return typeof str === "string" && /^\d{4}-\d{2}-\d{2}$/.test(str);
+}
+
+// YYYY-MM (mês/ano)
+export function isYearMonth(str) {
+  return typeof str === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(str);
 }
 
 // ISO com meia-noite UTC (ex.: 2025-09-16T00:00:00.000Z)
@@ -24,6 +33,22 @@ export function isUtcMidnight(iso) {
   );
 }
 
+// "YYYY-MM-DD HH:mm[:ss]" (parede, sem fuso)
+export function isWallDateTime(str) {
+  return (
+    typeof str === "string" &&
+    /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(:\d{2})?$/.test(str)
+  );
+}
+
+// ISO com fuso (termina com 'Z' ou offset +hh:mm / -hh:mm)
+export function isIsoWithTz(str) {
+  return (
+    typeof str === "string" &&
+    (/[zZ]$/.test(str) || /[+-]\d{2}:\d{2}$/.test(str))
+  );
+}
+
 export function extractYMD(s) {
   return typeof s === "string" ? s.slice(0, 10) : "";
 }
@@ -31,7 +56,7 @@ export function extractYMD(s) {
 /** Constrói Date no fuso LOCAL do navegador (seguro para date-only). */
 export function toLocalDate(input) {
   if (!input) return null;
-  if (input instanceof Date) return (isNaN(input) ? null : input);
+  if (input instanceof Date) return isNaN(input) ? null : input;
 
   if (typeof input === "string") {
     if (isDateOnly(input)) {
@@ -50,7 +75,7 @@ export function toLocalDate(input) {
 }
 
 /* ──────────────────────────────────────────────────────────────
-   HELPERS DE FORMATAÇÃO
+   HELPERS DE FORMATAÇÃO (sem criar Date para date-only/wall)
    ────────────────────────────────────────────────────────────── */
 
 /** "YYYY-MM-DD" → "dd/MM/aaaa" sem criar Date (evita shift). */
@@ -58,6 +83,15 @@ function fmtDateOnlyString(yyyyMmDd) {
   if (!isDateOnly(yyyyMmDd)) return "";
   const [y, m, d] = yyyyMmDd.split("-");
   return `${d}/${m}/${y}`;
+}
+
+/** "YYYY-MM-DD HH:mm[:ss]" → "dd/MM/aaaa HH:mm" (parede; sem Date) */
+export function fmtWallDateTime(wall) {
+  if (!isWallDateTime(wall)) return "";
+  const [ymd, hm] = wall.trim().split(/\s+/);
+  const [y, m, d] = ymd.split("-");
+  const [hh, mm] = hm.split(":");
+  return `${d}/${m}/${y} ${hh}:${mm}`;
 }
 
 /** Normaliza qualquer entrada para um YMD estável no contexto local. */
@@ -81,6 +115,7 @@ export function fmtData(dateLike, zone = ZONA_PADRAO) {
   if (typeof dateLike === "string") {
     if (isDateOnly(dateLike)) return fmtDateOnlyString(dateLike);
     if (isUtcMidnight(dateLike)) return fmtDateOnlyString(extractYMD(dateLike));
+    if (isWallDateTime(dateLike)) return fmtWallDateTime(dateLike).slice(0, 10); // só data
   }
   const d = toLocalDate(dateLike);
   if (!d) return "";
@@ -93,11 +128,11 @@ export function fmtData(dateLike, zone = ZONA_PADRAO) {
 }
 
 export function fmtDataHora(dateLike, zone = ZONA_PADRAO) {
-  // date-only ou midnight UTC -> mostrar só a data
+  // date-only, midnight Z ou wall → mostrar sem criar Date
   if (typeof dateLike === "string") {
-    if (isDateOnly(dateLike) || isUtcMidnight(dateLike)) {
+    if (isDateOnly(dateLike) || isUtcMidnight(dateLike))
       return fmtData(dateLike, zone);
-    }
+    if (isWallDateTime(dateLike)) return fmtWallDateTime(dateLike);
   }
   const d = toLocalDate(dateLike);
   if (!d) return "";
@@ -128,7 +163,7 @@ export function brDateToIsoDate(dataBr) {
 
 /**
  * "dd/MM/aaaa"+"HH:mm" (hora local do navegador) -> ISO UTC (com 'Z')
- * Ex.: "18/08/2025","14:30" → "2025-08-18T17:30:00.000Z" (dependendo do offset)
+ * Ex.: "18/08/2025","14:30" → "2025-08-18T17:30:00.000Z" (depende do offset)
  */
 export function brDateTimeToIsoUtc(dataBr, horaBr = "00:00") {
   const isoDate = brDateToIsoDate(dataBr);
@@ -147,6 +182,54 @@ export function brDateTimeToIsoUtc(dataBr, horaBr = "00:00") {
 }
 
 /* ──────────────────────────────────────────────────────────────
+   SUPORTE A PRAZO "PAREDE" (Brasília) NO FRONT
+   ────────────────────────────────────────────────────────────── */
+
+/** De <input type="datetime-local"> → "YYYY-MM-DD HH:mm:ss" (parede, SEM fuso). */
+export function datetimeLocalToBrWall(datetimeLocal) {
+  if (!datetimeLocal) return "";
+  const s = String(datetimeLocal).trim().replace("T", " ");
+  return s.length === 16 ? `${s}:00` : s; // garante segundos
+}
+
+/** Normaliza uma string "parede" para exibição no input datetime-local. */
+export function wallToDatetimeLocal(wall) {
+  if (!isWallDateTime(wall)) return "";
+  // "YYYY-MM-DD HH:mm[:ss]" → "YYYY-MM-DDTHH:mm"
+  const [ymd, hm] = wall.trim().split(/\s+/);
+  const [hh, mm] = hm.split(":");
+  return `${ymd}T${hh}:${mm}`;
+}
+
+/**
+ * Converte um ISO com fuso/UTC (ex.: "2025-10-16T02:00:00.000Z")
+ * para "YYYY-MM-DDTHH:mm" na zona informada (p/ <input type="datetime-local">).
+ * Ex.: isoToDatetimeLocalInZone("2025-10-16T02:00:00.000Z", "America/Sao_Paulo")
+ *      -> "2025-10-15T23:00"
+ */
+export function isoToDatetimeLocalInZone(iso, zone = "America/Sao_Paulo") {
+  if (!iso || typeof iso !== "string") return "";
+  if (!isIsoWithTz(iso)) return ""; // só processa ISO com 'Z' ou offset
+  try {
+    const d = new Date(iso);
+    if (isNaN(d)) return "";
+    const parts = new Intl.DateTimeFormat("sv-SE", {
+      timeZone: zone,
+      hour12: false,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).formatToParts(d);
+    const get = (t) => parts.find((p) => p.type === t)?.value.padStart(2, "0");
+    return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`;
+  } catch {
+    return "";
+  }
+}
+
+/* ──────────────────────────────────────────────────────────────
    FUNÇÕES LEGADAS (mantidas) → redirecionam pros helpers
    ────────────────────────────────────────────────────────────── */
 
@@ -155,6 +238,7 @@ export function formatarDataBrasileira(dataISO) {
   if (typeof dataISO === "string") {
     if (isDateOnly(dataISO)) return fmtDateOnlyString(dataISO);
     if (isUtcMidnight(dataISO)) return fmtDateOnlyString(extractYMD(dataISO));
+    if (isWallDateTime(dataISO)) return fmtWallDateTime(dataISO).slice(0, 10);
   }
   return fmtData(dataISO);
 }
@@ -171,6 +255,7 @@ export function formatarParaISO(data) {
     if (data.includes("/")) return brDateToIsoDate(data); // "dd/MM/aaaa"
     if (isDateOnly(data)) return data; // já é YMD
     if (isUtcMidnight(data)) return extractYMD(data); // meia-noite Z -> YMD
+    if (isWallDateTime(data)) return extractYMD(data); // parede -> YMD
   }
   // Qualquer outra coisa cai no cálculo local
   return toLocalYMD(data);
@@ -182,7 +267,7 @@ export function formatarParaISO(data) {
 
 /**
  * Gera um array de Date (local) entre início e fim, inclusive.
- * ⚠️ Evita new Date(\"YYYY-MM-DD\"); usa construções locais.
+ * ⚠️ Evita new Date("YYYY-MM-DD"); usa construções locais.
  */
 export function gerarIntervaloDeDatas(dataInicio, dataFim) {
   const ymdIni = toLocalYMD(dataInicio);
@@ -210,10 +295,6 @@ export function formatarCPF(cpf) {
   if (num.length !== 11) return cpf;
   return num.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
 }
-
-/* ──────────────────────────────────────────────────────────────
-   UTILITÁRIOS ADICIONAIS (não quebram compat)
-   ────────────────────────────────────────────────────────────── */
 
 /** Adiciona dias a um YMD sem criar Date a partir de string ISO */
 export function addDaysYMD(ymd, days = 0) {
@@ -253,7 +334,7 @@ export function isInRangeYMD(ymd, ini, fim) {
   return !(ymd < ini || ymd > fim);
 }
 
-/** Retorna YMD do \"agora\" no fuso local. */
+/** Retorna YMD do "agora" no fuso local. */
 export function nowLocalYMD() {
   const d = new Date();
   const y = d.getFullYear();
@@ -262,7 +343,7 @@ export function nowLocalYMD() {
   return `${y}-${m}-${day}`;
 }
 
-/** Parser simples de \"HH:mm\" → {hh, mm} seguros. */
+/** Parser simples de "HH:mm" → {hh, mm} seguros. */
 export function parseHoraBr(hhmm = "00:00") {
   const [hh = "00", mm = "00"] = String(hhmm).split(":");
   const h = Math.max(0, Math.min(23, parseInt(hh, 10) || 0));

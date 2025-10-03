@@ -5,7 +5,7 @@ import { CalendarDays, Megaphone } from "lucide-react";
 import Footer from "../components/Footer"; // ⬅️ novo
 
 /** Card de destaque com imagem e texto longo (sem CTA) */
-function DestaqueLongo({ imgSrc, imgAlt, titulo, subtitulo, badge, texto }) {
+function DestaqueLongo({ imgSrc, imgAlt, titulo, subtitulo, badge, children }) {
   return (
     <motion.article
       initial={{ opacity: 0, y: 10 }}
@@ -26,16 +26,16 @@ function DestaqueLongo({ imgSrc, imgAlt, titulo, subtitulo, badge, texto }) {
           </span>
         )}
       </div>
-      <div className="p-5 sm:p-6 space-y-2">
+      <div className="p-5 sm:p-6 space-y-2 text-justify">
         <h3 className="text-lg font-bold">{titulo}</h3>
         {subtitulo && (
           <p className="text-emerald-700 dark:text-emerald-300 text-sm font-medium">
             {subtitulo}
           </p>
         )}
-        <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-line">
-          {texto}
-        </p>
+        <div className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed space-y-3">
+          {children}
+        </div>
       </div>
     </motion.article>
   );
@@ -83,65 +83,157 @@ export default function HomeEscola() {
               titulo="Participe da Semana David Capistrano 2025!"
               subtitulo="11 a 14 de novembro de 2025"
               badge="Evento especial"
-              texto={`De 11 a 14 de novembro de 2025, a Escola da Saúde Pública de Santos realiza na Univesidade São Judas, campus Unimonte, mais uma edição da Semana Municipal de Saúde Pública Dr. David Capistrano, evento já consolidado no calendário oficial da cidade e reconhecido como espaço de encontro, reflexão e troca de experiências entre trabalhadoras e trabalhadores do SUS.
+              >
+              <p> De 11 a 14 de novembro de 2025, a Escola da Saúde Pública de Santos realiza na Univesidade São Judas, campus Unimonte, mais uma edição da Semana Municipal de Saúde Pública Dr. David Capistrano, evento já consolidado no calendário oficial da cidade e reconhecido como espaço de encontro, reflexão e troca de experiências entre trabalhadoras e trabalhadores do SUS. </p>
 
-Ao longo dos quatro dias, a programação contará com mesas temáticas, mostra de trabalhos com premiação e oficinas práticas ministradas por servidores, estudantes e parceiros da rede de saúde. Será um momento único para compartilhar saberes, fortalecer vínculos e debater caminhos para o fortalecimento da saúde pública.
+              <p>Ao longo dos quatro dias, a programação contará com mesas temáticas, mostra de trabalhos com premiação e oficinas práticas ministradas por servidores, estudantes e parceiros da rede de saúde. Será um momento único para compartilhar saberes, fortalecer vínculos e debater caminhos para o fortalecimento da saúde pública.</p>
 
-Em 2025, a Semana reafirma sua vocação de ser um evento construído pelos servidores e para os servidores, valorizando o protagonismo de quem, diariamente, atua na promoção do cuidado, da equidade e da qualidade no SUS. É a oportunidade de apresentar experiências exitosas, refletir sobre desafios atuais e construir soluções conjuntas que impactam diretamente o cotidiano da população.
+              <p>Em 2025, a Semana reafirma sua vocação de ser um evento construído pelos servidores e para os servidores, valorizando o protagonismo de quem, diariamente, atua na promoção do cuidado, da equidade e da qualidade no SUS. É a oportunidade de apresentar experiências exitosas, refletir sobre desafios atuais e construir soluções conjuntas que impactam diretamente o cotidiano da população.</p>
 
-A participação de cada profissional é fundamental para manter viva a memória e o legado do Dr. David Capistrano, que sempre defendeu uma saúde pública integral, inclusiva e transformadora.
+              <p>A participação de cada profissional é fundamental para manter viva a memória e o legado do Dr. David Capistrano, que sempre defendeu uma saúde pública integral, inclusiva e transformadora.</p>
 
-👉 Venha participar, trazer sua experiência e fortalecer ainda mais a nossa rede de cuidado. Inscrições serão abertas em breve!
-Porque o SUS se constrói todos os dias, com a contribuição de cada trabalhadora e trabalhador da saúde.`}
-            />
+              <p>👉 Venha participar, trazer sua experiência e fortalecer ainda mais a nossa rede de cuidado.</p>
+              <p>
+                <strong className="text-red-600 dark:text-red-400 font-bold"> 
+                  Inscrições serão abertas em breve! </strong> 
+                </p>
+              <p>Porque o SUS se constrói todos os dias, com a contribuição de cada trabalhadora e trabalhador da saúde.</p>
+            </DestaqueLongo>
 
-            {/* 2) Setembro Amarelo */}
+            {/* 2) Outubro Rosa */}
             <DestaqueLongo
-              imgSrc="/banners/setembro-amarelo.png"
-              imgAlt="Arte da campanha Setembro Amarelo"
-              titulo="🌻 Setembro Amarelo: Falar é a melhor solução"
-              subtitulo="Prevenção do suicídio"
-              badge="Campanha"
-              texto={`O Setembro Amarelo é o mês dedicado à prevenção do suicídio, um tema que precisa ser tratado com sensibilidade, responsabilidade e acolhimento. Todos os anos, milhares de vidas são perdidas em silêncio, mas esse silêncio pode ser quebrado com diálogo, apoio e cuidado.
+  imgSrc="/banners/outubro-rosa.jpg"
+  imgAlt="Arte da campanha Outubro Rosa"
+  titulo="🌷 Outubro Rosa: um mês pela vida"
+  subtitulo="Prevenção do câncer de mama"
+  badge="Campanha"
+>
+  <p>
+    Outubro é marcado mundialmente como o mês de conscientização sobre o câncer 
+    de mama, uma das doenças que mais acometem mulheres no Brasil e no mundo.
+    Esta campanha nasceu para lembrar a importância da prevenção e do diagnóstico
+    precoce, que pode salvar milhares de vidas.
+  </p>
 
-Falar sobre saúde mental é um passo essencial para salvar vidas. É preciso combater o estigma, reforçar a importância da escuta atenta e garantir que ninguém se sinta sozinho diante da dor. Cuidar da mente é tão importante quanto cuidar do corpo.
+  <p>
+    A cor rosa que vemos iluminar prédios, ruas e símbolos neste mês não é apenas
+    um detalhe visual: é um chamado para que todas as pessoas – mulheres e também
+    homens, que em menor número também podem ser acometidos – estejam atentos aos
+    cuidados com a saúde.
+  </p>
 
-Se você ou alguém que você conhece está passando por um momento difícil, não hesite em pedir ajuda. O CVV – Centro de Valorização da Vida oferece atendimento gratuito e sigiloso pelo número 188, disponível 24 horas por dia, em todo o Brasil.
+  <p>
+    <strong>
+      💡 Prevenção e autocuidado</strong>
+  </p>
+  <p>
+    Autoexame das mamas: deve ser feito regularmente, conhecendo o próprio corpo
+    e identificando alterações como nódulos, retrações ou secreções.
+  </p>
+  <p>
+    Consultas médicas e exames periódicos: a mamografia é o principal exame para
+    o diagnóstico precoce e deve ser realizada conforme orientação médica,
+    especialmente a partir dos 40 anos.
+  </p>
+  <p>
+    Hábitos de vida saudáveis: manter uma alimentação equilibrada, praticar
+    atividade física e evitar o consumo excessivo de álcool e tabaco são medidas
+    que ajudam na prevenção.
+  </p>
 
-💛 Lembre-se: sua vida importa. Você não está sozinho. Falar é a melhor solução.`}
-            />
+  <p>
+    <strong>🌍 Um compromisso coletivo</strong>
+  </p>
+  <p>
+    O Outubro Rosa é mais do que uma campanha: é um convite para o cuidado consigo
+    mesmo e com quem está ao nosso lado. Compartilhe informações, incentive amigas,
+    colegas e familiares a realizarem seus exames. Cada gesto pode fazer a
+    diferença.
+  </p>
 
-            {/* 3) Setembro Verde — Doação de órgãos */}
-            <DestaqueLongo
-              imgSrc="/banners/setembro-verde-doacao.png"
-              imgAlt="Arte da campanha Setembro Verde — Doação de Órgãos"
-              titulo="💚 Setembro Verde: Doe órgãos, salve vidas"
-              subtitulo="Conscientização sobre doação de órgãos"
-              badge="Conscientização"
-              texto={`O mês de setembro é marcado pela campanha do Setembro Verde, dedicada à conscientização sobre a importância da doação de órgãos e tecidos. Um único doador pode transformar e salvar diversas vidas, oferecendo esperança a quem aguarda por um transplante.
+  <p>
+    <strong>Cuidar da saúde é um ato de amor e de coragem. Previna-se. Valorize a vida. 💖</strong>
+  </p>
+</DestaqueLongo>
 
-Falar sobre doação de órgãos é falar sobre solidariedade, empatia e amor ao próximo. Mas, para que a doação aconteça, é fundamental que a família esteja ciente dessa vontade. Por isso, converse com seus familiares e manifeste seu desejo em vida.
+{/* 3) Saúde Mental */}
+<DestaqueLongo
+  imgSrc="/banners/saude-mental.png"
+  imgAlt="Arte do Dia Mundial da Saúde Mental"
+  titulo="💙 Dia Mundial da Saúde Mental"
+  subtitulo="10 de Outubro"
+  badge="Datas Importantes"
+>
+  <p>
+  O Dia Mundial da Saúde Mental foi instituído em 1992 pela Federação Mundial para a Saúde Mental (World Federation for Mental Health), com apoio da Organização Mundial da Saúde (OMS). Desde então, a data é lembrada anualmente em mais de 150 países como um chamado à reflexão e à ação sobre um tema que toca a todos nós: o cuidado com a saúde mental.
+  </p>
 
-No Brasil, milhares de pessoas esperam por um transplante. Ao decidir ser doador, você pode fazer parte dessa corrente de vida.
+  <p>
+  Ao longo da história, falar de saúde mental foi cercado de tabus e estigmas. Felizmente, hoje sabemos que cuidar da mente é tão essencial quanto cuidar do corpo. Depressão, ansiedade, estresse, síndrome de burnout e outros transtornos afetam milhões de pessoas, comprometendo qualidade de vida, relações sociais e até mesmo a saúde física.
+  </p>
 
-💚 Doe órgãos, salve vidas. A sua atitude pode ser o recomeço de alguém.`}
-            />
+  <p> <strong> 🌱 A importância da data</strong> </p>
+  <p>
+  O objetivo deste dia é conscientizar, informar e promover o acolhimento. Mais do que um lembrete, ele nos inspira a criar ambientes mais saudáveis, relações mais empáticas e sociedades mais inclusivas.
+  </p>
 
-            {/* 4) Setembro Verde — Inclusão da Pessoa com Deficiência */}
-            <DestaqueLongo
-              imgSrc="/banners/setembro-verde-pcd.png"
-              imgAlt="Arte da campanha Setembro Verde — Inclusão da Pessoa com Deficiência"
-              titulo="💚 Setembro Verde: Inclusão é respeito, é direito"
-              subtitulo="Acessibilidade e participação plena"
-              badge="Inclusão"
-              texto={`O Setembro Verde é dedicado à inclusão da pessoa com deficiência, reforçando a importância de uma sociedade mais justa, acessível e igualitária.
+  <p> <strong>🌍 💡 Orientações e cuidados</strong> </p>
 
-A inclusão não é apenas garantir acesso a espaços, serviços e oportunidades, mas também valorizar a diversidade, combater preconceitos e promover o respeito. Cada pessoa tem potencial e contribuições únicas para oferecer, e cabe a todos nós construir ambientes em que ninguém seja deixado para trás.
+  <p> Fale sobre o que sente: não guarde suas angústias só para você. Compartilhar é o primeiro passo para aliviar o peso. </p>
+  <p> Procure ajuda profissional: psicólogos e psiquiatras são aliados importantes no cuidado com a saúde mental. </p>
+  <p> Cuide do corpo para cuidar da mente: sono de qualidade, boa alimentação e atividade física regular influenciam diretamente o equilíbrio emocional. </p>
+  <p> Pratique pausas e lazer: reservar tempo para descansar e fazer o que gosta é fundamental. </p>
+  <p> Cultive vínculos: relações de amizade, familiares e de apoio são verdadeiros protetores da nossa saúde mental. </p>
 
-Neste mês, lembramos que direitos das pessoas com deficiência são conquistas de toda a sociedade. Acessibilidade, equidade e participação plena são pilares fundamentais para um mundo verdadeiramente inclusivo.
+  <p> <strong>🌍 Um compromisso coletivo</strong> </p>
+  <p>
+  A saúde mental não é apenas uma questão individual, mas também coletiva. Precisamos construir juntos uma cultura de respeito, empatia e solidariedade, combatendo preconceitos e abrindo espaço para o diálogo.
+  </p>
 
-💚 Incluir é transformar. É enxergar talentos, promover autonomia e respeitar cada ser humano em sua totalidade.`}
-            />
+  <p>
+    <strong>Neste 10 de outubro, lembre-se: cuidar da mente é cuidar da vida. 💙</strong>
+  </p>
+</DestaqueLongo>
+
+{/* 4) Vacinação */}
+<DestaqueLongo
+  imgSrc="/banners/vacinacao.png"
+  imgAlt="Arte do Dia Nacional de Vacinação"
+  titulo="💉 Dia Nacional da Vacinação"
+  subtitulo="17 de Outubro"
+  badge="Datas Importantes"
+>
+  <p>
+  O Dia Nacional da Vacinação foi instituído no Brasil para reforçar a importância da imunização como uma das ferramentas mais eficazes de prevenção de doenças. Essa data simboliza não apenas a vitória da ciência, mas também o compromisso coletivo com a proteção da vida. (OMS). Desde então, a data é lembrada anualmente em mais de 150 países como um chamado à reflexão e à ação sobre um tema que toca a todos nós: o cuidado com a saúde mental.
+  </p>
+
+  <p>
+  Graças às vacinas, o Brasil e o mundo conseguiram controlar ou até mesmo erradicar doenças que antes causavam sofrimento, incapacidades e mortes, como a varíola, a poliomielite e o sarampo. Cada dose aplicada representa um ato de cuidado consigo mesmo e com toda a comunidade.
+  </p>
+
+  <p> <strong> 🌱 A importância da data</strong> </p>
+  <p>
+  Celebrar o 17 de outubro é reconhecer o papel fundamental da vacinação na saúde pública e lembrar que a imunização é um direito e um dever. É também uma forma de valorizar o trabalho incansável de profissionais de saúde que, todos os dias, garantem que os imunobiológicos cheguem à população.
+  </p>
+
+  <p> <strong>🌍 💡 Orientações e cuidados</strong> </p>
+
+  <p> Mantenha a caderneta em dia: verifique periodicamente se todas as vacinas recomendadas foram aplicadas. </p>
+  <p> Vacine crianças, adolescentes, adultos e idosos: todas as fases da vida contam com vacinas específicas e essenciais. </p>
+  <p> Confie na ciência: vacinas são seguras, passam por rigorosos processos de pesquisa e controle de qualidade. </p>
+  <p> Proteção coletiva: quanto mais pessoas vacinadas, menor a circulação de doenças e maior a proteção de toda a sociedade. </p>
+  <p> Participe das campanhas nacionais: aproveite os dias de mobilização para atualizar suas doses. </p>
+
+  <p> <strong>🌍 Um compromisso de todos</strong> </p>
+  <p>
+  A vacinação é um ato de amor, responsabilidade e solidariedade. Ao nos vacinarmos, protegemos não apenas a nós mesmos, mas também nossos familiares, amigos e toda a comunidade.
+  </p>
+
+  <p>
+    <strong>Neste 17 de outubro, reafirme o compromisso com a vida: vacine-se e incentive quem você ama a fazer o mesmo. 💉💙</strong>
+  </p>
+</DestaqueLongo>
+
           </div>
         </section>
       </div>

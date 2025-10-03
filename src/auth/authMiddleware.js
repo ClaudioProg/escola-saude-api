@@ -1,6 +1,15 @@
 // 📁 src/auth/authMiddleware.js
+/* eslint-disable no-console */
 const jwt = require("jsonwebtoken");
-const db = require("../db");
+
+// 🔐 Import resiliente do DB: aceita tanto `module.exports = db` quanto `module.exports = { db }`
+let db;
+try {
+  const dbModule = require("../db");
+  db = dbModule?.db ?? dbModule ?? null;
+} catch (e) {
+  db = null;
+}
 
 let warned = false; // avisa 1x em dev sobre req.usuario
 
@@ -34,26 +43,35 @@ function authMiddleware(req, res, next) {
       cpf: decoded.cpf ?? null,
       nome: decoded.nome ?? null,
       perfil,
-      // anexar outros campos do token, se quiser:
-      // email: decoded.email ?? null,
+      // email: decoded.email ?? null, // opcional
     };
 
-    // disponibiliza a conexão do banco
+    // ✅ injeta a instância do banco
     req.db = db;
-
-    // novo nome (padrão)
     req.user = user;
+    req.usuario = req.user; // compat
 
-    // compatibilidade: antigo nome
-    req.usuario = req.user; // aponta para o MESMO objeto
+    // ───────────── Logs estratégicos (somente fora de produção) ─────────────
+    if (process.env.NODE_ENV !== "production") {
+      if (!warned) {
+        warned = true;
+        console.warn(
+          "[authMiddleware] Aviso: `req.usuario` está DEPRECIADO. Use `req.user`. Fornecendo ambos por compatibilidade temporária."
+        );
+      }
 
-    if (process.env.NODE_ENV !== "production" && !warned) {
-      warned = true;
-      console.warn(
-        "[authMiddleware] Aviso: `req.usuario` está DEPRECIADO. Use `req.user`. " +
-        "Fornecendo ambos por compatibilidade temporária."
-      );
-    }
+      const caps = req.db
+        ? {
+            hasTx: typeof req.db.tx === "function",
+            hasQuery: typeof req.db.query === "function",
+            hasAny: typeof req.db.any === "function",
+            hasOne: typeof req.db.one === "function",
+            hasNone: typeof req.db.none === "function",
+            type: req.db?.constructor?.name || typeof req.db,
+            keys: Object.keys(req.db).slice(0, 12),
+          }
+        : { db: "null/undefined" };
+        }
 
     return next();
   } catch (e) {
