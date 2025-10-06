@@ -1,4 +1,3 @@
-// 📁 src/routes/chamadasRoutes.js
 const express = require("express");
 const router = express.Router();
 
@@ -19,18 +18,27 @@ const requireAdmin = [requireAuth, authorizeRoles("administrador")];
  * ------------------------------------------------------------------
  * Lista chamadas publicadas e informa flag de prazo no payload.
  * GET /api/chamadas/ativas
+ * GET /api/chamadas/publicadas  (alias para compatibilidade)
  */
 router.get("/chamadas/ativas", injectDb(), ctrl.listarAtivas);
+router.get("/chamadas/publicadas", injectDb(), ctrl.listarAtivas);
 
 /**
  * Detalhe de uma chamada (com linhas/critérios)
  * GET /api/chamadas/:id
- * Observação: permanece público; usamos injectDb para o pool correto.
  */
 router.get("/chamadas/:id", injectDb(), ctrl.obterChamada);
 
 /**
- * Download do modelo de banner (.pptx)
+ * Download do modelo de banner (.pptx) POR CHAMADA
+ * GET /api/chamadas/:id/modelo-banner
+ * HEAD /api/chamadas/:id/modelo-banner
+ */
+router.head("/chamadas/:id/modelo-banner", injectDb(), ctrl.baixarModeloPorChamada);
+router.get("/chamadas/:id/modelo-banner", injectDb(), ctrl.baixarModeloPorChamada);
+
+/**
+ * Download do modelo de banner padrão (legado/global)
  * GET /api/modelos/banner-padrao.pptx
  */
 router.get("/modelos/banner-padrao.pptx", ctrl.exportarModeloBanner);

@@ -11,14 +11,14 @@ function getCampaignForMonth(month /* 1-12 */) {
   const campaigns = {
     7: {
       // Julho – Amarelo (Hepatites virais)
-      title: "Prevenção às Hepatites Virais",
+      title: "JULHO AMARELO • Prevenção às Hepatites Virais",
       footerBg: "bg-yellow-600",
       barBg: "bg-yellow-700",
       textColor: "text-white",
     },
     8: {
       // Agosto – Dourado (Aleitamento materno)
-      title: "Promoção do Aleitamento Materno",
+      title: "AGOSTO DOURADO • Promoção do Aleitamento Materno",
       footerBg: "bg-amber-600",
       barBg: "bg-amber-700",
       textColor: "text-white",
@@ -26,28 +26,28 @@ function getCampaignForMonth(month /* 1-12 */) {
     9: {
       // Setembro – Amarelo e Verde (Suicídio, PcD, Doação de órgãos)
       title:
-        "Prevenção ao Suicídio • Inclusão das Pessoas com Deficiência • Doação de Órgãos e Tecidos",
+        "SETEMBRO • Prevenção ao Suicídio • Inclusão das Pessoas com Deficiência • Doação de Órgãos e Tecidos",
       footerBg: "bg-gradient-to-r from-yellow-600 to-emerald-800",
       barBg: "bg-emerald-800",
       textColor: "text-white",
     },
     10: {
       // Outubro – Rosa (Câncer de mama)
-      title: "Prevenção ao Câncer de Mama",
+      title: "OUTUBRO ROSA  • Prevenção ao Câncer de Mama",
       footerBg: "bg-pink-700",
       barBg: "bg-pink-800",
       textColor: "text-white",
     },
     11: {
       // Novembro – Azul; Roxo (Próstata; Prematuridade)
-      title: "Prevenção do Câncer de Próstata • Conscientização sobre a Prematuridade",
+      title: "NOVEMBRO • Prevenção do Câncer de Próstata • Conscientização sobre a Prematuridade",
       footerBg: "bg-gradient-to-r from-blue-700 to-purple-700",
       barBg: "bg-purple-800",
       textColor: "text-white",
     },
     12: {
       // Dezembro – Vermelho (HIV/AIDS e outras ISTs)
-      title: "Conscientização e Prevenção ao HIV/AIDS e outras ISTs",
+      title: "DEZEMBRO VERMELHO • Conscientização e Prevenção ao HIV/AIDS e outras ISTs",
       footerBg: "bg-red-700",
       barBg: "bg-red-800",
       textColor: "text-white",

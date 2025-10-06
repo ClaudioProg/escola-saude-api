@@ -13,14 +13,17 @@ import {
   ClipboardList,
   X,
   Save,
+  Pencil,
+  Trash2,
+  Download,
 } from "lucide-react";
 import Footer from "../components/Footer";
 import { fmtDataHora } from "../utils/data";
 
-// ✅ usamos também o cliente default para enviar JSON
-import api, { apiGet, apiUpload as apiUploadSvc } from "../services/api";
+// ✅ cliente
+import api, { apiGet, apiDelete, apiPut, apiUpload as apiUploadSvc } from "../services/api";
 
-/* ─────────────── helpers ─────────────── */
+/* ───────── helpers ───────── */
 function wallToLocalDate(wall) {
   if (!wall || typeof wall !== "string") return null;
   const m = wall.trim().match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})(?::(\d{2}))?/);
@@ -38,30 +41,12 @@ function computeDentroPrazoFromWall(wall) {
   const dt = wallToLocalDate(wall);
   return !dt ? true : dt.getTime() >= Date.now();
 }
+const emailRx = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const cpfRx = /^\d{11}$/;
 
-// ▶️ pt-BR: “janeiro 2023”
-const MESES = [
-  "janeiro", "fevereiro", "março", "abril", "maio", "junho",
-  "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
-];
-// "2025-07" → "julho 2025"
-function labelMesAno(aaaaMm) {
-  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(aaaaMm || "")) return aaaaMm || "—";
-  const [y, m] = aaaaMm.split("-");
-  return `${MESES[parseInt(m, 10) - 1]} ${y}`;
-}
-// intervalo → “janeiro 2023 a julho 2025”
-function labelPeriodoMesAno(inicio, fim) {
-  const a = labelMesAno(inicio);
-  const b = labelMesAno(fim);
-  return `${a} a ${b}`;
-}
-
-/* ─────────────── UI helpers ─────────────── */
+/* ───────── UI ───────── */
 const Card = ({ children }) => (
-  <div className="rounded-2xl border bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:p-6">
-    {children}
-  </div>
+  <div className="rounded-2xl border bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:p-6">{children}</div>
 );
 const Field = ({ label, hint, error, children, className = "" }) => (
   <div className={`mb-4 ${className}`}>
@@ -77,7 +62,6 @@ const Counter = ({ value = "", max }) => {
   return <span className={`text-xs ${over ? "text-red-600" : "text-zinc-500"}`}>{len}{max ? `/${max}` : ""}</span>;
 };
 
-/* ─────────────── Header ─────────────── */
 function HeaderHero({ title, subtitle, accent = "emerald" }) {
   const accents = {
     emerald: "bg-emerald-600 dark:bg-emerald-700",
@@ -104,7 +88,6 @@ function HeaderHero({ title, subtitle, accent = "emerald" }) {
   );
 }
 
-/* ─────────────── Modal genérico ─────────────── */
 function Modal({ open, onClose, title, icon: Icon, children, footer, maxWidth = "max-w-4xl" }) {
   useEffect(() => {
     function onKey(e) { if (e.key === "Escape") onClose?.(); }
@@ -137,7 +120,7 @@ function Modal({ open, onClose, title, icon: Icon, children, footer, maxWidth = 
   );
 }
 
-/* ─────────────── Limites default ─────────────── */
+/* ───────── Limites ───────── */
 const LIM_DEFAULT = {
   titulo: 100,
   introducao: 2000,
@@ -148,10 +131,10 @@ const LIM_DEFAULT = {
   bibliografia: 8000,
 };
 
-/* ─────────────── Página ─────────────── */
 export default function UsuarioSubmissoes() {
   const [ativas, setAtivas] = useState([]);
   const [loadingAtivas, setLoadingAtivas] = useState(true);
+  const [modeloOk, setModeloOk] = useState({}); // { [chamadaId]: boolean }
 
   const [minhas, setMinhas] = useState([]);
   const [loadingMinhas, setLoadingMinhas] = useState(true);
@@ -160,6 +143,8 @@ export default function UsuarioSubmissoes() {
   const [submeterOpen, setSubmeterOpen] = useState(false);
   const [selecionada, setSelecionada] = useState(null);
   const [loadingDetalhe, setLoadingDetalhe] = useState(false);
+
+  const [editingId, setEditingId] = useState(null); // edição de submissão existente
 
   const [form, setForm] = useState({
     titulo: "",
@@ -171,6 +156,7 @@ export default function UsuarioSubmissoes() {
     resultados: "",
     consideracoes: "",
     bibliografia: "",
+    coautores: [], // [{nome, cpf, email, vinculo}]
   });
 
   // upload no modal
@@ -186,6 +172,7 @@ export default function UsuarioSubmissoes() {
 
   const abortRef = useRef(null);
 
+  // carregar listas
   useEffect(() => {
     (async () => {
       try {
@@ -201,8 +188,26 @@ export default function UsuarioSubmissoes() {
           dentro_prazo: typeof c.dentro_prazo === "boolean" ? c.dentro_prazo : computeDentroPrazoFromWall(c.prazo_final_br),
         }));
         setAtivas(sane);
-      } catch { setAtivas([]); }
-      finally { setLoadingAtivas(false); }
+
+        // checa modelo disponível (HEAD) para cada chamada
+        const updates = {};
+        await Promise.all(
+          sane.map(async (c) => {
+            try {
+              const url = `/api/chamadas/${c.id}/modelo-banner`;
+              const res = await fetch(url, { method: "HEAD" });
+              updates[c.id] = res.ok;
+            } catch {
+              updates[c.id] = false;
+            }
+          })
+        );
+        setModeloOk(updates);
+      } catch {
+        setAtivas([]);
+      } finally {
+        setLoadingAtivas(false);
+      }
     })();
 
     (async () => {
@@ -211,7 +216,7 @@ export default function UsuarioSubmissoes() {
         const mine = await apiGet(`/minhas-submissoes`);
         setMinhas(Array.isArray(mine) ? mine : []);
       } catch {
-        setMinhas([]); // backend 500 → lista vazia no front (sem quebrar)
+        setMinhas([]);
       } finally {
         setLoadingMinhas(false);
       }
@@ -225,6 +230,7 @@ export default function UsuarioSubmissoes() {
     setSubmeterOpen(false);
     setLoadingDetalhe(true);
     setSelecionada(null);
+    setEditingId(null);
     try {
       const data = await apiGet(`/chamadas/${id}`);
       setSelecionada(data);
@@ -238,8 +244,7 @@ export default function UsuarioSubmissoes() {
   const abrirSubmeter = () => {
     if (!selecionada?.chamada) return;
     const inicio = selecionada.chamada.periodo_experiencia_inicio || "2025-01";
-    setForm((f) => ({
-      ...f,
+    setForm({
       titulo: "",
       inicio_experiencia: inicio,
       linha_tematica_id: "",
@@ -249,11 +254,63 @@ export default function UsuarioSubmissoes() {
       resultados: "",
       consideracoes: "",
       bibliografia: "",
-    }));
+      coautores: [],
+    });
     setPosterFile(null);
     setPosterErr("");
     setErrForm("");
+    setEditingId(null);
     setSubmeterOpen(true);
+  };
+
+  // Edição de submissão existente (abre o mesmo modal, preenchido)
+  const abrirEditar = async (submissaoId) => {
+    setErrForm("");
+    setPosterFile(null);
+    setPosterErr("");
+    setEditingId(submissaoId);
+    setSubmeterOpen(true);
+    try {
+      // ajuste de rota se necessário
+      const s = await apiGet(`/submissoes/${submissaoId}`);
+      // precisamos da chamada/linhas; se ainda não carregada, busca
+      if (!selecionada?.chamada || selecionada?.chamada?.id !== s.chamada_id) {
+        try {
+          const data = await apiGet(`/chamadas/${s.chamada_id}`);
+          setSelecionada(data);
+        } catch {}
+      }
+      setForm({
+        titulo: s.titulo || "",
+        inicio_experiencia: s.inicio_experiencia || "2025-01",
+        linha_tematica_id: String(s.linha_tematica_id || ""),
+        introducao: s.introducao || "",
+        objetivos: s.objetivos || "",
+        metodo: s.metodo || "",
+        resultados: s.resultados || "",
+        consideracoes: s.consideracoes || "",
+        bibliografia: s.bibliografia || "",
+        coautores: Array.isArray(s.coautores) ? s.coautores.map((c) => ({
+          nome: c.nome || c.nome_completo || "",
+          cpf: (c.cpf || "").replace(/\D+/g, ""),
+          email: c.email || "",
+          vinculo: c.vinculo || c.vinculo_empregaticio || "",
+        })) : [],
+      });
+    } catch (e) {
+      setErrForm(e?.message || "Não foi possível carregar a submissão para edição.");
+    }
+  };
+
+  const onExcluir = async (submissaoId) => {
+    if (!submissaoId) return;
+    if (!confirm("Confirma excluir esta submissão? Esta ação não pode ser desfeita.")) return;
+    try {
+      await apiDelete(`/submissoes/${submissaoId}`);
+      setMinhas((xs) => xs.filter((x) => x.id !== submissaoId));
+    } catch (e) {
+      alert(e?.message || "Falha ao excluir.");
+    }
   };
 
   const updateForm = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -266,13 +323,34 @@ export default function UsuarioSubmissoes() {
     [selecionada]
   );
 
-  // 🔗 URL do modelo POR CHAMADA (download público)
   const modeloBannerUrl = useMemo(() => {
     const id = selecionada?.chamada?.id;
     return id ? `/api/chamadas/${id}/modelo-banner` : null;
   }, [selecionada]);
 
-  const validar = () => {
+  // até quando pode editar/excluir: usa prazo_final_br da submissão (preferível) ou da chamada
+  const canAlterar = (s) => {
+    const wall = s?.prazo_final_br || s?.chamada_prazo_final_br;
+    if (!wall) return false; // prudente: sem prazo conhecido → bloqueia
+    return computeDentroPrazoFromWall(wall);
+  };
+
+  const validarCoautores = (arr = []) => {
+    for (let i = 0; i < arr.length; i++) {
+      const c = arr[i];
+      if (!c) continue;
+      const nome = (c.nome || c.nome_completo || "").trim();
+      const cpf = String(c.cpf || "").replace(/\D+/g, "");
+      const email = (c.email || "").trim();
+      const vinculo = (c.vinculo || c.vinculo_empregaticio || "").trim();
+      if (!nome || !cpf || !email || !vinculo) return `Preencha todos os campos do coautor #${i + 1}.`;
+      if (!cpfRx.test(cpf)) return `CPF inválido no coautor #${i + 1} (use só números).`;
+      if (!emailRx.test(email)) return `E-mail inválido no coautor #${i + 1}.`;
+    }
+    return "";
+  };
+
+  const validar = (requireAll = true) => {
     if (!form.titulo || form.titulo.length > limites.titulo) return "Título é obrigatório e deve respeitar o limite.";
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(form.inicio_experiencia)) return "Início da experiência deve estar no formato AAAA-MM.";
     if (!form.linha_tematica_id) return "Selecione a linha temática.";
@@ -285,10 +363,18 @@ export default function UsuarioSubmissoes() {
     ];
     for (const [k, lim] of checks) {
       const val = (form[k] || "").trim();
-      if (!val) return "Preencha todos os campos obrigatórios.";
-      if (val.length > lim) return `Campo muito longo: "${k}" excede ${lim} caracteres.`;
+      if (requireAll && !val) return "Preencha todos os campos obrigatórios.";
+      if (val && val.length > lim) return `Campo muito longo: "${k}" excede ${lim} caracteres.`;
     }
     if (form.bibliografia && form.bibliografia.length > limites.bibliografia) return "Bibliografia muito longa.";
+
+    const max = Number(selecionada?.chamada?.max_coautores || 0);
+    if (max > 0 && form.coautores.length > max) {
+      return `Número de coautores excede o limite (${max}).`;
+    }
+    const vCo = validarCoautores(form.coautores || []);
+    if (vCo) return vCo;
+
     return "";
   };
 
@@ -300,31 +386,47 @@ export default function UsuarioSubmissoes() {
     return "";
   };
 
-  // wrapper do upload para manter o nome do campo ‘poster’
   const apiUpload = (url, fileOrFormData) =>
     apiUploadSvc(url, fileOrFormData, { fieldName: "poster" });
 
+  // criar/atualizar
   const submeter = async (status) => {
-    if (!selecionada?.chamada?.id) return;
+    if (!selecionada?.chamada?.id && !editingId) return;
     setErrForm("");
-    const v = validar();
+
+    // se for enviar, valida tudo; se rascunho, valida leve
+    const v = validar(status === "enviado");
     if (v && status === "enviado") { setErrForm(v); return; }
+
     setSaving(true);
     try {
       const payload = {
         ...form,
         linha_tematica_id: Number(form.linha_tematica_id) || null,
         status, // "rascunho" | "enviado"
+        coautores: (form.coautores || []).map((c) => ({
+          nome: (c.nome || c.nome_completo || "").trim(),
+          cpf: String(c.cpf || "").replace(/\D+/g, ""),
+          email: (c.email || "").trim(),
+          vinculo: (c.vinculo || c.vinculo_empregaticio || "").trim(),
+        })),
       };
 
-      // ✅ Envia JSON (axios/cliente default) — backend espera JSON aqui
-      const created = await api.request({
-        url: `/chamadas/${selecionada.chamada.id}/submissoes`,
-        method: "POST",
-        data: payload,
-      });
+      let created = null;
+      if (editingId) {
+        // UPDATE
+        await apiPut(`/submissoes/${editingId}`, payload);
+        created = { id: editingId };
+      } else {
+        // CREATE
+        created = await api.request({
+          url: `/chamadas/${selecionada.chamada.id}/submissoes`,
+          method: "POST",
+          data: payload,
+        });
+      }
 
-      // se a chamada aceita pôster e o user anexou no modal, envia
+      // pôster (se aceito e anexado e temos id)
       if (selecionada?.chamada?.aceita_poster && posterFile && created?.id) {
         try {
           setPosterBusy(true);
@@ -348,6 +450,7 @@ export default function UsuarioSubmissoes() {
 
       setSubmeterOpen(false);
       if (status === "enviado") setEditalOpen(false);
+      setEditingId(null);
     } catch (e) {
       const msg =
         e?.data?.erro ||
@@ -360,6 +463,7 @@ export default function UsuarioSubmissoes() {
     }
   };
 
+  /* ───────── render ───────── */
   return (
     <div className="flex min-h-screen flex-col bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
       <HeaderHero title="Submissão de Trabalhos" subtitle="Consulte o edital, inscreva seu trabalho e acompanhe o status." accent="emerald" />
@@ -375,43 +479,60 @@ export default function UsuarioSubmissoes() {
               <div className="py-6 text-zinc-500">Nenhuma chamada ativa no momento.</div>
             ) : (
               <div className="grid gap-3">
-                {ativas.map((c) => (
-                  <div key={c.id} className="flex flex-col gap-2 rounded-xl border p-3 sm:flex-row sm:items-center sm:justify-between dark:border-zinc-800">
-                    <div className="min-w-0">
-                      <div className="truncate font-medium">{c.titulo}</div>
-                      <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-                        {c.dentro_prazo ? (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">
-                            <CheckCircle2 className="h-3 w-3" /> Aberta
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200">
-                            <XCircle className="h-3 w-3" /> Encerrada
-                          </span>
-                        )}
-                        <span>Prazo: {fmtDataHora(c.prazo_final_br)}</span>
+                {ativas.map((c) => {
+                  const urlModelo = `/api/chamadas/${c.id}/modelo-banner`;
+                  const hasModelo = !!modeloOk[c.id];
+                  return (
+                    <div key={c.id} className="flex flex-col gap-2 rounded-xl border p-3 sm:flex-row sm:items-center sm:justify-between dark:border-zinc-800">
+                      <div className="min-w-0">
+                        <div className="truncate font-medium">{c.titulo}</div>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+                          {c.dentro_prazo ? (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">
+                              <CheckCircle2 className="h-3 w-3" /> Aberta
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200">
+                              <XCircle className="h-3 w-3" /> Encerrada
+                            </span>
+                          )}
+                          <span>Prazo: {fmtDataHora(c.prazo_final_br)}</span>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <a
+                          href={hasModelo ? urlModelo : undefined}
+                          onClick={(e) => { if (!hasModelo) e.preventDefault(); }}
+                          target="_blank"
+                          rel="noreferrer"
+                          className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium ${
+                            hasModelo ? "bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700" : "bg-zinc-200 text-zinc-500 cursor-not-allowed dark:bg-zinc-800/60"
+                          }`}
+                          title={hasModelo ? "Baixar modelo" : "Modelo não disponível"}
+                        >
+                          <Download className="h-4 w-4" /> Baixar modelo
+                        </a>
+
+                        <button
+                          onClick={() => abrirEdital(c.id)}
+                          className="inline-flex items-center gap-2 rounded-xl bg-[#005f73] px-3 py-2 text-sm font-medium text-white hover:bg-[#0a9396]"
+                        >
+                          <BookOpen className="h-4 w-4" /> Ver edital
+                        </button>
+
+                        <button
+                          disabled={!c.dentro_prazo}
+                          onClick={async () => { await abrirEdital(c.id); abrirSubmeter(); }}
+                          className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-white ${
+                            c.dentro_prazo ? "bg-[#f77f00] hover:bg-[#e36414]" : "cursor-not-allowed bg-zinc-400 dark:bg-zinc-700"
+                          }`}
+                        >
+                          <ClipboardList className="h-4 w-4" /> Inscrever
+                        </button>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => abrirEdital(c.id)}
-                        className="inline-flex items-center gap-2 rounded-xl bg-[#005f73] px-3 py-2 text-sm font-medium text-white hover:bg-[#0a9396]"
-                      >
-                        <BookOpen className="h-4 w-4" /> Ver edital
-                      </button>
-
-                      <button
-                        disabled={!c.dentro_prazo}
-                        onClick={async () => { await abrirEdital(c.id); abrirSubmeter(); }}
-                        className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-white ${
-                          c.dentro_prazo ? "bg-[#f77f00] hover:bg-[#e36414]" : "cursor-not-allowed bg-zinc-400 dark:bg-zinc-700"
-                        }`}
-                      >
-                        <ClipboardList className="h-4 w-4" /> Inscrever
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </Card>
@@ -440,34 +561,59 @@ export default function UsuarioSubmissoes() {
                     </tr>
                   </thead>
                   <tbody>
-                    {minhas.map((s) => (
-                      <tr key={s.id} className="border-t dark:border-zinc-800">
-                        <td className="py-2 pr-4">{s.titulo}</td>
-                        <td className="py-2 pr-4">{s.chamada_titulo}</td>
-                        <td className="py-2 pr-4">{s.linha_tematica_codigo}</td>
-                        <td className="py-2 pr-4">{s.inicio_experiencia}</td>
-                        <td className="py-2 pr-4">
-                          <span className="inline-flex items-center rounded-full bg-zinc-100 px-2 py-0.5 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
-                            {s.status}
-                          </span>
-                        </td>
-                        <td className="py-2 pr-4">{s.poster_nome ? s.poster_nome : <span className="text-zinc-400">—</span>}</td>
-                        <td className="py-2">
-                          <UploadPosterButton
-                            submissaoId={s.id}
-                            aceita={true}
-                            onDone={async () => {
-                              setLoadingMinhas(true);
-                              try {
-                                const mine = await apiGet(`/minhas-submissoes`);
-                                setMinhas(Array.isArray(mine) ? mine : []);
-                              } catch {}
-                              finally { setLoadingMinhas(false); }
-                            }}
-                          />
-                        </td>
-                      </tr>
-                    ))}
+                    {minhas.map((s) => {
+                      const podeAlterar = canAlterar(s);
+                      return (
+                        <tr key={s.id} className="border-t dark:border-zinc-800">
+                          <td className="py-2 pr-4">{s.titulo}</td>
+                          <td className="py-2 pr-4">{s.chamada_titulo}</td>
+                          <td className="py-2 pr-4">{s.linha_tematica_codigo}</td>
+                          <td className="py-2 pr-4">{s.inicio_experiencia}</td>
+                          <td className="py-2 pr-4">
+                            <span className="inline-flex items-center rounded-full bg-zinc-100 px-2 py-0.5 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
+                              {s.status}
+                            </span>
+                          </td>
+                          <td className="py-2 pr-4">{s.poster_nome ? s.poster_nome : <span className="text-zinc-400">—</span>}</td>
+                          <td className="py-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                disabled={!podeAlterar}
+                                onClick={() => abrirEditar(s.id)}
+                                className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 ${
+                                  podeAlterar ? "bg-sky-600 text-white hover:bg-sky-700" : "cursor-not-allowed bg-zinc-300 text-white dark:bg-zinc-700"
+                                }`}
+                                title={podeAlterar ? "Editar submissão" : "Prazo encerrado"}
+                              >
+                                <Pencil className="h-4 w-4" /> Editar
+                              </button>
+                              <button
+                                disabled={!podeAlterar}
+                                onClick={() => onExcluir(s.id)}
+                                className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 ${
+                                  podeAlterar ? "bg-rose-600 text-white hover:bg-rose-700" : "cursor-not-allowed bg-zinc-300 text-white dark:bg-zinc-700"
+                                }`}
+                                title={podeAlterar ? "Excluir submissão" : "Prazo encerrado"}
+                              >
+                                <Trash2 className="h-4 w-4" /> Excluir
+                              </button>
+                              <UploadPosterButton
+                                submissaoId={s.id}
+                                aceita={true}
+                                onDone={async () => {
+                                  setLoadingMinhas(true);
+                                  try {
+                                    const mine = await apiGet(`/minhas-submissoes`);
+                                    setMinhas(Array.isArray(mine) ? mine : []);
+                                  } catch {}
+                                  finally { setLoadingMinhas(false); }
+                                }}
+                              />
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -486,12 +632,24 @@ export default function UsuarioSubmissoes() {
         icon={BookOpen}
         footer={
           selecionada?.chamada ? (
-            <button
-              onClick={abrirSubmeter}
-              className="inline-flex items-center gap-2 rounded-xl bg-[#005f73] px-4 py-2 text-white hover:bg-[#0a9396]"
-            >
-              <ClipboardList className="h-4 w-4" /> Inscrever trabalho
-            </button>
+            <div className="flex items-center gap-2">
+              {modeloBannerUrl ? (
+                <a
+                  className="inline-flex items-center gap-2 rounded-xl bg-zinc-100 px-4 py-2 text-sm hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
+                  href={modeloBannerUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <Download className="h-4 w-4" /> Baixar modelo
+                </a>
+              ) : null}
+              <button
+                onClick={abrirSubmeter}
+                className="inline-flex items-center gap-2 rounded-xl bg-[#005f73] px-4 py-2 text-white hover:bg-[#0a9396]"
+              >
+                <ClipboardList className="h-4 w-4" /> Inscrever trabalho
+              </button>
+            </div>
           ) : null
         }
       >
@@ -516,11 +674,7 @@ export default function UsuarioSubmissoes() {
               <h4 className="text-sm font-semibold">2) Período & prazo</h4>
               <div className="text-sm text-zinc-600 dark:text-zinc-300">
                 Período aceito: <strong>
-                  {labelPeriodoMesAno(
-                    selecionada.chamada.periodo_experiencia_inicio,
-                    /* 👇 bug fix: 'Selecionada' → 'selecionada' */
-                    selecionada.chamada?.periodo_experiencia_fim
-                  )}
+                  {(selecionada.chamada.periodo_experiencia_inicio || "—")} a {(selecionada.chamada.periodo_experiencia_fim || "—")}
                 </strong>
                 {" · "}Prazo: <strong>{fmtDataHora(selecionada.chamada.prazo_final_br)}</strong>
               </div>
@@ -601,20 +755,7 @@ export default function UsuarioSubmissoes() {
               <h4 className="text-sm font-semibold">8) Formulário eletrônico</h4>
               <div className="text-sm text-zinc-600 dark:text-zinc-300">
                 {selecionada.chamada.aceita_poster ? (
-                  <>
-                    Aceita pôster (.ppt/.pptx).
-                    {" "}
-                    {modeloBannerUrl && (
-                      <a
-                        className="inline-flex items-center gap-1 underline decoration-dotted"
-                        href={modeloBannerUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Baixar modelo (se disponível) <ExternalLink className="h-3 w-3" />
-                      </a>
-                    )}
-                  </>
+                  <>Aceita pôster (.ppt/.pptx).</>
                 ) : (
                   <>Esta chamada não exige pôster.</>
                 )}
@@ -632,11 +773,11 @@ export default function UsuarioSubmissoes() {
         )}
       </Modal>
 
-      {/* Modal: Submeter */}
+      {/* Modal: Submeter / Editar */}
       <Modal
         open={submeterOpen}
-        onClose={() => setSubmeterOpen(false)}
-        title="Inscrever trabalho"
+        onClose={() => { setSubmeterOpen(false); setEditingId(null); }}
+        title={editingId ? "Editar submissão" : "Inscrever trabalho"}
         icon={ClipboardList}
         maxWidth="max-w-5xl"
         footer={
@@ -675,7 +816,6 @@ export default function UsuarioSubmissoes() {
               <input type="month" className={inputBase} value={form.inicio_experiencia} onChange={(e) => updateForm("inicio_experiencia", e.target.value)} required aria-required="true" />
             </Field>
 
-            {/* Linha temática em largura total */}
             <Field className="sm:col-span-2" label="Linha temática" hint={selecionada?.linhas?.length ? `Total de opções: ${selecionada.linhas.length}` : ""}>
               <select
                 className={`${inputBase} py-3`}
@@ -717,9 +857,81 @@ export default function UsuarioSubmissoes() {
               </Field>
             </div>
 
-            {/* Upload do pôster (opcional) no modal */}
+            {/* Coautores */}
+            <section className="sm:col-span-2">
+              <div className="mb-2 flex items-center justify-between">
+                <h4 className="text-sm font-semibold">
+                  Coautores {selecionada?.chamada?.max_coautores > 0 ? `(máx. ${selecionada.chamada.max_coautores})` : ""}
+                </h4>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const max = Number(selecionada?.chamada?.max_coautores || 0);
+                    setForm((f) => {
+                      const next = [...(f.coautores || [])];
+                      if (max === 0 || next.length < max) next.push({ nome: "", cpf: "", email: "", vinculo: "" });
+                      return { ...f, coautores: next };
+                    });
+                  }}
+                  className="rounded-xl bg-emerald-600 px-3 py-1.5 text-sm text-white hover:bg-emerald-700"
+                >
+                  Adicionar coautor
+                </button>
+              </div>
+              <div className="grid gap-3">
+                {(form.coautores || []).map((c, i) => (
+                  <div key={i} className="grid gap-2 sm:grid-cols-12">
+                    <input
+                      className={`${inputBase} sm:col-span-3`}
+                      placeholder="Nome completo"
+                      value={c.nome || ""}
+                      onChange={(e) => {
+                        const arr = [...form.coautores]; arr[i] = { ...arr[i], nome: e.target.value }; updateForm("coautores", arr);
+                      }}
+                    />
+                    <input
+                      className={`${inputBase} sm:col-span-2`}
+                      placeholder="CPF (apenas números)"
+                      value={c.cpf || ""}
+                      onChange={(e) => {
+                        const arr = [...form.coautores]; arr[i] = { ...arr[i], cpf: e.target.value.replace(/\D+/g, "") }; updateForm("coautores", arr);
+                      }}
+                      maxLength={11}
+                    />
+                    <input
+                      className={`${inputBase} sm:col-span-3`}
+                      placeholder="E-mail"
+                      value={c.email || ""}
+                      onChange={(e) => {
+                        const arr = [...form.coautores]; arr[i] = { ...arr[i], email: e.target.value }; updateForm("coautores", arr);
+                      }}
+                    />
+                    <input
+                      className={`${inputBase} sm:col-span-3`}
+                      placeholder="Vínculo empregatício"
+                      value={c.vinculo || ""}
+                      onChange={(e) => {
+                        const arr = [...form.coautores]; arr[i] = { ...arr[i], vinculo: e.target.value }; updateForm("coautores", arr);
+                      }}
+                    />
+                    <div className="sm:col-span-1">
+                      <button
+                        type="button"
+                        onClick={() => updateForm("coautores", form.coautores.filter((_, j) => j !== i))}
+                        className="h-full w-full rounded-xl bg-zinc-100 px-3 py-2 text-sm hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
+                        aria-label={`Remover coautor ${i + 1}`}
+                      >
+                        Remover
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            {/* Upload do pôster (sem “(opcional)”) */}
             {selecionada?.chamada?.aceita_poster && (
-              <Field className="sm:col-span-2" label="Pôster (opcional)">
+              <Field className="sm:col-span-2" label="Pôster">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                   <label className={`inline-flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-sm ${posterBusy ? "bg-zinc-300 text-white dark:bg-zinc-700" : "bg-emerald-600 text-white hover:bg-emerald-700"}`}>
                     <UploadIcon className="h-4 w-4" />
@@ -740,12 +952,12 @@ export default function UsuarioSubmissoes() {
                   </label>
 
                   <div className="text-sm text-zinc-600 dark:text-zinc-300">
-                    {posterFile ? <span className="font-medium">{posterFile.name}</span> : "Formatos aceitos: .ppt / .pptx (até 50MB)."}
+                    {posterFile ? <span className="font-medium">{posterFile.name}</span> : "Formatos: .ppt / .pptx (até 50MB)."}
                     {modeloBannerUrl && (
                       <>
                         {" "}|{" "}
                         <a className="inline-flex items-center gap-1 underline decoration-dotted" href={modeloBannerUrl} target="_blank" rel="noreferrer">
-                          Baixar modelo (se disponível) <ExternalLink className="h-3 w-3" />
+                          Baixar modelo <ExternalLink className="h-3 w-3" />
                         </a>
                       </>
                     )}
@@ -754,14 +966,6 @@ export default function UsuarioSubmissoes() {
                 {posterErr && <div className="mt-1 text-xs text-red-600">{posterErr}</div>}
               </Field>
             )}
-
-            <div className="sm:col-span-2 text-xs text-zinc-600 dark:text-zinc-400">
-              {selecionada?.chamada?.aceita_poster ? (
-                <>Você pode anexar o pôster agora ou depois, em <strong>Minhas submissões</strong>.</>
-              ) : (
-                <>Esta chamada não exige pôster.</>
-              )}
-            </div>
           </form>
         )}
       </Modal>
@@ -769,7 +973,7 @@ export default function UsuarioSubmissoes() {
   );
 }
 
-/* ─────────────── Upload na lista ─────────────── */
+/* ───────── Upload na lista ───────── */
 function UploadPosterButton({ submissaoId, aceita = true, onDone }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");

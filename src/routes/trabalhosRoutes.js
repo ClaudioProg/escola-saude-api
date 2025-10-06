@@ -65,19 +65,25 @@ function uploadRateLimit(req, res, next) {
 /* ------------------------------------------------------------------
    ROTAS DO USUÁRIO
    ------------------------------------------------------------------ */
-// Criar submissão
+// Criar submissão (rascunho/enviado)
 router.post("/chamadas/:chamadaId/submissoes", requireAuth, ctrl.criarSubmissao);
 
-// Upload/atualização do pôster
+// Editar submissão (somente autor/admin e até o prazo)
+router.put("/submissoes/:id", requireAuth, ctrl.atualizarSubmissao);
+
+// Excluir submissão (somente autor/admin e até o prazo)
+router.delete("/submissoes/:id", requireAuth, ctrl.removerSubmissao);
+
+// Upload/atualização do pôster (somente autor/admin e até o prazo)
 router.post(
   "/submissoes/:id/poster",
   requireAuth,
   uploadRateLimit,
   upload.single("poster"),
+  // middleware inline para tratar erros do multer
   (err, _req, res, next) => {
-    // Tratamento de erros do multer
     if (err) {
-      if (err.message.includes("Formato inválido")) {
+      if (err.message && err.message.includes("Formato inválido")) {
         return res.status(400).json({ erro: err.message });
       }
       if (err.code === "LIMIT_FILE_SIZE") {

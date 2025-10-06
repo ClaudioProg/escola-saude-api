@@ -236,8 +236,36 @@ function isSensitiveUrl(u = "") {
   }
 }
 
+// ───────────────────────────────────────────────────────────────────
+// WARM-UP automático para casos pós-upload / preflight frio
+// ───────────────────────────────────────────────────────────────────
+const WARMUP_PUBLIC = "/health";
+const WARMUP_AUTH = "/perfil/me";
+
+async function warmup(authNeeded) {
+  const path = authNeeded ? WARMUP_AUTH : WARMUP_PUBLIC;
+  const url = ensureApi(API_BASE_URL, path);
+  const token = getToken();
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      credentials: "include",
+      mode: "cors",
+      cache: "no-store",
+      headers: authNeeded && token ? { Authorization: `Bearer ${token}` } : {},
+      redirect: "follow",
+      referrerPolicy: "strict-origin-when-cross-origin",
+      keepalive: true,
+    });
+    // não importa o status — o objetivo é “acordar” sessão/CORS
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 // Handler centralizado — recebe contexto da requisição
-async function handle(res, { on401 = "silent", on403 = "silent", hadAuth = false } = {}) {
+async function handle(res, { on401 = "silent", on403 = "silent" } = {}) {
   const url = res?.url || "";
   const status = res?.status;
 
@@ -261,7 +289,6 @@ async function handle(res, { on401 = "silent", on403 = "silent", hadAuth = false
   }
 
   if (status === 401) {
-    // 🔐 Só efetua logout/redirecionamento quando explicitamente solicitado
     if (on401 === "redirect") {
       try {
         localStorage.clear();
@@ -297,7 +324,7 @@ async function handle(res, { on401 = "silent", on403 = "silent", hadAuth = false
 // ───────────────────────────────────────────────────────────────────
 const DEFAULT_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 15000);
 
-// Fetch centralizado (com timeout)
+// Fetch centralizado (com timeout + retry com warm-up)
 async function doFetch(
   path,
   { method = "GET", auth = true, headers, query, body, on401, on403 } = {}
@@ -318,14 +345,25 @@ async function doFetch(
     }
   } catch {}
 
-  const init = {
+  // Cabeçalhos e init
+  const initBase = {
     method,
-    headers: buildHeaders(auth, headers),
     credentials: "include",
+    mode: "cors",
+    cache: "no-store",
+    redirect: "follow",
+    referrerPolicy: "strict-origin-when-cross-origin",
+  };
+
+  const token = getToken();
+
+  const init = {
+    ...initBase,
+    headers: buildHeaders(auth, headers),
   };
 
   if (body instanceof FormData) {
-    const token = getToken();
+    // Não setar Content-Type manualmente em FormData
     init.headers = {
       ...(auth && token ? { Authorization: `Bearer ${token}` } : {}),
       ...headers,
@@ -335,52 +373,59 @@ async function doFetch(
     init.body = body ? JSON.stringify(body) : undefined;
   }
 
-  const hadAuth = !!init.headers?.Authorization;
+  const hadAuthHeader = !!init.headers?.Authorization;
   const headersPreview = { ...init.headers };
   if (headersPreview.Authorization) headersPreview.Authorization = "Bearer ***";
   console.log(`🛫 [req ${method}] ${url}`, {
     auth: auth ? "on" : "off",
-    hasAuthHeader: hadAuth,
+    hasAuthHeader: hadAuthHeader,
     headers: headersPreview,
     body: body instanceof FormData ? "[FormData]" : body,
   });
 
+  // ⏱️ timeout com AbortController
+  async function runOnce() {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(
+      () => controller.abort(new Error("timeout")),
+      DEFAULT_TIMEOUT_MS
+    );
+    try {
+      return await fetch(url, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
   let res;
   const t0 = typeof performance !== "undefined" ? performance.now() : Date.now();
 
-  // ⏱️ timeout com AbortController
-  const controller = new AbortController();
-  const timeoutId = setTimeout(
-    () => controller.abort(new Error("timeout")),
-    DEFAULT_TIMEOUT_MS
-  );
-
+  // 1ª tentativa
   try {
-    res = await fetch(url, { ...init, signal: controller.signal });
-  } catch (networkErr) {
-    const t1 = typeof performance !== "undefined" ? performance.now() : Date.now();
-    const reason = networkErr?.message || networkErr?.name || String(networkErr);
-    console.error(
-      `🌩️ [neterr ${method}] ${url} (${Math.round(t1 - t0)}ms):`,
-      reason
-    );
-    const isTimeout =
-      reason?.toLowerCase?.().includes("timeout") ||
-      networkErr?.name === "AbortError";
-    throw new ApiError(isTimeout ? "Tempo de resposta excedido." : "Falha de rede ou CORS", {
-      status: 0,
-      url: url,
-      data: networkErr,
-    });
-  } finally {
-    clearTimeout(timeoutId);
+    res = await runOnce();
+  } catch (e1) {
+    // Erro de rede/timeout → warm-up e retry 1x
+    const reason = e1?.message || e1?.name || String(e1);
+    console.error(`🌩️ [neterr ${method}] ${url}:`, reason);
+
+    await warmup(auth && hadAuthHeader);
+    try {
+      res = await runOnce();
+    } catch (e2) {
+      throw new ApiError(
+        reason?.toLowerCase?.().includes("timeout") || e2?.name === "AbortError"
+          ? "Tempo de resposta excedido."
+          : "Falha de rede ou CORS",
+        { status: 0, url, data: e2 }
+      );
+    }
   }
 
   const t1 = typeof performance !== "undefined" ? performance.now() : Date.now();
   console.log(`⏱️ [time ${method}] ${url} → ${Math.round(t1 - t0)}ms`);
 
-  // Passa o contexto (hadAuth) para o handler
-  return handle(res, { on401, on403, hadAuth });
+  // Passa o contexto (on401/on403) para o handler
+  return handle(res, { on401, on403 });
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -415,12 +460,13 @@ export async function apiUpload(path, formDataOrFile, opts = {}) {
   if (formDataOrFile instanceof FormData) {
     fd = formDataOrFile;
   } else if (formDataOrFile instanceof Blob) {
-    const fieldName = opts.fieldName || "file"; // pode trocar por "poster" onde precisar
+    const fieldName = opts.fieldName || "file"; // troque por "banner"/"poster" conforme rota
     fd = new FormData();
     fd.append(fieldName, formDataOrFile);
   } else {
     throw new Error("apiUpload: passe um FormData ou File/Blob.");
   }
+  // usa doFetch com FormData (sem Content-Type)
   return doFetch(path, { method: "POST", body: fd, ...opts });
 }
 
@@ -455,7 +501,10 @@ export async function apiPostFile(path, body, opts = {}) {
       ...headers,
     },
     credentials: "include",
-    body: body ? JSON.stringify(body) : undefined,
+    mode: "cors",
+    cache: "no-store",
+    redirect: "follow",
+    referrerPolicy: "strict-origin-when-cross-origin",
   });
 
   syncPerfilHeader(res);
@@ -526,6 +575,10 @@ export async function apiGetFile(path, opts = {}) {
       ...headers,
     },
     credentials: "include",
+    mode: "cors",
+    cache: "no-store",
+    redirect: "follow",
+    referrerPolicy: "strict-origin-when-cross-origin",
   });
 
   syncPerfilHeader(res);

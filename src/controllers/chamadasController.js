@@ -1,7 +1,7 @@
-// 📁 api/controllers/chamadasController.js
 /* eslint-disable no-console */
 const path = require("path");
 const fs = require("fs");
+const url = require("url"); // 👈 usado para validar URLs http/https
 
 const dbModule = require("../db");               // pode exportar default OU { db }
 const db = dbModule?.db ?? dbModule;            // resiliente: pega db ou o módulo inteiro
@@ -33,6 +33,20 @@ function isValidLimits(limites) {
     if (!Number.isInteger(v) || v < LIMIT_MIN || v > LIMIT_MAX) return false;
   }
   return true;
+}
+
+function isHttpUrl(u) {
+  try { const x = new url.URL(String(u)); return x.protocol === "http:" || x.protocol === "https:"; }
+  catch { return false; }
+}
+function fileExists(p) { try { return fs.existsSync(p); } catch { return false; } }
+function modeloPathPorChamada(chamadaId) {
+  const base = path.join(process.cwd(), "uploads", "modelos", "chamadas", String(chamadaId));
+  const pptx = path.join(base, "banner.pptx");
+  const ppt  = path.join(base, "banner.ppt");
+  if (fileExists(pptx)) return { path: pptx, name: "modelo_banner.pptx", type: "application/vnd.openxmlformats-officedocument.presentationml.presentation" };
+  if (fileExists(ppt))  return { path: ppt,  name: "modelo_banner.ppt",  type: "application/vnd.ms-powerpoint" };
+  return null;
 }
 
 // ✅ sempre use req.db se existir (injetado pelo auth), senão caia no import.
@@ -482,7 +496,7 @@ exports.remover = async (req, res, next) => {
   } catch (err) { console.error("[chamadas.remover] erro", err); next(err); }
 };
 
-// ── EXPORTAÇÃO DO MODELO DE BANNER (.pptx)
+// ── EXPORTAÇÃO DO MODELO DE BANNER (padrão/legado)
 exports.exportarModeloBanner = async (_req, res, next) => {
   try {
     const filePath = path.join(process.cwd(), "api", "assets", "modelos", "banner-padrao.pptx");
@@ -499,6 +513,58 @@ exports.exportarModeloBanner = async (_req, res, next) => {
     return res.sendFile(filePath);
   } catch (err) {
     console.error("[chamadas.exportarModeloBanner] erro", err);
+    next(err);
+  }
+};
+
+/**
+ * GET/HEAD /api/chamadas/:id/modelo-banner
+ * - Se houver arquivo em uploads/modelos/chamadas/:id/banner.pptx(.ppt), serve o arquivo
+ * - Se não houver e a chamada tiver link_modelo_poster (URL http/https), redireciona
+ * - Caso contrário: 404
+ */
+exports.baixarModeloPorChamada = async (req, res, next) => {
+  const DB = getDB(req);
+  try {
+    const id = Number(req.params.id);
+    if (!id) { const e = new Error("ID inválido."); e.status = 400; throw e; }
+
+    // 1) arquivo local?
+    const local = modeloPathPorChamada(id);
+    if (local) {
+      if (req.method === "HEAD") {
+        res.status(200).end();
+        return;
+      }
+      res.setHeader("Content-Type", local.type);
+      res.setHeader("Content-Disposition", `attachment; filename="${local.name}"`);
+      return res.sendFile(local.path);
+    }
+
+    // 2) fallback: link externo cadastrado na chamada?
+    const fetchOne = async (sql, params) => {
+      if (typeof DB.oneOrNone === "function") return DB.oneOrNone(sql, params);
+      if (typeof DB.query === "function") {
+        const r = await DB.query(sql, params);
+        return r?.rows?.[0] || null;
+      }
+      throw new Error("DB não expõe métodos para one/oneOrNone/query.");
+    };
+    const chamada = await fetchOne(`SELECT link_modelo_poster FROM trabalhos_chamadas WHERE id=$1`, [id]);
+    const link = chamada?.link_modelo_poster || null;
+
+    if (isHttpUrl(link)) {
+      if (req.method === "HEAD") {
+        res.setHeader("Location", link);
+        return res.status(200).end();
+      }
+      return res.redirect(302, link);
+    }
+
+    // 3) nada encontrado
+    return res.status(404).json({ erro: "Modelo não disponível para esta chamada." });
+  } catch (err) {
+    console.error("[chamadas.baixarModeloPorChamada] erro", err);
     next(err);
   }
 };

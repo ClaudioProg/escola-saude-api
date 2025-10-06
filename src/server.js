@@ -71,26 +71,7 @@ app.use(
 );
 app.use(compression());
 
-/* ───────── Temp & Uploads ───────── */
-const tempDir = path.join(__dirname, "temp");
-if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
-
-const uploadsDir = path.join(process.cwd(), "uploads");
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-app.use("/uploads", express.static(uploadsDir, { maxAge: "1h", fallthrough: true }));
-
-/* 🆕 Modelos por chamada: /api/modelos/chamadas/:id/banner.pptx */
-const modelosPorChamadaDir = path.join(process.cwd(), "uploads", "modelos", "chamadas");
-if (!fs.existsSync(modelosPorChamadaDir)) fs.mkdirSync(modelosPorChamadaDir, { recursive: true });
-app.use("/api/modelos/chamadas", express.static(modelosPorChamadaDir, { maxAge: "1d", fallthrough: true }));
-
-/* (legado) Diretório de modelos públicos (public/modelos) */
-const modelosDir = path.join(__dirname, "public", "modelos");
-if (!fs.existsSync(modelosDir)) fs.mkdirSync(modelosDir, { recursive: true });
-// Serve /api/modelos/* diretamente do public/modelos
-app.use("/api/modelos", express.static(modelosDir, { maxAge: "1d", fallthrough: true }));
-
-/* ───────── CORS ───────── */
+/* ───────── CORS (GLOBAL + preflight) ───────── */
 const fromEnv = (process.env.CORS_ORIGINS || "")
   .split(",").map(s => s.trim()).filter(Boolean);
 const defaultAllowed = [
@@ -106,15 +87,25 @@ const vercelRegex = /^https:\/\/[a-z0-9-]+\.vercel\.app$/i;
 
 const corsOptions = {
   origin(origin, cb) {
-    if (!origin) return cb(null, true);
+    if (!origin) return cb(null, true); // curl/Postman etc.
     if (allowedOrigins.includes(origin) || vercelRegex.test(origin)) return cb(null, true);
     return cb(new Error("CORS bloqueado: " + origin));
   },
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
-  exposedHeaders: ["Content-Disposition", "X-Perfil-Incompleto"],
   credentials: true,
-  maxAge: 60 * 60,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: [
+    "Accept",
+    "Accept-Language",
+    "Content-Type",
+    "Authorization",
+    "X-Requested-With",
+    "Origin",
+    "Referer",
+    "Cache-Control",
+    "Pragma",
+  ],
+  exposedHeaders: ["Content-Disposition", "X-Perfil-Incompleto"],
+  maxAge: 86400, // cache do preflight (1 dia)
 };
 app.use(cors(corsOptions));
 app.use((req, res, next) => { res.setHeader("Vary", "Origin"); next(); });
@@ -124,13 +115,33 @@ app.options("*", cors(corsOptions), (_req, res) => res.sendStatus(204));
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
+/* ───────── Temp & Uploads ───────── */
+const tempDir = path.join(__dirname, "temp");
+if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
+
+const uploadsDir = path.join(process.cwd(), "uploads");
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+// ⚠️ aplica CORS nos estáticos também:
+app.use("/uploads", cors(corsOptions), express.static(uploadsDir, { maxAge: "1h", fallthrough: true }));
+
+/* 🆕 Modelos por chamada: /api/modelos/chamadas/:id/banner.pptx */
+const modelosPorChamadaDir = path.join(process.cwd(), "uploads", "modelos", "chamadas");
+if (!fs.existsSync(modelosPorChamadaDir)) fs.mkdirSync(modelosPorChamadaDir, { recursive: true });
+app.use("/api/modelos/chamadas", cors(corsOptions), express.static(modelosPorChamadaDir, { maxAge: "1d", fallthrough: true }));
+
+/* (legado) Diretório de modelos públicos (public/modelos) */
+const modelosDir = path.join(__dirname, "public", "modelos");
+if (!fs.existsSync(modelosDir)) fs.mkdirSync(modelosDir, { recursive: true });
+// Serve /api/modelos/* diretamente do public/modelos
+app.use("/api/modelos", cors(corsOptions), express.static(modelosDir, { maxAge: "1d", fallthrough: true }));
+
 /* ───────── DB fallback global ───────── */
 app.use((req, _res, next) => {
   if (!req.db) req.db = db;
   next();
 });
 
-/* ───────── Estáticos ───────── */
+/* ───────── Estáticos públicos ───────── */
 app.use(express.static(path.join(__dirname, "public")));
 
 /* ───────── Logger dev ───────── */
