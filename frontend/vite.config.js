@@ -5,13 +5,18 @@ import { VitePWA } from 'vite-plugin-pwa';
 import path from 'path';
 
 export default defineConfig(({ mode }) => {
-  // Carrega variáveis .env (Vite só expõe as que começam com VITE_)
+  // Carrega .env (Vite só expõe variáveis com prefixo VITE_)
   const env = loadEnv(mode, process.cwd(), '');
 
+  // ▶ Proxy alvo no dev:
+  // - Padrão: API local em http://localhost:3000
+  // - Pode sobrescrever com VITE_DEV_PROXY_TARGET (ex.: https://sua-api.com)
   const proxyTarget =
-    env.VITE_DEV_PROXY_TARGET || 'https://escola-saude-api.onrender.com';
+    env.VITE_DEV_PROXY_TARGET?.replace(/\/+$/, '') || 'http://localhost:3000';
 
-  // Ativa PWA só em produção e se explicitamente permitido
+  const isHttps = /^https:/i.test(proxyTarget);
+
+  // Ativa PWA só em produção (mantém sua config)
   const enablePWA =
     mode === 'production' &&
     env.VITE_ENABLE_PWA !== 'false' &&
@@ -23,15 +28,9 @@ export default defineConfig(({ mode }) => {
       react(),
       enablePWA &&
         VitePWA({
-          /**
-           * 👇 Usa tag <script> (arquivo gerado e servido de "self"),
-           * evitando <script src="virtual:pwa-register"> que cai na CSP.
-           */
           injectRegister: 'script',
           registerType: 'autoUpdate',
-
           devOptions: { enabled: false },
-
           manifest: {
             name: 'Escola de Saúde',
             short_name: 'EscolaSaúde',
@@ -46,12 +45,9 @@ export default defineConfig(({ mode }) => {
               { src: '/icons/maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }
             ]
           },
-
           workbox: {
             clientsClaim: true,
             skipWaiting: true,
-            // (opcional) se tiver rotas de SPA:
-            // navigateFallback: '/index.html',
           },
         }),
     ].filter(Boolean),
@@ -59,12 +55,17 @@ export default defineConfig(({ mode }) => {
     server: {
       host: true,
       port: 5173,
+      strictPort: true,
       proxy: {
+        // Tudo que começar com /api vai para a API
         '/api': {
           target: proxyTarget,
           changeOrigin: true,
-          secure: true,
-          // rewrite: (p) => p.replace(/^\/api/, ''),
+          // secure = true só quando o target for https
+          secure: isHttps,
+          // se sua API estiver atrás de um proxy que exige Host correto,
+          // o changeOrigin acima já resolve; não precisa rewrite
+          // rewrite: (p) => p, // (mantemos /api)
         },
       },
     },
@@ -80,11 +81,7 @@ export default defineConfig(({ mode }) => {
     build: {
       sourcemap: mode !== 'production',
       chunkSizeWarningLimit: 900,
-      rollupOptions: {
-        output: {
-          // manualChunks: {},
-        },
-      },
+      rollupOptions: { output: {} },
     },
 
     envPrefix: 'VITE_',

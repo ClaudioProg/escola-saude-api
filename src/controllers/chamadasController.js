@@ -1,28 +1,41 @@
 /* eslint-disable no-console */
 const path = require("path");
 const fs = require("fs");
-const url = require("url"); // 👈 usado para validar URLs http/https
+const url = require("url"); // validar URLs http/https
 
-const dbModule = require("../db");               // pode exportar default OU { db }
-const db = dbModule?.db ?? dbModule;            // resiliente: pega db ou o módulo inteiro
+const dbModule = require("../db");
+const db = dbModule?.db ?? dbModule;
 
 // ───────────────────────── Helpers ─────────────────────────
 function isYYYYMM(s) { return typeof s === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(s); }
 function assert(cond, msg) { if (!cond) { const e = new Error(msg); e.status = 400; throw e; } }
 function withinLen(s, max) { return typeof s === "string" && String(s).trim().length <= max; }
 
-// 🔢 Limites aceitos (alinhados com a UI)
+// 🔢 Limites
 const LIMIT_MIN = 1;
 const LIMIT_MAX = 5000;
 
+/**
+ * Normaliza o “prazo_final_br” para ser salvo como timestamptz correto.
+ * - Se vier com TZ (Z ou ±HH:MM): usa diretamente como timestamptz.
+ * - Se vier sem TZ: interpreta como horário de Brasília e converte para timestamptz.
+ */
 function normalizePrazoFragment(prazo_final_br) {
   const s = String(prazo_final_br || "").trim();
   const isIsoWithTz = /[zZ]$/.test(s) || /[+\-]\d{2}:\d{2}$/.test(s);
+
   if (isIsoWithTz) {
-    return { fragment: `(($$PRAZO$$)::timestamptz AT TIME ZONE 'America/Sao_Paulo')`, param: s };
+    // Já inclui timezone → não desloque novamente
+    return { fragment: `($$PRAZO$$)::timestamptz`, param: s };
   }
+
+  // Horário de parede (sem TZ) → interpretar em America/Sao_Paulo
   assert(/^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?$/.test(s), "prazo_final_br inválido.");
-  return { fragment: `($$PRAZO$$)::timestamp`, param: s.length === 16 ? `${s}:00` : s };
+  const withSec = s.length === 16 ? `${s}:00` : s;
+  return {
+    fragment: `(($$PRAZO$$)::timestamp AT TIME ZONE 'America/Sao_Paulo')`,
+    param: withSec,
+  };
 }
 
 function isValidLimits(limites) {
@@ -40,6 +53,8 @@ function isHttpUrl(u) {
   catch { return false; }
 }
 function fileExists(p) { try { return fs.existsSync(p); } catch { return false; } }
+
+/** Caminho do modelo por chamada (upload local administrado) */
 function modeloPathPorChamada(chamadaId) {
   const base = path.join(process.cwd(), "uploads", "modelos", "chamadas", String(chamadaId));
   const pptx = path.join(base, "banner.pptx");
@@ -49,12 +64,10 @@ function modeloPathPorChamada(chamadaId) {
   return null;
 }
 
-// ✅ sempre use req.db se existir (injetado pelo auth), senão caia no import.
+// ✅ DB do req (se houver) ou fallback
 const getDB = (req) => (req && req.db) ? req.db : db;
 
-/**
- * Executa uma transação de forma resiliente
- */
+/** Executa uma transação de forma resiliente */
 async function withTx(DB, fn) {
   const hasTx = typeof DB?.tx === "function";
   const hasQuery = typeof DB?.query === "function";
@@ -97,24 +110,19 @@ async function withTx(DB, fn) {
 exports.listarAtivas = async (req, res, next) => {
   const DB = getDB(req);
   try {
+    const SQL = `
+      SELECT c.*,
+      ((now() AT TIME ZONE 'America/Sao_Paulo') <= c.prazo_final_br) AS dentro_prazo
+      FROM trabalhos_chamadas c
+      WHERE c.publicado = TRUE
+      ORDER BY c.prazo_final_br ASC, c.id ASC
+    `;
     if (typeof DB.any === "function") {
-      const rows = await DB.any(`
-        SELECT c.*,
-               (now() AT TIME ZONE 'America/Sao_Paulo') <= c.prazo_final_br AS dentro_prazo
-        FROM trabalhos_chamadas c
-        WHERE c.publicado = TRUE
-        ORDER BY c.prazo_final_br ASC, c.id ASC
-      `);
+      const rows = await DB.any(SQL);
       return res.json(rows);
     }
     if (typeof DB.query === "function") {
-      const r = await DB.query(`
-        SELECT c.*,
-               (now() AT TIME ZONE 'America/Sao_Paulo') <= c.prazo_final_br AS dentro_prazo
-        FROM trabalhos_chamadas c
-        WHERE c.publicado = TRUE
-        ORDER BY c.prazo_final_br ASC, c.id ASC
-      `);
+      const r = await DB.query(SQL);
       return res.json(r?.rows || []);
     }
     throw new Error("DB não expõe métodos de leitura (any/query).");
@@ -137,7 +145,7 @@ exports.obterChamada = async (req, res, next) => {
 
     const chamada = await fetchOne(`
       SELECT c.*,
-             (now() AT TIME ZONE 'America/Sao_Paulo') <= c.prazo_final_br AS dentro_prazo
+      ((now() AT TIME ZONE 'America/Sao_Paulo') <= c.prazo_final_br) AS dentro_prazo
       FROM trabalhos_chamadas c WHERE c.id=$1
     `, [id]);
 
@@ -173,7 +181,6 @@ exports.obterChamada = async (req, res, next) => {
       ORDER BY ordem
     `, [id]);
 
-    // 👇 espelha campos-chave no top-level para compat com o frontend
     const out = {
       chamada,
       linhas,
@@ -195,22 +202,18 @@ exports.obterChamada = async (req, res, next) => {
 exports.listarTodas = async (req, res, next) => {
   const DB = getDB(req);
   try {
+    const SQL = `
+      SELECT c.*,
+      ((now() AT TIME ZONE 'America/Sao_Paulo') <= c.prazo_final_br) AS dentro_prazo
+      FROM trabalhos_chamadas c
+      ORDER BY c.criado_em DESC, c.id DESC
+    `;
     if (typeof DB.any === "function") {
-      const rows = await DB.any(`
-        SELECT c.*,
-               (now() AT TIME ZONE 'America/Sao_Paulo') <= c.prazo_final_br AS dentro_prazo
-        FROM trabalhos_chamadas c
-        ORDER BY c.criado_em DESC, c.id DESC
-      `);
+      const rows = await DB.any(SQL);
       return res.json(rows);
     }
     if (typeof DB.query === "function") {
-      const r = await DB.query(`
-        SELECT c.*,
-               (now() AT TIME ZONE 'America/Sao_Paulo') <= c.prazo_final_br AS dentro_prazo
-        FROM trabalhos_chamadas c
-        ORDER BY c.criado_em DESC, c.id DESC
-      `);
+      const r = await DB.query(SQL);
       return res.json(r?.rows || []);
     }
     throw new Error("DB não expõe métodos de leitura (any/query).");
@@ -221,11 +224,18 @@ exports.criar = async (req, res, next) => {
   const DB = getDB(req);
   try {
     const {
-      titulo, descricao_markdown,
-      periodo_experiencia_inicio, periodo_experiencia_fim,
-      prazo_final_br, aceita_poster = true, link_modelo_poster = null,
-      max_coautores = 10, publicado = false,
-      linhas = [], criterios = [], critérios_orais = [], // manter compat
+      titulo,
+      descricao_markdown,
+      periodo_experiencia_inicio,
+      periodo_experiencia_fim,
+      prazo_final_br,
+      aceita_poster = true,
+      link_modelo_poster = null,
+      max_coautores = 10,
+      publicado = false,
+      linhas = [],
+      criterios = [],
+      critérios_orais = [], // compat
       limites = null,
       criterios_outros = null,
       oral_outros = null,
@@ -233,21 +243,34 @@ exports.criar = async (req, res, next) => {
       disposicoes_finais_texto = null,
     } = req.body;
 
-    const criterios_orais = req.body.criterios_orais ?? critérios_orais ?? [];
+    // usa nome diferente para não redeclarar
+    const criterios_orais_in = req.body.criterios_orais ?? critérios_orais ?? [];
 
+    // ─── Validações ──────────────────────────────────────────────
     assert(titulo && withinLen(titulo, 200), "Título é obrigatório (≤ 200).");
-    assert(descricao_markdown && String(descricao_markdown).trim().length, "Descrição é obrigatória.");
+    assert(
+      descricao_markdown && String(descricao_markdown).trim().length,
+      "Descrição é obrigatória."
+    );
+
     assert(isYYYYMM(periodo_experiencia_inicio), "Período início deve ser YYYY-MM.");
     assert(isYYYYMM(periodo_experiencia_fim), "Período fim deve ser YYYY-MM.");
-    assert(periodo_experiencia_inicio <= periodo_experiencia_fim, "Período inválido.");
+    assert(
+      periodo_experiencia_inicio <= periodo_experiencia_fim,
+      "Período inválido (início > fim)."
+    );
+
     assert(prazo_final_br, "Prazo final é obrigatório.");
     assert(isValidLimits(limites), `Limites inválidos (${LIMIT_MIN}–${LIMIT_MAX}).`);
     assert(req.user && req.user.id, "Autenticação necessária.");
 
+    // Normaliza prazo (com/sem TZ)
     const norm = normalizePrazoFragment(prazo_final_br);
 
     await withTx(DB, async (t) => {
-      const nova = await t.one(`
+      // Cria a chamada
+      const nova = await t.one(
+        `
         INSERT INTO trabalhos_chamadas
           (titulo, descricao_markdown, periodo_experiencia_inicio, periodo_experiencia_fim,
            prazo_final_br, aceita_poster, link_modelo_poster, max_coautores, publicado, criado_por,
@@ -255,57 +278,83 @@ exports.criar = async (req, res, next) => {
         VALUES ($1,$2,$3,$4, ${norm.fragment.replace("$$PRAZO$$", "$5")} ,$6,$7,$8,$9,$10,
                 $11,$12,$13,$14,$15)
         RETURNING id
-      `, [
-        titulo.trim(),
-        descricao_markdown,
-        periodo_experiencia_inicio,
-        periodo_experiencia_fim,
-        norm.param,
-        !!aceita_poster,
-        link_modelo_poster || null,
-        Number(max_coautores) || 10,
-        !!publicado,
-        req.user.id,
-        limites ? JSON.stringify(limites) : null,
-        criterios_outros || null,
-        oral_outros || null,
-        premiacao_texto || null,
-        disposicoes_finais_texto || null,
-      ]);
+        `,
+        [
+          titulo.trim(),
+          descricao_markdown,
+          periodo_experiencia_inicio,
+          periodo_experiencia_fim,
+          norm.param,
+          !!aceita_poster,
+          link_modelo_poster || null,
+          Number(max_coautores) || 10,
+          !!publicado,
+          req.user.id,
+          limites ? JSON.stringify(limites) : null,
+          criterios_outros || null,
+          oral_outros || null,
+          premiacao_texto || null,
+          disposicoes_finais_texto || null,
+        ]
+      );
 
-      // Linhas
+      // Linhas temáticas
       for (const l of Array.isArray(linhas) ? linhas : []) {
         assert(l?.nome, "Linha temática exige nome.");
         await t.none(
           `INSERT INTO trabalhos_chamada_linhas (chamada_id, codigo, nome, descricao)
            VALUES ($1,$2,$3,$4)`,
-          [nova.id, l.codigo ? String(l.codigo).trim() : null, String(l.nome).trim(), (l.descricao || null)]
+          [
+            nova.id,
+            l.codigo ? String(l.codigo).trim() : null,
+            String(l.nome).trim(),
+            l.descricao || null,
+          ]
         );
       }
 
-      // Critérios (escrita)
+      // Critérios (escritos)
       for (const [idx, c] of (Array.isArray(criterios) ? criterios : []).entries()) {
         assert(c?.titulo, "Critério escrito requer título.");
         await t.none(
-          `INSERT INTO trabalhos_chamada_criterios (chamada_id, ordem, titulo, escala_min, escala_max, peso)
+          `INSERT INTO trabalhos_chamada_criterios
+             (chamada_id, ordem, titulo, escala_min, escala_max, peso)
            VALUES ($1,$2,$3,$4,$5,$6)`,
-          [nova.id, c.ordem || idx + 1, c.titulo, c.escala_min ?? 1, c.escala_max ?? 5, c.peso ?? 1]
+          [
+            nova.id,
+            c.ordem || idx + 1,
+            c.titulo,
+            c.escala_min ?? 1,
+            c.escala_max ?? 5,
+            c.peso ?? 1,
+          ]
         );
       }
 
-      // Critérios (oral)
-      for (const [idx, c] of (Array.isArray(criterios_orais) ? criterios_orais : []).entries()) {
+      // Critérios (orais)
+      for (const [idx, c] of (Array.isArray(criterios_orais_in) ? criterios_orais_in : []).entries()) {
         assert(c?.titulo, "Critério oral requer título.");
         await t.none(
-          `INSERT INTO trabalhos_chamada_criterios_orais (chamada_id, ordem, titulo, escala_min, escala_max, peso)
+          `INSERT INTO trabalhos_chamada_criterios_orais
+             (chamada_id, ordem, titulo, escala_min, escala_max, peso)
            VALUES ($1,$2,$3,$4,$5,$6)`,
-          [nova.id, c.ordem || idx + 1, c.titulo, c.escala_min ?? 1, c.escala_max ?? 3, c.peso ?? 1]
+          [
+            nova.id,
+            c.ordem || idx + 1,
+            c.titulo,
+            c.escala_min ?? 1,
+            c.escala_max ?? 3,
+            c.peso ?? 1,
+          ]
         );
       }
 
       return res.status(201).json({ ok: true, id: nova.id });
     });
-  } catch (err) { console.error("[chamadas.criar] erro", err); next(err); }
+  } catch (err) {
+    console.error("[chamadas.criar] erro", err);
+    next(err);
+  }
 };
 
 exports.atualizar = async (req, res, next) => {
@@ -361,7 +410,6 @@ exports.atualizar = async (req, res, next) => {
         );
       }
 
-      // Recria linhas, se enviadas
       if (Array.isArray(body.linhas)) {
         await t.none(`DELETE FROM trabalhos_chamada_linhas WHERE chamada_id=$1`, [id]);
         for (const l of body.linhas) {
@@ -374,7 +422,6 @@ exports.atualizar = async (req, res, next) => {
         }
       }
 
-      // Recria critérios (escrita)
       if (Array.isArray(body.criterios)) {
         await t.none(`DELETE FROM trabalhos_chamada_criterios WHERE chamada_id=$1`, [id]);
         for (const [idx, c] of body.criterios.entries()) {
@@ -387,7 +434,6 @@ exports.atualizar = async (req, res, next) => {
         }
       }
 
-      // Recria critérios (oral)
       if (Array.isArray(body.criterios_orais)) {
         await t.none(`DELETE FROM trabalhos_chamada_criterios_orais WHERE chamada_id=$1`, [id]);
         for (const [idx, c] of body.criterios_orais.entries()) {
@@ -453,31 +499,25 @@ exports.publicar = async (req, res, next) => {
 exports.listarAdmin = async (req, res, next) => {
   const DB = getDB(req);
   try {
+    const SQL = `
+      SELECT c.*,
+      ((now() AT TIME ZONE 'America/Sao_Paulo') <= c.prazo_final_br) AS dentro_prazo
+      FROM trabalhos_chamadas c
+      ORDER BY c.prazo_final_br ASC, c.id DESC
+    `;
     if (typeof DB.any === "function") {
-      const rows = await DB.any(`
-        SELECT c.*,
-               (now() AT TIME ZONE 'America/Sao_Paulo') <= c.prazo_final_br AS dentro_prazo
-        FROM trabalhos_chamadas c
-        ORDER BY c.prazo_final_br ASC, c.id DESC
-      `);
+      const rows = await DB.any(SQL);
       return res.json(rows);
     }
     if (typeof DB.query === "function") {
-      const r = await DB.query(`
-        SELECT c.*,
-               (now() AT TIME ZONE 'America/Sao_Paulo') <= c.prazo_final_br AS dentro_prazo
-        FROM trabalhos_chamadas c
-        ORDER BY c.prazo_final_br ASC, c.id DESC
-      `);
+      const r = await DB.query(SQL);
       return res.json(r?.rows || []);
     }
     throw new Error("DB não expõe métodos de leitura (any/query).");
   } catch (err) { console.error("[chamadas.listarAdmin] erro", err); next(err); }
 };
 
-/**
- * DELETE /api/admin/chamadas/:id
- */
+/** DELETE /api/admin/chamadas/:id */
 exports.remover = async (req, res, next) => {
   const DB = getDB(req);
   const id = Number(req.params.id);
@@ -496,7 +536,7 @@ exports.remover = async (req, res, next) => {
   } catch (err) { console.error("[chamadas.remover] erro", err); next(err); }
 };
 
-// ── EXPORTAÇÃO DO MODELO DE BANNER (padrão/legado)
+// ── EXPORTAÇÃO DO MODELO PADRÃO (legado)
 exports.exportarModeloBanner = async (_req, res, next) => {
   try {
     const filePath = path.join(process.cwd(), "api", "assets", "modelos", "banner-padrao.pptx");
@@ -510,6 +550,7 @@ exports.exportarModeloBanner = async (_req, res, next) => {
       "application/vnd.openxmlformats-officedocument.presentationml.presentation"
     );
     res.setHeader("Content-Disposition", 'attachment; filename="modelo_banner.pptx"');
+    res.setHeader("Cache-Control", "public, max-age=60");
     return res.sendFile(filePath);
   } catch (err) {
     console.error("[chamadas.exportarModeloBanner] erro", err);
@@ -529,19 +570,36 @@ exports.baixarModeloPorChamada = async (req, res, next) => {
     const id = Number(req.params.id);
     if (!id) { const e = new Error("ID inválido."); e.status = 400; throw e; }
 
-    // 1) arquivo local?
     const local = modeloPathPorChamada(id);
-    if (local) {
-      if (req.method === "HEAD") {
-        res.status(200).end();
-        return;
+
+    // ── META MODE (GET ?meta=1)
+    if (req.method === "GET" && ("meta" in (req.query || {}))) {
+      if (local) {
+        return res.json({ exists: true, href: null, type: local.type, filename: local.name });
       }
+      const fetchOne = async (sql, params) => {
+        if (typeof DB.oneOrNone === "function") return DB.oneOrNone(sql, params);
+        if (typeof DB.query === "function") {
+          const r = await DB.query(sql, params);
+          return r?.rows?.[0] || null;
+        }
+        throw new Error("DB não expõe métodos para one/oneOrNone/query.");
+      };
+      const row = await fetchOne(`SELECT link_modelo_poster FROM trabalhos_chamadas WHERE id=$1`, [id]);
+      const link = row?.link_modelo_poster || null;
+      if (isHttpUrl(link)) return res.json({ exists: true, href: link });
+      return res.json({ exists: false, href: null });
+    }
+
+    // ── ARQUIVO LOCAL?
+    if (local) {
+      if (req.method === "HEAD") return res.status(200).end();
       res.setHeader("Content-Type", local.type);
       res.setHeader("Content-Disposition", `attachment; filename="${local.name}"`);
       return res.sendFile(local.path);
     }
 
-    // 2) fallback: link externo cadastrado na chamada?
+    // ── LINK EXTERNO?
     const fetchOne = async (sql, params) => {
       if (typeof DB.oneOrNone === "function") return DB.oneOrNone(sql, params);
       if (typeof DB.query === "function") {
@@ -554,14 +612,12 @@ exports.baixarModeloPorChamada = async (req, res, next) => {
     const link = chamada?.link_modelo_poster || null;
 
     if (isHttpUrl(link)) {
-      if (req.method === "HEAD") {
-        res.setHeader("Location", link);
-        return res.status(200).end();
-      }
+      if (req.method === "HEAD") { res.setHeader("Location", link); return res.status(200).end(); }
       return res.redirect(302, link);
     }
 
-    // 3) nada encontrado
+    // ── NADA ENCONTRADO
+    if (req.method === "HEAD") return res.status(204).end();
     return res.status(404).json({ erro: "Modelo não disponível para esta chamada." });
   } catch (err) {
     console.error("[chamadas.baixarModeloPorChamada] erro", err);

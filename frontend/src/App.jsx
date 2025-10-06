@@ -7,7 +7,7 @@ import {
   useSearchParams,
   useNavigate,
   Navigate,
-  useParams, // ⬅️ movido para o topo
+  useParams,
 } from "react-router-dom";
 import PrivateRoute from "./components/PrivateRoute";
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
@@ -37,9 +37,9 @@ const AgendaUsuario          = lazy(() => import("./pages/AgendaUsuario"));
 
 const DashboardInstrutor     = lazy(() => import("./pages/DashboardInstrutor"));
 const AgendaInstrutor        = lazy(() => import("./pages/AgendaInstrutor"));
-const InstrutorPresenca       = lazy(() => import("./pages/InstrutorPresenca"));
-const CertificadosInstrutor   = lazy(() => import("./pages/CertificadosInstrutor"));
-const AvaliacaoInstrutor      = lazy(() => import("./pages/AvaliacaoInstrutor"));
+const InstrutorPresenca      = lazy(() => import("./pages/InstrutorPresenca"));
+const CertificadosInstrutor  = lazy(() => import("./pages/CertificadosInstrutor"));
+const AvaliacaoInstrutor     = lazy(() => import("./pages/AvaliacaoInstrutor"));
 
 const DashboardAdministrador = lazy(() => import("./pages/DashboardAdministrador"));
 const DashboardAnalitico     = lazy(() => import("./pages/DashboardAnalitico"));
@@ -117,11 +117,8 @@ function ScrollUnlockOnRouteChange() {
         const top = parseInt(body.style.top || "0", 10) || 0;
         body.style.position = "";
         body.style.top = "";
-        try {
-          window.scrollTo({ top: -top, behavior: "instant" });
-        } catch {
-          window.scrollTo(0, -top);
-        }
+        try { window.scrollTo({ top: -top, behavior: "instant" }); }
+        catch { window.scrollTo(0, -top); }
       }
     };
 
@@ -138,11 +135,8 @@ function ScrollUnlockOnRouteChange() {
 function ScrollToTop() {
   const { pathname } = useLocation();
   useEffect(() => {
-    try {
-      window.scrollTo({ top: 0, behavior: "instant" });
-    } catch {
-      window.scrollTo(0, 0);
-    }
+    try { window.scrollTo({ top: 0, behavior: "instant" }); }
+    catch { window.scrollTo(0, 0); }
   }, [pathname]);
   return null;
 }
@@ -308,9 +302,9 @@ function AdminChamadaFormWrapper() {
   const { id } = useParams();
   return <AdminChamadaForm chamadaId={id} />;
 }
-function AdminSubmissoesRespostaWrapper() {
-  const { id } = useParams();
-  return <AdminSubmissoesResposta chamadaId={id} />;
+function AdminSubmissoesRouteWrapper() {
+  const { chamadaId } = useParams(); // opcional
+  return <AdminSubmissoesResposta chamadaId={chamadaId ? Number(chamadaId) : undefined} />;
 }
 
 /* ──────────────────────────────────────────────────────────────
@@ -405,8 +399,9 @@ export default function App() {
             {/* Admin: criar/editar chamada */}
             <Route path="/admin/chamadas/new" element={<PrivateRoute permitido={["administrador"]}><AdminChamadaForm /></PrivateRoute>} />
             <Route path="/admin/chamadas/:id" element={<PrivateRoute permitido={["administrador"]}><AdminChamadaFormWrapper /></PrivateRoute>} />
-            {/* Admin: ver/avaliar/responder submissões */}
-            <Route path="/admin/chamadas/:id/submissoes" element={<PrivateRoute permitido={["administrador"]}><AdminSubmissoesRespostaWrapper /></PrivateRoute>} />
+            {/* Admin: ver/avaliar/responder submissões (todas ou por chamada) */}
+            <Route path="/admin/submissoes" element={<PrivateRoute permitido={["administrador"]}><AdminSubmissoesRouteWrapper /></PrivateRoute>} />
+            <Route path="/admin/chamadas/:chamadaId/submissoes" element={<PrivateRoute permitido={["administrador"]}><AdminSubmissoesRouteWrapper /></PrivateRoute>} />
 
             <Route path="/administrador" element={<PrivateRoute permitido={["administrador"]}><DashboardAdministrador /></PrivateRoute>} />
             <Route path="/dashboard-analitico" element={<PrivateRoute permitido={["administrador"]}><DashboardAnalitico /></PrivateRoute>} />

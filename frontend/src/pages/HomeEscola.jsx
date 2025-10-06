@@ -162,7 +162,7 @@ export default function HomeEscola() {
   imgAlt="Arte do Dia Mundial da Saúde Mental"
   titulo="💙 Dia Mundial da Saúde Mental"
   subtitulo="10 de Outubro"
-  badge="Datas Importantes"
+  badge="Saúde"
 >
   <p>
   O Dia Mundial da Saúde Mental foi instituído em 1992 pela Federação Mundial para a Saúde Mental (World Federation for Mental Health), com apoio da Organização Mundial da Saúde (OMS). Desde então, a data é lembrada anualmente em mais de 150 países como um chamado à reflexão e à ação sobre um tema que toca a todos nós: o cuidado com a saúde mental.
@@ -201,7 +201,7 @@ export default function HomeEscola() {
   imgAlt="Arte do Dia Nacional de Vacinação"
   titulo="💉 Dia Nacional da Vacinação"
   subtitulo="17 de Outubro"
-  badge="Datas Importantes"
+  badge="Saúde"
 >
   <p>
   O Dia Nacional da Vacinação foi instituído no Brasil para reforçar a importância da imunização como uma das ferramentas mais eficazes de prevenção de doenças. Essa data simboliza não apenas a vitória da ciência, mas também o compromisso coletivo com a proteção da vida. (OMS). Desde então, a data é lembrada anualmente em mais de 150 países como um chamado à reflexão e à ação sobre um tema que toca a todos nós: o cuidado com a saúde mental.
@@ -232,6 +232,43 @@ export default function HomeEscola() {
   <p>
     <strong>Neste 17 de outubro, reafirme o compromisso com a vida: vacine-se e incentive quem você ama a fazer o mesmo. 💉💙</strong>
   </p>
+</DestaqueLongo>
+
+{/* 5) Sifilis */}
+<DestaqueLongo
+  imgSrc="/banners/sifilis.png"
+  imgAlt="Arte do Dia Nacional de Combate à Sífilis"
+  titulo="💗 Dia Nacional de Combate à Sífilis e à Sífilis Congênita: um alerta pela vida"
+  subtitulo="21 de Outubro"
+  badge="Saúde"
+>
+  <p>
+  O terceiro sábado de outubro é marcado pelo Dia Nacional de Combate à Sífilis e à Sífilis Congênita, uma data dedicada à conscientização sobre a prevenção, diagnóstico e tratamento dessa infecção sexualmente transmissível que, apesar de ter cura, ainda representa um grande desafio para a saúde pública no Brasil e no mundo.  </p>
+
+  <p>
+  A sífilis é uma doença causada pela bactéria Treponema pallidum e pode ser transmitida principalmente pelo contato sexual sem proteção, mas também da mãe para o bebê durante a gestação, o que caracteriza a sífilis congênita. Essa forma da doença pode causar sérias complicações, como aborto, parto prematuro e problemas de desenvolvimento no recém-nascido — situações que podem ser evitadas com o pré-natal adequado e o tratamento correto da gestante e do parceiro.  </p>
+
+  <p> <strong> 🌱 A importância da data</strong> </p>
+  <p>
+  Celebrar o 17 de outubro é reconhecer o papel fundamental da vacinação na saúde pública e lembrar que a imunização é um direito e um dever. É também uma forma de valorizar o trabalho incansável de profissionais de saúde que, todos os dias, garantem que os imunobiológicos cheguem à população.
+  </p>
+
+  <p> <strong>🌿 Prevenção e cuidado</strong> </p>
+
+  <p> O uso do preservativo em todas as relações sexuais continua sendo a forma mais eficaz de prevenção.
+  Durante a gravidez, o teste rápido de sífilis é essencial e deve ser realizado em todas as consultas de pré-natal. Caso o resultado seja positivo, o tratamento com penicilina é simples, gratuito e disponível no Sistema Único de Saúde (SUS), evitando a transmissão para o bebê. </p>
+ 
+  <p> <strong>🌺 Um compromisso com a saúde de todos</strong> </p>
+  <p>
+  Combater a sífilis é um dever coletivo. É preciso falar sobre o tema sem tabus, incentivar o cuidado e a responsabilidade consigo e com o outro. Profissionais de saúde, famílias e a sociedade têm um papel fundamental na educação sexual, prevenção e diagnóstico precoce.  
+  </p>
+
+  <p>
+    <strong>✨ Cuidar da saúde sexual é um gesto de amor e proteção à vida.</strong>
+  </p>
+  <p>
+  Neste dia, reforce esse compromisso: faça o teste, previna-se e incentive outras pessoas a se cuidarem.
+  A informação é o primeiro passo para vencer a sífilis. 💬  </p>
 </DestaqueLongo>
 
           </div>

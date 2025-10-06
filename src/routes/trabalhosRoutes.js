@@ -5,17 +5,17 @@ const multer = require("multer");
 const fs = require("fs");
 const path = require("path");
 
-// ✅ Middlewares do seu projeto
+// Middlewares
 const requireAuth = require("../auth/authMiddleware");
 const authorizeRoles = require("../auth/authorizeRoles");
 const requireAdmin = [requireAuth, authorizeRoles("administrador")];
 
-// Controllers
+// Controller
 const ctrl = require("../controllers/trabalhosController");
 
 /* ------------------------------------------------------------------
    Storage de pôster (PPT/PPTX)
-   ------------------------------------------------------------------ */
+------------------------------------------------------------------ */
 const postersDir = path.join(process.cwd(), "uploads", "posters");
 fs.mkdirSync(postersDir, { recursive: true });
 
@@ -46,8 +46,8 @@ const upload = multer({
 
 /* ------------------------------------------------------------------
    Rate limit simples por IP/rota para evitar double click no upload
-   ------------------------------------------------------------------ */
-const recentUploads = new Map(); // key: ip -> timestamp
+------------------------------------------------------------------ */
+const recentUploads = new Map(); // key: ip+rota -> timestamp
 function uploadRateLimit(req, res, next) {
   const now = Date.now();
   const key = `${req.ip}:/submissoes/${req.params.id}/poster`;
@@ -62,25 +62,23 @@ function uploadRateLimit(req, res, next) {
   next();
 }
 
-/* ------------------------------------------------------------------
-   ROTAS DO USUÁRIO
-   ------------------------------------------------------------------ */
-// Criar submissão (rascunho/enviado)
+/* ───────────────────────── ROTAS DO USUÁRIO ───────────────────────── */
+// Criar submissão (pode vir como rascunho ou enviado)
 router.post("/chamadas/:chamadaId/submissoes", requireAuth, ctrl.criarSubmissao);
 
-// Editar submissão (somente autor/admin e até o prazo)
+// Editar submissão (usar para salvar rascunho depois do 1º POST ou para enviar)
 router.put("/submissoes/:id", requireAuth, ctrl.atualizarSubmissao);
 
-// Excluir submissão (somente autor/admin e até o prazo)
+// Excluir submissão (até o prazo e se não estiver em avaliação/finalizada)
 router.delete("/submissoes/:id", requireAuth, ctrl.removerSubmissao);
 
-// Upload/atualização do pôster (somente autor/admin e até o prazo)
+// Upload/atualização do pôster
 router.post(
   "/submissoes/:id/poster",
   requireAuth,
   uploadRateLimit,
   upload.single("poster"),
-  // middleware inline para tratar erros do multer
+  // Middleware de erro específico do multer (precisa ter 4 args)
   (err, _req, res, next) => {
     if (err) {
       if (err.message && err.message.includes("Formato inválido")) {
@@ -96,43 +94,23 @@ router.post(
   ctrl.atualizarPoster
 );
 
-// Minhas submissões
+// Minhas submissões / Detalhe da submissão
 router.get("/minhas-submissoes", requireAuth, ctrl.minhasSubmissoes);
-
-// Detalhe da submissão (autor ou admin)
 router.get("/submissoes/:id", requireAuth, ctrl.obterSubmissao);
 
-/* ------------------------------------------------------------------
-   ROTAS ADMIN
-   ------------------------------------------------------------------ */
-router.get(
-  "/admin/chamadas/:chamadaId/submissoes",
-  requireAdmin,
-  ctrl.listarSubmissoesAdmin
-);
+/* ─────────────────────────── ROTAS ADMIN ─────────────────────────── */
+// 🆕 Lista TODAS as submissões (sem filtrar por chamada)
+router.get("/admin/submissoes", requireAdmin, ctrl.listarSubmissoesAdminTodas);
 
-router.post(
-  "/admin/submissoes/:id/avaliar",
-  requireAdmin,
-  ctrl.avaliarEscrita
-);
+// Lista submissões por chamada (compat)
+router.get("/admin/chamadas/:chamadaId/submissoes", requireAdmin, ctrl.listarSubmissoesAdmin);
 
-router.post(
-  "/admin/submissoes/:id/avaliar-oral",
-  requireAdmin,
-  ctrl.avaliarOral
-);
+// Avaliações
+router.post("/admin/submissoes/:id/avaliar", requireAdmin, ctrl.avaliarEscrita);
+router.post("/admin/submissoes/:id/avaliar-oral", requireAdmin, ctrl.avaliarOral);
 
-router.post(
-  "/admin/chamadas/:chamadaId/classificar",
-  requireAdmin,
-  ctrl.consolidarClassificacao
-);
-
-router.post(
-  "/admin/submissoes/:id/status",
-  requireAdmin,
-  ctrl.definirStatusFinal
-);
+// Consolidação e status final
+router.post("/admin/chamadas/:chamadaId/classificar", requireAdmin, ctrl.consolidarClassificacao);
+router.post("/admin/submissoes/:id/status", requireAdmin, ctrl.definirStatusFinal);
 
 module.exports = router;

@@ -23,6 +23,9 @@ import { fmtDataHora } from "../utils/data";
 // ✅ cliente
 import api, { apiGet, apiDelete, apiPut, apiUpload as apiUploadSvc } from "../services/api";
 
+/* 🔗 Base absoluta da API para links/GETs diretos (dev/prod) */
+const API_BASE = (api?.defaults?.baseURL || "/api").replace(/\/+$/,"");
+
 /* ───────── helpers ───────── */
 function wallToLocalDate(wall) {
   if (!wall || typeof wall !== "string") return null;
@@ -131,6 +134,88 @@ const LIM_DEFAULT = {
   bibliografia: 8000,
 };
 
+/* ───────── Month/Year Picker acessível ───────── */
+const MONTHS_PT = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
+
+function parseYYYYMM(s) {
+  const m = String(s || "").match(/^(\d{4})-(0[1-9]|1[0-2])$/);
+  if (!m) return null;
+  return { y: +m[1], m: +m[2] };
+}
+function clampYearMonth(v, min, max) {
+  if (!v) return null;
+  const n = v.y * 100 + v.m;
+  const nMin = min ? min.y * 100 + min.m : null;
+  const nMax = max ? max.y * 100 + max.m : null;
+  if (nMin !== null && n < nMin) return min;
+  if (nMax !== null && n > nMax) return max;
+  return v;
+}
+
+function MonthYearPicker({
+  value,
+  onChange,
+  min,
+  max,
+  className = "",
+  selectClass = "",
+  ariaLabelAno = "Ano",
+  ariaLabelMes = "Mês",
+}) {
+  const minP = parseYYYYMM(min);
+  const maxP = parseYYYYMM(max);
+
+  const now = new Date();
+  const cur = parseYYYYMM(value) ||
+              minP ||
+              { y: now.getFullYear(), m: now.getMonth() + 1 };
+
+  const yearStart = minP ? minP.y : cur.y - 5;
+  const yearEnd   = maxP ? maxP.y : cur.y + 5;
+  const years = [];
+  for (let y = yearStart; y <= yearEnd; y++) years.push(y);
+
+  const months = [];
+  const minMonth = (minP && cur.y === minP.y) ? minP.m : 1;
+  const maxMonth = (maxP && cur.y === maxP.y) ? maxP.m : 12;
+  for (let m = minMonth; m <= maxMonth; m++) months.push(m);
+
+  const baseSel = selectClass || "w-full rounded-xl border px-3 py-2 dark:border-zinc-700 dark:bg-zinc-800";
+
+  return (
+    <div className={`grid grid-cols-2 gap-2 ${className}`} role="group" aria-label="Seletor de mês e ano">
+      <select
+        className={baseSel}
+        aria-label={ariaLabelAno}
+        value={cur.y}
+        onChange={(e) => {
+          const newY = +e.target.value;
+          const next = clampYearMonth({ y: newY, m: cur.m }, minP, maxP);
+          onChange?.(`${next.y}-${String(next.m).padStart(2,"0")}`);
+        }}
+      >
+        {years.map((y) => (<option key={y} value={y}>{y}</option>))}
+      </select>
+
+      <select
+        className={baseSel}
+        aria-label={ariaLabelMes}
+        value={cur.m}
+        onChange={(e) => {
+          const next = clampYearMonth({ y: cur.y, m: +e.target.value }, minP, maxP);
+          onChange?.(`${next.y}-${String(next.m).padStart(2,"0")}`);
+        }}
+      >
+        {months.map((m) => (
+          <option key={m} value={m}>
+            {String(m).padStart(2,"0")} — {MONTHS_PT[m-1]}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 export default function UsuarioSubmissoes() {
   const [ativas, setAtivas] = useState([]);
   const [loadingAtivas, setLoadingAtivas] = useState(true);
@@ -147,6 +232,7 @@ export default function UsuarioSubmissoes() {
   const [editingId, setEditingId] = useState(null); // edição de submissão existente
 
   const [form, setForm] = useState({
+    submissao_id: null,     
     titulo: "",
     inicio_experiencia: "2025-01",
     linha_tematica_id: "",
@@ -160,6 +246,7 @@ export default function UsuarioSubmissoes() {
   });
 
   // upload no modal
+  //thePoster:
   const [posterFile, setPosterFile] = useState(null);
   const [posterErr, setPosterErr] = useState("");
   const [posterBusy, setPosterBusy] = useState(false);
@@ -189,14 +276,13 @@ export default function UsuarioSubmissoes() {
         }));
         setAtivas(sane);
 
-        // checa modelo disponível (HEAD) para cada chamada
+        // ✅ checa modelo disponível via API (sem fetch relativo)
         const updates = {};
         await Promise.all(
           sane.map(async (c) => {
             try {
-              const url = `/api/chamadas/${c.id}/modelo-banner`;
-              const res = await fetch(url, { method: "HEAD" });
-              updates[c.id] = res.ok;
+              const meta = await apiGet(`/chamadas/${c.id}/modelo-banner?meta=1`);
+              updates[c.id] = !!meta?.exists;
             } catch {
               updates[c.id] = false;
             }
@@ -243,26 +329,48 @@ export default function UsuarioSubmissoes() {
 
   const abrirSubmeter = () => {
     if (!selecionada?.chamada) return;
-    const inicio = selecionada.chamada.periodo_experiencia_inicio || "2025-01";
-    setForm({
-      titulo: "",
-      inicio_experiencia: inicio,
-      linha_tematica_id: "",
-      introducao: "",
-      objetivos: "",
-      metodo: "",
-      resultados: "",
-      consideracoes: "",
-      bibliografia: "",
-      coautores: [],
-    });
+
+    const existente = (minhas || []).find(
+      (s) => s.chamada_id === selecionada.chamada.id
+    );
+
+    if (existente) {
+      setForm({
+        submissao_id: existente.id,
+        titulo: existente.titulo || "",
+        inicio_experiencia: existente.inicio_experiencia || (selecionada.chamada.periodo_experiencia_inicio || "2025-01"),
+        linha_tematica_id: existente.linha_tematica_id || "",
+        introducao: existente.introducao || "",
+        objetivos: existente.objetivos || "",
+        metodo: existente.metodo || "",
+        resultados: existente.resultados || "",
+        consideracoes: existente.consideracoes || "",
+        bibliografia: existente.bibliografia || "",
+        coautores: [], // garantir array
+      });
+    } else {
+      const inicio = selecionada.chamada.periodo_experiencia_inicio || "2025-01";
+      setForm({
+        submissao_id: null,
+        titulo: "",
+        inicio_experiencia: inicio,
+        linha_tematica_id: "",
+        introducao: "",
+        objetivos: "",
+        metodo: "",
+        resultados: "",
+        consideracoes: "",
+        bibliografia: "",
+        coautores: [], // garantir array
+      });
+    }
+
     setPosterFile(null);
     setPosterErr("");
     setErrForm("");
-    setEditingId(null);
     setSubmeterOpen(true);
   };
-
+  
   // Edição de submissão existente (abre o mesmo modal, preenchido)
   const abrirEditar = async (submissaoId) => {
     setErrForm("");
@@ -271,9 +379,7 @@ export default function UsuarioSubmissoes() {
     setEditingId(submissaoId);
     setSubmeterOpen(true);
     try {
-      // ajuste de rota se necessário
       const s = await apiGet(`/submissoes/${submissaoId}`);
-      // precisamos da chamada/linhas; se ainda não carregada, busca
       if (!selecionada?.chamada || selecionada?.chamada?.id !== s.chamada_id) {
         try {
           const data = await apiGet(`/chamadas/${s.chamada_id}`);
@@ -281,6 +387,7 @@ export default function UsuarioSubmissoes() {
         } catch {}
       }
       setForm({
+        submissao_id: s.id,
         titulo: s.titulo || "",
         inicio_experiencia: s.inicio_experiencia || "2025-01",
         linha_tematica_id: String(s.linha_tematica_id || ""),
@@ -325,13 +432,12 @@ export default function UsuarioSubmissoes() {
 
   const modeloBannerUrl = useMemo(() => {
     const id = selecionada?.chamada?.id;
-    return id ? `/api/chamadas/${id}/modelo-banner` : null;
+    return id ? `${API_BASE}/chamadas/${id}/modelo-banner` : null;
   }, [selecionada]);
 
-  // até quando pode editar/excluir: usa prazo_final_br da submissão (preferível) ou da chamada
   const canAlterar = (s) => {
     const wall = s?.prazo_final_br || s?.chamada_prazo_final_br;
-    if (!wall) return false; // prudente: sem prazo conhecido → bloqueia
+    if (!wall) return false;
     return computeDentroPrazoFromWall(wall);
   };
 
@@ -369,10 +475,11 @@ export default function UsuarioSubmissoes() {
     if (form.bibliografia && form.bibliografia.length > limites.bibliografia) return "Bibliografia muito longa.";
 
     const max = Number(selecionada?.chamada?.max_coautores || 0);
-    if (max > 0 && form.coautores.length > max) {
+    const coautArr = Array.isArray(form.coautores) ? form.coautores : [];
+    if (max > 0 && coautArr.length > max) {
       return `Número de coautores excede o limite (${max}).`;
     }
-    const vCo = validarCoautores(form.coautores || []);
+    const vCo = validarCoautores(coautArr);
     if (vCo) return vCo;
 
     return "";
@@ -389,57 +496,51 @@ export default function UsuarioSubmissoes() {
   const apiUpload = (url, fileOrFormData) =>
     apiUploadSvc(url, fileOrFormData, { fieldName: "poster" });
 
-  // criar/atualizar
   const submeter = async (status) => {
-    if (!selecionada?.chamada?.id && !editingId) return;
+    if (!selecionada?.chamada?.id) return;
     setErrForm("");
-
-    // se for enviar, valida tudo; se rascunho, valida leve
-    const v = validar(status === "enviado");
+    const v = validar();
     if (v && status === "enviado") { setErrForm(v); return; }
-
     setSaving(true);
     try {
       const payload = {
         ...form,
         linha_tematica_id: Number(form.linha_tematica_id) || null,
-        status, // "rascunho" | "enviado"
-        coautores: (form.coautores || []).map((c) => ({
-          nome: (c.nome || c.nome_completo || "").trim(),
-          cpf: String(c.cpf || "").replace(/\D+/g, ""),
-          email: (c.email || "").trim(),
-          vinculo: (c.vinculo || c.vinculo_empregaticio || "").trim(),
-        })),
+        status,
       };
-
-      let created = null;
-      if (editingId) {
-        // UPDATE
-        await apiPut(`/submissoes/${editingId}`, payload);
-        created = { id: editingId };
+  
+      let createdOrUpdated;
+  
+      if (form.submissao_id) {
+        createdOrUpdated = await api.request({
+          url: `/submissoes/${form.submissao_id}`,
+          method: "PUT",
+          data: payload,
+        });
       } else {
-        // CREATE
-        created = await api.request({
+        createdOrUpdated = await api.request({
           url: `/chamadas/${selecionada.chamada.id}/submissoes`,
           method: "POST",
           data: payload,
         });
+        const newId = createdOrUpdated?.id;
+        if (newId) setForm((f) => ({ ...f, submissao_id: newId }));
       }
-
-      // pôster (se aceito e anexado e temos id)
-      if (selecionada?.chamada?.aceita_poster && posterFile && created?.id) {
+  
+      const createdId = form.submissao_id || createdOrUpdated?.id;
+  
+      if (selecionada?.chamada?.aceita_poster && posterFile && createdId) {
         try {
           setPosterBusy(true);
           setPosterErr("");
-          await apiUpload(`/submissoes/${created.id}/poster`, posterFile);
+          await apiUpload(`/submissoes/${createdId}/poster`, posterFile);
         } catch (e) {
           setPosterErr("Falha ao enviar pôster: " + (e?.message || "tente novamente."));
         } finally {
           setPosterBusy(false);
         }
       }
-
-      // recarrega lista
+  
       try {
         setLoadingMinhas(true);
         const mine = await apiGet(`/minhas-submissoes`);
@@ -447,16 +548,13 @@ export default function UsuarioSubmissoes() {
       } finally {
         setLoadingMinhas(false);
       }
-
-      setSubmeterOpen(false);
-      if (status === "enviado") setEditalOpen(false);
-      setEditingId(null);
+  
+      if (status === "enviado") {
+        setSubmeterOpen(false);
+        setEditalOpen(false);
+      }
     } catch (e) {
-      const msg =
-        e?.data?.erro ||
-        e?.data?.message ||
-        e?.message ||
-        "Falha ao salvar/enviar a submissão. Tente novamente.";
+      const msg = e?.data?.erro || e?.data?.message || e?.message || "Falha ao salvar/enviar a submissão. Tente novamente.";
       setErrForm(String(msg));
     } finally {
       setSaving(false);
@@ -480,7 +578,7 @@ export default function UsuarioSubmissoes() {
             ) : (
               <div className="grid gap-3">
                 {ativas.map((c) => {
-                  const urlModelo = `/api/chamadas/${c.id}/modelo-banner`;
+                  const urlModelo = `${API_BASE}/chamadas/${c.id}/modelo-banner`;
                   const hasModelo = !!modeloOk[c.id];
                   return (
                     <div key={c.id} className="flex flex-col gap-2 rounded-xl border p-3 sm:flex-row sm:items-center sm:justify-between dark:border-zinc-800">
@@ -813,7 +911,14 @@ export default function UsuarioSubmissoes() {
             </Field>
 
             <Field label="Início da experiência (AAAA-MM)">
-              <input type="month" className={inputBase} value={form.inicio_experiencia} onChange={(e) => updateForm("inicio_experiencia", e.target.value)} required aria-required="true" />
+              <MonthYearPicker
+                value={form.inicio_experiencia}
+                min={selecionada?.chamada?.periodo_experiencia_inicio}
+                max={selecionada?.chamada?.periodo_experiencia_fim}
+                className="sm:max-w-md"
+                selectClass={inputBase}
+                onChange={(v) => updateForm("inicio_experiencia", v)}
+              />
             </Field>
 
             <Field className="sm:col-span-2" label="Linha temática" hint={selecionada?.linhas?.length ? `Total de opções: ${selecionada.linhas.length}` : ""}>
@@ -929,7 +1034,7 @@ export default function UsuarioSubmissoes() {
               </div>
             </section>
 
-            {/* Upload do pôster (sem “(opcional)”) */}
+            {/* Upload do pôster */}
             {selecionada?.chamada?.aceita_poster && (
               <Field className="sm:col-span-2" label="Pôster">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">

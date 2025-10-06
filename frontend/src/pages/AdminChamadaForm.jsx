@@ -257,6 +257,83 @@ function ChamadasPainel({ onEditar, onNova, refreshSignal }) {
   );
 }
 
+/* ───────── Month/Year Picker ───────── */
+const MONTHS_PT = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
+
+function parseYYYYMM(s) {
+  const m = String(s || "").match(/^(\d{4})-(0[1-9]|1[0-2])$/);
+  return m ? { y: +m[1], m: +m[2] } : null;
+}
+function clampYearMonth(v, min, max) {
+  if (!v) return null;
+  const n = v.y * 100 + v.m;
+  const nMin = min ? min.y * 100 + min.m : null;
+  const nMax = max ? max.y * 100 + max.m : null;
+  if (nMin !== null && n < nMin) return min;
+  if (nMax !== null && n > nMax) return max;
+  return v;
+}
+
+function MonthYearPicker({
+  value,
+  onChange,
+  min,  // "YYYY-MM" (opcional)
+  max,  // "YYYY-MM" (opcional)
+  className = "",
+  selectClass = "",
+  ariaLabelAno = "Ano",
+  ariaLabelMes = "Mês",
+  yearPad = 7,        // quantos anos para cada lado quando sem min/max
+}) {
+  const minP = parseYYYYMM(min);
+  const maxP = parseYYYYMM(max);
+  const now = new Date();
+  const cur = parseYYYYMM(value) || minP || { y: now.getFullYear(), m: now.getMonth() + 1 };
+
+  const yearStart = minP ? minP.y : cur.y - yearPad;
+  const yearEnd   = maxP ? maxP.y : cur.y + yearPad;
+  const years = []; for (let y = yearStart; y <= yearEnd; y++) years.push(y);
+
+  const months = [];
+  const minMonth = (minP && cur.y === minP.y) ? minP.m : 1;
+  const maxMonth = (maxP && cur.y === maxP.y) ? maxP.m : 12;
+  for (let m = minMonth; m <= maxMonth; m++) months.push(m);
+
+  const baseSel = selectClass || "w-full rounded-xl border px-3 py-2 dark:border-zinc-700 dark:bg-zinc-800";
+
+  return (
+    <div className={`grid grid-cols-2 gap-2 ${className}`} role="group" aria-label="Seletor de mês e ano">
+      <select
+        className={baseSel}
+        aria-label={ariaLabelAno}
+        value={cur.y}
+        onChange={(e) => {
+          const next = clampYearMonth({ y: +e.target.value, m: cur.m }, minP, maxP);
+          onChange?.(`${next.y}-${String(next.m).padStart(2,"0")}`);
+        }}
+      >
+        {years.map((y) => <option key={y} value={y}>{y}</option>)}
+      </select>
+
+      <select
+        className={baseSel}
+        aria-label={ariaLabelMes}
+        value={cur.m}
+        onChange={(e) => {
+          const next = clampYearMonth({ y: cur.y, m: +e.target.value }, minP, maxP);
+          onChange?.(`${next.y}-${String(next.m).padStart(2,"0")}`);
+        }}
+      >
+        {months.map((m) => (
+          <option key={m} value={m}>
+            {String(m).padStart(2,"0")} — {MONTHS_PT[m-1]}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 /* ─── Modal Criar/Editar ─── */
 function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
   const isEdit = !!chamadaId;
@@ -553,13 +630,25 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
               </Field>
             </div>
             <Field label="Período da experiência — início (AAAA-MM)">
-              <input type="month" className={inputBase} value={form.periodo_experiencia_inicio}
-                onChange={(e) => update("periodo_experiencia_inicio", e.target.value)} required aria-required="true" />
-            </Field>
-            <Field label="Período da experiência — fim (AAAA-MM)">
-              <input type="month" className={inputBase} value={form.periodo_experiencia_fim}
-                onChange={(e) => update("periodo_experiencia_fim", e.target.value)} required aria-required="true" />
-            </Field>
+  <MonthYearPicker
+    value={form.periodo_experiencia_inicio}
+    max={form.periodo_experiencia_fim || undefined}     // início não pode passar do fim
+    selectClass={inputBase}
+    className="sm:max-w-xs"
+    onChange={(v) => update("periodo_experiencia_inicio", v)}
+  />
+</Field>
+
+<Field label="Período da experiência — fim (AAAA-MM)">
+  <MonthYearPicker
+    value={form.periodo_experiencia_fim}
+    min={form.periodo_experiencia_inicio || undefined}  // fim não pode ser antes do início
+    selectClass={inputBase}
+    className="sm:max-w-xs"
+    onChange={(v) => update("periodo_experiencia_fim", v)}
+  />
+</Field>
+
           </section>
 
           {/* 2) Prazo */}

@@ -247,7 +247,7 @@ export default function Navbar() {
       { label: "Histórico de Certificados", path: "/historico-certificados", icon: History },
       // trabalhos
       { label: "Criar Submissão de Trabalho",         path: "/admin/chamadas/new",     icon: PlusCircle },
-      { label: "Avaliar Submissão de Trabalho", path: "__open_submissions_prompt__", icon: FolderOpenDot },
+      { label: "Avaliar Submissão de Trabalho", path: "__open_submissions__", icon: FolderOpenDot },
       // gestão
       { label: "Gestão de Usuários",    path: "/gestao-usuarios",        icon: Users },
       { label: "Gestão de Instrutor",   path: "/gestao-instrutor",       icon: Presentation },
@@ -368,23 +368,21 @@ export default function Navbar() {
     navigate("/login");
   };
 
-  // ação especial do item “Abrir Submissões por Chamada…”
-  const handleAdminSelect = (path) => {
-    if (path === "__open_submissions_prompt__") {
-      const id = window.prompt("Informe o ID da chamada para abrir as submissões:");
-      if (!id) return;
-      if (!/^\d+$/.test(id)) { alert("ID inválido."); return; }
-      navigate(`/admin/chamadas/${id}/submissoes`);
-    } else {
-      navigate(path);
-    }
-    setMenuUsuarioOpen(false);
-    setMenuInstrutorOpen(false);
-    setMenuAdminOpen(false);
-    setConfigOpen(false);
-    setMobileOpen(false);
-    unlockScroll();
-  };
+// ação especial do item “Abrir Submissões…”
+const handleAdminSelect = (path) => {
+  if (path === "__open_submissions__" || path === "__open_submissions_prompt__") {
+    navigate("/admin/submissoes"); // sempre abre TODAS as submissões
+  } else {
+    navigate(path);
+  }
+  setMenuUsuarioOpen(false);
+  setMenuInstrutorOpen(false);
+  setMenuAdminOpen(false);
+  setConfigOpen(false);
+  setMobileOpen(false);
+  unlockScroll();
+};
+
 
   const go = (path) => handleAdminSelect(path); // reusa o mesmo close/unlock
 

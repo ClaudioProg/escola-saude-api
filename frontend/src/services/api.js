@@ -15,12 +15,17 @@ function isHttpUrl(u) {
 // Decide a base automaticamente
 function computeBase() {
   const raw = (import.meta.env.VITE_API_BASE_URL || "").trim().replace(/\/+$/, "");
-  if (raw) return raw;
+  if (raw) return raw; // sempre prioriza variável explícita
 
-  if (typeof window !== "undefined" && isLocalHost(window.location.host)) {
-    if (import.meta.env.VITE_USE_VITE_PROXY === "1") return "/api";
-    return "http://localhost:3000/api";
+  // 👉 Em DEV SEMPRE usa same-origin + proxy do Vite: /api
+  if (IS_DEV) return "";
+
+  // Em produção: se o front estiver no mesmo domínio da API, use same-origin (/api)
+  if (typeof window !== "undefined" && !isLocalHost(window.location.host)) {
+    return ""; // deixa o reverse proxy/ingress cuidar
   }
+
+  // Fallback (ex.: build estático rodando fora do domínio da API)
   return "https://escola-saude-api.onrender.com/api";
 }
 

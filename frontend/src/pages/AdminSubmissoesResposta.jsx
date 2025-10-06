@@ -1,8 +1,7 @@
-//frontend/src/pages/AdminSubmissoesResposta.jsx
-
+// frontend/src/pages/AdminSubmissoesResposta.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { Filter, SortAsc, SortDesc, RefreshCw, CheckCircle2, XCircle, Mic2, Images, Settings } from "lucide-react";
+import { Filter, SortAsc, SortDesc, RefreshCw, Settings } from "lucide-react";
 import Footer from "../components/Footer";
 import { fmtDataHora } from "../utils/data";
 
@@ -52,7 +51,7 @@ const Pill = ({ children, tone = "gray" }) => {
   );
 };
 
-/* ─────────────── HeaderHero local (centralizado) ─────────────── */
+/* ─────────────── HeaderHero local ─────────────── */
 function HeaderHero({ title, subtitle, accent = "amber" }) {
   const accents = {
     amber: "bg-amber-600 dark:bg-amber-700",
@@ -84,25 +83,38 @@ function HeaderHero({ title, subtitle, accent = "amber" }) {
 }
 
 /* ───────────────── Página ───────────────── */
-export default function AdminSubmissoesResposta({ chamadaId }) {
+import { useParams } from "react-router-dom";
+export default function AdminSubmissoesResposta() {
+const params = useParams();            // <- pegue o id se estiver na URL
+const chamadaIdURL = params?.id || params?.chamadaId || null;
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState("");
   const [ok, setOk] = useState("");
 
-  const [chamada, setChamada] = useState(null);
+  // chamadas (lista) + seleção
+  const [chamadas, setChamadas] = useState([]);
+  const [selChamadaId, setSelChamadaId] = useState("ALL"); // "ALL" | id
+
+  // detalhes da chamada selecionada (para header)
+  const chamadaSelecionada = useMemo(
+    () => (selChamadaId === "ALL" ? null : chamadas.find((c) => String(c.id) === String(selChamadaId)) || null),
+    [selChamadaId, chamadas]
+  );
+
+  // metadados da chamada (linhas/criterios) quando uma específica estiver selecionada
   const [linhas, setLinhas] = useState([]);
   const [criterios, setCriterios] = useState([]);
   const [criteriosOral, setCriteriosOral] = useState([]);
 
   const [rows, setRows] = useState([]);
-  const [filtro, setFiltro] = useState({ busca: "", linha: "ALL", status: "ALL" });
-  const [ordenarPor, setOrdenarPor] = useState("total_geral"); // total_geral | total_escrita | total_oral | inicio_experiencia
+  const [filtro, setFiltro] = useState({ busca: "", linha: "ALL", status: "ALL", chamada: "ALL" });
+  const [ordenarPor, setOrdenarPor] = useState("total_geral");
   const [ordAsc, setOrdAsc] = useState(false);
 
   // modal de avaliação
-  const [avaliando, setAvaliando] = useState(null); // objeto submissão
-  const [itensEsc, setItensEsc] = useState([]); // [{criterio_id, nota, comentarios}]
-  const [itensOral, setItensOral] = useState([]); // [{criterio_oral_id, nota, comentarios}]
+  const [avaliando, setAvaliando] = useState(null);
+  const [itensEsc, setItensEsc] = useState([]);
+  const [itensOral, setItensOral] = useState([]);
   const [salvandoAv, setSalvandoAv] = useState(false);
   const [errAv, setErrAv] = useState("");
 
@@ -115,43 +127,76 @@ export default function AdminSubmissoesResposta({ chamadaId }) {
     { v: "aprovado_oral", rot: "Aprovado (Apresentação Oral)" },
   ];
 
-  /* carregar chamada + lista */
+  /* 1) Carregar lista de chamadas (admin) */
   useEffect(() => {
     (async () => {
       try {
         setLoading(true);
-        const det = await apiGet(`/chamadas/${chamadaId}`);
-        setChamada(det.chamada || null);
-        setLinhas(det.linhas || []);
-        setCriterios(det.criterios || []);
-        setCriteriosOral(det.criterios_orais || []);
+        setErro("");
 
-        const lst = await apiGet(`/admin/chamadas/${chamadaId}/submissoes`);
-        setRows(Array.isArray(lst) ? lst : []);
-      } catch (e) {
-        setErro("Falha ao carregar dados da chamada.");
+        const list = await apiGet(`/admin/chamadas`);
+        setChamadas(Array.isArray(list) ? list : []);
+
+        // default: ALL
+        setSelChamadaId(chamadaIdURL ? String(chamadaIdURL) : "ALL");
+      } catch {
+        setErro("Falha ao carregar chamadas.");
       } finally {
         setLoading(false);
       }
     })();
-  }, [chamadaId]);
+  }, []);
 
-  const linhasMap = useMemo(() => {
-    const m = new Map();
-    (linhas || []).forEach((l) => m.set(l.codigo, l));
-    return m;
-  }, [linhas]);
+  /* 2) Carregar submissões conforme seleção (ALL ou 1 chamada) */
+  useEffect(() => {
+    (async () => {
+      try {
+        setLoading(true);
+        setErro("");
+        setOk("");
+
+        if (selChamadaId === "ALL") {
+             const lst = await apiGet(`/admin/submissoes`);
+             setRows(Array.isArray(lst) ? lst : []);
+             setLinhas([]); setCriterios([]); setCriteriosOral([]);
+             setFiltro((f) => ({ ...f, linha: "ALL", chamada: "ALL" }));
+           } else {
+          // uma chamada específica
+          const id = selChamadaId;
+          const det = await apiGet(`/chamadas/${id}`);
+          setLinhas(det.linhas || []);
+          setCriterios(det.criterios || []);
+          setCriteriosOral(det.criterios_orais || []);
+
+          const lst = await apiGet(`/admin/chamadas/${id}/submissoes`);
+          const ch = chamadas.find((c) => String(c.id) === String(id));
+          setRows((Array.isArray(lst) ? lst : []).map((s) => ({ ...s, chamada_id: Number(id), chamada_titulo: ch?.titulo || "" })));
+          setFiltro((f) => ({ ...f, chamada: String(id) }));
+        }
+      } catch {
+        setErro("Falha ao carregar submissões.");
+        setRows([]);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [selChamadaId, JSON.stringify(chamadas)]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const filtradas = useMemo(() => {
     let out = [...rows];
+
     if (filtro.busca.trim().length) {
       const q = filtro.busca.toLowerCase();
       out = out.filter(
         (r) =>
           r.titulo?.toLowerCase().includes(q) ||
           r.autor_nome?.toLowerCase().includes(q) ||
-          r.autor_email?.toLowerCase().includes(q)
+          r.autor_email?.toLowerCase().includes(q) ||
+          r.chamada_titulo?.toLowerCase().includes(q)
       );
+    }
+    if (filtro.chamada !== "ALL") {
+      out = out.filter((r) => String(r.chamada_id) === String(filtro.chamada));
     }
     if (filtro.linha !== "ALL") {
       out = out.filter((r) => r.linha_tematica_codigo === filtro.linha);
@@ -159,6 +204,7 @@ export default function AdminSubmissoesResposta({ chamadaId }) {
     if (filtro.status !== "ALL") {
       out = out.filter((r) => r.status === filtro.status);
     }
+
     out.sort((a, b) => {
       const dir = ordAsc ? 1 : -1;
       if (ordenarPor === "inicio_experiencia") {
@@ -172,16 +218,17 @@ export default function AdminSubmissoesResposta({ chamadaId }) {
     return out;
   }, [rows, filtro, ordenarPor, ordAsc]);
 
+  // avaliação
   const abrirAvaliacao = (sub) => {
     setAvaliando(sub);
-    setItensEsc(criterios.map((c) => ({ criterio_id: c.id, nota: c.escala_min, comentarios: "" })));
-    setItensOral(criteriosOral.map((c) => ({ criterio_oral_id: c.id, nota: c.escala_min, comentarios: "" })));
+    setItensEsc((criterios || []).map((c) => ({ criterio_id: c.id, nota: c.escala_min, comentarios: "" })));
+    setItensOral((criteriosOral || []).map((c) => ({ criterio_oral_id: c.id, nota: c.escala_min, comentarios: "" })));
     setErrAv("");
   };
 
   const validarItens = () => {
     for (const it of itensEsc) {
-      const ref = criterios.find((c) => c.id === it.criterio_id);
+      const ref = (criterios || []).find((c) => c.id === it.criterio_id);
       if (!ref) return "Critério inválido.";
       const n = parseInt(it.nota, 10);
       if (!Number.isInteger(n) || n < ref.escala_min || n > ref.escala_max) {
@@ -189,7 +236,7 @@ export default function AdminSubmissoesResposta({ chamadaId }) {
       }
     }
     for (const it of itensOral) {
-      const ref = criteriosOral.find((c) => c.id === it.criterio_oral_id);
+      const ref = (criteriosOral || []).find((c) => c.id === it.criterio_oral_id);
       if (!ref) return "Critério oral inválido.";
       const n = parseInt(it.nota, 10);
       if (!Number.isInteger(n) || n < ref.escala_min || n > ref.escala_max) {
@@ -197,6 +244,16 @@ export default function AdminSubmissoesResposta({ chamadaId }) {
       }
     }
     return "";
+  };
+
+  const recarregarSubmissoesSelecionadas = async () => {
+    if (selChamadaId === "ALL") {
+      setSelChamadaId(chamadaIdURL ? String(chamadaIdURL) : "ALL");
+    } else {
+      const lst = await apiGet(`/admin/chamadas/${selChamadaId}/submissoes`);
+      const ch = chamadas.find((c) => String(c.id) === String(selChamadaId));
+      setRows((Array.isArray(lst) ? lst : []).map((s) => ({ ...s, chamada_id: Number(selChamadaId), chamada_titulo: ch?.titulo || "" })));
+    }
   };
 
   const salvarAvaliacao = async () => {
@@ -217,8 +274,7 @@ export default function AdminSubmissoesResposta({ chamadaId }) {
       }
       setOk("Avaliação registrada com sucesso.");
       setAvaliando(null);
-      const lst = await apiGet(`/admin/chamadas/${chamadaId}/submissoes`);
-      setRows(Array.isArray(lst) ? lst : []);
+      await recarregarSubmissoesSelecionadas();
     } catch (e) {
       setErrAv("Falha ao salvar avaliação.");
     } finally {
@@ -227,13 +283,13 @@ export default function AdminSubmissoesResposta({ chamadaId }) {
   };
 
   const consolidar = async () => {
+    if (selChamadaId === "ALL") return; // proteção
     setErro("");
     setOk("");
     try {
-      await apiJson(`/admin/chamadas/${chamadaId}/classificar`, "POST", {});
+      await apiJson(`/admin/chamadas/${selChamadaId}/classificar`, "POST", {});
       setOk("Classificação consolidada (Top 40 + Top 6 por linha).");
-      const lst = await apiGet(`/admin/chamadas/${chamadaId}/submissoes`);
-      setRows(Array.isArray(lst) ? lst : []);
+      await recarregarSubmissoesSelecionadas();
     } catch {
       setErro("Falha ao consolidar classificação.");
     }
@@ -252,8 +308,7 @@ export default function AdminSubmissoesResposta({ chamadaId }) {
       await apiJson(`/admin/submissoes/${id}/status`, "POST", { status: novoStatus });
       setEditingStatusId(null);
       setOk("Status atualizado.");
-      const lst = await apiGet(`/admin/chamadas/${chamadaId}/submissoes`);
-      setRows(Array.isArray(lst) ? lst : []);
+      await recarregarSubmissoesSelecionadas();
     } catch {
       setErro("Falha ao atualizar status.");
     }
@@ -262,7 +317,7 @@ export default function AdminSubmissoesResposta({ chamadaId }) {
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-zinc-50 text-zinc-600 dark:bg-zinc-950 dark:text-zinc-300">
-        Carregando submissões…
+        Carregando…
       </div>
     );
   }
@@ -272,9 +327,11 @@ export default function AdminSubmissoesResposta({ chamadaId }) {
       <HeaderHero
         title="Admin · Submissões"
         subtitle={
-          chamada
-            ? `${chamada.titulo} · Prazo: ${fmtDataHora(chamada.prazo_final_br)}`
-            : "Selecione uma chamada"
+          selChamadaId === "ALL"
+            ? "Todas as chamadas"
+            : chamadaSelecionada
+              ? `${chamadaSelecionada.titulo} · Prazo: ${fmtDataHora(chamadaSelecionada.prazo_final_br)}`
+              : "Selecione uma chamada"
         }
         accent="amber"
       />
@@ -283,8 +340,25 @@ export default function AdminSubmissoesResposta({ chamadaId }) {
         {/* Filtros e ações */}
         <Card>
           <div className="flex flex-wrap items-end gap-3">
+            <div className="min-w-[220px]">
+              <Field label="Chamada">
+                <select
+                  className="w-full rounded-xl border px-3 py-2 ring-offset-2 focus:outline-none focus:ring-2 focus:ring-amber-500 dark:border-zinc-700 dark:bg-zinc-800"
+                  value={selChamadaId}
+                  onChange={(e) => setSelChamadaId(e.target.value)}
+                >
+                  <option value="ALL">Todas</option>
+                  {chamadas.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.titulo}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+
             <div className="min-w-[220px] flex-1">
-              <Field label="Busca (título/autor/email)">
+              <Field label="Busca (título/autor/email/chamada)">
                 <input
                   className="w-full rounded-xl border px-3 py-2 ring-offset-2 focus:outline-none focus:ring-2 focus:ring-amber-500 dark:border-zinc-700 dark:bg-zinc-800"
                   placeholder="Digite para filtrar…"
@@ -293,12 +367,15 @@ export default function AdminSubmissoesResposta({ chamadaId }) {
                 />
               </Field>
             </div>
+
             <div>
               <Field label="Linha temática">
                 <select
                   className="w-full rounded-xl border px-3 py-2 ring-offset-2 focus:outline-none focus:ring-2 focus:ring-amber-500 dark:border-zinc-700 dark:bg-zinc-800"
                   value={filtro.linha}
                   onChange={(e) => setFiltro((f) => ({ ...f, linha: e.target.value }))}
+                  disabled={selChamadaId === "ALL"}
+                  title={selChamadaId === "ALL" ? "Selecione uma chamada para filtrar por linha" : undefined}
                 >
                   <option value="ALL">Todas</option>
                   {(linhas || []).map((l) => (
@@ -309,6 +386,7 @@ export default function AdminSubmissoesResposta({ chamadaId }) {
                 </select>
               </Field>
             </div>
+
             <div>
               <Field label="Status">
                 <select
@@ -351,8 +429,9 @@ export default function AdminSubmissoesResposta({ chamadaId }) {
               </button>
               <button
                 onClick={consolidar}
-                className="mt-1 inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 text-sm font-medium text-white transition hover:bg-amber-700"
-                title="Top 40 + Top 6 por linha"
+                disabled={selChamadaId === "ALL"}
+                className="mt-1 inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 text-sm font-medium text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+                title={selChamadaId === "ALL" ? "Selecione uma chamada" : "Top 40 + Top 6 por linha"}
                 type="button"
               >
                 <RefreshCw className="h-4 w-4" /> Consolidar Classificação
@@ -375,6 +454,7 @@ export default function AdminSubmissoesResposta({ chamadaId }) {
                 <th className="py-2 pr-4">ID</th>
                 <th className="py-2 pr-4">Título</th>
                 <th className="py-2 pr-4">Autor</th>
+                <th className="py-2 pr-4">Chamada</th>
                 <th className="py-2 pr-4">Linha</th>
                 <th className="py-2 pr-4">Início</th>
                 <th className="py-2 pr-4">Escrita</th>
@@ -386,7 +466,7 @@ export default function AdminSubmissoesResposta({ chamadaId }) {
             </thead>
             <tbody>
               {filtradas.map((s) => (
-                <tr key={s.id} className="border-t align-top dark:border-zinc-800">
+                <tr key={`${s.chamada_id}-${s.id}`} className="border-t align-top dark:border-zinc-800">
                   <td className="py-2 pr-4">{s.id}</td>
                   <td className="py-2 pr-4">
                     <div className="font-medium">{s.titulo}</div>
@@ -394,8 +474,12 @@ export default function AdminSubmissoesResposta({ chamadaId }) {
                   </td>
                   <td className="py-2 pr-4">
                     <div>{s.autor_nome}</div>
-                    <div className="text-xs text-zinc-500">{s.linha_tematica_codigo}</div>
+                    <div className="text-xs text-zinc-500">UID: {s.usuario_id}</div>
                   </td>
+                  <td className="py-2 pr-4">
+                    <div className="max-w-[280px] truncate" title={s.chamada_titulo}>{s.chamada_titulo || `Chamada ${s.chamada_id}`}</div>
+                  </td>
+                  <td className="py-2 pr-4">{s.linha_tematica_codigo}</td>
                   <td className="py-2 pr-4">{s.inicio_experiencia}</td>
                   <td className="py-2 pr-4">{Number(s.total_escrita || 0).toFixed(2)}</td>
                   <td className="py-2 pr-4">{Number(s.total_oral || 0).toFixed(2)}</td>
@@ -409,8 +493,10 @@ export default function AdminSubmissoesResposta({ chamadaId }) {
                     <div className="flex flex-col gap-2">
                       <button
                         onClick={() => abrirAvaliacao(s)}
-                        className="rounded-xl bg-emerald-600 px-3 py-1.5 text-white transition hover:bg-emerald-700"
+                        disabled={selChamadaId === "ALL"}
+                        className="rounded-xl bg-emerald-600 px-3 py-1.5 text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                         type="button"
+                        title={selChamadaId === "ALL" ? "Escolha uma chamada para avaliar" : undefined}
                       >
                         Avaliar
                       </button>
@@ -427,7 +513,7 @@ export default function AdminSubmissoesResposta({ chamadaId }) {
               ))}
               {filtradas.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="py-6 text-center text-zinc-500">
+                  <td colSpan={11} className="py-6 text-center text-zinc-500">
                     Nenhuma submissão encontrada.
                   </td>
                 </tr>
@@ -532,7 +618,7 @@ export default function AdminSubmissoesResposta({ chamadaId }) {
             {errAv && <div className="mt-3 text-sm text-rose-600">{errAv}</div>}
 
             <div className="mt-4 flex items-center gap-2">
-              <button onClick={salvarAvaliacao} disabled={salvandoAv} className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-zinc-400 dark:disabled:bg-zinc-700" type="button">
+              <button onClick={salvarAvaliacao} disabled={salvandoAv || selChamadaId === "ALL"} className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-zinc-400 dark:disabled:bg-zinc-700" type="button">
                 {salvandoAv ? "Salvando…" : "Salvar avaliação"}
               </button>
               <button onClick={() => setAvaliando(null)} className="rounded-xl border bg-white px-4 py-2 transition hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800" type="button">

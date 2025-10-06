@@ -92,7 +92,7 @@ const corsOptions = {
     return cb(new Error("CORS bloqueado: " + origin));
   },
   credentials: true,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
   allowedHeaders: [
     "Accept",
     "Accept-Language",
@@ -203,6 +203,8 @@ app.use("/api", trabalhosRoutes);
 
 /* 🆕 Upload/Modelo de Banner (inclui rotas por chamada) */
 app.use("/api", uploadRoutes);
+
+app.use("/api/modelos/chamadas", cors(corsOptions), express.static(modelosPorChamadaDir, { /* ... */ }));
 
 /* ───────── Recuperação de senha ───────── */
 app.post("/api/usuarios/recuperar-senha", recuperarSenhaLimiter, usuarioPublicoController.recuperarSenha);
