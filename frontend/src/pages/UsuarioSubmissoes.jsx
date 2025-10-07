@@ -47,6 +47,40 @@ function computeDentroPrazoFromWall(wall) {
 const emailRx = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const cpfRx = /^\d{11}$/;
 
+// 🔽 Texto justificado com espaçamento entre parágrafos
+function Justified({ text }) {
+  if (!text) return <span className="text-zinc-500">—</span>;
+  const parts = String(text).trim().split(/\n{2,}/);
+  return (
+    <div className="space-y-3 leading-relaxed [text-align:justify]">
+      {parts.map((p, i) => (
+        <p key={i} className="whitespace-pre-line">{p}</p>
+      ))}
+    </div>
+  );
+}
+
+// 🔽 Download seguro via fetch (evita navegar para /api e o SPA redirecionar)
+async function downloadBlob(url, filename = "modelo.pptx") {
+  const res = await fetch(url, { credentials: "include" });
+  if (!res.ok) throw new Error(`Erro ${res.status}`);
+  const blob = await res.blob();
+  const a = document.createElement("a");
+  const objectUrl = URL.createObjectURL(blob);
+  a.href = objectUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
+// 🔽 Garante URL absoluta para a API, evitando o roteador do SPA
+function apiAbs(path) {
+  const base = API_BASE.startsWith("http") ? API_BASE : `${window.location.origin}${API_BASE}`;
+  return `${base}${path}`;
+}
+
 /* ───────── UI ───────── */
 const Card = ({ children }) => (
   <div className="rounded-2xl border bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:p-6">{children}</div>
@@ -217,12 +251,14 @@ function MonthYearPicker({
 }
 
 export default function UsuarioSubmissoes() {
+  const [linhasByChamada, setLinhasByChamada] = useState({}); // { chamadaId: { byCodigo: {COD: nome}, byId: {id: nome} } }
   const [ativas, setAtivas] = useState([]);
   const [loadingAtivas, setLoadingAtivas] = useState(true);
   const [modeloOk, setModeloOk] = useState({}); // { [chamadaId]: boolean }
 
   const [minhas, setMinhas] = useState([]);
   const [loadingMinhas, setLoadingMinhas] = useState(true);
+  const [linhasCarregando, setLinhasCarregando] = useState(false);
 
   const [editalOpen, setEditalOpen] = useState(false);
   const [submeterOpen, setSubmeterOpen] = useState(false);
@@ -300,11 +336,29 @@ export default function UsuarioSubmissoes() {
       try {
         setLoadingMinhas(true);
         const mine = await apiGet(`/minhas-submissoes`);
-        setMinhas(Array.isArray(mine) ? mine : []);
+        const sane = Array.isArray(mine) ? mine : [];
+        setMinhas(sane);
+
+        // 🔎 Carrega mapa de linhas por chamada para mostrar o NOME na lista
+        const ids = Array.from(new Set(sane.map(x => x.chamada_id).filter(Boolean)));
+        if (ids.length) {
+          setLinhasCarregando(true);
+          const entries = await Promise.all(ids.map(async (id) => {
+            try {
+              const det = await apiGet(`/chamadas/${id}`);
+              const linhas = Array.isArray(det?.linhas) ? det.linhas : [];
+              const byCodigo = Object.fromEntries(linhas.map(l => [l.codigo, l.nome]));
+              const byId = Object.fromEntries(linhas.map(l => [String(l.id), l.nome]));
+              return [id, { byCodigo, byId }];
+            } catch { return [id, { byCodigo: {}, byId: {} }]; }
+          }));
+          setLinhasByChamada(Object.fromEntries(entries));
+        }
       } catch {
         setMinhas([]);
       } finally {
         setLoadingMinhas(false);
+        setLinhasCarregando(false);
       }
     })();
 
@@ -487,7 +541,7 @@ export default function UsuarioSubmissoes() {
 
   const validatePoster = (file) => {
     if (!file) return "";
-    const okExt = /\.(pptx?|PPTX?)$/.test(file.name);
+    const okExt = /(\.pptx?|PPTX?)$/.test(file.name);
     if (!okExt) return "Envie arquivo .ppt ou .pptx";
     if (file.size > 50 * 1024 * 1024) return "Arquivo muito grande (máx 50MB).";
     return "";
@@ -578,7 +632,6 @@ export default function UsuarioSubmissoes() {
             ) : (
               <div className="grid gap-3">
                 {ativas.map((c) => {
-                  const urlModelo = `${API_BASE}/chamadas/${c.id}/modelo-banner`;
                   const hasModelo = !!modeloOk[c.id];
                   return (
                     <div key={c.id} className="flex flex-col gap-2 rounded-xl border p-3 sm:flex-row sm:items-center sm:justify-between dark:border-zinc-800">
@@ -598,18 +651,24 @@ export default function UsuarioSubmissoes() {
                         </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
-                        <a
-                          href={hasModelo ? urlModelo : undefined}
-                          onClick={(e) => { if (!hasModelo) e.preventDefault(); }}
-                          target="_blank"
-                          rel="noreferrer"
+                        <button
+                          onClick={async () => {
+                            if (!hasModelo) return;
+                            try {
+                              const url = apiAbs(`/chamadas/${c.id}/modelo-banner`);
+                              await downloadBlob(url, `modelo_chamada_${c.id}.pptx`);
+                            } catch (e) {
+                              alert("Não foi possível baixar o modelo. Tente novamente.");
+                            }
+                          }}
                           className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium ${
                             hasModelo ? "bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700" : "bg-zinc-200 text-zinc-500 cursor-not-allowed dark:bg-zinc-800/60"
                           }`}
                           title={hasModelo ? "Baixar modelo" : "Modelo não disponível"}
+                          aria-disabled={!hasModelo}
                         >
                           <Download className="h-4 w-4" /> Baixar modelo
-                        </a>
+                        </button>
 
                         <button
                           onClick={() => abrirEdital(c.id)}
@@ -665,7 +724,11 @@ export default function UsuarioSubmissoes() {
                         <tr key={s.id} className="border-t dark:border-zinc-800">
                           <td className="py-2 pr-4">{s.titulo}</td>
                           <td className="py-2 pr-4">{s.chamada_titulo}</td>
-                          <td className="py-2 pr-4">{s.linha_tematica_codigo}</td>
+                          <td className="py-2 pr-4">{
+                            (linhasByChamada[s.chamada_id]?.byCodigo?.[s.linha_tematica_codigo]) ||
+                            (linhasByChamada[s.chamada_id]?.byId?.[String(s.linha_tematica_id || "")]) ||
+                            s.linha_tematica_nome || s.linha_tematica || s.linha_tematica_codigo || "—"
+                          }</td>
                           <td className="py-2 pr-4">{s.inicio_experiencia}</td>
                           <td className="py-2 pr-4">
                             <span className="inline-flex items-center rounded-full bg-zinc-100 px-2 py-0.5 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
@@ -732,14 +795,19 @@ export default function UsuarioSubmissoes() {
           selecionada?.chamada ? (
             <div className="flex items-center gap-2">
               {modeloBannerUrl ? (
-                <a
+                <button
                   className="inline-flex items-center gap-2 rounded-xl bg-zinc-100 px-4 py-2 text-sm hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
-                  href={modeloBannerUrl}
-                  target="_blank"
-                  rel="noreferrer"
+                  onClick={async () => {
+                    try {
+                      const url = apiAbs(`/chamadas/${selecionada.chamada.id}/modelo-banner`);
+                      await downloadBlob(url, `modelo_chamada_${selecionada.chamada.id}.pptx`);
+                    } catch {
+                      alert("Não foi possível baixar o modelo. Tente novamente.");
+                    }
+                  }}
                 >
                   <Download className="h-4 w-4" /> Baixar modelo
-                </a>
+                </button>
               ) : null}
               <button
                 onClick={abrirSubmeter}
@@ -762,9 +830,7 @@ export default function UsuarioSubmissoes() {
             {/* 1) Informações gerais */}
             <section className="grid gap-1">
               <h4 className="text-sm font-semibold">1) Informações gerais</h4>
-              <div className="text-sm text-zinc-600 dark:text-zinc-300 whitespace-pre-wrap">
-                {selecionada.chamada.descricao_markdown || "—"}
-              </div>
+              <Justified text={selecionada.chamada.descricao_markdown} />
             </section>
 
             {/* 2) Período & Prazo */}
@@ -784,7 +850,7 @@ export default function UsuarioSubmissoes() {
               <ul className="grid gap-2">
                 {(selecionada.linhas || []).map((l) => (
                   <li key={l.id} className="rounded-xl border p-3 text-sm dark:border-zinc-800">
-                    <div className="font-medium">{l.codigo} — {l.nome}</div>
+                    <div className="font-medium">{l.nome}</div>
                     {l.descricao ? <div className="mt-1 text-zinc-600 dark:text-zinc-300 whitespace-pre-wrap">{l.descricao}</div> : null}
                   </li>
                 ))}
@@ -816,7 +882,7 @@ export default function UsuarioSubmissoes() {
                 </ul>
               )}
               {selecionada.criterios_outros ? (
-                <div className="text-sm text-zinc-600 dark:text-zinc-300 whitespace-pre-wrap">{selecionada.criterios_outros}</div>
+                <Justified text={selecionada.criterios_outros} />
               ) : null}
             </section>
 
@@ -836,16 +902,14 @@ export default function UsuarioSubmissoes() {
                 </ul>
               )}
               {selecionada.oral_outros ? (
-                <div className="text-sm text-zinc-600 dark:text-zinc-300 whitespace-pre-wrap">{selecionada.oral_outros}</div>
+                <Justified text={selecionada.oral_outros} />
               ) : null}
             </section>
 
             {/* 7) Premiação */}
             <section className="grid gap-1">
               <h4 className="text-sm font-semibold">7) Premiação</h4>
-              <div className="text-sm text-zinc-600 dark:text-zinc-300 whitespace-pre-wrap">
-                {selecionada.premiacao_texto || "—"}
-              </div>
+              <Justified text={selecionada.premiacao_texto} />
             </section>
 
             {/* 8) Formulário */}
@@ -863,9 +927,7 @@ export default function UsuarioSubmissoes() {
             {/* 9) Disposições finais */}
             <section className="grid gap-1">
               <h4 className="text-sm font-semibold">9) Disposições finais</h4>
-              <div className="text-sm text-zinc-600 dark:text-zinc-300 whitespace-pre-wrap">
-                {selecionada.disposicoes_finais_texto || "—"}
-              </div>
+              <Justified text={selecionada.disposicoes_finais_texto} />
             </section>
           </div>
         )}
@@ -931,7 +993,7 @@ export default function UsuarioSubmissoes() {
               >
                 <option value="">Selecione…</option>
                 {(selecionada.linhas || []).map((l) => (
-                  <option key={l.id} value={l.id}>{l.codigo} — {l.nome}</option>
+                  <option key={l.id} value={l.id}>{l.nome}</option>
                 ))}
               </select>
             </Field>
@@ -1061,9 +1123,20 @@ export default function UsuarioSubmissoes() {
                     {modeloBannerUrl && (
                       <>
                         {" "}|{" "}
-                        <a className="inline-flex items-center gap-1 underline decoration-dotted" href={modeloBannerUrl} target="_blank" rel="noreferrer">
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 underline decoration-dotted"
+                          onClick={async () => {
+                            try {
+                              const url = apiAbs(`/chamadas/${selecionada.chamada.id}/modelo-banner`);
+                              await downloadBlob(url, `modelo_chamada_${selecionada.chamada.id}.pptx`);
+                            } catch {
+                              alert("Não foi possível baixar o modelo. Tente novamente.");
+                            }
+                          }}
+                        >
                           Baixar modelo <ExternalLink className="h-3 w-3" />
-                        </a>
+                        </button>
                       </>
                     )}
                   </div>
@@ -1089,7 +1162,7 @@ function UploadPosterButton({ submissaoId, aceita = true, onDone }) {
     setErr("");
     setBusy(true);
     try {
-      const okExt = /\.(pptx?|PPTX?)$/.test(file.name);
+      const okExt = /(\.pptx?|PPTX?)$/.test(file.name);
       if (!okExt) throw new Error("Envie arquivo .ppt ou .pptx");
       if (file.size > 50 * 1024 * 1024) throw new Error("Arquivo muito grande (máx 50MB).");
       await apiUploadSvc(`/submissoes/${submissaoId}/poster`, file, { fieldName: "poster" });

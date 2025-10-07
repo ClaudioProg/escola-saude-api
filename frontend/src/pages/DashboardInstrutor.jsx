@@ -1,4 +1,4 @@
-// ✅ src/pages/DashboardInstrutor.jsx (DASHBOARD)
+// ✅ src/pages/DashboardInstrutor.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import Skeleton from "react-loading-skeleton";

@@ -137,31 +137,74 @@ export default function DashboardAdministrador() {
     }
   };
 
-  const carregarPresencas = async (turmaId) => {
-    try {
-      const data = await apiGet(`/api/presencas/turma/${turmaId}/detalhes`, { on403: "silent" });
-      const datas = Array.isArray(data?.datas) ? data.datas : [];
-      const usuarios = Array.isArray(data?.usuarios) ? data.usuarios : [];
-      const totalDias = datas.length || 0;
+  // Admin: guarda a lista por-usuário E um resumo por data para calcular "presença até agora"
+const carregarPresencas = async (turmaId) => {
+  try {
+    const data = await apiGet(`/api/presencas/turma/${turmaId}/detalhes`, { on403: "silent" });
 
-      const lista = usuarios.map((u) => {
-        const presentes = (u.presencas || []).filter((p) => p?.presente === true).length;
-        const freq = totalDias > 0 ? Math.round((presentes / totalDias) * 100) : 0;
-        return {
-          usuario_id: u.id,
-          nome: u.nome,
-          cpf: u.cpf,
-          presente: freq >= 75,
-          frequencia: `${freq}%`,
-        };
-      });
+    const datas = Array.isArray(data?.datas) ? data.datas : [];
+    const usuarios = Array.isArray(data?.usuarios) ? data.usuarios : [];
 
-      setPresencasPorTurma((prev) => ({ ...prev, [turmaId]: lista }));
-    } catch (err) {
-      console.error("❌ Erro ao carregar presenças:", err);
-      toast.error("Erro ao carregar presenças da turma.");
-    }
-  };
+    // lista por-usuário (mantém compatibilidade)
+    const totalDias = datas.length || 0;
+    const lista = usuarios.map((u) => {
+      const presentes = (u.presencas || []).filter((p) => p?.presente === true).length;
+      const freq = totalDias > 0 ? Math.round((presentes / totalDias) * 100) : 0;
+      return {
+        usuario_id: u.id,
+        id: u.id,
+        nome: u.nome,
+        cpf: u.cpf,
+        registro: u?.registro || u?.registro_funcional || u?.matricula,
+        data_nascimento: u?.data_nascimento || u?.nascimento,
+        pcd_visual: u?.pcd_visual || u?.def_visual || u?.deficiencia_visual,
+        pcd_auditiva: u?.pcd_auditiva || u?.def_auditiva || u?.deficiencia_auditiva || u?.surdo,
+        pcd_fisica: u?.pcd_fisica || u?.def_fisica || u?.deficiencia_fisica,
+        pcd_intelectual: u?.pcd_intelectual || u?.def_mental || u?.def_intelectual,
+        pcd_multipla: u?.pcd_multipla || u?.def_multipla,
+        pcd_autismo: u?.pcd_autismo || u?.tea || u?.transtorno_espectro_autista,
+        presente: presentes > 0,
+        frequencia: `${freq}%`,
+      };
+    });
+
+    // resumo por encontro (para "presentes até agora")
+    // conta presentes por data; só datas que já ocorreram entram no cálculo
+    const hoje = new Date();
+    const occurred = datas.filter(d => {
+      const di = (d?.data || d);
+      const hi = (d?.horario_inicio || "00:00").slice(0,5);
+      const dt = di ? new Date(`${String(di).slice(0,10)}T${hi}:00`) : null;
+      return dt && dt <= hoje;
+    });
+
+    const presentesPorData = occurred.map(d => {
+      const dia = String(d?.data || d).slice(0,10);
+      let count = 0;
+      for (const u of usuarios) {
+        if ((u.presencas || []).some(p => String(p?.data_presenca || p?.data).slice(0,10) === dia && p?.presente)) {
+          count += 1;
+        }
+      }
+      return { data: dia, presentes: count };
+    });
+
+    const encontrosOcorridos = presentesPorData.length;
+    const somaPresentes = presentesPorData.reduce((a,b)=>a + b.presentes, 0);
+    const mediaPresentes = encontrosOcorridos ? Math.round(somaPresentes / encontrosOcorridos) : 0;
+
+    setPresencasPorTurma((prev) => ({
+      ...prev,
+      [turmaId]: {
+        lista,                              // o que já existia
+        resumo: { encontrosOcorridos, presentesPorData, mediaPresentes }
+      }
+    }));
+  } catch (err) {
+    console.error("❌ Erro ao carregar presenças:", err);
+    toast.error("Erro ao carregar presenças da turma.");
+  }
+};
 
   /* ========= PDFs ========= */
 
@@ -199,50 +242,95 @@ export default function DashboardAdministrador() {
   // (2) PDF com dados do curso + lista de INSCRITOS (nome/cpf)
   const gerarPdfInscritosTurma = async (turmaId) => {
     try {
-      // Garante a lista de inscritos no cache
+      // garante dados
       let inscritos = inscritosPorTurma[turmaId];
       if (!Array.isArray(inscritos)) {
         const data = await apiGet(`/api/inscricoes/turma/${turmaId}`, { on403: "silent" });
         inscritos = Array.isArray(data) ? data : [];
         setInscritosPorTurma((prev) => ({ ...prev, [turmaId]: inscritos }));
       }
-
-      // Localiza o objeto da turma (procura em todas as listas já carregadas)
+  
+      // presenças (para % individual e média até agora)
+      let pres = presencasPorTurma[turmaId];
+      if (!pres) {
+        await carregarPresencas(turmaId);
+        pres = presencasPorTurma[turmaId]; // pode vir no próximo tick; se não vier, segue sem % individual
+      }
+  
       const todasTurmas = Object.values(turmasPorEvento).flat();
       const turma = todasTurmas.find((t) => Number(t?.id) === Number(turmaId)) || {};
-
-      const eventoNome =
-        turma?.evento?.nome || turma?.evento?.titulo || turma?.titulo_evento || turma?.nome_evento || "Evento";
+  
+      const eventoNome = turma?.evento?.nome || turma?.evento?.titulo || turma?.titulo_evento || "Evento";
       const turmaNome = turma?.nome || `Turma ${turmaId}`;
-      const di = ymd(turma?.data_inicio);
-      const df = ymd(turma?.data_fim);
-      const hi = onlyHHmm(turma?.horario_inicio);
-      const hf = onlyHHmm(turma?.horario_fim);
-      const vagas = Number(turma?.vagas || turma?.vagas_totais || 0);
-      const qtd = inscritos.length;
-      const perc = vagas > 0 ? Math.round((qtd / vagas) * 100) : null;
-
-      const doc = new jsPDF();
+  
+      // helpers locais
+      const only = (s) => (typeof s === "string" ? s.slice(0,5) : "");
+      const ymd = (s) => (typeof s === "string" ? s.slice(0,10) : "");
+      const di = ymd(turma?.data_inicio), df = ymd(turma?.data_fim);
+      const hi = only(turma?.horario_inicio), hf = only(turma?.horario_fim);
+  
+      const { jsPDF } = await import("jspdf");
+      const autoTable = (await import("jspdf-autotable")).default;
+  
+      const doc = new jsPDF({ orientation: "landscape" });
       doc.setFontSize(16);
-      doc.text(`Lista de Inscritos — ${eventoNome}`, 14, 18);
+      doc.text(`Lista de Inscritos — ${eventoNome}`, 14, 16);
       doc.setFontSize(12);
-      doc.text(`${turmaNome}`, 14, 26);
-      if (di || df) doc.text(`Período: ${formatarDataBR(di)} a ${formatarDataBR(df)}`, 14, 32);
-      if (hi || hf) doc.text(`Horário: ${hi} às ${hf}`, 14, 38);
-      if (vagas || vagas === 0) {
-        doc.text(
-          `Vagas: ${qtd}${vagas ? ` de ${vagas}` : ""}${perc !== null ? ` (${perc}%)` : ""}`,
-          14,
-          44
-        );
+      doc.text(`${turmaNome}`, 14, 24);
+      if (di || df) doc.text(`Período: ${di?.split("-").reverse().join("/")} a ${df?.split("-").reverse().join("/")}`, 14, 30);
+      if (hi || hf) doc.text(`Horário: ${hi} às ${hf}`, 14, 36);
+  
+      const presResumo = pres?.resumo;
+      if (presResumo) {
+        const media = presResumo.mediaPresentes || 0;
+        const totalInscritos = inscritos.length;
+        const pct = totalInscritos ? Math.round((media / totalInscritos) * 100) : 0;
+        doc.text(`Presença "até agora": média ${media}/${totalInscritos} (${pct}%) em ${presResumo.encontrosOcorridos} encontros`, 14, 42);
       }
-
+  
+      const mapFreq = {};
+      (pres?.lista || []).forEach(p => { mapFreq[p.usuario_id] = p.frequencia; });
+  
+      const idadeDe = (iso) => {
+        const d = typeof iso === "string" ? iso.slice(0,10) : "";
+        if (!d) return "";
+        const [Y,M,D] = d.split("-").map(Number);
+        const hoje = new Date();
+        let idade = hoje.getFullYear() - Y;
+        const m = hoje.getMonth() + 1 - M;
+        if (m < 0 || (m === 0 && hoje.getDate() < D)) idade--;
+        return idade >= 0 && idade < 140 ? `${idade}` : "";
+      };
+  
       autoTable(doc, {
-        startY: 50,
-        head: [["Nome", "CPF"]],
-        body: inscritos.map((i) => [i?.nome || "—", formatarCPF(i?.cpf)]),
+        startY: 48,
+        head: [["Nome", "CPF", "Idade", "Registro", "PcD", "Frequência"]],
+        body: inscritos
+          .slice()
+          .sort((a,b)=>String(a?.nome||"").localeCompare(String(b?.nome||"")))
+          .map((i) => {
+            const cpfFmt = formatarCPF(i?.cpf);
+            const pcdTags = [
+              (i?.pcd_visual || i?.def_visual) ? "VIS" : "",
+              (i?.pcd_auditiva || i?.def_auditiva || i?.surdo) ? "AUD" : "",
+              (i?.pcd_fisica || i?.def_fisica) ? "FIS" : "",
+              (i?.pcd_intelectual || i?.def_mental) ? "INT" : "",
+              (i?.pcd_multipla) ? "MULT" : "",
+              (i?.pcd_autismo || i?.tea) ? "TEA" : "",
+            ].filter(Boolean).join(", ");
+            return [
+              i?.nome || "—",
+              cpfFmt,
+              idadeDe(i?.data_nascimento || i?.nascimento),
+              i?.registro || i?.registro_funcional || i?.matricula || "",
+              pcdTags,
+              mapFreq[i?.id] || mapFreq[i?.usuario_id] || ""
+            ];
+          }),
+        styles: { fontSize: 9 },
+        headStyles: { fillColor: [22, 101, 52] },
       });
-
+  
       doc.save(`inscritos_turma_${turmaId}.pdf`);
       toast.success("📄 PDF de inscritos gerado!");
     } catch (e) {

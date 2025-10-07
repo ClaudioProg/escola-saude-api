@@ -8,7 +8,8 @@ import { toast } from "react-toastify";
 import { CalendarDays, RefreshCw } from "lucide-react";
 
 import Footer from "../components/Footer";
-import EventoDetalheModal from "../components/EventoDetalheModal"; // 👈 modal com detalhes
+import EventoDetalheModal from "../components/EventoDetalheModal";
+import LegendaEventos from "../components/LegendaEventos";
 import { apiGet } from "../services/api";
 
 /* ───────── Header (cor própria desta página) ───────── */
@@ -103,6 +104,35 @@ function MiniStat({ value, label, color, bordered = true }) {
   );
 }
 
+/* ───────── Badge (chip) clicável no dia ───────── */
+function DiaBadge({ evento, onClick }) {
+  const titulo = String(evento?.titulo || evento?.nome || "Evento").slice(0, 28);
+  const hi = hh(evento?.horario_inicio, "00:00");
+  const hf = hh(evento?.horario_fim, "23:59");
+  const showHora = hi !== "00:00" || hf !== "23:59";
+  const horaStr = showHora ? `${hi}–${hf}` : null;
+
+  const st = deriveStatus(evento);
+  const bg = colorByStatus[st] || colorByStatus.programado;
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={evento?.titulo}
+      className="max-w-full truncate inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold focus:outline-none focus:ring-2 focus:ring-cyan-600"
+      style={{
+        backgroundColor: `${bg}1A`, // ~10% alpha
+        color: bg,
+        border: `1px solid ${bg}55`, // ~33% alpha
+      }}
+    >
+      <span className="truncate">{titulo}</span>
+      {horaStr && <span className="opacity-80">• {horaStr}</span>}
+    </button>
+  );
+}
+
 /* ───────── normalização robusta (preserva local/instrutores) ───────── */
 function normalizeFromAPI(raw) {
   let arr = [];
@@ -148,8 +178,8 @@ function normalizeFromAPI(raw) {
       data_fim: t?.data_fim || parentEvt?.data_fim,
       horario_inicio: t?.horario_inicio || parentEvt?.horario_inicio,
       horario_fim: t?.horario_fim || parentEvt?.horario_fim,
-      local: parentEvt?.local || t?.local || t?.evento?.local || null,                 // 👈 preserva local
-      instrutores: parentEvt?.instrutores || t?.instrutores || [],                     // 👈 preserva instrutores
+      local: parentEvt?.local || t?.local || t?.evento?.local || null,
+      instrutores: parentEvt?.instrutores || t?.instrutores || [],
       ocorrencias,
       _turma: t,
     });
@@ -158,7 +188,6 @@ function normalizeFromAPI(raw) {
   for (const item of arr) {
     if (!item) continue;
 
-    // 1) evento rico com turmas → preserva metadados do evento no filho
     if (Array.isArray(item?.turmas) && item.turmas.length) {
       const parentEvt = {
         titulo: item?.titulo || item?.nome,
@@ -173,13 +202,11 @@ function normalizeFromAPI(raw) {
       continue;
     }
 
-    // 2) item já é uma turma
     if (item?.datas || item?.encontros || item?.evento) {
       fromTurma(item);
       continue;
     }
 
-    // 3) evento com ocorrências próprias
     const ocorrencias = [];
     const lista = Array.isArray(item?.ocorrencias) ? item.ocorrencias : Array.isArray(item?.datas) ? item.datas : [];
     for (const d of lista) {
@@ -223,9 +250,8 @@ export default function AgendaInstrutor() {
     setErro("");
     if (liveRef.current) liveRef.current.textContent = "Carregando sua agenda…";
 
-    // 👉 tenta primeiro o endpoint rico que criamos no backend
     const endpoints = [
-      "/api/agenda/instrutor/agenda", // PRIORIDADE
+      "/api/agenda/instrutor/agenda",
       "/api/agenda/instrutor",
       "/agenda/instrutor",
       "/api/agenda/minha-instrutor",
@@ -312,32 +338,39 @@ export default function AgendaInstrutor() {
                 prevLabel="‹"
                 nextLabel="›"
                 aria-label="Calendário dos meus eventos"
-                tileClassName="!rounded-lg hover:!bg-gray-200 dark:hover:!bg-zinc-700 focus:!ring-2 focus:!ring-lousa"
+                tileClassName="!rounded-lg hover:!bg-gray-200 dark:hover:!bg-zinc-700 focus:!ring-2 focus:!ring-cyan-600"
                 navigationLabel={({ date }) =>
                   format(date, "MMMM yyyy", { locale: ptBR }).replace(/^\w/, (c) => c.toUpperCase())
                 }
                 tileContent={({ date }) => {
                   const key = format(date, "yyyy-MM-dd");
-                  const diaEventos = eventosPorData[key] || [];
+                  const lista = eventosPorData[key] || [];
+                  if (!lista.length) return null;
+
+                  // mostra até 3 chips + "+N"
+                  const maxChips = 3;
+                  const visiveis = lista.slice(0, maxChips);
+                  const resto = Math.max(0, lista.length - visiveis.length);
+
                   return (
-                    <div className="rc-day-dots mt-1 flex gap-1 justify-center flex-wrap">
-                      {diaEventos.map((ev, idx) => {
-                        const st = deriveStatus(ev);
-                        return (
-                          <span
-                            key={`${ev.id ?? ev.titulo}-${key}-${idx}`}
-                            className="agenda-dot cursor-pointer focus:outline-none focus:ring-2 focus:ring-lousa"
-                            style={{ backgroundColor: colorByStatus[st] || colorByStatus.programado,
-                                     width: 10, height: 10, borderRadius: 9999, display: "inline-block" }}
-                            title={ev.titulo}
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => setSelecionado(ev)}                          // 👈 abre modal
-                            onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setSelecionado(ev)}
-                            aria-label={`Evento: ${ev.titulo}`}
-                          />
-                        );
-                      })}
+                    <div className="mt-1 px-1 flex gap-1 justify-center flex-wrap">
+                      {visiveis.map((ev, idx) => (
+                        <DiaBadge
+                          key={`${ev.id ?? ev.titulo}-${key}-${idx}`}
+                          evento={ev}
+                          onClick={() => setSelecionado(ev)}
+                        />
+                      ))}
+                      {resto > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setSelecionado(lista[0])}
+                          className="px-2 py-0.5 rounded-full text-[10px] font-semibold text-cyan-700 bg-cyan-50 border border-cyan-200 hover:bg-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-600"
+                          title={`Mais ${resto} evento(s) neste dia`}
+                        >
+                          +{resto}
+                        </button>
+                      )}
                     </div>
                   );
                 }}
@@ -345,9 +378,12 @@ export default function AgendaInstrutor() {
             )}
           </div>
         </div>
+
+        <div className="mt-6 flex justify-center">
+          <LegendaEventos />
+        </div>
       </main>
 
-      {/* 👇 modal com os detalhes completos (local + instrutores inclusos) */}
       {selecionado && (
         <EventoDetalheModal
           evento={selecionado}

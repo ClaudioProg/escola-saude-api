@@ -350,3 +350,17 @@ export function parseHoraBr(hhmm = "00:00") {
   const m = Math.max(0, Math.min(59, parseInt(mm, 10) || 0));
   return { hh: h, mm: m };
 }
+
+// Calcula idade a partir de "YYYY-MM-DD"
+export function idadeDe(nascimentoISO) {
+  const d = (nascimentoISO ?? "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
+
+  const [Y, M, D] = d.split("-").map(Number);
+  const hoje = new Date();
+  let idade = hoje.getFullYear() - Y;
+  const m = (hoje.getMonth() + 1) - M;
+  if (m < 0 || (m === 0 && hoje.getDate() < D)) idade--;
+
+  return idade >= 0 && idade < 140 ? idade : null;
+}

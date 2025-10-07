@@ -71,6 +71,45 @@ function MiniStat({ value, label, color, bordered = true }) {
   );
 }
 
+/* ───────────────── DiaBadge (chip clicável) ───────────────── */
+const colorByStatus = {
+  programado: "#22c55e", // green-500
+  andamento:  "#eab308", // amber-500
+  encerrado:  "#ef4444", // red-500
+};
+
+function DiaBadge({ evento, onClick }) {
+  // título curto
+  const titulo = String(evento?.titulo || evento?.nome || "Evento").slice(0, 28);
+
+  // hora (se houver)
+  const hi = (evento?.horario_inicio ?? "00:00").slice(0, 5);
+  const hf = (evento?.horario_fim ?? "23:59").slice(0, 5);
+  const showHora = hi !== "00:00" || hf !== "23:59";
+  const horaStr = showHora ? `${hi}–${hf}` : null;
+
+  // status → cores
+  const st = deriveStatus(evento);
+  const bg = colorByStatus[st] || colorByStatus.programado;
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={evento?.titulo}
+      className="max-w-full truncate inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-600"
+      style={{
+        backgroundColor: `${bg}1A`, // ~10% alpha
+        color: bg,
+        border: `1px solid ${bg}55`, // ~33% alpha
+      }}
+    >
+      <span className="truncate">{titulo}</span>
+      {horaStr && <span className="opacity-80">• {horaStr}</span>}
+    </button>
+  );
+}
+
 /* =========================================================================
    Helpers de data
    ========================================================================= */
@@ -134,12 +173,6 @@ function deriveStatus(ev) {
   }
   return ev.status || "programado";
 }
-
-const colorByStatus = {
-  programado: "#22c55e",
-  andamento:  "#eab308",
-  encerrado:  "#ef4444",
-};
 /* ========================================================================= */
 
 export default function AgendaUsuario() {
@@ -247,11 +280,11 @@ export default function AgendaUsuario() {
       <main className="min-h-screen bg-gelo dark:bg-gray-900 px-3 sm:px-4 py-6 text-gray-900 dark:text-white">
         <p ref={liveRef} className="sr-only" aria-live="polite" />
 
-        {/* Ministats com borda (mesmo padrão do painel/agenda do instrutor) */}
+        {/* Ministats com borda */}
         <div className="max-w-6xl mx-auto grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
-          <MiniStat value={stats.programados} label="Programados" color="#22c55e" />
-          <MiniStat value={stats.andamento}   label="Em andamento" color="#eab308" />
-          <MiniStat value={stats.realizados}  label="Realizados"  color="#ef4444" />
+          <MiniStat value={stats.programados} label="Programados"   color="#22c55e" />
+          <MiniStat value={stats.andamento}   label="Em andamento"  color="#eab308" />
+          <MiniStat value={stats.realizados}  label="Realizados"    color="#ef4444" />
         </div>
 
         <div className="mx-auto w-full max-w-7xl">
@@ -265,38 +298,39 @@ export default function AgendaUsuario() {
                 prevLabel="‹"
                 nextLabel="›"
                 aria-label="Calendário dos meus eventos"
-                tileClassName="!rounded-lg hover:!bg-gray-200 dark:hover:!bg-zinc-700 focus:!ring-2 focus:!ring-lousa"
+                tileClassName="!rounded-lg hover:!bg-gray-200 dark:hover:!bg-zinc-700 focus:!ring-2 focus:!ring-emerald-600"
                 navigationLabel={({ date }) =>
                   format(date, "MMMM yyyy", { locale: ptBR }).replace(/^\w/, (c) => c.toUpperCase())
                 }
                 tileContent={({ date }) => {
                   const key = format(date, "yyyy-MM-dd");
-                  const diaEventos = eventosPorData[key] || [];
+                  const lista = eventosPorData[key] || [];
+                  if (!lista.length) return null;
+
+                  // mostra até 3 chips + "+N"
+                  const maxChips = 3;
+                  const visiveis = lista.slice(0, maxChips);
+                  const resto = Math.max(0, lista.length - visiveis.length);
 
                   return (
-                    <div className="rc-day-dots mt-1 flex gap-1 justify-center flex-wrap">
-                      {diaEventos.map((ev) => {
-                        const st = deriveStatus(ev);
-                        return (
-                          <span
-                            key={`${ev.id ?? ev.titulo}-${key}`}
-                            className="agenda-dot cursor-pointer focus:outline-none focus:ring-2 focus:ring-lousa"
-                            style={{
-                              backgroundColor: colorByStatus[st] || colorByStatus.programado,
-                              width: 10,
-                              height: 10,
-                              borderRadius: 9999,
-                              display: "inline-block",
-                            }}
-                            title={ev.titulo}
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => setSelecionado(ev)}
-                            onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setSelecionado(ev)}
-                            aria-label={`Evento: ${ev.titulo}`}
-                          />
-                        );
-                      })}
+                    <div className="mt-1 px-1 flex gap-1 justify-center flex-wrap">
+                      {visiveis.map((ev) => (
+                        <DiaBadge
+                          key={`${ev.id ?? ev.titulo}-${key}`}
+                          evento={ev}
+                          onClick={() => setSelecionado(ev)}
+                        />
+                      ))}
+                      {resto > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setSelecionado(lista[0])}
+                          className="px-2 py-0.5 rounded-full text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                          title={`Mais ${resto} evento(s) neste dia`}
+                        >
+                          +{resto}
+                        </button>
+                      )}
                     </div>
                   );
                 }}

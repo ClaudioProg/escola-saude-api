@@ -492,30 +492,106 @@ async function obterMinhasInscricoes(req, res) {
 /* ────────────────────────────────────────────────────────────────
    📋 Inscritos por turma
    ──────────────────────────────────────────────────────────────── */
+   // 📁 src/controllers/inscricoesController.js  (substitua só esta função)
 async function listarInscritosPorTurma(req, res) {
-  const { turma_id } = req.params;
+  const turmaId = Number(req.params.turma_id || req.params.turmaId);
+  if (!Number.isFinite(turmaId)) {
+    return res.status(400).json({ erro: "turmaId inválido" });
+  }
 
   try {
-    const result = await db.query(
-      `SELECT 
-         u.id AS usuario_id, 
-         u.nome, 
-         u.cpf,
-         EXISTS (
-           SELECT 1 
-           FROM presencas p
-           WHERE p.usuario_id = u.id 
-             AND p.turma_id = $1 
-             AND p.data_presenca = CURRENT_DATE
-         ) AS presente
-       FROM inscricoes i
-       JOIN usuarios u ON u.id = i.usuario_id
-       WHERE i.turma_id = $1
-       ORDER BY u.nome`,
-      [turma_id]
+    // 1) total de encontros (datas_turma)
+    const { rows: diasRows } = await db.query(
+      `SELECT COUNT(*)::int AS total_dias
+         FROM datas_turma
+        WHERE turma_id = $1`,
+      [turmaId]
+    );
+    const totalDias = diasRows?.[0]?.total_dias || 0;
+
+    // 2) presentes por usuário
+    const { rows: presRows } = await db.query(
+      `
+      SELECT usuario_id,
+             SUM(CASE WHEN presente THEN 1 ELSE 0 END)::int AS presentes
+        FROM presencas
+       WHERE turma_id = $1
+       GROUP BY usuario_id
+      `,
+      [turmaId]
+    );
+    const presentesMap = new Map(
+      presRows.map(r => [Number(r.usuario_id), Number(r.presentes)])
     );
 
-    return res.json(result.rows);
+    // 3) inscritos + dados extras (de acordo com seu schema)
+    const { rows } = await db.query(
+      `
+      SELECT 
+        u.id  AS usuario_id,
+        u.nome,
+        u.cpf,
+        u.registro,
+        u.data_nascimento,
+        u.deficiencia,         -- texto livre (ex.: 'Visual', 'Auditiva', 'Física', 'Intelectual', 'Múltipla', 'TEA', ...)
+
+        /* idade calculada com base em data_nascimento */
+        CASE
+          WHEN u.data_nascimento IS NULL THEN NULL
+          ELSE EXTRACT(YEAR FROM age(CURRENT_DATE, u.data_nascimento))::int
+        END AS idade,
+
+        /* flags PcD derivadas do TEXTO da coluna 'deficiencia' */
+        CASE WHEN u.deficiencia ILIKE '%visual%'                        THEN TRUE ELSE FALSE END AS pcd_visual,
+        CASE WHEN u.deficiencia ILIKE '%auditiva%' OR u.deficiencia ILIKE '%surdez%' OR u.deficiencia ILIKE '%surdo%' 
+                                                                     THEN TRUE ELSE FALSE END AS pcd_auditiva,
+        CASE WHEN u.deficiencia ILIKE '%fisic%' OR u.deficiencia ILIKE '%locomot%' 
+                                                                     THEN TRUE ELSE FALSE END AS pcd_fisica,
+        CASE WHEN u.deficiencia ILIKE '%intelectual%' OR u.deficiencia ILIKE '%mental%' 
+                                                                     THEN TRUE ELSE FALSE END AS pcd_intelectual,
+        CASE WHEN u.deficiencia ILIKE '%múltipla%' OR u.deficiencia ILIKE '%multipla%' 
+                                                                     THEN TRUE ELSE FALSE END AS pcd_multipla,
+        CASE WHEN u.deficiencia ILIKE '%tea%' OR u.deficiencia ILIKE '%autis%' 
+                                                                     THEN TRUE ELSE FALSE END AS pcd_autismo
+
+      FROM inscricoes i
+      JOIN usuarios u ON u.id = i.usuario_id
+      WHERE i.turma_id = $1
+      ORDER BY u.nome ASC
+      `,
+      [turmaId]
+    );
+
+    // 4) saída com frequência
+    const lista = rows.map(r => {
+      const presentes = presentesMap.get(Number(r.usuario_id)) || 0;
+      const frequencia = totalDias > 0 ? Math.round((presentes / totalDias) * 100) : null;
+
+      return {
+        usuario_id: r.usuario_id,
+        nome: r.nome,
+        cpf: r.cpf,
+
+        // extras para o front
+        idade: Number.isFinite(r.idade) ? r.idade : null,
+        registro: r.registro || null,
+
+        // devolve o texto cru e as flags
+        deficiencia: r.deficiencia || null,
+        pcd_visual: !!r.pcd_visual,
+        pcd_auditiva: !!r.pcd_auditiva,
+        pcd_fisica: !!r.pcd_fisica,
+        pcd_intelectual: !!r.pcd_intelectual,
+        pcd_multipla: !!r.pcd_multipla,
+        pcd_autismo: !!r.pcd_autismo,
+
+        // frequência
+        frequencia_num: frequencia,
+        frequencia: frequencia != null ? `${frequencia}%` : null,
+      };
+    });
+
+    return res.json(lista);
   } catch (err) {
     console.error("❌ Erro ao buscar inscritos:", {
       message: err?.message, detail: err?.detail, code: err?.code

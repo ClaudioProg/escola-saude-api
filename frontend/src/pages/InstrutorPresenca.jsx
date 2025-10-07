@@ -1,4 +1,4 @@
-// ✅ src/pages/DashboardInstrutor.jsx
+// ✅ src/pages/InstrutorPresenca.jsx
 import { useEffect, useRef, useState } from "react";
 import { toast } from "react-toastify";
 import TurmasInstrutor from "../components/TurmasInstrutor";

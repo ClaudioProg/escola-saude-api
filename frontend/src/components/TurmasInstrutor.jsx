@@ -1,4 +1,4 @@
-// ✅ src/components/TurmasInstrutor.jsx (abas por DATA + ministats com animação + Aguardando)
+// ✅ src/components/TurmasInstrutor.jsx (abas por DATA + ministats em badge + donut de presença)
 import PropTypes from "prop-types";
 import { motion, AnimatePresence } from "framer-motion";
 import { useMemo, useState } from "react";
@@ -51,36 +51,105 @@ const CHIP_STYLES = {
 };
 const CHIP_TEXT = { programado: "Programado", andamento: "Em andamento", encerrado: "Encerrado" };
 
-/* Badges */
+/* Badges base (com borda) */
 const Badge = ({ children, kind = "waiting" }) => {
   const cls =
-    kind === "ok" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-600/30 dark:text-emerald-300"
-    : kind === "absent" ? "bg-rose-100 text-rose-700 dark:bg-rose-600/30 dark:text-rose-200"
-    : "bg-amber-100 text-amber-700 dark:bg-amber-600/30 dark:text-amber-200";
-  return <span className={`px-2.5 py-[2px] text-xs font-semibold rounded-full ${cls}`}>{children}</span>;
+    kind === "ok" ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800"
+    : kind === "absent" ? "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/20 dark:text-rose-200 dark:border-rose-800"
+    : "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-200 dark:border-amber-800";
+  return (
+    <span className={`px-2.5 py-[2px] text-xs font-semibold rounded-full border shadow-sm ${cls}`}>
+      {children}
+    </span>
+  );
 };
 
-/* Mini-stat (número grande + rótulo pequeno) com “pulse” quando muda */
-function pctColor(p) {
-  if (p >= 90) return "text-sky-600 dark:text-sky-400";
-  if (p >= 76) return "text-emerald-600 dark:text-emerald-400";
-  if (p >= 51) return "text-amber-600 dark:text-amber-400";
-  return "text-rose-600 dark:text-rose-400";
+/* Mini-stat em badge (número grande + rótulo pequeno) */
+function MiniStat({ number, label, className = "" }) {
+  return (
+    <div className="min-w-[82px]">
+      <div className="inline-flex flex-col items-center justify-center px-3 py-2 rounded-xl border border-zinc-200 bg-white shadow-sm dark:bg-zinc-900 dark:border-zinc-700">
+        <motion.div
+          key={String(number)}
+          initial={{ scale: 0.9, y: -2, opacity: 0.6 }}
+          animate={{ scale: 1, y: 0, opacity: 1 }}
+          transition={{ type: "spring", stiffness: 320, damping: 20 }}
+          className={`leading-none font-extrabold text-2xl sm:text-3xl ${className}`}
+        >
+          {number}
+        </motion.div>
+        <div className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">{label}</div>
+      </div>
+    </div>
+  );
 }
-const MiniStat = ({ number, label, className = "" }) => (
-  <div className="min-w-[64px] text-right">
-    <motion.div
-      key={String(number)} // re-render -> anima
-      initial={{ scale: 0.9, y: -2, opacity: 0.6 }}
-      animate={{ scale: 1, y: 0, opacity: 1 }}
-      transition={{ type: "spring", stiffness: 320, damping: 20 }}
-      className={`leading-none font-extrabold text-2xl sm:text-3xl ${className}`}
-    >
-      {number}
-    </motion.div>
-    <div className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">{label}</div>
-  </div>
-);
+
+/* cor HEX para o donut (mesmas faixas de severidade) */
+function pctColorHex(p) {
+  if (p >= 90) return "#0284c7";  // sky-600
+  if (p >= 76) return "#059669";  // emerald-600
+  if (p >= 51) return "#d97706";  // amber-600
+  return "#e11d48";               // rose-600
+}
+
+/* Donut de presença fino (SVG), sem borda externa e com rótulo interno */
+function DonutPresenca({ pct }) {
+  const v = Math.max(0, Math.min(100, Number(pct) || 0));
+  const color = pctColorHex(v);
+
+  const box = 72;
+  const stroke = 8;              // rosca fina
+  const r = (box - stroke) / 2;
+  const cx = box / 2;
+  const cy = box / 2;
+  const C = 2 * Math.PI * r;
+  const filled = (v / 100) * C;
+
+  return (
+    <div className="w-[72px] h-[72px] flex items-center justify-center">
+      <svg width={box} height={box} viewBox={`0 0 ${box} ${box}`} aria-label={`Presença: ${v}%`}>
+        {/* trilha */}
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke="#e5e7eb" strokeWidth={stroke} />
+        {/* progresso (começa no topo) */}
+        <circle
+          cx={cx}
+          cy={cy}
+          r={r}
+          fill="none"
+          stroke={color}
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={`${filled} ${C - filled}`}
+          transform={`rotate(-90 ${cx} ${cy})`}
+        />
+        {/* número central maior e na cor do arco */}
+        <text
+          x="50%"
+          y="47%"
+          textAnchor="middle"
+          dominantBaseline="central"
+          fontWeight="800"
+          fontSize="18"
+          fill={color}
+        >
+          {v}%
+        </text>
+        {/* label “presença” pequeno */}
+        <text
+          x="50%"
+          y="67%"
+          textAnchor="middle"
+          dominantBaseline="central"
+          fontSize="7"
+          fill="#6b7280"
+          style={{ letterSpacing: 0.4 }}
+        >
+          PRESENÇA
+        </text>
+      </svg>
+    </div>
+  );
+}
 
 /* =================================================================== */
 
@@ -111,19 +180,19 @@ export default function TurmasInstrutor({
   const eventosAgrupados = useMemo(() => {
     const out = {};
     for (const t of turmas || []) {
-    if (!t || !t.id) continue;
-    const evId = t?.evento?.id ?? t?.evento_id ?? t?.eventoId;
-    if (!evId) continue; // sem evento, ignora com segurança
-    const eventoId = String(evId);
-    const eventoNome = t?.evento?.nome || t?.evento?.titulo || t?.titulo_evento || "Evento";
-    const eventoLocal = t?.local || t?.evento?.local || "";
-    if (!out[eventoId]) out[eventoId] = { nome: eventoNome, local: eventoLocal, turmas: [] };
-    out[eventoId].turmas.push(t);
+      if (!t || !t.id) continue;
+      const evId = t?.evento?.id ?? t?.evento_id ?? t?.eventoId;
+      if (!evId) continue;
+      const eventoId = String(evId);
+      const eventoNome = t?.evento?.nome || t?.evento?.titulo || t?.titulo_evento || "Evento";
+      const eventoLocal = t?.local || t?.evento?.local || "";
+      if (!out[eventoId]) out[eventoId] = { nome: eventoNome, local: eventoLocal, turmas: [] };
+      out[eventoId].turmas.push(t);
     }
     return out;
   }, [turmas]);
 
-  /* Confirmação manual */
+  /* Confirmação manual (mesmo código) */
   async function confirmarPresencaManual(usuarioId, turmaId, dataReferencia) {
     const dataYMD = String(dataReferencia).slice(0, 10);
     const payload = { usuario_id: Number(usuarioId), turma_id: Number(turmaId), data: dataYMD, data_presenca: dataYMD };
@@ -304,7 +373,7 @@ export default function TurmasInstrutor({
                       </button>
                     </div>
 
-                    {/* Painel: Inscritos — ABAS POR DATA + MINISTATS (com “Aguardando”) */}
+                    {/* Painel: Inscritos — ABAS POR DATA + MINISTATS */}
                     <AnimatePresence>
                       {expandindoInscritos && (
                         <motion.div
@@ -399,13 +468,13 @@ export default function TurmasInstrutor({
                                           </div>
                                         </div>
 
-                                        {/* Ministats */}
-                                        <div className="ml-0 sm:ml-auto flex flex-wrap gap-4">
-                                          <MiniStat number={totalInscritos} label="inscritos" className="text-zinc-700 dark:text-zinc-100" />
+                                        {/* Ministats em badges + donut */}
+                                        <div className="ml-0 sm:ml-auto flex flex-wrap items-center gap-3">
+                                          <MiniStat number={totalInscritos} label="inscritos" className="text-zinc-800 dark:text-zinc-100" />
                                           <MiniStat number={presentes} label="presentes" className="text-emerald-600 dark:text-emerald-400" />
                                           <MiniStat number={faltas} label="faltas" className="text-rose-600 dark:text-rose-400" />
                                           <MiniStat number={aguardando} label="aguardando" className="text-amber-600 dark:text-amber-400" />
-                                          <MiniStat number={`${pct}%`} label="presença" className={pctColor(pct)} />
+                                          <DonutPresenca pct={pct} />
                                         </div>
                                       </header>
 

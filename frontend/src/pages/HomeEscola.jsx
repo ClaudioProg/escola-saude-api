@@ -250,7 +250,7 @@ export default function HomeEscola() {
 
   <p> <strong> 🌱 A importância da data</strong> </p>
   <p>
-  Celebrar o 17 de outubro é reconhecer o papel fundamental da vacinação na saúde pública e lembrar que a imunização é um direito e um dever. É também uma forma de valorizar o trabalho incansável de profissionais de saúde que, todos os dias, garantem que os imunobiológicos cheguem à população.
+  Celebrar o 21 de outubro é reconhecer o papel fundamental da vacinação na saúde pública e lembrar que a imunização é um direito e um dever. É também uma forma de valorizar o trabalho incansável de profissionais de saúde que, todos os dias, garantem que os imunobiológicos cheguem à população.
   </p>
 
   <p> <strong>🌿 Prevenção e cuidado</strong> </p>
