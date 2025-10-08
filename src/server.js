@@ -15,38 +15,39 @@ dotenv.config();
 const { db } = require("./db");
 
 /* ───────── Rotas existentes ───────── */
-const assinaturaRoutes            = require("./routes/assinaturaRoutes");
-const turmasRouteAdministrador    = require("./routes/turmasRouteAdministrador");
-const agendaRoute                 = require("./routes/agendaRoute");
-const avaliacoesRoute             = require("./routes/avaliacoesRoute");
-const certificadosRoute           = require("./routes/certificadosRoute");
-const certificadosHistoricoRoute  = require("./routes/certificadosHistoricoRoutes");
-const certificadosAvulsosRoutes   = require("./routes/certificadosAvulsosRoutes");
-const eventosRoute                = require("./routes/eventosRoute");
-const inscricoesRoute             = require("./routes/inscricoesRoute");
-const loginRoute                  = require("./routes/loginRoute");
-const presencasRoute              = require("./routes/presencasRoute");
-const relatorioPresencasRoute     = require("./routes/relatorioPresencasRoute");
-const turmasRoute                 = require("./routes/turmasRoute");
-const instrutorRoute              = require("./routes/instrutorRoutes");
-const relatoriosRoute             = require("./routes/relatoriosRoutes");
-const dashboardAnaliticoRoutes    = require("./routes/dashboardAnaliticoRoutes");
-const dashboardUsuarioRoute       = require("./routes/dashboardUsuarioRoute");
-const notificacoesRoute           = require("./routes/notificacoesRoute");
-const authGoogleRoute             = require("./auth/authGoogle");
-const unidadesRoutes              = require("./routes/unidadesRoutes");
-const usuarioPublicoController    = require("./controllers/usuarioPublicoController");
-const datasEventoRoute            = require("./routes/datasEventoRoute");
-const perfilRoutes                = require("./routes/perfilRoutes");
-const publicLookupsRoutes         = require("./routes/publicLookupsRoutes");
-const usuariosRoute               = require("./routes/usuariosRoute");
+// ⬇️ trocado para o arquivo/plural novo
+const assinaturaRoutes          = require("./routes/assinaturaRoutes");
+const turmasRouteAdministrador   = require("./routes/turmasRouteAdministrador");
+const agendaRoute                = require("./routes/agendaRoute");
+const avaliacoesRoute            = require("./routes/avaliacoesRoute");
+const certificadosRoute          = require("./routes/certificadosRoute");
+const certificadosHistoricoRoute = require("./routes/certificadosHistoricoRoutes");
+const certificadosAvulsosRoutes  = require("./routes/certificadosAvulsosRoutes");
+const eventosRoute               = require("./routes/eventosRoute");
+const inscricoesRoute            = require("./routes/inscricoesRoute");
+const loginRoute                 = require("./routes/loginRoute");
+const presencasRoute             = require("./routes/presencasRoute");
+const relatorioPresencasRoute    = require("./routes/relatorioPresencasRoute");
+const turmasRoute                = require("./routes/turmasRoute");
+const instrutorRoute             = require("./routes/instrutorRoutes");
+const relatoriosRoute            = require("./routes/relatoriosRoutes");
+const dashboardAnaliticoRoutes   = require("./routes/dashboardAnaliticoRoutes");
+const dashboardUsuarioRoute      = require("./routes/dashboardUsuarioRoute");
+const notificacoesRoute          = require("./routes/notificacoesRoute");
+const authGoogleRoute            = require("./auth/authGoogle");
+const unidadesRoutes             = require("./routes/unidadesRoutes");
+const usuarioPublicoController   = require("./controllers/usuarioPublicoController");
+const datasEventoRoute           = require("./routes/datasEventoRoute");
+const perfilRoutes               = require("./routes/perfilRoutes");
+const publicLookupsRoutes        = require("./routes/publicLookupsRoutes");
+const usuariosRoute              = require("./routes/usuariosRoute");
 
 /* 🆕 Submissão de Trabalhos */
-const chamadasRoutes              = require("./routes/chamadasRoutes");
-const trabalhosRoutes             = require("./routes/trabalhosRoutes");
+const chamadasRoutes             = require("./routes/chamadasRoutes");
+const trabalhosRoutes            = require("./routes/trabalhosRoutes");
 
 /* 🆕 Upload/Modelo de Banner (agora com rotas por chamada) */
-const uploadRoutes                = require("./routes/uploadRoutes");
+const uploadRoutes               = require("./routes/uploadRoutes");
 
 /* ───────── ENV obrigatórios em produção ───────── */
 if (process.env.NODE_ENV === "production") {
@@ -87,7 +88,7 @@ const vercelRegex = /^https:\/\/[a-z0-9-]+\.vercel\.app$/i;
 
 const corsOptions = {
   origin(origin, cb) {
-    if (!origin) return cb(null, true); // curl/Postman etc.
+    if (!origin) return cb(null, true);
     if (allowedOrigins.includes(origin) || vercelRegex.test(origin)) return cb(null, true);
     return cb(new Error("CORS bloqueado: " + origin));
   },
@@ -105,7 +106,7 @@ const corsOptions = {
     "Pragma",
   ],
   exposedHeaders: ["Content-Disposition", "X-Perfil-Incompleto"],
-  maxAge: 86400, // cache do preflight (1 dia)
+  maxAge: 86400,
 };
 app.use(cors(corsOptions));
 app.use((req, res, next) => { res.setHeader("Vary", "Origin"); next(); });
@@ -121,7 +122,6 @@ if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
 
 const uploadsDir = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-// ⚠️ aplica CORS nos estáticos também:
 app.use("/uploads", cors(corsOptions), express.static(uploadsDir, { maxAge: "1h", fallthrough: true }));
 
 /* 🆕 Modelos por chamada: /api/modelos/chamadas/:id/banner.pptx */
@@ -193,6 +193,7 @@ app.use("/api/notificacoes", notificacoesRoute);
 app.use("/api/auth", authGoogleRoute);
 app.use("/api/unidades", unidadesRoutes);
 app.use("/api/assinatura", assinaturaRoutes);
+app.use("/api/assinaturas", assinaturaRoutes);
 app.use("/api/datas", datasEventoRoute);
 app.use("/api/perfil", perfilRoutes);
 app.use("/api/usuarios/perfil", perfilRoutes);

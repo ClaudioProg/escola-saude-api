@@ -368,6 +368,47 @@ async function confirmarViaToken(req, res) {
   }
 }
 
+/**
+ * Confirma presença por token (idempotente), usada pela rota pública /api/presencas/qr/:token
+ * Parâmetros: { usuario_id, turma_id, data_ref:'YYYY-MM-DD' }
+ * Retorna: { ok: boolean, mensagem?: string }
+ */
+async function confirmarPresencaViaToken({ usuario_id, turma_id, data_ref }) {
+  // 1) Validar turma e janela de datas (datas-only, evita timezone)
+  const turma = await db.query(
+    `SELECT id, data_inicio::date AS di, data_fim::date AS df
+       FROM turmas WHERE id = $1`,
+    [turma_id]
+  );
+  if (turma.rowCount === 0) return { ok: false, mensagem: "Turma inválida." };
+
+  const di = ymd(turma.rows[0].di);
+  const df = ymd(turma.rows[0].df);
+  if (!data_ref || data_ref < di || data_ref > df) {
+    return { ok: false, mensagem: "Data fora do período da turma." };
+  }
+
+  // 2) Upsert idempotente em presencas
+  await db.query(
+    `
+    INSERT INTO presencas (usuario_id, turma_id, data_presenca, presente)
+    VALUES ($1, $2, $3, TRUE)
+    ON CONFLICT (usuario_id, turma_id, data_presenca)
+    DO UPDATE SET presente = EXCLUDED.presente
+    `,
+    [usuario_id, turma_id, data_ref]
+  );
+
+  // 3) Pós-ação opcional: checar elegibilidade de avaliação
+  try {
+    await verificarElegibilidadeParaAvaliacao(usuario_id, turma_id);
+  } catch (_) {
+    /* silencioso */
+  }
+
+  return { ok: true };
+}
+
 /* ------------------------------------------------------------------ *
  * POST /api/presencas/registrar-manual (instrutor/admin)
  * Body: { usuario_id, turma_id, data_presenca }
@@ -1100,4 +1141,5 @@ module.exports = {
   exportarPresencasPDF,
   listarTodasPresencasParaAdmin,
   obterMinhasPresencas,
+  confirmarPresencaViaToken, 
 };

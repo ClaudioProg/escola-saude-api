@@ -662,6 +662,32 @@ export async function apiPresencasTurmaPDF(turmaId) {
 }
 
 // ───────────────────────────────────────────────────────────────────
+// 🆕 Pequenos utilitários
+// ───────────────────────────────────────────────────────────────────
+export const onlyDigits = (s) => String(s ?? "").replace(/\D/g, ""); // 🆕 útil p/ CPF
+
+// ───────────────────────────────────────────────────────────────────
+// 🆕 APIs de Assinaturas/Certificados Avulsos
+// ───────────────────────────────────────────────────────────────────
+export async function apiGetAssinaturas(opts = {}) {         // 🆕 lista nomes com assinatura
+  return apiGet("/assinaturas", { on401: "silent", on403: "silent", ...opts });
+}
+
+/**
+ * 🆕 Gera/baixa PDF de certificado avulso com flags:
+ * - palestrante: boolean → rota de palestrante
+ * - assinatura2_id: id da assinatura extra (se houver)
+ */
+export async function apiCertAvulsoPDF(id, { palestrante = false, assinatura2_id } = {}) {
+  if (!id) throw new Error("id do certificado obrigatório");
+  const query = {
+    ...(palestrante ? { palestrante: "1" } : {}),
+    ...(assinatura2_id ? { assinatura2_id } : {}),
+  };
+  return apiGetFile(`/certificados-avulsos/${id}/pdf`, { query });
+}
+
+// ───────────────────────────────────────────────────────────────────
 // 🆕 APIs de Perfil (cadastro obrigatório) — ÚNICAS
 // ───────────────────────────────────────────────────────────────────
 export async function apiPerfilOpcoes(opts = {}) {

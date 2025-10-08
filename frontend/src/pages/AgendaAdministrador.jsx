@@ -1,8 +1,16 @@
-// ✅ src/pages/AgendaAdministrador.jsx (atualizado c/ badges de totais)
-import { useEffect, useMemo, useRef, useState } from "react";
+// ✅ src/pages/AgendaAdministrador.jsx — mobile-first, a11y e perf
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Calendar from "react-calendar";
 import "react-calendar/dist/Calendar.css";
-import { format, isAfter, isBefore, isWithinInterval, compareAsc, startOfMonth, endOfMonth } from "date-fns";
+import {
+  format,
+  isAfter,
+  isBefore,
+  isWithinInterval,
+  compareAsc,
+  startOfMonth,
+  endOfMonth,
+} from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { toast } from "react-toastify";
 
@@ -11,22 +19,33 @@ import EventoDetalheModal from "../components/EventoDetalheModal";
 import LegendaEventos from "../components/LegendaEventos";
 import { apiGet } from "../services/api";
 
-/* ========= HeaderHero (igual) ========= */
+/* ========= HeaderHero (mobile-first) ========= */
 function HeaderHero({ nome, carregando, onRefresh, onHoje }) {
   return (
-    <header className="bg-gradient-to-br from-sky-900 via-cyan-700 to-teal-600 text-white" role="banner">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 text-center flex flex-col items-center gap-3">
-        <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">
+    <header
+      className="bg-gradient-to-br from-sky-900 via-cyan-700 to-teal-600 text-white"
+      role="banner"
+    >
+      <a
+        href="#conteudo"
+        className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2"
+      >
+        Ir para o conteúdo
+      </a>
+
+      <div className="max-w-6xl mx-auto px-3 sm:px-6 py-4 sm:py-6 text-center flex flex-col items-center gap-2 sm:gap-3">
+        <h1 className="text-lg sm:text-2xl font-extrabold tracking-tight">
           Agenda Geral de Eventos
         </h1>
-        <p className="text-sm text-white/90">
-          {nome ? `Bem-vindo(a), ${nome}.` : "Bem-vindo(a)."} Visualize e consulte os eventos por dia.
+        <p className="text-xs sm:text-sm text-white/90 px-2">
+          {nome ? `Bem-vindo(a), ${nome}.` : "Bem-vindo(a)."} Visualize e
+          consulte os eventos por dia.
         </p>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
           <button
             type="button"
             onClick={onHoje}
-            className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md transition bg-white/15 hover:bg-white/25 text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+            className="inline-flex justify-center items-center gap-2 px-4 py-2 text-sm rounded-md transition bg-white/20 hover:bg-white/25 text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 w-full sm:w-auto"
             aria-label="Ir para a data de hoje no calendário"
           >
             Hoje
@@ -35,8 +54,8 @@ function HeaderHero({ nome, carregando, onRefresh, onHoje }) {
             type="button"
             onClick={onRefresh}
             disabled={carregando}
-            className={`inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70
-              ${carregando ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-white/15 hover:bg-white/25"} text-white`}
+            className={`inline-flex justify-center items-center gap-2 px-4 py-2 text-sm rounded-md transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 w-full sm:w-auto
+              ${carregando ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-white/20 hover:bg-white/25"} text-white`}
             aria-label="Atualizar agenda"
           >
             {carregando ? "Atualizando…" : "Atualizar"}
@@ -91,7 +110,7 @@ function deriveStatus(ev) {
   const hi = (ev.horario_inicio ?? "00:00").slice(0, 5);
   const hf = (ev.horario_fim ?? "23:59").slice(0, 5);
   const start = di ? toLocalDate(`${ymd(di)}T${hi}`) : null;
-  const end   = df ? toLocalDate(`${ymd(df)}T${hf}`) : null;
+  const end = df ? toLocalDate(`${ymd(df)}T${hf}`) : null;
   const agora = new Date();
   if (start && end) {
     if (isBefore(agora, start)) return "programado";
@@ -104,15 +123,14 @@ function deriveStatus(ev) {
 /* ========= Cores (status + tipo) ========= */
 const colorByStatus = {
   programado: { bg: "bg-emerald-100", text: "text-emerald-800", ring: "ring-emerald-300" },
-  andamento:  { bg: "bg-amber-100",   text: "text-amber-800",   ring: "ring-amber-300" },
-  encerrado:  { bg: "bg-rose-100",    text: "text-rose-800",    ring: "ring-rose-300" },
+  andamento: { bg: "bg-amber-100", text: "text-amber-800", ring: "ring-amber-300" },
+  encerrado: { bg: "bg-rose-100", text: "text-rose-800", ring: "ring-rose-300" },
 };
-// sobrescreve por tipo se existir (opcional)
 const colorByTipo = {
-  curso:      { bg: "bg-sky-100",     text: "text-sky-800",     ring: "ring-sky-300" },
-  oficina:    { bg: "bg-fuchsia-100", text: "text-fuchsia-800", ring: "ring-fuchsia-300" },
-  congresso:  { bg: "bg-indigo-100",  text: "text-indigo-800",  ring: "ring-indigo-300" },
-  webinar:    { bg: "bg-cyan-100",    text: "text-cyan-800",    ring: "ring-cyan-300" },
+  curso: { bg: "bg-sky-100", text: "text-sky-800", ring: "ring-sky-300" },
+  oficina: { bg: "bg-fuchsia-100", text: "text-fuchsia-800", ring: "ring-fuchsia-300" },
+  congresso: { bg: "bg-indigo-100", text: "text-indigo-800", ring: "ring-indigo-300" },
+  webinar: { bg: "bg-cyan-100", text: "text-cyan-800", ring: "ring-cyan-300" },
 };
 function getBadgeColors(ev) {
   const tipo = String(ev?.tipo || "").toLowerCase();
@@ -122,7 +140,7 @@ function getBadgeColors(ev) {
 }
 
 /* ========= Badge de evento no dia ========= */
-function DiaBadge({ ev, dateKey, onClick }) {
+function DiaBadge({ ev, onClick }) {
   const hi = (ev.horario_inicio ?? ev.horarioInicio ?? "").slice(0, 5);
   const hf = (ev.horario_fim ?? ev.horarioFim ?? "").slice(0, 5);
   const hora = hi && hf ? `${hi}–${hf}` : hi || hf || "";
@@ -133,19 +151,23 @@ function DiaBadge({ ev, dateKey, onClick }) {
       type="button"
       onClick={() => onClick?.(ev)}
       title={`${ev.titulo}${hora ? ` • ${hora}` : ""}`}
-      className={`group w-full text-left ${cores.bg} ${cores.text} ring-1 ${cores.ring} 
+      className={`group w-full text-left ${cores.bg} ${cores.text} ring-1 ${cores.ring}
                   rounded-md px-2 py-1 hover:brightness-95 focus:outline-none focus:ring-2 focus:ring-offset-1`}
       aria-label={`Evento: ${ev.titulo}${hora ? `, ${hora}` : ""}`}
     >
-      <div className="flex items-center gap-2">
-        {hora && <span className="text-[10px] font-semibold tabular-nums shrink-0">{hora}</span>}
+      <div className="flex items-center gap-2 min-h-[28px]">
+        {hora && (
+          <span className="text-[10px] font-semibold tabular-nums shrink-0">
+            {hora}
+          </span>
+        )}
         <span className="text-[11px] font-medium truncate">{ev.titulo}</span>
       </div>
     </button>
   );
 }
 
-/* ========= Badge de TOTAL (ministats compactos) ========= */
+/* ========= Badge de TOTAL ========= */
 function TotalBadge({ label, value, variant = "programado" }) {
   const c = colorByStatus[variant] || colorByStatus.programado;
   return (
@@ -171,7 +193,9 @@ export default function AgendaAdministrador() {
   const [viewDate, setViewDate] = useState(new Date());
 
   const liveRef = useRef(null);
-  const setLive = (msg) => { if (liveRef.current) liveRef.current.textContent = msg; };
+  const setLive = (msg) => {
+    if (liveRef.current) liveRef.current.textContent = msg;
+  };
 
   async function carregar() {
     setCarregando(true);
@@ -180,7 +204,11 @@ export default function AgendaAdministrador() {
     try {
       const data = await apiGet("/api/agenda");
       setEvents(Array.isArray(data) ? data : []);
-      setLive(Array.isArray(data) && data.length ? `Agenda carregada: ${data.length} evento(s).` : "Nenhum evento encontrado para o período.");
+      setLive(
+        Array.isArray(data) && data.length
+          ? `Agenda carregada: ${data.length} evento(s).`
+          : "Nenhum evento encontrado para o período."
+      );
     } catch (err) {
       console.error(err);
       setErro("Não foi possível carregar a agenda.");
@@ -190,7 +218,9 @@ export default function AgendaAdministrador() {
       setCarregando(false);
     }
   }
-  useEffect(() => { carregar(); }, []);
+  useEffect(() => {
+    carregar();
+  }, []);
 
   // 1) usa ocorrencias; 2) senão, datas das turmas; 3) fallback de intervalo
   const eventosPorData = useMemo(() => {
@@ -218,15 +248,17 @@ export default function AgendaAdministrador() {
           ymd(evento.data_fim ?? evento.data_termino ?? evento.dataTermino ?? evento.data)
         );
       }
-      for (const dia of ocorrencias) {
-        (map[dia] ||= []).push(evento);
-      }
+      for (const dia of ocorrencias) (map[dia] ||= []).push(evento);
     }
     // ordena por início dentro do dia
     for (const k of Object.keys(map)) {
       map[k].sort((a, b) => {
-        const aStart = toLocalDate(`${ymd(a.data_inicio ?? a.dataInicio ?? a.data)}T${(a.horario_inicio ?? "00:00").slice(0, 5)}`);
-        const bStart = toLocalDate(`${ymd(b.data_inicio ?? b.dataInicio ?? b.data)}T${(b.horario_inicio ?? "00:00").slice(0, 5)}`);
+        const aStart = toLocalDate(
+          `${ymd(a.data_inicio ?? a.dataInicio ?? a.data)}T${(a.horario_inicio ?? "00:00").slice(0, 5)}`
+        );
+        const bStart = toLocalDate(
+          `${ymd(b.data_inicio ?? b.dataInicio ?? b.data)}T${(b.horario_inicio ?? "00:00").slice(0, 5)}`
+        );
         if (!aStart || !bStart) return 0;
         return compareAsc(aStart, bStart);
       });
@@ -234,7 +266,7 @@ export default function AgendaAdministrador() {
     return map;
   }, [events]);
 
-  // Contagem de eventos no mês visível (apenas para feedback do calendário)
+  // Contagem de eventos no mês visível
   const contagemMes = useMemo(() => {
     const ini = startOfMonth(viewDate);
     const fim = endOfMonth(viewDate);
@@ -246,9 +278,11 @@ export default function AgendaAdministrador() {
     return total;
   }, [eventosPorData, viewDate]);
 
-  // 👉 Totais por status (para os BADGES de resumo)
+  // Totais por status
   const totais = useMemo(() => {
-    let programado = 0, andamento = 0, encerrado = 0;
+    let programado = 0,
+      andamento = 0,
+      encerrado = 0;
     for (const ev of events) {
       const st = deriveStatus(ev);
       if (st === "programado") programado++;
@@ -260,17 +294,86 @@ export default function AgendaAdministrador() {
 
   const irParaHoje = () => setViewDate(new Date());
 
+  // ⚡ evita recriar função por tile
+  const renderTileContent = useCallback(
+    ({ date }) => {
+      const key = format(date, "yyyy-MM-dd");
+      const diaEventos = eventosPorData[key] || [];
+      if (!diaEventos.length) return null;
+  
+      const MAX = 3;
+      const extras = Math.max(0, diaEventos.length - MAX);
+      const visiveis = diaEventos.slice(0, MAX);
+  
+      return (
+        <div className="mt-1 w-full px-1 space-y-1">
+          {visiveis.map((ev) => {
+            const hi = (ev.horario_inicio ?? ev.horarioInicio ?? "").slice(0, 5);
+            const hf = (ev.horario_fim ?? ev.horarioFim ?? "").slice(0, 5);
+            const hora = hi && hf ? `${hi}–${hf}` : hi || hf || "";
+            const cores = getBadgeColors(ev);
+  
+            return (
+              <div
+                key={`${ev.id ?? ev.titulo}-${key}`}
+                role="button"
+                tabIndex={0}
+                onClick={() => setSelecionado(ev)}
+                onKeyDown={(e) => e.key === "Enter" && setSelecionado(ev)}
+                title={`${ev.titulo}${hora ? ` • ${hora}` : ""}`}
+                className={`group w-full text-left cursor-pointer ${cores.bg} ${cores.text} ring-1 ${cores.ring}
+                  rounded-md px-2 py-1 hover:brightness-95 focus:outline-none focus:ring-2 focus:ring-offset-1`}
+                aria-label={`Evento: ${ev.titulo}${hora ? `, ${hora}` : ""}`}
+              >
+                <div className="flex items-center gap-2 min-h-[28px]">
+                  {hora && (
+                    <span className="text-[10px] font-semibold tabular-nums shrink-0">
+                      {hora}
+                    </span>
+                  )}
+                  <span className="text-[11px] font-medium truncate">
+                    {ev.titulo}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+  
+          {extras > 0 && (
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setSelecionado(diaEventos[0])}
+              onKeyDown={(e) => e.key === "Enter" && setSelecionado(diaEventos[0])}
+              className="w-full text-[11px] text-cyan-800 bg-cyan-100 ring-1 ring-cyan-300 rounded-md px-2 py-0.5 hover:brightness-95 focus:outline-none focus:ring-2 focus:ring-offset-1 cursor-pointer text-center"
+              title={`Mais ${extras} evento(s)`}
+            >
+              +{extras} evento(s)
+            </div>
+          )}
+        </div>
+      );
+    },
+    [eventosPorData]
+  );
+
   return (
     <div className="flex flex-col min-h-screen bg-gelo dark:bg-gray-900 text-black dark:text-white">
       <HeaderHero nome={nome} carregando={carregando} onRefresh={carregar} onHoje={irParaHoje} />
 
       {carregando && (
-        <div className="sticky top-0 left-0 w-full h-1 bg-cyan-100 z-40" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-label="Carregando agenda">
-          <div className="h-full bg-cyan-600 animate-pulse w-1/3" />
+        <div
+          className="sticky top-0 left-0 w-full h-1 bg-cyan-100 z-40"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="Carregando agenda"
+        >
+          <div className="h-full bg-cyan-600 animate-pulse w-1/3 motion-reduce:animate-none" />
         </div>
       )}
 
-      <main className="flex-1 max-w-7xl mx-auto px-3 sm:px-4 py-6">
+      <main id="conteudo" className="flex-1 max-w-7xl mx-auto px-3 sm:px-4 py-5 sm:py-6">
         <p ref={liveRef} className="sr-only" aria-live="polite" />
 
         <section className="bg-white dark:bg-zinc-800 rounded-xl p-3 sm:p-5 shadow-md">
@@ -278,28 +381,46 @@ export default function AgendaAdministrador() {
             <p className="text-red-600 dark:text-red-400 text-center">{erro}</p>
           ) : (
             <>
-              {/* Linha de mês + contagem + BADGES de totais */}
+              {/* Mês + contagem + badges (empilham no mobile) */}
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-3">
                 <div className="text-sm text-gray-600 dark:text-gray-300">
                   Mês visível:{" "}
                   <strong className="text-gray-900 dark:text-white">
-                    {format(viewDate, "MMMM 'de' yyyy", { locale: ptBR }).replace(/^\w/, (c) => c.toUpperCase())}
+                    {format(viewDate, "MMMM 'de' yyyy", { locale: ptBR }).replace(
+                      /^\w/,
+                      (c) => c.toUpperCase()
+                    )}
                   </strong>{" "}
                   • <span aria-live="polite">{contagemMes} evento(s)</span>
                 </div>
 
-                {/* Badges de resumo (totais por status) */}
                 <div className="flex flex-wrap gap-2">
-                  <TotalBadge label="Programados" value={totais.programado} variant="programado" />
-                  <TotalBadge label="Em andamento" value={totais.andamento} variant="andamento" />
-                  <TotalBadge label="Encerrados" value={totais.encerrado} variant="encerrado" />
+                  <TotalBadge
+                    label="Programados"
+                    value={totais.programado}
+                    variant="programado"
+                  />
+                  <TotalBadge
+                    label="Em andamento"
+                    value={totais.andamento}
+                    variant="andamento"
+                  />
+                  <TotalBadge
+                    label="Encerrados"
+                    value={totais.encerrado}
+                    variant="encerrado"
+                  />
                 </div>
               </div>
 
               <Calendar
                 value={viewDate}
-                onActiveStartDateChange={({ activeStartDate }) => setViewDate(activeStartDate || new Date())}
-                onViewChange={({ activeStartDate }) => setViewDate(activeStartDate || new Date())}
+                onActiveStartDateChange={({ activeStartDate }) =>
+                  setViewDate(activeStartDate || new Date())
+                }
+                onViewChange={({ activeStartDate }) =>
+                  setViewDate(activeStartDate || new Date())
+                }
                 onClickMonth={(dt) => setViewDate(dt)}
                 onClickDay={(dt) => setViewDate(dt)}
                 locale="pt-BR"
@@ -309,44 +430,11 @@ export default function AgendaAdministrador() {
                 aria-label="Calendário de eventos"
                 tileClassName="!rounded-lg hover:!bg-gray-200 dark:hover:!bg-zinc-700 focus:!ring-2 focus:!ring-cyan-500"
                 navigationLabel={({ date }) =>
-                  format(date, "MMMM yyyy", { locale: ptBR }).replace(/^\w/, (c) => c.toUpperCase())
+                  format(date, "MMMM yyyy", { locale: ptBR }).replace(/^\w/, (c) =>
+                    c.toUpperCase()
+                  )
                 }
-
-                /* ===== BADGES por dia ===== */
-                tileContent={({ date }) => {
-                  const key = format(date, "yyyy-MM-dd");
-                  const diaEventos = eventosPorData[key] || [];
-
-                  if (!diaEventos.length) return null;
-
-                  // limite para não “estourar” a célula. Mostra +N se passar.
-                  const MAX = 3;
-                  const extras = Math.max(0, diaEventos.length - MAX);
-                  const visiveis = diaEventos.slice(0, MAX);
-
-                  return (
-                    <div className="mt-1 w-full px-1 space-y-1">
-                      {visiveis.map((ev) => (
-                        <DiaBadge
-                          key={`${ev.id ?? ev.titulo}-${key}`}
-                          ev={ev}
-                          dateKey={key}
-                          onClick={(e) => setSelecionado(e)}
-                        />
-                      ))}
-                      {extras > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => setSelecionado(diaEventos[0])}
-                          className="w-full text-[11px] text-cyan-800 bg-cyan-100 ring-1 ring-cyan-300 rounded-md px-2 py-0.5 hover:brightness-95 focus:outline-none focus:ring-2 focus:ring-offset-1"
-                          title={`Mais ${extras} evento(s)`}
-                        >
-                          +{extras} evento(s)
-                        </button>
-                      )}
-                    </div>
-                  );
-                }}
+                tileContent={renderTileContent}
               />
             </>
           )}
@@ -357,11 +445,7 @@ export default function AgendaAdministrador() {
         </div>
 
         {selecionado && (
-          <EventoDetalheModal
-            evento={selecionado}
-            aoFechar={() => setSelecionado(null)}
-            visivel
-          />
+          <EventoDetalheModal evento={selecionado} aoFechar={() => setSelecionado(null)} visivel />
         )}
       </main>
 

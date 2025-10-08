@@ -1,4 +1,4 @@
-// ✅ src/pages/DashboardAdministrador.jsx
+// ✅ src/pages/DashboardAdministrador.jsx (mobile-first + a11y refinado)
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "react-toastify";
 import jsPDF from "jspdf";
@@ -8,24 +8,37 @@ import CardEventoadministrador from "../components/CardEventoadministrador";
 import Footer from "../components/Footer";
 import { apiGet } from "../services/api";
 
-/* ========= HeaderHero (novo) ========= */
+/* ========= HeaderHero (mobile-first) ========= */
 function HeaderHero({ nome, carregando, onRefresh }) {
   return (
-    <header className="bg-gradient-to-br from-rose-900 via-pink-700 to-orange-600 text-white" role="banner">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 text-center flex flex-col items-center gap-3">
-        <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">
+    <header
+      className="bg-gradient-to-br from-rose-900 via-pink-700 to-orange-600 text-white"
+      role="banner"
+    >
+      <a
+        href="#conteudo"
+        className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2"
+      >
+        Ir para o conteúdo
+      </a>
+
+      <div className="max-w-6xl mx-auto px-3 sm:px-6 py-4 sm:py-6 text-center flex flex-col items-center gap-2 sm:gap-3">
+        <h1 className="text-lg sm:text-2xl font-extrabold tracking-tight break-words">
           Painel do Administrador
         </h1>
-        <p className="text-sm text-white/90">
-          {nome ? `Bem-vindo(a), ${nome}.` : "Bem-vindo(a)."} Gerencie eventos, turmas, inscrições, presenças e avaliações.
+
+        <p className="text-xs sm:text-sm text-white/90 px-2">
+          {nome ? `Bem-vindo(a), ${nome}.` : "Bem-vindo(a)."} Gerencie eventos,
+          turmas, inscrições, presenças e avaliações.
         </p>
-        <div className="flex items-center gap-2">
+
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
           <button
             type="button"
             onClick={onRefresh}
             disabled={carregando}
-            className={`inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70
-              ${carregando ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-white/15 hover:bg-white/25"} text-white`}
+            className={`inline-flex justify-center items-center gap-2 px-4 py-2 text-sm rounded-md transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70
+              ${carregando ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-white/20 hover:bg-white/25"} text-white w-full sm:w-auto`}
             aria-label="Atualizar lista de eventos"
           >
             {carregando ? "Atualizando…" : "Atualizar"}
@@ -43,8 +56,10 @@ const toLocalDate = (ymdStr, hhmm = "12:00") =>
 
 const onlyHHmm = (s) => (typeof s === "string" ? s.slice(0, 5) : "");
 const formatarCPF = (v) =>
-  (String(v || "").replace(/\D/g, "").padStart(11, "0") || "")
-    .replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
+  (String(v || "").replace(/\D/g, "").padStart(11, "0") || "").replace(
+    /(\d{3})(\d{3})(\d{3})(\d{2})/,
+    "$1.$2.$3-$4"
+  );
 const formatarDataBR = (isoYMD) => {
   const d = ymd(isoYMD);
   return d ? d.split("-").reverse().join("/") : "";
@@ -69,7 +84,6 @@ export default function DashboardAdministrador() {
     if (liveRef.current) liveRef.current.textContent = msg;
   };
 
-  // Carrega nome (apenas UI)
   useEffect(() => {
     try {
       const u = JSON.parse(localStorage.getItem("usuario") || "{}");
@@ -79,7 +93,6 @@ export default function DashboardAdministrador() {
     }
   }, []);
 
-  // Carrega eventos (admin)
   async function carregarEventos() {
     setCarregando(true);
     try {
@@ -104,12 +117,14 @@ export default function DashboardAdministrador() {
   }, []);
 
   /* ========= Carregadores ========= */
-
   const carregarTurmas = async (eventoId) => {
     if (turmasPorEvento[eventoId]) return;
     try {
       const data = await apiGet(`/api/turmas/evento/${eventoId}`, { on403: "silent" });
-      setTurmasPorEvento((prev) => ({ ...prev, [eventoId]: Array.isArray(data) ? data : [] }));
+      setTurmasPorEvento((prev) => ({
+        ...prev,
+        [eventoId]: Array.isArray(data) ? data : [],
+      }));
     } catch (error) {
       console.error("❌ Erro ao carregar turmas:", error);
       toast.error("❌ Erro ao carregar turmas.");
@@ -119,13 +134,15 @@ export default function DashboardAdministrador() {
   const carregarInscritos = async (turmaId) => {
     try {
       const data = await apiGet(`/api/inscricoes/turma/${turmaId}`, { on403: "silent" });
-      setInscritosPorTurma((prev) => ({ ...prev, [turmaId]: Array.isArray(data) ? data : [] }));
+      setInscritosPorTurma((prev) => ({
+        ...prev,
+        [turmaId]: Array.isArray(data) ? data : [],
+      }));
     } catch {
       toast.error("❌ Erro ao carregar inscritos.");
     }
   };
 
-  // ⚠️ Admin deve usar o endpoint que retorna TODAS as respostas da turma
   const carregarAvaliacoes = async (turmaId) => {
     if (avaliacoesPorTurma[turmaId]) return;
     try {
@@ -137,85 +154,141 @@ export default function DashboardAdministrador() {
     }
   };
 
-  // Admin: guarda a lista por-usuário E um resumo por data para calcular "presença até agora"
-const carregarPresencas = async (turmaId) => {
-  try {
-    const data = await apiGet(`/api/presencas/turma/${turmaId}/detalhes`, { on403: "silent" });
-
-    const datas = Array.isArray(data?.datas) ? data.datas : [];
-    const usuarios = Array.isArray(data?.usuarios) ? data.usuarios : [];
-
-    // lista por-usuário (mantém compatibilidade)
-    const totalDias = datas.length || 0;
-    const lista = usuarios.map((u) => {
-      const presentes = (u.presencas || []).filter((p) => p?.presente === true).length;
-      const freq = totalDias > 0 ? Math.round((presentes / totalDias) * 100) : 0;
-      return {
-        usuario_id: u.id,
-        id: u.id,
-        nome: u.nome,
-        cpf: u.cpf,
-        registro: u?.registro || u?.registro_funcional || u?.matricula,
-        data_nascimento: u?.data_nascimento || u?.nascimento,
-        pcd_visual: u?.pcd_visual || u?.def_visual || u?.deficiencia_visual,
-        pcd_auditiva: u?.pcd_auditiva || u?.def_auditiva || u?.deficiencia_auditiva || u?.surdo,
-        pcd_fisica: u?.pcd_fisica || u?.def_fisica || u?.deficiencia_fisica,
-        pcd_intelectual: u?.pcd_intelectual || u?.def_mental || u?.def_intelectual,
-        pcd_multipla: u?.pcd_multipla || u?.def_multipla,
-        pcd_autismo: u?.pcd_autismo || u?.tea || u?.transtorno_espectro_autista,
-        presente: presentes > 0,
-        frequencia: `${freq}%`,
-      };
-    });
-
-    // resumo por encontro (para "presentes até agora")
-    // conta presentes por data; só datas que já ocorreram entram no cálculo
-    const hoje = new Date();
-    const occurred = datas.filter(d => {
-      const di = (d?.data || d);
-      const hi = (d?.horario_inicio || "00:00").slice(0,5);
-      const dt = di ? new Date(`${String(di).slice(0,10)}T${hi}:00`) : null;
-      return dt && dt <= hoje;
-    });
-
-    const presentesPorData = occurred.map(d => {
-      const dia = String(d?.data || d).slice(0,10);
-      let count = 0;
-      for (const u of usuarios) {
-        if ((u.presencas || []).some(p => String(p?.data_presenca || p?.data).slice(0,10) === dia && p?.presente)) {
-          count += 1;
+  const carregarPresencas = async (turmaId) => {
+    try {
+      const data = await apiGet(`/api/presencas/turma/${turmaId}/detalhes`, {
+        on403: "silent",
+      });
+  
+      const datas = Array.isArray(data?.datas) ? data.datas : [];
+      const usuarios = Array.isArray(data?.usuarios) ? data.usuarios : [];
+  
+      // ✅ Só conta encontros que já aconteceram (até agora)
+      const hoje = new Date();
+      const occurred = datas.filter((d) => {
+        const di = d?.data || d;
+        const hi = (d?.horario_inicio || "00:00").slice(0, 5);
+        const dt = di ? new Date(`${String(di).slice(0, 10)}T${hi}:00`) : null;
+        return dt && dt <= hoje;
+      });
+      const ocorridosSet = new Set(occurred.map((d) => String(d?.data || d).slice(0, 10)));
+      const totalOcorridos = occurred.length || 0;
+  
+      // ✅ frequência baseada SOMENTE nos ocorridos
+      const lista = usuarios.map((u) => {
+        const presentesEmOcorridos = (u.presencas || []).reduce((acc, p) => {
+          const dia = String(p?.data_presenca || p?.data).slice(0, 10);
+          return acc + (p?.presente && ocorridosSet.has(dia) ? 1 : 0);
+        }, 0);
+  
+        // evita erros de ponto flutuante; arredonda só para exibição
+        const percExato = totalOcorridos > 0 ? (presentesEmOcorridos / totalOcorridos) * 100 : 0;
+        const freqNum = Math.round(percExato);
+        const presenteElegivel = percExato >= 75 - 1e-9; // ✅ 3/4 = 75% já conta agora
+  
+        return {
+          usuario_id: u.id,
+          id: u.id,
+          nome: u.nome,
+          cpf: u.cpf,
+          registro: u?.registro || u?.registro_funcional || u?.matricula,
+          data_nascimento: u?.data_nascimento || u?.nascimento,
+          pcd_visual: u?.pcd_visual || u?.def_visual || u?.deficiencia_visual,
+          pcd_auditiva:
+            u?.pcd_auditiva || u?.def_auditiva || u?.deficiencia_auditiva || u?.surdo,
+          pcd_fisica: u?.pcd_fisica || u?.def_fisica || u?.deficiencia_fisica,
+          pcd_intelectual: u?.pcd_intelectual || u?.def_mental || u?.def_intelectual,
+          pcd_multipla: u?.pcd_multipla || u?.def_multipla,
+          pcd_autismo: u?.pcd_autismo || u?.tea || u?.transtorno_espectro_autista,
+  
+          // 🔑 campos usados pelos cards/PDFs:
+          presente: presenteElegivel,
+          frequencia_num: freqNum,
+          frequencia: `${freqNum}%`,
+  
+          // 🔎 úteis p/ checagens e agregações
+          presentes_ocorridos: presentesEmOcorridos,
+          total_ocorridos: totalOcorridos,
+        };
+      });
+  
+      // Resumo por data (apenas ocorridos)
+      const presentesPorData = occurred.map((d) => {
+        const dia = String(d?.data || d).slice(0, 10);
+        let count = 0;
+        for (const u of usuarios) {
+          if (
+            (u.presencas || []).some(
+              (p) =>
+                String(p?.data_presenca || p?.data).slice(0, 10) === dia && p?.presente
+            )
+          ) {
+            count += 1;
+          }
         }
-      }
-      return { data: dia, presentes: count };
-    });
+        return { data: dia, presentes: count };
+      });
+  
+      const encontrosOcorridos = totalOcorridos;
+      const somaPresentes = presentesPorData.reduce((a, b) => a + b.presentes, 0);
+      const mediaPresentes = encontrosOcorridos
+        ? Math.round(somaPresentes / encontrosOcorridos)
+        : 0;
+  
+      setPresencasPorTurma((prev) => ({
+        ...prev,
+        [turmaId]: {
+          lista,
+          resumo: { encontrosOcorridos, presentesPorData, mediaPresentes },
+        },
+      }));
+    } catch (err) {
+      console.error("❌ Erro ao carregar presenças:", err);
+      toast.error("Erro ao carregar presenças da turma.");
+    }
+  };
 
-    const encontrosOcorridos = presentesPorData.length;
-    const somaPresentes = presentesPorData.reduce((a,b)=>a + b.presentes, 0);
-    const mediaPresentes = encontrosOcorridos ? Math.round(somaPresentes / encontrosOcorridos) : 0;
-
-    setPresencasPorTurma((prev) => ({
-      ...prev,
-      [turmaId]: {
-        lista,                              // o que já existia
-        resumo: { encontrosOcorridos, presentesPorData, mediaPresentes }
-      }
-    }));
-  } catch (err) {
-    console.error("❌ Erro ao carregar presenças:", err);
-    toast.error("Erro ao carregar presenças da turma.");
+  /* ========= Regras de % (≥ 75%) ========= */
+  function porcentagemPresencaTurma(turmaId) {
+    const lista = presencasPorTurma?.[turmaId]?.lista || [];
+    const totalInscritos = (inscritosPorTurma?.[turmaId] || []).length;
+    if (!totalInscritos) return 0;
+    const elegiveis = lista.filter((u) => (u.frequencia_num ?? 0) >= 75).length;
+    return Math.round((elegiveis / totalInscritos) * 100);
   }
-};
+
+  function porcentagemPresencaEvento(eventoId) {
+    const turmas = turmasPorEvento?.[eventoId] || [];
+    let somaElegiveis = 0;
+    let somaInscritos = 0;
+
+    for (const t of turmas) {
+      const turmaId = t.id;
+      const lista = presencasPorTurma?.[turmaId]?.lista || [];
+      const inscritos = (inscritosPorTurma?.[turmaId] || []).length;
+      somaElegiveis += lista.filter((u) => (u.frequencia_num ?? 0) >= 75).length;
+      somaInscritos += inscritos;
+    }
+    if (!somaInscritos) return 0;
+    return Math.round((somaElegiveis / somaInscritos) * 100);
+  }
 
   /* ========= PDFs ========= */
-
-  // (1) Relatório de presença (mantido)
   const gerarRelatorioPDF = async (turmaId) => {
     try {
-      const data = await apiGet(`/api/presencas/relatorio-presencas/turma/${turmaId}`, { on403: "silent" });
+      const data = await apiGet(`/api/presencas/relatorio-presencas/turma/${turmaId}`, {
+        on403: "silent",
+      });
       const alunos = Array.isArray(data?.lista) ? data.lista : Array.isArray(data) ? data : [];
 
       const total = alunos.length;
-      const presentes = alunos.filter((a) => a.presente).length;
+      // ✅ Conta presentes somente com freq ≥ 75%
+      const presentes = alunos.filter((a) => {
+        const n = typeof a.frequencia_num === "number"
+          ? a.frequencia_num
+          : parseInt(String(a.frequencia || "0").replace(/\D/g, ""), 10) || 0;
+        return n >= 75;
+      }).length;
       const presencaMedia = total ? ((presentes / total) * 100).toFixed(1) : "0.0";
 
       const doc = new jsPDF();
@@ -223,15 +296,21 @@ const carregarPresencas = async (turmaId) => {
       doc.text("Relatório de Presença por Turma", 14, 20);
       autoTable(doc, {
         startY: 30,
-        head: [["Nome", "CPF", "Presença"]],
-        body: alunos.map((a) => [a.nome, formatarCPF(a.cpf), a.presente ? "Sim" : "Não"]),
+        head: [["Nome", "CPF", "Presença (≥75%)"]],
+        body: alunos.map((a) => {
+          const n = typeof a.frequencia_num === "number"
+            ? a.frequencia_num
+            : parseInt(String(a.frequencia || "0").replace(/\D/g, ""), 10) || 0;
+          const presenteElegivel = n >= 75;
+          return [a.nome, formatarCPF(a.cpf), presenteElegivel ? "Sim" : "Não"];
+        }),
       });
 
       const finalY = (doc.lastAutoTable?.finalY || 30) + 10;
       doc.setFontSize(12);
       doc.text(`Total de inscritos: ${total}`, 14, finalY);
-      doc.text(`Total de presentes: ${presentes}`, 14, finalY + 6);
-      doc.text(`Presença média: ${presencaMedia}%`, 14, finalY + 12);
+      doc.text(`Total de presentes (≥75%): ${presentes}`, 14, finalY + 6);
+      doc.text(`Presença (% ≥75%): ${presencaMedia}%`, 14, finalY + 12);
       doc.save(`relatorio_turma_${turmaId}.pdf`);
       toast.success("📄 PDF gerado com sucesso!");
     } catch {
@@ -239,98 +318,112 @@ const carregarPresencas = async (turmaId) => {
     }
   };
 
-  // (2) PDF com dados do curso + lista de INSCRITOS (nome/cpf)
   const gerarPdfInscritosTurma = async (turmaId) => {
     try {
-      // garante dados
       let inscritos = inscritosPorTurma[turmaId];
       if (!Array.isArray(inscritos)) {
         const data = await apiGet(`/api/inscricoes/turma/${turmaId}`, { on403: "silent" });
         inscritos = Array.isArray(data) ? data : [];
         setInscritosPorTurma((prev) => ({ ...prev, [turmaId]: inscritos }));
       }
-  
-      // presenças (para % individual e média até agora)
+
       let pres = presencasPorTurma[turmaId];
       if (!pres) {
         await carregarPresencas(turmaId);
-        pres = presencasPorTurma[turmaId]; // pode vir no próximo tick; se não vier, segue sem % individual
+        pres = presencasPorTurma[turmaId];
       }
-  
+
       const todasTurmas = Object.values(turmasPorEvento).flat();
-      const turma = todasTurmas.find((t) => Number(t?.id) === Number(turmaId)) || {};
-  
-      const eventoNome = turma?.evento?.nome || turma?.evento?.titulo || turma?.titulo_evento || "Evento";
+      const turma =
+        todasTurmas.find((t) => Number(t?.id) === Number(turmaId)) || {};
+
+      const eventoNome =
+        turma?.evento?.nome || turma?.evento?.titulo || turma?.titulo_evento || "Evento";
       const turmaNome = turma?.nome || `Turma ${turmaId}`;
-  
-      // helpers locais
-      const only = (s) => (typeof s === "string" ? s.slice(0,5) : "");
-      const ymd = (s) => (typeof s === "string" ? s.slice(0,10) : "");
-      const di = ymd(turma?.data_inicio), df = ymd(turma?.data_fim);
-      const hi = only(turma?.horario_inicio), hf = only(turma?.horario_fim);
-  
+
+      const only = (s) => (typeof s === "string" ? s.slice(0, 5) : "");
+      const di = ymd(turma?.data_inicio),
+        df = ymd(turma?.data_fim);
+      const hi = only(turma?.horario_inicio),
+        hf = only(turma?.horario_fim);
+
       const { jsPDF } = await import("jspdf");
       const autoTable = (await import("jspdf-autotable")).default;
-  
+
       const doc = new jsPDF({ orientation: "landscape" });
       doc.setFontSize(16);
       doc.text(`Lista de Inscritos — ${eventoNome}`, 14, 16);
       doc.setFontSize(12);
       doc.text(`${turmaNome}`, 14, 24);
-      if (di || df) doc.text(`Período: ${di?.split("-").reverse().join("/")} a ${df?.split("-").reverse().join("/")}`, 14, 30);
+      if (di || df)
+        doc.text(
+          `Período: ${di?.split("-").reverse().join("/")} a ${df
+            ?.split("-")
+            .reverse()
+            .join("/")}`,
+          14,
+          30
+        );
       if (hi || hf) doc.text(`Horário: ${hi} às ${hf}`, 14, 36);
-  
-      const presResumo = pres?.resumo;
-      if (presResumo) {
-        const media = presResumo.mediaPresentes || 0;
-        const totalInscritos = inscritos.length;
-        const pct = totalInscritos ? Math.round((media / totalInscritos) * 100) : 0;
-        doc.text(`Presença "até agora": média ${media}/${totalInscritos} (${pct}%) em ${presResumo.encontrosOcorridos} encontros`, 14, 42);
-      }
-  
+
+      // ✅ Resumo com a nova regra
+      const totalInscritos = inscritos.length;
+      const listaPres = pres?.lista || [];
+      const elegiveis = listaPres.filter((u) => (u.frequencia_num ?? 0) >= 75).length;
+      const pctElegiveis = totalInscritos ? Math.round((elegiveis / totalInscritos) * 100) : 0;
+      doc.text(
+        `Presença (regra ≥ 75%): ${elegiveis}/${totalInscritos} (${pctElegiveis}%)`,
+        14,
+        42
+      );
+
       const mapFreq = {};
-      (pres?.lista || []).forEach(p => { mapFreq[p.usuario_id] = p.frequencia; });
-  
+      (pres?.lista || []).forEach((p) => {
+        mapFreq[p.usuario_id] = p.frequencia;
+      });
+
       const idadeDe = (iso) => {
-        const d = typeof iso === "string" ? iso.slice(0,10) : "";
+        const d = typeof iso === "string" ? iso.slice(0, 10) : "";
         if (!d) return "";
-        const [Y,M,D] = d.split("-").map(Number);
+        const [Y, M, D] = d.split("-").map(Number);
         const hoje = new Date();
         let idade = hoje.getFullYear() - Y;
         const m = hoje.getMonth() + 1 - M;
         if (m < 0 || (m === 0 && hoje.getDate() < D)) idade--;
         return idade >= 0 && idade < 140 ? `${idade}` : "";
       };
-  
+
       autoTable(doc, {
         startY: 48,
         head: [["Nome", "CPF", "Idade", "Registro", "PcD", "Frequência"]],
         body: inscritos
           .slice()
-          .sort((a,b)=>String(a?.nome||"").localeCompare(String(b?.nome||"")))
+          .sort((a, b) => String(a?.nome || "").localeCompare(String(b?.nome || "")))
           .map((i) => {
             const cpfFmt = formatarCPF(i?.cpf);
             const pcdTags = [
-              (i?.pcd_visual || i?.def_visual) ? "VIS" : "",
-              (i?.pcd_auditiva || i?.def_auditiva || i?.surdo) ? "AUD" : "",
-              (i?.pcd_fisica || i?.def_fisica) ? "FIS" : "",
-              (i?.pcd_intelectual || i?.def_mental) ? "INT" : "",
-              (i?.pcd_multipla) ? "MULT" : "",
-              (i?.pcd_autismo || i?.tea) ? "TEA" : "",
-            ].filter(Boolean).join(", ");
+              i?.pcd_visual || i?.def_visual ? "VIS" : "",
+              i?.pcd_auditiva || i?.def_auditiva || i?.surdo ? "AUD" : "",
+              i?.pcd_fisica || i?.def_fisica ? "FIS" : "",
+              i?.pcd_intelectual || i?.def_mental ? "INT" : "",
+              i?.pcd_multipla ? "MULT" : "",
+              i?.pcd_autismo || i?.tea ? "TEA" : "",
+            ]
+              .filter(Boolean)
+              .join(", ");
             return [
               i?.nome || "—",
               cpfFmt,
               idadeDe(i?.data_nascimento || i?.nascimento),
               i?.registro || i?.registro_funcional || i?.matricula || "",
               pcdTags,
-              mapFreq[i?.id] || mapFreq[i?.usuario_id] || ""
+              mapFreq[i?.id] || mapFreq[i?.usuario_id] || "",
             ];
           }),
         styles: { fontSize: 9 },
         headStyles: { fillColor: [22, 101, 52] },
       });
-  
+
       doc.save(`inscritos_turma_${turmaId}.pdf`);
       toast.success("📄 PDF de inscritos gerado!");
     } catch (e) {
@@ -340,13 +433,11 @@ const carregarPresencas = async (turmaId) => {
   };
 
   /* ========= UI / Lógica ========= */
-
   const toggleExpandir = (eventoId) => {
     setEventoExpandido(eventoExpandido === eventoId ? null : eventoId);
     carregarTurmas(eventoId);
   };
 
-  // Filtrar por status com datas agregadas (respeitando hora local)
   const filtrarPorStatus = (evento) => {
     const agora = new Date();
     const turmas = turmasPorEvento[evento.id] || [];
@@ -359,7 +450,6 @@ const carregarPresencas = async (turmaId) => {
     let inicioDT = diAgg ? toLocalDate(diAgg, hiAgg) : null;
     let fimDT = dfAgg ? toLocalDate(dfAgg, hfAgg) : null;
 
-    // Fallback para o range real das turmas já carregadas
     if (!inicioDT || !fimDT) {
       const starts = [];
       const ends = [];
@@ -384,7 +474,6 @@ const carregarPresencas = async (turmaId) => {
     return true;
   };
 
-  // Ordena eventos por data de início (LOCAL, com hora)
   const eventosOrdenados = useMemo(() => {
     return [...eventos].sort((a, b) => {
       const aDT = toLocalDate(
@@ -409,58 +498,77 @@ const carregarPresencas = async (turmaId) => {
 
   return (
     <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
-      {/* Header novo */}
       <HeaderHero nome={nome} carregando={carregando} onRefresh={carregarEventos} />
 
-      {/* barra de carregamento fina no topo */}
       {carregando && (
-        <div className="sticky top-0 left-0 w-full h-1 bg-pink-100 z-40" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-label="Carregando eventos">
+        <div
+          className="sticky top-0 left-0 w-full h-1 bg-pink-100 z-40"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="Carregando eventos"
+        >
           <div className="h-full bg-pink-600 animate-pulse w-1/3" />
         </div>
       )}
 
-      <main className="flex-1 max-w-6xl mx-auto px-3 sm:px-4 py-6">
-        {/* Live region acessível */}
+      <main id="conteudo" className="flex-1 max-w-6xl mx-auto px-3 sm:px-4 py-5 sm:py-6">
         <p ref={liveRef} className="sr-only" aria-live="polite" />
 
-        {/* Filtros de status (acessível) */}
-        <section className="bg-white dark:bg-gray-800 rounded-xl shadow p-3 sm:p-4 mb-6">
-          <div className="flex justify-center gap-2 sm:gap-3 flex-wrap" role="group" aria-label="Filtros por status do evento">
-            {["todos", "programado", "em_andamento", "encerrado"].map((status) => (
-              <button
-                key={status}
-                onClick={() => setFiltroStatus(status)}
-                className={`px-4 py-2 rounded-full text-sm font-medium transition focus:outline-none focus-visible:ring-2 focus-visible:ring-pink-500
-                  ${filtroStatus === status
-                    ? "bg-pink-600 text-white"
-                    : "bg-gray-200 text-gray-900 hover:bg-gray-300 dark:bg-gray-700 dark:text-white"}`}
-                aria-pressed={filtroStatus === status}
-                aria-label={`Filtrar eventos: ${{
-                  todos: "Todos",
-                  programado: "Programados",
-                  em_andamento: "Em andamento",
-                  encerrado: "Encerrados",
-                }[status]}`}
-              >
-                {{
-                  todos: "Todos",
-                  programado: "Programados",
-                  em_andamento: "Em andamento",
-                  encerrado: "Encerrados",
-                }[status]}
-              </button>
-            ))}
+        {/* Filtros como chips roláveis (mobile-friendly) */}
+        <section
+          className="bg-white dark:bg-gray-800 rounded-xl shadow p-3 sm:p-4 mb-4 sm:mb-6"
+          aria-label="Filtros por status do evento"
+        >
+          <div className="-mx-3 px-3 overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-700">
+            <nav
+              className="flex gap-2 sm:gap-3 min-w-fit snap-x"
+              role="tablist"
+              aria-label="Filtros por status"
+            >
+              {[
+                { key: "todos", label: "Todos" },
+                { key: "programado", label: "Programados" },
+                { key: "em_andamento", label: "Em andamento" },
+                { key: "encerrado", label: "Encerrados" },
+              ].map(({ key, label }) => {
+                const active = filtroStatus === key;
+                return (
+                  <button
+                    key={key}
+                    role="tab"
+                    aria-selected={active}
+                    aria-controls={`painel-${key}`}
+                    onClick={() => setFiltroStatus(key)}
+                    className={`snap-start px-4 py-2 rounded-full text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500
+                      ${active
+                        ? "bg-pink-600 text-white"
+                        : "bg-gray-200 text-gray-900 hover:bg-gray-300 dark:bg-gray-700 dark:text-white"}`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </nav>
           </div>
         </section>
 
         {erro && (
-          <div className="bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-200 rounded-xl p-4 mb-4" role="alert">
-            {erro}
+          <div
+            className="bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-200 rounded-xl p-3 sm:p-4 mb-4"
+            role="alert"
+          >
+            <p className="text-sm">{erro}</p>
           </div>
         )}
 
-        {/* Lista de eventos */}
-        <section className="space-y-4">
+        {/* Lista de eventos (cards já responsivos) */}
+        <section
+          id={`painel-${filtroStatus}`}
+          role="tabpanel"
+          aria-label="Lista de eventos filtrados"
+          className="space-y-3 sm:space-y-4"
+        >
           {eventosFiltrados.map((evento) => (
             <CardEventoadministrador
               key={evento.id}
@@ -474,14 +582,16 @@ const carregarPresencas = async (turmaId) => {
               avaliacoesPorTurma={avaliacoesPorTurma}
               presencasPorTurma={presencasPorTurma}
               carregarPresencas={carregarPresencas}
-              // PDFs
-              gerarRelatorioPDF={gerarRelatorioPDF}            // presença
-              gerarPdfInscritosTurma={gerarPdfInscritosTurma}  // infos + inscritos
+              gerarRelatorioPDF={gerarRelatorioPDF}
+              gerarPdfInscritosTurma={gerarPdfInscritosTurma}
+              // ✅ Novas helpers para o card exibir % correta (≥ 75%)
+              calcularPctTurma={(turmaId) => porcentagemPresencaTurma(turmaId)}
+              calcularPctEvento={(eventoId) => porcentagemPresencaEvento(eventoId)}
             />
           ))}
 
           {!carregando && eventosFiltrados.length === 0 && (
-            <p className="text-center text-gray-600 dark:text-gray-300">
+            <p className="text-center text-gray-600 dark:text-gray-300 text-sm sm:text-base px-2">
               Nenhum evento encontrado para o filtro selecionado.
             </p>
           )}

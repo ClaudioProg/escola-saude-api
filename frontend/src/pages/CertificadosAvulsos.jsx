@@ -1,4 +1,4 @@
-// ✅ src/pages/CertificadosAvulsos.jsx
+// ✅ src/pages/CertificadosAvulsos.jsx (mobile/a11y + rota de assinaturas corrigida)
 import { useEffect, useState, useMemo, useRef } from "react";
 import { toast } from "react-toastify";
 import { RefreshCcw, Plus } from "lucide-react";
@@ -58,7 +58,9 @@ function validYMD(s) {
   return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
 }
 const validarEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || "").trim());
+const onlyDigits = (v = "") => String(v).replace(/\D+/g, "");
 
+/* ===================== Página ===================== */
 export default function CertificadosAvulsos() {
   const [form, setForm] = useState({
     nome: "",
@@ -69,6 +71,13 @@ export default function CertificadosAvulsos() {
     data_inicio: "",
     data_fim: "",
   });
+
+  // opções avançadas de geração
+  const [palestrante, setPalestrante] = useState(false);
+  const [usarAssinatura2, setUsarAssinatura2] = useState(false);
+  const [assinatura2Id, setAssinatura2Id] = useState("");
+  const [assinaturas, setAssinaturas] = useState([]); // [{id, nome}]
+  const [assinaturasCarregando, setAssinaturasCarregando] = useState(true);
 
   const [lista, setLista] = useState([]);
   const [carregando, setCarregando] = useState(true);
@@ -83,6 +92,7 @@ export default function CertificadosAvulsos() {
 
   useEffect(() => {
     carregarCertificados();
+    carregarAssinaturas();
   }, []);
 
   async function carregarCertificados() {
@@ -105,9 +115,42 @@ export default function CertificadosAvulsos() {
     }
   }
 
+  // Carrega lista de pessoas com assinatura disponível
+  async function carregarAssinaturas() {
+    try {
+      setAssinaturasCarregando(true);
+      // ✅ backend ajustado: GET /api/assinatura/lista retorna [{id, nome, tem_assinatura:true}] 
+      const data = await apiGet("/api/assinatura/lista", { on403: "silent" });
+      const arr = Array.isArray(data) ? data : (Array.isArray(data?.lista) ? data.lista : []);
+      const filtradas = arr
+        .filter(a => (a?.tem_assinatura ?? a?.possui_assinatura ?? !!a?.assinatura ?? !!a?.arquivo_assinatura) === true)
+        .map(a => ({ id: a.id ?? a.usuario_id ?? a.pessoa_id, nome: a.nome || a.titulo || "—" }))
+        .filter(a => a.id && a.nome);
+      setAssinaturas(filtradas);
+    } catch {
+      setAssinaturas([]);
+    } finally {
+      setAssinaturasCarregando(false);
+    }
+  }
+
   function handleChange(e) {
     const { name, value } = e.target;
+
+    if (name === "cpf") {
+      // Mantém apenas dígitos — inclusive colagem de "299.260.945-08"
+      const dig = onlyDigits(value).slice(0, 14); // suporta CPF/registro numérico maior
+      setForm((prev) => ({ ...prev, cpf: dig }));
+      return;
+    }
     setForm((prev) => ({ ...prev, [name]: value }));
+  }
+
+  function handlePasteCPF(e) {
+    const text = (e.clipboardData || window.clipboardData)?.getData("text") || "";
+    const dig = onlyDigits(text).slice(0, 14);
+    e.preventDefault();
+    setForm((prev) => ({ ...prev, cpf: dig }));
   }
 
   async function cadastrarCertificado(e) {
@@ -116,7 +159,7 @@ export default function CertificadosAvulsos() {
     // normaliza payload
     const payload = {
       nome: form.nome.trim(),
-      cpf: form.cpf.trim(), // CPF ou registro funcional
+      cpf: onlyDigits(form.cpf), // <- garante só números
       email: form.email.trim(),
       curso: form.curso.trim(),
       carga_horaria: Number(form.carga_horaria),
@@ -197,15 +240,24 @@ export default function CertificadosAvulsos() {
   async function gerarPDF(id) {
     setAcaoLoading({ id, tipo: "pdf" });
     try {
-      const { blob, filename } = await apiGetFile(`/api/certificados-avulsos/${id}/pdf`);
-      const url = window.URL.createObjectURL(blob);
+      // Monta querystring conforme opções marcadas
+      const params = new URLSearchParams();
+      if (palestrante) params.set("palestrante", "1");
+      if (usarAssinatura2 && assinatura2Id) params.set("assinatura2_id", String(assinatura2Id));
+
+      const url = params.toString()
+        ? `/api/certificados-avulsos/${id}/pdf?${params.toString()}`
+        : `/api/certificados-avulsos/${id}/pdf`;
+
+      const { blob, filename } = await apiGetFile(url);
+      const href = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = url;
+      a.href = href;
       a.download = filename || `certificado_${id}.pdf`;
       document.body.appendChild(a);
       a.click();
       a.remove();
-      window.URL.revokeObjectURL(url);
+      window.URL.revokeObjectURL(href);
     } catch {
       toast.error("❌ Erro ao gerar PDF.");
     } finally {
@@ -247,18 +299,18 @@ export default function CertificadosAvulsos() {
         <p ref={liveRef} className="sr-only" aria-live="polite" />
 
         {/* KPIs rápidos */}
-        <section className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
-          <div className="bg-white dark:bg-zinc-800 rounded-xl shadow p-4 text-center">
-            <p className="text-xs text-gray-600 dark:text-gray-300">Total</p>
-            <p className="text-2xl font-bold">{lista.length}</p>
+        <section className="grid grid-cols-3 gap-2 sm:gap-3 mb-6">
+          <div className="bg-white dark:bg-zinc-800 rounded-xl shadow p-3 sm:p-4 text-center">
+            <p className="text-[11px] sm:text-xs text-gray-600 dark:text-gray-300">Total</p>
+            <p className="text-xl sm:text-2xl font-bold">{lista.length}</p>
           </div>
-          <div className="bg-white dark:bg-zinc-800 rounded-xl shadow p-4 text-center">
-            <p className="text-xs text-gray-600 dark:text-gray-300">Enviados</p>
-            <p className="text-2xl font-bold">{enviados}</p>
+          <div className="bg-white dark:bg-zinc-800 rounded-xl shadow p-3 sm:p-4 text-center">
+            <p className="text-[11px] sm:text-xs text-gray-600 dark:text-gray-300">Enviados</p>
+            <p className="text-xl sm:text-2xl font-bold">{enviados}</p>
           </div>
-          <div className="bg-white dark:bg-zinc-800 rounded-xl shadow p-4 text-center">
-            <p className="text-xs text-gray-600 dark:text-gray-300">Não enviados</p>
-            <p className="text-2xl font-bold">{naoEnviados}</p>
+          <div className="bg-white dark:bg-zinc-800 rounded-xl shadow p-3 sm:p-4 text-center">
+            <p className="text-[11px] sm:text-xs text-gray-600 dark:text-gray-300">Não enviados</p>
+            <p className="text-xl sm:text-2xl font-bold">{naoEnviados}</p>
           </div>
         </section>
 
@@ -266,7 +318,7 @@ export default function CertificadosAvulsos() {
         <form
           id="form-cert-avulso"
           onSubmit={cadastrarCertificado}
-          className="grid gap-4 grid-cols-1 md:grid-cols-2 bg-white dark:bg-zinc-800 p-4 shadow rounded-xl"
+          className="grid gap-3 sm:gap-4 grid-cols-1 md:grid-cols-2 bg-white dark:bg-zinc-800 p-3 sm:p-4 shadow rounded-xl"
           aria-label="Cadastro de certificado avulso"
         >
           <div className="md:col-span-2">
@@ -295,10 +347,15 @@ export default function CertificadosAvulsos() {
               type="text"
               value={form.cpf}
               onChange={handleChange}
+              onPaste={handlePasteCPF}
               className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
               inputMode="numeric"
+              pattern="[0-9]*"
               autoComplete="off"
+              placeholder="Apenas números"
+              aria-describedby="cpf-help"
             />
+            <p id="cpf-help" className="text-[11px] text-zinc-500 mt-1">Aceita somente números; formataremos no PDF.</p>
           </div>
 
           <div>
@@ -377,6 +434,64 @@ export default function CertificadosAvulsos() {
             />
           </div>
 
+          {/* ===== Opções de geração ===== */}
+          <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-3 mt-1">
+            {/* 1) Palestrante */}
+            <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border bg-white dark:bg-zinc-700 dark:border-zinc-600 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                className="h-4 w-4"
+                checked={palestrante}
+                onChange={(e) => setPalestrante(e.target.checked)}
+              />
+              <span className="text-sm">Palestrante (gerar certificado de palestrante)</span>
+            </label>
+
+            {/* 2) Segunda assinatura (toggle + select) */}
+            <div className="col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border bg-white dark:bg-zinc-700 dark:border-zinc-600 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={usarAssinatura2}
+                  onChange={(e) => {
+                    setUsarAssinatura2(e.target.checked);
+                    if (!e.target.checked) setAssinatura2Id("");
+                  }}
+                />
+                <span className="text-sm">Adicionar 2ª assinatura</span>
+              </label>
+
+              <div className={`${usarAssinatura2 ? "" : "opacity-50 pointer-events-none"}`}>
+                <label htmlFor="assinatura2" className="block text-sm font-medium text-slate-700 dark:text-slate-200">
+                  Selecionar assinatura
+                </label>
+                <select
+                  id="assinatura2"
+                  value={assinatura2Id}
+                  onChange={(e) => setAssinatura2Id(e.target.value)}
+                  disabled={!usarAssinatura2 || assinaturasCarregando || assinaturas.length === 0}
+                  aria-disabled={!usarAssinatura2 || assinaturas.length === 0}
+                  className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
+                >
+                  <option value="">
+                    {assinaturasCarregando ? "Carregando…" : "— Selecione —"}
+                  </option>
+                  {assinaturas.map((a) => (
+                    <option key={a.id} value={a.id}>{a.nome}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-zinc-500 mt-1">
+                  {assinaturasCarregando
+                    ? "Buscando assinaturas disponíveis…"
+                    : assinaturas.length
+                      ? "Mostrando apenas pessoas com assinatura cadastrada."
+                      : "Nenhuma assinatura cadastrada encontrada."}
+                </p>
+              </div>
+            </div>
+          </div>
+
           <div className="md:col-span-2 flex justify-end">
             <BotaoPrimario type="submit" disabled={salvando} aria-busy={salvando}>
               {salvando ? "Enviando..." : "Cadastrar Certificado"}
@@ -452,7 +567,7 @@ export default function CertificadosAvulsos() {
                             disabled={isPdfLoading}
                             className={`underline ${isPdfLoading ? "opacity-60 cursor-not-allowed" : "text-blue-700 dark:text-blue-300"}`}
                             aria-label={`Baixar PDF do certificado de ${item.nome}`}
-                            title="Baixar PDF"
+                            title={`Baixar PDF${palestrante ? " (palestrante)" : ""}${usarAssinatura2 && assinatura2Id ? " com 2 assinaturas" : ""}`}
                           >
                             {isPdfLoading ? "Gerando…" : "PDF"}
                           </button>

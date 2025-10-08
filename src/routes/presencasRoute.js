@@ -5,6 +5,7 @@ const router = express.Router();
 const authMiddleware = require("../auth/authMiddleware");
 const db = require("../db");
 
+// Controllers
 const {
   registrarPresenca,
   confirmarPresencaViaQR,
@@ -22,9 +23,6 @@ const {
   obterMinhasPresencas, // ← vamos usar este
 } = require("../controllers/presencasController");
 
-// ❌ REMOVIDO: não vamos usar um segundo controller para “minhas”
-// const { listarMinhasPresencas } = require("../controllers/minhasPresencasController");
-
 /** Middleware simples para restringir por perfil (case-insensitive, trim) */
 function permitirPerfis(...perfisPermitidos) {
   const whitelist = perfisPermitidos.map((p) => String(p).trim().toLowerCase());
@@ -41,6 +39,8 @@ function permitirPerfis(...perfisPermitidos) {
 /* ----------------------------- *
  * Rotas públicas (sem auth)
  * ----------------------------- */
+
+// ✅ Validação simples por evento/usuario (já existia)
 router.get("/validar", async (req, res) => {
   try {
     const evento = req.query.evento || req.query.evento_id;
@@ -75,7 +75,7 @@ router.get("/validar", async (req, res) => {
 router.get("/minhas", authMiddleware, obterMinhasPresencas);
 router.get("/me", authMiddleware, obterMinhasPresencas);
 
-// 1) Registro de presença
+// 1) Registro de presença (aluno/monitor)
 router.post("/", authMiddleware, registrarPresenca);
 
 // 1.1) Relatório detalhado (datas × usuários)
@@ -102,8 +102,9 @@ router.get(
   exportarPresencasPDF
 );
 
-/* ====== Fluxo do QR Code ====== */
-
+/* ====== Fluxo do QR Code (AUTENTICADO) ======
+   Usado pela SPA: /presenca?turma=ID → POST /api/presencas/confirmar-qr/:turma_id
+*/
 router.post("/confirmarPresencaViaQR", authMiddleware, confirmarPresencaViaQR);
 router.post("/confirmar-presenca-qr", authMiddleware, confirmarPresencaViaQR);
 router.post("/confirmarPresencaViaQr", authMiddleware, confirmarPresencaViaQR);
@@ -118,7 +119,6 @@ router.get("/confirmar-qr", authMiddleware, (req, res, next) => {
 router.get("/confirmar/:turma_id", authMiddleware, confirmarPresencaViaQR);
 
 /* ====== Demais operações ====== */
-
 router.post("/confirmar-simples", authMiddleware, confirmarPresencaSimples);
 
 router.post(
@@ -181,8 +181,5 @@ router.get(
   permitirPerfis("administrador"),
   listarTodasPresencasParaAdmin
 );
-
-// ❌ REMOVIDO (duplicado e inválido):
-// router.get("/minhas", auth, ctrl.obterMinhasPresencas);
 
 module.exports = router;

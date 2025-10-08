@@ -37,6 +37,15 @@ const formatarCPF = (v) =>
   (String(v ?? "").replace(/\D/g, "").slice(0, 11).padStart(11, "0") || "")
     .replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
 
+// Normaliza lista (aceita array direto ou objeto { lista: [] })
+const normalizaArr = (v) => (Array.isArray(v) ? v : Array.isArray(v?.lista) ? v.lista : []);
+
+// Pega o número da frequência (prioriza frequencia_num; fallback parse da string "85%")
+const getFreqNum = (obj) =>
+  typeof obj?.frequencia_num === "number"
+    ? obj.frequencia_num
+    : parseInt(String(obj?.frequencia || "0").replace(/\D/g, ""), 10) || 0;
+
 /* ===== período & status do evento (anti-fuso) ===== */
 function getPeriodoEvento(evento, turmas) {
   const diAggY = ymd(evento?.data_inicio_geral);
@@ -114,6 +123,27 @@ function PctPill({ value }) {
   );
 }
 
+/* ===== Regra dinâmica ≥75% sobre encontros ocorridos ===== */
+function isElegivel75(u, resumo) {
+  // Se a função carregarPresencas populou esses campos, usamos direto:
+  const total = typeof u?.total_ocorridos === "number"
+    ? u.total_ocorridos
+    : (resumo?.encontrosOcorridos ?? 0);
+
+  if (total <= 0) return false;
+
+  if (typeof u?.presentes_ocorridos === "number") {
+    return (u.presentes_ocorridos / total) >= 0.75 - 1e-9;
+  }
+
+  // Fallback: usa frequencia_num / frequencia (já baseada nos ocorridos)
+  const n =
+    typeof u?.frequencia_num === "number"
+      ? u.frequencia_num
+      : parseInt(String(u?.frequencia || "0").replace(/\D/g, ""), 10) || 0;
+  return n >= 75;
+}
+
 /* ========================= UI helpers ========================= */
 function MiniStat({ value, label, className = "" }) {
   return (
@@ -141,23 +171,29 @@ export default function CardEventoadministrador({
   gerarRelatorioPDF,
   gerarPdfInscritosTurma,
 }) {
-  const normalizaArr = (v) => (Array.isArray(v) ? v : Array.isArray(v?.lista) ? v.lista : []);
-
-  // estatísticas do EVENTO (quando expandido)
+  // ===== Estatísticas do EVENTO (usando regra ≥ 75% dinâmica)
   const stats = useMemo(() => {
-    if (!expandido || !Array.isArray(turmas)) return { totalInscritos:0, totalPresentes:0, presencaMedia:"0", totalAvaliacoes:0, notaMedia:"—" };
-    let totalInscritos=0, totalPresentes=0;
-    for (const t of turmas) {
-      const ins = normalizaArr(inscritosPorTurma?.[t.id]);
-      const pres = normalizaArr(presencasPorTurma?.[t.id]);
-      totalInscritos += ins.length;
-      totalPresentes += pres.filter(p=>p?.presente===true).length;
+    if (!expandido || !Array.isArray(turmas)) {
+      return { totalInscritos: 0, totalPresentes: 0, presencaMedia: "0", totalAvaliacoes: 0, notaMedia: "—" };
     }
-    const presencaMedia = totalInscritos ? Math.round((totalPresentes/totalInscritos)*100).toString() : "0";
-    return { totalInscritos, totalPresentes, presencaMedia, totalAvaliacoes:0, notaMedia:"—" };
+    let totalInscritos = 0;
+    let totalElegiveis = 0; // presentes (≥ 75% nos ocorridos)
+
+    for (const t of turmas) {
+           const inscritos = normalizaArr(inscritosPorTurma?.[t.id]);
+            const presData  = presencasPorTurma?.[t.id] || {};
+            const presencas = normalizaArr(presData);
+      
+            totalInscritos += inscritos.length;
+            // ✅ usa o boolean já calculado no carregador
+           totalElegiveis += presencas.filter((p) => p?.presente === true).length;
+          }
+
+    const presencaMedia = totalInscritos ? Math.round((totalElegiveis / totalInscritos) * 100).toString() : "0";
+    return { totalInscritos, totalPresentes: totalElegiveis, presencaMedia, totalAvaliacoes: 0, notaMedia: "—" };
   }, [expandido, turmas, inscritosPorTurma, presencasPorTurma]);
 
-  // preload blocos ao expandir
+  // ===== Preload blocos ao expandir
   useEffect(() => {
     if (!expandido || !Array.isArray(turmas)) return;
     for (const turma of turmas) {
@@ -212,24 +248,27 @@ export default function CardEventoadministrador({
           <h4 className="sr-only">Estatísticas do evento</h4>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6">
             <MiniStat value={stats.totalInscritos} label="inscritos" />
-            <MiniStat value={stats.totalPresentes} label="presentes" className="text-emerald-600" />
-            <MiniStat value={`${stats.presencaMedia}%`} label="presença média" className="text-sky-600" />
+            <MiniStat value={stats.totalPresentes} label="presentes (≥75%)" className="text-emerald-600" />
+            <MiniStat value={`${stats.presencaMedia}%`} label="presença média (≥75%)" className="text-sky-600" />
           </div>
 
           {Array.isArray(turmas) && turmas.length ? (
             <div className="mt-6 space-y-6">
               {turmas.map((turma) => {
-                const lista = normalizaArr(inscritosPorTurma?.[turma.id]);
-                const pres = normalizaArr(presencasPorTurma?.[turma.id]);
-                const presentes = pres.filter(p=>p?.presente===true).length;
-                const presMedia = lista.length ? Math.round((presentes/lista.length)*100) : 0;
+                const inscritos = normalizaArr(inscritosPorTurma?.[turma.id]);
+                                const presData  = presencasPorTurma?.[turma.id] || {};
+                               const presencas = normalizaArr(presData);
+                
+                                // ✅ conta quem já está com ≥75% nos encontros ocorridos
+                                const elegiveis = presencas.filter((p) => p?.presente === true).length;
+                const pctElegiveis = inscritos.length ? Math.round((elegiveis / inscritos.length) * 100) : 0;
 
                 return (
                   <div key={turma.id} className="space-y-3">
                     {/* Cabeçalho da turma + ministats */}
                     <CardTurmaadministrador
                       turma={turma}
-                      inscritos={lista}
+                      inscritos={inscritos}
                       carregarInscritos={carregarInscritos}
                       carregarAvaliacoes={carregarAvaliacoes}
                       carregarPresencas={carregarPresencas}
@@ -237,9 +276,9 @@ export default function CardEventoadministrador({
                       somenteInfo
                     />
                     <div className="flex flex-wrap items-center gap-3 px-2">
-                      <MiniStat value={lista.length} label="inscritos" />
-                      <MiniStat value={presentes} label="presentes" className="text-emerald-600" />
-                      <MiniStat value={`${presMedia}%`} label="presença" className="text-sky-600" />
+                      <MiniStat value={inscritos.length} label="inscritos" />
+                      <MiniStat value={elegiveis} label="presentes (≥75%)" className="text-emerald-600" />
+                      <MiniStat value={`${pctElegiveis}%`} label="presença (≥75%)" className="text-sky-600" />
                     </div>
 
                     {/* Lista de inscritos (tabela responsiva em UMA coluna visual) */}
@@ -256,7 +295,7 @@ export default function CardEventoadministrador({
                         </button>
                       </div>
 
-                      {lista.length === 0 ? (
+                      {inscritos.length === 0 ? (
                         <p className="text-xs text-zinc-500 mt-2">Nenhum inscrito.</p>
                       ) : (
                         <div className="mt-3 w-full overflow-x-auto">
@@ -271,12 +310,11 @@ export default function CardEventoadministrador({
                           </div>
 
                           <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
-                            {lista
+                            {inscritos
                               .slice()
                               .sort((a,b)=>String(a?.nome||"").localeCompare(String(b?.nome||"")))
                               .map((i) => {
                                 const cpf = formatarCPF(i?.cpf);
-                                // 👇 usa idade do backend se existir; senão calcula localmente
                                 const idade = (Number.isFinite(i?.idade) ? i.idade : idadeDe(i?.data_nascimento || i?.nascimento));
                                 const registro = i?.registro || i?.matricula || null;
 
@@ -287,9 +325,16 @@ export default function CardEventoadministrador({
                                 const pcdMultipla = !!(i?.pcd_multipla || i?.def_multipla);
                                 const pcdTEA      = !!(i?.pcd_autismo || i?.tea || i?.transtorno_espectro_autista);
 
-                                const freqStr = pres.find(p =>
+                                const presObj = presencasPorTurma?.[turma.id] || {};
+                                const presList = normalizaArr(presObj);
+                                const presAluno = presList.find(p =>
                                   (p.usuario_id === i.id || p.usuario_id === i.usuario_id || p.cpf === i.cpf)
-                                )?.frequencia; // "25%"
+                                );
+                                const freqStr = presAluno
+                                  ? (typeof presAluno.frequencia_num === "number"
+                                      ? `${presAluno.frequencia_num}%`
+                                      : presAluno.frequencia)
+                                  : null;
 
                                 return (
                                   <li key={i.id || i.usuario_id || i.cpf} className="py-2">

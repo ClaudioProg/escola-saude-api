@@ -1,3 +1,4 @@
+// ✅ src/controllers/certificadosAvulsosController.js (atualizado: CPF só números, palestrante, 2ª assinatura e /api/assinaturas)
 const db = require("../db");
 const PDFDocument = require("pdfkit");
 const fs = require("fs");
@@ -7,9 +8,13 @@ const nodemailer = require("nodemailer");
 
 /* ========================= Utils ========================= */
 
+const IS_DEV = process.env.NODE_ENV !== "production";
+
+const onlyDigits = (v = "") => String(v).replace(/\D+/g, "");
+
 function formatarIdentificador(valor) {
   if (!valor) return "";
-  const onlyNum = String(valor).replace(/\D/g, "");
+  const onlyNum = onlyDigits(valor);
 
   // CPF: 11 dígitos
   if (/^\d{11}$/.test(onlyNum)) {
@@ -30,8 +35,8 @@ function formatarIdentificador(valor) {
 function dataHojePorExtenso() {
   const hoje = new Date();
   const meses = [
-    "janeiro", "fevereiro", "março", "abril", "maio", "junho",
-    "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"
+    "janeiro","fevereiro","março","abril","maio","junho",
+    "julho","agosto","setembro","outubro","novembro","dezembro"
   ];
   return `${hoje.getDate()} de ${meses[hoje.getMonth()]} de ${hoje.getFullYear()}`;
 }
@@ -45,13 +50,43 @@ function formatarDataCurtaBR(data) {
 
 function validarEmail(email) {
   if (!email) return false;
-  // Regex simples/aceitável para validação leve
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim());
 }
 
-// Garante diretório
 async function ensureDir(dir) {
   await fsp.mkdir(dir, { recursive: true });
+}
+
+/* ===== Fundo por tipo ===== */
+function resolveFirstExisting(candidates = []) {
+  for (const p of candidates) {
+    try { if (p && fs.existsSync(p)) return p; } catch (_) {}
+  }
+  return null;
+}
+function getFundoPath(tipo) {
+  const nomes = [
+    tipo === "palestrante" ? "fundo_certificado_instrutor.png" : null, // quando for palestrante, usa o mesmo do instrutor
+    "fundo_certificado.png"
+  ].filter(Boolean);
+
+  const roots = [
+    ...(process.env.CERT_FUNDO_DIR ? [process.env.CERT_FUNDO_DIR] : []),
+    path.resolve(__dirname, "../../certificados"),
+    path.resolve(__dirname, "../../assets"),
+    path.resolve(__dirname, "../../public"),
+    path.resolve(process.cwd(), "certificados"),
+    path.resolve(process.cwd(), "assets"),
+    path.resolve(process.cwd(), "public"),
+  ];
+  const candidates = [];
+  for (const nome of nomes) {
+    for (const root of roots) candidates.push(path.join(root, nome));
+    candidates.push(path.resolve(__dirname, nome));
+  }
+  const found = resolveFirstExisting(candidates);
+  if (!found && IS_DEV) console.warn("⚠️ Fundo não encontrado. Procurado:", candidates);
+  return found;
 }
 
 /* ========== Montagem de PDF (compartilhado) ========== */
@@ -66,31 +101,34 @@ function registerFonts(doc) {
   };
   for (const [nome, caminhoFonte] of Object.entries(fontes)) {
     if (fs.existsSync(caminhoFonte)) {
-      doc.registerFont(nome, caminhoFonte);
-    } else {
-      // Silencia em produção, mas loga em dev:
-      if (process.env.NODE_ENV !== "production") {
-        console.warn(`(certificados) Fonte ausente: ${caminhoFonte}`);
+      try { doc.registerFont(nome, caminhoFonte); } catch (e) {
+        if (IS_DEV) console.warn(`(certificados) Erro fonte ${nome}:`, e.message);
       }
+    } else if (IS_DEV) {
+      console.warn(`(certificados) Fonte ausente: ${caminhoFonte}`);
     }
   }
 }
 
-function desenharCertificado(doc, certificado) {
+/**
+ * Desenha o certificado.
+ * @param {PDFDocument} doc
+ * @param {object} certificado Linha de certificados_avulsos
+ * @param {object} opts { palestrante?: boolean, assinatura2?: {nome, cargo, imgBuffer}? }
+ */
+function desenharCertificado(doc, certificado, opts = {}) {
+  const { palestrante = false, assinatura2 = null } = opts;
+
   // Fundo
-  const fundo = path.join(__dirname, "..", "..", "certificados", "fundo_certificado_instrutor.png");
-  if (fs.existsSync(fundo)) {
-    // A4 landscape em pontos: 842 x 595
-    doc.image(fundo, 0, 0, { width: 842, height: 595 });
-  } else if (process.env.NODE_ENV !== "production") {
-    console.warn("(certificados) Imagem de fundo não encontrada:", fundo);
+  const fundo = getFundoPath(palestrante ? "palestrante" : "usuario");
+  if (fundo) {
+    doc.image(fundo, 0, 0, { width: doc.page.width, height: doc.page.height }); // A4 landscape
+  } else {
+    doc.save().rect(0, 0, doc.page.width, doc.page.height).fill("#ffffff").restore();
   }
 
   // Título
-  doc.fillColor("#0b3d2e") // verde lousa
-    .font("BreeSerif")
-    .fontSize(63)
-    .text("CERTIFICADO", { align: "center" });
+  doc.fillColor("#0b3d2e").font("BreeSerif").fontSize(63).text("CERTIFICADO", { align: "center" });
 
   // Cabeçalho institucional
   doc.fillColor("black");
@@ -101,13 +139,11 @@ function desenharCertificado(doc, certificado) {
 
   doc.moveDown(2.5);
 
-  // Nome do participante (dinâmico)
+  // Nome do participante
   const nome = certificado.nome || "";
   const nomeFont = "AlexBrush";
   const nomeMaxWidth = 680;
   let nomeFontSize = 45;
-
-  // Ajuste de tamanho: PDFKit mede pela font size corrente
   doc.font(nomeFont).fontSize(nomeFontSize);
   while (doc.widthOfString(nome) > nomeMaxWidth && nomeFontSize > 20) {
     nomeFontSize -= 1;
@@ -115,7 +151,7 @@ function desenharCertificado(doc, certificado) {
   }
   doc.text(nome, { align: "center" });
 
-  // Identificador (CPF ou Registro) — centralizado
+  // Identificador (CPF / Registro)
   const idFmt = formatarIdentificador(certificado.cpf || certificado.registro || "");
   if (idFmt) {
     doc.font("BreeSerif").fontSize(16)
@@ -131,11 +167,12 @@ function desenharCertificado(doc, certificado) {
   }
   const periodoCurso = partesPeriodo.length ? `, ${partesPeriodo.join(" ")}` : ".";
 
-  const textoCertificado =
-    `Concluiu o curso "${certificado.curso}", com carga horária de ${certificado.carga_horaria} horas${periodoCurso}`;
+  const fraseBase = palestrante
+    ? `Participou como palestrante do evento "${certificado.curso}", com carga horária de ${certificado.carga_horaria} horas${periodoCurso}`
+    : `Concluiu o curso "${certificado.curso}", com carga horária de ${certificado.carga_horaria} horas${periodoCurso}`;
 
   doc.moveDown(1);
-  doc.font("AlegreyaSans-Regular").fontSize(15).text(textoCertificado, 70, doc.y, {
+  doc.font("AlegreyaSans-Regular").fontSize(15).text(fraseBase, 70, doc.y, {
     align: "justify",
     lineGap: 4,
     width: 680,
@@ -150,19 +187,48 @@ function desenharCertificado(doc, certificado) {
       width: 680,
     });
 
-  // Assinatura
+  // Área de assinaturas
   const baseY = 470;
+
+  // Assinatura institucional (já “vem do background” visualmente, mas mantemos nome/cargo impresso)
+  // Posição tradicional ao centro
   doc.font("AlegreyaSans-Bold").fontSize(20)
     .text("Rafaella Pitol Corrêa", 270, baseY, { align: "center", width: 300 });
   doc.font("AlegreyaSans-Regular").fontSize(14)
     .text("Chefe da Escola da Saúde", 270, baseY + 25, { align: "center", width: 300 });
+
+  // 2ª assinatura (se houver)
+  if (assinatura2 && (assinatura2.imgBuffer || assinatura2.nome)) {
+    // Lado direito
+    const areaX = 440;
+    const areaW = 300;
+
+    if (assinatura2.imgBuffer) {
+      try {
+        const assinaturaWidth = 150;
+        const assinaturaX = areaX + (areaW - assinaturaWidth) / 2;
+        const assinaturaY = baseY - 50;
+        doc.image(assinatura2.imgBuffer, assinaturaX, assinaturaY, { width: assinaturaWidth });
+      } catch (e) {
+        if (IS_DEV) console.warn("⚠️ Erro ao desenhar 2ª assinatura:", e.message);
+      }
+    }
+
+    doc.font("AlegreyaSans-Bold").fontSize(20)
+      .text(assinatura2.nome || "—", areaX, baseY, { align: "center", width: areaW });
+    if (assinatura2.cargo) {
+      doc.font("AlegreyaSans-Regular").fontSize(14)
+        .text(assinatura2.cargo, areaX, baseY + 25, { align: "center", width: areaW });
+    }
+  }
 }
 
 /**
  * Gera o PDF para um arquivo temporário e retorna o caminho.
- * Limpeza do arquivo é responsabilidade do chamador.
+ * @param {object} certificado
+ * @param {object} opts { palestrante?: boolean, assinatura2?: {nome,cargo,imgBuffer}? }
  */
-async function gerarPdfTemporario(certificado, filenamePrefix = "certificado") {
+async function gerarPdfTemporario(certificado, filenamePrefix = "certificado", opts = {}) {
   const tempDir = path.join(__dirname, "..", "..", "temp");
   await ensureDir(tempDir);
 
@@ -173,7 +239,6 @@ async function gerarPdfTemporario(certificado, filenamePrefix = "certificado") {
     const doc = new PDFDocument({ size: "A4", margin: 50, layout: "landscape" });
     const stream = fs.createWriteStream(caminho);
 
-    // Tratamento de erros
     const onError = (err) => {
       try { stream.destroy(); } catch {}
       reject(err);
@@ -182,15 +247,9 @@ async function gerarPdfTemporario(certificado, filenamePrefix = "certificado") {
     doc.on("error", onError);
 
     doc.pipe(stream);
-
-    // Registra fontes (se existirem)
     registerFonts(doc);
-
-    // Desenha conteúdo
-    desenharCertificado(doc, certificado);
-
+    desenharCertificado(doc, certificado, opts);
     doc.end();
-
     stream.on("finish", resolve);
   });
 
@@ -206,14 +265,14 @@ async function criarCertificadoAvulso(req, res) {
   try {
     let { nome, cpf, email, curso, carga_horaria, data_inicio, data_fim } = req.body;
 
-    // Normalizações/validações leves
+    // Normalizações/validações
     nome = (nome || "").trim();
     curso = (curso || "").trim();
     email = (email || "").trim();
-    cpf = (cpf || "").trim();
+    cpf = onlyDigits(cpf || ""); // <- garante só números
     const carga = Number(carga_horaria);
 
-    if (!nome || !curso || !email || !Number.isFinite(carga)) {
+    if (!nome || !curso || !email || !Number.isFinite(carga) || carga <= 0) {
       return res.status(400).json({ erro: "Dados obrigatórios inválidos." });
     }
     if (!validarEmail(email)) {
@@ -224,8 +283,8 @@ async function criarCertificadoAvulso(req, res) {
 
     const { rows } = await db.query(
       `INSERT INTO certificados_avulsos
-       (nome, cpf, email, curso, carga_horaria, data_inicio, data_fim)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       (nome, cpf, email, curso, carga_horaria, data_inicio, data_fim, enviado)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, false)
        RETURNING *`,
       [nome, cpf, email, curso, carga, data_inicio || null, dataFinalValida]
     );
@@ -253,10 +312,38 @@ async function listarCertificadosAvulsos(req, res) {
 }
 
 /**
+ * GET /api/assinaturas
+ * Lista pessoas com assinatura cadastrada para 2ª assinatura no certificado.
+ */
+async function listarAssinaturas(req, res) {
+  try {
+    // Ajuste este SELECT conforme seu schema se necessário
+    const q = await db.query(
+      `
+      SELECT a.usuario_id AS id, u.nome, u.cargo, a.imagem_base64
+      FROM assinaturas a
+      JOIN usuarios u ON u.id = a.usuario_id
+      WHERE a.imagem_base64 IS NOT NULL AND a.imagem_base64 <> ''
+      ORDER BY u.nome ASC
+      `
+    );
+    const lista = q.rows.map(r => ({ id: r.id, nome: r.nome, cargo: r.cargo || null }));
+    return res.json(lista);
+  } catch (erro) {
+    console.error("❌ Erro ao listar assinaturas:", erro);
+    return res.status(500).json({ erro: "Erro ao listar assinaturas." });
+  }
+}
+
+/**
  * GET /api/certificados-avulsos/:id/pdf
+ * Suporta:
+ *   ?palestrante=1            → usa modelo de palestrante/instrutor e texto apropriado
+ *   ?assinatura2_id=<usuario> → imprime 2ª assinatura (imagem + nome/cargo) desta pessoa
  */
 async function gerarPdfCertificado(req, res) {
   const { id } = req.params;
+  const { palestrante, assinatura2_id } = req.query;
   let caminhoTemp;
 
   try {
@@ -267,30 +354,56 @@ async function gerarPdfCertificado(req, res) {
     if (rows.length === 0) {
       return res.status(404).json({ erro: "Certificado não encontrado." });
     }
-
     const certificado = rows[0];
-    caminhoTemp = await gerarPdfTemporario(certificado, "certificado");
 
-    // Faz o download e, ao finalizar, remove o arquivo
-    res.download(caminhoTemp, `certificado_${id}.pdf`, async (err) => {
+    // Monta opções
+    const opts = { palestrante: String(palestrante || "") === "1" };
+
+    // (opcional) carrega a 2ª assinatura
+    if (assinatura2_id) {
       try {
-        await fsp.unlink(caminhoTemp).catch(() => {});
-      } catch {}
-      if (err) {
-        console.error("❌ Erro ao enviar PDF para download:", err);
+        const a = await db.query(
+          `
+          SELECT a.imagem_base64, u.nome, u.cargo
+          FROM assinaturas a
+          JOIN usuarios u ON u.id = a.usuario_id
+          WHERE a.usuario_id = $1 AND a.imagem_base64 IS NOT NULL AND a.imagem_base64 <> ''
+          LIMIT 1
+          `,
+          [assinatura2_id]
+        );
+        if (a.rowCount) {
+          const row = a.rows[0];
+          let imgBuffer = null;
+          if (row.imagem_base64 && row.imagem_base64.startsWith("data:image")) {
+            try {
+              imgBuffer = Buffer.from(row.imagem_base64.split(",")[1], "base64");
+            } catch {}
+          }
+          opts.assinatura2 = { nome: row.nome, cargo: row.cargo || null, imgBuffer };
+        }
+      } catch (e) {
+        if (IS_DEV) console.warn("⚠️ Falha ao obter 2ª assinatura:", e.message);
       }
+    }
+
+    caminhoTemp = await gerarPdfTemporario(certificado, "certificado", opts);
+
+    res.download(caminhoTemp, `certificado_${id}.pdf`, async (err) => {
+      try { await fsp.unlink(caminhoTemp).catch(() => {}); } catch {}
+      if (err) console.error("❌ Erro ao enviar PDF:", err);
     });
   } catch (erro) {
     console.error("❌ Erro no gerarPdfCertificado:", erro);
-    try {
-      if (caminhoTemp) await fsp.unlink(caminhoTemp).catch(() => {});
-    } catch {}
+    try { if (caminhoTemp) await fsp.unlink(caminhoTemp).catch(() => {}); } catch {}
     return res.status(500).json({ erro: "Erro ao gerar PDF." });
   }
 }
 
 /**
  * POST /api/certificados-avulsos/:id/enviar
+ * (mantido sem opções de palestrante/assinatura2 por enquanto;
+ *  se quiser, posso incluir as mesmas querystrings aqui também)
  */
 async function enviarPorEmail(req, res) {
   const { id } = req.params;
@@ -306,31 +419,22 @@ async function enviarPorEmail(req, res) {
     }
     const certificado = rows[0];
 
-    // Gera o PDF temporário
     caminhoTemp = await gerarPdfTemporario(certificado, "certificado");
 
-    // Configuração do transporte
-    // Preferir SMTP genérico via env:
-    // SMTP_HOST, SMTP_PORT, SMTP_SECURE (true/false), SMTP_USER, SMTP_PASS
-    // Alternativa: service: "gmail" (requer App Password)
     let transporter;
     if (process.env.SMTP_HOST) {
       transporter = nodemailer.createTransport({
         host: process.env.SMTP_HOST,
         port: Number(process.env.SMTP_PORT || 587),
         secure: String(process.env.SMTP_SECURE || "").toLowerCase() === "true",
-        auth: {
-          user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASS,
-        },
+        auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
       });
     } else {
-      // fallback (ex.: Gmail)
       transporter = nodemailer.createTransport({
         service: "gmail",
         auth: {
           user: process.env.EMAIL_REMETENTE,
-          pass: process.env.EMAIL_SENHA, // App Password recomendado
+          pass: process.env.EMAIL_SENHA,
         },
       });
     }
@@ -363,23 +467,13 @@ Equipe da Escola da Saúde
       ],
     });
 
-    // Atualiza flag de enviado
-    await db.query(
-      "UPDATE certificados_avulsos SET enviado = true WHERE id = $1",
-      [id]
-    );
-
+    await db.query("UPDATE certificados_avulsos SET enviado = true WHERE id = $1", [id]);
     return res.status(200).json({ mensagem: "Certificado enviado com sucesso." });
   } catch (erro) {
     console.error("❌ Erro ao enviar certificado por e-mail:", erro);
     return res.status(500).json({ erro: "Erro ao enviar certificado." });
   } finally {
-    // Limpeza do arquivo temporário
-    if (caminhoTemp) {
-      try {
-        await fsp.unlink(caminhoTemp);
-      } catch {}
-    }
+    if (caminhoTemp) { try { await fsp.unlink(caminhoTemp); } catch {} }
   }
 }
 
@@ -388,4 +482,5 @@ module.exports = {
   listarCertificadosAvulsos,
   gerarPdfCertificado,
   enviarPorEmail,
+  listarAssinaturas, // 👈 novo: para popular o <select> no front
 };
