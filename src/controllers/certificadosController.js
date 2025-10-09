@@ -20,7 +20,6 @@ function formatarCPF(cpf) {
 /** 📅 data BR segura (lida com Date, 'YYYY-MM-DD' ou ISO completo) */
 function dataBR(isoLike) {
   if (!isoLike) return "";
-  // Date -> usa UTC para não sofrer com fuso
   if (isoLike instanceof Date) {
     const y = isoLike.getUTCFullYear();
     const m = String(isoLike.getUTCMonth() + 1).padStart(2, "0");
@@ -28,11 +27,8 @@ function dataBR(isoLike) {
     return `${d}/${m}/${y}`;
   }
   const s = String(isoLike);
-  // pega a primeira ocorrência YYYY-MM-DD (funciona p/ '2025-08-26', '2025-08-26T03:00:00Z', etc.)
   const m = s.match(/(\d{4})-(\d{2})-(\d{2})/);
   if (m) return `${m[3]}/${m[2]}/${m[1]}`;
-
-  // último recurso: tenta parsear como Date (evita retornar vazio)
   const d2 = new Date(s);
   if (!Number.isNaN(d2.getTime())) {
     const y = d2.getFullYear();
@@ -42,20 +38,16 @@ function dataBR(isoLike) {
   }
   return s;
 }
-
 /** 📅 data por extenso BR (ex.: 12 de maio de 2025) */
 function dataExtensoBR(dateLike = new Date()) {
   const d = dateLike instanceof Date ? dateLike : new Date(dateLike);
   if (Number.isNaN(d.getTime())) return "";
-
-  // usa formatToParts para garantir o ano correto em qualquer ICU
   const parts = new Intl.DateTimeFormat("pt-BR", {
     timeZone: "America/Sao_Paulo",
     day: "2-digit",
     month: "long",
     year: "numeric",
   }).formatToParts(d);
-
   const map = Object.fromEntries(parts.map(p => [p.type, p.value]));
   return `${map.day} de ${map.month} de ${map.year}`;
 }
@@ -201,25 +193,29 @@ async function resumoDatasTurma(turma_id, usuario_id) {
     return q.rows[0] || {};
   } catch (e) {
     console.error("[resumoDatasTurma] erro:", e);
-    // Evita quebrar o fluxo do certificado
     return {};
   }
 }
 
-
+/* ========================= Gerar Certificado ========================= */
 async function gerarCertificado(req, res) {
   const { usuario_id, evento_id, turma_id, tipo, assinaturaBase64 } = req.body;
 
+  // 🔐 validações básicas
+  if (!usuario_id || !evento_id || !turma_id) {
+    return res.status(400).json({ erro: "Parâmetros obrigatórios: usuario_id, evento_id, turma_id." });
+  }
+  if (!Number.isFinite(Number(usuario_id)) || !Number.isFinite(Number(evento_id)) || !Number.isFinite(Number(turma_id))) {
+    return res.status(400).json({ erro: "IDs inválidos." });
+  }
   if (!tipo || !["usuario", "instrutor"].includes(tipo)) {
-    return res
-      .status(400)
-      .json({ erro: "Parâmetro 'tipo' inválido (use 'usuario' ou 'instrutor')." });
+    return res.status(400).json({ erro: "Parâmetro 'tipo' inválido (use 'usuario' ou 'instrutor')." });
   }
 
   try {
     logDev("🔍 Tipo do certificado:", tipo);
 
-    // Evento + Turma (dados básicos)
+    // Evento + Turma
     const eventoResult = await db.query(
       `
       SELECT 
@@ -233,7 +229,7 @@ async function gerarCertificado(req, res) {
       JOIN turmas t ON t.evento_id = e.id
       WHERE e.id = $1 AND t.id = $2
       `,
-      [evento_id, turma_id]
+      [Number(evento_id), Number(turma_id)]
     );
     if (eventoResult.rowCount === 0) {
       return res.status(404).json({ erro: "Evento ou turma não encontrados." });
@@ -242,38 +238,52 @@ async function gerarCertificado(req, res) {
 
     // Usuário
     const pessoa = await db.query("SELECT nome, cpf, email FROM usuarios WHERE id = $1", [
-      usuario_id,
+      Number(usuario_id),
     ]);
     if (pessoa.rowCount === 0) {
       return res
         .status(404)
-        .json({ erro: tipo === "instrutor" ? "Instrutor não encontrado" : "Usuário não encontrado" });
+        .json({ erro: tipo === "instrutor" ? "Instrutor não encontrado." : "Usuário não encontrado." });
     }
     const nomeUsuario = pessoa.rows[0].nome;
     const cpfUsuario = formatarCPF(pessoa.rows[0].cpf || "");
 
-    // ---------- Helper local: resumo seguro das datas ----------
+    // 🔐 Regras/autorizações por tipo
+    if (tipo === "instrutor") {
+      // precisa estar vinculado ao evento
+      const vinc = await db.query(
+        `SELECT 1 FROM evento_instrutor WHERE evento_id = $1 AND instrutor_id = $2 LIMIT 1`,
+        [Number(evento_id), Number(usuario_id)]
+      );
+      if (vinc.rowCount === 0) {
+        return res.status(403).json({ erro: "Você não está vinculado como instrutor neste evento." });
+      }
+      // turma deve estar encerrada
+      const fimTS = new Date(`${String(TURMA.data_fim).slice(0,10)}T${(TURMA.horario_fim || "23:59").slice(0,5)}:00`);
+      if (Number.isFinite(fimTS.getTime()) && new Date() < fimTS) {
+        return res.status(400).json({ erro: "A turma ainda não encerrou para emissão do certificado de instrutor." });
+      }
+    }
+
+    // ---------- Helper local: resumo das datas ----------
     async function getResumoTurmaSegura() {
-      // 1) Preferir datas_turma (min/max/total/horas) + presenças distintas
       try {
         const r = await db.query(
           `
           WITH dt AS (
             SELECT 
-              data::date                  AS d,
-              horario_inicio::time        AS hi,
-              horario_fim::time           AS hf
+              data::date            AS d,
+              horario_inicio::time  AS hi,
+              horario_fim::time     AS hf
             FROM datas_turma
             WHERE turma_id = $1
           ),
           base AS (
             SELECT
-              MIN(d)                                          AS min_data,
-              MAX(d)                                          AS max_data,
-              COUNT(*)::int                                   AS total_aulas,
-              SUM(EXTRACT(EPOCH FROM (
-                COALESCE(hf, '23:59'::time) - COALESCE(hi, '00:00'::time)
-              )) / 3600.0)                                    AS horas_total
+              MIN(d) AS min_data,
+              MAX(d) AS max_data,
+              COUNT(*)::int AS total_aulas,
+              SUM(EXTRACT(EPOCH FROM (COALESCE(hf,'23:59'::time)-COALESCE(hi,'00:00'::time))) / 3600.0) AS horas_total
             FROM dt
           ),
           pres AS (
@@ -289,33 +299,28 @@ async function gerarCertificado(req, res) {
             COALESCE(pres.presencas_distintas,0)  AS presencas_distintas
           FROM base LEFT JOIN pres ON TRUE
           `,
-          [turma_id, usuario_id]
+          [Number(turma_id), Number(usuario_id)]
         );
-        if (r.rows?.length && (r.rows[0].min_data || r.rows[0].max_data)) {
-          return r.rows[0];
-        }
+        if (r.rows?.length && (r.rows[0].min_data || r.rows[0].max_data)) return r.rows[0];
       } catch (e) {
-        // Se a tabela datas_turma não existir, apenas fazemos fallback
         if (e?.code !== "42P01") throw e;
       }
-
-      // 2) Fallback: usar datas da turma + presenças
       const r2 = await db.query(
         `
         SELECT
-          t.data_inicio::date                                  AS min_data,
-          t.data_fim::date                                     AS max_data,
+          t.data_inicio::date AS min_data,
+          t.data_fim::date    AS max_data,
           GREATEST(1, (t.data_fim::date - t.data_inicio::date) + 1)::int AS total_aulas,
-          COALESCE(t.carga_horaria::numeric, 0)                AS horas_total,
+          COALESCE(t.carga_horaria::numeric, 0) AS horas_total,
           (
             SELECT COUNT(DISTINCT p.data_presenca::date)::int
             FROM presencas p
             WHERE p.turma_id = $1 AND p.usuario_id = $2 AND p.presente = TRUE
-          )                                                    AS presencas_distintas
+          ) AS presencas_distintas
         FROM turmas t
         WHERE t.id = $1
         `,
-        [turma_id, usuario_id]
+        [Number(turma_id), Number(usuario_id)]
       );
       return r2.rows[0] || {};
     }
@@ -337,9 +342,7 @@ async function gerarCertificado(req, res) {
       const fimDT = fimStr ? new Date(`${fimStr}T${hf}:00`) : null;
 
       if (fimDT && new Date() < fimDT) {
-        return res.status(400).json({
-          erro: "A turma ainda não encerrou. O certificado só pode ser gerado após o término.",
-        });
+        return res.status(400).json({ erro: "A turma ainda não encerrou. O certificado só pode ser gerado após o término." });
       }
 
       const taxa = totalAulas > 0 ? presencasDistintas / totalAulas : 0;
@@ -347,7 +350,7 @@ async function gerarCertificado(req, res) {
         return res.status(403).json({ erro: "Presença insuficiente (mínimo de 75%)." });
       }
 
-      const fez = await usuarioFezAvaliacao(usuario_id, turma_id);
+      const fez = await usuarioFezAvaliacao(Number(usuario_id), Number(turma_id));
       if (!fez) {
         return res.status(403).json({
           erro: "É necessário enviar a avaliação do evento para liberar o certificado.",
@@ -369,7 +372,7 @@ async function gerarCertificado(req, res) {
     const dfYmd = ymd(maxData || TURMA.data_fim);
     const mesmoDia = diYmd && diYmd === dfYmd;
 
-    const dataInicioBR   = dataBR(diYmd);  // aceita "YYYY-MM-DD"
+    const dataInicioBR   = dataBR(diYmd);
     const dataFimBR      = dataBR(dfYmd);
     const dataHojeExtenso = dataExtensoBR(new Date());
 
@@ -439,14 +442,15 @@ async function gerarCertificado(req, res) {
     }
 
     // Corpo
+    const tituloEvento = TURMA.titulo || "evento";
     const corpoTexto =
       tipo === "instrutor"
         ? (mesmoDia
-            ? `Participou como instrutor do evento "${TURMA.titulo}", realizado em ${dataInicioBR}, com carga horária total de ${cargaTexto} horas.`
-            : `Participou como instrutor do evento "${TURMA.titulo}", realizado de ${dataInicioBR} a ${dataFimBR}, com carga horária total de ${cargaTexto} horas.`)
+            ? `Participou como instrutor do evento "${tituloEvento}", realizado em ${dataInicioBR}, com carga horária total de ${cargaTexto} horas.`
+            : `Participou como instrutor do evento "${tituloEvento}", realizado de ${dataInicioBR} a ${dataFimBR}, com carga horária total de ${cargaTexto} horas.`)
         : (mesmoDia
-            ? `Participou do evento "${TURMA.titulo}", realizado em ${dataInicioBR}, com carga horária total de ${cargaTexto} horas.`
-            : `Participou do evento "${TURMA.titulo}", realizado de ${dataInicioBR} a ${dataFimBR}, com carga horária total de ${cargaTexto} horas.`);
+            ? `Participou do evento "${tituloEvento}", realizado em ${dataInicioBR}, com carga horária total de ${cargaTexto} horas.`
+            : `Participou do evento "${tituloEvento}", realizado de ${dataInicioBR} a ${dataFimBR}, com carga horária total de ${cargaTexto} horas.`);
 
     doc.moveDown(1);
     doc.font("AlegreyaSans-Regular").fontSize(15).text(corpoTexto, 70, doc.y, {
@@ -465,7 +469,7 @@ async function gerarCertificado(req, res) {
     // Assinaturas
     const baseY = 470;
 
-    // Institucional
+    // Assinatura institucional (posição varia por tipo)
     if (tipo === "instrutor") {
       doc.font("AlegreyaSans-Bold").fontSize(20).text("Rafaella Pitol Corrêa", 270, baseY, {
         align: "center",
@@ -486,22 +490,23 @@ async function gerarCertificado(req, res) {
       });
     }
 
-    // Assinatura do usuário (se enviada)
-    if (tipo === "usuario" && assinaturaBase64 && assinaturaBase64.startsWith("data:image")) {
+    // Assinatura enviada no payload
+    if (assinaturaBase64 && assinaturaBase64.startsWith("data:image")) {
       try {
         const imgBuffer = Buffer.from(assinaturaBase64.split(",")[1], "base64");
         const assinaturaWidth = 150;
+        // posição à direita
         const assinaturaX = 440 + (300 - assinaturaWidth) / 2;
-        const assinaturaY = baseY - 25;
+        const assinaturaY = baseY - (tipo === "usuario" ? 25 : 30);
         doc.image(imgBuffer, assinaturaX, assinaturaY, { width: assinaturaWidth });
       } catch (e) {
-        console.warn("⚠️ Assinatura do usuário inválida:", e.message);
+        console.warn("⚠️ Assinatura em Base64 inválida:", e.message);
       }
     }
 
-    // Assinatura do instrutor (certificado de usuário)
+    // Assinatura do instrutor no certificado do USUÁRIO (auto-busca)
     if (tipo === "usuario") {
-      let nomeInstrutor = "Palestrante";
+      let nomeInstrutor = "Instrutor(a)";
       try {
         const assinaturaInstrutor = await db.query(
           `
@@ -513,7 +518,7 @@ async function gerarCertificado(req, res) {
           ORDER BY ei.instrutor_id ASC
           LIMIT 1
           `,
-          [evento_id]
+          [Number(evento_id)]
         );
 
         nomeInstrutor = assinaturaInstrutor.rows[0]?.nome_instrutor || "Instrutor(a)";
@@ -542,8 +547,7 @@ async function gerarCertificado(req, res) {
     }
 
     // QR Code (validação)
-    const FRONTEND_BASE_URL =
-      process.env.FRONTEND_BASE_URL || "https://escoladasaude.vercel.app";
+    const FRONTEND_BASE_URL = process.env.FRONTEND_BASE_URL || "https://escoladasaude.vercel.app";
     const linkValidacao =
       `${FRONTEND_BASE_URL}/validar-certificado.html` +
       `?usuario_id=${encodeURIComponent(usuario_id)}` +
@@ -568,71 +572,52 @@ async function gerarCertificado(req, res) {
       DO UPDATE SET arquivo_pdf = EXCLUDED.arquivo_pdf, gerado_em = NOW()
       RETURNING id
       `,
-      [usuario_id, evento_id, turma_id ?? null, tipo, nomeArquivo]
+      [Number(usuario_id), Number(evento_id), Number(turma_id), tipo, nomeArquivo]
     );
 
-    // Notificação e e-mail (participante)
+    // Notificação (focada na turma)
     try {
-      await gerarNotificacoesDeCertificado(usuario_id);
+      await gerarNotificacoesDeCertificado(Number(usuario_id), Number(turma_id));
     } catch (e) {
-      console.warn("⚠️ Notificação de certificado falhou (ignorada):", e.message);
+      console.warn("⚠️ Notificação de certificado falhou (ignorada):", e?.message || e);
     }
 
+    // E-mail (participante)
     if (tipo === "usuario") {
       try {
         const { rows } = await db.query(
           "SELECT email, nome FROM usuarios WHERE id = $1",
-          [usuario_id]
+          [Number(usuario_id)]
         );
         const emailUsuario = rows[0]?.email?.trim();
         const nomeUsuarioEmail = rows[0]?.nome?.trim() || "Aluno(a)";
-    
         if (emailUsuario) {
           const { send } = require("../utils/email");
-          const titulo = TURMA?.titulo || "evento";
+          const titulo = tituloEvento || "evento";
           const link = `${FRONTEND_BASE_URL}/certificados`;
-    
           await send({
             to: emailUsuario,
             subject: `🎓 Certificado disponível do evento "${titulo}"`,
-    
-            // Fallback em texto puro (clientes sem HTML)
             text: `Olá, ${nomeUsuarioEmail}!
-    
-    Seu certificado do evento "${titulo}" já está disponível para download.
-    
-    Baixe aqui: ${link}
-    
-    Se o botão/link não abrir, copie e cole o endereço acima no seu navegador.
-    
-    Atenciosamente,
-    Equipe da Escola Municipal de Saúde`,
-    
-            // Versão HTML (melhor visualização)
+
+Seu certificado do evento "${titulo}" já está disponível para download.
+
+Baixe aqui: ${link}
+
+Se o botão/link não abrir, copie e cole o endereço acima no seu navegador.
+
+Atenciosamente,
+Equipe da Escola Municipal de Saúde`,
             html: `
               <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; line-height:1.6; color:#111;">
                 <p>Olá, ${nomeUsuarioEmail}!</p>
-    
-                <p>
-                  Seu certificado do evento <strong>${titulo}</strong> já está disponível para download.
-                </p>
-    
-                <p>
-                  <a href="${link}"
-                     style="display:inline-block; padding:10px 16px; border-radius:8px; text-decoration:none; background:#1b4332; color:#fff;">
-                    Baixar certificado
-                  </a>
-                </p>
-    
+                <p>Seu certificado do evento <strong>${titulo}</strong> já está disponível para download.</p>
+                <p><a href="${link}" style="display:inline-block; padding:10px 16px; border-radius:8px; text-decoration:none; background:#1b4332; color:#fff;">Baixar certificado</a></p>
                 <p style="font-size:14px; color:#444;">
                   Se o botão não funcionar, copie e cole este link no seu navegador:<br>
                   <a href="${link}" style="color:#1b4332;">${link}</a>
                 </p>
-    
-                <p>
-                  Atenciosamente,<br>
-                  <strong>Equipe da Escola Municipal de Saúde</strong>
-                </p>
+                <p>Atenciosamente,<br><strong>Equipe da Escola Municipal de Saúde</strong></p>
               </div>
             `,
           });
@@ -650,31 +635,29 @@ async function gerarCertificado(req, res) {
       certificado_id: upsert.rows[0].id,
     });
   } catch (error) {
-    console.error("❌ Erro ao gerar certificado:", error);
+    console.error("❌ Erro ao gerar certificado:", error?.stack || error);
     if (!res.headersSent) {
       return res.status(500).json({ erro: "Erro ao gerar certificado" });
     }
   }
 }
 
-
-
 /* ========================= Outros endpoints ========================= */
 async function listarCertificadosDoUsuario(req, res) {
   try {
     const usuario_id = req.usuario.id;
     const result = await db.query(
-      `SELECT c.id AS certificado_id, c.evento_id, c.arquivo_pdf, c.turma_id,
+      `SELECT c.id AS certificado_id, c.evento_id, c.arquivo_pdf, c.turma_id, c.tipo,
               e.titulo AS evento, t.data_inicio, t.data_fim
        FROM certificados c
        JOIN eventos e ON e.id = c.evento_id
        JOIN turmas t  ON t.id = c.turma_id
        WHERE c.usuario_id = $1
-       ORDER BY c.id DESC`, [usuario_id]
+       ORDER BY c.id DESC`, [Number(usuario_id)]
     );
     return res.json(result.rows);
   } catch (err) {
-    console.error("❌ Erro ao listar certificados:", err);
+    console.error("❌ Erro ao listar certificados:", err?.stack || err);
     return res.status(500).json({ erro: "Erro ao listar certificados do usuário." });
   }
 }
@@ -682,7 +665,7 @@ async function listarCertificadosDoUsuario(req, res) {
 async function baixarCertificado(req, res) {
   try {
     const { id } = req.params;
-    const result = await db.query(`SELECT usuario_id, arquivo_pdf FROM certificados WHERE id = $1`, [id]);
+    const result = await db.query(`SELECT usuario_id, arquivo_pdf FROM certificados WHERE id = $1`, [Number(id)]);
     if (result.rowCount === 0) return res.status(404).json({ erro: "Certificado não encontrado." });
 
     const { arquivo_pdf } = result.rows[0];
@@ -693,7 +676,7 @@ async function baixarCertificado(req, res) {
     res.setHeader("Content-Disposition", `attachment; filename="${arquivo_pdf}"`);
     fs.createReadStream(caminhoArquivo).pipe(res);
   } catch (err) {
-    console.error("❌ Erro ao baixar certificado:", err);
+    console.error("❌ Erro ao baixar certificado:", err?.stack || err);
     return res.status(500).json({ erro: "Erro ao baixar certificado." });
   }
 }
@@ -702,12 +685,12 @@ async function revalidarCertificado(req, res) {
   try {
     const { id } = req.params;
     const result = await db.query(
-      `UPDATE certificados SET revalidado_em = CURRENT_TIMESTAMP WHERE id = $1 RETURNING id`, [id]
+      `UPDATE certificados SET revalidado_em = CURRENT_TIMESTAMP WHERE id = $1 RETURNING id`, [Number(id)]
     );
     if (result.rowCount === 0) return res.status(404).json({ erro: "Certificado não encontrado." });
     return res.json({ mensagem: "✅ Certificado revalidado com sucesso!" });
   } catch (error) {
-    console.error("❌ Erro ao revalidar certificado:", error.message);
+    console.error("❌ Erro ao revalidar certificado:", error?.stack || error);
     return res.status(500).json({ erro: "Erro ao revalidar certificado." });
   }
 }
@@ -791,17 +774,17 @@ async function listarCertificadosElegiveis(req, res) {
 
   try {
     try {
-      const r = await db.query(queryDatasEventos, [usuario_id]);
+      const r = await db.query(queryDatasEventos, [Number(usuario_id)]);
       return res.json(r.rows);
     } catch (e) {
       if (e && e.code === "42P01") {
-        const r2 = await db.query(queryFallbackIntervalo, [usuario_id]);
+        const r2 = await db.query(queryFallbackIntervalo, [Number(usuario_id)]);
         return res.json(r2.rows);
       }
       throw e;
     }
   } catch (err) {
-    console.error("❌ Erro ao buscar certificados elegíveis:", err);
+    console.error("❌ Erro ao buscar certificados elegíveis:", err?.stack || err);
     return res.status(500).json({ erro: "Erro ao buscar certificados elegíveis." });
   }
 }
@@ -809,7 +792,7 @@ async function listarCertificadosElegiveis(req, res) {
 /** 👩‍🏫 Elegíveis (instrutor) — turma encerrada */
 async function listarCertificadosInstrutorElegiveis(req, res) {
   try {
-    const instrutor_id = req.usuario.id;
+    const instrutor_id = Number(req.usuario.id);
     const result = await db.query(
       `SELECT t.id AS turma_id, e.id AS evento_id, e.titulo AS evento, t.nome AS nome_turma,
               t.data_inicio, t.data_fim, t.horario_fim, c.id AS certificado_id, c.arquivo_pdf,
@@ -826,7 +809,7 @@ async function listarCertificadosInstrutorElegiveis(req, res) {
     );
     return res.json(result.rows);
   } catch (err) {
-    console.error("❌ Erro ao buscar certificados de instrutor elegíveis:", err);
+    console.error("❌ Erro ao buscar certificados de instrutor elegíveis:", err?.stack || err);
     return res.status(500).json({ erro: "Erro ao buscar certificados de instrutor elegíveis." });
   }
 }

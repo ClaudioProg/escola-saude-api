@@ -1,6 +1,9 @@
+// ✅ src/routes/assinaturaRoute.js
 const express = require("express");
 const router = express.Router();
+
 const authMiddleware = require("../auth/authMiddleware");
+const authorizeRoles = require("../auth/authorizeRoles");
 const ctrl = require("../controllers/assinaturaController");
 
 // 🔐 todas as rotas exigem autenticação
@@ -21,9 +24,12 @@ router.get("/", ctrl.getAssinatura);
 /**
  * 📜 Listar assinaturas cadastradas (para o dropdown de 2ª assinatura)
  * GET /api/assinatura/lista  ✅ caminho usado no frontend
- * GET /api/assinaturas       🔁 alias (compatibilidade)
+ * GET /api/assinatura/todas  🔁 alias (compatibilidade)
  */
-router.get("/lista", ctrl.listarAssinaturas);
-router.get("/todas", ctrl.listarAssinaturas); // opcional, mantém tua versão antiga também
+router.get(
+  ["/lista", "/todas"],
+  authorizeRoles("administrador", "instrutor"), // garante segurança
+  ctrl.listarAssinaturas
+);
 
 module.exports = router;

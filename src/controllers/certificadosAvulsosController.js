@@ -1,4 +1,5 @@
-// ✅ src/controllers/certificadosAvulsosController.js (atualizado: CPF só números, palestrante, 2ª assinatura e /api/assinaturas)
+// ✅ src/controllers/certificadosAvulsosController.js
+/* eslint-disable no-console */
 const db = require("../db");
 const PDFDocument = require("pdfkit");
 const fs = require("fs");
@@ -11,6 +12,12 @@ const nodemailer = require("nodemailer");
 const IS_DEV = process.env.NODE_ENV !== "production";
 
 const onlyDigits = (v = "") => String(v).replace(/\D+/g, "");
+const boolish = (v) => {
+  const s = String(v ?? "").trim().toLowerCase();
+  return s === "1" || s === "true" || s === "yes" || s === "on";
+};
+const safeFilename = (s = "") =>
+  String(s).replace(/[^a-z0-9._-]+/gi, "_").replace(/_+/g, "_");
 
 function formatarIdentificador(valor) {
   if (!valor) return "";
@@ -38,7 +45,8 @@ function dataHojePorExtenso() {
     "janeiro","fevereiro","março","abril","maio","junho",
     "julho","agosto","setembro","outubro","novembro","dezembro"
   ];
-  return `${hoje.getDate()} de ${meses[hoje.getMonth()]} de ${hoje.getFullYear()}`;
+  const dd = String(hoje.getDate()).padStart(2, "0");
+  return `${dd} de ${meses[hoje.getMonth()]} de ${hoje.getFullYear()}`;
 }
 
 function formatarDataCurtaBR(data) {
@@ -66,7 +74,7 @@ function resolveFirstExisting(candidates = []) {
 }
 function getFundoPath(tipo) {
   const nomes = [
-    tipo === "palestrante" ? "fundo_certificado_instrutor.png" : null, // quando for palestrante, usa o mesmo do instrutor
+    tipo === "palestrante" ? "fundo_certificado_instrutor.png" : null, // palestrante usa o mesmo do instrutor
     "fundo_certificado.png"
   ].filter(Boolean);
 
@@ -101,9 +109,8 @@ function registerFonts(doc) {
   };
   for (const [nome, caminhoFonte] of Object.entries(fontes)) {
     if (fs.existsSync(caminhoFonte)) {
-      try { doc.registerFont(nome, caminhoFonte); } catch (e) {
-        if (IS_DEV) console.warn(`(certificados) Erro fonte ${nome}:`, e.message);
-      }
+      try { doc.registerFont(nome, caminhoFonte); }
+      catch (e) { if (IS_DEV) console.warn(`(certificados) Erro fonte ${nome}:`, e.message); }
     } else if (IS_DEV) {
       console.warn(`(certificados) Fonte ausente: ${caminhoFonte}`);
     }
@@ -190,8 +197,7 @@ function desenharCertificado(doc, certificado, opts = {}) {
   // Área de assinaturas
   const baseY = 470;
 
-  // Assinatura institucional (já “vem do background” visualmente, mas mantemos nome/cargo impresso)
-  // Posição tradicional ao centro
+  // Assinatura institucional (texto)
   doc.font("AlegreyaSans-Bold").fontSize(20)
     .text("Rafaella Pitol Corrêa", 270, baseY, { align: "center", width: 300 });
   doc.font("AlegreyaSans-Regular").fontSize(14)
@@ -199,7 +205,6 @@ function desenharCertificado(doc, certificado, opts = {}) {
 
   // 2ª assinatura (se houver)
   if (assinatura2 && (assinatura2.imgBuffer || assinatura2.nome)) {
-    // Lado direito
     const areaX = 440;
     const areaW = 300;
 
@@ -226,13 +231,14 @@ function desenharCertificado(doc, certificado, opts = {}) {
 /**
  * Gera o PDF para um arquivo temporário e retorna o caminho.
  * @param {object} certificado
+ * @param {string} filenamePrefix
  * @param {object} opts { palestrante?: boolean, assinatura2?: {nome,cargo,imgBuffer}? }
  */
 async function gerarPdfTemporario(certificado, filenamePrefix = "certificado", opts = {}) {
   const tempDir = path.join(__dirname, "..", "..", "temp");
   await ensureDir(tempDir);
 
-  const filename = `${filenamePrefix}_${certificado.id || Date.now()}.pdf`;
+  const filename = `${filenamePrefix}_${safeFilename(String(certificado.id || Date.now()))}.pdf`;
   const caminho = path.join(tempDir, filename);
 
   await new Promise((resolve, reject) => {
@@ -279,14 +285,15 @@ async function criarCertificadoAvulso(req, res) {
       return res.status(400).json({ erro: "E-mail inválido." });
     }
 
-    const dataFinalValida = data_fim && String(data_fim).trim() !== "" ? data_fim : null;
+    const di = data_inicio ? String(data_inicio) : null;
+    const df = data_fim && String(data_fim).trim() !== "" ? String(data_fim) : di;
 
     const { rows } = await db.query(
       `INSERT INTO certificados_avulsos
        (nome, cpf, email, curso, carga_horaria, data_inicio, data_fim, enviado)
        VALUES ($1, $2, $3, $4, $5, $6, $7, false)
        RETURNING *`,
-      [nome, cpf, email, curso, carga, data_inicio || null, dataFinalValida]
+      [nome, cpf, email, curso, carga, di, df]
     );
 
     return res.status(201).json(rows[0]);
@@ -312,12 +319,12 @@ async function listarCertificadosAvulsos(req, res) {
 }
 
 /**
- * GET /api/assinaturas
+ * GET /api/assinatura/lista
  * Lista pessoas com assinatura cadastrada para 2ª assinatura no certificado.
+ * (alinhado ao front)
  */
 async function listarAssinaturas(req, res) {
   try {
-    // Ajuste este SELECT conforme seu schema se necessário
     const q = await db.query(
       `
       SELECT a.usuario_id AS id, u.nome, u.cargo, a.imagem_base64
@@ -327,7 +334,12 @@ async function listarAssinaturas(req, res) {
       ORDER BY u.nome ASC
       `
     );
-    const lista = q.rows.map(r => ({ id: r.id, nome: r.nome, cargo: r.cargo || null }));
+    const lista = q.rows.map(r => ({
+      id: r.id,
+      nome: r.nome,
+      cargo: r.cargo || null,
+      tem_assinatura: Boolean(r.imagem_base64),
+    }));
     return res.json(lista);
   } catch (erro) {
     console.error("❌ Erro ao listar assinaturas:", erro);
@@ -338,7 +350,7 @@ async function listarAssinaturas(req, res) {
 /**
  * GET /api/certificados-avulsos/:id/pdf
  * Suporta:
- *   ?palestrante=1            → usa modelo de palestrante/instrutor e texto apropriado
+ *   ?palestrante=1|true       → usa modelo de palestrante/instrutor e texto apropriado
  *   ?assinatura2_id=<usuario> → imprime 2ª assinatura (imagem + nome/cargo) desta pessoa
  */
 async function gerarPdfCertificado(req, res) {
@@ -357,7 +369,7 @@ async function gerarPdfCertificado(req, res) {
     const certificado = rows[0];
 
     // Monta opções
-    const opts = { palestrante: String(palestrante || "") === "1" };
+    const opts = { palestrante: boolish(palestrante) };
 
     // (opcional) carrega a 2ª assinatura
     if (assinatura2_id) {
@@ -389,10 +401,22 @@ async function gerarPdfCertificado(req, res) {
 
     caminhoTemp = await gerarPdfTemporario(certificado, "certificado", opts);
 
-    res.download(caminhoTemp, `certificado_${id}.pdf`, async (err) => {
+    // headers gentis de download
+    const outName = safeFilename(`certificado_${id}.pdf`);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${outName}"`);
+    res.setHeader("Cache-Control", "no-store");
+
+    const stream = fs.createReadStream(caminhoTemp);
+    stream.on("close", async () => {
       try { await fsp.unlink(caminhoTemp).catch(() => {}); } catch {}
-      if (err) console.error("❌ Erro ao enviar PDF:", err);
     });
+    stream.on("error", async (err) => {
+      console.error("❌ Erro ao ler PDF:", err);
+      try { await fsp.unlink(caminhoTemp).catch(() => {}); } catch {}
+      if (!res.headersSent) res.status(500).end();
+    });
+    stream.pipe(res);
   } catch (erro) {
     console.error("❌ Erro no gerarPdfCertificado:", erro);
     try { if (caminhoTemp) await fsp.unlink(caminhoTemp).catch(() => {}); } catch {}
@@ -402,8 +426,7 @@ async function gerarPdfCertificado(req, res) {
 
 /**
  * POST /api/certificados-avulsos/:id/enviar
- * (mantido sem opções de palestrante/assinatura2 por enquanto;
- *  se quiser, posso incluir as mesmas querystrings aqui também)
+ * (se quiser, dá para aceitar ?palestrante e ?assinatura2_id aqui também)
  */
 async function enviarPorEmail(req, res) {
   const { id } = req.params;
@@ -482,5 +505,5 @@ module.exports = {
   listarCertificadosAvulsos,
   gerarPdfCertificado,
   enviarPorEmail,
-  listarAssinaturas, // 👈 novo: para popular o <select> no front
+  listarAssinaturas, // GET /api/assinatura/lista
 };

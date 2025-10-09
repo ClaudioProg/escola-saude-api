@@ -173,7 +173,7 @@ async function enviarAvaliacao(req, res) {
       [usuario_id, Number(turma_id)]
     );
     if (participou.rowCount === 0) {
-      return res.status(403).json({ erro: "Você não participou desta turma" });
+      return res.status(403).json({ erro: "Você não participou desta turma." });
     }
 
     // Evita duplicidade
@@ -186,11 +186,11 @@ async function enviarAvaliacao(req, res) {
       [usuario_id, Number(turma_id)]
     );
     if (existente.rowCount > 0) {
-      return res.status(400).json({ erro: "Você já avaliou esta turma" });
+      return res.status(400).json({ erro: "Você já avaliou esta turma." });
     }
 
     // Persiste avaliação
-    const result = await db.query(
+    const insertRes = await db.query(
       `INSERT INTO avaliacoes (
         usuario_id, turma_id,
         desempenho_instrutor, divulgacao_evento, recepcao, credenciamento,
@@ -230,20 +230,28 @@ async function enviarAvaliacao(req, res) {
       ]
     );
 
-    // 🔔 Gera notificação/certificado se elegível (best-effort)
+    const avaliacao = insertRes.rows[0];
+    console.log("[avaliacoes] avaliação registrada", {
+      avaliacao_id: avaliacao?.id,
+      usuario_id,
+      turma_id: Number(turma_id),
+    });
+
+    // 🔔 Gera notificação/certificado se elegível (best-effort, focado na turma)
     try {
-      await gerarNotificacoesDeCertificado(usuario_id);
+      // Recomendado: assinatura (usuario_id, turma_id)
+      await gerarNotificacoesDeCertificado(usuario_id, Number(turma_id));
     } catch (e) {
-      console.warn("⚠️ Erro ao gerar certificado (ignorado):", e.message);
+      console.warn("⚠️ Erro ao agendar/gerar certificado:", e?.stack || e?.message || e);
     }
 
     return res.status(201).json({
-      mensagem: "Avaliação registrada com sucesso.",
-      avaliacao: result.rows[0],
+      mensagem: "Avaliação registrada com sucesso. Se elegível, seu certificado será liberado.",
+      avaliacao,
     });
   } catch (err) {
-    console.error("❌ Erro ao registrar avaliação:", err);
-    return res.status(500).json({ erro: "Erro ao registrar avaliação" });
+    console.error("❌ Erro ao registrar avaliação:", err?.stack || err);
+    return res.status(500).json({ erro: "Erro ao registrar avaliação." });
   }
 }
 
@@ -255,16 +263,16 @@ async function listarAvaliacoesDisponiveis(req, res) {
   const { usuario_id } = req.params;
 
   if (!usuario_id || Number.isNaN(Number(usuario_id))) {
-    return res.status(400).json({ erro: "usuario_id inválido" });
+    return res.status(400).json({ erro: "usuario_id inválido." });
   }
 
   try {
     const result = await db.query(
       `
       SELECT 
-        e.id   AS evento_id,
+        e.id     AS evento_id,
         e.titulo AS nome_evento,
-        t.id   AS turma_id,
+        t.id     AS turma_id,
         t.data_inicio,
         t.data_fim,
         t.horario_fim
@@ -296,28 +304,30 @@ async function listarAvaliacoesDisponiveis(req, res) {
 
     return res.status(200).json(result.rows);
   } catch (err) {
-    console.error("❌ Erro ao buscar avaliações disponíveis:", err);
-    return res.status(500).json({ erro: "Erro ao buscar avaliações disponíveis" });
+    console.error("❌ Erro ao buscar avaliações disponíveis:", err?.stack || err);
+    return res.status(500).json({ erro: "Erro ao buscar avaliações disponíveis." });
   }
 }
 
 /**
  * 🧑‍🏫 Avaliações da turma **do instrutor logado** (para a página do instrutor)
- * @route GET /api/avaliacoes/turma/:turma_id/** */
- 
-// src/controllers/avaliacoesController.js
+ * @route GET /api/avaliacoes/turma/:turma_id
+ */
 async function listarPorTurmaParaInstrutor(req, res) {
   const user = req.user ?? req.usuario ?? {};
   const usuarioId = Number(user.id);
   const perfis = Array.isArray(user.perfil)
     ? user.perfil.map(String)
-    : String(user.perfil || "").split(",").map(s => s.trim()).filter(Boolean);
+    : String(user.perfil || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
 
   const { turma_id } = req.params;
 
   if (!usuarioId) return res.status(401).json({ erro: "Não autenticado." });
   if (!turma_id || Number.isNaN(Number(turma_id))) {
-    return res.status(400).json({ erro: "ID de turma inválido" });
+    return res.status(400).json({ erro: "ID de turma inválido." });
   }
 
   try {
@@ -366,12 +376,11 @@ async function listarPorTurmaParaInstrutor(req, res) {
     res.setHeader("X-Debug-Perfis", perfis.join(","));
     res.setHeader("X-Debug-Avaliacoes-Count", String(rows.length));
 
-    // log rápido no server (remover depois)
     console.log(`[avaliacoes] turma=${turma_id} rows=${rows.length}`);
 
     return res.json(rows);
   } catch (err) {
-    console.error("❌ listarPorTurmaParaInstrutor:", err);
+    console.error("❌ listarPorTurmaParaInstrutor:", err?.stack || err);
     return res.status(500).json({ erro: "Erro ao buscar avaliações da turma." });
   }
 }
@@ -386,7 +395,7 @@ async function avaliacoesPorTurma(req, res) {
   const { turma_id } = req.params;
 
   if (!turma_id || Number.isNaN(Number(turma_id))) {
-    return res.status(400).json({ erro: "ID de turma inválido" });
+    return res.status(400).json({ erro: "ID de turma inválido." });
   }
 
   try {
@@ -454,7 +463,7 @@ async function avaliacoesPorTurma(req, res) {
       [Number(turma_id)]
     );
     if (turmaRes.rowCount === 0) {
-      return res.status(404).json({ erro: "Turma não encontrada" });
+      return res.status(404).json({ erro: "Turma não encontrada." });
     }
     const { data_inicio, data_fim } = turmaRes.rows[0];
     const datasTurma = gerarIntervaloYMD(data_inicio, data_fim);
@@ -501,8 +510,8 @@ async function avaliacoesPorTurma(req, res) {
       avaliacoes,
     });
   } catch (err) {
-    console.error("❌ Erro ao buscar avaliações da turma:", err);
-    return res.status(500).json({ erro: "Erro ao buscar avaliações da turma" });
+    console.error("❌ Erro ao buscar avaliações da turma:", err?.stack || err);
+    return res.status(500).json({ erro: "Erro ao buscar avaliações da turma." });
   }
 }
 
@@ -514,7 +523,7 @@ async function avaliacoesPorEvento(req, res) {
   const { evento_id } = req.params;
 
   if (!evento_id || Number.isNaN(Number(evento_id))) {
-    return res.status(400).json({ erro: "evento_id inválido" });
+    return res.status(400).json({ erro: "evento_id inválido." });
   }
 
   try {
@@ -574,8 +583,8 @@ async function avaliacoesPorEvento(req, res) {
       comentarios,
     });
   } catch (err) {
-    console.error("❌ Erro ao buscar avaliações do evento:", err);
-    return res.status(500).json({ erro: "Erro ao buscar avaliações do evento" });
+    console.error("❌ Erro ao buscar avaliações do evento:", err?.stack || err);
+    return res.status(500).json({ erro: "Erro ao buscar avaliações do evento." });
   }
 }
 

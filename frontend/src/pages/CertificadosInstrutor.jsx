@@ -67,7 +67,7 @@ export default function CertificadosInstrutor() {
   const [gerandoKey, setGerandoKey] = useState(null);
   const liveRef = useRef(null);
 
-  // usuário do localStorage, com imagem_base64 validada (para assinar certificado como instrutor)
+  // usuário do localStorage, com assinatura opcional
   const usuario = useMemo(() => {
     try {
       const parsed = JSON.parse(localStorage.getItem("usuario") || "{}");
@@ -97,16 +97,22 @@ export default function CertificadosInstrutor() {
       setErro("");
       if (liveRef.current) liveRef.current.textContent = "Carregando certificados…";
 
-      // ✅ Somente INSTRUTOR
+      // ✅ Endpoint de elegíveis do INSTRUTOR
       const dadosInstrutor = await apiGet("certificados/elegiveis-instrutor");
-      const lista = Array.isArray(dadosInstrutor) ? dadosInstrutor : [];
+      const listaBruta = Array.isArray(dadosInstrutor) ? dadosInstrutor : [];
 
-      // remove duplicatas por (evento_id, turma_id)
-      const unicos = lista.filter(
+      // defensivo: manter só instrutor (tipo = 'instrutor')
+      const apenasInstrutor = listaBruta.filter(
+        (c) => (c.tipo ?? "instrutor") === "instrutor"
+      );
+
+      // remove duplicatas por (tipo, evento_id, turma_id)
+      const unicos = apenasInstrutor.filter(
         (item, idx, arr) =>
           idx ===
           arr.findIndex(
             (c) =>
+              String(c.tipo ?? "instrutor") === String(item.tipo ?? "instrutor") &&
               String(c.evento_id) === String(item.evento_id) &&
               String(c.turma_id) === String(item.turma_id)
           )
@@ -129,7 +135,8 @@ export default function CertificadosInstrutor() {
   }
 
   function keyDoCert(cert) {
-    return `${cert.evento_id}-${cert.turma_id}-instrutor`;
+    const tipo = cert?.tipo ?? "instrutor";
+    return `${tipo}-${cert.evento_id}-${cert.turma_id}`;
   }
 
   async function gerarCertificado(cert) {
@@ -137,6 +144,11 @@ export default function CertificadosInstrutor() {
     setGerandoKey(key);
 
     try {
+      if (!usuario?.id) {
+        toast.error("❌ Usuário não identificado. Faça login novamente.");
+        return;
+      }
+
       const body = {
         usuario_id: usuario.id,
         evento_id: cert.evento_id,
@@ -144,24 +156,39 @@ export default function CertificadosInstrutor() {
         tipo: "instrutor", // ✅ fixo
       };
 
-      // se o instrutor tiver assinatura já salva, envia para sair no PDF
+      // assinatura opcional do instrutor no PDF
       if (usuario.imagem_base64) {
         body.assinaturaBase64 = usuario.imagem_base64;
       }
 
       const resultado = await apiPost("certificados/gerar", body);
 
+      // Tratar diferentes formatos de retorno
+      const certificadoId =
+        resultado?.certificado_id ??
+        resultado?.id ??
+        resultado?.certificado?.id ??
+        null;
+      const arquivoPdf =
+        resultado?.arquivo_pdf ??
+        resultado?.arquivo ??
+        resultado?.certificado?.arquivo_pdf ??
+        null;
+
       toast.success("🎉 Certificado de instrutor gerado com sucesso!");
 
+      // ✅ Reconciliação autoritativa
+      await carregarCertificados();
+
+      // Sinalização imediata local (opcional)
       setCertificados((prev) =>
         prev.map((c) =>
           c.evento_id === cert.evento_id && c.turma_id === cert.turma_id
             ? {
                 ...c,
                 ja_gerado: true,
-                arquivo_pdf: resultado?.arquivo,
-                certificado_id:
-                  resultado?.certificado_id ?? c.certificado_id ?? Date.now(),
+                certificado_id: c.certificado_id ?? certificadoId ?? c.certificado_id,
+                arquivo_pdf: c.arquivo_pdf ?? arquivoPdf ?? c.arquivo_pdf,
               }
             : c
         )
@@ -178,6 +205,18 @@ export default function CertificadosInstrutor() {
   function CartaoCertificado({ cert }) {
     const key = keyDoCert(cert);
     const gerando = gerandoKey === key;
+
+    // Link de download resiliente
+    const hrefDownload =
+      cert?.certificado_id
+        ? makeApiUrl(`certificados/${cert.certificado_id}/download`)
+        : cert?.arquivo_pdf
+        ? (cert.arquivo_pdf.startsWith("http")
+            ? cert.arquivo_pdf
+            : makeApiUrl(cert.arquivo_pdf.replace(/^\//, "")))
+        : null;
+
+    const prontoParaDownload = Boolean(hrefDownload) && (cert.ja_gerado || cert.certificado_id);
 
     return (
       <motion.li
@@ -206,9 +245,9 @@ export default function CertificadosInstrutor() {
         </div>
 
         <div className="mt-4 flex justify-center">
-          {cert.ja_gerado && cert.certificado_id ? (
+          {prontoParaDownload ? (
             <a
-              href={makeApiUrl(`certificados/${cert.certificado_id}/download`)}
+              href={hrefDownload}
               target="_blank"
               rel="noopener noreferrer"
               className="bg-green-700 hover:bg-green-800 text-white text-sm font-medium py-2 px-4 rounded text-center"

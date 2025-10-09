@@ -1,5 +1,5 @@
 // ✅ src/pages/CertificadosAvulsos.jsx (mobile/a11y + rota de assinaturas corrigida)
-import { useEffect, useState, useMemo, useRef } from "react";
+import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { toast } from "react-toastify";
 import { RefreshCcw, Plus } from "lucide-react";
 
@@ -10,7 +10,7 @@ import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import NadaEncontrado from "../components/NadaEncontrado";
 import { apiGet, apiPost, apiGetFile } from "../services/api";
 
-/* ---------------- HeaderHero (novo) ---------------- */
+/* ---------------- HeaderHero ---------------- */
 function HeaderHero({ onRefresh, onSubmitClick, carregando }) {
   return (
     <header className="bg-gradient-to-br from-amber-900 via-orange-700 to-rose-600 text-white" role="banner">
@@ -31,11 +31,11 @@ function HeaderHero({ onRefresh, onSubmitClick, carregando }) {
             {carregando ? "Atualizando…" : "Atualizar"}
           </BotaoSecundario>
 
+          {/* 🔧 type="button" para evitar submit duplicado */}
           <BotaoPrimario
             cor="amareloOuro"
             leftIcon={<Plus className="w-4 h-4" />}
-            form="form-cert-avulso"
-            type="submit"
+            type="button"
             onClick={onSubmitClick}
             aria-label="Cadastrar novo certificado"
           >
@@ -86,20 +86,22 @@ export default function CertificadosAvulsos() {
   const [acaoLoading, setAcaoLoading] = useState({ id: null, tipo: null }); // {id, 'pdf' | 'email'}
   const liveRef = useRef(null); // aria-live
 
-  const setLive = (msg) => {
+  const setLive = useCallback((msg) => {
     if (liveRef.current) liveRef.current.textContent = msg;
-  };
+  }, []);
 
   useEffect(() => {
     carregarCertificados();
     carregarAssinaturas();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function carregarCertificados() {
+  const carregarCertificados = useCallback(async () => {
     try {
       setCarregando(true);
       setLive("Carregando certificados…");
-      const data = await apiGet("/api/certificados-avulsos", { on403: "silent" });
+      // 🔧 padronizei sem prefixo "/api" (seu services/api geralmente já prefixa)
+      const data = await apiGet("certificados-avulsos", { on403: "silent" });
       setLista(Array.isArray(data) ? data : []);
       setLive(
         Array.isArray(data) && data.length
@@ -113,14 +115,14 @@ export default function CertificadosAvulsos() {
     } finally {
       setCarregando(false);
     }
-  }
+  }, [setLive]);
 
   // Carrega lista de pessoas com assinatura disponível
-  async function carregarAssinaturas() {
+  const carregarAssinaturas = useCallback(async () => {
     try {
       setAssinaturasCarregando(true);
-      // ✅ backend ajustado: GET /api/assinatura/lista retorna [{id, nome, tem_assinatura:true}] 
-      const data = await apiGet("/api/assinatura/lista", { on403: "silent" });
+      // ✅ backend ajustado: GET /api/assinatura/lista → services deve prefixar
+      const data = await apiGet("assinatura/lista", { on403: "silent" });
       const arr = Array.isArray(data) ? data : (Array.isArray(data?.lista) ? data.lista : []);
       const filtradas = arr
         .filter(a => (a?.tem_assinatura ?? a?.possui_assinatura ?? !!a?.assinatura ?? !!a?.arquivo_assinatura) === true)
@@ -132,14 +134,13 @@ export default function CertificadosAvulsos() {
     } finally {
       setAssinaturasCarregando(false);
     }
-  }
+  }, []);
 
   function handleChange(e) {
     const { name, value } = e.target;
 
     if (name === "cpf") {
-      // Mantém apenas dígitos — inclusive colagem de "299.260.945-08"
-      const dig = onlyDigits(value).slice(0, 14); // suporta CPF/registro numérico maior
+      const dig = onlyDigits(value).slice(0, 14);
       setForm((prev) => ({ ...prev, cpf: dig }));
       return;
     }
@@ -153,13 +154,12 @@ export default function CertificadosAvulsos() {
     setForm((prev) => ({ ...prev, cpf: dig }));
   }
 
-  async function cadastrarCertificado(e) {
+  const cadastrarCertificado = useCallback(async (e) => {
     e.preventDefault();
 
-    // normaliza payload
     const payload = {
       nome: form.nome.trim(),
-      cpf: onlyDigits(form.cpf), // <- garante só números
+      cpf: onlyDigits(form.cpf),
       email: form.email.trim(),
       curso: form.curso.trim(),
       carga_horaria: Number(form.carga_horaria),
@@ -201,7 +201,7 @@ export default function CertificadosAvulsos() {
 
     setSalvando(true);
     try {
-      const novo = await apiPost("/api/certificados-avulsos", payload);
+      const novo = await apiPost("certificados-avulsos", payload);
       setLista((prev) => [novo, ...prev]);
       setFiltro("todos");
       setForm({
@@ -221,13 +221,13 @@ export default function CertificadosAvulsos() {
     } finally {
       setSalvando(false);
     }
-  }
+  }, [form, setLive]);
 
-  async function enviarPorEmail(id) {
+  const enviarPorEmail = useCallback(async (id) => {
     setAcaoLoading({ id, tipo: "email" });
     try {
       toast.info("📤 Enviando…");
-      await apiPost(`/api/certificados-avulsos/${id}/enviar`);
+      await apiPost(`certificados-avulsos/${id}/enviar`);
       toast.success("✅ E-mail enviado!");
       setLista((prev) => prev.map((item) => (item.id === id ? { ...item, enviado: true } : item)));
     } catch {
@@ -235,20 +235,20 @@ export default function CertificadosAvulsos() {
     } finally {
       setAcaoLoading({ id: null, tipo: null });
     }
-  }
+  }, []);
 
-  async function gerarPDF(id) {
+  const gerarPDF = useCallback(async (id) => {
     setAcaoLoading({ id, tipo: "pdf" });
     try {
-      // Monta querystring conforme opções marcadas
       const params = new URLSearchParams();
       if (palestrante) params.set("palestrante", "1");
       if (usarAssinatura2 && assinatura2Id) params.set("assinatura2_id", String(assinatura2Id));
 
       const url = params.toString()
-        ? `/api/certificados-avulsos/${id}/pdf?${params.toString()}`
-        : `/api/certificados-avulsos/${id}/pdf`;
+        ? `certificados-avulsos/${id}/pdf?${params.toString()}`
+        : `certificados-avulsos/${id}/pdf`;
 
+      // 🔧 apiGetFile deve lidar com headers e nome do arquivo
       const { blob, filename } = await apiGetFile(url);
       const href = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -263,9 +263,12 @@ export default function CertificadosAvulsos() {
     } finally {
       setAcaoLoading({ id: null, tipo: null });
     }
-  }
+  }, [palestrante, usarAssinatura2, assinatura2Id]);
 
-  const enviados = useMemo(() => (lista || []).filter((i) => i.enviado === true).length, [lista]);
+  const enviados = useMemo(
+    () => (lista || []).filter((i) => i.enviado === true).length,
+    [lista]
+  );
   const naoEnviados = useMemo(
     () => (lista || []).filter((i) => i.enviado === false || i.enviado == null).length,
     [lista]
@@ -289,14 +292,21 @@ export default function CertificadosAvulsos() {
 
       {/* barra de carregamento fina no topo */}
       {carregando && (
-        <div className="sticky top-0 left-0 w-full h-1 bg-amber-100 z-40" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-label="Carregando dados">
+        <div
+          className="sticky top-0 left-0 w-full h-1 bg-amber-100 z-40"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="Carregando dados"
+          aria-busy="true"
+        >
           <div className="h-full bg-rose-600 animate-pulse w-1/3" />
         </div>
       )}
 
       <main className="flex-1 max-w-6xl mx-auto px-3 sm:px-4 py-6">
         {/* feedback de acessibilidade */}
-        <p ref={liveRef} className="sr-only" aria-live="polite" />
+        <p ref={liveRef} className="sr-only" aria-live="polite" role="status" />
 
         {/* KPIs rápidos */}
         <section className="grid grid-cols-3 gap-2 sm:gap-3 mb-6">
@@ -320,6 +330,7 @@ export default function CertificadosAvulsos() {
           onSubmit={cadastrarCertificado}
           className="grid gap-3 sm:gap-4 grid-cols-1 md:grid-cols-2 bg-white dark:bg-zinc-800 p-3 sm:p-4 shadow rounded-xl"
           aria-label="Cadastro de certificado avulso"
+          aria-busy={salvando}
         >
           <div className="md:col-span-2">
             <label htmlFor="nome" className="block text-sm font-medium text-slate-700 dark:text-slate-200">
@@ -333,6 +344,7 @@ export default function CertificadosAvulsos() {
               onChange={handleChange}
               required
               autoComplete="name"
+              disabled={salvando}
               className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
             />
           </div>
@@ -348,6 +360,7 @@ export default function CertificadosAvulsos() {
               value={form.cpf}
               onChange={handleChange}
               onPaste={handlePasteCPF}
+              disabled={salvando}
               className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
               inputMode="numeric"
               pattern="[0-9]*"
@@ -370,6 +383,7 @@ export default function CertificadosAvulsos() {
               onChange={handleChange}
               required
               autoComplete="email"
+              disabled={salvando}
               className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
             />
           </div>
@@ -385,6 +399,7 @@ export default function CertificadosAvulsos() {
               value={form.curso}
               onChange={handleChange}
               required
+              disabled={salvando}
               className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
             />
           </div>
@@ -402,6 +417,7 @@ export default function CertificadosAvulsos() {
               value={form.carga_horaria}
               onChange={handleChange}
               required
+              disabled={salvando}
               className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
             />
           </div>
@@ -416,6 +432,7 @@ export default function CertificadosAvulsos() {
               type="date"
               value={form.data_inicio}
               onChange={handleChange}
+              disabled={salvando}
               className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
             />
           </div>
@@ -430,6 +447,7 @@ export default function CertificadosAvulsos() {
               type="date"
               value={form.data_fim}
               onChange={handleChange}
+              disabled={salvando}
               className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
             />
           </div>
@@ -533,60 +551,66 @@ export default function CertificadosAvulsos() {
               <NadaEncontrado mensagem="Nenhum certificado cadastrado." />
             </div>
           ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-gray-100 dark:bg-zinc-700 text-left">
-                  <th className="p-2 border-b">Nome</th>
-                  <th className="p-2 border-b">Curso</th>
-                  <th className="p-2 border-b">E-mail</th>
-                  <th className="p-2 border-b text-center">Carga Horária</th>
-                  <th className="p-2 border-b text-center">Período</th>
-                  <th className="p-2 border-b text-center">Ações</th>
-                </tr>
-              </thead>
-              <tbody>
-                {listaFiltrada.map((item) => {
-                  const di = item.data_inicio?.slice(0, 10) || "";
-                  const df = item.data_fim?.slice(0, 10) || "";
-                  const periodo = di ? (df && df !== di ? `${ymdToBR(di)} a ${ymdToBR(df)}` : ymdToBR(di)) : "—";
+            <div role="region" aria-live="off" aria-busy={acaoLoading.id != null}>
+              {/* 🔧 caption oculta + th com scope="col" */}
+              <table className="w-full text-sm">
+                <caption className="sr-only">Tabela de certificados com ações de PDF e envio por e-mail</caption>
+                <thead>
+                  <tr className="bg-gray-100 dark:bg-zinc-700 text-left">
+                    <th scope="col" className="p-2 border-b">Nome</th>
+                    <th scope="col" className="p-2 border-b">Curso</th>
+                    <th scope="col" className="p-2 border-b">E-mail</th>
+                    <th scope="col" className="p-2 border-b text-center">Carga Horária</th>
+                    <th scope="col" className="p-2 border-b text-center">Período</th>
+                    <th scope="col" className="p-2 border-b text-center">Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {listaFiltrada.map((item) => {
+                    const di = item.data_inicio?.slice(0, 10) || "";
+                    const df = item.data_fim?.slice(0, 10) || "";
+                    const periodo = di ? (df && df !== di ? `${ymdToBR(di)} a ${ymdToBR(df)}` : ymdToBR(di)) : "—";
 
-                  const isEmailLoading = acaoLoading.id === item.id && acaoLoading.tipo === "email";
-                  const isPdfLoading = acaoLoading.id === item.id && acaoLoading.tipo === "pdf";
+                    const isEmailLoading = acaoLoading.id === item.id && acaoLoading.tipo === "email";
+                    const isPdfLoading = acaoLoading.id === item.id && acaoLoading.tipo === "pdf";
 
-                  return (
-                    <tr key={item.id} className="border-t dark:border-zinc-700">
-                      <td className="p-2">{item.nome}</td>
-                      <td className="p-2">{item.curso}</td>
-                      <td className="p-2 break-all">{item.email}</td>
-                      <td className="p-2 text-center">{item.carga_horaria}h</td>
-                      <td className="p-2 text-center">{periodo}</td>
-                      <td className="p-2">
-                        <div className="flex gap-3 justify-center">
-                          <button
-                            onClick={() => gerarPDF(item.id)}
-                            disabled={isPdfLoading}
-                            className={`underline ${isPdfLoading ? "opacity-60 cursor-not-allowed" : "text-blue-700 dark:text-blue-300"}`}
-                            aria-label={`Baixar PDF do certificado de ${item.nome}`}
-                            title={`Baixar PDF${palestrante ? " (palestrante)" : ""}${usarAssinatura2 && assinatura2Id ? " com 2 assinaturas" : ""}`}
-                          >
-                            {isPdfLoading ? "Gerando…" : "PDF"}
-                          </button>
-                          <button
-                            onClick={() => enviarPorEmail(item.id)}
-                            disabled={isEmailLoading}
-                            className={`underline ${isEmailLoading ? "opacity-60 cursor-not-allowed" : "text-green-700 dark:text-green-300"}`}
-                            aria-label={`Enviar certificado de ${item.nome} por e-mail`}
-                            title={item.enviado ? "Reenviar e-mail" : "Enviar e-mail"}
-                          >
-                            {isEmailLoading ? "Enviando…" : item.enviado ? "Reenviar" : "Enviar"}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                    return (
+                      <tr key={item.id} className="border-t dark:border-zinc-700">
+                        <td className="p-2">{item.nome}</td>
+                        <td className="p-2">{item.curso}</td>
+                        <td className="p-2 break-all">{item.email}</td>
+                        <td className="p-2 text-center">{item.carga_horaria}h</td>
+                        <td className="p-2 text-center">{periodo}</td>
+                        <td className="p-2">
+                          <div className="flex gap-3 justify-center">
+                            <button
+                              type="button"
+                              onClick={() => gerarPDF(item.id)}
+                              disabled={isPdfLoading}
+                              className={`underline ${isPdfLoading ? "opacity-60 cursor-not-allowed" : "text-blue-700 dark:text-blue-300"}`}
+                              aria-label={`Baixar PDF do certificado de ${item.nome}`}
+                              title={`Baixar PDF${palestrante ? " (palestrante)" : ""}${usarAssinatura2 && assinatura2Id ? " com 2 assinaturas" : ""}`}
+                            >
+                              {isPdfLoading ? "Gerando…" : "PDF"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => enviarPorEmail(item.id)}
+                              disabled={isEmailLoading}
+                              className={`underline ${isEmailLoading ? "opacity-60 cursor-not-allowed" : "text-green-700 dark:text-green-300"}`}
+                              aria-label={`Enviar certificado de ${item.nome} por e-mail`}
+                              title={item.enviado ? "Reenviar e-mail" : "Enviar e-mail"}
+                            >
+                              {isEmailLoading ? "Enviando…" : item.enviado ? "Reenviar" : "Enviar"}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
         </section>
       </main>

@@ -33,7 +33,7 @@ function HeaderHero({ onRefresh, variant = "teal", nome = "" }) {
         </div>
         <p className="text-sm text-white/90">
           {nome ? `Bem-vindo(a), ${nome}. ` : ""}
-          Gere e baixe seus certificados como <strong>participante</strong>.
+          Para visualizar os certificados, você deve primeiramente responder a avaliação do curso. Após, gere e baixe seus certificados como <strong>participante</strong>.
         </p>
         <BotaoPrimario
           onClick={onRefresh}
@@ -88,16 +88,20 @@ export default function MeusCertificados() {
       setErro("");
       if (liveRef.current) liveRef.current.textContent = "Carregando certificados…";
 
-      // ✅ Somente PARTICIPANTE
+      // ✅ Endpoint elegíveis do PARTICIPANTE
       const dadosUsuario = await apiGet("certificados/elegiveis");
+      const listaBruta = Array.isArray(dadosUsuario) ? dadosUsuario : [];
 
-      const lista = Array.isArray(dadosUsuario) ? dadosUsuario : [];
+      // defensivo: manter só participante (tipo = 'usuario')
+      const apenasParticipante = listaBruta.filter((c) => (c.tipo ?? "usuario") === "usuario");
 
-      // remove duplicatas por (evento_id, turma_id)
-      const unicos = lista.filter(
+      // remove duplicatas por (tipo, evento_id, turma_id)
+      const unicos = apenasParticipante.filter(
         (item, idx, arr) =>
-          idx === arr.findIndex(
+          idx ===
+          arr.findIndex(
             (c) =>
+              String(c.tipo ?? "usuario") === String(item.tipo ?? "usuario") &&
               String(c.evento_id) === String(item.evento_id) &&
               String(c.turma_id) === String(item.turma_id)
           )
@@ -120,7 +124,8 @@ export default function MeusCertificados() {
   }
 
   function keyDoCert(cert) {
-    return `${cert.evento_id}-${cert.turma_id}`;
+    const tipo = cert?.tipo ?? "usuario";
+    return `${tipo}-${cert.evento_id}-${cert.turma_id}`;
   }
 
   async function gerarCertificado(cert) {
@@ -128,6 +133,11 @@ export default function MeusCertificados() {
     setGerandoKey(key);
 
     try {
+      if (!usuario?.id) {
+        toast.error("❌ Usuário não identificado. Faça login novamente.");
+        return;
+      }
+
       const body = {
         usuario_id: usuario.id,
         evento_id: cert.evento_id,
@@ -137,16 +147,32 @@ export default function MeusCertificados() {
 
       const resultado = await apiPost("certificados/gerar", body);
 
+      // Tratar diferentes formatos de retorno
+      const certificadoId =
+        resultado?.certificado_id ??
+        resultado?.id ??
+        resultado?.certificado?.id ??
+        null;
+      const arquivoPdf =
+        resultado?.arquivo_pdf ??
+        resultado?.arquivo ??
+        resultado?.certificado?.arquivo_pdf ??
+        null;
+
       toast.success("🎉 Certificado gerado com sucesso!");
 
+      // ✅ Reconciliação autoritativa: recarrega a lista do servidor
+      await carregarCertificados();
+
+      // Caso queira também sinalizar imediatamente o item gerado (sem depender da recarga):
       setCertificados((prev) =>
         prev.map((c) =>
           c.evento_id === cert.evento_id && c.turma_id === cert.turma_id
             ? {
                 ...c,
                 ja_gerado: true,
-                arquivo_pdf: resultado?.arquivo,
-                certificado_id: resultado?.certificado_id ?? c.certificado_id ?? Date.now(),
+                certificado_id: c.certificado_id ?? certificadoId ?? c.certificado_id,
+                arquivo_pdf: c.arquivo_pdf ?? arquivoPdf ?? c.arquivo_pdf,
               }
             : c
         )
@@ -163,6 +189,20 @@ export default function MeusCertificados() {
   function CartaoCertificado({ cert }) {
     const key = keyDoCert(cert);
     const gerando = gerandoKey === key;
+
+    // Construção resiliente do link de download:
+    // 1) preferir certificado_id (rota REST estável)
+    // 2) se não existir, usar arquivo_pdf absoluto/relativo
+    const hrefDownload =
+      cert?.certificado_id
+        ? makeApiUrl(`certificados/${cert.certificado_id}/download`)
+        : cert?.arquivo_pdf
+        ? (cert.arquivo_pdf.startsWith("http")
+            ? cert.arquivo_pdf
+            : makeApiUrl(cert.arquivo_pdf.replace(/^\//, "")))
+        : null;
+
+    const prontoParaDownload = Boolean(hrefDownload) && (cert.ja_gerado || cert.certificado_id);
 
     return (
       <motion.li
@@ -187,9 +227,9 @@ export default function MeusCertificados() {
         </div>
 
         <div className="mt-4 flex justify-center">
-          {cert.ja_gerado && cert.certificado_id ? (
+          {prontoParaDownload ? (
             <a
-              href={makeApiUrl(`certificados/${cert.certificado_id}/download`)}
+              href={hrefDownload}
               target="_blank"
               rel="noopener noreferrer"
               className="bg-green-700 hover:bg-green-800 text-white text-sm font-medium py-2 px-4 rounded text-center"
