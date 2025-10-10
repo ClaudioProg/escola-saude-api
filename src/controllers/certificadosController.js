@@ -695,94 +695,134 @@ async function revalidarCertificado(req, res) {
   }
 }
 
-/** 🎓 Elegíveis (aluno) — conta aulas por datas_eventos; fallback: intervalo */
+/** 🎓 Elegíveis (aluno) — retorna SEMPRE:
+ *  (1) todos os JÁ GERADOS
+ *  (2) + os ELEGÍVEIS que AINDA NÃO têm certificado
+ *  Independe de datas_eventos; considera data_fim + horario_fim; frequência por dias distintos.
+ *  Mantém formato legado: array direto.
+ */
 async function listarCertificadosElegiveis(req, res) {
-  const usuario_id = req.usuario.id;
-
-  const queryDatasEventos = `
-    WITH turmas_base AS (
-      SELECT t.id AS turma_id, t.evento_id, t.nome AS nome_turma, t.data_inicio, t.data_fim
-      FROM turmas t
-      WHERE t.data_fim <= CURRENT_DATE
-    ),
-    total_aulas AS (
-      SELECT de.turma_id, COUNT(*)::int AS total
-      FROM datas_eventos de
-      GROUP BY de.turma_id
-    ),
-    presenca_user AS (
-      SELECT p.turma_id, COUNT(DISTINCT p.data_presenca::date)::int AS dias_presentes
-      FROM presencas p
-      WHERE p.usuario_id = $1 AND p.presente = TRUE
-      GROUP BY p.turma_id
-    ),
-    aval AS (
-      SELECT DISTINCT turma_id FROM avaliacoes WHERE usuario_id = $1
-    )
-    SELECT tb.turma_id, e.id AS evento_id, e.titulo AS evento, tb.nome_turma,
-           tb.data_inicio, tb.data_fim, c.id AS certificado_id, c.arquivo_pdf,
-           (c.arquivo_pdf IS NOT NULL) AS ja_gerado,
-           (pu.dias_presentes::float / NULLIF(ta.total,0)) >= 0.75 AS presenca_ok,
-           (aval.turma_id IS NOT NULL) AS fez_avaliacao,
-           ((pu.dias_presentes::float / NULLIF(ta.total,0)) >= 0.75) AND (aval.turma_id IS NOT NULL) AS pode_gerar
-    FROM turmas_base tb
-    JOIN eventos e ON e.id = tb.evento_id
-    LEFT JOIN total_aulas ta   ON ta.turma_id = tb.turma_id
-    LEFT JOIN presenca_user pu ON pu.turma_id = tb.turma_id
-    LEFT JOIN aval             ON aval.turma_id = tb.turma_id
-    LEFT JOIN certificados c
-      ON c.usuario_id = $1 AND c.evento_id = e.id AND c.turma_id = tb.turma_id AND c.tipo = 'usuario'
-    WHERE ta.total > 0
-      AND (pu.dias_presentes::float / NULLIF(ta.total,0)) >= 0.75
-      AND aval.turma_id IS NOT NULL
-    ORDER BY tb.data_fim DESC
-  `;
-
-  const queryFallbackIntervalo = `
-    WITH turmas_base AS (
-      SELECT t.id AS turma_id, t.evento_id, t.nome AS nome_turma, t.data_inicio, t.data_fim,
-             (DATE_PART('day', (t.data_fim::timestamp - t.data_inicio::timestamp))::int + 1) AS total
-      FROM turmas t
-      WHERE t.data_fim <= CURRENT_DATE
-    ),
-    presenca_user AS (
-      SELECT p.turma_id, COUNT(DISTINCT p.data_presenca::date)::int AS dias_presentes
-      FROM presencas p
-      WHERE p.usuario_id = $1 AND p.presente = TRUE
-      GROUP BY p.turma_id
-    ),
-    aval AS (
-      SELECT DISTINCT turma_id FROM avaliacoes WHERE usuario_id = $1
-    )
-    SELECT tb.turma_id, e.id AS evento_id, e.titulo AS evento, tb.nome_turma,
-           tb.data_inicio, tb.data_fim, c.id AS certificado_id, c.arquivo_pdf,
-           (c.arquivo_pdf IS NOT NULL) AS ja_gerado,
-           (pu.dias_presentes::float / NULLIF(tb.total,0)) >= 0.75 AS presenca_ok,
-           (aval.turma_id IS NOT NULL) AS fez_avaliacao,
-           ((pu.dias_presentes::float / NULLIF(tb.total,0)) >= 0.75) AND (aval.turma_id IS NOT NULL) AS pode_gerar
-    FROM turmas_base tb
-    JOIN eventos e ON e.id = tb.evento_id
-    LEFT JOIN presenca_user pu ON pu.turma_id = tb.turma_id
-    LEFT JOIN aval             ON aval.turma_id = tb.turma_id
-    LEFT JOIN certificados c
-      ON c.usuario_id = $1 AND c.evento_id = e.id AND c.turma_id = tb.turma_id AND c.tipo = 'usuario'
-    WHERE tb.total > 0
-      AND (pu.dias_presentes::float / NULLIF(tb.total,0)) >= 0.75
-      AND aval.turma_id IS NOT NULL
-    ORDER BY tb.data_fim DESC
-  `;
-
   try {
-    try {
-      const r = await db.query(queryDatasEventos, [Number(usuario_id)]);
-      return res.json(r.rows);
-    } catch (e) {
-      if (e && e.code === "42P01") {
-        const r2 = await db.query(queryFallbackIntervalo, [Number(usuario_id)]);
-        return res.json(r2.rows);
-      }
-      throw e;
-    }
+    const usuario_id = Number(req?.usuario?.id) || Number(req.query?.usuario_id);
+    if (!usuario_id) return res.status(400).json({ erro: "usuario_id ausente" });
+
+    const { rows } = await db.query(
+      `
+      /* ---------------------- JÁ GERADOS ---------------------- */
+      WITH gerados AS (
+        SELECT
+          c.id                AS certificado_id,
+          TRUE                AS ja_gerado,
+          c.arquivo_pdf,
+          t.id                AS turma_id,
+          e.id                AS evento_id,
+          e.titulo            AS evento,
+          t.nome              AS nome_turma,
+          t.data_inicio,
+          t.data_fim,
+          t.horario_fim
+        FROM certificados c
+        JOIN turmas   t ON t.id = c.turma_id
+        JOIN eventos  e ON e.id = c.evento_id
+        WHERE c.usuario_id = $1
+          AND c.tipo = 'usuario'
+      ),
+      /* ---------------------- BASE / ELEGÍVEIS ---------------------- */
+      encerradas AS (
+        SELECT
+          t.id AS turma_id,
+          t.evento_id,
+          t.nome       AS nome_turma,
+          t.data_inicio,
+          t.data_fim,
+          t.horario_fim,
+          ((t.data_fim::text || ' ' || COALESCE(t.horario_fim,'23:59'))::timestamp < NOW()) AS acabou
+        FROM turmas t
+      ),
+      freq AS (
+        SELECT
+          p.usuario_id,
+          p.turma_id,
+          COUNT(DISTINCT p.data_presenca::date)::int AS dias_presentes,
+          COUNT(DISTINCT p.data_presenca::date)::int AS encontros_realizados
+        FROM presencas p
+        WHERE p.usuario_id = $1
+        GROUP BY p.usuario_id, p.turma_id
+      ),
+      aval AS (
+        SELECT DISTINCT turma_id
+        FROM avaliacoes
+        WHERE usuario_id = $1
+      ),
+      base AS (
+        SELECT
+          e.id AS evento_id,
+          e.titulo AS evento,
+          en.turma_id,
+          en.nome_turma,
+          en.data_inicio,
+          en.data_fim,
+          en.horario_fim,
+          en.acabou,
+          COALESCE(f.dias_presentes,0)       AS dias_presentes,
+          COALESCE(f.encontros_realizados,0) AS encontros_realizados,
+          CASE WHEN COALESCE(f.encontros_realizados,0)=0
+               THEN 0
+               ELSE (f.dias_presentes::decimal / f.encontros_realizados) END AS freq_rel,
+          (av.turma_id IS NOT NULL)          AS fez_avaliacao
+        FROM encerradas en
+        JOIN eventos e ON e.id = en.evento_id
+        LEFT JOIN freq f ON f.turma_id = en.turma_id AND f.usuario_id = $1
+        LEFT JOIN aval av ON av.turma_id = en.turma_id
+      ),
+      elegiveis AS (
+        SELECT b.*
+        FROM base b
+        WHERE b.acabou = TRUE
+          AND b.fez_avaliacao = TRUE
+          AND b.freq_rel >= 0.75
+      )
+
+      /* --------------- RESULTADO FINAL --------------- */
+      SELECT
+        g.turma_id,
+        g.evento_id,
+        g.evento,
+        g.nome_turma,
+        g.data_inicio,
+        g.data_fim,
+        g.horario_fim,
+        g.certificado_id,
+        g.ja_gerado,
+        g.arquivo_pdf,
+        TRUE AS pode_gerar
+      FROM gerados g
+
+      UNION ALL
+
+      SELECT
+        el.turma_id,
+        el.evento_id,
+        el.evento,
+        el.nome_turma,
+        el.data_inicio,
+        el.data_fim,
+        el.horario_fim,
+        NULL::bigint         AS certificado_id,
+        FALSE                AS ja_gerado,
+        NULL::varchar(255)   AS arquivo_pdf,
+        TRUE                 AS pode_gerar
+      FROM elegiveis el
+      WHERE NOT EXISTS (
+        SELECT 1 FROM gerados g
+        WHERE g.turma_id = el.turma_id AND g.evento_id = el.evento_id
+      )
+      ORDER BY data_fim DESC, evento_id DESC;
+      `,
+      [usuario_id]
+    );
+
+    return res.json(rows); // formato legado: array direto
   } catch (err) {
     console.error("❌ Erro ao buscar certificados elegíveis:", err?.stack || err);
     return res.status(500).json({ erro: "Erro ao buscar certificados elegíveis." });

@@ -3,7 +3,34 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { apiPost } from "../services/api";
 import Footer from "../components/Footer";
-import { CheckCircle2, XCircle, Loader2, QrCode, Home, UserCheck } from "lucide-react";
+import { CheckCircle2, XCircle, Loader2, QrCode, Home, UserCheck, LogIn, UserPlus } from "lucide-react";
+
+/* ---------------- Helpers locais ---------------- */
+function getRawToken() {
+  try {
+    const raw = localStorage.getItem("token");
+    return raw ? raw.trim() : null;
+  } catch {
+    return null;
+  }
+}
+// token simples: aceita "Bearer x.y.z" e "x.y.z" e ignora expirado (fallback leve)
+function getValidToken() {
+  const raw = getRawToken();
+  if (!raw) return null;
+  const token = raw.startsWith("Bearer ") ? raw.slice(7).trim() : raw;
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  try {
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
+    const now = Date.now() / 1000;
+    if (payload?.nbf && now < payload.nbf) return null;
+    if (payload?.exp && now >= payload.exp) return null;
+    return token;
+  } catch {
+    return null;
+  }
+}
 
 /* ---------------- HeaderHero ---------------- */
 function HeaderHero({ status }) {
@@ -63,13 +90,17 @@ export default function ConfirmarPresenca() {
   const location = useLocation();
 
   // turma pode vir como /presenca?turma=123 ou /presenca/123
-  const turmaId = useMemo(() => searchParams.get("turma") || turmaIdFromPath || "", [searchParams, turmaIdFromPath]);
+  const turmaId = useMemo(
+    () => searchParams.get("turma") || turmaIdFromPath || "",
+    [searchParams, turmaIdFromPath]
+  );
 
   // estados
   const [status, setStatus] = useState("loading"); // "loading" | "ok" | "err"
   const [msg, setMsg] = useState("Confirmando presença…");
   const [detail, setDetail] = useState("");
   const [attempts, setAttempts] = useState(0);
+  const [requiresLogin, setRequiresLogin] = useState(false);
 
   // a11y
   const liveRef = useRef(null);
@@ -82,13 +113,43 @@ export default function ConfirmarPresenca() {
     if (liveRef.current) liveRef.current.textContent = text;
   };
 
+  const buildNext = () => {
+    const base = location.pathname;
+    const q = new URLSearchParams();
+    q.set("turma", String(turmaId || ""));
+    return `${base}?${q.toString()}`;
+  };
+
+  const goToLogin = () => {
+    const next = buildNext();
+    navigate(`/login?next=${encodeURIComponent(next)}`, { replace: true });
+  };
+
+  const goToRegister = () => {
+    const next = buildNext();
+    navigate(`/registro?next=${encodeURIComponent(next)}`, { replace: true });
+  };
+
   // ação principal
   async function confirmar(controller) {
     if (!turmaId || !/^\d+$/.test(String(turmaId))) {
       setStatus("err");
       setMsg("Parâmetro 'turma' ausente ou inválido.");
       setDetail("Use o QR correto desta sala/turma.");
+      setRequiresLogin(false);
       setLive("Parâmetro inválido.");
+      return;
+    }
+
+    // ✅ Pré-checagem: não logado → mensagem amigável com CTA
+    const tokenOk = getValidToken();
+    if (!tokenOk) {
+      setStatus("err");
+      setMsg("Você precisa estar logado para registrar presença.");
+      setDetail("Entre na sua conta para confirmar a presença nesta turma. Voltaremos automaticamente para esta tela após o login.");
+      setRequiresLogin(true);
+      setLive("Login necessário para confirmar presença.");
+      titleRef.current?.focus();
       return;
     }
 
@@ -96,9 +157,11 @@ export default function ConfirmarPresenca() {
       setStatus("loading");
       setMsg("Confirmando presença…");
       setDetail("");
+      setRequiresLogin(false);
       setLive("Iniciando confirmação.");
 
-      await apiPost(`/api/presencas/confirmar-qr/${encodeURIComponent(turmaId)}`, {}, { signal: controller?.signal });
+      // OBS: o helper de API já garante /api; usar caminho sem /api aqui também funciona.
+      await apiPost(`/presencas/confirmar-qr/${encodeURIComponent(turmaId)}`, {}, { signal: controller?.signal });
 
       setStatus("ok");
       setMsg("✅ Presença confirmada com sucesso!");
@@ -110,21 +173,23 @@ export default function ConfirmarPresenca() {
 
       if (code === 401) {
         // não logado → login e volta pra cá
-        const next = `${location.pathname}?turma=${encodeURIComponent(String(turmaId))}`;
-        navigate(`/login?next=${encodeURIComponent(next)}`, { replace: true });
+        goToLogin();
         return;
       }
 
       setStatus("err");
       if (code === 403) {
         setMsg("Acesso negado: você não está inscrito nesta turma.");
-        setDetail("Verifique se seu cadastro está correto para este evento/turma.");
+        setDetail("Verifique se seu cadastro está correto para este evento/turma. Se você não estiver logado com a conta correta, entre e tente novamente.");
+        setRequiresLogin(false);
       } else if (code === 409) {
         setMsg("Hoje não está dentro do período/datas desta turma.");
         setDetail("Confirme com a equipe a data correta ou o cronograma da turma.");
+        setRequiresLogin(false);
       } else {
         setMsg("Não foi possível confirmar a presença no momento.");
         setDetail("Tente novamente. Se persistir, procure a equipe de suporte.");
+        setRequiresLogin(false);
       }
       setLive("Falha na confirmação de presença.");
       titleRef.current?.focus();
@@ -167,17 +232,17 @@ export default function ConfirmarPresenca() {
         <p ref={liveRef} className="sr-only" aria-live="polite" />
 
         <section className="max-w-xl mx-auto">
-          <div
-            className="bg-white dark:bg-zinc-800 rounded-2xl shadow-sm ring-1 ring-zinc-200/60 dark:ring-zinc-700/60 p-5"
-          >
+          <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow-sm ring-1 ring-zinc-200/60 dark:ring-zinc-700/60 p-5">
             {/* título focável para leitores de tela após transição de estado */}
             <h2
               ref={titleRef}
               tabIndex={-1}
               className={`text-lg font-semibold ${
-                status === "ok" ? "text-emerald-700 dark:text-emerald-400"
-                : status === "err" ? "text-red-700 dark:text-red-400"
-                : "text-zinc-900 dark:text-zinc-100"
+                status === "ok"
+                  ? "text-emerald-700 dark:text-emerald-400"
+                  : status === "err"
+                  ? "text-red-700 dark:text-red-400"
+                  : "text-zinc-900 dark:text-zinc-100"
               }`}
             >
               {msg}
@@ -232,22 +297,46 @@ export default function ConfirmarPresenca() {
                 </>
               ) : (
                 <>
-                  <button
-                    type="button"
-                    onClick={onRetry}
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-sm transition"
-                  >
-                    <Loader2 className="w-4 h-4" />
-                    Tentar novamente
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => navigate("/")}
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border dark:border-zinc-700 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
-                  >
-                    <Home className="w-4 h-4" />
-                    Ir para a Home
-                  </button>
+                  {/* Se precisa logar, mostra CTAs de login/registro */}
+                  {requiresLogin ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={goToLogin}
+                        className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-sm transition"
+                      >
+                        <LogIn className="w-4 h-4" />
+                        Entrar e confirmar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={goToRegister}
+                        className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border dark:border-zinc-700 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
+                      >
+                        <UserPlus className="w-4 h-4" />
+                        Criar conta
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={onRetry}
+                        className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-sm transition"
+                      >
+                        <Loader2 className="w-4 h-4" />
+                        Tentar novamente
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => navigate("/")}
+                        className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border dark:border-zinc-700 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
+                      >
+                        <Home className="w-4 h-4" />
+                        Ir para a Home
+                      </button>
+                    </>
+                  )}
                 </>
               )}
             </div>

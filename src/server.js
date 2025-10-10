@@ -7,6 +7,7 @@ const fs = require("fs");
 const rateLimit = require("express-rate-limit");
 const compression = require("compression");
 const helmet = require("helmet");
+const crypto = require("crypto");
 
 // ⚠️ .env
 dotenv.config();
@@ -16,40 +17,47 @@ dotenv.config();
 const rawDb = require("./db");
 const db = rawDb?.db ?? rawDb;
 
+/* 🔒 Paths persistentes (UNIFICADOS) */
+const {
+  DATA_ROOT,
+  UPLOADS_DIR,
+  MODELOS_CHAMADAS_DIR,
+  ensureDir,
+} = require("./paths");
+
 /* ───────── Rotas existentes ───────── */
-// ⬇️ trocado para o arquivo/plural novo
-const assinaturaRoutes           = require("./routes/assinaturaRoutes");
-const turmasRouteAdministrador  = require("./routes/turmasRouteAdministrador");
-const agendaRoute               = require("./routes/agendaRoute");
-const avaliacoesRoute           = require("./routes/avaliacoesRoute");
-const certificadosRoute         = require("./routes/certificadosRoute");
-const certificadosHistoricoRoute= require("./routes/certificadosHistoricoRoutes");
-const certificadosAvulsosRoutes = require("./routes/certificadosAvulsosRoutes");
-const eventosRoute              = require("./routes/eventosRoute");
-const inscricoesRoute           = require("./routes/inscricoesRoute");
-const loginRoute                = require("./routes/loginRoute");
-const presencasRoute            = require("./routes/presencasRoute");
-const relatorioPresencasRoute   = require("./routes/relatorioPresencasRoute");
-const turmasRoute               = require("./routes/turmasRoute");
-const instrutorRoute            = require("./routes/instrutorRoutes");
-const relatoriosRoute           = require("./routes/relatoriosRoutes");
-const dashboardAnaliticoRoutes  = require("./routes/dashboardAnaliticoRoutes");
-const dashboardUsuarioRoute     = require("./routes/dashboardUsuarioRoute");
-const notificacoesRoute         = require("./routes/notificacoesRoute");
-const authGoogleRoute           = require("./auth/authGoogle");
-const unidadesRoutes            = require("./routes/unidadesRoutes");
-const usuarioPublicoController  = require("./controllers/usuarioPublicoController");
-const datasEventoRoute          = require("./routes/datasEventoRoute");
-const perfilRoutes              = require("./routes/perfilRoutes");
-const publicLookupsRoutes       = require("./routes/publicLookupsRoutes");
-const usuariosRoute             = require("./routes/usuariosRoute");
+const assinaturaRoutes            = require("./routes/assinaturaRoutes");
+const turmasRouteAdministrador   = require("./routes/turmasRouteAdministrador");
+const agendaRoute                = require("./routes/agendaRoute");
+const avaliacoesRoute            = require("./routes/avaliacoesRoute");
+const certificadosRoute          = require("./routes/certificadosRoute");
+const certificadosHistoricoRoute = require("./routes/certificadosHistoricoRoutes");
+const certificadosAvulsosRoutes  = require("./routes/certificadosAvulsosRoutes");
+const eventosRoute               = require("./routes/eventosRoute");
+const inscricoesRoute            = require("./routes/inscricoesRoute");
+const loginRoute                 = require("./routes/loginRoute");
+const presencasRoute             = require("./routes/presencasRoute");
+const relatorioPresencasRoute    = require("./routes/relatorioPresencasRoute");
+const turmasRoute                = require("./routes/turmasRoute");
+const instrutorRoute             = require("./routes/instrutorRoutes");
+const relatoriosRoute            = require("./routes/relatoriosRoutes");
+const dashboardAnaliticoRoutes   = require("./routes/dashboardAnaliticoRoutes");
+const dashboardUsuarioRoute      = require("./routes/dashboardUsuarioRoute");
+const notificacoesRoute          = require("./routes/notificacoesRoute");
+const authGoogleRoute            = require("./auth/authGoogle");
+const unidadesRoutes             = require("./routes/unidadesRoutes");
+const usuarioPublicoController   = require("./controllers/usuarioPublicoController");
+const datasEventoRoute           = require("./routes/datasEventoRoute");
+const perfilRoutes               = require("./routes/perfilRoutes");
+const publicLookupsRoutes        = require("./routes/publicLookupsRoutes");
+const usuariosRoute              = require("./routes/usuariosRoute");
 
 /* 🆕 Submissão de Trabalhos */
-const chamadasRoutes            = require("./routes/chamadasRoutes");
-const trabalhosRoutes           = require("./routes/trabalhosRoutes");
+const chamadasRoutes             = require("./routes/chamadasRoutes");
+const trabalhosRoutes            = require("./routes/trabalhosRoutes");
 
-/* 🆕 Upload/Modelo de Banner (agora com rotas por chamada) */
-const uploadRoutes              = require("./routes/uploadRoutes");
+/* 🆕 Upload/Modelo de Banner (por chamada) */
+const uploadRoutes               = require("./routes/uploadRoutes");
 
 /* ───────── ENV obrigatórios em produção ───────── */
 if (process.env.NODE_ENV === "production") {
@@ -59,19 +67,59 @@ if (process.env.NODE_ENV === "production") {
   }
 }
 
+const IS_DEV = process.env.NODE_ENV !== "production";
 const app = express();
 
 /* ───────── Hardening / perf ───────── */
 app.set("trust proxy", 1);
+
+// 1) Nonce por requisição (CSP)
+app.use((_, res, next) => {
+  res.locals.cspNonce = crypto.randomBytes(16).toString("base64");
+  next();
+});
+
+// 2) Helmet com CSP (nonce). Em DEV, liberar eval/inline para Vite.
 app.use(
   helmet({
-    contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,
     crossOriginOpenerPolicy: false,
     crossOriginResourcePolicy: { policy: "cross-origin" },
-    hsts: process.env.NODE_ENV === "production" ? undefined : false,
+    hsts: IS_DEV ? false : undefined,
+    referrerPolicy: { policy: "strict-origin-when-cross-origin" },
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        "default-src": ["'self'"],
+        "base-uri": ["'self'"],
+        "font-src": ["'self'", "data:", "https:"],
+        "img-src": ["'self'", "data:", "https:"],
+        "object-src": ["'none'"],
+        "script-src": [
+          "'self'",
+          "https://accounts.google.com",
+          "https://www.gstatic.com",
+          (_, res) => `'nonce-${res.locals.cspNonce}'`,
+          "'strict-dynamic'",
+          ...(IS_DEV ? ["'unsafe-eval'", "'unsafe-inline'"] : []),
+        ],
+        "style-src": ["'self'", "'unsafe-inline'"],
+        "connect-src": [
+          "'self'",
+          "https://escola-saude-api.onrender.com",
+          "https://www.googleapis.com",
+          ...(IS_DEV ? ["ws:", "http://localhost:5173", "http://127.0.0.1:5173"] : []),
+        ],
+        "frame-src": ["https://accounts.google.com"],
+        "media-src": ["'self'", "https:"],
+        "worker-src": ["'self'", "blob:"],
+      },
+    },
+    noSniff: true,
+    frameguard: { action: "sameorigin" },
   })
 );
+
 app.use(compression());
 
 /* ───────── CORS (GLOBAL + preflight) ───────── */
@@ -96,7 +144,7 @@ const corsOptions = {
     if (!origin) return cb(null, true);
     if (allowedOrigins.includes(origin) || vercelRegex.test(origin)) return cb(null, true);
     const err = new Error("CORS bloqueado: " + origin);
-    err.status = 403; // retorna 403 explícito no handler
+    err.status = 403;
     return cb(err);
   },
   credentials: true,
@@ -116,7 +164,7 @@ const corsOptions = {
   maxAge: 86400,
 };
 app.use(cors(corsOptions));
-app.use((req, res, next) => {
+app.use((_, res, next) => {
   res.setHeader("Vary", "Origin");
   next();
 });
@@ -126,31 +174,43 @@ app.options("*", cors(corsOptions), (_req, res) => res.sendStatus(204));
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-/* ───────── Temp & Uploads ───────── */
-const tempDir = path.join(__dirname, "temp");
-if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
+/* ───────── Persistência de arquivos (já garantida por paths.js) ───────── */
+ensureDir(DATA_ROOT);
+ensureDir(UPLOADS_DIR);
+ensureDir(MODELOS_CHAMADAS_DIR);
+console.log("[FILES] DATA_ROOT:", DATA_ROOT);
+console.log("[FILES] UPLOADS_DIR:", UPLOADS_DIR);
+console.log("[FILES] MODELOS_CHAMADAS_DIR:", MODELOS_CHAMADAS_DIR);
 
-const uploadsDir = path.join(process.cwd(), "uploads");
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+// /uploads (público)
 app.use(
   "/uploads",
   cors(corsOptions),
-  express.static(uploadsDir, { maxAge: "1h", fallthrough: true })
+  express.static(UPLOADS_DIR, {
+    maxAge: "1h",
+    fallthrough: true,
+    setHeaders(res) {
+      res.setHeader("Cache-Control", "public, max-age=3600");
+    },
+  })
 );
 
-/* 🆕 Modelos por chamada: /api/modelos/chamadas/:id/banner.pptx */
-const modelosPorChamadaDir = path.join(process.cwd(), "uploads", "modelos", "chamadas");
-if (!fs.existsSync(modelosPorChamadaDir)) fs.mkdirSync(modelosPorChamadaDir, { recursive: true });
+// Modelos por chamada (público): /api/modelos/chamadas/:id/banner.pptx
 app.use(
   "/api/modelos/chamadas",
   cors(corsOptions),
-  express.static(modelosPorChamadaDir, { maxAge: "1d", fallthrough: true })
+  express.static(MODELOS_CHAMADAS_DIR, {
+    maxAge: "1d",
+    fallthrough: true,
+    setHeaders(res) {
+      res.setHeader("Cache-Control", "public, max-age=86400, immutable");
+    },
+  })
 );
 
-/* (legado) Diretório de modelos públicos (public/modelos) */
+/* (legado) Diretório de modelos empacotados no build */
 const modelosDir = path.join(__dirname, "public", "modelos");
 if (!fs.existsSync(modelosDir)) fs.mkdirSync(modelosDir, { recursive: true });
-// Serve /api/modelos/* diretamente do public/modelos
 app.use("/api/modelos", cors(corsOptions), express.static(modelosDir, { maxAge: "1d", fallthrough: true }));
 
 /* ───────── DB fallback global ───────── */
@@ -163,7 +223,7 @@ app.use((req, _res, next) => {
 app.use(express.static(path.join(__dirname, "public")));
 
 /* ───────── Logger dev ───────── */
-if (process.env.NODE_ENV !== "production") {
+if (IS_DEV) {
   app.use((req, _res, next) => {
     console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
     next();
@@ -223,8 +283,6 @@ app.use("/api", trabalhosRoutes);
 /* 🆕 Upload/Modelo de Banner (inclui rotas por chamada) */
 app.use("/api", uploadRoutes);
 
-// ⚠️ REMOVIDO: mount duplicado de /api/modelos/chamadas
-
 /* ───────── Recuperação de senha ───────── */
 app.post("/api/usuarios/recuperar-senha", recuperarSenhaLimiter, usuarioPublicoController.recuperarSenha);
 
@@ -233,7 +291,7 @@ app.get("/api/health", (_req, res) => res.status(200).json({ ok: true, env: proc
 app.get("/", (_req, res) => res.send("🟢 API da Escola da Saúde rodando!"));
 
 /* ───────── 404 ───────── */
-app.use((req, res, next) => {
+app.use((req, res) => {
   if (req.url.startsWith("/uploads/") && req.method === "GET") {
     return res.status(404).end();
   }
@@ -251,7 +309,9 @@ app.use((err, _req, res, _next) => {
 
 /* ───────── Start & Shutdown ───────── */
 const PORT = process.env.PORT || 3000;
-const server = app.listen(PORT, () => console.log(`🟢🚀 Servidor rodando na porta ${PORT} 🟢`));
+const server = app.listen(PORT, () => {
+  console.log(`🟢🚀 Servidor rodando na porta ${PORT} 🟢`);
+});
 
 function shutdown(signal) {
   console.log(`\n${signal} recebido. Encerrando servidor...`);

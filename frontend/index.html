@@ -44,19 +44,8 @@
     <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 
-    <!-- Boot do tema (antes do render) -->
-    <script>
-      try {
-        var t = localStorage.getItem('theme');
-        var root = document.documentElement;
-        if (t === 'dark') {
-          root.classList.add('dark');
-        } else {
-          root.classList.remove('dark');
-          if (t !== 'light') localStorage.setItem('theme', 'light');
-        }
-      } catch (e) {}
-    </script>
+    <!-- Boot do tema (antes do render) - agora externo p/ CSP -->
+    <script src="/boot-theme.js"></script>
   </head>
 
   <body class="bg-white text-gray-900 dark:bg-gray-900 dark:text-white font-sans min-h-screen">
@@ -68,6 +57,7 @@
     <!-- Raiz para PORTAIS (modais, drawers, etc.) -->
     <div id="modal-root"></div>
 
+    <!-- App -->
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

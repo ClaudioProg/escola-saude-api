@@ -23,21 +23,29 @@ function decodeJwtPayload(token) {
 }
 
 function getValidToken() {
-  const token = localStorage.getItem("token");
+  let token = localStorage.getItem("token");
   if (!token) return null;
+
+  // Aceita "Bearer x.y.z" ou somente "x.y.z"
+  if (token.startsWith("Bearer ")) token = token.slice(7).trim();
+
   const payload = decodeJwtPayload(token);
   const now = Date.now() / 1000;
+
   if (payload?.nbf && now < payload.nbf) {
     DEBUG && console.warn("[PR] Token ainda não é válido (nbf).");
     return null;
   }
   if (payload?.exp && now >= payload.exp) {
     DEBUG && console.warn("[PR] Token expirado — limpando sessão");
-    localStorage.clear();
+    // Limpa apenas chaves de autenticação (evita apagar preferências)
+    localStorage.removeItem("token");
+    localStorage.removeItem("usuario");
+    localStorage.removeItem("perfil");
     sessionStorage.removeItem("perfil_incompleto");
     return null;
   }
-  return token;
+  return token; // retorna apenas o JWT
 }
 
 function getPerfisRobusto() {
@@ -96,11 +104,13 @@ export default function PrivateRoute({ children, permitido, perfilPermitido }) {
   const search = location?.search || "";
   const nextParam = encodeURIComponent(path + search);
 
+  // rotas 100% públicas (sem exigir login)
+  const PUBLIC_EXEMPT = ["/", "/login", "/registro", "/sobre", "/contato"];
+  const isRotaPublica = PUBLIC_EXEMPT.some((r) => path === r || path.startsWith(r + "/"));
+
   // rotas isentas do redirect por perfil incompleto
   const PERFIL_EXEMPT = ["/perfil", "/atualizar-cadastro", "/usuario/manual", "/manual", "/ajuda"];
-  const isRotaExentaPerfil = PERFIL_EXEMPT.some(
-    (r) => path === r || path.startsWith(r + "/")
-  );
+  const isRotaExentaPerfil = PERFIL_EXEMPT.some((r) => path === r || path.startsWith(r + "/"));
 
   const exigidos = useMemo(() => {
     if (Array.isArray(permitido)) return permitido;
@@ -110,6 +120,9 @@ export default function PrivateRoute({ children, permitido, perfilPermitido }) {
 
   const [token, setToken] = useState(getValidToken());
   const [perfisUsuario, setPerfisUsuario] = useState(() => getPerfisRobusto());
+
+  // Suporte a sessão com cookie httpOnly (quando não há token no storage)
+  const [sessaoValida, setSessaoValida] = useState(false);
 
   const [checandoPerfil, setChecandoPerfil] = useState(true);
   const [perfilIncompleto, setPerfilIncompleto] = useState(() => {
@@ -160,33 +173,80 @@ export default function PrivateRoute({ children, permitido, perfilPermitido }) {
     return unsubscribe;
   }, []);
 
-  // checagem inicial do /perfil/me (silenciosa)
+  // checagem inicial do /perfil/me (silenciosa) — também tenta sessão via cookie quando não há token
   useEffect(() => {
     let alive = true;
     (async () => {
       const tk = getValidToken();
+
+      // Se não há token:
+      //  - Rotas públicas: não precisa checar nada agora (libera).
+      //  - Rotas privadas: tenta sessão por cookie httpOnly via /perfil/me.
       if (!tk) {
-        DEBUG && console.log("[PR] Sem token, não checa perfil.");
-        setChecandoPerfil(false);
-        firstLoadRef.current = false;
+        if (isRotaPublica) {
+          DEBUG && console.log("[PR] Rota pública sem token — sem checagem de perfil necessária.");
+          setChecandoPerfil(false);
+          firstLoadRef.current = false;
+          return;
+        }
+        try {
+          DEBUG && console.log("[PR] Sem token — tentando sessão via cookie em /perfil/me (silent)...");
+          const me = await apiPerfilMe({ on401: "silent", on403: "silent" });
+          if (!alive) return;
+
+          if (me && typeof me === "object") {
+            // Considera sessão válida vinda do cookie
+            setSessaoValida(true);
+            setPerfilIncompleto(!!me?.perfil_incompleto);
+
+            // Se a API retornar perfis, atualiza localmente para a verificação de autorização
+            const possiveisPerfis = []
+              .concat(me?.perfil ?? [])
+              .concat((me?.perfis ?? "").toString().split(","))
+              .concat((me?.roles ?? "").toString().split(","))
+              .map((p) => String(p || "").replace(/[\[\]"]/g, "").trim().toLowerCase())
+              .filter(Boolean);
+
+            if (possiveisPerfis.length > 0) {
+              setPerfisUsuario(Array.from(new Set(possiveisPerfis)));
+            }
+
+            DEBUG &&
+              console.log(
+                "[PR] Sessão via cookie detectada. perfil_incompleto=",
+                !!me?.perfil_incompleto,
+                "perfis=",
+                possiveisPerfis
+              );
+          } else {
+            DEBUG && console.log("[PR] Sessão via cookie não encontrada.");
+          }
+        } catch (e) {
+          DEBUG && console.warn("[PR] Falha ao checar sessão via cookie (ignorada):", e?.message || e);
+        } finally {
+          if (alive) {
+            setChecandoPerfil(false);
+            firstLoadRef.current = false;
+          }
+        }
         return;
       }
+
+      // Com token válido:
       if (!firstLoadRef.current && perfilIncompleto !== null) {
         DEBUG && console.log("[PR] Já tenho flag de perfil:", perfilIncompleto);
         setChecandoPerfil(false);
         return;
       }
       try {
-        DEBUG && console.log("[PR] Consultando /perfil/me (on401:on403 silent)...");
+        DEBUG && console.log("[PR] Consultando /perfil/me (on401:on403 silent) com token...");
         const me = await apiPerfilMe({ on401: "silent", on403: "silent" });
         if (!alive) return;
         setPerfilIncompleto(!!me?.perfil_incompleto);
         DEBUG && console.log("[PR] Perfil incompleto? →", !!me?.perfil_incompleto);
       } catch (e) {
-        DEBUG && console.warn(
-          "[PR] Falha ao consultar perfil (ignorada p/ redirect):",
-          e?.message || e
-        );
+        DEBUG &&
+          console.warn("[PR] Falha ao consultar perfil (ignorada p/ redirect):", e?.message || e);
       } finally {
         if (alive) {
           setChecandoPerfil(false);
@@ -197,15 +257,22 @@ export default function PrivateRoute({ children, permitido, perfilPermitido }) {
     return () => {
       alive = false;
     };
-  }, [token]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, path]); // re-checa ao trocar de rota também
 
   /* ───────────────── Decisões ───────────────── */
 
-  if (!token) {
+  // 1) Sem token E sem sessão via cookie: libera rotas públicas; privadas → /login
+  if (!token && !sessaoValida) {
+    if (isRotaPublica) {
+      DEBUG && console.log(`[PR] Rota pública sem token — liberando: "${path}"`);
+      return children;
+    }
     DEBUG && console.warn(`[PR] Redirect → /login (motivo: sem token) ao acessar "${path}"`);
     return <Navigate to={`/login?next=${nextParam}`} replace state={{ from: location }} />;
   }
 
+  // 2) Autorização por perfil/role
   if (!autorizado) {
     DEBUG &&
       console.warn("[PR] Redirect → /dashboard (motivo: sem perfil exigido)", {
@@ -215,6 +282,7 @@ export default function PrivateRoute({ children, permitido, perfilPermitido }) {
     return <Navigate to="/dashboard" replace />;
   }
 
+  // 3) Carregando a 1ª checagem de perfil
   if (checandoPerfil && perfilIncompleto === null) {
     DEBUG && console.log("[PR] Aguardando 1ª checagem do perfil...");
     return (
@@ -224,14 +292,14 @@ export default function PrivateRoute({ children, permitido, perfilPermitido }) {
     );
   }
 
-  // 🔑 NÃO redireciona se a rota for exenta (manual, ajuda, perfil)
+  // 4) Perfil incompleto: redireciona, exceto nas rotas isentas
   if (!isRotaExentaPerfil && perfilIncompleto === true) {
     DEBUG && console.warn("[PR] Redirect → /perfil (motivo: perfil incompleto) a partir de", path);
     const from = location;
     return <Navigate to="/perfil" replace state={{ from, forced: true }} />;
   }
 
-  // Se entrou em /perfil forçado e completou, volta para origem
+  // 5) Voltando da tela de perfil forçado
   if (
     (path === "/perfil" || path === "/atualizar-cadastro") &&
     perfilIncompleto === false &&

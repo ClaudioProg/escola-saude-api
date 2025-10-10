@@ -57,7 +57,7 @@ if (isHttpUrl(API_BASE_URL) && !(typeof window !== "undefined" && isLocalHost(ne
 // ───────────────────────────────────────────────────────────────────
 // Token & headers
 // ───────────────────────────────────────────────────────────────────
-const getToken = () => {
+const getTokenRaw = () => {
   try {
     return localStorage.getItem("token");
   } catch {
@@ -65,11 +65,22 @@ const getToken = () => {
   }
 };
 
+// Normaliza para sempre retornar APENAS o JWT (sem "Bearer ")
+const getToken = () => {
+  try {
+    const raw = getTokenRaw();
+    if (!raw) return null;
+    return raw.startsWith("Bearer ") ? raw.slice(7).trim() : raw.trim();
+  } catch {
+    return null;
+  }
+};
+
 function buildHeaders(auth = true, extra = {}) {
-  const token = getToken();
+  const jwt = getToken();
   return {
     "Content-Type": "application/json",
-    ...(auth && token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(auth && jwt ? { Authorization: `Bearer ${jwt}` } : {}),
     ...extra,
   };
 }
@@ -250,14 +261,14 @@ const WARMUP_AUTH = "/perfil/me";
 async function warmup(authNeeded) {
   const path = authNeeded ? WARMUP_AUTH : WARMUP_PUBLIC;
   const url = ensureApi(API_BASE_URL, path);
-  const token = getToken();
+  const jwt = getToken();
   try {
     const res = await fetch(url, {
       method: "GET",
       credentials: "include",
       mode: "cors",
       cache: "no-store",
-      headers: authNeeded && token ? { Authorization: `Bearer ${token}` } : {},
+      headers: authNeeded && jwt ? { Authorization: `Bearer ${jwt}` } : {},
       redirect: "follow",
       referrerPolicy: "strict-origin-when-cross-origin",
       keepalive: true,
@@ -296,7 +307,10 @@ async function handle(res, { on401 = "silent", on403 = "silent" } = {}) {
   if (status === 401) {
     if (on401 === "redirect") {
       try {
-        localStorage.clear();
+        // limpa apenas chaves de auth
+        localStorage.removeItem("token");
+        localStorage.removeItem("usuario");
+        localStorage.removeItem("perfil");
         setPerfilIncompletoFlag(null);
       } catch {}
       if (typeof window !== "undefined" && !location.pathname.startsWith("/login")) {
@@ -360,7 +374,7 @@ async function doFetch(
     referrerPolicy: "strict-origin-when-cross-origin",
   };
 
-  const token = getToken();
+  const jwt = getToken();
 
   const init = {
     ...initBase,
@@ -370,7 +384,7 @@ async function doFetch(
   if (body instanceof FormData) {
     // Não setar Content-Type manualmente em FormData
     init.headers = {
-      ...(auth && token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(auth && jwt ? { Authorization: `Bearer ${jwt}` } : {}),
       ...headers,
     };
     init.body = body;
@@ -485,7 +499,7 @@ export async function apiPostFile(path, body, opts = {}) {
     on403 = "silent",
   } = opts;
 
-  const token = getToken();
+  const jwt = getToken();
 
   const safePath = normalizePath(path);
   const isAbsolute = /^https?:\/\//i.test(safePath);
@@ -500,11 +514,12 @@ export async function apiPostFile(path, body, opts = {}) {
   const res = await fetch(url, {
     method: "POST",
     headers: {
-      ...(auth && token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(auth && jwt ? { Authorization: `Bearer ${jwt}` } : {}),
       "Content-Type": "application/json",
       Accept: "*/*",
       ...headers,
     },
+    body: body ? JSON.stringify(body) : undefined, // 🔧 agora envia o body
     credentials: "include",
     mode: "cors",
     cache: "no-store",
@@ -516,7 +531,12 @@ export async function apiPostFile(path, body, opts = {}) {
 
   if (res.status === 401) {
     if (on401 === "redirect") {
-      try { localStorage.clear(); setPerfilIncompletoFlag(null); } catch {}
+      try {
+        localStorage.removeItem("token");
+        localStorage.removeItem("usuario");
+        localStorage.removeItem("perfil");
+        setPerfilIncompletoFlag(null);
+      } catch {}
       if (typeof window !== "undefined" && !location.pathname.startsWith("/login")) {
         const next = encodeURIComponent(currentPathWithQuery());
         window.location.assign(`/login?next=${next}`);
@@ -560,7 +580,7 @@ export async function apiGetFile(path, opts = {}) {
     on403 = "silent",
   } = opts;
 
-  const token = getToken();
+  const jwt = getToken();
 
   const safePath = normalizePath(path);
   const isAbsolute = /^https?:\/\//i.test(safePath);
@@ -575,7 +595,7 @@ export async function apiGetFile(path, opts = {}) {
   const res = await fetch(url, {
     method: "GET",
     headers: {
-      ...(auth && token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(auth && jwt ? { Authorization: `Bearer ${jwt}` } : {}),
       Accept: "*/*",
       ...headers,
     },
@@ -590,7 +610,12 @@ export async function apiGetFile(path, opts = {}) {
 
   if (res.status === 401) {
     if (on401 === "redirect") {
-      try { localStorage.clear(); setPerfilIncompletoFlag(null); } catch {}
+      try {
+        localStorage.removeItem("token");
+        localStorage.removeItem("usuario");
+        localStorage.removeItem("perfil");
+        setPerfilIncompletoFlag(null);
+      } catch {}
       if (typeof window !== "undefined" && !location.pathname.startsWith("/login")) {
         const next = encodeURIComponent(currentPathWithQuery());
         window.location.assign(`/login?next=${next}`);
