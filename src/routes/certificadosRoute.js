@@ -14,12 +14,17 @@ function ensureBodySelfOrAdmin(req, res, next) {
   const tokenId = Number(user.id);
   const perfis = Array.isArray(user.perfil)
     ? user.perfil.map(String)
-    : String(user.perfil || '').split(',').map(s => s.trim()).filter(Boolean);
+    : String(user.perfil || '')
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
   const isAdmin = perfis.includes('administrador');
 
   const bodyId = Number(req.body?.usuario_id);
   if (!Number.isFinite(bodyId)) {
-    return res.status(400).json({ erro: "Body inválido: 'usuario_id' numérico é obrigatório." });
+    return res
+      .status(400)
+      .json({ erro: "Body inválido: 'usuario_id' numérico é obrigatório." });
   }
   if (isAdmin || bodyId === tokenId) return next();
   return res.status(403).json({ erro: 'Acesso negado.' });
@@ -32,7 +37,10 @@ async function ensureCertOwnerOrAdmin(req, res, next) {
     const tokenId = Number(user.id);
     const perfis = Array.isArray(user.perfil)
       ? user.perfil.map(String)
-      : String(user.perfil || '').split(',').map(s => s.trim()).filter(Boolean);
+      : String(user.perfil || '')
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean);
     const isAdmin = perfis.includes('administrador');
 
     const id = Number(req.params.id);
@@ -54,6 +62,9 @@ async function ensureCertOwnerOrAdmin(req, res, next) {
     return res.status(500).json({ erro: 'Erro de autorização.' });
   }
 }
+
+/* Helper: exige perfil administrador */
+const requireAdmin = [authMiddleware, authorizeRoles('administrador')];
 
 /* ───────────────── Rotas ───────────────── */
 
@@ -77,7 +88,7 @@ router.get(
 router.get(
   '/elegiveis-instrutor',
   authMiddleware,
-  authorizeRoles('administrador', 'instrutor'),
+  authorizeRoles('administrador'),
   certificadosController.listarCertificadosInstrutorElegiveis
 );
 
@@ -111,6 +122,17 @@ router.post(
   authorizeRoles('administrador', 'instrutor', 'usuario'),
   ensureCertOwnerOrAdmin,
   certificadosController.revalidarCertificado
+);
+
+/* ───────────────── Admin: Reset por Turma ─────────────────
+   ATENÇÃO à URL final: se este router está montado em /api/certificados,
+   a rota ficará: POST /api/certificados/admin/turmas/:turmaId/reset
+   (ex.: POST /api/certificados/admin/turmas/1/reset)
+---------------------------------------------------------------- */
+router.post(
+  '/admin/turmas/:turmaId/reset',
+  requireAdmin,
+  certificadosController.resetTurma
 );
 
 module.exports = router;

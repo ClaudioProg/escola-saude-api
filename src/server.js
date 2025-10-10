@@ -17,7 +17,10 @@ dotenv.config();
 const rawDb = require("./db");
 const db = rawDb?.db ?? rawDb;
 
-/* 🔒 Paths persistentes (UNIFICADOS) */
+/* 🔒 Paths persistentes (UNIFICADOS)
+   Em produção (Render), defina:
+   FILES_BASE=/opt/render/project/data
+*/
 const {
   DATA_ROOT,
   UPLOADS_DIR,
@@ -31,7 +34,7 @@ const turmasRouteAdministrador   = require("./routes/turmasRouteAdministrador");
 const agendaRoute                = require("./routes/agendaRoute");
 const avaliacoesRoute            = require("./routes/avaliacoesRoute");
 const certificadosRoute          = require("./routes/certificadosRoute");
-const certificadosHistoricoRoute = require("./routes/certificadosHistoricoRoutes");
+const certificadosAdminRoutes    = require("./routes/certificadosAdminRoutes");
 const certificadosAvulsosRoutes  = require("./routes/certificadosAvulsosRoutes");
 const eventosRoute               = require("./routes/eventosRoute");
 const inscricoesRoute            = require("./routes/inscricoesRoute");
@@ -202,8 +205,18 @@ app.use(
   express.static(MODELOS_CHAMADAS_DIR, {
     maxAge: "1d",
     fallthrough: true,
-    setHeaders(res) {
+    setHeaders(res, filePath) {
       res.setHeader("Cache-Control", "public, max-age=86400, immutable");
+      if (filePath.endsWith(".pptx")) {
+        res.setHeader(
+          "Content-Type",
+          "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        );
+        res.setHeader("Content-Disposition", 'attachment; filename="banner.pptx"');
+      } else if (filePath.endsWith(".ppt")) {
+        res.setHeader("Content-Type", "application/vnd.ms-powerpoint");
+        res.setHeader("Content-Disposition", 'attachment; filename="banner.ppt"');
+      }
     },
   })
 );
@@ -211,7 +224,27 @@ app.use(
 /* (legado) Diretório de modelos empacotados no build */
 const modelosDir = path.join(__dirname, "public", "modelos");
 if (!fs.existsSync(modelosDir)) fs.mkdirSync(modelosDir, { recursive: true });
-app.use("/api/modelos", cors(corsOptions), express.static(modelosDir, { maxAge: "1d", fallthrough: true }));
+app.use(
+  "/api/modelos",
+  cors(corsOptions),
+  express.static(modelosDir, {
+    maxAge: "1d",
+    fallthrough: true,
+    setHeaders(res, filePath) {
+      res.setHeader("Cache-Control", "public, max-age=86400, immutable");
+      if (filePath.endsWith(".pptx")) {
+        res.setHeader(
+          "Content-Type",
+          "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        );
+        res.setHeader("Content-Disposition", 'attachment; filename="modelo-banner.pptx"');
+      } else if (filePath.endsWith(".ppt")) {
+        res.setHeader("Content-Type", "application/vnd.ms-powerpoint");
+        res.setHeader("Content-Disposition", 'attachment; filename="modelo-banner.ppt"');
+      }
+    },
+  })
+);
 
 /* ───────── DB fallback global ───────── */
 app.use((req, _res, next) => {
@@ -255,7 +288,7 @@ app.use("/api/administrador/turmas", turmasRouteAdministrador);
 app.use("/api/agenda", agendaRoute);
 app.use("/api/avaliacoes", avaliacoesRoute);
 app.use("/api/certificados", certificadosRoute);
-app.use("/api/certificados-historico", certificadosHistoricoRoute);
+app.use("/api/certificados-admin", certificadosAdminRoutes);
 app.use("/api/certificados-avulsos", certificadosAvulsosRoutes);
 app.use("/api/eventos", eventosRoute);
 app.use("/api/inscricoes", inscricoesRoute);
@@ -300,9 +333,19 @@ app.use((req, res) => {
 
 /* ───────── Error handler (inclui multer) ───────── */
 app.use((err, _req, res, _next) => {
-  if (err && (err.code === "LIMIT_FILE_SIZE" || err.field === "poster")) {
+  // Tamanho excedido (multer)
+  if (err?.code === "LIMIT_FILE_SIZE") {
+    return res.status(400).json({ erro: "Arquivo muito grande (máx. 50MB)." });
+  }
+  // Filtro de tipo/extensão configurado no multer
+  if (err?.message && /Apenas arquivos \.ppt|\.pptx/i.test(err.message)) {
+    return res.status(400).json({ erro: "Apenas arquivos .ppt ou .pptx" });
+  }
+  // Campos esperados de upload (usuário/admin)
+  if (err?.field === "poster" || err?.field === "banner") {
     return res.status(400).json({ erro: err.message || "Falha no upload." });
   }
+
   console.error("Erro inesperado:", err.stack || err.message || err);
   res.status(err.status || 500).json({ erro: err.message || "Erro interno do servidor" });
 });

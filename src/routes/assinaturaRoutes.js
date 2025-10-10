@@ -1,19 +1,14 @@
-// ✅ src/routes/assinaturaRoute.js
+// ✅ src/routes/assinaturaRoutes.js
+/* eslint-disable no-console */
 const express = require("express");
 const router = express.Router();
 
-const authMiddleware = require("../auth/authMiddleware");
+const requireAuth = require("../auth/authMiddleware");
 const authorizeRoles = require("../auth/authorizeRoles");
 const ctrl = require("../controllers/assinaturaController");
 
 // 🔐 todas as rotas exigem autenticação
-router.use(authMiddleware);
-
-/**
- * ✍️ Salvar ou atualizar assinatura do usuário autenticado
- * POST /api/assinatura
- */
-router.post("/", ctrl.salvarAssinatura);
+router.use(requireAuth);
 
 /**
  * 🖋️ Obter assinatura do usuário autenticado
@@ -22,13 +17,20 @@ router.post("/", ctrl.salvarAssinatura);
 router.get("/", ctrl.getAssinatura);
 
 /**
- * 📜 Listar assinaturas cadastradas (para o dropdown de 2ª assinatura)
+ * ✍️ Salvar/atualizar assinatura do usuário autenticado
+ * POST /api/assinatura
+ */
+router.post("/", ctrl.salvarAssinatura);
+
+/**
+ * 📜 Listar assinaturas cadastradas (metadados para dropdown)
  * GET /api/assinatura/lista  ✅ caminho usado no frontend
- * GET /api/assinatura/todas  🔁 alias (compatibilidade)
+ * GET /api/assinatura/todas  🔁 alias (compat)
+ * ⛑️ restrito a administradores/instrutores
  */
 router.get(
   ["/lista", "/todas"],
-  authorizeRoles("administrador", "instrutor"), // garante segurança
+  authorizeRoles("administrador", "instrutor"),
   ctrl.listarAssinaturas
 );
 

@@ -6,6 +6,7 @@ const fsp = fs.promises;
 const path = require("path");
 const QRCode = require("qrcode");
 const { gerarNotificacoesDeCertificado } = require("./notificacoesController");
+const { CERT_DIR, ensureDir } = require("../paths"); // usar a mesma pasta em gerar/baixar
 
 const IS_DEV = process.env.NODE_ENV !== "production";
 
@@ -52,7 +53,6 @@ function dataExtensoBR(dateLike = new Date()) {
   return `${map.day} de ${map.month} de ${map.year}`;
 }
 
-async function ensureDir(dir) { await fsp.mkdir(dir, { recursive: true }); }
 function registerFonts(doc) {
   const fontsRoot = path.resolve(__dirname, "../../fonts");
   const fonts = [
@@ -380,11 +380,9 @@ async function gerarCertificado(req, res) {
     const cargaTexto = horasTotal > 0 ? horasTotal : TURMA.carga_horaria;
 
     // ---------- PDF ----------
-    const { CERT_DIR, ensureDir } = require("../paths");
-const pasta = CERT_DIR;
-    await ensureDir(pasta);
+    await ensureDir(CERT_DIR);
     const nomeArquivo = `certificado_${tipo}_usuario${usuario_id}_evento${evento_id}_turma${turma_id}.pdf`;
-    const caminho = path.join(pasta, nomeArquivo);
+    const caminho = path.join(CERT_DIR, nomeArquivo);
 
     const doc = new PDFDocument({ size: "A4", layout: "landscape", margin: 40 });
     const writeStream = fs.createWriteStream(caminho);
@@ -467,85 +465,71 @@ const pasta = CERT_DIR;
       width: 680,
     });
 
-    // Assinaturas
+    // --- Assinaturas ---
     const baseY = 470;
+    const LEFT = { x: 100, w: 300 };   // institucional
+    const RIGHT = { x: 440, w: 300 };  // instrutor
 
-    // Assinatura institucional (posição varia por tipo)
-    if (tipo === "instrutor") {
-      doc.font("AlegreyaSans-Bold").fontSize(20).text("Rafaella Pitol Corrêa", 270, baseY, {
-        align: "center",
-        width: 300,
-      });
-      doc.font("AlegreyaSans-Regular").fontSize(14).text("Chefe da Escola da Saúde", 270, baseY + 25, {
-        align: "center",
-        width: 300,
-      });
-    } else {
-      doc.font("AlegreyaSans-Bold").fontSize(20).text("Rafaella Pitol Corrêa", 100, baseY, {
-        align: "center",
-        width: 300,
-      });
-      doc.font("AlegreyaSans-Regular").fontSize(14).text("Chefe da Escola da Saúde", 100, baseY + 25, {
-        align: "center",
-        width: 300,
-      });
-    }
-
-    // Assinatura enviada no payload
-    if (assinaturaBase64 && assinaturaBase64.startsWith("data:image")) {
+    // Esquerda: assinatura institucional (payload)
+    if (assinaturaBase64 && /^data:image\/(png|jpe?g|webp);base64,/.test(assinaturaBase64)) {
       try {
-        const imgBuffer = Buffer.from(assinaturaBase64.split(",")[1], "base64");
-        const assinaturaWidth = 150;
-        // posição à direita
-        const assinaturaX = 440 + (300 - assinaturaWidth) / 2;
-        const assinaturaY = baseY - (tipo === "usuario" ? 25 : 30);
-        doc.image(imgBuffer, assinaturaX, assinaturaY, { width: assinaturaWidth });
+        const buf = Buffer.from(assinaturaBase64.split(",")[1], "base64");
+        doc.image(buf, LEFT.x + (LEFT.w - 150) / 2, baseY - 50, { width: 150 });
       } catch (e) {
-        console.warn("⚠️ Assinatura em Base64 inválida:", e.message);
+        console.warn("⚠️ Assinatura institucional inválida:", e.message);
       }
     }
+    doc.font("AlegreyaSans-Bold").fontSize(20).text("Rafaella Pitol Corrêa", LEFT.x, baseY, { align: "center", width: LEFT.w });
+    doc.font("AlegreyaSans-Regular").fontSize(14).text("Chefe da Escola da Saúde", LEFT.x, baseY + 25, { align: "center", width: LEFT.w });
 
-    // Assinatura do instrutor no certificado do USUÁRIO (auto-busca)
+    // Direita: assinatura do instrutor real
+    let nomeInstrutor = "Instrutor(a)";
+    let assinaturaInstrutorBase64 = null;
+
     if (tipo === "usuario") {
-      let nomeInstrutor = "Instrutor(a)";
+      // primeiro instrutor vinculado ao evento
       try {
-        const assinaturaInstrutor = await db.query(
-          `
-          SELECT a.imagem_base64, u.nome AS nome_instrutor
+        const { rows } = await db.query(`
+          SELECT u.nome AS nome_instrutor, a.imagem_base64
           FROM evento_instrutor ei
-          JOIN usuarios u ON u.id = ei.instrutor_id
+          JOIN usuarios u         ON u.id = ei.instrutor_id
           LEFT JOIN assinaturas a ON a.usuario_id = ei.instrutor_id
           WHERE ei.evento_id = $1
           ORDER BY ei.instrutor_id ASC
           LIMIT 1
-          `,
-          [Number(evento_id)]
+        `, [Number(evento_id)]);
+        nomeInstrutor = rows[0]?.nome_instrutor || nomeInstrutor;
+        assinaturaInstrutorBase64 = rows[0]?.imagem_base64 || null;
+      } catch (e) {
+        console.warn("⚠️ Erro ao obter instrutor do evento:", e.message);
+      }
+    } else {
+      // tipo === "instrutor": assinatura do próprio usuário (instrutor)
+      try {
+        const { rows } = await db.query(
+          `SELECT a.imagem_base64, u.nome
+           FROM usuarios u
+           LEFT JOIN assinaturas a ON a.usuario_id = u.id
+           WHERE u.id = $1`,
+          [Number(usuario_id)]
         );
-
-        nomeInstrutor = assinaturaInstrutor.rows[0]?.nome_instrutor || "Instrutor(a)";
-        const base64Ass = assinaturaInstrutor.rows[0]?.imagem_base64;
-        if (base64Ass?.startsWith("data:image")) {
-          const imgBuffer = Buffer.from(base64Ass.split(",")[1], "base64");
-          const assinaturaWidth = 150;
-          const assinaturaX = 440 + (300 - assinaturaWidth) / 2;
-          const assinaturaY = baseY - 50;
-          doc.image(imgBuffer, assinaturaX, assinaturaY, { width: assinaturaWidth });
-        } else {
-          logDev("Assinatura Base64 do instrutor ausente.");
-        }
+        nomeInstrutor = rows[0]?.nome || nomeInstrutor;
+        assinaturaInstrutorBase64 = rows[0]?.imagem_base64 || null;
       } catch (e) {
         console.warn("⚠️ Erro ao obter assinatura do instrutor:", e.message);
       }
-
-      doc.font("AlegreyaSans-Bold").fontSize(20).text(nomeInstrutor, 440, baseY, {
-        align: "center",
-        width: 300,
-      });
-      doc.font("AlegreyaSans-Regular").fontSize(14).text("Instrutor(a)", 440, baseY + 25, {
-        align: "center",
-        width: 300,
-      });
     }
+
+    if (assinaturaInstrutorBase64 && /^data:image\/(png|jpe?g|webp);base64,/.test(assinaturaInstrutorBase64)) {
+      try {
+        const buf = Buffer.from(assinaturaInstrutorBase64.split(",")[1], "base64");
+        doc.image(buf, RIGHT.x + (RIGHT.w - 150) / 2, baseY - 50, { width: 150 });
+      } catch (e) {
+        console.warn("⚠️ Assinatura do instrutor inválida:", e.message);
+      }
+    }
+    doc.font("AlegreyaSans-Bold").fontSize(20).text(nomeInstrutor, RIGHT.x, baseY, { align: "center", width: RIGHT.w });
+    doc.font("AlegreyaSans-Regular").fontSize(14).text("Instrutor(a)", RIGHT.x, baseY + 25, { align: "center", width: RIGHT.w });
 
     // QR Code (validação)
     const FRONTEND_BASE_URL = process.env.FRONTEND_BASE_URL || "https://escoladasaude.vercel.app";
@@ -670,7 +654,7 @@ async function baixarCertificado(req, res) {
     if (result.rowCount === 0) return res.status(404).json({ erro: "Certificado não encontrado." });
 
     const { arquivo_pdf } = result.rows[0];
-    const caminhoArquivo = path.join(__dirname, "..", "certificados", arquivo_pdf);
+    const caminhoArquivo = path.join(CERT_DIR, arquivo_pdf); // usa a mesma pasta
     if (!fs.existsSync(caminhoArquivo)) return res.status(404).json({ erro: "Arquivo do certificado não encontrado." });
 
     res.setHeader("Content-Type", "application/pdf");
@@ -855,11 +839,54 @@ async function listarCertificadosInstrutorElegiveis(req, res) {
   }
 }
 
-module.exports = {
-  gerarCertificado,
-  listarCertificadosDoUsuario,
-  baixarCertificado,
-  revalidarCertificado,
-  listarCertificadosElegiveis,
-  listarCertificadosInstrutorElegiveis,
-};
+/* =========================================================
+   🔄 Resetar certificados gerados de uma turma
+   ========================================================= */
+   async function resetTurma(req, res) {
+    const { turmaId } = req.params;
+    const id = Number(turmaId);
+    if (!id) return res.status(400).json({ erro: "turmaId inválido" });
+  
+    const path = require("path");
+    const fs = require("fs");
+    const fsp = fs.promises;
+    const db = require("../db");
+  
+    try {
+      console.log(`[RESET] Limpando certificados da turma ${id}`);
+  
+      // 🧹 1) Apaga PDFs físicos (se existirem)
+      const pasta = path.join(__dirname, "../../data/certificados/turmas", String(id));
+      await fsp.rm(pasta, { recursive: true, force: true });
+  
+      // 🗑️ 2) Limpa registros do banco
+      await db.none(
+        `UPDATE certificados
+           SET ja_gerado = FALSE,
+               arquivo_pdf = NULL,
+               atualizado_em = NOW()
+         WHERE turma_id = $1`,
+        [id]
+      );
+  
+      // (opcional) limpa cache
+      await db.none("DELETE FROM certificados_cache WHERE turma_id = $1", [id]).catch(() => {});
+  
+      console.log(`[RESET] Concluído para turma ${id}`);
+      res.json({ ok: true, turma_id: id, resetado: true });
+    } catch (err) {
+      console.error("Erro ao resetar certificados:", err);
+      res.status(500).json({ erro: "Falha ao resetar certificados", detalhes: err.message });
+    }
+  }
+  
+  module.exports = {
+    gerarCertificado,
+    listarCertificadosDoUsuario,
+    baixarCertificado,
+    revalidarCertificado,
+    listarCertificadosElegiveis,
+    listarCertificadosInstrutorElegiveis,
+    resetTurma, // ✅ agora é um identificador válido
+  };
+  

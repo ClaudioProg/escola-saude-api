@@ -473,6 +473,107 @@ export const apiGetPublic = (path, opts = {}) =>
 export const apiPostPublic = (path, body, opts = {}) =>
   apiPost(path, body, { auth: false, on401: "silent", ...opts });
 
+/**
+ * 🆕 HEAD simples — retorna boolean (res.ok).
+ * Útil para checar existência de arquivos (ex.: modelo do banner).
+ */
+export async function apiHead(path, opts = {}) {
+  const { auth = true, headers, query, on401 = "silent", on403 = "silent" } = opts;
+
+  const safePath = normalizePath(path);
+  const isAbsolute = /^https?:\/\//i.test(safePath);
+  let url = isAbsolute ? safePath + qs(query) : ensureApi(API_BASE_URL, safePath) + qs(query);
+  try {
+    if (isHttpUrl(url)) {
+      const host = new URL(url).host;
+      if (!isLocalHost(host)) url = url.replace(/^http:\/\//i, "https://");
+    }
+  } catch {}
+
+  const jwt = getToken();
+  const res = await fetch(url, {
+    method: "HEAD",
+    headers: auth && jwt ? { Authorization: `Bearer ${jwt}`, ...(headers || {}) } : (headers || {}),
+    credentials: "include",
+    mode: "cors",
+    cache: "no-store",
+    redirect: "follow",
+    referrerPolicy: "strict-origin-when-cross-origin",
+  });
+
+  syncPerfilHeader(res);
+
+  if (res.status === 401 && on401 !== "silent") throw new Error("Não autorizado (401)");
+  if (res.status === 403 && on403 !== "silent") throw new Error("Sem permissão (403)");
+
+  return res.ok;
+}
+
+/**
+ * 🆕 GET que retorna a Response crua — para ler headers e então chamar .blob()
+ * Útil quando você precisa do Content-Disposition (nome do arquivo).
+ */
+export async function apiGetResponse(path, opts = {}) {
+  const { auth = true, headers, query, on401 = "silent", on403 = "silent" } = opts;
+
+  const safePath = normalizePath(path);
+  const isAbsolute = /^https?:\/\//i.test(safePath);
+  let url = isAbsolute ? safePath + qs(query) : ensureApi(API_BASE_URL, safePath) + qs(query);
+  try {
+    if (isHttpUrl(url)) {
+      const host = new URL(url).host;
+      if (!isLocalHost(host)) url = url.replace(/^http:\/\//i, "https://");
+    }
+  } catch {}
+
+  const jwt = getToken();
+  const res = await fetch(url, {
+    method: "GET",
+    headers: auth && jwt ? { Authorization: `Bearer ${jwt}`, ...(headers || {}) } : (headers || {}),
+    credentials: "include",
+    mode: "cors",
+    cache: "no-store",
+    redirect: "follow",
+    referrerPolicy: "strict-origin-when-cross-origin",
+  });
+
+  syncPerfilHeader(res);
+
+  if (res.status === 401) {
+    if (on401 === "redirect") {
+      try {
+        localStorage.removeItem("token");
+        localStorage.removeItem("usuario");
+        localStorage.removeItem("perfil");
+        setPerfilIncompletoFlag(null);
+      } catch {}
+      if (typeof window !== "undefined" && !location.pathname.startsWith("/login")) {
+        const next = encodeURIComponent(currentPathWithQuery());
+        window.location.assign(`/login?next=${next}`);
+      }
+    }
+    throw new Error("Não autorizado (401)");
+  }
+  if (res.status === 403) {
+    if (on403 === "redirect" && typeof window !== "undefined") {
+      window.location.assign("/dashboard");
+    }
+    throw new Error("Sem permissão (403)");
+  }
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try {
+      const txt = await res.text();
+      msg = txt || msg;
+      const json = JSON.parse(txt);
+      msg = json?.erro || json?.message || msg;
+    } catch {}
+    throw new Error(msg);
+  }
+
+  return res; // o chamador decide se usa .blob() / .arrayBuffer() / .text()
+}
+
 // Upload multipart (aceita FormData OU File/Blob)
 export async function apiUpload(path, formDataOrFile, opts = {}) {
   let fd;
@@ -519,7 +620,7 @@ export async function apiPostFile(path, body, opts = {}) {
       Accept: "*/*",
       ...headers,
     },
-    body: body ? JSON.stringify(body) : undefined, // 🔧 agora envia o body
+    body: body ? JSON.stringify(body) : undefined, // 🔧 envia o body
     credentials: "include",
     mode: "cors",
     cache: "no-store",
@@ -689,7 +790,19 @@ export async function apiPresencasTurmaPDF(turmaId) {
 // ───────────────────────────────────────────────────────────────────
 // 🆕 Pequenos utilitários
 // ───────────────────────────────────────────────────────────────────
-export const onlyDigits = (s) => String(s ?? "").replace(/\D/g, ""); // 🆕 útil p/ CPF
+export const onlyDigits = (s) => String(s ?? "").replace(/\D/g, "");
+
+/** 🆕 Helper para baixar um Blob com nome de arquivo. */
+export function downloadBlob(filename = "download", blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename || "download";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 
 // ───────────────────────────────────────────────────────────────────
 // 🆕 APIs de Assinaturas/Certificados Avulsos
@@ -757,6 +870,11 @@ export async function apiPerfilUpdate(payload, opts = {}) {
     on403: "silent",   // sem permissão → deixa o caller tratar
     ...opts,
   });
+}
+
+export function apiResetCertificadosTurma(turmaId, body = {}) {
+  if (!turmaId) throw new Error("turmaId é obrigatório");
+  return apiPost(`/certificados/admin/turmas/${turmaId}/reset`, body);
 }
 
 // ───────────────────────────────────────────────────────────────────

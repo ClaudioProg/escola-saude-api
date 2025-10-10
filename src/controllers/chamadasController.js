@@ -1,10 +1,15 @@
 /* eslint-disable no-console */
 const path = require("path");
 const fs = require("fs");
-const url = require("url"); // validar URLs http/https
+const url = require("url");
+const mime = require("mime-types");
 
+// ✅ usa o mesmo DB exportado pelo projeto
 const dbModule = require("../db");
 const db = dbModule?.db ?? dbModule;
+
+// ✅ usa os paths centralizados (DATA_ROOT/FILES_BASE)
+const { MODELOS_CHAMADAS_DIR } = require("../paths");
 
 // ───────────────────────── Helpers ─────────────────────────
 function isYYYYMM(s) { return typeof s === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(s); }
@@ -16,20 +21,17 @@ const LIMIT_MIN = 1;
 const LIMIT_MAX = 5000;
 
 /**
- * Normaliza o “prazo_final_br” para ser salvo como timestamptz correto.
- * - Se vier com TZ (Z ou ±HH:MM): usa diretamente como timestamptz.
- * - Se vier sem TZ: interpreta como horário de Brasília e converte para timestamptz.
+ * Normaliza prazo_final_br:
+ * - ISO com TZ: usa direto
+ * - Sem TZ: interpreta em America/Sao_Paulo
  */
 function normalizePrazoFragment(prazo_final_br) {
   const s = String(prazo_final_br || "").trim();
   const isIsoWithTz = /[zZ]$/.test(s) || /[+\-]\d{2}:\d{2}$/.test(s);
 
   if (isIsoWithTz) {
-    // Já inclui timezone → não desloque novamente
     return { fragment: `($$PRAZO$$)::timestamptz`, param: s };
   }
-
-  // Horário de parede (sem TZ) → interpretar em America/Sao_Paulo
   assert(/^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?$/.test(s), "prazo_final_br inválido.");
   const withSec = s.length === 16 ? `${s}:00` : s;
   return {
@@ -54,20 +56,21 @@ function isHttpUrl(u) {
 }
 function fileExists(p) { try { return fs.existsSync(p); } catch { return false; } }
 
-/** Caminho do modelo por chamada (upload local administrado) */
+/** Caminho do modelo por chamada (usando paths.js) */
 function modeloPathPorChamada(chamadaId) {
-  const base = path.join(process.cwd(), "uploads", "modelos", "chamadas", String(chamadaId));
+  // MODELOS_CHAMADAS_DIR = DATA_ROOT/uploads/modelos/chamadas
+  const base = path.join(MODELOS_CHAMADAS_DIR, String(chamadaId));
   const pptx = path.join(base, "banner.pptx");
   const ppt  = path.join(base, "banner.ppt");
-  if (fileExists(pptx)) return { path: pptx, name: "modelo_banner.pptx", type: "application/vnd.openxmlformats-officedocument.presentationml.presentation" };
-  if (fileExists(ppt))  return { path: ppt,  name: "modelo_banner.ppt",  type: "application/vnd.ms-powerpoint" };
+  if (fileExists(pptx)) return { path: pptx, name: "modelo_banner.pptx", type: mime.lookup(pptx) || "application/vnd.openxmlformats-officedocument.presentationml.presentation" };
+  if (fileExists(ppt))  return { path: ppt,  name: "modelo_banner.ppt",  type: mime.lookup(ppt)  || "application/vnd.ms-powerpoint" };
   return null;
 }
 
 // ✅ DB do req (se houver) ou fallback
 const getDB = (req) => (req && req.db) ? req.db : db;
 
-/** Executa uma transação de forma resiliente */
+// Executa uma transação com fallback
 async function withTx(DB, fn) {
   const hasTx = typeof DB?.tx === "function";
   const hasQuery = typeof DB?.query === "function";
@@ -112,7 +115,7 @@ exports.listarAtivas = async (req, res, next) => {
   try {
     const SQL = `
       SELECT c.*,
-      ((now() AT TIME ZONE 'America/Sao_Paulo') <= c.prazo_final_br) AS dentro_prazo
+             ((now() AT TIME ZONE 'America/Sao_Paulo') <= c.prazo_final_br) AS dentro_prazo
       FROM trabalhos_chamadas c
       WHERE c.publicado = TRUE
       ORDER BY c.prazo_final_br ASC, c.id ASC
@@ -145,7 +148,7 @@ exports.obterChamada = async (req, res, next) => {
 
     const chamada = await fetchOne(`
       SELECT c.*,
-      ((now() AT TIME ZONE 'America/Sao_Paulo') <= c.prazo_final_br) AS dentro_prazo
+             ((now() AT TIME ZONE 'America/Sao_Paulo') <= c.prazo_final_br) AS dentro_prazo
       FROM trabalhos_chamadas c WHERE c.id=$1
     `, [id]);
 
@@ -204,7 +207,7 @@ exports.listarTodas = async (req, res, next) => {
   try {
     const SQL = `
       SELECT c.*,
-      ((now() AT TIME ZONE 'America/Sao_Paulo') <= c.prazo_final_br) AS dentro_prazo
+             ((now() AT TIME ZONE 'America/Sao_Paulo') <= c.prazo_final_br) AS dentro_prazo
       FROM trabalhos_chamadas c
       ORDER BY c.criado_em DESC, c.id DESC
     `;
@@ -243,32 +246,24 @@ exports.criar = async (req, res, next) => {
       disposicoes_finais_texto = null,
     } = req.body;
 
-    // usa nome diferente para não redeclarar
     const criterios_orais_in = req.body.criterios_orais ?? critérios_orais ?? [];
 
     // ─── Validações ──────────────────────────────────────────────
     assert(titulo && withinLen(titulo, 200), "Título é obrigatório (≤ 200).");
-    assert(
-      descricao_markdown && String(descricao_markdown).trim().length,
-      "Descrição é obrigatória."
-    );
-
+    assert(descricao_markdown && String(descricao_markdown).trim().length, "Descrição é obrigatória.");
     assert(isYYYYMM(periodo_experiencia_inicio), "Período início deve ser YYYY-MM.");
     assert(isYYYYMM(periodo_experiencia_fim), "Período fim deve ser YYYY-MM.");
-    assert(
-      periodo_experiencia_inicio <= periodo_experiencia_fim,
-      "Período inválido (início > fim)."
-    );
-
+    assert(periodo_experiencia_inicio <= periodo_experiencia_fim, "Período inválido (início > fim).");
     assert(prazo_final_br, "Prazo final é obrigatório.");
     assert(isValidLimits(limites), `Limites inválidos (${LIMIT_MIN}–${LIMIT_MAX}).`);
-    assert(req.user && req.user.id, "Autenticação necessária.");
 
-    // Normaliza prazo (com/sem TZ)
+    // ✅ aceita req.user OU req.usuario
+    const userId = req.user?.id ?? req.usuario?.id;
+    assert(userId, "Autenticação necessária.");
+
     const norm = normalizePrazoFragment(prazo_final_br);
 
     await withTx(DB, async (t) => {
-      // Cria a chamada
       const nova = await t.one(
         `
         INSERT INTO trabalhos_chamadas
@@ -289,7 +284,7 @@ exports.criar = async (req, res, next) => {
           link_modelo_poster || null,
           Number(max_coautores) || 10,
           !!publicado,
-          req.user.id,
+          userId,
           limites ? JSON.stringify(limites) : null,
           criterios_outros || null,
           oral_outros || null,
@@ -501,7 +496,7 @@ exports.listarAdmin = async (req, res, next) => {
   try {
     const SQL = `
       SELECT c.*,
-      ((now() AT TIME ZONE 'America/Sao_Paulo') <= c.prazo_final_br) AS dentro_prazo
+             ((now() AT TIME ZONE 'America/Sao_Paulo') <= c.prazo_final_br) AS dentro_prazo
       FROM trabalhos_chamadas c
       ORDER BY c.prazo_final_br ASC, c.id DESC
     `;
@@ -560,9 +555,9 @@ exports.exportarModeloBanner = async (_req, res, next) => {
 
 /**
  * GET/HEAD /api/chamadas/:id/modelo-banner
- * - Se houver arquivo em uploads/modelos/chamadas/:id/banner.pptx(.ppt), serve o arquivo
- * - Se não houver e a chamada tiver link_modelo_poster (URL http/https), redireciona
- * - Caso contrário: 404
+ * - Arquivo local em DATA_ROOT/uploads/modelos/chamadas/:id/banner.pptx(.ppt)
+ * - Senão, se houver link_modelo_poster http/https: redireciona (GET) ou informa no HEAD
+ * - Senão: 404
  */
 exports.baixarModeloPorChamada = async (req, res, next) => {
   const DB = getDB(req);
@@ -572,7 +567,7 @@ exports.baixarModeloPorChamada = async (req, res, next) => {
 
     const local = modeloPathPorChamada(id);
 
-    // ── META MODE (GET ?meta=1)
+    // ── META MODE (GET ?meta=1) — útil para páginas admin
     if (req.method === "GET" && ("meta" in (req.query || {}))) {
       if (local) {
         return res.json({ exists: true, href: null, type: local.type, filename: local.name });
@@ -593,10 +588,22 @@ exports.baixarModeloPorChamada = async (req, res, next) => {
 
     // ── ARQUIVO LOCAL?
     if (local) {
-      if (req.method === "HEAD") return res.status(200).end();
+      const stat = fs.statSync(local.path);
       res.setHeader("Content-Type", local.type);
       res.setHeader("Content-Disposition", `attachment; filename="${local.name}"`);
-      return res.sendFile(local.path);
+      res.setHeader("Content-Length", String(stat.size));
+      res.setHeader("Access-Control-Expose-Headers", "Content-Disposition, Content-Length");
+      res.setHeader("Cache-Control", "public, max-age=60");
+
+      if (req.method === "HEAD") return res.status(200).end();
+
+      // stream (mais seguro para arquivos grandes)
+      const stream = fs.createReadStream(local.path);
+      stream.on("error", (e) => {
+        console.error("[stream modelobanner] erro:", e);
+        if (!res.headersSent) res.status(500).end();
+      });
+      return stream.pipe(res);
     }
 
     // ── LINK EXTERNO?
@@ -612,12 +619,16 @@ exports.baixarModeloPorChamada = async (req, res, next) => {
     const link = chamada?.link_modelo_poster || null;
 
     if (isHttpUrl(link)) {
-      if (req.method === "HEAD") { res.setHeader("Location", link); return res.status(200).end(); }
+      if (req.method === "HEAD") {
+        // dica para clientes que fazem HEAD e depois GET
+        res.setHeader("Location", link);
+        return res.status(200).end();
+      }
       return res.redirect(302, link);
     }
 
     // ── NADA ENCONTRADO
-    if (req.method === "HEAD") return res.status(204).end();
+    if (req.method === "HEAD") return res.status(404).end();
     return res.status(404).json({ erro: "Modelo não disponível para esta chamada." });
   } catch (err) {
     console.error("[chamadas.baixarModeloPorChamada] erro", err);

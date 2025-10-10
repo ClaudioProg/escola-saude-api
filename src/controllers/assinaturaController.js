@@ -1,19 +1,22 @@
 // ✅ src/controllers/assinaturaController.js
+/* eslint-disable no-console */
 const db = require("../db");
 
-const MAX_DATAURL_LEN = 2 * 1024 * 1024; // ~2MB em base64 (ajuste se precisar)
+const MAX_DATAURL_TOTAL = 6 * 1024 * 1024; // 6MB: limite para a string toda (prefixo + base64)
+const MAX_BASE64_BYTES   = 4 * 1024 * 1024; // 4MB: tamanho só do payload base64 (ajuste se quiser)
 
-/**
- * Obtém o ID do usuário autenticado do request.
- */
+/** Obtém o ID do usuário autenticado do request. */
 function getUserId(req) {
   return req.usuario?.id ?? req.user?.id ?? null;
 }
 
-/**
- * 🖋️ GET /api/assinatura
- * Retorna a assinatura (data URL) do usuário autenticado.
- */
+/** Extrai apenas a parte base64 de um DataURL (sem o cabeçalho). */
+function extractBase64Payload(dataUrl) {
+  const m = String(dataUrl || "").match(/^data:[^;]+;base64,([\s\S]+)$/);
+  return m ? m[1] : null;
+}
+
+/** 🖋️ GET /api/assinatura — retorna a assinatura dataURL do usuário */
 async function getAssinatura(req, res) {
   const usuario_id = getUserId(req);
   if (!usuario_id) return res.status(401).json({ erro: "Usuário não autenticado." });
@@ -23,7 +26,7 @@ async function getAssinatura(req, res) {
       "SELECT imagem_base64 FROM assinaturas WHERE usuario_id = $1 LIMIT 1",
       [usuario_id]
     );
-    const assinatura = r.rows[0]?.imagem_base64 || null;
+    const assinatura = r.rows?.[0]?.imagem_base64 || null;
     return res.status(200).json({ assinatura });
   } catch (e) {
     console.error("❌ Erro ao buscar assinatura:", e);
@@ -31,23 +34,21 @@ async function getAssinatura(req, res) {
   }
 }
 
-/**
- * ✍️ POST /api/assinatura
- * Salva/atualiza a assinatura (data URL de imagem) do usuário autenticado.
- */
+/** ✍️ POST /api/assinatura — salva/atualiza dataURL */
 async function salvarAssinatura(req, res) {
   const usuario_id = getUserId(req);
   const { assinatura } = req.body;
 
-  if (!usuario_id) return res.status(401).json({ erro: "Usuário não autenticado." });
+  if (!usuario_id) {
+    return res.status(401).json({ erro: "Usuário não autenticado." });
+  }
   if (!assinatura || typeof assinatura !== "string") {
     return res.status(400).json({ erro: "Assinatura é obrigatória." });
   }
 
-  // Por segurança, **bloqueia SVG** (passível de payloads ativos) e aceita PNG/JPG/JPEG/WEBP
+  // Bloqueia SVG; aceita PNG/JPG/JPEG/WEBP
   const isAllowedDataUrl =
     /^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=\s]+$/.test(assinatura);
-
   if (!isAllowedDataUrl) {
     return res.status(400).json({
       erro:
@@ -55,50 +56,70 @@ async function salvarAssinatura(req, res) {
     });
   }
 
-  if (assinatura.length > MAX_DATAURL_LEN) {
-    return res
-      .status(413)
-      .json({ erro: "Imagem muito grande. Envie um arquivo menor." });
+  // Limites (string toda e payload base64)
+  if (assinatura.length > MAX_DATAURL_TOTAL) {
+    return res.status(413).json({ erro: "Imagem muito grande (limite 6MB)." });
+  }
+  const b64 = extractBase64Payload(assinatura);
+  if (!b64) {
+    return res.status(400).json({ erro: "Data URL inválida." });
+  }
+  if (b64.length > MAX_BASE64_BYTES * 1.37) {
+    // base64 ~ 4/3, então comparo com fator 1.37 para folga
+    return res.status(413).json({ erro: "Imagem muito grande (payload > 4MB)." });
   }
 
-  try {
-    const existe = await db.query(
-      "SELECT 1 FROM assinaturas WHERE usuario_id = $1",
-      [usuario_id]
-    );
+  const payload = assinatura.trim();
 
-    if (existe.rowCount > 0) {
+  try {
+    // Tenta UPSERT (precisa de UNIQUE em assinaturas(usuario_id))
+    try {
       await db.query(
-        "UPDATE assinaturas SET imagem_base64 = $1, atualizado_em = NOW() WHERE usuario_id = $2",
-        [assinatura.trim(), usuario_id]
+        `
+        INSERT INTO assinaturas (usuario_id, imagem_base64)
+        VALUES ($1, $2)
+        ON CONFLICT (usuario_id)
+        DO UPDATE SET imagem_base64 = EXCLUDED.imagem_base64
+        `,
+        [usuario_id, payload]
       );
-    } else {
-      await db.query(
-        "INSERT INTO assinaturas (usuario_id, imagem_base64, criado_em) VALUES ($1, $2, NOW())",
-        [usuario_id, assinatura.trim()]
+    } catch (upsertErr) {
+      // Se não houver UNIQUE em usuario_id, cai no fallback:
+      // 1) tenta UPDATE
+      const upd = await db.query(
+        "UPDATE assinaturas SET imagem_base64 = $1 WHERE usuario_id = $2",
+        [payload, usuario_id]
       );
+      if (upd.rowCount === 0) {
+        // 2) se não atualizou nada, faz INSERT simples
+        await db.query(
+          "INSERT INTO assinaturas (usuario_id, imagem_base64) VALUES ($1, $2)",
+          [usuario_id, payload]
+        );
+      }
     }
 
     return res.status(200).json({ mensagem: "Assinatura salva com sucesso." });
   } catch (e) {
-    console.error("❌ Erro ao salvar assinatura:", e);
+    // loga com detalhes úteis
+    console.error("❌ Erro ao salvar assinatura:", {
+      message: e?.message,
+      code: e?.code,
+      detail: e?.detail,
+      table: e?.table,
+      constraint: e?.constraint,
+      stack: e?.stack,
+    });
     return res.status(500).json({ erro: "Erro ao salvar assinatura." });
   }
 }
 
-/**
- * 📜 GET /api/assinatura/lista  (alias: /api/assinatura/todas)
- * Lista pessoas que possuem assinatura cadastrada (metadados para dropdown).
- * Retorna sem a imagem para não trafegar dado pesado desnecessário.
- */
+/** 📜 GET /api/assinatura/lista — lista metadados (sem imagem) */
 async function listarAssinaturas(req, res) {
   try {
     const { rows } = await db.query(
       `
-      SELECT
-        a.usuario_id AS id,
-        u.nome,
-        COALESCE(u.cargo, NULL) AS cargo
+      SELECT a.usuario_id AS id, u.nome, COALESCE(u.cargo, NULL) AS cargo
       FROM assinaturas a
       JOIN usuarios u ON u.id = a.usuario_id
       WHERE a.imagem_base64 IS NOT NULL
@@ -107,9 +128,7 @@ async function listarAssinaturas(req, res) {
       `
     );
 
-    // Normaliza para o front:
-    // { id, nome, cargo?, tem_assinatura: true }
-    const lista = rows.map(r => ({
+    const lista = rows.map((r) => ({
       id: r.id,
       nome: r.nome,
       cargo: r.cargo || null,

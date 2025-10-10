@@ -46,7 +46,7 @@ const DashboardAnalitico     = lazy(() => import("./pages/DashboardAnalitico"));
 const GestaoInstrutor        = lazy(() => import("./pages/GestaoInstrutor"));
 const RelatoriosCustomizados = lazy(() => import("./pages/RelatoriosCustomizados"));
 const ListaPresencasTurma    = lazy(() => import("./pages/ListaPresencasTurma"));
-const HistoricoCertificados  = lazy(() => import("./pages/HistoricoCertificados"));
+const GestaoCertificados = lazy(() => import("./pages/GestaoCertificados"));
 const GestaoUsuarios         = lazy(() => import("./pages/GestaoUsuarios"));
 const GerenciarEventos       = lazy(() => import("./pages/GerenciarEventos"));
 const PresencasPorTurma      = lazy(() => import("./pages/PresencasPorTurma"));
@@ -408,7 +408,7 @@ export default function App() {
             <Route path="/gerenciar-eventos" element={<PrivateRoute permitido={["administrador"]}><GerenciarEventos /></PrivateRoute>} />
             <Route path="/gestao-instrutor" element={<PrivateRoute permitido={["administrador"]}><GestaoInstrutor /></PrivateRoute>} />
             <Route path="/gestao-usuarios" element={<PrivateRoute permitido={["administrador"]}><GestaoUsuarios /></PrivateRoute>} />
-            <Route path="/historico-certificados" element={<PrivateRoute permitido={["administrador"]}><HistoricoCertificados /></PrivateRoute>} />
+            <Route path="/gestao-certificados" element={<PrivateRoute permitido={["administrador"]}><GestaoCertificados /></PrivateRoute>} />
             <Route path="/lista-presencas-turma" element={<PrivateRoute permitido={["administrador"]}><ListaPresencasTurma /></PrivateRoute>} />
             <Route path="/relatorios-customizados" element={<PrivateRoute permitido={["administrador"]}><RelatoriosCustomizados /></PrivateRoute>} />
             <Route path="/agenda-administrador" element={<PrivateRoute permitido={["administrador"]}><AgendaAdministrador /></PrivateRoute>} />

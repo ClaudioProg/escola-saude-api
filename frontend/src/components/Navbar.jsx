@@ -244,7 +244,7 @@ export default function Navbar() {
       { label: "QR Code Presença",      path: "/admin/qr-codes",         icon: QrCode },
       // relatórios
       { label: "Relatórios Customizados", path: "/relatorios-customizados", icon: ClipboardList },
-      { label: "Histórico de Certificados", path: "/historico-certificados", icon: History },
+      { label: "Gestão de Certificados", path: "/gestao-certificados", icon: History },
       // trabalhos
       { label: "Criar Submissão de Trabalho",         path: "/admin/chamadas/new",     icon: PlusCircle },
       { label: "Avaliar Submissão de Trabalho", path: "__open_submissions__", icon: FolderOpenDot },
