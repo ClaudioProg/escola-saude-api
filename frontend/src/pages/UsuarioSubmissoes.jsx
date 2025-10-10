@@ -70,14 +70,21 @@ async function downloadBlob(url, fallbackFilename = "modelo.pptx") {
   URL.revokeObjectURL(objectUrl);
 }
 
-// 🔽 Garante URL absoluta para a API, evitando o roteador do SPA
+// 🔽 Garante URL absoluta para a API, inserindo /api quando necessário
 function apiAbs(path) {
-  const base =
-    API_BASE && API_BASE.startsWith("http")
-      ? API_BASE
-      : `${window.location.origin}${API_BASE || ""}`;
-  return `${String(base).replace(/\/+$/, "")}${path}`;
+  const base = (API_BASE && API_BASE.startsWith("http"))
+    ? API_BASE.replace(/\/+$/, "")
+    : `${window.location.origin}${(API_BASE || "").replace(/\/+$/, "")}`;
+
+  const p = String(path || "");
+  // se o path já começa com /api, mantém; caso contrário, prefixa /api
+  const withApi = /^\/api(\/|$)/.test(p)
+    ? p
+    : `/api${p.startsWith("/") ? "" : "/"}${p}`;
+
+  return `${base}${withApi}`;
 }
+
 
 // 🔽 Texto justificado com espaçamento entre parágrafos
 function Justified({ text }) {
@@ -419,7 +426,7 @@ export default function UsuarioSubmissoes() {
           sane.map(async (c) => {
             try {
               const url = apiAbs(`/chamadas/${c.id}/modelo-banner`);
-              const res = await fetch(url, { method: "HEAD", credentials: "include" });
+              const res = await fetch(url, { method: "HEAD" });
               updates[c.id] = res.ok; // 200 => existe (local) ou Location no HEAD tratado no backend
             } catch {
               updates[c.id] = false;
@@ -594,9 +601,9 @@ export default function UsuarioSubmissoes() {
   );
 
   const modeloBannerUrl = useMemo(() => {
-    const id = selecionada?.chamada?.id;
-    return id ? `${(API_BASE || "").replace(/\/+$/, "")}/chamadas/${id}/modelo-banner` : null;
-  }, [selecionada]);
+       const id = selecionada?.chamada?.id;
+       return id ? apiAbs(`/chamadas/${id}/modelo-banner`) : null;
+     }, [selecionada]);
 
   const canAlterar = (s) => {
     const wall = s?.prazo_final_br || s?.chamada_prazo_final_br;
@@ -655,7 +662,7 @@ export default function UsuarioSubmissoes() {
 
   const validatePoster = (file) => {
     if (!file) return "";
-    const okExt = /(\.pptx?|PPTX?)$/.test(file.name);
+    const okExt = /\.pptx?$/i.test(file.name);
     if (!okExt) return "Envie arquivo .ppt ou .pptx";
     if (file.size > 50 * 1024 * 1024) return "Arquivo muito grande (máx 50MB).";
     return "";
@@ -1345,7 +1352,7 @@ function UploadPosterButton({ submissaoId, aceita = true, onDone }) {
     setErr("");
     setBusy(true);
     try {
-      const okExt = /(\.pptx?|PPTX?)$/.test(file.name);
+      const okExt = /\.pptx?$/i.test(file.name);
       if (!okExt) throw new Error("Envie arquivo .ppt ou .pptx");
       if (file.size > 50 * 1024 * 1024) throw new Error("Arquivo muito grande (máx 50MB).");
       await apiUploadSvc(`/submissoes/${submissaoId}/poster`, file, { fieldName: "poster" });
