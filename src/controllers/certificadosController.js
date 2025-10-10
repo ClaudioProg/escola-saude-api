@@ -380,7 +380,8 @@ async function gerarCertificado(req, res) {
     const cargaTexto = horasTotal > 0 ? horasTotal : TURMA.carga_horaria;
 
     // ---------- PDF ----------
-    const pasta = path.join(__dirname, "..", "certificados");
+    const { CERT_DIR, ensureDir } = require("../paths");
+const pasta = CERT_DIR;
     await ensureDir(pasta);
     const nomeArquivo = `certificado_${tipo}_usuario${usuario_id}_evento${evento_id}_turma${turma_id}.pdf`;
     const caminho = path.join(pasta, nomeArquivo);
