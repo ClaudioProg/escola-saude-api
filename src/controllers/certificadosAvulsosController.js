@@ -75,7 +75,7 @@ function resolveFirstExisting(candidates = []) {
 function getFundoPath(tipo) {
   const nomes = [
     tipo === "palestrante" ? "fundo_certificado_instrutor.png" : null, // palestrante usa o mesmo do instrutor
-    "fundo_certificado.png"
+    "fundo_certificado_instrutor.png"
   ].filter(Boolean);
 
   const roots = [

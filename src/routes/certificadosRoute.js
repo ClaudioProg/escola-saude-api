@@ -12,12 +12,14 @@ const authorizeRoles = require('../auth/authorizeRoles');
 function ensureBodySelfOrAdmin(req, res, next) {
   const user = req.user ?? req.usuario ?? {};
   const tokenId = Number(user.id);
+
   const perfis = Array.isArray(user.perfil)
     ? user.perfil.map(String)
     : String(user.perfil || '')
         .split(',')
         .map(s => s.trim())
         .filter(Boolean);
+
   const isAdmin = perfis.includes('administrador');
 
   const bodyId = Number(req.body?.usuario_id);
@@ -35,12 +37,14 @@ async function ensureCertOwnerOrAdmin(req, res, next) {
   try {
     const user = req.user ?? req.usuario ?? {};
     const tokenId = Number(user.id);
+
     const perfis = Array.isArray(user.perfil)
       ? user.perfil.map(String)
       : String(user.perfil || '')
           .split(',')
           .map(s => s.trim())
           .filter(Boolean);
+
     const isAdmin = perfis.includes('administrador');
 
     const id = Number(req.params.id);
@@ -68,7 +72,7 @@ const requireAdmin = [authMiddleware, authorizeRoles('administrador')];
 
 /* ───────────────── Rotas ───────────────── */
 
-// 🧾 1. Listar certificados emitidos do usuário autenticado
+// 🧾 1) Listar certificados emitidos do usuário autenticado
 router.get(
   '/usuario',
   authMiddleware,
@@ -76,7 +80,7 @@ router.get(
   certificadosController.listarCertificadosDoUsuario
 );
 
-// 🆕 2. Listar certificados elegíveis para participante (do próprio usuário)
+// 🆕 2) Listar certificados elegíveis para participante (do próprio usuário)
 router.get(
   '/elegiveis',
   authMiddleware,
@@ -84,15 +88,16 @@ router.get(
   certificadosController.listarCertificadosElegiveis
 );
 
-// 🆕 3. Listar certificados elegíveis para instrutor (do próprio usuário)
+// 🆕 3) Listar certificados elegíveis para instrutor (do próprio usuário)
+//    ✅ agora permite 'administrador' OU 'instrutor'
 router.get(
   '/elegiveis-instrutor',
   authMiddleware,
-  authorizeRoles('administrador'),
+  authorizeRoles('administrador', 'instrutor'),
   certificadosController.listarCertificadosInstrutorElegiveis
 );
 
-// 🖨️ 4. Gerar certificado (participante ou instrutor)
+// 🖨️ 4) Gerar certificado (participante ou instrutor)
 //      Requer: auth + (admin ou o próprio usuario_id no body)
 router.post(
   '/gerar',
@@ -102,9 +107,8 @@ router.post(
   certificadosController.gerarCertificado
 );
 
-// 📥 5. Baixar certificado PDF
-// 👉 Opção A (pública): deixe sem authMiddleware (como estava) — porém é suscetível a enumeração de IDs.
-// 👉 Opção B (recomendada): proteger com dono/admin. Descomente abaixo e comente a rota pública.
+// 📥 5) Baixar certificado PDF
+// 👉 Opção B (recomendada): proteger com dono/admin.
 // router.get('/:id/download',
 //   authMiddleware,
 //   authorizeRoles('administrador', 'instrutor', 'usuario'),
@@ -112,10 +116,11 @@ router.post(
 //   certificadosController.baixarCertificado
 // );
 
-// Mantendo a rota pública (como você indicou). Se preferir pública, considere usar IDs opacos/UUID.
+// Mantendo a rota pública (como você usa hoje).
+// Se optar por deixá-la pública, prefira IDs opacos (UUID) no futuro.
 router.get('/:id/download', certificadosController.baixarCertificado);
 
-// 🔁 6. Revalidar certificado (dono ou admin)
+// 🔁 6) Revalidar certificado (dono ou admin)
 router.post(
   '/:id/revalidar',
   authMiddleware,
@@ -125,9 +130,8 @@ router.post(
 );
 
 /* ───────────────── Admin: Reset por Turma ─────────────────
-   ATENÇÃO à URL final: se este router está montado em /api/certificados,
-   a rota ficará: POST /api/certificados/admin/turmas/:turmaId/reset
-   (ex.: POST /api/certificados/admin/turmas/1/reset)
+   Se montado em /api/certificados:
+   POST /api/certificados/admin/turmas/:turmaId/reset
 ---------------------------------------------------------------- */
 router.post(
   '/admin/turmas/:turmaId/reset',

@@ -28,14 +28,14 @@ const storage = multer.diskStorage({
 });
 
 const fileFilter = (_req, file, cb) => {
-  const allowed = [
-    "application/vnd.ms-powerpoint", // .ppt
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation", // .pptx
-  ];
-  if (!allowed.includes(file.mimetype)) {
-    return cb(new Error("Formato inválido. Envie arquivo .ppt ou .pptx"));
-  }
-  cb(null, true);
+  const okMime =
+    file.mimetype === "application/vnd.ms-powerpoint" || // .ppt
+    file.mimetype === "application/vnd.openxmlformats-officedocument.presentationml.presentation"; // .pptx
+
+  const okExt = /\.(pptx?|PPTX?)$/.test(file.originalname || "");
+
+  if (okMime || okExt) return cb(null, true);
+  return cb(Object.assign(new Error("Apenas arquivos .ppt ou .pptx"), { status: 400 }));
 };
 
 const upload = multer({
@@ -81,13 +81,12 @@ router.post(
   // Middleware de erro específico do multer (precisa ter 4 args)
   (err, _req, res, next) => {
     if (err) {
-      if (err.message && err.message.includes("Formato inválido")) {
-        return res.status(400).json({ erro: err.message });
-      }
       if (err.code === "LIMIT_FILE_SIZE") {
         return res.status(413).json({ erro: "Arquivo muito grande (máximo 50MB)." });
       }
-      return res.status(400).json({ erro: "Falha no upload do arquivo." });
+      const msg = err.message || "Falha no upload do arquivo.";
+      const status = err.status || 400;
+      return res.status(status).json({ erro: msg });
     }
     next();
   },
@@ -96,6 +95,7 @@ router.post(
 
 // Minhas submissões / Detalhe da submissão
 router.get("/minhas-submissoes", requireAuth, ctrl.minhasSubmissoes);
+router.get("/submissoes/minhas", requireAuth, ctrl.minhasSubmissoes); 
 router.get("/submissoes/:id", requireAuth, ctrl.obterSubmissao);
 
 /* ─────────────────────────── ROTAS ADMIN ─────────────────────────── */
@@ -104,6 +104,9 @@ router.get("/admin/submissoes", requireAdmin, ctrl.listarSubmissoesAdminTodas);
 
 // Lista submissões por chamada (compat)
 router.get("/admin/chamadas/:chamadaId/submissoes", requireAdmin, ctrl.listarSubmissoesAdmin);
+
+// Download do pôster
+router.get("/submissoes/:id/poster", requireAuth, ctrl.baixarPoster);
 
 // Avaliações
 router.post("/admin/submissoes/:id/avaliar", requireAdmin, ctrl.avaliarEscrita);

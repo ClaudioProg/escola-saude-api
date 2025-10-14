@@ -25,6 +25,7 @@ const {
   DATA_ROOT,
   UPLOADS_DIR,
   MODELOS_CHAMADAS_DIR,
+  CERT_DIR,          // ✅ adicionada a pasta de certificados
   ensureDir,
 } = require("./paths");
 
@@ -181,9 +182,11 @@ app.use(express.urlencoded({ extended: true }));
 ensureDir(DATA_ROOT);
 ensureDir(UPLOADS_DIR);
 ensureDir(MODELOS_CHAMADAS_DIR);
+ensureDir(CERT_DIR); // ✅ garante a pasta onde os PDFs são salvos/baixados
 console.log("[FILES] DATA_ROOT:", DATA_ROOT);
 console.log("[FILES] UPLOADS_DIR:", UPLOADS_DIR);
 console.log("[FILES] MODELOS_CHAMADAS_DIR:", MODELOS_CHAMADAS_DIR);
+console.log("[FILES] CERT_DIR:", CERT_DIR);
 
 // /uploads (público)
 app.use(

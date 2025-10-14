@@ -3,6 +3,7 @@ const path = require("path");
 const fs = require("fs");
 const url = require("url");
 const mime = require("mime-types");
+const multer = require("multer");
 
 // ✅ usa o mesmo DB exportado pelo projeto
 const dbModule = require("../db");
@@ -10,6 +11,12 @@ const db = dbModule?.db ?? dbModule;
 
 // ✅ usa os paths centralizados (DATA_ROOT/FILES_BASE)
 const { MODELOS_CHAMADAS_DIR } = require("../paths");
+
+// ───────────────────────── Upload em memória ─────────────────────────
+const uploadMem = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
+});
 
 // ───────────────────────── Helpers ─────────────────────────
 function isYYYYMM(s) { return typeof s === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(s); }
@@ -56,7 +63,7 @@ function isHttpUrl(u) {
 }
 function fileExists(p) { try { return fs.existsSync(p); } catch { return false; } }
 
-/** Caminho do modelo por chamada (usando paths.js) */
+/** Caminho do modelo por chamada (legado em disco, usando paths.js) */
 function modeloPathPorChamada(chamadaId) {
   // MODELOS_CHAMADAS_DIR = DATA_ROOT/uploads/modelos/chamadas
   const base = path.join(MODELOS_CHAMADAS_DIR, String(chamadaId));
@@ -553,11 +560,111 @@ exports.exportarModeloBanner = async (_req, res, next) => {
   }
 };
 
+/* =================================================================== */
+/*  ADMIN: Modelo por CHAMADA                                          */
+/*  - GET  /api/admin/chamadas/:id/modelo-banner  → META               */
+/*  - POST /api/admin/chamadas/:id/modelo-banner  → UPLOAD (campo banner)
+   =================================================================== */
+
+// GET META
+exports.modeloBannerMeta = async (req, res, next) => {
+  const DB = getDB(req);
+  try {
+    const id = Number(req.params.id);
+    if (!id) { const e = new Error("ID inválido."); e.status = 400; throw e; }
+
+    // 1) banco
+    const metaDb = (typeof DB.oneOrNone === "function")
+      ? await DB.oneOrNone(
+          `SELECT nome, mime, octet_length(arquivo) AS bytes
+             FROM public.trabalhos_modelos
+            WHERE chamada_id=$1 AND tipo='banner'`,
+          [id]
+        )
+      : (await DB.query(
+          `SELECT nome, mime, octet_length(arquivo) AS bytes
+             FROM public.trabalhos_modelos
+            WHERE chamada_id=$1 AND tipo='banner'`,
+          [id]
+        )).rows?.[0];
+
+    if (metaDb && metaDb.bytes > 0) {
+      return res.json({
+        exists: true, origin: "db",
+        filename: metaDb.nome, mime: metaDb.mime, bytes: metaDb.bytes
+      });
+    }
+
+    // 2) arquivo local (legado)
+    const local = modeloPathPorChamada(id);
+    if (local) {
+      const stat = fs.statSync(local.path);
+      return res.json({
+        exists: true, origin: "fs",
+        filename: local.name, mime: local.type, bytes: stat.size
+      });
+    }
+
+    // 3) link externo
+    const rowLink = (typeof DB.oneOrNone === "function")
+      ? await DB.oneOrNone(`SELECT link_modelo_poster FROM trabalhos_chamadas WHERE id=$1`, [id])
+      : (await DB.query(`SELECT link_modelo_poster FROM trabalhos_chamadas WHERE id=$1`, [id])).rows?.[0];
+
+    const link = rowLink?.link_modelo_poster || null;
+    if (isHttpUrl(link)) return res.json({ exists: true, origin: "url", href: link });
+
+    return res.json({ exists: false });
+  } catch (err) { console.error("[chamadas.modeloBannerMeta] erro", err); next(err); }
+};
+
+// POST UPLOAD
+exports.importarModeloBanner = [
+  uploadMem.single("banner"),
+  async (req, res, next) => {
+    const DB = getDB(req);
+    try {
+      const chamadaId = Number(req.params.id);
+      const f = req.file;
+      if (!chamadaId) { const e = new Error("ID inválido."); e.status = 400; throw e; }
+      if (!f) { const e = new Error("Arquivo obrigatório (campo 'banner')."); e.status = 400; throw e; }
+
+      const nome = f.originalname || "modelo_banner.pptx";
+      const mimeIn = f.mimetype || mime.lookup(nome) || "application/octet-stream";
+      if (!/\.pptx?$/i.test(nome)) { const e = new Error("Envie arquivo .ppt ou .pptx."); e.status = 400; throw e; }
+
+      const userId = req.user?.id ?? req.usuario?.id ?? null;
+
+      const sql = `
+        INSERT INTO public.trabalhos_modelos
+          (chamada_id, tipo, nome, mime, tamanho, arquivo, atualizado_em, atualizado_por)
+        VALUES
+          ($1, 'banner', $2, $3, $4, $5, NOW(), $6)
+        ON CONFLICT (chamada_id, tipo) DO UPDATE
+        SET nome = EXCLUDED.nome,
+            mime = EXCLUDED.mime,
+            tamanho = EXCLUDED.tamanho,
+            arquivo = EXCLUDED.arquivo,
+            atualizado_em = NOW(),
+            atualizado_por = EXCLUDED.atualizado_por
+        RETURNING id
+      `;
+      const params = [chamadaId, nome, mimeIn, f.buffer.length, f.buffer, userId];
+
+      if (typeof DB.one === "function") await DB.one(sql, params);
+      else if (typeof DB.query === "function") await DB.query(sql, params);
+      else throw new Error("DB sem one/query.");
+
+      // dica: se havia arquivo legado no FS, pode apagar opcionalmente
+      // try { const legacy = modeloPathPorChamada(chamadaId); if (legacy) fs.unlinkSync(legacy.path); } catch {}
+
+      return res.status(201).json({ ok: true, chamada_id: chamadaId, nome, mime: mimeIn, tamanho: f.buffer.length });
+    } catch (err) { console.error("[chamadas.importarModeloBanner] erro", err); next(err); }
+  }
+];
+
 /**
  * GET/HEAD /api/chamadas/:id/modelo-banner
- * - Arquivo local em DATA_ROOT/uploads/modelos/chamadas/:id/banner.pptx(.ppt)
- * - Senão, se houver link_modelo_poster http/https: redireciona (GET) ou informa no HEAD
- * - Senão: 404
+ * Ordem: Banco (BYTEA) → Arquivo local (legado) → Link externo
  */
 exports.baixarModeloPorChamada = async (req, res, next) => {
   const DB = getDB(req);
@@ -565,28 +672,69 @@ exports.baixarModeloPorChamada = async (req, res, next) => {
     const id = Number(req.params.id);
     if (!id) { const e = new Error("ID inválido."); e.status = 400; throw e; }
 
-    const local = modeloPathPorChamada(id);
-
-    // ── META MODE (GET ?meta=1) — útil para páginas admin
+    // ── META MODE (GET ?meta=1) — útil para páginas admin públicas
     if (req.method === "GET" && ("meta" in (req.query || {}))) {
-      if (local) {
-        return res.json({ exists: true, href: null, type: local.type, filename: local.name });
+      // 1) banco
+      const metaDb = (typeof DB.oneOrNone === "function")
+        ? await DB.oneOrNone(
+            `SELECT nome, mime, octet_length(arquivo) AS bytes
+               FROM public.trabalhos_modelos
+              WHERE chamada_id=$1 AND tipo='banner'`,
+            [id]
+          )
+        : (await DB.query(
+            `SELECT nome, mime, octet_length(arquivo) AS bytes
+               FROM public.trabalhos_modelos
+              WHERE chamada_id=$1 AND tipo='banner'`,
+            [id]
+          )).rows?.[0];
+
+      if (metaDb && metaDb.bytes > 0) {
+        return res.json({ exists: true, origin: "db", filename: metaDb.nome, mime: metaDb.mime, bytes: metaDb.bytes });
       }
-      const fetchOne = async (sql, params) => {
-        if (typeof DB.oneOrNone === "function") return DB.oneOrNone(sql, params);
-        if (typeof DB.query === "function") {
-          const r = await DB.query(sql, params);
-          return r?.rows?.[0] || null;
-        }
-        throw new Error("DB não expõe métodos para one/oneOrNone/query.");
-      };
-      const row = await fetchOne(`SELECT link_modelo_poster FROM trabalhos_chamadas WHERE id=$1`, [id]);
+
+      // 2) arquivo local (legado)
+      const local = modeloPathPorChamada(id);
+      if (local) return res.json({ exists: true, origin: "fs", filename: local.name, mime: local.type });
+
+      // 3) link externo
+      const row = (typeof DB.oneOrNone === "function")
+        ? await DB.oneOrNone(`SELECT link_modelo_poster FROM trabalhos_chamadas WHERE id=$1`, [id])
+        : (await DB.query(`SELECT link_modelo_poster FROM trabalhos_chamadas WHERE id=$1`, [id])).rows?.[0];
       const link = row?.link_modelo_poster || null;
-      if (isHttpUrl(link)) return res.json({ exists: true, href: link });
-      return res.json({ exists: false, href: null });
+      if (isHttpUrl(link)) return res.json({ exists: true, origin: "url", href: link });
+
+      return res.json({ exists: false });
     }
 
-    // ── ARQUIVO LOCAL?
+    // ── 1) Tenta banco (BYTEA)
+    const rowDb = (typeof DB.oneOrNone === "function")
+      ? await DB.oneOrNone(
+          `SELECT nome, mime, arquivo
+             FROM public.trabalhos_modelos
+            WHERE chamada_id=$1 AND tipo='banner'`,
+          [id]
+        )
+      : (await DB.query(
+          `SELECT nome, mime, arquivo
+             FROM public.trabalhos_modelos
+            WHERE chamada_id=$1 AND tipo='banner'`,
+          [id]
+        )).rows?.[0];
+
+    if (rowDb?.arquivo) {
+      const filename = rowDb.nome || "modelo_banner.pptx";
+      const mimeType = rowDb.mime || mime.lookup(filename) || "application/octet-stream";
+      res.setHeader("Content-Type", mimeType);
+      res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
+      res.setHeader("Access-Control-Expose-Headers", "Content-Disposition");
+      res.setHeader("Cache-Control", "public, max-age=60");
+      if (req.method === "HEAD") return res.status(200).end();
+      return res.end(rowDb.arquivo); // Buffer (BYTEA)
+    }
+
+    // ── 2) Arquivo local (legado)
+    const local = modeloPathPorChamada(id);
     if (local) {
       const stat = fs.statSync(local.path);
       res.setHeader("Content-Type", local.type);
@@ -594,10 +742,7 @@ exports.baixarModeloPorChamada = async (req, res, next) => {
       res.setHeader("Content-Length", String(stat.size));
       res.setHeader("Access-Control-Expose-Headers", "Content-Disposition, Content-Length");
       res.setHeader("Cache-Control", "public, max-age=60");
-
       if (req.method === "HEAD") return res.status(200).end();
-
-      // stream (mais seguro para arquivos grandes)
       const stream = fs.createReadStream(local.path);
       stream.on("error", (e) => {
         console.error("[stream modelobanner] erro:", e);
@@ -606,21 +751,14 @@ exports.baixarModeloPorChamada = async (req, res, next) => {
       return stream.pipe(res);
     }
 
-    // ── LINK EXTERNO?
-    const fetchOne = async (sql, params) => {
-      if (typeof DB.oneOrNone === "function") return DB.oneOrNone(sql, params);
-      if (typeof DB.query === "function") {
-        const r = await DB.query(sql, params);
-        return r?.rows?.[0] || null;
-      }
-      throw new Error("DB não expõe métodos para one/oneOrNone/query.");
-    };
-    const chamada = await fetchOne(`SELECT link_modelo_poster FROM trabalhos_chamadas WHERE id=$1`, [id]);
+    // ── 3) Link externo
+    const chamada = (typeof DB.oneOrNone === "function")
+      ? await DB.oneOrNone(`SELECT link_modelo_poster FROM trabalhos_chamadas WHERE id=$1`, [id])
+      : (await DB.query(`SELECT link_modelo_poster FROM trabalhos_chamadas WHERE id=$1`, [id])).rows?.[0];
     const link = chamada?.link_modelo_poster || null;
 
     if (isHttpUrl(link)) {
       if (req.method === "HEAD") {
-        // dica para clientes que fazem HEAD e depois GET
         res.setHeader("Location", link);
         return res.status(200).end();
       }

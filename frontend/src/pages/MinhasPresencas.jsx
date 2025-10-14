@@ -193,7 +193,7 @@ export default function MinhasPresencas() {
       <HeaderHero onRefresh={carregar} variant="sky" />
 
       <main role="main" className="flex-1 px-4 py-6 max-w-6xl mx-auto">
-        <div role="list" className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div role="list" className="grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6">
           {turmas.map((t, idx) => {
             const statusTone =
               t.status === "andamento" ? "info" :
@@ -231,35 +231,42 @@ export default function MinhasPresencas() {
 
             return (
               <motion.div
-                role="listitem"
-                key={t.turma_id ?? idx}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.25, delay: idx * 0.03 }}
-                className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm p-4"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-                      {t.evento_titulo}
-                    </h2>
-                    <p className="text-sm text-slate-600 dark:text-slate-300">
-                      Turma: <span className="font-medium">{t.turma_nome || `#${t.turma_id}`}</span>
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Badge tone={statusTone} title="Status da turma">
-                      <Clock className="w-3.5 h-3.5" />
-                      <span className="capitalize">{t.status}</span>
-                    </Badge>
-                    {meets75 && (
-                      <Badge tone="brand" title="Elegível para avaliação (≥ 75% e turma encerrada)">
-                        <Award className="w-3.5 h-3.5" />
-                        Elegível
-                      </Badge>
-                    )}
-                  </div>
-                </div>
+  role="listitem"
+  key={t.turma_id ?? idx}
+  initial={{ opacity: 0, y: 8 }}
+  animate={{ opacity: 1, y: 0 }}
+  transition={{ duration: 0.25, delay: idx * 0.03 }}
+  className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm p-5 sm:p-6"
+>
+  <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 sm:gap-4">
+    <div className="flex-1">
+      <h2 className="text-base sm:text-lg md:text-xl font-semibold text-slate-900 dark:text-slate-100 leading-snug break-words">
+        {t.evento_titulo}
+      </h2>
+      <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">
+        Turma:{" "}
+        <span className="font-medium">
+          {t.turma_nome || `#${t.turma_id}`}
+        </span>
+      </p>
+    </div>
+
+    <div className="flex flex-wrap items-center gap-2 mt-2 sm:mt-0">
+      <Badge tone={statusTone} title="Status da turma">
+        <Clock className="w-3.5 h-3.5" />
+        <span className="capitalize">{t.status}</span>
+      </Badge>
+      {meets75 && (
+        <Badge
+          tone="brand"
+          title="Elegível para avaliação (≥ 75% e turma encerrada)"
+        >
+          <Award className="w-3.5 h-3.5" />
+          Elegível
+        </Badge>
+      )}
+    </div>
+  </div>
 
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
                   <CalendarDays className="w-4 h-4" />

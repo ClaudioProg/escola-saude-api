@@ -284,7 +284,10 @@ exports.removerSubmissao = async (req, res, next) => {
 };
 
 /* ────────────────────────────────────────────────────────────────
- * POSTER (com checagem de papel via hasRole)
+ * POSTER (upload no disco) + Download
+ *   Upload:  POST /submissoes/:id/poster  (campo 'poster' via multer)
+ *   Download: GET  /submissoes/:id/poster
+ *   Persistência principal: caminho (path relativo) em trabalhos_arquivos
  * ──────────────────────────────────────────────────────────────── */
 exports.atualizarPoster = async (req, res, next) => {
   try {
@@ -304,19 +307,49 @@ exports.atualizarPoster = async (req, res, next) => {
 
     const isAdmin = hasRole(req.user, "administrador");
     assert(isAdmin || sub.usuario_id === req.user.id, "Sem permissão.");
-
     assert(sub.aceita_poster, "Esta chamada não aceita envio de pôster.");
     assert(sub.dentro_prazo, "Prazo encerrado para alterações.");
 
-    const caminhoRel = path.relative(process.cwd(), req.file.path);
-    const hash = crypto.createHash("sha256").update(fs.readFileSync(req.file.path)).digest("hex");
+    // valida mime/ extensão (reforço)
+    const okMime =
+      /powerpoint|presentation/i.test(req.file.mimetype) ||
+      /\.(pptx?|PPTX?)$/.test(req.file.originalname || "");
+    assert(okMime, "Formato inválido. Envie .ppt ou .pptx.");
 
-    const arq = await db.one(`
-      INSERT INTO trabalhos_arquivos (submissao_id, caminho, nome_original, mime_type, tamanho_bytes, hash_sha256)
-      VALUES ($1,$2,$3,$4,$5,$6) RETURNING id
-    `, [sub.id, caminhoRel, req.file.originalname, req.file.mimetype, req.file.size, hash]);
+    // Como o storage é DISK, o arquivo está salvo em req.file.path.
+    // Vamos persistir o CAMINHO relativo (uploads/posters/arquivo.ext).
+    const absPath = req.file.path;                             // absoluto
+    const relPath = path.join("uploads", "posters", path.basename(absPath)); // relativo
 
-    await db.none(`UPDATE trabalhos_submissoes SET poster_arquivo_id=$1, atualizado_em=NOW() WHERE id=$2`, [arq.id, sub.id]);
+    // Hash e tamanho (opcional, mas útil)
+    const buffer = fs.readFileSync(absPath);
+    const hash = crypto.createHash("sha256").update(buffer).digest("hex");
+
+    const arq = await db.one(
+      `INSERT INTO trabalhos_arquivos
+         (submissao_id, caminho, nome_original, mime_type, tamanho_bytes, hash_sha256, arquivo)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       RETURNING id`,
+      [
+        sub.id,
+        relPath,                 // 👉 agora NÃO é nulo
+        req.file.originalname,
+        req.file.mimetype,
+        buffer.length,
+        hash,
+        null                     // arquivo BYTEA não usado quando armazenamos no disco
+      ]
+    );
+
+    await db.none(
+      `UPDATE trabalhos_submissoes
+          SET poster_arquivo_id=$1, atualizado_em=NOW()
+        WHERE id=$2`,
+      [arq.id, sub.id]
+    );
+
+    // IMPORTANTE: não deletar o arquivo do disco – ele é a fonte de verdade agora.
+    // (Se quisesse, poderíamos só remover arquivos antigos órfãos via job.)
 
     await notificarPosterAtualizado({
       usuario_id: req.user.id,
@@ -326,8 +359,40 @@ exports.atualizarPoster = async (req, res, next) => {
     });
 
     res.json({ ok: true, arquivo_id: arq.id });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// ✅ ÚNICA: GET /submissoes/:id/poster (disk-first, com fallback para BYTEA)
+exports.baixarPoster = async (req, res, next) => {
+  try {
+    const row = await db.oneOrNone(
+      `SELECT a.id, a.caminho, a.nome_original, a.mime_type, a.arquivo
+         FROM trabalhos_submissoes s
+    LEFT JOIN trabalhos_arquivos a ON a.id = s.poster_arquivo_id
+        WHERE s.id=$1`,
+      [req.params.id]
+    );
+    assert(row && (row.caminho || row.arquivo), "Pôster não encontrado.");
+
+    if (row.caminho) {
+      const abs = path.join(process.cwd(), row.caminho);
+      if (!fs.existsSync(abs)) {
+        assert(row.arquivo, "Arquivo não disponível no momento.");
+        res.setHeader("Content-Type", row.mime_type || "application/octet-stream");
+        res.setHeader("Content-Disposition", `inline; filename="${row.nome_original || "poster.pptx"}"`);
+        return res.send(row.arquivo);
+      }
+      return res.download(abs, row.nome_original || path.basename(abs));
+    } else {
+      res.setHeader("Content-Type", row.mime_type || "application/octet-stream");
+      res.setHeader("Content-Disposition", `inline; filename="${row.nome_original || "poster.pptx"}"`);
+      return res.send(row.arquivo);
+    }
   } catch (err) { next(err); }
 };
+
 
 /* ────────────────────────────────────────────────────────────────
  * LISTAS / OBTENÇÃO
@@ -443,9 +508,8 @@ exports.avaliarEscrita = async (req, res, next) => {
       const r = await db.query(SQL_UPD, [subId]);
       rowCount = r?.rowCount || 0;
     } else {
-      // Fallback sem rowCount disponível (pg-promise .none, por ex.)
       await db.none?.(SQL_UPD, [subId]);
-      rowCount = 0; // sem como saber → só não notifica
+      rowCount = 0;
     }
 
     // Notifica apenas se houve transição real de status

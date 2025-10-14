@@ -77,7 +77,7 @@ const AdminChamadaForm       = lazy(() => import("./pages/AdminChamadaForm"));
 // Usuário – submeter e acompanhar
 const UsuarioSubmissoes      = lazy(() => import("./pages/UsuarioSubmissoes"));
 // Admin – listar/avaliar/responder
-const AdminSubmissoesResposta = lazy(() => import("./pages/AdminSubmissoesResposta"));
+const AdminSubmissoes = lazy(() => import("./pages/AdminSubmissoes"));
 
 /* ──────────────────────────────────────────────────────────────
    A11y: Announcer de mudanças de rota
@@ -304,7 +304,7 @@ function AdminChamadaFormWrapper() {
 }
 function AdminSubmissoesRouteWrapper() {
   const { chamadaId } = useParams(); // opcional
-  return <AdminSubmissoesResposta chamadaId={chamadaId ? Number(chamadaId) : undefined} />;
+  return <AdminSubmissoes chamadaId={chamadaId ? Number(chamadaId) : undefined} />;
 }
 
 /* ──────────────────────────────────────────────────────────────

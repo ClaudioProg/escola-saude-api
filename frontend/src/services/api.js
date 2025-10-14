@@ -580,15 +580,28 @@ export async function apiUpload(path, formDataOrFile, opts = {}) {
   if (formDataOrFile instanceof FormData) {
     fd = formDataOrFile;
   } else if (formDataOrFile instanceof Blob) {
-    const fieldName = opts.fieldName || "file"; // troque por "banner"/"poster" conforme rota
+    // 🔧 nome do campo por padrão é "poster" para casar com upload.single("poster")
+    const fieldName = opts.fieldName || "poster";
     fd = new FormData();
-    fd.append(fieldName, formDataOrFile);
+    const fallbackName =
+      (formDataOrFile && "name" in formDataOrFile && formDataOrFile.name) ||
+      `${fieldName}${/presentation/i.test(formDataOrFile.type || "") ? ".pptx" : ""}`;
+    fd.append(fieldName, formDataOrFile, fallbackName);
   } else {
     throw new Error("apiUpload: passe um FormData ou File/Blob.");
   }
-  // usa doFetch com FormData (sem Content-Type)
+  // usa doFetch com FormData (sem Content-Type manual)
   return doFetch(path, { method: "POST", body: fd, ...opts });
 }
+
+// 🆕 Atalho específico para pôster (.ppt/.pptx)
+export const apiUploadPoster = (submissaoId, fileOrFormData, opts = {}) => {
+  if (!submissaoId) throw new Error("submissaoId é obrigatório");
+  return apiUpload(`/submissoes/${submissaoId}/poster`, fileOrFormData, {
+    ...opts,
+    fieldName: "poster",
+  });
+};
 
 // POST que retorna arquivo (Blob)
 export async function apiPostFile(path, body, opts = {}) {
@@ -620,7 +633,7 @@ export async function apiPostFile(path, body, opts = {}) {
       Accept: "*/*",
       ...headers,
     },
-    body: body ? JSON.stringify(body) : undefined, // 🔧 envia o body
+    body: body ? JSON.stringify(body) : undefined,
     credentials: "include",
     mode: "cors",
     cache: "no-store",
@@ -889,6 +902,7 @@ export const api = {
   patch: (path, body, opts) => apiPatch(path, body, opts),
   delete: (path, opts) => apiDelete(path, opts),
   upload: (path, formDataOrFile, opts) => apiUpload(path, formDataOrFile, opts),
+  uploadPoster: (submissaoId, fileOrFormData, opts) => apiUploadPoster(submissaoId, fileOrFormData, opts),
   request: ({ url, method = "GET", data, ...opts } = {}) =>
     doFetch(url, { method, body: data, ...opts }),
 };

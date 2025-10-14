@@ -197,6 +197,200 @@ async function resumoDatasTurma(turma_id, usuario_id) {
   }
 }
 
+/* ============== Helper central: gerar o PDF fisicamente ============== */
+async function _gerarPdfFisico({
+  tipo, usuario_id, evento_id, turma_id, assinaturaBase64,
+  TURMA, nomeUsuario, cpfUsuario, horasTotal, minData, maxData
+}) {
+  await ensureDir(CERT_DIR);
+
+  // Nome do arquivo (mantive seu padrão)
+  const nomeArquivo = `certificado_${tipo}_usuario${usuario_id}_evento${evento_id}_turma${turma_id}.pdf`;
+  const caminho = path.join(CERT_DIR, nomeArquivo);
+
+  // Datas
+  const ymd = (v) => {
+    if (!v) return "";
+    if (v instanceof Date) return v.toISOString().slice(0, 10);
+    const s = String(v);
+    const m = s.match(/(\d{4})-(\d{2})-(\d{2})/);
+    return m ? `${m[1]}-${m[2]}-${m[3]}` : "";
+  };
+  const diYmd = ymd(minData || TURMA.data_inicio);
+  const dfYmd = ymd(maxData || TURMA.data_fim);
+  const mesmoDia = diYmd && diYmd === dfYmd;
+  const dataInicioBR   = dataBR(diYmd);
+  const dataFimBR      = dataBR(dfYmd);
+  const dataHojeExtenso = dataExtensoBR(new Date());
+  const cargaTexto = horasTotal > 0 ? horasTotal : TURMA.carga_horaria;
+  const tituloEvento = TURMA.titulo || "evento";
+
+  const doc = new PDFDocument({ size: "A4", layout: "landscape", margin: 40 });
+  const writeStream = fs.createWriteStream(caminho);
+  const finished = new Promise((resolve, reject) => {
+    writeStream.on("finish", resolve);
+    writeStream.on("error", reject);
+    doc.on("error", reject);
+  });
+  doc.pipe(writeStream);
+
+  registerFonts(doc);
+
+  // Fundo
+  const fundoPath = getFundoPath(tipo);
+  if (fundoPath) {
+    doc.save();
+    doc.image(fundoPath, 0, 0, { width: doc.page.width, height: doc.page.height });
+    doc.restore();
+  } else {
+    doc.save().rect(0, 0, doc.page.width, doc.page.height).fill("#ffffff").restore();
+  }
+
+  // Título
+  doc.fillColor("#0b3d2e").font("BreeSerif").fontSize(63).text("CERTIFICADO", { align: "center" });
+  doc.y += 20;
+
+  // Cabeçalho
+  doc.fillColor("black");
+  doc.font("AlegreyaSans-Bold").fontSize(20).text("SECRETARIA MUNICIPAL DE SAÚDE", {
+    align: "center",
+    lineGap: 4,
+  });
+  doc.font("AlegreyaSans-Regular").fontSize(15).text("A Escola Municipal de Saúde Pública certifica que:", {
+    align: "center",
+  });
+  doc.moveDown(1);
+  doc.y += 20;
+
+  // Nome
+  const nomeFontName = "AlexBrush";
+  const maxNomeWidth = 680;
+  let nomeFontSize = 45;
+  doc.font(nomeFontName).fontSize(nomeFontSize);
+  while (doc.widthOfString(nomeUsuario) > maxNomeWidth && nomeFontSize > 20) {
+    nomeFontSize -= 1;
+    doc.fontSize(nomeFontSize);
+  }
+  doc.text(nomeUsuario, { align: "center" });
+
+  // CPF
+  if (cpfUsuario) {
+    doc.font("BreeSerif").fontSize(16).text(`CPF: ${cpfUsuario}`, 0, doc.y - 5, {
+      align: "center",
+      width: doc.page.width,
+    });
+  }
+
+  // Corpo
+  const corpoTexto =
+    tipo === "instrutor"
+      ? (mesmoDia
+          ? `Participou como instrutor do evento "${tituloEvento}", realizado em ${dataInicioBR}, com carga horária total de ${cargaTexto} horas.`
+          : `Participou como instrutor do evento "${tituloEvento}", realizado de ${dataInicioBR} a ${dataFimBR}, com carga horária total de ${cargaTexto} horas.`)
+      : (mesmoDia
+          ? `Participou do evento "${tituloEvento}", realizado em ${dataInicioBR}, com carga horária total de ${cargaTexto} horas.`
+          : `Participou do evento "${tituloEvento}", realizado de ${dataInicioBR} a ${dataFimBR}, com carga horária total de ${cargaTexto} horas.`);
+
+  doc.moveDown(1);
+  doc.font("AlegreyaSans-Regular").fontSize(15).text(corpoTexto, 70, doc.y, {
+    align: "justify",
+    lineGap: 4,
+    width: 680,
+  });
+
+  // Data de emissão
+  doc.moveDown(1);
+  doc.font("AlegreyaSans-Regular").fontSize(14).text(`Santos, ${dataHojeExtenso}.`, 100, doc.y + 10, {
+    align: "right",
+    width: 680,
+  });
+
+  // --- Assinaturas ---
+  const baseY = 470;
+  const LEFT = { x: 100, w: 300 };   // institucional
+  const RIGHT = { x: 440, w: 300 };  // instrutor
+
+  // Esquerda: assinatura institucional (payload)
+  if (assinaturaBase64 && /^data:image\/(png|jpe?g|webp);base64,/.test(assinaturaBase64)) {
+    try {
+      const buf = Buffer.from(assinaturaBase64.split(",")[1], "base64");
+      doc.image(buf, LEFT.x + (LEFT.w - 150) / 2, baseY - 50, { width: 150 });
+    } catch (e) {
+      console.warn("⚠️ Assinatura institucional inválida:", e.message);
+    }
+  }
+  doc.font("AlegreyaSans-Bold").fontSize(20).text("Rafaella Pitol Corrêa", LEFT.x, baseY, { align: "center", width: LEFT.w });
+  doc.font("AlegreyaSans-Regular").fontSize(14).text("Chefe da Escola da Saúde", LEFT.x, baseY + 25, { align: "center", width: LEFT.w });
+
+  // Direita: assinatura do instrutor real
+  let nomeInstrutor = "Instrutor(a)";
+  let assinaturaInstrutorBase64 = null;
+
+  if (tipo === "usuario") {
+    // primeiro instrutor vinculado ao evento
+    try {
+      const { rows } = await db.query(`
+        SELECT u.nome AS nome_instrutor, a.imagem_base64
+        FROM evento_instrutor ei
+        JOIN usuarios u         ON u.id = ei.instrutor_id
+        LEFT JOIN assinaturas a ON a.usuario_id = ei.instrutor_id
+        WHERE ei.evento_id = $1
+        ORDER BY ei.instrutor_id ASC
+        LIMIT 1
+      `, [Number(evento_id)]);
+      nomeInstrutor = rows[0]?.nome_instrutor || nomeInstrutor;
+      assinaturaInstrutorBase64 = rows[0]?.imagem_base64 || null;
+    } catch (e) {
+      console.warn("⚠️ Erro ao obter instrutor do evento:", e.message);
+    }
+  } else {
+    // tipo === "instrutor": assinatura do próprio usuário (instrutor)
+    try {
+      const { rows } = await db.query(
+        `SELECT a.imagem_base64, u.nome
+         FROM usuarios u
+         LEFT JOIN assinaturas a ON a.usuario_id = u.id
+         WHERE u.id = $1`,
+        [Number(usuario_id)]
+      );
+      nomeInstrutor = rows[0]?.nome || nomeInstrutor;
+      assinaturaInstrutorBase64 = rows[0]?.imagem_base64 || null;
+    } catch (e) {
+      console.warn("⚠️ Erro ao obter assinatura do instrutor:", e.message);
+    }
+  }
+
+  if (assinaturaInstrutorBase64 && /^data:image\/(png|jpe?g|webp);base64,/.test(assinaturaInstrutorBase64)) {
+    try {
+      const buf = Buffer.from(assinaturaInstrutorBase64.split(",")[1], "base64");
+      doc.image(buf, RIGHT.x + (RIGHT.w - 150) / 2, baseY - 50, { width: 150 });
+    } catch (e) {
+      console.warn("⚠️ Assinatura do instrutor inválida:", e.message);
+    }
+  }
+  doc.font("AlegreyaSans-Bold").fontSize(20).text(nomeInstrutor, RIGHT.x, baseY, { align: "center", width: RIGHT.w });
+  doc.font("AlegreyaSans-Regular").fontSize(14).text("Instrutor(a)", RIGHT.x, baseY + 25, { align: "center", width: RIGHT.w });
+
+  // QR Code (validação)
+  const FRONTEND_BASE_URL = process.env.FRONTEND_BASE_URL || "https://escoladasaude.vercel.app";
+  const linkValidacao =
+    `${FRONTEND_BASE_URL}/validar-certificado.html` +
+    `?usuario_id=${encodeURIComponent(usuario_id)}` +
+    `&evento_id=${encodeURIComponent(evento_id)}` +
+    `&turma_id=${encodeURIComponent(turma_id)}`;
+  const qrDataURL = await tryQRCodeDataURL(linkValidacao);
+  if (qrDataURL) {
+    doc.image(qrDataURL, 40, 420, { width: 80 });
+    doc.fillColor("#000").fontSize(7).text("Escaneie este QR Code", 40, 510);
+    doc.text("para validar o certificado.", 40, 520);
+  }
+
+  doc.end();
+  await finished;
+
+  return { nomeArquivo, caminho };
+}
+
 /* ========================= Gerar Certificado ========================= */
 async function gerarCertificado(req, res) {
   const { usuario_id, evento_id, turma_id, tipo, assinaturaBase64 } = req.body;
@@ -265,7 +459,7 @@ async function gerarCertificado(req, res) {
       }
     }
 
-    // ---------- Helper local: resumo das datas ----------
+    // ---------- Resumo/datas/horas ----------
     async function getResumoTurmaSegura() {
       try {
         const r = await db.query(
@@ -359,194 +553,11 @@ async function gerarCertificado(req, res) {
       }
     }
 
-    // ---------- Datas para o certificado (usando primeiro/último dia) ----------
-    const ymd = (v) => {
-      if (!v) return "";
-      if (v instanceof Date) return v.toISOString().slice(0, 10);
-      const s = String(v);
-      const m = s.match(/(\d{4})-(\d{2})-(\d{2})/);
-      return m ? `${m[1]}-${m[2]}-${m[3]}` : "";
-    };
-
-    const diYmd = ymd(minData || TURMA.data_inicio);
-    const dfYmd = ymd(maxData || TURMA.data_fim);
-    const mesmoDia = diYmd && diYmd === dfYmd;
-
-    const dataInicioBR   = dataBR(diYmd);
-    const dataFimBR      = dataBR(dfYmd);
-    const dataHojeExtenso = dataExtensoBR(new Date());
-
-    // Carga horária
-    const cargaTexto = horasTotal > 0 ? horasTotal : TURMA.carga_horaria;
-
-    // ---------- PDF ----------
-    await ensureDir(CERT_DIR);
-    const nomeArquivo = `certificado_${tipo}_usuario${usuario_id}_evento${evento_id}_turma${turma_id}.pdf`;
-    const caminho = path.join(CERT_DIR, nomeArquivo);
-
-    const doc = new PDFDocument({ size: "A4", layout: "landscape", margin: 40 });
-    const writeStream = fs.createWriteStream(caminho);
-    const finished = new Promise((resolve, reject) => {
-      writeStream.on("finish", resolve);
-      writeStream.on("error", reject);
-      doc.on("error", reject);
+    // ---------- Geração física ----------
+    const { nomeArquivo } = await _gerarPdfFisico({
+      tipo, usuario_id, evento_id, turma_id, assinaturaBase64,
+      TURMA, nomeUsuario, cpfUsuario, horasTotal, minData, maxData
     });
-    doc.pipe(writeStream);
-
-    registerFonts(doc);
-
-    // Fundo
-    const fundoPath = getFundoPath(tipo);
-    if (fundoPath) {
-      doc.save();
-      doc.image(fundoPath, 0, 0, { width: doc.page.width, height: doc.page.height });
-      doc.restore();
-    } else {
-      doc.save().rect(0, 0, doc.page.width, doc.page.height).fill("#ffffff").restore();
-    }
-
-    // Título
-    doc.fillColor("#0b3d2e").font("BreeSerif").fontSize(63).text("CERTIFICADO", { align: "center" });
-    doc.y += 20;
-
-    // Cabeçalho
-    doc.fillColor("black");
-    doc.font("AlegreyaSans-Bold").fontSize(20).text("SECRETARIA MUNICIPAL DE SAÚDE", {
-      align: "center",
-      lineGap: 4,
-    });
-    doc.font("AlegreyaSans-Regular").fontSize(15).text("A Escola Municipal de Saúde Pública certifica que:", {
-      align: "center",
-    });
-    doc.moveDown(1);
-    doc.y += 20;
-
-    // Nome
-    const nomeFontName = "AlexBrush";
-    const maxNomeWidth = 680;
-    let nomeFontSize = 45;
-    doc.font(nomeFontName).fontSize(nomeFontSize);
-    while (doc.widthOfString(nomeUsuario) > maxNomeWidth && nomeFontSize > 20) {
-      nomeFontSize -= 1;
-      doc.fontSize(nomeFontSize);
-    }
-    doc.text(nomeUsuario, { align: "center" });
-
-    // CPF
-    if (cpfUsuario) {
-      doc.font("BreeSerif").fontSize(16).text(`CPF: ${cpfUsuario}`, 0, doc.y - 5, {
-        align: "center",
-        width: doc.page.width,
-      });
-    }
-
-    // Corpo
-    const tituloEvento = TURMA.titulo || "evento";
-    const corpoTexto =
-      tipo === "instrutor"
-        ? (mesmoDia
-            ? `Participou como instrutor do evento "${tituloEvento}", realizado em ${dataInicioBR}, com carga horária total de ${cargaTexto} horas.`
-            : `Participou como instrutor do evento "${tituloEvento}", realizado de ${dataInicioBR} a ${dataFimBR}, com carga horária total de ${cargaTexto} horas.`)
-        : (mesmoDia
-            ? `Participou do evento "${tituloEvento}", realizado em ${dataInicioBR}, com carga horária total de ${cargaTexto} horas.`
-            : `Participou do evento "${tituloEvento}", realizado de ${dataInicioBR} a ${dataFimBR}, com carga horária total de ${cargaTexto} horas.`);
-
-    doc.moveDown(1);
-    doc.font("AlegreyaSans-Regular").fontSize(15).text(corpoTexto, 70, doc.y, {
-      align: "justify",
-      lineGap: 4,
-      width: 680,
-    });
-
-    // Data de emissão
-    doc.moveDown(1);
-    doc.font("AlegreyaSans-Regular").fontSize(14).text(`Santos, ${dataHojeExtenso}.`, 100, doc.y + 10, {
-      align: "right",
-      width: 680,
-    });
-
-    // --- Assinaturas ---
-    const baseY = 470;
-    const LEFT = { x: 100, w: 300 };   // institucional
-    const RIGHT = { x: 440, w: 300 };  // instrutor
-
-    // Esquerda: assinatura institucional (payload)
-    if (assinaturaBase64 && /^data:image\/(png|jpe?g|webp);base64,/.test(assinaturaBase64)) {
-      try {
-        const buf = Buffer.from(assinaturaBase64.split(",")[1], "base64");
-        doc.image(buf, LEFT.x + (LEFT.w - 150) / 2, baseY - 50, { width: 150 });
-      } catch (e) {
-        console.warn("⚠️ Assinatura institucional inválida:", e.message);
-      }
-    }
-    doc.font("AlegreyaSans-Bold").fontSize(20).text("Rafaella Pitol Corrêa", LEFT.x, baseY, { align: "center", width: LEFT.w });
-    doc.font("AlegreyaSans-Regular").fontSize(14).text("Chefe da Escola da Saúde", LEFT.x, baseY + 25, { align: "center", width: LEFT.w });
-
-    // Direita: assinatura do instrutor real
-    let nomeInstrutor = "Instrutor(a)";
-    let assinaturaInstrutorBase64 = null;
-
-    if (tipo === "usuario") {
-      // primeiro instrutor vinculado ao evento
-      try {
-        const { rows } = await db.query(`
-          SELECT u.nome AS nome_instrutor, a.imagem_base64
-          FROM evento_instrutor ei
-          JOIN usuarios u         ON u.id = ei.instrutor_id
-          LEFT JOIN assinaturas a ON a.usuario_id = ei.instrutor_id
-          WHERE ei.evento_id = $1
-          ORDER BY ei.instrutor_id ASC
-          LIMIT 1
-        `, [Number(evento_id)]);
-        nomeInstrutor = rows[0]?.nome_instrutor || nomeInstrutor;
-        assinaturaInstrutorBase64 = rows[0]?.imagem_base64 || null;
-      } catch (e) {
-        console.warn("⚠️ Erro ao obter instrutor do evento:", e.message);
-      }
-    } else {
-      // tipo === "instrutor": assinatura do próprio usuário (instrutor)
-      try {
-        const { rows } = await db.query(
-          `SELECT a.imagem_base64, u.nome
-           FROM usuarios u
-           LEFT JOIN assinaturas a ON a.usuario_id = u.id
-           WHERE u.id = $1`,
-          [Number(usuario_id)]
-        );
-        nomeInstrutor = rows[0]?.nome || nomeInstrutor;
-        assinaturaInstrutorBase64 = rows[0]?.imagem_base64 || null;
-      } catch (e) {
-        console.warn("⚠️ Erro ao obter assinatura do instrutor:", e.message);
-      }
-    }
-
-    if (assinaturaInstrutorBase64 && /^data:image\/(png|jpe?g|webp);base64,/.test(assinaturaInstrutorBase64)) {
-      try {
-        const buf = Buffer.from(assinaturaInstrutorBase64.split(",")[1], "base64");
-        doc.image(buf, RIGHT.x + (RIGHT.w - 150) / 2, baseY - 50, { width: 150 });
-      } catch (e) {
-        console.warn("⚠️ Assinatura do instrutor inválida:", e.message);
-      }
-    }
-    doc.font("AlegreyaSans-Bold").fontSize(20).text(nomeInstrutor, RIGHT.x, baseY, { align: "center", width: RIGHT.w });
-    doc.font("AlegreyaSans-Regular").fontSize(14).text("Instrutor(a)", RIGHT.x, baseY + 25, { align: "center", width: RIGHT.w });
-
-    // QR Code (validação)
-    const FRONTEND_BASE_URL = process.env.FRONTEND_BASE_URL || "https://escoladasaude.vercel.app";
-    const linkValidacao =
-      `${FRONTEND_BASE_URL}/validar-certificado.html` +
-      `?usuario_id=${encodeURIComponent(usuario_id)}` +
-      `&evento_id=${encodeURIComponent(evento_id)}` +
-      `&turma_id=${encodeURIComponent(turma_id)}`;
-    const qrDataURL = await tryQRCodeDataURL(linkValidacao);
-    if (qrDataURL) {
-      doc.image(qrDataURL, 40, 420, { width: 80 });
-      doc.fillColor("#000").fontSize(7).text("Escaneie este QR Code", 40, 510);
-      doc.text("para validar o certificado.", 40, 520);
-    }
-
-    doc.end();
-    await finished;
 
     // Upsert do certificado
     const upsert = await db.query(
@@ -578,7 +589,8 @@ async function gerarCertificado(req, res) {
         const nomeUsuarioEmail = rows[0]?.nome?.trim() || "Aluno(a)";
         if (emailUsuario) {
           const { send } = require("../utils/email");
-          const titulo = tituloEvento || "evento";
+          const titulo = TURMA.titulo || "evento";
+          const FRONTEND_BASE_URL = process.env.FRONTEND_BASE_URL || "https://escoladasaude.vercel.app";
           const link = `${FRONTEND_BASE_URL}/certificados`;
           await send({
             to: emailUsuario,
@@ -647,18 +659,81 @@ async function listarCertificadosDoUsuario(req, res) {
   }
 }
 
+/* 🔁 Baixar com autoreparo: se não houver arquivo, regera e atualiza */
 async function baixarCertificado(req, res) {
   try {
     const { id } = req.params;
-    const result = await db.query(`SELECT usuario_id, arquivo_pdf FROM certificados WHERE id = $1`, [Number(id)]);
-    if (result.rowCount === 0) return res.status(404).json({ erro: "Certificado não encontrado." });
 
-    const { arquivo_pdf } = result.rows[0];
-    const caminhoArquivo = path.join(CERT_DIR, arquivo_pdf); // usa a mesma pasta
-    if (!fs.existsSync(caminhoArquivo)) return res.status(404).json({ erro: "Arquivo do certificado não encontrado." });
+    const q = await db.query(
+      `SELECT id, usuario_id, evento_id, turma_id, tipo, arquivo_pdf
+         FROM certificados WHERE id = $1`,
+      [Number(id)]
+    );
+    if (q.rowCount === 0) return res.status(404).json({ erro: "Certificado não encontrado." });
+
+    const cert = q.rows[0];
+
+    // Caminho físico atual
+    await ensureDir(CERT_DIR);
+    let nomeArquivo = cert.arquivo_pdf || `certificado_${cert.tipo}_usuario${cert.usuario_id}_evento${cert.evento_id}_turma${cert.turma_id}.pdf`;
+    let caminhoArquivo = path.join(CERT_DIR, nomeArquivo);
+
+    // Se não existe, regera usando as regras atuais
+    if (!fs.existsSync(caminhoArquivo)) {
+      logDev("📄 Arquivo ausente; regenerando certificado", { id: cert.id });
+
+      // Carrega dados
+      const eventoResult = await db.query(
+        `SELECT e.titulo, t.horario_inicio, t.horario_fim, t.data_inicio, t.data_fim, t.carga_horaria
+           FROM eventos e JOIN turmas t ON t.evento_id = e.id
+          WHERE e.id = $1 AND t.id = $2`,
+        [cert.evento_id, cert.turma_id]
+      );
+      if (eventoResult.rowCount === 0) {
+        return res.status(404).json({ erro: "Evento/Turma do certificado não encontrados." });
+      }
+      const TURMA = eventoResult.rows[0];
+
+      const pessoa = await db.query("SELECT nome, cpf FROM usuarios WHERE id = $1", [cert.usuario_id]);
+      if (pessoa.rowCount === 0) {
+        return res.status(404).json({ erro: "Usuário do certificado não encontrado." });
+      }
+      const nomeUsuario = pessoa.rows[0].nome;
+      const cpfUsuario = formatarCPF(pessoa.rows[0].cpf || "");
+
+      // Resumo para horas/datas
+      const r = await resumoDatasTurma(cert.turma_id, cert.usuario_id);
+      const minData = r.min_data || TURMA.data_inicio;
+      const maxData = r.max_data || TURMA.data_fim;
+      const horasTotal = Number(r.horas_total || 0);
+
+      // (assinatura institucional não é necessária para autoreparo)
+      const ret = await _gerarPdfFisico({
+        tipo: cert.tipo,
+        usuario_id: cert.usuario_id,
+        evento_id: cert.evento_id,
+        turma_id: cert.turma_id,
+        assinaturaBase64: null,
+        TURMA,
+        nomeUsuario,
+        cpfUsuario,
+        horasTotal,
+        minData,
+        maxData,
+      });
+
+      nomeArquivo = ret.nomeArquivo;
+      caminhoArquivo = ret.caminho;
+
+      // Atualiza o banco com o nome correto
+      await db.query(
+        `UPDATE certificados SET arquivo_pdf = $1, gerado_em = NOW() WHERE id = $2`,
+        [nomeArquivo, cert.id]
+      );
+    }
 
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename="${arquivo_pdf}"`);
+    res.setHeader("Content-Disposition", `attachment; filename="${path.basename(caminhoArquivo)}"`);
     fs.createReadStream(caminhoArquivo).pipe(res);
   } catch (err) {
     console.error("❌ Erro ao baixar certificado:", err?.stack || err);
@@ -680,12 +755,7 @@ async function revalidarCertificado(req, res) {
   }
 }
 
-/** 🎓 Elegíveis (aluno) — retorna SEMPRE:
- *  (1) todos os JÁ GERADOS
- *  (2) + os ELEGÍVEIS que AINDA NÃO têm certificado
- *  Independe de datas_eventos; considera data_fim + horario_fim; frequência por dias distintos.
- *  Mantém formato legado: array direto.
- */
+/** 🎓 Elegíveis (aluno) — mantém formato legado (array direto) */
 async function listarCertificadosElegiveis(req, res) {
   try {
     const usuario_id = Number(req?.usuario?.id) || Number(req.query?.usuario_id);
@@ -807,7 +877,7 @@ async function listarCertificadosElegiveis(req, res) {
       [usuario_id]
     );
 
-    return res.json(rows); // formato legado: array direto
+    return res.json(rows);
   } catch (err) {
     console.error("❌ Erro ao buscar certificados elegíveis:", err?.stack || err);
     return res.status(500).json({ erro: "Erro ao buscar certificados elegíveis." });
@@ -842,51 +912,44 @@ async function listarCertificadosInstrutorElegiveis(req, res) {
 /* =========================================================
    🔄 Resetar certificados gerados de uma turma
    ========================================================= */
-   async function resetTurma(req, res) {
-    const { turmaId } = req.params;
-    const id = Number(turmaId);
-    if (!id) return res.status(400).json({ erro: "turmaId inválido" });
-  
-    const path = require("path");
-    const fs = require("fs");
-    const fsp = fs.promises;
-    const db = require("../db");
-  
-    try {
-      console.log(`[RESET] Limpando certificados da turma ${id}`);
-  
-      // 🧹 1) Apaga PDFs físicos (se existirem)
-      const pasta = path.join(__dirname, "../../data/certificados/turmas", String(id));
-      await fsp.rm(pasta, { recursive: true, force: true });
-  
-      // 🗑️ 2) Limpa registros do banco
-      await db.none(
-        `UPDATE certificados
-           SET ja_gerado = FALSE,
-               arquivo_pdf = NULL,
-               atualizado_em = NOW()
-         WHERE turma_id = $1`,
-        [id]
-      );
-  
-      // (opcional) limpa cache
-      await db.none("DELETE FROM certificados_cache WHERE turma_id = $1", [id]).catch(() => {});
-  
-      console.log(`[RESET] Concluído para turma ${id}`);
-      res.json({ ok: true, turma_id: id, resetado: true });
-    } catch (err) {
-      console.error("Erro ao resetar certificados:", err);
-      res.status(500).json({ erro: "Falha ao resetar certificados", detalhes: err.message });
-    }
+async function resetTurma(req, res) {
+  const { turmaId } = req.params;
+  const id = Number(turmaId);
+  if (!id) return res.status(400).json({ erro: "turmaId inválido" });
+
+  try {
+    console.log(`[RESET] Limpando certificados da turma ${id}`);
+
+    // 🧹 1) Apaga PDFs físicos (se existirem)
+    const pasta = path.join(CERT_DIR, "turmas", String(id));
+    await fsp.rm(pasta, { recursive: true, force: true });
+
+    // 🗑️ 2) Limpa registros do banco
+    await db.none(
+      `UPDATE certificados
+         SET arquivo_pdf = NULL,
+             atualizado_em = NOW()
+       WHERE turma_id = $1`,
+      [id]
+    );
+
+    // (opcional) limpa cache
+    await db.none("DELETE FROM certificados_cache WHERE turma_id = $1", [id]).catch(() => {});
+
+    console.log(`[RESET] Concluído para turma ${id}`);
+    res.json({ ok: true, turma_id: id, resetado: true });
+  } catch (err) {
+    console.error("Erro ao resetar certificados:", err);
+    res.status(500).json({ erro: "Falha ao resetar certificados", detalhes: err.message });
   }
-  
-  module.exports = {
-    gerarCertificado,
-    listarCertificadosDoUsuario,
-    baixarCertificado,
-    revalidarCertificado,
-    listarCertificadosElegiveis,
-    listarCertificadosInstrutorElegiveis,
-    resetTurma, // ✅ agora é um identificador válido
-  };
-  
+}
+
+module.exports = {
+  gerarCertificado,
+  listarCertificadosDoUsuario,
+  baixarCertificado,
+  revalidarCertificado,
+  listarCertificadosElegiveis,
+  listarCertificadosInstrutorElegiveis,
+  resetTurma,
+};

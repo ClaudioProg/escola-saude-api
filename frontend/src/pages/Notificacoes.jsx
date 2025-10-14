@@ -1,28 +1,22 @@
 // 📁 src/pages/Notificacoes.jsx
-import { useEffect, useState, useMemo } from "react";
+import { useState, useMemo } from "react";
 import { Bell, CalendarDays, CheckCircle, Info, Star, Check } from "lucide-react";
-import Breadcrumbs from "../components/Breadcrumbs";
 import { toast } from "react-toastify";
 import { motion } from "framer-motion";
 import { apiGet, apiPatch } from "../services/api";
+import { useOnceEffect } from "../hooks/useOnceEffect";
 
-// Cabeçalho compacto + rodapé institucional
-import PageHeader from "../components/PageHeader";
+import Breadcrumbs from "../components/Breadcrumbs";
 import Footer from "../components/Footer";
 
 /* =======================
    Helpers de data (anti-UTC)
    ======================= */
-// Aceita "YYYY-MM-DD", "YYYY-MM-DDTHH:mm", "YYYY-MM-DDTHH:mm:ss[.sss][Z]"
 function formatarDataLocalLegivel(s) {
   if (!s) return "";
   const str = String(s);
-
-  // Só data
   const mDate = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (mDate) return `${mDate[3]}/${mDate[2]}/${mDate[1]}`;
-
-  // Data + hora (ignorando timezone/Z)
   const mDateTime = str.match(
     /^(\d{4})-(\d{2})-(\d{2})[T\s]?(\d{2}):(\d{2})(?::(\d{2}))?/
   );
@@ -30,8 +24,6 @@ function formatarDataLocalLegivel(s) {
     const [, y, mo, d, hh, mm] = mDateTime;
     return `${d}/${mo}/${y} ${hh}:${mm}`;
   }
-
-  // Fallback: tenta Date sem exibir fuso
   const dt = new Date(str);
   if (Number.isNaN(dt.getTime())) return str;
   const y = dt.getFullYear();
@@ -48,45 +40,50 @@ export default function Notificacoes() {
   const [marcando, setMarcando] = useState(null);
   const [marcandoTodas, setMarcandoTodas] = useState(false);
 
-  async function carregarNotificacoes() {
+  async function carregarNotificacoes(signal) {
     try {
       setLoading(true);
-      const data = await apiGet("/api/notificacoes");
+      const data = await apiGet("/api/notificacoes", { signal });
       setNotificacoes(Array.isArray(data) ? data : []);
     } catch (error) {
-      toast.error("❌ Erro ao carregar notificações.");
-      console.error("Erro:", error);
-      setNotificacoes([]);
+      if (error?.name !== "AbortError") {
+        toast.error("❌ Erro ao carregar notificações.");
+        console.error("Erro:", error);
+        setNotificacoes([]);
+      }
     } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => {
-    carregarNotificacoes();
+  // ✅ evita duplo carregamento (StrictMode)
+  useOnceEffect(() => {
+    const ac = new AbortController();
+    carregarNotificacoes(ac.signal);
+    return () => ac.abort();
   }, []);
 
-  // ───────────────────────── helpers ─────────────────────────
+  // ───────────── Helpers ─────────────
   const isNaoLida = (n) => {
     if (typeof n?.lida === "boolean") return !n.lida;
     if (typeof n?.lido === "boolean") return !n.lido;
     if ("lida_em" in (n || {})) return !n.lida_em;
     if ("lidaEm" in (n || {})) return !n.lidaEm;
-    return true; // sem marcador -> trata como não lida
+    return true;
   };
 
   const obterIcone = (tipo) => {
     switch (String(tipo || "").toLowerCase()) {
       case "evento":
-        return <CalendarDays className="text-blue-600 dark:text-blue-400" />;
+        return <CalendarDays className="text-blue-600 dark:text-blue-400" aria-hidden="true" />;
       case "certificado":
-        return <CheckCircle className="text-green-600 dark:text-green-400" />;
+        return <CheckCircle className="text-green-600 dark:text-green-400" aria-hidden="true" />;
       case "aviso":
-        return <Info className="text-yellow-600 dark:text-yellow-400" />;
+        return <Info className="text-yellow-600 dark:text-yellow-400" aria-hidden="true" />;
       case "avaliacao":
-        return <Star className="text-purple-600 dark:text-purple-400" />;
+        return <Star className="text-purple-600 dark:text-purple-400" aria-hidden="true" />;
       default:
-        return <Bell className="text-gray-600 dark:text-gray-400" />;
+        return <Bell className="text-gray-600 dark:text-gray-400" aria-hidden="true" />;
     }
   };
 
@@ -110,19 +107,17 @@ export default function Notificacoes() {
       if (link) window.location.href = link;
     } catch (error) {
       toast.error("❌ Erro ao marcar como lida.");
-      console.error("Erro ao marcar notificação como lida:", error);
+      console.error(error);
     } finally {
       setMarcando(null);
     }
   }
 
-  // Opcional: marcar todas (loop seguro)
   async function marcarTodas() {
     const ids = notificacoes.filter(isNaoLida).map((n) => n.id).filter(Boolean);
     if (!ids.length) return;
     try {
       setMarcandoTodas(true);
-      // Caso o backend não tenha endpoint bulk, faz loop
       for (const id of ids) {
         try {
           await apiPatch(`/api/notificacoes/${id}/lida`);
@@ -142,26 +137,43 @@ export default function Notificacoes() {
     }
   }
 
-  // não lidas primeiro
   const lista = useMemo(
     () => [...notificacoes].sort((a, b) => (isNaoLida(b) ? 1 : 0) - (isNaoLida(a) ? 1 : 0)),
     [notificacoes]
   );
 
-  // ───────────────────────── render ─────────────────────────
+  // ───────────── Render ─────────────
   return (
     <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900">
-      {/* 🟪 Cabeçalho (comunicações/avisos) */}
-      <PageHeader title="Notificações" icon={Bell} variant="roxo" />
+      {/* 🟣 HeaderHero exclusivo desta página (violeta → fúcsia → rosa) */}
+      <header
+        className="relative w-full text-white bg-gradient-to-r from-violet-600 via-fuchsia-600 to-pink-500 py-10 px-6 sm:py-16 sm:px-8 shadow-lg"
+        aria-labelledby="header-notificacoes-title"
+      >
+        <motion.div
+          initial={{ opacity: 0, y: 15 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6 }}
+          className="max-w-5xl mx-auto text-center flex flex-col items-center justify-center"
+        >
+          <Bell size={48} strokeWidth={1.5} className="mb-3 animate-pulse drop-shadow-md" aria-hidden="true" />
+          <h1 id="header-notificacoes-title" className="text-3xl sm:text-4xl font-bold tracking-tight">
+            Minhas Notificações
+          </h1>
+          <p className="mt-2 text-base sm:text-lg text-white/90 max-w-2xl">
+            Acompanhe avisos, certificados e atualizações da Escola da Saúde.
+          </p>
+        </motion.div>
+      </header>
 
       <main role="main" className="flex-1">
         <section className="p-4 sm:p-6 md:p-8 max-w-4xl mx-auto">
           <Breadcrumbs trilha={[{ label: "Início", href: "/" }, { label: "Notificações" }]} />
 
           <div className="flex items-center justify-between mb-4">
-            <h1 className="text-xl sm:text-2xl font-bold flex items-center gap-2 text-lousa dark:text-white">
-              <Bell /> Notificações
-            </h1>
+            <h2 className="text-xl sm:text-2xl font-bold flex items-center gap-2 text-lousa dark:text-white">
+              <Bell aria-hidden="true" /> Notificações
+            </h2>
 
             <button
               onClick={marcarTodas}
@@ -195,9 +207,7 @@ export default function Notificacoes() {
                   initial={{ opacity: 0, y: 15 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.3, delay: index * 0.05 }}
-                  className={`rounded-xl shadow p-4 border-l-4 transition-all duration-200 ${classesCartao(
-                    n
-                  )}`}
+                  className={`rounded-xl shadow p-4 border-l-4 transition-all duration-200 ${classesCartao(n)}`}
                 >
                   <div className="flex items-start gap-3">
                     <div className="shrink-0 mt-0.5">{obterIcone(n.tipo)}</div>
@@ -263,7 +273,6 @@ export default function Notificacoes() {
         </section>
       </main>
 
-      {/* Rodapé institucional */}
       <Footer />
     </div>
   );

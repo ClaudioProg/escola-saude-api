@@ -2,6 +2,7 @@
 import { Navigate, useLocation } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiPerfilMe, getPerfilIncompletoFlag, subscribePerfilFlag } from "../services/api";
+import { useOnceEffect } from "../hooks/useOnceEffect";
 
 const DEBUG =
   typeof import.meta !== "undefined" && import.meta.env?.VITE_DEBUG_PRIVATE_ROUTE
@@ -129,21 +130,25 @@ export default function PrivateRoute({ children, permitido, perfilPermitido }) {
     const f = getPerfilIncompletoFlag();
     return f === null ? null : !!f;
   });
-  const firstLoadRef = useRef(true);
 
   const autorizado = useMemo(
     () => temAcesso(perfisUsuario, exigidos),
     [perfisUsuario, exigidos]
   );
 
-  // atualiza sessão/perfis ao mudar de rota
+  // ── Guards contra duplo-mount do StrictMode / corrida de efeitos ──
+  const ranInitialRef = useRef(false);
+  const prevPathRef = useRef(path);
+  const isFetchingRef = useRef(false);
+
+  /* Atualiza sessão/perfis ao mudar de rota */
   useEffect(() => {
     setToken(getValidToken());
     setPerfisUsuario(getPerfisRobusto());
   }, [location.pathname]);
 
-  // ouvinte de storage + evento manual "auth:changed"
-  useEffect(() => {
+  /* Ouvinte de storage + evento manual "auth:changed" (roda uma única vez) */
+  useOnceEffect(() => {
     const onStorage = (e) => {
       if (!e.key || ["perfil", "usuario", "token"].includes(e.key)) {
         DEBUG && console.log("[PR] storage event → atualizar sessão/perfis");
@@ -164,8 +169,8 @@ export default function PrivateRoute({ children, permitido, perfilPermitido }) {
     };
   }, []);
 
-  // flag de perfil (broadcast)
-  useEffect(() => {
+  /* flag de perfil (broadcast) — assinatura única */
+  useOnceEffect(() => {
     const unsubscribe = subscribePerfilFlag((next) => {
       DEBUG && console.log("[PR] evento perfil:flag →", next);
       setPerfilIncompleto(next);
@@ -173,9 +178,29 @@ export default function PrivateRoute({ children, permitido, perfilPermitido }) {
     return unsubscribe;
   }, []);
 
-  // checagem inicial do /perfil/me (silenciosa) — também tenta sessão via cookie quando não há token
+  /* Checagem de /perfil/me:
+     - evita rodar 2x no primeiro mount (StrictMode) com ranInitialRef/prevPathRef
+     - re-checa ao trocar de rota (path mudou)
+     - usa AbortController e trava concorrência com isFetchingRef  */
   useEffect(() => {
-    let alive = true;
+    const pathMudou = prevPathRef.current !== path;
+
+    // Ignora a 1ª duplicata do StrictMode (mesmo path, já rodou uma vez)
+    if (ranInitialRef.current && !pathMudou) return;
+
+    // Atualiza referência de path e marca que já rodou pelo menos uma vez
+    prevPathRef.current = path;
+    if (!ranInitialRef.current) ranInitialRef.current = true;
+
+    // Evita concorrência
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+
+    const ac = new AbortController();
+    const finish = () => {
+      isFetchingRef.current = false;
+    };
+
     (async () => {
       const tk = getValidToken();
 
@@ -186,20 +211,16 @@ export default function PrivateRoute({ children, permitido, perfilPermitido }) {
         if (isRotaPublica) {
           DEBUG && console.log("[PR] Rota pública sem token — sem checagem de perfil necessária.");
           setChecandoPerfil(false);
-          firstLoadRef.current = false;
+          finish();
           return;
         }
         try {
           DEBUG && console.log("[PR] Sem token — tentando sessão via cookie em /perfil/me (silent)...");
-          const me = await apiPerfilMe({ on401: "silent", on403: "silent" });
-          if (!alive) return;
-
+          const me = await apiPerfilMe({ on401: "silent", on403: "silent", signal: ac.signal });
           if (me && typeof me === "object") {
-            // Considera sessão válida vinda do cookie
             setSessaoValida(true);
             setPerfilIncompleto(!!me?.perfil_incompleto);
 
-            // Se a API retornar perfis, atualiza localmente para a verificação de autorização
             const possiveisPerfis = []
               .concat(me?.perfil ?? [])
               .concat((me?.perfis ?? "").toString().split(","))
@@ -222,43 +243,44 @@ export default function PrivateRoute({ children, permitido, perfilPermitido }) {
             DEBUG && console.log("[PR] Sessão via cookie não encontrada.");
           }
         } catch (e) {
-          DEBUG && console.warn("[PR] Falha ao checar sessão via cookie (ignorada):", e?.message || e);
-        } finally {
-          if (alive) {
-            setChecandoPerfil(false);
-            firstLoadRef.current = false;
+          if (e?.name !== "AbortError") {
+            DEBUG && console.warn("[PR] Falha ao checar sessão via cookie (ignorada):", e?.message || e);
           }
+        } finally {
+          setChecandoPerfil(false);
+          finish();
         }
         return;
       }
 
       // Com token válido:
-      if (!firstLoadRef.current && perfilIncompleto !== null) {
+      if (perfilIncompleto !== null) {
         DEBUG && console.log("[PR] Já tenho flag de perfil:", perfilIncompleto);
         setChecandoPerfil(false);
+        finish();
         return;
       }
+
       try {
         DEBUG && console.log("[PR] Consultando /perfil/me (on401:on403 silent) com token...");
-        const me = await apiPerfilMe({ on401: "silent", on403: "silent" });
-        if (!alive) return;
+        const me = await apiPerfilMe({ on401: "silent", on403: "silent", signal: ac.signal });
         setPerfilIncompleto(!!me?.perfil_incompleto);
         DEBUG && console.log("[PR] Perfil incompleto? →", !!me?.perfil_incompleto);
       } catch (e) {
-        DEBUG &&
-          console.warn("[PR] Falha ao consultar perfil (ignorada p/ redirect):", e?.message || e);
-      } finally {
-        if (alive) {
-          setChecandoPerfil(false);
-          firstLoadRef.current = false;
+        if (e?.name !== "AbortError") {
+          DEBUG && console.warn("[PR] Falha ao consultar perfil (ignorada p/ redirect):", e?.message || e);
         }
+      } finally {
+        setChecandoPerfil(false);
+        finish();
       }
     })();
+
     return () => {
-      alive = false;
+      ac.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, path]); // re-checa ao trocar de rota também
+  }, [token, path]); // mantém re-checagem ao trocar de rota
 
   /* ───────────────── Decisões ───────────────── */
 
