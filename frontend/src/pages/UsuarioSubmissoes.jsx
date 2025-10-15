@@ -15,6 +15,13 @@ import ModalVerEdital from "../components/ModalVerEdital";
 import ModalInscreverTrabalho from "../components/ModalInscreverTrabalho";
 import Footer from "../components/Footer";
 
+/* 🔗 Usa a mesma base do Axios para montar URLs absolutas */
+const mkApiUrl = (subpath) => {
+  const base = (api?.defaults?.baseURL ?? "/api").replace(/\/+$/, "");
+  const path = String(subpath || "").replace(/^\/+/, "");
+  return `${base}/${path}`;
+};
+
 function PosterCell({ id, nome }) {
   const [downloading, setDownloading] = useState(false);
 
@@ -109,15 +116,19 @@ export default function UsuarioSubmissoes() {
     setMinhas(Array.isArray(s) ? s : s.data || []);
   };
 
+  const isDentroPrazo = (row) =>
+    !!(row?.dentro_prazo ?? row?.dentroPrazo);
+
   const canEdit = (row) => {
     // pode editar se: dentro do prazo da chamada e status NÃO está nos bloqueados
-    return !!row.dentro_prazo && !BLOQUEADOS.has(row.status);
+    return isDentroPrazo(row) && !BLOQUEADOS.has(row.status);
   };
 
   const abertas = useMemo(
-    () => chamadas.filter((c) => c.dentro_prazo).length,
+    () => chamadas.filter((c) => isDentroPrazo(c)).length,
     [chamadas]
   );
+
   const aprovadas = useMemo(
     () =>
       minhas.filter((m) =>
@@ -181,6 +192,12 @@ export default function UsuarioSubmissoes() {
             <div className="grid md:grid-cols-2 gap-5">
               {chamadas.map((ch) => {
                 const temModelo = !!modeloMap[ch.id];
+                const prazoStr = ch.prazo_final_br || ch.prazo_final || ch.prazoFinal;
+                const prazoFmt = prazoStr
+                  ? /^\d{4}-\d{2}-\d{2}/.test(String(prazoStr))
+                    ? new Date(prazoStr).toLocaleDateString("pt-BR")
+                    : String(prazoStr)
+                  : "—";
                 return (
                   <motion.div
                     key={ch.id}
@@ -197,11 +214,10 @@ export default function UsuarioSubmissoes() {
                       </p>
                       <p
                         className={`text-xs font-medium ${
-                          ch.dentro_prazo ? "text-green-600" : "text-red-600"
+                          isDentroPrazo(ch) ? "text-green-600" : "text-red-600"
                         }`}
                       >
-                        Prazo final:{" "}
-                        {new Date(ch.prazo_final_br).toLocaleDateString("pt-BR")}
+                        Prazo final: {prazoFmt}
                       </p>
                     </div>
 
@@ -213,7 +229,7 @@ export default function UsuarioSubmissoes() {
                         <FileText className="w-4 h-4" /> Ver edital
                       </button>
 
-                      {ch.dentro_prazo && (
+                      {isDentroPrazo(ch) && (
                         <button
                           onClick={() => setModalInscricao({ chamadaId: ch.id })}
                           className="flex items-center gap-2 text-sm bg-indigo-600 text-white px-3 py-2 rounded-md hover:bg-indigo-700 transition"
@@ -224,7 +240,9 @@ export default function UsuarioSubmissoes() {
 
                       {temModelo && (
                         <a
-                          href={`/api/chamadas/${ch.id}/modelo-banner`}
+                          href={mkApiUrl(`chamadas/${ch.id}/modelo-banner`)} // ✅ base do Axios
+                          target="_blank"
+                          rel="noopener noreferrer"
                           className="ml-auto inline-flex items-center gap-1 text-sm text-indigo-700 hover:underline"
                         >
                           Modelo de pôster <ExternalLink className="w-3.5 h-3.5" />
@@ -278,7 +296,7 @@ export default function UsuarioSubmissoes() {
                               : "bg-gray-100 text-gray-700"
                           }`}
                         >
-                          {m.status.replace("_", " ")}
+                          {String(m.status).replaceAll("_", " ")}
                         </span>
                       </td>
                       <td className="p-3 text-center">

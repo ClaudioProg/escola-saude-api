@@ -2,14 +2,17 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from "react"
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Settings2, Save, Plus, Trash2, Pencil, Eye, EyeOff,
-  CheckCircle2, XCircle, X, Loader2, FileText, AlertCircle, Upload
+  CheckCircle2, XCircle, X, Loader2, FileText, AlertCircle, Upload, Download
 } from "lucide-react";
 import Footer from "../components/Footer";
 import {
   datetimeLocalToBrWall, wallToDatetimeLocal, isIsoWithTz, isWallDateTime,
   isoToDatetimeLocalInZone, fmtWallDateTime, fmtDataHora
 } from "../utils/data";
-import { apiGet, apiPost, apiPut, apiDelete, apiUpload as apiUploadSvc } from "../services/api";
+import {
+  apiGet, apiPost, apiPut, apiDelete, apiUpload as apiUploadSvc,
+  apiGetFile, downloadBlob
+} from "../services/api";
 import { useParams } from "react-router-dom";
 
 /* ─── utils ─── */
@@ -367,6 +370,7 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
   const [modeloBusy, setModeloBusy] = useState(false);
   const [modeloErr, setModeloErr] = useState("");
   const [modeloOk, setModeloOk] = useState("");
+  const [modeloDownloading, setModeloDownloading] = useState(false);
   const hadUploadCorsRef = useRef(false); // marca se houve CORS/401/403 no upload
 
   const inputBase =
@@ -453,6 +457,28 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
   // util: espera ms
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+  // 📥 baixar modelo (.ppt/.pptx)
+  const onDownloadModelo = async () => {
+    if (!isEdit) return;
+    if (!modeloMeta?.exists) return;
+    setModeloErr("");
+    setModeloOk("");
+    setModeloDownloading(true);
+    try {
+      const { blob, filename } = await apiGetFile(`admin/chamadas/${chamadaId}/modelo-banner/download`);
+      const name =
+        filename ||
+        modeloMeta?.filename ||
+        `modelo-banner-chamada-${chamadaId}${/\.pptx?$/i.test(modeloMeta?.filename || "") ? "" : ".pptx"}`;
+      downloadBlob(name, blob);
+      setModeloOk("Download iniciado.");
+    } catch (e) {
+      setModeloErr(e?.message || "Falha ao baixar o modelo.");
+    } finally {
+      setModeloDownloading(false);
+    }
+  };
+
   // 📤 importar modelo de banner (.pptx) com retry anti-CORS/401
   const onImportModelo = async (file) => {
     if (!file) return;
@@ -466,8 +492,7 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
       if (file.size > 50 * 1024 * 1024) throw new Error("Arquivo muito grande (máx 50MB).");
 
       const tryOnce = async () => {
-        // usa a rota pública protegida por authAdmin no backend
-         await apiUploadSvc(`chamadas/${chamadaId}/modelo-banner`, file, { fieldName: "file" });
+        await apiUploadSvc(`chamadas/${chamadaId}/modelo-banner`, file, { fieldName: "file" });
         const meta = await apiGet(`admin/chamadas/${chamadaId}/modelo-banner`);
         setModeloMeta(meta || null);
       };
@@ -486,14 +511,13 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
           lastErr = e;
           const msg = String(e?.message || "");
           const status = e?.status || e?.response?.status;
-          // tenta “esquentar” sessão em erro típico
           if (status === 401 || status === 403 || /Failed to fetch|CORS/i.test(msg)) {
             hadUploadCorsRef.current = true;
             try { await apiGet("perfil/me"); } catch {}
             await sleep(attempts[i]);
             continue;
           }
-          break; // outros erros
+          break;
         }
       }
       if (lastErr) throw lastErr;
@@ -511,7 +535,6 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
     setErr("");
     setInfoOk("");
 
-    // se acabou de ter CORS no upload, realiza um warm-up rápido antes do save
     if (hadUploadCorsRef.current) {
       try { await apiGet("perfil/me"); } catch {}
       await sleep(150);
@@ -579,7 +602,6 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
         setInfoOk("Chamada criada. Agora você já pode importar o modelo (.pptx) desta chamada.");
         onSaved?.(savedId);
 
-        // aquecimento leve da sessão e pré-carga da meta do modelo
         try { await apiGet(`admin/chamadas/${savedId}/modelo-banner`); } catch {}
         try { await apiGet("perfil/me"); } catch {}
       }
@@ -631,24 +653,24 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
               </Field>
             </div>
             <Field label="Período da experiência — início (AAAA-MM)">
-  <MonthYearPicker
-    value={form.periodo_experiencia_inicio}
-    max={form.periodo_experiencia_fim || undefined}     // início não pode passar do fim
-    selectClass={inputBase}
-    className="sm:max-w-xs"
-    onChange={(v) => update("periodo_experiencia_inicio", v)}
-  />
-</Field>
+              <MonthYearPicker
+                value={form.periodo_experiencia_inicio}
+                max={form.periodo_experiencia_fim || undefined}
+                selectClass={inputBase}
+                className="sm:max-w-xs"
+                onChange={(v) => update("periodo_experiencia_inicio", v)}
+              />
+            </Field>
 
-<Field label="Período da experiência — fim (AAAA-MM)">
-  <MonthYearPicker
-    value={form.periodo_experiencia_fim}
-    min={form.periodo_experiencia_inicio || undefined}  // fim não pode ser antes do início
-    selectClass={inputBase}
-    className="sm:max-w-xs"
-    onChange={(v) => update("periodo_experiencia_fim", v)}
-  />
-</Field>
+            <Field label="Período da experiência — fim (AAAA-MM)">
+              <MonthYearPicker
+                value={form.periodo_experiencia_fim}
+                min={form.periodo_experiencia_inicio || undefined}
+                selectClass={inputBase}
+                className="sm:max-w-xs"
+                onChange={(v) => update("periodo_experiencia_fim", v)}
+              />
+            </Field>
 
           </section>
 
@@ -864,7 +886,6 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
 
             {/* Importar modelo POR CHAMADA */}
             <Field label="Modelo de banner">
-              {/* Banner de aviso quando for NOVA chamada (antes de salvar) */}
               {!isEdit && (
                 <div className="mb-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-amber-900 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
                   <div className="flex items-start gap-2 text-sm">
@@ -877,22 +898,38 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
               )}
 
               <div className="flex flex-col items-center justify-center gap-3">
-                <label
-                  className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm text-white ${
-                    isEdit && !modeloBusy ? "bg-emerald-600 hover:bg-emerald-700 cursor-pointer" : "bg-zinc-400 cursor-not-allowed"
-                  }`}
-                  title={isEdit ? "Importar modelo (.pptx)" : "Salve a chamada para habilitar o upload"}
-                >
-                  <input
-                    type="file"
-                    accept=".ppt,.pptx,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                    className="hidden"
-                    disabled={!isEdit || modeloBusy}
-                    onChange={(e) => onImportModelo(e.target.files?.[0] || null)}
-                  />
-                  {modeloBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-                  {modeloBusy ? "Enviando…" : "Importar modelo (.pptx)"}
-                </label>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <label
+                    className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm text-white ${
+                      isEdit && !modeloBusy ? "bg-emerald-600 hover:bg-emerald-700 cursor-pointer" : "bg-zinc-400 cursor-not-allowed"
+                    }`}
+                    title={isEdit ? "Importar modelo (.pptx)" : "Salve a chamada para habilitar o upload"}
+                  >
+                    <input
+                      type="file"
+                      accept=".ppt,.pptx,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                      className="hidden"
+                      disabled={!isEdit || modeloBusy}
+                      onChange={(e) => onImportModelo(e.target.files?.[0] || null)}
+                    />
+                    {modeloBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                    {modeloBusy ? "Enviando…" : "Importar modelo (.pptx)"}
+                  </label>
+
+                  {/* Botão de download quando existir */}
+                  {isEdit && modeloMeta?.exists === true && (
+                    <button
+                      type="button"
+                      onClick={onDownloadModelo}
+                      disabled={modeloBusy || modeloDownloading}
+                      className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-zinc-400 dark:disabled:bg-zinc-700"
+                      title="Baixar modelo de banner"
+                    >
+                      {modeloDownloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                      {modeloDownloading ? "Baixando…" : "Baixar modelo"}
+                    </button>
+                  )}
+                </div>
 
                 <div className="mt-1 text-center text-xs text-zinc-500">
                   Esse arquivo será usado por outras telas para gerar/exportar o banner da <strong>chamada atual</strong>.

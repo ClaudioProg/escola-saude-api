@@ -9,15 +9,19 @@ import api, { apiHead, apiUpload } from "../services/api";
 /* Utils */
 const unwrap = (r) => (r?.data ?? r);
 const toMonthValue = (val) => {
-  // Normaliza para YYYY-MM (input[type=month])
   if (!val) return "";
   const s = String(val);
-  // já está no formato
   if (/^\d{4}-\d{2}$/.test(s)) return s;
-  // ISO: 2025-10-03T...
   const m = s.match(/^(\d{4})-(\d{2})/);
   if (m) return `${m[1]}-${m[2]}`;
   return "";
+};
+
+/** 🔗 Gera URL absoluta apontando para a mesma base do cliente API (Axios) */
+const mkApiUrl = (subpath) => {
+  const base = (api?.defaults?.baseURL ?? "/api").replace(/\/+$/, "");
+  const path = String(subpath || "").replace(/^\/+/, "");
+  return `${base}/${path}`;
 };
 
 export default function ModalInscreverTrabalho({
@@ -63,7 +67,6 @@ export default function ModalInscreverTrabalho({
   const prazoFmt = useMemo(() => {
     const v = chamada?.prazo_final_br || chamada?.prazo_final || chamada?.prazoFinal;
     if (!v) return "—";
-    // se vier ISO, formata; se vier "dd/mm/aaaa hh:mm", só retorna
     if (/^\d{4}-\d{2}-\d{2}/.test(String(v))) {
       const d = new Date(v);
       return isNaN(d) ? String(v) : d.toLocaleString("pt-BR");
@@ -77,6 +80,7 @@ export default function ModalInscreverTrabalho({
       return;
     }
     try {
+      // usa HEAD no mesmo caminho relativo do API service
       const ok = await apiHead(`/chamadas/${chId}/modelo-banner`, {
         auth: true,
         on401: "silent",
@@ -193,7 +197,7 @@ export default function ModalInscreverTrabalho({
   const setCoautor = (idx, key, val) => {
     setForm((f) => {
       const arr = [...(f.coautores || [])];
-      arr[idx = Number(idx)] = { ...arr[idx], [key]: val };
+      arr[(idx = Number(idx))] = { ...arr[idx], [key]: val };
       return { ...f, coautores: arr };
     });
   };
@@ -210,7 +214,7 @@ export default function ModalInscreverTrabalho({
         email: c.email?.trim() || "",
         vinculo: c.vinculo?.trim() || "",
       })),
-      poster: undefined, // não manda file aqui — upload é separado
+      poster: undefined, // upload é separado
     };
 
     if (!submissaoId) {
@@ -228,7 +232,6 @@ export default function ModalInscreverTrabalho({
     if (!form.poster || !id) return { ok: true };
     if (posterState === "uploading") return { ok: false, error: "Upload em andamento." };
 
-    // ── Normalização de nome e MIME (.ppt / .pptx)
     const f = form.poster;
     const rawName = (f.name || "").trim();
     const rawType = (f.type || "").trim();
@@ -258,7 +261,6 @@ export default function ModalInscreverTrabalho({
 
     const fileToSend = new File([f], fixedName, { type: fixedType });
 
-    // ── FormData com o campo esperado pelo backend ("poster")
     const fd = new FormData();
     fd.append("poster", fileToSend, fileToSend.name);
 
@@ -272,7 +274,6 @@ export default function ModalInscreverTrabalho({
         await attempt();
       } catch (e) {
         const status = e?.status || e?.response?.status;
-        // re-tenta após throttle simples do backend
         if (status === 429) {
           await new Promise((r) => setTimeout(r, 3200));
           await attempt();
@@ -305,7 +306,6 @@ export default function ModalInscreverTrabalho({
       const up = await uploadPosterIfAny(id);
       if (!up.ok) alert(`Rascunho salvo, mas o pôster não foi anexado.\nMotivo: ${up.error}`);
       onSucesso?.();
-      // re-checa modelo (caso admin tenha publicado recentemente)
       await checarModelo(chamada?.id || propChamadaId);
     } catch (e) {
       alert(e?.message || "Falha ao salvar rascunho.");
@@ -358,7 +358,11 @@ export default function ModalInscreverTrabalho({
     );
   }
 
-  const dentroPrazo = !!chamada.dentro_prazo;
+  // ✅ aceita snake_case ou camelCase vindo do backend
+  const dentroPrazo = !!(chamada?.dentro_prazo ?? chamada?.dentroPrazo);
+
+  // ✅ URL absoluta e consistente com a base do Axios
+  const modeloUrl = mkApiUrl(`chamadas/${chamada?.id || propChamadaId}/modelo-banner`);
 
   return (
     <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
@@ -554,9 +558,9 @@ export default function ModalInscreverTrabalho({
 
               {modeloDisponivel ? (
                 <a
-                  href={`/api/chamadas/${chamada?.id || propChamadaId}/modelo-banner`}
+                  href={modeloUrl}               // ✅ agora usa a base do Axios (localhost/produção)
                   target="_blank"
-                  rel="noreferrer"
+                  rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 text-indigo-700 hover:underline"
                 >
                   Baixar modelo <ExternalLink className="w-3.5 h-3.5" />
