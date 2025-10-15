@@ -1,4 +1,4 @@
-// 📁 src/routes/chamadas.routes.js
+// 📁 src/routes/chamadasRoutes.js
 const express = require("express");
 const router = express.Router();
 
@@ -18,7 +18,7 @@ const requireAdmin = [requireAuth, authorizeRoles("administrador")];
 /* =================================================================== */
 
 // Cache curtinho para arquivos públicos (ideal para <img> sem token)
-function cachePublicoCurto(req, res, next) {
+function cachePublicoCurto(_req, res, next) {
   // 1 hora, com "immutable" para evitar revalidações desnecessárias
   res.setHeader("Cache-Control", "public, max-age=3600, immutable");
   next();
@@ -35,20 +35,9 @@ router.get("/chamadas/publicadas", injectDb(), ctrl.listarAtivas); // alias
 // Detalhe de uma chamada (linhas / critérios / limites)
 router.get("/chamadas/:id", injectDb(), ctrl.obterChamada);
 
-// Modelo de banner POR CHAMADA (público)
-// - HEAD → retorna apenas headers (útil para checagem rápida no front)
-// - GET  → streaming do arquivo (ou 302 se for link externo)
-router.head(
-  "/chamadas/:id/modelo-banner",
-  injectDb(),
-  ctrl.baixarModeloPorChamada
-);
-router.get(
-  "/chamadas/:id/modelo-banner",
-  cachePublicoCurto,
-  injectDb(),
-  ctrl.baixarModeloPorChamada
-);
+// ⚠️ REMOVIDO DAQUI:
+//   HEAD/GET /chamadas/:id/modelo-banner
+// Essas rotas agora vivem em src/routes/chamadasModeloRoutes.js
 
 // Modelo de banner padrão (legado/global)
 router.get("/modelos/banner-padrao.pptx", injectDb(), ctrl.exportarModeloBanner);
@@ -72,48 +61,11 @@ router.patch("/admin/chamadas/:id/publicar", requireAdmin, injectDb(), ctrl.publ
 // Excluir chamada
 router.delete("/admin/chamadas/:id", requireAdmin, injectDb(), ctrl.remover);
 
-/* ---------------- Modelo por CHAMADA (Admin) ----------------
-   - GET  /api/admin/chamadas/:id/modelo-banner            → META (ou use ?meta=1 na pública)
-   - POST /api/admin/chamadas/:id/modelo-banner            → UPLOAD (campo "banner")
-   - GET  /api/admin/chamadas/:id/modelo-banner/download   → STREAM seguro (p/ fetch blob no painel)
-   - HEAD /api/admin/chamadas/:id/modelo-banner/download   → HEAD seguro
-   ------------------------------------------------------------ */
-
-// META (somente se o controller existir)
-if (typeof ctrl.modeloBannerMeta === "function") {
-  router.get(
-    "/admin/chamadas/:id/modelo-banner",
-    requireAdmin,
-    injectDb(),
-    ctrl.modeloBannerMeta
-  );
-}
-
-// UPLOAD (somente se o controller existir)
-if (typeof ctrl.importarModeloBanner === "function") {
-  router.post(
-    "/admin/chamadas/:id/modelo-banner",
-    requireAdmin,
-    injectDb(),
-    ctrl.importarModeloBanner
-  );
-}
-
-// DOWNLOAD/STREAM SEGURO (opcional; só cria se existir no controller)
-if (typeof ctrl.baixarModeloPorChamadaAdmin === "function") {
-  router.head(
-    "/admin/chamadas/:id/modelo-banner/download",
-    requireAdmin,
-    injectDb(),
-    ctrl.baixarModeloPorChamadaAdmin
-  );
-  router.get(
-    "/admin/chamadas/:id/modelo-banner/download",
-    requireAdmin,
-    injectDb(),
-    ctrl.baixarModeloPorChamadaAdmin
-  );
-}
+// ⚠️ REMOVIDO DAQUI (ADMIN – modelo por chamada):
+//   - GET  /api/admin/chamadas/:id/modelo-banner
+//   - POST /api/admin/chamadas/:id/modelo-banner
+//   - HEAD/GET /api/admin/chamadas/:id/modelo-banner/download
+// Essas rotas agora vivem em src/routes/chamadasModeloRoutes.js
 
 /* =================================================================== */
 /* Administração — Submissões (sem exigir chamadaId)                    */
@@ -121,12 +73,7 @@ if (typeof ctrl.baixarModeloPorChamadaAdmin === "function") {
 
 // Todas as submissões (admin)
 if (typeof trabCtrl.listarSubmissoesAdminTodas === "function") {
-  router.get(
-    "/admin/submissoes",
-    requireAdmin,
-    injectDb(),
-    trabCtrl.listarSubmissoesAdminTodas
-  );
+  router.get("/admin/submissoes", requireAdmin, injectDb(), trabCtrl.listarSubmissoesAdminTodas);
 }
 
 // Submissões por chamada (compat com página atual)
@@ -138,26 +85,11 @@ router.get(
 );
 
 // Avaliação escrita / oral
-router.post(
-  "/admin/submissoes/:id/avaliar",
-  requireAdmin,
-  injectDb(),
-  trabCtrl.avaliarEscrita
-);
-router.post(
-  "/admin/submissoes/:id/avaliar-oral",
-  requireAdmin,
-  injectDb(),
-  trabCtrl.avaliarOral
-);
+router.post("/admin/submissoes/:id/avaliar", requireAdmin, injectDb(), trabCtrl.avaliarEscrita);
+router.post("/admin/submissoes/:id/avaliar-oral", requireAdmin, injectDb(), trabCtrl.avaliarOral);
 
 // Definir status final
-router.post(
-  "/admin/submissoes/:id/status",
-  requireAdmin,
-  injectDb(),
-  trabCtrl.definirStatusFinal
-);
+router.post("/admin/submissoes/:id/status", requireAdmin, injectDb(), trabCtrl.definirStatusFinal);
 
 // Consolidar classificação (Top 40 + Top 6 por linha)
 router.post(

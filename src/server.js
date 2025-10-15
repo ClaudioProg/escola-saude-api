@@ -13,19 +13,15 @@ const crypto = require("crypto");
 dotenv.config();
 
 /* ───────── DB (adapter com any/oneOrNone/tx) ───────── */
-// compatível com `module.exports = db` OU `module.exports = { db }`
 const rawDb = require("./db");
 const db = rawDb?.db ?? rawDb;
 
-/* 🔒 Paths persistentes (UNIFICADOS)
-   Em produção (Render), defina:
-   FILES_BASE=/opt/render/project/data
-*/
+/* 🔒 Paths persistentes (UNIFICADOS) */
 const {
   DATA_ROOT,
   UPLOADS_DIR,
   MODELOS_CHAMADAS_DIR,
-  CERT_DIR,          // ✅ adicionada a pasta de certificados
+  CERT_DIR,
   ensureDir,
 } = require("./paths");
 
@@ -60,33 +56,24 @@ const usuariosRoute              = require("./routes/usuariosRoute");
 const chamadasRoutes             = require("./routes/chamadasRoutes");
 const trabalhosRoutes            = require("./routes/trabalhosRoutes");
 
-/* 🆕 Upload/Modelo de Banner (por chamada) — NOVAS rotas dinâmicas */
-const chamadasModeloRoutes       = require("./routes/chamadasModelo.routes");
-/* (legado) Se ainda usa algo em uploadRoutes, mantenha:
-   const uploadRoutes               = require("./routes/uploadRoutes");
-*/
-
-/* ───────── ENV obrigatórios em produção ───────── */
-if (process.env.NODE_ENV === "production") {
-  if (!process.env.JWT_SECRET || !process.env.GOOGLE_CLIENT_ID) {
-    console.error("❌ JWT_SECRET ou GOOGLE_CLIENT_ID não definido.");
-    process.exit(1);
-  }
-}
+/* 🆕 Upload/Modelo de Banner (por chamada) — arquivo correto */
+const chamadasModeloRoutes       = require("./routes/chamadasModeloRoutes");
+// const uploadRoutes            = require("./routes/uploadRoutes"); // (legado, se precisar)
 
 const IS_DEV = process.env.NODE_ENV !== "production";
 const app = express();
+app.disable("x-powered-by");
 
 /* ───────── Hardening / perf ───────── */
 app.set("trust proxy", 1);
 
-// 1) Nonce por requisição (CSP)
+// Nonce por requisição (CSP)
 app.use((_, res, next) => {
   res.locals.cspNonce = crypto.randomBytes(16).toString("base64");
   next();
 });
 
-// 2) Helmet com CSP (nonce). Em DEV, liberar eval/inline para Vite.
+// Helmet com CSP
 app.use(
   helmet({
     crossOriginEmbedderPolicy: false,
@@ -167,7 +154,7 @@ const corsOptions = {
     "Cache-Control",
     "Pragma",
   ],
-  exposedHeaders: ["Content-Disposition", "X-Perfil-Incompleto"],
+  exposedHeaders: ["Content-Disposition", "Content-Length", "X-Perfil-Incompleto"],
   maxAge: 86400,
 };
 app.use(cors(corsOptions));
@@ -181,11 +168,11 @@ app.options("*", cors(corsOptions), (_req, res) => res.sendStatus(204));
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-/* ───────── Persistência de arquivos (já garantida por paths.js) ───────── */
+/* ───────── Persistência de arquivos ───────── */
 ensureDir(DATA_ROOT);
 ensureDir(UPLOADS_DIR);
 ensureDir(MODELOS_CHAMADAS_DIR);
-ensureDir(CERT_DIR); // ✅ garante a pasta onde os PDFs são salvos/baixados
+ensureDir(CERT_DIR);
 console.log("[FILES] DATA_ROOT:", DATA_ROOT);
 console.log("[FILES] UPLOADS_DIR:", UPLOADS_DIR);
 console.log("[FILES] MODELOS_CHAMADAS_DIR:", MODELOS_CHAMADAS_DIR);
@@ -319,15 +306,12 @@ app.use((req, res) => {
 
 /* ───────── Error handler (inclui multer) ───────── */
 app.use((err, _req, res, _next) => {
-  // Tamanho excedido (multer)
   if (err?.code === "LIMIT_FILE_SIZE") {
     return res.status(400).json({ erro: "Arquivo muito grande (máx. 50MB)." });
   }
-  // Filtro de tipo/extensão configurado no multer
   if (err?.message && /Apenas arquivos \.ppt|\.pptx/i.test(err.message)) {
     return res.status(400).json({ erro: "Apenas arquivos .ppt ou .pptx" });
   }
-  // Campos esperados de upload (usuário/admin)
   if (err?.field === "poster" || err?.field === "banner" || err?.field === "file") {
     return res.status(400).json({ erro: err.message || "Falha no upload." });
   }
