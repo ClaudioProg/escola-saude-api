@@ -6,6 +6,20 @@ import {
 } from "lucide-react";
 import api, { apiHead, apiUpload } from "../services/api";
 
+/* Utils */
+const unwrap = (r) => (r?.data ?? r);
+const toMonthValue = (val) => {
+  // Normaliza para YYYY-MM (input[type=month])
+  if (!val) return "";
+  const s = String(val);
+  // já está no formato
+  if (/^\d{4}-\d{2}$/.test(s)) return s;
+  // ISO: 2025-10-03T...
+  const m = s.match(/^(\d{4})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}`;
+  return "";
+};
+
 export default function ModalInscreverTrabalho({
   chamadaId: propChamadaId,
   submissaoId: propSubId,
@@ -45,11 +59,34 @@ export default function ModalInscreverTrabalho({
     poster: null,
   });
 
+  // mostra prazo com segurança (se já vier em PT-BR, mantém)
   const prazoFmt = useMemo(() => {
-    const v = chamada?.prazo_final_br;
-    const d = v ? new Date(v) : null;
-    return d && !isNaN(d.getTime()) ? d.toLocaleString("pt-BR") : "—";
+    const v = chamada?.prazo_final_br || chamada?.prazo_final || chamada?.prazoFinal;
+    if (!v) return "—";
+    // se vier ISO, formata; se vier "dd/mm/aaaa hh:mm", só retorna
+    if (/^\d{4}-\d{2}-\d{2}/.test(String(v))) {
+      const d = new Date(v);
+      return isNaN(d) ? String(v) : d.toLocaleString("pt-BR");
+    }
+    return String(v);
   }, [chamada]);
+
+  async function checarModelo(chId) {
+    if (!chId) {
+      setModeloDisponivel(false);
+      return;
+    }
+    try {
+      const ok = await apiHead(`/chamadas/${chId}/modelo-banner`, {
+        auth: true,
+        on401: "silent",
+        on403: "silent",
+      });
+      setModeloDisponivel(!!ok);
+    } catch {
+      setModeloDisponivel(false);
+    }
+  }
 
   // Carrega:
   // - edição: submissão + chamada da submissão
@@ -58,26 +95,27 @@ export default function ModalInscreverTrabalho({
     let alive = true;
     (async () => {
       try {
+        setLoading(true);
+
         if (propSubId) {
-          // Submissão
-          const s = await api.get(`/submissoes/${propSubId}`);
-          const sub = s?.data ?? s;
+          // Submissão (edição)
+          const s = unwrap(await api.get(`/submissoes/${propSubId}`));
           if (!alive) return;
 
-          setSubmissaoId(sub.id);
+          setSubmissaoId(s.id);
           setForm((f) => ({
             ...f,
-            titulo: sub.titulo || "",
-            inicio_experiencia: sub.inicio_experiencia || "",
-            linha_tematica_id: sub.linha_tematica_id || "",
-            introducao: sub.introducao || "",
-            objetivos: sub.objetivos || "",
-            metodo: sub.metodo || "",
-            resultados: sub.resultados || "",
-            consideracoes: sub.consideracoes || "",
-            bibliografia: sub.bibliografia || "",
-            coautores: Array.isArray(sub.coautores)
-              ? sub.coautores.map((c) => ({
+            titulo: s.titulo || "",
+            inicio_experiencia: toMonthValue(s.inicio_experiencia || s.inicioExperiencia),
+            linha_tematica_id: s.linha_tematica_id || s.linhaTematicaId || "",
+            introducao: s.introducao || "",
+            objetivos: s.objetivos || "",
+            metodo: s.metodo || "",
+            resultados: s.resultados || "",
+            consideracoes: s.consideracoes || "",
+            bibliografia: s.bibliografia || "",
+            coautores: Array.isArray(s.coautores)
+              ? s.coautores.map((c) => ({
                   nome: c.nome || "",
                   cpf: c.cpf || "",
                   email: c.email || "",
@@ -86,9 +124,9 @@ export default function ModalInscreverTrabalho({
               : [],
           }));
 
-          // se já tem pôster, exibimos como "enviado"
-          if (sub.poster_nome) {
-            setPosterExistente(sub.poster_nome);
+          // pôster existente
+          if (s.poster_nome || s.posterNome) {
+            setPosterExistente(s.poster_nome || s.posterNome);
             setPosterState("done");
           } else {
             setPosterExistente("");
@@ -96,46 +134,22 @@ export default function ModalInscreverTrabalho({
           }
 
           // Chamada da submissão
-          const ch = await api.get(`/chamadas/${sub.chamada_id}`);
-          const payload = ch?.data ?? ch;
-          const chamadaFound = payload?.chamada || payload;
-
-          setChamada(chamadaFound || null);
-          setLinhas(payload?.linhas || []);
-          setLimites(payload?.limites || chamadaFound?.limites || {});
-          setMaxCoautores(Number(chamadaFound?.max_coautores ?? 10));
-
-          try {
-            const ok = await apiHead(`/chamadas/${sub.chamada_id}/modelo-banner`, {
-              auth: true,
-              on401: "silent",
-              on403: "silent",
-            });
-            setModeloDisponivel(!!ok);
-          } catch {
-            setModeloDisponivel(false);
-          }
+          const chResp = unwrap(await api.get(`/chamadas/${s.chamada_id || s.chamadaId}`));
+          const ch = chResp?.chamada || chResp;
+          setChamada(ch || null);
+          setLinhas(chResp?.linhas || []);
+          setLimites(chResp?.limites || ch?.limites || {});
+          setMaxCoautores(Number(ch?.max_coautores ?? 10));
+          await checarModelo(ch?.id || s.chamada_id || s.chamadaId);
         } else {
           // Nova submissão
-          const r = await api.get(`/chamadas/${propChamadaId}`);
-          const payload = r?.data ?? r;
-          const ch = payload?.chamada || payload;
-
+          const r = unwrap(await api.get(`/chamadas/${propChamadaId}`));
+          const ch = r?.chamada || r;
           setChamada(ch || null);
-          setLinhas(payload?.linhas || []);
-          setLimites(payload?.limites || ch?.limites || {});
+          setLinhas(r?.linhas || []);
+          setLimites(r?.limites || ch?.limites || {});
           setMaxCoautores(Number(ch?.max_coautores ?? 10));
-
-          try {
-            const ok = await apiHead(`/chamadas/${propChamadaId}/modelo-banner`, {
-              auth: true,
-              on401: "silent",
-              on403: "silent",
-            });
-            setModeloDisponivel(!!ok);
-          } catch {
-            setModeloDisponivel(false);
-          }
+          await checarModelo(ch?.id || propChamadaId);
         }
       } catch (err) {
         console.error("Erro ao carregar modal:", err);
@@ -179,7 +193,7 @@ export default function ModalInscreverTrabalho({
   const setCoautor = (idx, key, val) => {
     setForm((f) => {
       const arr = [...(f.coautores || [])];
-      arr[idx] = { ...arr[idx], [key]: val };
+      arr[idx = Number(idx)] = { ...arr[idx], [key]: val };
       return { ...f, coautores: arr };
     });
   };
@@ -188,6 +202,7 @@ export default function ModalInscreverTrabalho({
     const payload = {
       ...form,
       status: statusAlvo, // "rascunho" | "submetido"
+      inicio_experiencia: toMonthValue(form.inicio_experiencia), // garante YYYY-MM
       linha_tematica_id: form.linha_tematica_id || null,
       coautores: (form.coautores || []).map((c) => ({
         nome: c.nome?.trim() || "",
@@ -195,7 +210,7 @@ export default function ModalInscreverTrabalho({
         email: c.email?.trim() || "",
         vinculo: c.vinculo?.trim() || "",
       })),
-      poster: undefined,
+      poster: undefined, // não manda file aqui — upload é separado
     };
 
     if (!submissaoId) {
@@ -212,54 +227,52 @@ export default function ModalInscreverTrabalho({
   async function uploadPosterIfAny(id) {
     if (!form.poster || !id) return { ok: true };
     if (posterState === "uploading") return { ok: false, error: "Upload em andamento." };
-  
+
     // ── Normalização de nome e MIME (.ppt / .pptx)
     const f = form.poster;
     const rawName = (f.name || "").trim();
     const rawType = (f.type || "").trim();
-  
-    const isPptxMime = rawType === "application/vnd.openxmlformats-officedocument.presentationml.presentation";
-    const isPptMime  = rawType === "application/vnd.ms-powerpoint";
-  
-    let ext = rawName.toLowerCase().endsWith(".pptx") ? ".pptx"
-            : rawName.toLowerCase().endsWith(".ppt")  ? ".ppt"
-            : "";
-  
-    // Se MIME indicar pptx/ppt mas o nome não tiver extensão, adiciona
+
+    const isPptxMime =
+      rawType === "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+    const isPptMime = rawType === "application/vnd.ms-powerpoint";
+
+    let ext =
+      rawName.toLowerCase().endsWith(".pptx")
+        ? ".pptx"
+        : rawName.toLowerCase().endsWith(".ppt")
+        ? ".ppt"
+        : "";
+
     if (!ext && (isPptxMime || isPptMime)) {
       ext = isPptxMime ? ".pptx" : ".ppt";
     }
-  
-    // Se ainda sem extensão, assume .pptx por padrão
     if (!ext) ext = ".pptx";
-  
-    // Define MIME coerente com a extensão final
-    const fixedType = ext === ".ppt"
-      ? "application/vnd.ms-powerpoint"
-      : "application/vnd.openxmlformats-officedocument.presentationml.presentation";
-  
+
+    const fixedType =
+      ext === ".ppt"
+        ? "application/vnd.ms-powerpoint"
+        : "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+
     const fixedName = rawName.toLowerCase().endsWith(ext) ? rawName : `${rawName}${ext}`;
-  
+
     const fileToSend = new File([f], fixedName, { type: fixedType });
-  
-    // ── Monta FormData com APENAS o campo esperado pelo backend
+
+    // ── FormData com o campo esperado pelo backend ("poster")
     const fd = new FormData();
     fd.append("poster", fileToSend, fileToSend.name);
-  
+
     setPosterState("uploading");
     setPosterProgress(0);
-  
-    const attempt = async () => {
-      // apiUpload já detecta FormData e não seta Content-Type manualmente
-      return apiUpload(`/submissoes/${id}/poster`, fd);
-    };
-  
+
+    const attempt = async () => apiUpload(`/submissoes/${id}/poster`, fd);
+
     try {
       try {
         await attempt();
       } catch (e) {
         const status = e?.status || e?.response?.status;
-        // Respeita o rate-limit simples da rota (3s na sua API)
+        // re-tenta após throttle simples do backend
         if (status === 429) {
           await new Promise((r) => setTimeout(r, 3200));
           await attempt();
@@ -267,25 +280,24 @@ export default function ModalInscreverTrabalho({
           throw e;
         }
       }
-  
+
       setPosterProgress(100);
       setPosterState("done");
       return { ok: true };
     } catch (e) {
-      // Erro do backend (mensagem amigável já vem como {erro: "..."} nas suas rotas)
       const msgBackend = e?.data?.erro || e?.response?.data?.erro;
       const status = e?.status || e?.response?.status;
-  
+
       let msg = msgBackend || e?.message || "Falha ao enviar o pôster.";
       if (status === 413) msg = "Arquivo muito grande (máximo 50MB).";
       if (status === 400 && !msgBackend) msg = "Apenas arquivos .ppt ou .pptx.";
-  
+
       console.error("Falha no upload do pôster:", e);
       setPosterState("error");
       return { ok: false, error: msg };
     }
   }
-  
+
   const onSalvar = async () => {
     setSaving(true);
     try {
@@ -293,6 +305,8 @@ export default function ModalInscreverTrabalho({
       const up = await uploadPosterIfAny(id);
       if (!up.ok) alert(`Rascunho salvo, mas o pôster não foi anexado.\nMotivo: ${up.error}`);
       onSucesso?.();
+      // re-checa modelo (caso admin tenha publicado recentemente)
+      await checarModelo(chamada?.id || propChamadaId);
     } catch (e) {
       alert(e?.message || "Falha ao salvar rascunho.");
     } finally {
@@ -306,7 +320,9 @@ export default function ModalInscreverTrabalho({
       const id = await criarOuAtualizar("submetido");
       const up = await uploadPosterIfAny(id);
       if (!up.ok) {
-        alert("Submissão enviada (sem pôster). Você pode anexar o pôster depois em “Minhas submissões”.");
+        alert(
+          "Submissão enviada (sem pôster). Você pode anexar o pôster depois em “Minhas submissões”."
+        );
       }
       setSucesso(true);
       setTimeout(() => {
@@ -396,7 +412,7 @@ export default function ModalInscreverTrabalho({
               <input
                 type="month"
                 name="inicio_experiencia"
-                value={form.inicio_experiencia}
+                value={toMonthValue(form.inicio_experiencia)}
                 onChange={onChange}
                 className="mt-1 w-full rounded-xl border px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 required
@@ -536,13 +552,17 @@ export default function ModalInscreverTrabalho({
 
               <span className="text-zinc-500">Formatos: .ppt / .pptx (até 50MB).</span>
 
-              {modeloDisponivel && (
+              {modeloDisponivel ? (
                 <a
-                  href={`/api/chamadas/${chamada.id}/modelo-banner`}
+                  href={`/api/chamadas/${chamada?.id || propChamadaId}/modelo-banner`}
+                  target="_blank"
+                  rel="noreferrer"
                   className="inline-flex items-center gap-1 text-indigo-700 hover:underline"
                 >
                   Baixar modelo <ExternalLink className="w-3.5 h-3.5" />
                 </a>
+              ) : (
+                <span className="text-zinc-400">(modelo indisponível no momento)</span>
               )}
             </div>
 

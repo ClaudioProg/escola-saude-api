@@ -1,4 +1,3 @@
-// 📁 src/auth/authMiddleware.js
 /* eslint-disable no-console */
 const jwt = require("jsonwebtoken");
 
@@ -7,12 +6,15 @@ let db;
 try {
   const dbModule = require("../db");
   db = dbModule?.db ?? dbModule ?? null;
-} catch (e) {
+} catch {
   db = null;
 }
 
 let warned = false; // avisa 1x em dev sobre req.usuario
 
+/**
+ * Middleware base: valida JWT e injeta req.user
+ */
 function authMiddleware(req, res, next) {
   const h = req.headers.authorization || "";
   const m = h.match(/^Bearer\s+(.+)$/i);
@@ -43,35 +45,18 @@ function authMiddleware(req, res, next) {
       cpf: decoded.cpf ?? null,
       nome: decoded.nome ?? null,
       perfil,
-      // email: decoded.email ?? null, // opcional
     };
 
-    // ✅ injeta a instância do banco
-    req.db = db;
+    req.db = req.db ?? db;
     req.user = user;
-    req.usuario = req.user; // compat
+    req.usuario = user; // compatibilidade temporária
 
-    // ───────────── Logs estratégicos (somente fora de produção) ─────────────
-    if (process.env.NODE_ENV !== "production") {
-      if (!warned) {
-        warned = true;
-        console.warn(
-          "[authMiddleware] Aviso: `req.usuario` está DEPRECIADO. Use `req.user`. Fornecendo ambos por compatibilidade temporária."
-        );
-      }
-
-      const caps = req.db
-        ? {
-            hasTx: typeof req.db.tx === "function",
-            hasQuery: typeof req.db.query === "function",
-            hasAny: typeof req.db.any === "function",
-            hasOne: typeof req.db.one === "function",
-            hasNone: typeof req.db.none === "function",
-            type: req.db?.constructor?.name || typeof req.db,
-            keys: Object.keys(req.db).slice(0, 12),
-          }
-        : { db: "null/undefined" };
-        }
+    if (process.env.NODE_ENV !== "production" && !warned) {
+      warned = true;
+      console.warn(
+        "[authMiddleware] Aviso: `req.usuario` está DEPRECIADO. Use `req.user`. Fornecendo ambos por compatibilidade temporária."
+      );
+    }
 
     return next();
   } catch (e) {
@@ -80,4 +65,33 @@ function authMiddleware(req, res, next) {
   }
 }
 
-module.exports = authMiddleware;
+/**
+ * Wrapper: permite apenas usuários autenticados (qualquer papel)
+ */
+function authAny(req, res, next) {
+  return authMiddleware(req, res, next);
+}
+
+/**
+ * Wrapper: exige perfil de administrador
+ */
+function authAdmin(req, res, next) {
+  return authMiddleware(req, res, (err) => {
+    if (err) return next(err);
+    const perfis = req.user?.perfil ?? [];
+    if (!perfis.includes("administrador")) {
+      return res.status(403).json({ erro: "Acesso restrito a administradores." });
+    }
+    next();
+  });
+}
+
+/* ───────────────── Exports resilientes ─────────────────
+   - default: a própria função middleware (permite router.use(require(...)))
+   - nomeados: authMiddleware, authAny, authAdmin (permite destructuring)
+*/
+module.exports = authMiddleware;           // default CJS
+module.exports.default = authMiddleware;   // compat
+module.exports.authMiddleware = authMiddleware;
+module.exports.authAny = authAny;
+module.exports.authAdmin = authAdmin;

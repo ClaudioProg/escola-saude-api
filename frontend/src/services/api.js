@@ -891,6 +891,49 @@ export function apiResetCertificadosTurma(turmaId, body = {}) {
 }
 
 // ───────────────────────────────────────────────────────────────────
+// 🆕 Helpers de Modelo de Banner por Chamada
+// ───────────────────────────────────────────────────────────────────
+
+/** HEAD: existe modelo para a chamada? (true/false) */
+export async function apiChamadaModeloExists(chamadaId) {
+  if (!chamadaId) throw new Error("chamadaId é obrigatório");
+  return apiHead(`/chamadas/${chamadaId}/modelo-banner`, {
+    auth: true,
+    on401: "silent",
+    on403: "silent",
+  });
+}
+
+/** GET (Response crua): baixar modelo da chamada (use .blob() e Content-Disposition) */
+export async function apiChamadaModeloDownload(chamadaId) {
+  if (!chamadaId) throw new Error("chamadaId é obrigatório");
+  return apiGetResponse(`/chamadas/${chamadaId}/modelo-banner`, {
+    auth: true,
+    on401: "silent",
+    on403: "silent",
+  });
+}
+
+/** POST (multipart): enviar/atualizar modelo (.ppt/.pptx) – campo `file` */
+export async function apiChamadaModeloUpload(chamadaId, fileOrFormData) {
+  if (!chamadaId) throw new Error("chamadaId é obrigatório");
+  // força o nome do campo correto esperado pelo backend
+  return apiUpload(`/chamadas/${chamadaId}/modelo-banner`, fileOrFormData, {
+    fieldName: "file",
+  });
+}
+
+/** GET admin (JSON): meta para o painel (exists/filename/size/mtime/mime) */
+export async function apiChamadaModeloAdminMeta(chamadaId) {
+  if (!chamadaId) throw new Error("chamadaId é obrigatório");
+  return apiGet(`/admin/chamadas/${chamadaId}/modelo-banner`, {
+    auth: true,
+    on401: "silent",
+    on403: "silent",
+  });
+}
+
+// ───────────────────────────────────────────────────────────────────
 // Compat: facade estilo axios + default export
 // ───────────────────────────────────────────────────────────────────
 export { API_BASE_URL };
@@ -905,6 +948,13 @@ export const api = {
   uploadPoster: (submissaoId, fileOrFormData, opts) => apiUploadPoster(submissaoId, fileOrFormData, opts),
   request: ({ url, method = "GET", data, ...opts } = {}) =>
     doFetch(url, { method, body: data, ...opts }),
+  // 🆕 agrupamento semântico para o modelo de banner por chamada
+  chamadaModelo: {
+    exists: (id) => apiChamadaModeloExists(id),
+    download: (id) => apiChamadaModeloDownload(id),
+    upload: (id, fileOrFD) => apiChamadaModeloUpload(id, fileOrFD),
+    adminMeta: (id) => apiChamadaModeloAdminMeta(id),
+  },
 };
 
 export default api;

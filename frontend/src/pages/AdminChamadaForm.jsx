@@ -462,11 +462,12 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
     setModeloBusy(true);
     try {
       if (!isEdit) throw new Error("Salve a chamada para habilitar o upload do modelo.");
-      if (!/\.pptx?$/i.test(file.name)) throw new Error("Envie arquivo .pptx");
+      if (!/\.(pptx?|PPTX?)$/.test(file.name)) throw new Error("Envie arquivo .ppt ou .pptx");
       if (file.size > 50 * 1024 * 1024) throw new Error("Arquivo muito grande (máx 50MB).");
 
       const tryOnce = async () => {
-        await apiUploadSvc(`admin/chamadas/${chamadaId}/modelo-banner`, file, { fieldName: "banner" });
+        // usa a rota pública protegida por authAdmin no backend
+         await apiUploadSvc(`chamadas/${chamadaId}/modelo-banner`, file, { fieldName: "file" });
         const meta = await apiGet(`admin/chamadas/${chamadaId}/modelo-banner`);
         setModeloMeta(meta || null);
       };

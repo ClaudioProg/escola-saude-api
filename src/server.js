@@ -60,8 +60,11 @@ const usuariosRoute              = require("./routes/usuariosRoute");
 const chamadasRoutes             = require("./routes/chamadasRoutes");
 const trabalhosRoutes            = require("./routes/trabalhosRoutes");
 
-/* 🆕 Upload/Modelo de Banner (por chamada) */
-const uploadRoutes               = require("./routes/uploadRoutes");
+/* 🆕 Upload/Modelo de Banner (por chamada) — NOVAS rotas dinâmicas */
+const chamadasModeloRoutes       = require("./routes/chamadasModelo.routes");
+/* (legado) Se ainda usa algo em uploadRoutes, mantenha:
+   const uploadRoutes               = require("./routes/uploadRoutes");
+*/
 
 /* ───────── ENV obrigatórios em produção ───────── */
 if (process.env.NODE_ENV === "production") {
@@ -201,30 +204,7 @@ app.use(
   })
 );
 
-// Modelos por chamada (público): /api/modelos/chamadas/:id/banner.pptx
-app.use(
-  "/api/modelos/chamadas",
-  cors(corsOptions),
-  express.static(MODELOS_CHAMADAS_DIR, {
-    maxAge: "1d",
-    fallthrough: true,
-    setHeaders(res, filePath) {
-      res.setHeader("Cache-Control", "public, max-age=86400, immutable");
-      if (filePath.endsWith(".pptx")) {
-        res.setHeader(
-          "Content-Type",
-          "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-        );
-        res.setHeader("Content-Disposition", 'attachment; filename="banner.pptx"');
-      } else if (filePath.endsWith(".ppt")) {
-        res.setHeader("Content-Type", "application/vnd.ms-powerpoint");
-        res.setHeader("Content-Disposition", 'attachment; filename="banner.ppt"');
-      }
-    },
-  })
-);
-
-/* (legado) Diretório de modelos empacotados no build */
+// (LEGADO) Modelos empacotados
 const modelosDir = path.join(__dirname, "public", "modelos");
 if (!fs.existsSync(modelosDir)) fs.mkdirSync(modelosDir, { recursive: true });
 app.use(
@@ -316,8 +296,11 @@ app.use("/api/usuarios/perfil", perfilRoutes);
 app.use("/api", chamadasRoutes);
 app.use("/api", trabalhosRoutes);
 
-/* 🆕 Upload/Modelo de Banner (inclui rotas por chamada) */
-app.use("/api", uploadRoutes);
+/* 🆕 Modelo de banner por chamada (dinâmico) */
+app.use("/api", chamadasModeloRoutes);
+
+/* (se ainda usar) Upload genérico legado */
+// app.use("/api", uploadRoutes);
 
 /* ───────── Recuperação de senha ───────── */
 app.post("/api/usuarios/recuperar-senha", recuperarSenhaLimiter, usuarioPublicoController.recuperarSenha);
@@ -345,7 +328,7 @@ app.use((err, _req, res, _next) => {
     return res.status(400).json({ erro: "Apenas arquivos .ppt ou .pptx" });
   }
   // Campos esperados de upload (usuário/admin)
-  if (err?.field === "poster" || err?.field === "banner") {
+  if (err?.field === "poster" || err?.field === "banner" || err?.field === "file") {
     return res.status(400).json({ erro: err.message || "Falha no upload." });
   }
 
