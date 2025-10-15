@@ -752,90 +752,71 @@ exports.baixarModeloPorChamada = async (req, res, next) => {
     }
 
     // ── 3) Link externo (proxy para não violar a CSP)
-    const chamada = (typeof DB.oneOrNone === "function")
-      ? await DB.oneOrNone(`SELECT link_modelo_poster FROM trabalhos_chamadas WHERE id=$1`, [id])
-      : (await DB.query(`SELECT link_modelo_poster FROM trabalhos_chamadas WHERE id=$1`, [id])).rows?.[0];
+const chamada = (typeof DB.oneOrNone === "function")
+? await DB.oneOrNone(`SELECT link_modelo_poster FROM trabalhos_chamadas WHERE id=$1`, [id])
+: (await DB.query(`SELECT link_modelo_poster FROM trabalhos_chamadas WHERE id=$1`, [id])).rows?.[0];
 
-    const link = chamada?.link_modelo_poster || null;
+const link = chamada?.link_modelo_poster || null;
 
-    if (isHttpUrl(link)) {
-      // helper: extrai nome do arquivo
-      const getFilename = (headers, fallbackUrl) => {
-        const cd = (headers && typeof headers.get === "function") ? (headers.get("content-disposition") || "") : "";
-        const m1 = /filename\*=(?:UTF-8'')?([^;]+)/i.exec(cd);
-        const m2 = /filename="?([^"]+)"?/i.exec(cd);
-        if (m1) return decodeURIComponent(m1[1].trim().replace(/^['"]|['"]$/g, ""));
-        if (m2) return m2[1].trim();
-        try {
-          const u = new URL(String(fallbackUrl));
-          const last = u.pathname.split("/").filter(Boolean).pop();
-          return last || "modelo_banner.pptx";
-        } catch {
-          return "modelo_banner.pptx";
-        }
-      };
+if (isHttpUrl(link)) {
+// helper: extrai nome pelo path da URL (sem depender do upstream)
+const filenameFromUrl = (u) => {
+  try {
+    const x = new URL(String(u));
+    const last = x.pathname.split("/").filter(Boolean).pop();
+    return last || "modelo_banner.pptx";
+  } catch { return "modelo_banner.pptx"; }
+};
 
-      try {
-        // HEAD: retorna apenas cabeçalhos
-        if (req.method === "HEAD") {
-          const headRes = await fetch(link, { method: "HEAD" });
-          if (!headRes.ok) { res.status(headRes.status).end(); return; }
+// ↳ HEAD: não consulta upstream; só sinaliza que existe
+if (req.method === "HEAD") {
+  const fname = filenameFromUrl(link);
+  const mimeType = mime.lookup(fname) || "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+  res.setHeader("Content-Type", mimeType);
+  res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(fname)}`);
+  res.setHeader("Access-Control-Expose-Headers", "Content-Disposition");
+  res.setHeader("Cache-Control", "public, max-age=60");
+  return res.status(200).end();
+}
 
-          const filename = getFilename(headRes.headers, link);
-          const mimeType = headRes.headers.get("content-type") || mime.lookup(filename) || "application/octet-stream";
-          const len = headRes.headers.get("content-length");
+// ↳ GET: proxy (stream) do upstream
+try {
+  const upstream = await fetch(link);
+  if (!upstream.ok) {
+    return res.status(upstream.status).json({ erro: `Falha ao obter modelo (upstream ${upstream.status}).` });
+  }
 
-          res.setHeader("Content-Type", mimeType);
-          if (len) res.setHeader("Content-Length", String(len));
-          res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
-          res.setHeader("Access-Control-Expose-Headers", "Content-Disposition, Content-Length");
-          res.setHeader("Cache-Control", "public, max-age=60");
-          res.status(200).end();
-          return;
-        }
+  // tenta nome/mime do upstream; fallback pelo path
+  const cd = upstream.headers.get("content-disposition") || "";
+  const m1 = /filename\*=(?:UTF-8'')?([^;]+)/i.exec(cd);
+  const m2 = /filename="?([^"]+)"?/i.exec(cd);
+  const fname =
+    (m1 ? decodeURIComponent(m1[1].trim().replace(/^['"]|['"]$/g, "")) :
+    (m2 ? m2[1].trim() : filenameFromUrl(link)));
 
-        // GET: baixa do storage externo e stream para o cliente
-        const upstream = await fetch(link);
-        if (!upstream.ok) {
-          res.status(upstream.status).json({ erro: `Falha ao obter modelo (upstream ${upstream.status}).` });
-          return;
-        }
+  const mimeType = upstream.headers.get("content-type") || mime.lookup(fname) || "application/octet-stream";
+  const len = upstream.headers.get("content-length");
 
-        const filename = getFilename(upstream.headers, link);
-        const mimeType = upstream.headers.get("content-type") || mime.lookup(filename) || "application/octet-stream";
-        const len = upstream.headers.get("content-length");
+  res.setHeader("Content-Type", mimeType);
+  if (len) res.setHeader("Content-Length", String(len));
+  res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(fname)}`);
+  res.setHeader("Access-Control-Expose-Headers", "Content-Disposition, Content-Length");
+  res.setHeader("Cache-Control", "public, max-age=60");
 
-        res.setHeader("Content-Type", mimeType);
-        if (len) res.setHeader("Content-Length", String(len));
-        res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
-        res.setHeader("Access-Control-Expose-Headers", "Content-Disposition, Content-Length");
-        res.setHeader("Cache-Control", "public, max-age=60");
-
-        const { Readable } = require("stream");
-
-        if (upstream.body) {
-          // Node 18+: body é ReadableStream (web)
-          if (typeof Readable.fromWeb === "function" && upstream.body[Symbol.asyncIterator]) {
-            Readable.fromWeb(upstream.body).pipe(res);
-            return;
-          }
-          // fallback caso já seja stream Node
-          if (typeof upstream.body.pipe === "function") {
-            upstream.body.pipe(res);
-            return;
-          }
-        }
-
-        // último recurso: bufferizar (evitar para arquivos grandes)
-        const buf = Buffer.from(await upstream.arrayBuffer());
-        res.end(buf);
-        return;
-      } catch (e) {
-        console.error("[proxy modelo-banner] erro:", e);
-        res.status(502).json({ erro: "Falha ao proxyar o modelo externo." });
-        return;
-      }
-    }
+  const { Readable } = require("stream");
+  if (upstream.body && typeof Readable.fromWeb === "function" && upstream.body[Symbol.asyncIterator]) {
+    return Readable.fromWeb(upstream.body).pipe(res);
+  }
+  if (upstream.body && typeof upstream.body.pipe === "function") {
+    return upstream.body.pipe(res);
+  }
+  const buf = Buffer.from(await upstream.arrayBuffer());
+  return res.end(buf);
+} catch (e) {
+  console.error("[proxy modelo-banner] erro:", e);
+  return res.status(502).json({ erro: "Falha ao proxyar o modelo externo." });
+}
+}
 
     // ── nada encontrado
     if (req.method === "HEAD") return res.status(404).end();
