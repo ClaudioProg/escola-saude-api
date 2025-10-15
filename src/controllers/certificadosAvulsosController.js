@@ -66,17 +66,13 @@ async function ensureDir(dir) {
 }
 
 /* ===== Fundo por tipo ===== */
-function resolveFirstExisting(candidates = []) {
-  for (const p of candidates) {
-    try { if (p && fs.existsSync(p)) return p; } catch (_) {}
-  }
-  return null;
-}
-function getFundoPath(tipo) {
-  const nomes = [
-    tipo === "palestrante" ? "fundo_certificado_instrutor.png" : null, // palestrante usa o mesmo do instrutor
-    "fundo_certificado_instrutor.png"
-  ].filter(Boolean);
+function getFundoPath({ palestrante = false, temAssinatura2 = false }) {
+  // Regra:
+  // - Com 2ª assinatura → fundo_certificado.png
+  // - Sem 2ª assinatura → fundo_certificado_instrutor.png
+  const nomeArquivo = temAssinatura2
+    ? "fundo_certificado.png"
+    : "fundo_certificado_instrutor.png";
 
   const roots = [
     ...(process.env.CERT_FUNDO_DIR ? [process.env.CERT_FUNDO_DIR] : []),
@@ -87,13 +83,13 @@ function getFundoPath(tipo) {
     path.resolve(process.cwd(), "assets"),
     path.resolve(process.cwd(), "public"),
   ];
-  const candidates = [];
-  for (const nome of nomes) {
-    for (const root of roots) candidates.push(path.join(root, nome));
-    candidates.push(path.resolve(__dirname, nome));
+
+  const candidates = roots.map((root) => path.join(root, nomeArquivo));
+  let found = null;
+  for (const p of candidates) {
+    try { if (fs.existsSync(p)) { found = p; break; } } catch {}
   }
-  const found = resolveFirstExisting(candidates);
-  if (!found && IS_DEV) console.warn("⚠️ Fundo não encontrado. Procurado:", candidates);
+  if (!found && IS_DEV) console.warn("⚠️ Fundo não encontrado:", candidates);
   return found;
 }
 
@@ -117,6 +113,23 @@ function registerFonts(doc) {
   }
 }
 
+/** Texto principal conforme regras (participante/palestrante + período) */
+function montarTextoPrincipal({ palestrante, tituloEvento, dataInicio, dataFim, carga }) {
+  const dataInicioBR = formatarDataCurtaBR(dataInicio);
+  const dataFimBR = formatarDataCurtaBR(dataFim);
+  const mesmoDia = dataInicio && dataFim && String(dataInicio) === String(dataFim);
+  const cargaTexto = carga;
+
+  if (palestrante) {
+    return (mesmoDia
+      ? `Participou como instrutor do evento "${tituloEvento}", realizado em ${dataInicioBR}, com carga horária total de ${cargaTexto} horas.`
+      : `Participou como instrutor do evento "${tituloEvento}", realizado de ${dataInicioBR} a ${dataFimBR}, com carga horária total de ${cargaTexto} horas.`);
+  }
+  return (mesmoDia
+    ? `Participou do evento "${tituloEvento}", realizado em ${dataInicioBR}, com carga horária total de ${cargaTexto} horas.`
+    : `Participou do evento "${tituloEvento}", realizado de ${dataInicioBR} a ${dataFimBR}, com carga horária total de ${cargaTexto} horas.`);
+}
+
 /**
  * Desenha o certificado.
  * @param {PDFDocument} doc
@@ -125,9 +138,10 @@ function registerFonts(doc) {
  */
 function desenharCertificado(doc, certificado, opts = {}) {
   const { palestrante = false, assinatura2 = null } = opts;
+  const temAssinatura2 = Boolean(assinatura2);
 
   // Fundo
-  const fundo = getFundoPath(palestrante ? "palestrante" : "usuario");
+  const fundo = getFundoPath({ palestrante, temAssinatura2 });
   if (fundo) {
     doc.image(fundo, 0, 0, { width: doc.page.width, height: doc.page.height }); // A4 landscape
   } else {
@@ -148,10 +162,9 @@ function desenharCertificado(doc, certificado, opts = {}) {
 
   // Nome do participante
   const nome = certificado.nome || "";
-  const nomeFont = "AlexBrush";
   const nomeMaxWidth = 680;
   let nomeFontSize = 45;
-  doc.font(nomeFont).fontSize(nomeFontSize);
+  doc.font("AlexBrush").fontSize(nomeFontSize);
   while (doc.widthOfString(nome) > nomeMaxWidth && nomeFontSize > 20) {
     nomeFontSize -= 1;
     doc.fontSize(nomeFontSize);
@@ -166,20 +179,16 @@ function desenharCertificado(doc, certificado, opts = {}) {
   }
 
   // Texto principal
-  const partesPeriodo = [];
-  if (certificado.data_inicio && certificado.data_fim && certificado.data_inicio !== certificado.data_fim) {
-    partesPeriodo.push(`no período de ${formatarDataCurtaBR(certificado.data_inicio)} a ${formatarDataCurtaBR(certificado.data_fim)}`);
-  } else if (certificado.data_inicio) {
-    partesPeriodo.push(`em ${formatarDataCurtaBR(certificado.data_inicio)}`);
-  }
-  const periodoCurso = partesPeriodo.length ? `, ${partesPeriodo.join(" ")}` : ".";
-
-  const fraseBase = palestrante
-    ? `Participou como palestrante do evento "${certificado.curso}", com carga horária de ${certificado.carga_horaria} horas${periodoCurso}`
-    : `Concluiu o curso "${certificado.curso}", com carga horária de ${certificado.carga_horaria} horas${periodoCurso}`;
+  const texto = montarTextoPrincipal({
+    palestrante,
+    tituloEvento: certificado.curso || "",
+    dataInicio: certificado.data_inicio,
+    dataFim: certificado.data_fim,
+    carga: certificado.carga_horaria
+  });
 
   doc.moveDown(1);
-  doc.font("AlegreyaSans-Regular").fontSize(15).text(fraseBase, 70, doc.y, {
+  doc.font("AlegreyaSans-Regular").fontSize(15).text(texto, 70, doc.y, {
     align: "justify",
     lineGap: 4,
     width: 680,
@@ -194,38 +203,41 @@ function desenharCertificado(doc, certificado, opts = {}) {
       width: 680,
     });
 
-  // Área de assinaturas
-  const baseY = 470;
+    // Área de assinaturas
+const baseY = 470;
 
-  // Assinatura institucional (texto)
-  doc.font("AlegreyaSans-Bold").fontSize(20)
-    .text("Rafaella Pitol Corrêa", 270, baseY, { align: "center", width: 300 });
-  doc.font("AlegreyaSans-Regular").fontSize(14)
-    .text("Chefe da Escola da Saúde", 270, baseY + 25, { align: "center", width: 300 });
+// Quando existir 2ª assinatura, desloca mais à esquerda a Rafaella.
+// (sem 2ª assinatura continua centralizado)
+const assinatura1X = temAssinatura2 ? 120 : 270; // <- mais à esquerda que antes
+const assinatura1W = 300;
 
-  // 2ª assinatura (se houver)
-  if (assinatura2 && (assinatura2.imgBuffer || assinatura2.nome)) {
-    const areaX = 440;
-    const areaW = 300;
+// Assinatura institucional (Rafaella)
+doc.font("AlegreyaSans-Bold").fontSize(20)
+  .text("Rafaella Pitol Corrêa", assinatura1X, baseY, { align: "center", width: assinatura1W });
+doc.font("AlegreyaSans-Regular").fontSize(14)
+  .text("Chefe da Escola da Saúde", assinatura1X, baseY + 25, { align: "center", width: assinatura1W });
 
-    if (assinatura2.imgBuffer) {
-      try {
-        const assinaturaWidth = 150;
-        const assinaturaX = areaX + (areaW - assinaturaWidth) / 2;
-        const assinaturaY = baseY - 50;
-        doc.image(assinatura2.imgBuffer, assinaturaX, assinaturaY, { width: assinaturaWidth });
-      } catch (e) {
-        if (IS_DEV) console.warn("⚠️ Erro ao desenhar 2ª assinatura:", e.message);
-      }
-    }
+// 2ª assinatura (Instrutor[a]) no local original (antes da mudança)
+if (temAssinatura2) {
+  const areaX = 440;  // ← posição original restaurada
+  const areaW = 300;
 
-    doc.font("AlegreyaSans-Bold").fontSize(20)
-      .text(assinatura2.nome || "—", areaX, baseY, { align: "center", width: areaW });
-    if (assinatura2.cargo) {
-      doc.font("AlegreyaSans-Regular").fontSize(14)
-        .text(assinatura2.cargo, areaX, baseY + 25, { align: "center", width: areaW });
+  if (assinatura2.imgBuffer) {
+    try {
+      const assinaturaWidth = 150;
+      const assinaturaX = areaX + (areaW - assinaturaWidth) / 2;
+      const assinaturaY = baseY - 50;
+      doc.image(assinatura2.imgBuffer, assinaturaX, assinaturaY, { width: assinaturaWidth });
+    } catch (e) {
+      if (IS_DEV) console.warn("⚠️ Erro ao desenhar 2ª assinatura:", e.message);
     }
   }
+
+  doc.font("AlegreyaSans-Bold").fontSize(20)
+    .text(assinatura2.nome || "—", areaX, baseY, { align: "center", width: areaW });
+  doc.font("AlegreyaSans-Regular").fontSize(14)
+    .text("Instrutor(a)", areaX, baseY + 25, { align: "center", width: areaW });
+}
 }
 
 /**
@@ -350,7 +362,7 @@ async function listarAssinaturas(req, res) {
 /**
  * GET /api/certificados-avulsos/:id/pdf
  * Suporta:
- *   ?palestrante=1|true       → usa modelo de palestrante/instrutor e texto apropriado
+ *   ?palestrante=1|true       → usa texto de instrutor
  *   ?assinatura2_id=<usuario> → imprime 2ª assinatura (imagem + nome/cargo) desta pessoa
  */
 async function gerarPdfCertificado(req, res) {
@@ -426,10 +438,14 @@ async function gerarPdfCertificado(req, res) {
 
 /**
  * POST /api/certificados-avulsos/:id/enviar
- * (se quiser, dá para aceitar ?palestrante e ?assinatura2_id aqui também)
+ * Suporta:
+ *   ?palestrante=1|true
+ *   ?assinatura2_id=<usuario>
+ * Usa a mesma lógica de fundo e texto do gerarPdfCertificado.
  */
 async function enviarPorEmail(req, res) {
   const { id } = req.params;
+  const { palestrante, assinatura2_id } = req.query;
   let caminhoTemp;
 
   try {
@@ -442,7 +458,48 @@ async function enviarPorEmail(req, res) {
     }
     const certificado = rows[0];
 
-    caminhoTemp = await gerarPdfTemporario(certificado, "certificado");
+    // Monta opções iguais ao /pdf
+    const opts = { palestrante: boolish(palestrante) };
+
+    // (opcional) carrega a 2ª assinatura
+    if (assinatura2_id) {
+      try {
+        const a = await db.query(
+          `
+          SELECT a.imagem_base64, u.nome, u.cargo
+          FROM assinaturas a
+          JOIN usuarios u ON u.id = a.usuario_id
+          WHERE a.usuario_id = $1 AND a.imagem_base64 IS NOT NULL AND a.imagem_base64 <> ''
+          LIMIT 1
+          `,
+          [assinatura2_id]
+        );
+        if (a.rowCount) {
+          const row = a.rows[0];
+          let imgBuffer = null;
+          if (row.imagem_base64 && row.imagem_base64.startsWith("data:image")) {
+            try {
+              imgBuffer = Buffer.from(row.imagem_base64.split(",")[1], "base64");
+            } catch {}
+          }
+          opts.assinatura2 = { nome: row.nome, cargo: row.cargo || null, imgBuffer };
+        }
+      } catch (e) {
+        if (IS_DEV) console.warn("⚠️ Falha ao obter 2ª assinatura:", e.message);
+      }
+    }
+
+    // Gera PDF com as mesmas regras de fundo/texto
+    caminhoTemp = await gerarPdfTemporario(certificado, "certificado", opts);
+
+    // Monta o mesmo texto para o corpo do e-mail
+    const textoPrincipal = montarTextoPrincipal({
+      palestrante: opts.palestrante,
+      tituloEvento: certificado.curso || "",
+      dataInicio: certificado.data_inicio,
+      dataFim: certificado.data_fim,
+      carga: certificado.carga_horaria
+    });
 
     let transporter;
     if (process.env.SMTP_HOST) {
@@ -474,7 +531,9 @@ async function enviarPorEmail(req, res) {
       subject: "Seu Certificado",
       text: `Prezado(a) ${certificado.nome},
 
-Seu certificado foi gerado com sucesso referente ao curso "${certificado.curso}", com carga horária de ${certificado.carga_horaria} horas.
+${textoPrincipal}
+
+Em anexo, segue o seu certificado em PDF.
 
 Caso tenha dúvidas ou precise de suporte, entre em contato com a equipe da Escola da Saúde.
 
