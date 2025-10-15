@@ -196,4 +196,39 @@ router.post(
   }
 );
 
+/* =================================================================== */
+/* Admin: leitura/meta (compat com painel admin)                       */
+/* =================================================================== */
+router.get(
+  "/admin/chamadas/:id/modelo-banner",
+  injectDb(),
+  authMiddleware,
+  authorizeRoles("administrador"),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0)
+      return res.status(400).json({ erro: "ID inválido" });
+
+    try {
+      const { rows } = await q(
+        req,
+        `SELECT chamada_id, nome_arquivo, mime, tamanho_bytes, updated_at
+           FROM trabalhos_chamadas_modelos
+          WHERE chamada_id = $1
+          ORDER BY updated_at DESC
+          LIMIT 1`,
+        [id]
+      );
+
+      if (!rows.length)
+        return res.status(404).json({ erro: "Modelo não encontrado" });
+
+      return res.json(rows[0]);
+    } catch (e) {
+      console.error("[GET admin/modelo-banner]", e);
+      return res.status(500).json({ erro: "Falha ao obter meta do modelo" });
+    }
+  }
+);
+
 module.exports = router;
