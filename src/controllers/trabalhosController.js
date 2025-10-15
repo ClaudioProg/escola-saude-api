@@ -169,9 +169,19 @@ exports.atualizarSubmissao = async (req, res, next) => {
     `, [id]);
 
     if (!meta) { const e = new Error("Submissão não encontrada."); e.status = 404; throw e; }
-    if (!hasRole(req.user, "administrador") && meta.usuario_id !== req.user.id) {
-      const e = new Error("Sem permissão."); e.status = 403; throw e;
-    }
+    const ehAdmin = Array.isArray(req.user.perfil) && req.user.perfil.includes("administrador");
+const ehAutor = String(meta.usuario_id) === String(req.user.id);
+
+if (!ehAdmin && !ehAutor) {
+  console.warn("[Submissão bloqueada]", {
+    user_id: req.user.id,
+    dono_submissao: meta.usuario_id,
+    perfil: req.user.perfil,
+  });
+  const e = new Error("Sem permissão para editar esta submissão.");
+  e.status = 403;
+  throw e;
+}
 
     const gate = podeExcluirOuEditarPeloAutor(meta, meta);
     assert(gate.ok, gate.msg);

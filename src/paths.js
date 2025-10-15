@@ -74,6 +74,13 @@ if (process.env.NODE_ENV !== "test") {
   console.log("[FILES] TMP_DIR:", TMP_DIR);
 }
 
+// abaixo das outras constantes
+const POSTERS_DIR = path.join(UPLOADS_DIR, "posters");
+
+// garanta criação
+[DATA_ROOT, UPLOADS_DIR, MODELOS_CHAMADAS_DIR, CERT_DIR, TMP_DIR, POSTERS_DIR].forEach(ensureDir);
+
+// no module.exports
 module.exports = {
   IS_DEV,
   DATA_ROOT,
@@ -82,5 +89,6 @@ module.exports = {
   CERT_DIR,
   TMP_DIR,
   ensureDir,
-  isWritable, // exportado caso queira diagnosticar em runtime
+  isWritable,
+  POSTERS_DIR,              // 👈 exporte isto
 };

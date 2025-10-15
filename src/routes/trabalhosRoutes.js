@@ -16,8 +16,8 @@ const ctrl = require("../controllers/trabalhosController");
 /* ------------------------------------------------------------------
    Storage de pôster (PPT/PPTX)
 ------------------------------------------------------------------ */
-const postersDir = path.join(process.cwd(), "uploads", "posters");
-fs.mkdirSync(postersDir, { recursive: true });
+const { POSTERS_DIR } = require("../paths");
+const postersDir = POSTERS_DIR; // já é garantido pelo paths.js
 
 const storage = multer.diskStorage({
   destination: (_, __, cb) => cb(null, postersDir),
