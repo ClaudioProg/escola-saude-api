@@ -291,6 +291,10 @@ exports.removerSubmissao = async (req, res, next) => {
  * ──────────────────────────────────────────────────────────────── */
 exports.atualizarPoster = async (req, res, next) => {
   try {
+    // --- Verificação de autenticação e arquivo ---
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ erro: "Usuário não autenticado." });
+    }
     assert(req.file, "Envie o arquivo .ppt/.pptx no campo 'poster'.");
 
     const sub = await db.oneOrNone(
@@ -305,26 +309,32 @@ exports.atualizarPoster = async (req, res, next) => {
     );
     assert(sub, "Submissão não encontrada.");
 
-    const isAdmin = hasRole(req.user, "administrador");
-    assert(isAdmin || sub.usuario_id === req.user.id, "Sem permissão.");
+    // --- Permissão: autor ou admin ---
+    const ehAdmin = Array.isArray(req.user.perfil) && req.user.perfil.includes("administrador");
+    const ehAutor = String(sub.usuario_id) === String(req.user.id);
+
+    if (!ehAdmin && !ehAutor) {
+      console.warn("[atualizarPoster] Bloqueado: user", req.user.id, "tentou alterar submissão", sub.id);
+      return res.status(403).json({ erro: "Você não tem permissão para enviar o banner desta submissão." });
+    }
+
+    // --- Regras de prazo e tipo ---
     assert(sub.aceita_poster, "Esta chamada não aceita envio de pôster.");
     assert(sub.dentro_prazo, "Prazo encerrado para alterações.");
 
-    // valida mime/ extensão (reforço)
+    // --- Validação extra de tipo ---
     const okMime =
       /powerpoint|presentation/i.test(req.file.mimetype) ||
       /\.(pptx?|PPTX?)$/.test(req.file.originalname || "");
     assert(okMime, "Formato inválido. Envie .ppt ou .pptx.");
 
-    // Como o storage é DISK, o arquivo está salvo em req.file.path.
-    // Vamos persistir o CAMINHO relativo (uploads/posters/arquivo.ext).
-    const absPath = req.file.path;                             // absoluto
-    const relPath = path.join("uploads", "posters", path.basename(absPath)); // relativo
-
-    // Hash e tamanho (opcional, mas útil)
+    // --- Persistência no disco ---
+    const absPath = req.file.path;
+    const relPath = path.join("uploads", "posters", path.basename(absPath));
     const buffer = fs.readFileSync(absPath);
     const hash = crypto.createHash("sha256").update(buffer).digest("hex");
 
+    // --- Inserção do arquivo ---
     const arq = await db.one(
       `INSERT INTO trabalhos_arquivos
          (submissao_id, caminho, nome_original, mime_type, tamanho_bytes, hash_sha256, arquivo)
@@ -332,24 +342,22 @@ exports.atualizarPoster = async (req, res, next) => {
        RETURNING id`,
       [
         sub.id,
-        relPath,                 // 👉 agora NÃO é nulo
+        relPath,
         req.file.originalname,
         req.file.mimetype,
         buffer.length,
         hash,
-        null                     // arquivo BYTEA não usado quando armazenamos no disco
+        null,
       ]
     );
 
+    // --- Atualiza submissão com o arquivo ---
     await db.none(
       `UPDATE trabalhos_submissoes
           SET poster_arquivo_id=$1, atualizado_em=NOW()
         WHERE id=$2`,
       [arq.id, sub.id]
     );
-
-    // IMPORTANTE: não deletar o arquivo do disco – ele é a fonte de verdade agora.
-    // (Se quisesse, poderíamos só remover arquivos antigos órfãos via job.)
 
     await notificarPosterAtualizado({
       usuario_id: req.user.id,
@@ -358,8 +366,15 @@ exports.atualizarPoster = async (req, res, next) => {
       arquivo_nome: req.file.originalname,
     });
 
+    console.log("[Poster OK]", {
+      usuario: req.user.id,
+      submissao: sub.id,
+      arquivo: req.file.originalname,
+    });
+
     res.json({ ok: true, arquivo_id: arq.id });
   } catch (err) {
+    console.error("[atualizarPoster] erro:", err.message);
     next(err);
   }
 };
