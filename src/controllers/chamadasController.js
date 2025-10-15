@@ -4,6 +4,7 @@ const fs = require("fs");
 const url = require("url");
 const mime = require("mime-types");
 const multer = require("multer");
+const crypto = require("crypto");
 
 // ✅ usa o mesmo DB exportado pelo projeto
 const dbModule = require("../db");
@@ -72,6 +73,13 @@ function modeloPathPorChamada(chamadaId) {
   if (fileExists(pptx)) return { path: pptx, name: "modelo_banner.pptx", type: mime.lookup(pptx) || "application/vnd.openxmlformats-officedocument.presentationml.presentation" };
   if (fileExists(ppt))  return { path: ppt,  name: "modelo_banner.ppt",  type: mime.lookup(ppt)  || "application/vnd.ms-powerpoint" };
   return null;
+}
+
+/** storage_key relativo → caminho absoluto no FS */
+function resolveStoragePath(storageKey) {
+  if (!storageKey) return null;
+  const key = String(storageKey).replace(/^\/+/, "");
+  return path.isAbsolute(key) ? key : path.join(MODELOS_CHAMADAS_DIR, key);
 }
 
 // ✅ DB do req (se houver) ou fallback
@@ -566,32 +574,40 @@ exports.exportarModeloBanner = async (_req, res, next) => {
 /*  - POST /api/admin/chamadas/:id/modelo-banner  → UPLOAD (campo banner)
    =================================================================== */
 
-// GET META
+// GET META (admin)
 exports.modeloBannerMeta = async (req, res, next) => {
   const DB = getDB(req);
   try {
     const id = Number(req.params.id);
     if (!id) { const e = new Error("ID inválido."); e.status = 400; throw e; }
 
-    // 1) banco
+    // 1) banco (tabela de storage em disco)
     const metaDb = (typeof DB.oneOrNone === "function")
       ? await DB.oneOrNone(
-          `SELECT nome, mime, octet_length(arquivo) AS bytes
-             FROM public.trabalhos_modelos
-            WHERE chamada_id=$1 AND tipo='banner'`,
+          `SELECT nome_arquivo, mime, storage_key, tamanho_bytes
+             FROM public.trabalhos_chamadas_modelos
+            WHERE chamada_id=$1
+            ORDER BY updated_at DESC
+            LIMIT 1`,
           [id]
         )
       : (await DB.query(
-          `SELECT nome, mime, octet_length(arquivo) AS bytes
-             FROM public.trabalhos_modelos
-            WHERE chamada_id=$1 AND tipo='banner'`,
+          `SELECT nome_arquivo, mime, storage_key, tamanho_bytes
+             FROM public.trabalhos_chamadas_modelos
+            WHERE chamada_id=$1
+            ORDER BY updated_at DESC
+            LIMIT 1`,
           [id]
         )).rows?.[0];
 
-    if (metaDb && metaDb.bytes > 0) {
+    if (metaDb?.storage_key) {
+      const abs = resolveStoragePath(metaDb.storage_key);
+      const bytes = (() => { try { return fs.statSync(abs).size; } catch { return metaDb.tamanho_bytes || null; } })();
       return res.json({
         exists: true, origin: "db",
-        filename: metaDb.nome, mime: metaDb.mime, bytes: metaDb.bytes
+        filename: metaDb.nome_arquivo || "modelo_banner.pptx",
+        mime: metaDb.mime || mime.lookup(metaDb.nome_arquivo || "") || "application/octet-stream",
+        bytes
       });
     }
 
@@ -617,7 +633,7 @@ exports.modeloBannerMeta = async (req, res, next) => {
   } catch (err) { console.error("[chamadas.modeloBannerMeta] erro", err); next(err); }
 };
 
-// POST UPLOAD
+// POST UPLOAD (admin) → salva no FS e cadastra em trabalhos_chamadas_modelos
 exports.importarModeloBanner = [
   uploadMem.single("banner"),
   async (req, res, next) => {
@@ -632,39 +648,46 @@ exports.importarModeloBanner = [
       const mimeIn = f.mimetype || mime.lookup(nome) || "application/octet-stream";
       if (!/\.pptx?$/i.test(nome)) { const e = new Error("Envie arquivo .ppt ou .pptx."); e.status = 400; throw e; }
 
+      // grava no disco em MODELOS_CHAMADAS_DIR/<chamadaId>/modelo_banner.pptx
+      const dir = path.join(MODELOS_CHAMADAS_DIR, String(chamadaId));
+      fs.mkdirSync(dir, { recursive: true });
+      const storageKey = `${chamadaId}/modelo_banner${path.extname(nome).toLowerCase() || ".pptx"}`;
+      const absPath = resolveStoragePath(storageKey);
+      fs.writeFileSync(absPath, f.buffer);
+
+      const tamanho = f.buffer.length;
+      const hash = crypto.createHash("sha256").update(f.buffer).digest("hex");
       const userId = req.user?.id ?? req.usuario?.id ?? null;
 
       const sql = `
-        INSERT INTO public.trabalhos_modelos
-          (chamada_id, tipo, nome, mime, tamanho, arquivo, atualizado_em, atualizado_por)
+        INSERT INTO public.trabalhos_chamadas_modelos
+          (chamada_id, nome_arquivo, mime, storage_key, tamanho_bytes, hash_sha256, updated_at, updated_by)
         VALUES
-          ($1, 'banner', $2, $3, $4, $5, NOW(), $6)
-        ON CONFLICT (chamada_id, tipo) DO UPDATE
-        SET nome = EXCLUDED.nome,
-            mime = EXCLUDED.mime,
-            tamanho = EXCLUDED.tamanho,
-            arquivo = EXCLUDED.arquivo,
-            atualizado_em = NOW(),
-            atualizado_por = EXCLUDED.atualizado_por
+          ($1, $2, $3, $4, $5, $6, NOW(), $7)
+        ON CONFLICT (chamada_id) DO UPDATE
+        SET nome_arquivo   = EXCLUDED.nome_arquivo,
+            mime           = EXCLUDED.mime,
+            storage_key    = EXCLUDED.storage_key,
+            tamanho_bytes  = EXCLUDED.tamanho_bytes,
+            hash_sha256    = EXCLUDED.hash_sha256,
+            updated_at     = NOW(),
+            updated_by     = EXCLUDED.updated_by
         RETURNING id
       `;
-      const params = [chamadaId, nome, mimeIn, f.buffer.length, f.buffer, userId];
+      const params = [chamadaId, nome, mimeIn, storageKey, tamanho, hash, userId];
 
       if (typeof DB.one === "function") await DB.one(sql, params);
       else if (typeof DB.query === "function") await DB.query(sql, params);
       else throw new Error("DB sem one/query.");
 
-      // dica: se havia arquivo legado no FS, pode apagar opcionalmente
-      // try { const legacy = modeloPathPorChamada(chamadaId); if (legacy) fs.unlinkSync(legacy.path); } catch {}
-
-      return res.status(201).json({ ok: true, chamada_id: chamadaId, nome, mime: mimeIn, tamanho: f.buffer.length });
+      return res.status(201).json({ ok: true, chamada_id: chamadaId, nome, mime: mimeIn, tamanho });
     } catch (err) { console.error("[chamadas.importarModeloBanner] erro", err); next(err); }
   }
 ];
 
 /**
  * GET/HEAD /api/chamadas/:id/modelo-banner
- * Ordem: Banco (BYTEA) → Arquivo local (legado) → Link externo (proxy)
+ * Ordem: Banco (trabalhos_chamadas_modelos em disco) → Arquivo local (legado) → Link externo (proxy)
  */
 exports.baixarModeloPorChamada = async (req, res, next) => {
   const DB = getDB(req);
@@ -674,30 +697,33 @@ exports.baixarModeloPorChamada = async (req, res, next) => {
 
     // ── META MODE (GET ?meta=1)
     if (req.method === "GET" && ("meta" in (req.query || {}))) {
-      // 1) banco
       const metaDb = (typeof DB.oneOrNone === "function")
         ? await DB.oneOrNone(
-            `SELECT nome, mime, octet_length(arquivo) AS bytes
-               FROM public.trabalhos_modelos
-              WHERE chamada_id=$1 AND tipo='banner'`,
+            `SELECT nome_arquivo, mime, storage_key, tamanho_bytes
+               FROM public.trabalhos_chamadas_modelos
+              WHERE chamada_id=$1
+              ORDER BY updated_at DESC
+              LIMIT 1`,
             [id]
           )
         : (await DB.query(
-            `SELECT nome, mime, octet_length(arquivo) AS bytes
-               FROM public.trabalhos_modelos
-              WHERE chamada_id=$1 AND tipo='banner'`,
+            `SELECT nome_arquivo, mime, storage_key, tamanho_bytes
+               FROM public.trabalhos_chamadas_modelos
+              WHERE chamada_id=$1
+              ORDER BY updated_at DESC
+              LIMIT 1`,
             [id]
           )).rows?.[0];
 
-      if (metaDb && metaDb.bytes > 0) {
-        return res.json({ exists: true, origin: "db", filename: metaDb.nome, mime: metaDb.mime, bytes: metaDb.bytes });
+      if (metaDb?.storage_key) {
+        const abs = resolveStoragePath(metaDb.storage_key);
+        const bytes = (() => { try { return fs.statSync(abs).size; } catch { return metaDb.tamanho_bytes || null; } })();
+        return res.json({ exists: true, origin: "db", filename: metaDb.nome_arquivo, mime: metaDb.mime, bytes });
       }
 
-      // 2) arquivo local (legado)
       const local = modeloPathPorChamada(id);
       if (local) return res.json({ exists: true, origin: "fs", filename: local.name, mime: local.type });
 
-      // 3) link externo
       const row = (typeof DB.oneOrNone === "function")
         ? await DB.oneOrNone(`SELECT link_modelo_poster FROM trabalhos_chamadas WHERE id=$1`, [id])
         : (await DB.query(`SELECT link_modelo_poster FROM trabalhos_chamadas WHERE id=$1`, [id])).rows?.[0];
@@ -707,30 +733,50 @@ exports.baixarModeloPorChamada = async (req, res, next) => {
       return res.json({ exists: false });
     }
 
-    // ── 1) Banco (BYTEA)
+    // ── 1) Banco (storage local)
     const rowDb = (typeof DB.oneOrNone === "function")
       ? await DB.oneOrNone(
-          `SELECT nome, mime, arquivo
-             FROM public.trabalhos_modelos
-            WHERE chamada_id=$1 AND tipo='banner'`,
+          `SELECT nome_arquivo, mime, storage_key, tamanho_bytes
+             FROM public.trabalhos_chamadas_modelos
+            WHERE chamada_id=$1
+            ORDER BY updated_at DESC
+            LIMIT 1`,
           [id]
         )
       : (await DB.query(
-          `SELECT nome, mime, arquivo
-             FROM public.trabalhos_modelos
-            WHERE chamada_id=$1 AND tipo='banner'`,
+          `SELECT nome_arquivo, mime, storage_key, tamanho_bytes
+             FROM public.trabalhos_chamadas_modelos
+            WHERE chamada_id=$1
+            ORDER BY updated_at DESC
+            LIMIT 1`,
           [id]
         )).rows?.[0];
 
-    if (rowDb?.arquivo) {
-      const filename = rowDb.nome || "modelo_banner.pptx";
-      const mimeType = rowDb.mime || mime.lookup(filename) || "application/octet-stream";
-      res.setHeader("Content-Type", mimeType);
-      res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
-      res.setHeader("Access-Control-Expose-Headers", "Content-Disposition");
-      res.setHeader("Cache-Control", "public, max-age=60");
-      if (req.method === "HEAD") return res.status(200).end();
-      return res.end(rowDb.arquivo); // Buffer (BYTEA)
+    if (rowDb?.storage_key) {
+      const absPath = resolveStoragePath(rowDb.storage_key);
+      try {
+        const stat = fs.statSync(absPath);
+        const filename = rowDb.nome_arquivo || "modelo_banner.pptx";
+        const mimeType = rowDb.mime || mime.lookup(filename) || "application/octet-stream";
+
+        res.setHeader("Content-Type", mimeType);
+        res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
+        res.setHeader("Content-Length", String(stat.size));
+        res.setHeader("Access-Control-Expose-Headers", "Content-Disposition, Content-Length");
+        res.setHeader("Cache-Control", "public, max-age=60");
+
+        if (req.method === "HEAD") return res.status(200).end();
+
+        const stream = fs.createReadStream(absPath);
+        stream.on("error", (e) => {
+          console.error("[stream modelo-banner banco] erro:", e);
+          if (!res.headersSent) res.status(500).end();
+        });
+        return stream.pipe(res);
+      } catch (e) {
+        console.error("[modelo-banner banco] storage_key inválido ou inacessível:", { storage_key: rowDb.storage_key, absPath, err: e?.message });
+        // segue para fallbacks
+      }
     }
 
     // ── 2) Arquivo local (legado)
@@ -751,65 +797,97 @@ exports.baixarModeloPorChamada = async (req, res, next) => {
       return stream.pipe(res);
     }
 
-    // ── 3) Link externo (proxy para não violar a CSP)
-const chamada = (typeof DB.oneOrNone === "function")
+    // ── 3) Link externo (proxy para não violar CSP)
+const rowLink = (typeof DB.oneOrNone === "function")
 ? await DB.oneOrNone(`SELECT link_modelo_poster FROM trabalhos_chamadas WHERE id=$1`, [id])
 : (await DB.query(`SELECT link_modelo_poster FROM trabalhos_chamadas WHERE id=$1`, [id])).rows?.[0];
 
-const link = chamada?.link_modelo_poster || null;
+const link = rowLink?.link_modelo_poster || null;
 
 if (isHttpUrl(link)) {
-// helper: extrai nome pelo path da URL (sem depender do upstream)
+// Extrai nome a partir da URL (fallback simples)
 const filenameFromUrl = (u) => {
   try {
     const x = new URL(String(u));
     const last = x.pathname.split("/").filter(Boolean).pop();
     return last || "modelo_banner.pptx";
-  } catch { return "modelo_banner.pptx"; }
+  } catch {
+    return "modelo_banner.pptx";
+  }
 };
 
-// ↳ HEAD: não consulta upstream; só sinaliza que existe
+// HEAD → não chama o upstream; só devolve cabeçalhos coerentes
 if (req.method === "HEAD") {
   const fname = filenameFromUrl(link);
-  const mimeType = mime.lookup(fname) || "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+  const mimeType =
+    mime.lookup(fname) ||
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation";
   res.setHeader("Content-Type", mimeType);
-  res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(fname)}`);
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename*=UTF-8''${encodeURIComponent(fname)}`
+  );
   res.setHeader("Access-Control-Expose-Headers", "Content-Disposition");
   res.setHeader("Cache-Control", "public, max-age=60");
   return res.status(200).end();
 }
 
-// ↳ GET: proxy (stream) do upstream
+// GET → proxy do arquivo externo (streaming)
 try {
-  const upstream = await fetch(link);
+  const _fetch =
+    (typeof globalThis.fetch === "function"
+      ? globalThis.fetch
+      : (await import("node-fetch")).default);
+
+  const upstream = await _fetch(link);
   if (!upstream.ok) {
-    return res.status(upstream.status).json({ erro: `Falha ao obter modelo (upstream ${upstream.status}).` });
+    return res
+      .status(upstream.status)
+      .json({ erro: `Falha ao obter modelo (upstream ${upstream.status}).` });
   }
 
-  // tenta nome/mime do upstream; fallback pelo path
-  const cd = upstream.headers.get("content-disposition") || "";
+  // Tenta obter filename do header 'content-disposition'; fallback = path da URL
+  const cd = typeof upstream.headers.get === "function"
+    ? (upstream.headers.get("content-disposition") || "")
+    : "";
   const m1 = /filename\*=(?:UTF-8'')?([^;]+)/i.exec(cd);
   const m2 = /filename="?([^"]+)"?/i.exec(cd);
-  const fname =
-    (m1 ? decodeURIComponent(m1[1].trim().replace(/^['"]|['"]$/g, "")) :
-    (m2 ? m2[1].trim() : filenameFromUrl(link)));
+  const fname = m1
+    ? decodeURIComponent(m1[1].trim().replace(/^['"]|['"]$/g, ""))
+    : (m2 ? m2[1].trim() : filenameFromUrl(link));
 
-  const mimeType = upstream.headers.get("content-type") || mime.lookup(fname) || "application/octet-stream";
-  const len = upstream.headers.get("content-length");
+  const mimeType =
+    (typeof upstream.headers.get === "function" && upstream.headers.get("content-type")) ||
+    mime.lookup(fname) ||
+    "application/octet-stream";
+  const len = (typeof upstream.headers.get === "function" && upstream.headers.get("content-length")) || null;
 
   res.setHeader("Content-Type", mimeType);
   if (len) res.setHeader("Content-Length", String(len));
-  res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(fname)}`);
-  res.setHeader("Access-Control-Expose-Headers", "Content-Disposition, Content-Length");
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename*=UTF-8''${encodeURIComponent(fname)}`
+  );
+  res.setHeader(
+    "Access-Control-Expose-Headers",
+    "Content-Disposition, Content-Length"
+  );
   res.setHeader("Cache-Control", "public, max-age=60");
 
   const { Readable } = require("stream");
+
+  // Node 18+/20/22: body é ReadableStream (web)
   if (upstream.body && typeof Readable.fromWeb === "function" && upstream.body[Symbol.asyncIterator]) {
-    return Readable.fromWeb(upstream.body).pipe(res);
+    Readable.fromWeb(upstream.body).pipe(res);
+    return;
   }
+  // Caso o adaptador já exponha um stream Node
   if (upstream.body && typeof upstream.body.pipe === "function") {
-    return upstream.body.pipe(res);
+    upstream.body.pipe(res);
+    return;
   }
+
+  // Último recurso: bufferizar (evite arquivos enormes)
   const buf = Buffer.from(await upstream.arrayBuffer());
   return res.end(buf);
 } catch (e) {
@@ -818,11 +896,11 @@ try {
 }
 }
 
-    // ── nada encontrado
-    if (req.method === "HEAD") return res.status(404).end();
-    return res.status(404).json({ erro: "Modelo não disponível para esta chamada." });
-  } catch (err) {
-    console.error("[chamadas.baixarModeloPorChamada] erro", err);
-    next(err);
-  }
+// ── nada encontrado
+if (req.method === "HEAD") return res.status(404).end();
+return res.status(404).json({ erro: "Modelo não disponível para esta chamada." });
+} catch (err) {
+console.error("[chamadas.baixarModeloPorChamada] erro", err);
+next(err);
+}
 };
