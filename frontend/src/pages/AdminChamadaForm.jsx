@@ -915,20 +915,7 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
                     {modeloBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
                     {modeloBusy ? "Enviando…" : "Importar modelo (.pptx)"}
                   </label>
-
-                  {/* Botão de download quando existir */}
-                  {isEdit && modeloMeta?.exists === true && (
-                    <button
-                      type="button"
-                      onClick={onDownloadModelo}
-                      disabled={modeloBusy || modeloDownloading}
-                      className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-zinc-400 dark:disabled:bg-zinc-700"
-                      title="Baixar modelo de banner"
-                    >
-                      {modeloDownloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-                      {modeloDownloading ? "Baixando…" : "Baixar modelo"}
-                    </button>
-                  )}
+                 
                 </div>
 
                 <div className="mt-1 text-center text-xs text-zinc-500">

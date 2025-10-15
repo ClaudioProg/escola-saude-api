@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import {
   X, FilePlus2, Loader2, CheckCircle2, Upload, Plus, Trash2, ExternalLink,
 } from "lucide-react";
-import api, { apiHead, apiUpload } from "../services/api";
+import api, { apiHead, apiUpload, apiGetFile, downloadBlob } from "../services/api";
 
 /* Utils */
 const unwrap = (r) => (r?.data ?? r);
@@ -15,13 +15,6 @@ const toMonthValue = (val) => {
   const m = s.match(/^(\d{4})-(\d{2})/);
   if (m) return `${m[1]}-${m[2]}`;
   return "";
-};
-
-/** 🔗 Gera URL absoluta apontando para a mesma base do cliente API (Axios) */
-const mkApiUrl = (subpath) => {
-  const base = (api?.defaults?.baseURL ?? "/api").replace(/\/+$/, "");
-  const path = String(subpath || "").replace(/^\/+/, "");
-  return `${base}/${path}`;
 };
 
 export default function ModalInscreverTrabalho({
@@ -40,6 +33,7 @@ export default function ModalInscreverTrabalho({
   const [limites, setLimites] = useState({});
   const [maxCoautores, setMaxCoautores] = useState(10);
   const [modeloDisponivel, setModeloDisponivel] = useState(false);
+  const [baixandoModelo, setBaixandoModelo] = useState(false); // ✅ novo
 
   // id da submissão (rascunho/edição)
   const [submissaoId, setSubmissaoId] = useState(propSubId || null);
@@ -80,7 +74,6 @@ export default function ModalInscreverTrabalho({
       return;
     }
     try {
-      // usa HEAD no mesmo caminho relativo do API service
       const ok = await apiHead(`/chamadas/${chId}/modelo-banner`, {
         auth: true,
         on401: "silent",
@@ -89,6 +82,20 @@ export default function ModalInscreverTrabalho({
       setModeloDisponivel(!!ok);
     } catch {
       setModeloDisponivel(false);
+    }
+  }
+
+  // 🔽 download autenticado do modelo
+  async function baixarModeloBanner(chId) {
+    if (!chId) return;
+    try {
+      setBaixandoModelo(true);
+      const { blob, filename } = await apiGetFile(`/chamadas/${chId}/modelo-banner`);
+      downloadBlob(filename || "modelo-poster.pptx", blob);
+    } catch (e) {
+      alert(e?.message || "Falha ao baixar o modelo de pôster.");
+    } finally {
+      setBaixandoModelo(false);
     }
   }
 
@@ -361,9 +368,6 @@ export default function ModalInscreverTrabalho({
   // ✅ aceita snake_case ou camelCase vindo do backend
   const dentroPrazo = !!(chamada?.dentro_prazo ?? chamada?.dentroPrazo);
 
-  // ✅ URL absoluta e consistente com a base do Axios
-  const modeloUrl = mkApiUrl(`chamadas/${chamada?.id || propChamadaId}/modelo-banner`);
-
   return (
     <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
       <motion.div
@@ -557,14 +561,20 @@ export default function ModalInscreverTrabalho({
               <span className="text-zinc-500">Formatos: .ppt / .pptx (até 50MB).</span>
 
               {modeloDisponivel ? (
-                <a
-                  href={modeloUrl}               // ✅ agora usa a base do Axios (localhost/produção)
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-indigo-700 hover:underline"
+                <button
+                  type="button"
+                  onClick={() => baixarModeloBanner(chamada?.id || propChamadaId)}
+                  className="inline-flex items-center gap-1 text-indigo-700 hover:underline disabled:opacity-60"
+                  disabled={baixandoModelo}
+                  title="Baixar modelo de pôster"
                 >
-                  Baixar modelo <ExternalLink className="w-3.5 h-3.5" />
-                </a>
+                  {baixandoModelo ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  )}
+                  Baixar modelo
+                </button>
               ) : (
                 <span className="text-zinc-400">(modelo indisponível no momento)</span>
               )}

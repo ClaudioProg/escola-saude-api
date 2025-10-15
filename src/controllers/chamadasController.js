@@ -664,7 +664,7 @@ exports.importarModeloBanner = [
 
 /**
  * GET/HEAD /api/chamadas/:id/modelo-banner
- * Ordem: Banco (BYTEA) → Arquivo local (legado) → Link externo
+ * Ordem: Banco (BYTEA) → Arquivo local (legado) → Link externo (proxy)
  */
 exports.baixarModeloPorChamada = async (req, res, next) => {
   const DB = getDB(req);
@@ -672,7 +672,7 @@ exports.baixarModeloPorChamada = async (req, res, next) => {
     const id = Number(req.params.id);
     if (!id) { const e = new Error("ID inválido."); e.status = 400; throw e; }
 
-    // ── META MODE (GET ?meta=1) — útil para páginas admin públicas
+    // ── META MODE (GET ?meta=1)
     if (req.method === "GET" && ("meta" in (req.query || {}))) {
       // 1) banco
       const metaDb = (typeof DB.oneOrNone === "function")
@@ -707,7 +707,7 @@ exports.baixarModeloPorChamada = async (req, res, next) => {
       return res.json({ exists: false });
     }
 
-    // ── 1) Tenta banco (BYTEA)
+    // ── 1) Banco (BYTEA)
     const rowDb = (typeof DB.oneOrNone === "function")
       ? await DB.oneOrNone(
           `SELECT nome, mime, arquivo
@@ -751,21 +751,93 @@ exports.baixarModeloPorChamada = async (req, res, next) => {
       return stream.pipe(res);
     }
 
-    // ── 3) Link externo
+    // ── 3) Link externo (proxy para não violar a CSP)
     const chamada = (typeof DB.oneOrNone === "function")
       ? await DB.oneOrNone(`SELECT link_modelo_poster FROM trabalhos_chamadas WHERE id=$1`, [id])
       : (await DB.query(`SELECT link_modelo_poster FROM trabalhos_chamadas WHERE id=$1`, [id])).rows?.[0];
+
     const link = chamada?.link_modelo_poster || null;
 
     if (isHttpUrl(link)) {
-      if (req.method === "HEAD") {
-        res.setHeader("Location", link);
-        return res.status(200).end();
+      // helper: extrai nome do arquivo
+      const getFilename = (headers, fallbackUrl) => {
+        const cd = (headers && typeof headers.get === "function") ? (headers.get("content-disposition") || "") : "";
+        const m1 = /filename\*=(?:UTF-8'')?([^;]+)/i.exec(cd);
+        const m2 = /filename="?([^"]+)"?/i.exec(cd);
+        if (m1) return decodeURIComponent(m1[1].trim().replace(/^['"]|['"]$/g, ""));
+        if (m2) return m2[1].trim();
+        try {
+          const u = new URL(String(fallbackUrl));
+          const last = u.pathname.split("/").filter(Boolean).pop();
+          return last || "modelo_banner.pptx";
+        } catch {
+          return "modelo_banner.pptx";
+        }
+      };
+
+      try {
+        // HEAD: retorna apenas cabeçalhos
+        if (req.method === "HEAD") {
+          const headRes = await fetch(link, { method: "HEAD" });
+          if (!headRes.ok) { res.status(headRes.status).end(); return; }
+
+          const filename = getFilename(headRes.headers, link);
+          const mimeType = headRes.headers.get("content-type") || mime.lookup(filename) || "application/octet-stream";
+          const len = headRes.headers.get("content-length");
+
+          res.setHeader("Content-Type", mimeType);
+          if (len) res.setHeader("Content-Length", String(len));
+          res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
+          res.setHeader("Access-Control-Expose-Headers", "Content-Disposition, Content-Length");
+          res.setHeader("Cache-Control", "public, max-age=60");
+          res.status(200).end();
+          return;
+        }
+
+        // GET: baixa do storage externo e stream para o cliente
+        const upstream = await fetch(link);
+        if (!upstream.ok) {
+          res.status(upstream.status).json({ erro: `Falha ao obter modelo (upstream ${upstream.status}).` });
+          return;
+        }
+
+        const filename = getFilename(upstream.headers, link);
+        const mimeType = upstream.headers.get("content-type") || mime.lookup(filename) || "application/octet-stream";
+        const len = upstream.headers.get("content-length");
+
+        res.setHeader("Content-Type", mimeType);
+        if (len) res.setHeader("Content-Length", String(len));
+        res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
+        res.setHeader("Access-Control-Expose-Headers", "Content-Disposition, Content-Length");
+        res.setHeader("Cache-Control", "public, max-age=60");
+
+        const { Readable } = require("stream");
+
+        if (upstream.body) {
+          // Node 18+: body é ReadableStream (web)
+          if (typeof Readable.fromWeb === "function" && upstream.body[Symbol.asyncIterator]) {
+            Readable.fromWeb(upstream.body).pipe(res);
+            return;
+          }
+          // fallback caso já seja stream Node
+          if (typeof upstream.body.pipe === "function") {
+            upstream.body.pipe(res);
+            return;
+          }
+        }
+
+        // último recurso: bufferizar (evitar para arquivos grandes)
+        const buf = Buffer.from(await upstream.arrayBuffer());
+        res.end(buf);
+        return;
+      } catch (e) {
+        console.error("[proxy modelo-banner] erro:", e);
+        res.status(502).json({ erro: "Falha ao proxyar o modelo externo." });
+        return;
       }
-      return res.redirect(302, link);
     }
 
-    // ── NADA ENCONTRADO
+    // ── nada encontrado
     if (req.method === "HEAD") return res.status(404).end();
     return res.status(404).json({ erro: "Modelo não disponível para esta chamada." });
   } catch (err) {

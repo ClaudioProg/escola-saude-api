@@ -15,13 +15,6 @@ import ModalVerEdital from "../components/ModalVerEdital";
 import ModalInscreverTrabalho from "../components/ModalInscreverTrabalho";
 import Footer from "../components/Footer";
 
-/* 🔗 Usa a mesma base do Axios para montar URLs absolutas */
-const mkApiUrl = (subpath) => {
-  const base = (api?.defaults?.baseURL ?? "/api").replace(/\/+$/, "");
-  const path = String(subpath || "").replace(/^\/+/, "");
-  return `${base}/${path}`;
-};
-
 function PosterCell({ id, nome }) {
   const [downloading, setDownloading] = useState(false);
 
@@ -72,6 +65,22 @@ export default function UsuarioSubmissoes() {
   const [modalInscricao, setModalInscricao] = useState(null);
   // cache: chamadaId -> bool (tem modelo de pôster?)
   const [modeloMap, setModeloMap] = useState({});
+  // controle de spinner por chamada ao baixar modelo
+  const [baixandoMap, setBaixandoMap] = useState({}); // { [chamadaId]: boolean }
+
+  // ── download autenticado do modelo de pôster
+  async function baixarModeloBanner(chId) {
+    if (!chId) return;
+    try {
+      setBaixandoMap((m) => ({ ...m, [chId]: true }));
+      const { blob, filename } = await apiGetFile(`/chamadas/${chId}/modelo-banner`);
+      downloadBlob(filename || "modelo-poster.pptx", blob);
+    } catch (e) {
+      alert(e?.message || "Falha ao baixar o modelo de pôster.");
+    } finally {
+      setBaixandoMap((m) => ({ ...m, [chId]: false }));
+    }
+  }
 
   // ───────────── Fetch inicial ─────────────
   useEffect(() => {
@@ -198,6 +207,8 @@ export default function UsuarioSubmissoes() {
                     ? new Date(prazoStr).toLocaleDateString("pt-BR")
                     : String(prazoStr)
                   : "—";
+                const carregando = !!baixandoMap[ch.id];
+
                 return (
                   <motion.div
                     key={ch.id}
@@ -239,14 +250,20 @@ export default function UsuarioSubmissoes() {
                       )}
 
                       {temModelo && (
-                        <a
-                          href={mkApiUrl(`chamadas/${ch.id}/modelo-banner`)} // ✅ base do Axios
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="ml-auto inline-flex items-center gap-1 text-sm text-indigo-700 hover:underline"
+                        <button
+                          type="button"
+                          onClick={() => baixarModeloBanner(ch.id)}
+                          className="ml-auto inline-flex items-center gap-1 text-sm text-indigo-700 hover:underline disabled:opacity-60"
+                          disabled={carregando}
+                          title="Baixar modelo de pôster"
                         >
-                          Modelo de pôster <ExternalLink className="w-3.5 h-3.5" />
-                        </a>
+                          {carregando ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          )}
+                          Modelo de pôster
+                        </button>
                       )}
                     </div>
                   </motion.div>
