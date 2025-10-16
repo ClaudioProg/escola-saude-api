@@ -244,7 +244,6 @@ export default function Navbar() {
       { label: "QR Code Presença",      path: "/admin/qr-codes",         icon: QrCode },
       // relatórios
       { label: "Relatórios Customizados", path: "/relatorios-customizados", icon: ClipboardList },
-      { label: "Gestão de Certificados", path: "/gestao-certificados", icon: History },
       // trabalhos
       { label: "Criar Submissão de Trabalho",         path: "/admin/chamadas/new",     icon: PlusCircle },
       { label: "Avaliar Submissão de Trabalho", path: "__open_submissions__", icon: FolderOpenDot },
@@ -252,8 +251,10 @@ export default function Navbar() {
       { label: "Gestão de Usuários",    path: "/gestao-usuarios",        icon: Users },
       { label: "Gestão de Instrutor",   path: "/gestao-instrutor",       icon: Presentation },
       { label: "Gestão de Eventos",     path: "/gerenciar-eventos",      icon: CalendarDays },
+      { label: "Gestão de Inscrições",   path: "/admin/cancelar-inscricoes", icon: XCircle },
       { label: "Gestão de Presença",    path: "/gestao-presenca",        icon: QrCode },
-      { label: "Cancelar Inscrições",   path: "/admin/cancelar-inscricoes", icon: XCircle },
+      { label: "Gestão de Certificados", path: "/gestao-certificados", icon: History },
+
     ],
     []
   );

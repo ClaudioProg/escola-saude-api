@@ -1,12 +1,12 @@
 // ✅ src/pages/DashboardAdministrador.jsx (mobile-first + a11y refinado)
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "react-toastify";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
 
 import CardEventoadministrador from "../components/CardEventoadministrador";
 import Footer from "../components/Footer";
 import { apiGet } from "../services/api";
+import Skeleton from "react-loading-skeleton";
+import { useReducedMotion } from "framer-motion";
 
 /* ========= HeaderHero (mobile-first) ========= */
 function HeaderHero({ nome, carregando, onRefresh }) {
@@ -77,27 +77,53 @@ export default function DashboardAdministrador() {
 
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState("");
-  const [filtroStatus, setFiltroStatus] = useState("em_andamento");
 
+  // filtros
+  const [filtroStatus, setFiltroStatus] = useState(
+    () => localStorage.getItem("adm:filtroStatus") || "em_andamento"
+  );
+  const [busca, setBusca] = useState(() => localStorage.getItem("adm:busca") || "");
+  const [buscaDebounced, setBuscaDebounced] = useState(busca);
+
+  const reduceMotion = useReducedMotion();
   const liveRef = useRef(null);
+  const erroRef = useRef(null);
+  const mounted = useRef(true);
+
   const setLive = (msg) => {
     if (liveRef.current) liveRef.current.textContent = msg;
   };
 
   useEffect(() => {
+    mounted.current = true;
     try {
       const u = JSON.parse(localStorage.getItem("usuario") || "{}");
       setNome(u?.nome || "");
     } catch {
       setNome("");
     }
+    return () => {
+      mounted.current = false;
+    };
   }, []);
+
+  // persistência de filtros
+  useEffect(() => {
+    localStorage.setItem("adm:filtroStatus", filtroStatus);
+  }, [filtroStatus]);
+
+  useEffect(() => {
+    localStorage.setItem("adm:busca", busca);
+    const t = setTimeout(() => setBuscaDebounced(busca.trim().toLowerCase()), 250);
+    return () => clearTimeout(t);
+  }, [busca]);
 
   async function carregarEventos() {
     setCarregando(true);
     try {
       setLive("Carregando eventos…");
       const data = await apiGet("/api/eventos", { on403: "silent" });
+      if (!mounted.current) return;
       setEventos(Array.isArray(data) ? data : []);
       setErro("");
       setLive("Eventos atualizados.");
@@ -106,8 +132,10 @@ export default function DashboardAdministrador() {
       toast.error("❌ Erro ao carregar eventos");
       setErro("Erro ao carregar eventos");
       setLive("Falha ao carregar eventos.");
+      // melhora a11y: foca na mensagem de erro
+      setTimeout(() => erroRef.current?.focus(), 0);
     } finally {
-      setCarregando(false);
+      if (mounted.current) setCarregando(false);
     }
   }
 
@@ -159,10 +187,10 @@ export default function DashboardAdministrador() {
       const data = await apiGet(`/api/presencas/turma/${turmaId}/detalhes`, {
         on403: "silent",
       });
-  
+
       const datas = Array.isArray(data?.datas) ? data.datas : [];
       const usuarios = Array.isArray(data?.usuarios) ? data.usuarios : [];
-  
+
       // ✅ Só conta encontros que já aconteceram (até agora)
       const hoje = new Date();
       const occurred = datas.filter((d) => {
@@ -173,19 +201,18 @@ export default function DashboardAdministrador() {
       });
       const ocorridosSet = new Set(occurred.map((d) => String(d?.data || d).slice(0, 10)));
       const totalOcorridos = occurred.length || 0;
-  
+
       // ✅ frequência baseada SOMENTE nos ocorridos
       const lista = usuarios.map((u) => {
         const presentesEmOcorridos = (u.presencas || []).reduce((acc, p) => {
           const dia = String(p?.data_presenca || p?.data).slice(0, 10);
           return acc + (p?.presente && ocorridosSet.has(dia) ? 1 : 0);
         }, 0);
-  
-        // evita erros de ponto flutuante; arredonda só para exibição
+
         const percExato = totalOcorridos > 0 ? (presentesEmOcorridos / totalOcorridos) * 100 : 0;
         const freqNum = Math.round(percExato);
-        const presenteElegivel = percExato >= 75 - 1e-9; // ✅ 3/4 = 75% já conta agora
-  
+        const presenteElegivel = percExato >= 75 - 1e-9;
+
         return {
           usuario_id: u.id,
           id: u.id,
@@ -200,18 +227,16 @@ export default function DashboardAdministrador() {
           pcd_intelectual: u?.pcd_intelectual || u?.def_mental || u?.def_intelectual,
           pcd_multipla: u?.pcd_multipla || u?.def_multipla,
           pcd_autismo: u?.pcd_autismo || u?.tea || u?.transtorno_espectro_autista,
-  
-          // 🔑 campos usados pelos cards/PDFs:
+
           presente: presenteElegivel,
           frequencia_num: freqNum,
           frequencia: `${freqNum}%`,
-  
-          // 🔎 úteis p/ checagens e agregações
+
           presentes_ocorridos: presentesEmOcorridos,
           total_ocorridos: totalOcorridos,
         };
       });
-  
+
       // Resumo por data (apenas ocorridos)
       const presentesPorData = occurred.map((d) => {
         const dia = String(d?.data || d).slice(0, 10);
@@ -228,13 +253,13 @@ export default function DashboardAdministrador() {
         }
         return { data: dia, presentes: count };
       });
-  
+
       const encontrosOcorridos = totalOcorridos;
       const somaPresentes = presentesPorData.reduce((a, b) => a + b.presentes, 0);
       const mediaPresentes = encontrosOcorridos
         ? Math.round(somaPresentes / encontrosOcorridos)
         : 0;
-  
+
       setPresencasPorTurma((prev) => ({
         ...prev,
         [turmaId]: {
@@ -273,7 +298,7 @@ export default function DashboardAdministrador() {
     return Math.round((somaElegiveis / somaInscritos) * 100);
   }
 
-  /* ========= PDFs ========= */
+  /* ========= PDFs (import dinâmico) ========= */
   const gerarRelatorioPDF = async (turmaId) => {
     try {
       const data = await apiGet(`/api/presencas/relatorio-presencas/turma/${turmaId}`, {
@@ -282,14 +307,17 @@ export default function DashboardAdministrador() {
       const alunos = Array.isArray(data?.lista) ? data.lista : Array.isArray(data) ? data : [];
 
       const total = alunos.length;
-      // ✅ Conta presentes somente com freq ≥ 75%
       const presentes = alunos.filter((a) => {
-        const n = typeof a.frequencia_num === "number"
-          ? a.frequencia_num
-          : parseInt(String(a.frequencia || "0").replace(/\D/g, ""), 10) || 0;
+        const n =
+          typeof a.frequencia_num === "number"
+            ? a.frequencia_num
+            : parseInt(String(a.frequencia || "0").replace(/\D/g, ""), 10) || 0;
         return n >= 75;
       }).length;
       const presencaMedia = total ? ((presentes / total) * 100).toFixed(1) : "0.0";
+
+      const { jsPDF } = await import("jspdf");
+      const autoTable = (await import("jspdf-autotable")).default;
 
       const doc = new jsPDF();
       doc.setFontSize(16);
@@ -298,9 +326,10 @@ export default function DashboardAdministrador() {
         startY: 30,
         head: [["Nome", "CPF", "Presença (≥75%)"]],
         body: alunos.map((a) => {
-          const n = typeof a.frequencia_num === "number"
-            ? a.frequencia_num
-            : parseInt(String(a.frequencia || "0").replace(/\D/g, ""), 10) || 0;
+          const n =
+            typeof a.frequencia_num === "number"
+              ? a.frequencia_num
+              : parseInt(String(a.frequencia || "0").replace(/\D/g, ""), 10) || 0;
           const presenteElegivel = n >= 75;
           return [a.nome, formatarCPF(a.cpf), presenteElegivel ? "Sim" : "Não"];
         }),
@@ -334,8 +363,7 @@ export default function DashboardAdministrador() {
       }
 
       const todasTurmas = Object.values(turmasPorEvento).flat();
-      const turma =
-        todasTurmas.find((t) => Number(t?.id) === Number(turmaId)) || {};
+      const turma = todasTurmas.find((t) => Number(t?.id) === Number(turmaId)) || {};
 
       const eventoNome =
         turma?.evento?.nome || turma?.evento?.titulo || turma?.titulo_evento || "Evento";
@@ -491,10 +519,17 @@ export default function DashboardAdministrador() {
     });
   }, [eventos]);
 
-  const eventosFiltrados = useMemo(
-    () => eventosOrdenados.filter(filtrarPorStatus),
-    [eventosOrdenados, filtroStatus, turmasPorEvento]
-  );
+  // filtro por busca (nome do evento) + status
+  const eventosFiltrados = useMemo(() => {
+    const byStatus = eventosOrdenados.filter(filtrarPorStatus);
+    if (!buscaDebounced) return byStatus;
+    const q = buscaDebounced;
+    return byStatus.filter((ev) =>
+      String(ev?.nome || ev?.titulo || "")
+        .toLowerCase()
+        .includes(q)
+    );
+  }, [eventosOrdenados, filtroStatus, turmasPorEvento, buscaDebounced]);
 
   return (
     <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
@@ -508,57 +543,101 @@ export default function DashboardAdministrador() {
           aria-valuemax={100}
           aria-label="Carregando eventos"
         >
-          <div className="h-full bg-pink-600 animate-pulse w-1/3" />
+          <div
+            className={`h-full bg-pink-600 ${reduceMotion ? "" : "animate-pulse"} w-1/3`}
+          />
         </div>
       )}
 
       <main id="conteudo" className="flex-1 max-w-6xl mx-auto px-3 sm:px-4 py-5 sm:py-6">
         <p ref={liveRef} className="sr-only" aria-live="polite" />
 
-        {/* Filtros como chips roláveis (mobile-friendly) */}
+        {/* Filtros: chips + busca (mobile-friendly) */}
         <section
           className="bg-white dark:bg-gray-800 rounded-xl shadow p-3 sm:p-4 mb-4 sm:mb-6"
           aria-label="Filtros por status do evento"
         >
-          <div className="-mx-3 px-3 overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-700">
-            <nav
-              className="flex gap-2 sm:gap-3 min-w-fit snap-x"
-              role="tablist"
-              aria-label="Filtros por status"
-            >
-              {[
-                { key: "todos", label: "Todos" },
-                { key: "programado", label: "Programados" },
-                { key: "em_andamento", label: "Em andamento" },
-                { key: "encerrado", label: "Encerrados" },
-              ].map(({ key, label }) => {
-                const active = filtroStatus === key;
-                return (
-                  <button
-                    key={key}
-                    role="tab"
-                    aria-selected={active}
-                    aria-controls={`painel-${key}`}
-                    onClick={() => setFiltroStatus(key)}
-                    className={`snap-start px-4 py-2 rounded-full text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500
-                      ${active
-                        ? "bg-pink-600 text-white"
-                        : "bg-gray-200 text-gray-900 hover:bg-gray-300 dark:bg-gray-700 dark:text-white"}`}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-            </nav>
+          <div className="flex flex-col gap-3">
+            <div className="-mx-3 px-3 overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-700">
+              <nav
+                className="flex gap-2 sm:gap-3 min-w-fit snap-x"
+                role="tablist"
+                aria-label="Filtros por status"
+              >
+                {[
+                  { key: "todos", label: "Todos" },
+                  { key: "programado", label: "Programados" },
+                  { key: "em_andamento", label: "Em andamento" },
+                  { key: "encerrado", label: "Encerrados" },
+                ].map(({ key, label }) => {
+                  const active = filtroStatus === key;
+                  return (
+                    <button
+                      key={key}
+                      role="tab"
+                      aria-selected={active}
+                      aria-controls={`painel-${key}`}
+                      onClick={() => setFiltroStatus(key)}
+                      className={`snap-start px-4 py-2 rounded-full text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500
+                        ${
+                          active
+                            ? "bg-pink-600 text-white"
+                            : "bg-gray-200 text-gray-900 hover:bg-gray-300 dark:bg-gray-700 dark:text-white"
+                        }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </nav>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <label htmlFor="busca-evento" className="sr-only">
+                Buscar evento pelo nome
+              </label>
+              <input
+                id="busca-evento"
+                type="search"
+                inputMode="search"
+                placeholder="Buscar evento pelo nome…"
+                value={busca}
+                onChange={(e) => setBusca(e.target.value)}
+                className="flex-1 px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 dark:bg-zinc-800 dark:text-white text-sm"
+                aria-describedby="dica-busca"
+              />
+              <button
+                type="button"
+                onClick={() => setBusca("")}
+                className="px-3 py-2 rounded-md bg-gray-200 dark:bg-gray-700 text-sm"
+                aria-label="Limpar busca"
+              >
+                Limpar
+              </button>
+            </div>
+            <p id="dica-busca" className="text-xs text-gray-600 dark:text-gray-300">
+              Dica: digite parte do nome do evento para filtrar rapidamente.
+            </p>
           </div>
         </section>
 
         {erro && (
           <div
-            className="bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-200 rounded-xl p-3 sm:p-4 mb-4"
+            ref={erroRef}
+            tabIndex={-1}
+            className="bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-200 rounded-xl p-3 sm:p-4 mb-4 outline-none"
             role="alert"
           >
-            <p className="text-sm">{erro}</p>
+            <div className="flex items-center gap-2 justify-between">
+              <p className="text-sm">{erro}</p>
+              <button
+                type="button"
+                onClick={carregarEventos}
+                className="text-sm px-3 py-1.5 rounded-md bg-red-100 dark:bg-red-800/40"
+              >
+                Tentar novamente
+              </button>
+            </div>
           </div>
         )}
 
@@ -569,26 +648,35 @@ export default function DashboardAdministrador() {
           aria-label="Lista de eventos filtrados"
           className="space-y-3 sm:space-y-4"
         >
-          {eventosFiltrados.map((evento) => (
-            <CardEventoadministrador
-              key={evento.id}
-              evento={evento}
-              expandido={eventoExpandido === evento.id}
-              toggleExpandir={toggleExpandir}
-              turmas={turmasPorEvento[evento.id] || []}
-              carregarInscritos={carregarInscritos}
-              inscritosPorTurma={inscritosPorTurma}
-              carregarAvaliacoes={carregarAvaliacoes}
-              avaliacoesPorTurma={avaliacoesPorTurma}
-              presencasPorTurma={presencasPorTurma}
-              carregarPresencas={carregarPresencas}
-              gerarRelatorioPDF={gerarRelatorioPDF}
-              gerarPdfInscritosTurma={gerarPdfInscritosTurma}
-              // ✅ Novas helpers para o card exibir % correta (≥ 75%)
-              calcularPctTurma={(turmaId) => porcentagemPresencaTurma(turmaId)}
-              calcularPctEvento={(eventoId) => porcentagemPresencaEvento(eventoId)}
-            />
-          ))}
+          {carregando && (
+            <>
+              <Skeleton height={110} />
+              <Skeleton height={110} />
+              <Skeleton height={110} />
+            </>
+          )}
+
+          {!carregando &&
+            eventosFiltrados.map((evento) => (
+              <CardEventoadministrador
+                key={evento.id}
+                evento={evento}
+                expandido={eventoExpandido === evento.id}
+                toggleExpandir={toggleExpandir}
+                turmas={turmasPorEvento[evento.id] || []}
+                carregarInscritos={carregarInscritos}
+                inscritosPorTurma={inscritosPorTurma}
+                carregarAvaliacoes={carregarAvaliacoes}
+                avaliacoesPorTurma={avaliacoesPorTurma}
+                presencasPorTurma={presencasPorTurma}
+                carregarPresencas={carregarPresencas}
+                gerarRelatorioPDF={gerarRelatorioPDF}
+                gerarPdfInscritosTurma={gerarPdfInscritosTurma}
+                // ✅ Novas helpers para o card exibir % correta (≥ 75%)
+                calcularPctTurma={(turmaId) => porcentagemPresencaTurma(turmaId)}
+                calcularPctEvento={(eventoId) => porcentagemPresencaEvento(eventoId)}
+              />
+            ))}
 
           {!carregando && eventosFiltrados.length === 0 && (
             <p className="text-center text-gray-600 dark:text-gray-300 text-sm sm:text-base px-2">

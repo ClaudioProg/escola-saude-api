@@ -1,26 +1,58 @@
-// src/controllers/usuarioAdministradorController.js
+// 📁 src/controllers/usuarioAdministradorController.js
 const db = require("../db");
 
-/* util: normaliza vetor/CSV de perfis para array minúsculo */
+/* ---------------- utils ---------------- */
 function toPerfilArray(perfil) {
   if (Array.isArray(perfil)) {
     return perfil.map((p) => String(p || "").toLowerCase().trim()).filter(Boolean);
   }
   if (typeof perfil === "string") {
-    return perfil
-      .split(",")
-      .map((p) => p.toLowerCase().trim())
-      .filter(Boolean);
+    return perfil.split(",").map((p) => p.toLowerCase().trim()).filter(Boolean);
   }
   return [];
+}
+
+// opcional: se você já tem esse helper noutro arquivo, pode remover daqui
+function traduzPgError(err) {
+  // mapeia alguns erros comuns do Postgres para mensagens amigáveis
+  if (!err) return { erro: "Erro desconhecido." };
+  if (err.code === "23505") return { erro: "Registro duplicado." };
+  if (err.code === "23503") return { erro: "Violação de integridade referencial." };
+  if (err.code === "23514") return { erro: "Restrição de validação violada." };
+  return { erro: err.message || "Erro de banco de dados." };
 }
 
 /* =============== LISTAR TODOS OS USUÁRIOS (ADMIN) =============== */
 async function listarUsuarios(req, res) {
   try {
     const { rows } = await db.query(
-      "SELECT id, nome, cpf, email, perfil FROM usuarios ORDER BY nome ASC"
+      `
+      SELECT
+        u.id,
+        u.nome,
+        u.cpf,
+        u.email,
+        u.registro,
+        u.data_nascimento,
+        u.perfil,
+        u.unidade_id,
+        u.escolaridade_id,
+        u.cargo_id,
+        u.deficiencia_id,
+        -- nomes quando existirem nas tabelas de apoio (ajuste os nomes se forem diferentes)
+        un.nome  AS unidade_nome,
+        es.nome  AS escolaridade_nome,
+        ca.nome  AS cargo_nome,
+        de.nome  AS deficiencia_nome
+      FROM usuarios u
+      LEFT JOIN unidades       un ON un.id = u.unidade_id
+      LEFT JOIN escolaridades  es ON es.id = u.escolaridade_id
+      LEFT JOIN cargos         ca ON ca.id = u.cargo_id
+      LEFT JOIN deficiencias   de ON de.id = u.deficiencia_id
+      ORDER BY u.nome ASC
+      `
     );
+
     const data = rows.map((u) => ({ ...u, perfil: toPerfilArray(u.perfil) }));
     res.json(data);
   } catch (err) {
@@ -41,12 +73,34 @@ async function buscarUsuarioPorId(req, res) {
 
   try {
     const { rows } = await db.query(
-      "SELECT id, nome, cpf, email, perfil FROM usuarios WHERE id = $1",
+      `
+      SELECT
+        u.id,
+        u.nome,
+        u.cpf,
+        u.email,
+        u.registro,
+        u.data_nascimento,
+        u.perfil,
+        u.unidade_id,
+        u.escolaridade_id,
+        u.cargo_id,
+        u.deficiencia_id,
+        un.nome  AS unidade_nome,
+        es.nome  AS escolaridade_nome,
+        ca.nome  AS cargo_nome,
+        de.nome  AS deficiencia_nome
+      FROM usuarios u
+      LEFT JOIN unidades       un ON un.id = u.unidade_id
+      LEFT JOIN escolaridades  es ON es.id = u.escolaridade_id
+      LEFT JOIN cargos         ca ON ca.id = u.cargo_id
+      LEFT JOIN deficiencias   de ON de.id = u.deficiencia_id
+      WHERE u.id = $1
+      `,
       [id]
     );
-    if (rows.length === 0) {
-      return res.status(404).json({ erro: "Usuário não encontrado." });
-    }
+
+    if (rows.length === 0) return res.status(404).json({ erro: "Usuário não encontrado." });
     const u = rows[0];
     res.json({ ...u, perfil: toPerfilArray(u.perfil) });
   } catch (err) {
@@ -80,7 +134,6 @@ async function atualizarUsuario(req, res) {
   }
 
   try {
-    // Monta query dinamicamente
     const sets = ["nome = $1", "email = $2"];
     const values = [nome, email];
     let idx = 3;
@@ -96,13 +149,12 @@ async function atualizarUsuario(req, res) {
       `UPDATE usuarios
          SET ${sets.join(", ")}
        WHERE id = $${idx}
-       RETURNING id, nome, cpf, email, perfil`,
+       RETURNING id, nome, cpf, email, registro, data_nascimento, perfil,
+                 unidade_id, escolaridade_id, cargo_id, deficiencia_id`,
       values
     );
 
-    if (rows.length === 0) {
-      return res.status(404).json({ erro: "Usuário não encontrado." });
-    }
+    if (rows.length === 0) return res.status(404).json({ erro: "Usuário não encontrado." });
 
     const u = rows[0];
     res.json({ ...u, perfil: toPerfilArray(u.perfil) });
@@ -119,18 +171,15 @@ async function excluirUsuario(req, res) {
   const { id } = req.params;
   const isAdministrador = toPerfilArray(req.usuario?.perfil).includes("administrador");
 
-  if (!isAdministrador) {
-    return res.status(403).json({ erro: "Acesso negado." });
-  }
+  if (!isAdministrador) return res.status(403).json({ erro: "Acesso negado." });
 
   try {
     const { rows } = await db.query(
       "DELETE FROM usuarios WHERE id = $1 RETURNING id, nome, cpf, email, perfil",
       [id]
     );
-    if (rows.length === 0) {
-      return res.status(404).json({ erro: "Usuário não encontrado." });
-    }
+    if (rows.length === 0) return res.status(404).json({ erro: "Usuário não encontrado." });
+
     const u = rows[0];
     res.json({
       mensagem: "Usuário excluído com sucesso.",
@@ -142,16 +191,10 @@ async function excluirUsuario(req, res) {
   }
 }
 
-/* =============== LISTAR INSTRUTORES ===============
-   - inclui:
-     a) quem tem perfil contendo 'instrutor'
-     b) e/ou quem já ministrou algum evento
-   - retorna métricas agregadas quando existirem
-*/
-async function listarInstrutoresCore(req, res) {
+/* =============== LISTAR INSTRUTORES (com métricas) =============== */
+async function listarInstrutoresCore(_req, res) {
   try {
-    const { rows } = await db.query(
-      `
+    const { rows } = await db.query(`
       WITH instrutores_base AS (
         SELECT DISTINCT u.id, u.nome, u.email
         FROM usuarios u
@@ -189,15 +232,14 @@ async function listarInstrutoresCore(req, res) {
       ) e_stats ON e_stats.uid = b.id
       LEFT JOIN assinaturas s ON s.usuario_id = b.id
       ORDER BY b.nome ASC;
-      `
-    );
+    `);
 
     const instrutores = rows.map((r) => ({
       id: r.id,
       nome: r.nome,
       email: r.email,
       eventosMinistrados: Number(r.eventos_ministrados) || 0,
-      mediaAvaliacao: r.media_avaliacao !== null ? Number(r.media_avaliacao) : null, // ✅ fix
+      mediaAvaliacao: r.media_avaliacao !== null ? Number(r.media_avaliacao) : null,
       possuiAssinatura: !!r.possui_assinatura,
     }));
 
@@ -208,10 +250,9 @@ async function listarInstrutoresCore(req, res) {
   }
 }
 
-/* ===== aliases para compatibilidade com nomes usados no router ===== */
-const listarInstrutores = listarInstrutoresCore;   // plural
-const listarInstrutor   = listarInstrutoresCore;   // singular
-const listarinstrutor   = listarInstrutoresCore;   // caso o router tenha ficado minúsculo
+const listarInstrutores = listarInstrutoresCore;
+const listarInstrutor   = listarInstrutoresCore;
+const listarinstrutor   = listarInstrutoresCore;
 
 /* =============== ATUALIZAR PERFIL (ADMIN) =============== */
 async function atualizarPerfil(req, res) {
@@ -226,18 +267,14 @@ async function atualizarPerfil(req, res) {
   const arr = toPerfilArray(perfil).filter((p) => perfilValido.includes(p));
   const perfilCsv = arr.join(",");
 
-  if (!perfilCsv) {
-    return res.status(400).json({ erro: "Perfil inválido ou vazio." });
-  }
+  if (!perfilCsv) return res.status(400).json({ erro: "Perfil inválido ou vazio." });
 
   try {
     const { rows } = await db.query(
       "UPDATE usuarios SET perfil = $1 WHERE id = $2 RETURNING id, nome, email, perfil",
       [perfilCsv, id]
     );
-    if (rows.length === 0) {
-      return res.status(404).json({ erro: "Usuário não encontrado." });
-    }
+    if (rows.length === 0) return res.status(404).json({ erro: "Usuário não encontrado." });
     const u = rows[0];
     res.json({ ...u, perfil: toPerfilArray(u.perfil) });
   } catch (err) {
@@ -246,14 +283,104 @@ async function atualizarPerfil(req, res) {
   }
 }
 
+/* =============== RESUMO POR USUÁRIO (cursos ≥75% e certificados) =============== */
+/* =============== RESUMO (cursos ≥75% e certificados) =============== */
+async function getResumoUsuario(req, res) {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) {
+    return res.status(400).json({ erro: "ID inválido." });
+  }
+
+  try {
+    const sqlCursos75 = `
+      WITH minhas_turmas AS (
+        SELECT
+          t.id              AS turma_id,
+          t.data_inicio::date AS di_raw,
+          t.data_fim::date    AS df_raw
+        FROM inscricoes i
+        JOIN turmas t ON t.id = i.turma_id
+        WHERE i.usuario_id = $1
+      ),
+      datas_base AS (
+        -- 1) Preferir datas_turma
+        SELECT mt.turma_id, (dt.data::date) AS d
+        FROM minhas_turmas mt
+        JOIN datas_turma dt ON dt.turma_id = mt.turma_id
+
+        UNION ALL
+
+        -- 2) Fallback: janela di..df quando NÃO existem datas_turma
+        SELECT mt.turma_id, gs::date AS d
+        FROM minhas_turmas mt
+        LEFT JOIN datas_turma dt ON dt.turma_id = mt.turma_id
+        CROSS JOIN LATERAL generate_series(mt.di_raw, mt.df_raw, interval '1 day') AS gs
+        WHERE dt.turma_id IS NULL
+      ),
+      pres AS (
+        -- presença consolidada por dia
+        SELECT p.turma_id, p.data_presenca::date AS d, BOOL_OR(p.presente) AS presente
+        FROM presencas p
+        WHERE p.usuario_id = $1
+        GROUP BY p.turma_id, p.data_presenca::date
+      ),
+      agreg AS (
+        SELECT
+          mt.turma_id,
+          MIN(db.d) AS di,
+          MAX(db.d) AS df,
+          COUNT(*)  AS total_encontros,
+          COUNT(*) FILTER (WHERE db.d <= CURRENT_DATE) AS realizados,
+          COUNT(*) FILTER (WHERE p.presente IS TRUE AND db.d <= CURRENT_DATE) AS presentes_passados
+        FROM minhas_turmas mt
+        JOIN datas_base   db ON db.turma_id = mt.turma_id
+        LEFT JOIN pres     p ON p.turma_id  = mt.turma_id AND p.d = db.d
+        GROUP BY mt.turma_id
+      )
+      SELECT
+        COALESCE( COUNT(*) FILTER (
+          WHERE (CURRENT_DATE > df)              -- turma encerrada
+            AND total_encontros > 0
+            AND (presentes_passados::numeric / total_encontros) >= 0.75
+        ), 0)::int AS n
+      FROM agreg;
+    `;
+
+    const sqlCerts = `
+      SELECT COALESCE(COUNT(*)::int, 0) AS n
+      FROM certificados
+      WHERE usuario_id = $1 AND tipo = 'usuario';
+    `;
+
+    const [cursosQ, certsQ] = await Promise.all([
+      db.query(sqlCursos75, [id]),
+      db.query(sqlCerts,     [id]),
+    ]);
+
+    const cursos75 = Number(cursosQ?.rows?.[0]?.n || 0);
+    const certificados = Number(certsQ?.rows?.[0]?.n || 0);
+
+    // Por segurança: nunca reportar menos cursos que certificados (no seu fluxo, certificado implica ≥75%)
+    const cursos_concluidos_75 = Math.max(cursos75, certificados);
+
+    return res.json({
+      cursos_concluidos_75,
+      certificados_emitidos: certificados,
+    });
+  } catch (err) {
+    console.error("❌ [getResumoUsuario] erro:", err);
+    return res.status(500).json({ erro: "Erro ao obter resumo do usuário." });
+  }
+}
+
 module.exports = {
   listarUsuarios,
   buscarUsuarioPorId,
   atualizarUsuario,
   excluirUsuario,
-  // instrutores (múltiplos aliases p/ evitar crash por nome diferente no router)
   listarInstrutores,
   listarInstrutor,
   listarinstrutor,
   atualizarPerfil,
+  getResumoUsuario,          
 };

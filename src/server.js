@@ -51,6 +51,7 @@ const datasEventoRoute           = require("./routes/datasEventoRoute");
 const perfilRoutes               = require("./routes/perfilRoutes");
 const publicLookupsRoutes        = require("./routes/publicLookupsRoutes");
 const usuariosRoute              = require("./routes/usuariosRoute");
+const metricasRoutes = require("./routes/metricasRoutes");
 
 /* 🆕 Submissão de Trabalhos */
 const chamadasRoutes             = require("./routes/chamadasRoutes");
@@ -58,7 +59,9 @@ const trabalhosRoutes            = require("./routes/trabalhosRoutes");
 
 /* 🆕 Upload/Modelo de Banner (por chamada) — arquivo correto */
 const chamadasModeloRoutes       = require("./routes/chamadasModeloRoutes");
-// const uploadRoutes            = require("./routes/uploadRoutes"); // (legado, se precisar)
+
+// 🆕 Estatísticas de usuários (Doughnuts do Dashboard Analítico)
+const usuariosEstatisticasRoute  = require("./routes/usuariosEstatisticasRoute");
 
 const IS_DEV = process.env.NODE_ENV !== "production";
 const app = express();
@@ -265,7 +268,14 @@ app.use("/api/inscricoes", inscricoesRoute);
 app.use("/api/presencas", presencasRoute);
 app.use("/api/relatorio-presencas", relatorioPresencasRoute);
 app.use("/api/turmas", turmasRoute);
+app.use("/api/metricas", metricasRoutes);
+
+// 🔹 MONTE PRIMEIRO a rota de Estatísticas (estática)
+app.use("/api", usuariosEstatisticasRoute);
+
+// 🔹 Depois, as demais de /usuarios (contém rotas dinâmicas :id)
 app.use("/api/usuarios", usuariosRoute);
+
 app.use("/api/instrutor", instrutorRoute);
 app.use("/api/relatorios", relatoriosRoute);
 app.use("/api/dashboard-analitico", dashboardAnaliticoRoutes);

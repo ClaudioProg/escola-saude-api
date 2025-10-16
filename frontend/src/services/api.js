@@ -1,5 +1,3 @@
-/* eslint-disable no-console */
-
 // ───────────────────────────────────────────────────────────────────
 // Helpers de ambiente
 // ───────────────────────────────────────────────────────────────────
@@ -36,21 +34,10 @@ if (isHttpUrl(API_BASE_URL) && !(typeof window !== "undefined" && isLocalHost(ne
   API_BASE_URL = API_BASE_URL.replace(/^http:\/\//i, "https://");
 }
 
-// Logs de init
+// Validação de base (sem log)
 (() => {
-  const proto = typeof window !== "undefined" ? window.location.protocol : "n/a";
-  const host = typeof window !== "undefined" ? window.location.host : "n/a";
-
-  console.info("[API:init] base:", API_BASE_URL || "(vazia)", {
-    protocol: proto,
-    host,
-    env: IS_DEV ? "dev" : "prod",
-  });
-
-  if (!API_BASE_URL) {
-    const msg = "[API:init] Base vazia.";
-    if (!IS_DEV) throw new Error("VITE_API_BASE_URL ausente em produção.");
-    console.warn(`${msg} Em dev use proxy do Vite ou .env.local.`);
+  if (!API_BASE_URL && !IS_DEV) {
+    throw new Error("VITE_API_BASE_URL ausente em produção.");
   }
 })();
 
@@ -294,16 +281,6 @@ async function handle(res, { on401 = "silent", on403 = "silent" } = {}) {
   try { text = await res.text(); } catch {}
   try { data = text ? JSON.parse(text) : null; } catch { data = null; }
 
-  if (IS_DEV) {
-    const preview = data ?? text ?? "";
-    console[res.ok ? "log" : "warn"](
-      `🛬 [resp ${status}] ${url}`,
-      typeof preview === "string" ? preview.slice(0, 500) : preview
-    );
-  } else if (!res.ok) {
-    console.warn(`🛬 [resp ${status}] ${url}`);
-  }
-
   if (status === 401) {
     if (on401 === "redirect") {
       try {
@@ -393,14 +370,6 @@ async function doFetch(
   }
 
   const hadAuthHeader = !!init.headers?.Authorization;
-  const headersPreview = { ...init.headers };
-  if (headersPreview.Authorization) headersPreview.Authorization = "Bearer ***";
-  console.log(`🛫 [req ${method}] ${url}`, {
-    auth: auth ? "on" : "off",
-    hasAuthHeader: hadAuthHeader,
-    headers: headersPreview,
-    body: body instanceof FormData ? "[FormData]" : body,
-  });
 
   // ⏱️ timeout com AbortController
   async function runOnce() {
@@ -417,7 +386,6 @@ async function doFetch(
   }
 
   let res;
-  const t0 = typeof performance !== "undefined" ? performance.now() : Date.now();
 
   // 1ª tentativa
   try {
@@ -425,7 +393,6 @@ async function doFetch(
   } catch (e1) {
     // Erro de rede/timeout → warm-up e retry 1x
     const reason = e1?.message || e1?.name || String(e1);
-    console.error(`🌩️ [neterr ${method}] ${url}:`, reason);
 
     await warmup(auth && hadAuthHeader);
     try {
@@ -439,9 +406,6 @@ async function doFetch(
       );
     }
   }
-
-  const t1 = typeof performance !== "undefined" ? performance.now() : Date.now();
-  console.log(`⏱️ [time ${method}] ${url} → ${Math.round(t1 - t0)}ms`);
 
   // Passa o contexto (on401/on403) para o handler
   return handle(res, { on401, on403 });

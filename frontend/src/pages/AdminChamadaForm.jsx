@@ -1,8 +1,9 @@
+// 📁 src/pages/AdminChamadaForm.jsx
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Settings2, Save, Plus, Trash2, Pencil, Eye, EyeOff,
-  CheckCircle2, XCircle, X, Loader2, FileText, AlertCircle, Upload, Download
+  CheckCircle2, XCircle, X, Loader2, FileText, AlertCircle, Upload
 } from "lucide-react";
 import Footer from "../components/Footer";
 import {
@@ -46,15 +47,15 @@ const clampUi = (n) => Math.max(LIMIT_MIN, Math.min(LIMIT_MAX, Number(n) || LIMI
 const enforceBackend = (n) => Math.max(BACKEND_MIN, Math.min(BACKEND_MAX, Number(n) || BACKEND_MIN));
 
 /* ─── UI helpers ─── */
-const Card = ({ children }) => (
-  <div className="rounded-2xl border bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:p-6">{children}</div>
+const Card = ({ children, className = "" }) => (
+  <div className={`rounded-2xl border bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:p-6 ${className}`}>{children}</div>
 );
-const Field = ({ label, hint, error, children }) => (
+const Field = ({ label, hint, error, children, htmlFor }) => (
   <div className="mb-4">
-    {label && <label className="mb-1 block text-sm font-medium text-zinc-800 dark:text-zinc-100">{label}</label>}
+    {label && <label htmlFor={htmlFor} className="mb-1 block text-sm font-medium text-zinc-800 dark:text-zinc-100">{label}</label>}
     {children}
     {hint && <div className="mt-1 text-xs text-zinc-500">{hint}</div>}
-    {error && <div className="mt-1 text-xs text-red-600">{error}</div>}
+    {error && <div role="alert" className="mt-1 text-xs text-red-600">{error}</div>}
   </div>
 );
 const Badge = ({ children, tone = "indigo" }) => {
@@ -73,35 +74,97 @@ const Counter = ({ value, max }) => {
   return <span className={`text-xs ${over ? "text-red-600" : "text-zinc-500"}`}>{len}{max ? `/${max}` : ""}</span>;
 };
 
+/* ─── A11y: Live regions ─── */
+function LiveRegion({ message, type = "polite" }) {
+  if (!message) return null;
+  return (
+    <div aria-live={type} className="sr-only">
+      {message}
+    </div>
+  );
+}
+
+/* ─── Confirm Dialog ─── */
+function ConfirmDialog({ open, title = "Confirmar", description, onConfirm, onCancel }) {
+  return (
+    <Modal
+      open={open}
+      onClose={onCancel}
+      title={title}
+      size="sm"
+      footer={
+        <>
+          <button type="button" onClick={onCancel} className="rounded-xl px-4 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800">Cancelar</button>
+          <button type="button" onClick={onConfirm} className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2 text-white hover:bg-rose-700">
+            <Trash2 className="h-4 w-4" aria-hidden="true" /> Excluir
+          </button>
+        </>
+      }
+    >
+      <div className="text-sm text-zinc-700 dark:text-zinc-200">{description}</div>
+    </Modal>
+  );
+}
+
 /* ─── Modal ─── */
-function Modal({ open, onClose, title, children, footer }) {
+function Modal({ open, onClose, title, children, footer, size = "lg", labelledById, describedById }) {
+  const dialogRef = useRef(null);
+  const lastFocusRef = useRef(null);
+
+  // Focus trap + restore + scroll lock
+  useEffect(() => {
+    if (open) {
+      lastFocusRef.current = document.activeElement;
+      document.body.style.overflow = "hidden";
+      setTimeout(() => dialogRef.current?.querySelector?.("[data-autofocus]")?.focus?.(), 0);
+    } else {
+      document.body.style.overflow = "";
+      lastFocusRef.current?.focus?.();
+    }
+    return () => { document.body.style.overflow = ""; };
+  }, [open]);
+
+  // Escape
   useEffect(() => {
     function onKey(e) { if (e.key === "Escape") onClose?.(); }
     if (open) document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
+  const sizes = { sm: "max-w-md", md: "max-w-2xl", lg: "max-w-4xl" };
+
+  // Close on backdrop click (but not on content)
+  const onBackdrop = (e) => { if (e.target === e.currentTarget) onClose?.(); };
+
   return (
     <AnimatePresence>
       {open && (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4" aria-modal="true" role="dialog">
-          <motion.div initial={{ y: 12, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 12, opacity: 0 }}
-            className="relative w-full max-w-4xl overflow-hidden rounded-2xl border bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-900">
+        <motion.div
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
+          aria-modal="true" role="dialog"
+          aria-labelledby={labelledById} aria-describedby={describedById}
+          onMouseDown={onBackdrop}
+        >
+          <motion.div
+            ref={dialogRef}
+            initial={{ y: 12, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 12, opacity: 0 }}
+            className={`relative w-full ${sizes[size]} overflow-hidden rounded-2xl border bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-900`}
+          >
             <div className="flex items-center justify-between bg-gradient-to-r from-indigo-600 to-teal-600 px-4 py-3 text-white">
               <div className="flex items-center gap-2">
-                <FileText className="h-5 w-5" />
-                <h3 className="text-lg font-semibold">{title}</h3>
+                <FileText className="h-5 w-5" aria-hidden="true" />
+                <h3 id={labelledById} className="text-lg font-semibold">{title}</h3>
                 <Badge tone="emerald">Admin</Badge>
               </div>
-              <button onClick={onClose} className="rounded-xl p-2 hover:bg-white/10" aria-label="Fechar">
-                <X className="h-5 w-5" />
+              <button type="button" onClick={onClose} className="rounded-xl p-2 hover:bg-white/10" aria-label="Fechar" data-autofocus>
+                <X className="h-5 w-5" aria-hidden="true" />
               </button>
             </div>
 
-            <div className="max-h-[75vh] overflow-y-auto p-4 sm:p-6">{children}</div>
+            <div id={describedById} className="max-h-[75vh] overflow-y-auto p-4 sm:p-6">{children}</div>
 
-            <div className="flex items-center justify-end gap-3 border-t bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900/50">
+            <div className="flex flex-wrap items-center justify-end gap-3 border-t bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900/50">
               {footer}
             </div>
           </motion.div>
@@ -114,7 +177,7 @@ function Modal({ open, onClose, title, children, footer }) {
 /* ─── Header ─── */
 function HeaderHero() {
   return (
-    <motion.header initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}
+    <motion.header initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}
       className="w-full bg-indigo-600 text-white dark:bg-indigo-700">
       <div className="mx-auto max-w-screen-xl px-4 py-6 text-center sm:px-6 lg:px-8">
         <div className="mx-auto flex max-w-3xl flex-col items-center gap-3">
@@ -131,6 +194,20 @@ function HeaderHero() {
   );
 }
 
+/* ─── Skeleton Item ─── */
+function ChamadaSkeleton() {
+  return (
+    <div className="animate-pulse rounded-xl border p-3 dark:border-zinc-800">
+      <div className="h-4 w-1/2 rounded bg-zinc-200 dark:bg-zinc-700" />
+      <div className="mt-2 flex items-center gap-2">
+        <div className="h-4 w-24 rounded bg-zinc-200 dark:bg-zinc-700" />
+        <div className="h-4 w-20 rounded bg-zinc-200 dark:bg-zinc-700" />
+        <div className="h-4 w-40 rounded bg-zinc-200 dark:bg-zinc-700" />
+      </div>
+    </div>
+  );
+}
+
 /* ─── Painel ─── */
 function ChamadasPainel({ onEditar, onNova, refreshSignal }) {
   const [lista, setLista] = useState([]);
@@ -138,6 +215,7 @@ function ChamadasPainel({ onEditar, onNova, refreshSignal }) {
   const [err, setErr] = useState("");
   const [filtro, setFiltro] = useState("abertas");
   const [mutatingId, setMutatingId] = useState(null);
+  const [confirmId, setConfirmId] = useState(null);
 
   const load = useCallback(async () => {
     setErr(""); setLoading(true);
@@ -163,15 +241,17 @@ function ChamadasPainel({ onEditar, onNova, refreshSignal }) {
       await apiPut(`admin/chamadas/${id}/publicar`, { publicado: !!valor });
       setLista((xs) => xs.map((c) => (c.id === id ? { ...c, publicado: !!valor } : c)));
     } catch (e) {
-      alert(e?.message || "Erro ao alterar publicação.");
+      setErr(e?.message || "Erro ao alterar publicação.");
     } finally { setMutatingId(null); }
   };
   const excluir = async (id) => {
-    if (!confirm("Confirma excluir esta chamada? Esta ação não pode ser desfeita.")) return;
     setMutatingId(id);
-    try { await apiDelete(`admin/chamadas/${id}`); setLista((xs) => xs.filter((c) => c.id !== id)); }
-    catch (e) { alert(e?.message || "Erro ao excluir chamada."); }
-    finally { setMutatingId(null); }
+    try {
+      await apiDelete(`admin/chamadas/${id}`);
+      setLista((xs) => xs.filter((c) => c.id !== id));
+    } catch (e) {
+      setErr(e?.message || "Erro ao excluir chamada.");
+    } finally { setMutatingId(null); }
   };
 
   const renderPrazo = (valor) => {
@@ -184,38 +264,58 @@ function ChamadasPainel({ onEditar, onNova, refreshSignal }) {
   return (
     <Card>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
+        {/* Filtro como toggle group acessível */}
+        <div role="group" aria-label="Filtro de chamadas" className="flex items-center gap-2">
           {["abertas", "encerradas", "todas"].map((key) => (
-            <button key={key} onClick={() => setFiltro(key)}
-              className={`rounded-xl px-3 py-1.5 text-sm ${filtro === key ? "bg-indigo-600 text-white" : "bg-zinc-100 dark:bg-zinc-800"}`}>
+            <button
+              key={key}
+              type="button"
+              onClick={() => setFiltro(key)}
+              aria-pressed={filtro === key}
+              className={`rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500
+                ${filtro === key ? "bg-indigo-600 text-white" : "bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-100"}`}
+            >
               {key[0].toUpperCase() + key.slice(1)}
             </button>
           ))}
         </div>
+
         <div className="flex items-center gap-2">
-          <button onClick={load} className="rounded-xl border px-3 py-1.5 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800">Recarregar</button>
-          <button onClick={onNova} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-1.5 text-white hover:bg-indigo-700">
-            <Plus className="h-4 w-4" /> Nova chamada
+          <button type="button" onClick={load}
+            className="rounded-xl border px-3 py-1.5 text-sm hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:hover:bg-zinc-800">
+            Recarregar
+          </button>
+          <button type="button" onClick={onNova}
+            className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-1.5 text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <Plus className="h-4 w-4" aria-hidden="true" /> Nova chamada
           </button>
         </div>
       </div>
 
+      {/* Live error */}
+      <LiveRegion message={err} type="assertive" />
       {err && <div className="mb-3 text-sm text-red-600">{err}</div>}
+
       {loading ? (
-        <div className="text-sm text-zinc-600">Carregando…</div>
+        <div className="grid gap-2">
+          {Array.from({ length: 3 }).map((_, i) => <ChamadaSkeleton key={i} />)}
+        </div>
       ) : visiveis.length === 0 ? (
         <div className="text-sm text-zinc-600">Nenhuma chamada no filtro atual.</div>
       ) : (
         <div className="grid gap-2">
           {visiveis.map((c) => (
-            <div key={c.id} className="flex flex-col gap-2 rounded-xl border p-3 text-sm dark:border-zinc-800 md:flex-row md:items-center md:justify-between">
+            <div
+              key={c.id}
+              className="flex flex-col gap-2 rounded-xl border p-3 text-sm dark:border-zinc-800 md:flex-row md:items-center md:justify-between"
+            >
               <div className="min-w-0">
                 <div className="truncate font-medium">{c.titulo}</div>
                 <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
                   {c.publicado ? (
-                    <Badge tone="emerald"><CheckCircle2 className="mr-1 h-3 w-3" />Publicado</Badge>
+                    <Badge tone="emerald"><CheckCircle2 className="mr-1 h-3 w-3" aria-hidden="true" />Publicado</Badge>
                   ) : (
-                    <Badge tone="zinc"><XCircle className="mr-1 h-3 w-3" />Rascunho</Badge>
+                    <Badge tone="zinc"><XCircle className="mr-1 h-3 w-3" aria-hidden="true" />Rascunho</Badge>
                   )}
                   {c.dentro_prazo ? (
                     <Badge tone="indigo">Aberta</Badge>
@@ -227,42 +327,61 @@ function ChamadasPainel({ onEditar, onNova, refreshSignal }) {
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                <button className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 hover:bg-zinc-50 dark:hover:bg-zinc-800"
-                        onClick={() => onEditar?.(c.id)} title="Editar">
-                  <Pencil className="h-4 w-4" /> Editar
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:hover:bg-zinc-800"
+                  onClick={() => onEditar?.(c.id)} title="Editar"
+                >
+                  <Pencil className="h-4 w-4" aria-hidden="true" /> Editar
                 </button>
 
                 {c.publicado ? (
-                  <button disabled={mutatingId === c.id}
-                          className="inline-flex items-center gap-1 rounded-lg bg-zinc-100 px-2.5 py-1.5 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700"
-                          onClick={() => publicar(c.id, false)} title="Despublicar">
-                    <EyeOff className="h-4 w-4" /> Despublicar
+                  <button
+                    type="button"
+                    disabled={mutatingId === c.id}
+                    className="inline-flex items-center gap-1 rounded-lg bg-zinc-100 px-2.5 py-1.5 hover:bg-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-zinc-800 dark:hover:bg-zinc-700"
+                    onClick={() => publicar(c.id, false)} title="Despublicar"
+                  >
+                    <EyeOff className="h-4 w-4" aria-hidden="true" /> Despublicar
                   </button>
                 ) : (
-                  <button disabled={mutatingId === c.id}
-                          className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1.5 text-white hover:bg-indigo-700"
-                          onClick={() => publicar(c.id, true)} title="Publicar">
-                    <Eye className="h-4 w-4" /> Publicar
+                  <button
+                    type="button"
+                    disabled={mutatingId === c.id}
+                    className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1.5 text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    onClick={() => publicar(c.id, true)} title="Publicar"
+                  >
+                    <Eye className="h-4 w-4" aria-hidden="true" /> Publicar
                   </button>
                 )}
 
-                <button disabled={mutatingId === c.id}
-                        className="inline-flex items-center gap-1 rounded-lg bg-rose-600 px-2.5 py-1.5 text-white hover:bg-rose-700"
-                        onClick={() => excluir(c.id)} title="Excluir">
-                  <Trash2 className="h-4 w-4" /> Excluir
+                <button
+                  type="button"
+                  disabled={mutatingId === c.id}
+                  className="inline-flex items-center gap-1 rounded-lg bg-rose-600 px-2.5 py-1.5 text-white hover:bg-rose-700 focus:outline-none focus:ring-2 focus:ring-rose-500"
+                  onClick={() => setConfirmId(c.id)} title="Excluir"
+                >
+                  <Trash2 className="h-4 w-4" aria-hidden="true" /> Excluir
                 </button>
               </div>
             </div>
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirmId != null}
+        title="Excluir chamada"
+        description="Confirma excluir esta chamada? Esta ação não pode ser desfeita."
+        onCancel={() => setConfirmId(null)}
+        onConfirm={() => { const id = confirmId; setConfirmId(null); excluir(id); }}
+      />
     </Card>
   );
 }
 
 /* ───────── Month/Year Picker ───────── */
 const MONTHS_PT = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
-
 function parseYYYYMM(s) {
   const m = String(s || "").match(/^(\d{4})-(0[1-9]|1[0-2])$/);
   return m ? { y: +m[1], m: +m[2] } : null;
@@ -276,17 +395,9 @@ function clampYearMonth(v, min, max) {
   if (nMax !== null && n > nMax) return max;
   return v;
 }
-
 function MonthYearPicker({
-  value,
-  onChange,
-  min,  // "YYYY-MM" (opcional)
-  max,  // "YYYY-MM" (opcional)
-  className = "",
-  selectClass = "",
-  ariaLabelAno = "Ano",
-  ariaLabelMes = "Mês",
-  yearPad = 7,        // quantos anos para cada lado quando sem min/max
+  value, onChange, min, max, className = "", selectClass = "",
+  ariaLabelAno = "Ano", ariaLabelMes = "Mês", yearPad = 7,
 }) {
   const minP = parseYYYYMM(min);
   const maxP = parseYYYYMM(max);
@@ -393,10 +504,7 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
   // carrega para edição + meta do modelo da CHAMADA
   useEffect(() => {
     if (!open) return;
-    setErr("");
-    setInfoOk("");
-    setModeloErr("");
-    setModeloOk("");
+    setErr(""); setInfoOk(""); setModeloErr(""); setModeloOk("");
     if (!isEdit) {
       setForm((prev) => ({ ...prev, titulo: "", linhas: [], criterios: [], criterios_orais: [] }));
       setModeloMeta(null);
@@ -461,9 +569,7 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
   const onDownloadModelo = async () => {
     if (!isEdit) return;
     if (!modeloMeta?.exists) return;
-    setModeloErr("");
-    setModeloOk("");
-    setModeloDownloading(true);
+    setModeloErr(""); setModeloOk(""); setModeloDownloading(true);
     try {
       const { blob, filename } = await apiGetFile(`admin/chamadas/${chamadaId}/modelo-banner/download`);
       const name =
@@ -474,18 +580,13 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
       setModeloOk("Download iniciado.");
     } catch (e) {
       setModeloErr(e?.message || "Falha ao baixar o modelo.");
-    } finally {
-      setModeloDownloading(false);
-    }
+    } finally { setModeloDownloading(false); }
   };
 
   // 📤 importar modelo de banner (.pptx) com retry anti-CORS/401
   const onImportModelo = async (file) => {
     if (!file) return;
-    setModeloErr("");
-    setModeloOk("");
-    setInfoOk("");
-    setModeloBusy(true);
+    setModeloErr(""); setModeloOk(""); setInfoOk(""); setModeloBusy(true);
     try {
       if (!isEdit) throw new Error("Salve a chamada para habilitar o upload do modelo.");
       if (!/\.(pptx?|PPTX?)$/.test(file.name)) throw new Error("Envie arquivo .ppt ou .pptx");
@@ -532,8 +633,7 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
   };
 
   const onSave = async () => {
-    setErr("");
-    setInfoOk("");
+    setErr(""); setInfoOk("");
 
     if (hadUploadCorsRef.current) {
       try { await apiGet("perfil/me"); } catch {}
@@ -598,10 +698,8 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
       } else {
         const r = await apiPost("admin/chamadas", payload);
         if (r?.id) savedId = r.id;
-
         setInfoOk("Chamada criada. Agora você já pode importar o modelo (.pptx) desta chamada.");
         onSaved?.(savedId);
-
         try { await apiGet(`admin/chamadas/${savedId}/modelo-banner`); } catch {}
         try { await apiGet("perfil/me"); } catch {}
       }
@@ -619,27 +717,33 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
       open={open}
       onClose={onClose}
       title={isEdit ? "Editar chamada" : "Nova chamada"}
+      labelledById="dlg-title"
+      describedById="dlg-desc"
       footer={
         <>
+          <span className="sr-only" id="dlg-desc">Formulário para criar ou editar chamada.</span>
           {(err || infoOk) && (
             <span className={`mr-auto text-sm ${err ? "text-red-600" : "text-emerald-600"}`}>
               {err || infoOk}
             </span>
           )}
-          <button onClick={onClose} className="rounded-xl px-4 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800">Cancelar</button>
+          <button type="button" onClick={onClose} className="rounded-xl px-4 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800">Cancelar</button>
           <button
+            type="button"
             onClick={onSave}
             disabled={saving || modeloBusy}
-            className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-zinc-400 dark:disabled:bg-zinc-700"
+            className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-white transition hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-zinc-400 dark:disabled:bg-zinc-700"
           >
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} {saving ? "Salvando..." : "Salvar"}
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />} {saving ? "Salvando..." : "Salvar"}
           </button>
         </>
       }
     >
+      <LiveRegion message={err || infoOk} type={err ? "assertive" : "polite"} />
+
       {loading ? (
         <div className="flex items-center gap-2 text-sm text-zinc-600">
-          <Loader2 className="h-4 w-4 animate-spin" /> Carregando…
+          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> Carregando…
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-8">
@@ -647,11 +751,12 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
           <section id="s1" className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <h2 className="sm:col-span-3 mb-2 text-base font-semibold">Informações gerais</h2>
             <div className="sm:col-span-3">
-              <Field label={<span>Título da chamada <Counter value={form.titulo} max={200} /></span>}>
-                <input className={`${inputBase} text-lg sm:text-xl`} value={form.titulo}
+              <Field label={<span>Título da chamada <Counter value={form.titulo} max={200} /></span>} htmlFor="titulo">
+                <input id="titulo" className={`${inputBase} text-lg sm:text-xl`} value={form.titulo}
                   onChange={(e) => update("titulo", e.target.value)} maxLength={200} required aria-required="true" />
               </Field>
             </div>
+
             <Field label="Período da experiência — início (AAAA-MM)">
               <MonthYearPicker
                 value={form.periodo_experiencia_inicio}
@@ -671,14 +776,13 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
                 onChange={(v) => update("periodo_experiencia_fim", v)}
               />
             </Field>
-
           </section>
 
           {/* 2) Prazo */}
           <section id="s2" className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <h2 className="sm:col-span-2 mb-2 text-base font-semibold">Prazo para submissão</h2>
-            <Field label="Prazo final (Brasília)">
-              <input type="datetime-local" className={inputBase} value={form.prazo_final_br}
+            <Field label="Prazo final (Brasília)" htmlFor="prazo">
+              <input id="prazo" type="datetime-local" className={inputBase} value={form.prazo_final_br}
                 onChange={(e) => update("prazo_final_br", e.target.value)} required aria-required="true" />
             </Field>
           </section>
@@ -694,9 +798,9 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
                 <button
                   type="button"
                   onClick={() => update("linhas", [...form.linhas, { nome: "", descricao: "" }])}
-                  className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700 focus:ring-2 focus:ring-indigo-500"
+                  className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
-                  <Plus className="h-4 w-4" /> adicionar linha
+                  <Plus className="h-4 w-4" aria-hidden="true" /> adicionar linha
                 </button>
               </div>
               <div className="grid gap-3">
@@ -711,9 +815,9 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
                         aria-label="Descrição da linha temática" />
                       <button type="button"
                         onClick={() => update("linhas", form.linhas.filter((_, j) => j !== i))}
-                        className="inline-flex items-center gap-2 rounded-xl bg-zinc-100 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+                        className="inline-flex items-center gap-2 rounded-xl bg-zinc-100 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
                         aria-label={`Remover linha temática ${i + 1}`}>
-                        <Trash2 className="h-4 w-4" /> Remover
+                        <Trash2 className="h-4 w-4" aria-hidden="true" /> Remover
                       </button>
                     </div>
                   </div>
@@ -753,8 +857,8 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
             </div>
 
             {/* Markdown normas */}
-            <Field label="Descrição/Normas (Markdown)">
-              <textarea className={`${inputBase} min-h-[180px] rounded-2xl`}
+            <Field label="Descrição/Normas (Markdown)" htmlFor="desc">
+              <textarea id="desc" className={`${inputBase} min-h-[180px] rounded-2xl`}
                 value={form.descricao_markdown}
                 onChange={(e) => update("descricao_markdown", e.target.value)}
                 required aria-required="true" />
@@ -764,8 +868,8 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
           {/* 4) Autores */}
           <section id="s4" className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <h2 className="sm:col-span-2 mb-2 text-base font-semibold">Limite de autores e coautores</h2>
-            <Field label="Máximo de coautores">
-              <input type="number" min={0} className={inputBase}
+            <Field label="Máximo de coautores" htmlFor="coaut">
+              <input id="coaut" type="number" min={0} className={inputBase}
                 value={form.max_coautores}
                 onChange={(e) => update("max_coautores", e.target.value)} />
             </Field>
@@ -780,9 +884,9 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
                 <button
                   type="button"
                   onClick={() => update("criterios", [...form.criterios, { titulo: "", escala_min: 1, escala_max: 5, peso: 1 }])}
-                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-sm text-white hover:bg-emerald-700 focus:ring-2 focus:ring-emerald-500"
+                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-sm text-white hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 >
-                  <Plus className="h-4 w-4" /> adicionar critério
+                  <Plus className="h-4 w-4" aria-hidden="true" /> adicionar critério
                 </button>
               </div>
               <div className="grid gap-3">
@@ -824,9 +928,9 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
                 <button
                   type="button"
                   onClick={() => update("criterios_orais", [...form.criterios_orais, { titulo: "", escala_min: 1, escala_max: 3, peso: 1 }])}
-                  className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-3 py-2 text-sm text-white hover:bg-amber-700 focus:ring-2 focus:ring-amber-500"
+                  className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-3 py-2 text-sm text-white hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500"
                 >
-                  <Plus className="h-4 w-4" /> adicionar critério
+                  <Plus className="h-4 w-4" aria-hidden="true" /> adicionar critério
                 </button>
               </div>
               <div className="grid gap-3">
@@ -889,7 +993,7 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
               {!isEdit && (
                 <div className="mb-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-amber-900 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
                   <div className="flex items-start gap-2 text-sm">
-                    <AlertCircle className="mt-0.5 h-4 w-4 flex-none" />
+                    <AlertCircle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
                     <div>
                       <strong>Salve a chamada</strong> para habilitar o envio do modelo (.pptx). Após salvar, o botão de upload ficará disponível nesta mesma tela.
                     </div>
@@ -912,10 +1016,9 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
                       disabled={!isEdit || modeloBusy}
                       onChange={(e) => onImportModelo(e.target.files?.[0] || null)}
                     />
-                    {modeloBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                    {modeloBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Upload className="h-4 w-4" aria-hidden="true" />}
                     {modeloBusy ? "Enviando…" : "Importar modelo (.pptx)"}
                   </label>
-                 
                 </div>
 
                 <div className="mt-1 text-center text-xs text-zinc-500">

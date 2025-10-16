@@ -19,6 +19,86 @@ import {
 
 ChartJS.register(BarElement, CategoryScale, LinearScale, ArcElement, Tooltip, Legend);
 
+/* ==================== Helpers de módulo (fora do componente) ==================== */
+// Paleta base p/ doughnut
+const COLORS = [
+  "#14532d", "#0ea5e9", "#9333ea", "#f59e0b", "#ef4444",
+  "#14b8a6", "#3b82f6", "#f43f5e", "#84cc16", "#eab308",
+  "#8b5cf6", "#06b6d4", "#f97316", "#22c55e", "#0f766e",
+];
+const colorAt = (i) => (i < COLORS.length ? COLORS[i] : `hsl(${(i * 47) % 360} 65% 45%)`);
+
+const sanitizeArr = (arr) =>
+  Array.isArray(arr)
+    ? arr.map((x) => ({
+        label: String(x?.label ?? "Não informado").trim() || "Não informado",
+        value: Number.isFinite(Number(x?.value)) ? Math.max(0, Number(x.value)) : 0,
+      }))
+    : [];
+
+const toPieDataset = (arr) => {
+  const clean = sanitizeArr(arr);
+  const labels = clean.map((i) => i.label);
+  const data = clean.map((i) => i.value);
+  const backgroundColor = clean.map((_, i) => colorAt(i));
+  const borderColor = backgroundColor.map(() => "rgba(255,255,255,0.9)");
+  return {
+    labels,
+    datasets: [
+      {
+        data,
+        backgroundColor,
+        borderColor,
+        borderWidth: 2,
+        hoverOffset: 4,
+        cutout: "60%", // doughnut
+      },
+    ],
+    _total: data.reduce((a, b) => a + b, 0),
+  };
+};
+
+// 🔧 Opções do Pie/Doughnut — agora é função de módulo (não depende do escopo do componente)
+const pieOptions = (total, reduceMotion) => ({
+  plugins: {
+    legend: {
+      position: "bottom",
+      labels: {
+        boxWidth: 10,
+        usePointStyle: true,
+        pointStyle: "circle",
+        font: { size: 12 },
+        generateLabels: (chart) => {
+          const ds = chart.data.datasets?.[0] || {};
+          const bg = ds.backgroundColor || [];
+          return (chart.data.labels || []).map((raw, i) => {
+            const label = String(raw ?? "—");
+            return {
+              text: label.length > 22 ? label.slice(0, 21) + "…" : label,
+              fillStyle: bg[i],
+              strokeStyle: bg[i],
+              hidden: false,
+              index: i,
+            };
+          });
+        },
+      },
+    },
+    tooltip: {
+      callbacks: {
+        label: (ctx) => {
+          const label = ctx.label ?? "—";
+          const v = Number(ctx.parsed) || 0;
+          const pct = total ? ((v / total) * 100).toFixed(1) : "0.0";
+          return `${label}: ${v} (${pct}%)`;
+        },
+      },
+    },
+  },
+  animation: reduceMotion ? false : undefined,
+  maintainAspectRatio: false,
+});
+
 /* ------------------------- HeaderHero (novo) ------------------------- */
 function HeaderHero({ onRefresh, carregando }) {
   return (
@@ -64,6 +144,19 @@ export default function DashboardAnalitico() {
     presencaPorEvento: null,
   });
 
+  // 📊 Estatísticas demográficas (usuarios/estatisticas)
+  const [stats, setStats] = useState({
+    total_usuarios: 0,
+    faixa_etaria: [],
+    por_unidade: [],
+    por_escolaridade: [],
+    por_cargo: [],
+    por_orientacao_sexual: [],
+    por_genero: [],
+    por_deficiencia: [],
+    por_cor_raca: [],
+  });
+
   const [ano, setAno] = useState("");
   const [mes, setMes] = useState("");
   const [tipo, setTipo] = useState("");
@@ -80,7 +173,7 @@ export default function DashboardAnalitico() {
   const safeNumber = (n, d = 0) => {
     const v = Number(n);
     return Number.isFinite(v) ? v : d;
-    };
+  };
 
   const clampPct = (n) => {
     const v = Number(n);
@@ -119,8 +212,20 @@ export default function DashboardAnalitico() {
     }
   }
 
+  // 🔁 Estatísticas demográficas (chamada separada; sem filtros por enquanto)
+  async function carregarStats() {
+    try {
+      const res = await apiGet(`/api/usuarios/estatisticas`, { on403: "silent" });
+      if (res && typeof res === "object") setStats(res);
+    } catch (e) {
+      console.error("Erro ao carregar /usuarios/estatisticas:", e);
+      // Não bloqueia a página
+    }
+  }
+
   useEffect(() => {
     carregarDados();
+    carregarStats();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ano, mes, tipo]);
 
@@ -130,7 +235,7 @@ export default function DashboardAnalitico() {
     setTipo("");
   };
 
-  // datasets seguros
+  // ======== datasets seguros existentes ========
   const evPorMesData = useMemo(() => ensureChart(dados?.eventosPorMes), [dados]);
   const evPorTipoData = useMemo(() => ensureChart(dados?.eventosPorTipo), [dados]);
 
@@ -162,6 +267,16 @@ export default function DashboardAnalitico() {
   const temGraficoMes = evPorMesData.labels.length && evPorMesData.datasets.length;
   const temGraficoTipo = evPorTipoData.labels.length && evPorTipoData.datasets.length;
   const temGraficoPres = presencaPorEventoData.labels.length && presencaPorEventoData.datasets.length;
+
+  // ======== datasets dos DOUGHNUTS (usuarios/estatisticas) ========
+  const pieFaixa   = useMemo(() => toPieDataset(stats.faixa_etaria || []), [stats]);
+  const pieUnidade = useMemo(() => toPieDataset(stats.por_unidade || []), [stats]);
+  const pieEscol   = useMemo(() => toPieDataset(stats.por_escolaridade || []), [stats]);
+  const pieCargo   = useMemo(() => toPieDataset(stats.por_cargo || []), [stats]);
+  const pieOriSex  = useMemo(() => toPieDataset(stats.por_orientacao_sexual || []), [stats]);
+  const pieGenero  = useMemo(() => toPieDataset(stats.por_genero || []), [stats]);
+  const pieDefic   = useMemo(() => toPieDataset(stats.por_deficiencia || []), [stats]);
+  const pieCor     = useMemo(() => toPieDataset(stats.por_cor_raca || []), [stats]);
 
   /* ----------------------------- UI ----------------------------- */
   return (
@@ -280,7 +395,7 @@ export default function DashboardAnalitico() {
           </div>
         ) : (
           <>
-            {/* 🔢 Indicadores com descrição acessível */}
+            {/* 🔢 Indicadores */}
             <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
               <Indicador
                 titulo="Total de Eventos"
@@ -304,7 +419,7 @@ export default function DashboardAnalitico() {
               />
             </section>
 
-            {/* 📊 Gráficos */}
+            {/* 📊 Gráficos existentes */}
             <section className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
               <ChartCard
                 title="Eventos por Mês"
@@ -312,7 +427,10 @@ export default function DashboardAnalitico() {
               >
                 {temGraficoMes ? (
                   <div style={{ height: 320 }}>
-                    <Bar data={evPorMesData} options={{ maintainAspectRatio: false, animation: reduceMotion ? false : undefined }} />
+                    <Bar
+                      data={evPorMesData}
+                      options={{ maintainAspectRatio: false, animation: reduceMotion ? false : undefined }}
+                    />
                   </div>
                 ) : (
                   <NoData />
@@ -325,7 +443,10 @@ export default function DashboardAnalitico() {
               >
                 {temGraficoTipo ? (
                   <div style={{ height: 320 }}>
-                    <Pie data={evPorTipoData} options={{ maintainAspectRatio: false, animation: reduceMotion ? false : undefined }} />
+                    <Pie
+                      data={evPorTipoData}
+                      options={{ maintainAspectRatio: false, animation: reduceMotion ? false : undefined }}
+                    />
                   </div>
                 ) : (
                   <NoData />
@@ -345,6 +466,28 @@ export default function DashboardAnalitico() {
                 <NoData />
               )}
             </ChartCard>
+
+            {/* 🧑‍🤝‍🧑 Demografia — GRÁFICOS DE ROSCA */}
+            <section className="mt-10">
+              <h2 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">
+                População Cadastrada
+              </h2>
+
+              <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-300 mb-3">
+                <strong>Total de usuários:</strong> {stats?.total_usuarios ?? 0}
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                <PieCard title="Faixa etária" data={pieFaixa} />
+                <PieCard title="Unidade (sigla)" data={pieUnidade} />
+                <PieCard title="Escolaridade" data={pieEscol} />
+                <PieCard title="Cargo" data={pieCargo} />
+                <PieCard title="Orientação sexual" data={pieOriSex} />
+                <PieCard title="Gênero" data={pieGenero} />
+                <PieCard title="Deficiência" data={pieDefic} />
+                <PieCard title="Raça/Cor" data={pieCor} />
+              </div>
+            </section>
           </>
         )}
       </main>
@@ -389,5 +532,39 @@ function NoData() {
     <div className="h-40 flex items-center justify-center text-gray-600 dark:text-gray-300 text-sm italic">
       Sem dados para exibir.
     </div>
+  );
+}
+
+/* ====== PieCard: card pronto para DOUGHNUT ====== */
+function PieCard({ title, data }) {
+  const reduceMotion = useReducedMotion();
+  const hasData = (data?._total || 0) > 0;
+
+  const options = useMemo(
+    () => pieOptions(data?._total || 0, reduceMotion),
+    [data?._total, reduceMotion]
+  );
+
+  return (
+    <motion.section
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35 }}
+      className="bg-white dark:bg-gray-800 rounded-xl shadow p-4"
+      role="img"
+      aria-label={`Gráfico de rosca: ${title}`}
+    >
+      <h3 className="text-center font-semibold mb-3">{title}</h3>
+      {hasData ? (
+        <div style={{ height: 280 }}>
+          <Pie data={data} options={options} />
+        </div>
+      ) : (
+        <NoData />
+      )}
+      <p className="mt-3 text-xs sm:text-sm text-gray-600 dark:text-gray-300 text-center">
+        <strong>Total:</strong> {data?._total || 0}
+      </p>
+    </motion.section>
   );
 }

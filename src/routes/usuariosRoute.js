@@ -1,4 +1,4 @@
-// 📁 src/routes/usuariosRoute.js
+// 📁 src/routes/usuariosRoutes.js
 const express = require("express");
 const router = express.Router();
 
@@ -6,13 +6,6 @@ const usuarioAdministradorController = require("../controllers/usuarioAdministra
 const usuarioPublicoController = require("../controllers/usuarioPublicoController");
 const authMiddleware = require("../auth/authMiddleware");
 const authorizeRoles = require("../auth/authorizeRoles");
-
-/*
-  Montagem típica (no app.js):
-    // Você JÁ monta as rotas de perfil separadamente em server.js:
-    // app.use("/api/perfil", require("./routes/perfilRoutes"));
-    // app.use("/api/usuarios/perfil", require("./routes/perfilRoutes"));
-*/
 
 // ─────────────────────────────────────────────────────────────
 // Utils
@@ -52,11 +45,8 @@ if (typeof usuarioPublicoController?.redefinirSenha === "function") {
 
 // ─────────────────────────────────────────────────────────────
 // 🔒 Rotas protegidas (exigem token válido)
+// OBS: endpoints de perfil /perfil/me ficam em perfilRoutes
 // ─────────────────────────────────────────────────────────────
-// ⚠️ Removido: /me e /perfil/me
-// Esses endpoints já são servidos por perfilRoutes montadas em server.js:
-//  - /api/perfil/me
-//  - /api/usuarios/perfil/me
 
 // 👥 Listar todos (admin)
 registerIf(usuarioAdministradorController?.listarUsuarios, function listarUsuariosRoute() {
@@ -68,7 +58,7 @@ registerIf(usuarioAdministradorController?.listarUsuarios, function listarUsuari
   );
 });
 
-// 👨‍🏫 Listar instrutores (admin) — com fallback de nome
+// 👨‍🏫 Listar instrutores (admin)
 const listarInstrutoresHandler =
   usuarioAdministradorController?.listarInstrutores ||
   usuarioAdministradorController?.listarinstrutor;
@@ -82,7 +72,18 @@ registerIf(listarInstrutoresHandler, function listarInstrutoresRoute() {
   );
 });
 
-// 📝 Atualizar perfil (admin) por :id
+// 📊 Resumo do usuário (cursos ≥75% e certificados) — admin
+registerIf(usuarioAdministradorController?.getResumoUsuario, function getResumoUsuarioRoute() {
+  router.get(
+    "/:id(\\d+)/resumo",
+    authMiddleware,
+    authorizeRoles("administrador"),
+    validarId,
+    usuarioAdministradorController.getResumoUsuario
+  );
+});
+
+// 📝 Atualizar perfil (admin) por :id (NUMÉRICO)
 const atualizarPerfilHandler =
   usuarioAdministradorController?.atualizarPerfil ||
   usuarioAdministradorController?.atualizarPerfilUsuario ||
@@ -90,14 +91,14 @@ const atualizarPerfilHandler =
 
 registerIf(atualizarPerfilHandler, function atualizarPerfilRoute() {
   router.patch(
-    "/:id/perfil",
+    "/:id(\\d+)/perfil",
     authMiddleware,
     authorizeRoles("administrador"),
     validarId,
     atualizarPerfilHandler
   );
   router.put(
-    "/:id/perfil",
+    "/:id(\\d+)/perfil",
     authMiddleware,
     authorizeRoles("administrador"),
     validarId,
@@ -105,20 +106,20 @@ registerIf(atualizarPerfilHandler, function atualizarPerfilRoute() {
   );
 });
 
-// 👤 Obter usuário por ID
+// 👤 Obter usuário por ID (NUMÉRICO)
 registerIf(usuarioPublicoController?.obterUsuarioPorId, function obterUsuarioPorIdRoute() {
   router.get(
-    "/:id",
+    "/:id(\\d+)",
     authMiddleware,
     validarId,
     usuarioPublicoController.obterUsuarioPorId
   );
 });
 
-// 🔄 Atualizar dados básicos do usuário (próprio ou admin) por :id
+// 🔄 Atualizar dados básicos do usuário por ID (NUMÉRICO)
 registerIf(usuarioPublicoController?.atualizarUsuario, function atualizarUsuarioRoute() {
   router.patch(
-    "/:id",
+    "/:id(\\d+)",
     authMiddleware,
     validarId,
     usuarioPublicoController.atualizarUsuario
@@ -134,10 +135,10 @@ registerIf(usuarioPublicoController?.obterAssinatura, function obterAssinaturaRo
   );
 });
 
-// ❌ Excluir usuário (admin)
+// ❌ Excluir usuário (admin) por ID (NUMÉRICO)
 registerIf(usuarioAdministradorController?.excluirUsuario, function excluirUsuarioRoute() {
   router.delete(
-    "/:id",
+    "/:id(\\d+)",
     authMiddleware,
     authorizeRoles("administrador"),
     validarId,
