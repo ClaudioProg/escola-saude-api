@@ -6,6 +6,7 @@ import { format, isAfter, isBefore, isWithinInterval, compareAsc } from "date-fn
 import { ptBR } from "date-fns/locale";
 import { toast } from "react-toastify";
 import { CalendarDays, RefreshCw } from "lucide-react";
+import { motion, useReducedMotion } from "framer-motion";
 
 import Footer from "../components/Footer";
 import EventoDetalheModal from "../components/EventoDetalheModal";
@@ -14,8 +15,12 @@ import { apiGet } from "../services/api";
 
 /* ───────── Header (cor própria desta página) ───────── */
 function HeaderHero({ onRefresh, carregando = false, nome = "" }) {
-  return (
-    <header className="bg-gradient-to-br from-cyan-900 via-cyan-800 to-cyan-700 text-white">
+    return (
+      <header className="bg-gradient-to-br from-cyan-900 via-cyan-800 to-cyan-700 text-white" role="banner">
+        <a href="#conteudo"
+           className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2">
+          Ir para o conteúdo
+        </a>
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 flex flex-col items-center text-center gap-3">
         <div className="inline-flex items-center gap-2">
           <CalendarDays className="w-5 h-5" aria-hidden="true" />
@@ -30,8 +35,8 @@ function HeaderHero({ onRefresh, carregando = false, nome = "" }) {
             type="button"
             onClick={onRefresh}
             disabled={carregando}
-            className={`inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md transition
-              ${carregando ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-green-600 hover:bg-green-700"} text-white`}
+            className={`inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70
+                          ${carregando ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-green-600 hover:bg-green-700"} text-white`}
             aria-label="Atualizar agenda"
           >
             <RefreshCw className="w-4 h-4" />
@@ -95,12 +100,48 @@ function deriveStatus(ev) {
 const colorByStatus = { programado: "#22c55e", andamento: "#eab308", encerrado: "#ef4444" };
 
 /* ───────── mini stat ───────── */
-function MiniStat({ value, label, color, bordered = true }) {
+/* substitua apenas o bloco MiniStat existente por este: */
+function MiniStat({
+  icon: Icon,                // opcional
+  titulo,
+  label,
+  valor,
+  value,
+  descricao,
+  description,
+  color = "#0ea5e9",         // pode ser "#RRGGBB" | "rgb(...)" | "hsl(...)" | "bg-emerald-700"
+}) {
+  const title = titulo ?? label ?? "—";
+  const val = (valor ?? value ?? "—");
+  const desc = descricao ?? description ?? "";
+
+  const isTailwindBgClass = typeof color === "string" && /^bg-/.test(color);
+  const badgeClass = `${isTailwindBgClass ? color : ""} text-white text-xs font-semibold px-2 py-1 rounded-md`;
+  const badgeStyle = isTailwindBgClass ? undefined : { backgroundColor: color };
+
   return (
-    <div className={`flex-1 min-w-[170px] ${bordered ? "border rounded-2xl" : ""} p-4 text-center`} style={{ borderColor: "rgba(0,0,0,0.08)" }}>
-      <div className="text-3xl font-extrabold" style={{ color }}>{value}</div>
-      <div className="text-[11px] tracking-wide uppercase text-gray-500">{label}</div>
-    </div>
+    <motion.div
+      className="bg-white dark:bg-zinc-800 rounded-2xl shadow p-4"
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35 }}
+      role="group"
+      aria-label={`${title}: ${val}`}
+    >
+      <div className="flex items-center justify-between mb-2">
+        <div className={badgeClass} style={badgeStyle}>
+          {title}
+        </div>
+        {Icon ? <Icon className="w-5 h-5 text-black/60 dark:text-white/70" aria-hidden="true" /> : null}
+      </div>
+
+      <p className="text-3xl font-extrabold text-lousa dark:text-white leading-tight">
+        {val}
+      </p>
+      {desc ? (
+        <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">{desc}</p>
+      ) : null}
+    </motion.div>
   );
 }
 
@@ -251,7 +292,6 @@ export default function AgendaInstrutor() {
     if (liveRef.current) liveRef.current.textContent = "Carregando sua agenda…";
 
     const endpoints = [
-      "/api/agenda/instrutor/agenda",
       "/api/agenda/instrutor",
       "/agenda/instrutor",
       "/api/agenda/minha-instrutor",
@@ -318,14 +358,14 @@ export default function AgendaInstrutor() {
     <>
       <HeaderHero onRefresh={carregar} carregando={carregando} nome={nome} />
 
-      <main className="min-h-screen bg-gelo dark:bg-gray-900 px-3 sm:px-4 py-6 text-gray-900 dark:text-white">
+      <main id="conteudo" className="min-h-screen bg-gelo dark:bg-gray-900 px-3 sm:px-4 py-6 text-gray-900 dark:text-white">
         <p ref={liveRef} className="sr-only" aria-live="polite" />
 
         <div className="max-w-6xl mx-auto grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
-          <MiniStat value={stats.programados} label="Programados" color="#22c55e" />
-          <MiniStat value={stats.andamento}   label="Em andamento" color="#eab308" />
-          <MiniStat value={stats.realizados}  label="Realizados"  color="#ef4444" />
-        </div>
+  <MiniStat value={stats.programados} label="Programados"  color="#22c55e" />
+  <MiniStat value={stats.andamento}   label="Em andamento" color="#eab308" />
+  <MiniStat value={stats.realizados}  label="Realizados"   color="#ef4444" />
+</div>
 
         <div className="mx-auto w-full max-w-7xl">
           <div className="bg-white dark:bg-zinc-800 rounded-xl p-3 sm:p-5 shadow-md">

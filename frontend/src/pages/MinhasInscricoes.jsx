@@ -2,7 +2,9 @@
 import { useEffect, useState, useMemo } from "react";
 import { toast } from "react-toastify";
 import { motion, AnimatePresence } from "framer-motion";
-import { BookOpen, Clock, CheckCircle, XCircle, RefreshCw, User } from "lucide-react";
+import {
+  BookOpen, Clock, CheckCircle, XCircle, RefreshCw, User, LineChart, CalendarClock
+} from "lucide-react";
 import Skeleton from "react-loading-skeleton";
 
 import Footer from "../components/Footer";
@@ -13,30 +15,95 @@ import { apiGet, apiDelete } from "../services/api";
 import { gerarLinkGoogleAgenda } from "../utils/gerarLinkGoogleAgenda";
 import { formatarDataBrasileira } from "../utils/data";
 
-/* ───────────── Hero centralizado (sem breadcrumbs) ───────────── */
-function MinhasInscricoesHero({ onRefresh }) {
+/* ──────────────────────────────────────────────────────────────
+   Header Hero  — gradiente 3 cores exclusivo
+   ────────────────────────────────────────────────────────────── */
+function MinhasInscricoesHero({ onRefresh, total, programados, andamento, updatedAt }) {
   return (
-    <header className="bg-gradient-to-br from-amber-900 via-amber-800 to-amber-700 text-white">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 flex flex-col items-center text-center gap-3">
+    <header
+      role="banner"
+      className="bg-gradient-to-br from-emerald-900 via-emerald-700 to-emerald-600 text-white"
+    >
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 flex flex-col items-center text-center gap-4">
         <div className="inline-flex items-center gap-2">
-          <BookOpen className="w-6 h-6" />
+          <BookOpen className="w-6 h-6" aria-hidden="true" />
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
             Meus Cursos
           </h1>
         </div>
-        <p className="text-sm text-white/90">
-          Visualize apenas as inscrições ativas: eventos programados ou em andamento.
+
+        <p className="text-sm text-white/90 max-w-xl">
+          Visualize suas inscrições <strong>ativas</strong> (eventos programados ou em andamento).
         </p>
+
+        {/* Mini-stats (não removem nada existente) */}
+        <section
+          aria-label="Resumo de inscrições"
+          className="grid grid-cols-2 sm:grid-cols-4 gap-3 w-full max-w-4xl"
+        >
+          <StatCard
+            icon={<LineChart className="w-4 h-4" aria-hidden="true" />}
+            label="Ativas"
+            value={total}
+          />
+          <StatCard
+            icon={<Clock className="w-4 h-4" aria-hidden="true" />}
+            label="Programados"
+            value={programados}
+            // Programado = Verde (padrão global memorizado)
+            tone="success"
+          />
+          <StatCard
+            icon={<CalendarClock className="w-4 h-4" aria-hidden="true" />}
+            label="Em andamento"
+            value={andamento}
+            // Em andamento = Amarelo (padrão global memorizado)
+            tone="warning"
+          />
+          <StatCard
+            icon={<RefreshCw className="w-4 h-4" aria-hidden="true" />}
+            label="Atualizado"
+            value={updatedAt ? updatedAt : "—"}
+            small
+          />
+        </section>
+
         <BotaoPrimario
           onClick={onRefresh}
           variante="secundario"
-          icone={<RefreshCw className="w-4 h-4" />}
+          icone={<RefreshCw className="w-4 h-4" aria-hidden="true" />}
           aria-label="Atualizar minhas inscrições"
         >
           Atualizar
         </BotaoPrimario>
       </div>
     </header>
+  );
+}
+
+/* Mini card reutilizável para stats */
+function StatCard({ icon, label, value, small = false, tone = "default" }) {
+  const toneClasses =
+    tone === "success"
+      ? "bg-white/10 border-emerald-400/50"
+      : tone === "warning"
+      ? "bg-white/10 border-amber-400/50"
+      : "bg-white/10 border-white/20";
+
+  return (
+    <div
+      className={`rounded-2xl border ${toneClasses} px-3 py-3 text-left backdrop-blur-sm`}
+      role="status"
+      aria-live="polite"
+    >
+      <div className="flex items-center justify-between">
+        <span className="text-xs uppercase tracking-wide text-white/80">{label}</span>
+        <span className="opacity-90">{icon}</span>
+      </div>
+      <div className={`mt-1 font-bold ${small ? "text-base" : "text-2xl"}`}>
+        {value}
+      </div>
+    </div>
   );
 }
 
@@ -82,22 +149,20 @@ function buildAgendaHref(item) {
   }
 }
 
-/* ───────────── Status do evento ───────────── */
+/* ───────────── Status do evento (com cores padrão global) ───────────── */
 function obterStatusEvento(dataInicioISO, dataFimISO, horarioInicio, horarioFim) {
-  const fimISO = dataFimISO || dataInicioISO;        // ← 1 dia: fim = início
+  const fimISO = dataFimISO || dataInicioISO;
   const inicio = makeLocalDate(dataInicioISO, horarioInicio || "00:00:00");
-  const fim    = makeLocalDate(fimISO,        horarioFim    || "23:59:59");
-
+  const fim = makeLocalDate(fimISO, horarioFim || "23:59:59");
   const agora = new Date();
 
-  // Se ambas datas são válidas, usa comparação por Date
   if (isValidDate(inicio) && isValidDate(fim)) {
     if (agora < inicio) return "Programado";
-    if (agora > fim)    return "Encerrado";
+    if (agora > fim) return "Encerrado";
     return "Em andamento";
   }
 
-  // Fallback robusto: compara strings ISO (YYYY-MM-DD) se existirem
+  // Fallback robusto
   const di = String(dataInicioISO || "").slice(0, 10);
   const df = String(fimISO || "").slice(0, 10);
   const hojeISO = new Date().toISOString().slice(0, 10);
@@ -107,9 +172,31 @@ function obterStatusEvento(dataInicioISO, dataFimISO, horarioInicio, horarioFim)
     if (hojeISO > df) return "Encerrado";
     return "Em andamento";
   }
-
-  // Último recurso
   return "Programado";
+}
+
+function statusClasses(status) {
+  // Padrão global memorizado:
+  // Programado → verde, Em andamento → amarelo, Encerrado → vermelho
+  if (status === "Programado") {
+    return {
+      text: "text-emerald-700 dark:text-emerald-400",
+      icon: <Clock className="w-4 h-4 text-emerald-700 dark:text-emerald-400" aria-hidden="true" />,
+      badge: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200",
+    };
+  }
+  if (status === "Em andamento") {
+    return {
+      text: "text-amber-700 dark:text-amber-400",
+      icon: <CheckCircle className="w-4 h-4 text-amber-700 dark:text-amber-400" aria-hidden="true" />,
+      badge: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
+    };
+  }
+  return {
+    text: "text-red-700 dark:text-red-400",
+    icon: <XCircle className="w-4 h-4 text-red-700 dark:text-red-400" aria-hidden="true" />,
+    badge: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200",
+  };
 }
 
 export default function MinhasInscricoes() {
@@ -117,6 +204,7 @@ export default function MinhasInscricoes() {
   const [erro, setErro] = useState("");
   const [carregando, setCarregando] = useState(true);
   const [cancelandoId, setCancelandoId] = useState(null);
+  const [updatedAt, setUpdatedAt] = useState("");
 
   const usuario = useMemo(() => {
     try {
@@ -138,25 +226,25 @@ export default function MinhasInscricoes() {
       const data = await apiGet("/api/inscricoes/minhas");
       const arr = Array.isArray(data) ? data : [];
 
-      // 1) Ordena pelo término (desc)
+      // Ordena pelo término (desc)
       const ordenadas = [...arr].sort((a, b) => {
         const aEnd = safeTs(a.data_fim || a.data_inicio, a.horario_fim || a.horario_inicio || "23:59:59");
         const bEnd = safeTs(b.data_fim || b.data_inicio, b.horario_fim || b.horario_inicio || "23:59:59");
         return bEnd - aEnd;
       });
 
+      // Apenas ativas
       const ativas = ordenadas.filter((item) => {
         const status = obterStatusEvento(item.data_inicio, item.data_fim, item.horario_inicio, item.horario_fim);
-      
-        // guarda-chuva: se o fim (ou início) < hoje, some da lista
         const fimISO = (item.data_fim || item.data_inicio || "").slice(0, 10);
         const hojeISO = new Date().toISOString().slice(0, 10);
         const encerradoPeloISO = fimISO && fimISO < hojeISO;
-      
         return (status === "Programado" || status === "Em andamento") && !encerradoPeloISO;
       });
+
       setInscricoes(ativas);
       setErro("");
+      setUpdatedAt(new Date().toLocaleString());
     } catch {
       setErro("Erro ao carregar inscrições");
       toast.error("❌ Erro ao carregar inscrições.");
@@ -186,29 +274,51 @@ export default function MinhasInscricoes() {
     }
   }
 
+  // Contagens para mini-stats
+  const totalAtivas = inscricoes.length;
+  const contProgramados = useMemo(
+    () =>
+      inscricoes.filter((it) => obterStatusEvento(it.data_inicio, it.data_fim, it.horario_inicio, it.horario_fim) === "Programado").length,
+    [inscricoes]
+  );
+  const contAndamento = totalAtivas - contProgramados;
+
   return (
     <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
-      {/* 💡 Hero centralizado */}
-      <MinhasInscricoesHero onRefresh={buscarInscricoes} />
+      {/* 💡 Hero + stats */}
+      <MinhasInscricoesHero
+        onRefresh={buscarInscricoes}
+        total={totalAtivas}
+        programados={contProgramados}
+        andamento={contAndamento}
+        updatedAt={updatedAt}
+      />
 
-      <main role="main" className="flex-1 px-2 sm:px-4 py-6">
+      <main role="main" className="flex-1 px-3 sm:px-4 py-6">
         {carregando ? (
           <div className="space-y-4 max-w-md mx-auto" role="status" aria-live="polite">
             {[...Array(4)].map((_, i) => (
-              <Skeleton key={i} height={110} className="rounded-xl" />
+              <Skeleton key={i} height={110} className="rounded-2xl" />
             ))}
           </div>
         ) : erro ? (
-          <p className="text-red-600 dark:text-red-400 text-center" aria-live="assertive">
-            {erro}
-          </p>
+          <div className="text-center space-y-3">
+            <p className="text-red-600 dark:text-red-400" aria-live="assertive">
+              {erro}
+            </p>
+            <div className="flex justify-center">
+              <BotaoSecundario onClick={buscarInscricoes} aria-label="Tentar novamente">
+                Tentar novamente
+              </BotaoSecundario>
+            </div>
+          </div>
         ) : inscricoes.length === 0 ? (
           <NadaEncontrado
             mensagem="📭 Você não possui inscrições ativas."
             sugestao="Acesse a página de eventos para se inscrever."
           />
         ) : (
-          <ul className="space-y-4 w-full sm:max-w-2xl mx-auto" role="list">
+          <ul className="space-y-4 w-full sm:max-w-2xl mx-auto" role="list" aria-label="Lista de inscrições ativas">
             <AnimatePresence>
               {inscricoes.map((item) => {
                 const status = obterStatusEvento(
@@ -217,7 +327,6 @@ export default function MinhasInscricoes() {
                   item.horario_inicio,
                   item.horario_fim
                 );
-
                 const agendaHref = buildAgendaHref(item);
                 const podeAgendar = Boolean(agendaHref);
 
@@ -232,6 +341,8 @@ export default function MinhasInscricoes() {
                   .filter(Boolean)
                   .join(" até ");
 
+                const s = statusClasses(status);
+
                 return (
                   <motion.li
                     key={item.inscricao_id}
@@ -240,17 +351,26 @@ export default function MinhasInscricoes() {
                     exit={{ opacity: 0 }}
                     transition={{ duration: 0.25 }}
                     tabIndex={0}
-                    className="border p-4 rounded-2xl shadow bg-white dark:bg-neutral-900 focus:outline-none focus:ring-2 focus:ring-lousa transition"
+                    className="border p-4 rounded-2xl shadow bg-white dark:bg-neutral-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/70 transition"
                     aria-label={`Inscrição em ${item.titulo}`}
                     role="listitem"
                   >
-                    <h4 className="flex items-center gap-2 text-lg font-semibold text-lousa dark:text-white">
-                      <BookOpen className="w-5 h-5" />
-                      {item.titulo}
-                    </h4>
+                    <div className="flex items-start justify-between gap-3">
+                      <h4 className="flex items-center gap-2 text-lg font-semibold text-lousa dark:text-white">
+                        <BookOpen className="w-5 h-5" aria-hidden="true" />
+                        {item.titulo}
+                      </h4>
 
-                    <div className="text-sm italic text-gray-600 dark:text-gray-300 mt-1 flex items-start gap-2">
-                      <User className="w-4 h-4 mt-0.5" />
+                      <span
+                        className={`text-xs px-2 py-1 rounded-full font-medium ${s.badge}`}
+                        aria-label={`Status do evento: ${status}`}
+                      >
+                        {status}
+                      </span>
+                    </div>
+
+                    <div className="text-sm italic text-gray-600 dark:text-gray-300 mt-2 flex items-start gap-2">
+                      <User className="w-4 h-4 mt-0.5" aria-hidden="true" />
                       <div>
                         Instrutor(es):{" "}
                         {instrutores.length ? (
@@ -265,7 +385,7 @@ export default function MinhasInscricoes() {
                       </div>
                     </div>
 
-                    <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">
+                    <p className="text-sm text-gray-600 dark:text-gray-300 mt-2">
                       <strong>Período:</strong><br />
                       {periodoFmt} {item.local ? `– ${item.local}` : ""}
                     </p>
@@ -274,22 +394,9 @@ export default function MinhasInscricoes() {
                       Inscrição realizada em: {formatarDataBrasileira(item.data_inscricao)}
                     </p>
 
-                    <p className="text-sm mt-1 font-semibold flex items-center gap-1">
-                      {status === "Programado" && <Clock className="w-4 h-4 text-yellow-700" />}
-                      {status === "Em andamento" && <CheckCircle className="w-4 h-4 text-green-600" />}
-                      {/* Encerrado não aparece mais nesta página, mas mantive a cor por segurança */}
-                      {status === "Encerrado" && <XCircle className="w-4 h-4 text-red-600" />}
-                      <span
-                        className={
-                          status === "Programado"
-                            ? "text-yellow-700"
-                            : status === "Em andamento"
-                            ? "text-green-600"
-                            : "text-red-600"
-                        }
-                      >
-                        Status: {status}
-                      </span>
+                    <p className={`text-sm mt-2 font-semibold flex items-center gap-1 ${s.text}`}>
+                      {s.icon}
+                      <span>Status: {status}</span>
                     </p>
 
                     <div className="flex flex-wrap gap-3 mt-4">

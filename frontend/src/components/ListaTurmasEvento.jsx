@@ -1,11 +1,10 @@
 // frontend/src/components/ListaTurmasEvento.jsx
 /* eslint-disable no-console */
-import React, { useState } from "react";
+import React, { useMemo } from "react";
 import PropTypes from "prop-types";
 import { CalendarDays, Clock3 } from "lucide-react";
 
 /* ========================== Helpers ========================== */
-
 const clamp = (n, a = 0, b = 100) => Math.max(a, Math.min(b, n));
 const toPct = (num, den) => {
   const n = Number(num) || 0;
@@ -103,6 +102,26 @@ const getStatusPorJanela = ({ di, df, hi, hf, agora = new Date() }) => {
   return "Em andamento";
 };
 
+/* Normaliza números (aceita string/number) */
+const toInt = (v, fb = 0) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fb;
+};
+
+/* Extrai vagas e preenchidas com múltiplos aliases */
+const getVagasTotal = (t) =>
+  toInt(t?.vagas_total ?? t?.vagasTotais ?? t?.vagas ?? t?.capacidade, 0);
+
+const getPreenchidas = (t) =>
+  toInt(
+    t?.vagas_preenchidas ??
+      t?.inscritos_confirmados ??
+      t?.inscritos ??
+      t?.confirmados ??
+      t?.matriculados,
+    0
+  );
+
 /* ======================== Componente ======================== */
 
 export default function ListaTurmasEvento({
@@ -119,13 +138,10 @@ export default function ListaTurmasEvento({
   /** 🆕 controla se mostra “realizados/total” quando há encontros */
   exibirRealizadosTotal = false,
 }) {
-  const isCongresso = (eventoTipo || "").toLowerCase() === "congresso";
-  const jaInscritoTurma = (tid) => inscricoesConfirmadas.includes(Number(tid));
-  const HOJE_ISO = ymdLocal(hoje);
+  const isCongresso = String(eventoTipo || "").toLowerCase() === "congresso";
+  const jaInscritoTurma = (tid) => inscricoesConfirmadas.map(Number).includes(Number(tid));
 
-  // (mantido pra futura expansão se quiser abrir/fechar blocos)
-  const [expand, setExpand] = useState({});
-  const toggleExpand = (id) => setExpand((s) => ({ ...s, [id]: !s[id] }));
+  const HOJE_ISO = useMemo(() => ymdLocal(hoje), [hoje]);
 
   return (
     <div id={`turmas-${eventoId}`} className="mt-4 space-y-4">
@@ -135,24 +151,26 @@ export default function ListaTurmasEvento({
         // bloquear outras turmas se não for congresso
         const bloquearOutras = !isCongresso && jaInscritoNoEvento && !jaInscrito;
 
-        // preenchidas → vários fallbacks
-        const preenchidas = Number(t?.vagas_preenchidas ?? t?.inscritos_confirmados ?? t?.inscritos) || 0;
-        const inscritos = jaInscrito && preenchidas === 0 ? 1 : preenchidas;
+        // vagas / preenchidas (robustos)
+        const vagas = getVagasTotal(t);
+        const preenchidasRaw = getPreenchidas(t);
+        // se o usuário já está inscrito, garanta pelo menos 1 inscrito para UX (quando backend devolve 0)
+        const inscritos = jaInscrito && preenchidasRaw === 0 ? 1 : preenchidasRaw;
 
-        const vagas = Number.isFinite(Number(t.vagas_total)) ? Number(t.vagas_total) : 0;
-        const perc = toPct(inscritos, vagas);
+        const temLimiteVagas = vagas > 0;
+        const perc = temLimiteVagas ? toPct(inscritos, vagas) : 0;
 
-        const di = (t.data_inicio || "").slice(0, 10);
-        const df = (t.data_fim || "").slice(0, 10);
+        const di = String(t.data_inicio || "").slice(0, 10);
+        const df = String(t.data_fim || "").slice(0, 10);
 
-        // Encontros: aceita vários formatos
+        // Encontros: aceita vários formatos + dedup + ordenação
         const encontrosInline =
           (Array.isArray(t.encontros) && t.encontros.length ? t.encontros : null) ||
           (Array.isArray(t.datas) && t.datas.length ? t.datas : null) ||
           (Array.isArray(t._datas) && t._datas.length ? t._datas : null);
 
         const encontros = (encontrosInline || []).map((d) => isoDiaLocal(d)).filter(Boolean);
-        const encontrosOrdenados = [...encontros].sort(); // YYYY-MM-DD ordena lexicograficamente
+        const encontrosOrdenados = Array.from(new Set(encontros)).sort(); // dedup + sort
         const qtdEncontros = encontrosOrdenados.length;
         const realizados = encontrosOrdenados.filter((d) => d <= HOJE_ISO).length;
 
@@ -161,7 +179,7 @@ export default function ListaTurmasEvento({
         const hi = parseHora(t.horario_inicio) || hiEncontros || null;
         const hf = parseHora(t.horario_fim) || hfEncontros || null;
 
-        const lotada = vagas > 0 && inscritos >= vagas;
+        const lotada = temLimiteVagas && inscritos >= vagas;
         const carregando = Number(inscrevendo) === Number(t.id);
 
         const statusTurma = getStatusPorJanela({ di, df, hi, hf, agora: hoje });
@@ -174,6 +192,7 @@ export default function ListaTurmasEvento({
           (jaInscrito && "Você já está inscrito nesta turma") ||
           (bloquearOutras && "Você já está inscrito em uma turma deste evento") ||
           (lotada && "Turma lotada") ||
+          (!temLimiteVagas && "") ||
           "";
 
         return (
@@ -195,6 +214,10 @@ export default function ListaTurmasEvento({
                         {di.split("-").reverse().map(pad).join("/")} a{" "}
                         {df.split("-").reverse().map(pad).join("/")}
                       </>
+                    ) : di ? (
+                      <>A partir de {di.split("-").reverse().map(pad).join("/")}</>
+                    ) : df ? (
+                      <>Até {df.split("-").reverse().map(pad).join("/")}</>
                     ) : (
                       "Data a definir"
                     )}
@@ -279,17 +302,21 @@ export default function ListaTurmasEvento({
               )}
             </div>
 
-            {/* Barra de vagas */}
+            {/* Barra de vagas / info de vagas */}
             <div className="mt-3">
               <div className="flex justify-between text-xs text-gray-600 dark:text-gray-400 mb-1">
                 <span>
-                  {inscritos} de {vagas || 0} vagas preenchidas
+                  {temLimiteVagas
+                    ? `${inscritos} de ${vagas} vagas preenchidas`
+                    : `${inscritos} inscrito${inscritos === 1 ? "" : "s"} (sem limite de vagas)`}
                 </span>
-                <span>{perc}%</span>
+                {temLimiteVagas && <span>{perc}%</span>}
               </div>
-              <div className="h-2 rounded bg-gray-200 dark:bg-gray-700 overflow-hidden" aria-hidden="true">
-                <div className="h-2 bg-emerald-500 dark:bg-emerald-600" style={{ width: `${perc}%` }} />
-              </div>
+              {temLimiteVagas && (
+                <div className="h-2 rounded bg-gray-200 dark:bg-gray-700 overflow-hidden" aria-hidden="true">
+                  <div className="h-2 bg-emerald-500 dark:bg-emerald-600" style={{ width: `${perc}%` }} />
+                </div>
+              )}
             </div>
 
             {/* CTA centralizado */}
@@ -323,7 +350,7 @@ export default function ListaTurmasEvento({
                     : "Inscrever-se na turma"
                 }
               >
-                {carregando
+                {Number(inscrevendo) === Number(t.id)
                   ? "Processando..."
                   : jaInstrutorDoEvento
                   ? "Instrutor do evento"
@@ -345,22 +372,29 @@ export default function ListaTurmasEvento({
 
 /* ======================== PropTypes ======================== */
 ListaTurmasEvento.propTypes = {
-  turmas: PropTypes.arrayOf(PropTypes.shape({
-    id: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
-    nome: PropTypes.string,
-    data_inicio: PropTypes.string,
-    data_fim: PropTypes.string,
-    horario_inicio: PropTypes.string,
-    horario_fim: PropTypes.string,
-    vagas_total: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
-    vagas_preenchidas: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
-    inscritos_confirmados: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
-    inscritos: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
-    carga_horaria: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
-    encontros: PropTypes.array, // strings "YYYY-MM-DD" ou objetos {data,inicio/fim}
-    datas: PropTypes.array,
-    _datas: PropTypes.array,
-  })),
+  turmas: PropTypes.arrayOf(
+    PropTypes.shape({
+      id: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+      nome: PropTypes.string,
+      data_inicio: PropTypes.string,
+      data_fim: PropTypes.string,
+      horario_inicio: PropTypes.string,
+      horario_fim: PropTypes.string,
+      vagas_total: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+      vagas_preenchidas: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+      inscritos_confirmados: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+      inscritos: PropTypes.oneOfType([
+        PropTypes.number,
+        PropTypes.string,
+        PropTypes.array,
+        PropTypes.object,
+      ]),
+      carga_horaria: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+      encontros: PropTypes.array, // strings "YYYY-MM-DD" ou objetos {data,inicio/fim}
+      datas: PropTypes.array,
+      _datas: PropTypes.array,
+    })
+  ),
   eventoId: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
   eventoTipo: PropTypes.string,
   hoje: PropTypes.instanceOf(Date),
@@ -372,6 +406,6 @@ ListaTurmasEvento.propTypes = {
   jaInscritoNoEvento: PropTypes.bool,
   jaInstrutorDoEvento: PropTypes.bool,
   mostrarStatusTurma: PropTypes.bool,
-  /** 🆕 quando true, mostra o badge “realizados/total” */
+  /** quando true, mostra o badge “realizados/total” */
   exibirRealizadosTotal: PropTypes.bool,
 };

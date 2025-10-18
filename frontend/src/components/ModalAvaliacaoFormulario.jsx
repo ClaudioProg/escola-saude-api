@@ -3,7 +3,16 @@ import { useMemo, useState, useRef, useEffect } from "react";
 import { toast } from "react-toastify";
 import Modal from "./Modal";
 import { apiPost } from "../services/api";
+import {
+  Gauge,
+  Star,
+  CheckCircle2,
+  AlertTriangle,
+  SendHorizonal,
+  Loader2,
+} from "lucide-react";
 
+/* ===================== Opções e utilidades ===================== */
 const OPCOES = [
   { label: "Ótimo", value: "Ótimo", nota: 5 },
   { label: "Bom", value: "Bom", nota: 4 },
@@ -21,7 +30,8 @@ const NORM = (s) =>
     .toLowerCase()
     .trim();
 
-/* ───────────────── Campos ───────────────── */
+/* ===================== Campos ===================== */
+// Fixos para exibição e para a média (somente estes entram na média)
 const CAMPOS_BASE = [
   { chave: "divulgacao_evento", rotulo: "Divulgação do evento" },
   { chave: "recepcao", rotulo: "Recepção" },
@@ -47,7 +57,7 @@ const COND_CONGRESSO = [
   { chave: "oficinas", rotulo: "Oficinas" },
 ];
 
-// Obrigatórios (fixos, conforme sua regra)
+// Obrigatórios (fixos, conforme regra)
 const OBRIGATORIOS = new Set([
   "desempenho_instrutor",
   "divulgacao_evento",
@@ -63,6 +73,7 @@ const OBRIGATORIOS = new Set([
   "inscricao_online",
 ]); // ⚠️ sem 'exposicao_trabalhos'
 
+/* ===================== Componente ===================== */
 export default function ModalAvaliacaoFormulario({
   isOpen,
   onClose,
@@ -70,19 +81,19 @@ export default function ModalAvaliacaoFormulario({
   turma_id,
   recarregar,
 }) {
-  // Hooks no topo
   const [comentarios_finais, setComentariosFinais] = useState("");
   const [gostou_mais, setGostouMais] = useState("");
   const [sugestoes_melhoria, setSugestoesMelhoria] = useState("");
   const [notas, setNotas] = useState({});
   const [enviando, setEnviando] = useState(false);
+  const [msgA11y, setMsgA11y] = useState("");
   const primeiroCampoRef = useRef(null);
 
-  // Derivados
   const tipoNorm = NORM(evento?.tipo);
   const isCongresso = tipoNorm === "congresso";
   const isSimposio = tipoNorm === "simposio" || tipoNorm === "simpósio";
 
+  // Campos dinâmicos (exibição)
   const camposNotas = useMemo(() => {
     const extras = [];
     if (isCongresso || isSimposio) extras.push(...COND_SIMPOSIO_OU_CONGRESSO);
@@ -90,41 +101,71 @@ export default function ModalAvaliacaoFormulario({
     return [...CAMPOS_BASE, ...extras];
   }, [isCongresso, isSimposio]);
 
+  // Ministats (progresso de obrigatórios & média prévia /5)
+  const totalObrig = OBRIGATORIOS.size;
+  const preenchidosObrig = useMemo(
+    () =>
+      [...OBRIGATORIOS].filter((c) => notas[c] && LABELS_VALIDAS.has(notas[c]))
+        .length,
+    [notas]
+  );
+  const pctObrig = Math.round((preenchidosObrig / totalObrig) * 100) || 0;
+
+  const mediaPrevia = useMemo(() => {
+    const labels = [...OBRIGATORIOS]
+      .map((c) => notas[c])
+      .filter((v) => LABELS_VALIDAS.has(v));
+    if (!labels.length) return null;
+    const soma = labels.reduce((acc, lab) => {
+      const item = OPCOES.find((o) => o.value === lab);
+      return acc + (item?.nota ?? 0);
+    }, 0);
+    return (soma / labels.length).toFixed(1);
+  }, [notas]);
+
   useEffect(() => {
     if (isOpen) {
       setNotas({});
       setGostouMais("");
       setSugestoesMelhoria("");
       setComentariosFinais("");
+      setMsgA11y("");
       setTimeout(() => primeiroCampoRef.current?.focus(), 30);
     }
   }, [isOpen, evento?.id, turma_id]);
 
   if (!isOpen || !evento) return null;
 
-  const handleNotaChange = (campo, valorLabel) =>
-    setNotas((prev) => ({ ...prev, [campo]: valorLabel })); // 👈 envia string (“Ótimo”, …)
+  const handleNotaChange = (campo, valorLabel) => {
+    setNotas((prev) => {
+      const next = { ...prev, [campo]: valorLabel };
+      return next;
+    });
+  };
 
   async function enviarAvaliacao() {
     const usuario = JSON.parse(localStorage.getItem("usuario") || "{}");
     if (!usuario?.id) {
+      setMsgA11y("Usuário não identificado.");
       toast.error("Usuário não identificado.");
       return;
     }
 
-    // checar obrigatórios: precisa existir e ser uma label válida
     const faltando = [...OBRIGATORIOS].filter(
       (c) => !notas[c] || !LABELS_VALIDAS.has(String(notas[c]))
     );
     if (faltando.length) {
-      toast.warning("Preencha todas as notas obrigatórias.");
+      const msg = `Preencha todas as notas obrigatórias (${faltando.length} pendente${
+        faltando.length > 1 ? "s" : ""
+      }).`;
+      setMsgA11y(msg);
+      toast.warning(msg);
       return;
     }
 
     try {
       setEnviando(true);
 
-      // payload com strings (compatível com seu controller e com a tabela)
       const payload = {
         evento_id: Number(evento.evento_id ?? evento.id),
         turma_id: Number(turma_id),
@@ -143,131 +184,240 @@ export default function ModalAvaliacaoFormulario({
 
       await apiPost("/api/avaliacoes", payload);
 
+      setMsgA11y("Avaliação enviada com sucesso.");
       toast.success("✅ Avaliação enviada com sucesso!");
       onClose?.();
       recarregar?.();
     } catch (err) {
       console.error(err);
+      setMsgA11y("Erro ao enviar avaliação.");
       toast.error("❌ Erro ao enviar avaliação.");
     } finally {
       setEnviando(false);
     }
   }
 
+  /* ===================== UI ===================== */
   return (
     <Modal
       open={isOpen}
       onClose={onClose}
       labelledBy="titulo-avaliacao"
       describedBy="descricao-avaliacao"
-      className="w-[95%] max-w-3xl"
+      // largura confortável no mobile; central no desktop
+      className="w-[96%] max-w-3xl p-0 overflow-hidden"
     >
-      <h2
-        id="titulo-avaliacao"
-        className="text-2xl font-bold text-lousa dark:text-green-100 mb-4"
+      {/* Cabeçalho com degradê exclusivo (3 cores) */}
+      <div
+        className="px-4 sm:px-6 py-4 text-white bg-gradient-to-br from-emerald-900 via-emerald-700 to-teal-600"
+        role="group"
+        aria-label="Cabeçalho do formulário de avaliação"
       >
-        ✍️ Avaliar: {evento?.nome || evento?.titulo || "Evento"}
-      </h2>
-      <p id="descricao-avaliacao" className="sr-only">
-        Formulário de avaliação do evento. Selecione uma opção para cada critério.
-      </p>
+        <h2
+          id="titulo-avaliacao"
+          className="text-xl sm:text-2xl font-extrabold tracking-tight"
+        >
+          ✍️ Avaliar: {evento?.nome || evento?.titulo || "Evento"}
+        </h2>
+        <p id="descricao-avaliacao" className="text-white/90 text-sm mt-1">
+          Selecione uma opção para cada critério e, se desejar, deixe comentários.
+        </p>
+      </div>
 
-      {/* Campos de notas */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-[60vh] overflow-y-auto pr-2">
-        {camposNotas.map(({ chave, rotulo }, idx) => {
-          const obrig = OBRIGATORIOS.has(chave);
-          return (
-            <fieldset
-              key={chave}
-              className="border rounded-md p-3 dark:border-gray-700"
-              aria-required={obrig ? "true" : "false"}
-            >
-              <legend className="text-sm font-medium text-gray-700 dark:text-gray-200">
-                {rotulo}{" "}
-                {obrig ? (
-                  <span className="text-red-600" title="Obrigatório">
-                    *
-                  </span>
-                ) : null}
-              </legend>
+      {/* Ministats (mobile-first) */}
+      <div className="px-4 sm:px-6 pt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {/* Progresso obrigatórios */}
+        <div className="rounded-2xl border border-emerald-100 dark:border-emerald-900 p-3 shadow-sm bg-white dark:bg-slate-900">
+          <div className="flex items-center gap-2 mb-1">
+            <Gauge className="w-5 h-5" aria-hidden="true" />
+            <span className="font-semibold">Progresso</span>
+          </div>
+          <div className="text-sm text-slate-600 dark:text-slate-300 mb-2">
+            {preenchidosObrig}/{totalObrig} obrigatórios
+          </div>
+          <div className="h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden" aria-hidden="true">
+            <div
+              className="h-full bg-emerald-500 transition-all"
+              style={{ width: `${pctObrig}%` }}
+            />
+          </div>
+        </div>
 
-              <div className="mt-2 flex flex-wrap gap-3">
-                {OPCOES.map(({ label, value, nota }) => (
-                  <label key={value} className="inline-flex items-center gap-2 text-sm">
-                    <input
-                      ref={idx === 0 && value === "Ótimo" ? primeiroCampoRef : undefined}
-                      type="radio"
-                      name={chave}
-                      value={value}
-                      checked={String(notas[chave]) === value}
-                      onChange={(e) => handleNotaChange(chave, e.target.value)}
-                      className="accent-emerald-600"
-                    />
-                    <span>
-                      {label} <span className="text-xs text-gray-500">({nota})</span>
+        {/* Média prévia */}
+        <div className="rounded-2xl border border-emerald-100 dark:border-emerald-900 p-3 shadow-sm bg-white dark:bg-slate-900">
+          <div className="flex items-center gap-2 mb-1">
+            <Star className="w-5 h-5" aria-hidden="true" />
+            <span className="font-semibold">Média prévia</span>
+          </div>
+          <div className="text-2xl font-bold">
+            {mediaPrevia ? `${mediaPrevia} / 5` : "— / 5"}
+          </div>
+          <div className="text-xs text-slate-600 dark:text-slate-300">
+            Calculada só com campos obrigatórios preenchidos
+          </div>
+        </div>
+
+        {/* Status de validação */}
+        <div
+          className={`rounded-2xl border p-3 shadow-sm bg-white dark:bg-slate-900 ${
+            preenchidosObrig === totalObrig
+              ? "border-emerald-200 dark:border-emerald-900"
+              : "border-amber-200 dark:border-amber-900"
+          }`}
+        >
+          <div className="flex items-center gap-2 mb-1">
+            {preenchidosObrig === totalObrig ? (
+              <CheckCircle2 className="w-5 h-5" aria-hidden="true" />
+            ) : (
+              <AlertTriangle className="w-5 h-5" aria-hidden="true" />
+            )}
+            <span className="font-semibold">Status</span>
+          </div>
+          <div className="text-sm">
+            {preenchidosObrig === totalObrig
+              ? "Tudo pronto para enviar"
+              : "Há campos obrigatórios pendentes"}
+          </div>
+        </div>
+      </div>
+
+      {/* Live region para leitores de tela */}
+      <div
+        aria-live="polite"
+        className="sr-only"
+      >
+        {msgA11y}
+      </div>
+
+      {/* Campos de notas (scrollável) */}
+      <div className="px-4 sm:px-6 pb-28 pt-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-[60vh] overflow-y-auto pr-1">
+          {camposNotas.map(({ chave, rotulo }, idx) => {
+            const obrig = OBRIGATORIOS.has(chave);
+            const invalido =
+              obrig && (!notas[chave] || !LABELS_VALIDAS.has(String(notas[chave])));
+            const fieldName = `nota-${chave}`;
+
+            return (
+              <fieldset
+                key={chave}
+                className="rounded-xl border border-slate-200 dark:border-slate-700 p-3"
+                aria-required={obrig ? "true" : "false"}
+                aria-invalid={invalido ? "true" : "false"}
+              >
+                <legend className="text-sm font-medium text-slate-800 dark:text-slate-100">
+                  {rotulo}{" "}
+                  {obrig ? (
+                    <span className="text-red-600" title="Obrigatório" aria-label="Obrigatório">
+                      *
                     </span>
-                  </label>
-                ))}
-              </div>
-            </fieldset>
-          );
-        })}
+                  ) : null}
+                </legend>
+
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {OPCOES.map(({ label, value, nota }) => (
+                    <label
+                      key={value}
+                      className={`inline-flex items-center gap-2 text-sm rounded-full px-3 py-1 border cursor-pointer select-none transition
+                        ${
+                          String(notas[chave]) === value
+                            ? "bg-emerald-50 border-emerald-400 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200"
+                            : "bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 hover:border-emerald-300"
+                        }`}
+                    >
+                      <input
+                        ref={idx === 0 && value === "Ótimo" ? primeiroCampoRef : undefined}
+                        type="radio"
+                        name={fieldName}
+                        value={value}
+                        checked={String(notas[chave]) === value}
+                        onChange={(e) => handleNotaChange(chave, e.target.value)}
+                        className="accent-emerald-600"
+                      />
+                      <span>
+                        {label}{" "}
+                        <span className="text-xs text-slate-500">({nota})</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            );
+          })}
+        </div>
+
+        {/* Textos livres */}
+        <div className="mt-4 space-y-4">
+          <div>
+            <label className="block font-medium text-slate-800 dark:text-slate-100 mb-1">
+              O que você mais gostou?
+            </label>
+            <textarea
+              className="w-full border rounded-xl px-3 py-2 dark:bg-slate-900 dark:text-white border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              rows={2}
+              value={gostou_mais}
+              onChange={(e) => setGostouMais(e.target.value)}
+              aria-label="O que você mais gostou"
+            />
+          </div>
+
+          <div>
+            <label className="block font-medium text-slate-800 dark:text-slate-100 mb-1">
+              Sugestões de melhoria
+            </label>
+            <textarea
+              className="w-full border rounded-xl px-3 py-2 dark:bg-slate-900 dark:text-white border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              rows={2}
+              value={sugestoes_melhoria}
+              onChange={(e) => setSugestoesMelhoria(e.target.value)}
+              aria-label="Sugestões de melhoria"
+            />
+          </div>
+
+          <div>
+            <label className="block font-medium text-slate-800 dark:text-slate-100 mb-1">
+              Comentários finais
+            </label>
+            <textarea
+              className="w-full border rounded-xl px-3 py-2 dark:bg-slate-900 dark:text-white border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              rows={3}
+              value={comentarios_finais}
+              onChange={(e) => setComentariosFinais(e.target.value)}
+              aria-label="Comentários finais"
+            />
+          </div>
+        </div>
       </div>
 
-      {/* Textos livres */}
-      <div className="mt-4">
-        <label className="block font-medium text-gray-700 dark:text-gray-300 mb-1">
-          O que você mais gostou?
-        </label>
-        <textarea
-          className="w-full border rounded-md px-3 py-2 dark:bg-gray-800 dark:text-white"
-          rows={2}
-          value={gostou_mais}
-          onChange={(e) => setGostouMais(e.target.value)}
-        />
-      </div>
-
-      <div className="mt-4">
-        <label className="block font-medium text-gray-700 dark:text-gray-300 mb-1">
-          Sugestões de melhoria
-        </label>
-        <textarea
-          className="w-full border rounded-md px-3 py-2 dark:bg-gray-800 dark:text-white"
-          rows={2}
-          value={sugestoes_melhoria}
-          onChange={(e) => setSugestoesMelhoria(e.target.value)}
-        />
-      </div>
-
-      <div className="mt-4">
-        <label className="block font-medium text-gray-700 dark:text-gray-300 mb-1">
-          Comentários finais
-        </label>
-        <textarea
-          className="w-full border rounded-md px-3 py-2 dark:bg-gray-800 dark:text-white"
-          rows={3}
-          value={comentarios_finais}
-          onChange={(e) => setComentariosFinais(e.target.value)}
-        />
-      </div>
-
-      {/* Ações */}
-      <div className="flex justify-end mt-6 gap-3">
+      {/* Barra de ações sticky (ótimo no mobile) */}
+      <div className="sticky bottom-0 left-0 right-0 bg-white/80 dark:bg-slate-950/80 backdrop-blur border-t border-slate-200 dark:border-slate-800 px-4 sm:px-6 py-3 flex items-center justify-end gap-3">
         <button
           type="button"
           onClick={onClose}
-          className="px-4 py-2 rounded-md bg-gray-300 dark:bg-gray-600 text-black dark:text-white hover:bg-gray-400 disabled:opacity-60"
+          className="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-slate-100 hover:bg-slate-300 dark:hover:bg-slate-700 transition"
           disabled={enviando}
         >
           Cancelar
         </button>
+
         <button
           type="button"
           onClick={enviarAvaliacao}
-          className="px-4 py-2 rounded-md bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-60"
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 transition disabled:opacity-60"
           disabled={enviando}
+          aria-disabled={enviando ? "true" : "false"}
         >
-          {enviando ? "Enviando..." : "Enviar Avaliação"}
+          {enviando ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+              Enviando...
+            </>
+          ) : (
+            <>
+              <SendHorizonal className="w-4 h-4" aria-hidden="true" />
+              Enviar Avaliação
+            </>
+          )}
         </button>
       </div>
     </Modal>

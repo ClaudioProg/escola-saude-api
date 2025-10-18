@@ -1,29 +1,23 @@
-// src/middlewares/injectDb.js
-let dbInstance = null;
+// 📁 src/middlewares/injectDb.js
+/* eslint-disable no-console */
+const { db } = require("../db");
 
-module.exports = function injectDb(dbArg) {
-  // Aceita injeção explícita (ex.: require('./db').db) ou tenta resolver sozinho
-  if (!dbInstance) {
-    dbInstance = dbArg;
-    if (!dbInstance) {
-      try {
-        const dbModule = require("../db");
-        dbInstance = dbModule?.db ?? dbModule;
-      } catch (e) {
-        // vai revelar erro quando o primeiro request chegar
-      }
-    }
+/**
+ * Middleware que injeta a instância global do DB em req.db
+ * Garante compatibilidade com controladores antigos que usam req.db
+ */
+function injectDbMiddleware(req, _res, next) {
+  if (!db || typeof db.any !== "function") {
+    console.error("[injectDb] Erro: DB não inicializado ou inválido.");
+    const err = new Error(
+      "DB não inicializado no middleware injectDb. Verifique src/db/index.js e a ordem de app.use()."
+    );
+    err.status = 500;
+    return next(err);
   }
 
-  return function injectDbMiddleware(req, _res, next) {
-    if (!dbInstance) {
-      const err = new Error(
-        "DB não inicializado no middleware injectDb. Verifique src/db/index.js e a ordem de app.use()."
-      );
-      err.status = 500;
-      return next(err);
-    }
-    req.db = dbInstance;
-    next();
-  };
-};
+  req.db = db;
+  next();
+}
+
+module.exports = injectDbMiddleware;

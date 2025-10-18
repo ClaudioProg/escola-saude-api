@@ -25,13 +25,18 @@ function HeaderHero({ onRefresh, carregando = false, variant = "emerald", nome =
   const grad = variants[variant] ?? variants.emerald;
 
   return (
-    <header className={`bg-gradient-to-br ${grad} text-white`}>
+    <header className={`bg-gradient-to-br ${grad} text-white`} role="banner">
+      <a
+        href="#conteudo"
+        className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2"
+      >
+        Ir para o conteúdo
+      </a>
+
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 flex flex-col items-center text-center gap-3">
         <div className="inline-flex items-center gap-2">
           <CalendarDays className="w-5 h-5" aria-hidden="true" />
-          <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">
-            Minha Agenda
-          </h1>
+          <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">Minha Agenda</h1>
         </div>
 
         <p className="text-sm text-white/90">Seus eventos e turmas inscritas.</p>
@@ -46,7 +51,7 @@ function HeaderHero({ onRefresh, carregando = false, variant = "emerald", nome =
             onClick={onRefresh}
             disabled={carregando}
             className={`inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md transition
-              ${carregando ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-green-600 hover:bg-green-700"} text-white`}
+              ${carregando ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-green-600 hover:bg-green-700"} text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70`}
             aria-label="Atualizar agenda"
           >
             <RefreshCw className="w-4 h-4" />
@@ -65,48 +70,50 @@ function MiniStat({ value, label, color, bordered = true }) {
       className={`flex-1 min-w-[170px] ${bordered ? "border rounded-2xl" : ""} p-4 text-center`}
       style={{ borderColor: "rgba(0,0,0,0.08)" }}
     >
-      <div className="text-3xl font-extrabold" style={{ color }}>{value}</div>
+      <div className="text-3xl font-extrabold" style={{ color }}>
+        {value}
+      </div>
       <div className="text-[11px] tracking-wide uppercase text-gray-500">{label}</div>
     </div>
   );
 }
 
-/* ───────────────── DiaBadge (chip clicável) ───────────────── */
+/* ───────────────── DiaBadge (chip clicável, sem nested button) ───────────────── */
 const colorByStatus = {
   programado: "#22c55e", // green-500
-  andamento:  "#eab308", // amber-500
-  encerrado:  "#ef4444", // red-500
+  andamento: "#eab308", // amber-500
+  encerrado: "#ef4444", // red-500
 };
 
-function DiaBadge({ evento, onClick }) {
-  // título curto
+// ⬇️ por padrão, renderiza como <span>; fora do calendário você pode usar as="button"
+function DiaBadge({ as: As = "span", evento, onClick, ...rest }) {
   const titulo = String(evento?.titulo || evento?.nome || "Evento").slice(0, 28);
 
-  // hora (se houver)
   const hi = (evento?.horario_inicio ?? "00:00").slice(0, 5);
   const hf = (evento?.horario_fim ?? "23:59").slice(0, 5);
   const showHora = hi !== "00:00" || hf !== "23:59";
   const horaStr = showHora ? `${hi}–${hf}` : null;
 
-  // status → cores
   const st = deriveStatus(evento);
   const bg = colorByStatus[st] || colorByStatus.programado;
 
   return (
-    <button
-      type="button"
+    <As
+      {...(As === "button" ? { type: "button" } : { role: "button", tabIndex: 0 })}
       onClick={onClick}
       title={evento?.titulo}
+      aria-label={`Evento: ${titulo}${horaStr ? `, ${horaStr}` : ""}`}
       className="max-w-full truncate inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-600"
       style={{
-        backgroundColor: `${bg}1A`, // ~10% alpha
+        backgroundColor: `${bg}1A`,
         color: bg,
-        border: `1px solid ${bg}55`, // ~33% alpha
+        border: `1px solid ${bg}55`,
       }}
+      {...rest}
     >
       <span className="truncate">{titulo}</span>
       {horaStr && <span className="opacity-80">• {horaStr}</span>}
-    </button>
+    </As>
   );
 }
 
@@ -163,7 +170,7 @@ function deriveStatus(ev) {
   const hf = (ev.horario_fim ?? "23:59").slice(0, 5);
 
   const start = di ? toLocalDate(`${ymd(di)}T${hi}`) : null;
-  const end   = df ? toLocalDate(`${ymd(df)}T${hf}`) : null;
+  const end = df ? toLocalDate(`${ymd(df)}T${hf}`) : null;
 
   const agora = new Date();
   if (start && end) {
@@ -189,7 +196,6 @@ export default function AgendaUsuario() {
     if (liveRef.current) liveRef.current.textContent = "Carregando sua agenda…";
 
     try {
-      // backend retorna somente eventos nos quais o usuário está inscrito
       const data = await apiGet("/api/agenda/minha", { on401: "silent", on403: "silent" });
       const arr = Array.isArray(data) ? data : [];
       setEvents(arr);
@@ -208,11 +214,8 @@ export default function AgendaUsuario() {
     }
   }
 
-  useEffect(() => {
-    carregar();
-  }, []);
+  useEffect(() => { carregar(); }, []);
 
-  // 👉 ministats (conta por status)
   const stats = useMemo(() => {
     let p = 0, a = 0, r = 0;
     for (const ev of events) {
@@ -224,10 +227,8 @@ export default function AgendaUsuario() {
     return { programados: p, andamento: a, realizados: r };
   }, [events]);
 
-  // mapa dia->eventos (datas reais preferencialmente)
   const eventosPorData = useMemo(() => {
     const map = {};
-
     for (const evento of events) {
       let ocorrencias = [];
 
@@ -277,14 +278,16 @@ export default function AgendaUsuario() {
     <>
       <HeaderHero onRefresh={carregar} carregando={carregando} variant="emerald" nome={nome} />
 
-      <main className="min-h-screen bg-gelo dark:bg-gray-900 px-3 sm:px-4 py-6 text-gray-900 dark:text-white">
+      <main
+        id="conteudo"
+        className="min-h-screen bg-gelo dark:bg-gray-900 px-3 sm:px-4 py-6 text-gray-900 dark:text-white"
+      >
         <p ref={liveRef} className="sr-only" aria-live="polite" />
 
-        {/* Ministats com borda */}
         <div className="max-w-6xl mx-auto grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
-          <MiniStat value={stats.programados} label="Programados"   color="#22c55e" />
-          <MiniStat value={stats.andamento}   label="Em andamento"  color="#eab308" />
-          <MiniStat value={stats.realizados}  label="Realizados"    color="#ef4444" />
+          <MiniStat value={stats.programados} label="Programados" color="#22c55e" />
+          <MiniStat value={stats.andamento} label="Em andamento" color="#eab308" />
+          <MiniStat value={stats.realizados} label="Realizados" color="#ef4444" />
         </div>
 
         <div className="mx-auto w-full max-w-7xl">
@@ -307,7 +310,6 @@ export default function AgendaUsuario() {
                   const lista = eventosPorData[key] || [];
                   if (!lista.length) return null;
 
-                  // mostra até 3 chips + "+N"
                   const maxChips = 3;
                   const visiveis = lista.slice(0, maxChips);
                   const resto = Math.max(0, lista.length - visiveis.length);
@@ -316,20 +318,23 @@ export default function AgendaUsuario() {
                     <div className="mt-1 px-1 flex gap-1 justify-center flex-wrap">
                       {visiveis.map((ev) => (
                         <DiaBadge
+                          as="span"                       // ⬅️ evita nested <button>
                           key={`${ev.id ?? ev.titulo}-${key}`}
                           evento={ev}
                           onClick={() => setSelecionado(ev)}
                         />
                       ))}
                       {resto > 0 && (
-                        <button
-                          type="button"
+                        <span
+                          role="button"                   // ⬅️ não é button real
+                          tabIndex={0}
                           onClick={() => setSelecionado(lista[0])}
                           className="px-2 py-0.5 rounded-full text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-600"
                           title={`Mais ${resto} evento(s) neste dia`}
+                          aria-label={`Mais ${resto} evento(s) neste dia`}
                         >
                           +{resto}
-                        </button>
+                        </span>
                       )}
                     </div>
                   );
@@ -344,11 +349,7 @@ export default function AgendaUsuario() {
         </div>
 
         {selecionado && (
-          <EventoDetalheModal
-            evento={selecionado}
-            aoFechar={() => setSelecionado(null)}
-            visivel
-          />
+          <EventoDetalheModal evento={selecionado} aoFechar={() => setSelecionado(null)} visivel />
         )}
       </main>
 

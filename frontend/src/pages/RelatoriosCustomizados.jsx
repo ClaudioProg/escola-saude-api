@@ -66,9 +66,7 @@ function HeaderHero({ onRefresh, carregando }) {
 function parseLocalYMD(ymd) {
   const m = String(ymd || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!m) return new Date(NaN);
-  const y = +m[1],
-    mo = +m[2],
-    d = +m[3];
+  const y = +m[1], mo = +m[2], d = +m[3];
   return new Date(y, mo - 1, d, 0, 0, 0, 0);
 }
 function toLocalNaiveISO(dt) {
@@ -91,7 +89,6 @@ function endOfDayLocalISO(dateLike) {
   dt.setMilliseconds(0);
   return toLocalNaiveISO(dt);
 }
-const safeStr = (s, max = 180) => String(s ?? "").trim().slice(0, max);
 
 /* ======================= Metadata dos relatórios ======================= */
 const REPORTS = [
@@ -120,7 +117,7 @@ export default function RelatoriosCustomizados() {
   })();
   const usuarioId = usuarioObj?.id ?? null;
 
-  // guarda/recupera filtros base do localStorage
+  // filtros persistidos
   const loadPersisted = () => {
     try {
       const raw = localStorage.getItem("relatorios:filtros");
@@ -129,7 +126,6 @@ export default function RelatoriosCustomizados() {
       return null;
     }
   };
-
   const persisted = loadPersisted();
 
   const [reportKey, setReportKey] = useState(
@@ -172,6 +168,7 @@ export default function RelatoriosCustomizados() {
 
   // a11y
   const liveRef = useRef(null);
+  const searchRef = useRef(null);
   const setLive = (msg) => {
     if (liveRef.current) liveRef.current.textContent = msg;
   };
@@ -313,7 +310,6 @@ export default function RelatoriosCustomizados() {
     setCarregando(true);
     setLive("Buscando dados do relatório…");
     try {
-      // endpoint genérico aceita "tipo"
       const res = await apiGet(`relatorios/custom?${qs.toString()}`, { on403: "silent" });
       setDados(Array.isArray(res) ? res : []);
       setLive(`Busca concluída. ${Array.isArray(res) ? res.length : 0} registro(s).`);
@@ -354,8 +350,15 @@ export default function RelatoriosCustomizados() {
       const { blob, filename } = await apiPostFile("relatorios/exportar", payload, {
         on403: "silent",
       });
+
+      const stamp = new Date();
+      const stampStr = `${stamp.getFullYear()}-${String(stamp.getMonth() + 1).padStart(2, "0")}-${String(
+        stamp.getDate()
+      ).padStart(2, "0")}`;
       const ext = tipo === "pdf" ? "pdf" : "xlsx";
-      saveAs(blob, filename || `relatorio_${reportKey}.${ext}`);
+      const fallbackName = `relatorio_${reportKey}_${stampStr}.${ext}`;
+
+      saveAs(blob, filename || fallbackName);
       setLive("Exportação concluída.");
     } catch {
       toast.error("Falha no download.");
@@ -382,9 +385,15 @@ export default function RelatoriosCustomizados() {
     setDados([]);
     setPage(1);
     setLive("Filtros limpos.");
+    // move o foco de volta para a busca para acelerar a próxima ação
+    setTimeout(() => searchRef.current?.focus(), 50);
   };
 
-  const totalRegistros = dados?.length || 0;
+  // limpar dados ao trocar o tipo de relatório (evita confusão visual)
+  useEffect(() => {
+    setDados([]);
+    setPage(1);
+  }, [reportKey]);
 
   // filtro de busca client-side adicional (segurança/UX)
   const dadosFiltrados = useMemo(() => {
@@ -460,7 +469,18 @@ export default function RelatoriosCustomizados() {
         <p ref={liveRef} className="sr-only" aria-live="polite" role="status" />
 
         {erroCarregamento ? (
-          <ErroCarregamento mensagem="Falha ao carregar os filtros disponíveis." />
+          <div className="space-y-3">
+            <ErroCarregamento mensagem="Falha ao carregar os filtros disponíveis." />
+            <div className="text-center">
+              <button
+                onClick={carregarOpcoes}
+                className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold border border-pink-600 text-pink-700 hover:bg-pink-50 dark:text-pink-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-pink-600 transition"
+              >
+                <RefreshCcw className="w-4 h-4" />
+                Tentar novamente
+              </button>
+            </div>
+          </div>
         ) : (
           <>
             {/* Abas/Chips de relatórios (scroll horizontal no mobile) */}
@@ -556,10 +576,17 @@ export default function RelatoriosCustomizados() {
                     />
                     <input
                       id="busca"
+                      ref={searchRef}
                       type="search"
                       inputMode="search"
                       value={buscaValue}
                       onChange={(e) => setBuscaValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          buscar();
+                        }
+                      }}
                       placeholder="Buscar por nome, curso, e-mail…"
                       className="pl-8 pr-8 py-2 w-full rounded-md border border-gray-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-pink-500"
                       aria-label="Buscar nos resultados"
@@ -742,3 +769,4 @@ export default function RelatoriosCustomizados() {
     </div>
   );
 }
+

@@ -39,14 +39,10 @@ function minutesBetween(hhmmIni, hhmmFim) {
   if (![h1, m1, h2, m2].every((n) => Number.isFinite(n))) return 0;
   return h2 * 60 + m2 - (h1 * 60 + m1);
 }
-function pad2(n) {
-  return String(n).padStart(2, "0");
-}
 
-/* ===== Status key (usa datas reais da turma) ===== */
-function getStatusKeyByDates(minData, maxData, horarioFimUltimoDia = "23:59") {
+/* ===== Status key (usa datas reais da turma + agora = 'hoje') ===== */
+function getStatusKeyByDates(minData, maxData, horarioFimUltimoDia = "23:59", agora = new Date()) {
   if (!minData || !maxData) return "desconhecido";
-  const agora = new Date();
   const dataInicio = startOfDayLocal(minData);
   const dataFim = endOfDayLocal(maxData);
 
@@ -120,8 +116,9 @@ export default function CardTurma({
     };
   }, [turma]);
 
-  // ======= Status (BadgeStatus) =======
-  const statusKey = getStatusKeyByDates(minData, maxData, horarioFimUltimoDia);
+  // ======= Status (BadgeStatus) — usa 'hoje' quando informado =======
+  const agoraRef = (hoje instanceof Date ? hoje : new Date());
+  const statusKey = getStatusKeyByDates(minData, maxData, horarioFimUltimoDia, agoraRef);
 
   // ======= Texto do período =======
   const periodoTexto =
@@ -141,13 +138,20 @@ export default function CardTurma({
   // ======= Bloqueio de inscrição por data real =======
   function bloquearInscricaoPorData() {
     const fimTurma = endOfDayLocal(maxData || turma.data_fim);
-    return fimTurma ? fimTurma < new Date() : false;
+    return fimTurma ? fimTurma < agoraRef : false;
   }
   const bloquear = bloquearInscricao || bloquearInscricaoPorData();
 
   // ======= Barra de progresso (cores com bom contraste) =======
   const corBarra =
     percentual >= 100 ? "bg-red-600" : percentual >= 75 ? "bg-orange-500" : "bg-green-600";
+
+  const badgePercentClasses =
+    percentual >= 100
+      ? "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-200"
+      : percentual >= 75
+      ? "bg-orange-100 text-orange-900 dark:bg-orange-900/30 dark:text-orange-200"
+      : "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-200";
 
   // ======= Prévia de datas (opcional) =======
   const previewDatas =
@@ -168,14 +172,21 @@ export default function CardTurma({
       <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 mb-4">
         <div className="w-full min-w-0">
           <div className="flex items-center gap-2 mb-1">
-            <h4 className="text-base font-bold text-green-900 dark:text-green-200 truncate" title={turma.nome}>
+            <h4
+              className="text-base font-bold text-green-900 dark:text-green-200 truncate"
+              title={turma.nome}
+              aria-live="polite"
+            >
               {turma.nome}
             </h4>
             <BadgeStatus status={statusKey} size="sm" variant="soft" />
           </div>
 
           {turma.evento_titulo && (
-            <span className="text-xs text-gray-500 dark:text-gray-400 block mb-1 truncate" title={turma.evento_titulo}>
+            <span
+              className="text-xs text-gray-500 dark:text-gray-400 block mb-1 truncate"
+              title={turma.evento_titulo}
+            >
               <CalendarDays size={14} className="inline mr-1" /> Evento: {turma.evento_titulo}
             </span>
           )}
@@ -188,7 +199,7 @@ export default function CardTurma({
           {/* Horário compacto quando for um único dia */}
           {turma.horario_inicio && turma.horario_fim && (datasOrdenadas?.length || 0) <= 1 && (
             <span className="text-xs text-gray-600 dark:text-gray-300 block mt-0.5">
-              ⏰ Horário: {turma.horario_inicio.slice(0, 5)} às {turma.horario_fim.slice(0, 5)}
+              ⏰ Horário: {String(turma.horario_inicio).slice(0, 5)} às {String(turma.horario_fim).slice(0, 5)}
             </span>
           )}
 
@@ -211,14 +222,20 @@ export default function CardTurma({
                 {ocupadas} de {total} vagas preenchidas
               </span>
               <span
-                className="ml-2 px-2 py-0.5 rounded bg-green-100 text-green-800 text-xs dark:bg-green-900/30 dark:text-green-200"
+                className={`ml-2 px-2 py-0.5 rounded ${badgePercentClasses} text-xs`}
                 aria-live="polite"
               >
                 {percentual}%
               </span>
             </div>
-            <div className="w-full h-2 bg-gray-300 dark:bg-gray-700 rounded-full overflow-hidden" role="progressbar"
-                 aria-valuemin={0} aria-valuemax={100} aria-valuenow={percentual}>
+            <div
+              className="w-full h-2 bg-gray-300 dark:bg-gray-700 rounded-full overflow-hidden"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={percentual}
+              aria-valuetext={`${percentual}% das vagas preenchidas`}
+            >
               <div className={`h-full ${corBarra}`} style={{ width: `${percentual}%` }} />
             </div>
           </div>
@@ -229,25 +246,34 @@ export default function CardTurma({
       <div className="mt-4 flex justify-end">
         {inscrever && (
           inscricoesConfirmadas.includes(turma.id) ? (
-            <button
-              className="bg-green-100 text-green-800 font-semibold px-4 py-1 rounded-full border border-green-400 cursor-default"
-              disabled
+            <span
+              className="inline-flex items-center rounded-full border font-semibold px-4 py-1 cursor-default
+                         bg-emerald-50 text-emerald-800 border-emerald-300
+                         dark:bg-emerald-900/20 dark:text-emerald-200 dark:border-emerald-800/60"
+              aria-label="Inscrição confirmada"
             >
               ✅ Inscrito
-            </button>
+            </span>
           ) : bloquear ? (
-            <button
-              className="bg-gray-200 text-gray-500 font-semibold px-4 py-1 rounded-full border border-gray-300 cursor-not-allowed"
-              disabled
+            <span
+              className="inline-flex items-center rounded-full border font-semibold px-4 py-1 cursor-not-allowed
+                         bg-gray-200 text-gray-500 border-gray-300 dark:bg-gray-800 dark:text-gray-300/60 dark:border-gray-700"
+              aria-label="Inscrição indisponível"
             >
               Inscrição indisponível
-            </button>
+            </span>
           ) : (
             <button
-              className="bg-green-900 hover:bg-green-900/90 text-white font-semibold px-4 py-1 rounded-full transition focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-green-900/60"
+              className="px-4 py-1 rounded-full font-semibold text-white transition
+                         bg-gradient-to-br from-[#0f2c1f] via-[#114b2d] to-[#166534]
+                         hover:brightness-[1.05]
+                         focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-500/60
+                         dark:focus-visible:ring-offset-gray-900"
               onClick={() => inscrever(Number(turma.id))}
               disabled={inscrevendo === Number(turma.id)}
               aria-busy={inscrevendo === Number(turma.id) || undefined}
+              aria-label="Inscrever-se nesta turma"
+              title="Inscrever-se nesta turma"
             >
               {inscrevendo === Number(turma.id) ? "Inscrevendo..." : "Inscrever-se"}
             </button>
@@ -260,7 +286,7 @@ export default function CardTurma({
 
 CardTurma.propTypes = {
   turma: PropTypes.object.isRequired,
-  eventoId: PropTypes.number.isRequired,
+  eventoId: PropTypes.oneOfType([PropTypes.number, PropTypes.string]).isRequired,
   hoje: PropTypes.instanceOf(Date).isRequired,
   carregarInscritos: PropTypes.func.isRequired,
   carregarAvaliacoes: PropTypes.func.isRequired,

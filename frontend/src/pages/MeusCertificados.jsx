@@ -1,5 +1,5 @@
 // ✅ src/pages/MeusCertificados.jsx (somente PARTICIPANTE)
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { motion } from "framer-motion";
 import Skeleton from "react-loading-skeleton";
 import { toast } from "react-toastify";
@@ -48,10 +48,10 @@ function HeaderHero({ onRefresh, variant = "teal", nome = "" }) {
   );
 }
 
-/* ───────────────── Util: período seguro (date-only) ───────────────── */
+/* ───────────────── Util: período (date-only) ───────────────── */
 function periodoSeguro(cert) {
-  const iniRaw = cert.data_inicio ?? cert.di ?? cert.inicio;
-  const fimRaw = cert.data_fim ?? cert.df ?? cert.fim;
+  const iniRaw = cert?.data_inicio ?? cert?.di ?? cert?.inicio;
+  const fimRaw = cert?.data_fim ?? cert?.df ?? cert?.fim;
   const iniISO = formatarParaISO(iniRaw);
   const fimISO = formatarParaISO(fimRaw);
   const ini = iniISO ? formatarDataBrasileira(iniISO) : "—";
@@ -59,13 +59,23 @@ function periodoSeguro(cert) {
   return `${ini} até ${fim}`;
 }
 
-/* ───────────────── Página ───────────────── */
 export default function MeusCertificados() {
   const [certificados, setCertificados] = useState([]);
   const [erro, setErro] = useState("");
   const [carregando, setCarregando] = useState(true);
   const [gerandoKey, setGerandoKey] = useState(null);
+  const [busy, setBusy] = useState(false);
   const liveRef = useRef(null);
+  const abortRef = useRef(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      abortRef.current?.abort?.();
+    };
+  }, []);
 
   const usuario = useMemo(() => {
     try {
@@ -82,54 +92,67 @@ export default function MeusCertificados() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const setLive = (msg) => {
+    if (liveRef.current) liveRef.current.textContent = msg;
+  };
+
+  const keyDoCert = useCallback((cert) => {
+    const tipo = cert?.tipo ?? "usuario";
+    return `${tipo}-${cert?.evento_id}-${cert?.turma_id}`;
+  }, []);
+
   async function carregarCertificados() {
     try {
+      abortRef.current?.abort?.();
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
+
       setCarregando(true);
       setErro("");
-      if (liveRef.current) liveRef.current.textContent = "Carregando certificados…";
+      setLive("Carregando certificados…");
 
       // ✅ Endpoint elegíveis do PARTICIPANTE
-      const dadosUsuario = await apiGet("certificados/elegiveis");
+      const dadosUsuario = await apiGet("/certificados/elegiveis", { signal: ctrl.signal });
       const listaBruta = Array.isArray(dadosUsuario) ? dadosUsuario : [];
 
-      // defensivo: manter só participante (tipo = 'usuario')
-      const apenasParticipante = listaBruta.filter((c) => (c.tipo ?? "usuario") === "usuario");
+      // somente participante (tipo = 'usuario')
+      const apenasParticipante = listaBruta.filter((c) => (c?.tipo ?? "usuario") === "usuario");
 
       // remove duplicatas por (tipo, evento_id, turma_id)
-      const unicos = apenasParticipante.filter(
-        (item, idx, arr) =>
-          idx ===
-          arr.findIndex(
-            (c) =>
-              String(c.tipo ?? "usuario") === String(item.tipo ?? "usuario") &&
-              String(c.evento_id) === String(item.evento_id) &&
-              String(c.turma_id) === String(item.turma_id)
-          )
-      );
-
-      setCertificados(unicos);
-      if (liveRef.current) {
-        liveRef.current.textContent = unicos.length
-          ? `Foram encontrados ${unicos.length} certificado(s) elegível(is).`
-          : "Nenhum certificado elegível encontrado.";
+      const seen = new Set();
+      const unicos = [];
+      for (const item of apenasParticipante) {
+        const k = `usuario-${item?.evento_id}-${item?.turma_id}`;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        unicos.push(item);
       }
+
+      if (!mountedRef.current) return;
+      setCertificados(unicos);
+      setLive(
+        unicos.length
+          ? `Foram encontrados ${unicos.length} certificado(s) elegível(is).`
+          : "Nenhum certificado elegível encontrado."
+      );
     } catch (e) {
+      if (e?.name === "AbortError") return;
       console.error(e);
+      if (!mountedRef.current) return;
       setErro("Erro ao carregar certificados");
       toast.error("❌ Erro ao carregar certificados.");
-      if (liveRef.current) liveRef.current.textContent = "Falha ao carregar certificados.";
+      setLive("Falha ao carregar certificados.");
+      setCertificados([]);
     } finally {
-      setCarregando(false);
+      if (mountedRef.current) setCarregando(false);
     }
   }
 
-  function keyDoCert(cert) {
-    const tipo = cert?.tipo ?? "usuario";
-    return `${tipo}-${cert.evento_id}-${cert.turma_id}`;
-  }
-
   async function gerarCertificado(cert) {
+    // bloqueia concorrência / duplo clique
+    if (busy) return;
     const key = keyDoCert(cert);
+    setBusy(true);
     setGerandoKey(key);
 
     try {
@@ -145,26 +168,19 @@ export default function MeusCertificados() {
         tipo: "usuario", // ✅ somente participante
       };
 
-      const resultado = await apiPost("certificados/gerar", body);
+      const resultado = await apiPost("/certificados/gerar", body);
 
-      // Tratar diferentes formatos de retorno
       const certificadoId =
-        resultado?.certificado_id ??
-        resultado?.id ??
-        resultado?.certificado?.id ??
-        null;
+        resultado?.certificado_id ?? resultado?.id ?? resultado?.certificado?.id ?? null;
       const arquivoPdf =
-        resultado?.arquivo_pdf ??
-        resultado?.arquivo ??
-        resultado?.certificado?.arquivo_pdf ??
-        null;
+        resultado?.arquivo_pdf ?? resultado?.arquivo ?? resultado?.certificado?.arquivo_pdf ?? null;
 
       toast.success("🎉 Certificado gerado com sucesso!");
 
-      // ✅ Reconciliação autoritativa: recarrega a lista do servidor
+      // Recarrega do servidor (reconciliação autoritativa)
       await carregarCertificados();
 
-      // Caso queira também sinalizar imediatamente o item gerado (sem depender da recarga):
+      // Sinaliza otimista
       setCertificados((prev) =>
         prev.map((c) =>
           c.evento_id === cert.evento_id && c.turma_id === cert.turma_id
@@ -182,6 +198,7 @@ export default function MeusCertificados() {
       toast.error("❌ Erro ao gerar certificado.");
     } finally {
       setGerandoKey(null);
+      setBusy(false);
     }
   }
 
@@ -190,17 +207,14 @@ export default function MeusCertificados() {
     const key = keyDoCert(cert);
     const gerando = gerandoKey === key;
 
-    // Construção resiliente do link de download:
-    // 1) preferir certificado_id (rota REST estável)
-    // 2) se não existir, usar arquivo_pdf absoluto/relativo
-    const hrefDownload =
-      cert?.certificado_id
-        ? makeApiUrl(`certificados/${cert.certificado_id}/download`)
-        : cert?.arquivo_pdf
-        ? (cert.arquivo_pdf.startsWith("http")
-            ? cert.arquivo_pdf
-            : makeApiUrl(cert.arquivo_pdf.replace(/^\//, "")))
-        : null;
+    // Link de download resiliente
+    const hrefDownload = cert?.certificado_id
+      ? makeApiUrl(`certificados/${cert.certificado_id}/download`)
+      : cert?.arquivo_pdf
+      ? cert.arquivo_pdf.startsWith("http")
+        ? cert.arquivo_pdf
+        : makeApiUrl(cert.arquivo_pdf.replace(/^\//, ""))
+      : null;
 
     const prontoParaDownload = Boolean(hrefDownload) && (cert.ja_gerado || cert.certificado_id);
 
@@ -210,20 +224,18 @@ export default function MeusCertificados() {
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.25 }}
-        className="rounded-2xl border shadow-sm p-4 flex flex-col justify-between transition
-                   bg-white border-gray-200 dark:bg-zinc-900 dark:border-zinc-700"
+        className="rounded-2xl border shadow-sm p-4 flex flex-col justify-between transition bg-white border-gray-200 dark:bg-zinc-900 dark:border-zinc-700"
+        aria-busy={gerando ? "true" : "false"}
       >
         <div>
           <h3 className="text-lg font-bold mb-1 text-lousa dark:text-green-100">
-            {cert.evento || cert.evento_titulo || cert.nome_evento || "Evento"}
+            {cert?.evento || cert?.evento_titulo || cert?.nome_evento || "Evento"}
           </h3>
 
           <p className="text-sm text-gray-700 dark:text-gray-300">
-            Turma: {cert.nome_turma || cert.turma_nome || `#${cert.turma_id}`}
+            Turma: {cert?.nome_turma || cert?.turma_nome || `#${cert?.turma_id}`}
           </p>
-          <p className="text-sm text-gray-500 dark:text-gray-400">
-            Período: {periodoSeguro(cert)}
-          </p>
+          <p className="text-sm text-gray-500 dark:text-gray-400">Período: {periodoSeguro(cert)}</p>
         </div>
 
         <div className="mt-4 flex justify-center">
@@ -239,7 +251,7 @@ export default function MeusCertificados() {
           ) : (
             <button
               onClick={() => gerarCertificado(cert)}
-              disabled={gerando}
+              disabled={gerando || busy}
               className="text-white text-sm font-medium py-2 px-4 rounded text-center disabled:opacity-60 bg-blue-700 hover:bg-blue-800"
               aria-label="Gerar certificado de participante"
             >

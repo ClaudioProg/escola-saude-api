@@ -1,5 +1,5 @@
 // ✅ src/pages/Login.jsx
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { GoogleLogin } from "@react-oauth/google";
 import { toast } from "react-toastify";
@@ -8,6 +8,38 @@ import { LogIn, Eye, EyeOff, User, Lock, AlertTriangle } from "lucide-react";
 import BotaoPrimario from "../components/BotaoPrimario";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import { apiPost } from "../services/api";
+
+/* ---------------------- utils CPF ---------------------- */
+function aplicarMascaraCPF(valor) {
+  return valor
+    .replace(/\D/g, "")
+    .slice(0, 11)
+    .replace(/(\d{3})(\d)/, "$1.$2")
+    .replace(/(\d{3})(\d)/, "$1.$2")
+    .replace(/(\d{3})(\d{1,2})$/, "$1-$2");
+}
+function apenasDigitos(c) {
+  return String(c || "").replace(/\D/g, "");
+}
+function cpfChecksumValido(cpf) {
+  const s = apenasDigitos(cpf);
+  if (s.length !== 11) return false;
+  if (/^(\d)\1{10}$/.test(s)) return false; // evita 000... / 111...
+
+  const calc = (arr, len) => {
+    let soma = 0;
+    for (let i = 0; i < len - 1; i++) soma += parseInt(arr[i], 10) * (len - i);
+    const resto = (soma * 10) % 11;
+    return resto === 10 ? 0 : resto;
+  };
+  const d1 = calc(s, 10);
+  const d2 = calc(s, 11);
+  return d1 === parseInt(s[9], 10) && d2 === parseInt(s[10], 10);
+}
+function validarCPF(c) {
+  const maskOk = /^\d{3}\.\d{3}\.\d{3}-\d{2}$/.test(c);
+  return maskOk && cpfChecksumValido(c);
+}
 
 export default function Login() {
   const [cpf, setCpf] = useState("");
@@ -21,8 +53,10 @@ export default function Login() {
 
   const navigate = useNavigate();
   const location = useLocation();
+  const cpfRef = useRef(null);
+  const senhaRef = useRef(null);
 
-  const hasGoogleClient = !!import.meta.env.VITE_GOOGLE_CLIENT_ID;
+  const hasGoogleClient = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID);
 
   const redirectPath = useMemo(() => {
     try {
@@ -45,18 +79,6 @@ export default function Login() {
     if (location.pathname === "/login" && token) navigate("/", { replace: true });
   }, [navigate, location]);
 
-  function aplicarMascaraCPF(valor) {
-    return valor
-      .replace(/\D/g, "")
-      .replace(/(\d{3})(\d)/, "$1.$2")
-      .replace(/(\d{3})(\d)/, "$1.$2")
-      .replace(/(\d{3})(\d{1,2})$/, "$1-$2");
-  }
-
-  function validarCPF(c) {
-    return /^\d{3}\.\d{3}\.\d{3}-\d{2}$/.test(c);
-  }
-
   function persistirSessao(payload) {
     const { token, usuario } = payload || {};
     if (!token || !usuario) throw new Error("Resposta de login inválida.");
@@ -67,7 +89,7 @@ export default function Login() {
       ? usuario.perfil.split(",").map((p) => p.trim()).filter(Boolean)
       : [];
 
-    localStorage.clear();
+    // evita apagar outras preferências do app (tema, etc.)
     localStorage.setItem("token", token);
     localStorage.setItem("nome", usuario.nome || "");
     localStorage.setItem("perfil", JSON.stringify(perfilArray));
@@ -76,21 +98,24 @@ export default function Login() {
 
   async function handleLogin(e) {
     e.preventDefault();
-    if (loading) return;
+    if (loading || loadingGoogle) return;
 
     setErroCpf("");
     setErroSenha("");
 
     if (!validarCPF(cpf)) {
-      setErroCpf("CPF inválido. Digite no formato 000.000.000-00.");
+      setErroCpf("CPF inválido. Verifique os dígitos e o formato 000.000.000-00.");
+      cpfRef.current?.focus();
       return;
     }
     if (!senha) {
       setErroSenha("Digite sua senha.");
+      senhaRef.current?.focus();
       return;
     }
     if (senha.length < 8) {
       setErroSenha("A senha deve conter pelo menos 8 caracteres.");
+      senhaRef.current?.focus();
       return;
     }
 
@@ -98,7 +123,7 @@ export default function Login() {
     try {
       const payload = await apiPost(
         "/login",
-        { cpf: cpf.replace(/\D/g, ""), senha },
+        { cpf: apenasDigitos(cpf), senha },
         { auth: false, on401: "silent" }
       );
       persistirSessao(payload);
@@ -108,6 +133,8 @@ export default function Login() {
       const serverMsg =
         err?.data?.erro || err?.data?.message || err?.message || "Erro ao fazer login.";
       setSenha("");
+      setMostrarSenha(false);
+      senhaRef.current?.focus();
       toast.error(serverMsg);
     } finally {
       setLoading(false);
@@ -119,7 +146,7 @@ export default function Login() {
       toast.error("Credencial do Google ausente.");
       return;
     }
-    if (loadingGoogle) return;
+    if (loadingGoogle || loading) return;
 
     setLoadingGoogle(true);
     try {
@@ -158,6 +185,7 @@ export default function Login() {
           onSubmit={handleLogin}
           className="bg-lousa text-white rounded-2xl shadow-2xl p-7 md:p-8 space-y-6"
           aria-label="Formulário de Login"
+          aria-busy={loading || loadingGoogle ? "true" : "false"}
         >
           <header className="text-center">
             <h1 className="text-2xl font-bold">Acessar Plataforma</h1>
@@ -174,6 +202,7 @@ export default function Login() {
             <input
               id="cpf"
               name="cpf"
+              ref={cpfRef}
               type="text"
               value={cpf}
               onChange={(e) => {
@@ -184,6 +213,9 @@ export default function Login() {
                 e.preventDefault();
                 const text = (e.clipboardData.getData("text") || "").trim();
                 setCpf(aplicarMascaraCPF(text));
+              }}
+              onBlur={() => {
+                if (cpf && !validarCPF(cpf)) setErroCpf("CPF inválido.");
               }}
               placeholder="000.000.000-00"
               maxLength={14}
@@ -197,11 +229,13 @@ export default function Login() {
               aria-describedby={erroCpf ? "erro-cpf" : undefined}
               inputMode="numeric"
             />
-            {erroCpf && (
-              <p id="erro-cpf" className="text-red-200 text-xs mt-1" role="alert">
-                {erroCpf}
-              </p>
-            )}
+            <div className="min-h-[1rem]" aria-live="polite">
+              {erroCpf && (
+                <p id="erro-cpf" className="text-red-200 text-xs mt-1" role="alert">
+                  {erroCpf}
+                </p>
+              )}
+            </div>
           </div>
 
           {/* Senha */}
@@ -213,6 +247,7 @@ export default function Login() {
               <input
                 id="senha"
                 name="senha"
+                ref={senhaRef}
                 type={mostrarSenha ? "text" : "password"}
                 value={senha}
                 onChange={(e) => {
@@ -220,14 +255,13 @@ export default function Login() {
                   if (erroSenha) setErroSenha("");
                 }}
                 onKeyUp={(e) => setCapsLockOn(e.getModifierState?.("CapsLock"))}
+                onKeyDown={(e) => setCapsLockOn(e.getModifierState?.("CapsLock"))}
                 placeholder="Digite sua senha"
                 autoComplete="current-password"
                 className="w-full px-4 py-2.5 rounded bg-white dark:bg-gray-100 text-gray-800 placeholder-gray-400 pr-14 focus:ring-2 focus:ring-lousa"
                 aria-label="Digite sua senha"
                 aria-invalid={!!erroSenha}
-                aria-describedby={
-                  erroSenha || capsLockOn ? "erro-senha aviso-caps" : undefined
-                }
+                aria-describedby={erroSenha || capsLockOn ? "erro-senha aviso-caps" : undefined}
               />
               <button
                 type="button"
@@ -241,20 +275,22 @@ export default function Login() {
               </button>
             </div>
 
-            {erroSenha && (
-              <p id="erro-senha" className="text-red-200 text-xs mt-1" role="alert">
-                {erroSenha}
-              </p>
-            )}
-            {capsLockOn && !erroSenha && (
-              <p
-                id="aviso-caps"
-                className="text-amber-200 text-[11px] mt-1 flex items-center gap-1"
-                role="status"
-              >
-                <AlertTriangle size={12} /> Atenção: Caps Lock está ativado.
-              </p>
-            )}
+            <div className="min-h-[1.25rem]" aria-live="polite">
+              {erroSenha && (
+                <p id="erro-senha" className="text-red-200 text-xs mt-1" role="alert">
+                  {erroSenha}
+                </p>
+              )}
+              {capsLockOn && !erroSenha && (
+                <p
+                  id="aviso-caps"
+                  className="text-amber-200 text-[11px] mt-1 flex items-center gap-1"
+                  role="status"
+                >
+                  <AlertTriangle size={12} /> Atenção: Caps Lock está ativado.
+                </p>
+              )}
+            </div>
 
             <div className="mt-2 text-right">
               <button
@@ -280,7 +316,7 @@ export default function Login() {
             {loading ? "Entrando..." : "Entrar"}
           </BotaoPrimario>
 
-          <div className="text-center text-sm text-white mt-2">ou</div>
+          <div className="text-center text-sm text-white mt-2" aria-hidden="true">ou</div>
 
           {/* Google */}
           <div className="flex justify-center mt-1 mb-2">
@@ -308,8 +344,7 @@ export default function Login() {
 
           {redirectPath && (
             <p className="text-[11px] text-center text-white/70">
-              Após o login, você será levado para:{" "}
-              <span className="font-semibold">{redirectPath}</span>
+              Após o login, você será levado para: <span className="font-semibold">{redirectPath}</span>
             </p>
           )}
 
@@ -323,7 +358,7 @@ export default function Login() {
             </button>
           </div>
 
-          <p className="text-[11px] text-center text-white/70">
+          <p className="text-[11px] text-center text-white/70" aria-live="polite">
             Ao continuar, você concorda com o uso dos seus dados para fins de controle de
             eventos, presença e certificação, conforme a política institucional da Escola da Saúde.
           </p>

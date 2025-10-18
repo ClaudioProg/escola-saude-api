@@ -2,9 +2,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback, Suspense, lazy } from "react";
 import { toast } from "react-toastify";
 import Skeleton from "react-loading-skeleton";
-import {
-  Users, RefreshCcw, ShieldCheck, GraduationCap, Award, Search,
-} from "lucide-react";
+import { Users, RefreshCcw, ShieldCheck, Search } from "lucide-react";
 
 import { apiGet, apiPut } from "../services/api";
 import Footer from "../components/Footer";
@@ -32,13 +30,20 @@ const idadeFrom = (isoOrDate) => {
   return age;
 };
 
-/* ============ HeaderHero ============ */
+/* ============ HeaderHero (três cores) ============ */
 function HeaderHero({ onAtualizar, atualizando, total }) {
   return (
     <header
       className="relative isolate overflow-hidden bg-gradient-to-br from-indigo-900 via-violet-800 to-fuchsia-700 text-white"
       role="banner"
     >
+      <a
+        href="#conteudo"
+        className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2"
+      >
+        Ir para o conteúdo
+      </a>
+
       <div
         className="pointer-events-none absolute inset-0 opacity-70"
         style={{
@@ -87,25 +92,6 @@ function HeaderHero({ onAtualizar, atualizando, total }) {
   );
 }
 
-/* ============ KPIs (ministats) ============ */
-function Stat({ label, value, Icon }) {
-  return (
-    <div
-      className="flex items-center gap-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white/80 dark:bg-zinc-800/70 px-4 py-3 shadow-sm"
-      role="group"
-      aria-label={label}
-    >
-      <div className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-200">
-        <Icon className="h-5 w-5" aria-hidden="true" />
-      </div>
-      <div className="min-w-0">
-        <p className="text-xs text-zinc-500 dark:text-zinc-400">{label}</p>
-        <p className="text-lg font-semibold text-zinc-900 dark:text-white">{value}</p>
-      </div>
-    </div>
-  );
-}
-
 export default function GestaoUsuarios() {
   const [usuarios, setUsuarios] = useState([]);
   const [carregandoUsuarios, setCarregandoUsuarios] = useState(true);
@@ -113,33 +99,41 @@ export default function GestaoUsuarios() {
   const [busca, setBusca] = useState("");
   const [usuarioSelecionado, setUsuarioSelecionado] = useState(null);
   const [revealCpfIds, setRevealCpfIds] = useState(() => new Set());
+  const [hydrating, setHydrating] = useState(false); // mantém a flag, mas não hidrata em massa
+  const searchRef = useRef(null);
   const liveRef = useRef(null);
-  const abortRef = useRef(null);
-  const [hydrating, setHydrating] = useState(false);
 
-  const setLive = (msg) => {
-    if (liveRef.current) liveRef.current.textContent = msg;
-  };
+  // cache para o resumo por usuário (carregado sob demanda)
+  const [resumoCache, setResumoCache] = useState(() => new Map());       // id -> { cursos_concluidos_75, certificados_emitidos }
+  const [loadingResumo, setLoadingResumo] = useState(() => new Set());    // ids em carregamento
 
-  /* ---------- carrega + hidrata ---------- */
+  const setLive = (msg) => { if (liveRef.current) liveRef.current.textContent = msg; };
+
+  // atalho: "/" foca busca
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        searchRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  /* ---------- carregar (sem hidratação pesada) ---------- */
   const carregarUsuarios = useCallback(async () => {
     try {
-      abortRef.current?.abort?.();
-      const controller = new AbortController();
-      abortRef.current = controller;
-
       setCarregandoUsuarios(true);
       setErro("");
       setLive("Carregando usuários…");
 
-      // 1) base
-      const data = await apiGet("/api/usuarios", { on403: "silent", signal: controller.signal });
+      const data = await apiGet("/api/usuarios", { on403: "silent" });
       const base =
         Array.isArray(data) ? data :
         Array.isArray(data?.lista) ? data.lista :
         Array.isArray(data?.usuarios) ? data.usuarios : [];
 
-      // 2) enrich local
       const enriched = base.map((u) => ({
         ...u,
         idade: idadeFrom(u?.data_nascimento) ?? undefined,
@@ -148,54 +142,15 @@ export default function GestaoUsuarios() {
         escolaridade_nome: u?.escolaridade_nome || u?.escolaridade || u?.escolaridade_id || null,
         cargo_nome: u?.cargo_nome || u?.cargo || u?.cargo_id || null,
         deficiencia_nome: u?.deficiencia_nome || u?.deficiencia || u?.deficiencia_id || null,
-        cursos_concluidos_75: 0,
-        certificados_emitidos: 0,
+        // valores que só virão quando o usuário abrir o “detalhe”:
+        cursos_concluidos_75: undefined,
+        certificados_emitidos: undefined,
       }));
 
       setUsuarios(enriched);
+      setResumoCache(new Map());     // limpa cache de resumos ao recarregar
       setLive(`Usuários carregados: ${enriched.length}.`);
-
-      // 3) hidrata estatísticas individuais (concorrência limitada)
-      if (enriched.length) {
-        setHydrating(true);
-        const limit = 8;
-        let i = 0;
-
-        async function worker() {
-          while (i < enriched.length) {
-            const idx = i++;
-            const u = enriched[idx];
-            try {
-              const r = await apiGet(`/api/usuarios/${u.id}/resumo`, {
-                on404: "silent",
-                signal: controller.signal,
-              });
-              if (r) {
-                enriched[idx] = {
-                  ...enriched[idx],
-                  cursos_concluidos_75: Number(r?.cursos_concluidos_75 ?? 0),
-                  certificados_emitidos: Number(r?.certificados_emitidos ?? 0),
-                };
-                // update incremental para manter a UI responsiva
-                setUsuarios((prev) => {
-                  const copy = [...prev];
-                  copy[idx] = enriched[idx];
-                  return copy;
-                });
-              }
-            } catch {
-              // silencioso; seguimos com os demais
-            }
-          }
-        }
-        await Promise.all(
-          Array.from({ length: Math.min(limit, enriched.length) }).map(worker)
-        );
-        setHydrating(false);
-        setLive("Usuários atualizados com estatísticas.");
-      }
     } catch (e) {
-      if (e?.name === "AbortError") return;
       const msg = e?.message || "Erro ao carregar usuários.";
       console.error("❌ /api/usuarios falhou:", e);
       setErro(msg);
@@ -204,13 +159,42 @@ export default function GestaoUsuarios() {
       setLive("Falha ao carregar usuários.");
     } finally {
       setCarregandoUsuarios(false);
+      setHydrating(false);
     }
   }, []);
 
-  useEffect(() => {
-    carregarUsuarios();
-    return () => abortRef.current?.abort?.();
-  }, [carregarUsuarios]);
+  useEffect(() => { carregarUsuarios(); }, [carregarUsuarios]);
+
+  /* ---------- carregar resumo de UM usuário, sob demanda ---------- */
+  async function carregarResumoUsuario(id) {
+    if (!id) return;
+    if (resumoCache.has(id) || loadingResumo.has(id)) return; // já em cache ou em andamento
+
+    setLoadingResumo((prev) => new Set(prev).add(id));
+    try {
+      const r = await apiGet(`/api/usuarios/${id}/resumo`, { on404: "silent" });
+      const resumo = {
+        cursos_concluidos_75: Number(r?.cursos_concluidos_75 ?? 0),
+        certificados_emitidos: Number(r?.certificados_emitidos ?? 0),
+      };
+      setResumoCache((prev) => {
+        const next = new Map(prev);
+        next.set(id, resumo);
+        return next;
+      });
+      // opcional: refletir no array principal (para aparecer no card imediatamente)
+      setUsuarios((prev) => prev.map((u) => (u.id === id ? { ...u, ...resumo } : u)));
+    } catch (e) {
+      console.error("❌ resumo usuário", id, e);
+      toast.error("Erro ao carregar detalhes do usuário.");
+    } finally {
+      setLoadingResumo((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  }
 
   /* ---------- salvar perfil ---------- */
   async function salvarPerfil(id, perfil) {
@@ -225,7 +209,7 @@ export default function GestaoUsuarios() {
       await apiPut(`/api/usuarios/${id}/perfil`, { perfil: perfilStr });
       toast.success("✅ Perfil atualizado com sucesso!");
       setUsuarioSelecionado(null);
-      carregarUsuarios(); // auto-refresh
+      carregarUsuarios(); // refresh leve
     } catch (err) {
       const msg = err?.message || err?.erro || "❌ Erro ao atualizar perfil.";
       console.error("❌ Erro ao atualizar perfil:", err);
@@ -253,14 +237,6 @@ export default function GestaoUsuarios() {
     });
   }, [usuarios, debouncedQ]);
 
-  /* ---------- KPIs agregados ---------- */
-  const kpis = useMemo(() => {
-    const total = usuarios.length;
-    const cursos = usuarios.reduce((acc, u) => acc + (Number(u.cursos_concluidos_75) || 0), 0);
-    const certs = usuarios.reduce((acc, u) => acc + (Number(u.certificados_emitidos) || 0), 0);
-    return { total, cursos, certs };
-  }, [usuarios]);
-
   /* ---------- CPF reveal/ocultar por item ---------- */
   const onToggleCpf = (id) => {
     setRevealCpfIds((prev) => {
@@ -271,7 +247,7 @@ export default function GestaoUsuarios() {
     });
   };
 
-  const anyLoading = carregandoUsuarios;
+  const anyLoading = carregandoUsuarios; // não hidratamos mais em massa
 
   return (
     <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
@@ -286,7 +262,7 @@ export default function GestaoUsuarios() {
       />
 
       {/* progress bar fina */}
-      {(anyLoading || hydrating) && (
+      {(anyLoading) && (
         <div
           className="sticky top-0 left-0 w-full h-1 bg-fuchsia-100 z-40"
           role="progressbar"
@@ -298,44 +274,35 @@ export default function GestaoUsuarios() {
         </div>
       )}
 
-      <main className="flex-1 max-w-6xl mx-auto px-3 sm:px-4 py-6">
-        {/* search + ministats (em linhas separadas) */}
-<section className="mb-5 space-y-4" aria-label="Busca e estatísticas">
-  {/* 🔍 Busca */}
-  <div>
-    <label className="sr-only" htmlFor="busca-usuarios">
-      Buscar por nome, e-mail, CPF ou registro
-    </label>
-    <div className="relative max-w-lg">
-      <Search
-        className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500"
-        aria-hidden="true"
-      />
-      <input
-        id="busca-usuarios"
-        type="text"
-        autoComplete="off"
-        placeholder="Buscar por nome, e-mail, CPF ou registro…"
-        value={busca}
-        onChange={(e) => setBusca(e.target.value)}
-        className="w-full pl-9 pr-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-violet-700 focus:outline-none dark:bg-gray-800 dark:text-white"
-        aria-describedby="resultados-count"
-      />
-      <p id="resultados-count" className="sr-only" aria-live="polite">
-        {usuariosFiltrados.length} resultado(s).
-      </p>
-    </div>
-  </div>
+      <main id="conteudo" className="flex-1 max-w-6xl mx-auto px-3 sm:px-4 py-6">
+        {/* 🔍 Busca (sem KPIs agregados) */}
+        <section className="mb-5" aria-label="Busca">
+          <label className="sr-only" htmlFor="busca-usuarios">
+            Buscar por nome, e-mail, CPF ou registro
+          </label>
+          <div className="relative max-w-lg">
+            <Search
+              className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500"
+              aria-hidden="true"
+            />
+            <input
+              ref={searchRef}
+              id="busca-usuarios"
+              type="text"
+              autoComplete="off"
+              placeholder="Buscar por nome, e-mail, CPF ou registro…"
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-violet-700 focus:outline-none dark:bg-gray-800 dark:text-white"
+              aria-describedby="resultados-count"
+            />
+            <p id="resultados-count" className="sr-only" aria-live="polite">
+              {usuariosFiltrados.length} resultado(s).
+            </p>
+          </div>
+        </section>
 
-  {/* 📊 Ministats em grid separado */}
-  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-3xl">
-    <Stat label="Usuários" value={kpis.total} Icon={Users} />
-    <Stat label="Cursos ≥75%" value={kpis.cursos} Icon={GraduationCap} />
-    <Stat label="Certificados" value={kpis.certs} Icon={Award} />
-  </div>
-</section>
-
-        {/* tabela/lista */}
+        {/* lista */}
         {carregandoUsuarios ? (
           <div className="space-y-4" aria-busy="true" aria-live="polite">
             {[...Array(5)].map((_, i) => (
@@ -353,6 +320,10 @@ export default function GestaoUsuarios() {
             onToggleCpf={onToggleCpf}
             isCpfRevealed={(id) => revealCpfIds.has(id)}
             maskCpfFn={maskCpf}
+            /* 🔽 NOVO: carregamento sob demanda do resumo */
+            onCarregarResumo={carregarResumoUsuario}
+            isResumoLoading={(id) => loadingResumo.has(id)}
+            hasResumo={(id) => resumoCache.has(id)}
           />
         )}
 

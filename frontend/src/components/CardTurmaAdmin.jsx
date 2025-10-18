@@ -14,6 +14,15 @@ function getStatusKey(inicioISO, fimISO, hojeISO) {
   return "andamento";
 }
 
+/** Texto de período robusto */
+function periodoTexto(inicioISO, fimISO) {
+  if (inicioISO && fimISO) {
+    return `${formatarDataBrasileira(inicioISO)} a ${formatarDataBrasileira(fimISO)}`;
+  }
+  if (inicioISO) return formatarDataBrasileira(inicioISO);
+  return "Datas a definir";
+}
+
 export default function CardTurmaadministrador({
   turma,
   hojeISO,
@@ -39,61 +48,112 @@ export default function CardTurmaadministrador({
     navigate(path);
   };
 
+  const tituloId = `turma-${turma?.id}-titulo`;
+  const periodoId = `turma-${turma?.id}-periodo`;
+
   return (
     <motion.div
       layout
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0 }}
-      transition={{ duration: 0.2 }}
-      className="border p-4 rounded-2xl bg-white dark:bg-gray-900 shadow-sm flex flex-col border-gray-200 dark:border-gray-700"
-      aria-label={`Cartão da turma ${turma?.nome || ""}`}
+      transition={{ duration: 0.22 }}
+      className="border p-5 rounded-2xl bg-white dark:bg-gray-900 shadow-sm flex flex-col border-gray-200 dark:border-gray-700"
+      role="region"
+      aria-labelledby={tituloId}
+      aria-describedby={periodoId}
     >
       <div className="flex justify-between items-start gap-3 mb-1">
-        <h4 className="text-md font-semibold text-green-900 dark:text-green-200 truncate" title={turma?.nome}>
+        <h4
+          id={tituloId}
+          className="text-md md:text-lg font-semibold text-green-900 dark:text-green-200 truncate"
+          title={turma?.nome}
+          aria-live="polite"
+        >
           {turma?.nome}
         </h4>
         <BadgeStatus status={statusKey} size="sm" variant="soft" />
       </div>
 
-      <p className="text-sm text-gray-500 dark:text-gray-300">
-        {inicioISO && fimISO
-          ? `${formatarDataBrasileira(inicioISO)} a ${formatarDataBrasileira(fimISO)}`
-          : "Datas a definir"}
+      <p id={periodoId} className="text-sm text-gray-600 dark:text-gray-300">
+        {periodoTexto(inicioISO, fimISO)}
       </p>
 
+      {/* Ações */}
       {!modoadministradorPresencas ? (
-        <div className="flex flex-wrap gap-2 mt-2 mb-1">
-          <BotaoSecundario onClick={() => carregarInscritos?.(turma.id)}>
-            👥 Inscritos
+        <div className="flex flex-wrap gap-2 mt-3 mb-1">
+          <BotaoSecundario
+            onClick={() => carregarInscritos?.(turma.id)}
+            aria-label="Abrir lista de inscritos"
+            leftIcon={<span aria-hidden>👥</span>}
+            variant="outline"
+            cor="verde"
+            title="Inscritos"
+          >
+            Inscritos
           </BotaoSecundario>
 
-          <BotaoSecundario onClick={() => carregarAvaliacoes?.(turma.id)}>
-            ⭐ Avaliações
+          <BotaoSecundario
+            onClick={() => carregarAvaliacoes?.(turma.id)}
+            aria-label="Abrir avaliações da turma"
+            leftIcon={<span aria-hidden>⭐</span>}
+            variant="outline"
+            cor="azulPetroleo"
+            title="Avaliações"
+          >
+            Avaliações
           </BotaoSecundario>
 
           {dentroDoPeriodo && (
-            <BotaoPrimario onClick={() => handleIr("/scanner")}>
-              📷 QR Code
+            <BotaoPrimario
+              onClick={() => handleIr("/scanner")}
+              aria-label="Abrir leitor de QR Code para presença"
+              leftIcon={<span aria-hidden>📷</span>}
+              cor="verde"
+              title="Registro de presença por QR Code"
+              className="bg-gradient-to-br from-[#0f2c1f] via-[#114b2d] to-[#166534] hover:brightness-[1.05]"
+            >
+              QR Code
             </BotaoPrimario>
           )}
 
           {eventoJaIniciado && (
-            <BotaoSecundario onClick={() => gerarRelatorioPDF?.(turma.id)}>
-              📄 PDF
+            <BotaoSecundario
+              onClick={() => gerarRelatorioPDF?.(turma.id)}
+              aria-label="Gerar PDF desta turma"
+              leftIcon={<span aria-hidden>📄</span>}
+              variant="outline"
+              cor="laranjaQueimado"
+              title="Gerar relatório em PDF"
+            >
+              PDF
             </BotaoSecundario>
           )}
 
-          <BotaoSecundario onClick={() => handleIr(`/turmas/editar/${turma.id}`)}>
-            ✏️ Editar
+          <BotaoSecundario
+            onClick={() => handleIr(`/turmas/editar/${turma.id}`)}
+            aria-label="Editar turma"
+            leftIcon={<span aria-hidden>✏️</span>}
+            variant="outline"
+            cor="amareloOuro"
+            title="Editar turma"
+          >
+            Editar
           </BotaoSecundario>
 
-          <BotaoSecundario onClick={() => handleIr(`/turmas/presencas/${turma.id}`)}>
-            📋 Ver Presenças
+          <BotaoSecundario
+            onClick={() => handleIr(`/turmas/presencas/${turma.id}`)}
+            aria-label="Ver presenças da turma"
+            leftIcon={<span aria-hidden>📋</span>}
+            variant="outline"
+            cor="vermelhoCoral"
+            title="Presenças"
+          >
+            Ver Presenças
           </BotaoSecundario>
         </div>
       ) : (
-        <div className="flex justify-end mt-2">
+        <div className="flex justify-end mt-3">
           <BotaoPrimario
             onClick={() => {
               if (!turma?.id) return;
@@ -104,6 +164,10 @@ export default function CardTurmaadministrador({
                 carregarPresencas?.(turma.id);
               }
             }}
+            aria-label={estaExpandida ? "Recolher detalhes da turma" : "Ver detalhes da turma"}
+            rightIcon={<span aria-hidden>{estaExpandida ? "▴" : "▾"}</span>}
+            cor="azulPetroleo"
+            className="bg-gradient-to-br from-slate-900 via-teal-900 to-slate-800 hover:brightness-[1.05]"
           >
             {estaExpandida ? "Recolher Detalhes" : "Ver Detalhes"}
           </BotaoPrimario>

@@ -1,21 +1,17 @@
-// ✅ src/pages/PresencasPorTurma.jsx
-import { useState, useEffect } from "react";
-import { useParams, Navigate } from "react-router-dom";
+// ✅ src/pages/PresencasPorTurma.jsx (refactor com hero, ministats, busca e a11y)
+import { useState, useEffect, useMemo, useRef } from "react";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { toast } from "react-toastify";
 import { differenceInMinutes, isBefore } from "date-fns";
 
 import { apiGet, apiPost } from "../services/api";
-import Breadcrumbs from "../components/Breadcrumbs";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import ErroCarregamento from "../components/ErroCarregamento";
 import { formatarCPF, formatarDataBrasileira } from "../utils/data";
-
-// Cabeçalho compacto + rodapé
-import PageHeader from "../components/PageHeader";
 import Footer from "../components/Footer";
-import { CheckSquare } from "lucide-react";
+import { CheckSquare, RefreshCw, Search } from "lucide-react";
 
-// ---------- helpers de data locais (anti-UTC) ----------
+/* ───────────────── helpers anti-UTC ───────────────── */
 const ymd = (s) => {
   const m = String(s || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
   return m ? { y: +m[1], mo: +m[2], d: +m[3] } : null;
@@ -29,41 +25,167 @@ const makeLocalDate = (ymdStr, hhmm = "00:00") => {
   const t = hms(hhmm);
   return d ? new Date(d.y, d.mo - 1, d.d, t.hh, t.mm, 0, 0) : new Date(NaN);
 };
-// -------------------------------------------------------
+
+/* ───────────────── sessão: valida token com JWT URL-safe ───────────────── */
+function getValidToken() {
+  try {
+    const raw = localStorage.getItem("token");
+    if (!raw) return null;
+    const token = raw.startsWith("Bearer ") ? raw.slice(7).trim() : raw;
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+    const payload = JSON.parse(atob(b64 + pad));
+    const now = Date.now() / 1000;
+    if (payload?.nbf && now < payload.nbf) return null;
+    if (payload?.exp && now >= payload.exp) return null;
+    return token;
+  } catch {
+    return null;
+  }
+}
+
+/* ───────────────── HeaderHero padronizado (degradê 3 cores) ───────────────── */
+function HeaderHero({ turmaId, onRefresh }) {
+  return (
+    <header className="relative isolate overflow-hidden bg-gradient-to-br from-amber-900 via-orange-800 to-rose-700 text-white">
+      <div
+        className="pointer-events-none absolute inset-0 opacity-70"
+        style={{
+          background:
+            "radial-gradient(52% 60% at 50% 0%, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.05) 32%, rgba(255,255,255,0) 60%)",
+        }}
+        aria-hidden="true"
+      />
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-10 md:py-12 min-h-[150px] sm:min-h-[180px] text-center flex flex-col items-center gap-3">
+        <div className="inline-flex items-center gap-2">
+          <CheckSquare className="w-6 h-6" aria-hidden="true" />
+          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Presenças por Turma</h1>
+        </div>
+        <p className="text-sm sm:text-base text-white/90">
+          Consulte e, quando aplicável, confirme presenças manualmente até 48h após o término.
+        </p>
+
+        <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
+          <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/15 text-sm">
+            <span className="font-semibold">Turma</span> #{turmaId || "—"}
+          </span>
+          <button
+            type="button"
+            onClick={onRefresh}
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/20 hover:bg-white/25 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+            aria-label="Atualizar lista de presenças"
+            title="Atualizar"
+          >
+            <RefreshCw className="w-4 h-4" /> Atualizar
+          </button>
+        </div>
+      </div>
+      <div className="absolute bottom-0 left-0 right-0 h-px bg-white/25" aria-hidden="true" />
+    </header>
+  );
+}
 
 export default function PresencasPorTurma() {
-  const { turmaId } = useParams(); // /presencas/turma/:turmaId
+  const { turmaId } = useParams();
+  const navigate = useNavigate();
+  const location = useLocation();
+
   const [dados, setDados] = useState([]);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState("");
   const [confirmandoId, setConfirmandoId] = useState(null);
+  const [busca, setBusca] = useState("");
+  const liveRef = useRef(null);
 
-  const token = localStorage.getItem("token");
-  if (!token) return <Navigate to="/login" replace />;
+  const setLive = (msg) => {
+    if (liveRef.current) liveRef.current.textContent = msg;
+  };
 
+  // gate de sessão coerente (preserva retorno)
   useEffect(() => {
+    if (!getValidToken()) {
+      const redirect = `${location.pathname}${location.search}`;
+      navigate(`/login?redirect=${encodeURIComponent(redirect)}`, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const carregar = async () => {
     if (!turmaId || Number.isNaN(Number(turmaId))) {
       setErro("ID da turma inválido.");
       setCarregando(false);
       return;
     }
+    try {
+      setCarregando(true);
+      setErro("");
+      setLive("Carregando presenças…");
+      const data = await apiGet(`/api/relatorio-presencas/turma/${turmaId}`);
+      const lista = Array.isArray(data?.lista) ? data.lista : Array.isArray(data) ? data : [];
+      setDados(lista);
+      setLive("Presenças carregadas.");
+    } catch (e) {
+      setErro("Erro ao carregar presenças da turma.");
+      toast.error("❌ Erro ao carregar presenças da turma.");
+      setDados([]);
+      setLive("Falha ao carregar presenças.");
+    } finally {
+      setCarregando(false);
+    }
+  };
 
-    (async () => {
-      try {
-        setCarregando(true);
-        const data = await apiGet(`/api/relatorio-presencas/turma/${turmaId}`);
-        // aceita array direto ou objeto { lista: [...] }
-        const lista = Array.isArray(data?.lista) ? data.lista : Array.isArray(data) ? data : [];
-        setDados(lista);
-        setErro("");
-      } catch {
-        setErro("Erro ao carregar presenças da turma.");
-        toast.error("❌ Erro ao carregar presenças da turma.");
-      } finally {
-        setCarregando(false);
-      }
-    })();
+  useEffect(() => {
+    carregar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [turmaId]);
+
+  // filtro local (nome/CPF)
+  const normaliza = (s) =>
+    String(s || "").normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
+  const filtrados = useMemo(() => {
+    const q = normaliza(busca);
+    if (!q) return dados;
+    return dados.filter((p) => {
+      const nome = normaliza(p.nome);
+      const cpf = String(p.cpf || "").replace(/\D/g, "");
+      const qdigits = q.replace(/\D/g, "");
+      return nome.includes(q) || (qdigits && cpf.includes(qdigits));
+    });
+  }, [dados, busca]);
+
+  // ministats
+  const stats = useMemo(() => {
+    const agora = new Date();
+    let presentes = 0;
+    let aguardando = 0;
+    let faltas = 0;
+
+    filtrados.forEach((p) => {
+      const inicio = makeLocalDate(p.data_referencia, p.horario_inicio || "00:00");
+      const fim = makeLocalDate(p.data_referencia, p.horario_fim || "23:59");
+      const expiracao = new Date(fim.getTime() + 48 * 60 * 60 * 1000);
+      const passou60 = differenceInMinutes(agora, inicio) > 60;
+
+      if (p.data_presenca || p.presente) {
+        presentes += 1;
+      } else if (!passou60) {
+        aguardando += 1;
+      } else if (isBefore(agora, expiracao)) {
+        faltas += 1;
+      } else {
+        faltas += 1; // expirado também conta como falta
+      }
+    });
+
+    return {
+      total: filtrados.length,
+      presentes,
+      aguardando,
+      faltas,
+    };
+  }, [filtrados]);
 
   async function confirmarPresencaManual(usuario_id, turma_id, data_referencia) {
     try {
@@ -71,13 +193,13 @@ export default function PresencasPorTurma() {
       await apiPost("/api/presencas/confirmar-simples", {
         turma_id: Number(turma_id),
         usuario_id,
-        // 🔧 unificado com o resto do app
-        data: data_referencia,
+        data: data_referencia, // unificado
       });
 
       toast.success("✅ Presença confirmada!");
+      setLive("Presença confirmada.");
 
-      // 🔄 Atualização otimista local
+      // update otimista
       setDados((prev) =>
         prev.map((item) =>
           item.usuario_id === usuario_id &&
@@ -89,22 +211,22 @@ export default function PresencasPorTurma() {
       );
     } catch {
       toast.error("❌ Erro ao confirmar presença.");
+      setLive("Falha ao confirmar presença.");
     } finally {
       setConfirmandoId(null);
     }
   }
 
   function renderStatus(p) {
-    // calcula relativo ao "agora" usando datas locais (anti-UTC)
     const agora = new Date();
     const inicio = makeLocalDate(p.data_referencia, p.horario_inicio || "00:00");
     const fim = makeLocalDate(p.data_referencia, p.horario_fim || "23:59");
-    const expiracao = new Date(fim.getTime() + 48 * 60 * 60 * 1000); // +48h
+    const expiracao = new Date(fim.getTime() + 48 * 60 * 60 * 1000);
     const passou60min = differenceInMinutes(agora, inicio) > 60;
 
     if (p.data_presenca || p.presente) {
       return (
-        <span className="bg-green-100 text-green-800 px-2 py-1 rounded font-semibold text-xs">
+        <span className="bg-emerald-100 text-emerald-800 px-2 py-1 rounded font-semibold text-xs">
           ✅ Presente
         </span>
       );
@@ -112,7 +234,7 @@ export default function PresencasPorTurma() {
 
     if (!passou60min) {
       return (
-        <span className="bg-yellow-100 text-yellow-800 px-2 py-1 rounded font-semibold text-xs">
+        <span className="bg-amber-100 text-amber-800 px-2 py-1 rounded font-semibold text-xs">
           🟡 Aguardando confirmação
         </span>
       );
@@ -124,16 +246,16 @@ export default function PresencasPorTurma() {
 
       return (
         <div className="flex items-center gap-2">
-          <span className="bg-red-100 text-red-800 px-2 py-1 rounded font-semibold text-xs">
+          <span className="bg-rose-100 text-rose-800 px-2 py-1 rounded font-semibold text-xs">
             🟥 Faltou
           </span>
           <button
-            onClick={() =>
-              confirmarPresencaManual(p.usuario_id, p.turma_id, p.data_referencia)
-            }
-            className="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-700"
+            onClick={() => confirmarPresencaManual(p.usuario_id, p.turma_id, p.data_referencia)}
+            className="text-xs bg-blue-700 text-white px-2 py-1 rounded hover:bg-blue-800 disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-700"
             disabled={loading}
-            aria-label={`Confirmar presença de ${p.nome} em ${formatarDataBrasileira(p.data_referencia)}`}
+            aria-label={`Confirmar presença de ${p.nome} em ${formatarDataBrasileira(
+              p.data_referencia
+            )}`}
           >
             {loading ? "Confirmando..." : "Confirmar"}
           </button>
@@ -142,55 +264,122 @@ export default function PresencasPorTurma() {
     }
 
     return (
-      <span className="bg-red-200 text-red-900 px-2 py-1 rounded font-semibold text-xs">
+      <span className="bg-rose-200 text-rose-900 px-2 py-1 rounded font-semibold text-xs">
         🟥 Faltou (Expirado)
       </span>
     );
   }
 
   return (
-    <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900">
-      {/* 🟧 Cabeçalho (família Presenças) */}
-      <PageHeader title="Presenças por Turma" icon={CheckSquare} variant="laranja" />
+    <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
+      <HeaderHero turmaId={turmaId} onRefresh={carregar} />
 
-      <main role="main" className="flex-1 px-4 py-6">
-        <Breadcrumbs trilha={[{ label: "Painel administrador" }, { label: "Presenças por Turma" }]} />
+      <main role="main" className="flex-1 px-3 sm:px-4 py-6">
+        {/* live region acessível */}
+        <p ref={liveRef} className="sr-only" aria-live="polite" />
 
-        {carregando ? (
-          <CarregandoSkeleton texto="Carregando presenças..." />
-        ) : erro ? (
-          <ErroCarregamento mensagem={erro} />
-        ) : (
-          <section
-            className="space-y-4 max-w-5xl mx-auto"
-            aria-label={`Lista de presenças da turma ${turmaId}`}
-          >
-            {dados.map((p) => (
-              <article
-                key={`${p.usuario_id}-${p.data_referencia}`}
-                className="border border-gray-200 dark:border-gray-600 p-4 rounded-lg bg-white dark:bg-zinc-800 shadow"
-                aria-label={`Registro de ${p.nome}`}
+        <section className="max-w-5xl mx-auto">
+          {/* busca + mini-stats */}
+          <div className="flex flex-col gap-3 sm:gap-4">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+              <div className="relative flex-1">
+                <Search
+                  className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
+                  aria-hidden="true"
+                />
+                <input
+                  type="text"
+                  value={busca}
+                  onChange={(e) => setBusca(e.target.value)}
+                  placeholder="Buscar por nome ou CPF…"
+                  className="w-full pl-10 pr-3 py-2 rounded-lg border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 focus:outline-none focus:ring-2 focus:ring-amber-600"
+                  aria-label="Buscar por nome ou CPF"
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={carregar}
+                className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-700"
+                aria-label="Atualizar presenças"
+                title="Atualizar"
               >
-                <p className="text-lousa dark:text-white font-semibold">{p.nome}</p>
-                <p className="text-sm text-gray-600 dark:text-gray-300 mb-1">
-                  CPF: {formatarCPF(p.cpf)}
-                </p>
-                <p className="text-sm text-gray-600 dark:text-gray-300">
-                  Data: {formatarDataBrasileira(p.data_referencia)} – {p.horario_inicio} às {p.horario_fim}
-                </p>
-                <div className="mt-2">{renderStatus(p)}</div>
-              </article>
-            ))}
-            {!dados?.length && (
-              <p className="text-sm text-gray-600 dark:text-gray-300 text-center">
-                Nenhum registro encontrado.
-              </p>
+                <RefreshCw className="w-4 h-4" /> Atualizar
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 sm:gap-3">
+              <div className="rounded-xl bg-white dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 p-3 text-center">
+                <div className="text-[11px] text-slate-500 dark:text-slate-300">Total</div>
+                <div className="text-lg font-semibold">{stats.total}</div>
+              </div>
+              <div className="rounded-xl bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200/60 dark:border-emerald-800 p-3 text-center">
+                <div className="text-[11px] text-emerald-700 dark:text-emerald-300">Presentes</div>
+                <div className="text-lg font-semibold text-emerald-800 dark:text-emerald-200">
+                  {stats.presentes}
+                </div>
+              </div>
+              <div className="rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200/60 dark:border-amber-800 p-3 text-center">
+                <div className="text-[11px] text-amber-700 dark:text-amber-300">Aguardando</div>
+                <div className="text-lg font-semibold text-amber-800 dark:text-amber-200">
+                  {stats.aguardando}
+                </div>
+              </div>
+              {/* opcionalmente trocar a terceira pelo card de faltas em telas pequenas */}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3">
+              <div className="sm:col-start-3 rounded-xl bg-rose-50 dark:bg-rose-900/20 border border-rose-200/60 dark:border-rose-800 p-3 text-center">
+                <div className="text-[11px] text-rose-700 dark:text-rose-300">Faltas</div>
+                <div className="text-lg font-semibold text-rose-800 dark:text-rose-200">
+                  {stats.faltas}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* conteúdo */}
+          <div className="mt-5">
+            {carregando ? (
+              <CarregandoSkeleton texto="Carregando presenças..." linhas={6} />
+            ) : erro ? (
+              <ErroCarregamento mensagem={erro} />
+            ) : (
+              <section
+                className="space-y-3"
+                aria-label={`Lista de presenças da turma ${turmaId || ""}`}
+              >
+                {filtrados.map((p) => (
+                  <article
+                    key={`${p.usuario_id}-${p.data_referencia}`}
+                    className="border border-slate-200 dark:border-zinc-700 p-4 rounded-lg bg-white dark:bg-zinc-800 shadow-sm"
+                    aria-label={`Registro de ${p.nome}`}
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-lousa dark:text-white font-semibold truncate">{p.nome}</p>
+                        <p className="text-sm text-slate-600 dark:text-slate-300">
+                          CPF: {formatarCPF(p.cpf)}
+                        </p>
+                        <p className="text-sm text-slate-600 dark:text-slate-300">
+                          Data: {formatarDataBrasileira(p.data_referencia)} – {p.horario_inicio} às {p.horario_fim}
+                        </p>
+                      </div>
+                      <div className="shrink-0 mt-1 sm:mt-0">{renderStatus(p)}</div>
+                    </div>
+                  </article>
+                ))}
+
+                {!filtrados?.length && (
+                  <p className="text-sm text-slate-600 dark:text-slate-300 text-center py-6">
+                    {busca ? "Nenhum registro corresponde à busca." : "Nenhum registro encontrado."}
+                  </p>
+                )}
+              </section>
             )}
-          </section>
-        )}
+          </div>
+        </section>
       </main>
 
-      {/* Rodapé institucional */}
       <Footer />
     </div>
   );

@@ -1,14 +1,6 @@
 /* eslint-disable no-console */
 const jwt = require("jsonwebtoken");
-
-// 🔐 Import resiliente do DB: aceita tanto `module.exports = db` quanto `module.exports = { db }`
-let db;
-try {
-  const dbModule = require("../db");
-  db = dbModule?.db ?? dbModule ?? null;
-} catch {
-  db = null;
-}
+const { db } = require("../db"); // ✅ import único e correto
 
 let warned = false; // avisa 1x em dev sobre req.usuario
 
@@ -49,7 +41,7 @@ function authMiddleware(req, res, next) {
 
     req.db = req.db ?? db;
     req.user = user;
-    req.usuario = user; // compatibilidade temporária
+    req.usuario = user; // compat temporária
 
     if (process.env.NODE_ENV !== "production" && !warned) {
       warned = true;
@@ -86,10 +78,7 @@ function authAdmin(req, res, next) {
   });
 }
 
-/* ───────────────── Exports resilientes ─────────────────
-   - default: a própria função middleware (permite router.use(require(...)))
-   - nomeados: authMiddleware, authAny, authAdmin (permite destructuring)
-*/
+/* ───────────────── Exports ───────────────── */
 module.exports = authMiddleware;           // default CJS
 module.exports.default = authMiddleware;   // compat
 module.exports.authMiddleware = authMiddleware;

@@ -1,4 +1,5 @@
 // ✅ src/pages/CertificadosAvulsos.jsx (mobile/a11y + rota de assinaturas corrigida + UX/segurança)
+// ✅ Ajuste: permitir espaços ao digitar em "nome" e "curso"
 import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { toast } from "react-toastify";
 import { RefreshCcw, Plus, Search, X } from "lucide-react";
@@ -73,7 +74,8 @@ function validYMD(s) {
 const validarEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || "").trim());
 const onlyDigits = (v = "") => String(v).replace(/\D+/g, "");
 
-const clampLen = (s, n = 200) => String(s || "").slice(0, n).trim();
+/** 🔧 Agora NÃO remove espaços: só limita o tamanho. */
+const clampLen = (s, n = 200) => String(s ?? "").slice(0, n);
 
 /* ===================== Página ===================== */
 export default function CertificadosAvulsos() {
@@ -183,10 +185,21 @@ export default function CertificadosAvulsos() {
       return;
     }
 
-    // pequenas proteções contra inputs gigantes
+    if (name === "email") {
+      // Mantém comportamento (limita tamanho e lowercase). A limpeza final ocorre no submit.
+      setForm((prev) => ({ ...prev, email: clampLen(value, 120).toLowerCase() }));
+      return;
+    }
+
+    if (name === "carga_horaria") {
+      const v = value.replace(/[^\d]/g, "");
+      setForm((prev) => ({ ...prev, carga_horaria: v }));
+      return;
+    }
+
+    // 🔧 Importante: NÃO tirar espaços aqui.
     const maxMap = {
       nome: 150,
-      email: 120,
       curso: 160,
     };
     const v = maxMap[name] ? clampLen(value, maxMap[name]) : value;
@@ -206,10 +219,11 @@ export default function CertificadosAvulsos() {
       if (salvando) return; // evita duplo submit
 
       const payload = {
-        nome: clampLen(form.nome.trim(), 150),
+        // 🔧 Limpeza somente no submit (permite digitar espaços livremente no input)
+        nome: clampLen(form.nome.replace(/\s+/g, " ").trim(), 150),
         cpf: onlyDigits(form.cpf),
-        email: clampLen(form.email.trim(), 120),
-        curso: clampLen(form.curso.trim(), 160),
+        email: clampLen(form.email.trim(), 120).toLowerCase(),
+        curso: clampLen(form.curso.replace(/\s+/g, " ").trim(), 160),
         carga_horaria: Number(form.carga_horaria),
         data_inicio: form.data_inicio || "",
         data_fim: form.data_fim || form.data_inicio || "",
@@ -274,6 +288,7 @@ export default function CertificadosAvulsos() {
   );
 
   const enviarPorEmail = useCallback(async (id) => {
+    if (acaoLoading.id) return; // evita cliques concorrentes
     setAcaoLoading({ id, tipo: "email" });
     try {
       toast.info("📤 Enviando…");
@@ -287,10 +302,17 @@ export default function CertificadosAvulsos() {
     } finally {
       setAcaoLoading({ id: null, tipo: null });
     }
-  }, []);
+  }, [acaoLoading.id]);
 
   const gerarPDF = useCallback(
     async (id) => {
+      if (acaoLoading.id) return; // evita cliques concorrentes
+      // se marcou 2ª assinatura, mas não escolheu um id, bloqueia
+      if (usarAssinatura2 && !assinatura2Id) {
+        toast.info("Selecione a 2ª assinatura antes de gerar o PDF.");
+        return;
+      }
+
       setAcaoLoading({ id, tipo: "pdf" });
       let href = "";
       try {
@@ -318,7 +340,7 @@ export default function CertificadosAvulsos() {
         setAcaoLoading({ id: null, tipo: null });
       }
     },
-    [palestrante, usarAssinatura2, assinatura2Id]
+    [palestrante, usarAssinatura2, assinatura2Id, acaoLoading.id]
   );
 
   const enviados = useMemo(
@@ -347,9 +369,11 @@ export default function CertificadosAvulsos() {
     <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
       <HeaderHero
         onRefresh={carregarCertificados}
-        onSubmitClick={() =>
-          document.getElementById("form-cert-avulso")?.requestSubmit()
-        }
+        onSubmitClick={() => {
+          const f = document.getElementById("form-cert-avulso");
+          if (f?.requestSubmit) f.requestSubmit();
+          else f?.submit();
+        }}
         carregando={carregando}
       />
 
@@ -364,9 +388,7 @@ export default function CertificadosAvulsos() {
           aria-busy="true"
         >
           <div
-            className={`h-full bg-rose-600 w-1/3 ${
-              reduceMotion ? "" : "animate-pulse"
-            }`}
+            className={`h-full bg-rose-600 w-1/3 ${reduceMotion ? "" : "animate-pulse"}`}
           />
         </div>
       )}
@@ -656,13 +678,13 @@ export default function CertificadosAvulsos() {
             <div className="col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border bg-white dark:bg-zinc-700 dark:border-zinc-600 cursor-pointer select-none">
                 <input
-                  type="checkbox"
-                  className="h-4 w-4"
-                  checked={usarAssinatura2}
-                  onChange={(e) => {
-                    setUsarAssinatura2(e.target.checked);
-                    if (!e.target.checked) setAssinatura2Id("");
-                  }}
+                    type="checkbox"
+                    className="h-4 w-4"
+                    checked={usarAssinatura2}
+                    onChange={(e) => {
+                      setUsarAssinatura2(e.target.checked);
+                      if (!e.target.checked) setAssinatura2Id("");
+                    }}
                 />
                 <span className="text-sm">Adicionar 2ª assinatura</span>
               </label>

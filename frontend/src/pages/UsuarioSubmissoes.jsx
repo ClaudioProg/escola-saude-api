@@ -15,6 +15,84 @@ import ModalVerEdital from "../components/ModalVerEdital";
 import ModalInscreverTrabalho from "../components/ModalInscreverTrabalho";
 import Footer from "../components/Footer";
 
+/* ───────────────── Helpers ───────────────── */
+// ⚠️ Padrão datas-only (YYYY-MM-DD) sem new Date("YYYY-MM-DD")
+function toBrDateOnly(input) {
+  if (!input) return "—";
+  const s = String(input).trim();
+  // aceita "YYYY-MM-DD" ou "YYYY-MM-DD..." (com hora ignorada)
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
+  return s; // já vem formatado (ex.: "10/11/2025" ou texto)
+}
+
+/* ───────────────── HeaderHero padronizado ─────────────────
+   • 3 cores (violet → indigo → blue) exclusivas desta página
+   • Altura/typo padronizadas como nas demais telas
+   • A11y com skip-link
+---------------------------------------------------------------- */
+function HeaderHero() {
+  const gradient = "from-violet-900 via-indigo-800 to-blue-700";
+  return (
+    <header className={`bg-gradient-to-br ${gradient} text-white`} role="banner">
+      <a
+        href="#conteudo"
+        className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2"
+      >
+        Ir para o conteúdo
+      </a>
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-10 sm:py-12 min-h-[180px] flex items-center">
+        <div className="w-full text-center sm:text-left">
+          <div className="inline-flex items-center gap-3">
+            <FileText className="w-6 h-6 sm:w-7 sm:h-7" aria-hidden="true" />
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
+              Submissão de Trabalhos
+            </h1>
+          </div>
+          <p className="mt-2 text-sm sm:text-base text-white/90 max-w-3xl">
+            Acompanhe suas submissões, edite rascunhos e inscreva novos trabalhos.
+          </p>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+/* ───────────────── Primitivos de UI ───────────────── */
+function Card({ children, className = "", ...rest }) {
+  return (
+    <div
+      className={
+        "rounded-2xl bg-white/80 dark:bg-zinc-900/80 backdrop-blur border border-black/5 dark:border-white/10 shadow-sm " +
+        className
+      }
+      {...rest}
+    >
+      {children}
+    </div>
+  );
+}
+
+function Chip({ children, tone = "default", title }) {
+  const tones = {
+    default: "bg-slate-100 text-slate-800 dark:bg-zinc-800 dark:text-zinc-200",
+    verde: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
+    amarelo: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300",
+    vermelho: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
+    azul: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
+    roxo: "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300",
+  };
+  return (
+    <span
+      className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${tones[tone] ?? tones.default}`}
+      title={title}
+    >
+      {children}
+    </span>
+  );
+}
+
+/* ───────────────── PosterCell (download autenticado) ───────────────── */
 function PosterCell({ id, nome }) {
   const [downloading, setDownloading] = useState(false);
 
@@ -125,24 +203,12 @@ export default function UsuarioSubmissoes() {
     setMinhas(Array.isArray(s) ? s : s.data || []);
   };
 
-  const isDentroPrazo = (row) =>
-    !!(row?.dentro_prazo ?? row?.dentroPrazo);
+  const isDentroPrazo = (row) => !!(row?.dentro_prazo ?? row?.dentroPrazo);
+  const canEdit = (row) => isDentroPrazo(row) && !BLOQUEADOS.has(row.status);
 
-  const canEdit = (row) => {
-    // pode editar se: dentro do prazo da chamada e status NÃO está nos bloqueados
-    return isDentroPrazo(row) && !BLOQUEADOS.has(row.status);
-  };
-
-  const abertas = useMemo(
-    () => chamadas.filter((c) => isDentroPrazo(c)).length,
-    [chamadas]
-  );
-
+  const abertas = useMemo(() => chamadas.filter((c) => isDentroPrazo(c)).length, [chamadas]);
   const aprovadas = useMemo(
-    () =>
-      minhas.filter((m) =>
-        ["aprovado_oral", "aprovado_exposicao"].includes(m.status)
-      ).length,
+    () => minhas.filter((m) => ["aprovado_oral", "aprovado_exposicao"].includes(m.status)).length,
     [minhas]
   );
 
@@ -155,191 +221,203 @@ export default function UsuarioSubmissoes() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-br from-violet-50 via-white to-indigo-100">
-      {/* HeaderHero */}
-      <header className="relative isolate overflow-hidden bg-gradient-to-r from-violet-800 via-indigo-700 to-blue-600 py-16 px-6 text-white text-center">
-        <motion.h1
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="text-3xl sm:text-4xl font-bold mb-2"
-        >
-          Submissão de Trabalhos
-        </motion.h1>
-        <p className="text-violet-100 max-w-2xl mx-auto text-sm sm:text-base">
-          Acompanhe suas submissões, edite rascunhos e inscreva novos trabalhos.
-        </p>
-      </header>
+    <div className="min-h-screen flex flex-col bg-zinc-50 dark:bg-neutral-900 text-black dark:text-white">
+      {/* HeaderHero padronizado */}
+      <HeaderHero />
 
       {/* Conteúdo principal */}
-      <main className="flex-1 px-4 sm:px-8 py-10 max-w-6xl mx-auto w-full space-y-10">
-        {/* ────── Mini Cards ────── */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center">
-          <div className="bg-white rounded-xl shadow p-4 border-t-4 border-violet-600">
-            <p className="text-sm text-gray-500">Chamadas abertas</p>
-            <p className="text-2xl font-semibold text-violet-700">{abertas}</p>
-          </div>
-          <div className="bg-white rounded-xl shadow p-4 border-t-4 border-indigo-600">
-            <p className="text-sm text-gray-500">Minhas submissões</p>
-            <p className="text-2xl font-semibold text-indigo-700">{minhas.length}</p>
-          </div>
-          <div className="bg-white rounded-xl shadow p-4 border-t-4 border-blue-600">
-            <p className="text-sm text-gray-500">Aprovadas</p>
-            <p className="text-2xl font-semibold text-blue-700">{aprovadas}</p>
-          </div>
-        </div>
+      <main id="conteudo" className="flex-1">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-10 space-y-10">
+          {/* ────── Ministats ────── */}
+          <section aria-labelledby="metricas">
+            <h2 id="metricas" className="sr-only">Métricas de Submissões</h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+              <Card className="p-4">
+                <p className="text-xs text-slate-600 dark:text-slate-300">Chamadas abertas</p>
+                <p className="text-xl font-semibold text-violet-700 dark:text-violet-300">{abertas}</p>
+              </Card>
+              <Card className="p-4">
+                <p className="text-xs text-slate-600 dark:text-slate-300">Minhas submissões</p>
+                <p className="text-xl font-semibold text-indigo-700 dark:text-indigo-300">{minhas.length}</p>
+              </Card>
+              <Card className="p-4">
+                <p className="text-xs text-slate-600 dark:text-slate-300">Aprovadas</p>
+                <p className="text-xl font-semibold text-emerald-700 dark:text-emerald-300">{aprovadas}</p>
+              </Card>
+              <Card className="p-4">
+                <p className="text-xs text-slate-600 dark:text-slate-300">Status</p>
+                <div className="flex gap-2 mt-1">
+                  <Chip tone="azul">Submetido</Chip>
+                  <Chip tone="amarelo">Em avaliação</Chip>
+                  <Chip tone="verde">Aprovado</Chip>
+                </div>
+              </Card>
+            </div>
+          </section>
 
-        {/* ────── Chamadas Abertas ────── */}
-        <section>
-          <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
-            <BookOpen className="w-5 h-5 text-violet-600" />
-            Chamadas abertas
-          </h2>
+          {/* ────── Chamadas Abertas ────── */}
+          <section aria-labelledby="chamadas-abertas">
+            <div className="flex items-center gap-2 mb-2">
+              <BookOpen className="w-5 h-5 text-violet-600" aria-hidden="true" />
+              <h2 id="chamadas-abertas" className="text-base sm:text-lg font-bold">Chamadas abertas</h2>
+            </div>
 
-          {chamadas.length === 0 ? (
-            <p className="text-gray-600 italic">Nenhuma chamada disponível no momento.</p>
-          ) : (
-            <div className="grid md:grid-cols-2 gap-5">
-              {chamadas.map((ch) => {
-                const temModelo = !!modeloMap[ch.id];
-                const prazoStr = ch.prazo_final_br || ch.prazo_final || ch.prazoFinal;
-                const prazoFmt = prazoStr
-                  ? /^\d{4}-\d{2}-\d{2}/.test(String(prazoStr))
-                    ? new Date(prazoStr).toLocaleDateString("pt-BR")
-                    : String(prazoStr)
-                  : "—";
-                const carregando = !!baixandoMap[ch.id];
+            {chamadas.length === 0 ? (
+              <p className="text-slate-600 dark:text-slate-300 italic">Nenhuma chamada disponível no momento.</p>
+            ) : (
+              <div className="grid md:grid-cols-2 gap-5">
+                {chamadas.map((ch) => {
+                  const temModelo = !!modeloMap[ch.id];
+                  const prazoStr =
+                    ch.prazo_final_br || ch.prazo_final || ch.prazoFinal || ch.prazo || null;
+                  const prazoFmt = toBrDateOnly(prazoStr);
+                  const carregando = !!baixandoMap[ch.id];
+                  const dentro = isDentroPrazo(ch);
 
-                return (
-                  <motion.div
-                    key={ch.id}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="bg-white border rounded-xl shadow hover:shadow-md transition p-5 flex flex-col justify-between"
-                  >
-                    <div>
-                      <h3 className="text-lg font-semibold text-gray-800 mb-1">
-                        {ch.titulo}
-                      </h3>
-                      <p className="text-sm text-gray-600 line-clamp-3 mb-3">
-                        {ch.descricao_markdown?.slice(0, 200)}...
-                      </p>
-                      <p
-                        className={`text-xs font-medium ${
-                          isDentroPrazo(ch) ? "text-green-600" : "text-red-600"
-                        }`}
-                      >
-                        Prazo final: {prazoFmt}
-                      </p>
-                    </div>
+                  return (
+                    <motion.div
+                      key={ch.id}
+                      initial={{ opacity: 0, y: 18 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.25 }}
+                      className="group"
+                    >
+                      <Card className="p-5 h-full transition-shadow group-hover:shadow-md">
+                        <div className="flex flex-col justify-between h-full">
+                          <div>
+                            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                              {ch.titulo}
+                            </h3>
+                            <p className="mt-1 text-sm text-gray-600 dark:text-gray-300 line-clamp-3">
+                              {ch.descricao_markdown?.slice(0, 200) ?? "—"}
+                            </p>
+                            <div className="mt-2 flex items-center gap-2 text-xs font-medium">
+                              {dentro ? (
+                                <Chip tone="verde" title="Dentro do prazo">Dentro do prazo</Chip>
+                              ) : (
+                                <Chip tone="vermelho" title="Fora do prazo">Fora do prazo</Chip>
+                              )}
+                              <span className="text-slate-600 dark:text-slate-300">
+                                Prazo final: <strong>{prazoFmt}</strong>
+                              </span>
+                            </div>
+                          </div>
 
-                    <div className="mt-4 flex flex-wrap gap-3 items-center">
-                      <button
-                        onClick={() => setModalEdital(ch.id)}
-                        className="flex items-center gap-2 text-sm bg-violet-700 text-white px-3 py-2 rounded-md hover:bg-violet-800 transition"
-                      >
-                        <FileText className="w-4 h-4" /> Ver edital
-                      </button>
+                          <div className="mt-4 flex flex-wrap gap-3 items-center">
+                            <button
+                              onClick={() => setModalEdital(ch.id)}
+                              className="flex items-center gap-2 text-sm bg-violet-700 text-white px-3 py-2 rounded-md hover:bg-violet-800 transition focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-violet-500"
+                            >
+                              <FileText className="w-4 h-4" /> Ver edital
+                            </button>
 
-                      {isDentroPrazo(ch) && (
-                        <button
-                          onClick={() => setModalInscricao({ chamadaId: ch.id })}
-                          className="flex items-center gap-2 text-sm bg-indigo-600 text-white px-3 py-2 rounded-md hover:bg-indigo-700 transition"
-                        >
-                          <PlusCircle className="w-4 h-4" /> Submeter trabalho
-                        </button>
-                      )}
+                            {dentro && (
+                              <button
+                                onClick={() => setModalInscricao({ chamadaId: ch.id })}
+                                className="flex items-center gap-2 text-sm bg-indigo-600 text-white px-3 py-2 rounded-md hover:bg-indigo-700 transition focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                              >
+                                <PlusCircle className="w-4 h-4" /> Submeter trabalho
+                              </button>
+                            )}
 
-                      {temModelo && (
-                        <button
-                          type="button"
-                          onClick={() => baixarModeloBanner(ch.id)}
-                          className="ml-auto inline-flex items-center gap-1 text-sm text-indigo-700 hover:underline disabled:opacity-60"
-                          disabled={carregando}
-                          title="Baixar modelo de pôster"
-                        >
-                          {carregando ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            {temModelo && (
+                              <button
+                                type="button"
+                                onClick={() => baixarModeloBanner(ch.id)}
+                                className="ml-auto inline-flex items-center gap-1 text-sm text-indigo-700 hover:underline disabled:opacity-60"
+                                disabled={carregando}
+                                title="Baixar modelo de pôster"
+                              >
+                                {carregando ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <ExternalLink className="w-3.5 h-3.5" />
+                                )}
+                                Modelo de pôster
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </Card>
+                    </motion.div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          {/* ────── Minhas Submissões ────── */}
+          <section aria-labelledby="minhas-submissoes">
+            <div className="flex items-center gap-2 mb-2">
+              <FileText className="w-5 h-5 text-indigo-600" aria-hidden="true" />
+              <h2 id="minhas-submissoes" className="text-base sm:text-lg font-bold">Minhas submissões</h2>
+            </div>
+
+            {minhas.length === 0 ? (
+              <p className="text-slate-600 dark:text-slate-300 italic">
+                Você ainda não submeteu nenhum trabalho.
+              </p>
+            ) : (
+              <Card className="p-0 overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-violet-700 text-white">
+                      <tr>
+                        <th className="p-3 text-left font-semibold">Título</th>
+                        <th className="p-3 text-left font-semibold">Chamada</th>
+                        <th className="p-3 text-center font-semibold">Status</th>
+                        <th className="p-3 text-center font-semibold">Pôster</th>
+                        <th className="p-3 text-center font-semibold">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {minhas.map((m) => {
+                        const st = String(m.status ?? "").toLowerCase();
+                        const statusChip =
+                          st === "submetido" ? (
+                            <Chip tone="azul">submetido</Chip>
+                          ) : st === "em_avaliacao" ? (
+                            <Chip tone="amarelo">em avaliação</Chip>
+                          ) : st === "aprovado_exposicao" || st === "aprovado_oral" ? (
+                            <Chip tone="verde">aprovado</Chip>
+                          ) : st === "reprovado" ? (
+                            <Chip tone="vermelho">reprovado</Chip>
                           ) : (
-                            <ExternalLink className="w-3.5 h-3.5" />
-                          )}
-                          Modelo de pôster
-                        </button>
-                      )}
-                    </div>
-                  </motion.div>
-                );
-              })}
-            </div>
-          )}
-        </section>
+                            <Chip>—</Chip>
+                          );
 
-        {/* ────── Minhas Submissões ────── */}
-        <section>
-          <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
-            <FileText className="w-5 h-5 text-indigo-600" />
-            Minhas submissões
-          </h2>
-
-          {minhas.length === 0 ? (
-            <p className="text-gray-600 italic">
-              Você ainda não submeteu nenhum trabalho.
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse rounded-lg overflow-hidden shadow-sm">
-                <thead className="bg-violet-700 text-white text-sm">
-                  <tr>
-                    <th className="p-3 text-left">Título</th>
-                    <th className="p-3">Chamada</th>
-                    <th className="p-3">Status</th>
-                    <th className="p-3">Pôster</th>
-                    <th className="p-3">Ações</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {minhas.map((m) => (
-                    <tr key={m.id} className="border-b hover:bg-violet-50 transition text-sm">
-                      <td className="p-3">{m.titulo}</td>
-                      <td className="p-3">{m.chamada_titulo}</td>
-                      <td className="p-3 text-center">
-                        <span
-                          className={`px-2 py-1 rounded text-xs font-medium ${
-                            m.status === "submetido"
-                              ? "bg-blue-100 text-blue-700"
-                              : m.status === "em_avaliacao"
-                              ? "bg-amber-100 text-amber-700"
-                              : ["aprovado_exposicao", "aprovado_oral"].includes(m.status)
-                              ? "bg-green-100 text-green-700"
-                              : "bg-gray-100 text-gray-700"
-                          }`}
-                        >
-                          {String(m.status).replaceAll("_", " ")}
-                        </span>
-                      </td>
-                      <td className="p-3 text-center">
-                        <PosterCell id={m.id} nome={m.poster_nome} />
-                      </td>
-                      <td className="p-3 text-center">
-                        {canEdit(m) ? (
-                          <button
-                            onClick={() => setModalInscricao({ submissaoId: m.id })}
-                            className="inline-flex items-center gap-1 text-sm bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-700"
-                            title="Editar submissão"
-                          >
-                            <Pencil className="w-4 h-4" />
-                            Editar
-                          </button>
-                        ) : (
-                          <span className="text-gray-400 text-xs">Edição indisponível</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
+                        return (
+                          <tr key={m.id} className="border-b last:border-b-0 border-black/5 dark:border-white/10 hover:bg-violet-50/50 dark:hover:bg-zinc-800/40 transition">
+                            <td className="p-3 align-top">{m.titulo}</td>
+                            <td className="p-3 align-top">{m.chamada_titulo}</td>
+                            <td className="p-3 text-center align-top">{statusChip}</td>
+                            <td className="p-3 text-center align-top">
+                              <PosterCell id={m.id} nome={m.poster_nome} />
+                            </td>
+                            <td className="p-3 text-center align-top">
+                              {canEdit(m) ? (
+                                <button
+                                  onClick={() => setModalInscricao({ submissaoId: m.id })}
+                                  className="inline-flex items-center gap-1 bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                                  title="Editar submissão"
+                                >
+                                  <Pencil className="w-4 h-4" />
+                                  Editar
+                                </button>
+                              ) : (
+                                <span className="text-gray-400 text-xs">Edição indisponível</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            )}
+          </section>
+        </div>
       </main>
 
       <Footer />

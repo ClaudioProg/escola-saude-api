@@ -6,7 +6,6 @@ import { toast } from "react-toastify";
 import { motion, useReducedMotion } from "framer-motion";
 import Footer from "../components/Footer";
 import { apiGet } from "../services/api";
-
 import {
   Chart as ChartJS,
   BarElement,
@@ -16,10 +15,20 @@ import {
   Tooltip,
   Legend,
 } from "chart.js";
+import {
+  CalendarDays,
+  Users2,
+  Star,
+  Percent,
+  RefreshCcw,
+  Info,
+} from "lucide-react";
 
 ChartJS.register(BarElement, CategoryScale, LinearScale, ArcElement, Tooltip, Legend);
 
-/* ==================== Helpers de módulo (fora do componente) ==================== */
+/* =========================================================
+   Helpers de módulo
+========================================================= */
 // Paleta base p/ doughnut
 const COLORS = [
   "#14532d", "#0ea5e9", "#9333ea", "#f59e0b", "#ef4444",
@@ -58,7 +67,7 @@ const toPieDataset = (arr) => {
   };
 };
 
-// 🔧 Opções do Pie/Doughnut — agora é função de módulo (não depende do escopo do componente)
+// Opções do Pie/Doughnut
 const pieOptions = (total, reduceMotion) => ({
   plugins: {
     legend: {
@@ -99,18 +108,28 @@ const pieOptions = (total, reduceMotion) => ({
   maintainAspectRatio: false,
 });
 
-/* ------------------------- HeaderHero (novo) ------------------------- */
+/* =========================================================
+   HeaderHero (padrão — altura/tipografia uniformes no app)
+   — Gradiente exclusivo desta página (3 cores)
+========================================================= */
 function HeaderHero({ onRefresh, carregando }) {
   return (
     <header
-      className="bg-gradient-to-br from-sky-900 via-cyan-800 to-emerald-700 text-white"
+      className="bg-gradient-to-br from-indigo-900 via-fuchsia-800 to-rose-700 text-white"
       role="banner"
     >
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 flex flex-col items-center text-center gap-3">
-        <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">
+      <a
+        href="#conteudo"
+        className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2"
+      >
+        Ir para o conteúdo
+      </a>
+
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-10 flex flex-col items-center text-center gap-3">
+        <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
           Painel de Indicadores
         </h1>
-        <p className="text-sm text-white/90 max-w-2xl">
+        <p className="text-sm sm:text-base text-white/90 max-w-2xl">
           Visão analítica dos eventos, inscrições e presenças. Use os filtros abaixo para refinar a análise.
         </p>
 
@@ -119,10 +138,11 @@ function HeaderHero({ onRefresh, carregando }) {
             type="button"
             onClick={onRefresh}
             disabled={carregando}
-            className={`inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70
+            className={`inline-flex items-center gap-2 px-3 py-2 text-sm rounded-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70
               ${carregando ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-white/15 hover:bg-white/25"} text-white`}
             aria-label="Atualizar indicadores"
           >
+            <RefreshCcw className="h-4 w-4" aria-hidden="true" />
             {carregando ? "Atualizando…" : "Atualizar"}
           </button>
         </div>
@@ -131,7 +151,9 @@ function HeaderHero({ onRefresh, carregando }) {
   );
 }
 
-/* ------------------------- Página ------------------------- */
+/* =========================================================
+   Página
+========================================================= */
 export default function DashboardAnalitico() {
   const [carregando, setCarregando] = useState(true);
   const [dados, setDados] = useState({
@@ -144,7 +166,7 @@ export default function DashboardAnalitico() {
     presencaPorEvento: null,
   });
 
-  // 📊 Estatísticas demográficas (usuarios/estatisticas)
+  // 📊 Estatísticas demográficas
   const [stats, setStats] = useState({
     total_usuarios: 0,
     faixa_etaria: [],
@@ -212,14 +234,14 @@ export default function DashboardAnalitico() {
     }
   }
 
-  // 🔁 Estatísticas demográficas (chamada separada; sem filtros por enquanto)
+  // 🔁 Estatísticas demográficas
   async function carregarStats() {
     try {
       const res = await apiGet(`/api/usuarios/estatisticas`, { on403: "silent" });
       if (res && typeof res === "object") setStats(res);
     } catch (e) {
       console.error("Erro ao carregar /usuarios/estatisticas:", e);
-      // Não bloqueia a página
+      // não bloqueia a página
     }
   }
 
@@ -235,7 +257,7 @@ export default function DashboardAnalitico() {
     setTipo("");
   };
 
-  // ======== datasets seguros existentes ========
+  // ======== datasets seguros ========
   const evPorMesData = useMemo(() => ensureChart(dados?.eventosPorMes), [dados]);
   const evPorTipoData = useMemo(() => ensureChart(dados?.eventosPorTipo), [dados]);
 
@@ -268,7 +290,7 @@ export default function DashboardAnalitico() {
   const temGraficoTipo = evPorTipoData.labels.length && evPorTipoData.datasets.length;
   const temGraficoPres = presencaPorEventoData.labels.length && presencaPorEventoData.datasets.length;
 
-  // ======== datasets dos DOUGHNUTS (usuarios/estatisticas) ========
+  // ======== datasets dos DOUGHNUTS ========
   const pieFaixa   = useMemo(() => toPieDataset(stats.faixa_etaria || []), [stats]);
   const pieUnidade = useMemo(() => toPieDataset(stats.por_unidade || []), [stats]);
   const pieEscol   = useMemo(() => toPieDataset(stats.por_escolaridade || []), [stats]);
@@ -278,89 +300,71 @@ export default function DashboardAnalitico() {
   const pieDefic   = useMemo(() => toPieDataset(stats.por_deficiencia || []), [stats]);
   const pieCor     = useMemo(() => toPieDataset(stats.por_cor_raca || []), [stats]);
 
-  /* ----------------------------- UI ----------------------------- */
+  /* =========================================================
+     UI
+  ========================================================= */
   return (
     <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
       {/* Header novo */}
       <HeaderHero onRefresh={carregarDados} carregando={carregando} />
 
-      <main className="flex-1 max-w-6xl mx-auto px-3 sm:px-4 py-6">
+      <main id="conteudo" className="flex-1 max-w-6xl mx-auto px-3 sm:px-4 py-6">
         {/* Região viva para leitores de tela */}
         <p ref={liveRef} className="sr-only" aria-live="polite" />
 
         {/* 🎯 Filtros */}
         <section
           aria-label="Filtros do painel"
-          className="bg-white dark:bg-gray-800 rounded-xl shadow p-3 sm:p-4 mb-6"
+          className="bg-white dark:bg-gray-800 rounded-2xl shadow p-3 sm:p-4 mb-6"
         >
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 items-end">
-            <div className="flex flex-col">
-              <label className="text-xs mb-1 text-slate-700 dark:text-slate-200" htmlFor="filtro-ano">
-                Ano
-              </label>
-              <select
-                id="filtro-ano"
-                value={ano}
-                onChange={(e) => setAno(e.target.value)}
-                className="p-2 rounded border dark:bg-zinc-800 dark:text-white"
-              >
-                <option value="">Todos os Anos</option>
-                <option value="2024">2024</option>
-                <option value="2025">2025</option>
-              </select>
-            </div>
-
-            <div className="flex flex-col">
-              <label className="text-xs mb-1 text-slate-700 dark:text-slate-200" htmlFor="filtro-mes">
-                Mês
-              </label>
-              <select
-                id="filtro-mes"
-                value={mes}
-                onChange={(e) => setMes(e.target.value)}
-                className="p-2 rounded border dark:bg-zinc-800 dark:text-white"
-              >
-                <option value="">Todos os Meses</option>
-                {[...Array(12)].map((_, i) => (
-                  <option key={i + 1} value={i + 1}>
-                    {new Date(0, i).toLocaleString("pt-BR", { month: "long" })
-                      .replace(/^\w/, (c) => c.toUpperCase())}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="flex flex-col">
-              <label className="text-xs mb-1 text-slate-700 dark:text-slate-200" htmlFor="filtro-tipo">
-                Tipo
-              </label>
-              <select
-                id="filtro-tipo"
-                value={tipo}
-                onChange={(e) => setTipo(e.target.value)}
-                className="p-2 rounded border dark:bg-zinc-800 dark:text-white"
-              >
-                <option value="">Todos os Tipos</option>
-                <option value="Congresso">Congresso</option>
-                <option value="Curso">Curso</option>
-                <option value="Oficina">Oficina</option>
-                <option value="Palestra">Palestra</option>
-                <option value="Seminário">Seminário</option>
-                <option value="Simpósio">Simpósio</option>
-                <option value="Outros">Outros</option>
-              </select>
-            </div>
+            <FieldSelect
+              id="filtro-ano"
+              label="Ano"
+              value={ano}
+              onChange={(e) => setAno(e.target.value)}
+              options={[
+                { value: "", label: "Todos os Anos" },
+                { value: "2024", label: "2024" },
+                { value: "2025", label: "2025" },
+              ]}
+            />
+            <FieldSelect
+              id="filtro-mes"
+              label="Mês"
+              value={mes}
+              onChange={(e) => setMes(e.target.value)}
+              options={[
+                { value: "", label: "Todos os Meses" },
+                ...[...Array(12)].map((_, i) => ({
+                  value: String(i + 1),
+                  label: new Date(0, i)
+                    .toLocaleString("pt-BR", { month: "long" })
+                    .replace(/^\w/, (c) => c.toUpperCase()),
+                })),
+              ]}
+            />
+            <FieldSelect
+              id="filtro-tipo"
+              label="Tipo"
+              value={tipo}
+              onChange={(e) => setTipo(e.target.value)}
+              options={[
+                { value: "", label: "Todos os Tipos" },
+                "Congresso","Curso","Oficina","Palestra","Seminário","Simpósio","Outros",
+              ].map((t) => (typeof t === "string" ? { value: t, label: t } : t))}
+            />
 
             <div className="flex gap-2 sm:justify-end">
               <button
                 type="button"
                 onClick={carregarDados}
                 disabled={carregando}
-                className={`px-3 py-2 text-sm rounded-md transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500
+                className={`px-3 py-2 text-sm rounded-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500
                   ${carregando
                     ? "opacity-60 cursor-not-allowed bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300"
-                    : "bg-emerald-600 text-white hover:bg-emerald-700"}`}
-                aria-label="Atualizar indicadores"
+                    : "bg-rose-600 text-white hover:bg-rose-700"}`}
+                aria-label="Aplicar filtros"
               >
                 {carregando ? "Atualizando…" : "Aplicar"}
               </button>
@@ -369,7 +373,7 @@ export default function DashboardAnalitico() {
                 <button
                   type="button"
                   onClick={limparFiltros}
-                  className="px-3 py-2 text-sm rounded-md bg-red-100 text-red-700 dark:bg-red-900 dark:text-white hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                  className="px-3 py-2 text-sm rounded-lg bg-red-100 text-red-700 dark:bg-red-900 dark:text-white hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
                   aria-label="Limpar filtros do painel"
                 >
                   Limpar
@@ -387,35 +391,38 @@ export default function DashboardAnalitico() {
             <Skeleton height={360} />
           </div>
         ) : erro ? (
-          <div
-            className="bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-200 rounded-xl p-4"
-            role="alert"
-          >
-            {erro}
-          </div>
+          <AlertCard message={erro} />
         ) : (
           <>
-            {/* 🔢 Indicadores */}
+            {/* 🔢 Indicadores (MINISTATS com ícones) */}
             <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-              <Indicador
+              <MiniStat
+                icon={CalendarDays}
                 titulo="Total de Eventos"
                 valor={safeNumber(dados?.totalEventos, 0)}
-                descricao="Quantidade total de eventos no período filtrado"
+                descricao="Total no período filtrado"
+                accent="from-violet-600 to-fuchsia-600"
               />
-              <Indicador
+              <MiniStat
+                icon={Users2}
                 titulo="Inscritos Únicos"
                 valor={safeNumber(dados?.inscritosUnicos, 0)}
-                descricao="Total de pessoas únicas inscritas nos eventos"
+                descricao="Pessoas únicas inscritas"
+                accent="from-sky-600 to-cyan-600"
               />
-              <Indicador
+              <MiniStat
+                icon={Star}
                 titulo="Média de Avaliações"
                 valor={`${safeNumber(dados?.mediaAvaliacoes, 0).toFixed(1)} ⭐`}
-                descricao="Média geral das avaliações dos eventos"
+                descricao="Média geral dos eventos"
+                accent="from-amber-600 to-orange-600"
               />
-              <Indicador
+              <MiniStat
+                icon={Percent}
                 titulo="% Presença Média"
                 valor={`${clampPct(dados?.percentualPresenca ?? 0).toFixed(1)}%`}
-                descricao="Percentual médio de presença entre inscritos"
+                descricao="Entre inscritos"
+                accent="from-emerald-600 to-teal-600"
               />
             </section>
 
@@ -469,13 +476,13 @@ export default function DashboardAnalitico() {
 
             {/* 🧑‍🤝‍🧑 Demografia — GRÁFICOS DE ROSCA */}
             <section className="mt-10">
-              <h2 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">
-                População Cadastrada
-              </h2>
-
-              <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-300 mb-3">
-                <strong>Total de usuários:</strong> {stats?.total_usuarios ?? 0}
-              </p>
+              <div className="flex items-center gap-2 mb-3 sm:mb-4">
+                <h2 className="text-base sm:text-lg font-semibold">População Cadastrada</h2>
+                <span className="inline-flex items-center text-xs sm:text-sm text-gray-600 dark:text-gray-300">
+                  <Info className="h-4 w-4 mr-1" aria-hidden="true" />
+                  Total de usuários: <strong className="ml-1">{stats?.total_usuarios ?? 0}</strong>
+                </span>
+              </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 <PieCard title="Faixa etária" data={pieFaixa} />
@@ -497,32 +504,73 @@ export default function DashboardAnalitico() {
   );
 }
 
-/* ============== UI Helpers ============== */
-function ChartCard({ title, children, ariaLabel }) {
+/* =========================================================
+   Componentes de UI
+========================================================= */
+function FieldSelect({ id, label, value, onChange, options }) {
   return (
-    <motion.section
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35 }}
-      className="bg-white dark:bg-gray-800 rounded-xl shadow p-4"
-      role="img"
-      aria-label={ariaLabel || title}
-    >
-      <h2 className="text-center font-semibold mb-4">{title}</h2>
-      {children}
-    </motion.section>
+    <div className="flex flex-col">
+      <label className="text-xs mb-1 text-slate-700 dark:text-slate-200" htmlFor={id}>
+        {label}
+      </label>
+      <select
+        id={id}
+        value={value}
+        onChange={onChange}
+        className="p-2 rounded-lg border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
+      >
+        {options.map((opt) => (
+          <option key={opt.value ?? opt} value={opt.value ?? opt}>
+            {opt.label ?? opt}
+          </option>
+        ))}
+      </select>
+    </div>
   );
 }
 
-function Indicador({ titulo, valor, descricao }) {
+function AlertCard({ message }) {
   return (
     <div
-      className="bg-white dark:bg-gray-800 rounded-xl shadow p-4 text-center"
+      className="bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-200 rounded-2xl p-4"
+      role="alert"
+    >
+      {message}
+    </div>
+  );
+}
+
+function ChartCard({ title, children, ariaLabel }) {
+  return (
+    <motion.figure
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35 }}
+      className="bg-white dark:bg-gray-800 rounded-2xl shadow p-4"
+      role="group"
+      aria-label={ariaLabel || title}
+    >
+      <figcaption className="text-center font-semibold mb-4">{title}</figcaption>
+      {children}
+    </motion.figure>
+  );
+}
+
+function MiniStat({ icon: Icon, titulo, valor, descricao, accent = "from-slate-600 to-slate-700" }) {
+  return (
+    <div
+      className="bg-white dark:bg-gray-800 rounded-2xl shadow p-4"
       role="group"
       aria-label={descricao || titulo}
     >
-      <p className="text-sm text-gray-600 dark:text-gray-300 mb-1">{titulo}</p>
-      <p className="text-2xl font-bold text-lousa dark:text-white">{valor}</p>
+      <div className="flex items-center justify-between mb-2">
+        <div className={`rounded-xl px-2 py-1 text-white text-xs font-medium bg-gradient-to-r ${accent}`}>
+          {titulo}
+        </div>
+        <Icon className="h-5 w-5 text-black/60 dark:text-white/70" aria-hidden="true" />
+      </div>
+      <p className="text-3xl font-extrabold text-lousa dark:text-white leading-tight">{valor}</p>
+      <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">{descricao}</p>
     </div>
   );
 }
@@ -535,7 +583,6 @@ function NoData() {
   );
 }
 
-/* ====== PieCard: card pronto para DOUGHNUT ====== */
 function PieCard({ title, data }) {
   const reduceMotion = useReducedMotion();
   const hasData = (data?._total || 0) > 0;
@@ -546,15 +593,15 @@ function PieCard({ title, data }) {
   );
 
   return (
-    <motion.section
+    <motion.figure
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className="bg-white dark:bg-gray-800 rounded-xl shadow p-4"
-      role="img"
+      className="bg-white dark:bg-gray-800 rounded-2xl shadow p-4"
+      role="group"
       aria-label={`Gráfico de rosca: ${title}`}
     >
-      <h3 className="text-center font-semibold mb-3">{title}</h3>
+      <figcaption className="text-center font-semibold mb-3">{title}</figcaption>
       {hasData ? (
         <div style={{ height: 280 }}>
           <Pie data={data} options={options} />
@@ -565,6 +612,6 @@ function PieCard({ title, data }) {
       <p className="mt-3 text-xs sm:text-sm text-gray-600 dark:text-gray-300 text-center">
         <strong>Total:</strong> {data?._total || 0}
       </p>
-    </motion.section>
+    </motion.figure>
   );
 }

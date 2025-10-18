@@ -24,11 +24,15 @@ export default function InscritosTurma() {
 
   // ------- Utils -------
   const somenteDigitos = (v = "") => String(v).replace(/\D/g, "");
-  const formatarCPF = (cpf) => {
+
+  /** Formata CPF; por padrão exibe conforme `mostrarCpf` */
+  const formatarCPF = (cpf, opts = {}) => {
+    const { exibirCompleto = mostrarCpf } = opts;
     const s = somenteDigitos(cpf);
     if (s.length !== 11) return cpf || "—";
     const fmt = `${s.slice(0, 3)}.${s.slice(3, 6)}.${s.slice(6, 9)}-${s.slice(9)}`;
-    return mostrarCpf ? fmt : `${s.slice(0, 3)}.${s.slice(3, 6)}.***-**`;
+    if (exibirCompleto) return fmt;
+    return `${s.slice(0, 3)}.${s.slice(3, 6)}.***-**`;
   };
 
   // ------- Carregamento -------
@@ -50,6 +54,7 @@ export default function InscritosTurma() {
           apiGet(`/api/inscricoes/turma/${id}`, { signal: ctrl.signal }),
         ]);
         setTurma(turmaData);
+
         const lista = Array.isArray(inscritosData) ? inscritosData : [];
         // remove duplicados por usuario_id/cpf/email
         const seen = new Set();
@@ -80,25 +85,22 @@ export default function InscritosTurma() {
     const base = inscritos.filter((i) => {
       if (!q) return true;
       const nome = (i.nome || "").toLowerCase();
-      const cpf = somenteDigitos(i.cpf);
+      const cpfDigits = somenteDigitos(i.cpf);
+      const cpfFormatFull = formatarCPF(i.cpf, { exibirCompleto: true }).toLowerCase(); // sempre completo p/ busca
       const email = (i.email || "").toLowerCase();
-      return (
-        nome.includes(q) ||
-        email.includes(q) ||
-        cpf.includes(q) ||
-        formatarCPF(i.cpf).toLowerCase().includes(q)
-      );
+      return nome.includes(q) || email.includes(q) || cpfDigits.includes(q) || cpfFormatFull.includes(q);
     });
 
-    base.sort((a, b) => {
-      if (!ordenarAZ) return 0;
-      return String(a.nome || "").localeCompare(String(b.nome || ""), "pt-BR", {
-        sensitivity: "base",
-        ignorePunctuation: true,
-      });
-    });
+    if (ordenarAZ) {
+      base.sort((a, b) =>
+        String(a.nome || "").localeCompare(String(b.nome || ""), "pt-BR", {
+          sensitivity: "base",
+          ignorePunctuation: true,
+        })
+      );
+    }
     return base;
-  }, [inscritos, busca, ordenarAZ, mostrarCpf]);
+  }, [inscritos, busca, ordenarAZ]); // busca não depende de mostrarCpf mais
 
   const total = inscritos.length;
   const totalFiltrado = listaFiltrada.length;
@@ -119,7 +121,7 @@ export default function InscritosTurma() {
         head: [["Nome", "CPF", "E-mail"]],
         body: listaFiltrada.map((i) => [
           i.nome || "—",
-          formatarCPF(i.cpf),
+          formatarCPF(i.cpf, { exibirCompleto: true }),
           i.email || "—",
         ]),
         styles: { fontSize: 10 },
@@ -146,9 +148,7 @@ export default function InscritosTurma() {
         ["Nome", "CPF", "E-mail"],
         ...listaFiltrada.map((i) => [i.nome || "", somenteDigitos(i.cpf), i.email || ""]),
       ];
-      const csv = rows
-        .map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(";"))
-        .join("\n");
+      const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(";")).join("\n");
       const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -191,13 +191,38 @@ export default function InscritosTurma() {
   }
 
   if (erro) {
-    return <p className="text-center text-red-600 mt-10">{erro}</p>;
+    return <p className="text-center text-red-600 mt-10" role="alert" aria-live="assertive">{erro}</p>;
   }
 
   return (
     <main className="min-h-screen bg-gelo dark:bg-gray-900 px-2 py-8">
-      <Breadcrumbs />
-      <CabecalhoPainel perfil="administrador" saudacao={`Visualização da turma: ${turma?.nome || "—"}`} />
+      <Breadcrumbs
+        trilha={[
+          { label: "Painel do Administrador", href: "/administrador" },
+          { label: "Inscritos da Turma" },
+        ]}
+      />
+
+      <CabecalhoPainel
+        tituloOverride={`Inscritos – ${turma?.nome || "Turma"}`}
+        // saudação padrão do componente permanece habilitada
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <BotaoSecundario onClick={() => navigate(-1)} leftIcon={<ArrowLeft size={16} />} cor="gray" aria-label="Voltar">
+              Voltar
+            </BotaoSecundario>
+            <BotaoSecundario onClick={copiarEmails} leftIcon={<Copy size={16} />} aria-label="Copiar e-mails">
+              Copiar e-mails
+            </BotaoSecundario>
+            <BotaoSecundario onClick={exportarCSV} leftIcon={<FileDown size={16} />} aria-label="Exportar CSV">
+              CSV
+            </BotaoSecundario>
+            <BotaoPrimario onClick={exportarPDF} leftIcon={<FileText size={16} />} aria-label="Exportar lista em PDF">
+              PDF
+            </BotaoPrimario>
+          </div>
+        }
+      />
 
       <motion.div
         initial={{ opacity: 0, y: 16 }}
@@ -205,39 +230,6 @@ export default function InscritosTurma() {
         className="max-w-3xl mx-auto bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-lg"
         aria-label="Lista de Inscritos da Turma"
       >
-        {/* Topo com ações */}
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
-          <h2 className="text-2xl font-bold text-emerald-900 dark:text-white flex items-center gap-2">
-            👥 Inscritos
-            <span className="text-sm font-normal text-gray-500 dark:text-gray-300">
-              {totalFiltrado}/{total}
-            </span>
-          </h2>
-
-          <div className="flex flex-wrap gap-2 justify-end">
-            <BotaoSecundario
-              onClick={() => navigate(-1)}
-              icon={<ArrowLeft size={16} />}
-              aria-label="Voltar"
-              cor="gray"
-            >
-              Voltar
-            </BotaoSecundario>
-
-            <BotaoSecundario onClick={copiarEmails} icon={<Copy size={16} />} aria-label="Copiar e-mails">
-              Copiar e-mails
-            </BotaoSecundario>
-
-            <BotaoSecundario onClick={exportarCSV} icon={<FileDown size={16} />} aria-label="Exportar CSV">
-              CSV
-            </BotaoSecundario>
-
-            <BotaoPrimario onClick={exportarPDF} aria-label="Exportar lista em PDF" icon={<FileText size={16} />}>
-              PDF
-            </BotaoPrimario>
-          </div>
-        </div>
-
         {/* Filtros locais */}
         <div className="flex flex-col sm:flex-row gap-2 mb-4">
           <label className="relative flex-1">
@@ -274,6 +266,14 @@ export default function InscritosTurma() {
           >
             {mostrarCpf ? <Eye className="w-4 h-4 inline" /> : <EyeOff className="w-4 h-4 inline" />} CPF
           </button>
+        </div>
+
+        {/* Título / contagem */}
+        <div className="flex items-baseline justify-between mb-3">
+          <h2 className="text-xl font-bold text-emerald-900 dark:text-white">👥 Inscritos</h2>
+          <span className="text-sm font-normal text-gray-500 dark:text-gray-300">
+            {totalFiltrado}/{total}
+          </span>
         </div>
 
         {/* Lista */}

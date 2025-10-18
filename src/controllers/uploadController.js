@@ -1,6 +1,5 @@
 /* eslint-disable no-console */
-const dbModule = require("../db");
-const db = dbModule?.db ?? dbModule; // resiliente
+const { db } = require("../db");
 
 const getDB = (req) => (req && req.db) ? req.db : db;
 

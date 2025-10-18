@@ -1,13 +1,18 @@
 // 📁 src/components/ListaInscritos.jsx
 import PropTypes from "prop-types";
 import { motion } from "framer-motion";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { toast } from "react-toastify";
 import { apiPost } from "../services/api"; // ✅ cliente central
+import BotaoSecundario from "./BotaoSecundario";
 
-/* ===================== Helpers de data (fuso LOCAL) ===================== */
+/* ===================== Config / Helpers (Fuso LOCAL) ===================== */
 
-const MS_HOUR = 60 * 60 * 1000;
+const UNLOCK_MINUTES_AFTER_START = 60;   // minutos após o início do dia para liberar confirmação
+const CONFIRM_WINDOW_HOURS = 48;         // janela para confirmar após o fim do dia
+
+const MS_MIN = 60 * 1000;
+const MS_HOUR = 60 * MS_MIN;
 
 function isDateOnly(str) {
   return typeof str === "string" && /^\d{4}-\d{2}-\d{2}$/.test(str);
@@ -18,9 +23,9 @@ function toLocalDate(input) {
   if (typeof input === "string") {
     if (isDateOnly(input)) {
       const [y, m, d] = input.split("-").map(Number);
-      return new Date(y, m - 1, d); // 00:00 no fuso local
+      return new Date(y, m - 1, d); // 00:00 local
     }
-    return new Date(input); // deixa o JS interpretar quando tiver hora/timezone
+    return new Date(input); // strings com horário/timezone mantêm info
   }
   return new Date(input);
 }
@@ -37,17 +42,17 @@ function ymdLocalString(d) {
   const day = String(dt.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
-function combineDateAndTimeLocal(dateOnly, timeHHmm, fallbackEnd = false) {
+function combineDateAndTimeLocal(dateOnly, timeHHmm, endOfDay = false) {
   if (!dateOnly) return null;
   const base = startOfDayLocal(dateOnly);
   if (!base) return null;
   const hhmm = typeof timeHHmm === "string" ? timeHHmm.slice(0, 5) : "";
   const [h, m] = hhmm.split(":").map(Number);
   base.setHours(
-    Number.isFinite(h) ? h : (fallbackEnd ? 23 : 0),
-    Number.isFinite(m) ? m : (fallbackEnd ? 59 : 0),
-    fallbackEnd ? 59 : 0,
-    fallbackEnd ? 999 : 0
+    Number.isFinite(h) ? h : (endOfDay ? 23 : 0),
+    Number.isFinite(m) ? m : (endOfDay ? 59 : 0),
+    endOfDay ? 59 : 0,
+    endOfDay ? 999 : 0
   );
   return base;
 }
@@ -78,10 +83,16 @@ export default function ListaInscritos({
   carregarPresencas,     // () => Promise<void>
   datas = [],            // [{ data:'YYYY-MM-DD', horario_inicio:'HH:MM', horario_fim:'HH:MM' }]
 }) {
-  const [confirmando, setConfirmando] = useState(null);
-  const agora = new Date();
+  const [confirmandoKey, setConfirmandoKey] = useState(null);
+  const [now, setNow] = useState(() => new Date());
 
-  /** Define as linhas/datas exibidas: usa encontros reais quando vierem, senão intervalo simples */
+  // mantém "agora" razoavelmente fresco se a tela ficar aberta por muito tempo
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 30 * MS_MIN);
+    return () => clearInterval(id);
+  }, []);
+
+  /** Linhas/dias exibidos: usa encontros reais quando vierem; senão, intervalo simples */
   const linhasDatas = useMemo(() => {
     if (Array.isArray(datas) && datas.length > 0) {
       return datas
@@ -100,7 +111,20 @@ export default function ListaInscritos({
     }));
   }, [datas, turma?.data_inicio, turma?.data_fim, turma?.horario_inicio, turma?.horario_fim]);
 
-  /** Prazo: pode confirmar até 48h após o término do dia (usa hf do dia ou hf da turma) */
+  /** Map para lookup O(1) das presenças: key = `${usuario_id}#${YYYY-MM-DD}` */
+  const presencasMap = useMemo(() => {
+    const m = new Map();
+    for (const p of Array.isArray(presencas) ? presencas : []) {
+      const dateKey = ymdLocalString(p?.data);
+      const uid = p?.usuario_id ?? p?.usuario ?? p?.user_id;
+      if (uid != null && dateKey) {
+        m.set(`${uid}#${dateKey}`, !!p?.presente);
+      }
+    }
+    return m;
+  }, [presencas]);
+
+  /** Regras de janela: pode confirmar até 48h após o término do dia */
   const dentroDoPrazoDeConfirmacao = (dataRef, horarioFimDoDia, horarioFimTurma) => {
     const fimDia = combineDateAndTimeLocal(
       dataRef,
@@ -108,33 +132,54 @@ export default function ListaInscritos({
       true
     );
     if (!fimDia) return false;
-    const limite = new Date(fimDia.getTime() + 48 * MS_HOUR);
-    return agora <= limite;
+    const limite = new Date(fimDia.getTime() + CONFIRM_WINDOW_HOURS * MS_HOUR);
+    return now <= limite;
+  };
+
+  /** Libera ação após X min do horário de início do dia */
+  const liberouPosInicio = (dataRef, horarioInicio, minutos = UNLOCK_MINUTES_AFTER_START) => {
+    const inicioDia = combineDateAndTimeLocal(dataRef, horarioInicio);
+    if (!inicioDia) return false;
+    const unlockAt = new Date(inicioDia.getTime() + minutos * MS_MIN);
+    return now >= unlockAt;
   };
 
   /** Confirma presença para um (usuario_id, data "YYYY-MM-DD") */
   async function confirmarPresenca(usuario_id, dataRef) {
+    const key = `${usuario_id}#${dataRef}`;
     try {
-      setConfirmando(`${usuario_id}-${dataRef}`);
-      // manda "YYYY-MM-DDT00:00:00" (backend pode normalizar para o dia)
+      setConfirmandoKey(key);
+      // manda "YYYY-MM-DDT00:00:00" (backend normaliza por dia)
       const dataISO = `${dataRef}T00:00:00`;
-      await apiPost("/api/presencas/confirmar-instrutor", {
+      const res = await apiPost("/api/presencas/confirmar-instrutor", {
         usuario_id,
         turma_id: turma.id,
         data: dataISO,
       });
+
+      // considera qualquer 2xx sucesso
+      if (res?.status && String(res.status)[0] !== "2") {
+        throw res;
+      }
+
       toast.success("✅ Presença confirmada com sucesso!");
       await carregarPresencas?.();
     } catch (err) {
-      // tolerante a idempotência
-      if (err?.status === 409) {
+      const st = err?.status ?? err?.response?.status;
+      if (st === 409 || st === 208) {
         toast.success("✅ Presença já estava confirmada.");
         await carregarPresencas?.();
       } else {
-        toast.error(err?.message || "❌ Erro ao confirmar presença.");
+        const msg =
+          err?.data?.erro ||
+          err?.data?.message ||
+          err?.response?.data?.message ||
+          err?.message ||
+          "Erro ao confirmar presença.";
+        toast.error(`❌ ${msg}`);
       }
     } finally {
-      setConfirmando(null);
+      setConfirmandoKey(null);
     }
   }
 
@@ -157,28 +202,28 @@ export default function ListaInscritos({
       ) : (
         <ul className="space-y-4">
           {inscritos.map((inscrito) => {
-            const idKey = inscrito.usuario_id ?? inscrito.id ?? inscrito.email;
-            const presencasUsuario = Array.isArray(presencas)
-              ? presencas.filter((p) => p.usuario_id === inscrito.usuario_id)
-              : [];
+            const usuarioId = inscrito.usuario_id ?? inscrito.id ?? inscrito.email ?? inscrito.cpf;
+            const nomeExib = inscrito.nome || "Participante";
+            const emailExib = inscrito.email || "—";
+            const cpfExib = formatCPF(inscrito.cpf);
 
             return (
               <li
-                key={idKey}
+                key={usuarioId}
                 className="p-4 bg-white dark:bg-zinc-800 rounded-2xl shadow border border-gray-100 dark:border-zinc-700"
               >
                 {/* Cabeçalho do inscrito */}
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-1 mb-4">
                   <div className="min-w-0">
                     <p className="font-semibold text-gray-900 dark:text-white break-words">
-                      {inscrito.nome || "Participante"}
+                      {nomeExib}
                     </p>
                     <p className="text-sm text-gray-600 dark:text-gray-300 break-all">
-                      {inscrito.email || "—"}
+                      {emailExib}
                     </p>
                   </div>
                   <span className="text-sm text-gray-700 dark:text-gray-200">
-                    {formatCPF(inscrito.cpf)}
+                    {cpfExib}
                   </span>
                 </div>
 
@@ -186,7 +231,7 @@ export default function ListaInscritos({
                 <div className="overflow-x-auto">
                   <table
                     className="min-w-full text-sm text-center"
-                    aria-label={`Datas e presenças de ${inscrito.nome || "participante"}`}
+                    aria-label={`Datas e presenças de ${nomeExib}`}
                   >
                     <caption className="sr-only">Controle de presenças por data</caption>
                     <thead>
@@ -203,33 +248,31 @@ export default function ListaInscritos({
                         const horarioStr =
                           (hi || hf) ? `${hi || ""}${hi && hf ? " – " : ""}${hf || ""}` : "—";
 
-                        // presença já registrada nesse dia?
-                        const p = presencasUsuario.find(
-                          (px) => (px?.data || "").slice(0, 10) === data
-                        );
-                        const isPresente = p?.presente === true;
+                        const presente = !!presencasMap.get(`${inscrito.usuario_id}#${data}`);
 
-                        // liberar ação após 60min do horário de início do dia
-                        const inicioDia = combineDateAndTimeLocal(data, hi);
-                        const liberouPosInicio =
-                          inicioDia ? agora > new Date(inicioDia.getTime() + 60 * 60 * 1000) : false;
+                        // libera ação X minutos após o início do dia
+                        const podeAbrirPorInicio = liberouPosInicio(data, hi);
+                        const noPrazo = dentroDoPrazoDeConfirmacao(data, hf, turma?.horario_fim);
 
-                        const podeConfirmar =
-                          !isPresente &&
-                          liberouPosInicio &&
-                          dentroDoPrazoDeConfirmacao(data, hf, turma?.horario_fim);
+                        const podeConfirmar = !presente && podeAbrirPorInicio && noPrazo;
 
                         let statusBadge = null;
-                        if (isPresente) {
+                        if (presente) {
                           statusBadge = (
                             <span className="inline-block bg-green-100 text-green-800 px-3 py-1 rounded-full text-xs font-bold">
                               ✅ Presente
                             </span>
                           );
-                        } else if (!liberouPosInicio) {
+                        } else if (!podeAbrirPorInicio) {
                           statusBadge = (
                             <span className="inline-block bg-yellow-100 text-yellow-800 px-3 py-1 rounded-full text-xs font-bold">
                               ⏳ Aguardando
+                            </span>
+                          );
+                        } else if (!noPrazo) {
+                          statusBadge = (
+                            <span className="inline-block bg-rose-100 text-rose-700 px-3 py-1 rounded-full text-xs font-bold">
+                              ❌ Fora do prazo
                             </span>
                           );
                         } else {
@@ -240,6 +283,15 @@ export default function ListaInscritos({
                           );
                         }
 
+                        const isLoading = confirmandoKey === `${inscrito.usuario_id}#${data}`;
+                        const titleBtn = presente
+                          ? "Presença já confirmada."
+                          : !podeAbrirPorInicio
+                          ? `A confirmação libera ${UNLOCK_MINUTES_AFTER_START} min após o início.`
+                          : !noPrazo
+                          ? `Fora do prazo de ${CONFIRM_WINDOW_HOURS}h após o fim do dia.`
+                          : "Confirmar presença deste dia";
+
                         return (
                           <tr key={data} className="border-t border-gray-200 dark:border-gray-700">
                             <td className="p-2">{dataBR}</td>
@@ -247,21 +299,16 @@ export default function ListaInscritos({
                             <td className="p-2">{statusBadge}</td>
                             <td className="p-2">
                               {podeConfirmar && (
-                                <button
-                                  type="button"
-                                  disabled={confirmando === `${inscrito.usuario_id}-${data}`}
+                                <BotaoSecundario
                                   onClick={() => confirmarPresenca(inscrito.usuario_id, data)}
-                                  className={`text-xs px-2 py-1 rounded
-                                    bg-green-900 hover:bg-green-800
-                                    focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:outline-none
-                                    text-white disabled:opacity-60 disabled:cursor-not-allowed`}
-                                  title="Confirmar presença deste dia"
-                                  aria-label={`Confirmar presença em ${dataBR} para ${inscrito.nome || "participante"}`}
+                                  loading={isLoading}
+                                  disabled={isLoading}
+                                  aria-label={`Confirmar presença em ${dataBR} para ${nomeExib}`}
+                                  title={titleBtn}
+                                  size="sm"
                                 >
-                                  {confirmando === `${inscrito.usuario_id}-${data}`
-                                    ? "Confirmando..."
-                                    : "Confirmar presença"}
-                                </button>
+                                  Confirmar presença
+                                </BotaoSecundario>
                               )}
                             </td>
                           </tr>

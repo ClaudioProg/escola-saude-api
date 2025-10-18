@@ -9,18 +9,37 @@ const SIZE_MAP = {
   lg: { wrap: "w-24 h-24", icon: "w-12 h-12", title: "text-xl md:text-2xl", hint: "text-base md:text-lg" },
 };
 
+// Degradês de 3 cores para harmonizar com o restante do app
+const VARIANT_RING = {
+  emerald: "from-emerald-500 via-teal-500 to-lime-500",
+  indigo:  "from-indigo-500 via-violet-500 to-fuchsia-500",
+  cyan:    "from-cyan-500 via-sky-500 to-blue-500",
+  rose:    "from-rose-500 via-red-500 to-orange-500",
+  slate:   "from-slate-500 via-zinc-500 to-stone-500",
+};
+
 export default function NadaEncontrado({
   mensagem = "Nenhum dado encontrado.",
   sugestao,
   Icone = SearchX,          // permite customizar o ícone
-  acao,                      // { label: string, onClick: func }
+  acao,                      // { label: string, onClick: func } (compat)
+  actions,                   // [{ label, onClick, icon?:Node, variant?:'primary'|'secondary' }]
   size = "md",               // 'sm' | 'md' | 'lg'
+  variant = "indigo",        // harmonia de cor/gradiente
   className = "",
   iconClassName = "",
-  testId = "nada-encontrado"
+  testId = "nada-encontrado",
 }) {
   const reduceMotion = useReducedMotion();
   const sz = SIZE_MAP[size] || SIZE_MAP.md;
+  const ring = VARIANT_RING[variant] || VARIANT_RING.indigo;
+
+  // Ações combinadas (mantém compat c/ prop antiga `acao`)
+  const mergedActions = Array.isArray(actions) && actions?.length
+    ? actions
+    : (acao?.label && typeof acao.onClick === "function" ? [{ ...acao, variant: "primary" }] : []);
+
+  const descId = `${testId}-desc`;
 
   return (
     <motion.div
@@ -28,38 +47,57 @@ export default function NadaEncontrado({
       role="status"
       aria-live="polite"
       aria-atomic="true"
+      aria-describedby={sugestao ? descId : undefined}
       data-testid={testId}
       initial={reduceMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: reduceMotion ? 0 : 0.4 }}
     >
       <div
-        className={`inline-flex items-center justify-center ${sz.wrap} mb-4 rounded-full bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow`}
+        className={[
+          "inline-flex items-center justify-center mb-4 rounded-full border shadow",
+          "bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-800",
+          "relative overflow-hidden",
+          sz.wrap,
+        ].join(" ")}
+        aria-hidden="true"
       >
+        {/* anel em degradê 3 cores (sutil) */}
+        <div className={`absolute inset-0 opacity-20 bg-gradient-to-br ${ring}`} />
         <Icone
-          className={`${sz.icon} text-lousa dark:text-white ${iconClassName}`}
-          aria-hidden="true"
+          className={`${sz.icon} text-lousa dark:text-white relative ${iconClassName}`}
         />
-        <span className="sr-only">Ícone de nada encontrado</span>
       </div>
 
       <p className={`${sz.title} font-semibold`}>{mensagem}</p>
 
       {sugestao && (
-        <p className={`${sz.hint} text-gray-500 dark:text-gray-400 mt-1`}>
+        <p id={descId} className={`${sz.hint} text-gray-500 dark:text-gray-400 mt-1`}>
           {sugestao}
         </p>
       )}
 
-      {acao?.label && typeof acao.onClick === "function" && (
-        <div className="mt-4">
-          <button
-            type="button"
-            onClick={acao.onClick}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-lousa text-white hover:opacity-90 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-lousa"
-          >
-            {acao.label}
-          </button>
+      {mergedActions.length > 0 && (
+        <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+          {mergedActions.map((a, idx) => {
+            const primary = (a.variant || "primary") === "primary";
+            return (
+              <button
+                key={`${a.label}-${idx}`}
+                type="button"
+                onClick={a.onClick}
+                className={[
+                  "inline-flex items-center gap-2 px-4 py-2 rounded-lg transition focus-visible:ring-2 focus-visible:ring-offset-2",
+                  primary
+                    ? "bg-lousa text-white hover:opacity-90 focus-visible:ring-lousa"
+                    : "bg-gray-200 text-gray-900 hover:bg-gray-300 dark:bg-gray-700 dark:text-white dark:hover:bg-gray-600 focus-visible:ring-gray-400",
+                ].join(" ")}
+              >
+                {a.icon ? a.icon : null}
+                {a.label}
+              </button>
+            );
+          })}
         </div>
       )}
     </motion.div>
@@ -74,7 +112,16 @@ NadaEncontrado.propTypes = {
     label: PropTypes.string.isRequired,
     onClick: PropTypes.func.isRequired,
   }),
+  actions: PropTypes.arrayOf(
+    PropTypes.shape({
+      label: PropTypes.string.isRequired,
+      onClick: PropTypes.func.isRequired,
+      icon: PropTypes.node,
+      variant: PropTypes.oneOf(["primary", "secondary"]),
+    })
+  ),
   size: PropTypes.oneOf(["sm", "md", "lg"]),
+  variant: PropTypes.oneOf(["emerald", "indigo", "cyan", "rose", "slate"]),
   className: PropTypes.string,
   iconClassName: PropTypes.string,
   testId: PropTypes.string,

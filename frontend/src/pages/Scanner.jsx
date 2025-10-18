@@ -75,8 +75,10 @@ export default function Scanner() {
   const html5QrCodeRef = useRef(null);
   const timeoutRef = useRef(null);
   const processedRef = useRef(false);
+  const startLockRef = useRef(false);
   const mountedRef = useRef(true);
   const devicesRef = useRef([]); // lista de câmeras disponíveis
+  const currentIndexRef = useRef(0);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -102,11 +104,48 @@ export default function Scanner() {
     []
   );
 
+  // calcula um qrbox responsivo (quadrado), limitado
+  const computeQrbox = () => {
+    const max = 320; // bom equilíbrio mobile/desktop
+    const min = 200;
+    const padding = 32;
+    const w = Math.min(
+      max,
+      Math.max(min, Math.floor((Math.min(window.innerWidth, 600) - padding) * 0.9))
+    );
+    return w;
+  };
+
+  const mapCameraError = (err) => {
+    const name = err?.name || err?.message || "";
+    if (/NotAllowedError|Permission/i.test(name)) {
+      return "Permissão de câmera negada. Habilite o acesso nas configurações do navegador.";
+    }
+    if (/NotFoundError|DevicesNotFound|No camera/i.test(name)) {
+      return "Nenhuma câmera foi encontrada neste dispositivo.";
+    }
+    if (/NotReadableError|TrackStartError|AbortError/i.test(name)) {
+      return "A câmera está em uso por outro aplicativo. Feche outros apps e tente novamente.";
+    }
+    if (!window.isSecureContext) {
+      return "O acesso à câmera requer conexão segura (HTTPS). Acesse a página por HTTPS.";
+    }
+    return "Erro ao iniciar o scanner.";
+  };
+
   // (re)iniciar com base no cameraConfig atual
   const startCamera = useMemo(
     () => async () => {
+      if (startLockRef.current) return;
+      startLockRef.current = true;
+
       try {
-        await new Promise((r) => setTimeout(r, 80)); // pequeno delay
+        // checa contexto seguro
+        if (!window.isSecureContext) {
+          throw new Error("InsecureContext");
+        }
+
+        await new Promise((r) => setTimeout(r, 60)); // pequeno delay
         const el = document.getElementById("leitor-qr");
         if (!el) throw new Error("Elemento 'leitor-qr' não encontrado.");
 
@@ -123,13 +162,20 @@ export default function Scanner() {
             devicesRef.current = devices;
             // se o config atual é facingMode, tenta escolher a traseira pelo label
             if (cameraConfig?.facingMode) {
-              const back = devices.find((d) =>
+              const idxBack = devices.findIndex((d) =>
                 (d.label || "").toLowerCase().includes("back")
               );
-              if (back) {
-                // preferir id da traseira no mobile
-                setCameraConfig(back.id);
+              if (idxBack >= 0) {
+                currentIndexRef.current = idxBack;
+                setCameraConfig(devices[idxBack].id);
+              } else {
+                // fallback para primeira câmera
+                currentIndexRef.current = 0;
+                setCameraConfig(devices[0].id);
               }
+            } else if (typeof cameraConfig === "string") {
+              const idx = devices.findIndex((d) => d.id === cameraConfig);
+              currentIndexRef.current = idx >= 0 ? idx : 0;
             }
           }
         } catch {
@@ -139,6 +185,11 @@ export default function Scanner() {
         const onSuccess = async (decodedText) => {
           if (!decodedText || processedRef.current) return;
           processedRef.current = true;
+
+          // leve feedback tátil, quando disponível
+          try {
+            if (navigator.vibrate) navigator.vibrate(40);
+          } catch {}
 
           clearTimeout(timeoutRef.current);
           setDetectado(true);
@@ -152,10 +203,9 @@ export default function Scanner() {
 
           setTimeout(() => {
             if (!mountedRef.current) return;
-            navigate(
-              `/validar-presenca?codigo=${encodeURIComponent(decodedText)}`,
-              { replace: true }
-            );
+            navigate(`/validar-presenca?codigo=${encodeURIComponent(decodedText)}`, {
+              replace: true,
+            });
           }, 50);
         };
 
@@ -166,11 +216,27 @@ export default function Scanner() {
             ? { deviceId: { exact: cameraConfig } }
             : cameraConfig; // { facingMode: ... }
 
-        await html5QrCode.start(configArg, { fps: 10, qrbox: 250 }, onSuccess, onError);
+        await html5QrCode.start(
+          configArg,
+          { fps: 10, qrbox: computeQrbox() },
+          onSuccess,
+          onError
+        );
 
-        timeoutRef.current = setTimeout(() => {
+        // timeout de detecção (reinicia levemente p/ reativar autofocus em alguns devices)
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = setTimeout(async () => {
           if (!processedRef.current) {
-            toast.error("⚠️ Nenhum QR Code detectado. Tente novamente.");
+            toast.error("⚠️ Nenhum QR Code detectado. Reiniciando leitor…");
+            try {
+              await stopCamera();
+            } catch {}
+            processedRef.current = false;
+            setDetectado(false);
+            setResultado(null);
+            setHandoff(false);
+            startLockRef.current = false;
+            await startCamera();
           }
         }, 20000);
 
@@ -178,7 +244,9 @@ export default function Scanner() {
       } catch (err) {
         console.error("Erro ao iniciar QR Code:", err);
         setErro(true);
-        toast.error("❌ Erro ao iniciar o scanner.");
+        toast.error(`❌ ${mapCameraError(err)}`);
+      } finally {
+        startLockRef.current = false;
       }
     },
     [cameraConfig, navigate, stopCamera]
@@ -202,8 +270,19 @@ export default function Scanner() {
     };
     document.addEventListener("visibilitychange", onVis);
 
+    const onResize = () => {
+      // um pequeno restart melhora o enquadramento do qrbox em rotação
+      if (html5QrCodeRef.current && !processedRef.current) {
+        startCamera();
+      }
+    };
+    window.addEventListener("orientationchange", onResize);
+    window.addEventListener("resize", onResize);
+
     return () => {
       document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("orientationchange", onResize);
+      window.removeEventListener("resize", onResize);
       clearTimeout(timeoutRef.current);
       processedRef.current = false;
       stopCamera();
@@ -222,22 +301,16 @@ export default function Scanner() {
   const handleToggleCamera = async () => {
     const list = devicesRef.current || [];
     if (list.length >= 2) {
-      // alterna entre a atual e a outra
-      const currentId = typeof cameraConfig === "string" ? cameraConfig : null;
-      if (currentId) {
-        const idx = list.findIndex((d) => d.id === currentId);
-        const next = list[(idx + 1) % list.length];
-        setCameraConfig(next?.id || { facingMode: "environment" });
-      } else {
-        // estava em facingMode: escolhe a primeira id
-        setCameraConfig(list[0].id);
-      }
+      // avança índice circularmente
+      currentIndexRef.current = (currentIndexRef.current + 1) % list.length;
+      const next = list[currentIndexRef.current];
+      setCameraConfig(next?.id || { facingMode: "environment" });
     } else {
       // sem múltiplas: alterna facingMode
       const fm = cameraConfig?.facingMode === "user" ? "environment" : "user";
       setCameraConfig({ facingMode: fm });
     }
-    // reinicia automaticamente via useEffect
+    // reinicia automaticamente via useEffect/startCamera
   };
 
   return (

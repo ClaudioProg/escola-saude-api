@@ -7,8 +7,7 @@ const multer = require("multer");
 const crypto = require("crypto");
 
 // ✅ usa o mesmo DB exportado pelo projeto
-const dbModule = require("../db");
-const db = dbModule?.db ?? dbModule;
+const { db } = require("../db");
 
 // ✅ usa os paths centralizados (DATA_ROOT/FILES_BASE)
 const { MODELOS_CHAMADAS_DIR } = require("../paths");

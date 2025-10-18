@@ -1,8 +1,8 @@
 // 📁 src/components/ModalErro.jsx
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import Modal from "react-modal";
-import { AlertTriangle, Clipboard, ChevronDown, RotateCcw } from "lucide-react";
+import Modal from "./Modal";
+import { AlertTriangle, Clipboard, ChevronDown, RotateCcw, Check } from "lucide-react";
 
 export default function ModalErro({
   isOpen,
@@ -17,53 +17,71 @@ export default function ModalErro({
 }) {
   const fecharBtnRef = useRef(null);
   const [mostrarDetalhes, setMostrarDetalhes] = useState(false);
+  const [copiado, setCopiado] = useState(false);
+
+  // foca o botão fechar ao abrir
+  useEffect(() => {
+    if (!isOpen) return;
+    const t = setTimeout(() => fecharBtnRef.current?.focus(), 30);
+    return () => clearTimeout(t);
+  }, [isOpen]);
 
   const copyDetalhes = async () => {
     try {
-      await navigator.clipboard.writeText(detalhes || mensagem);
+      await navigator.clipboard.writeText(String(detalhes || mensagem));
+      setCopiado(true);
+      setTimeout(() => setCopiado(false), 1200);
     } catch {
       // silencioso
     }
   };
 
+  if (!isOpen) return null;
+
+  const titleId = "modal-erro-titulo";
+  const descId = "modal-erro-mensagem";
+
   return (
     <Modal
-      isOpen={isOpen}
-      onRequestClose={onClose}
-      shouldCloseOnOverlayClick={!bloqueiaCliqueFora}
-      shouldCloseOnEsc={true}
-      ariaHideApp={false}
-      onAfterOpen={() => fecharBtnRef.current?.focus()}
-      className="max-w-md mx-auto mt-24 bg-white dark:bg-zinc-800 p-6 rounded-xl shadow-lg outline-none"
-      overlayClassName="fixed inset-0 bg-black/50 z-50 flex justify-center items-start"
-      contentLabel="Alerta de erro"
+      open={isOpen}
+      onClose={onClose}
+      labelledBy={titleId}
+      describedBy={descId}
+      // quando bloqueia clique fora, não queremos fechar pelo overlay
+      closeOnBackdrop={!bloqueiaCliqueFora}
+      className="w-[96%] max-w-md p-0 overflow-hidden"
       role="alertdialog"
-      aria-labelledby="modal-erro-titulo"
-      aria-describedby="modal-erro-mensagem"
     >
-      <div className="flex flex-col items-center text-center space-y-4">
-        <AlertTriangle size={48} className="text-red-600" aria-hidden="true" />
-        <h2 id="modal-erro-titulo" className="text-xl font-bold text-gray-800 dark:text-white">
-          {titulo}
-        </h2>
-
-        <p id="modal-erro-mensagem" className="text-sm text-gray-700 dark:text-gray-200">
+      {/* Header hero (degradê 3 cores) */}
+      <header
+        className="px-4 sm:px-6 py-4 text-white bg-gradient-to-br from-rose-900 via-red-800 to-orange-700"
+        aria-live="assertive"
+      >
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="w-6 h-6" aria-hidden="true" />
+          <h2 id={titleId} className="text-xl sm:text-2xl font-extrabold tracking-tight">
+            {titulo}
+          </h2>
+        </div>
+        <p id={descId} className="text-white/90 text-sm mt-1">
           {mensagem}
         </p>
+      </header>
 
+      {/* Corpo */}
+      <section className="px-4 sm:px-6 pt-4 pb-24">
         {/* Detalhes (opcional) */}
         {detalhes && (
           <div className="w-full">
             <button
               type="button"
               onClick={() => setMostrarDetalhes((v) => !v)}
-              className="mx-auto flex items-center gap-1 text-sm text-gray-600 dark:text-gray-300 hover:underline"
+              className="mx-auto flex items-center gap-1 text-sm text-slate-600 dark:text-slate-300 hover:underline"
               aria-expanded={mostrarDetalhes}
               aria-controls="erro-detalhes"
             >
               <ChevronDown
-                size={16}
-                className={`transition-transform ${mostrarDetalhes ? "rotate-180" : ""}`}
+                className={`w-4 h-4 transition-transform ${mostrarDetalhes ? "rotate-180" : ""}`}
                 aria-hidden="true"
               />
               {mostrarDetalhes ? "Ocultar detalhes" : "Mostrar detalhes"}
@@ -72,7 +90,7 @@ export default function ModalErro({
             {mostrarDetalhes && (
               <pre
                 id="erro-detalhes"
-                className="mt-2 max-h-48 overflow-auto bg-gray-50 dark:bg-zinc-900 text-left text-xs p-3 rounded border dark:border-zinc-700 text-gray-800 dark:text-gray-200 whitespace-pre-wrap"
+                className="mt-2 max-h-56 overflow-auto bg-slate-50 dark:bg-zinc-900 text-left text-xs p-3 rounded-xl border border-slate-200 dark:border-zinc-700 text-slate-800 dark:text-slate-200 whitespace-pre-wrap"
               >
                 {detalhes}
               </pre>
@@ -82,36 +100,38 @@ export default function ModalErro({
               <button
                 type="button"
                 onClick={copyDetalhes}
-                className="inline-flex items-center gap-2 px-3 py-1.5 text-xs rounded bg-gray-200 hover:bg-gray-300 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-gray-800 dark:text-white"
+                className="inline-flex items-center gap-2 px-3 py-1.5 text-xs rounded-xl bg-slate-200 hover:bg-slate-300 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-slate-900 dark:text-white transition"
                 title="Copiar detalhes"
+                aria-live="polite"
               >
-                <Clipboard size={14} />
-                Copiar detalhes
+                {copiado ? <Check className="w-4 h-4" /> : <Clipboard className="w-4 h-4" />}
+                {copiado ? "Copiado!" : "Copiar detalhes"}
               </button>
             </div>
           </div>
         )}
+      </section>
 
-        <div className="flex gap-3 mt-2">
-          {onTentarNovamente && (
-            <button
-              type="button"
-              onClick={onTentarNovamente}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded"
-            >
-              <RotateCcw size={16} />
-              {textoTentarNovamente}
-            </button>
-          )}
+      {/* Rodapé sticky */}
+      <div className="sticky bottom-0 left-0 right-0 bg-white/85 dark:bg-zinc-950/85 backdrop-blur border-t border-slate-200 dark:border-slate-800 px-4 sm:px-6 py-3 flex flex-wrap items-center justify-end gap-2">
+        {onTentarNovamente && (
           <button
             type="button"
-            ref={fecharBtnRef}
-            onClick={onClose}
-            className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition"
+            onClick={onTentarNovamente}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-600 text-white font-semibold hover:bg-amber-700 transition"
           >
-            {textoFechar}
+            <RotateCcw className="w-4 h-4" />
+            {textoTentarNovamente}
           </button>
-        </div>
+        )}
+        <button
+          type="button"
+          ref={fecharBtnRef}
+          onClick={onClose}
+          className="px-4 py-2 rounded-xl bg-rose-600 text-white font-semibold hover:bg-rose-700 transition"
+        >
+          {textoFechar}
+        </button>
       </div>
     </Modal>
   );

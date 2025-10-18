@@ -30,17 +30,8 @@ async function query(text, params) {
   return pool.query(text, params);
 }
 
-async function getClient() {
-  const client = await pool.connect();
-  return client;
-}
-
-function shutdown() {
-  return pool.end();
-}
-
 /* ──────────────────────────────────────────────────────────────
-   Adapter tipo pg-promise: any / one / oneOrNone / none / tx
+   Adapter tipo pg-promise: any / one / oneOrNone / none / tx / result
    ────────────────────────────────────────────────────────────── */
 function makeExec(clientOrPool) {
   const exec = async (text, params) => {
@@ -49,8 +40,10 @@ function makeExec(clientOrPool) {
   };
 
   return {
+    // API pg “pura”
     query: (t, p) => exec(t, p),
 
+    // API “pg-promise-like”
     any: async (t, p) => {
       const { rows } = await exec(t, p);
       return rows;
@@ -77,6 +70,9 @@ function makeExec(clientOrPool) {
       await exec(t, p);
       return null;
     },
+
+    // Compat com trechos que checam rowCount
+    result: (t, p) => exec(t, p),
   };
 }
 
@@ -89,7 +85,10 @@ const db = {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+
+      // t herda os mesmos métodos, mas executa no client transacional
       const t = makeExec(client);
+
       const result = await cb(t);
       await client.query('COMMIT');
       return result;
@@ -102,10 +101,19 @@ const db = {
   },
 };
 
+async function getClient() {
+  const client = await pool.connect();
+  return client;
+}
+
+function shutdown() {
+  return pool.end();
+}
+
 module.exports = {
   pool,
   query,
   getClient,
   shutdown,
-  db, // 👈 use isto nas rotas
+  db, // 👈 importe `{ db }` no backend
 };

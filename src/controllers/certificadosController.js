@@ -204,7 +204,6 @@ async function _gerarPdfFisico({
 }) {
   await ensureDir(CERT_DIR);
 
-  // Nome do arquivo (mantive seu padrão)
   const nomeArquivo = `certificado_${tipo}_usuario${usuario_id}_evento${evento_id}_turma${turma_id}.pdf`;
   const caminho = path.join(CERT_DIR, nomeArquivo);
 
@@ -219,11 +218,11 @@ async function _gerarPdfFisico({
   const diYmd = ymd(minData || TURMA.data_inicio);
   const dfYmd = ymd(maxData || TURMA.data_fim);
   const mesmoDia = diYmd && diYmd === dfYmd;
-  const dataInicioBR   = dataBR(diYmd);
-  const dataFimBR      = dataBR(dfYmd);
+  const dataInicioBR    = dataBR(diYmd);
+  const dataFimBR       = dataBR(dfYmd);
   const dataHojeExtenso = dataExtensoBR(new Date());
-  const cargaTexto = horasTotal > 0 ? horasTotal : TURMA.carga_horaria;
-  const tituloEvento = TURMA.titulo || "evento";
+  const cargaTexto      = horasTotal > 0 ? horasTotal : TURMA.carga_horaria;
+  const tituloEvento    = TURMA.titulo || "evento";
 
   const doc = new PDFDocument({ size: "A4", layout: "landscape", margin: 40 });
   const writeStream = fs.createWriteStream(caminho);
@@ -247,18 +246,17 @@ async function _gerarPdfFisico({
   }
 
   // Título
-  doc.fillColor("#0b3d2e").font("BreeSerif").fontSize(63).text("CERTIFICADO", { align: "center" });
+  doc.fillColor("#0b3d2e")
+     .font("BreeSerif").fontSize(63)
+     .text("CERTIFICADO", { align: "center" });
   doc.y += 20;
 
   // Cabeçalho
   doc.fillColor("black");
-  doc.font("AlegreyaSans-Bold").fontSize(20).text("SECRETARIA MUNICIPAL DE SAÚDE", {
-    align: "center",
-    lineGap: 4,
-  });
-  doc.font("AlegreyaSans-Regular").fontSize(15).text("A Escola Municipal de Saúde Pública certifica que:", {
-    align: "center",
-  });
+  doc.font("AlegreyaSans-Bold").fontSize(20)
+     .text("SECRETARIA MUNICIPAL DE SAÚDE", { align: "center", lineGap: 4 });
+  doc.font("AlegreyaSans-Regular").fontSize(15)
+     .text("A Escola Municipal de Saúde Pública certifica que:", { align: "center" });
   doc.moveDown(1);
   doc.y += 20;
 
@@ -275,10 +273,8 @@ async function _gerarPdfFisico({
 
   // CPF
   if (cpfUsuario) {
-    doc.font("BreeSerif").fontSize(16).text(`CPF: ${cpfUsuario}`, 0, doc.y - 5, {
-      align: "center",
-      width: doc.page.width,
-    });
+    doc.font("BreeSerif").fontSize(16)
+       .text(`CPF: ${cpfUsuario}`, 0, doc.y - 5, { align: "center", width: doc.page.width });
   }
 
   // Corpo
@@ -292,84 +288,71 @@ async function _gerarPdfFisico({
           : `Participou do evento "${tituloEvento}", realizado de ${dataInicioBR} a ${dataFimBR}, com carga horária total de ${cargaTexto} horas.`);
 
   doc.moveDown(1);
-  doc.font("AlegreyaSans-Regular").fontSize(15).text(corpoTexto, 70, doc.y, {
-    align: "justify",
-    lineGap: 4,
-    width: 680,
-  });
+  doc.font("AlegreyaSans-Regular").fontSize(15)
+     .text(corpoTexto, 70, doc.y, { align: "justify", lineGap: 4, width: 680 });
 
   // Data de emissão
   doc.moveDown(1);
-  doc.font("AlegreyaSans-Regular").fontSize(14).text(`Santos, ${dataHojeExtenso}.`, 100, doc.y + 10, {
-    align: "right",
-    width: 680,
-  });
+  doc.font("AlegreyaSans-Regular").fontSize(14)
+     .text(`Santos, ${dataHojeExtenso}.`, 100, doc.y + 10, { align: "right", width: 680 });
 
-  // --- Assinaturas ---
+  /* ---------------- Assinaturas / Identificação ---------------- */
   const baseY = 470;
-  const LEFT = { x: 100, w: 300 };   // institucional
-  const RIGHT = { x: 440, w: 300 };  // instrutor
 
-  // Esquerda: assinatura institucional (payload)
-  if (assinaturaBase64 && /^data:image\/(png|jpe?g|webp);base64,/.test(assinaturaBase64)) {
-    try {
-      const buf = Buffer.from(assinaturaBase64.split(",")[1], "base64");
-      doc.image(buf, LEFT.x + (LEFT.w - 150) / 2, baseY - 50, { width: 150 });
-    } catch (e) {
-      console.warn("⚠️ Assinatura institucional inválida:", e.message);
-    }
-  }
-  doc.font("AlegreyaSans-Bold").fontSize(20).text("Rafaella Pitol Corrêa", LEFT.x, baseY, { align: "center", width: LEFT.w });
-  doc.font("AlegreyaSans-Regular").fontSize(14).text("Chefe da Escola da Saúde", LEFT.x, baseY + 25, { align: "center", width: LEFT.w });
+  if (tipo === "instrutor") {
+    // ✅ INSTRUTOR: somente a identificação institucional CENTRALIZADA
+    const CENTER_W = 360;
+    const CENTER_X = (doc.page.width - CENTER_W) / 2;
 
-  // Direita: assinatura do instrutor real
-  let nomeInstrutor = "Instrutor(a)";
-  let assinaturaInstrutorBase64 = null;
+    doc.font("AlegreyaSans-Bold").fontSize(20)
+       .text("Rafaella Pitol Corrêa", CENTER_X, baseY, { align: "center", width: CENTER_W });
+    doc.font("AlegreyaSans-Regular").fontSize(14)
+       .text("Chefe da Escola da Saúde", CENTER_X, baseY + 25, { align: "center", width: CENTER_W });
 
-  if (tipo === "usuario") {
-    // primeiro instrutor vinculado ao evento
+    // (A assinatura dela já está no background; não desenhamos nenhuma outra)
+  } else {
+    // ✅ PARTICIPANTE: Rafaella à esquerda (somente texto) + instrutor à direita
+    const LEFT  = { x: 100, w: 300 };
+    const RIGHT = { x: 440, w: 300 };
+
+    // Esquerda: Rafaella (apenas texto; a assinatura está no fundo)
+    doc.font("AlegreyaSans-Bold").fontSize(20)
+       .text("Rafaella Pitol Corrêa", LEFT.x, baseY, { align: "center", width: LEFT.w });
+    doc.font("AlegreyaSans-Regular").fontSize(14)
+       .text("Chefe da Escola da Saúde", LEFT.x, baseY + 25, { align: "center", width: LEFT.w });
+
+    // Direita: instrutor (nome + cargo). Se houver assinatura do instrutor no banco, desenha.
+    let nomeInstrutor = "Instrutor(a)";
+    let assinaturaInstrutorBase64 = null;
     try {
       const { rows } = await db.query(`
         SELECT u.nome AS nome_instrutor, a.imagem_base64
-        FROM evento_instrutor ei
-        JOIN usuarios u         ON u.id = ei.instrutor_id
-        LEFT JOIN assinaturas a ON a.usuario_id = ei.instrutor_id
-        WHERE ei.evento_id = $1
-        ORDER BY ei.instrutor_id ASC
-        LIMIT 1
+          FROM evento_instrutor ei
+          JOIN usuarios u         ON u.id = ei.instrutor_id
+          LEFT JOIN assinaturas a ON a.usuario_id = ei.instrutor_id
+         WHERE ei.evento_id = $1
+         ORDER BY ei.instrutor_id ASC
+         LIMIT 1
       `, [Number(evento_id)]);
       nomeInstrutor = rows[0]?.nome_instrutor || nomeInstrutor;
       assinaturaInstrutorBase64 = rows[0]?.imagem_base64 || null;
     } catch (e) {
       console.warn("⚠️ Erro ao obter instrutor do evento:", e.message);
     }
-  } else {
-    // tipo === "instrutor": assinatura do próprio usuário (instrutor)
-    try {
-      const { rows } = await db.query(
-        `SELECT a.imagem_base64, u.nome
-         FROM usuarios u
-         LEFT JOIN assinaturas a ON a.usuario_id = u.id
-         WHERE u.id = $1`,
-        [Number(usuario_id)]
-      );
-      nomeInstrutor = rows[0]?.nome || nomeInstrutor;
-      assinaturaInstrutorBase64 = rows[0]?.imagem_base64 || null;
-    } catch (e) {
-      console.warn("⚠️ Erro ao obter assinatura do instrutor:", e.message);
-    }
-  }
 
-  if (assinaturaInstrutorBase64 && /^data:image\/(png|jpe?g|webp);base64,/.test(assinaturaInstrutorBase64)) {
-    try {
-      const buf = Buffer.from(assinaturaInstrutorBase64.split(",")[1], "base64");
-      doc.image(buf, RIGHT.x + (RIGHT.w - 150) / 2, baseY - 50, { width: 150 });
-    } catch (e) {
-      console.warn("⚠️ Assinatura do instrutor inválida:", e.message);
+    if (assinaturaInstrutorBase64 && /^data:image\/(png|jpe?g|webp);base64,/.test(assinaturaInstrutorBase64)) {
+      try {
+        const buf = Buffer.from(assinaturaInstrutorBase64.split(",")[1], "base64");
+        doc.image(buf, RIGHT.x + (RIGHT.w - 150) / 2, baseY - 50, { width: 150 });
+      } catch (e) {
+        console.warn("⚠️ Assinatura do instrutor inválida:", e.message);
+      }
     }
+    doc.font("AlegreyaSans-Bold").fontSize(20)
+       .text(nomeInstrutor, RIGHT.x, baseY, { align: "center", width: RIGHT.w });
+    doc.font("AlegreyaSans-Regular").fontSize(14)
+       .text("Instrutor(a)", RIGHT.x, baseY + 25, { align: "center", width: RIGHT.w });
   }
-  doc.font("AlegreyaSans-Bold").fontSize(20).text(nomeInstrutor, RIGHT.x, baseY, { align: "center", width: RIGHT.w });
-  doc.font("AlegreyaSans-Regular").fontSize(14).text("Instrutor(a)", RIGHT.x, baseY + 25, { align: "center", width: RIGHT.w });
 
   // QR Code (validação)
   const FRONTEND_BASE_URL = process.env.FRONTEND_BASE_URL || "https://escoladasaude.vercel.app";
@@ -390,6 +373,7 @@ async function _gerarPdfFisico({
 
   return { nomeArquivo, caminho };
 }
+
 
 /* ========================= Gerar Certificado ========================= */
 async function gerarCertificado(req, res) {

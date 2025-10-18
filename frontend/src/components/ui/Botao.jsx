@@ -5,10 +5,12 @@ import { forwardRef, useCallback, useMemo } from "react";
 /**
  * Botão acessível e responsivo.
  * - Variantes alinhadas à paleta (lousa, azul petróleo, dourado, violeta, laranja, vermelho).
- * - Estados: loading/disabled com aria-busy + spinner semântico.
+ * - Gradientes 3 cores nas variantes principais.
+ * - Estados: loading/disabled com aria-busy + spinner semântico (e loadingText).
  * - Previne duplo clique enquanto loading.
- * - Suporte a ícones (leftIcon/rightIcon) e larguras/sizes.
- * - Foco visível consistente (usa tokens/cores do projeto).
+ * - Suporte a ícones (leftIcon/rightIcon), tamanhos, forma (rounded|pill|square) e elevação.
+ * - Suporte a href/target (vira <a role="button">).
+ * - Foco visível consistente.
  */
 const Botao = forwardRef(function Botao(
   {
@@ -17,62 +19,84 @@ const Botao = forwardRef(function Botao(
     type = "button",
     variant = "primary",
     size = "md",
+    shape = "rounded",        // "rounded" | "pill" | "square"
+    elevation = "md",         // "none" | "md" | "lg"
     disabled = false,
     loading = false,
+    loadingText = "Carregando…",
     fullWidth = false,
     leftIcon = null,
     rightIcon = null,
     ariaLabel,
     className = "",
+    title,
+    href,                     // se definido, renderiza <a>
+    target,
+    rel,
   },
   ref
 ) {
   const isDisabled = disabled || loading;
+  const isLink = typeof href === "string" && href.length > 0;
 
   const base =
-    "inline-flex items-center justify-center gap-2 rounded-2xl font-medium " +
+    "inline-flex items-center justify-center gap-2 font-medium " +
     "transition focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 " +
-    "ring-offset-background disabled:cursor-not-allowed select-none";
+    "ring-offset-background disabled:cursor-not-allowed select-none " +
+    "whitespace-nowrap";
 
   const sizes = useMemo(
     () => ({
-      sm: "px-3 py-1.5 text-sm",
-      md: "px-4 py-2 text-base",
-      lg: "px-5 py-3 text-base md:text-lg",
+      sm: "px-3 py-2 text-sm min-h-[40px]",
+      md: "px-4 py-2.5 text-base min-h-[44px]",
+      lg: "px-5 py-3 text-base md:text-lg min-h-[48px]",
+      xl: "px-6 py-3.5 text-lg min-h-[52px]",
     }),
     []
   );
 
-  // Paleta: lousa (primário), azul-petróleo (secondary), dourado (warning),
-  // violeta (info), laranja (accent), vermelho (danger), neutro (ghost/outline).
+  const shapes = useMemo(
+    () => ({
+      rounded: "rounded-2xl",
+      pill: "rounded-full",
+      square: "rounded-lg",
+    }),
+    []
+  );
+
+  const elevations = useMemo(
+    () => ({
+      none: "",
+      md: "shadow-md hover:shadow-lg",
+      lg: "shadow-lg hover:shadow-xl",
+    }),
+    []
+  );
+
+  // Paleta com gradiente 3-cores nas principais
   const variants = useMemo(
     () => ({
       primary:
-        // verde lousa
-        "bg-lousa text-textoLousa hover:bg-lousa/90 " +
-        "disabled:bg-lousa/50 dark:hover:bg-lousa/80",
+        "text-textoLousa bg-gradient-to-br from-lousa via-lousa/90 to-lousa/80 hover:brightness-110 " +
+        "disabled:opacity-60",
       secondary:
-        // azul petróleo
-        "bg-azulPetroleo text-white hover:bg-azulPetroleo/90 " +
+        "text-white bg-gradient-to-br from-azulPetroleo via-azulPetroleo/90 to-azulPetroleo/80 hover:brightness-110 " +
         "disabled:opacity-60",
       warning:
-        // dourado
-        "bg-dourado text-black hover:bg-dourado/90 disabled:opacity-60",
+        "text-black bg-gradient-to-br from-dourado via-dourado/90 to-dourado/80 hover:brightness-110 disabled:opacity-60",
       info:
-        // violeta
-        "bg-violeta text-white hover:bg-violeta/90 disabled:opacity-60",
+        "text-white bg-gradient-to-br from-violeta via-violeta/90 to-violeta/80 hover:brightness-110 disabled:opacity-60",
       accent:
-        // laranja
-        "bg-laranja text-black hover:bg-laranja/90 disabled:opacity-60",
+        "text-black bg-gradient-to-br from-laranja via-laranja/90 to-laranja/80 hover:brightness-110 disabled:opacity-60",
       danger:
-        // vermelho p/ ações destrutivas
-        "bg-red-600 text-white hover:bg-red-700 disabled:opacity-60",
+        "text-white bg-red-600 hover:bg-red-700 disabled:opacity-60",
       outline:
-        // contorno neutro (bom p/ secundário em superfícies claras/escuras)
         "bg-transparent text-foreground border border-gray-300 " +
         "hover:bg-gray-100 dark:border-gray-600 dark:hover:bg-gray-700",
       ghost:
         "bg-transparent text-foreground hover:bg-black/5 dark:hover:bg-white/10",
+      link:
+        "bg-transparent underline underline-offset-4 text-azulPetroleo hover:opacity-80 dark:text-dourado",
     }),
     []
   );
@@ -90,38 +114,62 @@ const Botao = forwardRef(function Botao(
     [isDisabled, onClick]
   );
 
+  const Tag = isLink ? "a" : "button";
+  const commonProps = isLink
+    ? {
+        href,
+        target,
+        rel: rel ?? (target === "_blank" ? "noopener noreferrer" : undefined),
+        role: "button",
+        "aria-disabled": isDisabled || undefined,
+        onClick: isDisabled ? (e) => e.preventDefault() : undefined,
+      }
+    : {
+        type,
+        disabled: isDisabled,
+        onClick: handleClick,
+        "aria-disabled": isDisabled,
+      };
+
   return (
-    <button
+    <Tag
       ref={ref}
-      type={type}
-      onClick={handleClick}
-      disabled={isDisabled}
-      aria-disabled={isDisabled}
+      title={title}
       aria-busy={loading || undefined}
       aria-label={ariaLabel}
       className={[
         base,
+        shapes[shape],
         sizes[size],
+        elevations[elevation],
         variants[variant] ?? variants.primary,
+        "focus-visible:ring-white/80 dark:focus-visible:ring-white/70",
         width,
         className,
-      ].join(" ")}
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      {...commonProps}
     >
       {/* Spinner acessível quando loading */}
       {loading && (
-        <span
-          className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent"
-          aria-hidden="true"
-        />
+        <>
+          <span
+            className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+            aria-hidden="true"
+          />
+          {/* Texto escondido para leitores de tela */}
+          <span className="sr-only">{loadingText}</span>
+        </>
       )}
 
-      {leftIcon && <span className="inline-flex shrink-0">{leftIcon}</span>}
+      {leftIcon && <span className="inline-flex shrink-0" aria-hidden="true">{leftIcon}</span>}
 
       {/* Texto do botão: mantém espaçamento quando o spinner aparece */}
       <span className={loading ? "opacity-90" : ""}>{children}</span>
 
-      {rightIcon && <span className="inline-flex shrink-0">{rightIcon}</span>}
-    </button>
+      {rightIcon && <span className="inline-flex shrink-0" aria-hidden="true">{rightIcon}</span>}
+    </Tag>
   );
 });
 
@@ -138,15 +186,23 @@ Botao.propTypes = {
     "danger",
     "outline",
     "ghost",
+    "link",
   ]),
-  size: PropTypes.oneOf(["sm", "md", "lg"]),
+  size: PropTypes.oneOf(["sm", "md", "lg", "xl"]),
+  shape: PropTypes.oneOf(["rounded", "pill", "square"]),
+  elevation: PropTypes.oneOf(["none", "md", "lg"]),
   disabled: PropTypes.bool,
   loading: PropTypes.bool,
+  loadingText: PropTypes.string,
   fullWidth: PropTypes.bool,
   leftIcon: PropTypes.node,
   rightIcon: PropTypes.node,
   ariaLabel: PropTypes.string,
   className: PropTypes.string,
+  title: PropTypes.string,
+  href: PropTypes.string,
+  target: PropTypes.string,
+  rel: PropTypes.string,
 };
 
 export default Botao;

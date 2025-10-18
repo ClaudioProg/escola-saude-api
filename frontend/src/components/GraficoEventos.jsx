@@ -19,7 +19,8 @@ function toNumber(v) {
   return Number.isFinite(n) ? n : 0;
 }
 function normKey(s) {
-  if (!s) return "";
+  if (s === 0) return "0";
+  if (!s && s !== 0) return "";
   return s
     .toString()
     .normalize("NFD")
@@ -29,19 +30,69 @@ function normKey(s) {
 }
 function mapLabelToSlot(label) {
   const k = normKey(label);
-  if (["realizados", "concluidos", "concluídos", "finalizados", "executados", "encerrados", "feitos"].includes(k))
+  if (
+    [
+      "realizados",
+      "concluidos",
+      "concluido",
+      "concluidos",
+      "concluido",
+      "concluidos",
+      "finalizados",
+      "executados",
+      "encerrados",
+      "feitos",
+      "realizado",
+      "finalizado",
+      "encerrado",
+    ].includes(k)
+  )
     return "realizados";
-  if (["programados", "agendados", "marcados", "futuros", "proximos", "próximos"].includes(k))
+
+  if (
+    [
+      "programados",
+      "programado",
+      "agendados",
+      "agendado",
+      "marcados",
+      "marcado",
+      "futuros",
+      "futuro",
+      "proximos",
+      "proximo",
+      "proximas",
+      "proxima",
+      "próximos",
+      "próximo",
+      "próximas",
+      "próxima",
+    ].includes(k)
+  )
     return "programados";
-  if (["instrutor", "ministrados", "como instrutor", "docente", "professor", "palestrante"].includes(k))
+
+  if (
+    [
+      "instrutor",
+      "ministrados",
+      "ministrado",
+      "como instrutor",
+      "docente",
+      "professor",
+      "palestrante",
+      "como docente",
+      "como palestrante",
+    ].includes(k)
+  )
     return "instrutor";
+
   return null;
 }
 
 /**
  * Aceita:
  *  - objeto: { realizados, programados, instrutor } (qualquer caixa/acentos/sinônimos)
- *  - array: [{ label|status|tipo, valor|qtd|quantidade|count }]
+ *  - array: [{ label|status|tipo|nome|categoria, valor|qtd|quantidade|count|total|numero }]
  */
 export function normalizeEventos(input) {
   const base = { realizados: 0, programados: 0, instrutor: 0 };
@@ -63,22 +114,44 @@ export function normalizeEventos(input) {
 
   // Objeto plano (soma aliases compatíveis)
   const keys = Object.keys(input || {});
-  const readByAliases = (aliases) => {
-    let sum = 0;
-    for (const a of aliases) {
-      if (a in input) sum += toNumber(input[a]);
-      else {
-        const m = keys.find((k) => normKey(k) === normKey(a));
-        if (m) sum += toNumber(input[m]);
-      }
-    }
-    return sum;
-  };
+  const sumByAliases = (aliases) =>
+    aliases.reduce((sum, a) => {
+      if (a in input) return sum + toNumber(input[a]);
+      const m = keys.find((k) => normKey(k) === normKey(a));
+      return m ? sum + toNumber(input[m]) : sum;
+    }, 0);
 
   return {
-    realizados: readByAliases(["realizados", "concluídos", "concluidos", "finalizados", "executados", "encerrados"]),
-    programados: readByAliases(["programados", "agendados", "próximos", "proximos", "futuros", "marcados"]),
-    instrutor: readByAliases(["instrutor", "ministrados", "como instrutor", "docente", "palestrante"]),
+    realizados: sumByAliases([
+      "realizados",
+      "realizado",
+      "concluídos",
+      "concluidos",
+      "finalizados",
+      "executados",
+      "encerrados",
+      "feitos",
+    ]),
+    programados: sumByAliases([
+      "programados",
+      "programado",
+      "agendados",
+      "agendado",
+      "próximos",
+      "proximos",
+      "futuros",
+      "marcados",
+      "marcado",
+    ]),
+    instrutor: sumByAliases([
+      "instrutor",
+      "ministrados",
+      "ministrado",
+      "como instrutor",
+      "docente",
+      "palestrante",
+      "professor",
+    ]),
   };
 }
 
@@ -91,11 +164,18 @@ export default function GraficoEventos({
   showLegend = false,
 }) {
   const norm = useMemo(() => normalizeEventos(dados), [dados]);
-  const dataVals = [norm.realizados, norm.programados, norm.instrutor];
+  const dataVals = useMemo(
+    () => [norm.realizados, norm.programados, norm.instrutor],
+    [norm]
+  );
 
-  // evita gráfico vazio
+  const total = dataVals.reduce((a, b) => a + (Number(b) || 0), 0);
   const hasData = dataVals.some((v) => Number(v) > 0);
+
   const [reduceMotion, setReduceMotion] = useState(false);
+  const isDark = typeof document !== "undefined" && document.documentElement.classList.contains("dark");
+  const tickColor = isDark ? "#e5e7eb" : "#374151";
+  const gridColor = isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)";
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -115,70 +195,70 @@ export default function GraficoEventos({
   }
 
   // Paleta padrão (coerente com o restante do app)
-  const colors = palette ?? [
-    "#065f46", // emerald-800 — Realizados
-    "#b45309", // amber-700   — Programados
-    "#1d4ed8", // blue-700    — Instrutor
-  ];
+  const colors = useMemo(
+    () =>
+      palette ?? [
+        "#065f46", // emerald-800 — Realizados
+        "#b45309", // amber-700   — Programados
+        "#1d4ed8", // blue-700    — Instrutor
+      ],
+    [palette]
+  );
 
-  const data = {
-    labels: ["Realizados", "Programados", "Instrutor"],
-    datasets: [
-      {
-        label: "Eventos",
-        data: dataVals,
-        backgroundColor: colors,
-        borderColor: "#ffffff",
-        borderWidth: 1.5,
-        borderSkipped: false,
-      },
-    ],
-  };
+  const data = useMemo(
+    () => ({
+      labels: ["Realizados", "Programados", "Instrutor"],
+      datasets: [
+        {
+          label: "Eventos",
+          data: dataVals,
+          backgroundColor: colors,
+          borderColor: "#ffffff",
+          borderWidth: 1.5,
+          borderSkipped: false,
+        },
+      ],
+    }),
+    [dataVals, colors]
+  );
 
-  const options = {
-    responsive: true,
-    maintainAspectRatio: false, // usa a altura do container
-    animation: reduceMotion ? false : { duration: 600 },
-    plugins: {
-      legend: { display: showLegend, position: "bottom" },
-      tooltip: {
-        callbacks: {
-          label: (ctx) => {
-            const val = Number(ctx.raw) || 0;
-            return `${ctx.label}: ${val}`;
+  const options = useMemo(
+    () => ({
+      responsive: true,
+      maintainAspectRatio: false, // usa a altura do container
+      animation: reduceMotion ? false : { duration: 600 },
+      plugins: {
+        legend: { display: showLegend, position: "bottom" },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const val = Number(ctx.raw) || 0;
+              return `${ctx.label}: ${val}`;
+            },
           },
         },
       },
-    },
-    scales: {
-      x: {
-        grid: { display: false },
-        ticks: {
-          color: (ctx) =>
-            document.documentElement.classList.contains("dark") ? "#e5e7eb" : "#374151",
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: { color: tickColor },
+        },
+        y: {
+          beginAtZero: true,
+          ticks: { precision: 0, color: tickColor },
+          grid: { color: gridColor },
         },
       },
-      y: {
-        beginAtZero: true,
-        ticks: {
-          precision: 0,
-          color: (ctx) =>
-            document.documentElement.classList.contains("dark") ? "#e5e7eb" : "#374151",
-        },
-        grid: {
-          color: (ctx) =>
-            document.documentElement.classList.contains("dark") ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)",
-        },
-      },
-    },
-  };
+    }),
+    [reduceMotion, showLegend, tickColor, gridColor]
+  );
 
   return (
     <div
       className={`relative w-full ${className}`}
       style={{ minHeight: height }}
       role="img"
-      aria-label="Gráfico de barras com totais de eventos realizados, programados e como instrutor."
+      aria-label={`Gráfico de barras com totais de eventos (${total} no período): realizados, programados e como instrutor.`}
     >
       <Bar data={data} options={options} />
     </div>

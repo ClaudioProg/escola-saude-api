@@ -72,6 +72,17 @@ registerIf(listarInstrutoresHandler, function listarInstrutoresRoute() {
   );
 });
 
+// 👨‍⚖️ Listar avaliadores elegíveis (instrutor/administrador) — admin
+registerIf(usuarioAdministradorController?.listarAvaliadoresElegiveis, function listarAvaliadoresElegiveisRoute() {
+  // Ex.: GET /usuarios/avaliadores?roles=instrutor,administrador
+  router.get(
+    "/avaliadores",
+    authMiddleware,
+    authorizeRoles("administrador"),
+    usuarioAdministradorController.listarAvaliadoresElegiveis
+  );
+});
+
 // 📊 Resumo do usuário (cursos ≥75% e certificados) — admin
 registerIf(usuarioAdministradorController?.getResumoUsuario, function getResumoUsuarioRoute() {
   router.get(

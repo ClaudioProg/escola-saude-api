@@ -14,106 +14,167 @@ const requireAdmin = [requireAuth, authorizeRoles("administrador")];
 const ctrl = require("../controllers/trabalhosController");
 
 /* ------------------------------------------------------------------
-   Storage de pôster (PPT/PPTX)
+   Storage de pôster e banner (paths unificados)
 ------------------------------------------------------------------ */
-const { POSTERS_DIR } = require("../paths");
-const postersDir = POSTERS_DIR; // já é garantido pelo paths.js
+const { POSTERS_DIR, BANNERS_DIR, ensureDir } = require("../paths");
 
-const storage = multer.diskStorage({
-  destination: (_, __, cb) => cb(null, postersDir),
-  filename: (_, file, cb) => {
-    const uid = Date.now() + "_" + Math.round(Math.random() * 1e9);
-    cb(null, `${uid}${path.extname(file.originalname)}`);
-  },
-});
+// Garante diretórios persistentes (cross-env)
+const postersDir = POSTERS_DIR;
+const bannersDir = BANNERS_DIR || path.join(POSTERS_DIR, "..", "banners");
+[postersDir, bannersDir].forEach((d) => ensureDir(d));
 
-const fileFilter = (_req, file, cb) => {
+/* ------------------------------------------------------------------
+   Helpers
+------------------------------------------------------------------ */
+function buildSafeName(originalname) {
+  const ext = path.extname(originalname || "").toLowerCase();
+  const uid = Date.now() + "_" + Math.round(Math.random() * 1e9);
+  return `${uid}${ext}`;
+}
+function isPptOrPptx(file) {
   const okMime =
-    file.mimetype === "application/vnd.ms-powerpoint" || // .ppt
-    file.mimetype === "application/vnd.openxmlformats-officedocument.presentationml.presentation"; // .pptx
+    file.mimetype === "application/vnd.ms-powerpoint" ||
+    file.mimetype === "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+  const okExt = /\.(pptx?|PPTX?)$/i.test(file.originalname || "");
+  return okMime || okExt;
+}
+function isBannerAllowed(file) {
+  const okMime = /^image\//i.test(file.mimetype) || /pdf/i.test(file.mimetype);
+  const okExt = /\.(png|jpe?g|gif|pdf)$/i.test(file.originalname || "");
+  return okMime || okExt;
+}
 
-  const okExt = /\.(pptx?|PPTX?)$/.test(file.originalname || "");
+/* ------------------------------------------------------------------
+   Multer storages e filtros (com limites)
+------------------------------------------------------------------ */
+const MAX_POSTER_MB = Number(process.env.MAX_POSTER_MB || 50);
+const MAX_BANNER_MB = Number(process.env.MAX_BANNER_MB || 30);
 
-  if (okMime || okExt) return cb(null, true);
+const posterStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, postersDir),
+  filename: (_req, file, cb) => cb(null, buildSafeName(file.originalname)),
+});
+const posterFileFilter = (_req, file, cb) => {
+  if (isPptOrPptx(file)) return cb(null, true);
   return cb(Object.assign(new Error("Apenas arquivos .ppt ou .pptx"), { status: 400 }));
 };
+const posterUpload = multer({
+  storage: posterStorage,
+  fileFilter: posterFileFilter,
+  limits: { fileSize: MAX_POSTER_MB * 1024 * 1024 },
+});
 
-const upload = multer({
-  storage,
-  fileFilter,
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
+const bannerStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, bannersDir),
+  filename: (_req, file, cb) => cb(null, buildSafeName(file.originalname)),
+});
+const bannerFileFilter = (_req, file, cb) => {
+  if (isBannerAllowed(file)) return cb(null, true);
+  return cb(
+    Object.assign(new Error("Formato inválido. Envie PNG, JPG, GIF ou PDF."), { status: 400 })
+  );
+};
+const bannerUpload = multer({
+  storage: bannerStorage,
+  fileFilter: bannerFileFilter,
+  limits: { fileSize: MAX_BANNER_MB * 1024 * 1024 },
 });
 
 /* ------------------------------------------------------------------
-   Rate limit simples por IP/rota para evitar double click no upload
+   Rate limit simples por IP/rota para evitar double-click no upload
 ------------------------------------------------------------------ */
 const recentUploads = new Map(); // key: ip+rota -> timestamp
-function uploadRateLimit(req, res, next) {
-  const now = Date.now();
-  const key = `${req.ip}:/submissoes/${req.params.id}/poster`;
-  const last = recentUploads.get(key) || 0;
-  if (now - last < 3000) {
-    return res
-      .status(429)
-      .json({ erro: "Muitas tentativas. Aguarde alguns segundos e tente novamente." });
-  }
-  recentUploads.set(key, now);
-  setTimeout(() => recentUploads.delete(key), 5000);
-  next();
+function mkRateLimiter(keyBuilder, windowMs = 3000, forgetMs = 5000) {
+  return function (req, res, next) {
+    const now = Date.now();
+    const key = keyBuilder(req);
+    const last = recentUploads.get(key) || 0;
+    if (now - last < windowMs) {
+      return res
+        .status(429)
+        .json({ erro: "Muitas tentativas. Aguarde alguns segundos e tente novamente." });
+    }
+    recentUploads.set(key, now);
+    setTimeout(() => recentUploads.delete(key), forgetMs);
+    next();
+  };
+}
+const posterRateLimit = mkRateLimiter((req) => `${req.ip}:/submissoes/${req.params.id}/poster`);
+const bannerRateLimit = mkRateLimiter((req) => `${req.ip}:/submissoes/${req.params.id}/banner`);
+
+/* ------------------------------------------------------------------
+   Middleware de erro específico do Multer (reutilizável)
+------------------------------------------------------------------ */
+function multerErrorHandler(maxMbMsg) {
+  return (err, _req, res, next) => {
+    if (!err) return next();
+    if (err.code === "LIMIT_FILE_SIZE") {
+      return res.status(413).json({ erro: maxMbMsg });
+    }
+    const msg = err.message || "Falha no upload do arquivo.";
+    const status = err.status || 400;
+    return res.status(status).json({ erro: msg });
+  };
 }
 
 /* ───────────────────────── ROTAS DO USUÁRIO ───────────────────────── */
-// Criar submissão (pode vir como rascunho ou enviado)
+// Criar submissão (rascunho ou enviado)
 router.post("/chamadas/:chamadaId/submissoes", requireAuth, ctrl.criarSubmissao);
 
-// Editar submissão (usar para salvar rascunho depois do 1º POST ou para enviar)
+// Editar submissão
 router.put("/submissoes/:id", requireAuth, ctrl.atualizarSubmissao);
 
-// Excluir submissão (até o prazo e se não estiver em avaliação/finalizada)
+// Excluir submissão
 router.delete("/submissoes/:id", requireAuth, ctrl.removerSubmissao);
 
-// Upload/atualização do pôster
+/* Upload/atualização do PÔSTER (.ppt/.pptx) */
 router.post(
   "/submissoes/:id/poster",
   requireAuth,
-  uploadRateLimit,
-  upload.single("poster"),
-  // Middleware de erro específico do multer (precisa ter 4 args)
-  (err, _req, res, next) => {
-    if (err) {
-      if (err.code === "LIMIT_FILE_SIZE") {
-        return res.status(413).json({ erro: "Arquivo muito grande (máximo 50MB)." });
-      }
-      const msg = err.message || "Falha no upload do arquivo.";
-      const status = err.status || 400;
-      return res.status(status).json({ erro: msg });
-    }
-    next();
-  },
+  posterRateLimit,
+  posterUpload.single("poster"),
+  multerErrorHandler(`Arquivo muito grande (máximo ${MAX_POSTER_MB}MB).`),
+  // dica: se quiser salvar BLOB também, o controller pode ler req.file.path
   ctrl.atualizarPoster
 );
 
-// Minhas submissões / Detalhe da submissão
+/* Upload/atualização do BANNER (png/jpg/gif/pdf) */
+router.post(
+  "/submissoes/:id/banner",
+  requireAuth,
+  bannerRateLimit,
+  bannerUpload.single("banner"),
+  multerErrorHandler(`Arquivo muito grande (máximo ${MAX_BANNER_MB}MB).`),
+  ctrl.atualizarBanner
+);
+
+// Minhas submissões / Detalhe
 router.get("/minhas-submissoes", requireAuth, ctrl.minhasSubmissoes);
-router.get("/submissoes/minhas", requireAuth, ctrl.minhasSubmissoes); 
+router.get("/submissoes/minhas", requireAuth, ctrl.minhasSubmissoes);
 router.get("/submissoes/:id", requireAuth, ctrl.obterSubmissao);
 
 /* ─────────────────────────── ROTAS ADMIN ─────────────────────────── */
-// 🆕 Lista TODAS as submissões (sem filtrar por chamada)
+// Lista todas as submissões (sem filtrar por chamada)
 router.get("/admin/submissoes", requireAdmin, ctrl.listarSubmissoesAdminTodas);
 
-// Lista submissões por chamada (compat)
+// Lista por chamada (compat)
 router.get("/admin/chamadas/:chamadaId/submissoes", requireAdmin, ctrl.listarSubmissoesAdmin);
 
-// Download do pôster
+// Downloads (inline; autorização fina no controller)
 router.get("/submissoes/:id/poster", requireAuth, ctrl.baixarPoster);
+router.get("/submissoes/:id/banner", requireAuth, ctrl.baixarBanner);
 
-// Avaliações
-router.post("/admin/submissoes/:id/avaliar", requireAdmin, ctrl.avaliarEscrita);
-router.post("/admin/submissoes/:id/avaliar-oral", requireAdmin, ctrl.avaliarOral);
+/* Avaliações — controller valida admin OU avaliador atribuído */
+router.post("/admin/submissoes/:id/avaliar", requireAuth, ctrl.avaliarEscrita);
+router.post("/admin/submissoes/:id/avaliar-oral", requireAuth, ctrl.avaliarOral);
 
-// Consolidação e status final
+/* Consolidação e status final (admin-only) */
 router.post("/admin/chamadas/:chamadaId/classificar", requireAdmin, ctrl.consolidarClassificacao);
 router.post("/admin/submissoes/:id/status", requireAdmin, ctrl.definirStatusFinal);
+
+/* Painel do avaliador */
+router.get("/avaliador/submissoes", requireAuth, ctrl.listarSubmissoesDoAvaliador);
+router.get("/avaliador/submissoes/:id", requireAuth, ctrl.obterParaAvaliacao);
+router.post("/avaliador/submissoes/:id/avaliar", requireAuth, ctrl.avaliarEscrita);
 
 module.exports = router;

@@ -1,12 +1,12 @@
-// ✅ src/pages/Eventos.jsx
+// ✅ src/pages/Eventos.jsx (revisado)
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
 import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
+import { motion, useReducedMotion } from "framer-motion";
 
 import { CalendarDays, RefreshCw } from "lucide-react";
-import PageHeader from "../components/PageHeader"; // (mantido se precisar em outras páginas, mas não usado aqui)
 import Footer from "../components/Footer";
 import NadaEncontrado from "../components/NadaEncontrado";
 import BotaoPrimario from "../components/BotaoPrimario";
@@ -17,21 +17,31 @@ import { apiGet, apiPost } from "../services/api";
 /* ───────────────── Hero centralizado (sem breadcrumbs) ───────────────── */
 function EventosHero({ onRefresh }) {
   return (
-    <header className="bg-gradient-to-br from-indigo-900 via-violet-800 to-indigo-700 text-white">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 flex flex-col items-center text-center gap-3">
+    <header
+      className="bg-gradient-to-br from-indigo-900 via-violet-800 to-indigo-700 text-white"
+      role="banner"
+    >
+      <a
+        href="#conteudo"
+        className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2"
+      >
+        Ir para o conteúdo
+      </a>
+
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-10 flex flex-col items-center text-center gap-3">
         <div className="inline-flex items-center gap-2">
-          <span className="text-2xl">🎓</span>
+          <span className="text-2xl" aria-hidden="true">🎓</span>
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
             Eventos disponíveis
           </h1>
         </div>
-        <p className="text-sm text-white/90">
+        <p className="text-sm sm:text-base text-white/90">
           Inscreva-se em turmas abertas ou consulte detalhes dos eventos.
         </p>
         <BotaoPrimario
           onClick={onRefresh}
           variante="secundario"
-          icone={<RefreshCw className="w-4 h-4" />}
+          icone={<RefreshCw className="w-4 h-4" aria-hidden="true" />}
           aria-label="Atualizar lista de eventos"
         >
           Atualizar
@@ -107,11 +117,11 @@ export default function Eventos() {
   const [carregandoEventos, setCarregandoEventos] = useState(true);
 
   const [filtro, setFiltro] = useState("programado");
+  const reduceMotion = useReducedMotion();
 
   const navigate = useNavigate();
   let usuario = {};
   try { usuario = JSON.parse(localStorage.getItem("usuario") || "{}"); } catch {}
-  const nome = usuario?.nome || "";
   const usuarioId = Number(usuario?.id) || null;
 
   /* -------------------- carregamentos -------------------- */
@@ -297,46 +307,33 @@ export default function Eventos() {
     return "programado";
   }
 
+  // Chips sólidos legíveis (sem degradê)
   const chip = {
-    programado: { text: "Programado", cls: "bg-emerald-100 text-emerald-800" },
-    andamento:  { text: "Em andamento", cls: "bg-amber-100 text-amber-800" },
-    encerrado:  { text: "Encerrado", cls: "bg-rose-100 text-rose-800" },
+    programado: { text: "Programado", cls: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800" },
+    andamento:  { text: "Em andamento", cls: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200 border border-amber-200 dark:border-amber-800" },
+    encerrado:  { text: "Encerrado", cls: "bg-rose-100 text-rose-800 dark:bg-rose-900/30 dark:text-rose-200 border border-rose-200 dark:border-rose-800" },
   };
 
   const setFiltroNormalizado = (valor) => {
     const v = String(valor || "").toLowerCase().replace(/\s+/g, "_");
-  
     if (v === "todos") return setFiltro("todos");
     if (v === "programados" || v === "programado") return setFiltro("programado");
-  
-    // <- aceite qualquer forma e normalize para "andamento"
-    if (v === "andamento" || v === "em_andamento" || v === "em-andamento")
-      return setFiltro("andamento");
-  
-    if (["encerrado", "encerrados", "finalizado", "concluido", "concluído"].includes(v))
-      return setFiltro("encerrado");
-  
+    if (v === "andamento" || v === "em_andamento" || v === "em-andamento") return setFiltro("andamento");
+    if (["encerrado", "encerrados", "finalizado", "concluido", "concluído"].includes(v)) return setFiltro("encerrado");
     setFiltro("programado");
   };
 
-  // 🔎 aplica regra: nunca mostrar encerrados sem inscrição prévia
-const eventosFiltrados = eventos.filter((evento) => {
-  const st = statusDoEvento(evento); // "programado" | "andamento" | "encerrado"
-  const inscrito = jaInscritoNoEvento(evento);
-
-  // 1) regra global: esconder encerrados para quem não participou
-  if (st === "encerrado" && !inscrito) return false;
-
-  // 2) filtros visuais
-  if (filtro === "todos") return true;
-  if (filtro === "programado") return st === "programado";
-  if (filtro === "andamento") return st === "andamento";
-
-  // 3) no filtro "encerrado", só aparecem os que ele participou
-  if (filtro === "encerrado") return st === "encerrado" && inscrito;
-
-  return true;
-});
+  // 🔎 regra: nunca mostrar encerrados sem inscrição prévia
+  const eventosFiltrados = eventos.filter((evento) => {
+    const st = statusDoEvento(evento);
+    const inscrito = jaInscritoNoEvento(evento);
+    if (st === "encerrado" && !inscrito) return false;
+    if (filtro === "todos") return true;
+    if (filtro === "programado") return st === "programado";
+    if (filtro === "andamento") return st === "andamento";
+    if (filtro === "encerrado") return st === "encerrado" && inscrito;
+    return true;
+  });
 
   function keyFim(evento) {
     const ts = turmasDoEvento(evento);
@@ -354,25 +351,21 @@ const eventosFiltrados = eventos.filter((evento) => {
 
   /* --------------------------------- UI --------------------------------- */
   return (
-    <main className="min-h-screen bg-gelo dark:bg-zinc-900">
-      {/* ✅ header centralizado, sem breadcrumbs */}
+    <main id="conteudo" className="min-h-screen bg-gelo dark:bg-zinc-900">
       <EventosHero onRefresh={atualizarEventos} />
 
       <div className="px-2 sm:px-4 py-6 max-w-6xl mx-auto">
         {/* Filtros */}
         <section aria-label="Filtros de eventos" className="mb-5">
-          <FiltrosEventos
-            filtroAtivo={filtro}
-            onFiltroChange={setFiltroNormalizado}
-            filtroSelecionado={filtro}
-            valorSelecionado={filtro}
-            onChange={setFiltroNormalizado}
-          />
+        <FiltrosEventos
+  filtroSelecionado={filtro}
+  onFiltroChange={setFiltroNormalizado}
+/>
         </section>
 
         {carregandoEventos ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4" aria-busy="true" aria-live="polite">
-            {[...Array(6)].map((_, i) => (<Skeleton key={i} height={200} className="rounded-xl" />))}
+            {[...Array(6)].map((_, i) => (<Skeleton key={i} height={200} className="rounded-2xl" />))}
           </div>
         ) : erro ? (
           <p className="text-red-500 text-center">{erro}</p>
@@ -385,13 +378,17 @@ const eventosFiltrados = eventos.filter((evento) => {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {[...eventosFiltrados]
               .sort((a, b) => (keyFim(b) > keyFim(a) ? 1 : keyFim(b) < keyFim(a) ? -1 : 0))
-              .map((evento) => {
+              .map((evento, idx) => {
                 const ehInstrutor = Boolean(evento.ja_instrutor);
                 const st = statusDoEvento(evento);
                 const chipCfg = chip[st];
+
                 return (
-                  <article
-                    key={evento.id}
+                  <motion.article
+                    key={evento.id ?? idx}
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: reduceMotion ? 0 : 0.35 }}
                     className="bg-white dark:bg-neutral-900 rounded-2xl p-5 shadow border border-gray-200 dark:border-gray-700"
                     aria-labelledby={`evt-${evento.id}-titulo`}
                   >
@@ -472,7 +469,7 @@ const eventosFiltrados = eventos.filter((evento) => {
                         />
                       </div>
                     )}
-                  </article>
+                  </motion.article>
                 );
               })}
           </div>

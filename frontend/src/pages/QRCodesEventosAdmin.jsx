@@ -54,6 +54,28 @@ function HeaderHero({ onRefresh, carregando }) {
 const safeStr = (s, max = 200) => String(s ?? "").slice(0, max).trim();
 const tituloEvento = (ev) => safeStr(ev?.titulo || ev?.nome || `Evento #${ev?.id ?? "—"}`, 170);
 const tituloTurma = (t) => safeStr(t?.nome || `Turma #${t?.id ?? "—"}`, 170);
+const normaliza = (s) => String(s || "").toLowerCase();
+
+/* ---------------- Cache (sessionStorage) ---------------- */
+const CACHE_KEY = "qr:eventos:v1";
+const CACHE_TTL = 3 * 60 * 1000; // 3 min
+
+const readCache = () => {
+  try {
+    const raw = sessionStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.ts || Date.now() - parsed.ts > CACHE_TTL) return null;
+    return Array.isArray(parsed.eventos) ? parsed.eventos : null;
+  } catch {
+    return null;
+  }
+};
+const writeCache = (eventos) => {
+  try {
+    sessionStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), eventos }));
+  } catch {}
+};
 
 /* ---------------- Página ---------------- */
 export default function QRCodesEventosAdmin() {
@@ -65,30 +87,37 @@ export default function QRCodesEventosAdmin() {
   const [busca, setBusca] = useState(() => localStorage.getItem("qr:busca") || "");
   const [buscaDebounced, setBuscaDebounced] = useState(busca);
   const [gerando, setGerando] = useState(null); // turmaId em processamento
+  const [tentativa, setTentativa] = useState(0); // retry leve
 
   const liveRef = useRef(null);
   const erroRef = useRef(null);
+  const abortRef = useRef(null);
 
   const setLive = useCallback((msg) => {
     if (liveRef.current) liveRef.current.textContent = msg;
   }, []);
 
-  /* ---------------- Carregar dados ---------------- */
-  async function carregar() {
+  /* ---------------- Carregar dados (Abort + Cache) ---------------- */
+  const carregar = useCallback(async () => {
+    // cancela requests anteriores
+    abortRef.current?.abort?.();
+    const ac = new AbortController();
+    abortRef.current = ac;
+
     setCarregandoDados(true);
     setErro("");
     setLive("Carregando eventos e turmas…");
 
     try {
       // services/api geralmente já prefixa /api
-      const listaEventos = await apiGet("eventos", { on403: "silent" });
+      const listaEventos = await apiGet("eventos", { on403: "silent", signal: ac.signal });
       const eventosArr = Array.isArray(listaEventos) ? listaEventos : [];
 
       // turmas por evento em paralelo
       const withTurmas = await Promise.all(
         eventosArr.map(async (ev) => {
           try {
-            const turmas = await apiGet(`turmas/evento/${ev.id}`, { on403: "silent" });
+            const turmas = await apiGet(`turmas/evento/${ev.id}`, { on403: "silent", signal: ac.signal });
             return { ...ev, turmas: Array.isArray(turmas) ? turmas : [] };
           } catch {
             return { ...ev, turmas: [] };
@@ -97,24 +126,36 @@ export default function QRCodesEventosAdmin() {
       );
 
       setEventos(withTurmas);
+      writeCache(withTurmas);
       setLive(
         withTurmas.length
           ? `Foram carregados ${withTurmas.length} evento(s).`
           : "Nenhum evento encontrado."
       );
     } catch (e) {
-      console.error(e);
-      setErro("Erro ao carregar eventos/turmas");
-      toast.error("❌ Erro ao carregar eventos/turmas.");
-      setLive("Falha ao carregar eventos e turmas.");
-      setTimeout(() => erroRef.current?.focus(), 0);
+      if (e?.name !== "AbortError") {
+        console.error(e);
+        setErro("Erro ao carregar eventos/turmas");
+        toast.error("❌ Erro ao carregar eventos/turmas.");
+        setLive("Falha ao carregar eventos e turmas.");
+        setTimeout(() => erroRef.current?.focus(), 0);
+      }
     } finally {
       setCarregandoDados(false);
     }
-  }
+  }, [setLive]);
 
+  // primeiro paint: tenta cache e depois atualiza
   useEffect(() => {
+    const cached = readCache();
+    if (cached) {
+      setEventos(cached);
+      setCarregandoDados(false);
+      setLive(`Exibindo ${cached.length} evento(s) do cache.`);
+    }
     carregar();
+    return () => abortRef.current?.abort?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* ---------------- Busca: persistência + debounce ---------------- */
@@ -131,14 +172,28 @@ export default function QRCodesEventosAdmin() {
     [eventos]
   );
 
-  /* ---------------- Filtro ---------------- */
+  /* ---------------- Filtro (evento + turma + instrutores) ---------------- */
   const eventosFiltrados = useMemo(() => {
     const q = buscaDebounced;
     if (!q) return eventos;
-    return eventos.filter((e) => {
-      const titulo = tituloEvento(e).toLowerCase();
-      return titulo.includes(q);
-    });
+
+    return eventos
+      .map((e) => {
+        const evMatch = normaliza(tituloEvento(e)).includes(q);
+        const turmasFiltradas = (e.turmas || []).filter((t) => {
+          const tTitle = normaliza(tituloTurma(t));
+          const instr = Array.isArray(e?.instrutor)
+            ? e.instrutor.map((i) => i?.nome).join(",")
+            : Array.isArray(t?.instrutor)
+            ? t.instrutor.map((i) => i?.nome).join(",")
+            : "";
+          return evMatch || tTitle.includes(q) || normaliza(instr).includes(q);
+        });
+        // mantém o evento se o próprio nome casar OU se sobrar alguma turma filtrada
+        const keepEvento = evMatch || turmasFiltradas.length > 0;
+        return keepEvento ? { ...e, turmas: turmasFiltradas } : null;
+      })
+      .filter(Boolean);
   }, [eventos, buscaDebounced]);
 
   const turmasFiltradasCount = useMemo(() => {
@@ -153,19 +208,54 @@ export default function QRCodesEventosAdmin() {
   );
 
   /* ---------------- Ações ---------------- */
-  const handleGerarPDF = async (t, evTitle, instrutores) => {
-    if (gerando) return; // evita duplo clique
-    const turmaId = t?.id;
-    setGerando(turmaId);
-    try {
-      await gerarQrCodePresencaPDF(t, evTitle, instrutores);
-    } catch (e) {
-      console.error(e);
-      toast.error("❌ Erro ao gerar PDF do QR Code.");
-    } finally {
-      setGerando(null);
-    }
-  };
+  const handleGerarPDF = useCallback(
+    async (t, evTitle, instrutores) => {
+      if (gerando) return; // evita duplo clique/global gerando
+      const turmaId = t?.id;
+      setGerando(turmaId);
+      try {
+        await gerarQrCodePresencaPDF(t, evTitle, instrutores);
+      } catch (e) {
+        console.error(e);
+        toast.error("❌ Erro ao gerar PDF do QR Code.");
+      } finally {
+        setGerando(null);
+      }
+    },
+    [gerando]
+  );
+
+  const mkHandleGerar = useCallback(
+    (t, evTitle, instrutores) => () => handleGerarPDF(t, evTitle, instrutores),
+    [handleGerarPDF]
+  );
+
+  // "Gerar todos" por evento
+  const gerarTodosDoEvento = useCallback(
+    async (ev) => {
+      if (!Array.isArray(ev?.turmas) || !ev.turmas.length || gerando) return;
+      setGerando(-1); // sentinela global
+      try {
+        const instrutores =
+          (Array.isArray(ev?.instrutor)
+            ? ev.instrutor.map((i) => i?.nome).filter(Boolean)
+            : []
+          ).join(", ") || "Instrutor";
+        const evTitle = tituloEvento(ev);
+
+        for (const t of ev.turmas) {
+          await gerarQrCodePresencaPDF(t, evTitle, instrutores);
+        }
+        toast.success("✅ PDFs gerados para todas as turmas do evento.");
+      } catch (e) {
+        console.error(e);
+        toast.error("❌ Erro ao gerar alguns PDFs.");
+      } finally {
+        setGerando(null);
+      }
+    },
+    [gerando]
+  );
 
   return (
     <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
@@ -181,18 +271,18 @@ export default function QRCodesEventosAdmin() {
           aria-label="Carregando dados"
           aria-busy="true"
         >
-          <div
-            className={`h-full bg-indigo-700 w-1/3 ${
-              reduceMotion ? "" : "animate-pulse"
-            }`}
-          />
+          <div className={`h-full bg-indigo-700 w-1/3 ${reduceMotion ? "" : "animate-pulse"}`} />
         </div>
       )}
 
-      <main id="conteudo" role="main" className="flex-1 px-3 sm:px-4 py-6 max-w-6xl mx-auto">
+      <main id="conteudo" tabIndex={-1} role="main" className="flex-1 px-3 sm:px-4 py-6 max-w-6xl mx-auto">
         {/* Live region acessível */}
         <p ref={liveRef} className="sr-only" aria-live="polite" role="status" />
-        <div ref={erroRef} tabIndex={-1} className="sr-only" />
+        {!!erro && (
+          <p ref={erroRef} className="sr-only" role="alert" aria-live="assertive">
+            {erro}
+          </p>
+        )}
 
         {/* KPIs + Busca */}
         <section className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
@@ -206,7 +296,7 @@ export default function QRCodesEventosAdmin() {
           </div>
           <div className="bg-white dark:bg-zinc-800 rounded-xl shadow p-3">
             <label htmlFor="busca" className="sr-only">
-              Buscar evento
+              Buscar evento, turma ou instrutor
             </label>
             <div className="relative">
               <Search
@@ -219,9 +309,9 @@ export default function QRCodesEventosAdmin() {
                 inputMode="search"
                 value={busca}
                 onChange={(e) => setBusca(e.target.value)}
-                placeholder="Buscar evento…"
+                placeholder="Buscar evento, turma ou instrutor…"
                 className="pl-8 pr-8 py-2 w-full rounded-md border border-gray-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                aria-label="Buscar por nome do evento"
+                aria-label="Buscar por nome do evento, turma ou instrutor"
               />
               {!!busca && (
                 <button
@@ -234,9 +324,22 @@ export default function QRCodesEventosAdmin() {
                 </button>
               )}
             </div>
-            <p className="mt-2 text-[11px] text-gray-600 dark:text-gray-300" aria-live="polite">
-              {eventosFiltrados.length} evento(s) • {turmasFiltradasCount} turma(s)
-            </p>
+            <div className="mt-2 flex items-center justify-between text-[11px] text-gray-600 dark:text-gray-300">
+              <p aria-live="polite">
+                {eventosFiltrados.length} evento(s) • {turmasFiltradasCount} turma(s)
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setTentativa((n) => n + 1);
+                  carregar();
+                }}
+                className="px-2 py-1 rounded-md border dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+                aria-label="Tentar novamente carregar os dados"
+              >
+                Tentar novamente
+              </button>
+            </div>
           </div>
         </section>
 
@@ -265,9 +368,27 @@ export default function QRCodesEventosAdmin() {
                     <h3 className="text-base sm:text-lg font-semibold text-lousa dark:text-white break-words">
                       {evTitle}
                     </h3>
-                    <p className="text-xs text-gray-600 dark:text-gray-300">
-                      {Array.isArray(ev?.turmas) ? ev.turmas.length : 0} turma(s)
-                    </p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-xs text-gray-600 dark:text-gray-300">
+                        {Array.isArray(ev?.turmas) ? ev.turmas.length : 0} turma(s)
+                      </p>
+                      {!!ev?.turmas?.length && (
+                        <button
+                          type="button"
+                          onClick={() => gerarTodosDoEvento(ev)}
+                          disabled={!!gerando}
+                          className={`text-xs px-3 py-1.5 rounded-md ${
+                            gerando
+                              ? "bg-indigo-300 text-white cursor-not-allowed"
+                              : "bg-indigo-600 hover:bg-indigo-700 text-white"
+                          }`}
+                          aria-label={`Gerar PDFs de QR Code para todas as turmas do evento ${evTitle}`}
+                          title="Gerar PDFs de todas as turmas"
+                        >
+                          {gerando ? "Gerando…" : "Gerar todos"}
+                        </button>
+                      )}
+                    </div>
                   </header>
 
                   {!ev.turmas?.length ? (
@@ -305,7 +426,7 @@ export default function QRCodesEventosAdmin() {
 
                             <button
                               type="button"
-                              onClick={() => handleGerarPDF(t, evTitle, nomesInstrutores)}
+                              onClick={mkHandleGerar(t, evTitle, nomesInstrutores)}
                               disabled={isLoading}
                               className={`inline-flex items-center gap-2 text-sm font-semibold px-3 py-1.5 rounded transition focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2
                                 ${

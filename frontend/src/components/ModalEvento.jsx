@@ -1,5 +1,5 @@
 // 📁 src/components/ModalEvento.jsx
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "react-toastify";
 import {
   MapPin,
@@ -9,16 +9,14 @@ import {
   Trash2,
   Lock,
   Unlock,
+  X,
 } from "lucide-react";
-import ModalBase from "./ModalBase";            // ⬅️ usa o ModalBase com portal
+import ModalBase from "./ModalBase";
 import ModalTurma from "./ModalTurma";
 import { formatarDataBrasileira } from "../utils/data";
 import { apiGet, apiDelete } from "../services/api";
 
-/* =========================
-   Constantes / Utils locais
-   ========================= */
-
+/* ========================= Constantes / Utils ========================= */
 const TIPOS_EVENTO = [
   "Congresso",
   "Curso",
@@ -32,14 +30,7 @@ const TIPOS_EVENTO = [
 const minDate = (arr) => arr.map((d) => d.data).sort()[0];
 const maxDate = (arr) => arr.map((d) => d.data).sort().slice(-1)[0];
 const hh = (s) => (typeof s === "string" ? s.slice(0, 5) : "");
-
-// só dígitos
 const normReg = (s) => String(s || "").replace(/\D/g, "");
-
-/**
- * Extrai TODAS as sequências válidas de 6 dígitos (janela deslizante).
- * Ex.: "1234567" => ["123456","234567"] — remove duplicados.
- */
 const parseRegsBulk = (txt) => {
   const runs = String(txt || "").match(/\d+/g) || [];
   const out = [];
@@ -52,18 +43,18 @@ const parseRegsBulk = (txt) => {
   return Array.from(new Set(out.filter((r) => /^\d{6}$/.test(r))));
 };
 
-// badge simples + acessível
+// Badge
 const Badge = ({ children, title, ariaLabel }) => (
   <span
     title={title}
     aria-label={ariaLabel || title}
-    className="ml-2 inline-flex items-center justify-center text-[11px] px-2 py-0.5 rounded-full bg-gray-200 text-gray-700"
+    className="ml-2 inline-flex items-center justify-center text-[11px] px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 dark:bg-zinc-800 dark:text-zinc-200"
   >
     {children}
   </span>
 );
 
-/* Normalização robusta de datas/encontros de uma turma */
+/* Normalização de turmas/datas */
 function encontrosParaDatas(turma) {
   const baseHi = hh(turma.horario_inicio || turma.hora_inicio || "08:00");
   const baseHf = hh(turma.horario_fim || turma.hora_fim || "17:00");
@@ -117,7 +108,7 @@ function normalizarDatasTurma(t, hiBase = "08:00", hfBase = "17:00") {
   };
 }
 
-/* Aceita tanto evento.instrutor (array de objetos/ids) quanto evento.instrutores */
+/* Aceita evento.instrutor ou evento.instrutores */
 const getInstrutoresIds = (ev) => {
   const arr = Array.isArray(ev?.instrutores)
     ? ev.instrutores
@@ -127,10 +118,7 @@ const getInstrutoresIds = (ev) => {
   return arr.map((i) => Number(i?.id ?? i)).filter((x) => Number.isFinite(x));
 };
 
-/* =========================
-   Componente
-   ========================= */
-
+/* ========================= Componente ========================= */
 export default function ModalEvento({
   isOpen,
   onClose,
@@ -139,9 +127,9 @@ export default function ModalEvento({
   onTurmaRemovida,
   salvando = false,
 }) {
+  // ================= States =================
   const [titulo, setTitulo] = useState("");
-  const [Descricao, setDescricao] = useState("");
-  const [descricao, setDescricaoState] = useState(""); // compat p/ manter nome antigo
+  const [descricao, setDescricao] = useState("");
   const [local, setLocal] = useState("");
   const [tipo, setTipo] = useState("");
   const [unidadeId, setUnidadeId] = useState("");
@@ -153,20 +141,24 @@ export default function ModalEvento({
   const [instrutorSelecionado, setInstrutorSelecionado] = useState([""]);
   const [removendoId, setRemovendoId] = useState(null);
 
-  // 🔒 restrição
+  // 🔒 restrições
   const [restrito, setRestrito] = useState(false);
   const [restritoModo, setRestritoModo] = useState(""); // 'todos_servidores' | 'lista_registros'
   const [registroInput, setRegistroInput] = useState("");
   const [registros, setRegistros] = useState([]); // strings (6 dígitos)
 
-  // opções de instrutor
-  const opcoesInstrutor = usuarios.filter((usuario) => {
-    const perfil = (Array.isArray(usuario.perfil)
-      ? usuario.perfil.join(",")
-      : String(usuario.perfil || "")
-    ).toLowerCase();
-    return perfil.includes("instrutor") || perfil.includes("administrador");
-  });
+  // ================= Derivados =================
+  const opcoesInstrutor = useMemo(
+    () =>
+      usuarios.filter((usuario) => {
+        const perfil = (Array.isArray(usuario.perfil)
+          ? usuario.perfil.join(",")
+          : String(usuario.perfil || "")
+        ).toLowerCase();
+        return perfil.includes("instrutor") || perfil.includes("administrador");
+      }),
+    [usuarios]
+  );
 
   function handleSelecionarInstrutor(index, valor) {
     const nova = [...instrutorSelecionado];
@@ -188,12 +180,11 @@ export default function ModalEvento({
     );
   }
 
-  // Preenche ao abrir/editar
+  // ================= Effects =================
   useEffect(() => {
     if (evento) {
       setTitulo(evento.titulo || "");
       setDescricao(evento.descricao || "");
-      setDescricaoState(evento.descricao || "");
       setLocal(evento.local || "");
       setTipo(evento.tipo || "");
       setUnidadeId(evento.unidade_id || "");
@@ -230,7 +221,6 @@ export default function ModalEvento({
       const restr = !!evento.restrito;
       setRestrito(restr);
 
-      // usa restrito_modo OU vis_reg_tipo do backend pra escolher o modo
       const modoFromVis =
         evento.vis_reg_tipo === "lista" ? "lista_registros" : "todos_servidores";
       const modo = evento.restrito_modo || (restr ? modoFromVis : "");
@@ -239,17 +229,13 @@ export default function ModalEvento({
       const lista =
         (Array.isArray(evento.registros_permitidos)
           ? evento.registros_permitidos
-          : null) ??
-        (Array.isArray(evento.registros) ? evento.registros : []);
-      const onlySix = (lista || [])
-        .map(normReg)
-        .filter((r) => /^\d{6}$/.test(r));
+          : null) ?? (Array.isArray(evento.registros) ? evento.registros : []);
+      const onlySix = (lista || []).map(normReg).filter((r) => /^\d{6}$/.test(r));
       setRegistros(Array.from(new Set(onlySix)));
       setRegistroInput("");
     } else {
       setTitulo("");
       setDescricao("");
-      setDescricaoState("");
       setLocal("");
       setTipo("");
       setUnidadeId("");
@@ -263,7 +249,6 @@ export default function ModalEvento({
     }
   }, [evento, isOpen]);
 
-  // Garante a lista ao editar (pega dados atuais do backend)
   useEffect(() => {
     if (!isOpen || !evento?.id) return;
     (async () => {
@@ -281,9 +266,7 @@ export default function ModalEvento({
           : Array.isArray(det.registros)
           ? det.registros
           : [];
-        const parsed = (lista || [])
-          .map(normReg)
-          .filter((r) => /^\d{6}$/.test(r));
+        const parsed = (lista || []).map(normReg).filter((r) => /^\d{6}$/.test(r));
         setRegistros([...new Set(parsed)]);
       } catch {
         /* silencioso */
@@ -291,7 +274,6 @@ export default function ModalEvento({
     })();
   }, [isOpen, evento?.id]);
 
-  // Carrega unidades/usuários
   useEffect(() => {
     (async () => {
       try {
@@ -313,7 +295,7 @@ export default function ModalEvento({
     })();
   }, []);
 
-  // ➕ registros
+  // ================= Handlers de Registro =================
   const addRegistro = () => {
     const novos = parseRegsBulk(registroInput);
     if (!novos.length) {
@@ -332,9 +314,9 @@ export default function ModalEvento({
     setRegistros((prev) => Array.from(new Set([...prev, ...novos])));
     setRegistroInput("");
   };
-  const removeRegistro = (r) =>
-    setRegistros((prev) => prev.filter((x) => x !== r));
+  const removeRegistro = (r) => setRegistros((prev) => prev.filter((x) => x !== r));
 
+  // ================= Submit =================
   const handleSubmit = (e) => {
     e.preventDefault();
 
@@ -351,13 +333,8 @@ export default function ModalEvento({
       return;
     }
 
-    // validação das turmas
     for (const t of turmas) {
-      if (
-        !t.nome ||
-        !Number(t.vagas_total) ||
-        !Number.isFinite(Number(t.carga_horaria))
-      ) {
+      if (!t.nome || !Number(t.vagas_total) || !Number.isFinite(Number(t.carga_horaria))) {
         toast.error("❌ Preencha nome, vagas e carga horária de cada turma.");
         return;
       }
@@ -384,12 +361,8 @@ export default function ModalEvento({
       }
     }
 
-    // instrutores
-    const instrutorValidado = instrutorSelecionado
-      .map(Number)
-      .filter((id) => !Number.isNaN(id));
+    const instrutorValidado = instrutorSelecionado.map(Number).filter((id) => !Number.isNaN(id));
 
-    // normaliza turmas para o payload
     const turmasCompletas = turmas.map((t) => {
       const n = normalizarDatasTurma(t);
       return {
@@ -409,11 +382,7 @@ export default function ModalEvento({
     });
 
     const turmaPrincipal = turmasCompletas[0] || {};
-    const regs6 = Array.from(
-      new Set(registros.filter((r) => /^\d{6}$/.test(r)))
-    );
-
-    // 🔑 chave do backend: vis_reg_tipo ('todos' | 'lista')
+    const regs6 = Array.from(new Set(registros.filter((r) => /^\d{6}$/.test(r))));
     const vis_reg_tipo = restrito
       ? restritoModo === "lista_registros"
         ? "lista"
@@ -428,18 +397,15 @@ export default function ModalEvento({
       unidade_id: Number(unidadeId),
       publico_alvo: publicoAlvo,
 
-      // instrutores — envie nos dois campos para compatibilidade entre telas
       instrutor: instrutorValidado,
       instrutores: instrutorValidado,
 
       turmas: turmasCompletas,
 
-      // “espelhos” no nível do evento
       data_inicio: turmaPrincipal.data_inicio,
       data_fim: turmaPrincipal.data_fim,
       horario_inicio: turmaPrincipal.horario_inicio,
       horario_fim: turmaPrincipal.horario_fim,
-      // espelhos legacy (se alguma tela ainda usa)
       hora_inicio: turmaPrincipal.horario_inicio,
       hora_fim: turmaPrincipal.horario_fim,
 
@@ -448,25 +414,19 @@ export default function ModalEvento({
 
       ...(evento?.id ? { id: evento.id } : {}),
 
-      // 🔒 restrição
       restrito: !!restrito,
       restrito_modo: restrito ? restritoModo || "todos_servidores" : "",
-      vis_reg_tipo, // alinhar com o que o GET devolve
+      vis_reg_tipo,
       ...(restrito && vis_reg_tipo === "lista" && regs6.length > 0
         ? { registros_permitidos: regs6 }
         : {}),
     };
 
-    // debug local
     console.log("[PUT evento] payload:", payload);
-
     onSalvar(payload);
     onClose();
   };
 
-  const abrirModalTurma = () => setModalTurmaAberto(true);
-
-  // 🔥 Remover turma
   async function removerTurma(turma, idx) {
     const nome = turma?.nome || `Turma ${idx + 1}`;
     const ok = window.confirm(
@@ -491,9 +451,7 @@ export default function ModalEvento({
       if (err?.status === 409 || code === "TURMA_COM_REGISTROS") {
         const c = err?.data?.contagens || {};
         toast.error(
-          `Não é possível excluir: ${c.presencas || 0} presenças / ${
-            c.certificados || 0
-          } certificados.`
+          `Não é possível excluir: ${c.presencas || 0} presenças / ${c.certificados || 0} certificados.`
         );
       } else if (err?.status === 404) {
         toast.warn("Turma não encontrada. Atualize a página.");
@@ -511,28 +469,41 @@ export default function ModalEvento({
       ? registros.length
       : Number(evento?.count_registros_permitidos ?? 0);
 
-  /* =========================
-     Render
-     ========================= */
-
-     return (
+  /* ========================= Render ========================= */
+  return (
+    <>
       <ModalBase
         isOpen={isOpen}
         onClose={onClose}
-        level={0}                 // ⬅️ pai (evento) fica abaixo do filho (turma)
+        level={0}
         maxWidth="max-w-3xl"
+        labelledBy="modal-evento-titulo"
+        describedBy="modal-evento-desc"
       >
         {/* card com cantos arredondados e body rolável */}
-        <div className="grid grid-rows-[auto,1fr,auto] max-h-[90vh] rounded-2xl overflow-hidden">
+        <div className="grid grid-rows-[auto,1fr,auto] max-h-[90vh] rounded-2xl overflow-hidden bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/10 shadow-xl">
           {/* HEADER */}
-          <div className="p-5 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
-            <h2 id="modal-evento-titulo" className="text-xl font-semibold">
-              {evento?.id ? "Editar Evento" : "Novo Evento"}
-            </h2>
+          <div className="p-5 border-b border-black/5 dark:border-white/10 bg-white/80 dark:bg-zinc-900/80 backdrop-blur">
+            <div className="flex items-center justify-between">
+              <h2 id="modal-evento-titulo" className="text-lg sm:text-xl font-bold tracking-tight">
+                {evento?.id ? "Editar Evento" : "Novo Evento"}
+              </h2>
+              <button
+                onClick={onClose}
+                className="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-black/5 dark:hover:bg-white/10"
+                aria-label="Fechar"
+              >
+                <X className="w-5 h-5" aria-hidden="true" />
+              </button>
+            </div>
+            {/* descrição fixa para ARIA (estrutura estável) */}
+            <p id="modal-evento-desc" className="sr-only">
+              Formulário para criação ou edição de evento, incluindo turmas e restrições de acesso.
+            </p>
           </div>
-    
-          {/* BODY (rolável) */}
-          <div className="p-5 overflow-y-auto bg-white dark:bg-zinc-900">
+
+          {/* BODY */}
+          <div className="p-5 overflow-y-auto">
             <form
               id="form-evento"
               onSubmit={handleSubmit}
@@ -541,130 +512,153 @@ export default function ModalEvento({
               role="form"
             >
               {/* TÍTULO */}
-              <div className="relative">
-                <FileText className="absolute left-3 top-3 text-gray-500" size={18} />
-                <input
-                  value={titulo}
-                  onChange={(e) => setTitulo(e.target.value)}
-                  placeholder="Título"
-                  className="w-full pl-10 py-2 border rounded-md shadow-sm"
-                  required
-                />
-              </div>
-    
-              {/* DESCRIÇÃO */}
-              <div className="relative">
-                <FileText className="absolute left-3 top-3 text-gray-500" size={18} />
-                <textarea
-                  value={descricao}
-                  onChange={(e) => setDescricaoState(e.target.value)}
-                  placeholder="Descrição"
-                  className="w-full pl-10 py-2 h-24 border rounded-md shadow-sm"
-                />
-              </div>
-    
-              {/* PÚBLICO-ALVO */}
-              <div className="relative">
-                <FileText className="absolute left-3 top-3 text-gray-500" size={18} />
-                <input
-                  value={publicoAlvo}
-                  onChange={(e) => setPublicoAlvo(e.target.value)}
-                  placeholder="Público-alvo"
-                  className="w-full pl-10 py-2 border rounded-md shadow-sm"
-                />
-              </div>
-    
-              {/* INSTRUTOR(ES) */}
-              {instrutorSelecionado.map((valor, index) => (
-                <div key={index} className="mb-2 relative pr-10">
-                  <label className="text-sm font-medium text-gray-700 dark:text-white">
-                    {index === 0 ? "Selecione o instrutor" : `Instrutor adicional`}
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <select
-                      value={valor}
-                      onChange={(e) => handleSelecionarInstrutor(index, e.target.value)}
-                      className="w-full pl-3 py-2 border rounded-md shadow-sm"
-                      required={index === 0}
-                    >
-                      <option value="">Selecione o instrutor</option>
-                      {getInstrutorDisponivel(index).map((i) => (
-                        <option key={i.id} value={i.id}>{i.nome}</option>
-                      ))}
-                    </select>
-                    {index > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => removerInstrutor(index)}
-                        className="text-red-500 hover:text-red-700 font-bold text-lg"
-                        title="Remover este instrutor"
-                      >
-                        ❌
-                      </button>
-                    )}
-                  </div>
-    
-                  {valor && index === instrutorSelecionado.length - 1 && (
-                    <div className="flex justify-center mt-3">
-                      <button
-                        type="button"
-                        onClick={adicionarInstrutor}
-                        className="flex items-center gap-2 bg-teal-700 hover:bg-teal-800 text-white font-semibold px-4 py-2 rounded-full transition focus-visible:ring-2 focus-visible:ring-teal-400"
-                      >
-                        <PlusCircle size={16} />
-                        Incluir outro instrutor
-                      </button>
-                    </div>
-                  )}
+              <div className="grid gap-1">
+                <label htmlFor="evento-titulo" className="text-sm font-medium">Título *</label>
+                <div className="relative">
+                  <FileText className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
+                  <input
+                    id="evento-titulo"
+                    value={titulo}
+                    onChange={(e) => setTitulo(e.target.value)}
+                    placeholder="Ex.: Curso de Atualização em Urgência"
+                    className="w-full pl-10 pr-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm"
+                    required
+                  />
                 </div>
-              ))}
-    
+              </div>
+
+              {/* DESCRIÇÃO */}
+              <div className="grid gap-1">
+                <label htmlFor="evento-descricao" className="text-sm font-medium">Descrição</label>
+                <div className="relative">
+                  <FileText className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
+                  <textarea
+                    id="evento-descricao"
+                    value={descricao}
+                    onChange={(e) => setDescricao(e.target.value)}
+                    placeholder="Contexto, objetivos e observações do evento."
+                    className="w-full pl-10 pr-3 py-2 h-24 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm"
+                  />
+                </div>
+              </div>
+
+              {/* PÚBLICO-ALVO */}
+              <div className="grid gap-1">
+                <label htmlFor="evento-publico" className="text-sm font-medium">Público-alvo</label>
+                <div className="relative">
+                  <FileText className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
+                  <input
+                    id="evento-publico"
+                    value={publicoAlvo}
+                    onChange={(e) => setPublicoAlvo(e.target.value)}
+                    placeholder="Ex.: Profissionais da APS, enfermeiros, médicos"
+                    className="w-full pl-10 pr-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm"
+                  />
+                </div>
+              </div>
+
+              {/* INSTRUTOR(ES) */}
+              <div className="grid gap-2">
+                <span className="text-sm font-medium">Instrutor(es)</span>
+                {instrutorSelecionado.map((valor, index) => (
+                  <div key={`instrutor-${index}`} className="relative">
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={valor}
+                        onChange={(e) => handleSelecionarInstrutor(index, e.target.value)}
+                        className="w-full pl-3 pr-10 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm"
+                        required={index === 0}
+                        aria-label={index === 0 ? "Instrutor principal" : `Instrutor adicional ${index}`}
+                      >
+                        <option value="">Selecione o instrutor</option>
+                        {getInstrutorDisponivel(index).map((i) => (
+                          <option key={i.id} value={i.id}>{i.nome}</option>
+                        ))}
+                      </select>
+
+                      {index > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => removerInstrutor(index)}
+                          className="inline-flex items-center gap-1 rounded-lg px-3 py-2 border border-red-200 dark:border-red-900/40 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20"
+                          title="Remover este instrutor"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                          Remover
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={adicionarInstrutor}
+                          className="inline-flex items-center gap-2 rounded-xl px-4 py-2 bg-teal-700 hover:bg-teal-600 text-white font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500"
+                        >
+                          <PlusCircle className="w-4 h-4" />
+                          Incluir outro
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
               {/* LOCAL */}
-              <div className="relative">
-                <MapPin className="absolute left-3 top-3 text-gray-500" size={18} />
-                <input
-                  value={local}
-                  onChange={(e) => setLocal(e.target.value)}
-                  placeholder="Local"
-                  className="w-full pl-10 py-2 border rounded-md shadow-sm"
-                  required
-                />
+              <div className="grid gap-1">
+                <label htmlFor="evento-local" className="text-sm font-medium">Local *</label>
+                <div className="relative">
+                  <MapPin className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
+                  <input
+                    id="evento-local"
+                    value={local}
+                    onChange={(e) => setLocal(e.target.value)}
+                    placeholder="Ex.: Auditório da Escola da Saúde"
+                    className="w-full pl-10 pr-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm"
+                    required
+                  />
+                </div>
               </div>
-    
+
               {/* TIPO */}
-              <div className="relative">
-                <Layers3 className="absolute left-3 top-3 text-gray-500" size={18} />
-                <select
-                  value={tipo}
-                  onChange={(e) => setTipo(e.target.value)}
-                  className="w-full pl-10 py-2 border rounded-md shadow-sm"
-                  required
-                >
-                  <option value="">Selecione o tipo</option>
-                  {TIPOS_EVENTO.map((t) => (
-                    <option key={t} value={t}>{t}</option>
-                  ))}
-                </select>
+              <div className="grid gap-1">
+                <label htmlFor="evento-tipo" className="text-sm font-medium">Tipo *</label>
+                <div className="relative">
+                  <Layers3 className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
+                  <select
+                    id="evento-tipo"
+                    value={tipo}
+                    onChange={(e) => setTipo(e.target.value)}
+                    className="w-full pl-10 pr-10 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm"
+                    required
+                  >
+                    <option value="">Selecione o tipo</option>
+                    {TIPOS_EVENTO.map((t) => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
-    
+
               {/* UNIDADE */}
-              <div className="relative">
-                <Layers3 className="absolute left-3 top-3 text-gray-500" size={18} />
-                <select
-                  value={unidadeId}
-                  onChange={(e) => setUnidadeId(e.target.value)}
-                  className="w-full pl-10 py-2 border rounded-md shadow-sm"
-                  required
-                >
-                  <option value="">Selecione a unidade</option>
-                  {unidades.map((u) => (
-                    <option key={u.id} value={u.id}>{u.nome}</option>
-                  ))}
-                </select>
+              <div className="grid gap-1">
+                <label htmlFor="evento-unidade" className="text-sm font-medium">Unidade *</label>
+                <div className="relative">
+                  <Layers3 className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
+                  <select
+                    id="evento-unidade"
+                    value={unidadeId}
+                    onChange={(e) => setUnidadeId(e.target.value)}
+                    className="w-full pl-10 pr-10 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm"
+                    required
+                  >
+                    <option value="">Selecione a unidade</option>
+                    {unidades.map((u) => (
+                      <option key={u.id} value={u.id}>{u.nome}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
-    
+
               {/* 🔒 RESTRIÇÃO DE ACESSO */}
-              <fieldset className="border rounded-md p-4 mt-2">
+              <fieldset className="border rounded-xl p-4 mt-2 border-black/10 dark:border-white/10">
                 <legend className="px-1 font-semibold flex items-center gap-2">
                   {restrito ? <Lock size={16} /> : <Unlock size={16} />} Visibilidade do evento
                   {restrito && restritoModo === "lista_registros" && regCount > 0 && (
@@ -673,7 +667,7 @@ export default function ModalEvento({
                     </Badge>
                   )}
                 </legend>
-    
+
                 <label className="inline-flex items-center gap-2 mt-2">
                   <input
                     type="checkbox"
@@ -686,7 +680,7 @@ export default function ModalEvento({
                   />
                   <span>Evento restrito</span>
                 </label>
-    
+
                 {restrito && (
                   <div className="mt-3 space-y-2">
                     <label className="flex items-center gap-2">
@@ -701,7 +695,7 @@ export default function ModalEvento({
                         Todos os servidores (somente quem possui <strong>registro</strong> cadastrado)
                       </span>
                     </label>
-    
+
                     <label className="flex items-center gap-2">
                       <input
                         type="radio"
@@ -719,7 +713,7 @@ export default function ModalEvento({
                         )}
                       </span>
                     </label>
-    
+
                     {restritoModo === "lista_registros" && (
                       <div className="mt-2 space-y-2">
                         <div className="flex gap-2">
@@ -735,68 +729,76 @@ export default function ModalEvento({
                               e.preventDefault();
                               addRegistrosBulk(txt);
                             }}
-                            placeholder="Digite/cole registros (toda sequência de 6 dígitos) e pressione Enter"
-                            className="w-full px-3 py-2 border rounded-md"
+                            placeholder="Digite/cole registros (qualquer texto — extrairemos todos os blocos de 6 dígitos) e Enter"
+                            className="w-full px-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900"
+                            aria-describedby="ajuda-registros"
                           />
                           <button
                             type="button"
                             onClick={addRegistro}
-                            className="px-3 py-2 rounded-md bg-teal-700 hover:bg-teal-800 text-white"
+                            className="px-3 py-2 rounded-xl bg-teal-700 hover:bg-teal-600 text-white font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500"
                           >
                             Adicionar
                           </button>
                         </div>
-    
-                        {regCount > 0 ? (
-                          <>
-                            <div className="flex items-center justify-between">
-                              <div className="text-xs text-gray-600">{regCount} registro(s) na lista</div>
-                              <button
-                                type="button"
-                                onClick={() => setRegistros([])}
-                                className="text-xs underline text-red-700"
-                                title="Limpar todos os registros"
-                              >
-                                Limpar todos
-                              </button>
-                            </div>
-                            <div className="flex flex-wrap gap-2">
-                              {registros.map((r) => (
-                                <span
-                                  key={r}
-                                  className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-gray-200 text-gray-800 text-xs"
+
+                        {/* Wrapper fixo mantém o mesmo tipo de nó */}
+                        <div className="mt-1">
+                          {regCount > 0 ? (
+                            <div>
+                              <div className="flex items-center justify-between">
+                                <div id="ajuda-registros" className="text-xs text-slate-600 dark:text-slate-300">
+                                  {regCount} registro(s) na lista
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => setRegistros([])}
+                                  className="text-xs underline text-red-700 dark:text-red-300"
+                                  title="Limpar todos os registros"
                                 >
-                                  {r}
-                                  <button
-                                    type="button"
-                                    className="ml-1 text-red-600"
-                                    title="Remover"
-                                    onClick={() => removeRegistro(r)}
+                                  Limpar todos
+                                </button>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {registros.map((r) => (
+                                  <span
+                                    key={r}
+                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-slate-200 text-slate-800 dark:bg-zinc-800 dark:text-zinc-200 text-xs"
                                   >
-                                    ×
-                                  </button>
-                                </span>
-                              ))}
+                                    {r}
+                                    <button
+                                      type="button"
+                                      className="ml-1 text-red-600 dark:text-red-400"
+                                      title="Remover"
+                                      onClick={() => removeRegistro(r)}
+                                      aria-label={`Remover registro ${r}`}
+                                    >
+                                      ×
+                                    </button>
+                                  </span>
+                                ))}
+                              </div>
                             </div>
-                          </>
-                        ) : (
-                          <p className="text-xs text-gray-600">
-                            Pode colar CSV/planilha/texto — extraímos todas as sequências de 6 dígitos.
-                          </p>
-                        )}
+                          ) : (
+                            <p id="ajuda-registros" className="text-xs text-slate-600 dark:text-slate-300">
+                              Pode colar CSV/planilha/texto — extraímos todas as sequências de 6 dígitos.
+                            </p>
+                          )}
+                        </div>
                       </div>
                     )}
                   </div>
                 )}
               </fieldset>
-    
+
               {/* TURMAS */}
               <div>
-                <h3 className="text-md font-semibold mt-4 flex items-center gap-2 text-lousa dark:text-white">
-                  <Layers3 size={16} /> Turmas Cadastradas
+                <h3 className="text-sm sm:text-base font-semibold mt-4 flex items-center gap-2">
+                  <Layers3 className="w-4 h-4" aria-hidden="true" /> Turmas Cadastradas
                 </h3>
+
                 {turmas.length === 0 ? (
-                  <p className="text-sm text-gray-500 mt-1">Nenhuma turma cadastrada.</p>
+                  <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">Nenhuma turma cadastrada.</p>
                 ) : (
                   <div className="mt-2 space-y-2">
                     {turmas.map((t, i) => {
@@ -809,39 +811,43 @@ export default function ModalEvento({
                       return (
                         <div
                           key={t.id ?? `temp-${i}`}
-                          className="bg-gray-100 dark:bg-zinc-800 rounded-md p-3 text-sm shadow-sm relative"
+                          className="rounded-xl border border-black/10 dark:border-white/10 bg-zinc-50/70 dark:bg-zinc-800/60 p-3 text-sm shadow-sm relative"
                         >
                           <button
                             type="button"
                             onClick={() => removerTurma(t, i)}
                             disabled={removendoId === t.id}
                             title="Remover turma"
-                            className="absolute right-2 top-2 inline-flex items-center gap-2 rounded-lg border border-red-200 px-3 py-1.5 text-xs
-                                       hover:bg-red-50 active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed"
+                            className="absolute right-2 top-2 inline-flex items-center gap-2 rounded-lg border border-red-200 dark:border-red-900/40 px-3 py-1.5 text-xs hover:bg-red-50 dark:hover:bg-red-900/20 active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed"
                           >
-                            <Trash2 size={14} />
+                            <Trash2 className="w-4 h-4" />
                             {removendoId === t.id ? "Removendo..." : "Remover"}
                           </button>
-    
+
                           <p className="font-bold pr-28">{t.nome}</p>
-                          {qtd > 0 ? (
-                            <>
+
+                          {/* Wrapper fixo para manter o mesmo tipo no slot */}
+                          <div className="mt-1">
+                            {qtd > 0 ? (
+                              <div>
+                                <p>
+                                  📅 {qtd} encontro(s) • {formatarDataBrasileira(di)} a {formatarDataBrasileira(df)}
+                                </p>
+                                <ul className="mt-1 text-xs text-slate-600 dark:text-slate-300 list-disc list-inside">
+                                  {t.datas.map((d, idx) => (
+                                    <li key={`${t.id ?? i}-d-${idx}`}>
+                                      {formatarDataBrasileira(d.data)} — {hh(d.horario_inicio)} às {hh(d.horario_fim)}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ) : (
                               <p>
-                                📅 {qtd} encontro(s) • {formatarDataBrasileira(di)} a {formatarDataBrasileira(df)}
+                                📅 {formatarDataBrasileira(t.data_inicio)} a {formatarDataBrasileira(t.data_fim)}
                               </p>
-                              <ul className="mt-1 text-xs text-gray-600 dark:text-gray-300 list-disc list-inside">
-                                {t.datas.map((d, idx) => (
-                                  <li key={idx}>
-                                    {formatarDataBrasileira(d.data)} — {hh(d.horario_inicio)} às {hh(d.horario_fim)}
-                                  </li>
-                                ))}
-                              </ul>
-                            </>
-                          ) : (
-                            <p>
-                              📅 {formatarDataBrasileira(t.data_inicio)} a {formatarDataBrasileira(t.data_fim)}
-                            </p>
-                          )}
+                            )}
+                          </div>
+
                           {hi && hf && <p>🕒 {hi} às {hf}</p>}
                           <p>👥 {t.vagas_total} vagas • ⏱ {t.carga_horaria}h</p>
                         </div>
@@ -849,29 +855,29 @@ export default function ModalEvento({
                     })}
                   </div>
                 )}
+
                 <div className="flex justify-center mt-3">
                   <button
                     type="button"
-                    onClick={abrirModalTurma}
-                    className="flex items-center gap-2 bg-teal-700 hover:bg-teal-800 text-white font-semibold px-4 py-2 rounded-full transition focus-visible:ring-2 focus-visible:ring-teal-400"
+                    onClick={() => setModalTurmaAberto(true)}
+                    className="inline-flex items-center gap-2 rounded-xl px-4 py-2 bg-teal-700 hover:bg-teal-600 text-white font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500"
                     aria-label="Adicionar nova turma"
-                    tabIndex={0}
                   >
-                    <PlusCircle size={16} />
+                    <PlusCircle className="w-4 h-4" />
                     Adicionar Turma
                   </button>
                 </div>
               </div>
             </form>
           </div>
-    
-          {/* FOOTER arredondado */}
-          <div className="p-4 border-t border-zinc-200 dark:border-zinc-800 bg-gray-50 dark:bg-zinc-800 rounded-b-2xl">
+
+          {/* FOOTER */}
+          <div className="p-4 border-t border-black/5 dark:border-white/10 bg-zinc-50 dark:bg-zinc-800">
             <div className="flex justify-end gap-2">
               <button
                 type="button"
                 onClick={onClose}
-                className="bg-gray-200 hover:bg-gray-300 px-4 py-2 rounded-md"
+                className="rounded-xl px-4 py-2 bg-slate-200 hover:bg-slate-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-900 dark:text-slate-100"
               >
                 Cancelar
               </button>
@@ -879,8 +885,10 @@ export default function ModalEvento({
                 type="submit"
                 form="form-evento"
                 disabled={salvando}
-                className={`px-4 py-2 rounded-md font-semibold text-white ${
-                  salvando ? "bg-green-900 cursor-not-allowed" : "bg-lousa hover:bg-green-800"
+                className={`rounded-xl px-4 py-2 font-semibold text-white ${
+                  salvando
+                    ? "bg-emerald-900 cursor-not-allowed"
+                    : "bg-emerald-700 hover:bg-emerald-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500"
                 }`}
               >
                 {salvando ? "Salvando..." : "Salvar"}
@@ -888,29 +896,30 @@ export default function ModalEvento({
             </div>
           </div>
         </div>
-    
-        {/* MODAL TURMA (fora do form e com level maior) */}
-        <ModalTurma
-          isOpen={modalTurmaAberto}
-          onClose={() => setModalTurmaAberto(false)}
-          onSalvar={(turma) => {
-            const n = normalizarDatasTurma(turma);
-            setTurmas((prev) => [
-              ...prev,
-              {
-                ...turma,
-                datas: n.datas,
-                data_inicio: n.data_inicio,
-                data_fim: n.data_fim,
-                horario_inicio: n.horario_inicio,
-                horario_fim: n.horario_fim,
-                carga_horaria: Number(turma.carga_horaria) || 0,
-                vagas_total: Number(turma.vagas_total) || 0,
-              },
-            ]);
-            setModalTurmaAberto(false);
-          }}
-        />
       </ModalBase>
-    );
-  }    
+
+      {/* ⬇️ Fora do ModalBase para não variar os children do modal */}
+      <ModalTurma
+        isOpen={modalTurmaAberto}
+        onClose={() => setModalTurmaAberto(false)}
+        onSalvar={(turma) => {
+          const n = normalizarDatasTurma(turma);
+          setTurmas((prev) => [
+            ...prev,
+            {
+              ...turma,
+              datas: n.datas,
+              data_inicio: n.data_inicio,
+              data_fim: n.data_fim,
+              horario_inicio: n.horario_inicio,
+              horario_fim: n.horario_fim,
+              carga_horaria: Number(turma.carga_horaria) || 0,
+              vagas_total: Number(turma.vagas_total) || 0,
+            },
+          ]);
+          setModalTurmaAberto(false);
+        }}
+      />
+    </>
+  );
+}

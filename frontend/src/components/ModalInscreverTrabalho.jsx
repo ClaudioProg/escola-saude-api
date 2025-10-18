@@ -1,5 +1,5 @@
 // 📁 src/components/ModalInscreverTrabalho.jsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useId } from "react";
 import { motion } from "framer-motion";
 import {
   X, FilePlus2, Loader2, CheckCircle2, Upload, Plus, Trash2, ExternalLink,
@@ -16,6 +16,24 @@ const toMonthValue = (val) => {
   if (m) return `${m[1]}-${m[2]}`;
   return "";
 };
+const sanitizeCPF = (s) => String(s || "").replace(/\D/g, "").slice(0, 11);
+const trimStr = (s) => String(s || "").trim();
+
+/** valida campos essenciais antes de enviar */
+function validarForm(form, limites = {}, dentroPrazo = true) {
+  const errs = [];
+  if (!trimStr(form.titulo)) errs.push("Informe o título do trabalho.");
+  if (!toMonthValue(form.inicio_experiencia)) errs.push("Selecione o mês/ano de início da experiência.");
+  if (!form.linha_tematica_id) errs.push("Selecione a linha temática.");
+  const longos = ["introducao", "objetivos", "metodo", "resultados", "consideracoes", "bibliografia"];
+  longos.forEach((k) => {
+    const max = Number(limites[k]) || 2000;
+    if ((form[k] || "").length > max) errs.push(`Campo "${k}" ultrapassa o limite de ${max} caracteres.`);
+  });
+  const maxCo = Number(form._maxCoautores || 10);
+  if ((form.coautores?.length || 0) > maxCo) errs.push(`Máximo de ${maxCo} coautores.`);
+  return { ok: errs.length === 0, erros: errs };
+}
 
 export default function ModalInscreverTrabalho({
   chamadaId: propChamadaId,
@@ -33,7 +51,7 @@ export default function ModalInscreverTrabalho({
   const [limites, setLimites] = useState({});
   const [maxCoautores, setMaxCoautores] = useState(10);
   const [modeloDisponivel, setModeloDisponivel] = useState(false);
-  const [baixandoModelo, setBaixandoModelo] = useState(false); // ✅ novo
+  const [baixandoModelo, setBaixandoModelo] = useState(false);
 
   // id da submissão (rascunho/edição)
   const [submissaoId, setSubmissaoId] = useState(propSubId || null);
@@ -41,7 +59,11 @@ export default function ModalInscreverTrabalho({
   // pôster
   const [posterState, setPosterState] = useState("idle"); // idle | uploading | done | error
   const [posterProgress, setPosterProgress] = useState(0);
-  const [posterExistente, setPosterExistente] = useState(""); // nome do arquivo já enviado
+  const [posterExistente, setPosterExistente] = useState("");
+
+  const tituloId = useId();
+  const inicioId = useId();
+  const linhaId = useId();
 
   const [form, setForm] = useState({
     titulo: "",
@@ -55,6 +77,7 @@ export default function ModalInscreverTrabalho({
     bibliografia: "",
     coautores: [],
     poster: null,
+    _maxCoautores: 10, // só pra validação local
   });
 
   // mostra prazo com segurança (se já vier em PT-BR, mantém)
@@ -127,12 +150,13 @@ export default function ModalInscreverTrabalho({
             bibliografia: s.bibliografia || "",
             coautores: Array.isArray(s.coautores)
               ? s.coautores.map((c) => ({
-                  nome: c.nome || "",
-                  cpf: c.cpf || "",
-                  email: c.email || "",
-                  vinculo: c.vinculo || "",
+                  nome: trimStr(c.nome),
+                  cpf: sanitizeCPF(c.cpf),
+                  email: trimStr(c.email),
+                  vinculo: trimStr(c.vinculo),
                 }))
               : [],
+            _maxCoautores: Number(s.max_coautores ?? 10),
           }));
 
           // pôster existente
@@ -150,7 +174,9 @@ export default function ModalInscreverTrabalho({
           setChamada(ch || null);
           setLinhas(chResp?.linhas || []);
           setLimites(chResp?.limites || ch?.limites || {});
-          setMaxCoautores(Number(ch?.max_coautores ?? 10));
+          const max = Number(ch?.max_coautores ?? 10);
+          setMaxCoautores(max);
+          setForm((f) => ({ ...f, _maxCoautores: max }));
           await checarModelo(ch?.id || s.chamada_id || s.chamadaId);
         } else {
           // Nova submissão
@@ -159,7 +185,9 @@ export default function ModalInscreverTrabalho({
           setChamada(ch || null);
           setLinhas(r?.linhas || []);
           setLimites(r?.limites || ch?.limites || {});
-          setMaxCoautores(Number(ch?.max_coautores ?? 10));
+          const max = Number(ch?.max_coautores ?? 10);
+          setMaxCoautores(max);
+          setForm((f) => ({ ...f, _maxCoautores: max }));
           await checarModelo(ch?.id || propChamadaId);
         }
       } catch (err) {
@@ -168,9 +196,7 @@ export default function ModalInscreverTrabalho({
         if (alive) setLoading(false);
       }
     })();
-    return () => {
-      alive = false;
-    };
+    return () => { alive = false; };
   }, [propChamadaId, propSubId]);
 
   // Handlers
@@ -183,12 +209,31 @@ export default function ModalInscreverTrabalho({
     const file = e.target.files?.[0] || null;
     setPosterState("idle");
     setPosterProgress(0);
+    if (file) {
+      // valida tipo/tamanho antes
+      const type = String(file.type || "");
+      const name = String(file.name || "").toLowerCase();
+      const sizeOk = file.size <= 50 * 1024 * 1024;
+      const typeOk =
+        name.endsWith(".ppt") ||
+        name.endsWith(".pptx") ||
+        type === "application/vnd.ms-powerpoint" ||
+        type === "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+      if (!sizeOk) {
+        alert("Arquivo muito grande (máximo 50MB).");
+        return;
+      }
+      if (!typeOk) {
+        alert("Formato inválido. Use .ppt ou .pptx.");
+        return;
+      }
+    }
     setForm((f) => ({ ...f, poster: file }));
   };
 
   const addCoautor = () => {
     setForm((f) => {
-      const lim = maxCoautores || 10;
+      const lim = Number(f._maxCoautores || maxCoautores || 10);
       if ((f.coautores?.length || 0) >= lim) return f;
       return {
         ...f,
@@ -204,7 +249,10 @@ export default function ModalInscreverTrabalho({
   const setCoautor = (idx, key, val) => {
     setForm((f) => {
       const arr = [...(f.coautores || [])];
-      arr[(idx = Number(idx))] = { ...arr[idx], [key]: val };
+      arr[(idx = Number(idx))] = {
+        ...arr[idx],
+        [key]: key === "cpf" ? sanitizeCPF(val) : val,
+      };
       return { ...f, coautores: arr };
     });
   };
@@ -213,13 +261,13 @@ export default function ModalInscreverTrabalho({
     const payload = {
       ...form,
       status: statusAlvo, // "rascunho" | "submetido"
-      inicio_experiencia: toMonthValue(form.inicio_experiencia), // garante YYYY-MM
+      inicio_experiencia: toMonthValue(form.inicio_experiencia),
       linha_tematica_id: form.linha_tematica_id || null,
       coautores: (form.coautores || []).map((c) => ({
-        nome: c.nome?.trim() || "",
-        cpf: (c.cpf || "").replace(/\D/g, ""),
-        email: c.email?.trim() || "",
-        vinculo: c.vinculo?.trim() || "",
+        nome: trimStr(c.nome),
+        cpf: sanitizeCPF(c.cpf),
+        email: trimStr(c.email),
+        vinculo: trimStr(c.vinculo),
       })),
       poster: undefined, // upload é separado
     };
@@ -240,8 +288,8 @@ export default function ModalInscreverTrabalho({
     if (posterState === "uploading") return { ok: false, error: "Upload em andamento." };
 
     const f = form.poster;
-    const rawName = (f.name || "").trim();
-    const rawType = (f.type || "").trim();
+    const rawName = trimStr(f.name);
+    const rawType = trimStr(f.type);
 
     const isPptxMime =
       rawType === "application/vnd.openxmlformats-officedocument.presentationml.presentation";
@@ -265,7 +313,6 @@ export default function ModalInscreverTrabalho({
         : "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 
     const fixedName = rawName.toLowerCase().endsWith(ext) ? rawName : `${rawName}${ext}`;
-
     const fileToSend = new File([f], fixedName, { type: fixedType });
 
     const fd = new FormData();
@@ -274,7 +321,15 @@ export default function ModalInscreverTrabalho({
     setPosterState("uploading");
     setPosterProgress(0);
 
-    const attempt = async () => apiUpload(`/submissoes/${id}/poster`, fd);
+    const attempt = async () =>
+      apiUpload(`/submissoes/${id}/poster`, fd, {
+        // se seu apiUpload suportar, isso atualiza a barra
+        onUploadProgress: (evt) => {
+          if (!evt?.total) return;
+          const pct = Math.round((evt.loaded / evt.total) * 100);
+          setPosterProgress(pct);
+        },
+      });
 
     try {
       try {
@@ -291,6 +346,7 @@ export default function ModalInscreverTrabalho({
 
       setPosterProgress(100);
       setPosterState("done");
+      setPosterExistente(fileToSend.name);
       return { ok: true };
     } catch (e) {
       const msgBackend = e?.data?.erro || e?.response?.data?.erro;
@@ -307,6 +363,13 @@ export default function ModalInscreverTrabalho({
   }
 
   const onSalvar = async () => {
+    const dentro = !!(chamada?.dentro_prazo ?? chamada?.dentroPrazo);
+    const v = validarForm(form, limites, dentro);
+    if (!v.ok) {
+      alert(v.erros.join("\n"));
+      return;
+    }
+
     setSaving(true);
     try {
       const id = await criarOuAtualizar("rascunho");
@@ -322,6 +385,13 @@ export default function ModalInscreverTrabalho({
   };
 
   const onEnviar = async () => {
+    const dentro = !!(chamada?.dentro_prazo ?? chamada?.dentroPrazo);
+    const v = validarForm(form, limites, dentro);
+    if (!v.ok) {
+      alert(v.erros.join("\n"));
+      return;
+    }
+
     setSending(true);
     try {
       const id = await criarOuAtualizar("submetido");
@@ -367,6 +437,7 @@ export default function ModalInscreverTrabalho({
 
   // ✅ aceita snake_case ou camelCase vindo do backend
   const dentroPrazo = !!(chamada?.dentro_prazo ?? chamada?.dentroPrazo);
+  const atingiuMaxCoautores = (form.coautores?.length || 0) >= (Number(form._maxCoautores) || maxCoautores || 10);
 
   return (
     <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
@@ -375,11 +446,14 @@ export default function ModalInscreverTrabalho({
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0 }}
         className="relative bg-white w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={tituloId}
       >
         {/* Header */}
         <div className="relative bg-gradient-to-r from-violet-700 via-indigo-600 to-blue-500 px-5 py-4 text-white">
           <div className="flex items-center justify-between">
-            <h2 className="flex items-center gap-2 text-lg sm:text-xl font-semibold">
+            <h2 id={tituloId} className="flex items-center gap-2 text-lg sm:text-xl font-semibold">
               <FilePlus2 className="w-5 h-5" />
               {submissaoId ? "Editar submissão" : "Submeter trabalho"}
             </h2>
@@ -398,8 +472,9 @@ export default function ModalInscreverTrabalho({
         <div className="max-h-[76vh] overflow-y-auto p-5">
           {/* Título */}
           <div className="mb-4">
-            <label className="block text-sm font-medium text-zinc-700">Título do trabalho</label>
+            <label htmlFor={tituloId + "-t"} className="block text-sm font-medium text-zinc-700">Título do trabalho</label>
             <input
+              id={tituloId + "-t"}
               name="titulo"
               value={form.titulo}
               onChange={onChange}
@@ -416,8 +491,9 @@ export default function ModalInscreverTrabalho({
           {/* Início + Linha */}
           <div className="grid gap-4 sm:grid-cols-2 mb-4">
             <div>
-              <label className="block text-sm font-medium text-zinc-700">Início da experiência</label>
+              <label htmlFor={inicioId} className="block text-sm font-medium text-zinc-700">Início da experiência</label>
               <input
+                id={inicioId}
                 type="month"
                 name="inicio_experiencia"
                 value={toMonthValue(form.inicio_experiencia)}
@@ -428,8 +504,9 @@ export default function ModalInscreverTrabalho({
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-zinc-700">Linha temática</label>
+              <label htmlFor={linhaId} className="block text-sm font-medium text-zinc-700">Linha temática</label>
               <select
+                id={linhaId}
                 name="linha_tematica_id"
                 value={form.linha_tematica_id}
                 onChange={onChange}
@@ -478,7 +555,7 @@ export default function ModalInscreverTrabalho({
             <button
               type="button"
               onClick={addCoautor}
-              disabled={!dentroPrazo}
+              disabled={!dentroPrazo || atingiuMaxCoautores}
               className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-1.5 text-white text-sm hover:bg-emerald-700 disabled:opacity-50"
             >
               <Plus className="w-4 h-4" /> Adicionar coautor
@@ -497,7 +574,7 @@ export default function ModalInscreverTrabalho({
                 className="rounded-xl border px-3 py-2"
                 placeholder="CPF (apenas números)"
                 value={c.cpf}
-                onChange={(e) => setCoautor(i, "cpf", e.target.value.replace(/\D/g, ""))}
+                onChange={(e) => setCoautor(i, "cpf", e.target.value)}
                 disabled={!dentroPrazo}
               />
               <input

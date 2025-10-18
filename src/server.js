@@ -51,17 +51,20 @@ const datasEventoRoute           = require("./routes/datasEventoRoute");
 const perfilRoutes               = require("./routes/perfilRoutes");
 const publicLookupsRoutes        = require("./routes/publicLookupsRoutes");
 const usuariosRoute              = require("./routes/usuariosRoute");
-const metricasRoutes = require("./routes/metricasRoutes");
+const metricasRoutes             = require("./routes/metricasRoutes");
 
 /* 🆕 Submissão de Trabalhos */
 const chamadasRoutes             = require("./routes/chamadasRoutes");
 const trabalhosRoutes            = require("./routes/trabalhosRoutes");
 
-/* 🆕 Upload/Modelo de Banner (por chamada) — arquivo correto */
+/* 🆕 Upload/Modelo de Banner (por chamada) */
 const chamadasModeloRoutes       = require("./routes/chamadasModeloRoutes");
 
-// 🆕 Estatísticas de usuários (Doughnuts do Dashboard Analítico)
+/* 🆕 Estatísticas de usuários (Doughnuts do Dashboard Analítico) */
 const usuariosEstatisticasRoute  = require("./routes/usuariosEstatisticasRoute");
+
+/* 🆕 Admin de Submissões (router completo) */
+const submissoesAdminRoutes      = require("./routes/submissoesAdminRoutes");
 
 const IS_DEV = process.env.NODE_ENV !== "production";
 const app = express();
@@ -90,7 +93,8 @@ app.use(
         "default-src": ["'self'"],
         "base-uri": ["'self'"],
         "font-src": ["'self'", "data:", "https:"],
-        "img-src": ["'self'", "data:", "https:"],
+        // ⬇️ permite data: e blob: para inline/preview
+        "img-src": ["'self'", "data:", "https:", "blob:"],
         "object-src": ["'none'"],
         "script-src": [
           "'self'",
@@ -105,11 +109,14 @@ app.use(
           "'self'",
           "https://escola-saude-api.onrender.com",
           "https://www.googleapis.com",
+          ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []),
           ...(IS_DEV ? ["ws:", "http://localhost:5173", "http://127.0.0.1:5173"] : []),
         ],
         "frame-src": ["https://accounts.google.com"],
-        "media-src": ["'self'", "https:"],
+        // ⬇️ inclui blob: para players/viewers modernos
+        "media-src": ["'self'", "https:", "blob:"],
         "worker-src": ["'self'", "blob:"],
+        "frame-ancestors": ["'self'"],
       },
     },
     noSniff: true,
@@ -119,7 +126,7 @@ app.use(
 
 app.use(compression());
 
-/* ───────── CORS (GLOBAL + preflight) ───────── */
+/* ───────── CORS (GLOBAL) ───────── */
 const fromEnv = (process.env.CORS_ORIGINS || "")
   .split(",")
   .map((s) => s.trim())
@@ -194,39 +201,11 @@ app.use(
   })
 );
 
-// (LEGADO) Modelos empacotados
-const modelosDir = path.join(__dirname, "public", "modelos");
-if (!fs.existsSync(modelosDir)) fs.mkdirSync(modelosDir, { recursive: true });
-app.use(
-  "/api/modelos",
-  cors(corsOptions),
-  express.static(modelosDir, {
-    maxAge: "1d",
-    fallthrough: true,
-    setHeaders(res, filePath) {
-      res.setHeader("Cache-Control", "public, max-age=86400, immutable");
-      if (filePath.endsWith(".pptx")) {
-        res.setHeader(
-          "Content-Type",
-          "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-        );
-        res.setHeader("Content-Disposition", 'attachment; filename="modelo-banner.pptx"');
-      } else if (filePath.endsWith(".ppt")) {
-        res.setHeader("Content-Type", "application/vnd.ms-powerpoint");
-        res.setHeader("Content-Disposition", 'attachment; filename="modelo-banner.ppt"');
-      }
-    },
-  })
-);
-
 /* ───────── DB fallback global ───────── */
 app.use((req, _res, next) => {
   if (!req.db) req.db = db;
   next();
 });
-
-/* ───────── Estáticos públicos ───────── */
-app.use(express.static(path.join(__dirname, "public")));
 
 /* ───────── Logger dev ───────── */
 if (IS_DEV) {
@@ -240,15 +219,11 @@ if (IS_DEV) {
 const loginLimiter = rateLimit({
   windowMs: 5 * 60 * 1000,
   max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
   message: { erro: "Muitas tentativas, tente novamente em alguns minutos." },
 });
 const recuperarSenhaLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
-  standardHeaders: true,
-  legacyHeaders: false,
   message: { erro: "Muitas solicitações, aguarde antes de tentar novamente." },
 });
 
@@ -269,13 +244,8 @@ app.use("/api/presencas", presencasRoute);
 app.use("/api/relatorio-presencas", relatorioPresencasRoute);
 app.use("/api/turmas", turmasRoute);
 app.use("/api/metricas", metricasRoutes);
-
-// 🔹 MONTE PRIMEIRO a rota de Estatísticas (estática)
 app.use("/api", usuariosEstatisticasRoute);
-
-// 🔹 Depois, as demais de /usuarios (contém rotas dinâmicas :id)
 app.use("/api/usuarios", usuariosRoute);
-
 app.use("/api/instrutor", instrutorRoute);
 app.use("/api/relatorios", relatoriosRoute);
 app.use("/api/dashboard-analitico", dashboardAnaliticoRoutes);
@@ -284,20 +254,18 @@ app.use("/api/notificacoes", notificacoesRoute);
 app.use("/api/auth", authGoogleRoute);
 app.use("/api/unidades", unidadesRoutes);
 app.use("/api/assinatura", assinaturaRoutes);
-app.use("/api/assinaturas", assinaturaRoutes);
 app.use("/api/datas", datasEventoRoute);
 app.use("/api/perfil", perfilRoutes);
-app.use("/api/usuarios/perfil", perfilRoutes);
 
 /* 🆕 Submissões de Trabalhos */
 app.use("/api", chamadasRoutes);
 app.use("/api", trabalhosRoutes);
 
-/* 🆕 Modelo de banner por chamada (dinâmico) */
-app.use("/api", chamadasModeloRoutes);
+/* 🆕 Admin de Submissões (avaliadores, notas, banner inline) */
+app.use("/api", submissoesAdminRoutes);
 
-/* (se ainda usar) Upload genérico legado */
-// app.use("/api", uploadRoutes);
+/* 🆕 Modelo de banner por chamada */
+app.use("/api", chamadasModeloRoutes);
 
 /* ───────── Recuperação de senha ───────── */
 app.post("/api/usuarios/recuperar-senha", recuperarSenhaLimiter, usuarioPublicoController.recuperarSenha);
@@ -308,23 +276,18 @@ app.get("/", (_req, res) => res.send("🟢 API da Escola da Saúde rodando!"));
 
 /* ───────── 404 ───────── */
 app.use((req, res) => {
-  if (req.url.startsWith("/uploads/") && req.method === "GET") {
-    return res.status(404).end();
-  }
+  if (req.url.startsWith("/uploads/") && req.method === "GET") return res.status(404).end();
   return res.status(404).json({ erro: "Rota não encontrada" });
 });
 
-/* ───────── Error handler (inclui multer) ───────── */
+/* ───────── Error handler ───────── */
 app.use((err, _req, res, _next) => {
-  if (err?.code === "LIMIT_FILE_SIZE") {
+  if (err?.code === "LIMIT_FILE_SIZE")
     return res.status(400).json({ erro: "Arquivo muito grande (máx. 50MB)." });
-  }
-  if (err?.message && /Apenas arquivos \.ppt|\.pptx/i.test(err.message)) {
+  if (err?.message && /Apenas arquivos \.(ppt|pptx)/i.test(err.message))
     return res.status(400).json({ erro: "Apenas arquivos .ppt ou .pptx" });
-  }
-  if (err?.field === "poster" || err?.field === "banner" || err?.field === "file") {
+  if (["poster", "banner", "file"].includes(err?.field))
     return res.status(400).json({ erro: err.message || "Falha no upload." });
-  }
 
   console.error("Erro inesperado:", err.stack || err.message || err);
   res.status(err.status || 500).json({ erro: err.message || "Erro interno do servidor" });

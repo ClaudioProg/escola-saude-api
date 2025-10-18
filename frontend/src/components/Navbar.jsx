@@ -71,22 +71,29 @@ function getValidToken() {
   if (payload?.exp && Date.now() >= payload.exp * 1000) return null;
   return token;
 }
+function normPerfilStr(p) {
+  return String(p ?? "")
+    .replace(/[\[\]"]/g, "")
+    .split(",")
+    .map((x) => x.trim().toLowerCase())
+    .filter(Boolean);
+}
 function getPerfisRobusto() {
   const out = new Set();
+
+  // LS: "perfil"
   const rawPerfil = localStorage.getItem("perfil");
   if (rawPerfil) {
     try {
       const parsed = JSON.parse(rawPerfil);
       if (Array.isArray(parsed)) parsed.forEach((p) => out.add(String(p).toLowerCase()));
-      else String(rawPerfil)
-        .split(",")
-        .forEach((p) => out.add(p.replace(/[\[\]"]/g, "").trim().toLowerCase()));
+      else normPerfilStr(rawPerfil).forEach((p) => out.add(p));
     } catch {
-      String(rawPerfil)
-        .split(",")
-        .forEach((p) => out.add(p.replace(/[\[\]"]/g, "").trim().toLowerCase()));
+      normPerfilStr(rawPerfil).forEach((p) => out.add(p));
     }
   }
+
+  // LS: "usuario"
   try {
     const rawUser = localStorage.getItem("usuario");
     if (rawUser) {
@@ -97,12 +104,11 @@ function getPerfisRobusto() {
       }
       if (u?.perfis) {
         if (Array.isArray(u.perfis)) u.perfis.forEach((p) => out.add(String(p).toLowerCase()));
-        else String(u.perfis)
-          .split(",")
-          .forEach((p) => out.add(p.replace(/[\[\]"]/g, "").trim().toLowerCase()));
+        else normPerfilStr(u.perfis).forEach((p) => out.add(p));
       }
     }
   } catch {}
+
   if (out.size === 0) out.add("usuario");
   return Array.from(out).filter(Boolean);
 }
@@ -120,6 +126,21 @@ function getIniciais(nome, email) {
   if (e) return (e.split("@")[0].slice(0, 2) || "?").toUpperCase();
   return "?";
 }
+
+/* Scroll lock robusto para o menu mobile */
+let _restoreScrollTop = 0;
+function lockScroll() {
+  const body = document.body;
+  if (!body) return;
+  _restoreScrollTop = window.scrollY || window.pageYOffset || 0;
+  body.style.position = "fixed";
+  body.style.top = `-${_restoreScrollTop}px`;
+  body.style.left = "0";
+  body.style.right = "0";
+  body.style.width = "100%";
+  body.style.overflow = "hidden";
+  body.classList.add("overflow-hidden", "no-scroll", "modal-open");
+}
 function unlockScroll() {
   const html = document.documentElement;
   const body = document.body;
@@ -130,10 +151,12 @@ function unlockScroll() {
     el.classList.remove("overflow-hidden", "no-scroll", "modal-open");
   });
   if (body && body.style.position === "fixed") {
-    const prevTop = parseInt(body.style.top || "0", 10) || 0;
     body.style.position = "";
     body.style.top = "";
-    try { window.scrollTo({ top: -prevTop, behavior: "instant" }); } catch { window.scrollTo(0, -prevTop); }
+    body.style.left = "";
+    body.style.right = "";
+    body.style.width = "";
+    try { window.scrollTo({ top: _restoreScrollTop, behavior: "instant" }); } catch { window.scrollTo(0, _restoreScrollTop); }
   }
 }
 
@@ -179,12 +202,41 @@ export default function Navbar() {
   const [emailUsuario, setEmailUsuario] = useState(() => getEmailUsuario());
   const iniciais = useMemo(() => getIniciais(nomeUsuario, emailUsuario), [nomeUsuario, emailUsuario]);
 
+  /* Tema: respeita preferência salva; na ausência, usa sistema/DOM */
   const [darkMode, setDarkMode] = useState(() => {
     const t = localStorage.getItem("theme");
     if (t === "dark") return true;
     if (t === "light") return false;
-    return document.documentElement.classList.contains("dark");
+    return (
+      window.matchMedia?.("(prefers-color-scheme: dark)").matches ||
+      document.documentElement.classList.contains("dark")
+    );
   });
+
+  /* Sincroniza DOM + persiste quando o usuário alterna */
+  useEffect(() => {
+    const root = document.documentElement;
+    if (darkMode) {
+      root.classList.add("dark");
+      try { localStorage.setItem("theme", "dark"); } catch {}
+    } else {
+      root.classList.remove("dark");
+      try { localStorage.setItem("theme", "light"); } catch {}
+    }
+  }, [darkMode]);
+
+  /* Respeita mudança do sistema apenas se NÃO houver escolha salva do usuário */
+  useEffect(() => {
+    const mq = window.matchMedia?.("(prefers-color-scheme: dark)");
+    if (!mq) return;
+    const handler = (e) => {
+      const saved = localStorage.getItem("theme");
+      if (saved === "dark" || saved === "light") return; // usuário já decidiu
+      setDarkMode(e.matches);
+    };
+    mq.addEventListener?.("change", handler);
+    return () => mq.removeEventListener?.("change", handler);
+  }, []);
 
   const [menuUsuarioOpen, setMenuUsuarioOpen] = useState(false);
   const [menuInstrutorOpen, setMenuInstrutorOpen] = useState(false);
@@ -229,6 +281,7 @@ export default function Navbar() {
       { label: "Presença", path: "/instrutor/presenca", icon: QrCode },
       { label: "Certificados", path: "/instrutor/certificados", icon: FileText },
       { label: "Avaliação", path: "/instrutor/avaliacao", icon: PencilLine },
+      { label: "Avaliar Trabalhos Atribuídos", path: "/avaliador/submissoes", icon: FolderOpenDot },
     ],
     []
   );
@@ -245,16 +298,15 @@ export default function Navbar() {
       // relatórios
       { label: "Relatórios Customizados", path: "/relatorios-customizados", icon: ClipboardList },
       // trabalhos
-      { label: "Criar Submissão de Trabalho",         path: "/admin/chamadas/new",     icon: PlusCircle },
+      { label: "Criar Submissão de Trabalho", path: "/admin/chamadas/new", icon: PlusCircle },
       { label: "Avaliar Submissão de Trabalho", path: "__open_submissions__", icon: FolderOpenDot },
       // gestão
       { label: "Gestão de Usuários",    path: "/gestao-usuarios",        icon: Users },
       { label: "Gestão de Instrutor",   path: "/gestao-instrutor",       icon: Presentation },
       { label: "Gestão de Eventos",     path: "/gerenciar-eventos",      icon: CalendarDays },
-      { label: "Gestão de Inscrições",   path: "/admin/cancelar-inscricoes", icon: XCircle },
+      { label: "Gestão de Inscrições",  path: "/admin/cancelar-inscricoes", icon: XCircle },
       { label: "Gestão de Presença",    path: "/gestao-presenca",        icon: QrCode },
-      { label: "Gestão de Certificados", path: "/gestao-certificados", icon: History },
-
+      { label: "Gestão de Certificados", path: "/gestao-certificados",   icon: History },
     ],
     []
   );
@@ -290,6 +342,7 @@ export default function Navbar() {
     };
   }, [token, atualizarContadorNotificacoes]);
 
+  /* Reage a mudanças no LS (login/logout/perfis/tema) */
   useEffect(() => {
     const refreshFromLS = () => {
       setToken(getValidToken());
@@ -304,6 +357,8 @@ export default function Navbar() {
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, []);
+
+  /* Fecha tudo ao trocar de rota */
   useEffect(() => {
     setMenuUsuarioOpen(false);
     setMenuInstrutorOpen(false);
@@ -317,13 +372,7 @@ export default function Navbar() {
     setToken(getValidToken());
   }, [location.pathname]);
 
-  const toggleTheme = () => {
-    const next = !darkMode;
-    setDarkMode(next);
-    const root = document.documentElement;
-    if (next) { root.classList.add("dark"); localStorage.setItem("theme", "dark"); }
-    else { root.classList.remove("dark"); localStorage.setItem("theme", "light"); }
-  };
+  const toggleTheme = () => setDarkMode((v) => !v);
 
   // fechar ao clicar fora
   useEffect(() => {
@@ -363,27 +412,48 @@ export default function Navbar() {
     return () => window.removeEventListener("keydown", onEsc);
   }, []);
 
+  /* foca primeiro item do drawer ao abrir */
+  useEffect(() => {
+    if (mobileOpen) {
+      lockScroll();
+      // tenta focar primeiro botão do menu
+      requestAnimationFrame(() => {
+        const firstBtn = refMobile.current?.querySelector("button");
+        firstBtn?.focus();
+      });
+    }
+  }, [mobileOpen]);
+
+  // ❗️Logout preservando TEMA (não apagar 'theme')
   const sair = () => {
-    localStorage.clear();
+    const theme = localStorage.getItem("theme"); // preserve
+    // Remova apenas chaves de sessão — NUNCA use localStorage.clear()
+    [
+      "token",
+      "refresh_token",
+      "perfil",
+      "usuario",
+      // adicione outras chaves de sessão aqui…
+    ].forEach((k) => localStorage.removeItem(k));
+    if (theme) localStorage.setItem("theme", theme);
     unlockScroll();
     navigate("/login");
   };
 
-// ação especial do item “Abrir Submissões…”
-const handleAdminSelect = (path) => {
-  if (path === "__open_submissions__" || path === "__open_submissions_prompt__") {
-    navigate("/admin/submissoes"); // sempre abre TODAS as submissões
-  } else {
-    navigate(path);
-  }
-  setMenuUsuarioOpen(false);
-  setMenuInstrutorOpen(false);
-  setMenuAdminOpen(false);
-  setConfigOpen(false);
-  setMobileOpen(false);
-  unlockScroll();
-};
-
+  // ação especial do item “Abrir Submissões…”
+  const handleAdminSelect = (path) => {
+    if (path === "__open_submissions__" || path === "__open_submissions_prompt__") {
+      navigate("/admin/submissoes"); // sempre abre TODAS as submissões
+    } else {
+      navigate(path);
+    }
+    setMenuUsuarioOpen(false);
+    setMenuInstrutorOpen(false);
+    setMenuAdminOpen(false);
+    setConfigOpen(false);
+    setMobileOpen(false);
+    unlockScroll();
+  };
 
   const go = (path) => handleAdminSelect(path); // reusa o mesmo close/unlock
 
@@ -400,8 +470,16 @@ const handleAdminSelect = (path) => {
   return (
     <nav
       role="navigation"
-      className={`w-full ${navBg} text-white shadow-md px-3 sm:px-4 py-2 sticky top-0 z-50 border-b border-white/20`}
+      className={`w-full ${navBg} text-white shadow-md px-3 sm:px-4 py-2 sticky top-0 z-50 border-b border-white/20 pt-[env(safe-area-inset-top)]`}
     >
+      {/* Skip-link: acessa o main#conteudo se existir */}
+      <a
+        href="#conteudo"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 bg-white text-lousa px-3 py-2 rounded-md shadow"
+      >
+        Ir para o conteúdo
+      </a>
+
       <div className="flex items-center justify-between">
         {/* logo / home */}
         <button
@@ -491,6 +569,9 @@ const handleAdminSelect = (path) => {
           )}
 
           {/* NOTIFICAÇÕES */}
+          <div aria-live="polite" className="sr-only">
+            {totalNaoLidas > 0 ? `${totalNaoLidas} notificações não lidas` : ""}
+          </div>
           <button
             type="button"
             onClick={() => go("/notificacoes")}
@@ -587,13 +668,7 @@ const handleAdminSelect = (path) => {
         <button
           type="button"
           className="md:hidden inline-flex items-center justify-center rounded-lg p-2 hover:bg-white hover:text-lousa focus-visible:ring-2 focus-visible:ring-white/60 outline-none"
-          onClick={() => {
-            setMobileOpen((v) => {
-              const next = !v;
-              if (!next) unlockScroll();
-              return next;
-            });
-          }}
+          onClick={() => setMobileOpen((v) => !v)}
           aria-label={mobileOpen ? "Fechar menu" : "Abrir menu"}
           aria-expanded={mobileOpen}
           aria-controls="navbar-mobile-menu"
@@ -738,7 +813,7 @@ const handleAdminSelect = (path) => {
             </button>
             <button
               type="button"
-              onClick={toggleTheme}
+              onClick={() => setDarkMode((v) => !v)}
               className="text-left w-full px-3 py-2 rounded-lg flex items-center gap-2 hover:bg-gelo"
             >
               {darkMode ? <Sun size={16} /> : <Moon size={16} />} Modo {darkMode ? "Claro" : "Escuro"}

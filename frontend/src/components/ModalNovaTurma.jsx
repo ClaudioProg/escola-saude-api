@@ -1,10 +1,11 @@
 // frontend/src/components/ModalNovaTurma.jsx
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import TurmaDatasFieldset from "./TurmaDatasFieldset";
 import { apiPost } from "../services/api";
 import { toast } from "react-toastify";
 import Modal from "./Modal"; // ✅ usa o modal reutilizável (Esc, foco, acessível)
+import { CalendarDays, Clock3, Layers3 } from "lucide-react";
 
 /* =========================
    Helpers de horário/data
@@ -60,6 +61,14 @@ function buildDatasValidas(rows) {
   return unicas.sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : 0));
 }
 
+const br = (yyyy_mm_dd) => {
+  if (!yyyy_mm_dd) return "";
+  const s = String(yyyy_mm_dd).slice(0, 10);
+  const [y, m, d] = s.split("-");
+  if (!y || !m || !d) return "";
+  return `${d}/${m}/${y}`;
+};
+
 /* =========================
    Componente
    ========================= */
@@ -69,23 +78,36 @@ export default function ModalNovaTurma({ eventoId, onClose, onSaved }) {
   const [vagas, setVagas] = useState("");
   const [datas, setDatas] = useState([{ data: "", horario_inicio: "", horario_fim: "" }]);
   const [saving, setSaving] = useState(false);
+  const [msgA11y, setMsgA11y] = useState("");
 
-  async function handleSave() {
+  const datasValidas = useMemo(() => buildDatasValidas(datas), [datas]);
+
+  const minis = useMemo(() => {
+    const qtd = datasValidas.length;
+    const inicio = qtd ? br(datasValidas[0].data) : "—";
+    const fim = qtd ? br(datasValidas[qtd - 1].data) : "—";
+    return { qtd, inicio, fim };
+  }, [datasValidas]);
+
+  async function handleSave(e) {
+    e?.preventDefault?.();
     if (saving) return;
 
     const nomeTrim = nome.trim();
     if (!nomeTrim) {
+      setMsgA11y("Informe o nome da turma.");
       toast.error("Informe o nome da turma.");
       return;
     }
 
-    const datasValidas = buildDatasValidas(datas);
     if (datasValidas.length === 0) {
+      setMsgA11y("Inclua ao menos uma data completa (data, início e fim).");
       toast.error("Inclua ao menos uma data completa (data, início e fim).");
       return;
     }
 
     if (vagas && (!Number.isFinite(Number(vagas)) || Number(vagas) < 0)) {
+      setMsgA11y("Quantidade de vagas deve ser um número válido.");
       toast.error("Quantidade de vagas deve ser um número válido.");
       return;
     }
@@ -104,13 +126,16 @@ export default function ModalNovaTurma({ eventoId, onClose, onSaved }) {
 
     try {
       setSaving(true);
+      setMsgA11y("Salvando turma...");
       await apiPost("/api/turmas", payload);
       toast.success("Turma criada com sucesso!");
+      setMsgA11y("Turma criada com sucesso!");
       onSaved?.();
       onClose?.();
     } catch (e) {
       console.error(e);
       const msg = e?.data?.erro || e?.message || "Erro ao criar turma.";
+      setMsgA11y(msg);
       toast.error(msg);
     } finally {
       setSaving(false);
@@ -118,50 +143,110 @@ export default function ModalNovaTurma({ eventoId, onClose, onSaved }) {
   }
 
   return (
-    <Modal open={true} onClose={onClose}>
-      <h3 className="text-lg font-bold text-emerald-800 dark:text-emerald-200 mb-3">
-        Nova Turma
-      </h3>
+    <Modal
+      open={true}
+      onClose={saving ? undefined : onClose} // bloqueia fechar durante salvamento
+      labelledBy="titulo-nova-turma"
+      describedBy="descricao-nova-turma"
+      className="w-[96%] max-w-2xl p-0 overflow-hidden"
+    >
+      {/* Header hero (altura/tipografia padrão; degradê 3 cores exclusivo) */}
+      <header
+        className="px-4 sm:px-6 py-4 text-white bg-gradient-to-br from-emerald-900 via-teal-800 to-lime-700"
+        role="group"
+        aria-label="Criação de turma"
+      >
+        <h3 id="titulo-nova-turma" className="text-xl sm:text-2xl font-extrabold tracking-tight">
+          Nova Turma
+        </h3>
+        <p id="descricao-nova-turma" className="text-white/90 text-sm mt-1">
+          Defina nome, datas dos encontros e a quantidade de vagas.
+        </p>
+      </header>
 
-      <div className="space-y-3">
+      {/* Ministats */}
+      <section className="px-4 sm:px-6 pt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="rounded-2xl border border-emerald-100 dark:border-emerald-900 p-3 shadow-sm bg-white dark:bg-slate-900">
+          <div className="flex items-center gap-2 mb-1">
+            <Layers3 className="w-5 h-5" aria-hidden="true" />
+            <span className="font-semibold">Encontros</span>
+          </div>
+          <div className="text-lg font-bold">{minis.qtd || "—"}</div>
+          <div className="text-xs text-slate-600 dark:text-slate-300">Total adicionados</div>
+        </div>
+
+        <div className="rounded-2xl border border-emerald-100 dark:border-emerald-900 p-3 shadow-sm bg-white dark:bg-slate-900">
+          <div className="flex items-center gap-2 mb-1">
+            <CalendarDays className="w-5 h-5" aria-hidden="true" />
+            <span className="font-semibold">Início</span>
+          </div>
+          <div className="text-lg font-bold">{minis.inicio}</div>
+          <div className="text-xs text-slate-600 dark:text-slate-300">Primeira data válida</div>
+        </div>
+
+        <div className="rounded-2xl border border-emerald-100 dark:border-emerald-900 p-3 shadow-sm bg-white dark:bg-slate-900">
+          <div className="flex items-center gap-2 mb-1">
+            <Clock3 className="w-5 h-5" aria-hidden="true" />
+            <span className="font-semibold">Término</span>
+          </div>
+          <div className="text-lg font-bold">{minis.fim}</div>
+          <div className="text-xs text-slate-600 dark:text-slate-300">Última data válida</div>
+        </div>
+      </section>
+
+      {/* Live region A11y */}
+      <div aria-live="polite" className="sr-only">
+        {msgA11y}
+      </div>
+
+      {/* Formulário */}
+      <form onSubmit={handleSave} className="px-4 sm:px-6 pt-4 pb-24 space-y-3">
         <div>
-          <label className="text-xs text-gray-600 dark:text-gray-300">Nome da turma</label>
+          <label className="text-xs text-slate-600 dark:text-slate-300">Nome da turma</label>
           <input
             type="text"
-            className="w-full border rounded px-3 py-2 dark:bg-zinc-800 dark:text-white"
+            className="w-full border rounded-xl px-3 py-2 dark:bg-slate-900 dark:text-white border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
             value={nome}
             onChange={(e) => setNome(e.target.value)}
             placeholder="Nome da turma"
+            disabled={saving}
+            autoComplete="off"
           />
         </div>
 
-        <TurmaDatasFieldset value={datas} onChange={setDatas} />
+        <TurmaDatasFieldset value={datas} onChange={setDatas} disabled={saving} />
 
         <div>
-          <label className="text-xs text-gray-600 dark:text-gray-300">Quantidade de vagas</label>
+          <label className="text-xs text-slate-600 dark:text-slate-300">Quantidade de vagas</label>
           <input
             type="number"
             min="0"
-            className="w-full border rounded px-3 py-2 dark:bg-zinc-800 dark:text-white"
+            className="w-full border rounded-xl px-3 py-2 dark:bg-slate-900 dark:text-white border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
             value={vagas}
             onChange={(e) => setVagas(e.target.value)}
             placeholder="ex.: 30"
+            disabled={saving}
+            inputMode="numeric"
           />
         </div>
-      </div>
+      </form>
 
-      <div className="mt-5 flex justify-end gap-2">
+      {/* Rodapé sticky (excelente no mobile) */}
+      <div className="sticky bottom-0 left-0 right-0 bg-white/85 dark:bg-zinc-950/85 backdrop-blur border-t border-slate-200 dark:border-slate-800 px-4 sm:px-6 py-3 flex items-center justify-end gap-2">
         <button
-          className="px-4 py-2 rounded border border-gray-300 text-gray-700 dark:text-white dark:border-gray-600"
+          type="button"
+          className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 transition disabled:opacity-60"
           onClick={onClose}
           disabled={saving}
         >
           Cancelar
         </button>
         <button
-          className="px-4 py-2 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
+          type="button"
+          className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 transition disabled:opacity-60"
           onClick={handleSave}
           disabled={saving}
+          aria-busy={saving ? "true" : "false"}
         >
           {saving ? "Salvando..." : "Salvar Turma"}
         </button>

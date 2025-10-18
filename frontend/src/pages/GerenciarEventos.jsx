@@ -1,5 +1,5 @@
 /* eslint-disable no-console */
-// 📁 src/pages/GerenciarEventos.jsx
+// 📁 src/pages/GerenciarEventos.jsx (revisto - cores sólidas, sem degradês que “apagam”)
 import { useEffect, useRef, useState } from "react";
 import { toast } from "react-toastify";
 import { motion } from "framer-motion";
@@ -9,7 +9,6 @@ import { apiGet, apiPost, apiPut, apiDelete } from "../services/api";
 import ModalEvento from "../components/ModalEvento";
 import NenhumDado from "../components/NenhumDado";
 import SkeletonEvento from "../components/SkeletonEvento";
-import BotaoPrimario from "../components/BotaoPrimario";
 import Footer from "../components/Footer";
 
 /* =============================
@@ -277,28 +276,24 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
   return clean(body);
 }
 
-/* ---------------- HeaderHero (azul, título central e altura média) ---------------- */
+/* ---------------- HeaderHero (cor única por página, sem degradê p/ branco) ---------------- */
 function HeaderHero({ onCriar, onAtualizar, atualizando }) {
   return (
     <header
-      className="relative isolate overflow-hidden bg-gradient-to-br from-sky-900 via-blue-800 to-indigo-700 text-white"
+      className="relative isolate overflow-hidden bg-indigo-700 text-white"
       role="banner"
     >
-      {/* glow sutil */}
-      <div
-        className="pointer-events-none absolute inset-0 opacity-60"
-        style={{
-          background:
-            "radial-gradient(55% 55% at 50% 0%, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.05) 30%, rgba(255,255,255,0) 60%)",
-        }}
-        aria-hidden="true"
-      />
+      <a
+        href="#conteudo"
+        className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2"
+      >
+        Ir para o conteúdo
+      </a>
 
-      {/* ⬇️ altura “média” */}
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-7 sm:py-8 md:py-9 min-h-[140px] sm:min-h-[170px]">
         <div className="flex flex-col items-center text-center gap-2.5 sm:gap-3">
           <div className="inline-flex items-center justify-center gap-2">
-            <Wrench className="w-6 h-6" />
+            <Wrench className="w-6 h-6" aria-hidden="true" />
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
               Gerenciar Eventos
             </h1>
@@ -318,7 +313,7 @@ function HeaderHero({ onCriar, onAtualizar, atualizando }) {
               aria-label="Atualizar lista de eventos"
               aria-busy={atualizando ? "true" : "false"}
             >
-              <RefreshCcw className="w-4 h-4" />
+              <RefreshCcw className="w-4 h-4" aria-hidden="true" />
               {atualizando ? "Atualizando…" : "Atualizar"}
             </button>
 
@@ -328,14 +323,13 @@ function HeaderHero({ onCriar, onAtualizar, atualizando }) {
               className="inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-semibold bg-amber-400 text-slate-900 hover:bg-amber-300 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-400"
               aria-label="Criar novo evento"
             >
-              <PlusCircle className="w-5 h-5" />
+              <PlusCircle className="w-5 h-5" aria-hidden="true" />
               Criar Evento
             </button>
           </div>
         </div>
       </div>
 
-      {/* linha sutil de separação na base */}
       <div className="absolute bottom-0 left-0 right-0 h-px bg-white/25" aria-hidden="true" />
     </header>
   );
@@ -595,7 +589,7 @@ export default function GerenciarEventos() {
       {/* live region acessível */}
       <p ref={liveRef} className="sr-only" aria-live="polite" />
 
-      {/* Header hero (título central e ações) */}
+      {/* Header hero (cor única da página) */}
       <HeaderHero
         onCriar={abrirModalCriar}
         onAtualizar={recarregarEventos}
@@ -604,12 +598,12 @@ export default function GerenciarEventos() {
 
       {/* barra de carregamento fina no topo */}
       {anyLoading && (
-        <div className="sticky top-0 left-0 w-full h-1 bg-blue-100 z-40" role="progressbar" aria-label="Carregando dados">
-          <div className="h-full bg-blue-700 animate-pulse w-1/3" />
+        <div className="sticky top-0 left-0 w-full h-1 bg-indigo-100 z-40" role="progressbar" aria-label="Carregando dados">
+          <div className="h-full bg-indigo-700 animate-pulse w-1/3" />
         </div>
       )}
 
-      <div className="px-2 sm:px-4 py-6 max-w-6xl mx-auto w-full">
+      <div id="conteudo" className="px-2 sm:px-4 py-6 max-w-6xl mx-auto w-full">
         {!!erro && !loading && (
           <p className="text-red-500 text-center mb-4" role="alert">
             {erro}
@@ -634,7 +628,7 @@ export default function GerenciarEventos() {
                     {ev.titulo}
                   </span>
 
-                  {/* Badge de restrição */}
+                  {/* Badge de restrição (sólida, sem degradê) */}
                   {ev?.restrito && (
                     <span
                       title={
@@ -642,7 +636,7 @@ export default function GerenciarEventos() {
                           ? "Restrito a uma lista de registros"
                           : "Visível a todos os servidores (com registro cadastrado)"
                       }
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-amber-100 text-amber-800 border border-amber-300"
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 border border-amber-300 dark:border-amber-800"
                     >
                       <Lock size={12} aria-hidden="true" />
                       {ev.restrito_modo === "lista_registros" ? "Lista" : "Servidores"}
@@ -653,14 +647,14 @@ export default function GerenciarEventos() {
                 <div className="flex gap-2 justify-end">
                   <button
                     onClick={() => abrirModalEditar(ev)}
-                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded flex items-center gap-1"
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded flex items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
                     aria-label={`Editar evento ${ev.titulo}`}
                   >
                     <Pencil size={16} aria-hidden="true" /> Editar
                   </button>
                   <button
                     onClick={() => excluirEvento(ev.id)}
-                    className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded flex items-center gap-1"
+                    className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded flex items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-300"
                     aria-label={`Excluir evento ${ev.titulo}`}
                   >
                     <Trash2 size={16} aria-hidden="true" /> Excluir

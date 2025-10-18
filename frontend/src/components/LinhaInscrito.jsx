@@ -1,5 +1,5 @@
 // 📁 src/components/LinhaInscrito.jsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import PropTypes from "prop-types";
 import { toast } from "react-toastify";
 import { motion } from "framer-motion";
@@ -9,10 +9,8 @@ import { formatarCPF as formatarCPFUtils } from "../utils/data";
 import { apiPost } from "../services/api"; // ✅ cliente central
 
 /* ======================= Helpers de data (fuso local) ======================= */
-
 const MS = {
   HOUR: 60 * 60 * 1000,
-  DAY: 24 * 60 * 60 * 1000,
 };
 
 function isDateOnly(str) {
@@ -44,7 +42,7 @@ function startOfDayLocal(d) {
   return new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
 }
 function combineDateAndTimeLocal(dateOnly, timeHHmm) {
-  // junta "YYYY-MM-DD" + "HH:MM" em Date local (termino real do curso)
+  // junta "YYYY-MM-DD" + "HH:MM" em Date local (término real do curso)
   if (!dateOnly) return null;
   const base = startOfDayLocal(dateOnly);
   if (!base) return null;
@@ -55,12 +53,7 @@ function combineDateAndTimeLocal(dateOnly, timeHHmm) {
 }
 
 /* =============================== Componente =============================== */
-
 export default function LinhaInscrito({ inscrito, turma }) {
-  // hoje como string local (YYYY-MM-DD) — evita UTC shift
-  const hojeStr = useMemo(() => ymdLocalString(new Date()), []);
-  const agora = useMemo(() => new Date(), []);
-
   // datas da turma
   const dataInicioStr = ymdLocalString(turma?.data_inicio);
   const fimDate = useMemo(
@@ -68,67 +61,25 @@ export default function LinhaInscrito({ inscrito, turma }) {
     [turma?.data_fim, turma?.horario_fim]
   );
 
-  // janelas de status
-  const eventoAindaNaoComecou = useMemo(() => {
-    return dataInicioStr && hojeStr ? hojeStr < dataInicioStr : false;
-  }, [dataInicioStr, hojeStr]);
-
-  const eventoEncerrado = useMemo(() => {
-    return fimDate ? agora > fimDate : false;
-  }, [fimDate, agora]);
-
-  // prazo de confirmação: até 48h após o fim
-  const limiteConfirmacao = useMemo(() => {
-    return fimDate ? new Date(fimDate.getTime() + 48 * MS.HOUR) : null;
-  }, [fimDate]);
-
-  const dentroPrazoConfirmacao = useMemo(() => {
-    return limiteConfirmacao ? agora <= limiteConfirmacao : false;
-  }, [limiteConfirmacao, agora]);
-
-  // status inicial pela presença existente
+  // status inicial pela presença existente (sincroniza ao receber prop nova)
   const temPresenca = inscrito?.data_presenca != null;
   const [status, setStatus] = useState(temPresenca ? "presente" : null);
   const [loading, setLoading] = useState(false);
 
-  // sincroniza status caso a lista seja recarregada e a presença chegue depois
   useEffect(() => {
     setStatus(inscrito?.data_presenca != null ? "presente" : null);
   }, [inscrito?.data_presenca]);
 
-  async function confirmarPresenca() {
-    // regras: não confirmar antes de começar; só após encerrar e até 48h; não repetir
-    if (status || eventoAindaNaoComecou || !eventoEncerrado || !dentroPrazoConfirmacao || loading) {
-      return;
-    }
+  // estados derivados (avaliados no render para não “congelar o relógio”)
+  const agora = new Date();
+  const hojeStr = ymdLocalString(agora);
+  const eventoAindaNaoComecou = dataInicioStr ? hojeStr < dataInicioStr : false;
+  const eventoEncerrado = fimDate ? agora > fimDate : false;
+  const limiteConfirmacao = fimDate ? new Date(fimDate.getTime() + 48 * MS.HOUR) : null;
+  const dentroPrazoConfirmacao = limiteConfirmacao ? agora <= limiteConfirmacao : false;
 
-    setLoading(true);
-    try {
-      await apiPost("/api/presencas/registrar", {
-        usuario_id: inscrito.usuario_id,
-        turma_id: turma.id,
-        data: hojeStr, // data local (YYYY-MM-DD)
-      });
-      setStatus("presente");
-      toast.success("✅ Presença confirmada!");
-    } catch (err) {
-      // idempotência amigável
-      if (err?.status === 409) {
-        setStatus("presente");
-        toast.success("✅ Presença já estava confirmada.");
-      } else {
-        setStatus((s) => s || "faltou"); // só marca faltou se não houver status
-        const msg =
-          err?.data?.erro ||
-          err?.data?.message ||
-          err?.message ||
-          "Erro ao confirmar presença.";
-        toast.error(`❌ ${msg}`);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }
+  const podeConfirmar =
+    !status && eventoEncerrado && dentroPrazoConfirmacao && !eventoAindaNaoComecou;
 
   function StatusBadge() {
     if (status === "presente") {
@@ -152,14 +103,59 @@ export default function LinhaInscrito({ inscrito, turma }) {
     );
   }
 
-  const podeConfirmar =
-    !status && eventoEncerrado && dentroPrazoConfirmacao && !eventoAindaNaoComecou;
+  function motivoBloqueio() {
+    if (status) return "Presença já confirmada.";
+    if (eventoAindaNaoComecou) return "A confirmação só libera no término da turma.";
+    if (!eventoEncerrado) return "A confirmação só libera após o término da turma.";
+    if (!dentroPrazoConfirmacao) return "Fora do prazo de 48h para confirmação.";
+    return null;
+  }
 
-  const tituloBotao = !eventoEncerrado
-    ? "A confirmação libera após o término da turma."
-    : !dentroPrazoConfirmacao
-    ? "Fora do prazo de 48h para confirmação."
-    : "Confirmar presença";
+  async function confirmarPresenca() {
+    const motivo = motivoBloqueio();
+    if (motivo || loading) {
+      if (motivo) toast.info(motivo);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await apiPost("/api/presencas/registrar", {
+        usuario_id: inscrito.usuario_id,
+        turma_id: turma.id,
+        data: hojeStr, // data local (YYYY-MM-DD)
+      });
+
+      // aceita 2xx como sucesso
+      if (!res || (res.status && String(res.status)[0] !== "2")) {
+        throw res;
+      }
+
+      setStatus("presente");
+      toast.success("✅ Presença confirmada!");
+    } catch (err) {
+      // idempotência amigável
+      const st = err?.status ?? err?.response?.status;
+      if (st === 409 || st === 208) {
+        setStatus("presente");
+        toast.success("✅ Presença já estava confirmada.");
+      } else {
+        setStatus((s) => s || "faltou"); // só marca faltou se não houver status anterior
+        const msg =
+          err?.data?.erro ||
+          err?.data?.message ||
+          err?.response?.data?.message ||
+          err?.message ||
+          "Erro ao confirmar presença.";
+        toast.error(`❌ ${msg}`);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const tituloBotao =
+    motivoBloqueio() || "Confirmar presença";
 
   return (
     <motion.li
@@ -197,10 +193,11 @@ export default function LinhaInscrito({ inscrito, turma }) {
         <BotaoSecundario
           onClick={confirmarPresenca}
           disabled={!podeConfirmar || loading}
+          loading={loading}
           aria-label={`Confirmar presença de ${inscrito?.nome || "participante"}`}
           title={tituloBotao}
         >
-          {loading ? "Confirmando..." : "Confirmar presença"}
+          Confirmar presença
         </BotaoSecundario>
       </div>
     </motion.li>

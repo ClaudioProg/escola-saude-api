@@ -1,15 +1,21 @@
-// 📁 src/pages/Perfil.jsx
-import { useEffect, useRef, useState } from "react";
+// ✅ src/pages/Perfil.jsx
+import { useEffect, useRef, useState, useMemo } from "react";
 import { toast } from "react-toastify";
-// 🔁 removido Breadcrumbs e PageHeader para usar o hero padronizado
 import ModalAssinatura from "../components/ModalAssinatura";
 import { apiGet, apiPatch, apiPerfilMe, setPerfilIncompletoFlag } from "../services/api";
 import Footer from "../components/Footer";
 import BotaoPrimario from "../components/BotaoPrimario";
 import { User, Save, Edit } from "lucide-react";
 
-/* ───────────────── Hero padronizado ───────────────── */
-function HeaderHero({ onSave, onAssinatura, podeGerenciarAssinatura = false, salvando = false, variant = "petroleo" }) {
+/* ───────────────── HeaderHero padronizado + ministats ───────────────── */
+function HeaderHero({
+  onSave,
+  onAssinatura,
+  podeGerenciarAssinatura = false,
+  salvando = false,
+  variant = "petroleo",
+  stats = { completo: false, pendentes: 0, percent: 0 },
+}) {
   const variants = {
     sky: "from-sky-900 via-sky-800 to-sky-700",
     violet: "from-violet-900 via-violet-800 to-violet-700",
@@ -22,54 +28,83 @@ function HeaderHero({ onSave, onAssinatura, podeGerenciarAssinatura = false, sal
   const grad = variants[variant] ?? variants.petroleo;
 
   return (
-    <header className={`bg-gradient-to-br ${grad} text-white`}>
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 flex flex-col items-center text-center gap-3">
-        <div className="inline-flex items-center gap-2">
-          <User className="w-5 h-5" aria-hidden="true" />
-          <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">Meu Perfil</h1>
-        </div>
-        <p className="text-sm text-white/90">
-          Atualize seus dados pessoais e preferências. CPF fica visível e não pode ser alterado aqui.
-        </p>
+    <header className={`relative isolate overflow-hidden bg-gradient-to-br ${grad} text-white`} role="banner">
+      <div
+        className="pointer-events-none absolute inset-0 opacity-70"
+        style={{
+          background:
+            "radial-gradient(52% 60% at 50% 0%, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.05) 32%, rgba(255,255,255,0) 60%)",
+        }}
+        aria-hidden="true"
+      />
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-10 md:py-12 min-h-[150px] sm:min-h-[180px]">
+        <div className="flex flex-col items-center text-center gap-3 sm:gap-4">
+          <div className="inline-flex items-center justify-center gap-2">
+            <User className="w-6 h-6" aria-hidden="true" />
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Meu Perfil</h1>
+          </div>
+          <p className="text-sm sm:text-base text-white/90 max-w-2xl">
+            Atualize seus dados pessoais e preferências. O CPF aparece somente para consulta.
+          </p>
 
-        <div className="flex flex-wrap gap-2 justify-center">
-          <BotaoPrimario
-            onClick={onSave}
-            disabled={salvando}
-            aria-label="Salvar alterações no perfil"
-            icone={<Save className="w-4 h-4" />}
-          >
-            {salvando ? "Salvando..." : "Salvar alterações"}
-          </BotaoPrimario>
+          {/* ministats */}
+          <div className="mt-1 sm:mt-2 grid grid-cols-3 gap-2 sm:gap-3">
+            <div className="rounded-xl bg-white/10 px-3 py-2 text-center">
+              <div className="text-[11px] uppercase tracking-wide text-white/80">Status</div>
+              <div className="text-sm font-semibold">{stats.completo ? "Completo" : "Incompleto"}</div>
+            </div>
+            <div className="rounded-xl bg-white/10 px-3 py-2 text-center">
+              <div className="text-[11px] uppercase tracking-wide text-white/80">Completude</div>
+              <div className="text-sm font-semibold">{stats.percent.toFixed(0)}%</div>
+            </div>
+            <div className="rounded-xl bg-white/10 px-3 py-2 text-center">
+              <div className="text-[11px] uppercase tracking-wide text-white/80">Pendentes</div>
+              <div className="text-sm font-semibold">{stats.pendentes}</div>
+            </div>
+          </div>
 
-          {podeGerenciarAssinatura && (
+          {/* Ações (sem repetir na página) */}
+          <div className="mt-3 flex flex-wrap gap-2 justify-center">
             <BotaoPrimario
-              onClick={onAssinatura}
-              variante="secundario"
-              aria-label="Gerenciar assinatura digital"
-              icone={<Edit className="w-4 h-4" />}
+              onClick={onSave}
+              disabled={salvando}
+              aria-label="Salvar alterações no perfil"
+              icone={<Save className="w-4 h-4" />}
             >
-              Gerenciar assinatura
+              {salvando ? "Salvando..." : "Salvar alterações"}
             </BotaoPrimario>
-          )}
+
+            {podeGerenciarAssinatura && (
+              <BotaoPrimario
+                onClick={onAssinatura}
+                variante="secundario"
+                aria-label="Gerenciar assinatura digital"
+                icone={<Edit className="w-4 h-4" />}
+              >
+                Gerenciar assinatura
+              </BotaoPrimario>
+            )}
+          </div>
         </div>
       </div>
+      <div className="absolute bottom-0 left-0 right-0 h-px bg-white/25" aria-hidden="true" />
     </header>
   );
 }
 
+/* ───────────────── Página ───────────────── */
 export default function Perfil() {
   const [usuario, setUsuario] = useState(null);
 
   // básicos
   const [nome, setNome] = useState("");
-  const [cpf, setCpf] = useState(""); // ✅ visível (read-only)
+  const [cpf, setCpf] = useState(""); // read-only
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
-  const [registro, setRegistro] = useState(""); // (opcional) com máscara
+  const [registro, setRegistro] = useState("");
   const [dataNascimento, setDataNascimento] = useState(""); // YYYY-MM-DD
 
-  // selects (IDs) — SEMPRE STRINGS
+  // selects (sempre strings)
   const [unidadeId, setUnidadeId] = useState("");
   const [cargoId, setCargoId] = useState("");
   const [generoId, setGeneroId] = useState("");
@@ -106,7 +141,7 @@ export default function Perfil() {
   const [eEscolaridade, setEEscolaridade] = useState("");
   const [eDeficiencia, setEDeficiencia] = useState("");
 
-  // refs para foco
+  // refs
   const rNome = useRef(null);
   const rEmail = useRef(null);
   const rSenha = useRef(null);
@@ -124,7 +159,6 @@ export default function Perfil() {
   const stripPrefixNum = (s) => String(s || "").replace(/^\d+\s*-\s*/, "");
   const validarEmail = (v) => !!v && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
   const asStr = (v) => (v === null || v === undefined ? "" : String(v));
-
   const aplicarMascaraCPF = (v) =>
     String(v || "")
       .replace(/\D/g, "")
@@ -132,8 +166,6 @@ export default function Perfil() {
       .replace(/(\d{3})(\d)/, "$1.$2")
       .replace(/(\d{3})(\d)/, "$1.$2")
       .replace(/(\d{3})(\d{1,2})$/, "$1-$2");
-
-  // máscara de registro (aceita só números também): 00.000-0
   const maskRegistro = (raw) => {
     const d = String(raw || "").replace(/\D/g, "").slice(0, 6);
     let out = d;
@@ -141,8 +173,6 @@ export default function Perfil() {
     if (d.length > 5) out = out.slice(0, 6) + "-" + d.slice(5);
     return out;
   };
-
-  // 🔧 Corrige fuso: sempre devolve só YYYY-MM-DD, sem usar Date()
   const toYMD = (val) => {
     if (!val) return "";
     const s = String(val);
@@ -156,23 +186,20 @@ export default function Perfil() {
     return `${y}-${mth}-${day}`;
   };
 
-  // 1) Hidrata com o que houver no localStorage (mais rápido pra UI)
+  // 1) hidrata do localStorage (rápido p/ UI)
   useEffect(() => {
     try {
       const dadosString = localStorage.getItem("usuario");
       if (!dadosString) return;
-
       const dados = JSON.parse(dadosString);
       const perfilString = Array.isArray(dados.perfil) ? dados.perfil[0] : dados.perfil;
       const u = { ...dados, perfil: perfilString };
-
       setUsuario(u);
       setNome(u.nome || "");
-      setCpf(aplicarMascaraCPF(u.cpf || "")); // ✅ carrega CPF
+      setCpf(aplicarMascaraCPF(u.cpf || ""));
       setEmail(u.email || "");
       setRegistro(maskRegistro(u.registro || ""));
       setDataNascimento(toYMD(u.data_nascimento) || "");
-
       setUnidadeId(asStr(u.unidade_id));
       setCargoId(asStr(u.cargo_id));
       setGeneroId(asStr(u.genero_id));
@@ -181,32 +208,28 @@ export default function Perfil() {
       setEscolaridadeId(asStr(u.escolaridade_id));
       setDeficienciaId(asStr(u.deficiencia_id));
     } catch (erro) {
-      console.error("Erro ao carregar dados do localStorage:", erro);
+      console.error("Erro ao carregar localStorage:", erro);
       toast.error("Erro ao carregar dados do perfil.");
     }
   }, []);
 
-  // 2) Hidrata do backend (fonte da verdade) e sincroniza localStorage
+  // 2) hidrata do backend (fonte da verdade)
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
         const me = await apiPerfilMe({ on401: "silent", on403: "silent" });
         if (!alive || !me) return;
-
-        // 🔒 preserva CPF se a API não devolver
         let antigo = {};
         try {
           antigo = JSON.parse(localStorage.getItem("usuario") || "{}");
         } catch {}
         const cpfFinal = me.cpf ?? antigo.cpf ?? "";
-
         setNome(me.nome || "");
-        setCpf(aplicarMascaraCPF(cpfFinal)); // ✅ não zera mais o CPF
+        setCpf(aplicarMascaraCPF(cpfFinal));
         setEmail(me.email || "");
         setRegistro(maskRegistro(me.registro || ""));
         setDataNascimento(toYMD(me.data_nascimento) || "");
-
         setUnidadeId(asStr(me.unidade_id));
         setCargoId(asStr(me.cargo_id));
         setGeneroId(asStr(me.genero_id));
@@ -215,7 +238,6 @@ export default function Perfil() {
         setEscolaridadeId(asStr(me.escolaridade_id));
         setDeficienciaId(asStr(me.deficiencia_id));
 
-        // 👇 regrava no LS preservando o CPF antigo quando necessário
         try {
           const novo = { ...antigo, ...me, cpf: me.cpf ?? antigo.cpf };
           localStorage.setItem("usuario", JSON.stringify(novo));
@@ -231,7 +253,7 @@ export default function Perfil() {
     };
   }, []);
 
-  // listas auxiliares (padronizadas com /api)
+  // listas auxiliares
   useEffect(() => {
     (async () => {
       try {
@@ -245,11 +267,8 @@ export default function Perfil() {
           apiGet("/api/escolaridades", { on403: "silent" }),
           apiGet("/api/deficiencias", { on403: "silent" }),
         ]);
-
         setUnidades((uni || []).sort((a, b) => (a.nome || "").localeCompare(b.nome || "")));
         setCargos((car || []).sort((a, b) => stripPrefixNum(a.nome).localeCompare(stripPrefixNum(b.nome))));
-
-        // respeita o display_order do backend
         setGeneros(gen || []);
         setOrientacoes(ori || []);
         setCoresRacas(cr || []);
@@ -264,35 +283,53 @@ export default function Perfil() {
     })();
   }, []);
 
-  // ⚠️ Perfil incompleto? (usa os estados atuais da tela)
-  const perfilIncompleto = [
-    unidadeId,
-    cargoId,
-    generoId,
-    orientacaoSexualId,
-    corRacaId,
-    escolaridadeId,
-    deficienciaId,
-    dataNascimento,
-  ].some((v) => !String(v || "").trim());
+  // campos obrigatórios que contam para completude
+  const requiredFields = useMemo(
+    () => [
+      ["unidadeId", unidadeId],
+      ["cargoId", cargoId],
+      ["generoId", generoId],
+      ["orientacaoSexualId", orientacaoSexualId],
+      ["corRacaId", corRacaId],
+      ["escolaridadeId", escolaridadeId],
+      ["deficienciaId", deficienciaId],
+      ["dataNascimento", dataNascimento],
+      ["nome", nome],
+      ["email", email],
+    ],
+    [
+      unidadeId,
+      cargoId,
+      generoId,
+      orientacaoSexualId,
+      corRacaId,
+      escolaridadeId,
+      deficienciaId,
+      dataNascimento,
+      nome,
+      email,
+    ]
+  );
+
+  const pendentes = requiredFields.filter(([, v]) => !String(v || "").trim()).length;
+  const completo = pendentes === 0;
+  const percent = Math.round(((requiredFields.length - pendentes) / requiredFields.length) * 100);
+
+  // status (para hero)
+  const stats = useMemo(
+    () => ({ completo, pendentes, percent }),
+    [completo, pendentes, percent]
+  );
 
   // limpar erros
   const clearErrors = () => {
-    setENome("");
-    setEEmail("");
-    setESenha("");
-    setERegistro("");
-    setEData("");
-    setEUnidade("");
-    setECargo("");
-    setEGenero("");
-    setEOrientacao("");
-    setECor("");
-    setEEscolaridade("");
-    setEDeficiencia("");
+    setENome(""); setEEmail(""); setESenha("");
+    setERegistro(""); setEData("");
+    setEUnidade(""); setECargo(""); setEGenero("");
+    setEOrientacao(""); setECor(""); setEEscolaridade(""); setEDeficiencia("");
   };
 
-  // aplica erros do servidor e foca no primeiro
+  // aplicar erros do servidor e focar
   const aplicarErrosServidor = (fields = {}) => {
     clearErrors();
     let focou = false;
@@ -304,82 +341,30 @@ export default function Perfil() {
       }
     };
 
-    if (fields.nome) {
-      setENome(fields.nome);
-      focar(rNome);
-    }
-    if (fields.email) {
-      setEEmail(fields.email);
-      focar(rEmail);
-    }
-    if (fields.senha || fields.novaSenha) {
-      setESenha(fields.senha || fields.novaSenha);
-      focar(rSenha);
-    }
-    if (fields.registro) {
-      setERegistro(fields.registro);
-      focar(rRegistro);
-    }
-    if (fields.data_nascimento) {
-      setEData(fields.data_nascimento);
-      focar(rData);
-    }
-
-    if (fields.unidade_id) {
-      setEUnidade(fields.unidade_id);
-      focar(rUnidade);
-    }
-    if (fields.cargo_id) {
-      setECargo(fields.cargo_id);
-      focar(rCargo);
-    }
-    if (fields.genero_id) {
-      setEGenero(fields.genero_id);
-      focar(rGenero);
-    }
-    if (fields.orientacao_sexual_id) {
-      setEOrientacao(fields.orientacao_sexual_id);
-      focar(rOrientacao);
-    }
-    if (fields.cor_raca_id) {
-      setECor(fields.cor_raca_id);
-      focar(rCor);
-    }
-    if (fields.escolaridade_id) {
-      setEEscolaridade(fields.escolaridade_id);
-      focar(rEscolaridade);
-    }
-    if (fields.deficiencia_id) {
-      setEDeficiencia(fields.deficiencia_id);
-      focar(rDeficiencia);
-    }
+    if (fields.nome) { setENome(fields.nome); focar(rNome); }
+    if (fields.email) { setEEmail(fields.email); focar(rEmail); }
+    if (fields.senha || fields.novaSenha) { setESenha(fields.senha || fields.novaSenha); focar(rSenha); }
+    if (fields.registro) { setERegistro(fields.registro); focar(rRegistro); }
+    if (fields.data_nascimento) { setEData(fields.data_nascimento); focar(rData); }
+    if (fields.unidade_id) { setEUnidade(fields.unidade_id); focar(rUnidade); }
+    if (fields.cargo_id) { setECargo(fields.cargo_id); focar(rCargo); }
+    if (fields.genero_id) { setEGenero(fields.genero_id); focar(rGenero); }
+    if (fields.orientacao_sexual_id) { setEOrientacao(fields.orientacao_sexual_id); focar(rOrientacao); }
+    if (fields.cor_raca_id) { setECor(fields.cor_raca_id); focar(rCor); }
+    if (fields.escolaridade_id) { setEEscolaridade(fields.escolaridade_id); focar(rEscolaridade); }
+    if (fields.deficiencia_id) { setEDeficiencia(fields.deficiencia_id); focar(rDeficiencia); }
   };
 
   const salvarAlteracoes = async () => {
     if (!usuario?.id) return;
-
     clearErrors();
 
-    // validações rápidas no cliente
-    if (!nome.trim()) {
-      setENome("Informe seu nome.");
-      rNome.current?.focus();
-      return;
-    }
-    if (!validarEmail(email)) {
-      setEEmail("E-mail inválido.");
-      rEmail.current?.focus();
-      return;
-    }
-    if (senha && senha.length < 8) {
-      setESenha("A nova senha deve ter pelo menos 8 caracteres.");
-      rSenha.current?.focus();
-      return;
-    }
+    // validações rápidas
+    if (!nome.trim()) { setENome("Informe seu nome."); rNome.current?.focus(); return; }
+    if (!validarEmail(email)) { setEEmail("E-mail inválido."); rEmail.current?.focus(); return; }
+    if (senha && senha.length < 8) { setESenha("A nova senha deve ter pelo menos 8 caracteres."); rSenha.current?.focus(); return; }
     if (dataNascimento && !/^\d{4}-\d{2}-\d{2}$/.test(dataNascimento)) {
-      setEData("Data inválida (use YYYY-MM-DD).");
-      rData.current?.focus();
-      return;
+      setEData("Data inválida (use YYYY-MM-DD)."); rData.current?.focus(); return;
     }
 
     const payload = {
@@ -395,25 +380,25 @@ export default function Perfil() {
       cor_raca_id: corRacaId ? Number(corRacaId) : null,
       escolaridade_id: escolaridadeId ? Number(escolaridadeId) : null,
       deficiencia_id: deficienciaId ? Number(deficienciaId) : null,
-      // ⚠️ cpf NÃO vai no payload (imutável aqui)
     };
 
     try {
       setSalvando(true);
       const resp = await apiPatch(`/api/perfil/me`, payload, { auth: true });
 
-      // reconsulta o perfil (também atualiza a flag global via apiPerfilMe)
+      // reconsulta perfil e atualiza flags
       const atualizado = await apiPerfilMe({ on401: "silent", on403: "silent" });
       setPerfilIncompletoFlag(!!atualizado?.perfil_incompleto || !!resp?.perfilIncompleto);
 
-      const novo = { ...(JSON.parse(localStorage.getItem("usuario") || "{}")), ...atualizado };
+      const antigo = JSON.parse(localStorage.getItem("usuario") || "{}");
+      const novo = { ...antigo, ...atualizado };
       localStorage.setItem("usuario", JSON.stringify(novo));
       localStorage.setItem("nome", novo.nome || "");
-
       setUsuario(novo);
       setSenha("");
 
-      setCpf(aplicarMascaraCPF(novo.cpf ?? cpf ?? "")); // ✅ mantém sincronizado / preserva atual
+      // ressincroniza campos
+      setCpf(aplicarMascaraCPF(novo.cpf ?? cpf ?? ""));
       setRegistro(maskRegistro(novo.registro || ""));
       setDataNascimento(toYMD(novo.data_nascimento) || "");
       setUnidadeId(asStr(novo.unidade_id));
@@ -443,7 +428,7 @@ export default function Perfil() {
       : [String(usuario?.perfil || "").toLowerCase()]
     ).some((p) => p === "instrutor" || p === "administrador");
 
-  // estado inicial de carregamento do localStorage/me
+  // carregamento inicial
   if (!usuario) {
     return (
       <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900">
@@ -453,6 +438,7 @@ export default function Perfil() {
           podeGerenciarAssinatura={false}
           salvando={true}
           variant="petroleo"
+          stats={{ completo: false, pendentes: 0, percent: 0 }}
         />
         <main role="main" className="flex-1 max-w-3xl mx-auto px-4 py-8">
           <p className="text-center text-gray-600 dark:text-gray-300">🔄 Carregando dados do perfil...</p>
@@ -464,36 +450,28 @@ export default function Perfil() {
 
   return (
     <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900">
-      {/* 🟦 Hero petróleo (área de conta/usuário) */}
+      {/* hero petróleo (área de conta) – padronizado */}
       <HeaderHero
         onSave={salvarAlteracoes}
         onAssinatura={() => setModalAberto(true)}
         podeGerenciarAssinatura={podeGerenciarAssinatura}
         salvando={salvando}
         variant="petroleo"
+        stats={stats}
       />
 
       <main role="main" className="flex-1 max-w-3xl mx-auto px-4 py-8">
         <h1 className="sr-only">Meu Perfil</h1>
 
         <div className="bg-white dark:bg-zinc-800 p-6 rounded-xl shadow space-y-6">
-          {/* 🔴/🟢 Avisos de status do cadastro */}
-          {perfilIncompleto ? (
-            <div
-              role="alert"
-              aria-live="polite"
-              className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-red-700 text-sm dark:bg-red-900/20 dark:border-red-800 dark:text-red-300"
-            >
-              <strong className="font-medium">Ação necessária:</strong>{" "}
-              Preencha todo o cadastro para ter acesso completo à plataforma.
+          {/* alert de status do cadastro */}
+          {completo ? (
+            <div role="status" aria-live="polite" className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-green-800 text-sm dark:bg-green-900/20 dark:border-green-800 dark:text-green-300">
+              ✅ <strong className="font-medium">Cadastro completo!</strong> Você já tem acesso à plataforma.
             </div>
           ) : (
-            <div
-              role="status"
-              aria-live="polite"
-              className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-green-800 text-sm dark:bg-green-900/20 dark:border-green-800 dark:text-green-300"
-            >
-              ✅ <strong className="font-medium">Cadastro completo!</strong> Você já tem acesso à plataforma.
+            <div role="alert" aria-live="polite" className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-red-700 text-sm dark:bg-red-900/20 dark:border-red-800 dark:text-red-300">
+              <strong className="font-medium">Ação necessária:</strong> Preencha o cadastro para acesso completo.
             </div>
           )}
 
@@ -508,21 +486,15 @@ export default function Perfil() {
                 ref={rNome}
                 type="text"
                 value={nome}
-                onChange={(e) => {
-                  setNome(e.target.value);
-                  setENome("");
-                }}
-                className={`mt-1 w-full px-4 py-2 border rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 ${
-                  eNome ? "border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"
-                }`}
-                aria-label="Nome completo"
+                onChange={(e) => { setNome(e.target.value); setENome(""); }}
+                className={`mt-1 w-full px-4 py-2 border rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 ${eNome ? "border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"}`}
                 aria-invalid={!!eNome}
                 aria-describedby={eNome ? "erro-nome" : undefined}
+                autoComplete="name"
               />
               {eNome && <p id="erro-nome" className="text-xs text-red-500 mt-1">{eNome}</p>}
             </div>
 
-            {/* ✅ CPF visível (somente leitura) */}
             <div>
               <label htmlFor="cpf" className="block text-sm font-medium text-gray-700 dark:text-gray-200">
                 CPF
@@ -534,7 +506,8 @@ export default function Perfil() {
                 readOnly
                 placeholder="—"
                 className="mt-1 w-full px-4 py-2 border rounded-md bg-gray-100 dark:bg-zinc-700/60 dark:text-white text-gray-700 cursor-not-allowed"
-                aria-label="CPF"
+                aria-readonly="true"
+                aria-label="CPF (somente leitura)"
               />
               <p className="text-xs text-gray-500 mt-1">O CPF não pode ser alterado nesta tela.</p>
             </div>
@@ -548,15 +521,9 @@ export default function Perfil() {
                 ref={rEmail}
                 type="email"
                 value={email}
-                onChange={(e) => {
-                  setEmail(e.target.value);
-                  setEEmail("");
-                }}
-                className={`mt-1 w-full px-4 py-2 border rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 ${
-                  eEmail ? "border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"
-                }`}
+                onChange={(e) => { setEmail(e.target.value); setEEmail(""); }}
+                className={`mt-1 w-full px-4 py-2 border rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 ${eEmail ? "border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"}`}
                 autoComplete="email"
-                aria-label="E-mail"
                 aria-invalid={!!eEmail}
                 aria-describedby={eEmail ? "erro-email" : undefined}
               />
@@ -572,16 +539,10 @@ export default function Perfil() {
                 ref={rSenha}
                 type="password"
                 value={senha}
-                onChange={(e) => {
-                  setSenha(e.target.value);
-                  setESenha("");
-                }}
+                onChange={(e) => { setSenha(e.target.value); setESenha(""); }}
                 placeholder="Digite para alterar a senha"
-                className={`mt-1 w-full px-4 py-2 border rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 ${
-                  eSenha ? "border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"
-                }`}
+                className={`mt-1 w-full px-4 py-2 border rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 ${eSenha ? "border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"}`}
                 autoComplete="new-password"
-                aria-label="Nova senha"
                 minLength={8}
                 aria-invalid={!!eSenha}
                 aria-describedby={eSenha ? "erro-senha" : undefined}
@@ -600,15 +561,11 @@ export default function Perfil() {
                 ref={rRegistro}
                 type="text"
                 value={registro}
-                onChange={(e) => {
-                  setRegistro(maskRegistro(e.target.value));
-                  setERegistro("");
-                }}
-                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${
-                  eRegistro ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"
-                } disabled:opacity-60`}
+                onChange={(e) => { setRegistro(maskRegistro(e.target.value)); setERegistro(""); }}
+                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${eRegistro ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"} disabled:opacity-60`}
                 placeholder="Ex.: 10.010-1"
                 disabled={salvando}
+                inputMode="numeric"
                 aria-invalid={!!eRegistro}
                 aria-describedby={eRegistro ? "erro-registro" : undefined}
               />
@@ -623,13 +580,8 @@ export default function Perfil() {
                 ref={rData}
                 type="date"
                 value={dataNascimento}
-                onChange={(e) => {
-                  setDataNascimento(e.target.value);
-                  setEData("");
-                }}
-                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${
-                  eData ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"
-                } disabled:opacity-60`}
+                onChange={(e) => { setDataNascimento(e.target.value); setEData(""); }}
+                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${eData ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"} disabled:opacity-60`}
                 disabled={salvando}
                 aria-invalid={!!eData}
                 aria-describedby={eData ? "erro-data" : undefined}
@@ -647,22 +599,15 @@ export default function Perfil() {
               <select
                 ref={rUnidade}
                 value={unidadeId}
-                onChange={(e) => {
-                  setUnidadeId(e.target.value);
-                  setEUnidade("");
-                }}
-                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${
-                  eUnidade ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"
-                } disabled:opacity-60`}
+                onChange={(e) => { setUnidadeId(e.target.value); setEUnidade(""); }}
+                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${eUnidade ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"} disabled:opacity-60`}
                 disabled={salvando || carregandoListas}
                 aria-invalid={!!eUnidade}
                 aria-describedby={eUnidade ? "erro-unidade" : undefined}
               >
                 <option value="">Selecione…</option>
                 {unidades.map((u) => (
-                  <option key={u.id} value={String(u.id)}>
-                    {u.sigla}
-                  </option>
+                  <option key={u.id} value={String(u.id)}>{u.sigla}</option>
                 ))}
               </select>
               {eUnidade && <p id="erro-unidade" className="text-xs text-red-500 mt-1">{eUnidade}</p>}
@@ -675,29 +620,22 @@ export default function Perfil() {
               <select
                 ref={rEscolaridade}
                 value={escolaridadeId}
-                onChange={(e) => {
-                  setEscolaridadeId(e.target.value);
-                  setEEscolaridade("");
-                }}
-                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${
-                  eEscolaridade ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"
-                } disabled:opacity-60`}
+                onChange={(e) => { setEscolaridadeId(e.target.value); setEEscolaridade(""); }}
+                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${eEscolaridade ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"} disabled:opacity-60`}
                 disabled={salvando || carregandoListas}
                 aria-invalid={!!eEscolaridade}
                 aria-describedby={eEscolaridade ? "erro-escolaridade" : undefined}
               >
                 <option value="">Selecione…</option>
                 {escolaridades.map((esc) => (
-                  <option key={esc.id} value={String(esc.id)}>
-                    {esc.nome}
-                  </option>
+                  <option key={esc.id} value={String(esc.id)}>{esc.nome}</option>
                 ))}
               </select>
               {eEscolaridade && <p id="erro-escolaridade" className="text-xs text-red-500 mt-1">{eEscolaridade}</p>}
             </div>
           </section>
 
-          {/* Cargo em linha inteira */}
+          {/* Cargo */}
           <section className="grid grid-cols-1 gap-5 border-t border-white/10 pt-1">
             <div className="md:col-span-2">
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
@@ -706,22 +644,15 @@ export default function Perfil() {
               <select
                 ref={rCargo}
                 value={cargoId}
-                onChange={(e) => {
-                  setCargoId(e.target.value);
-                  setECargo("");
-                }}
-                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${
-                  eCargo ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"
-                } disabled:opacity-60`}
+                onChange={(e) => { setCargoId(e.target.value); setECargo(""); }}
+                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${eCargo ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"} disabled:opacity-60`}
                 disabled={salvando || carregandoListas}
                 aria-invalid={!!eCargo}
                 aria-describedby={eCargo ? "erro-cargo" : undefined}
               >
                 <option value="">Selecione…</option>
                 {cargos.map((c) => (
-                  <option key={c.id} value={String(c.id)}>
-                    {c.nome}
-                  </option>
+                  <option key={c.id} value={String(c.id)}>{c.nome}</option>
                 ))}
               </select>
               {eCargo && <p id="erro-cargo" className="text-xs text-red-500 mt-1">{eCargo}</p>}
@@ -737,22 +668,15 @@ export default function Perfil() {
               <select
                 ref={rGenero}
                 value={generoId}
-                onChange={(e) => {
-                  setGeneroId(e.target.value);
-                  setEGenero("");
-                }}
-                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${
-                  eGenero ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"
-                } disabled:opacity-60`}
+                onChange={(e) => { setGeneroId(e.target.value); setEGenero(""); }}
+                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${eGenero ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"} disabled:opacity-60`}
                 disabled={salvando || carregandoListas}
                 aria-invalid={!!eGenero}
                 aria-describedby={eGenero ? "erro-genero" : undefined}
               >
                 <option value="">Selecione…</option>
                 {generos.map((g) => (
-                  <option key={g.id} value={String(g.id)}>
-                    {g.nome}
-                  </option>
+                  <option key={g.id} value={String(g.id)}>{g.nome}</option>
                 ))}
               </select>
               {eGenero && <p id="erro-genero" className="text-xs text-red-500 mt-1">{eGenero}</p>}
@@ -765,22 +689,15 @@ export default function Perfil() {
               <select
                 ref={rOrientacao}
                 value={orientacaoSexualId}
-                onChange={(e) => {
-                  setOrientacaoSexualId(e.target.value);
-                  setEOrientacao("");
-                }}
-                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${
-                  eOrientacao ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"
-                } disabled:opacity-60`}
+                onChange={(e) => { setOrientacaoSexualId(e.target.value); setEOrientacao(""); }}
+                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${eOrientacao ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"} disabled:opacity-60`}
                 disabled={salvando || carregandoListas}
                 aria-invalid={!!eOrientacao}
                 aria-describedby={eOrientacao ? "erro-orientacao" : undefined}
               >
                 <option value="">Selecione…</option>
                 {orientacoes.map((o) => (
-                  <option key={o.id} value={String(o.id)}>
-                    {o.nome}
-                  </option>
+                  <option key={o.id} value={String(o.id)}>{o.nome}</option>
                 ))}
               </select>
               {eOrientacao && <p id="erro-orientacao" className="text-xs text-red-500 mt-1">{eOrientacao}</p>}
@@ -793,22 +710,15 @@ export default function Perfil() {
               <select
                 ref={rCor}
                 value={corRacaId}
-                onChange={(e) => {
-                  setCorRacaId(e.target.value);
-                  setECor("");
-                }}
-                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${
-                  eCor ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"
-                } disabled:opacity-60`}
+                onChange={(e) => { setCorRacaId(e.target.value); setECor(""); }}
+                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${eCor ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"} disabled:opacity-60`}
                 disabled={salvando || carregandoListas}
                 aria-invalid={!!eCor}
                 aria-describedby={eCor ? "erro-cor" : undefined}
               >
                 <option value="">Selecione…</option>
                 {coresRacas.map((c) => (
-                  <option key={c.id} value={String(c.id)}>
-                    {c.nome}
-                  </option>
+                  <option key={c.id} value={String(c.id)}>{c.nome}</option>
                 ))}
               </select>
               {eCor && <p id="erro-cor" className="text-xs text-red-500 mt-1">{eCor}</p>}
@@ -821,57 +731,27 @@ export default function Perfil() {
               <select
                 ref={rDeficiencia}
                 value={deficienciaId}
-                onChange={(e) => {
-                  setDeficienciaId(e.target.value);
-                  setEDeficiencia("");
-                }}
-                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${
-                  eDeficiencia ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"
-                } disabled:opacity-60`}
+                onChange={(e) => { setDeficienciaId(e.target.value); setEDeficiencia(""); }}
+                className={`mt-1 w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-zinc-700 dark:text-white focus:ring-2 ${eDeficiencia ? "border border-red-500 focus:ring-red-600" : "focus:ring-emerald-700"} disabled:opacity-60`}
                 disabled={salvando || carregandoListas}
                 aria-invalid={!!eDeficiencia}
                 aria-describedby={eDeficiencia ? "erro-deficiencia" : undefined}
               >
                 <option value="">Selecione…</option>
                 {deficiencias.map((d) => (
-                  <option key={d.id} value={String(d.id)}>
-                    {d.nome}
-                  </option>
+                  <option key={d.id} value={String(d.id)}>{d.nome}</option>
                 ))}
               </select>
               {eDeficiencia && <p id="erro-deficiencia" className="text-xs text-red-500 mt-1">{eDeficiencia}</p>}
               <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">Se não possuir, escolha “Não possuo”.</p>
             </div>
           </section>
-
-          <div className="flex flex-col sm:flex-row justify-between gap-5 mt-2">
-            <button
-              onClick={salvarAlteracoes}
-              disabled={salvando}
-              className={`${
-                salvando ? "bg-emerald-900 cursor-not-allowed" : "bg-lousa hover:bg-green-800"
-              } text-white px-5 py-2 rounded-md shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-700`}
-              aria-label="Salvar alterações no perfil"
-            >
-              {salvando ? "Salvando..." : "💾 Salvar Alterações"}
-            </button>
-
-            {podeGerenciarAssinatura && (
-              <button
-                onClick={() => setModalAberto(true)}
-                className="bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-gray-400"
-                aria-label="Gerenciar assinatura digital"
-              >
-                ✍️ Gerenciar Assinatura
-              </button>
-            )}
-          </div>
         </div>
 
+        {/* modal de assinatura */}
         <ModalAssinatura isOpen={modalAberto} onClose={() => setModalAberto(false)} />
       </main>
 
-      {/* Rodapé institucional */}
       <Footer />
     </div>
   );

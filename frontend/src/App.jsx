@@ -46,7 +46,7 @@ const DashboardAnalitico     = lazy(() => import("./pages/DashboardAnalitico"));
 const GestaoInstrutor        = lazy(() => import("./pages/GestaoInstrutor"));
 const RelatoriosCustomizados = lazy(() => import("./pages/RelatoriosCustomizados"));
 const ListaPresencasTurma    = lazy(() => import("./pages/ListaPresencasTurma"));
-const GestaoCertificados = lazy(() => import("./pages/GestaoCertificados"));
+const GestaoCertificados     = lazy(() => import("./pages/GestaoCertificados"));
 const GestaoUsuarios         = lazy(() => import("./pages/GestaoUsuarios"));
 const GerenciarEventos       = lazy(() => import("./pages/GerenciarEventos"));
 const PresencasPorTurma      = lazy(() => import("./pages/PresencasPorTurma"));
@@ -77,7 +77,9 @@ const AdminChamadaForm       = lazy(() => import("./pages/AdminChamadaForm"));
 // Usuário – submeter e acompanhar
 const UsuarioSubmissoes      = lazy(() => import("./pages/UsuarioSubmissoes"));
 // Admin – listar/avaliar/responder
-const AdminSubmissoes = lazy(() => import("./pages/AdminSubmissoes"));
+const AdminSubmissoes        = lazy(() => import("./pages/AdminSubmissoes"));
+// Avaliador – trabalhos atribuídos (duplo-cego)
+const AvaliadorSubmissoes    = lazy(() => import("./pages/AvaliadorSubmissoes"));
 
 /* ──────────────────────────────────────────────────────────────
    A11y: Announcer de mudanças de rota
@@ -396,6 +398,17 @@ export default function App() {
             {/* 🆕 ROTAS DE SUBMISSÕES DE TRABALHOS */}
             {/* Usuário: submeter e acompanhar */}
             <Route path="/submissoes" element={<PrivateRoute><UsuarioSubmissoes /></PrivateRoute>} />
+
+            {/* Avaliador: ver/avaliar trabalhos atribuídos (duplo-cego) */}
+            <Route
+              path="/avaliador/submissoes"
+              element={
+                <PrivateRoute permitido={["instrutor", "administrador"]}>
+                  <AvaliadorSubmissoes />
+                </PrivateRoute>
+              }
+            />
+
             {/* Admin: criar/editar chamada */}
             <Route path="/admin/chamadas/new" element={<PrivateRoute permitido={["administrador"]}><AdminChamadaForm /></PrivateRoute>} />
             <Route path="/admin/chamadas/:id" element={<PrivateRoute permitido={["administrador"]}><AdminChamadaFormWrapper /></PrivateRoute>} />

@@ -3,7 +3,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { apiPost } from "../services/api";
 import Footer from "../components/Footer";
-import { CheckCircle2, XCircle, Loader2, QrCode, Home, UserCheck, LogIn, UserPlus } from "lucide-react";
+import {
+  CheckCircle2,
+  XCircle,
+  Loader2,
+  QrCode,
+  Home,
+  UserCheck,
+  LogIn,
+  UserPlus,
+} from "lucide-react";
 
 /* ---------------- Helpers locais ---------------- */
 function getRawToken() {
@@ -14,7 +23,8 @@ function getRawToken() {
     return null;
   }
 }
-// token simples: aceita "Bearer x.y.z" e "x.y.z" e ignora expirado (fallback leve)
+
+// JWT: aceita "Bearer x.y.z" ou "x.y.z"; valida nbf/exp; URL-safe + padding
 function getValidToken() {
   const raw = getRawToken();
   if (!raw) return null;
@@ -22,7 +32,9 @@ function getValidToken() {
   const parts = token.split(".");
   if (parts.length !== 3) return null;
   try {
-    const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
+    const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+    const payload = JSON.parse(atob(b64 + pad));
     const now = Date.now() / 1000;
     if (payload?.nbf && now < payload.nbf) return null;
     if (payload?.exp && now >= payload.exp) return null;
@@ -32,29 +44,37 @@ function getValidToken() {
   }
 }
 
-/* ---------------- HeaderHero ---------------- */
+/* ---------------- HeaderHero (padronizado) ---------------- */
 function HeaderHero({ status }) {
   const isOk = status === "ok";
   const isErr = status === "err";
 
   return (
     <header
-      className="relative isolate overflow-hidden bg-gradient-to-br from-emerald-900 via-teal-700 to-cyan-600 text-white"
+      className="relative isolate overflow-hidden bg-gradient-to-br from-emerald-900 via-teal-800 to-cyan-700 text-white"
       role="banner"
     >
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8 text-center">
+      <div
+        className="pointer-events-none absolute inset-0 opacity-70"
+        style={{
+          background:
+            "radial-gradient(52% 60% at 50% 0%, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.05) 32%, rgba(255,255,255,0) 60%)",
+        }}
+        aria-hidden="true"
+      />
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-10 md:py-12 min-h-[150px] sm:min-h-[180px] text-center flex flex-col items-center gap-3">
         <div className="inline-flex items-center gap-2">
           <QrCode className="w-6 h-6" aria-hidden="true" />
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
             Confirmação de Presença
           </h1>
         </div>
-        <p className="mt-2 text-sm sm:text-base text-white/90">
+        <p className="text-sm sm:text-base text-white/90 max-w-2xl">
           Escaneie o QR e deixe o resto com a gente. A confirmação é autenticada e idempotente.
         </p>
 
-        {/* estado visual sutil */}
-        <div className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/15">
+        {/* chip de estado */}
+        <div className="mt-1 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/15">
           {isOk ? (
             <>
               <CheckCircle2 className="w-4 h-4" />
@@ -73,11 +93,11 @@ function HeaderHero({ status }) {
           )}
         </div>
       </div>
-      {/* Gradiente decorativo */}
       <div
         aria-hidden="true"
         className="pointer-events-none absolute -top-24 left-1/2 h-[300px] w-[800px] -translate-x-1/2 rounded-full blur-3xl opacity-25 bg-cyan-300"
       />
+      <div className="absolute bottom-0 left-0 right-0 h-px bg-white/25" aria-hidden="true" />
     </header>
   );
 }
@@ -106,14 +126,17 @@ export default function ConfirmarPresenca() {
   const liveRef = useRef(null);
   const titleRef = useRef(null);
   const [nowStr] = useState(() =>
-    new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium", timeStyle: "short" }).format(new Date())
+    new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium", timeStyle: "short" }).format(
+      new Date()
+    )
   );
 
   const setLive = (text) => {
     if (liveRef.current) liveRef.current.textContent = text;
   };
 
-  const buildNext = () => {
+  // redirecionamento consistente com Login.jsx (usa ?redirect=…)
+  const buildRedirect = () => {
     const base = location.pathname;
     const q = new URLSearchParams();
     q.set("turma", String(turmaId || ""));
@@ -121,13 +144,14 @@ export default function ConfirmarPresenca() {
   };
 
   const goToLogin = () => {
-    const next = buildNext();
-    navigate(`/login?next=${encodeURIComponent(next)}`, { replace: true });
+    const redirect = buildRedirect();
+    navigate(`/login?redirect=${encodeURIComponent(redirect)}`, { replace: true });
   };
 
   const goToRegister = () => {
-    const next = buildNext();
-    navigate(`/registro?next=${encodeURIComponent(next)}`, { replace: true });
+    const redirect = buildRedirect();
+    // rota padronizada com o app
+    navigate(`/cadastro?redirect=${encodeURIComponent(redirect)}`, { replace: true });
   };
 
   // ação principal
@@ -141,12 +165,14 @@ export default function ConfirmarPresenca() {
       return;
     }
 
-    // ✅ Pré-checagem: não logado → mensagem amigável com CTA
+    // Pré-checagem de sessão
     const tokenOk = getValidToken();
     if (!tokenOk) {
       setStatus("err");
       setMsg("Você precisa estar logado para registrar presença.");
-      setDetail("Entre na sua conta para confirmar a presença nesta turma. Voltaremos automaticamente para esta tela após o login.");
+      setDetail(
+        "Entre na sua conta para confirmar a presença nesta turma. Voltaremos automaticamente para esta tela após o login."
+      );
       setRequiresLogin(true);
       setLive("Login necessário para confirmar presença.");
       titleRef.current?.focus();
@@ -160,7 +186,7 @@ export default function ConfirmarPresenca() {
       setRequiresLogin(false);
       setLive("Iniciando confirmação.");
 
-      // OBS: o helper de API já garante /api; usar caminho sem /api aqui também funciona.
+      // helper de API já prefixa /api quando necessário
       await apiPost(`/presencas/confirmar-qr/${encodeURIComponent(turmaId)}`, {}, { signal: controller?.signal });
 
       setStatus("ok");
@@ -172,7 +198,6 @@ export default function ConfirmarPresenca() {
       const code = e?.status || e?.response?.status;
 
       if (code === 401) {
-        // não logado → login e volta pra cá
         goToLogin();
         return;
       }
@@ -180,7 +205,9 @@ export default function ConfirmarPresenca() {
       setStatus("err");
       if (code === 403) {
         setMsg("Acesso negado: você não está inscrito nesta turma.");
-        setDetail("Verifique se seu cadastro está correto para este evento/turma. Se você não estiver logado com a conta correta, entre e tente novamente.");
+        setDetail(
+          "Verifique se seu cadastro está correto para este evento/turma. Se você não estiver logado com a conta correta, entre e tente novamente."
+        );
         setRequiresLogin(false);
       } else if (code === 409) {
         setMsg("Hoje não está dentro do período/datas desta turma.");
@@ -249,9 +276,7 @@ export default function ConfirmarPresenca() {
             </h2>
 
             {/* detalhes amigáveis */}
-            {detail && (
-              <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">{detail}</p>
-            )}
+            {detail && <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">{detail}</p>}
 
             {/* contexto da operação */}
             <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
@@ -297,7 +322,6 @@ export default function ConfirmarPresenca() {
                 </>
               ) : (
                 <>
-                  {/* Se precisa logar, mostra CTAs de login/registro */}
                   {requiresLogin ? (
                     <>
                       <button
@@ -353,9 +377,7 @@ export default function ConfirmarPresenca() {
             )}
 
             {/* contador de tentativas (debug leve) */}
-            <p className="mt-3 text-[11px] text-zinc-400 dark:text-zinc-500">
-              Tentativas: {attempts}
-            </p>
+            <p className="mt-3 text-[11px] text-zinc-400 dark:text-zinc-500">Tentativas: {attempts}</p>
           </div>
         </section>
       </main>

@@ -1,4 +1,5 @@
 // 📁 src/components/ListaTurmasAdministrador.jsx
+/* eslint-disable no-console */
 import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -97,15 +98,16 @@ function montarDatasGrade(turma, bloco, datasFallback) {
 
 export default function ListaTurmasAdministrador({
   eventos = [],
-  hoje, // não usado diretamente, mantido por compatibilidade
+  hoje, // compat
   carregarInscritos,
   carregarAvaliacoes,
-  gerarRelatorioPDF, // (não utilizado aqui, mas preservado)
+  gerarRelatorioPDF, // compat
   inscritosPorTurma,
-  avaliacoesPorTurma, // (não utilizado aqui, mas preservado)
-  navigate, // (não utilizado aqui, mas preservado)
+  avaliacoesPorTurma, // compat
+  navigate, // compat
   modoadministradorPresencas = false,
   onTurmaRemovida,
+  mostrarBotaoRemover = true, // ✅ novo: permite ocultar o botão "Remover"
 }) {
   const [turmaExpandidaId, setTurmaExpandidaId] = useState(null);
   const [presencasPorTurma, setPresencasPorTurma] = useState({});
@@ -134,12 +136,37 @@ export default function ListaTurmasAdministrador({
     [eventos]
   );
 
-  // ----- Carregar presenças (bloco rico) -----
+  // ----- Carregar presenças (bloco rico + tentativa de datas_turma) -----
   async function carregarPresencas(turmaId) {
     try {
-      const data = await apiGet(`/api/presencas/turma/${turmaId}/detalhes`, { on403: "silent" });
-      const datas = Array.isArray(data?.datas) ? data.datas : [];
-      const usuarios = Array.isArray(data?.usuarios) ? data.usuarios : [];
+      // bloco detalhado
+      const detalhes = await apiGet(`/api/presencas/turma/${turmaId}/detalhes`, { on403: "silent" });
+      const usuarios = Array.isArray(detalhes?.usuarios) ? detalhes.usuarios : [];
+
+      // tenta datas_turma
+      let datas = [];
+      try {
+        const viaDatas = await apiGet(`/api/datas/turma/${turmaId}?via=datas`, { on403: "silent" });
+        const arr = Array.isArray(viaDatas) ? viaDatas : [];
+        datas = arr.map((x) => (typeof x === "string" ? x.slice(0, 10) : x?.data?.slice(0, 10))).filter(Boolean);
+      } catch {}
+
+      // fallback: datas distintas via presenças
+      if (!datas.length) {
+        try {
+          const viaPres = await apiGet(`/api/datas/turma/${turmaId}?via=presencas`, { on403: "silent" });
+          const arr2 = Array.isArray(viaPres) ? viaPres : [];
+          datas = arr2.map((x) => (typeof x === "string" ? x.slice(0, 10) : x?.data?.slice(0, 10))).filter(Boolean);
+        } catch {}
+      }
+
+      // último recurso: "datas" do próprio /detalhes
+      if (!datas.length) {
+        const arr3 = Array.isArray(detalhes?.datas) ? detalhes.datas : [];
+        datas = arr3.map((d) => (typeof d === "string" ? d.slice(0, 10) : d?.data?.slice(0, 10))).filter(Boolean);
+      }
+
+      datas = Array.from(new Set(datas)).sort();
       setPresencasPorTurma((prev) => ({ ...prev, [turmaId]: { datas, usuarios } }));
     } catch (err) {
       console.error("❌ Erro ao carregar presenças:", err);
@@ -166,8 +193,8 @@ export default function ListaTurmasAdministrador({
       await carregarPresencas(turmaId);
       setRefreshKey((k) => k + 1);
     } catch (err) {
-      // tolera idempotência
       if (err?.status === 409) {
+        // tolera idempotência (já confirmado)
         toast.success("✅ Presença já estava confirmada.");
         await carregarPresencas(turmaId);
         setRefreshKey((k) => k + 1);
@@ -275,18 +302,20 @@ export default function ListaTurmasAdministrador({
                           {status}
                         </span>
 
-                        <button
-                          type="button"
-                          onClick={() => removerTurma(turma.id, turma.nome)}
-                          disabled={removendoId === turma.id}
-                          title="Remover turma"
-                          className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-3 py-1.5 text-xs
-                                     hover:bg-red-50 active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed"
-                          aria-label={`Remover turma ${turma.nome}`}
-                        >
-                          <Trash2 size={14} />
-                          {removendoId === turma.id ? "Removendo..." : "Remover"}
-                        </button>
+                        {mostrarBotaoRemover && (
+                          <button
+                            type="button"
+                            onClick={() => removerTurma(turma.id, turma.nome)}
+                            disabled={removendoId === turma.id}
+                            title="Remover turma"
+                            className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-3 py-1.5 text-xs
+                                       hover:bg-red-50 active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed"
+                            aria-label={`Remover turma ${turma.nome}`}
+                          >
+                            <Trash2 size={14} />
+                            {removendoId === turma.id ? "Removendo..." : "Remover"}
+                          </button>
+                        )}
                       </div>
                     </div>
 
@@ -307,6 +336,8 @@ export default function ListaTurmasAdministrador({
                             }
                             setTurmaExpandidaId(nova);
                           }}
+                          aria-expanded={estaExpandida}
+                          aria-controls={`turma-${turma.id}-detalhes`}
                         >
                           {estaExpandida ? "Recolher Detalhes" : "Ver Detalhes"}
                         </BotaoPrimario>
@@ -314,7 +345,7 @@ export default function ListaTurmasAdministrador({
                     )}
 
                     {modoadministradorPresencas && estaExpandida && (
-                      <div className="mt-4">
+                      <div id={`turma-${turma.id}-detalhes`} className="mt-4">
                         <div className="font-semibold text-sm mt-4 text-lousa dark:text-white mb-2">
                           Inscritos:
                         </div>
@@ -351,7 +382,7 @@ export default function ListaTurmasAdministrador({
                                       </tr>
                                     </thead>
                                     <tbody>
-                                      {datasGrade.map(({ dataISO, hi, hf }) => {
+                                      {datasGrade.map(({ dataISO, hi }) => {
                                         // presença no dia
                                         const presente = Array.isArray(usuarioBloco?.presencas)
                                           ? usuarioBloco.presencas.some(
@@ -363,7 +394,7 @@ export default function ListaTurmasAdministrador({
                                             )
                                           : false;
 
-                                        // abre 60 min após o início do dia
+                                        // abre 60 min após o início do encontro
                                         const inicioDia = toLocalDateFromYMDTime(dataISO, hi);
                                         const abreJanela = inicioDia
                                           ? new Date(inicioDia.getTime() + 60 * 60 * 1000)
@@ -394,7 +425,12 @@ export default function ListaTurmasAdministrador({
                                               {formatarDataBrasileira(dataISO)}
                                             </td>
                                             <td className="py-1 px-2 text-left">
-                                              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${statusClasse}`}>
+                                              <span
+                                                className={`text-xs font-bold px-2 py-0.5 rounded-full ${statusClasse}`}
+                                                aria-label={`Status em ${formatarDataBrasileira(
+                                                  dataISO
+                                                )}: ${statusTexto}`}
+                                              >
                                                 {statusTexto}
                                               </span>
                                             </td>
@@ -413,7 +449,7 @@ export default function ListaTurmasAdministrador({
                                                   Confirmar
                                                 </button>
                                               ) : (
-                                                <span className="text-gray-400 text-xs">—</span>
+                                                <span className="text-gray-400 text-xs" aria-hidden="true">—</span>
                                               )}
                                             </td>
                                           </tr>
@@ -475,4 +511,5 @@ ListaTurmasAdministrador.propTypes = {
   navigate: PropTypes.func,
   modoadministradorPresencas: PropTypes.bool,
   onTurmaRemovida: PropTypes.func,
+  mostrarBotaoRemover: PropTypes.bool,
 };

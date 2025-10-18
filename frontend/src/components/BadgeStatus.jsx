@@ -32,22 +32,20 @@ function toKey(status) {
     return "andamento";
 
   // programado
-  if (["programado", "agendado", "previsto, previsto", "scheduled"].includes(s))
+  if (["programado", "agendado", "previsto", "scheduled"].includes(s))
     return "programado";
 
   // encerrado
   if (
-    ["encerrado", "finalizado", "concluido", "concluído", "done", "finalizado com sucesso"].includes(
-      s
-    )
+    ["encerrado", "finalizado", "concluido", "concluído", "done", "finalizado com sucesso"].includes(s)
   )
     return "encerrado";
 
   // aguardando / pendente
-  if (["aguardando", "pendente", "waiting", "to do"].includes(s)) return "aguardando";
+  if (["aguardando", "pendente", "waiting", "to do", "todo"].includes(s)) return "aguardando";
 
   // cancelado
-  if (["cancelado", "cancelada", "canceled"].includes(s)) return "cancelado";
+  if (["cancelado", "cancelada", "canceled", "cancelled"].includes(s)) return "cancelado";
 
   // suspenso / pausado
   if (["suspenso", "pausado", "paused", "interrompido"].includes(s)) return "suspenso";
@@ -57,7 +55,7 @@ function toKey(status) {
 
   // ativo / inativo (auxiliar p/ outros contextos)
   if (["ativo", "active"].includes(s)) return "ativo";
-  if (["inativo", "inactive", "desativado"].includes(s)) return "inativo";
+  if (["inativo", "inactive", "desativado", "disabled"].includes(s)) return "inativo";
 
   return "desconhecido";
 }
@@ -70,91 +68,91 @@ function toKey(status) {
    - Encerrado → VERMELHO
    ========================================================= */
 const STATUS_CONFIG = {
-  andamento: { label: "Em andamento", color: "amber" },   // 🟨
-  programado: { label: "Programado", color: "green" },    // 🟩
-  encerrado: { label: "Encerrado", color: "red" },        // 🟥
+  andamento:  { label: "Em andamento", color: "amber"   }, // 🟨
+  programado: { label: "Programado",   color: "green"   }, // 🟩
+  encerrado:  { label: "Encerrado",    color: "red"     }, // 🟥
 
-  aguardando: { label: "Aguardando", color: "amber" },
-  cancelado: { label: "Cancelado", color: "rose" },
-  suspenso: { label: "Suspenso", color: "orange" },
-  rascunho: { label: "Rascunho", color: "zinc" },
-  ativo: { label: "Ativo", color: "emerald" },
-  inativo: { label: "Inativo", color: "zinc" },
-  desconhecido: { label: "Desconhecido", color: "gray" },
+  aguardando: { label: "Aguardando",   color: "amber"   },
+  cancelado:  { label: "Cancelado",    color: "rose"    },
+  suspenso:   { label: "Suspenso",     color: "orange"  },
+  rascunho:   { label: "Rascunho",     color: "zinc"    },
+  ativo:      { label: "Ativo",        color: "emerald" },
+  inativo:    { label: "Inativo",      color: "zinc"    },
+  desconhecido:{label: "Desconhecido", color: "gray"    },
+};
+
+/* =========================================================
+   Gradientes 3 cores para sólido (harmoniza com resto do app)
+   ========================================================= */
+const GRADS = {
+  green:   "bg-gradient-to-br from-emerald-600 via-emerald-700 to-emerald-800 text-white border-emerald-900/50",
+  amber:   "bg-gradient-to-br from-amber-500 via-amber-600 to-amber-700 text-black border-amber-800/50",
+  red:     "bg-gradient-to-br from-red-600 via-red-700 to-red-800 text-white border-red-900/50",
+  rose:    "bg-gradient-to-br from-rose-600 via-rose-700 to-rose-800 text-white border-rose-900/50",
+  orange:  "bg-gradient-to-br from-orange-600 via-orange-700 to-orange-800 text-white border-orange-900/50",
+  emerald: "bg-gradient-to-br from-emerald-600 via-emerald-700 to-emerald-800 text-white border-emerald-900/50",
+  zinc:    "bg-gradient-to-br from-zinc-600 via-zinc-700 to-zinc-800 text-white border-zinc-900/50",
+  gray:    "bg-gradient-to-br from-gray-600 via-gray-700 to-gray-800 text-white border-gray-900/50",
 };
 
 /* =========================================================
    Classes por variante (com dark-mode)
-   - green usa o nosso padrão (verde-900 em contorno/sombra),
-     mantendo readable contrast no "soft".
    ========================================================= */
 function variantClasses(color, variant) {
   const map = {
     green: {
-      solid:
-        "bg-green-600 text-white border-green-700 dark:bg-green-700 dark:border-green-800",
       soft:
-        "bg-green-100 text-green-800 border-green-200 dark:bg-green-900/30 dark:text-green-200 dark:border-green-800/60",
+        "bg-green-100 text-green-800 border-green-200 dark:bg-green-900/25 dark:text-green-200 dark:border-green-800/50",
       outline:
         "text-green-800 border-green-400 dark:text-green-200 dark:border-green-600",
     },
     amber: {
-      solid:
-        "bg-amber-500 text-black border-amber-600 dark:bg-amber-600 dark:text-black dark:border-amber-700",
       soft:
-        "bg-amber-100 text-amber-900 border-amber-200 dark:bg-amber-900/30 dark:text-amber-200 dark:border-amber-800/60",
+        "bg-amber-100 text-amber-900 border-amber-200 dark:bg-amber-900/25 dark:text-amber-200 dark:border-amber-800/50",
       outline:
         "text-amber-800 border-amber-400 dark:text-amber-200 dark:border-amber-600",
     },
     red: {
-      solid:
-        "bg-red-600 text-white border-red-700 dark:bg-red-700 dark:border-red-800",
       soft:
-        "bg-red-100 text-red-800 border-red-200 dark:bg-red-900/30 dark:text-red-200 dark:border-red-800/60",
+        "bg-red-100 text-red-800 border-red-200 dark:bg-red-900/25 dark:text-red-200 dark:border-red-800/50",
       outline:
         "text-red-700 border-red-400 dark:text-red-200 dark:border-red-600",
     },
     rose: {
-      solid:
-        "bg-rose-600 text-white border-rose-700 dark:bg-rose-700 dark:border-rose-800",
       soft:
-        "bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-900/30 dark:text-rose-200 dark:border-rose-800/60",
+        "bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-900/25 dark:text-rose-200 dark:border-rose-800/50",
       outline:
         "text-rose-700 border-rose-400 dark:text-rose-200 dark:border-rose-600",
     },
     orange: {
-      solid:
-        "bg-orange-600 text-white border-orange-700 dark:bg-orange-700 dark:border-orange-800",
       soft:
-        "bg-orange-100 text-orange-800 border-orange-200 dark:bg-orange-900/30 dark:text-orange-200 dark:border-orange-800/60",
+        "bg-orange-100 text-orange-800 border-orange-200 dark:bg-orange-900/25 dark:text-orange-200 dark:border-orange-800/50",
       outline:
         "text-orange-700 border-orange-400 dark:text-orange-200 dark:border-orange-600",
     },
     emerald: {
-      solid:
-        "bg-emerald-600 text-white border-emerald-700 dark:bg-emerald-700 dark:border-emerald-800",
       soft:
-        "bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-800/60",
+        "bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-900/25 dark:text-emerald-200 dark:border-emerald-800/50",
       outline:
         "text-emerald-700 border-emerald-400 dark:text-emerald-200 dark:border-emerald-600",
     },
     zinc: {
-      solid:
-        "bg-zinc-600 text-white border-zinc-700 dark:bg-zinc-700 dark:border-zinc-800",
       soft:
-        "bg-zinc-100 text-zinc-800 border-zinc-200 dark:bg-zinc-900/30 dark:text-zinc-200 dark:border-zinc-700/60",
+        "bg-zinc-100 text-zinc-800 border-zinc-200 dark:bg-zinc-900/25 dark:text-zinc-200 dark:border-zinc-700/50",
       outline:
         "text-zinc-700 border-zinc-400 dark:text-zinc-200 dark:border-zinc-600",
     },
     gray: {
-      solid:
-        "bg-gray-500 text-white border-gray-600 dark:bg-gray-600 dark:border-gray-700",
       soft:
-        "bg-gray-100 text-gray-800 border-gray-200 dark:bg-gray-900/30 dark:text-gray-200 dark:border-gray-700/60",
+        "bg-gray-100 text-gray-800 border-gray-200 dark:bg-gray-900/25 dark:text-gray-200 dark:border-gray-700/50",
       outline:
         "text-gray-700 border-gray-400 dark:text-gray-200 dark:border-gray-600",
     },
   };
+
+  if (variant === "solid") {
+    return GRADS[color] || GRADS.gray;
+  }
 
   const c = map[color] || map.gray;
   return c[variant] || c.soft;
@@ -212,14 +210,28 @@ export default function BadgeStatus({
   rounded = "full", // 'full' | 'md' | 'lg'
   className = "",
   title, // tooltip opcional
+
+  // Novos opcionais (retrocompatíveis)
+  pulseWhenLive = true, // animação sutil quando em andamento
+  labels,               // { key: "Novo rótulo" } para overrides
 }) {
   const key = toKey(status);
-  const { label, color } = STATUS_CONFIG[key] || STATUS_CONFIG.desconhecido;
+  const baseCfg = STATUS_CONFIG[key] || STATUS_CONFIG.desconhecido;
+  const label = labels?.[key] || baseCfg.label;
+  const color = baseCfg.color;
 
   const base =
-    "inline-flex items-center font-semibold border shadow-sm select-none " +
+    "inline-flex items-center font-semibold border select-none " +
     "focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 " +
-    "focus-visible:ring-green-900/50"; // foco consistente com verde-900
+    // foco acompanha o status (varia por cor):
+    (color === "green"   ? "focus-visible:ring-emerald-300/70 " :
+     color === "amber"   ? "focus-visible:ring-amber-400/70 "   :
+     color === "red"     ? "focus-visible:ring-red-400/70 "     :
+     color === "rose"    ? "focus-visible:ring-rose-400/70 "    :
+     color === "orange"  ? "focus-visible:ring-orange-400/70 "  :
+     color === "emerald" ? "focus-visible:ring-emerald-300/70 " :
+     color === "zinc"    ? "focus-visible:ring-zinc-400/70 "    :
+                           "focus-visible:ring-gray-400/70 ");
 
   const radius =
     rounded === "full" ? "rounded-full" : rounded === "lg" ? "rounded-lg" : "rounded-md";
@@ -228,9 +240,13 @@ export default function BadgeStatus({
     base,
     sizeClasses(size),
     variantClasses(color, variant),
+    "shadow-sm",
     radius,
     className,
   ].join(" ");
+
+  // Animação sutil para "Em andamento"
+  const shouldPulse = pulseWhenLive && key === "andamento";
 
   return (
     <motion.span
@@ -242,8 +258,16 @@ export default function BadgeStatus({
       aria-label={label}
       role="status"
     >
-      {showIcon && <StatusIcon k={key} />}
-      <span>{label}</span>
+      {showIcon && (
+        <motion.span
+          className="inline-flex"
+          animate={shouldPulse ? { scale: [1, 1.06, 1] } : undefined}
+          transition={shouldPulse ? { duration: 1.1, repeat: Infinity, ease: "easeInOut" } : undefined}
+        >
+          <StatusIcon k={key} />
+        </motion.span>
+      )}
+      <span className="ml-1">{label}</span>
     </motion.span>
   );
 }
@@ -256,4 +280,6 @@ BadgeStatus.propTypes = {
   rounded: PropTypes.oneOf(["full", "md", "lg"]),
   className: PropTypes.string,
   title: PropTypes.string,
+  pulseWhenLive: PropTypes.bool,
+  labels: PropTypes.object,
 };

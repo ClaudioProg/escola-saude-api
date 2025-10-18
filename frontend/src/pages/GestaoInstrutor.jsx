@@ -25,28 +25,24 @@ function ymdToBR(s) {
 }
 // --------------------------------------
 
-/* ---------------- HeaderHero (roxo, título central e altura média) ---------------- */
+/* ---------------- HeaderHero (cor única sólida) ---------------- */
 function HeaderHero({ onRefresh, carregando, busca, setBusca }) {
   const inputRef = useRef(null);
   return (
-    <header
-      className="relative isolate overflow-hidden bg-gradient-to-br from-fuchsia-900 via-violet-800 to-indigo-700 text-white"
-      role="banner"
-    >
-      <div
-        className="pointer-events-none absolute inset-0 opacity-60"
-        style={{
-          background:
-            "radial-gradient(55% 55% at 50% 0%, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.05) 30%, rgba(255,255,255,0) 60%)",
-        }}
-        aria-hidden="true"
-      />
+    <header className="bg-violet-800 text-white" role="banner">
+      <a
+        href="#conteudo"
+        className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2"
+      >
+        Ir para o conteúdo
+      </a>
+
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-9 min-h-[150px] sm:min-h-[170px]">
         <div className="flex flex-col items-center text-center gap-3">
           <div className="inline-flex items-center justify-center gap-2">
             <GraduationCap className="w-6 h-6" />
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-              Gestão de Instrutor
+              Gestão de Instrutores
             </h1>
           </div>
 
@@ -67,10 +63,13 @@ function HeaderHero({ onRefresh, carregando, busca, setBusca }) {
                 placeholder="Buscar por nome ou e-mail…"
                 value={busca}
                 onChange={(e) => setBusca(e.target.value)}
-                className="w-full px-4 py-2 pl-10 rounded-md bg-white/95 text-slate-900 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-white/60"
+                className="w-full px-4 py-2 pl-10 rounded-md bg-white text-slate-900 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-white/60"
                 autoComplete="off"
               />
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-600" aria-hidden="true" />
+              <Search
+                className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-600"
+                aria-hidden="true"
+              />
             </div>
 
             <button
@@ -88,7 +87,8 @@ function HeaderHero({ onRefresh, carregando, busca, setBusca }) {
           </div>
         </div>
       </div>
-      <div className="absolute bottom-0 left-0 right-0 h-px bg-white/25" aria-hidden="true" />
+
+      <div className="h-px w-full bg-white/25" aria-hidden="true" />
     </header>
   );
 }
@@ -168,7 +168,7 @@ export default function GestaoInstrutor() {
       {/* Live region acessível */}
       <p ref={liveRef} className="sr-only" aria-live="polite" />
 
-      {/* Header hero roxo */}
+      {/* Header hero (violeta sólido) */}
       <HeaderHero
         onRefresh={carregarInstrutores}
         carregando={carregandoDados}
@@ -177,7 +177,7 @@ export default function GestaoInstrutor() {
       />
 
       {/* Conteúdo */}
-      <div className="px-3 sm:px-4 py-6 max-w-6xl mx-auto w-full">
+      <div id="conteudo" className="px-3 sm:px-4 py-6 max-w-6xl mx-auto w-full">
         {carregandoDados ? (
           <div className="space-y-4" aria-busy="true" aria-live="polite">
             {[...Array(4)].map((_, i) => (

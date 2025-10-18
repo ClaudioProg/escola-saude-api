@@ -1,11 +1,33 @@
-// ✅ src/pages/ConfirmarPresenca.jsx
+// ✅ src/pages/ConfirmarPresenca.jsx (paleta fixa de 3 cores, rotas corrigidas, UX/a11y refinado)
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { apiPost } from "../services/api";
 import Footer from "../components/Footer";
-import { CheckCircle2, XCircle, Loader2, QrCode, Home, UserCheck, LogIn, UserPlus } from "lucide-react";
+import {
+  CheckCircle2,
+  XCircle,
+  Loader2,
+  QrCode,
+  Home,
+  UserCheck,
+  LogIn,
+  UserPlus,
+} from "lucide-react";
 
 /* ---------------- Helpers locais ---------------- */
+function safeAtob(s) {
+  try {
+    return atob(s);
+  } catch {
+    // tenta normalizar o padding do JWT
+    const pad = s.length % 4 === 2 ? "==" : s.length % 4 === 3 ? "=" : "";
+    try {
+      return atob(s + pad);
+    } catch {
+      return "";
+    }
+  }
+}
 function getRawToken() {
   try {
     const raw = localStorage.getItem("token");
@@ -14,7 +36,7 @@ function getRawToken() {
     return null;
   }
 }
-// token simples: aceita "Bearer x.y.z" e "x.y.z" e ignora expirado (fallback leve)
+// token simples: aceita "Bearer x.y.z" e "x.y.z"; checa nbf/exp
 function getValidToken() {
   const raw = getRawToken();
   if (!raw) return null;
@@ -22,7 +44,8 @@ function getValidToken() {
   const parts = token.split(".");
   if (parts.length !== 3) return null;
   try {
-    const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
+    const payloadStr = safeAtob(parts[1].replace(/-/g, "+").replace(/_/g, "/"));
+    const payload = JSON.parse(payloadStr || "{}");
     const now = Date.now() / 1000;
     if (payload?.nbf && now < payload.nbf) return null;
     if (payload?.exp && now >= payload.exp) return null;
@@ -36,18 +59,15 @@ function getValidToken() {
 function HeaderHero({ status }) {
   const isOk = status === "ok";
   const isErr = status === "err";
+  // Paleta fixa de 3 cores (página Confirmar Presença): emerald → teal → cyan
+  const gradient = "from-emerald-900 via-teal-700 to-cyan-600";
 
   return (
-    <header
-      className="relative isolate overflow-hidden bg-gradient-to-br from-emerald-900 via-teal-700 to-cyan-600 text-white"
-      role="banner"
-    >
+    <header className={`relative isolate overflow-hidden bg-gradient-to-br ${gradient} text-white`} role="banner">
       <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8 text-center">
         <div className="inline-flex items-center gap-2">
           <QrCode className="w-6 h-6" aria-hidden="true" />
-          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-            Confirmação de Presença
-          </h1>
+          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Confirmação de Presença</h1>
         </div>
         <p className="mt-2 text-sm sm:text-base text-white/90">
           Escaneie o QR e deixe o resto com a gente. A confirmação é autenticada e idempotente.
@@ -73,7 +93,8 @@ function HeaderHero({ status }) {
           )}
         </div>
       </div>
-      {/* Gradiente decorativo */}
+
+      {/* Glow decorativo */}
       <div
         aria-hidden="true"
         className="pointer-events-none absolute -top-24 left-1/2 h-[300px] w-[800px] -translate-x-1/2 rounded-full blur-3xl opacity-25 bg-cyan-300"
@@ -115,7 +136,7 @@ export default function ConfirmarPresenca() {
 
   const buildNext = () => {
     const base = location.pathname;
-    const q = new URLSearchParams();
+    const q = new URLSearchParams(location.search);
     q.set("turma", String(turmaId || ""));
     return `${base}?${q.toString()}`;
   };
@@ -127,7 +148,8 @@ export default function ConfirmarPresenca() {
 
   const goToRegister = () => {
     const next = buildNext();
-    navigate(`/registro?next=${encodeURIComponent(next)}`, { replace: true });
+    // 🔧 rota pública de cadastro no app
+    navigate(`/cadastro?next=${encodeURIComponent(next)}`, { replace: true });
   };
 
   // ação principal
@@ -138,15 +160,18 @@ export default function ConfirmarPresenca() {
       setDetail("Use o QR correto desta sala/turma.");
       setRequiresLogin(false);
       setLive("Parâmetro inválido.");
+      titleRef.current?.focus();
       return;
     }
 
-    // ✅ Pré-checagem: não logado → mensagem amigável com CTA
+    // ✅ Pré-checagem: não logado → mensagem + CTA
     const tokenOk = getValidToken();
     if (!tokenOk) {
       setStatus("err");
       setMsg("Você precisa estar logado para registrar presença.");
-      setDetail("Entre na sua conta para confirmar a presença nesta turma. Voltaremos automaticamente para esta tela após o login.");
+      setDetail(
+        "Entre na sua conta para confirmar a presença nesta turma. Voltaremos automaticamente para esta tela após o login."
+      );
       setRequiresLogin(true);
       setLive("Login necessário para confirmar presença.");
       titleRef.current?.focus();
@@ -160,7 +185,7 @@ export default function ConfirmarPresenca() {
       setRequiresLogin(false);
       setLive("Iniciando confirmação.");
 
-      // OBS: o helper de API já garante /api; usar caminho sem /api aqui também funciona.
+      // OBS: apiPost já prefixa /api quando necessário
       await apiPost(`/presencas/confirmar-qr/${encodeURIComponent(turmaId)}`, {}, { signal: controller?.signal });
 
       setStatus("ok");
@@ -170,6 +195,7 @@ export default function ConfirmarPresenca() {
       titleRef.current?.focus();
     } catch (e) {
       const code = e?.status || e?.response?.status;
+      const serverMsg = e?.response?.data?.mensagem || e?.response?.data?.message || "";
 
       if (code === 401) {
         // não logado → login e volta pra cá
@@ -180,11 +206,19 @@ export default function ConfirmarPresenca() {
       setStatus("err");
       if (code === 403) {
         setMsg("Acesso negado: você não está inscrito nesta turma.");
-        setDetail("Verifique se seu cadastro está correto para este evento/turma. Se você não estiver logado com a conta correta, entre e tente novamente.");
+        setDetail(
+          "Verifique se seu cadastro está correto para este evento/turma. Se você não estiver logado com a conta correta, entre e tente novamente."
+        );
         setRequiresLogin(false);
       } else if (code === 409) {
-        setMsg("Hoje não está dentro do período/datas desta turma.");
-        setDetail("Confirme com a equipe a data correta ou o cronograma da turma.");
+        // Alguns backends usam 409 tanto para fora do período quanto para 'já confirmada'
+        const already = /já (foi )?confirmad/i.test(serverMsg);
+        setMsg(already ? "Sua presença já foi confirmada." : "Hoje não está dentro do período/datas desta turma.");
+        setDetail(
+          already
+            ? "Não é necessário repetir a leitura do QR. Se precisar, confira suas presenças."
+            : "Confirme com a equipe a data correta ou o cronograma da turma."
+        );
         setRequiresLogin(false);
       } else {
         setMsg("Não foi possível confirmar a presença no momento.");
@@ -249,9 +283,7 @@ export default function ConfirmarPresenca() {
             </h2>
 
             {/* detalhes amigáveis */}
-            {detail && (
-              <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">{detail}</p>
-            )}
+            {detail && <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">{detail}</p>}
 
             {/* contexto da operação */}
             <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
@@ -353,9 +385,7 @@ export default function ConfirmarPresenca() {
             )}
 
             {/* contador de tentativas (debug leve) */}
-            <p className="mt-3 text-[11px] text-zinc-400 dark:text-zinc-500">
-              Tentativas: {attempts}
-            </p>
+            <p className="mt-3 text-[11px] text-zinc-400 dark:text-zinc-500">Tentativas: {attempts}</p>
           </div>
         </section>
       </main>

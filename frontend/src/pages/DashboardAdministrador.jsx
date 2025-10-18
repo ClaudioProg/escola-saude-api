@@ -51,15 +51,17 @@ function HeaderHero({ nome, carregando, onRefresh }) {
 
 /* ========= Helpers anti-fuso e formatação ========= */
 const ymd = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
+const onlyHHmm = (s) =>
+  typeof s === "string" && /^\d{2}:\d{2}/.test(s) ? s.slice(0, 5) : "12:00";
 const toLocalDate = (ymdStr, hhmm = "12:00") =>
-  ymdStr ? new Date(`${ymdStr}T${(hhmm || "12:00").slice(0, 5)}:00`) : null;
+  ymdStr ? new Date(`${ymdStr}T${onlyHHmm(hhmm)}:00`) : null;
 
-const onlyHHmm = (s) => (typeof s === "string" ? s.slice(0, 5) : "");
-const formatarCPF = (v) =>
-  (String(v || "").replace(/\D/g, "").padStart(11, "0") || "").replace(
-    /(\d{3})(\d{3})(\d{3})(\d{2})/,
-    "$1.$2.$3-$4"
-  );
+const formatarCPF = (v) => {
+  const raw = String(v || "").replace(/\D/g, "");
+  return raw.length === 11
+    ? raw.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4")
+    : raw;
+};
 const formatarDataBR = (isoYMD) => {
   const d = ymd(isoYMD);
   return d ? d.split("-").reverse().join("/") : "";
@@ -122,7 +124,8 @@ export default function DashboardAdministrador() {
     setCarregando(true);
     try {
       setLive("Carregando eventos…");
-      const data = await apiGet("/api/eventos", { on403: "silent" });
+      // ✅ padronizado sem /api (o client já prefixa)
+      const data = await apiGet("eventos", { on403: "silent" });
       if (!mounted.current) return;
       setEventos(Array.isArray(data) ? data : []);
       setErro("");
@@ -148,7 +151,7 @@ export default function DashboardAdministrador() {
   const carregarTurmas = async (eventoId) => {
     if (turmasPorEvento[eventoId]) return;
     try {
-      const data = await apiGet(`/api/turmas/evento/${eventoId}`, { on403: "silent" });
+      const data = await apiGet(`turmas/evento/${eventoId}`, { on403: "silent" });
       setTurmasPorEvento((prev) => ({
         ...prev,
         [eventoId]: Array.isArray(data) ? data : [],
@@ -161,7 +164,7 @@ export default function DashboardAdministrador() {
 
   const carregarInscritos = async (turmaId) => {
     try {
-      const data = await apiGet(`/api/inscricoes/turma/${turmaId}`, { on403: "silent" });
+      const data = await apiGet(`inscricoes/turma/${turmaId}`, { on403: "silent" });
       setInscritosPorTurma((prev) => ({
         ...prev,
         [turmaId]: Array.isArray(data) ? data : [],
@@ -174,7 +177,7 @@ export default function DashboardAdministrador() {
   const carregarAvaliacoes = async (turmaId) => {
     if (avaliacoesPorTurma[turmaId]) return;
     try {
-      const data = await apiGet(`/api/avaliacoes/turma/${turmaId}/all`, { on403: "silent" });
+      const data = await apiGet(`avaliacoes/turma/${turmaId}/all`, { on403: "silent" });
       setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: data || {} }));
     } catch (err) {
       console.error("❌ Erro ao carregar avaliações:", err);
@@ -182,9 +185,10 @@ export default function DashboardAdministrador() {
     }
   };
 
+  // ✅ retorna o payload para evitar race-condition com setState
   const carregarPresencas = async (turmaId) => {
     try {
-      const data = await apiGet(`/api/presencas/turma/${turmaId}/detalhes`, {
+      const data = await apiGet(`presencas/turma/${turmaId}/detalhes`, {
         on403: "silent",
       });
 
@@ -192,26 +196,33 @@ export default function DashboardAdministrador() {
       const usuarios = Array.isArray(data?.usuarios) ? data.usuarios : [];
 
       // ✅ Só conta encontros que já aconteceram (até agora)
-      const hoje = new Date();
+      const agora = new Date();
+      const hojeY = agora.toISOString().slice(0, 10);
+      const hhmmAgora = `${String(agora.getHours()).padStart(2, "0")}:${String(
+        agora.getMinutes()
+      ).padStart(2, "0")}`;
+
       const occurred = datas.filter((d) => {
-        const di = d?.data || d;
-        const hi = (d?.horario_inicio || "00:00").slice(0, 5);
-        const dt = di ? new Date(`${String(di).slice(0, 10)}T${hi}:00`) : null;
-        return dt && dt <= hoje;
+        const di = String(d?.data || d).slice(0, 10);
+        const hi = onlyHHmm(d?.horario_inicio || "23:59"); // se hoje, só ocorre após o horário
+        // Se data < hoje → ocorreu; se data === hoje → ocorreu se horário <= agora
+        return di < hojeY || (di === hojeY && hi <= hhmmAgora);
       });
+
       const ocorridosSet = new Set(occurred.map((d) => String(d?.data || d).slice(0, 10)));
       const totalOcorridos = occurred.length || 0;
 
-      // ✅ frequência baseada SOMENTE nos ocorridos
+      // ✅ frequência baseada SOMENTE nos ocorridos (usa exato para elegibilidade)
       const lista = usuarios.map((u) => {
         const presentesEmOcorridos = (u.presencas || []).reduce((acc, p) => {
           const dia = String(p?.data_presenca || p?.data).slice(0, 10);
           return acc + (p?.presente && ocorridosSet.has(dia) ? 1 : 0);
         }, 0);
 
-        const percExato = totalOcorridos > 0 ? (presentesEmOcorridos / totalOcorridos) * 100 : 0;
+        const percExato =
+          totalOcorridos > 0 ? (presentesEmOcorridos / totalOcorridos) * 100 : 0;
         const freqNum = Math.round(percExato);
-        const presenteElegivel = percExato >= 75 - 1e-9;
+        const elegivel = percExato >= 75; // regra usa o exato, não o arredondado
 
         return {
           usuario_id: u.id,
@@ -228,8 +239,9 @@ export default function DashboardAdministrador() {
           pcd_multipla: u?.pcd_multipla || u?.def_multipla,
           pcd_autismo: u?.pcd_autismo || u?.tea || u?.transtorno_espectro_autista,
 
-          presente: presenteElegivel,
-          frequencia_num: freqNum,
+          elegivel,
+          perc_exato: percExato,
+          frequencia_num: freqNum, // exibição
           frequencia: `${freqNum}%`,
 
           presentes_ocorridos: presentesEmOcorridos,
@@ -260,16 +272,21 @@ export default function DashboardAdministrador() {
         ? Math.round(somaPresentes / encontrosOcorridos)
         : 0;
 
+      const payload = {
+        lista,
+        resumo: { encontrosOcorridos, presentesPorData, mediaPresentes },
+      };
+
       setPresencasPorTurma((prev) => ({
         ...prev,
-        [turmaId]: {
-          lista,
-          resumo: { encontrosOcorridos, presentesPorData, mediaPresentes },
-        },
+        [turmaId]: payload,
       }));
+
+      return payload;
     } catch (err) {
       console.error("❌ Erro ao carregar presenças:", err);
       toast.error("Erro ao carregar presenças da turma.");
+      return null;
     }
   };
 
@@ -278,7 +295,7 @@ export default function DashboardAdministrador() {
     const lista = presencasPorTurma?.[turmaId]?.lista || [];
     const totalInscritos = (inscritosPorTurma?.[turmaId] || []).length;
     if (!totalInscritos) return 0;
-    const elegiveis = lista.filter((u) => (u.frequencia_num ?? 0) >= 75).length;
+    const elegiveis = lista.filter((u) => u.elegivel === true).length;
     return Math.round((elegiveis / totalInscritos) * 100);
   }
 
@@ -291,7 +308,7 @@ export default function DashboardAdministrador() {
       const turmaId = t.id;
       const lista = presencasPorTurma?.[turmaId]?.lista || [];
       const inscritos = (inscritosPorTurma?.[turmaId] || []).length;
-      somaElegiveis += lista.filter((u) => (u.frequencia_num ?? 0) >= 75).length;
+      somaElegiveis += lista.filter((u) => u.elegivel === true).length;
       somaInscritos += inscritos;
     }
     if (!somaInscritos) return 0;
@@ -301,7 +318,7 @@ export default function DashboardAdministrador() {
   /* ========= PDFs (import dinâmico) ========= */
   const gerarRelatorioPDF = async (turmaId) => {
     try {
-      const data = await apiGet(`/api/presencas/relatorio-presencas/turma/${turmaId}`, {
+      const data = await apiGet(`presencas/relatorio-presencas/turma/${turmaId}`, {
         on403: "silent",
       });
       const alunos = Array.isArray(data?.lista) ? data.lista : Array.isArray(data) ? data : [];
@@ -351,15 +368,14 @@ export default function DashboardAdministrador() {
     try {
       let inscritos = inscritosPorTurma[turmaId];
       if (!Array.isArray(inscritos)) {
-        const data = await apiGet(`/api/inscricoes/turma/${turmaId}`, { on403: "silent" });
+        const data = await apiGet(`inscricoes/turma/${turmaId}`, { on403: "silent" });
         inscritos = Array.isArray(data) ? data : [];
         setInscritosPorTurma((prev) => ({ ...prev, [turmaId]: inscritos }));
       }
 
       let pres = presencasPorTurma[turmaId];
       if (!pres) {
-        await carregarPresencas(turmaId);
-        pres = presencasPorTurma[turmaId];
+        pres = await carregarPresencas(turmaId); // ✅ usa retorno para evitar race
       }
 
       const todasTurmas = Object.values(turmasPorEvento).flat();
@@ -397,7 +413,7 @@ export default function DashboardAdministrador() {
       // ✅ Resumo com a nova regra
       const totalInscritos = inscritos.length;
       const listaPres = pres?.lista || [];
-      const elegiveis = listaPres.filter((u) => (u.frequencia_num ?? 0) >= 75).length;
+      const elegiveis = listaPres.filter((u) => u.elegivel === true).length;
       const pctElegiveis = totalInscritos ? Math.round((elegiveis / totalInscritos) * 100) : 0;
       doc.text(
         `Presença (regra ≥ 75%): ${elegiveis}/${totalInscritos} (${pctElegiveis}%)`,
@@ -448,8 +464,16 @@ export default function DashboardAdministrador() {
               mapFreq[i?.id] || mapFreq[i?.usuario_id] || "",
             ];
           }),
-        styles: { fontSize: 9 },
+        styles: { fontSize: 9, overflow: "linebreak" },
         headStyles: { fillColor: [22, 101, 52] },
+        columnStyles: {
+          0: { cellWidth: 90 },
+          1: { cellWidth: 30 },
+          2: { cellWidth: 20, halign: "center" },
+          3: { cellWidth: 30 },
+          4: { cellWidth: 30 },
+          5: { cellWidth: 30, halign: "center" },
+        },
       });
 
       doc.save(`inscritos_turma_${turmaId}.pdf`);
@@ -512,10 +536,9 @@ export default function DashboardAdministrador() {
         ymd(b.data_inicio_geral || b.data_inicio || b.data),
         onlyHHmm(b.horario_inicio_geral || b.horario_inicio || "00:00")
       );
-      if (!aDT && !bDT) return 0;
-      if (!aDT) return 1;
-      if (!bDT) return -1;
-      return aDT - bDT;
+      const aTime = aDT?.getTime?.() ?? Infinity;
+      const bTime = bDT?.getTime?.() ?? Infinity;
+      return aTime - bTime;
     });
   }, [eventos]);
 
@@ -525,11 +548,22 @@ export default function DashboardAdministrador() {
     if (!buscaDebounced) return byStatus;
     const q = buscaDebounced;
     return byStatus.filter((ev) =>
-      String(ev?.nome || ev?.titulo || "")
-        .toLowerCase()
-        .includes(q)
+      String(ev?.nome || ev?.titulo || "").toLowerCase().includes(q)
     );
   }, [eventosOrdenados, filtroStatus, turmasPorEvento, buscaDebounced]);
+
+  // teclas de navegação para os filtros (tabs)
+  const filtroKeys = ["todos", "programado", "em_andamento", "encerrado"];
+  const onTabKeyDown = (e) => {
+    const idx = filtroKeys.indexOf(filtroStatus);
+    if (e.key === "ArrowRight") {
+      const next = filtroKeys[(idx + 1) % filtroKeys.length];
+      setFiltroStatus(next);
+    } else if (e.key === "ArrowLeft") {
+      const prev = filtroKeys[(idx - 1 + filtroKeys.length) % filtroKeys.length];
+      setFiltroStatus(prev);
+    }
+  };
 
   return (
     <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
@@ -550,7 +584,7 @@ export default function DashboardAdministrador() {
       )}
 
       <main id="conteudo" className="flex-1 max-w-6xl mx-auto px-3 sm:px-4 py-5 sm:py-6">
-        <p ref={liveRef} className="sr-only" aria-live="polite" />
+        <p ref={liveRef} className="sr-only" aria-live="polite" aria-atomic="true" />
 
         {/* Filtros: chips + busca (mobile-friendly) */}
         <section
@@ -563,6 +597,7 @@ export default function DashboardAdministrador() {
                 className="flex gap-2 sm:gap-3 min-w-fit snap-x"
                 role="tablist"
                 aria-label="Filtros por status"
+                onKeyDown={onTabKeyDown}
               >
                 {[
                   { key: "todos", label: "Todos" },
@@ -575,6 +610,7 @@ export default function DashboardAdministrador() {
                     <button
                       key={key}
                       role="tab"
+                      tabIndex={active ? 0 : -1}
                       aria-selected={active}
                       aria-controls={`painel-${key}`}
                       onClick={() => setFiltroStatus(key)}
@@ -609,7 +645,13 @@ export default function DashboardAdministrador() {
               <button
                 type="button"
                 onClick={() => setBusca("")}
-                className="px-3 py-2 rounded-md bg-gray-200 dark:bg-gray-700 text-sm"
+                disabled={!busca}
+                aria-disabled={!busca}
+                className={`px-3 py-2 rounded-md text-sm ${
+                  !busca
+                    ? "bg-gray-200/60 dark:bg-gray-700/60 cursor-not-allowed"
+                    : "bg-gray-200 dark:bg-gray-700"
+                }`}
                 aria-label="Limpar busca"
               >
                 Limpar

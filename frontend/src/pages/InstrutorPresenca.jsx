@@ -11,7 +11,7 @@ import { formatarCPF, formatarDataBrasileira } from "../utils/data";
 import { apiGet, apiGetTurmaDatasAuto } from "../services/api";
 import { RefreshCw, PenLine, Presentation } from "lucide-react";
 
-/* ───────────────────────────── HeaderHero ───────────────────────────── */
+/* ───────────────────────────── HeaderHero (3 cores) ───────────────────────────── */
 function HeaderHero({
   nome = "",
   carregando = false,
@@ -20,18 +20,16 @@ function HeaderHero({
   mostrarBotaoAssinatura = false,
   variant = "indigo",
 }) {
+  // apenas 3 variantes (como combinado)
   const variants = {
     indigo: "from-indigo-900 via-violet-800 to-fuchsia-700",
     emerald: "from-emerald-900 via-emerald-800 to-emerald-700",
     cyan: "from-cyan-900 via-cyan-800 to-cyan-700",
-    fuchsia: "from-fuchsia-900 via-fuchsia-800 to-fuchsia-700",
-    amber: "from-amber-900 via-amber-800 to-amber-700",
-    slate: "from-slate-900 via-slate-800 to-slate-700",
   };
   const grad = variants[variant] ?? variants.indigo;
 
   return (
-    <header className={`bg-gradient-to-br ${grad} text-white`}>
+    <header className={`bg-gradient-to-br ${grad} text-white`} role="banner">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 flex flex-col items-center text-center gap-3">
         <div className="inline-flex items-center gap-2">
           <Presentation className="w-5 h-5" aria-hidden="true" />
@@ -55,8 +53,8 @@ function HeaderHero({
             type="button"
             onClick={onRefresh}
             disabled={carregando}
-            className={`inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md transition
-              ${carregando ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-green-600 hover:bg-green-700"} text-white`}
+            className={`inline-flex items-center gap-2 px-4 py-2 text-sm rounded-md transition border border-white/20
+              ${carregando ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-white/15 hover:bg-white/25"} text-white`}
             aria-label="Atualizar painel do instrutor"
             title="Atualizar"
           >
@@ -68,7 +66,7 @@ function HeaderHero({
             <button
               type="button"
               onClick={onAbrirAssinatura}
-              className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md bg-amber-500 text-white hover:bg-amber-600"
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm rounded-md bg-amber-500 text-white hover:bg-amber-600"
               aria-label="Cadastrar ou alterar assinatura"
               title="Cadastrar/Alterar Assinatura"
             >
@@ -96,7 +94,6 @@ const hhmm = (v, fb = "") =>
   typeof v === "string" && /^\d{2}:\d{2}/.test(v) ? v.slice(0, 5) : fb;
 
 /* ----------------- SW Cache (sessionStorage) ----------------- */
-// 🔁 nova chave de cache, separada da agenda
 const CACHE_KEY = "cache:instrutor:minhas-turmas:v1";
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5min
 function readCache() {
@@ -172,7 +169,7 @@ function normalizeTurma(t) {
 
 /* ===================================================================== */
 
-export default function DashboardInstrutor() {
+export default function InstrutorPresenca() {
   const liveRef = useRef(null);
 
   let usuario = {};
@@ -245,7 +242,6 @@ export default function DashboardInstrutor() {
       const ctrl = new AbortController();
       abortRef.current = ctrl;
 
-      // 🔄 novo endpoint dedicado ao instrutor autenticado
       const data = await withTimeout(
         apiGet("/api/instrutor/minhas/turmas", { on403: "silent", signal: ctrl.signal })
       );
@@ -306,12 +302,15 @@ export default function DashboardInstrutor() {
 
   useEffect(() => {
     const cached = readCache();
+    const freshEnough = cached?.ts && Date.now() - cached.ts < CACHE_TTL_MS;
+
     if (cached?.turmas?.length) {
       setTurmas(ordenar(cached.turmas));
       setCarregando(false);
       setLive("Turmas do cache exibidas.");
     }
-    fetchTurmas({ showSpinner: !cached });
+    // se o cache for velho, atualiza já; se for recente, atualiza silencioso
+    fetchTurmas({ showSpinner: !freshEnough });
 
     const onVis = () => {
       if (document.hidden) return;
@@ -341,11 +340,12 @@ export default function DashboardInstrutor() {
         const pres = Array.isArray(u.presencas) ? u.presencas : [];
         const presentes = pres.filter((p) => p?.presente === true).length;
         const freq = totalDias > 0 ? Math.round((presentes / totalDias) * 100) : 0;
+        const atingiu = freq >= 75;
         return {
           usuario_id: u.id,
           nome: u.nome,
           cpf: u.cpf,
-          presente: freq >= 75,
+          presente: atingiu,
           frequencia: `${freq}%`,
         };
       });
@@ -357,13 +357,9 @@ export default function DashboardInstrutor() {
     } catch (err) {
       if (err?.status === 404) {
         if (!silent) toast.warn("Turma não encontrada ou sem dados de presença.");
-        setPresencasPorTurma((prev) => ({
-          ...prev,
-          [turmaId]: { detalhado: { datas: [], usuarios: [] }, lista: [] },
-        }));
-        return;
+      } else if (!silent) {
+        toast.error("Erro ao carregar presenças da turma.");
       }
-      if (!silent) toast.error("Erro ao carregar presenças da turma.");
       setPresencasPorTurma((prev) => ({
         ...prev,
         [turmaId]: { detalhado: { datas: [], usuarios: [] }, lista: [] },

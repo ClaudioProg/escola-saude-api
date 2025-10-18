@@ -11,6 +11,7 @@ import {
   startOfMonth,
   endOfMonth,
 } from "date-fns";
+import { CalendarDays } from "lucide-react";
 import { ptBR } from "date-fns/locale";
 import { toast } from "react-toastify";
 import Skeleton from "react-loading-skeleton";
@@ -36,9 +37,13 @@ function HeaderHero({ nome, carregando, onRefresh, onHoje }) {
       </a>
 
       <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4 sm:py-6 text-center flex flex-col items-center gap-2 sm:gap-3">
-        <h1 className="text-lg sm:text-2xl font-extrabold tracking-tight">
-          Agenda Geral de Eventos
-        </h1>
+        {/* Ícone + título na MESMA linha */}
+        <div className="flex items-center gap-2">
+         <CalendarDays className="h-6 w-6 sm:h-7 sm:w-7" aria-hidden="true" />
+          <h1 className="text-lg sm:text-2xl font-extrabold tracking-tight">
+            Agenda Geral de Eventos
+          </h1>
+        </div>
         <p className="text-xs sm:text-sm text-white/90 px-2">
           {nome ? `Bem-vindo(a), ${nome}.` : "Bem-vindo(a)."} Visualize e consulte os eventos por dia.
         </p>
@@ -142,31 +147,33 @@ function getBadgeColors(ev) {
 }
 
 /* ========= Badge de evento no dia ========= */
-function DiaBadge({ ev, onClick }) {
-  const titulo = String(ev?.titulo ?? ev?.nome ?? "Evento").trim();
-  const hi = (ev.horario_inicio ?? ev.horarioInicio ?? "").slice(0, 5);
-  const hf = (ev.horario_fim ?? ev.horarioFim ?? "").slice(0, 5);
-  const hora = hi && hf ? `${hi}–${hf}` : hi || hf || "";
-  const cores = getBadgeColors(ev);
-
+function DiaBadge({ children, onClick, color = "teal" }) {
+  const cores = {
+    teal: "bg-teal-600 text-white",
+    amber: "bg-amber-600 text-white",
+    rose: "bg-rose-600 text-white",
+    gray: "bg-gray-500 text-white",
+  };
+  const handleKey = (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onClick?.(e);
+    }
+  };
   return (
-    <button
-      type="button"
-      onClick={() => onClick?.(ev)}
-      title={`${titulo}${hora ? ` • ${hora}` : ""}`}
-      className={`group w-full text-left ${cores.bg} ${cores.text} ring-1 ${cores.ring}
-                  rounded-md px-2 py-1 hover:brightness-95 focus:outline-none focus:ring-2 focus:ring-offset-1`}
-      aria-label={`Evento: ${titulo}${hora ? `, ${hora}` : ""}`}
+    <span
+      role="button"
+      tabIndex={0}
+      onClick={(e) => { e.stopPropagation(); onClick?.(e); }}
+      onKeyDown={handleKey}
+      className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${cores[color]} cursor-pointer`}
+      // garante que o clique não "clica" o dia do calendário
     >
-      <div className="flex items-center gap-2 min-height-[28px]">
-        {hora && (
-          <span className="text-[10px] font-semibold tabular-nums shrink-0">{hora}</span>
-        )}
-        <span className="text-[11px] font-medium truncate">{titulo}</span>
-      </div>
-    </button>
+      {children}
+    </span>
   );
 }
+
 
 /* ========= Badge de TOTAL ========= */
 function TotalBadge({ label, value, variant = "programado" }) {

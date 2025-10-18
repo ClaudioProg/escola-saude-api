@@ -53,7 +53,7 @@ function resolveAbsPath(storageKey) {
 /* =================================================================== */
 
 /** HEAD → apenas indica se o modelo existe no banco/FS */
-router.head("/chamadas/:id/modelo-banner", injectDb(), async (req, res) => {
+router.head("/chamadas/:id/modelo-banner", injectDb, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id) || id <= 0) return res.status(400).end();
 
@@ -75,7 +75,7 @@ router.head("/chamadas/:id/modelo-banner", injectDb(), async (req, res) => {
 });
 
 /** GET → stream do arquivo físico (FS/S3) */
-router.get("/chamadas/:id/modelo-banner", injectDb(), async (req, res) => {
+router.get("/chamadas/:id/modelo-banner", injectDb, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id) || id <= 0)
     return res.status(400).json({ erro: "ID inválido" });
@@ -89,14 +89,20 @@ router.get("/chamadas/:id/modelo-banner", injectDb(), async (req, res) => {
         ORDER BY updated_at DESC LIMIT 1`,
       [id]
     );
-    if (!rows.length) return res.status(404).json({ erro: "Modelo não encontrado" });
+    if (!rows.length)
+      return res.status(404).json({ erro: "Modelo não encontrado" });
 
     const m = rows[0];
     const absPath = resolveAbsPath(m.storage_key);
 
     if (!absPath || !fs.existsSync(absPath)) {
-      console.error("[modelo-banner] arquivo ausente:", { absPath, storage_key: m.storage_key });
-      return res.status(410).json({ erro: "Arquivo do modelo não está disponível" });
+      console.error("[modelo-banner] arquivo ausente:", {
+        absPath,
+        storage_key: m.storage_key,
+      });
+      return res
+        .status(410)
+        .json({ erro: "Arquivo do modelo não está disponível" });
     }
 
     // If-Modified-Since → 304
@@ -153,7 +159,7 @@ router.get("/chamadas/:id/modelo-banner", injectDb(), async (req, res) => {
 /* =================================================================== */
 router.post(
   "/chamadas/:id/modelo-banner",
-  injectDb(),
+  injectDb,
   authMiddleware,
   authorizeRoles("administrador"),
   upload.single("file"),
@@ -168,7 +174,10 @@ router.post(
       return res.status(400).json({ erro: "Apenas arquivos .ppt ou .pptx" });
 
     try {
-      const { storageKey, sha256 } = await storage.saveChamadaModelo(chamadaId, f);
+      const { storageKey, sha256 } = await storage.saveChamadaModelo(
+        chamadaId,
+        f
+      );
 
       const { rows } = await q(
         req,
@@ -185,13 +194,22 @@ router.post(
             updated_at     = now()
         RETURNING id, chamada_id, nome_arquivo, mime, storage_key, tamanho_bytes, hash_sha256, updated_at
       `,
-        [chamadaId, f.originalname, f.mimetype, storageKey, f.size ?? null, sha256 ?? null]
+        [
+          chamadaId,
+          f.originalname,
+          f.mimetype,
+          storageKey,
+          f.size ?? null,
+          sha256 ?? null,
+        ]
       );
 
       return res.json(rows[0]);
     } catch (e) {
       console.error("[POST modelo-banner]", e);
-      return res.status(500).json({ erro: "Falha ao salvar o arquivo do modelo" });
+      return res
+        .status(500)
+        .json({ erro: "Falha ao salvar o arquivo do modelo" });
     }
   }
 );
@@ -201,7 +219,7 @@ router.post(
 /* =================================================================== */
 router.get(
   "/admin/chamadas/:id/modelo-banner",
-  injectDb(),
+  injectDb,
   authMiddleware,
   authorizeRoles("administrador"),
   async (req, res) => {
@@ -226,7 +244,9 @@ router.get(
       return res.json(rows[0]);
     } catch (e) {
       console.error("[GET admin/modelo-banner]", e);
-      return res.status(500).json({ erro: "Falha ao obter meta do modelo" });
+      return res
+        .status(500)
+        .json({ erro: "Falha ao obter meta do modelo" });
     }
   }
 );

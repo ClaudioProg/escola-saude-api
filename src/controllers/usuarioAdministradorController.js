@@ -284,7 +284,6 @@ async function atualizarPerfil(req, res) {
 }
 
 /* =============== RESUMO POR USUÁRIO (cursos ≥75% e certificados) =============== */
-/* =============== RESUMO (cursos ≥75% e certificados) =============== */
 async function getResumoUsuario(req, res) {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) {
@@ -359,8 +358,6 @@ async function getResumoUsuario(req, res) {
 
     const cursos75 = Number(cursosQ?.rows?.[0]?.n || 0);
     const certificados = Number(certsQ?.rows?.[0]?.n || 0);
-
-    // Por segurança: nunca reportar menos cursos que certificados (no seu fluxo, certificado implica ≥75%)
     const cursos_concluidos_75 = Math.max(cursos75, certificados);
 
     return res.json({
@@ -373,6 +370,55 @@ async function getResumoUsuario(req, res) {
   }
 }
 
+/* =============== NOVO: LISTAR AVALIADORES ELEGÍVEIS =============== */
+/**
+ * GET /api/usuarios/avaliadores?roles=instrutor,administrador
+ * Usa o campo CSV `usuarios.perfil` para filtrar.
+ * - Se `roles` não for informado, assume "instrutor,administrador".
+ */
+async function listarAvaliadoresElegiveis(req, res) {
+  try {
+    const rolesQuery = String(req.query.roles || "instrutor,administrador")
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+
+    // Monta condições dinâmicas com ILIKE no CSV de perfis
+    // Ex.: LOWER(u.perfil) LIKE '%instrutor%' OR LOWER(u.perfil) LIKE '%administrador%'
+    let whereSql = "";
+    const params = [];
+    if (rolesQuery.length > 0) {
+      const conds = rolesQuery.map((role, i) => {
+        params.push(`%${role}%`);
+        return `LOWER(u.perfil) LIKE $${params.length}`;
+      });
+      whereSql = `WHERE ${conds.join(" OR ")}`;
+    }
+
+    const { rows } = await db.query(
+      `
+      SELECT u.id, u.nome, u.email, u.perfil
+      FROM usuarios u
+      ${whereSql}
+      ORDER BY u.nome ASC
+      `,
+      params
+    );
+
+    const data = rows.map((u) => ({
+      id: u.id,
+      nome: u.nome,
+      email: u.email,
+      perfil: toPerfilArray(u.perfil),
+    }));
+
+    res.json(data);
+  } catch (err) {
+    console.error("❌ Erro ao listar avaliadores elegíveis:", err);
+    res.status(500).json({ erro: "Erro ao listar avaliadores." });
+  }
+}
+
 module.exports = {
   listarUsuarios,
   buscarUsuarioPorId,
@@ -382,5 +428,6 @@ module.exports = {
   listarInstrutor,
   listarinstrutor,
   atualizarPerfil,
-  getResumoUsuario,          
+  getResumoUsuario,
+  listarAvaliadoresElegiveis, // 👈 novo export
 };

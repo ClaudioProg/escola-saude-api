@@ -1,6 +1,6 @@
 // ✅ src/pages/DashboardInstrutor.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
 import { toast } from "react-toastify";
@@ -45,18 +45,28 @@ const isProximosDias = (d, dias = 7) => {
 };
 const clampPct = (n) => Math.min(100, Math.max(0, Number(n) || 0));
 
-/* ───────────── Header/Hero ───────────── */
+/* ───────────── Header/Hero (padronizado app-wide) ───────────── */
 function DashboardHero({ onRefresh, carregando }) {
   return (
-    <header className="bg-gradient-to-br from-indigo-900 via-violet-800 to-fuchsia-700 text-white">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 flex flex-col items-center text-center gap-3">
+    <header
+      className="bg-gradient-to-br from-emerald-900 via-teal-800 to-cyan-700 text-white"
+      role="banner"
+    >
+      <a
+        href="#conteudo"
+        className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2"
+      >
+        Ir para o conteúdo
+      </a>
+
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-10 flex flex-col items-center text-center gap-3">
         <div className="inline-flex items-center gap-2">
-          <Presentation className="w-6 h-6" />
+          <Presentation className="w-6 h-6" aria-hidden="true" />
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
             Painel do Instrutor
           </h1>
         </div>
-        <p className="text-sm text-white/90">
+        <p className="text-sm sm:text-base text-white/90 max-w-2xl">
           Visão geral das suas turmas, presenças e avaliações.
         </p>
         <button
@@ -64,15 +74,15 @@ function DashboardHero({ onRefresh, carregando }) {
           onClick={onRefresh}
           disabled={carregando}
           className={[
-            "inline-flex items-center gap-2 px-4 py-2 rounded-full font-semibold",
-            "bg-white/10 hover:bg-white/20 border border-white/20",
+            "inline-flex items-center gap-2 px-4 py-2 rounded-lg font-semibold",
+            "bg-white/15 hover:bg-white/25 border border-white/20",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70",
             carregando ? "opacity-60 cursor-not-allowed" : "",
           ].join(" ")}
           aria-label="Atualizar painel do instrutor"
           title="Atualizar"
         >
-          <RefreshCw className="w-4 h-4" />
+          <RefreshCw className="w-4 h-4" aria-hidden="true" />
           {carregando ? "Atualizando…" : "Atualizar"}
         </button>
       </div>
@@ -99,6 +109,7 @@ export default function DashboardInstrutor() {
 
   const liveRef = useRef(null);
   const setLive = (m) => { if (liveRef.current) liveRef.current.textContent = m; };
+  const reduceMotion = useReducedMotion();
 
   const usuarioId = (() => {
     try { return Number(JSON.parse(localStorage.getItem("usuario") || "{}")?.id) || null; }
@@ -124,7 +135,7 @@ export default function DashboardInstrutor() {
       }
 
       // 3) Presenças por turma (concorrência limitada)
-      const limit = 6; // pega as 6 turmas mais recentes para gráfico/estatística (evita muitas chamadas)
+      const limit = 6; // top N para gráficos
       const turmasOrdenadas = turmasArr
         .slice()
         .sort((a, b) => (new Date(ymd(b.data_inicio || b.data_fim)) - new Date(ymd(a.data_inicio || a.data_fim))))
@@ -134,9 +145,9 @@ export default function DashboardInstrutor() {
         const det = await apiGet(`/presencas/turma/${tid}/detalhes`, { on403: "silent" }).catch(() => null);
         const datas = Array.isArray(det?.datas) ? det.datas : [];
         const usuarios = Array.isArray(det?.usuarios) ? det.usuarios : [];
-        // só encontros passados
         const passados = datas.filter((d) => ymd(d?.data) <= hojeYMD());
         const totalEncontrosPassados = passados.length;
+
         let presentesTotal = 0;
         if (totalEncontrosPassados > 0) {
           for (const u of usuarios) {
@@ -152,7 +163,7 @@ export default function DashboardInstrutor() {
         return { turmaId: tid, pct, datas, usuarios };
       };
 
-      // concorrência simples
+      // concorrência simples (chunk de 3)
       const chunks = [];
       for (let i = 0; i < turmasOrdenadas.length; i += 3) chunks.push(turmasOrdenadas.slice(i, i + 3));
       const presPorTurma = [];
@@ -164,13 +175,11 @@ export default function DashboardInstrutor() {
       // KPIs derivados
       const aulasHoje = turmasArr.reduce((acc, t) => {
         const dI = ymd(t?.data_inicio), dF = ymd(t?.data_fim);
-        // se tiver "datas" (encontros reais), conta os iguais a hoje
         const dts = Array.isArray(t?.datas) ? t.datas : [];
         if (dts.length) {
           return acc + dts.filter((d) => isHoje(ymd(d?.data || d))).length;
         }
-        // fallback por intervalo
-        if (dI && dF && isHoje(dI) || isHoje(dF)) return acc + 1;
+        if (dI && dF && (isHoje(dI) || isHoje(dF))) return acc + 1; // correção de precedência
         return acc;
       }, 0);
 
@@ -194,7 +203,7 @@ export default function DashboardInstrutor() {
         return Math.round(m * 10) / 10; // 1 casa
       })();
 
-      // Total de avaliações (aproximação: eventos com nota média possuem avaliações)
+      // Total de avaliações (aproximação)
       const totalAvaliacoes = notasEventos.length;
 
       setKpi({
@@ -206,7 +215,7 @@ export default function DashboardInstrutor() {
         totalAvaliacoes,
       });
 
-      // Séries: Presença por Turma (top N)
+      // Séries: Presença por Turma
       const labelsPres = turmasOrdenadas.map((t) => String(t?.nome || `Turma ${t?.id}`));
       const mapPct = new Map(presPorTurma.map((x) => [String(x.turmaId), x.pct]));
       const dataPres = turmasOrdenadas.map((t) => Number(mapPct.get(String(t.id)) || 0));
@@ -223,7 +232,7 @@ export default function DashboardInstrutor() {
         datasets: [{ label: "Nota média (0–10)", data: dataNota }],
       });
 
-      // Série: Carga de aulas nos próximos 14 dias (contagem por dia)
+      // Série: Carga de aulas nos próximos 14 dias
       const prox14 = (() => {
         const mapa = new Map();
         const hoje = new Date(hojeYMD());
@@ -245,7 +254,7 @@ export default function DashboardInstrutor() {
       })();
       setSerieCargaProximos({
         labels: prox14.labels,
-        datasets: [{ label: "Aulas agendadas", data: prox14.values }],
+        datasets: [{ label: "Aulas agendadas", data: prox14.values, tension: 0.35, pointRadius: 3 }],
       });
 
       setLive("Painel atualizado.");
@@ -266,82 +275,90 @@ export default function DashboardInstrutor() {
   useEffect(() => { carregar(); /* eslint-disable-next-line */ }, []);
 
   const barPctOptions = useMemo(() => ({
-    plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => `${ctx.parsed.y}%` } } },
+    plugins: {
+      legend: { display: false },
+      tooltip: { callbacks: { label: (ctx) => `${ctx.parsed.y}%` } },
+    },
+    animation: reduceMotion ? false : undefined,
     scales: { y: { beginAtZero: true, max: 100, ticks: { callback: (v) => `${v}%` } } },
     maintainAspectRatio: false,
-  }), []);
+  }), [reduceMotion]);
 
   const barNotaOptions = useMemo(() => ({
     plugins: { legend: { display: false } },
+    animation: reduceMotion ? false : undefined,
     scales: { y: { beginAtZero: true, max: 10 } },
     maintainAspectRatio: false,
-  }), []);
+  }), [reduceMotion]);
 
   const lineOptions = useMemo(() => ({
     plugins: { legend: { display: false } },
+    animation: reduceMotion ? false : undefined,
     scales: { y: { beginAtZero: true } },
     maintainAspectRatio: false,
-  }), []);
+  }), [reduceMotion]);
 
   return (
     <>
       <DashboardHero onRefresh={carregar} carregando={carregando} />
 
-      <main className="min-h-screen bg-gelo dark:bg-zinc-900 px-3 sm:px-4 py-6">
+      <main id="conteudo" className="min-h-screen bg-gelo dark:bg-zinc-900 px-3 sm:px-4 py-6">
         <p ref={liveRef} className="sr-only" aria-live="polite" />
 
-        {/* KPIs */}
+        {/* KPIs (MINISTATS) */}
         {carregando ? (
           <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {[...Array(6)].map((_, i) => <Skeleton key={i} height={110} className="rounded-xl" />)}
+            {[...Array(6)].map((_, i) => <Skeleton key={i} height={110} className="rounded-2xl" />)}
           </div>
+        ) : erro ? (
+          <AlertCard message={erro} />
         ) : (
           <motion.section
             className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
             initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}
             aria-label="Indicadores do instrutor"
           >
-            <KPI icon={Presentation} titulo="Minhas Turmas" valor={kpi.totalTurmas} />
-            <KPI icon={CalendarDays} titulo="Aulas Hoje" valor={kpi.aulasHoje} />
-            <KPI icon={CalendarDays} titulo="Próximas 7 dias" valor={kpi.proximasAulas} />
-            <KPI icon={Users} titulo="% Presença Média" valor={`${kpi.presencaMediaGeral.toFixed(1)}%`} />
-            <KPI icon={Star} titulo="Nota Média (0–10)" valor={kpi.notaMediaGeral.toFixed(1)} />
-            <KPI icon={BarChart3} titulo="Eventos Avaliados" valor={kpi.totalAvaliacoes} />
+            <MiniStat icon={Presentation} titulo="Minhas Turmas" valor={kpi.totalTurmas} descricao="Turmas vinculadas" accent="from-cyan-600 to-sky-600" />
+            <MiniStat icon={CalendarDays} titulo="Aulas Hoje" valor={kpi.aulasHoje} descricao="Encontros no dia" accent="from-emerald-600 to-teal-600" />
+            <MiniStat icon={CalendarDays} titulo="Próximos 7 dias" valor={kpi.proximasAulas} descricao="Aulas agendadas" accent="from-indigo-600 to-violet-600" />
+            <MiniStat icon={Users} titulo="% Presença Média" valor={`${kpi.presencaMediaGeral.toFixed(1)}%`} descricao="Entre seus alunos" accent="from-amber-600 to-orange-600" />
+            <MiniStat icon={Star} titulo="Nota Média (0–10)" valor={kpi.notaMediaGeral.toFixed(1)} descricao="Avaliação dos eventos" accent="from-fuchsia-600 to-rose-600" />
+            <MiniStat icon={BarChart3} titulo="Eventos Avaliados" valor={kpi.totalAvaliacoes} descricao="Com avaliações registradas" accent="from-slate-600 to-gray-700" />
           </motion.section>
         )}
 
         {/* Gráficos */}
         <section className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
-          <ChartCard title="% Presença média por Turma">
+          <ChartCard title="% Presença média por Turma" ariaLabel="Gráfico de barras de presença média por turma">
             {carregando ? (
-              <Skeleton height={320} className="rounded-xl" />
+              <Skeleton height={320} className="rounded-2xl" />
             ) : seriePresencaTurma.labels.length ? (
               <div style={{ height: 320 }}>
                 <Bar data={seriePresencaTurma} options={barPctOptions} />
               </div>
-            ) : <NoData />}
+            ) : <NoData /> }
           </ChartCard>
 
-          <ChartCard title="Nota média por Evento">
+          <ChartCard title="Nota média por Evento" ariaLabel="Gráfico de barras de nota média por evento">
             {carregando ? (
-              <Skeleton height={320} className="rounded-xl" />
+              <Skeleton height={320} className="rounded-2xl" />
             ) : serieNotaEvento.labels.length ? (
               <div style={{ height: 320 }}>
                 <Bar data={serieNotaEvento} options={barNotaOptions} />
               </div>
-            ) : <NoData />}
+            ) : <NoData /> }
           </ChartCard>
         </section>
 
         <section className="max-w-6xl mx-auto mt-6">
-          <ChartCard title="Aulas agendadas nos próximos 14 dias">
+          <ChartCard title="Aulas agendadas nos próximos 14 dias" ariaLabel="Gráfico de linha com aulas agendadas para os próximos 14 dias">
             {carregando ? (
-              <Skeleton height={320} className="rounded-xl" />
+              <Skeleton height={320} className="rounded-2xl" />
             ) : serieCargaProximos.labels.length ? (
               <div style={{ height: 320 }}>
                 <Line data={serieCargaProximos} options={lineOptions} />
               </div>
-            ) : <NoData />}
+            ) : <NoData /> }
           </ChartCard>
         </section>
       </main>
@@ -352,29 +369,43 @@ export default function DashboardInstrutor() {
 }
 
 /* ───────────── UI helpers ───────────── */
-function KPI({ icon: Icon, titulo, valor }) {
+function AlertCard({ message }) {
+  return (
+    <div className="max-w-6xl mx-auto bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-200 rounded-2xl p-4" role="alert">
+      {message}
+    </div>
+  );
+}
+
+function MiniStat({ icon: Icon, titulo, valor, descricao, accent = "from-slate-600 to-slate-700" }) {
   return (
     <motion.div
-      className="bg-white dark:bg-zinc-800 rounded-xl shadow p-4 flex flex-col items-center justify-center gap-2 text-center"
+      className="bg-white dark:bg-zinc-800 rounded-2xl shadow p-4"
       initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}
-      tabIndex={-1} aria-label={`${titulo}: ${valor}`}
+      role="group" aria-label={`${titulo}: ${valor}`}
     >
-      <Icon className="w-7 h-7 text-lousa dark:text-white" aria-hidden="true" />
-      <p className="text-sm text-gray-600 dark:text-gray-300">{titulo}</p>
-      <p className="text-2xl font-bold text-lousa dark:text-white">{valor}</p>
+      <div className="flex items-center justify-between mb-2">
+        <div className={`rounded-xl px-2 py-1 text-white text-xs font-medium bg-gradient-to-r ${accent}`}>
+          {titulo}
+        </div>
+        <Icon className="w-5 h-5 text-black/60 dark:text-white/70" aria-hidden="true" />
+      </div>
+      <p className="text-3xl font-extrabold text-lousa dark:text-white leading-tight">{valor}</p>
+      <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">{descricao}</p>
     </motion.div>
   );
 }
 
-function ChartCard({ title, children }) {
+function ChartCard({ title, children, ariaLabel }) {
   return (
-    <motion.div
+    <motion.figure
       initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}
-      className="bg-white dark:bg-gray-800 rounded-xl shadow p-4"
+      className="bg-white dark:bg-gray-800 rounded-2xl shadow p-4"
+      role="group" aria-label={ariaLabel || title}
     >
-      <h2 className="text-center font-semibold mb-4">{title}</h2>
+      <figcaption className="text-center font-semibold mb-4">{title}</figcaption>
       {children}
-    </motion.div>
+    </motion.figure>
   );
 }
 

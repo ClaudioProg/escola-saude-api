@@ -1,7 +1,7 @@
 // 📁 src/components/Footer.jsx
 import { Mail, Phone, MapPin } from "lucide-react";
 
-/** Formata DD/MM com zero à esquerda */
+/** Zero à esquerda p/ 2 dígitos */
 function dd(n) {
   return String(n).padStart(2, "0");
 }
@@ -33,21 +33,23 @@ function getCampaignForMonth(month /* 1-12 */) {
     },
     10: {
       // Outubro – Rosa (Câncer de mama)
-      title: "OUTUBRO ROSA  • Prevenção ao Câncer de Mama",
+      title: "OUTUBRO ROSA • Prevenção ao Câncer de Mama",
       footerBg: "bg-pink-700",
       barBg: "bg-pink-800",
       textColor: "text-white",
     },
     11: {
       // Novembro – Azul; Roxo (Próstata; Prematuridade)
-      title: "NOVEMBRO • Prevenção do Câncer de Próstata • Conscientização sobre a Prematuridade",
+      title:
+        "NOVEMBRO • Prevenção do Câncer de Próstata • Conscientização sobre a Prematuridade",
       footerBg: "bg-gradient-to-r from-blue-700 to-purple-700",
       barBg: "bg-purple-800",
       textColor: "text-white",
     },
     12: {
       // Dezembro – Vermelho (HIV/AIDS e outras ISTs)
-      title: "DEZEMBRO VERMELHO • Conscientização e Prevenção ao HIV/AIDS e outras ISTs",
+      title:
+        "DEZEMBRO VERMELHO • Conscientização e Prevenção ao HIV/AIDS e outras ISTs",
       footerBg: "bg-red-700",
       barBg: "bg-red-800",
       textColor: "text-white",
@@ -56,14 +58,22 @@ function getCampaignForMonth(month /* 1-12 */) {
   return campaigns[month] || null;
 }
 
-export default function Footer() {
-  const now = new Date(); // usa fuso local do navegador
-  const month = now.getMonth() + 1; // 1-12
-  const year = now.getFullYear();
-
-  // Primeiro e último dia do mês atual
+/** Gera texto “de DD/MM/AAAA a DD/MM/AAAA” do mês de `date` */
+function periodTextOfMonth(date) {
+  const year = date.getFullYear();
+  const month = date.getMonth() + 1; // 1-12
   const first = new Date(year, month - 1, 1);
   const last = new Date(year, month, 0);
+  return `de ${dd(first.getDate())}/${dd(month)}/${year} a ${dd(
+    last.getDate()
+  )}/${dd(month)}/${year}`;
+}
+
+export default function Footer() {
+  // Usa fuso local do navegador
+  const now = new Date();
+  const month = now.getMonth() + 1; // 1-12
+  const year = now.getFullYear();
 
   const campaign = getCampaignForMonth(month);
 
@@ -72,13 +82,11 @@ export default function Footer() {
   const barBg = campaign ? campaign.barBg : "bg-emerald-800";
   const textColor = campaign ? campaign.textColor : "text-white";
 
-  const periodo = `de ${dd(first.getDate())}/${dd(month)}/${year} a ${dd(
-    last.getDate()
-  )}/${dd(month)}/${year}`;
+  const periodo = campaign ? periodTextOfMonth(now) : null;
 
   return (
     <footer
-      className={`${footerBg} ${textColor} mt-10`}
+      className={`${footerBg} ${textColor} mt-10 print:text-black print:bg-white`}
       role="contentinfo"
       aria-label={
         campaign
@@ -89,32 +97,60 @@ export default function Footer() {
       {/* Faixa com TÍTULO da campanha e PERÍODO (exibida só de jul–dez) */}
       {campaign && (
         <div className="px-6 py-4 text-center">
-          <h2 className="text-base sm:text-lg font-bold">
+          <h2
+            id="footer-campaign-title"
+            className="text-base sm:text-lg font-bold"
+          >
             {campaign.title}
           </h2>
-          <p className="text-xs sm:text-sm opacity-90 mt-1">{periodo}</p>
+          {periodo && (
+            <p className="text-xs sm:text-sm opacity-90 mt-1">{periodo}</p>
+          )}
         </div>
       )}
 
-      <div className="max-w-7xl mx-auto px-6 py-8 grid gap-8 sm:grid-cols-2">
+      {/* Bloco principal com microdados básicos de organização */}
+      <div
+        className="max-w-7xl mx-auto px-6 py-8 grid gap-8 sm:grid-cols-2"
+        itemScope
+        itemType="https://schema.org/Organization"
+      >
         {/* Logo e Instituição */}
         <div>
-          <h3 className="text-lg font-bold">
+          <h3 className="text-lg font-bold" itemProp="name">
             Escola Municipal de Saúde Pública
           </h3>
-          <address className="not-italic text-sm mt-2 leading-relaxed">
-            Rua Amador Bueno, 333 – 4º andar – Sala 401 <br />
-            Centro, Santos – SP, 11013-151
+          <address
+            className="not-italic text-sm mt-2 leading-relaxed"
+            aria-label="Endereço da instituição"
+            itemProp="address"
+            itemScope
+            itemType="https://schema.org/PostalAddress"
+          >
+            <span itemProp="streetAddress">
+              Rua Amador Bueno, 333 – 4º andar – Sala 401
+            </span>
+            <br />
+            <span>
+              <span itemProp="addressLocality">Santos</span>,{" "}
+              <span itemProp="addressRegion">SP</span>,{" "}
+              <span itemProp="postalCode">11013-151</span>
+            </span>
           </address>
         </div>
 
         {/* Contatos */}
-        <div className="space-y-3 text-sm">
+        <div className="space-y-3 text-sm" aria-labelledby="footer-contatos">
+          <h4 id="footer-contatos" className="sr-only">
+            Informações de contato
+          </h4>
+
           <p className="flex items-center gap-2">
             <Phone size={18} aria-hidden="true" />
             <a
               href="tel:+551332015000"
-              className="hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 rounded-sm"
+              className="hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 dark:focus-visible:ring-white/70 rounded-sm"
+              itemProp="telephone"
             >
               (13) 3201-5000 R. 5331
             </a>
@@ -124,7 +160,8 @@ export default function Footer() {
             <Mail size={18} aria-hidden="true" />
             <a
               href="mailto:escoladasaude@santos.sp.gov.br"
-              className="hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 rounded-sm break-all"
+              className="hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 dark:focus-visible:ring-white/70 rounded-sm break-all"
+              itemProp="email"
             >
               escoladasaude@santos.sp.gov.br
             </a>

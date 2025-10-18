@@ -1,80 +1,79 @@
 // 📁 src/components/EditarInstrutor.jsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback, useId } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
 import { motion } from "framer-motion";
-import Breadcrumbs from "./Breadcrumbs";
+
+import CabecalhoPainel from "../components/CabecalhoPainel";
 import BotaoPrimario from "./BotaoPrimario";
+import BotaoSecundario from "./BotaoSecundario";
 import { apiGet, apiPut } from "../services/api"; // ✅ serviço centralizado
 
 export default function EditarInstrutor() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const liveId = useId();
 
   const [instrutor, setInstrutor] = useState(null);
   const [carregando, setCarregando] = useState(true);
   const [salvando, setSalvando] = useState(false);
-  const [erro, setErro] = useState("");
+  const [erroGeral, setErroGeral] = useState("");
+  const [errors, setErrors] = useState({});
 
   const nomeUsuario = useMemo(() => localStorage.getItem("nome") || "", []);
 
-  useEffect(() => {
-    let ativo = true;
-    (async () => {
-      try {
-        setCarregando(true);
-        const data = await apiGet(`/api/usuarios/${id}`);
-        if (ativo) {
-          setInstrutor(data);
-          setErro("");
-        }
-      } catch {
-        if (ativo) {
-          setErro("Erro ao carregar dados do instrutor.");
-          setInstrutor(null);
-        }
-      } finally {
-        if (ativo) setCarregando(false);
-      }
-    })();
-    return () => {
-      ativo = false;
-    };
+  const carregar = useCallback(async () => {
+    setCarregando(true);
+    setErroGeral("");
+    try {
+      const data = await apiGet(`/api/usuarios/${id}`);
+      setInstrutor(data || {});
+    } catch {
+      setInstrutor(null);
+      setErroGeral("Erro ao carregar dados do instrutor.");
+    } finally {
+      setCarregando(false);
+    }
   }, [id]);
 
-  function handleChange(e) {
+  useEffect(() => {
+    carregar();
+  }, [carregar]);
+
+  const handleChange = useCallback((e) => {
     const { name, value } = e.target;
     setInstrutor((prev) => ({
       ...prev,
       [name]: name === "email" ? value.trim() : value,
     }));
-  }
+    setErrors((prev) => ({ ...prev, [name]: "" }));
+  }, []);
 
   function validar(form) {
-    const msgs = [];
-    if (!form?.nome?.trim()) msgs.push("Informe o nome completo.");
+    const msgs = {};
+    if (!form?.nome?.trim()) msgs.nome = "Informe o nome completo.";
     if (!form?.email?.trim()) {
-      msgs.push("Informe o e-mail.");
+      msgs.email = "Informe o e-mail.";
     } else {
-      // validação simples de e-mail
       const ok = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email);
-      if (!ok) msgs.push("E-mail inválido.");
+      if (!ok) msgs.email = "E-mail inválido.";
     }
     return msgs;
   }
 
-  async function handleSubmit(e) {
+  const handleSubmit = useCallback(async (e) => {
     e.preventDefault();
-    if (!instrutor) return;
+    if (!instrutor || salvando) return;
 
     const msgs = validar(instrutor);
-    if (msgs.length) {
-      toast.warn(msgs.join(" "));
+    setErrors(msgs);
+    if (Object.keys(msgs).length) {
+      toast.warn("⚠️ Corrija os campos destacados.");
       return;
     }
 
     setSalvando(true);
-    setErro("");
+    setErroGeral("");
     try {
       await apiPut(`/api/usuarios/${id}`, {
         ...instrutor,
@@ -83,106 +82,120 @@ export default function EditarInstrutor() {
       toast.success("✅ Instrutor atualizado com sucesso!");
       navigate("/administrador", { replace: true });
     } catch {
-      setErro("Erro ao salvar alterações.");
+      setErroGeral("Erro ao salvar alterações.");
       toast.error("❌ Erro ao atualizar instrutor.");
     } finally {
       setSalvando(false);
     }
-  }
+  }, [instrutor, salvando, id, navigate]);
 
-  if (carregando) {
+  if (carregando && !erroGeral) {
     return (
-      <div className="max-w-xl mx-auto p-8">
-        <div className="animate-pulse h-8 bg-gray-200 dark:bg-gray-700 rounded mb-6" />
-        <div className="space-y-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-10 bg-gray-200 dark:bg-gray-700 rounded" />
-          ))}
-        </div>
-      </div>
+      <main className="min-h-screen bg-gelo dark:bg-gray-900 px-2 py-6">
+        <CabecalhoPainel tituloOverride="Editar Instrutor" />
+        <p className="p-4 text-center text-gray-600 dark:text-gray-300" role="status" aria-live="polite">
+          Carregando…
+        </p>
+      </main>
     );
   }
 
-  if (!instrutor) {
+  if (!instrutor && erroGeral) {
     return (
-      <p className="text-center text-red-600 dark:text-red-400 my-10" role="alert" aria-live="assertive">
-        {erro || "Não foi possível carregar o instrutor."}
-      </p>
+      <main className="min-h-screen bg-gelo dark:bg-gray-900 px-2 py-6">
+        <CabecalhoPainel tituloOverride="Editar Instrutor" />
+        <p className="text-center text-red-600 dark:text-red-400 my-10" role="alert" aria-live="assertive">
+          {erroGeral}
+        </p>
+        <div className="mt-2 flex justify-center">
+          <BotaoSecundario onClick={() => navigate(-1)} variant="outline">← Voltar</BotaoSecundario>
+        </div>
+      </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-gelo dark:bg-gray-900 px-2 py-8">
-      <Breadcrumbs trilha={[{ label: "Painel do Administrador", href: "/administrador" }, { label: "Editar Instrutor" }]} />
-
-      {/* Cabeçalho padrão (verde-900) */}
-      <div
-        className="flex justify-between items-center bg-green-900 text-white px-4 py-2 rounded-xl shadow mb-6"
-        role="region"
-        aria-label="Cabeçalho do painel do administrador"
-      >
-        <span>Seja bem-vindo(a), <strong>{nomeUsuario}</strong></span>
-        <span className="font-semibold">Painel do Administrador</span>
-      </div>
+    <main className="min-h-screen bg-gelo dark:bg-gray-900 px-2 py-6">
+      <CabecalhoPainel tituloOverride="Editar Instrutor" />
 
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         className="max-w-xl mx-auto p-6 bg-white dark:bg-gray-800 rounded-2xl shadow"
-        role="form"
-        aria-label="Edição de instrutor"
+        role="region"
+        aria-labelledby="editar-instrutor-titulo"
+        aria-describedby={erroGeral ? `${liveId}-status` : undefined}
       >
-        <h2 className="text-2xl font-bold mb-6 text-green-900 dark:text-green-200 text-center">
+        <h2 id="editar-instrutor-titulo" className="text-2xl font-bold mb-2 text-green-900 dark:text-green-200">
           ✏️ Editar Instrutor
         </h2>
+        <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
+          Seja bem-vindo(a), <strong>{nomeUsuario || "usuário(a)"}</strong>.
+        </p>
 
-        {erro && (
-          <p className="mb-3 text-sm text-red-600 dark:text-red-400" role="alert" aria-live="assertive">
-            {erro}
+        {erroGeral && (
+          <p id={`${liveId}-status`} className="mb-3 text-sm text-red-600 dark:text-red-400" role="alert" aria-live="assertive">
+            {erroGeral}
           </p>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-5" noValidate>
-          <fieldset disabled={salvando} aria-busy={salvando}>
+        <form onSubmit={handleSubmit} className="space-y-5" noValidate aria-label="Formulário de edição de instrutor">
+          <fieldset disabled={salvando} aria-busy={salvando} className="space-y-4">
+            {/* Nome */}
             <div>
               <label htmlFor="nome" className="block font-semibold mb-1">Nome Completo</label>
               <input
                 id="nome"
                 name="nome"
                 type="text"
-                value={instrutor.nome || ""}
+                value={instrutor?.nome || ""}
                 onChange={handleChange}
-                className="w-full border border-gray-300 dark:border-zinc-600 px-3 py-2 rounded bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-green-600"
                 required
                 aria-required="true"
-                aria-label="Nome do instrutor"
+                aria-invalid={!!errors.nome}
+                aria-describedby={errors.nome ? "erro-nome" : undefined}
+                className={[
+                  "w-full border rounded px-3 py-2 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-green-600",
+                  errors.nome ? "border-red-400 dark:border-red-500" : "border-gray-300 dark:border-zinc-600",
+                ].join(" ")}
                 placeholder="Digite o nome completo"
                 autoComplete="name"
               />
+              {errors.nome && <p id="erro-nome" className="mt-1 text-xs text-red-600 dark:text-red-400">{errors.nome}</p>}
             </div>
 
+            {/* E-mail */}
             <div>
               <label htmlFor="email" className="block font-semibold mb-1">E-mail</label>
               <input
                 id="email"
                 name="email"
                 type="email"
-                value={instrutor.email || ""}
+                value={instrutor?.email || ""}
                 onChange={handleChange}
-                className="w-full border border-gray-300 dark:border-zinc-600 px-3 py-2 rounded bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-green-600"
                 required
                 aria-required="true"
-                aria-label="E-mail do instrutor"
+                aria-invalid={!!errors.email}
+                aria-describedby={errors.email ? "erro-email" : undefined}
+                className={[
+                  "w-full border rounded px-3 py-2 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-green-600",
+                  errors.email ? "border-red-400 dark:border-red-500" : "border-gray-300 dark:border-zinc-600",
+                ].join(" ")}
                 placeholder="nome.sobrenome@dominio.gov.br"
                 autoComplete="email"
                 inputMode="email"
               />
+              {errors.email && <p id="erro-email" className="mt-1 text-xs text-red-600 dark:text-red-400">{errors.email}</p>}
             </div>
 
-            <div className="pt-2">
+            {/* Ações */}
+            <div className="pt-2 flex items-center gap-2">
               <BotaoPrimario type="submit" disabled={salvando}>
                 {salvando ? "Salvando..." : "💾 Salvar Alterações"}
               </BotaoPrimario>
+              <BotaoSecundario onClick={() => navigate(-1)} variant="outline">
+                Cancelar
+              </BotaoSecundario>
             </div>
           </fieldset>
         </form>

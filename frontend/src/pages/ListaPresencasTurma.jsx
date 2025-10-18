@@ -1,5 +1,5 @@
 // ✅ src/pages/ListaPresencasTurma.jsx
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { toast } from "react-toastify";
 import { AnimatePresence, motion } from "framer-motion";
 import { CheckCircle, XCircle, ClipboardList } from "lucide-react";
@@ -22,11 +22,9 @@ export default function ListaPresencasTurma({
   const [inscritosState, setInscritosState] = useState(inscritosPorTurma);
   const [loading, setLoading] = useState(null); // {turmaId, usuarioId, data}
 
+  // mantém estado de inscritos sincronizado com prop
   useEffect(() => {
-    const atual = JSON.stringify(inscritosState);
-    const novo = JSON.stringify(inscritosPorTurma);
-    if (atual !== novo) setInscritosState(inscritosPorTurma);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setInscritosState(inscritosPorTurma);
   }, [inscritosPorTurma]);
 
   /* ───────────────────────────────
@@ -66,6 +64,24 @@ export default function ListaPresencasTurma({
     return "";
   };
 
+  // ordena turmas por data_inicio (mais recentes primeiro) para melhor UX
+  const turmasOrdenadas = useMemo(() => {
+    const key = (t) => isoDia(t?.data_inicio) || "";
+    return [...(Array.isArray(turmas) ? turmas : [])].sort((a, b) =>
+      (key(b) > key(a)) ? 1 : (key(b) < key(a) ? -1 : 0)
+    );
+  }, [turmas]);
+
+  // quando expandir e não houver inscritos, carrega automaticamente
+  useEffect(() => {
+    if (!turmaExpandidaId || !carregarInscritos) return;
+    const lista = inscritosState?.[turmaExpandidaId];
+    if (!Array.isArray(lista) || lista.length === 0) {
+      carregarInscritos(turmaExpandidaId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [turmaExpandidaId]);
+
   async function confirmarPresenca(turmaId, usuarioId, dataISO) {
     const confirmar = window.confirm("Deseja realmente confirmar presença deste usuário?");
     if (!confirmar) return;
@@ -73,11 +89,10 @@ export default function ListaPresencasTurma({
     setLoading({ turmaId, usuarioId, data: dataISO });
 
     try {
-      // padronizado com o restante do app
       await apiPost("/api/presencas/confirmar-simples", {
         turma_id: turmaId,
         usuario_id: usuarioId,
-        data: dataISO, // backend espera 'data'
+        data: dataISO,
       });
 
       toast.success("✅ Presença confirmada com sucesso.", { ariaLive: "polite" });
@@ -115,6 +130,7 @@ export default function ListaPresencasTurma({
   if (!Array.isArray(turmas) || turmas.length === 0) {
     return (
       <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
+        {/* Cabeçalho verde (dentro do padrão de 3 variantes do sistema) */}
         <PageHeader title="Presenças por Turma" icon={ClipboardList} variant="esmeralda" />
         <main className="flex-1 px-2 sm:px-4 py-6">
           <Breadcrumbs trilha={[{ label: "Painel" }, { label: "Presenças por Turma" }]} />
@@ -138,7 +154,7 @@ export default function ListaPresencasTurma({
         <Breadcrumbs trilha={[{ label: "Painel" }, { label: "Presenças por Turma" }]} />
 
         <div className="space-y-6">
-          {turmas.map((turma) => {
+          {turmasOrdenadas.map((turma) => {
             const inicioDia = isoDia(turma.data_inicio);
             const fimDia = isoDia(turma.data_fim);
 
@@ -249,7 +265,9 @@ export default function ListaPresencasTurma({
                                           turma.horario_fim || "17:00"
                                         );
 
-                                        const passou60 = Date.now() >= inicioLocal.getTime() + 60 * 60 * 1000;
+                                        const passou60 =
+                                          Number.isFinite(+inicioLocal) &&
+                                          Date.now() >= inicioLocal.getTime() + 60 * 60 * 1000;
 
                                         let status = "Aguardando";
                                         let style = "bg-yellow-300 text-yellow-900";
@@ -267,6 +285,7 @@ export default function ListaPresencasTurma({
                                         // pode confirmar até 48h após o término (local)
                                         const podeConfirmar =
                                           modoadministradorPresencas &&
+                                          Number.isFinite(+fimLocal) &&
                                           Date.now() <= fimLocal.getTime() + 48 * 60 * 60 * 1000;
 
                                         const isLoading =

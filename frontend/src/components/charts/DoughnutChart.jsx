@@ -1,23 +1,29 @@
 // 📁 src/components/charts/DoughnutChart.jsx
 import React, { useMemo, useState, useEffect, useId } from "react";
-import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from "recharts";
+import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, Sector } from "recharts";
 
-// 🎨 Paleta base (alto contraste)
+/* ============================================
+   🎨 Paleta base (alto contraste, acessível)
+   ============================================ */
 const DEFAULT_COLORS = [
   "#14532d", "#0ea5e9", "#9333ea", "#f59e0b", "#ef4444",
   "#14b8a6", "#3b82f6", "#f43f5e", "#84cc16", "#eab308",
   "#8b5cf6", "#06b6d4", "#f97316", "#22c55e", "#0f766e",
 ];
 
-// 🔁 Gera cor adicional caso falte
-function colorAt(idx, palette = DEFAULT_COLORS) {
-  if (idx < palette.length) return palette[idx];
-  // fallback: roda matiz com HSL previsível
-  const h = (idx * 47) % 360;
-  return `hsl(${h}deg 65% 45%)`;
+/* Cor determinística por rótulo (consistência entre gráfico/legenda) */
+function hashLabel(label) {
+  const s = String(label ?? "");
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h) + s.charCodeAt(i);
+  return Math.abs(h);
+}
+function colorFor(label, palette = DEFAULT_COLORS) {
+  const idx = hashLabel(label) % palette.length;
+  return palette[idx];
 }
 
-// 🧼 Sanitiza itens e evita valores negativos/NaN
+/* 🧼 Sanitiza itens e evita valores negativos/NaN */
 function sanitizeData(arr) {
   if (!Array.isArray(arr)) return [];
   return arr
@@ -28,14 +34,31 @@ function sanitizeData(arr) {
     .filter((d) => d.value >= 0);
 }
 
+/* Agrega excedentes em “Outros” para não poluir o gráfico/legenda */
+function aggregateSmallSlices(items, maxSlices, othersLabel = "Outros") {
+  if (!Array.isArray(items) || items.length <= maxSlices) return items;
+  const head = items.slice(0, maxSlices - 1);
+  const tail = items.slice(maxSlices - 1);
+  const others = tail.reduce((acc, it) => acc + (it.value || 0), 0);
+  return [...head, { label: othersLabel, value: others, __isOthers: true }];
+}
+
 export default function DoughnutChart({
   data = [],
   title = "Distribuição",
   ariaDescription,
-  height = 240,
+  height = 260,
   colors = DEFAULT_COLORS,
   showPercent = true,
-  maxLegend = 14,           // evita legenda enorme em telas pequenas
+  showLabels = false,            // exibe % dentro dos arcos (somente fatias “grandes”)
+  minPctForLabel = 6,            // mínimo de % para desenhar label no arco
+  maxLegend = 12,                // limita a legenda em telas pequenas
+  maxSlices = 12,                // número máximo de fatias antes de agregar “Outros”
+  othersLabel = "Outros",
+  centerTotal = true,            // mostra total no centro
+  centerFormatter,               // (total) => string (personaliza centro)
+  emptyMessage = "Sem dados suficientes para exibir o gráfico.",
+  onSliceClick,                  // (entry) => void
   className = "",
 }) {
   const regionId = useId();
@@ -51,31 +74,76 @@ export default function DoughnutChart({
   }, []);
 
   const clean = useMemo(() => sanitizeData(data), [data]);
+
+  // Total
   const total = useMemo(
     () => clean.reduce((acc, it) => acc + (it.value || 0), 0),
     [clean]
   );
-
-  // Ordena por valor desc, limita legenda (mobile)
-  const forLegend = useMemo(() => {
-    const sorted = [...clean].sort((a, b) => b.value - a.value);
-    return sorted.slice(0, maxLegend);
-  }, [clean, maxLegend]);
-
   const hasData = total > 0;
 
-  // Formata tooltip: valor + % (quando aplicável)
-  const tooltipFormatter = (value, name, props) => {
+  // Enriquecido com % e cor determinística por label
+  const enriched = useMemo(() => {
+    if (!hasData) return [];
+    return clean.map((it) => {
+      const pct = total ? (100 * (it.value || 0)) / total : 0;
+      return {
+        ...it,
+        pct,
+        color: colorFor(it.label, colors),
+      };
+    });
+  }, [clean, colors, total, hasData]);
+
+  // Ordena por valor desc, agrega "Outros" se ultrapassar maxSlices
+  const ranked = useMemo(() => {
+    const sorted = [...enriched].sort((a, b) => b.value - a.value);
+    return aggregateSmallSlices(sorted, Math.max(1, maxSlices), othersLabel);
+  }, [enriched, maxSlices, othersLabel]);
+
+  // Legenda limitada (usa as mesmas cores determinísticas)
+  const legendItems = useMemo(() => {
+    return ranked.slice(0, maxLegend).map((item) => ({
+      value: item.label,
+      id: `l-${item.label}`,
+      type: "circle",
+      color: item.color,
+    }));
+  }, [ranked, maxLegend]);
+
+  const tooltipFormatter = (value, name) => {
     const v = Number(value) || 0;
     const pct = total ? ((v / total) * 100).toFixed(1) : "0.0";
     return showPercent ? [`${v} (${pct}%)`, name] : [`${v}`, name];
   };
 
-  // Trunca rótulos muito longos (mantém acessível via title)
   const truncate = (s, n = 22) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
+  // Label custom no arco (mostra % quando a fatia é “grande”)
+  const renderSliceLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent, name }) => {
+    const prc = percent * 100;
+    if (!showLabels || prc < minPctForLabel) return null;
+    const RAD = Math.PI / 180;
+    const r = innerRadius + (outerRadius - innerRadius) * 0.5;
+    const x = cx + r * Math.cos(-midAngle * RAD);
+    const y = cy + r * Math.sin(-midAngle * RAD);
+    const txt = showPercent ? `${prc.toFixed(0)}%` : name;
+    return (
+      <text
+        x={x}
+        y={y}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontSize={12}
+        fill="#fff"
+        style={{ fontWeight: 700 }}
+      >
+        {txt}
+      </text>
+    );
+  };
+
   if (!hasData) {
-    // 🕳️ Empty state
     return (
       <div
         className={`bg-white dark:bg-gray-800 rounded-2xl shadow-md p-4 sm:p-5 text-center ${className}`}
@@ -89,15 +157,19 @@ export default function DoughnutChart({
           {title}
         </h3>
         <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-300">
-          Sem dados suficientes para exibir o gráfico.
+          {emptyMessage}
         </p>
       </div>
     );
   }
 
+  // Raio ajustado ao container (melhor para telas pequenas)
+  const innerR = 60;
+  const outerR = 90;
+
   return (
     <div
-      className={`bg-white dark:bg-gray-800 rounded-2xl shadow-md p-4 sm:p-5 flex flex-col justify-between h-full ${className}`}
+      className={`relative bg-white dark:bg-gray-800 rounded-2xl shadow-md p-4 sm:p-5 flex flex-col justify-between h-full ${className}`}
       role="region"
       aria-labelledby={`${regionId}-title`}
       aria-describedby={ariaDescription ? `${regionId}-desc` : undefined}
@@ -108,6 +180,7 @@ export default function DoughnutChart({
       >
         {title}
       </h3>
+
       {ariaDescription && (
         <p id={`${regionId}-desc`} className="sr-only">
           {ariaDescription}
@@ -115,47 +188,66 @@ export default function DoughnutChart({
       )}
 
       <div style={{ width: "100%", height }} className="flex items-center justify-center">
-        <ResponsiveContainer>
-          <PieChart>
-            <Pie
-              data={clean}
-              dataKey="value"
-              nameKey="label"
-              innerRadius={60}
-              outerRadius={90}
-              paddingAngle={2}
-              isAnimationActive={!reducedMotion}
+        <div className="relative w-full h-full">
+          {/* Centro com total */}
+          {centerTotal && (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 flex items-center justify-center"
             >
-              {clean.map((entry, idx) => (
-                <Cell key={`c-${idx}`} fill={colorAt(idx, colors)} />
-              ))}
-            </Pie>
-            <Tooltip
-              formatter={tooltipFormatter}
-              // aparência com bom contraste no tema escuro
-              contentStyle={{
-                backgroundColor: "#111827",
-                border: "none",
-                borderRadius: 8,
-                color: "#f9fafb",
-              }}
-              labelFormatter={(label) => String(label)}
-            />
-            <Legend
-              verticalAlign="bottom"
-              height={44}
-              iconType="circle"
-              formatter={(value) => truncate(String(value))}
-              wrapperStyle={{ fontSize: "0.75rem", lineHeight: 1.2 }}
-              payload={forLegend.map((item, idx) => ({
-                value: item.label,
-                id: `l-${idx}`,
-                type: "circle",
-                color: colorAt(idx, colors),
-              }))}
-            />
-          </PieChart>
-        </ResponsiveContainer>
+              <div className="text-center px-2">
+                <div className="text-xs sm:text-sm text-gray-500 dark:text-gray-300">
+                  Total
+                </div>
+                <div className="text-lg sm:text-xl font-extrabold text-gray-900 dark:text-gray-100">
+                  {typeof centerFormatter === "function" ? centerFormatter(total) : total}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <ResponsiveContainer>
+            <PieChart>
+              <Pie
+                data={ranked}
+                dataKey="value"
+                nameKey="label"
+                innerRadius={innerR}
+                outerRadius={outerR}
+                paddingAngle={2}
+                isAnimationActive={!reducedMotion}
+                label={renderSliceLabel}
+                onClick={(entry) => onSliceClick?.(entry)}
+              >
+                {ranked.map((entry, idx) => (
+                  <Cell key={`c-${entry.label}-${idx}`} fill={entry.color} />
+                ))}
+              </Pie>
+
+              <Tooltip
+                formatter={tooltipFormatter}
+                contentStyle={{
+                  backgroundColor: "#111827",
+                  border: "none",
+                  borderRadius: 8,
+                  color: "#f9fafb",
+                }}
+                labelFormatter={(label) => String(label)}
+                itemStyle={{ padding: 2 }}
+                wrapperStyle={{ outline: "none" }}
+              />
+
+              <Legend
+                verticalAlign="bottom"
+                height={48}
+                iconType="circle"
+                formatter={(value) => truncate(String(value))}
+                wrapperStyle={{ fontSize: "0.75rem", lineHeight: 1.2 }}
+                payload={legendItems}
+              />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
       </div>
 
       <p className="mt-3 text-xs sm:text-sm text-gray-600 dark:text-gray-300 text-center sm:text-left">

@@ -1,28 +1,31 @@
 // 📁 src/components/LegendaEventos.jsx
 import PropTypes from "prop-types";
 
-/** Itens padrão (coerentes com o app: Programado / Em andamento / Encerrado) */
+/** Itens padrão (alinhados com BadgeStatus: programado / andamento / encerrado) */
 export const DEFAULT_EVENT_LEGEND = [
-  { key: "programado", text: "Programado", color: "emerald" },
-  { key: "em-andamento", text: "Em andamento", color: "amber" },
-  { key: "encerrado", text: "Encerrado", color: "rose" },
+  { key: "programado", text: "Programado", color: "emerald" }, // verde
+  { key: "andamento",  text: "Em andamento", color: "amber" }, // amarelo
+  { key: "encerrado",  text: "Encerrado",   color: "rose" },   // vermelho/rose
 ];
 
 /** Mapa de cores → classes (bg + border) com bom contraste em light/dark */
 function colorClasses(color) {
+  // aliases para compatibilidade
+  const c = color === "green" ? "emerald" : color === "red" ? "rose" : color;
+
   const map = {
     emerald: "bg-emerald-600 border-emerald-700 dark:border-emerald-500",
-    amber:   "bg-amber-400 border-amber-500 dark:border-amber-400",
+    amber:   "bg-amber-500 border-amber-600 dark:border-amber-400",
     rose:    "bg-rose-600 border-rose-700 dark:border-rose-500",
     slate:   "bg-slate-500 border-slate-600 dark:border-slate-400",
     purple:  "bg-purple-600 border-purple-700 dark:border-purple-500",
     blue:    "bg-blue-600 border-blue-700 dark:border-blue-500",
-    orange:  "bg-orange-500 border-orange-600 dark:border-orange-500",
+    orange:  "bg-orange-600 border-orange-700 dark:border-orange-500",
     teal:    "bg-teal-600 border-teal-700 dark:border-teal-500",
     zinc:    "bg-zinc-500 border-zinc-600 dark:border-zinc-400",
     gray:    "bg-gray-500 border-gray-600 dark:border-gray-400",
   };
-  return map[color] || map.gray;
+  return map[c] || map.gray;
 }
 
 function sizeClasses(size) {
@@ -34,7 +37,7 @@ function sizeClasses(size) {
 }
 
 /**
- * Legenda de eventos com suporte a:
+ * Legenda de eventos
  * - items: [{ key, text, color }]
  * - size: 'sm' | 'md' | 'lg'
  * - variant: 'dot' | 'pill'
@@ -63,9 +66,8 @@ export function LegendaEventos({
             <span
               className={[
                 "inline-flex items-center rounded-full px-2 py-0.5 text-[0.75rem] font-semibold",
-                "border shadow-sm",
+                "border shadow-sm text-white",
                 colorClasses(color),
-                "text-white",
               ].join(" ")}
               aria-hidden="true"
             >
@@ -78,7 +80,6 @@ export function LegendaEventos({
                   "shrink-0 rounded-full border",
                   colorClasses(color),
                   sz.dot,
-                  // realce sutil para quem usa dark-mode
                   "ring-1 ring-black/5 dark:ring-white/10",
                 ].join(" ")}
                 aria-hidden="true"
@@ -110,6 +111,9 @@ LegendaEventos.propTypes = {
         "teal",
         "zinc",
         "gray",
+        // aliases aceitos
+        "green",
+        "red",
       ]),
     })
   ),

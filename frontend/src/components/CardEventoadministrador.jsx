@@ -1,10 +1,7 @@
-// 📁 src/components/CardEventoadministrador.jsx (atualizado)
+// 📁 src/components/CardEventoadministrador.jsx
 import PropTypes from "prop-types";
 import { useEffect, useMemo } from "react";
-import {
-  CalendarDays, Users, Star, BarChart, FileDown,
-  Eye, Ear, Accessibility,
-} from "lucide-react";
+import { CalendarDays, FileDown, Eye, Ear, Accessibility } from "lucide-react";
 import BadgeStatus from "./BadgeStatus";
 import CardTurmaadministrador from "./CardTurmaadministrador";
 import { idadeDe } from "../utils/data";
@@ -39,12 +36,6 @@ const formatarCPF = (v) =>
 
 // Normaliza lista (aceita array direto ou objeto { lista: [] })
 const normalizaArr = (v) => (Array.isArray(v) ? v : Array.isArray(v?.lista) ? v.lista : []);
-
-// Pega o número da frequência (prioriza frequencia_num; fallback parse da string "85%")
-const getFreqNum = (obj) =>
-  typeof obj?.frequencia_num === "number"
-    ? obj.frequencia_num
-    : parseInt(String(obj?.frequencia || "0").replace(/\D/g, ""), 10) || 0;
 
 /* ===== período & status do evento (anti-fuso) ===== */
 function getPeriodoEvento(evento, turmas) {
@@ -100,15 +91,14 @@ function getStatusEvento({ evento, turmas }) {
   return "andamento";
 }
 
+/* ===== presença visual ===== */
 function pctColorHex(p) {
   if (p >= 90) return "#0284c7";  // sky-600
   if (p >= 76) return "#059669";  // emerald-600
   if (p >= 51) return "#d97706";  // amber-600
   return "#e11d48";               // rose-600
 }
-
 function PctPill({ value }) {
-  // aceita "25%" ou número; normaliza
   const n = typeof value === "string" ? parseInt(value.replace(/\D/g, ""), 10) : Number(value || 0);
   const pct = Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : 0;
   const color = pctColorHex(pct);
@@ -125,23 +115,64 @@ function PctPill({ value }) {
 
 /* ===== Regra dinâmica ≥75% sobre encontros ocorridos ===== */
 function isElegivel75(u, resumo) {
-  // Se a função carregarPresencas populou esses campos, usamos direto:
   const total = typeof u?.total_ocorridos === "number"
     ? u.total_ocorridos
     : (resumo?.encontrosOcorridos ?? 0);
-
   if (total <= 0) return false;
 
   if (typeof u?.presentes_ocorridos === "number") {
     return (u.presentes_ocorridos / total) >= 0.75 - 1e-9;
   }
-
-  // Fallback: usa frequencia_num / frequencia (já baseada nos ocorridos)
   const n =
     typeof u?.frequencia_num === "number"
       ? u.frequencia_num
       : parseInt(String(u?.frequencia || "0").replace(/\D/g, ""), 10) || 0;
   return n >= 75;
+}
+
+/* ===== Constrói uma visão uniforme de presenças por turma =====
+   Aceita:
+   - Array simples: [{usuario_id, presente, frequencia_num, ...}]
+   - Bloco detalhado: { usuarios:[{id|usuario_id, presencas:[{data,presente}] , ...}], resumo? }
+*/
+function mapPresencasParaLista(presencasPorTurma, turmaId) {
+  const raw = presencasPorTurma?.[turmaId];
+  // caso 1: já seja um array simples
+  if (Array.isArray(raw)) return raw;
+
+  // caso 2: objeto com lista
+  const lista = normalizaArr(raw);
+  if (lista.length) return lista;
+
+  // caso 3: detalhado
+  const usuarios = Array.isArray(raw?.usuarios) ? raw.usuarios : [];
+  const resumo = raw?.resumo || raw?.detalhado?.resumo || {};
+  const out = [];
+  for (const u of usuarios) {
+    const id = u?.usuario_id ?? u?.id ?? null;
+    if (!id) continue;
+
+    // tenta usar métricas prontas; senão, calcula a partir de presenças
+    let frequenciaNum =
+      typeof u?.frequencia_num === "number"
+        ? u.frequencia_num
+        : parseInt(String(u?.frequencia || "0").replace(/\D/g, ""), 10) || undefined;
+
+    if (typeof frequenciaNum !== "number" || Number.isNaN(frequenciaNum)) {
+      const totalOc = u?.total_ocorridos ?? resumo?.encontrosOcorridos ?? 0;
+      const presOc = u?.presentes_ocorridos ?? (Array.isArray(u?.presencas) ? u.presencas.filter(p=>p?.presente).length : 0);
+      frequenciaNum = totalOc > 0 ? Math.round((presOc / totalOc) * 100) : 0;
+    }
+
+    out.push({
+      usuario_id: id,
+      presente: isElegivel75(u, resumo), // ≥75% nos ocorridos
+      frequencia_num: frequenciaNum,
+      frequencia: `${frequenciaNum}%`,
+      cpf: u?.cpf,
+    });
+  }
+  return out;
 }
 
 /* ========================= UI helpers ========================= */
@@ -173,24 +204,22 @@ export default function CardEventoadministrador({
 }) {
   // ===== Estatísticas do EVENTO (usando regra ≥ 75% dinâmica)
   const stats = useMemo(() => {
-    if (!expandido || !Array.isArray(turmas)) {
-      return { totalInscritos: 0, totalPresentes: 0, presencaMedia: "0", totalAvaliacoes: 0, notaMedia: "—" };
+    if (!expandido || !Array.isArray(turmas) || !turmas.length) {
+      return { totalInscritos: 0, totalPresentes: 0, presencaMedia: "0" };
     }
     let totalInscritos = 0;
-    let totalElegiveis = 0; // presentes (≥ 75% nos ocorridos)
+    let totalElegiveis = 0;
 
     for (const t of turmas) {
-           const inscritos = normalizaArr(inscritosPorTurma?.[t.id]);
-            const presData  = presencasPorTurma?.[t.id] || {};
-            const presencas = normalizaArr(presData);
-      
-            totalInscritos += inscritos.length;
-            // ✅ usa o boolean já calculado no carregador
-           totalElegiveis += presencas.filter((p) => p?.presente === true).length;
-          }
+      const inscritos = normalizaArr(inscritosPorTurma?.[t.id]);
+      const presencas = mapPresencasParaLista(presencasPorTurma, t.id);
+
+      totalInscritos += inscritos.length;
+      totalElegiveis += presencas.filter((p) => p?.presente === true).length;
+    }
 
     const presencaMedia = totalInscritos ? Math.round((totalElegiveis / totalInscritos) * 100).toString() : "0";
-    return { totalInscritos, totalPresentes: totalElegiveis, presencaMedia, totalAvaliacoes: 0, notaMedia: "—" };
+    return { totalInscritos, totalPresentes: totalElegiveis, presencaMedia };
   }, [expandido, turmas, inscritosPorTurma, presencasPorTurma]);
 
   // ===== Preload blocos ao expandir
@@ -256,11 +285,9 @@ export default function CardEventoadministrador({
             <div className="mt-6 space-y-6">
               {turmas.map((turma) => {
                 const inscritos = normalizaArr(inscritosPorTurma?.[turma.id]);
-                                const presData  = presencasPorTurma?.[turma.id] || {};
-                               const presencas = normalizaArr(presData);
-                
-                                // ✅ conta quem já está com ≥75% nos encontros ocorridos
-                                const elegiveis = presencas.filter((p) => p?.presente === true).length;
+                const presencas = mapPresencasParaLista(presencasPorTurma, turma.id);
+
+                const elegiveis = presencas.filter((p) => p?.presente === true).length;
                 const pctElegiveis = inscritos.length ? Math.round((elegiveis / inscritos.length) * 100) : 0;
 
                 return (
@@ -281,7 +308,7 @@ export default function CardEventoadministrador({
                       <MiniStat value={`${pctElegiveis}%`} label="presença (≥75%)" className="text-sky-600" />
                     </div>
 
-                    {/* Lista de inscritos (tabela responsiva em UMA coluna visual) */}
+                    {/* Lista de inscritos */}
                     <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/40 p-4">
                       <div className="flex items-center justify-between gap-2">
                         <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
@@ -325,16 +352,14 @@ export default function CardEventoadministrador({
                                 const pcdMultipla = !!(i?.pcd_multipla || i?.def_multipla);
                                 const pcdTEA      = !!(i?.pcd_autismo || i?.tea || i?.transtorno_espectro_autista);
 
-                                const presObj = presencasPorTurma?.[turma.id] || {};
-                                const presList = normalizaArr(presObj);
-                                const presAluno = presList.find(p =>
-                                  (p.usuario_id === i.id || p.usuario_id === i.usuario_id || p.cpf === i.cpf)
-                                );
-                                const freqStr = presAluno
-                                  ? (typeof presAluno.frequencia_num === "number"
-                                      ? `${presAluno.frequencia_num}%`
-                                      : presAluno.frequencia)
-                                  : null;
+                                // frequência do aluno (usando presenças mapeadas)
+                                const presAluno = mapPresencasParaLista(presencasPorTurma, turma.id)
+                                  .find(p =>
+                                    (p.usuario_id === i.id || p.usuario_id === i.usuario_id || p.cpf === i.cpf)
+                                  );
+                                const freqStr = presAluno?.frequencia_num != null
+                                  ? `${presAluno.frequencia_num}%`
+                                  : presAluno?.frequencia || null;
 
                                 return (
                                   <li key={i.id || i.usuario_id || i.cpf} className="py-2">

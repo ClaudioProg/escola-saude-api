@@ -1,7 +1,7 @@
 // 📁 src/components/CardEvento.jsx
 import { CalendarDays, Users, Star, BarChart } from "lucide-react";
 import PropTypes from "prop-types";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useCallback } from "react";
 import CardTurma from "./CardTurma";
 
 /* =========================
@@ -18,6 +18,7 @@ function toLocalDate(input) {
   if (typeof input === "string") {
     if (isDateOnly(input)) {
       const [y, m, d] = input.split("-").map(Number);
+      // constrói data local sem deslocamento UTC
       return new Date(y, m - 1, d);
     }
     return new Date(input); // se tiver timezone, respeita; senão, assume local
@@ -27,7 +28,7 @@ function toLocalDate(input) {
 
 function formatarDataLocal(d) {
   const dt = toLocalDate(d);
-  if (!dt || Number.isNaN(dt.getTime())) return "";
+  if (!dt || Number.isNaN(dt.getTime?.())) return "";
   return dt.toLocaleDateString("pt-BR");
 }
 
@@ -147,7 +148,10 @@ export default function CardEvento({
   carregarPresencas,
   gerarRelatorioPDF,
 }) {
-  const normalizaArr = (v) => (Array.isArray(v) ? v : Array.isArray(v?.lista) ? v.lista : []);
+  const normalizaArr = useCallback(
+    (v) => (Array.isArray(v) ? v : Array.isArray(v?.lista) ? v.lista : []),
+    []
+  );
 
   const stats = useMemo(() => {
     if (!expandido || !Array.isArray(turmas) || !turmas.length) {
@@ -190,7 +194,7 @@ export default function CardEvento({
     }
 
     return { totalInscritos, totalPresentes, presencaMedia, totalAvaliacoes, notaMedia };
-  }, [expandido, turmas, inscritosPorTurma, presencasPorTurma, avaliacoesPorTurma]);
+  }, [expandido, turmas, inscritosPorTurma, presencasPorTurma, avaliacoesPorTurma, normalizaArr]);
 
   useEffect(() => {
     if (!expandido || !Array.isArray(turmas)) return;
@@ -202,7 +206,7 @@ export default function CardEvento({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expandido, turmas]);
 
-  const nomeinstrutor = useMemo(() => {
+  const nomeInstrutor = useMemo(() => {
     if (Array.isArray(evento?.instrutor)) {
       return evento.instrutor.map((i) => i?.nome).filter(Boolean).join(", ") || "—";
     }
@@ -212,38 +216,51 @@ export default function CardEvento({
     return "—";
   }, [evento]);
 
+  const periodoTexto = useMemo(() => getPeriodoEvento(evento, turmas), [evento, turmas]);
+  const turmasId = `evento-${evento.id}-turmas`;
+  const tituloId = `evento-${evento.id}-titulo`;
+  const periodoId = `evento-${evento.id}-periodo`;
+
   return (
     <section
       className="bg-white dark:bg-zinc-800 p-6 rounded-2xl shadow-lg mb-6 border border-gray-200 dark:border-zinc-700 transition hover:shadow-2xl"
-      aria-labelledby={`evento-${evento.id}-titulo`}
+      aria-labelledby={tituloId}
+      aria-describedby={periodoId}
     >
       <div className="flex justify-between items-start gap-4">
         <div className="min-w-0">
           <h3
-            id={`evento-${evento.id}-titulo`}
+            id={tituloId}
             className="text-2xl font-bold text-green-900 dark:text-green-200 text-left truncate"
             title={evento.titulo}
+            aria-live="polite"
           >
             {evento.titulo}
           </h3>
+
           <div className="text-sm text-gray-700 dark:text-gray-200 flex items-center gap-2 mt-1 mb-1">
             <span className="font-semibold">Instrutor:</span>
-            <span className="truncate" title={nomeinstrutor}>
-              {nomeinstrutor}
+            <span className="truncate" title={nomeInstrutor}>
+              {nomeInstrutor}
             </span>
           </div>
-          <p className="text-sm text-gray-600 dark:text-gray-300 flex items-center gap-2 mt-0.5">
+
+          <p
+            id={periodoId}
+            className="text-sm text-gray-600 dark:text-gray-300 flex items-center gap-2 mt-0.5"
+          >
             <CalendarDays size={16} aria-hidden="true" />
-            {getPeriodoEvento(evento, turmas)}
+            {periodoTexto}
           </p>
         </div>
 
         <button
+          type="button"
           onClick={() => toggleExpandir(evento.id)}
           aria-label={expandido ? "Recolher detalhes do evento" : "Ver detalhes do evento"}
           aria-expanded={expandido}
-          aria-controls={`evento-${evento.id}-turmas`}
-          className="text-sm px-4 py-1 bg-green-900 text-white rounded-full hover:bg-green-900/90 transition focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-green-900/60"
+          aria-controls={turmasId}
+          className="text-sm px-4 py-1 rounded-full transition focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-500/60 bg-gradient-to-br from-[#0f2c1f] via-[#114b2d] to-[#166534] text-white hover:brightness-[1.05]"
         >
           {expandido ? "Recolher" : "Ver Turmas"}
         </button>
@@ -252,28 +269,47 @@ export default function CardEvento({
       {expandido && (
         <>
           <h4 className="sr-only">Estatísticas do evento</h4>
+
+          {/* Ministats com micro-gradiente e alto contraste */}
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mt-6">
-            <StatCard icon={<Users aria-hidden="true" />} label="Inscritos" value={stats.totalInscritos} />
-            <StatCard icon={<Users aria-hidden="true" />} label="Presentes" value={stats.totalPresentes} />
+            <StatCard
+              icon={<Users aria-hidden="true" />}
+              label="Inscritos"
+              value={stats.totalInscritos}
+              accent="emerald"
+            />
+            <StatCard
+              icon={<Users aria-hidden="true" />}
+              label="Presentes"
+              value={stats.totalPresentes}
+              accent="teal"
+            />
             <StatCard
               icon={<BarChart aria-hidden="true" />}
               label="Presença Média"
               value={`${stats.presencaMedia}%`}
               title="Presença média nas turmas"
+              accent="cyan"
             />
-            <StatCard icon={<Star aria-hidden="true" />} label="Avaliações" value={stats.totalAvaliacoes} />
+            <StatCard
+              icon={<Star aria-hidden="true" />}
+              label="Avaliações"
+              value={stats.totalAvaliacoes}
+              accent="amber"
+            />
             <StatCard
               icon={<Star aria-hidden="true" />}
               label="Nota Média"
               value={stats.notaMedia}
               title="Nota média atribuída ao evento (escala 1–5)"
+              accent="violet"
             />
           </div>
         </>
       )}
 
       {expandido && Array.isArray(turmas) && turmas.length > 0 && (
-        <div id={`evento-${evento.id}-turmas`} className="mt-6 space-y-4">
+        <div id={turmasId} className="mt-6 space-y-4">
           {turmas.map((turma) => (
             <CardTurma
               key={turma.id}
@@ -329,19 +365,36 @@ CardEvento.propTypes = {
 };
 
 /* =========================
-   UI: Cartão de estatística
+   UI: Cartão de estatística (ministat)
    ========================= */
-function StatCard({ icon, label, value, title }) {
+function StatCard({ icon, label, value, title, accent = "emerald" }) {
+  const accents = {
+    emerald: "from-emerald-50 via-emerald-100 to-transparent border-emerald-200 dark:from-emerald-900/20 dark:via-emerald-900/10 dark:to-transparent dark:border-emerald-800/60",
+    teal: "from-teal-50 via-teal-100 to-transparent border-teal-200 dark:from-teal-900/20 dark:via-teal-900/10 dark:to-transparent dark:border-teal-800/60",
+    cyan: "from-cyan-50 via-cyan-100 to-transparent border-cyan-200 dark:from-cyan-900/20 dark:via-cyan-900/10 dark:to-transparent dark:border-cyan-800/60",
+    amber: "from-amber-50 via-amber-100 to-transparent border-amber-200 dark:from-amber-900/20 dark:via-amber-900/10 dark:to-transparent dark:border-amber-800/60",
+    violet: "from-violet-50 via-violet-100 to-transparent border-violet-200 dark:from-violet-900/20 dark:via-violet-900/10 dark:to-transparent dark:border-violet-800/60",
+  };
+  const grad = accents[accent] || accents.emerald;
+
   return (
     <div
-      className="bg-white dark:bg-zinc-700 rounded-xl p-4 flex flex-col items-start shadow border border-gray-200 dark:border-zinc-600"
+      className={[
+        "rounded-2xl p-4 shadow border",
+        "bg-gradient-to-br", grad,
+        "flex flex-col items-start",
+      ].join(" ")}
       title={title || label}
+      role="group"
+      aria-label={`${label}: ${value ?? "—"}`}
     >
-      <div className="flex items-center gap-2 text-gray-600 dark:text-gray-300 mb-1">
-        {icon}
-        <span className="text-sm">{label}</span>
+      <div className="flex items-center gap-2 text-gray-700 dark:text-gray-200 mb-1">
+        <span aria-hidden="true">{icon}</span>
+        <span className="text-sm font-medium">{label}</span>
       </div>
-      <div className="text-xl font-bold text-green-900 dark:text-green-200">{value}</div>
+      <div className="text-xl font-extrabold text-green-900 dark:text-green-200 select-none">
+        {value ?? "—"}
+      </div>
     </div>
   );
 }
@@ -351,4 +404,5 @@ StatCard.propTypes = {
   label: PropTypes.string.isRequired,
   value: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
   title: PropTypes.string,
+  accent: PropTypes.oneOf(["emerald", "teal", "cyan", "amber", "violet"]),
 };

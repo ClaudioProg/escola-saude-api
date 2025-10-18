@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from "react"
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Settings2, Save, Plus, Trash2, Pencil, Eye, EyeOff,
-  CheckCircle2, XCircle, X, Loader2, FileText, AlertCircle, Upload
+  CheckCircle2, XCircle, X, Loader2, FileText, AlertCircle, Upload, Download
 } from "lucide-react";
 import Footer from "../components/Footer";
 import {
@@ -72,6 +72,25 @@ const Counter = ({ value, max }) => {
   const len = (value || "").length;
   const over = max ? len > max : false;
   return <span className={`text-xs ${over ? "text-red-600" : "text-zinc-500"}`}>{len}{max ? `/${max}` : ""}</span>;
+};
+
+/* Mini-stat card */
+const StatCard = ({ label, value, icon, tone = "default" }) => {
+  const tones = {
+    default: "border-white/20",
+    success: "border-emerald-400/50",
+    warning: "border-amber-400/50",
+    info: "border-cyan-400/50",
+  };
+  return (
+    <div className={`rounded-2xl border ${tones[tone]} bg-white/10 px-3 py-3 text-left backdrop-blur-sm`}>
+      <div className="flex items-center justify-between">
+        <span className="text-xs uppercase tracking-wide text-white/80">{label}</span>
+        <span className="opacity-90">{icon}</span>
+      </div>
+      <div className="mt-1 font-bold text-lg sm:text-2xl text-white">{value}</div>
+    </div>
+  );
 };
 
 /* ─── A11y: Live regions ─── */
@@ -151,7 +170,7 @@ function Modal({ open, onClose, title, children, footer, size = "lg", labelledBy
             initial={{ y: 12, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 12, opacity: 0 }}
             className={`relative w-full ${sizes[size]} overflow-hidden rounded-2xl border bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-900`}
           >
-            <div className="flex items-center justify-between bg-gradient-to-r from-indigo-600 to-teal-600 px-4 py-3 text-white">
+            <div className="flex items-center justify-between bg-gradient-to-r from-cyan-700 via-violet-700 to-emerald-700 px-4 py-3 text-white">
               <div className="flex items-center gap-2">
                 <FileText className="h-5 w-5" aria-hidden="true" />
                 <h3 id={labelledById} className="text-lg font-semibold">{title}</h3>
@@ -162,7 +181,7 @@ function Modal({ open, onClose, title, children, footer, size = "lg", labelledBy
               </button>
             </div>
 
-            <div id={describedById} className="max-h-[75vh] overflow-y-auto p-4 sm:p-6">{children}</div>
+            <div className="max-h-[75vh] overflow-y-auto p-4 sm:p-6">{children}</div>
 
             <div className="flex flex-wrap items-center justify-end gap-3 border-t bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900/50">
               {footer}
@@ -174,25 +193,42 @@ function Modal({ open, onClose, title, children, footer, size = "lg", labelledBy
   );
 }
 
-/* ─── Header ─── */
-function HeaderHero() {
+/* ─── Header (gradiente exclusivo desta página) ─── */
+/* ─── Header (gradiente exclusivo desta página) ─── */
+function HeaderHero({ counts = { total: "—", abertas: "—", encerradas: "—", publicadas: "—" } }) {
   return (
-    <motion.header initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}
-      className="w-full bg-indigo-600 text-white dark:bg-indigo-700">
-      <div className="mx-auto max-w-screen-xl px-4 py-6 text-center sm:px-6 lg:px-8">
-        <div className="mx-auto flex max-w-3xl flex-col items-center gap-3">
-          <Settings2 className="h-10 w-10" aria-hidden="true" />
-          <div>
-            <h1 className="text-2xl font-bold leading-tight sm:text-3xl">Submissão de Trabalhos — Administração</h1>
-            <p className="mt-1 text-sm opacity-90 sm:text-base">
-              Gerencie as chamadas abertas, edite, publique/despublique e exclua. Criação/Edição em modal com visual mais agradável.
+    <motion.header
+      initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}
+      className="w-full text-white"
+    >
+      <div className="bg-gradient-to-br from-cyan-900 via-violet-800 to-emerald-700">
+        <div className="mx-auto max-w-screen-xl px-4 py-8 sm:px-6 lg:px-8">
+          {/* Título + ícone na MESMA LINHA */}
+          <div className="flex flex-col items-center gap-3 text-center">
+            <div className="flex items-center gap-3">
+              <Settings2 className="h-8 w-8 sm:h-9 sm:w-9" aria-hidden="true" />
+              <h1 className="text-2xl font-extrabold leading-tight sm:text-3xl">
+                Submissão de Trabalhos — Administração
+              </h1>
+            </div>
+            <p className="mt-0.5 text-sm opacity-90 sm:text-base">
+              Gerencie chamadas: criar/editar, publicar/despublicar e excluir. Edição em modal com visual limpo e acessível.
             </p>
+
+            {/* Mini-stats: aparecem SOMENTE no header */}
+            <div className="grid w-full max-w-3xl grid-cols-2 gap-3 sm:grid-cols-4 mt-2">
+              <StatCard label="Chamadas"   value={counts.total}      icon={<FileText className="w-4 h-4" />} tone="info" />
+              <StatCard label="Abertas"    value={counts.abertas}    icon={<Eye className="w-4 h-4" />} tone="success" />
+              <StatCard label="Encerradas" value={counts.encerradas} icon={<EyeOff className="w-4 h-4" />} tone="warning" />
+              <StatCard label="Publicadas" value={counts.publicadas} icon={<CheckCircle2 className="w-4 h-4" />} tone="success" />
+            </div>
           </div>
         </div>
       </div>
     </motion.header>
   );
 }
+
 
 /* ─── Skeleton Item ─── */
 function ChamadaSkeleton() {
@@ -209,7 +245,7 @@ function ChamadaSkeleton() {
 }
 
 /* ─── Painel ─── */
-function ChamadasPainel({ onEditar, onNova, refreshSignal }) {
+function ChamadasPainel({ onEditar, onNova, refreshSignal, onCountsChange }) {
   const [lista, setLista] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
@@ -228,6 +264,18 @@ function ChamadasPainel({ onEditar, onNova, refreshSignal }) {
   }, []);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { if (refreshSignal !== undefined) load(); }, [refreshSignal, load]);
+
+  // Contadores para mini-stats
+  const counts = useMemo(() => {
+    const total = lista.length;
+    const abertas = lista.filter((c) => c.dentro_prazo === true).length;
+    const encerradas = lista.filter((c) => c.dentro_prazo === false).length;
+    const publicadas = lista.filter((c) => c.publicado === true).length;
+    return { total, abertas, encerradas, publicadas };
+  }, [lista]);
+
+  // Avisa o topo quando os contadores mudarem
+ useEffect(() => { onCountsChange?.(counts); }, [counts, onCountsChange]);
 
   const visiveis = useMemo(() => {
     if (filtro === "todas") return lista;
@@ -263,7 +311,7 @@ function ChamadasPainel({ onEditar, onNova, refreshSignal }) {
 
   return (
     <Card>
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         {/* Filtro como toggle group acessível */}
         <div role="group" aria-label="Filtro de chamadas" className="flex items-center gap-2">
           {["abertas", "encerradas", "todas"].map((key) => (
@@ -721,11 +769,23 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
       describedById="dlg-desc"
       footer={
         <>
-          <span className="sr-only" id="dlg-desc">Formulário para criar ou editar chamada.</span>
-          {(err || infoOk) && (
+           {(err || infoOk) && (
             <span className={`mr-auto text-sm ${err ? "text-red-600" : "text-emerald-600"}`}>
               {err || infoOk}
             </span>
+          )}
+          {/* Botões auxiliares de modelo (se já existir) */}
+          {isEdit && modeloMeta?.exists && (
+            <button
+              type="button"
+              onClick={onDownloadModelo}
+              disabled={modeloDownloading}
+              className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800 dark:border-zinc-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              title="Baixar modelo de banner (.pptx)"
+            >
+              {modeloDownloading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Download className="h-4 w-4" aria-hidden="true" />}
+              {modeloDownloading ? "Baixando…" : "Baixar modelo"}
+            </button>
           )}
           <button type="button" onClick={onClose} className="rounded-xl px-4 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800">Cancelar</button>
           <button
@@ -747,6 +807,12 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-8">
+          {/* Descrição acessível do conteúdo do modal (para aria-describedby) */}
+          <div id="dlg-desc" className="sr-only">
+            Formulário para criar ou editar chamada. Preencha informações gerais, prazos, normas,
+            limites de caracteres e critérios de avaliação. Ao final, salve para habilitar upload
+            do modelo de banner (.pptx) específico desta chamada.
+          </div>
           {/* 1) Gerais */}
           <section id="s1" className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <h2 className="sm:col-span-3 mb-2 text-base font-semibold">Informações gerais</h2>
@@ -815,7 +881,7 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
                         aria-label="Descrição da linha temática" />
                       <button type="button"
                         onClick={() => update("linhas", form.linhas.filter((_, j) => j !== i))}
-                        className="inline-flex items-center gap-2 rounded-xl bg-zinc-100 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+                        className="inline-flex items-center gap-2 rounded-2xl bg-zinc-100 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
                         aria-label={`Remover linha temática ${i + 1}`}>
                         <Trash2 className="h-4 w-4" aria-hidden="true" /> Remover
                       </button>
@@ -865,7 +931,7 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
             </Field>
           </section>
 
-          {/* 4) Autores */}
+                    {/* 4) Autores */}
           <section id="s4" className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <h2 className="sm:col-span-2 mb-2 text-base font-semibold">Limite de autores e coautores</h2>
             <Field label="Máximo de coautores" htmlFor="coaut">
@@ -1059,6 +1125,12 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
 export default function AdminChamadaForm() {
   const params = useParams();
   const routeId = params?.chamadaId;
+  const [counts, setCounts] = useState({
+    total: "—",
+    abertas: "—",
+    encerradas: "—",
+    publicadas: "—",
+  });
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -1075,10 +1147,15 @@ export default function AdminChamadaForm() {
 
   return (
     <div className="flex min-h-screen flex-col bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
-      <HeaderHero />
+      <HeaderHero counts={counts} />
       <main className="mx-auto w-full max-w-screen-xl p-4 sm:px-6 lg:px-8">
         <div className="mb-6">
-          <ChamadasPainel onEditar={openEditar} onNova={openNovo} refreshSignal={refreshSignal} />
+        <ChamadasPainel
+            onEditar={openEditar}
+            onNova={openNovo}
+            refreshSignal={refreshSignal}
+            onCountsChange={setCounts}
+         />
         </div>
       </main>
       <Footer />

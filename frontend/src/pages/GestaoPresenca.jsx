@@ -11,21 +11,17 @@ import Spinner from "../components/Spinner";
 import ListaTurmasPresenca from "../components/ListaTurmasPresenca";
 
 /* ---------------- HeaderHero (verde-azulado, título central, altura média) ---------------- */
+/* ---------------- HeaderHero (cor única, sem degradê) ---------------- */
 function HeaderHero({ onAtualizar, atualizando }) {
   return (
-    <header
-      className="relative isolate overflow-hidden bg-gradient-to-br from-teal-900 via-emerald-800 to-green-700 text-white"
-      role="banner"
-    >
-      {/* glow sutil */}
-      <div
-        className="pointer-events-none absolute inset-0 opacity-70"
-        style={{
-          background:
-            "radial-gradient(55% 55% at 50% 0%, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.05) 32%, rgba(255,255,255,0) 60%)",
-        }}
-        aria-hidden="true"
-      />
+    <header className="bg-teal-700 text-white" role="banner">
+      <a
+        href="#conteudo"
+        className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2"
+      >
+        Ir para o conteúdo
+      </a>
+
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-10 md:py-12 min-h-[150px] sm:min-h-[180px]">
         <div className="flex flex-col items-center text-center gap-3 sm:gap-4">
           <div className="inline-flex items-center justify-center gap-2">
@@ -55,7 +51,8 @@ function HeaderHero({ onAtualizar, atualizando }) {
           </div>
         </div>
       </div>
-      <div className="absolute bottom-0 left-0 right-0 h-px bg-white/25" aria-hidden="true" />
+
+      <div className="h-px w-full bg-white/25" aria-hidden="true" />
     </header>
   );
 }

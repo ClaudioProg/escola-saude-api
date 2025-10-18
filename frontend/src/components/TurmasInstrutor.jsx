@@ -107,7 +107,13 @@ function DonutPresenca({ pct }) {
 
   return (
     <div className="w-[72px] h-[72px] flex items-center justify-center">
-      <svg width={box} height={box} viewBox={`0 0 ${box} ${box}`} aria-label={`Presença: ${v}%`}>
+      <svg
+        role="img"
+        aria-label={`Presença: ${v}%`}
+        width={box}
+        height={box}
+        viewBox={`0 0 ${box} ${box}`}
+      >
         {/* trilha */}
         <circle cx={cx} cy={cy} r={r} fill="none" stroke="#e5e7eb" strokeWidth={stroke} />
         {/* progresso (começa no topo) */}
@@ -175,6 +181,7 @@ export default function TurmasInstrutor({
 } = {}) {
   const [abrindo, setAbrindo] = useState(null);
   const [dataAtivaPorTurma, setDataAtivaPorTurma] = useState({}); // { [turmaId]: "YYYY-MM-DD" }
+  const [somenteSemPresencaPorTurma, setSomenteSemPresencaPorTurma] = useState({}); // { [turmaId]: bool }
 
   /* Agrupar por evento */
   const eventosAgrupados = useMemo(() => {
@@ -226,6 +233,23 @@ export default function TurmasInstrutor({
     } finally {
       setAbrindo(null);
     }
+  }
+
+  /* Export CSV da data ativa */
+  function exportarCSVDataAtiva(turmaId, dataAtiva, mapaUsuarios) {
+    const rows = [["Nome","CPF","Status"]];
+    for (const u of mapaUsuarios.values()) {
+      const presente = !!u.presencas.get(dataAtiva);
+      const status = presente ? "Presente" : "Sem presença";
+      rows.push([u.nome, formatarCPF(u.cpf) || u.cpf || "", status]);
+    }
+    const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `presencas_${turmaId}_${dataAtiva}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
   }
 
   if (carregando) {
@@ -300,6 +324,25 @@ export default function TurmasInstrutor({
                 });
 
                 const dataAtiva = dataAtivaPorTurma[idSeguro] || (datas[0]?.data ?? null);
+                const soPend = !!somenteSemPresencaPorTurma[idSeguro];
+
+                // handler teclado nas abas
+                function onTabKeyDown(e, idxAtual) {
+                  const total = datas.length;
+                  if (!total) return;
+                  let i = idxAtual;
+                  if (e.key === "ArrowRight") i = (idxAtual + 1) % total;
+                  else if (e.key === "ArrowLeft") i = (idxAtual - 1 + total) % total;
+                  else if (e.key === "Home") i = 0;
+                  else if (e.key === "End") i = total - 1;
+                  else return;
+                  e.preventDefault();
+                  const prox = datas[i];
+                  setDataAtivaPorTurma((p) => ({ ...p, [idSeguro]: prox.data }));
+                  requestAnimationFrame(() => {
+                    document.getElementById(`tab-${idSeguro}-${prox.data}`)?.focus();
+                  });
+                }
 
                 return (
                   <section key={idSeguro} className="rounded-xl ring-1 ring-gray-200 dark:ring-zinc-700 bg-gray-50/50 dark:bg-zinc-900/30">
@@ -342,6 +385,8 @@ export default function TurmasInstrutor({
                           setTurmaExpandidaInscritos(expandindoInscritos ? null : idSeguro);
                           setTurmaExpandidaAvaliacoes(null);
                         }}
+                        aria-expanded={expandindoInscritos}
+                        aria-controls={`painel-inscritos-${idSeguro}`}
                         className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm px-3 py-1.5 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-700/40"
                       >
                         <Users className="w-4 h-4" /> Ver inscritos
@@ -353,6 +398,8 @@ export default function TurmasInstrutor({
                           setTurmaExpandidaAvaliacoes(expandindoAvaliacoes ? null : idSeguro);
                           setTurmaExpandidaInscritos(null);
                         }}
+                        aria-expanded={expandindoAvaliacoes}
+                        aria-controls={`painel-avaliacoes-${idSeguro}`}
                         className="inline-flex items-center gap-2 bg-fuchsia-600 hover:bg-fuchsia-700 text-white text-sm px-3 py-1.5 rounded-lg focus:outline-none focus:ring-2 focus:ring-fuchsia-700/40"
                       >
                         <Star className="w-4 h-4" /> Avaliações
@@ -414,18 +461,24 @@ export default function TurmasInstrutor({
                             return (
                               <div className="space-y-4">
                                 {/* Tabs de datas */}
-                                <div className="flex flex-wrap gap-2 mb-2">
-                                  {datas.map((d) => {
+                                <div role="tablist" aria-label={`Datas da turma ${turma.nome || turma.id}`} className="flex flex-wrap gap-2 mb-2">
+                                  {datas.map((d, idx) => {
                                     const active = (dataAtivaPorTurma[idSeguro] || datas[0].data) === d.data;
+                                    const tabId = `tab-${idSeguro}-${d.data}`;
+                                    const panelId = `panel-${idSeguro}-${d.data}`;
                                     return (
                                       <button
                                         key={d.data}
+                                        id={tabId}
                                         type="button"
+                                        role="tab"
+                                        aria-selected={active}
+                                        aria-controls={panelId}
                                         onClick={() => setDataAtivaPorTurma((p) => ({ ...p, [idSeguro]: d.data }))}
+                                        onKeyDown={(e) => onTabKeyDown(e, idx)}
                                         className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition
                                           ${active ? "bg-violet-700 text-white border-violet-700"
                                             : "bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-100 border-zinc-300 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800"}`}
-                                        aria-pressed={active}
                                       >
                                         {d.data.split("-").reverse().join("/")} · {d.horario_inicio}–{d.horario_fim}
                                       </button>
@@ -437,6 +490,9 @@ export default function TurmasInstrutor({
                                 {(() => {
                                   const d = datas.find((x) => x.data === (dataAtivaPorTurma[idSeguro] || datas[0].data)) || datas[0];
                                   if (!d) return null;
+
+                                  const panelId = `panel-${idSeguro}-${d.data}`;
+                                  const tabId = `tab-${idSeguro}-${d.data}`;
 
                                   const inicioDia = toLocalDateFromYMDTime(d.data, d.horario_inicio);
                                   const abreJanela = inicioDia ? new Date(inicioDia.getTime() + 60 * 60 * 1000) : null;
@@ -454,8 +510,20 @@ export default function TurmasInstrutor({
                                   }
                                   const pct = totalInscritos > 0 ? Math.round((presentes / totalInscritos) * 100) : 0;
 
+                                  // lista final (filtrada)
+                                  const listaUsuarios = Array.from(mapaUsuarios.values()).filter((u) => {
+                                    if (!soPend) return true;
+                                    const presente = !!u.presencas.get(d.data);
+                                    return !presente; // apenas sem presença (aguardando + faltou)
+                                  });
+
                                   return (
-                                    <section className="rounded-xl bg-white dark:bg-zinc-900/40 ring-1 ring-zinc-200 dark:ring-zinc-800">
+                                    <section
+                                      id={panelId}
+                                      role="region"
+                                      aria-labelledby={tabId}
+                                      className="rounded-xl bg-white dark:bg-zinc-900/40 ring-1 ring-zinc-200 dark:ring-zinc-800"
+                                    >
                                       <header className="px-4 py-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                                         <div className="flex items-center gap-3">
                                           <CalendarDays className="w-4 h-4 text-zinc-600 dark:text-zinc-300" />
@@ -465,77 +533,110 @@ export default function TurmasInstrutor({
                                               <Clock className="inline w-3.5 h-3.5 mr-1" />
                                               {d.horario_inicio}–{d.horario_fim}
                                             </div>
+                                            {antesDaJanela && (
+                                              <div className="text-[11px] text-amber-600 dark:text-amber-300 mt-1">
+                                                Confirmação manual libera ~1h após o início da aula.
+                                              </div>
+                                            )}
                                           </div>
                                         </div>
 
-                                        {/* Ministats em badges + donut */}
+                                        {/* Ministats + ações rápidas */}
                                         <div className="ml-0 sm:ml-auto flex flex-wrap items-center gap-3">
                                           <MiniStat number={totalInscritos} label="inscritos" className="text-zinc-800 dark:text-zinc-100" />
                                           <MiniStat number={presentes} label="presentes" className="text-emerald-600 dark:text-emerald-400" />
                                           <MiniStat number={faltas} label="faltas" className="text-rose-600 dark:text-rose-400" />
                                           <MiniStat number={aguardando} label="aguardando" className="text-amber-600 dark:text-amber-400" />
                                           <DonutPresenca pct={pct} />
+                                          <button
+                                            onClick={() => exportarCSVDataAtiva(idSeguro, d.data, mapaUsuarios)}
+                                            className="inline-flex items-center gap-2 bg-slate-200 hover:bg-slate-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-900 dark:text-slate-100 text-xs px-3 py-1.5 rounded-lg"
+                                            title="Exportar CSV da data ativa"
+                                          >
+                                            <FileText className="w-4 h-4" />
+                                            Exportar CSV
+                                          </button>
                                         </div>
                                       </header>
 
-                                      <div className="px-4 pb-4 overflow-x-auto">
-                                        <table className="min-w-full text-sm">
-                                          <thead>
-                                            <tr className="text-left text-zinc-600 dark:text-zinc-300">
-                                              <th className="py-2 pr-4">👤 Nome</th>
-                                              <th className="py-2 pr-4">CPF</th>
-                                              <th className="py-2 pr-4">Situação</th>
-                                              <th className="py-2 pr-4">Ações</th>
-                                            </tr>
-                                          </thead>
-                                          <tbody>
-                                            {Array.from(mapaUsuarios.values()).map((u) => {
-                                              const presente = !!u.presencas.get(d.data);
-                                              const status = presente ? "presente" : (antesDaJanela ? "aguardando" : "faltou");
-                                              const podeConfirmar = !presente && dentroDaJanelaConfirmacao(d.data, d.horario_inicio, d.horario_fim);
-                                              const loadingThis = abrindo === `${u.id}-${idSeguro}-${d.data}`;
+                                      <div className="px-4 pb-4">
+                                        {/* Filtros de lista */}
+                                        <div className="mb-2 flex items-center justify-between">
+                                          <label className="inline-flex items-center gap-2 text-xs">
+                                            <input
+                                              type="checkbox"
+                                              checked={soPend}
+                                              onChange={(e) =>
+                                                setSomenteSemPresencaPorTurma((p) => ({ ...p, [idSeguro]: e.target.checked }))
+                                              }
+                                            />
+                                            Mostrar apenas sem presença
+                                          </label>
+                                          <div className="text-xs text-zinc-500">
+                                            {listaUsuarios.length} de {totalInscritos} exibidos
+                                          </div>
+                                        </div>
 
-                                              return (
-                                                <tr key={`${u.id}-${d.data}`} className="border-t border-zinc-200 dark:border-zinc-800">
-                                                  <td className="py-2 pr-4 whitespace-nowrap">{u.nome}</td>
-                                                  <td className="py-2 pr-4 whitespace-nowrap">{formatarCPF(u.cpf) || u.cpf || "—"}</td>
-                                                  <td className="py-2 pr-4">
-                                                    {status === "presente" ? (
-                                                      <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300">
-                                                        <CheckCircle2 className="w-4 h-4" />
-                                                        <Badge kind="ok">Presente</Badge>
-                                                      </span>
-                                                    ) : status === "aguardando" ? (
-                                                      <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-300">
-                                                        <AlertCircle className="w-4 h-4" />
-                                                        <Badge>Aguardando</Badge>
-                                                      </span>
-                                                    ) : (
-                                                      <span className="inline-flex items-center gap-1 text-rose-700 dark:text-rose-300">
-                                                        <XCircle className="w-4 h-4" />
-                                                        <Badge kind="absent">Faltou</Badge>
-                                                      </span>
-                                                    )}
-                                                  </td>
-                                                  <td className="py-2 pr-4">
-                                                    {podeConfirmar ? (
-                                                      <button
-                                                        onClick={() => confirmarPresencaManual(u.id, idSeguro, d.data)}
-                                                        disabled={loadingThis}
-                                                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-emerald-700/40"
-                                                      >
-                                                        <CheckCircle2 className="w-4 h-4" />
-                                                        {loadingThis ? "Confirmando..." : "Confirmar"}
-                                                      </button>
-                                                    ) : (
-                                                      <span className="text-xs text-zinc-400">—</span>
-                                                    )}
-                                                  </td>
-                                                </tr>
-                                              );
-                                            })}
-                                          </tbody>
-                                        </table>
+                                        <div className="overflow-x-auto">
+                                          <table className="min-w-full text-sm table-fixed">
+                                            <thead>
+                                              <tr className="text-left text-zinc-600 dark:text-zinc-300">
+                                                <th scope="col" className="py-2 pr-4 w-[40%]">👤 Nome</th>
+                                                <th scope="col" className="py-2 pr-4 w-[20%]">CPF</th>
+                                                <th scope="col" className="py-2 pr-4 w-[20%]">Situação</th>
+                                                <th scope="col" className="py-2 pr-4 w-[20%]">Ações</th>
+                                              </tr>
+                                            </thead>
+                                            <tbody>
+                                              {listaUsuarios.map((u) => {
+                                                const presente = !!u.presencas.get(d.data);
+                                                const status = presente ? "presente" : (antesDaJanela ? "aguardando" : "faltou");
+                                                const podeConfirmar = !presente && dentroDaJanelaConfirmacao(d.data, d.horario_inicio, d.horario_fim);
+                                                const loadingThis = abrindo === `${u.id}-${idSeguro}-${d.data}`;
+
+                                                return (
+                                                  <tr key={`${u.id}-${d.data}`} className="border-t border-zinc-200 dark:border-zinc-800">
+                                                    <td className="py-2 pr-4 whitespace-nowrap overflow-hidden text-ellipsis">{u.nome}</td>
+                                                    <td className="py-2 pr-4 whitespace-nowrap">{formatarCPF(u.cpf) || u.cpf || "—"}</td>
+                                                    <td className="py-2 pr-4">
+                                                      {status === "presente" ? (
+                                                        <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300">
+                                                          <CheckCircle2 className="w-4 h-4" />
+                                                          <Badge kind="ok">Presente</Badge>
+                                                        </span>
+                                                      ) : status === "aguardando" ? (
+                                                        <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-300">
+                                                          <AlertCircle className="w-4 h-4" />
+                                                          <Badge>Aguardando</Badge>
+                                                        </span>
+                                                      ) : (
+                                                        <span className="inline-flex items-center gap-1 text-rose-700 dark:text-rose-300">
+                                                          <XCircle className="w-4 h-4" />
+                                                          <Badge kind="absent">Faltou</Badge>
+                                                        </span>
+                                                      )}
+                                                    </td>
+                                                    <td className="py-2 pr-4">
+                                                      {podeConfirmar ? (
+                                                        <button
+                                                          onClick={() => confirmarPresencaManual(u.id, idSeguro, d.data)}
+                                                          disabled={loadingThis}
+                                                          aria-busy={loadingThis || undefined}
+                                                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-emerald-700/40"
+                                                        >
+                                                          <CheckCircle2 className="w-4 h-4" />
+                                                          {loadingThis ? "Confirmando..." : "Confirmar"}
+                                                        </button>
+                                                      ) : (
+                                                        <span className="text-xs text-zinc-400">—</span>
+                                                      )}
+                                                    </td>
+                                                  </tr>
+                                                );
+                                              })}
+                                            </tbody>
+                                          </table>
+                                        </div>
                                       </div>
                                     </section>
                                   );

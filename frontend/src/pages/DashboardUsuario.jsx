@@ -1,6 +1,6 @@
-// ✅ src/pages/DashboardUsuario.jsx (versão PARTICIPANTE)
+// ✅ src/pages/DashboardUsuario.jsx (versão PARTICIPANTE — revisado)
 import { useEffect, useRef, useState } from "react";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import {
   CalendarDays,
   BookOpen,
@@ -17,18 +17,28 @@ import GraficoEventos from "../components/GraficoEventos";
 import { apiGet } from "../services/api";
 import { formatarDataBrasileira } from "../utils/data";
 
-/* ───────────── Hero centralizado (sem breadcrumbs) ───────────── */
+/* ───────────────── HeaderHero (padronizado app-wide) ───────────────── */
 function DashboardHero({ onRefresh, carregando }) {
   return (
-    <header className="bg-gradient-to-br from-emerald-700 via-emerald-600 to-emerald-500 text-white">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 flex flex-col items-center text-center gap-3">
+    <header
+      className="bg-gradient-to-br from-sky-900 via-blue-800 to-indigo-700 text-white"
+      role="banner"
+    >
+      <a
+        href="#conteudo"
+        className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2"
+      >
+        Ir para o conteúdo
+      </a>
+
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-10 flex flex-col items-center text-center gap-3">
         <div className="inline-flex items-center gap-2">
-          <span className="text-2xl">🎯</span>
+          <span className="text-2xl" aria-hidden="true">🎯</span>
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
             Painel do Usuário
           </h1>
         </div>
-        <p className="text-sm text-white/90">
+        <p className="text-sm sm:text-base text-white/90 max-w-2xl">
           Acompanhe suas inscrições, presenças e certificados.
         </p>
 
@@ -37,15 +47,15 @@ function DashboardHero({ onRefresh, carregando }) {
           onClick={onRefresh}
           disabled={carregando}
           className={[
-            "inline-flex items-center gap-2 px-4 py-2 rounded-full font-semibold",
-            "bg-white/10 hover:bg-white/20 border border-white/20",
+            "inline-flex items-center gap-2 px-4 py-2 rounded-lg font-semibold",
+            "bg-white/15 hover:bg-white/25 border border-white/20",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70",
             carregando ? "opacity-60 cursor-not-allowed" : "",
           ].join(" ")}
           aria-label="Atualizar painel do usuário"
           title="Atualizar"
         >
-          <RefreshCw className="w-4 h-4" />
+          <RefreshCw className="w-4 h-4" aria-hidden="true" />
           {carregando ? "Atualizando…" : "Atualizar"}
         </button>
       </div>
@@ -64,20 +74,14 @@ const hojeYMD = () => {
 const isPastOrToday = (dYMD) => !!dYMD && ymd(dYMD) <= hojeYMD();
 
 /**
- * Tenta calcular a nota (0–10) a partir de diferentes formatos de payload.
- * Regras:
- * - considerar SOMENTE encontros que já aconteceram (data <= hoje)
+ * Calcula a nota (0–10) com 1 casa:
+ * - considera só encontros já ocorridos (data <= hoje)
  * - nota = (presenças / encontros_passados) * 10
- * - 1 casa decimal
  */
 function calcularNotaParticipacao(dados) {
-  // 1) Se o backend já enviar pronto
   const notaDireta = Number(dados?.nota);
-  if (Number.isFinite(notaDireta)) {
-    return Math.max(0, Math.min(10, Number(notaDireta.toFixed(1))));
-  }
+  if (Number.isFinite(notaDireta)) return Math.max(0, Math.min(10, Number(notaDireta.toFixed(1))));
 
-  // 2) Contadores simples (encontros e presenças até hoje)
   const presencasAteHoje = Number(dados?.presencasAteHoje ?? dados?.presencas_passadas);
   const encontrosAteHoje = Number(dados?.encontrosAteHoje ?? dados?.encontros_passados);
   if (Number.isFinite(presencasAteHoje) && Number.isFinite(encontrosAteHoje) && encontrosAteHoje > 0) {
@@ -85,8 +89,6 @@ function calcularNotaParticipacao(dados) {
     return Math.max(0, Math.min(10, Number(nota.toFixed(1))));
   }
 
-  // 3) Derivar de coleções comuns
-  // Procuramos por estruturas que contenham turmas/inscrições com `datas` e `presencas`
   const colecoesPossiveis = [
     dados?.inscricoes,
     dados?.minhasInscricoes,
@@ -100,27 +102,19 @@ function calcularNotaParticipacao(dados) {
 
   for (const colecao of colecoesPossiveis) {
     for (const item of colecao) {
-      // datas: [{data, horario_inicio, horario_fim}] OU array de strings "YYYY-MM-DD"
       const datas = Array.isArray(item?.datas)
         ? item.datas.map((d) => (typeof d === "string" ? { data: ymd(d) } : { data: ymd(d.data) }))
         : [];
-
-      // presencas: [{data_presenca, presente}] ou [{data, presente}]
       const presencas = Array.isArray(item?.presencas)
-        ? item.presencas.map((p) => ({
-            data: ymd(p.data_presenca ?? p.data),
-            presente: !!p.presente,
-          }))
+        ? item.presencas.map((p) => ({ data: ymd(p.data_presenca ?? p.data), presente: !!p.presente }))
         : [];
 
       const setPresencas = new Map();
-      presencas.forEach((p) => {
-        if (p.data) setPresencas.set(p.data, p.presente === true);
-      });
+      presencas.forEach((p) => { if (p.data) setPresencas.set(p.data, p.presente === true); });
 
       for (const d of datas) {
         const dia = ymd(d.data);
-        if (!dia || !isPastOrToday(dia)) continue; // só conta o que já passou
+        if (!dia || !isPastOrToday(dia)) continue;
         encontrosPassados += 1;
         if (setPresencas.get(dia) === true) totalPresencas += 1;
       }
@@ -132,7 +126,6 @@ function calcularNotaParticipacao(dados) {
     return Math.max(0, Math.min(10, Number(nota.toFixed(1))));
   }
 
-  // 4) Sem dados suficientes
   return null;
 }
 
@@ -141,6 +134,7 @@ export default function DashboardUsuario() {
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState("");
   const liveRef = useRef(null);
+  const reduceMotion = useReducedMotion();
 
   const usuarioNome = (() => {
     try {
@@ -172,10 +166,7 @@ export default function DashboardUsuario() {
     }
   }
 
-  useEffect(() => {
-    carregar();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  useEffect(() => { carregar(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, []);
 
   // ── KPIs tolerantes
   const concluidos = Number(dados?.cursosRealizados ?? dados?.concluidos ?? 0) || 0;
@@ -186,12 +177,11 @@ export default function DashboardUsuario() {
   const avaliacoesPendentes =
     Number(dados?.avaliacoesPendentes ?? dados?.pendenciasAvaliacao ?? dados?.notificacoesAvaliacao ?? 0) || 0;
 
-  const nota = calcularNotaParticipacao(dados); // 👈 nova nota (0–10, 1 casa)
+  const nota = calcularNotaParticipacao(dados);
   const notaExibicao = nota == null ? "—" : nota.toFixed(1);
 
   return (
-    <main className="min-h-screen bg-gelo dark:bg-zinc-900">
-      {/* 💚 Header centralizado */}
+    <main id="conteudo" className="min-h-screen bg-gelo dark:bg-zinc-900">
       <DashboardHero onRefresh={carregar} carregando={carregando} />
 
       {/* Live region para leitores de tela */}
@@ -204,11 +194,11 @@ export default function DashboardUsuario() {
           <div className="max-w-6xl mx-auto space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {[...Array(6)].map((_, i) => (
-                <Skeleton key={i} height={110} className="rounded-xl" />
+                <Skeleton key={i} height={110} className="rounded-2xl" />
               ))}
             </div>
-            <Skeleton height={320} className="rounded-xl" />
-            <Skeleton height={120} className="rounded-xl" />
+            <Skeleton height={320} className="rounded-2xl" />
+            <Skeleton height={120} className="rounded-2xl" />
           </div>
         ) : dados ? (
           <motion.div
@@ -217,39 +207,37 @@ export default function DashboardUsuario() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4 }}
           >
-            {/* 👇 saudação pequena (opcional) */}
+            {/* Saudação opcional */}
             {usuarioNome && (
               <p className="text-center text-sm text-slate-600 dark:text-slate-300 mb-4">
                 Bem-vindo(a), <span className="font-medium">{usuarioNome}</span>
               </p>
             )}
 
-            {/* Cards de KPI (somente PARTICIPANTE) */}
+            {/* 🔢 MINISTATS */}
             <section
               aria-label="Indicadores rápidos"
               className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
             >
-              <CardInfo icon={BookOpen} titulo="Eventos Concluídos" valor={concluidos} />
-              <CardInfo icon={ClipboardList} titulo="Inscrições em Andamento" valor={inscricoesAtuais} />
-              <CardInfo icon={CalendarDays} titulo="Próximos eventos" valor={proximosEventos} />
-              <CardInfo icon={FileText} titulo="Certificados Disponíveis" valor={certificadosDisponiveis} />
-              <CardInfo icon={CalendarDays} titulo="Avaliações Pendentes" valor={avaliacoesPendentes} />
-              {/* 🆕 6º KPI: Nota */}
-              <CardInfo icon={ClipboardList} titulo="Nota de Participação" valor={notaExibicao} />
+              <MiniStat icon={BookOpen}        titulo="Eventos Concluídos"     valor={concluidos}           descricao="Concluídos no histórico"        accent="from-amber-600 to-orange-600" />
+              <MiniStat icon={ClipboardList}   titulo="Inscrições em Andamento" valor={inscricoesAtuais}    descricao="Inscrições ativas"              accent="from-emerald-600 to-teal-600" />
+              <MiniStat icon={CalendarDays}    titulo="Próximos Eventos"        valor={proximosEventos}     descricao="Agendados para você"            accent="from-indigo-600 to-violet-600" />
+              <MiniStat icon={FileText}        titulo="Certificados Disponíveis" valor={certificadosDisponiveis} descricao="Prontos para download"       accent="from-rose-600 to-pink-600" />
+              <MiniStat icon={CalendarDays}    titulo="Avaliações Pendentes"    valor={avaliacoesPendentes} descricao="Aguardando seu feedback"        accent="from-sky-600 to-cyan-600" />
+              <MiniStat icon={ClipboardList}   titulo="Nota de Participação"    valor={notaExibicao}        descricao="Cálculo sobre encontros passados" accent="from-slate-600 to-gray-700" />
             </section>
 
-            {/* Gráfico de Eventos (participante) */}
+            {/* 📈 Gráfico de Eventos (participante) */}
             <section className="mt-8 grid grid-cols-1 gap-4">
-              <div className="bg-white dark:bg-zinc-800 rounded-xl p-4 shadow">
-                <h2 className="text-center font-semibold mb-2">Gráfico de Eventos</h2>
+              <ChartCard title="Gráfico de Eventos" ariaLabel="Gráfico de eventos do usuário">
                 <GraficoEventos
                   dados={dados?.graficoEventos ?? {}}
                   aria-label="Gráfico de eventos do usuário"
                 />
-              </div>
+              </ChartCard>
             </section>
 
-            {/* Notificações */}
+            {/* 🔔 Notificações */}
             <section className="mt-8">
               <h2 className="text-lg font-semibold text-lousa dark:text-white mb-2">
                 ✨ Últimas Notificações
@@ -259,7 +247,7 @@ export default function DashboardUsuario() {
                   {dados.ultimasNotificacoes.map((n, i) => (
                     <li
                       key={i}
-                      className="bg-white dark:bg-zinc-800 rounded-md shadow px-4 py-2 text-sm"
+                      className="bg-white dark:bg-zinc-800 rounded-xl shadow px-4 py-2 text-sm"
                     >
                       <p className="font-medium">{String(n.mensagem || "")}</p>
                       {n.data && (
@@ -287,24 +275,36 @@ export default function DashboardUsuario() {
   );
 }
 
-/* ---------- UI ---------- */
-function CardInfo({ icon: Icon, titulo, valor }) {
-  const n = Number(valor);
-  const exibicao = Number.isFinite(n) ? valor : (valor ?? "—");
-
+/* ───────────────── UI ───────────────── */
+function MiniStat({ icon: Icon, titulo, valor, descricao, accent = "from-slate-600 to-slate-700" }) {
   return (
     <motion.div
-      className="bg-white dark:bg-zinc-800 rounded-xl shadow p-4 flex flex-col items-center justify-center gap-2 text-center focus-within:ring-2 focus-within:ring-lousa"
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35 }}
-      tabIndex={-1}
-      aria-label={`${titulo}: ${exibicao}`}
-      title={titulo === "Nota de Participação" && exibicao !== "—" ? `Nota calculada sobre encontros já realizados (0–10)` : undefined}
+      className="bg-white dark:bg-zinc-800 rounded-2xl shadow p-4"
+      initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}
+      role="group" aria-label={`${titulo}: ${valor}`}
     >
-      <Icon className="w-8 h-8 text-lousa dark:text-white" aria-hidden="true" />
-      <p className="text-sm text-gray-600 dark:text-gray-300">{titulo}</p>
-      <p className="text-2xl font-bold text-lousa dark:text-white">{exibicao}</p>
+      <div className="flex items-center justify-between mb-2">
+        <div className={`rounded-xl px-2 py-1 text-white text-xs font-medium bg-gradient-to-r ${accent}`}>
+          {titulo}
+        </div>
+        <Icon className="w-5 h-5 text-black/60 dark:text-white/70" aria-hidden="true" />
+      </div>
+      <p className="text-3xl font-extrabold text-lousa dark:text-white leading-tight">{Number.isFinite(Number(valor)) ? valor : (valor ?? "—")}</p>
+      <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">{descricao}</p>
     </motion.div>
+  );
+}
+
+function ChartCard({ title, children, ariaLabel }) {
+  const reduceMotion = useReducedMotion();
+  return (
+    <motion.figure
+      initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: reduceMotion ? 0 : 0.4 }}
+      className="bg-white dark:bg-zinc-800 rounded-2xl p-4 shadow"
+      role="group" aria-label={ariaLabel || title}
+    >
+      <figcaption className="text-center font-semibold mb-3">{title}</figcaption>
+      {children}
+    </motion.figure>
   );
 }

@@ -1,12 +1,11 @@
-// 📁 src/pages/Notificacoes.jsx
-import { useState, useMemo } from "react";
+// ✅ src/pages/Notificacoes.jsx
+import { useState, useMemo, useCallback, useRef } from "react";
 import { Bell, CalendarDays, CheckCircle, Info, Star, Check } from "lucide-react";
 import { toast } from "react-toastify";
 import { motion } from "framer-motion";
 import { apiGet, apiPatch } from "../services/api";
 import { useOnceEffect } from "../hooks/useOnceEffect";
 
-import Breadcrumbs from "../components/Breadcrumbs";
 import Footer from "../components/Footer";
 
 /* =======================
@@ -17,9 +16,7 @@ function formatarDataLocalLegivel(s) {
   const str = String(s);
   const mDate = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (mDate) return `${mDate[3]}/${mDate[2]}/${mDate[1]}`;
-  const mDateTime = str.match(
-    /^(\d{4})-(\d{2})-(\d{2})[T\s]?(\d{2}):(\d{2})(?::(\d{2}))?/
-  );
+  const mDateTime = str.match(/^(\d{4})-(\d{2})-(\d{2})[T\s]?(\d{2}):(\d{2})(?::(\d{2}))?/);
   if (mDateTime) {
     const [, y, mo, d, hh, mm] = mDateTime;
     return `${d}/${mo}/${y} ${hh}:${mm}`;
@@ -34,22 +31,85 @@ function formatarDataLocalLegivel(s) {
   return `${d}/${mo}/${y} ${hh}:${mm}`;
 }
 
+/* =======================
+   HeaderHero padronizado
+   ======================= */
+function HeaderHero({ total = 0, naoLidas = 0, onMarcarTodas, marcandoTodas }) {
+  return (
+    <header className="relative isolate overflow-hidden bg-gradient-to-br from-violet-900 via-fuchsia-800 to-pink-700 text-white" role="banner">
+      <div
+        className="pointer-events-none absolute inset-0 opacity-70"
+        style={{
+          background:
+            "radial-gradient(55% 55% at 50% 0%, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.05) 32%, rgba(255,255,255,0) 60%)",
+        }}
+        aria-hidden="true"
+      />
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-10 md:py-12 min-h-[150px] sm:min-h-[180px]">
+        <div className="flex flex-col items-center text-center gap-3 sm:gap-4">
+          <div className="inline-flex items-center justify-center gap-2">
+            <Bell className="w-6 h-6" aria-hidden="true" />
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Minhas Notificações</h1>
+          </div>
+          <p className="text-sm sm:text-base text-white/90 max-w-2xl">
+            Acompanhe avisos, certificados e atualizações da Escola da Saúde.
+          </p>
+
+          {/* ministats */}
+          <div className="mt-2 sm:mt-3 flex flex-wrap items-center justify-center gap-2">
+            <span className="inline-flex items-center rounded-full bg-white/10 px-3 py-2 text-xs">
+              {total} notificação{total === 1 ? "" : "s"}
+            </span>
+            <span className="inline-flex items-center rounded-full bg-white/10 px-3 py-2 text-xs">
+              {naoLidas} não lida{naoLidas === 1 ? "" : "s"}
+            </span>
+
+            <button
+              type="button"
+              onClick={onMarcarTodas}
+              disabled={marcandoTodas || naoLidas === 0}
+              className={`inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition
+                ${marcandoTodas || naoLidas === 0 ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-white/15 hover:bg-white/25"} text-white`}
+              aria-label="Marcar todas como lidas"
+            >
+              <Check className="w-4 h-4" aria-hidden="true" />
+              {marcandoTodas ? "Marcando…" : "Marcar todas"}
+            </button>
+          </div>
+        </div>
+      </div>
+      <div className="absolute bottom-0 left-0 right-0 h-px bg-white/25" aria-hidden="true" />
+    </header>
+  );
+}
+
+/* =======================
+   Página
+   ======================= */
 export default function Notificacoes() {
   const [notificacoes, setNotificacoes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [marcando, setMarcando] = useState(null);
   const [marcandoTodas, setMarcandoTodas] = useState(false);
+  const liveRef = useRef(null);
+
+  const setLive = useCallback((msg) => {
+    if (liveRef.current) liveRef.current.textContent = msg;
+  }, []);
 
   async function carregarNotificacoes(signal) {
     try {
       setLoading(true);
+      setLive("Carregando notificações…");
       const data = await apiGet("/api/notificacoes", { signal });
       setNotificacoes(Array.isArray(data) ? data : []);
+      setLive("Notificações carregadas.");
     } catch (error) {
       if (error?.name !== "AbortError") {
         toast.error("❌ Erro ao carregar notificações.");
         console.error("Erro:", error);
         setNotificacoes([]);
+        setLive("Falha ao carregar notificações.");
       }
     } finally {
       setLoading(false);
@@ -63,7 +123,7 @@ export default function Notificacoes() {
     return () => ac.abort();
   }, []);
 
-  // ───────────── Helpers ─────────────
+  // ───────── Helpers ─────────
   const isNaoLida = (n) => {
     if (typeof n?.lida === "boolean") return !n.lida;
     if (typeof n?.lido === "boolean") return !n.lido;
@@ -127,7 +187,12 @@ export default function Notificacoes() {
       }
       toast.success("✅ Notificações marcadas como lidas.");
       setNotificacoes((prev) =>
-        prev.map((n) => ({ ...n, lida: true, lido: true, lida_em: n.lida_em ?? new Date().toISOString() }))
+        prev.map((n) => ({
+          ...n,
+          lida: true,
+          lido: true,
+          lida_em: n.lida_em ?? new Date().toISOString(),
+        }))
       );
       if (typeof window.atualizarContadorNotificacoes === "function") {
         window.atualizarContadorNotificacoes();
@@ -137,38 +202,29 @@ export default function Notificacoes() {
     }
   }
 
-  const lista = useMemo(
-    () => [...notificacoes].sort((a, b) => (isNaoLida(b) ? 1 : 0) - (isNaoLida(a) ? 1 : 0)),
-    [notificacoes]
-  );
+  // ordena: não lidas primeiro, depois por data desc se existir
+  const lista = useMemo(() => {
+    const getDate = (n) => new Date(n.data || n.criada_em || n.criadaEm || 0).getTime();
+    return [...notificacoes].sort((a, b) => {
+      const unreadDelta = (isNaoLida(b) ? 1 : 0) - (isNaoLida(a) ? 1 : 0);
+      if (unreadDelta !== 0) return unreadDelta;
+      return getDate(b) - getDate(a);
+    });
+  }, [notificacoes]);
 
-  // ───────────── Render ─────────────
+  const total = lista.length;
+  const naoLidas = lista.filter(isNaoLida).length;
+
+  // ───────── Render ─────────
   return (
     <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900">
-      {/* 🟣 HeaderHero exclusivo desta página (violeta → fúcsia → rosa) */}
-      <header
-        className="relative w-full text-white bg-gradient-to-r from-violet-600 via-fuchsia-600 to-pink-500 py-10 px-6 sm:py-16 sm:px-8 shadow-lg"
-        aria-labelledby="header-notificacoes-title"
-      >
-        <motion.div
-          initial={{ opacity: 0, y: 15 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6 }}
-          className="max-w-5xl mx-auto text-center flex flex-col items-center justify-center"
-        >
-          <Bell size={48} strokeWidth={1.5} className="mb-3 animate-pulse drop-shadow-md" aria-hidden="true" />
-          <h1 id="header-notificacoes-title" className="text-3xl sm:text-4xl font-bold tracking-tight">
-            Minhas Notificações
-          </h1>
-          <p className="mt-2 text-base sm:text-lg text-white/90 max-w-2xl">
-            Acompanhe avisos, certificados e atualizações da Escola da Saúde.
-          </p>
-        </motion.div>
-      </header>
+      {/* HeaderHero 3 cores (violet) + ministats e ação */}
+      <HeaderHero total={total} naoLidas={naoLidas} onMarcarTodas={marcarTodas} marcandoTodas={marcandoTodas} />
 
       <main role="main" className="flex-1">
         <section className="p-4 sm:p-6 md:p-8 max-w-4xl mx-auto">
-          <Breadcrumbs trilha={[{ label: "Início", href: "/" }, { label: "Notificações" }]} />
+          {/* live region acessível */}
+          <p ref={liveRef} className="sr-only" aria-live="polite" />
 
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl sm:text-2xl font-bold flex items-center gap-2 text-lousa dark:text-white">
@@ -177,7 +233,7 @@ export default function Notificacoes() {
 
             <button
               onClick={marcarTodas}
-              disabled={marcandoTodas || !lista.some(isNaoLida)}
+              disabled={marcandoTodas || naoLidas === 0}
               className="text-sm px-3 py-1.5 rounded-full bg-amber-700 text-white hover:bg-amber-800 disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-700"
               aria-label="Marcar todas as notificações como lidas"
             >
@@ -192,9 +248,7 @@ export default function Notificacoes() {
           )}
 
           {!loading && lista.length === 0 && (
-            <p className="text-sm text-zinc-600 dark:text-zinc-400">
-              Você não possui notificações.
-            </p>
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">Você não possui notificações.</p>
           )}
 
           <div role="list" className="space-y-3">
@@ -212,7 +266,7 @@ export default function Notificacoes() {
                   <div className="flex items-start gap-3">
                     <div className="shrink-0 mt-0.5">{obterIcone(n.tipo)}</div>
 
-                    <div className="flex-1">
+                    <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         {n.titulo && (
                           <p className="text-zinc-900 dark:text-white font-semibold leading-tight">
@@ -227,7 +281,7 @@ export default function Notificacoes() {
                       </div>
 
                       {n.mensagem && (
-                        <p className="text-zinc-800 dark:text-white mt-0.5">
+                        <p className="text-zinc-800 dark:text-white mt-0.5 break-words">
                           {String(n.mensagem)}
                         </p>
                       )}
@@ -248,11 +302,7 @@ export default function Notificacoes() {
                                 : "bg-gray-200 text-gray-700 dark:bg-zinc-700 dark:text-gray-100 cursor-default"
                             }`}
                           disabled={!naoLida || marcando === n.id}
-                          aria-label={
-                            naoLida
-                              ? (n.link ? "Ver mais e marcar como lida" : "Marcar como lida")
-                              : "Notificação já lida"
-                          }
+                          aria-label={naoLida ? (n.link ? "Ver mais e marcar como lida" : "Marcar como lida") : "Notificação já lida"}
                         >
                           <Check size={14} />
                           {marcando === n.id

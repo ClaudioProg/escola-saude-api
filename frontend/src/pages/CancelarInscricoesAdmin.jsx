@@ -17,7 +17,7 @@ import {
   Filter,
 } from "lucide-react";
 
-/* ---------------- HeaderHero (padronizado) ---------------- */
+/* ───────────────── HeaderHero (padronizado: 3 cores fixas, ícone+título mesma linha) ───────────────── */
 function HeaderHero({ totalEventos, totalTurmas, onSearch, searchValue }) {
   const buscaRef = useRef(null);
   return (
@@ -26,19 +26,19 @@ function HeaderHero({ totalEventos, totalTurmas, onSearch, searchValue }) {
       role="banner"
     >
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
-        {/* ⬇️ centralizamos o conteúdo e o texto */}
         <div className="flex flex-col items-center gap-3 text-center">
           <div className="inline-flex items-center justify-center gap-2">
-            <XCircle className="w-5 h-5" />
+            <XCircle className="w-5 h-5" aria-hidden="true" />
             <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">
               Cancelar Inscrições
             </h1>
           </div>
+
           <p className="text-sm text-white/90">
             Expanda um evento, selecione a turma e gerencie as inscrições dos participantes.
           </p>
 
-          {/* Busca / KPIs rápidos */}
+          {/* Busca + KPIs rápidos */}
           <div className="mt-2 grid w-full grid-cols-1 sm:grid-cols-3 gap-2">
             <div className="sm:col-span-2">
               <label htmlFor="busca" className="sr-only">Buscar por evento ou local</label>
@@ -58,9 +58,10 @@ function HeaderHero({ totalEventos, totalTurmas, onSearch, searchValue }) {
                 />
               </div>
             </div>
+
             <div className="flex items-center justify-center sm:justify-start gap-2">
               <span className="inline-flex items-center gap-1 text-sm bg-white/10 px-3 py-2 rounded-xl">
-                <Filter className="w-4 h-4" /> {totalEventos} eventos
+                <Filter className="w-4 h-4" aria-hidden="true" /> {totalEventos} eventos
               </span>
               <span className="hidden sm:inline-flex items-center gap-1 text-sm bg-white/10 px-3 py-2 rounded-xl">
                 {totalTurmas} turmas
@@ -73,7 +74,7 @@ function HeaderHero({ totalEventos, totalTurmas, onSearch, searchValue }) {
   );
 }
 
-/* Pequeno Modal acessível (sem dependências) */
+/* ───────────────── Modal de confirmação (leve e acessível) ───────────────── */
 function ConfirmModal({ open, title, message, onCancel, onConfirm, confirmLabel = "Confirmar", danger }) {
   const ref = useRef(null);
   useEffect(() => {
@@ -85,7 +86,9 @@ function ConfirmModal({ open, title, message, onCancel, onConfirm, confirmLabel 
     }
     return () => { document.body.style.overflow = ""; };
   }, [open]);
+
   if (!open) return null;
+
   return (
     <div
       role="dialog"
@@ -124,11 +127,12 @@ function ConfirmModal({ open, title, message, onCancel, onConfirm, confirmLabel 
   );
 }
 
+/* ───────────────── Página ───────────────── */
 export default function CancelarInscricoesAdmin() {
   const [eventos, setEventos] = useState([]);
   const [loadingEventos, setLoadingEventos] = useState(true);
 
-  // mapas de estado por id
+  // estados por id
   const [abertoEvento, setAbertoEvento] = useState({});
   const [turmasPorEvento, setTurmasPorEvento] = useState({});
   const [loadingTurmas, setLoadingTurmas] = useState({});
@@ -146,15 +150,18 @@ export default function CancelarInscricoesAdmin() {
 
   const setLive = (msg) => { if (liveRef.current) liveRef.current.textContent = msg; };
 
-  // carregar eventos
+  /* Carrega eventos */
   useEffect(() => {
     (async () => {
       try {
         setLoadingEventos(true);
         setLive("Carregando eventos…");
         let data = [];
-        try { data = await apiGet(`/api/eventos?ordenar=recentes`, { on403: "silent" }); }
-        catch { data = await apiGet(`/api/eventos`, { on403: "silent" }); }
+        try {
+          data = await apiGet(`/api/eventos?ordenar=recentes`, { on403: "silent" });
+        } catch {
+          data = await apiGet(`/api/eventos`, { on403: "silent" });
+        }
         setEventos(Array.isArray(data) ? data : []);
         setLive(`Eventos carregados: ${Array.isArray(data) ? data.length : 0}.`);
       } catch (e) {
@@ -167,7 +174,7 @@ export default function CancelarInscricoesAdmin() {
     })();
   }, []);
 
-  // filtro de eventos por texto (título/local)
+  /* Filtro por texto (título/local) */
   const eventosFiltrados = useMemo(() => {
     const q = busca.trim().toLowerCase();
     if (!q) return eventos;
@@ -177,15 +184,18 @@ export default function CancelarInscricoesAdmin() {
   }, [eventos, busca]);
 
   async function toggleEvento(eventoId) {
-    setAbertoEvento((prev) => ({ ...prev, [eventoId]: !prev[eventoId] }));
-    const abriu = !abertoEvento[eventoId];
-    if (abriu && !turmasPorEvento[eventoId]) {
+    const willOpen = !abertoEvento[eventoId];
+    setAbertoEvento((prev) => ({ ...prev, [eventoId]: willOpen }));
+    if (willOpen && !turmasPorEvento[eventoId]) {
       try {
         setLoadingTurmas((p) => ({ ...p, [eventoId]: true }));
         setLive(`Carregando turmas do evento ${eventoId}…`);
         let turmas = [];
-        try { turmas = await apiGet(`/api/turmas?evento_id=${eventoId}`, { on403: "silent" }); }
-        catch { turmas = await apiGet(`/api/turmas/evento/${eventoId}`, { on403: "silent" }); }
+        try {
+          turmas = await apiGet(`/api/turmas?evento_id=${eventoId}`, { on403: "silent" });
+        } catch {
+          turmas = await apiGet(`/api/turmas/evento/${eventoId}`, { on403: "silent" });
+        }
         if (!Array.isArray(turmas)) turmas = [];
         setTurmasPorEvento((prev) => ({ ...prev, [eventoId]: turmas }));
         setLive(`Turmas do evento ${eventoId} carregadas: ${turmas.length}.`);
@@ -200,9 +210,9 @@ export default function CancelarInscricoesAdmin() {
   }
 
   async function toggleTurma(turmaId) {
-    setAbertaTurma((prev) => ({ ...prev, [turmaId]: !prev[turmaId] }));
-    const abriu = !abertaTurma[turmaId];
-    if (abriu && !inscritosPorTurma[turmaId]) {
+    const willOpen = !abertaTurma[turmaId];
+    setAbertaTurma((prev) => ({ ...prev, [turmaId]: willOpen }));
+    if (willOpen && !inscritosPorTurma[turmaId]) {
       await carregarInscritos(turmaId);
     }
   }
@@ -214,7 +224,9 @@ export default function CancelarInscricoesAdmin() {
       const inscritos = await apiGet(`/api/inscricoes/turma/${turmaId}`, { on403: "silent" });
       setInscritosPorTurma((prev) => ({ ...prev, [turmaId]: Array.isArray(inscritos) ? inscritos : [] }));
       setSelecionados((prev) => ({ ...prev, [turmaId]: new Set() }));
-      setLive(`Inscritos da turma ${turmaId} carregados: ${Array.isArray(inscritos) ? inscritos.length : 0}.`);
+      setLive(
+        `Inscritos da turma ${turmaId} carregados: ${Array.isArray(inscritos) ? inscritos.length : 0}.`
+      );
     } catch (e) {
       const msg = e?.response?.data?.erro || e?.message || "Falha ao buscar inscritos.";
       toast.error(msg);
@@ -242,12 +254,10 @@ export default function CancelarInscricoesAdmin() {
     setSelecionados((prev) => ({ ...prev, [turmaId]: new Set() }));
   }
 
-  // cancelamento individual (abre modal)
+  // confirmações
   function confirmarCancelarIndividual(turmaId, usuarioId) {
     setModal({ open: true, turmaId, usuarioIds: [usuarioId] });
   }
-
-  // cancelamento em lote (abre modal)
   function confirmarCancelarLote(turmaId) {
     const setSel = selecionados[turmaId] || new Set();
     if (setSel.size === 0) {
@@ -259,9 +269,12 @@ export default function CancelarInscricoesAdmin() {
 
   async function efetivarCancelamento() {
     const { turmaId, usuarioIds } = modal;
-    if (!turmaId || !usuarioIds.length) { setModal({ open: false, turmaId: null, usuarioIds: [] }); return; }
+    if (!turmaId || !usuarioIds.length) {
+      setModal({ open: false, turmaId: null, usuarioIds: [] });
+      return;
+    }
 
-    // otimista
+    // atualização otimista
     setInscritosPorTurma((prev) => {
       const atuais = prev[turmaId] || [];
       const rest = atuais.filter((u) => !usuarioIds.includes(u.usuario_id));
@@ -280,7 +293,7 @@ export default function CancelarInscricoesAdmin() {
       );
       setLive("Cancelamento concluído.");
     } catch (e) {
-      await carregarInscritos(turmaId); // rollback com recarregamento
+      await carregarInscritos(turmaId); // rollback com recarga
       const msg = e?.response?.data?.erro || e?.message || "Erro ao cancelar inscrição.";
       toast.error(msg);
       setLive("Falha ao cancelar. Lista recarregada.");
@@ -304,7 +317,7 @@ export default function CancelarInscricoesAdmin() {
       {/* Live region acessível */}
       <p ref={liveRef} className="sr-only" aria-live="polite" />
 
-      {/* HeaderHero */}
+      {/* Header */}
       <HeaderHero
         totalEventos={totalEventos}
         totalTurmas={totalTurmas}
@@ -312,7 +325,7 @@ export default function CancelarInscricoesAdmin() {
         searchValue={busca}
       />
 
-      {/* barra de progresso fina */}
+      {/* Barra de progresso fina */}
       {anyLoading && (
         <div
           className="sticky top-0 left-0 w-full h-1 bg-emerald-100 z-40"
@@ -328,7 +341,6 @@ export default function CancelarInscricoesAdmin() {
       {/* Conteúdo */}
       <main className="flex-1 max-w-6xl mx-auto px-4 sm:px-6 py-6">
         <section className="bg-white dark:bg-zinc-900 rounded-2xl shadow ring-1 ring-black/5 overflow-hidden">
-          {/* Lista de eventos */}
           {loadingEventos ? (
             <div className="p-6 flex items-center justify-center">
               <Spinner />
@@ -363,10 +375,10 @@ export default function CancelarInscricoesAdmin() {
                         </span>
                       </div>
                       <div className="text-xs text-gray-600 dark:text-gray-300 flex items-center gap-2 mt-0.5">
-                        <Building2 className="w-3.5 h-3.5" />
+                        <Building2 className="w-3.5 h-3.5" aria-hidden="true" />
                         <span>{ev.local || "Local a definir"}</span>
                         <span className="mx-1">•</span>
-                        <CalendarClock className="w-3.5 h-3.5" />
+                        <CalendarClock className="w-3.5 h-3.5" aria-hidden="true" />
                         <span>Carga horária: {ev.carga_horaria_total ?? ev.carga_horaria ?? "—"}</span>
                       </div>
                     </div>
@@ -378,7 +390,9 @@ export default function CancelarInscricoesAdmin() {
                       {carregandoTurmas ? (
                         <div className="p-4 pl-10"><Spinner pequeno /></div>
                       ) : turmas.length === 0 ? (
-                        <div className="p-4 pl-10 text-sm text-gray-600 dark:text-gray-300">Nenhuma turma para este evento.</div>
+                        <div className="p-4 pl-10 text-sm text-gray-600 dark:text-gray-300">
+                          Nenhuma turma para este evento.
+                        </div>
                       ) : (
                         turmas.map((t) => {
                           const aberta = !!abertaTurma[t.id];
@@ -409,7 +423,9 @@ export default function CancelarInscricoesAdmin() {
                                   </div>
                                   <div className="text-xs text-gray-600 dark:text-gray-300">
                                     {t.data_inicio
-                                      ? `Início: ${t.data_inicio} ${t.horario_inicio ? `às ${String(t.horario_inicio).slice(0,5)}` : ""}`
+                                      ? `Início: ${t.data_inicio} ${
+                                          t.horario_inicio ? `às ${String(t.horario_inicio).slice(0, 5)}` : ""
+                                        }`
                                       : "Datas a definir"}
                                   </div>
                                 </div>
@@ -456,7 +472,9 @@ export default function CancelarInscricoesAdmin() {
                                             <th className="px-3 py-2 font-medium w-10">
                                               <span className="sr-only">Selecionar</span>
                                             </th>
-                                            <th className="px-3 py-2 font-medium"><Users className="inline w-4 h-4 mr-1" /> Nome</th>
+                                            <th className="px-3 py-2 font-medium">
+                                              <Users className="inline w-4 h-4 mr-1" aria-hidden="true" /> Nome
+                                            </th>
                                             <th className="px-3 py-2 font-medium">CPF</th>
                                             <th className="px-3 py-2 font-medium">Presente hoje</th>
                                             <th className="px-3 py-2 font-medium text-right">Ações</th>

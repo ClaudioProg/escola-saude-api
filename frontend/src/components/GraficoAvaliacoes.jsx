@@ -17,7 +17,8 @@ function toNumber(v) {
   return Number.isFinite(n) ? n : 0;
 }
 function normKey(s) {
-  if (!s) return "";
+  if (s === 0) return "0";
+  if (!s && s !== 0) return "";
   return s
     .toString()
     .normalize("NFD")
@@ -27,11 +28,22 @@ function normKey(s) {
 }
 function mapLabelToKey(label) {
   const k = normKey(label);
+
+  // aceita letras, palavras e números (string/number)
   if (["otimo", "excelente", "muito bom", "5", "a"].includes(k)) return "otimo";
   if (["bom", "4", "b"].includes(k)) return "bom";
-  if (["regular, mediano"].includes(k) || k === "regular" || k === "3" || k === "c") return "regular";
+  if (["regular", "mediano", "3", "c"].includes(k)) return "regular";
   if (["ruim", "2", "d"].includes(k)) return "ruim";
-  if (["pessimo", "1", "e"].includes(k) || k === "péssimo") return "pessimo";
+  if (["pessimo", "1", "e"].includes(k)) return "pessimo";
+
+  // tenta mapear números puros (ex.: 5, 4, 3…)
+  const asNum = Number(k);
+  if (asNum === 5) return "otimo";
+  if (asNum === 4) return "bom";
+  if (asNum === 3) return "regular";
+  if (asNum === 2) return "ruim";
+  if (asNum === 1) return "pessimo";
+
   return null;
 }
 
@@ -48,7 +60,8 @@ export function normalizeAvaliacoes(input) {
         item?.categoria ??
         item?.tipo ??
         item?.nome ??
-        item?.classificacao;
+        item?.classificacao ??
+        item?.nivel;
       const key = mapLabelToKey(label);
       const valor =
         item?.valor ??
@@ -56,7 +69,8 @@ export function normalizeAvaliacoes(input) {
         item?.quantidade ??
         item?.count ??
         item?.total ??
-        item?.numero;
+        item?.numero ??
+        0;
       if (key) acc[key] += toNumber(valor);
     }
     return acc;
@@ -68,19 +82,20 @@ export function normalizeAvaliacoes(input) {
   const pickAliasMax = (aliases) => {
     let best = 0;
     for (const a of aliases) {
-      if (a in input) best = Math.max(best, toNumber(input[a]));
-      else {
+      if (a in input) {
+        best = Math.max(best, toNumber(input[a]));
+      } else {
         const m = keys.find((kk) => normKey(kk) === normKey(a));
         if (m) best = Math.max(best, toNumber(input[m]));
       }
     }
     return best;
   };
-  out.otimo   = pickAliasMax(["otimo", "ótimo", "excelente", "Excelente"]);
-  out.bom     = pickAliasMax(["bom", "Bom"]);
-  out.regular = pickAliasMax(["regular", "Regular", "mediano", "Mediano"]);
-  out.ruim    = pickAliasMax(["ruim", "Ruim"]);
-  out.pessimo = pickAliasMax(["pessimo", "péssimo", "Pessimo", "Péssimo"]);
+  out.otimo   = pickAliasMax(["otimo", "ótimo", "excelente", "Excelente", "5", "A"]);
+  out.bom     = pickAliasMax(["bom", "Bom", "4", "B"]);
+  out.regular = pickAliasMax(["regular", "Regular", "mediano", "Mediano", "3", "C"]);
+  out.ruim    = pickAliasMax(["ruim", "Ruim", "2", "D"]);
+  out.pessimo = pickAliasMax(["pessimo", "péssimo", "Pessimo", "Péssimo", "1", "E"]);
   return out;
 }
 
@@ -113,56 +128,65 @@ export default function GraficoAvaliacoes({
     );
   }
 
-  // Paleta padrão (boa em light/dark e daltônico-friendly o suficiente para 5 fatias)
-  const colors = palette ?? [
-    "#065f46", // emerald-800 (Ótimo)
-    "#b45309", // amber-700 (Bom)
-    "#1e3a8a", // blue-900 (Regular)
-    "#b91c1c", // red-700 (Ruim)
-    "#6d28d9", // violet-700 (Péssimo)
-  ];
+  // Paleta padrão (boa em light/dark e com contraste):
+  const colors = useMemo(
+    () =>
+      palette ?? [
+        "#065f46", // emerald-800 (Ótimo)
+        "#b45309", // amber-700   (Bom)
+        "#1e3a8a", // blue-900    (Regular)
+        "#b91c1c", // red-700     (Ruim)
+        "#6d28d9", // violet-700  (Péssimo)
+      ],
+    [palette]
+  );
 
-  const data = {
-    labels: ["Ótimo", "Bom", "Regular", "Ruim", "Péssimo"],
-    datasets: [
-      {
-        label: "Distribuição de Avaliações",
-        data: [norm.otimo, norm.bom, norm.regular, norm.ruim, norm.pessimo],
-        backgroundColor: colors,
-        borderColor: "#ffffff",               // borda branca para contraste em dark
-        borderWidth: 2,
-        hoverOffset: reduceMotion ? 0 : 8,
-      },
-    ],
-  };
+  const data = useMemo(
+    () => ({
+      labels: ["Ótimo", "Bom", "Regular", "Ruim", "Péssimo"],
+      datasets: [
+        {
+          label: "Distribuição de Avaliações",
+          data: [norm.otimo, norm.bom, norm.regular, norm.ruim, norm.pessimo],
+          backgroundColor: colors,
+          borderColor: "#ffffff", // borda branca p/ contraste
+          borderWidth: 2,
+          hoverOffset: reduceMotion ? 0 : 8,
+        },
+      ],
+    }),
+    [norm, colors, reduceMotion]
+  );
 
-  const options = {
-    responsive: true,
-    maintainAspectRatio: false,              // permite container controlar a altura
-    animation: reduceMotion ? false : { duration: 600 },
-    plugins: {
-      legend: { display: showLegend, position: "bottom" },
-      tooltip: {
-        callbacks: {
-          label: (ctx) => {
-            const sum = (ctx.dataset.data || []).reduce((a, b) => a + b, 0);
-            const value = Number(ctx.raw) || 0;
-            const percent = sum ? ((value / sum) * 100).toFixed(1) : "0.0";
-            return `${ctx.label}: ${value} (${percent}%)`;
+  const options = useMemo(
+    () => ({
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: reduceMotion ? false : { duration: 600 },
+      plugins: {
+        legend: { display: showLegend, position: "bottom" },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const sum = (ctx.dataset.data || []).reduce((a, b) => a + b, 0);
+              const value = Number(ctx.raw) || 0;
+              const percent = sum ? ((value / sum) * 100).toFixed(1) : "0.0";
+              return `${ctx.label}: ${value} (${percent}%)`;
+            },
           },
         },
+        title: { display: false },
       },
-      // melhora leitura de rótulos por leitores de tela
-      title: { display: false },
-    },
-  };
+    }),
+    [reduceMotion, showLegend]
+  );
 
   return (
     <div
       className={`relative w-full ${className}`}
       style={{ minHeight: height }}
       role="img"
-      aria-label="Gráfico de pizza com a distribuição das avaliações: ótimo, bom, regular, ruim e péssimo."
+      aria-label={`Gráfico de pizza com a distribuição de ${total} avaliações: ótimo, bom, regular, ruim e péssimo.`}
     >
       <Pie data={data} options={options} />
     </div>
