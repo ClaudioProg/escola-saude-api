@@ -17,13 +17,35 @@ import ModalInscreverTrabalho from "../components/ModalInscreverTrabalho";
 import Footer from "../components/Footer";
 
 /* ───────────────── Helpers ───────────────── */
-function toBrDateOnly(input) {
-  if (!input) return "—";
-  const s = String(input).trim();
-  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
-  return s;
-}
+// ⚠️ SEM fuso-horário: apenas reformatamos o texto vindo do backend.
+// Aceita:
+//  - "YYYY-MM-DD"
+//  - "YYYY-MM-DD HH:MM"  | "YYYY-MM-DD HH:MM:SS"
+//  - "YYYY-MM-DDTHH:MM"  | "YYYY-MM-DDTHH:MM:SS"
+// Se já vier em BR, devolvemos como está.
+function toBrDateTimeSafe(input) {
+   if (!input) return "—";
+    const s = String(input).trim();
+    // já está no formato BR? (procura dd/mm/aaaa)
+   if (/^\d{2}\/\d{2}\/\d{4}/.test(s)) return s;
+  
+    // YYYY-MM-DD [T]HH:MM[:SS]
+    const mDT = s.match(
+      /^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})(?::(\d{2}))?/
+    );
+    if (mDT) {
+      const [, yy, mm, dd, hh, mi] = mDT;
+      return `${dd}/${mm}/${yy} ${hh}:${mi}`;
+    }
+  
+    // YYYY-MM-DD
+    const mD = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (mD) {
+      const [, yy, mm, dd] = mD;
+      return `${dd}/${mm}/${yy}`;
+    }
+    return s; // fallback cru
+  }
 
 /* ───────────────── HeaderHero ───────────────── */
 function HeaderHero() {
@@ -258,8 +280,9 @@ export default function UsuarioSubmissoes() {
               <div className="grid md:grid-cols-2 gap-5">
                 {chamadas.map((ch) => {
                   const temModelo = !!modeloMap[ch.id];
-                  const prazoStr = ch.prazo_final_br || ch.prazo_final || ch.prazoFinal || ch.prazo || null;
-                  const prazoFmt = toBrDateOnly(prazoStr);
+                  const prazoStr =
+  ch.prazo_final_br || ch.prazo_final || ch.prazoFinal || ch.prazo || null;
+const prazoFmt = toBrDateTimeSafe(prazoStr);
                   const carregando = !!baixandoMap[ch.id];
                   const dentro = !!(ch?.dentro_prazo ?? ch?.dentroPrazo);
 
@@ -274,8 +297,9 @@ export default function UsuarioSubmissoes() {
                             </p>
                             <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-xs font-medium">
                               {dentro ? <Chip tone="verde" title="Dentro do prazo">Dentro do prazo</Chip> : <Chip tone="vermelho" title="Fora do prazo">Fora do prazo</Chip>}
-                              <span className="text-slate-600 dark:text-slate-300">Prazo final: <strong>{prazoFmt}</strong></span>
-                            </div>
+                              <span className="text-slate-600 dark:text-slate-300">
+  Prazo final (data e horário): <strong>{prazoFmt}</strong>
+</span>                            </div>
                           </div>
 
                           <div className="mt-4 flex flex-wrap gap-3 items-center justify-center sm:justify-start">

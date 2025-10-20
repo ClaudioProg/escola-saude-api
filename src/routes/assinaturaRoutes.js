@@ -31,14 +31,30 @@ router.use(requireAuth);
 /**
  * 🖋️ Obter assinatura do usuário autenticado
  * GET /api/assinatura
+ * - Se usuário for instrutor/administrador e NÃO tiver assinatura,
+ *   o controller auto-gera uma assinatura (PNG em dataURL) e persiste.
+ * - Retorna { assinatura: string|null }
  */
-router.get("/", ctrl.getAssinatura);
+router.get("/", (req, res, next) => {
+  // evita cache agressivo do navegador
+  res.setHeader("Cache-Control", "no-store, max-age=0");
+  return ctrl.getAssinatura(req, res, next);
+});
 
 /**
- * ✍️ Salvar/atualizar assinatura do usuário autenticado
+ * ✍️ Salvar/atualizar assinatura do usuário autenticado (dataURL)
  * POST /api/assinatura
+ * body: { assinatura: "data:image/png;base64,..." }
  */
 router.post("/", ctrl.salvarAssinatura);
+
+/**
+ * ⚡ Forçar autogeração idempotente (atalho)
+ * POST /api/assinatura/auto
+ * - Útil para o front acionar explicitamente a criação automática quando quiser.
+ * - Apenas delega ao getAssinatura (que já é idempotente).
+ */
+router.post("/auto", (req, res, next) => ctrl.getAssinatura(req, res, next));
 
 /**
  * 📜 Listar assinaturas cadastradas (metadados para dropdown)

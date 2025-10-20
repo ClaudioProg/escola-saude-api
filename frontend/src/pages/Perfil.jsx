@@ -127,6 +127,9 @@ export default function Perfil() {
   const [modalAberto, setModalAberto] = useState(false);
   const [carregandoListas, setCarregandoListas] = useState(true);
 
+  // assinatura (para exibir o aviso de política)
+  const [temAssinatura, setTemAssinatura] = useState(null); // null=indefinido, true/false após checar
+
   // erros por campo
   const [eNome, setENome] = useState("");
   const [eEmail, setEEmail] = useState("");
@@ -251,6 +254,19 @@ export default function Perfil() {
     return () => {
       alive = false;
     };
+  }, []);
+
+  // 2.1) checar assinatura (para mostrar aviso)
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await apiGet("/api/assinatura", { on401: "silent", on403: "silent" });
+        const assinatura = r?.assinatura || r?.data?.assinatura || null;
+        setTemAssinatura(!!assinatura);
+      } catch {
+        setTemAssinatura(false);
+      }
+    })();
   }, []);
 
   // listas auxiliares
@@ -472,6 +488,32 @@ export default function Perfil() {
           ) : (
             <div role="alert" aria-live="polite" className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-red-700 text-sm dark:bg-red-900/20 dark:border-red-800 dark:text-red-300">
               <strong className="font-medium">Ação necessária:</strong> Preencha o cadastro para acesso completo.
+            </div>
+          )}
+
+          {/* 🔔 Política de assinatura automática para instrutores/administradores */}
+          {podeGerenciarAssinatura && (
+            <div
+              role="status"
+              aria-live="polite"
+              className={`rounded-md px-4 py-3 text-sm ${
+                temAssinatura === false
+                  ? "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-200"
+                  : "border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-900/40 dark:bg-sky-900/20 dark:text-sky-200"
+              }`}
+            >
+              <strong className="font-medium">Assinatura digital:</strong>{" "}
+              {temAssinatura === false ? (
+                <>
+                  enquanto você não criar a sua assinatura, utilizaremos automaticamente <em>seu nome em letra cursiva</em> como assinatura provisória.
+                  Para trocar, clique em <em>Gerenciar assinatura</em>, use a opção <em>Limpar</em> e crie sua assinatura própria.
+                </>
+              ) : (
+                <>
+                  se você ainda não criou uma assinatura própria, estamos utilizando seu <em>nome em letra cursiva</em> como assinatura provisória.
+                  Para alterar, clique em <em>Gerenciar assinatura</em>, depois <em>Limpar</em> e crie sua assinatura.
+                </>
+              )}
             </div>
           )}
 
@@ -725,7 +767,7 @@ export default function Perfil() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
+              <label className="block text sm font-medium text-gray-700 dark:text-gray-200">
                 Deficiência <span className="text-red-600">*</span>
               </label>
               <select
