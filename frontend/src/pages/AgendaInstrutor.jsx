@@ -146,7 +146,8 @@ function MiniStat({
 }
 
 /* ───────── Badge (chip) clicável no dia ───────── */
-function DiaBadge({ evento, onClick }) {
+/* ───────── Badge (chip) NÃO-<button> para usar dentro do calendário ───────── */
+function DiaBadge({ evento, onActivate }) {
   const titulo = String(evento?.titulo || evento?.nome || "Evento").slice(0, 28);
   const hi = hh(evento?.horario_inicio, "00:00");
   const hf = hh(evento?.horario_fim, "23:59");
@@ -156,21 +157,31 @@ function DiaBadge({ evento, onClick }) {
   const st = deriveStatus(evento);
   const bg = colorByStatus[st] || colorByStatus.programado;
 
+  const handleKey = (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onActivate?.();
+    }
+  };
+
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <span
+      role="button"
+      tabIndex={0}
+      onClick={onActivate}
+      onKeyDown={handleKey}
       title={evento?.titulo}
-      className="max-w-full truncate inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold focus:outline-none focus:ring-2 focus:ring-cyan-600"
+      aria-label={`${titulo}${horaStr ? `, ${horaStr}` : ""}`}
+      className="max-w-full truncate inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold focus:outline-none focus:ring-2 focus:ring-cyan-600 cursor-pointer"
       style={{
-        backgroundColor: `${bg}1A`, // ~10% alpha
+        backgroundColor: `${bg}1A`,        // ~10% alpha
         color: bg,
-        border: `1px solid ${bg}55`, // ~33% alpha
+        border: `1px solid ${bg}55`,       // ~33% alpha
       }}
     >
       <span className="truncate">{titulo}</span>
       {horaStr && <span className="opacity-80">• {horaStr}</span>}
-    </button>
+    </span>
   );
 }
 
@@ -386,34 +397,42 @@ export default function AgendaInstrutor() {
                   const key = format(date, "yyyy-MM-dd");
                   const lista = eventosPorData[key] || [];
                   if (!lista.length) return null;
-
-                  // mostra até 3 chips + "+N"
+                
                   const maxChips = 3;
                   const visiveis = lista.slice(0, maxChips);
                   const resto = Math.max(0, lista.length - visiveis.length);
-
+                
                   return (
                     <div className="mt-1 px-1 flex gap-1 justify-center flex-wrap">
                       {visiveis.map((ev, idx) => (
                         <DiaBadge
                           key={`${ev.id ?? ev.titulo}-${key}-${idx}`}
                           evento={ev}
-                          onClick={() => setSelecionado(ev)}
+                          onActivate={() => setSelecionado(ev)}
                         />
                       ))}
                       {resto > 0 && (
-                        <button
-                          type="button"
+                        <span
+                          role="button"
+                          tabIndex={0}
                           onClick={() => setSelecionado(lista[0])}
-                          className="px-2 py-0.5 rounded-full text-[10px] font-semibold text-cyan-700 bg-cyan-50 border border-cyan-200 hover:bg-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-600"
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              setSelecionado(lista[0]);
+                            }
+                          }}
+                          className="px-2 py-0.5 rounded-full text-[10px] font-semibold text-cyan-700 bg-cyan-50 border border-cyan-200 hover:bg-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-600 cursor-pointer"
                           title={`Mais ${resto} evento(s) neste dia`}
+                          aria-label={`Mais ${resto} evento(s) neste dia`}
                         >
                           +{resto}
-                        </button>
+                        </span>
                       )}
                     </div>
                   );
                 }}
+                
               />
             )}
           </div>

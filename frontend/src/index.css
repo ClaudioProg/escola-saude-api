@@ -3,6 +3,12 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ==== Fullscreen root (destrava largura do app) ==== */
+@layer base {
+  html, body { width: 100%; min-width: 0; margin: 0; padding: 0; }
+  #root      { width: 100% !important; max-width: none !important; margin: 0 !important; padding: 0 !important; }
+}
+
 /* ==========================================
    Tokens rápidos via CSS vars (opcional)
 ========================================== */

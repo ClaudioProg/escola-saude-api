@@ -52,6 +52,7 @@ const perfilRoutes               = require("./routes/perfilRoutes");
 const publicLookupsRoutes        = require("./routes/publicLookupsRoutes");
 const usuariosRoute              = require("./routes/usuariosRoute");
 const metricasRoutes             = require("./routes/metricasRoutes");
+const solicitacoesCursoRoute         = require("./routes/solicitacoesCursoRoute");
 
 /* 🆕 Submissão de Trabalhos */
 const chamadasRoutes             = require("./routes/chamadasRoutes");
@@ -256,6 +257,7 @@ app.use("/api/unidades", unidadesRoutes);
 app.use("/api/assinatura", assinaturaRoutes);
 app.use("/api/datas", datasEventoRoute);
 app.use("/api/perfil", perfilRoutes);
+app.use("/api/solicitacoes", solicitacoesCursoRoute);
 
 /* 🆕 Submissões de Trabalhos */
 app.use("/api", chamadasRoutes);

@@ -180,6 +180,17 @@ function DetalhesSubmissao({ open, onClose, s }) {
   const [carregandoAvaliadores, setCarregandoAvaliadores] = useState(false);
   const [atribuicoesAtuais, setAtribuicoesAtuais] = useState([]);
 
+  // ➕ derivado: progresso das atribuições
+  const qtdAtribuidos = (atribuicoesAtuais?.length || 0);
+  const faltam = Math.max(0, 2 - qtdAtribuidos);
+
+  // ➕ helper: montar payload com 1 ou 2 ids (sem duplicar)
+  function buildAvaliadoresPayload(a1, a2) {
+    const ids = [a1, a2].map(String).filter(Boolean);
+    const uniq = Array.from(new Set(ids));
+    return uniq.map(Number);
+  }
+
   // notas dos avaliadores
   const [avaliacoes, setAvaliacoes] = useState([]); // normalizadas
   const [notaVisivel, setNotaVisivel] = useState(false);
@@ -332,6 +343,11 @@ function DetalhesSubmissao({ open, onClose, s }) {
 
   const toggleVisibilidadeNota = async () => {
     try {
+      // regra: só permite liberar para o autor quando houver 2 avaliadores atribuídos
+      if (!notaVisivel && qtdAtribuidos < 2) {
+        alert("Para liberar a nota ao autor, é necessário ter 2 avaliadores atribuídos.");
+        return;
+      }
       const novo = !notaVisivel;
       await api.post(`/admin/submissoes/${data.id}/nota-visivel`, { visivel: novo });
       setNotaVisivel(novo);
@@ -503,15 +519,31 @@ function DetalhesSubmissao({ open, onClose, s }) {
               </section>
             )}
 
-            {/* Encaminhar para 2 avaliadores */}
+            {/* Encaminhar (1 ou 2 avaliadores, completar depois) */}
             <section className="bg-zinc-50 dark:bg-zinc-800/50 rounded-xl p-4">
-              <h4 className="font-semibold text-zinc-800 dark:text-zinc-100">Encaminhar para avaliação</h4>
-              <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-1">
-                Selecione <strong>dois</strong> avaliadores (instrutores/administradores). Somente eles (e administradores) poderão abrir e avaliar este trabalho.
+              <h4 className="font-semibold text-zinc-800 dark:text-zinc-100 text-center">Encaminhar para avaliação</h4>
+              <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-1 text-center">
+                Você pode encaminhar com <strong>apenas 1 avaliador agora</strong> e adicionar o segundo depois.
+                O sistema exige <strong>2 avaliadores ao final</strong> para a média oficial.
               </p>
 
+              <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+                <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
+                  Atribuições: {qtdAtribuidos}/2
+                </span>
+                {faltam > 0 ? (
+                  <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-200" aria-live="polite">
+                    Faltam {faltam}
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200">
+                    Pronto para média final
+                  </span>
+                )}
+              </div>
+
               {atribuicoesAtuais?.length > 0 && (
-                <div className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
+                <div className="mt-2 text-xs text-zinc-600 dark:text-zinc-400 text-center">
                   Já atribuídos:&nbsp;
                   {atribuicoesAtuais.map((u, i) => (
                     <span key={i} className="inline-block mr-2">
@@ -521,7 +553,7 @@ function DetalhesSubmissao({ open, onClose, s }) {
                 </div>
               )}
 
-              <div className="mt-3 grid sm:grid-cols-2 gap-3">
+              <div className="mt-4 grid sm:grid-cols-2 gap-3">
                 <label className="text-sm">
                   <span className="block mb-1 text-zinc-600 dark:text-zinc-300">Avaliador 1</span>
                   <select
@@ -529,6 +561,7 @@ function DetalhesSubmissao({ open, onClose, s }) {
                     onChange={(e) => setAvaliador1(e.target.value)}
                     disabled={carregandoAvaliadores}
                     className="border rounded-md px-3 py-2 text-sm w-full dark:border-zinc-700 dark:bg-zinc-800"
+                    aria-label="Selecionar primeiro avaliador"
                   >
                     <option value="">{carregandoAvaliadores ? "Carregando..." : "Selecione…"}</option>
                     {avaliadoresElegiveis.map((u) => (
@@ -540,12 +573,13 @@ function DetalhesSubmissao({ open, onClose, s }) {
                 </label>
 
                 <label className="text-sm">
-                  <span className="block mb-1 text-zinc-600 dark:text-zinc-300">Avaliador 2</span>
+                  <span className="block mb-1 text-zinc-600 dark:text-zinc-300">Avaliador 2 (opcional agora)</span>
                   <select
                     value={avaliador2}
                     onChange={(e) => setAvaliador2(e.target.value)}
                     disabled={carregandoAvaliadores}
                     className="border rounded-md px-3 py-2 text-sm w-full dark:border-zinc-700 dark:bg-zinc-800"
+                    aria-label="Selecionar segundo avaliador"
                   >
                     <option value="">{carregandoAvaliadores ? "Carregando..." : "Selecione…"}</option>
                     {avaliadoresElegiveis.map((u) => (
@@ -557,27 +591,46 @@ function DetalhesSubmissao({ open, onClose, s }) {
                 </label>
               </div>
 
-              <div className="mt-3">
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
                 <button
                   type="button"
                   disabled={savingAtrib}
                   onClick={async () => {
                     if (!data?.id) return;
-                    if (!avaliador1 || !avaliador2 || avaliador1 === avaliador2) {
-                      alert("Selecione dois avaliadores distintos.");
+
+                    const payload = buildAvaliadoresPayload(avaliador1, avaliador2);
+                    if (payload.length === 0) {
+                      alert("Selecione pelo menos 1 avaliador.");
                       return;
                     }
+                    if (payload.length === 2 && String(payload[0]) === String(payload[1])) {
+                      alert("Os avaliadores devem ser distintos.");
+                      return;
+                    }
+
                     try {
                       setSavingAtrib(true);
-                      await api.post(`/admin/submissoes/${data.id}/avaliadores`, {
-                        avaliadores: [Number(avaliador1), Number(avaliador2)],
+                      await api.post(`/admin/submissoes/${data.id}/avaliadores`, { avaliadores: payload });
+
+                      // Atualiza “já atribuídos” mesclando, sem duplicar
+                      const novos = payload.map((id) => {
+                        const found = avaliadoresElegiveis.find((u) => String(u.id) === String(id));
+                        return found || { id, nome: `#${id}` };
                       });
-                      alert("Encaminhado com sucesso! Os dois avaliadores já têm acesso.");
-                      setAtribuicoesAtuais(
-                        [avaliador1, avaliador2].map((id) => {
-                          const found = avaliadoresElegiveis.find((u) => String(u.id) === String(id));
-                          return found || { id, nome: `#${id}` };
-                        })
+                      setAtribuicoesAtuais((prev) => {
+                        const map = new Map((prev || []).map((p) => [String(p.id || p.avaliador_id), p]));
+                        for (const n of novos) map.set(String(n.id || n.avaliador_id), n);
+                        return Array.from(map.values());
+                      });
+
+                      // limpa selects
+                      setAvaliador1("");
+                      setAvaliador2("");
+
+                      alert(
+                        payload.length === 2
+                          ? "Encaminhado com sucesso para 2 avaliadores."
+                          : "Encaminhado com sucesso. Você pode atribuir o segundo avaliador depois."
                       );
                     } catch (e) {
                       console.error("Falha ao encaminhar:", e);
@@ -589,8 +642,16 @@ function DetalhesSubmissao({ open, onClose, s }) {
                   className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-700 text-white hover:bg-amber-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-700"
                 >
                   {savingAtrib ? <Loader2 className="h-4 w-4 animate-spin" /> : <ClipboardList className="h-4 w-4" />}
-                  Encaminhar para avaliação
+                  Encaminhar (1 ou 2 avaliadores)
                 </button>
+
+                <span
+                  className={`text-xs px-3 py-1.5 rounded-full ${faltam > 0 ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-200" : "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200"}`}
+                  role="status"
+                  aria-live="polite"
+                >
+                  {faltam > 0 ? `Ainda faltam ${faltam} avaliador(es) para fechar a média.` : "Dois avaliadores atribuídos — pronto para consolidar nota oficial."}
+                </span>
               </div>
             </section>
 

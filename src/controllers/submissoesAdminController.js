@@ -120,43 +120,96 @@ async function listarAvaliadoresDaSubmissao(req, res) {
   }
 }
 
-/** POST /api/admin/submissoes/:id/avaliadores  (exige exatamente 2) */
+/** POST /api/admin/submissoes/:id/avaliadores
+ *  Aceita 1 ou 2 IDs. Mescla com os atuais (sem duplicar).
+ *  Só atualiza status para 'em_avaliacao' quando totalizar 2.
+ *  Se body.replace === true, substitui os atuais pelos informados (1 ou 2).
+ */
 async function atribuirAvaliadores(req, res) {
   const id = asInt(req.params.id);
-  const { avaliadores } = req.body || {};
-  log("POST /admin/submissoes/:id/avaliadores →", { id, avaliadores });
+  const { avaliadores, replace = false } = req.body || {};
+  log("POST /admin/submissoes/:id/avaliadores →", { id, avaliadores, replace });
 
   if (!Number.isInteger(id) || id <= 0) {
     return res.status(400).json({ error: "ID inválido" });
   }
-  if (!Array.isArray(avaliadores) || avaliadores.length !== 2) {
-    return res.status(400).json({ error: "Envie exatamente dois avaliadores." });
+  if (!Array.isArray(avaliadores) || avaliadores.length < 1 || avaliadores.length > 2) {
+    return res.status(400).json({ error: "Envie 1 ou 2 avaliadores." });
   }
-  if (avaliadores[0] === avaliadores[1]) {
-    return res.status(400).json({ error: "Avaliadores devem ser distintos." });
+
+  // normaliza para strings p/ Set e compara depois como número
+  const incoming = Array.from(new Set(avaliadores.map(v => String(v).trim()))).filter(Boolean);
+  if (incoming.length === 0) {
+    return res.status(400).json({ error: "Nenhum avaliador informado." });
+  }
+  if (incoming.length > 2) {
+    return res.status(400).json({ error: "Máximo de 2 avaliadores." });
   }
 
   try {
-    const elegiveis = await db.any(
-      `SELECT id
-         FROM usuarios
-        WHERE id = ANY($1)
-          AND LOWER(COALESCE(perfil,'')) IN ('instrutor','administrador')`,
-      [avaliadores]
+    // atuais não revogados
+    const atuaisRows = await db.any(
+      `SELECT avaliador_id
+         FROM trabalhos_submissoes_avaliadores
+        WHERE submissao_id=$1 AND revoked_at IS NULL
+        ORDER BY avaliador_id`,
+      [id]
     );
-    log("atribuirAvaliadores: elegiveis=", j(elegiveis));
-    if (elegiveis.length !== 2) {
-      return res.status(400).json({ error: "Usuários inválidos para avaliação." });
+    const atuais = new Set(atuaisRows.map(r => String(r.avaliador_id)));
+
+    // destino final (merge ou replace)
+    let destinoSet;
+    if (replace) {
+      destinoSet = new Set(incoming);
+    } else {
+      destinoSet = new Set([...atuais, ...incoming]);
+    }
+    const destino = Array.from(destinoSet);
+
+    if (destino.length > 2) {
+      return res.status(400).json({ error: "O total de avaliadores não pode exceder 2." });
+    }
+    if (destino.length === 2 && destino[0] === destino[1]) {
+      return res.status(400).json({ error: "Avaliadores devem ser distintos." });
+    }
+
+    // Valida elegibilidade apenas dos NOVOS (quem ainda não está atribuído)
+    const novos = destino.filter(idStr => !atuais.has(idStr));
+    if (novos.length > 0) {
+      // valida perfis elegíveis
+      const novosNums = novos.map(n => Number(n)).filter(Number.isFinite);
+      const elegiveis = await db.any(
+        `SELECT id
+           FROM usuarios
+          WHERE id = ANY($1)
+            AND LOWER(COALESCE(perfil,'')) IN ('instrutor','administrador')`,
+        [novosNums]
+      );
+      if (elegiveis.length !== novosNums.length) {
+        return res.status(400).json({ error: "Usuários inválidos para avaliação." });
+      }
     }
 
     await db.tx(async (t) => {
-      await t.none(
-        `DELETE FROM trabalhos_submissoes_avaliadores WHERE submissao_id=$1`,
-        [id]
-      );
-
       const assignedBy = Number(req?.user?.id) || null;
-      for (const uid of avaliadores) {
+
+      if (replace) {
+        // revoga quem não está no destino
+        const destinoNums = destino.map(d => Number(d)).filter(Number.isFinite);
+        await t.none(
+          `UPDATE trabalhos_submissoes_avaliadores
+              SET revoked_at = NOW()
+            WHERE submissao_id=$1
+              AND revoked_at IS NULL
+              AND avaliador_id <> ALL($2::int[])`,
+          [id, destinoNums.length ? destinoNums : [0]] // evita erro de array vazio
+        );
+      }
+      // (modo merge): não revoga ninguém — apenas insere/reativa os novos
+
+      // upsert/reativa cada id do destino
+      for (const idStr of destino) {
+        const uid = Number(idStr);
         await t.none(
           `INSERT INTO trabalhos_submissoes_avaliadores (submissao_id, avaliador_id, assigned_by)
            VALUES ($1,$2,$3)
@@ -166,17 +219,22 @@ async function atribuirAvaliadores(req, res) {
         );
       }
 
-      await t.none(
-        `UPDATE trabalhos_submissoes SET status='em_avaliacao' WHERE id=$1`,
-        [id]
-      );
+      // só marca 'em_avaliacao' quando totalizar 2 ativos
+      if (destino.length === 2) {
+        await t.none(
+          `UPDATE trabalhos_submissoes
+              SET status='em_avaliacao', atualizado_em=NOW()
+            WHERE id=$1 AND status IN ('submetido','em_avaliacao')`,
+          [id]
+        );
+      }
     });
 
-    log("atribuirAvaliadores: OK");
-    res.json({ ok: true });
+    log("atribuirAvaliadores: OK (total ativos =", destino.length, ")");
+    return res.json({ ok: true, total_atribuidos: destino.length });
   } catch (err) {
     console.error("[atribuirAvaliadores]", err);
-    res.status(500).json({ error: "Erro ao atribuir avaliadores." });
+    return res.status(500).json({ error: "Erro ao atribuir avaliadores." });
   }
 }
 

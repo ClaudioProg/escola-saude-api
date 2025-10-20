@@ -3,20 +3,27 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { toast } from "react-toastify";
 import Footer from "../components/Footer";
 import {
-  ClipboardCheck, X, Loader2, CheckCircle2, Clock3, BookOpenCheck,
-  BarChart3, Play, FileQuestion, Award, ShieldCheck, AlertCircle
+  ClipboardCheck,
+  X,
+  Loader2,
+  Clock3,
+  BookOpenCheck,
+  BarChart3,
+  Play,
+  FileQuestion,
+  Award,
+  ShieldCheck,
+  AlertCircle,
 } from "lucide-react";
 import { apiGet, apiPost } from "../services/api";
 
 /* =========================================================================
-   HeaderHero padronizado (mesma altura/tipografia em todas as páginas)
-   - Gradiente exclusivo desta página (3 cores): indigo → indigo → indigo
+   HeaderHero padronizado — compacto em telas grandes
    ========================================================================= */
 function HeaderHero() {
   const gradient = "from-indigo-900 via-indigo-800 to-indigo-700";
   return (
     <header className={`bg-gradient-to-br ${gradient} text-white`} role="banner">
-      {/* Skip-link para navegação por teclado/leitores de tela */}
       <a
         href="#conteudo"
         className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2"
@@ -24,14 +31,15 @@ function HeaderHero() {
         Ir para o conteúdo
       </a>
 
-      {/* Altura/tipografia padronizadas */}
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-10 sm:py-12 min-h-[180px] flex items-center">
-        <div className="w-full text-center sm:text-left">
-          <div className="inline-flex items-center gap-3">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 sm:py-10 lg:py-8 min-h-[136px] flex items-center justify-center">
+        <div className="w-full text-center">
+          <div className="inline-flex flex-wrap items-center justify-center gap-3">
             <ClipboardCheck className="w-6 h-6 sm:w-7 sm:h-7" aria-hidden="true" />
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Teste do Curso</h1>
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight leading-tight text-balance break-words">
+              Teste do Curso
+            </h1>
           </div>
-          <p className="mt-2 text-sm sm:text-base text-white/90 max-w-3xl">
+          <p className="mt-2 text-sm sm:text-base text-white/90 max-w-3xl mx-auto text-balance">
             Responda avaliações dos cursos que possuem testes habilitados.
           </p>
         </div>
@@ -60,10 +68,10 @@ function Card({ children, className = "", ...rest }) {
 function Chip({ children, tone = "default" }) {
   const tones = {
     default: "bg-slate-100 text-slate-800 dark:bg-zinc-800 dark:text-zinc-200",
-    verde: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",  // aprovado/concluído
-    amarelo: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300",    // pendente/em andamento
-    vermelho: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",               // bloqueado/expirado
-    azul: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",               // disponível
+    verde: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
+    amarelo: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300",
+    vermelho: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
+    azul: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
   };
   return (
     <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${tones[tone] ?? tones.default}`}>
@@ -91,7 +99,9 @@ function MiniStat({ icon: Icon, label, value, hint, loading = false }) {
   );
 }
 
-/* Modal acessível (ESC/overlay fecham, foco no título) */
+/* =========================================================================
+   Modal acessível
+   ========================================================================= */
 function Modal({ open, title, onClose, children, labelledById = "modal-title" }) {
   const dialogRef = useRef(null);
 
@@ -121,7 +131,7 @@ function Modal({ open, title, onClose, children, labelledById = "modal-title" })
               <h2 id={labelledById} tabIndex={-1} className="text-lg sm:text-xl font-bold tracking-tight">{title}</h2>
               <button
                 onClick={onClose}
-                className="inline-flex items-center justify-center rounded-xl p-2 hover:bg-black/5 dark:hover:bg-white/10 transition"
+                className="inline-flex items-center justify-center rounded-xl p-2 hover:bg-black/5 dark:hover:bg白/10 transition"
                 aria-label="Fechar"
               >
                 <X className="w-5 h-5" aria-hidden="true" />
@@ -154,69 +164,122 @@ function Progress({ value = 0, label = "Progresso" }) {
 }
 
 /* =========================================================================
-   Tabela/lista de testes (responsive)
+   Lista de testes — Tabela (desktop) + Cards (mobile) SEM perder nada
    ========================================================================= */
 function ListaTestes({ testes, onStart }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="text-left border-b border-black/10 dark:border-white/10">
-            <th className="py-3 pr-3 font-semibold">Curso / Turma</th>
-            <th className="py-3 pr-3 font-semibold">Disponibilidade</th>
-            <th className="py-3 pr-3 font-semibold">Status</th>
-            <th className="py-3 pr-3 font-semibold">Nota</th>
-            <th className="py-3 pr-3 font-semibold">Ações</th>
-          </tr>
-        </thead>
-        <tbody>
-          {testes.map((t) => (
-            <tr key={t.id} className="border-b last:border-b-0 border-black/5 dark:border-white/5">
-              <td className="py-3 pr-3">
-                <div className="font-medium">{t.curso}</div>
-                <div className="text-xs text-slate-600 dark:text-slate-300">{t.turma}</div>
-              </td>
-              <td className="py-3 pr-3 whitespace-nowrap">
-                <div className="text-xs text-slate-600 dark:text-slate-300">{t.inicio} — {t.fim}</div>
-              </td>
-              <td className="py-3 pr-3">
-                {t.status === "disponivel" && <Chip tone="azul">Disponível</Chip>}
-                {t.status === "andamento" && <Chip tone="amarelo">Em andamento</Chip>}
-                {t.status === "concluido" && <Chip tone="verde">Concluído</Chip>}
-                {t.status === "bloqueado" && <Chip tone="vermelho">Bloqueado</Chip>}
-              </td>
-              <td className="py-3 pr-3">
-                {t.status === "concluido" ? <span className="font-medium">{t.nota?.toFixed?.(1) ?? t.nota} / 10</span> : "—"}
-              </td>
-              <td className="py-3 pr-3">
-                <div className="flex items-center gap-2">
-                  {(t.status === "disponivel" || t.status === "andamento") && (
-                    <button
-                      onClick={() => onStart?.(t)}
-                      className="inline-flex items-center gap-2 rounded-xl px-3 py-1.5 bg-indigo-700 hover:bg-indigo-600 text-white font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                    >
-                      <Play className="w-4 h-4" aria-hidden="true" />
-                      Iniciar
-                    </button>
-                  )}
-                  {t.status === "concluido" && (
-                    <Chip tone="verde">Finalizado</Chip>
-                  )}
-                </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <>
+      {/* 🟢 Mobile: cards */}
+      <div className="sm:hidden space-y-3">
+        {testes.map((t) => (
+          <div
+            key={t.id}
+            className="rounded-xl p-4 bg-white dark:bg-zinc-800 border border-black/5 dark:border-white/10"
+          >
+            <div className="font-medium break-words">{t.curso}</div>
+            <div className="text-xs text-slate-600 dark:text-slate-300">{t.turma}</div>
+            <div className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+              {t.inicio} — {t.fim}
+            </div>
 
-      {/* Versão compacta para telas muito pequenas (opcional) */}
-      {testes.length === 0 && (
-        <div className="rounded-xl p-4 mt-3 bg-indigo-50 dark:bg-zinc-800/60 border border-black/5 dark:border-white/10 flex items-center gap-2">
-          <AlertCircle className="w-4 h-4" aria-hidden="true" />
-          <span className="text-sm">Nenhum teste disponível no momento.</span>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {t.status === "disponivel" && <Chip tone="azul">Disponível</Chip>}
+              {t.status === "andamento" && <Chip tone="amarelo">Em andamento</Chip>}
+              {t.status === "concluido" && <Chip tone="verde">Concluído</Chip>}
+              {t.status === "bloqueado" && <Chip tone="vermelho">Bloqueado</Chip>}
+              <div className="text-sm ml-auto">
+                {t.status === "concluido" ? (
+                  <span className="font-medium">{t.nota?.toFixed?.(1) ?? t.nota} / 10</span>
+                ) : "—"}
+              </div>
+            </div>
+
+            <div className="mt-3 flex justify-end">
+              {(t.status === "disponivel" || t.status === "andamento") ? (
+                <button
+                  onClick={() => onStart?.(t)}
+                  className="inline-flex items-center gap-2 rounded-xl px-3 py-2 bg-indigo-700 hover:bg-indigo-600 text-white text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                >
+                  <Play className="w-4 h-4" aria-hidden="true" />
+                  Iniciar
+                </button>
+              ) : (
+                <Chip tone="verde">Finalizado</Chip>
+              )}
+            </div>
+          </div>
+        ))}
+
+        {testes.length === 0 && (
+          <div className="rounded-xl p-4 bg-indigo-50 dark:bg-zinc-800/60 border border-black/5 dark:border-white/10 flex items-center gap-2">
+            <AlertCircle className="w-4 h-4" aria-hidden="true" />
+            <span className="text-sm">Nenhum teste disponível no momento.</span>
+          </div>
+        )}
+      </div>
+
+      {/* 🟦 Desktop/Tablet: tabela com scroll horizontal seguro */}
+      <div className="hidden sm:block">
+        <div className="overflow-x-auto -mx-2 sm:mx-0">
+          <table className="w-full text-sm min-w-[720px]">
+            <thead>
+              <tr className="text-left border-b border-black/10 dark:border-white/10">
+                <th className="py-3 pr-3 font-semibold">Curso / Turma</th>
+                <th className="py-3 pr-3 font-semibold">Disponibilidade</th>
+                <th className="py-3 pr-3 font-semibold">Status</th>
+                <th className="py-3 pr-3 font-semibold">Nota</th>
+                <th className="py-3 pr-3 font-semibold">Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {testes.map((t) => (
+                <tr key={t.id} className="border-b last:border-b-0 border-black/5 dark:border-white/5">
+                  <td className="py-3 pr-3 align-top">
+                    <div className="font-medium break-words">{t.curso}</div>
+                    <div className="text-xs text-slate-600 dark:text-slate-300">{t.turma}</div>
+                  </td>
+                  <td className="py-3 pr-3 align-top whitespace-nowrap">
+                    <div className="text-xs text-slate-600 dark:text-slate-300">{t.inicio} — {t.fim}</div>
+                  </td>
+                  <td className="py-3 pr-3 align-top">
+                    {t.status === "disponivel" && <Chip tone="azul">Disponível</Chip>}
+                    {t.status === "andamento" && <Chip tone="amarelo">Em andamento</Chip>}
+                    {t.status === "concluido" && <Chip tone="verde">Concluído</Chip>}
+                    {t.status === "bloqueado" && <Chip tone="vermelho">Bloqueado</Chip>}
+                  </td>
+                  <td className="py-3 pr-3 align-top">
+                    {t.status === "concluido" ? <span className="font-medium">{t.nota?.toFixed?.(1) ?? t.nota} / 10</span> : "—"}
+                  </td>
+                  <td className="py-3 pr-3 align-top">
+                    <div className="flex items-center gap-2">
+                      {(t.status === "disponivel" || t.status === "andamento") && (
+                        <button
+                          onClick={() => onStart?.(t)}
+                          className="inline-flex items-center gap-2 rounded-xl px-3 py-1.5 bg-indigo-700 hover:bg-indigo-600 text-white font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                        >
+                          <Play className="w-4 h-4" aria-hidden="true" />
+                          Iniciar
+                        </button>
+                      )}
+                      {t.status === "concluido" && (
+                        <Chip tone="verde">Finalizado</Chip>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-      )}
-    </div>
+
+        {testes.length === 0 && (
+          <div className="rounded-xl p-4 mt-3 bg-indigo-50 dark:bg-zinc-800/60 border border-black/5 dark:border-white/10 flex items-center gap-2">
+            <AlertCircle className="w-4 h-4" aria-hidden="true" />
+            <span className="text-sm">Nenhum teste disponível no momento.</span>
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -263,7 +326,6 @@ export default function Teste() {
       if (l?.ok && l?.data) setTestes(l.data);
       else setTestes([]);
     } catch {
-      // Fallback demo
       setStats({ disponiveis: 2, emAndamento: 0, concluidos: 0, notaMedia: 0 });
       setTestes([]);
     } finally {
@@ -285,12 +347,10 @@ export default function Teste() {
     if (!testeSelecionado) return;
     setSubmitting(true);
     try {
-      // TODO endpoint real: POST /api/testes/iniciar
       const resp = await apiPost?.("/api/testes/iniciar", { teste_id: testeSelecionado.id });
       if (resp?.ok) {
         toast.success("Teste iniciado! Boa prova. ✨");
         setOpenModal(false);
-        // redirecionar para página do teste se existir rota dedicada, ex.: navigate(`/teste/${id}`)
         fetchTudo();
       } else {
         toast.info("Ambiente de demonstração: início de teste simulado.");
@@ -304,12 +364,15 @@ export default function Teste() {
     }
   };
 
+  const totalItens = stats.concluidos + stats.emAndamento + stats.disponiveis;
+  const progressoGeral = Math.min(100, Math.round((stats.concluidos / Math.max(1, totalItens)) * 100));
+
   return (
     <div className="flex flex-col min-h-screen bg-zinc-50 dark:bg-neutral-900 text-black dark:text-white">
       <HeaderHero />
 
       <main id="conteudo" role="main" className="flex-1">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-10">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 sm:py-10">
           {/* ===================== Ministats ===================== */}
           <section aria-labelledby="metricas" className="mb-6 sm:mb-8">
             <h2 id="metricas" className="sr-only">Métricas dos Testes</h2>
@@ -364,8 +427,8 @@ export default function Teste() {
               </div>
             </Card>
 
-            {/* Dicas & Regras */}
-            <Card className="md:col-span-2 p-5 sm:p-6">
+            {/* Dicas & Regras — sticky para melhor uso do espaço vertical */}
+            <Card className="md:col-span-2 p-5 sm:p-6 md:sticky md:top-4 h-fit">
               <div className="flex items-center gap-2">
                 <BookOpenCheck className="w-5 h-5" aria-hidden="true" />
                 <h3 className="text-base sm:text-lg font-bold">Regras & Dicas</h3>
@@ -400,9 +463,9 @@ export default function Teste() {
                 </li>
               </ul>
 
-              {/* Exemplo de progresso geral (mock) */}
+              {/* Progresso geral */}
               <div className="mt-5">
-                <Progress value={Math.min(100, Math.round((stats.concluidos / Math.max(1, stats.concluidos + stats.emAndamento + stats.disponiveis)) * 100))} label="Progresso geral" />
+                <Progress value={progressoGeral} label="Progresso geral" />
               </div>
             </Card>
           </section>

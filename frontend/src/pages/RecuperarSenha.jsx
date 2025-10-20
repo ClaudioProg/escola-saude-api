@@ -1,7 +1,7 @@
 // ✅ src/pages/RecuperarSenha.jsx
 import { useEffect, useRef, useState, useCallback } from "react";
 import { toast } from "react-toastify";
-import { Mail, ExternalLink } from "lucide-react";
+import { Mail } from "lucide-react";
 
 import BotaoPrimario from "../components/BotaoPrimario";
 import BotaoSecundario from "../components/BotaoSecundario";
@@ -121,12 +121,6 @@ export default function RecuperarSenha() {
     }
   }
 
-  const abrirEmailCliente = () => {
-    try {
-      window.open("mailto:", "_blank", "noopener,noreferrer");
-    } catch {}
-  };
-
   return (
     <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
       <HeaderHero />
@@ -223,17 +217,6 @@ export default function RecuperarSenha() {
             >
               Voltar
             </BotaoSecundario>
-
-            <button
-              type="button"
-              onClick={abrirEmailCliente}
-              className="w-full inline-flex items-center justify-center gap-2 rounded border border-white/30 px-4 py-2 text-sm hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-white/60"
-              aria-label="Abrir seu aplicativo de e-mail"
-              title="Abrir cliente de e-mail"
-            >
-              <ExternalLink className="w-4 h-4" />
-              Abrir e-mail
-            </button>
           </div>
 
           <p className="text-[11px] text-white/80 text-center">

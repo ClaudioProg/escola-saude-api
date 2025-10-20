@@ -299,7 +299,7 @@ export default function Navbar() {
       { label: "Relatórios Customizados", path: "/relatorios-customizados", icon: ClipboardList },
       // trabalhos
       { label: "Criar Submissão de Trabalho", path: "/admin/chamadas/new", icon: PlusCircle },
-      { label: "Avaliar Submissão de Trabalho", path: "__open_submissions__", icon: FolderOpenDot },
+      { label: "Gerenciar Submissão de Trabalho", path: "__open_submissions__", icon: FolderOpenDot },
       // gestão
       { label: "Gestão de Usuários",    path: "/gestao-usuarios",        icon: Users },
       { label: "Gestão de Instrutor",   path: "/gestao-instrutor",       icon: Presentation },
@@ -458,7 +458,7 @@ export default function Navbar() {
   const go = (path) => handleAdminSelect(path); // reusa o mesmo close/unlock
 
   const dropBtnBase =
-    "flex items-center gap-2 px-2 py-1 text-sm rounded-xl hover:bg-white hover:text-lousa focus-visible:ring-2 focus-visible:ring-white/60 outline-none";
+  "flex h-10 items-center gap-2 px-3 text-sm rounded-xl hover:bg-white hover:text-lousa focus-visible:ring-2 focus-visible:ring-white/60 outline-none";
 
   const goHome = () => { go("/"); };
 
@@ -470,7 +470,7 @@ export default function Navbar() {
   return (
     <nav
       role="navigation"
-      className={`w-full ${navBg} text-white shadow-md px-3 sm:px-4 py-2 sticky top-0 z-50 border-b border-white/20 pt-[env(safe-area-inset-top)]`}
+      className={`w-full ${navBg} text-white shadow-md px-3 sm:px-4 py-2.5 sticky top-0 z-50 border-b border-white/20 pt-[env(safe-area-inset-top)]`}
     >
       {/* Skip-link: acessa o main#conteudo se existir */}
       <a
@@ -480,7 +480,7 @@ export default function Navbar() {
         Ir para o conteúdo
       </a>
 
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between min-h-[48px]">
         {/* logo / home */}
         <button
           type="button"
@@ -575,7 +575,7 @@ export default function Navbar() {
           <button
             type="button"
             onClick={() => go("/notificacoes")}
-            className="relative flex items-center justify-center px-3 py-1 rounded-xl hover:bg-white hover:text-lousa focus-visible:ring-2 focus-visible:ring-white/60 outline-none"
+            className="relative flex h-10 items-center justify-center px-3 rounded-xl hover:bg-white hover:text-lousa focus-visible:ring-2 focus-visible:ring-white/60 outline-none"
             aria-label={`Abrir notificações${totalNaoLidas ? `, ${totalNaoLidas} não lidas` : ""}`}
           >
             <Bell className="w-5 h-5" aria-hidden="true" />
@@ -594,7 +594,7 @@ export default function Navbar() {
             <button
               type="button"
               onClick={() => setConfigOpen((v) => !v)}
-              className="flex items-center gap-2 px-2 py-1 text-sm rounded-xl border border-white/70 hover:bg-white hover:text-lousa focus-visible:ring-2 focus-visible:ring-white/60 outline-none"
+              className="flex h-10 items-center gap-2 px-3 text-sm rounded-xl border border-white/70 hover:bg-white hover:text-lousa focus-visible:ring-2 focus-visible:ring-white/60 outline-none"
               aria-haspopup="menu"
               aria-expanded={configOpen}
               aria-controls={configMenuId}
@@ -667,7 +667,7 @@ export default function Navbar() {
         {/* hambúrguer (mobile) */}
         <button
           type="button"
-          className="md:hidden inline-flex items-center justify-center rounded-lg p-2 hover:bg-white hover:text-lousa focus-visible:ring-2 focus-visible:ring-white/60 outline-none"
+          className="md:hidden inline-flex h-10 w-10 items-center justify-center rounded-lg p-2 hover:bg-white hover:text-lousa focus-visible:ring-2 focus-visible:ring-white/60 outline-none"
           onClick={() => setMobileOpen((v) => !v)}
           aria-label={mobileOpen ? "Fechar menu" : "Abrir menu"}
           aria-expanded={mobileOpen}

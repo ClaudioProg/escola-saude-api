@@ -4,20 +4,18 @@ import { toast } from "react-toastify";
 import Footer from "../components/Footer";
 import {
   CalendarDays, Plus, X, Loader2, CheckCircle2, Clock3, Building2, Users,
-  Info, CalendarCheck2, AlertCircle
+  Info, CalendarCheck2, AlertCircle, Search, Filter, ChevronDown, ChevronUp,
 } from "lucide-react";
 import { apiGet, apiPost } from "../services/api";
 
 /* =========================================================================
    HeaderHero padronizado (altura/tipografia iguais nas páginas)
    - Paleta exclusiva (3 cores) desta página: marrom/âmbar (stone + amber)
-   - Ícone e título na mesma linha
    ========================================================================= */
 function HeaderHero() {
   const gradient = "from-stone-900 via-stone-800 to-amber-900";
   return (
     <header className={`bg-gradient-to-br ${gradient} text-white`} role="banner">
-      {/* Skip-link para leitores de tela/teclado */}
       <a
         href="#conteudo"
         className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2"
@@ -25,16 +23,15 @@ function HeaderHero() {
         Ir para o conteúdo
       </a>
 
-      {/* Altura padronizada + tipografia uniforme entre páginas */}
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-10 sm:py-12 min-h-[180px] flex items-center">
-        <div className="w-full text-center sm:text-left">
-          <div className="inline-flex items-center gap-3">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 sm:py-10 min-h-[136px] flex items-center justify-center">
+        <div className="w-full text-center">
+          <div className="flex flex-wrap items-center justify-center gap-3">
             <CalendarDays className="w-6 h-6 sm:w-7 sm:h-7" aria-hidden="true" />
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight leading-tight text-balance break-words">
               Agendamento de Sala
             </h1>
           </div>
-          <p className="mt-2 text-sm sm:text-base text-white/90 max-w-3xl">
+          <p className="mt-2 text-sm sm:text-base text-white/90 max-w-3xl mx-auto text-balance">
             Visualize datas disponíveis e solicite o uso das salas (sujeito à aprovação).
           </p>
         </div>
@@ -63,9 +60,9 @@ function Card({ children, className = "", ...rest }) {
 function Chip({ children, tone = "default" }) {
   const tones = {
     default: "bg-slate-100 text-slate-800 dark:bg-zinc-800 dark:text-zinc-200",
-    verde: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",   // programado/aprovado
-    amarelo: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300",     // pendente/em andamento
-    vermelho: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",                // indeferido/encerrado
+    verde: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",   // aprovado/programado
+    amarelo: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300",     // pendente
+    vermelho: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",                // indeferido/indisponível
   };
   return (
     <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${tones[tone] ?? tones.default}`}>
@@ -160,7 +157,7 @@ function FormNovaReserva({ salas, onSubmit, submitting }) {
     e.preventDefault();
     onSubmit?.({
       sala_id: salaId,
-      data,           // "YYYY-MM-DD" (seguir padrão datas-only do projeto)
+      data,           // "YYYY-MM-DD"
       hora_inicio: horaInicio,
       hora_fim: horaFim,
       finalidade,
@@ -265,51 +262,169 @@ function FormNovaReserva({ salas, onSubmit, submitting }) {
 }
 
 /* =========================================================================
-   Linha simplificada de calendário (legenda)
+   Legenda do calendário/estados
    ========================================================================= */
 function CalendarioLegend() {
   return (
     <div className="flex flex-wrap items-center gap-2 text-xs">
       <span className="text-slate-500 dark:text-slate-400">Legenda:</span>
-      <Chip tone="verde">Disponível</Chip>
+      <Chip tone="verde">Disponível/Aprovada</Chip>
       <Chip tone="amarelo">Pendente</Chip>
-      <Chip tone="vermelho">Indisponível</Chip>
+      <Chip tone="vermelho">Indisponível/Indeferida</Chip>
     </div>
   );
 }
 
 /* =========================================================================
-   Tabela de próximas reservas (demo)
+   Cards (mobile) + Tabela (desktop) das próximas reservas
    ========================================================================= */
-function TabelaReservas({ reservas }) {
+function ListaReservas({ reservas }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="text-left border-b border-black/10 dark:border-white/10">
-            <th className="py-3 pr-3 font-semibold">Data</th>
-            <th className="py-3 pr-3 font-semibold">Horário</th>
-            <th className="py-3 pr-3 font-semibold">Sala</th>
-            <th className="py-3 pr-3 font-semibold">Finalidade</th>
-            <th className="py-3 pr-3 font-semibold">Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {reservas.map((r) => (
-            <tr key={r.id} className="border-b last:border-b-0 border-black/5 dark:border-white/5">
-              <td className="py-3 pr-3 whitespace-nowrap">{r.data}</td>
-              <td className="py-3 pr-3 whitespace-nowrap">{r.hora_inicio}–{r.hora_fim}</td>
-              <td className="py-3 pr-3">{r.sala_nome}</td>
-              <td className="py-3 pr-3">{r.finalidade}</td>
-              <td className="py-3 pr-3">
-                {r.status === "aprovada" && <Chip tone="verde">Aprovada</Chip>}
-                {r.status === "pendente" && <Chip tone="amarelo">Pendente</Chip>}
-                {r.status === "indeferida" && <Chip tone="vermelho">Indeferida</Chip>}
-              </td>
+    <>
+      {/* Mobile Cards */}
+      <div className="sm:hidden space-y-3">
+        {reservas.map((r) => (
+          <div key={r.id} className="rounded-xl p-4 bg-white dark:bg-zinc-800 border border-black/5 dark:border-white/10">
+            <div className="text-sm text-slate-600 dark:text-slate-300">{r.data} — {r.hora_inicio}–{r.hora_fim}</div>
+            <div className="font-medium">{r.sala_nome}</div>
+            <div className="text-sm break-words">{r.finalidade}</div>
+            <div className="mt-2">
+              {r.status === "aprovada" && <Chip tone="verde">Aprovada</Chip>}
+              {r.status === "pendente" && <Chip tone="amarelo">Pendente</Chip>}
+              {r.status === "indeferida" && <Chip tone="vermelho">Indeferida</Chip>}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Desktop Tabela */}
+      <div className="hidden sm:block overflow-x-auto">
+        <table className="w-full text-sm min-w-[720px]">
+          <thead>
+            <tr className="text-left border-b border-black/10 dark:border-white/10">
+              <th className="py-3 pr-3 font-semibold">Data</th>
+              <th className="py-3 pr-3 font-semibold">Horário</th>
+              <th className="py-3 pr-3 font-semibold">Sala</th>
+              <th className="py-3 pr-3 font-semibold">Finalidade</th>
+              <th className="py-3 pr-3 font-semibold">Status</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {reservas.map((r) => (
+              <tr key={r.id} className="border-b last:border-b-0 border-black/5 dark:border-white/5">
+                <td className="py-3 pr-3 whitespace-nowrap">{r.data}</td>
+                <td className="py-3 pr-3 whitespace-nowrap">{r.hora_inicio}–{r.hora_fim}</td>
+                <td className="py-3 pr-3">{r.sala_nome}</td>
+                <td className="py-3 pr-3 break-words">{r.finalidade}</td>
+                <td className="py-3 pr-3">
+                  {r.status === "aprovada" && <Chip tone="verde">Aprovada</Chip>}
+                  {r.status === "pendente" && <Chip tone="amarelo">Pendente</Chip>}
+                  {r.status === "indeferida" && <Chip tone="vermelho">Indeferida</Chip>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
+/* =========================================================================
+   Barra de filtros (busca, sala, data, status) — não remove info, só organiza
+   ========================================================================= */
+function FiltroReservas({ salas, filtros, onChange, onClear }) {
+  const [aberta, setAberta] = useState(false);
+
+  return (
+    <div className="rounded-xl border border-black/5 dark:border-white/10 bg-white/70 dark:bg-zinc-900/70 p-3 sm:p-4">
+      <button
+        className="w-full sm:w-auto inline-flex items-center gap-2 text-sm font-medium rounded-lg px-3 py-2 bg-stone-100 dark:bg-zinc-800"
+        onClick={() => setAberta((v) => !v)}
+        aria-expanded={aberta}
+        aria-controls="filtros-conteudo"
+      >
+        <Filter className="w-4 h-4" /> Filtros
+        {aberta ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+      </button>
+
+      <div id="filtros-conteudo" className={`${aberta ? "mt-3 grid gap-3" : "hidden"}`}>
+        <div className="grid md:grid-cols-4 gap-3">
+          <div className="relative">
+            <label htmlFor="busca" className="sr-only">Buscar</label>
+            <input
+              id="busca"
+              type="text"
+              value={filtros.busca}
+              onChange={(e) => onChange({ ...filtros, busca: e.target.value })}
+              placeholder="Buscar por finalidade ou sala"
+              className="w-full rounded-xl border px-9 py-2 bg-white dark:bg-zinc-900 border-black/10 dark:border-white/10"
+            />
+            <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-500" aria-hidden="true" />
+          </div>
+
+          <div className="grid">
+            <label htmlFor="sala" className="sr-only">Sala</label>
+            <select
+              id="sala"
+              value={filtros.salaId}
+              onChange={(e) => onChange({ ...filtros, salaId: e.target.value })}
+              className="w-full rounded-xl border px-3 py-2 bg-white dark:bg-zinc-900 border-black/10 dark:border-white/10"
+            >
+              <option value="">Todas as salas</option>
+              {salas.map((s) => <option key={s.id} value={s.id}>{s.nome}</option>)}
+            </select>
+          </div>
+
+          <div className="grid">
+            <label htmlFor="dataIni" className="sr-only">Data inicial</label>
+            <input
+              id="dataIni"
+              type="date"
+              value={filtros.dataIni}
+              onChange={(e) => onChange({ ...filtros, dataIni: e.target.value })}
+              className="w-full rounded-xl border px-3 py-2 bg-white dark:bg-zinc-900 border-black/10 dark:border-white/10"
+            />
+          </div>
+
+          <div className="grid">
+            <label htmlFor="dataFim" className="sr-only">Data final</label>
+            <input
+              id="dataFim"
+              type="date"
+              value={filtros.dataFim}
+              onChange={(e) => onChange({ ...filtros, dataFim: e.target.value })}
+              className="w-full rounded-xl border px-3 py-2 bg-white dark:bg-zinc-900 border-black/10 dark:border-white/10"
+            />
+          </div>
+        </div>
+
+        <div className="grid md:grid-cols-4 gap-3 mt-3">
+          <div className="grid">
+            <label htmlFor="status" className="sr-only">Status</label>
+            <select
+              id="status"
+              value={filtros.status}
+              onChange={(e) => onChange({ ...filtros, status: e.target.value })}
+              className="w-full rounded-xl border px-3 py-2 bg-white dark:bg-zinc-900 border-black/10 dark:border-white/10"
+            >
+              <option value="">Todos os status</option>
+              <option value="aprovada">Aprovada</option>
+              <option value="pendente">Pendente</option>
+              <option value="indeferida">Indeferida</option>
+            </select>
+          </div>
+
+          <div className="md:col-span-3 flex items-center justify-end">
+            <button
+              onClick={onClear}
+              className="inline-flex items-center gap-2 rounded-xl px-3 py-2 bg-stone-100 dark:bg-zinc-800 text-sm"
+            >
+              Limpar filtros
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -318,7 +433,7 @@ function TabelaReservas({ reservas }) {
    Página
    ========================================================================= */
 export default function AgendamentoSala() {
-  // ======= Estado: ministats =======
+  // ======= Ministats =======
   const [loadingStats, setLoadingStats] = useState(true);
   const [stats, setStats] = useState({
     salasDisponiveisHoje: 0,
@@ -327,9 +442,14 @@ export default function AgendamentoSala() {
     taxaOcupacao: 0, // %
   });
 
-  // ======= Estado: listas =======
+  // ======= Listas =======
   const [salas, setSalas] = useState([]);
   const [reservas, setReservas] = useState([]);
+
+  // ======= Filtros/Paginação =======
+  const [filtros, setFiltros] = useState({ busca: "", salaId: "", dataIni: "", dataFim: "", status: "" });
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
 
   // ======= Modal =======
   const [openModal, setOpenModal] = useState(false);
@@ -339,11 +459,9 @@ export default function AgendamentoSala() {
   const fetchAll = useCallback(async () => {
     setLoadingStats(true);
     try {
-      // TODO: alinhar com teu backend real
-      // Exemplos:
       // const m = await apiGet("/api/salas/metricas");
       // const s = await apiGet("/api/salas");
-      // const r = await apiGet("/api/salas/reservas?proximas=1&limit=10");
+      // const r = await apiGet("/api/salas/reservas?proximas=1&limit=100");
 
       // Demo mode:
       const m = { ok: true, data: { salasDisponiveisHoje: 5, reservasHoje: 7, pendentes: 2, taxaOcupacao: 68 } };
@@ -358,9 +476,9 @@ export default function AgendamentoSala() {
       const r = {
         ok: true,
         data: [
-          { id: "r1", data: "2025-10-18", hora_inicio: "09:00", hora_fim: "11:00", sala_nome: "Sala 101 (Auditório)", finalidade: "Aula de Acolhimento", status: "aprovada" },
-          { id: "r2", data: "2025-10-18", hora_inicio: "14:00", hora_fim: "16:00", sala_nome: "Sala 202 (Multiuso)", finalidade: "Reunião Pedagógica", status: "pendente" },
-          { id: "r3", data: "2025-10-19", hora_inicio: "08:00", hora_fim: "10:00", sala_nome: "Lab Simulação", finalidade: "OSCE – Estações clínicas", status: "indeferida" },
+          { id: "r1", data: "2025-10-18", hora_inicio: "09:00", hora_fim: "11:00", sala_id: "1", sala_nome: "Sala 101 (Auditório)", finalidade: "Aula de Acolhimento", status: "aprovada" },
+          { id: "r2", data: "2025-10-18", hora_inicio: "14:00", hora_fim: "16:00", sala_id: "2", sala_nome: "Sala 202 (Multiuso)", finalidade: "Reunião Pedagógica", status: "pendente" },
+          { id: "r3", data: "2025-10-19", hora_inicio: "08:00", hora_fim: "10:00", sala_id: "3", sala_nome: "Lab Simulação", finalidade: "OSCE – Estações clínicas", status: "indeferida" },
         ],
       };
 
@@ -373,7 +491,6 @@ export default function AgendamentoSala() {
       if (r?.ok && r?.data) setReservas(r.data);
       else setReservas([]);
     } catch {
-      // Fallback demo
       setStats({ salasDisponiveisHoje: 5, reservasHoje: 7, pendentes: 2, taxaOcupacao: 68 });
       setSalas([{ id: "1", nome: "Sala 101 (Auditório)" }]);
       setReservas([]);
@@ -386,11 +503,34 @@ export default function AgendamentoSala() {
     fetchAll();
   }, [fetchAll]);
 
+  // ======= Derivados: filtro + paginação =======
+  const reservasFiltradas = useMemo(() => {
+    let out = [...reservas];
+    if (filtros.busca.trim()) {
+      const q = filtros.busca.toLowerCase();
+      out = out.filter(r =>
+        r.finalidade?.toLowerCase().includes(q) ||
+        r.sala_nome?.toLowerCase().includes(q)
+      );
+    }
+    if (filtros.salaId) out = out.filter(r => r.sala_id === filtros.salaId);
+    if (filtros.status) out = out.filter(r => r.status === filtros.status);
+    if (filtros.dataIni) out = out.filter(r => r.data >= filtros.dataIni);
+    if (filtros.dataFim) out = out.filter(r => r.data <= filtros.dataFim);
+    return out;
+  }, [reservas, filtros]);
+
+  const totalPages = Math.max(1, Math.ceil(reservasFiltradas.length / pageSize));
+  const paginaAtual = Math.min(page, totalPages);
+  const reservasPagina = useMemo(() => {
+    const start = (paginaAtual - 1) * pageSize;
+    return reservasFiltradas.slice(start, start + pageSize);
+  }, [reservasFiltradas, paginaAtual]);
+
   // ======= Submit: nova reserva =======
   const handleSubmitReserva = async (payload) => {
     setSubmitting(true);
     try {
-      // TODO: alinhar endpoint real (ex.: POST /api/salas/reservas)
       const resp = await apiPost?.("/api/salas/reservas", payload);
       if (resp?.ok) {
         toast.success("Solicitação enviada para análise! 🎉");
@@ -408,12 +548,17 @@ export default function AgendamentoSala() {
     }
   };
 
+  const clearFiltros = () => {
+    setFiltros({ busca: "", salaId: "", dataIni: "", dataFim: "", status: "" });
+    setPage(1);
+  };
+
   return (
     <div className="flex flex-col min-h-screen bg-zinc-50 dark:bg-neutral-900 text-black dark:text-white">
       <HeaderHero />
 
       <main id="conteudo" role="main" className="flex-1">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-10">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 sm:py-10">
           {/* ===================== Ministats ===================== */}
           <section aria-labelledby="metricas" className="mb-6 sm:mb-8">
             <h2 id="metricas" className="sr-only">Métricas de ocupação das salas</h2>
@@ -471,13 +616,17 @@ export default function AgendamentoSala() {
                 Consulte abaixo os agendamentos mais próximos. Status seguem o padrão de cores da plataforma.
               </p>
 
+              <div className="mt-4"><CalendarioLegend /></div>
+
+              {/* Filtros */}
               <div className="mt-4">
-                <CalendarioLegend />
+                <FiltroReservas salas={salas} filtros={filtros} onChange={setFiltros} onClear={clearFiltros} />
               </div>
 
+              {/* Lista (paginada) */}
               <div className="mt-4">
-                {reservas.length ? (
-                  <TabelaReservas reservas={reservas} />
+                {reservasPagina.length ? (
+                  <ListaReservas reservas={reservasPagina} />
                 ) : (
                   <div className="rounded-xl p-4 bg-stone-50 dark:bg-zinc-800/60 border border-black/5 dark:border-white/10 flex items-center gap-2">
                     <AlertCircle className="w-4 h-4" aria-hidden="true" />
@@ -485,10 +634,35 @@ export default function AgendamentoSala() {
                   </div>
                 )}
               </div>
+
+              {/* Paginação simples */}
+              {reservasFiltradas.length > pageSize && (
+                <nav className="mt-4 flex items-center justify-between text-sm" aria-label="Paginação de reservas">
+                  <span className="text-slate-600 dark:text-slate-300">
+                    Página {paginaAtual} de {totalPages} — {reservasFiltradas.length} itens
+                  </span>
+                  <div className="flex gap-2">
+                    <button
+                      disabled={paginaAtual <= 1}
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      className="rounded-lg px-3 py-2 bg-stone-100 dark:bg-zinc-800 disabled:opacity-60"
+                    >
+                      Anterior
+                    </button>
+                    <button
+                      disabled={paginaAtual >= totalPages}
+                      onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                      className="rounded-lg px-3 py-2 bg-stone-100 dark:bg-zinc-800 disabled:opacity-60"
+                    >
+                      Próxima
+                    </button>
+                  </div>
+                </nav>
+              )}
             </Card>
 
-            {/* Coluna Direita */}
-            <Card className="md:col-span-2 p-5 sm:p-6">
+            {/* Coluna Direita — sticky para aproveitar altura */}
+            <Card className="md:col-span-2 p-5 sm:p-6 md:sticky md:top-4 h-fit">
               <div className="flex items-center gap-2">
                 <Info className="w-5 h-5" aria-hidden="true" />
                 <h3 className="text-base sm:text-lg font-bold">Regras e orientações</h3>
@@ -536,7 +710,11 @@ export default function AgendamentoSala() {
         title="Solicitar reserva de sala"
         labelledById="modal-nova-reserva-title"
       >
-        <FormNovaReserva salas={salas.length ? salas : [{ id: "1", nome: "Sala 101 (Auditório)" }]} onSubmit={handleSubmitReserva} submitting={submitting} />
+        <FormNovaReserva
+          salas={salas.length ? salas : [{ id: "1", nome: "Sala 101 (Auditório)" }]}
+          onSubmit={handleSubmitReserva}
+          submitting={submitting}
+        />
       </Modal>
     </div>
   );

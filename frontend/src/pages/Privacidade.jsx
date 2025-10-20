@@ -1,4 +1,4 @@
-// ✅ src/pages/Privacidade.jsx (refactor com HeaderHero 3 cores, mini-stats e a11y)
+// ✅ src/pages/Privacidade.jsx (texto de contato sem botão/link)
 import { motion } from "framer-motion";
 import {
   ShieldCheck,
@@ -6,7 +6,6 @@ import {
   Ban,
   Database,
   FileText,
-  Mail,
   ArrowLeft,
 } from "lucide-react";
 import Footer from "../components/Footer";
@@ -22,7 +21,7 @@ function HeaderHero() {
         }}
         aria-hidden="true"
       />
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-10 md:py-12 min-h-[150px] sm:min-h-[180px] text-center flex flex-col items-center gap-3">
+      <div className="w-full px-4 sm:px-6 py-8 sm:py-10 md:py-12 min-h-[150px] sm:min-h-[180px] text-center flex flex-col items-center gap-3">
         <div className="inline-flex items-center gap-2">
           <ShieldCheck className="w-6 h-6" aria-hidden="true" />
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
@@ -154,12 +153,7 @@ export default function Privacidade() {
               <h3 className="text-lg font-semibold">Contato</h3>
               <p className="mt-2">
                 Em caso de dúvidas, fale com a equipe pelo e-mail{" "}
-                <a
-                  href="mailto:escoladasaude@santos.sp.gov.br"
-                  className="underline decoration-emerald-600 decoration-2 underline-offset-2 hover:opacity-90"
-                >
-                  escoladasaude@santos.sp.gov.br
-                </a>.
+                <strong>escoladasaude@santos.sp.gov.br</strong>.
               </p>
             </div>
           </section>
@@ -172,14 +166,6 @@ export default function Privacidade() {
             >
               <ArrowLeft className="w-4 h-4" />
               Voltar para a página inicial
-            </a>
-            <a
-              href="mailto:escoladasaude@santos.sp.gov.br"
-              className="inline-flex items-center gap-2 rounded-xl px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white"
-              aria-label="Entrar em contato por e-mail"
-            >
-              <Mail className="w-4 h-4" />
-              Entrar em contato
             </a>
           </div>
         </motion.article>

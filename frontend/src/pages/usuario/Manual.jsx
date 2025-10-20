@@ -1,4 +1,4 @@
-// ✅ src/pages/usuario/Manual.jsx
+// ✅ src/pages/usuario/Manual.jsx — fullscreen + responsivo
 import { useEffect, useState } from "react";
 import { BookOpen, Printer, FileText, CalendarClock } from "lucide-react";
 import Footer from "../../components/Footer";
@@ -11,7 +11,8 @@ function HeaderHero({ onPrint }) {
       role="banner"
       className="bg-gradient-to-br from-violet-900 via-violet-700 to-fuchsia-700 text-white"
     >
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 flex flex-col items-center text-center gap-4">
+      {/* 👇 Full width, sem max-w */}
+      <div className="w-full px-4 sm:px-6 lg:px-8 py-8 flex flex-col items-center text-center gap-4">
         <div className="inline-flex items-center gap-2">
           <BookOpen className="w-6 h-6" aria-hidden="true" />
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
@@ -19,12 +20,12 @@ function HeaderHero({ onPrint }) {
           </h1>
         </div>
 
-        <p className="text-sm text-white/90 max-w-xl">
+        <p className="text-sm text-white/90 max-w-none">
           Orientações sobre acesso, inscrições, presenças, avaliações e certificados.
         </p>
 
-        {/* mini stats no topo */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-2">
+        {/* mini stats no topo (grid fluida) */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-2 w-full max-w-none">
           <StatCard icon={<FileText className="w-4 h-4" />} label="Seções" value="12" />
           <StatCard
             icon={<CalendarClock className="w-4 h-4" />}
@@ -63,7 +64,7 @@ function StatCard({ icon, label, value, tone = "default" }) {
   };
   return (
     <div
-      className={`rounded-2xl border ${tones[tone]} px-3 py-3 text-left backdrop-blur-sm`}
+      className={`rounded-2xl border ${tones[tone]} px-3 py-3 text-left backdrop-blur-sm w-full`}
       role="status"
       aria-live="polite"
     >
@@ -96,7 +97,8 @@ export default function Manual() {
 
       <main
         role="main"
-        className="flex-1 max-w-6xl mx-auto px-4 sm:px-6 py-8 text-gray-700 dark:text-gray-300"
+        // 👇 Full width + respiro lateral; removidos max-w e mx-auto
+        className="flex-1 w-full px-4 sm:px-6 lg:px-8 py-8 text-gray-700 dark:text-gray-300"
       >
         <p className="mb-6 font-semibold">
           <strong>Escola da Saúde – Secretaria Municipal de Saúde de Santos</strong>

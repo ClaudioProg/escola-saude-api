@@ -259,18 +259,27 @@ export default function AccordionAjuda({
                         {highlight(item.pergunta, query)}
                       </span>
                       <div className="flex items-center gap-2">
-                        <button
-                          type="button"
+                        {/* ⬇️ AQUI trocamos o <button> por um elemento não-button com acessibilidade */}
+                        <span
+                          role="button"
+                          tabIndex={0}
                           onClick={(e) => {
                             e.stopPropagation();
                             handleCopyLink(item.id);
                           }}
-                          className="p-1 rounded-md hover:bg-black/5 dark:hover:bg-white/10"
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              handleCopyLink(item.id);
+                            }
+                          }}
+                          className="p-1 rounded-md hover:bg-black/5 dark:hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20 dark:focus-visible:ring-white/30"
                           aria-label="Copiar link desta pergunta"
                           title="Copiar link desta pergunta"
                         >
                           <LinkIcon className="h-4 w-4 text-gray-600 dark:text-gray-300" />
-                        </button>
+                        </span>
                         <ChevronUp
                           className={`${nowOpen ? "rotate-180" : ""} h-5 w-5 text-gray-600 dark:text-gray-300 transition-transform`}
                           aria-hidden="true"

@@ -295,6 +295,20 @@ exports.atualizarSubmissao = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
+// ⬇️ gate específico para EXCLUSÃO (não depende do prazo)
+function podeExcluirPeloAutor(sub, user) {
+  const ehDono = String(sub.usuario_id) === String(user.id);
+  const ehAdmin = hasRole(user, "administrador");
+  if (!ehDono && !ehAdmin) return { ok: false, status: 403, msg: "Sem permissão." };
+
+  const status = String(sub.status || "").toLowerCase();
+  const permitido = status === "rascunho" || status === "submetido";
+  if (!permitido && !ehAdmin) {
+    return { ok: false, status: 400, msg: "Somente rascunho ou submetido podem ser excluídos." };
+  }
+  return { ok: true };
+}
+
 /* ────────────────────────────────────────────────────────────────
  * EXCLUIR SUBMISSÃO (autor) — DELETE /submissoes/:id
  * ──────────────────────────────────────────────────────────────── */
@@ -310,20 +324,20 @@ exports.removerSubmissao = async (req, res, next) => {
     `, [id]);
 
     if (!meta) { const e = new Error("Submissão não encontrada."); e.status = 404; throw e; }
-    if (!hasRole(req.user, "administrador") && meta.usuario_id !== req.user.id) {
-      const e = new Error("Sem permissão."); e.status = 403; throw e;
-    }
 
-    const gate = podeExcluirOuEditarPeloAutor(meta, meta);
-    assert(gate.ok, gate.msg);
+    const gate = podeExcluirPeloAutor(meta, req.user);
+    if (!gate.ok) { const e = new Error(gate.msg); e.status = gate.status || 400; throw e; }
 
+    // apaga coautores/arquivos e a submissão
     await db.tx(async (t) => {
       await t.none(`DELETE FROM trabalhos_coautores WHERE submissao_id=$1`, [id]);
       await t.none(`DELETE FROM trabalhos_arquivos  WHERE submissao_id=$1`, [id]);
       await t.none(`DELETE FROM trabalhos_submissoes WHERE id=$1`, [id]);
     });
 
-    res.json({ ok: true, id });
+    // Se você salva arquivo em disco além do BLOB, poderia buscar os caminhos antes e dar fs.unlink aqui.
+
+    res.status(204).end(); // sem corpo
   } catch (err) { next(err); }
 };
 

@@ -32,8 +32,8 @@ export default defineConfig(({ mode }) => {
           registerType: 'autoUpdate',
           devOptions: { enabled: false },
           manifest: {
-            name: 'Escola de Saúde',
-            short_name: 'EscolaSaúde',
+            name: 'Escola da Saúde',
+            short_name: 'SESA',
             start_url: '/',
             scope: '/',
             display: 'standalone',

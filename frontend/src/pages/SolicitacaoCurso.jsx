@@ -11,7 +11,7 @@ import { apiGet, apiPost } from "../services/api";
 /* =========================================================================
    HeaderHero padronizado (mesmo tamanho/typo em TODAS as páginas)
    - 3 cores por gradiente
-   - Título e subtítulo com tamanhos consistentes
+   - Título centralizado com ícone ao lado (mobile-safe)
    ========================================================================= */
 function HeaderHero({ variant = "petroleo", title, subtitle, Icon = GraduationCap }) {
   const variants = {
@@ -37,16 +37,16 @@ function HeaderHero({ variant = "petroleo", title, subtitle, Icon = GraduationCa
   return (
     <header className={`bg-gradient-to-br ${grad} text-white`}>
       {/* Altura padronizada + tipografia uniforme entre páginas */}
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-10 sm:py-12 min-h-[180px] flex items-center">
-        <div className="w-full text-center sm:text-left">
-          <div className="inline-flex items-center gap-3">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-10 sm:py-12 min-h-[180px] flex items-center justify-center">
+        <div className="w-full text-center">
+          <div className="flex flex-wrap items-center justify-center gap-3">
             <Icon className="w-6 h-6 sm:w-7 sm:h-7" aria-hidden="true" />
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight leading-tight text-balance break-words">
               {title}
             </h1>
           </div>
           {subtitle && (
-            <p className="mt-2 text-sm sm:text-base text-white/90 max-w-3xl">
+            <p className="mt-2 text-sm sm:text-base text-white/90 max-w-3xl mx-auto text-balance">
               {subtitle}
             </p>
           )}
