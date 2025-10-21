@@ -3,28 +3,8 @@
   <head>
     <meta charset="utf-8" />
 
-    <!-- 🔒 Content Security Policy (CSP) — META (DEV)
-         Observação: 'frame-ancestors' NÃO tem efeito via <meta>, use no servidor (Helmet).
-         Em produção, ajuste/remova hosts de DEV abaixo. -->
-    <meta http-equiv="Content-Security-Policy" content="
-      default-src 'self';
-      connect-src 'self'
-        http://localhost:3000 http://127.0.0.1:3000
-        https://escola-saude-api.onrender.com
-        https://accounts.google.com https://www.googleapis.com
-        ws: blob: data:;
-      script-src 'self' https://accounts.google.com https://www.gstatic.com 'unsafe-inline';
-      style-src  'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com;
-      style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com;
-      font-src   'self' https://fonts.gstatic.com data:;
-      img-src    'self' data: blob: https:;
-      frame-src  'self' https://accounts.google.com;
-      worker-src 'self' blob:;
-      media-src  'self' https:;
-      object-src 'none';
-      base-uri   'self';
-      form-action 'self';
-    ">
+    <!-- CSP é enviada via header pelo Helmet no servidor (com nonce dinâmico).
+         Evite duplicar CSP via <meta> para não conflitar com o header. -->
 
     <!-- Mobile / viewport -->
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -66,7 +46,7 @@
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 
     <!-- Boot do tema (antes do render) -->
-    <script>
+    <script nonce="{{CSP_NONCE}}">
       try {
         var saved = localStorage.getItem('theme'); // 'light' | 'dark' | null
         var systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;

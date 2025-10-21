@@ -14,13 +14,26 @@ const requireAdmin = [requireAuth, authorizeRoles("administrador")];
 const ctrl = require("../controllers/trabalhosController");
 const adminCtrl = require("../controllers/submissoesAdminController");
 
+// Upload temp (usado por pôster e banner)
+const upload = multer({ dest: path.join(process.cwd(), "uploads/tmp") });
+
 /* ─────────────────────────── ROTAS DE USUÁRIO ─────────────────────────── */
 /**
  * GET /api/submissoes/minhas
  * → Lista todas as submissões do usuário autenticado.
  * ⚠️ Deve vir antes de qualquer rota com :id(\\d+)!
  */
-router.get("/submissoes/minhas", requireAuth, ctrl.listarMinhas);
+router.get("/submissoes/minhas", requireAuth, ctrl.minhasSubmissoes);
+
+/**
+ * POST /api/chamadas/:chamadaId/submissoes
+ * → Criar submissão na chamada informada
+ */
+router.post(
+  "/chamadas/:chamadaId(\\d+)/submissoes",
+  requireAuth,
+  ctrl.criarSubmissao
+);
 
 /**
  * GET /api/submissoes/:id
@@ -45,6 +58,20 @@ router.delete("/submissoes/:id(\\d+)", requireAuth, ctrl.removerSubmissao);
 /* Downloads (inline; autorização fina no controller) */
 router.get("/submissoes/:id(\\d+)/poster", requireAuth, ctrl.baixarPoster);
 router.get("/submissoes/:id(\\d+)/banner", requireAuth, ctrl.baixarBanner);
+
+/* Uploads (pôster e banner) */
+router.post(
+  "/submissoes/:id(\\d+)/poster",
+  requireAuth,
+  upload.single("poster"),
+  ctrl.atualizarPoster
+);
+router.post(
+  "/submissoes/:id(\\d+)/banner",
+  requireAuth,
+  upload.single("banner"),
+  ctrl.atualizarBanner
+);
 
 /* ─────────────────────────── ROTAS ADMIN ─────────────────────────── */
 // Lista todas as submissões (sem filtrar por chamada)

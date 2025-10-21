@@ -122,16 +122,16 @@ export default function RankingModal({ open, onClose, itens = [], onStatusChange
 
         {/* Lista rolável */}
         <div className="flex-1 overflow-y-auto">
-          <table className="w-full text-sm">
+        <table className="w-full text-sm table-fixed">
             <thead className="bg-amber-600 text-white sticky top-0 z-10">
               <tr>
-                <th className="p-2 text-left w-16">#</th>
-                <th className="p-2 text-left">Título</th>
-                <th className="p-2 text-left">Autor</th>
-                <th className="p-2 text-left">Chamada</th>
-                <th className="p-2 text-center w-24">Nota</th>
-                <th className="p-2 text-center w-40">Status</th>
-                <th className="p-2 text-center w-60">Ações</th>
+              <th className="p-2 text-left w-12">#</th>
+                <th className="p-2 text-left w-[36%]">Título</th>
+                <th className="p-2 text-left w-[24%]">Autor</th>
+                <th className="p-2 text-left w-[22%]">Chamada</th>
+                <th className="p-2 text-center w-20">Nota</th>
+                <th className="p-2 text-center w-28">Status</th>
+                <th className="p-2 text-center w-[16%]">Ações</th>
               </tr>
             </thead>
             <tbody>
@@ -143,25 +143,27 @@ export default function RankingModal({ open, onClose, itens = [], onStatusChange
                 </tr>
               )}
               {ordenados.map((s) => (
-                <tr key={s.id} className="border-b dark:border-zinc-800">
-                  <td className="p-2 font-semibold text-zinc-700 dark:text-zinc-200">{s._rank}</td>
-                  <td className="p-2">
-                    <div className="max-w-[44ch] truncate" title={s.titulo}>
+               <tr key={s.id} className="border-b dark:border-zinc-800 align-top">
+                  <td className="p-2 font-semibold text-zinc-700 dark:text-zinc-200 align-top">{s._rank}</td>
+                  <td className="p-2 align-top">
+                    <div className="whitespace-normal break-words" title={s.titulo}>
                       {s.titulo}
                     </div>
-                    <div className="text-xs text-zinc-500">
+                    <div className="text-xs text-zinc-500 mt-0.5 whitespace-normal break-words">
                       {s.linha_tematica_nome || s.linha_tematica_codigo || "—"}
                     </div>
                   </td>
-                  <td className="p-2">
-                    <div className="max-w-[28ch] truncate">{s.autor_nome}</div>
-                    <div className="text-xs text-zinc-500">{s.autor_email}</div>
+                  <td className="p-2 align-top">
+                    <div className="whitespace-normal break-words font-medium">{s.autor_nome}</div>
+                    <div className="text-xs text-zinc-500 whitespace-normal break-words break-all">
+                      {s.autor_email}
+                    </div>
                   </td>
-                  <td className="p-2">{fmt(s.chamada_titulo)}</td>
-                  <td className="p-2 text-center font-bold">{fmtNum(s._nota, 1)}</td>
-                  <td className="p-2 text-center">{fmt(s.status)}</td>
-                  <td className="p-2">
-                    <div className="flex items-center justify-center gap-2">
+                  <td className="p-2 align-top whitespace-normal break-words">{fmt(s.chamada_titulo)}</td>
+                  <td className="p-2 text-center font-bold align-top">{fmtNum(s._nota, 1)}</td>
+                  <td className="p-2 text-center align-top whitespace-normal break-words">{fmt(s.status)}</td>
+                <td className="p-2 align-top">
+                    <div className="flex flex-wrap items-center justify-center gap-2">
                       <button
                         onClick={() => setStatus(s, "aprovado")}
                         disabled={workingId === s.id}

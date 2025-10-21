@@ -109,6 +109,7 @@ app.use(
         "connect-src": [
           "'self'",
           "https://escola-saude-api.onrender.com",
+          "https://accounts.google.com",
           "https://www.googleapis.com",
           ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []),
           ...(IS_DEV ? ["ws:", "http://localhost:5173", "http://127.0.0.1:5173"] : []),
@@ -202,6 +203,20 @@ app.use(
   })
 );
 
+/* ───────── Static do SPA (opcional) ───────── */
+const PUBLIC_DIR = path.join(__dirname, "public");
+if (fs.existsSync(PUBLIC_DIR)) {
+  app.use(
+    express.static(PUBLIC_DIR, {
+      index: false,
+      maxAge: IS_DEV ? 0 : "1h",
+      setHeaders(res) {
+        if (!IS_DEV) res.setHeader("Cache-Control", "public, max-age=3600");
+      },
+    })
+  );
+}
+
 /* ───────── DB fallback global ───────── */
 app.use((req, _res, next) => {
   if (!req.db) req.db = db;
@@ -274,7 +289,34 @@ app.post("/api/usuarios/recuperar-senha", recuperarSenhaLimiter, usuarioPublicoC
 
 /* ───────── Health & Root ───────── */
 app.get("/api/health", (_req, res) => res.status(200).json({ ok: true, env: process.env.NODE_ENV || "dev" }));
-app.get("/", (_req, res) => res.send("🟢 API da Escola da Saúde rodando!"));
+
+// Root/SPA: se houver public/index.html, serve com nonce; senão mostra mensagem da API
+app.get("/", (req, res, next) => {
+  const indexPath = path.join(PUBLIC_DIR, "index.html");
+  if (fs.existsSync(indexPath)) {
+   try {
+      const html = fs.readFileSync(indexPath, "utf8").replaceAll("{{CSP_NONCE}}", res.locals.cspNonce);
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      return res.status(200).send(html);
+    } catch (e) {
+      return next(e);
+    }
+  }
+  return res.send("🟢 API da Escola da Saúde rodando!");
+});
+
+// SPA fallback: qualquer rota não-API e não-uploads devolve index.html com nonce
+app.get(/^\/(?!api\/|uploads\/).+/, (req, res, next) => {
+  const indexPath = path.join(PUBLIC_DIR, "index.html");
+  if (!fs.existsSync(indexPath)) return next();
+  try {
+    const html = fs.readFileSync(indexPath, "utf8").replaceAll("{{CSP_NONCE}}", res.locals.cspNonce);
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    return res.status(200).send(html);
+  } catch (e) {
+    return next(e);
+  }
+});
 
 /* ───────── 404 ───────── */
 app.use((req, res) => {

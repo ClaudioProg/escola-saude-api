@@ -23,6 +23,22 @@ import RankingModal from "../components/RankingModal";
 /* ————————————————— Utils ————————————————— */
 const fmt = (v, alt = "—") => (v === 0 || !!v ? String(v) : alt);
 const fmtNum = (v, d = 2) => Number(v ?? 0).toFixed(d);
+function fmtDateTimeBR(v) {
+    if (!v) return "—";
+    try {
+     const d = new Date(v);
+      if (Number.isNaN(d.getTime())) return "—";
+      // dd/mm/aaaa hh:mm
+      const dd = String(d.getDate()).padStart(2, "0");
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const yyyy = d.getFullYear();
+      const hh = String(d.getHours()).padStart(2, "0");
+      const min = String(d.getMinutes()).padStart(2, "0");
+      return `${dd}/${mm}/${yyyy} ${hh}:${min}`;
+    } catch {
+      return "—";
+    }
+  }
 const fmtMonthBR = (yyyyMm) => {
   const m = String(yyyyMm || "").trim();
   if (!/^\d{4}-\d{2}$/.test(m)) return fmt(yyyyMm);
@@ -1010,6 +1026,7 @@ export default function AdminSubmissoes() {
         <th scope="col" className="p-3 text-left">Título</th>
         <th scope="col" className="p-3 text-left">Autor</th>
         <th scope="col" className="p-3 text-left">Chamada</th>
+        <th scope="col" className="p-3 text-center">Submetido em</th>
         <th scope="col" className="p-3 text-center">Status</th>
         <th scope="col" className="p-3 text-center">Nota (média)</th>
         <th scope="col" className="p-3 text-center">Detalhes</th>
@@ -1018,7 +1035,7 @@ export default function AdminSubmissoes() {
     <tbody>
       {filtradas.length === 0 && (
         <tr>
-          <td colSpan={6} className="text-center py-6 text-zinc-600">Nenhuma submissão encontrada.</td>
+          <td colSpan={7} className="text-center py-6 text-zinc-600">Nenhuma submissão encontrada.</td>
         </tr>
       )}
 
@@ -1056,6 +1073,11 @@ export default function AdminSubmissoes() {
                     </div>
                   </td>
                   <td className="p-3 text-zinc-700 dark:text-zinc-300">{s.chamada_titulo}</td>
+                  <td className="p-3 text-center">
+                    {s.status === "rascunho"
+                      ? "—"
+                      : fmtDateTimeBR(s.submetido_em || s.criado_em)}
+                  </td>
                   <td className="p-3 text-center"><StatusBadge status={s.status} /></td>
                   <td className="p-3 text-center font-semibold text-zinc-800 dark:text-zinc-100">
                     {fmt(s.nota_media, "—")}
@@ -1110,6 +1132,11 @@ export default function AdminSubmissoes() {
                 <span className="font-medium">{s.autor_nome}</span>
                 <span className="text-zinc-500"> · {s.autor_email}</span>
               </p>
+              {s.status !== "rascunho" && (
+                <p className="text-xs text-zinc-500">
+                  Submetido em: {fmtDateTimeBR(s.submetido_em || s.criado_em)}
+                </p>
+              )}
                           <div className="flex items-center justify-between pt-1">
                 <span className="text-sm font-semibold">Nota: {fmt(s.nota_media, "—")}</span>
                 <button
