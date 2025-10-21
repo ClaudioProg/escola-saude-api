@@ -339,7 +339,7 @@ async function listarTurmasPorEvento(req, res) {
 // GET /api/turmas/instrutor
 async function listarTurmasDoInstrutor(req, res) {
   try {
-    const usuarioId = req.usuario?.id;
+    const usuarioId = req.user?.id;
     if (!usuarioId) return res.status(401).json({ erro: "Não autenticado." });
 
     // (1) Turmas do instrutor

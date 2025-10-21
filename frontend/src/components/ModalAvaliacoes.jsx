@@ -1,7 +1,6 @@
 // 📁 src/components/ModalAvaliacoes.jsx
 import PropTypes from "prop-types";
 import Modal from "./Modal"; // ✅ usa o Modal padrão do projeto
-import { formatarDataBrasileira } from "../utils/data";
 import { Star, Gauge, CalendarDays, Info } from "lucide-react";
 
 /* ====================== Campos ====================== */
@@ -67,6 +66,19 @@ const calcMedia = (avaliacao) => {
   return (soma / valores.length).toFixed(1);
 };
 
+// 🔒 BR date safe (sem timezone / sem new Date)
+function formatIsoToBR(input) {
+  if (!input) return "—";
+  const s = String(input).trim();
+  // date+time
+  const dt = s.match(/^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})(?::\d{2})?/);
+  if (dt) return `${dt[3]}/${dt[2]}/${dt[1]} ${dt[4]}:${dt[5]}`;
+  // date only
+  const d = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (d) return `${d[3]}/${d[2]}/${d[1]}`;
+  return s;
+}
+
 /* ====================== Componente ====================== */
 export default function ModalAvaliacoes({ isOpen, onClose, avaliacao }) {
   if (!avaliacao) return null;
@@ -92,7 +104,7 @@ export default function ModalAvaliacoes({ isOpen, onClose, avaliacao }) {
       describedBy="descricao-avaliacao-visualizacao"
       className="w-[96%] max-w-3xl p-0 overflow-hidden"
     >
-      {/* Header (gradiente exclusivo 3 cores) */}
+      {/* Header */}
       <header
         className="px-4 sm:px-6 py-4 text-white bg-gradient-to-br from-indigo-900 via-violet-800 to-fuchsia-700"
         role="group"
@@ -114,117 +126,112 @@ export default function ModalAvaliacoes({ isOpen, onClose, avaliacao }) {
             <CalendarDays className="w-4 h-4" aria-hidden="true" />
             <span>
               Data da avaliação:{" "}
-              <strong>{formatarDataBrasileira(dataAval)}</strong>
+              <strong>{formatIsoToBR(dataAval)}</strong>
             </span>
           </div>
         )}
       </header>
 
-      {/* Ministats */}
-      <section className="px-4 sm:px-6 pt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
-        {/* Média geral */}
-        <div className="rounded-2xl border border-indigo-100 dark:border-indigo-900 p-3 shadow-sm bg-white dark:bg-slate-900">
-          <div className="flex items-center gap-2 mb-1">
-            <Star className="w-5 h-5" aria-hidden="true" />
-            <span className="font-semibold">Média</span>
+      {/* ===== Corpo rolável (garante ver o final) ===== */}
+      <div className="max-h-[75vh] overflow-y-auto px-4 sm:px-6 pt-4 pb-24">
+        {/* Ministats */}
+        <section className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="rounded-2xl border border-indigo-100 dark:border-indigo-900 p-3 shadow-sm bg-white dark:bg-slate-900">
+            <div className="flex items-center gap-2 mb-1">
+              <Star className="w-5 h-5" aria-hidden="true" />
+              <span className="font-semibold">Média</span>
+            </div>
+            <div className="text-2xl font-bold">{media ? `${media} / 5` : "— / 5"}</div>
+            <div className="text-xs text-slate-600 dark:text-slate-300">
+              Conversão das labels (Ótimo=5 … Péssimo=1)
+            </div>
           </div>
-          <div className="text-2xl font-bold">{media ? `${media} / 5` : "— / 5"}</div>
-          <div className="text-xs text-slate-600 dark:text-slate-300">
-            Conversão das labels (Ótimo=5 … Péssimo=1)
+
+          <div className="rounded-2xl border border-indigo-100 dark:border-indigo-900 p-3 shadow-sm bg-white dark:bg-slate-900">
+            <div className="flex items-center gap-2 mb-1">
+              <Gauge className="w-5 h-5" aria-hidden="true" />
+              <span className="font-semibold">Cobertura</span>
+            </div>
+            <div className="text-sm text-slate-600 dark:text-slate-300 mb-2">
+              {totalPreenchidos}/{totalCrit} critérios preenchidos
+            </div>
+            <div className="h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden" aria-hidden="true">
+              <div className="h-full bg-indigo-500 transition-all" style={{ width: `${pctPreenchidos}%` }} />
+            </div>
           </div>
+
+          <div className="rounded-2xl border border-indigo-100 dark:border-indigo-900 p-3 shadow-sm bg-white dark:bg-slate-900">
+            <div className="flex items-center gap-2 mb-1">
+              <Info className="w-5 h-5" aria-hidden="true" />
+              <span className="font-semibold">Notas</span>
+            </div>
+            <div className="text-sm">
+              Itens extras (ex.: <em>Exposição</em>, <em>Oficinas</em>) aparecem
+              somente quando informados.
+            </div>
+          </div>
+        </section>
+
+        {/* Live region A11y */}
+        <div aria-live="polite" className="sr-only">
+          {media ? `Média geral ${media} de 5.` : "Sem média calculada."}
         </div>
 
-        {/* Critérios preenchidos */}
-        <div className="rounded-2xl border border-indigo-100 dark:border-indigo-900 p-3 shadow-sm bg-white dark:bg-slate-900">
-          <div className="flex items-center gap-2 mb-1">
-            <Gauge className="w-5 h-5" aria-hidden="true" />
-            <span className="font-semibold">Cobertura</span>
-          </div>
-          <div className="text-sm text-slate-600 dark:text-slate-300 mb-2">
-            {totalPreenchidos}/{totalCrit} critérios preenchidos
-          </div>
-          <div className="h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden" aria-hidden="true">
-            <div
-              className="h-full bg-indigo-500 transition-all"
-              style={{ width: `${pctPreenchidos}%` }}
-            />
-          </div>
-        </div>
+        {/* Conteúdo principal */}
+        <section className="pt-4">
+          {/* Bloco de notas */}
+          {notasVisiveis.length > 0 ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {notasVisiveis.map(({ chave, rotulo }) => {
+                const valor = avaliacao[chave];
+                const notaNum = labelToNota(valor);
+                return (
+                  <div
+                    key={chave}
+                    className="p-3 rounded-xl border bg-white dark:bg-slate-900 dark:border-slate-700"
+                  >
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                        {rotulo}
+                      </div>
+                      <div className="text-xs text-slate-500 dark:text-slate-400">
+                        {typeof notaNum === "number" ? `${notaNum}/5` : "—/5"}
+                      </div>
+                    </div>
 
-        {/* Observação de interpretação */}
-        <div className="rounded-2xl border border-indigo-100 dark:border-indigo-900 p-3 shadow-sm bg-white dark:bg-slate-900">
-          <div className="flex items-center gap-2 mb-1">
-            <Info className="w-5 h-5" aria-hidden="true" />
-            <span className="font-semibold">Notas</span>
-          </div>
-          <div className="text-sm">
-            Itens extras (ex.: <em>Exposição</em>, <em>Oficinas</em>) aparecem
-            somente quando informados.
-          </div>
-        </div>
-      </section>
+                    <span
+                      className={`inline-block text-xs font-bold px-2 py-1 rounded-full border ${corNota(valor)}`}
+                      aria-label={`Nota: ${valor}`}
+                    >
+                      {valor}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-sm text-slate-500 italic">
+              (Sem notas registradas)
+            </p>
+          )}
 
-      {/* Live region A11y */}
-      <div aria-live="polite" className="sr-only">
-        {media ? `Média geral ${media} de 5.` : "Sem média calculada."}
+          {/* Campos textuais */}
+          <div className="mt-4 space-y-3">
+            {CAMPOS_TEXTO.map(({ chave, rotulo }) => (
+              <div key={chave}>
+                <strong className="block text-slate-800 dark:text-slate-100 mb-1">
+                  {rotulo}:
+                </strong>
+                <p className="bg-white dark:bg-slate-900 border dark:border-slate-700 p-3 rounded-xl text-sm text-slate-800 dark:text-slate-100 min-h-[2.5rem]">
+                  {avaliacao[chave] || "—"}
+                </p>
+              </div>
+            ))}
+          </div>
+        </section>
       </div>
 
-      {/* Conteúdo principal (scrollável) */}
-      <section className="px-4 sm:px-6 pb-20 pt-4">
-        {/* Bloco de notas */}
-        {notasVisiveis.length > 0 ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {notasVisiveis.map(({ chave, rotulo }) => {
-              const valor = avaliacao[chave];
-              const notaNum = labelToNota(valor);
-              return (
-                <div
-                  key={chave}
-                  className="p-3 rounded-xl border bg-white dark:bg-slate-900 dark:border-slate-700"
-                >
-                  <div className="flex items-center justify-between gap-2 mb-2">
-                    <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-                      {rotulo}
-                    </div>
-                    <div className="text-xs text-slate-500 dark:text-slate-400">
-                      {typeof notaNum === "number" ? `${notaNum}/5` : "—/5"}
-                    </div>
-                  </div>
-
-                  <span
-                    className={`inline-block text-xs font-bold px-2 py-1 rounded-full border ${corNota(
-                      valor
-                    )}`}
-                    aria-label={`Nota: ${valor}`}
-                  >
-                    {valor}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <p className="text-sm text-slate-500 italic">
-            (Sem notas registradas)
-          </p>
-        )}
-
-        {/* Campos textuais */}
-        <div className="mt-4 space-y-3">
-          {CAMPOS_TEXTO.map(({ chave, rotulo }) => (
-            <div key={chave}>
-              <strong className="block text-slate-800 dark:text-slate-100 mb-1">
-                {rotulo}:
-              </strong>
-              <p className="bg-white dark:bg-slate-900 border dark:border-slate-700 p-3 rounded-xl text-sm text-slate-800 dark:text-slate-100 min-h-[2.5rem]">
-                {avaliacao[chave] || "—"}
-              </p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* Barra de ações sticky (excelente no mobile) */}
+      {/* Footer sticky */}
       <div className="sticky bottom-0 left-0 right-0 bg-white/80 dark:bg-slate-950/80 backdrop-blur border-t border-slate-200 dark:border-slate-800 px-4 sm:px-6 py-3 flex items-center justify-end">
         <button
           onClick={onClose}

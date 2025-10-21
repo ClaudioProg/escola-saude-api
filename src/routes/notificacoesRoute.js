@@ -26,7 +26,7 @@ function getPagination(req) {
  * Suporta paginação via ?limit=&offset=
  */
 router.get("/", authMiddleware, async (req, res) => {
-  const { id: usuario_id } = req.usuario;
+  const { id: usuario_id } = req.user;
   const { limit, offset } = getPagination(req);
 
   try {
@@ -60,7 +60,7 @@ router.get("/", authMiddleware, async (req, res) => {
  * Total de notificações não lidas do usuário
  */
 router.get("/nao-lidas/contagem", authMiddleware, async (req, res) => {
-  const { id: usuario_id } = req.usuario;
+  const { id: usuario_id } = req.user;
 
   try {
     const { rows } = await db.query(
@@ -85,7 +85,7 @@ router.get("/nao-lidas/contagem", authMiddleware, async (req, res) => {
  * Marca uma notificação como lida (se pertencer ao usuário)
  */
 router.patch("/:id/lida", authMiddleware, async (req, res) => {
-  const { id: usuario_id } = req.usuario;
+  const { id: usuario_id } = req.user;
 
   // valida ID numérico
   const notificacao_id = Number.parseInt(req.params.id, 10);
@@ -122,7 +122,7 @@ router.patch("/:id/lida", authMiddleware, async (req, res) => {
  * Marca TODAS as notificações do usuário como lidas
  */
 router.patch("/lidas/todas", authMiddleware, async (req, res) => {
-  const { id: usuario_id } = req.usuario;
+  const { id: usuario_id } = req.user;
   try {
     await db.query(
       `

@@ -24,8 +24,8 @@ router.use(auth);
  * IMPORTANTE:
  * - /opcoes: não passa pelo forcarAtualizacaoCadastro (não pode bloquear a carga das listas)
  * - /me (GET/PUT/PATCH): amarrado diretamente ao usuarioPublicoController
- *   - GET -> obterUsuarioPorId (usa req.usuario.id)
- *   - PUT/PATCH -> atualizarPerfilCompleto (usa req.usuario.id)
+ *   - GET -> obterUsuarioPorId (usa req.user.id)
+ *   - PUT/PATCH -> atualizarPerfilCompleto (usa req.user.id)
  */
 
 // ▶️ Opções para os selects (livre do "forçar atualização")
@@ -49,14 +49,14 @@ try {
 router.get(
   "/me",
   wrap(async (req, res) => {
-    req.params.id = req.usuario.id;
+    req.params.id = req.user.id;
     return usuarioPublico.obterUsuarioPorId(req, res);
   })
 );
 
 // ✏️ Atualizar meu perfil (cadastro complementar) — aceita PUT e PATCH
 const atualizarMeuPerfil = async (req, res) => {
-  req.params.id = req.usuario.id;
+  req.params.id = req.user.id;
   return usuarioPublico.atualizarPerfilCompleto(req, res);
 };
 

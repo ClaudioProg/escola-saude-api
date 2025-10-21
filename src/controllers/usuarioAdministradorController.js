@@ -64,7 +64,7 @@ async function listarUsuarios(req, res) {
 /* ======= BUSCAR USUÁRIO POR ID (ADMIN OU O PRÓPRIO) ======= */
 async function buscarUsuarioPorId(req, res) {
   const { id } = req.params;
-  const solicitante = req.usuario;
+  const solicitante = req.user;
   const isAdministrador = toPerfilArray(solicitante?.perfil).includes("administrador");
 
   if (!isAdministrador && Number(id) !== Number(solicitante?.id)) {
@@ -114,7 +114,7 @@ async function atualizarUsuario(req, res) {
   const { id } = req.params;
   const { nome, email, perfil } = req.body;
 
-  const solicitante = req.usuario;
+  const solicitante = req.user;
   const isAdministrador = toPerfilArray(solicitante?.perfil).includes("administrador");
 
   if (!isAdministrador && Number(id) !== Number(solicitante?.id)) {
@@ -169,7 +169,7 @@ async function atualizarUsuario(req, res) {
 /* =============== EXCLUIR USUÁRIO (ADMIN) =============== */
 async function excluirUsuario(req, res) {
   const { id } = req.params;
-  const isAdministrador = toPerfilArray(req.usuario?.perfil).includes("administrador");
+  const isAdministrador = toPerfilArray(req.user?.perfil).includes("administrador");
 
   if (!isAdministrador) return res.status(403).json({ erro: "Acesso negado." });
 
@@ -259,7 +259,7 @@ async function atualizarPerfil(req, res) {
   const { id } = req.params;
   const { perfil } = req.body;
 
-  if (!toPerfilArray(req.usuario?.perfil).includes("administrador")) {
+  if (!toPerfilArray(req.user?.perfil).includes("administrador")) {
     return res.status(403).json({ erro: "Acesso negado." });
   }
 

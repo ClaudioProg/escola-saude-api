@@ -88,7 +88,7 @@ async function colIf(name) {
 /* ============================================================ */
 async function listarNotificacoes(req, res) {
   try {
-    const usuario_id = req.usuario?.id;
+    const usuario_id = req.user?.id;
     if (!usuario_id) return res.status(401).json({ erro: "Não autorizado" });
 
     const meta = await getNotifColumns();
@@ -185,7 +185,7 @@ async function criarNotificacao(usuario_id, mensagem, extra) {
 /* ============================================================ */
 async function contarNaoLidas(req, res) {
   try {
-    const usuario_id = req.usuario?.id;
+    const usuario_id = req.user?.id;
     if (!usuario_id) return res.status(401).json({ erro: "Não autorizado" });
 
     const meta = await getNotifColumns();
@@ -212,7 +212,7 @@ async function contarNaoLidas(req, res) {
 /* ============================================================ */
 async function marcarComoLida(req, res) {
   try {
-    const usuario_id = req.usuario?.id;
+    const usuario_id = req.user?.id;
     if (!usuario_id) return res.status(401).json({ erro: "Não autorizado" });
 
     const { id } = req.params;

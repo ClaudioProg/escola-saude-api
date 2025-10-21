@@ -83,7 +83,7 @@ async function getEventosAvaliacoesPorInstrutor(req, res) {
 
 async function getResumoDashboard(req, res) {
   try {
-    const usuarioId = req.usuario?.id;
+    const usuarioId = req.user?.id;
     if (!usuarioId) {
       return res.status(401).json({ erro: "Usuário não autenticado." });
     }
@@ -220,7 +220,7 @@ WHERE ei.instrutor_id = $1
 
 async function getAvaliacoesRecentesInstrutor(req, res) {
   try {
-    const usuarioId = req.usuario?.id;
+    const usuarioId = req.user?.id;
     const query = `
       SELECT 
         e.titulo AS evento,

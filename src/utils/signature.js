@@ -4,7 +4,7 @@ const path = require("path");
 const { createCanvas, registerFont } = require("canvas");
 
 // Config: fontes e limites
-const SIGNATURE_FONT_PATH = process.env.SIGNATURE_FONT_TTF || path.join(process.cwd(), "assets", "fonts", "GreatVibes-Regular.ttf");
+const SIGNATURE_FONT_PATH = process.env.SIGNATURE_FONT_TTF || path.join(process.cwd(), "fonts", "GreatVibes-Regular.ttf");
 const SIGNATURE_FONT_FAMILY = process.env.SIGNATURE_FONT_FAMILY || "GreatVibesAuto";
 const SIGNATURE_WIDTH = Number(process.env.SIGNATURE_WIDTH || 900);   // px
 const SIGNATURE_HEIGHT = Number(process.env.SIGNATURE_HEIGHT || 300); // px

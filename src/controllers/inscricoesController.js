@@ -74,7 +74,7 @@ async function getResumoTurma(turmaId) {
    ➕ Inscrever-se em uma turma
    ──────────────────────────────────────────────────────────────── */
    async function inscreverEmTurma(req, res) {
-    const usuario_id = req.usuario.id;
+    const usuario_id = req.user.id;
     const { turma_id } = req.body;
   
     if (!turma_id) {
@@ -303,8 +303,8 @@ async function getResumoTurma(turmaId) {
    ❌ Cancelar inscrição (usuário cancela a PRÓPRIA, por turmaId)
    ──────────────────────────────────────────────────────────────── */
    async function cancelarMinhaInscricao(req, res) {
-    // compat: req.user (novo) ou req.usuario (legado)
-    const usuarioId = Number(req.user?.id || req.usuario?.id);
+    // compat: req.user (novo) ou req.user (legado)
+    const usuarioId = Number(req.user?.id || req.user?.id);
     const turmaId   = Number(req.params.turmaId || req.params.id); // id legado (ver rota antiga)
   
     if (!usuarioId || !turmaId) {
@@ -399,7 +399,7 @@ async function getResumoTurma(turmaId) {
    ──────────────────────────────────────────────────────────────── */
 async function obterMinhasInscricoes(req, res) {
   try {
-    const usuario_id = req.usuario.id;
+    const usuario_id = req.user.id;
 
     const resultado = await db.query(
       `

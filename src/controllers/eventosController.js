@@ -45,7 +45,7 @@ const MODO_LISTA = 'lista_registros';
 const ALLOWED_MODOS = new Set([MODO_TODOS, MODO_LISTA]);
 
 function getPerfisFromReq(req) {
-  const raw = req.usuario?.perfil ?? req.usuario?.perfis ?? [];
+  const raw = req.user?.perfil ?? req.user?.perfis ?? [];
   if (Array.isArray(raw)) return raw.map((p) => String(p).toLowerCase());
   return String(raw).split(',').map((p) => p.replace(/[\[\]"]/g, '').trim().toLowerCase()).filter(Boolean);
 }
@@ -56,7 +56,7 @@ function isInstrutorPerfil(req) {
   const p = getPerfisFromReq(req);
   return p.includes('instrutor') || p.includes('administrador');
 }
-const getUsuarioId = (req) => (req.user?.id ?? req.usuario?.id ?? null);
+const getUsuarioId = (req) => (req.user?.id ?? req.user?.id ?? null);
 
 /* =====================================================================
    🔐 Núcleo de checagem por REGISTRO (reuso interno)
@@ -190,7 +190,7 @@ async function listarEventos(req, res) {
    🆕 Listar eventos "para mim" (aplica regra por registro no SQL)
    ===================================================================== */
 async function listarEventosParaMim(req, res) {
-  const usuarioId = req.user?.id ?? req.usuario?.id ?? null;
+  const usuarioId = req.user?.id ?? req.user?.id ?? null;
   if (!usuarioId) return res.status(401).json({ ok: false, erro: 'NAO_AUTENTICADO' });
 
   const client = await pool.connect();

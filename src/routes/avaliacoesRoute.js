@@ -17,7 +17,7 @@ const {
 
 // Permite admin para qualquer usuário; demais perfis só se o :usuario_id == id do token
 function ensureSelfOrAdmin(req, res, next) {
-  const user = req.user ?? req.usuario ?? {};
+  const user = req.user ?? req.user ?? {};
   const tokenId = Number(user.id);
   const paramId = Number(req.params.usuario_id);
 

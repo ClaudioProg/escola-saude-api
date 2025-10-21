@@ -129,7 +129,7 @@ async function enviarAvaliacao(req, res) {
     comentarios_finais,
   } = req.body;
 
-  const usuario_id = req.user?.id ?? req.usuario?.id;
+  const usuario_id = req.user?.id ?? req.user?.id;
 
   if (!usuario_id) {
     return res.status(401).json({ erro: "Não autenticado." });
@@ -314,7 +314,7 @@ async function listarAvaliacoesDisponiveis(req, res) {
  * @route GET /api/avaliacoes/turma/:turma_id
  */
 async function listarPorTurmaParaInstrutor(req, res) {
-  const user = req.user ?? req.usuario ?? {};
+  const user = req.user ?? req.user ?? {};
   const usuarioId = Number(user.id);
   const perfis = Array.isArray(user.perfil)
     ? user.perfil.map(String)

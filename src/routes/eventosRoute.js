@@ -8,7 +8,7 @@ const authorizeRoles = require('../auth/authorizeRoles');
 
 // 🚧 Rota de teste de autenticação (remover em produção)
 router.get('/protegido', authMiddleware, (req, res) => {
-  res.json({ mensagem: `Acesso autorizado para o usuário ${req.usuario.cpf}` });
+  res.json({ mensagem: `Acesso autorizado para o usuário ${req.user.cpf}` });
 });
 
 /* ===============================

@@ -4,6 +4,7 @@ const router = express.Router();
 
 const authMiddleware = require("../auth/authMiddleware");
 const db = require("../db");
+const { extrairPerfis, permitirPerfis } = require("../utils/perfil");
 
 // Controllers
 const {
@@ -20,34 +21,99 @@ const {
   relatorioPresencasPorTurma,
   listaPresencasTurma,
   exportarPresencasPDF,
-  obterMinhasPresencas, // ← vamos usar este
+  obterMinhasPresencas,
 } = require("../controllers/presencasController");
 
-/** Middleware simples para restringir por perfil (case-insensitive, trim) */
-function permitirPerfis(...perfisPermitidos) {
-  const whitelist = perfisPermitidos.map((p) => String(p).trim().toLowerCase());
-  return (req, res, next) => {
-    const perfilRaw = req?.usuario?.perfil;
-    const perfil = String(perfilRaw || "").trim().toLowerCase();
-    if (!perfil || !whitelist.includes(perfil)) {
-      return res.status(403).json({ erro: "Acesso negado." });
-    }
-    next();
+/* ───────────────────────────────
+   Helpers: info de usuário/perfil
+─────────────────────────────── */
+function getUser(req) {
+  const u = req.usuario ?? req.user ?? {};
+  const id = Number(u.id);
+  const perfis = extrairPerfis({ usuario: u, user: u });
+  return {
+    id,
+    perfis,
+    isAdmin: perfis.includes("administrador"),
+    isInstr: perfis.includes("instrutor"),
+    isAluno: perfis.includes("usuario"),
   };
 }
 
-/* ----------------------------- *
- * Rotas públicas (sem auth)
- * ----------------------------- */
+/* ───────────────────────────────
+   Autorização contextual
+─────────────────────────────── */
 
-// ✅ Validação simples por evento/usuario (já existia)
+/** 🔐 Permite admin/instrutor OU o próprio aluno vinculado à turma */
+async function ensureTurmaViewer(req, res, next) {
+  try {
+    const { id: userId, isAdmin, isInstr } = getUser(req);
+    const turmaId = Number(req.params.turma_id || req.params.id);
+    if (!turmaId) return res.status(400).json({ erro: "turma_id inválido." });
+
+    if (isAdmin || isInstr) return next();
+    if (!userId) return res.status(401).json({ erro: "Não autenticado." });
+
+    const vinculos = await db.query(
+      `
+      SELECT 1
+      FROM presencas p
+      WHERE p.turma_id = $1 AND p.usuario_id = $2
+      UNION ALL
+      SELECT 1
+      FROM inscricoes i
+      WHERE i.turma_id = $1 AND i.usuario_id = $2
+      LIMIT 1
+      `,
+      [turmaId, userId]
+    );
+
+    if (vinculos.rowCount > 0) return next();
+    return res.status(403).json({ erro: "Acesso negado à turma." });
+  } catch (e) {
+    console.error("[ensureTurmaViewer]", e);
+    return res.status(500).json({ erro: "Erro de autorização." });
+  }
+}
+
+/** 🔎 Handler “self”: retorna só as presenças do próprio aluno */
+async function detalhesTurmaSelf(req, res) {
+  try {
+    const { id: userId } = getUser(req);
+    const turmaId = Number(req.params.turma_id);
+    if (!turmaId) return res.status(400).json({ erro: "turma_id inválido." });
+
+    const { rows } = await db.query(
+      `SELECT
+         p.data_presenca::date AS data,
+         p.presente AS presente
+       FROM presencas p
+       WHERE p.turma_id = $1 AND p.usuario_id = $2
+       ORDER BY p.data_presenca ASC`,
+      [turmaId, userId]
+    );
+
+    return res.json({ turma_id: turmaId, minhas_presencas: rows });
+  } catch (e) {
+    console.error("[detalhesTurmaSelf]", e);
+    return res.status(500).json({ erro: "Erro ao obter presenças." });
+  }
+}
+
+/* ───────────────────────────────
+   Rotas públicas
+─────────────────────────────── */
+
+// ✅ Validação simples por evento/usuario (pública)
 router.get("/validar", async (req, res) => {
   try {
     const evento = req.query.evento || req.query.evento_id;
     const usuario = req.query.usuario || req.query.usuario_id;
 
     if (!evento || !usuario) {
-      return res.status(400).json({ presente: false, erro: "Parâmetros ausentes." });
+      return res
+        .status(400)
+        .json({ presente: false, erro: "Parâmetros ausentes." });
     }
 
     const sql = `
@@ -63,30 +129,36 @@ router.get("/validar", async (req, res) => {
     return res.json({ presente: rowCount > 0 });
   } catch (err) {
     console.error("❌ Erro em GET /api/presencas/validar:", err);
-    return res.status(500).json({ presente: false, erro: "Erro ao validar presença." });
+    return res
+      .status(500)
+      .json({ presente: false, erro: "Erro ao validar presença." });
   }
 });
 
-/* ----------------------------- *
- * Rotas AUTENTICADAS
- * ----------------------------- */
+/* ───────────────────────────────
+   Rotas AUTENTICADAS
+─────────────────────────────── */
 
-// 0) 👤 Minhas presenças
+// 👤 Minhas presenças (todas as turmas)
 router.get("/minhas", authMiddleware, obterMinhasPresencas);
 router.get("/me", authMiddleware, obterMinhasPresencas);
 
-// 1) Registro de presença (aluno/monitor)
+// Registro de presença (aluno/monitor)
 router.post("/", authMiddleware, registrarPresenca);
 
-// 1.1) Relatório detalhado (datas × usuários)
+// 🔁 Detalhes da turma (modo seguro)
 router.get(
   "/turma/:turma_id/detalhes",
   authMiddleware,
-  permitirPerfis("instrutor", "administrador"),
-  relatorioPresencasPorTurma
+  ensureTurmaViewer,
+  async (req, res, next) => {
+    const { isAdmin, isInstr } = getUser(req);
+    if (isAdmin || isInstr) return relatorioPresencasPorTurma(req, res, next);
+    return detalhesTurmaSelf(req, res);
+  }
 );
 
-// 1.2) Frequências (resumo por usuário)
+// Resumo de frequências (instrutor/admin)
 router.get(
   "/turma/:turma_id/frequencias",
   authMiddleware,
@@ -94,7 +166,7 @@ router.get(
   listaPresencasTurma
 );
 
-// 1.3) PDF
+// Exportar PDF (instrutor/admin)
 router.get(
   "/turma/:turma_id/pdf",
   authMiddleware,
@@ -102,9 +174,7 @@ router.get(
   exportarPresencasPDF
 );
 
-/* ====== Fluxo do QR Code (AUTENTICADO) ======
-   Usado pela SPA: /presenca?turma=ID → POST /api/presencas/confirmar-qr/:turma_id
-*/
+/* ====== Fluxo do QR Code ====== */
 router.post("/confirmarPresencaViaQR", authMiddleware, confirmarPresencaViaQR);
 router.post("/confirmar-presenca-qr", authMiddleware, confirmarPresencaViaQR);
 router.post("/confirmarPresencaViaQr", authMiddleware, confirmarPresencaViaQR);

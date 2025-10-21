@@ -1,10 +1,12 @@
 // ✅ src/controllers/certificadosController.js
+/* eslint-disable no-console */
 const db = require("../db");
 const PDFDocument = require("pdfkit");
 const fs = require("fs");
 const fsp = fs.promises;
 const path = require("path");
 const QRCode = require("qrcode");
+// (removido) ensureAutoSignature não é necessário aqui
 const { gerarNotificacoesDeCertificado } = require("./notificacoesController");
 const { CERT_DIR, ensureDir } = require("../paths"); // usar a mesma pasta em gerar/baixar
 
@@ -68,6 +70,37 @@ function registerFonts(doc) {
     } else { logDev(`(certificados) Fonte ausente: ${file}`); }
   }
 }
+
+function drawSignatureText(doc, rawText, { x, y, w }, {
+  maxFont = 34, minFont = 16, font = "AlexBrush", color = "#111"
+} = {}) {
+  // força uma única linha (remove quebras/acúmulos de espaço)
+  const text = String(rawText ?? "").replace(/\s+/g, " ").trim();
+
+  doc.save().font(font);
+
+  // 1) reduz a fonte até o texto caber em w
+  let size = maxFont;
+  while (size > minFont) {
+    doc.fontSize(size);
+    const ww = doc.widthOfString(text);
+    if (ww <= w) break;
+    size -= 1;
+  }
+
+  // 2) centraliza manualmente dentro da caixa, SEM width e SEM line break
+  const ww = doc.widthOfString(text);
+  const xCentered = x + Math.max(0, (w - ww) / 2);
+
+  // leve ajuste vertical para suavizar a “altura visual” da AlexBrush
+  const textY = y + 25 + Math.max(0, (maxFont - size) / 3);
+
+  // 3) escreve em UMA linha (lineBreak:false evita qualquer quebra)
+  doc.fillColor(color).text(text, xCentered, textY, { lineBreak: false });
+
+  doc.restore();
+}
+
 function safeImage(doc, absPath, opts = {}) {
   if (absPath && fs.existsSync(absPath)) {
     try { doc.image(absPath, opts); return true; }
@@ -321,7 +354,7 @@ async function _gerarPdfFisico({
     doc.font("AlegreyaSans-Regular").fontSize(14)
        .text("Chefe da Escola da Saúde", LEFT.x, baseY + 25, { align: "center", width: LEFT.w });
 
-    // Direita: instrutor (nome + cargo). Se houver assinatura do instrutor no banco, desenha.
+    // Direita: instrutor (nome + assinatura com fallback)
     let nomeInstrutor = "Instrutor(a)";
     let assinaturaInstrutorBase64 = null;
     try {
@@ -340,14 +373,28 @@ async function _gerarPdfFisico({
       console.warn("⚠️ Erro ao obter instrutor do evento:", e.message);
     }
 
-    if (assinaturaInstrutorBase64 && /^data:image\/(png|jpe?g|webp);base64,/.test(assinaturaInstrutorBase64)) {
-      try {
-        const buf = Buffer.from(assinaturaInstrutorBase64.split(",")[1], "base64");
-        doc.image(buf, RIGHT.x + (RIGHT.w - 150) / 2, baseY - 50, { width: 150 });
-      } catch (e) {
-        console.warn("⚠️ Assinatura do instrutor inválida:", e.message);
-      }
-    }
+        const SIGN_W = 150;
+const signX = RIGHT.x + (RIGHT.w - SIGN_W) / 2;
+const signY = baseY - 50;
+const SIGN_BOX = { x: signX, y: signY, w: SIGN_W };
+
+let desenhouAssinatura = false;
+if (assinaturaInstrutorBase64 && /^data:image\/(png|jpe?g|webp);base64,/.test(assinaturaInstrutorBase64)) {
+  try {
+    const buf = Buffer.from(assinaturaInstrutorBase64.split(",")[1], "base64");
+    // imagem dentro do mesmo box (largura fixa)
+    doc.image(buf, SIGN_BOX.x, SIGN_BOX.y, { width: SIGN_BOX.w });
+    desenhouAssinatura = true;
+  } catch (e) {
+    console.warn("⚠️ Assinatura do instrutor inválida (fallback cursivo):", e.message);
+  }
+}
+if (!desenhouAssinatura) {
+  // ✍️ sempre caberá dentro do SIGN_W
+  drawSignatureText(doc, nomeInstrutor, SIGN_BOX, { maxFont: 34, minFont: 16 });
+}
+
+    // Nome impresso e cargo (sempre)
     doc.font("AlegreyaSans-Bold").fontSize(20)
        .text(nomeInstrutor, RIGHT.x, baseY, { align: "center", width: RIGHT.w });
     doc.font("AlegreyaSans-Regular").fontSize(14)
@@ -373,7 +420,6 @@ async function _gerarPdfFisico({
 
   return { nomeArquivo, caminho };
 }
-
 
 /* ========================= Gerar Certificado ========================= */
 async function gerarCertificado(req, res) {
@@ -626,7 +672,7 @@ Equipe da Escola Municipal de Saúde`,
 /* ========================= Outros endpoints ========================= */
 async function listarCertificadosDoUsuario(req, res) {
   try {
-    const usuario_id = req.usuario.id;
+    const usuario_id = Number(req?.usuario?.id ?? req?.user?.id);
     const result = await db.query(
       `SELECT c.id AS certificado_id, c.evento_id, c.arquivo_pdf, c.turma_id, c.tipo,
               e.titulo AS evento, t.data_inicio, t.data_fim
@@ -742,8 +788,14 @@ async function revalidarCertificado(req, res) {
 /** 🎓 Elegíveis (aluno) — mantém formato legado (array direto) */
 async function listarCertificadosElegiveis(req, res) {
   try {
-    const usuario_id = Number(req?.usuario?.id) || Number(req.query?.usuario_id);
-    if (!usuario_id) return res.status(400).json({ erro: "usuario_id ausente" });
+    // 🔧 Tolerante a req.usuario || req.user || ?usuario_id
+    const usuario_id =
+      Number(req?.usuario?.id ?? req?.user?.id) ||
+      Number(req.query?.usuario_id);
+
+    if (!usuario_id) {
+      return res.status(400).json({ erro: "usuario_id ausente" });
+    }
 
     const { rows } = await db.query(
       `
@@ -871,7 +923,11 @@ async function listarCertificadosElegiveis(req, res) {
 /** 👩‍🏫 Elegíveis (instrutor) — turma encerrada */
 async function listarCertificadosInstrutorElegiveis(req, res) {
   try {
-    const instrutor_id = Number(req.usuario.id);
+    const instrutor_id =
+      Number(req?.usuario?.id ?? req?.user?.id);
+    if (!instrutor_id) {
+      return res.status(400).json({ erro: "usuario_id ausente" });
+    }
     const result = await db.query(
       `SELECT t.id AS turma_id, e.id AS evento_id, e.titulo AS evento, t.nome AS nome_turma,
               t.data_inicio, t.data_fim, t.horario_fim, c.id AS certificado_id, c.arquivo_pdf,

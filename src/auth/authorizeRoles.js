@@ -8,14 +8,14 @@
 function authorizeRoles(...rolesPermitidos) {
   return (req, res, next) => {
 
-    if (!req.usuario || !req.usuario.perfil) {
+    if (!req.user || !req.user.perfil) {
       return res.status(401).json({ erro: 'Usuário não autenticado ou sem perfil' });
     }
 
-    const perfilUsuario = Array.isArray(req.usuario.perfil)
-      ? req.usuario.perfil
-      : typeof req.usuario.perfil === 'string'
-        ? req.usuario.perfil.split(',').map(p => p.trim())
+    const perfilUsuario = Array.isArray(req.user.perfil)
+      ? req.user.perfil
+      : typeof req.user.perfil === 'string'
+        ? req.user.perfil.split(',').map(p => p.trim())
         : [];
 
 

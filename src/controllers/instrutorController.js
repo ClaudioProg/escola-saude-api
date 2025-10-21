@@ -184,7 +184,7 @@ async function getTurmasComEventoPorInstrutor(req, res) {
  */
 async function getMinhasTurmasInstrutor(req, res) {
   try {
-    const usuarioId = req.user?.id ?? req.usuario?.id;
+    const usuarioId = req.user?.id ?? req.user?.id;
     if (!usuarioId) {
       return res.status(401).json({ erro: "Usuário não autenticado." });
     }

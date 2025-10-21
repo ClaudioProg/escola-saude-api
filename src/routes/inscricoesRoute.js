@@ -36,7 +36,7 @@ async function checarAcessoPorRegistroNaTurma(req, res, next) {
     }
 
     const acesso = await podeVerEvento({
-      usuarioId: req.user?.id || req.usuario?.id, // compat
+      usuarioId: req.user?.id || req.user?.id, // compat
       eventoId: turma.evento_id,
     });
 
@@ -110,10 +110,10 @@ router.delete("/:id", auth, async (req, res, next) => {
       const { usuario_id, turma_id } = ins.rows[0] || {};
       // se próprio usuário OU admin, permitir via controller admin (reuso)
       const isAdmin =
-        (req.user?.perfil || req.usuario?.perfil || []).includes(
+        (req.user?.perfil || req.user?.perfil || []).includes(
           "administrador"
         );
-      const isSelf = Number(usuario_id) === Number(req.user?.id || req.usuario?.id);
+      const isSelf = Number(usuario_id) === Number(req.user?.id || req.user?.id);
       if (!isAdmin && !isSelf) {
         return res.status(403).json({ erro: "Sem permissão para cancelar esta inscrição." });
       }

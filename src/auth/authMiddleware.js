@@ -2,7 +2,7 @@
 const jwt = require("jsonwebtoken");
 const { db } = require("../db"); // ✅ import único e correto
 
-let warned = false; // avisa 1x em dev sobre req.usuario
+let warned = false; // avisa 1x em dev sobre req.user
 
 /**
  * Middleware base: valida JWT e injeta req.user
@@ -41,12 +41,12 @@ function authMiddleware(req, res, next) {
 
     req.db = req.db ?? db;
     req.user = user;
-    req.usuario = user; // compat temporária
+    req.user = user; // compat temporária
 
     if (process.env.NODE_ENV !== "production" && !warned) {
       warned = true;
       console.warn(
-        "[authMiddleware] Aviso: `req.usuario` está DEPRECIADO. Use `req.user`. Fornecendo ambos por compatibilidade temporária."
+        "[authMiddleware] Aviso: `req.user` está DEPRECIADO. Use `req.user`. Fornecendo ambos por compatibilidade temporária."
       );
     }
 

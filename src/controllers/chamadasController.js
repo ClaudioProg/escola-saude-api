@@ -271,8 +271,8 @@ exports.criar = async (req, res, next) => {
     assert(prazo_final_br, "Prazo final é obrigatório.");
     assert(isValidLimits(limites), `Limites inválidos (${LIMIT_MIN}–${LIMIT_MAX}).`);
 
-    // ✅ aceita req.user OU req.usuario
-    const userId = req.user?.id ?? req.usuario?.id;
+    // ✅ aceita req.user OU req.user
+    const userId = req.user?.id ?? req.user?.id;
     assert(userId, "Autenticação necessária.");
 
     const norm = normalizePrazoFragment(prazo_final_br);
@@ -656,7 +656,7 @@ exports.importarModeloBanner = [
 
       const tamanho = f.buffer.length;
       const hash = crypto.createHash("sha256").update(f.buffer).digest("hex");
-      const userId = req.user?.id ?? req.usuario?.id ?? null;
+      const userId = req.user?.id ?? req.user?.id ?? null;
 
       const sql = `
         INSERT INTO public.trabalhos_chamadas_modelos

@@ -19,6 +19,55 @@ const toMonthValue = (val) => {
 const sanitizeCPF = (s) => String(s || "").replace(/\D/g, "").slice(0, 11);
 const trimStr = (s) => String(s || "").trim();
 
+/* ───────────────────────── Helpers de DATA/HORA (sem TZ) ───────────────────────── */
+
+// "2025-10-25" -> "25/10/2025"
+function toBrDateOnly(s) {
+  if (typeof s !== "string") return "";
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return s;
+  const [, yy, mm, dd] = m;
+  return `${dd}/${mm}/${yy}`;
+}
+
+// "22:15" ou "22:15:00" -> "22:15"
+function toBrTimeOnly(s) {
+  if (typeof s !== "string") return "";
+  const m = s.match(/^(\d{2}):(\d{2})(?::\d{2})?$/);
+  if (!m) return s;
+  const [, hh, mi] = m;
+  return `${hh}:${mi}`;
+}
+
+// "DD/MM/YYYY às HH:mm"
+function toBrPretty(date, time) {
+  const d = toBrDateOnly(date);
+  const t = toBrTimeOnly(time);
+  if (d && t) return `${d} às ${t}`;
+  if (d) return d;
+  return "";
+}
+
+// Aceita: "YYYY-MM-DDTHH:mm", "YYYY-MM-DDTHH:mm:ss", "YYYY-MM-DDTHH:mm:ss.SSS",
+// com sufixo "Z" ou offset "+HH:MM"/"-HH:MM" (ignorado, sem shift)
+function toBrPrettyFromIsoLike(isoLike) {
+  if (typeof isoLike !== "string") return "";
+  const s = isoLike.trim();
+  const m = s.match(
+    /^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})(?::\d{2}(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}:\d{2})?$/
+  );
+  if (m) {
+    const [, yy, mm, dd, hh, mi] = m;
+    return `${dd}/${mm}/${yy} às ${hh}:${mi}`;
+  }
+  const onlyDate = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (onlyDate) {
+    const [, yy, mm, dd] = onlyDate;
+    return `${dd}/${mm}/${yy}`;
+  }
+  return s; // fallback
+}
+
 /** valida campos essenciais antes de enviar */
 function validarForm(form, limites = {}, dentroPrazo = true) {
   const errs = [];
@@ -80,15 +129,28 @@ export default function ModalInscreverTrabalho({
     _maxCoautores: 10, // só pra validação local
   });
 
-  // mostra prazo com segurança (se já vier em PT-BR, mantém)
+  // ✅ prazo legível e SEM timezone
   const prazoFmt = useMemo(() => {
-    const v = chamada?.prazo_final_br || chamada?.prazo_final || chamada?.prazoFinal;
+    const v =
+      chamada?.prazo_final_br ??
+      chamada?.prazo_final ??
+      chamada?.prazoFinal ??
+      null;
+
     if (!v) return "—";
-    if (/^\d{4}-\d{2}-\d{2}/.test(String(v))) {
-      const d = new Date(v);
-      return isNaN(d) ? String(v) : d.toLocaleString("pt-BR");
+
+    // Preferir campos separados, se existirem
+    if (chamada?.prazo_final_date && chamada?.prazo_final_time) {
+      return toBrPretty(chamada.prazo_final_date, chamada.prazo_final_time);
     }
-    return String(v);
+
+    const s = String(v);
+    // ISO-like com Z/offset/segundos/milissegundos
+    if (/^\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}/.test(s)) {
+      return toBrPrettyFromIsoLike(s);
+    }
+    // Data-only BR já pronta
+    return s;
   }, [chamada]);
 
   async function checarModelo(chId) {
@@ -323,7 +385,6 @@ export default function ModalInscreverTrabalho({
 
     const attempt = async () =>
       apiUpload(`/submissoes/${id}/poster`, fd, {
-        // se seu apiUpload suportar, isso atualiza a barra
         onUploadProgress: (evt) => {
           if (!evt?.total) return;
           const pct = Math.round((evt.loaded / evt.total) * 100);
@@ -398,7 +459,7 @@ export default function ModalInscreverTrabalho({
       const up = await uploadPosterIfAny(id);
       if (!up.ok) {
         alert(
-          "Submissão enviada (sem pôster). Você pode anexar o pôster depois em “Minhas submissões”."
+          "Submissão enviado (sem pôster). Você pode anexar o pôster depois em “Minhas submissões”."
         );
       }
       setSucesso(true);
@@ -464,7 +525,10 @@ export default function ModalInscreverTrabalho({
 
           <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-sm">
             <p className="opacity-90">{chamada?.titulo}</p>
-            <p className={dentroPrazo ? "text-emerald-200" : "text-rose-200"}>Prazo: {prazoFmt}</p>
+            <p className={dentroPrazo ? "text-emerald-200" : "text-rose-200"}>
+              Prazo: <strong className="tracking-tight">{prazoFmt}</strong>{" "}
+              <span className="text-white/70">(horário local)</span>
+            </p>
           </div>
         </div>
 

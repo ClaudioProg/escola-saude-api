@@ -362,7 +362,7 @@ async function redefinirSenha(req, res) {
    ────────────────────────────────────────────────────────────── */
 async function obterUsuarioPorId(req, res) {
   const { id } = req.params;
-  const usuarioLogado = req.usuario || {};
+  const usuarioLogado = req.user || {};
   const perfilArr = Array.isArray(usuarioLogado.perfil) ? usuarioLogado.perfil : perfilToArray(usuarioLogado.perfil);
   const ehAdmin = perfilArr.includes("administrador");
   if (Number(id) !== Number(usuarioLogado.id) && !ehAdmin) {
@@ -419,7 +419,7 @@ async function obterUsuarioPorId(req, res) {
    ────────────────────────────────────────────────────────────── */
 async function atualizarUsuario(req, res) {
   const { id } = req.params;
-  const usuarioLogado = req.usuario || {};
+  const usuarioLogado = req.user || {};
   const perfilArr = Array.isArray(usuarioLogado.perfil) ? usuarioLogado.perfil : perfilToArray(usuarioLogado.perfil);
   const ehAdmin = perfilArr.includes("administrador");
   if (Number(id) !== Number(usuarioLogado.id) && !ehAdmin) {
@@ -472,7 +472,7 @@ async function atualizarUsuario(req, res) {
    ────────────────────────────────────────────────────────────── */
 async function atualizarPerfilCompleto(req, res) {
   const { id } = req.params;
-  const usuarioLogado = req.usuario || {};
+  const usuarioLogado = req.user || {};
   const perfilArr = Array.isArray(usuarioLogado.perfil) ? usuarioLogado.perfil : perfilToArray(usuarioLogado.perfil);
   const ehAdmin = perfilArr.includes("administrador");
   if (Number(id) !== Number(usuarioLogado.id) && !ehAdmin) {
@@ -593,8 +593,8 @@ async function loginUsuario(req, res) {
    ✍️ Obter assinatura (instrutor/admin)
    ────────────────────────────────────────────────────────────── */
 async function obterAssinatura(req, res) {
-  const usuarioId = req.usuario?.id;
-  const perfilArr = Array.isArray(req.usuario?.perfil) ? req.usuario.perfil : perfilToArray(req.usuario?.perfil);
+  const usuarioId = req.user?.id;
+  const perfilArr = Array.isArray(req.user?.perfil) ? req.user.perfil : perfilToArray(req.user?.perfil);
   if (!usuarioId) return res.status(401).json({ message: "Usuário não autenticado." });
   if (!perfilArr.includes("instrutor") && !perfilArr.includes("administrador")) {
     return res.status(403).json({ message: "Acesso restrito a instrutor ou administradores." });

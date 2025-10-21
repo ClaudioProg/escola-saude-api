@@ -114,7 +114,7 @@ async function buscarAgenda(req, res) {
  */
 async function buscarAgendaInstrutor(req, res) {
   try {
-    const usuarioId = req.usuario?.id;
+    const usuarioId = req.user?.id;
     if (!usuarioId) {
       return res.status(401).json({ erro: "Usuário não autenticado." });
     }
@@ -224,7 +224,7 @@ async function buscarAgendaInstrutor(req, res) {
  */
 async function buscarAgendaMinha(req, res) {
   try {
-    const usuarioId = req.usuario?.id;
+    const usuarioId = req.user?.id;
     if (!usuarioId) {
       return res.status(401).json({ erro: "Usuário não autenticado." });
     }

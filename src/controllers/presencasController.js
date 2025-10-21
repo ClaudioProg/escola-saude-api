@@ -127,7 +127,7 @@ async function mapearPresencasTrue(turma_id) {
  * ------------------------------------------------------------------ */
 async function confirmarPresencaInstrutor(req, res) {
   const { usuario_id, turma_id, data } = req.body;
-  const instrutor_id = req.usuario?.id;
+  const instrutor_id = req.user?.id;
 
   if (!usuario_id || !turma_id || !data) {
     return res
@@ -205,7 +205,7 @@ async function confirmarPresencaInstrutor(req, res) {
  * ------------------------------------------------------------------ */
 async function registrarPresenca(req, res) {
   const { evento_id, data } = req.body;
-  const usuario_id = req.usuario?.id;
+  const usuario_id = req.user?.id;
 
   if (!evento_id || !data) {
     return res.status(400).json({ erro: "Evento e data são obrigatórios." });
@@ -268,7 +268,7 @@ async function registrarPresenca(req, res) {
  * Valida por datas_turma; se vazio, cai no intervalo da turma.
  * ------------------------------------------------------------------ */
 async function confirmarPresencaViaQR(req, res) {
-  const usuario_id = req.usuario?.id;
+  const usuario_id = req.user?.id;
   const turma_id = parseInt(req.params.turma_id || req.body.turma_id, 10);
 
   try {
@@ -353,14 +353,14 @@ async function confirmarViaToken(req, res) {
       return res.status(400).json({ erro: "Token inválido ou expirado." });
     }
 
-    const usuario_id = payload.usuarioId || req.usuario?.id;
+    const usuario_id = payload.usuarioId || req.user?.id;
     if (!usuario_id) return res.status(401).json({ erro: "Não autenticado." });
 
     const turma_id = payload.turmaId;
     if (!turma_id) return res.status(400).json({ erro: "Token sem turma." });
 
     req.body.turma_id = turma_id;
-    req.usuario = { id: usuario_id, ...(req.usuario || {}) };
+    req.user = { id: usuario_id, ...(req.user || {}) };
     return confirmarPresencaViaQR(req, res);
   } catch (err) {
     console.error("❌ [confirmarViaToken] erro:", err);
@@ -787,7 +787,7 @@ async function exportarPresencasPDF(req, res) {
  * ------------------------------------------------------------------ */
 async function confirmarPresencaSimples(req, res) {
   const { usuario_id, turma_id } = req.body;
-  const perfil = String(req.usuario?.perfil || "").toLowerCase();
+  const perfil = String(req.user?.perfil || "").toLowerCase();
 
   const dataInput = req.body.data_presenca || req.body.data;
   if (!usuario_id || !turma_id || !dataInput) {
@@ -933,7 +933,7 @@ async function listarTodasPresencasParaAdmin(req, res) {
  * - periodo: data_inicio/data_fim + horarios (mais frequentes)
  * ------------------------------------------------------------------ */
 async function obterMinhasPresencas(req, res) {
-  const usuario_id = req.usuario?.id;
+  const usuario_id = req.user?.id;
   if (!usuario_id) return res.status(401).json({ erro: "Não autenticado." });
 
   try {

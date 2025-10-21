@@ -1,5 +1,7 @@
 // ✅ src/controllers/assinaturaController.js
 /* eslint-disable no-console */
+const path = require("path");
+const fs = require("fs");
 const db = require("../db");
 
 /* ————————————————— Configs/tamanhos ————————————————— */
@@ -8,7 +10,7 @@ const MAX_BASE64_BYTES   = 4 * 1024 * 1024; // 4MB: tamanho só do payload base6
 
 /* ————————————————— Helpers gerais ————————————————— */
 function getUserId(req) {
-  return req.usuario?.id ?? req.user?.id ?? null;
+  return req.user?.id ?? req.user?.id ?? null;
 }
 function extractBase64Payload(dataUrl) {
   const m = String(dataUrl || "").match(/^data:[^;]+;base64,([\s\S]+)$/);
@@ -42,19 +44,28 @@ function buildNameVariants(fullName = "") {
   };
 }
 
-/* ————————————————— Renderização (node-canvas) —————————————————
-   Tenta usar um util dedicado (../utils/signature); se não houver, usa fallback local.
------------------------------------------------------------------ */
+/* ————————————————— Localiza o TTF da fonte ————————————————— */
+function resolveSignatureTtf() {
+  if (process.env.SIGNATURE_FONT_TTF) return process.env.SIGNATURE_FONT_TTF;
+  const candidates = [
+    path.join(process.cwd(), "fonts", "GreatVibes-Regular.ttf"),
+    path.join(process.cwd(), "assets", "fonts", "GreatVibes-Regular.ttf"),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null; // usa fonte do sistema (fallback)
+}
+
+/* ————————————————— Renderização (node-canvas) ————————————————— */
 let externalRenderSignaturePng = null;
 try {
-  // se você criou o util `api/utils/signature.js`, ele será usado aqui:
   externalRenderSignaturePng = require("../utils/signature")?.renderSignaturePng || null;
 } catch {}
 
 let canvasLib = null;
 function requireCanvas() {
   if (canvasLib) return canvasLib;
-  // carrega sob demanda (para evitar erro em ambientes sem canvas)
   // eslint-disable-next-line global-require
   canvasLib = require("canvas");
   return canvasLib;
@@ -67,7 +78,7 @@ const SIGNATURE_CFG = {
   FONT_MIN: Number(process.env.SIGNATURE_FONT_MIN || 72),
   FONT_MAX: Number(process.env.SIGNATURE_FONT_MAX || 180),
   FAMILY: process.env.SIGNATURE_FONT_FAMILY || "GreatVibesAuto",
-  TTF: process.env.SIGNATURE_FONT_TTF || null, // ex: assets/fonts/GreatVibes-Regular.ttf
+  TTF: resolveSignatureTtf(),
   STROKE: process.env.SIGNATURE_STROKE || "#111827",
   FILL: process.env.SIGNATURE_FILL || "#111827",
   SHADOW: process.env.SIGNATURE_SHADOW || "rgba(0,0,0,0.12)",
@@ -77,15 +88,17 @@ let _fontRegistered = false;
 function ensureFontRegistered() {
   if (_fontRegistered) return;
   try {
-    if (SIGNATURE_CFG.TTF) {
+    const ttf = SIGNATURE_CFG.TTF;
+    if (ttf) {
       const { registerFont } = requireCanvas();
-      registerFont(SIGNATURE_CFG.TTF, { family: SIGNATURE_CFG.FAMILY });
-      _fontRegistered = true;
+      registerFont(ttf, { family: SIGNATURE_CFG.FAMILY });
+      console.log("[assinatura] Fonte cursiva registrada:", ttf);
     } else {
-      _fontRegistered = true; // sem TTF, usa fontes do sistema/fallback
+      console.warn("[assinatura] TTF não encontrado — usando fonte cursiva do sistema (fallback).");
     }
   } catch (e) {
     console.warn("[assinatura] Falha ao registrar fonte cursiva:", e.message);
+  } finally {
     _fontRegistered = true;
   }
 }
@@ -105,16 +118,17 @@ function renderSignatureFallbackPng(nome) {
   const opts = [variants.opt1, variants.opt2, variants.opt3, variants.opt4, variants.clean, variants.text].filter(Boolean);
   const maxTextWidth = W - PAD * 2;
 
-  // medição/ajuste de fonte
+  function fontSpec(size) {
+    return `${size}px "${SIGNATURE_CFG.FAMILY}", "Segoe Script", "Snell Roundhand", "Brush Script MT", cursive`;
+  }
   function fits(text, size) {
-    ctx.font = `${size}px "${SIGNATURE_CFG.FAMILY}", "Segoe Script", "Snell Roundhand", "Brush Script MT", cursive`;
+    ctx.font = fontSpec(size);
     const m = ctx.measureText(text);
     return m.width <= maxTextWidth;
   }
   function pickVariant() {
-    // testa com fonte mínima para escolher o mais completo que caiba
     for (const t of opts) { if (fits(t, SIGNATURE_CFG.FONT_MIN)) return t; }
-    return opts[opts.length - 1]; // o mais curto
+    return opts[opts.length - 1];
   }
   function pickFontSize(text) {
     let lo = SIGNATURE_CFG.FONT_MIN;
@@ -130,8 +144,7 @@ function renderSignatureFallbackPng(nome) {
   const text = pickVariant();
   const fontPx = pickFontSize(text);
 
-  // estilo
-  ctx.font = `${fontPx}px "${SIGNATURE_CFG.FAMILY}", "Segoe Script", "Snell Roundhand", "Brush Script MT", cursive`;
+  ctx.font = fontSpec(fontPx);
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.shadowColor = SIGNATURE_CFG.SHADOW;
@@ -153,21 +166,19 @@ function renderSignatureFallbackPng(nome) {
 
 function renderSignaturePng(name) {
   if (typeof externalRenderSignaturePng === "function") {
-    try { return externalRenderSignaturePng(name); } catch (e) { /* cai no fallback */ }
+    try { return externalRenderSignaturePng(name); } catch { /* fallback */ }
   }
   return renderSignatureFallbackPng(name);
 }
 
 /* ————————————————— Auto-geração e persistência ————————————————— */
 async function ensureAutoSignature(usuarioId) {
-  // já existe?
   const exists = await db.query(
     "SELECT 1 FROM assinaturas WHERE usuario_id = $1 AND imagem_base64 IS NOT NULL AND imagem_base64 <> '' LIMIT 1",
     [usuarioId]
   );
-  if (exists.rows.length > 0) return null; // nada a fazer
+  if (exists.rows.length > 0) return null;
 
-  // pega nome + perfis
   const uRes = await db.query(
     `SELECT id, nome, email, perfil, perfis
        FROM usuarios
@@ -178,23 +189,17 @@ async function ensureAutoSignature(usuarioId) {
   const u = uRes.rows?.[0];
   if (!u) return null;
 
-  if (!isInstrOuAdm(u.perfis ?? u.perfil)) {
-    // não se aplica
-    return null;
-  }
+  if (!isInstrOuAdm(u.perfis ?? u.perfil)) return null;
 
-  // renderiza PNG e salva como dataURL na sua tabela `assinaturas`
   const displayName = String(u.nome || u.email || `Usuario_${u.id}`).trim();
   const { buffer } = renderSignaturePng(displayName);
   const dataUrl = `data:image/png;base64,${buffer.toString("base64")}`;
 
   await db.query(
-    `
-    INSERT INTO assinaturas (usuario_id, imagem_base64)
-    VALUES ($1, $2)
-    ON CONFLICT (usuario_id)
-    DO UPDATE SET imagem_base64 = EXCLUDED.imagem_base64
-    `,
+    `INSERT INTO assinaturas (usuario_id, imagem_base64)
+     VALUES ($1, $2)
+     ON CONFLICT (usuario_id)
+     DO UPDATE SET imagem_base64 = EXCLUDED.imagem_base64`,
     [usuarioId, dataUrl]
   );
 
@@ -203,7 +208,7 @@ async function ensureAutoSignature(usuarioId) {
 
 /* ————————————————— Endpoints ————————————————— */
 
-/** 🖋️ GET /api/assinatura — retorna a assinatura do usuário (e auto-gera se instrutor/adm sem assinatura) */
+/** 🖋️ GET /api/assinatura — retorna a assinatura (autogera se instrutor/adm sem assinatura) */
 async function getAssinatura(req, res) {
   const usuario_id = getUserId(req);
   if (!usuario_id) return res.status(401).json({ erro: "Usuário não autenticado." });
@@ -215,7 +220,6 @@ async function getAssinatura(req, res) {
     );
     let assinatura = r.rows?.[0]?.imagem_base64 || null;
 
-    // se não existir e o usuário for instrutor/administrador → autogerar
     if (!assinatura) {
       try {
         const nova = await ensureAutoSignature(usuario_id);
@@ -225,7 +229,6 @@ async function getAssinatura(req, res) {
         }
       } catch (e) {
         console.warn("[assinatura][auto] falha ao autogerar:", e?.message);
-        // segue silenciosamente — apenas não retorna assinatura
       }
     }
 
@@ -236,7 +239,7 @@ async function getAssinatura(req, res) {
   }
 }
 
-/** ✍️ POST /api/assinatura — salva/atualiza dataURL enviada pelo usuário (continua igual) */
+/** ✍️ POST /api/assinatura — salva/atualiza dataURL enviada pelo usuário */
 async function salvarAssinatura(req, res) {
   const usuario_id = getUserId(req);
   const { assinatura } = req.body;
@@ -248,17 +251,14 @@ async function salvarAssinatura(req, res) {
     return res.status(400).json({ erro: "Assinatura é obrigatória." });
   }
 
-  // Bloqueia SVG; aceita PNG/JPG/JPEG/WEBP
   const isAllowedDataUrl =
     /^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=\s]+$/.test(assinatura);
   if (!isAllowedDataUrl) {
     return res.status(400).json({
-      erro:
-        "Assinatura inválida. Envie uma imagem base64 nos formatos PNG, JPG/JPEG ou WEBP.",
+      erro: "Assinatura inválida. Envie PNG, JPG/JPEG ou WEBP em base64.",
     });
   }
 
-  // Limites (string toda e payload base64)
   if (assinatura.length > MAX_DATAURL_TOTAL) {
     return res.status(413).json({ erro: "Imagem muito grande (limite 6MB)." });
   }
@@ -273,19 +273,15 @@ async function salvarAssinatura(req, res) {
   const payload = assinatura.trim();
 
   try {
-    // UPSERT (de preferência com UNIQUE em assinaturas(usuario_id))
     try {
       await db.query(
-        `
-        INSERT INTO assinaturas (usuario_id, imagem_base64)
-        VALUES ($1, $2)
-        ON CONFLICT (usuario_id)
-        DO UPDATE SET imagem_base64 = EXCLUDED.imagem_base64
-        `,
+        `INSERT INTO assinaturas (usuario_id, imagem_base64)
+         VALUES ($1, $2)
+         ON CONFLICT (usuario_id)
+         DO UPDATE SET imagem_base64 = EXCLUDED.imagem_base64`,
         [usuario_id, payload]
       );
-    } catch (upsertErr) {
-      // Fallback (sem UNIQUE)
+    } catch {
       const upd = await db.query(
         "UPDATE assinaturas SET imagem_base64 = $1 WHERE usuario_id = $2",
         [payload, usuario_id]
@@ -301,12 +297,8 @@ async function salvarAssinatura(req, res) {
     return res.status(200).json({ mensagem: "Assinatura salva com sucesso." });
   } catch (e) {
     console.error("❌ Erro ao salvar assinatura:", {
-      message: e?.message,
-      code: e?.code,
-      detail: e?.detail,
-      table: e?.table,
-      constraint: e?.constraint,
-      stack: e?.stack,
+      message: e?.message, code: e?.code, detail: e?.detail, table: e?.table,
+      constraint: e?.constraint, stack: e?.stack,
     });
     return res.status(500).json({ erro: "Erro ao salvar assinatura." });
   }
@@ -316,14 +308,12 @@ async function salvarAssinatura(req, res) {
 async function listarAssinaturas(req, res) {
   try {
     const { rows } = await db.query(
-      `
-      SELECT a.usuario_id AS id, u.nome, COALESCE(u.cargo, NULL) AS cargo
-      FROM assinaturas a
-      JOIN usuarios u ON u.id = a.usuario_id
-      WHERE a.imagem_base64 IS NOT NULL
-        AND a.imagem_base64 <> ''
-      ORDER BY u.nome ASC
-      `
+      `SELECT a.usuario_id AS id, u.nome, COALESCE(u.cargo, NULL) AS cargo
+         FROM assinaturas a
+         JOIN usuarios u ON u.id = a.usuario_id
+        WHERE a.imagem_base64 IS NOT NULL
+          AND a.imagem_base64 <> ''
+        ORDER BY u.nome ASC`
     );
 
     const lista = rows.map((r) => ({
@@ -344,4 +334,6 @@ module.exports = {
   getAssinatura,
   salvarAssinatura,
   listarAssinaturas,
+  // útil para o gerador de certificados chamar direto se quiser
+  ensureAutoSignature,
 };

@@ -9,6 +9,107 @@ import api from "../services/api";
 import ReactMarkdown from "react-markdown";
 import Modal from "./Modal";
 
+/* ───────────────────────── Helpers de DATA/HORA (sem TZ) ───────────────────────── */
+
+// "2025-10-25" -> "25/10/2025"
+function toBrDateOnly(s) {
+  if (typeof s !== "string") return "";
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return s;
+  const [, yy, mm, dd] = m;
+  return `${dd}/${mm}/${yy}`;
+}
+
+// "22:15" ou "22:15:00" -> "22:15"
+function toBrTimeOnly(s) {
+  if (typeof s !== "string") return "";
+  const m = s.match(/^(\d{2}):(\d{2})(?::\d{2})?$/);
+  if (!m) return s;
+  const [, hh, mi] = m;
+  return `${hh}:${mi}`;
+}
+
+// "YYYY-MM" -> "MM/YYYY"
+function toBrYearMonth(s) {
+  if (typeof s !== "string") return "";
+  const m = s.match(/^(\d{4})-(0[1-9]|1[0-2])$/);
+  if (!m) return s;
+  const [, yy, mm] = m;
+  return `${mm}/${yy}`;
+}
+
+// Normaliza datas ISO dentro de textos Markdown sem usar Date()
+function normalizeDatesInsideText(text) {
+  if (!text || typeof text !== "string") return text;
+  let s = text;
+  s = s.replace(
+    /(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})(?::\d{2})?/g,
+    (_, yy, mm, dd, hh, mi) => `${dd}/${mm}/${yy} ${hh}:${mi}`
+  );
+  s = s.replace(
+    /(\d{4})-(\d{2})-(\d{2})(?![\d:])/g,
+    (_, yy, mm, dd) => `${dd}/${mm}/${yy}`
+  );
+  return s;
+}
+
+// "DD/MM/YYYY às HH:mm"
+function toBrPretty(date, time) {
+  const d = toBrDateOnly(date);
+  const t = toBrTimeOnly(time);
+  if (d && t) return `${d} às ${t}`;
+  if (d) return d;
+  return "";
+}
+
+// Detecta se uma string parece ISO/ISO-like
+function looksIsoLike(s) {
+  if (typeof s !== "string") return false;
+  return /^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2})(?::\d{2}(?:\.\d{1,6})?)?)?(?:Z|[+-]\d{2}:\d{2})?$/i.test(
+    s.trim()
+  );
+}
+
+// "YYYY-MM-DD[ T]HH:mm[:ss][.SSS][Z|±HH:MM]" -> "DD/MM/YYYY às HH:mm" (sem fuso/shift)
+function toBrPrettyFromIsoLike(isoLike) {
+  if (typeof isoLike !== "string") return "";
+  const s = isoLike.trim();
+
+  // data + hora
+  const m = s.match(
+    /^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2})(?::\d{2}(?:\.\d{1,6})?)?)?(?:Z|[+-]\d{2}:\d{2})?$/i
+  );
+  if (!m) return s;
+
+  const [, yy, mm, dd, hh, mi] = m;
+  if (hh && mi) return `${dd}/${mm}/${yy} às ${hh}:${mi}`;
+  // só data
+  return `${dd}/${mm}/${yy}`;
+}
+
+// Monta o texto do prazo final (amigável) a partir dos campos possíveis
+function buildPrazoFinalPretty(ch) {
+  // Preferência: campos separados → ISO-like em qualquer key → texto já BR
+  if (ch?.prazo_final_date && ch?.prazo_final_time) {
+    return toBrPretty(ch.prazo_final_date, ch.prazo_final_time);
+  }
+
+  const candidate =
+    (typeof ch?.prazo_final === "string" && ch.prazo_final) ||
+    (typeof ch?.prazo_final_br === "string" && ch.prazo_final_br) ||
+    null;
+
+  if (candidate && looksIsoLike(candidate)) {
+    return toBrPrettyFromIsoLike(candidate);
+  }
+
+  if (typeof ch?.prazo_final_br === "string") {
+    return ch.prazo_final_br;
+  }
+
+  return "—";
+}
+
 export default function ModalVerEdital({ isOpen = true, chamadaId, onClose }) {
   const titleId = useId();
   const descId = useId();
@@ -35,9 +136,12 @@ export default function ModalVerEdital({ isOpen = true, chamadaId, onClose }) {
       }
     }
     if (isOpen) fetchData();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [isOpen, chamadaId]);
 
+  // Derivados seguros (antes de usar)
   const chamada = dados?.chamada || {};
   const linhas = dados?.linhas || [];
   const criterios = dados?.criterios || [];
@@ -45,21 +149,20 @@ export default function ModalVerEdital({ isOpen = true, chamadaId, onClose }) {
   const limites = dados?.limites || null;
   const modelo_meta = dados?.modelo_meta || null;
 
-  // Derivados (prazo e minis)
-  const prazoFinalTxt = useMemo(() => {
-    const raw = chamada?.prazo_final_br || chamada?.prazo_final || null;
-    if (!raw) return "—";
-    const d = new Date(raw);
-    return isNaN(d) ? String(raw) : d.toLocaleString("pt-BR");
-  }, [chamada?.prazo_final_br, chamada?.prazo_final]);
+  // Prazo final (amigável, sem fuso)
+  const prazoFinalTxt = useMemo(() => buildPrazoFinalPretty(chamada), [chamada]);
 
-  const minis = useMemo(() => ({
-    linhas: linhas.length,
-    critEscrita: criterios.length,
-    critOrais: criterios_orais.length,
-    aceitaPoster: !!chamada?.aceita_poster,
-    maxCoautores: chamada?.max_coautores ?? "—",
-  }), [linhas, criterios, criterios_orais, chamada]);
+  // Ministats
+  const minis = useMemo(
+    () => ({
+      linhas: linhas.length,
+      critEscrita: criterios.length,
+      critOrais: criterios_orais.length,
+      aceitaPoster: !!chamada?.aceita_poster,
+      maxCoautores: chamada?.max_coautores ?? "—",
+    }),
+    [linhas, criterios, criterios_orais, chamada]
+  );
 
   const headerGradient = "from-indigo-900 via-violet-800 to-blue-700";
 
@@ -82,7 +185,10 @@ export default function ModalVerEdital({ isOpen = true, chamadaId, onClose }) {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <FileText className="w-5 h-5 shrink-0" aria-hidden="true" />
-              <h2 id={titleId} className="text-xl sm:text-2xl font-extrabold tracking-tight truncate">
+              <h2
+                id={titleId}
+                className="text-xl sm:text-2xl font-extrabold tracking-tight truncate"
+              >
                 Edital da Chamada
               </h2>
             </div>
@@ -91,7 +197,10 @@ export default function ModalVerEdital({ isOpen = true, chamadaId, onClose }) {
             </p>
             <p className="text-xs mt-1 flex items-center gap-2">
               <CalendarDays className="w-4 h-4" aria-hidden />
-              <span>Prazo final: <strong>{prazoFinalTxt}</strong></span>
+              <span>
+                Prazo final: <strong className="tracking-tight">{prazoFinalTxt}</strong>{" "}
+                <span className="text-white/70">(horário local)</span>
+              </span>
             </p>
           </div>
 
@@ -161,7 +270,7 @@ export default function ModalVerEdital({ isOpen = true, chamadaId, onClose }) {
                   <ScrollText className="w-5 h-5" /> Normas e Descrição
                 </h3>
                 <div className="prose prose-sm sm:prose-base max-w-none text-slate-800 dark:text-slate-200">
-                  <ReactMarkdown>{chamada.descricao_markdown}</ReactMarkdown>
+                  <ReactMarkdown>{normalizeDatesInsideText(chamada.descricao_markdown)}</ReactMarkdown>
                 </div>
               </section>
             )}
@@ -173,8 +282,8 @@ export default function ModalVerEdital({ isOpen = true, chamadaId, onClose }) {
                   <CalendarDays className="w-5 h-5" /> Período da Experiência
                 </h3>
                 <p className="text-sm">
-                  <strong>Início:</strong> {chamada?.periodo_experiencia_inicio || "—"} <br />
-                  <strong>Fim:</strong> {chamada?.periodo_experiencia_fim || "—"}
+                  <strong>Início:</strong> {toBrYearMonth(chamada?.periodo_experiencia_inicio) || "—"} <br />
+                  <strong>Fim:</strong> {toBrYearMonth(chamada?.periodo_experiencia_fim) || "—"}
                 </p>
               </section>
             )}
@@ -272,7 +381,7 @@ export default function ModalVerEdital({ isOpen = true, chamadaId, onClose }) {
                   <Award className="w-5 h-5" /> Premiação
                 </h3>
                 <div className="prose prose-sm sm:prose-base max-w-none text-slate-800 dark:text-slate-200">
-                  <ReactMarkdown>{chamada.premiacao_texto}</ReactMarkdown>
+                  <ReactMarkdown>{normalizeDatesInsideText(chamada.premiacao_texto)}</ReactMarkdown>
                 </div>
               </section>
             )}
@@ -284,7 +393,7 @@ export default function ModalVerEdital({ isOpen = true, chamadaId, onClose }) {
                   <FileText className="w-5 h-5" /> Disposições Finais
                 </h3>
                 <div className="prose prose-sm sm:prose-base max-w-none text-slate-800 dark:text-slate-200">
-                  <ReactMarkdown>{chamada.disposicoes_finais_texto}</ReactMarkdown>
+                  <ReactMarkdown>{normalizeDatesInsideText(chamada.disposicoes_finais_texto)}</ReactMarkdown>
                 </div>
               </section>
             )}
