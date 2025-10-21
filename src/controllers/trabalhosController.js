@@ -1,4 +1,3 @@
-// 📁 src/controllers/trabalhosController.js
 /* eslint-disable no-console */
 const path = require("path");
 const fs = require("fs");
@@ -20,6 +19,7 @@ const {
 
 // ⬇️ helpers de autorização (admin/avaliador)
 const { canUserReviewOrView, isAdmin } = require("./submissoesAdminController");
+const { atualizarNotaMediaMaterializada } = require("./submissoesAdminController");
 
 /* ───────────────── Helpers comuns ───────────────── */
 function isYYYYMM(s) { return typeof s === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(s); }
@@ -30,6 +30,11 @@ function hasRole(user, role) {
   if (!user) return false;
   const p = user.perfil;
   return Array.isArray(p) ? p.includes(role) : p === role;
+}
+// ── inteiro seguro: retorna null em vez de NaN
+function toIntOrNull(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.trunc(n) : null;
 }
 
 /** Converte um caminho salvo no DB (pode ter \, /, ser relativo ou absoluto) em um caminho absoluto válido */
@@ -109,7 +114,13 @@ function podeExcluirOuEditarPeloAutor(sub, ch) {
  * ────────────────────────────────────────────────────────────────── */
 exports.criarSubmissao = async (req, res, next) => {
   try {
-    const chamadaId = Number(req.params.chamadaId);
+    const chamadaId = toIntOrNull(req.params.chamadaId);
+    if (chamadaId === null) { const e = new Error("chamadaId inválido."); e.status = 400; throw e; }
+
+    const authUser = res?.locals?.user ?? req.user ?? null;
+    const userId = toIntOrNull(authUser?.id);
+    if (userId === null) { const e = new Error("Não autorizado."); e.status = 401; throw e; }
+
     const ch = await getChamadaValidacao(chamadaId);
     assert(ch.publicado, "Chamada não publicada.");
     assert(ch.dentro_prazo, "O prazo de submissão encerrou.");
@@ -154,7 +165,7 @@ exports.criarSubmissao = async (req, res, next) => {
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
       RETURNING id
     `, [
-      req.user.id, chamadaId, titulo?.trim(), inicio_experiencia,
+      userId, chamadaId, titulo?.trim(), inicio_experiencia,
       lt.id, lt.codigo || null,
       introducao || null, objetivos || null, metodo || null, resultados || null, consideracoes || null,
       bibliografia || null,
@@ -172,14 +183,14 @@ exports.criarSubmissao = async (req, res, next) => {
     }
 
     await notificarSubmissaoCriada({
-      usuario_id: req.user.id,
+      usuario_id: userId,
       chamada_titulo: ch.titulo,
       trabalho_titulo: titulo?.trim(),
       submissao_id: ins.id,
     });
     if (status === "submetido") {
       await notificarStatusSubmissao({
-        usuario_id: req.user.id,
+        usuario_id: userId,
         chamada_titulo: ch.titulo,
         trabalho_titulo: titulo?.trim(),
         status: "submetido",
@@ -195,7 +206,12 @@ exports.criarSubmissao = async (req, res, next) => {
  * ──────────────────────────────────────────────────────────────── */
 exports.atualizarSubmissao = async (req, res, next) => {
   try {
-    const id = Number(req.params.id);
+    const id = toIntOrNull(req.params.id);
+    if (id === null) { const e = new Error("id inválido."); e.status = 400; throw e; }
+
+    const authUser = res?.locals?.user ?? req.user ?? null;
+    const userId = toIntOrNull(authUser?.id);
+    if (userId === null) { const e = new Error("Não autorizado."); e.status = 401; throw e; }
 
     const meta = await db.oneOrNone(`
       SELECT s.*, c.id AS chamada_id, c.titulo AS chamada_titulo,
@@ -208,14 +224,14 @@ exports.atualizarSubmissao = async (req, res, next) => {
     `, [id]);
 
     if (!meta) { const e = new Error("Submissão não encontrada."); e.status = 404; throw e; }
-    const ehAdmin = Array.isArray(req.user.perfil) && req.user.perfil.includes("administrador");
-    const ehAutor = String(meta.usuario_id) === String(req.user.id);
+    const ehAdmin = Array.isArray(authUser?.perfil) && authUser.perfil.includes("administrador");
+    const ehAutor = String(meta.usuario_id) === String(userId);
 
     if (!ehAdmin && !ehAutor) {
       console.warn("[Submissão bloqueada]", {
-        user_id: req.user.id,
+        user_id: userId,
         dono_submissao: meta.usuario_id,
-        perfil: req.user.perfil,
+        perfil: authUser?.perfil,
       });
       const e = new Error("Sem permissão para editar esta submissão.");
       e.status = 403;
@@ -314,7 +330,12 @@ function podeExcluirPeloAutor(sub, user) {
  * ──────────────────────────────────────────────────────────────── */
 exports.removerSubmissao = async (req, res, next) => {
   try {
-    const id = Number(req.params.id);
+    const id = toIntOrNull(req.params.id);
+    if (id === null) { const e = new Error("id inválido."); e.status = 400; throw e; }
+
+    const authUser = res?.locals?.user ?? req.user ?? null;
+    const userId = toIntOrNull(authUser?.id);
+    if (userId === null) { const e = new Error("Não autorizado."); e.status = 401; throw e; }
 
     const meta = await db.oneOrNone(`
       SELECT s.*, c.prazo_final_br, (now() <= c.prazo_final_br) AS dentro_prazo
@@ -325,7 +346,7 @@ exports.removerSubmissao = async (req, res, next) => {
 
     if (!meta) { const e = new Error("Submissão não encontrada."); e.status = 404; throw e; }
 
-    const gate = podeExcluirPeloAutor(meta, req.user);
+    const gate = podeExcluirPeloAutor(meta, { ...(authUser||{}), id: userId });
     if (!gate.ok) { const e = new Error(gate.msg); e.status = gate.status || 400; throw e; }
 
     // apaga coautores/arquivos e a submissão
@@ -335,9 +356,7 @@ exports.removerSubmissao = async (req, res, next) => {
       await t.none(`DELETE FROM trabalhos_submissoes WHERE id=$1`, [id]);
     });
 
-    // Se você salva arquivo em disco além do BLOB, poderia buscar os caminhos antes e dar fs.unlink aqui.
-
-    res.status(204).end(); // sem corpo
+    res.status(204).end();
   } catch (err) { next(err); }
 };
 
@@ -346,8 +365,13 @@ exports.removerSubmissao = async (req, res, next) => {
  * ──────────────────────────────────────────────────────────────── */
 exports.atualizarPoster = async (req, res, next) => {
   try {
-    if (!req.user || !req.user.id) return res.status(401).json({ erro: "Usuário não autenticado." });
+    const authUser = res?.locals?.user ?? req.user ?? null;
+    const userId = toIntOrNull(authUser?.id);
+    if (userId === null) return res.status(401).json({ erro: "Usuário não autenticado." });
     assert(req.file, "Envie o arquivo .ppt/.pptx no campo 'poster'.");
+
+    const subId = toIntOrNull(req.params.id);
+    assert(subId !== null, "Submissão inválida.");
 
     const sub = await db.oneOrNone(
       `SELECT s.id, s.usuario_id, s.titulo AS trabalho_titulo,
@@ -357,14 +381,14 @@ exports.atualizarPoster = async (req, res, next) => {
          FROM trabalhos_submissoes s
          JOIN trabalhos_chamadas c ON c.id = s.chamada_id
         WHERE s.id=$1`,
-      [req.params.id]
+      [subId]
     );
     assert(sub, "Submissão não encontrada.");
 
-    const ehAdmin = Array.isArray(req.user.perfil) && req.user.perfil.includes("administrador");
-    const ehAutor = String(sub.usuario_id) === String(req.user.id);
+    const ehAdmin = Array.isArray(authUser?.perfil) && authUser.perfil.includes("administrador");
+    const ehAutor = String(sub.usuario_id) === String(userId);
     if (!ehAdmin && !ehAutor) {
-      console.warn("[atualizarPoster] Bloqueado:", req.user.id, "=>", sub.id);
+      console.warn("[atualizarPoster] Bloqueado:", userId, "=>", sub.id);
       return res.status(403).json({ erro: "Você não tem permissão para enviar o pôster desta submissão." });
     }
 
@@ -386,7 +410,7 @@ exports.atualizarPoster = async (req, res, next) => {
          (submissao_id, caminho, nome_original, mime_type, tamanho_bytes, hash_sha256, arquivo)
        VALUES ($1,$2,$3,$4,$5,$6,$7)
        RETURNING id`,
-      [sub.id, relPath, req.file.originalname, req.file.mimetype, buffer.length, hash, buffer] // ⬅ salva BLOB
+      [sub.id, relPath, req.file.originalname, req.file.mimetype, buffer.length, hash, buffer]
     );
 
     await db.none(
@@ -397,13 +421,13 @@ exports.atualizarPoster = async (req, res, next) => {
     );
 
     await notificarPosterAtualizado({
-      usuario_id: req.user.id,
+      usuario_id: userId,
       chamada_titulo: sub.chamada_titulo,
       trabalho_titulo: sub.trabalho_titulo,
       arquivo_nome: req.file.originalname,
     });
 
-    console.log("[Poster OK]", { usuario: req.user.id, submissao: sub.id, arquivo: req.file.originalname, relPath });
+    console.log("[Poster OK]", { usuario: userId, submissao: sub.id, arquivo: req.file.originalname, relPath });
     res.json({ ok: true, arquivo_id: arq.id });
   } catch (err) {
     console.error("[atualizarPoster] erro:", err.message);
@@ -414,13 +438,18 @@ exports.atualizarPoster = async (req, res, next) => {
 // GET /submissoes/:id/poster — inline (prefere BLOB; cai para disco; 410 se ausente)
 exports.baixarPoster = async (req, res, next) => {
   try {
-    const subId = Number(req.params.id);
+    const subId = toIntOrNull(req.params.id);
+    if (subId === null) return res.status(400).json({ erro: "id inválido." });
 
-    const ehAdministrador = await isAdmin(req.user.id);
-    let permitido = ehAdministrador || (await canUserReviewOrView(req.user.id, subId));
+    const authUser = res?.locals?.user ?? req.user ?? null;
+    const userId = toIntOrNull(authUser?.id);
+    if (userId === null) return res.status(401).json({ erro: "Não autorizado." });
+
+    const ehAdministrador = await isAdmin(userId);
+    let permitido = ehAdministrador || (await canUserReviewOrView(userId, subId));
     if (!permitido) {
       const dono = await db.oneOrNone(`SELECT usuario_id FROM trabalhos_submissoes WHERE id=$1`, [subId]);
-      permitido = String(dono?.usuario_id) === String(req.user.id);
+      permitido = String(dono?.usuario_id) === String(userId);
     }
     if (!permitido) return res.status(403).json({ erro: "Acesso negado." });
 
@@ -443,19 +472,16 @@ exports.baixarPoster = async (req, res, next) => {
     res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
     res.setHeader("Content-Type", mime);
 
-    // 1) Prefira servir o BLOB se existir
     if (row.arquivo && row.arquivo.length) {
       return res.end(row.arquivo);
     }
 
-    // 2) Legados: tentar disco
     const abs = normalizeStoragePath(row.caminho);
     logDownload("poster:fs-check", { subId, caminhoResolvido: abs, exists: !!abs && fs.existsSync(abs) });
     if (abs && fs.existsSync(abs)) {
       return fs.createReadStream(abs).pipe(res);
     }
 
-    // 3) Nada disponível → 410 (arquivo ausente no armazenamento)
     logDownload("poster:missing", { subId });
     return res.status(410).json({
       erro: "Arquivo do pôster não está disponível no momento.",
@@ -471,8 +497,13 @@ exports.baixarPoster = async (req, res, next) => {
 // POST /submissoes/:id/banner (campo 'banner' via multer)
 exports.atualizarBanner = async (req, res, next) => {
   try {
-    if (!req.user || !req.user.id) return res.status(401).json({ erro: "Usuário não autenticado." });
+    const authUser = res?.locals?.user ?? req.user ?? null;
+    const userId = toIntOrNull(authUser?.id);
+    if (userId === null) return res.status(401).json({ erro: "Usuário não autenticado." });
     assert(req.file, "Envie o arquivo do banner no campo 'banner'.");
+
+    const subId = toIntOrNull(req.params.id);
+    assert(subId !== null, "Submissão inválida.");
 
     const sub = await db.oneOrNone(
       `SELECT s.id, s.usuario_id, s.titulo AS trabalho_titulo,
@@ -481,14 +512,14 @@ exports.atualizarBanner = async (req, res, next) => {
          FROM trabalhos_submissoes s
          JOIN trabalhos_chamadas c ON c.id = s.chamada_id
         WHERE s.id=$1`,
-      [req.params.id]
+      [subId]
     );
     assert(sub, "Submissão não encontrada.");
 
-    const ehAdmin = Array.isArray(req.user.perfil) && req.user.perfil.includes("administrador");
-    const ehAutor = String(sub.usuario_id) === String(req.user.id);
+    const ehAdmin = Array.isArray(authUser?.perfil) && authUser.perfil.includes("administrador");
+    const ehAutor = String(sub.usuario_id) === String(userId);
     if (!ehAdmin && !ehAutor) {
-      console.warn("[atualizarBanner] Bloqueado:", req.user.id, "=>", sub.id);
+      console.warn("[atualizarBanner] Bloqueado:", userId, "=>", sub.id);
       return res.status(403).json({ erro: "Você não tem permissão para enviar o banner desta submissão." });
     }
 
@@ -523,7 +554,7 @@ exports.atualizarBanner = async (req, res, next) => {
       [arq.id, sub.id]
     );
 
-    console.log("[Banner OK - usando poster_arquivo_id]", { usuario: req.user.id, submissao: sub.id, arquivo: req.file.originalname, relPath });
+    console.log("[Banner OK - usando poster_arquivo_id]", { usuario: userId, submissao: sub.id, arquivo: req.file.originalname, relPath });
     res.json({ ok: true, arquivo_id: arq.id });
   } catch (err) {
     console.error("[atualizarBanner] erro:", err.message);
@@ -534,13 +565,18 @@ exports.atualizarBanner = async (req, res, next) => {
 // GET /submissoes/:id/banner — inline (prefere BLOB; cai para disco)
 exports.baixarBanner = async (req, res, next) => {
   try {
-    const subId = Number(req.params.id);
+    const subId = toIntOrNull(req.params.id);
+    if (subId === null) return res.status(400).json({ erro: "id inválido." });
 
-    const ehAdministrador = await isAdmin(req.user.id);
-    let permitido = ehAdministrador || (await canUserReviewOrView(req.user.id, subId));
+    const authUser = res?.locals?.user ?? req.user ?? null;
+    const userId = toIntOrNull(authUser?.id);
+    if (userId === null) return res.status(401).json({ erro: "Não autorizado." });
+
+    const ehAdministrador = await isAdmin(userId);
+    let permitido = ehAdministrador || (await canUserReviewOrView(userId, subId));
     if (!permitido) {
       const dono = await db.oneOrNone(`SELECT usuario_id FROM trabalhos_submissoes WHERE id=$1`, [subId]);
-      permitido = String(dono?.usuario_id) === String(req.user.id);
+      permitido = String(dono?.usuario_id) === String(userId);
     }
     if (!permitido) return res.status(403).json({ erro: "Acesso negado." });
 
@@ -583,6 +619,10 @@ exports.baixarBanner = async (req, res, next) => {
  * ──────────────────────────────────────────────────────────────── */
 exports.minhasSubmissoes = async (req, res, next) => {
   try {
+    const authUser = res?.locals?.user ?? req.user ?? null;
+    const userId = toIntOrNull(authUser?.id);
+    if (userId === null) { const e = new Error("Não autorizado."); e.status = 401; throw e; }
+
     const rows = await db.any(`
       SELECT s.*, a.nome_original AS poster_nome,
              c.titulo AS chamada_titulo, c.prazo_final_br,
@@ -592,14 +632,23 @@ exports.minhasSubmissoes = async (req, res, next) => {
       LEFT JOIN trabalhos_arquivos a ON a.id = s.poster_arquivo_id
       WHERE s.usuario_id=$1
       ORDER BY s.criado_em DESC
-    `, [req.user.id]);
+    `, [userId]);
     res.json(rows);
   } catch (err) { next(err); }
 };
 
+// Compat: algumas rotas usam ctrl.listarMinhas → reexporta o mesmo handler
+ exports.listarMinhas = exports.minhasSubmissoes;
+
 exports.obterSubmissao = async (req, res, next) => {
   try {
-    const subId = Number(req.params.id);
+    const subId = toIntOrNull(req.params.id);
+    if (subId === null) { const e = new Error("id inválido."); e.status = 400; throw e; }
+
+    const authUser = res?.locals?.user ?? req.user ?? null;
+    const userId = toIntOrNull(authUser?.id);
+    if (userId === null) { const e = new Error("Não autorizado."); e.status = 401; throw e; }
+
     const s = await db.oneOrNone(`
       SELECT s.*,
              pa.nome_original AS poster_nome, pa.caminho AS poster_caminho,
@@ -615,9 +664,9 @@ exports.obterSubmissao = async (req, res, next) => {
     if (!s) { const e = new Error("Submissão não encontrada."); e.status = 404; throw e; }
 
     // Permissão: admin, autor OU avaliador atribuído
-    const ehAdmin = await isAdmin(req.user.id);
-    const ehAutor = s.usuario_id === req.user.id;
-    const ehAvaliadorVinculado = await canUserReviewOrView(req.user.id, subId);
+    const ehAdmin = await isAdmin(userId);
+    const ehAutor = String(s.usuario_id) === String(userId);
+    const ehAvaliadorVinculado = await canUserReviewOrView(userId, subId);
     if (!ehAdmin && !ehAutor && !ehAvaliadorVinculado) {
       const e = new Error("Sem permissão."); e.status = 403; throw e;
     }
@@ -639,51 +688,82 @@ exports.obterSubmissao = async (req, res, next) => {
 exports.listarSubmissoesAdmin = async (req, res, next) => {
   const t0 = Date.now();
   try {
-    const chamadaId = Number(req.params.chamadaId);
-    const rows = await db.any(`
-      SELECT s.id, s.titulo, s.usuario_id, s.status, s.linha_tematica_codigo, s.inicio_experiencia,
-             u.nome AS autor_nome, u.email AS autor_email,
-             COALESCE(ve.total_ponderado,0) AS total_escrita,
-             COALESCE(vo.total_oral_ponderado,0) AS total_oral,
-             (COALESCE(ve.total_ponderado,0)+COALESCE(vo.total_oral_ponderado,0)) AS total_geral
-      FROM trabalhos_submissoes s
-      JOIN usuarios u ON u.id = s.usuario_id
-      LEFT JOIN vw_submissao_total_escrita ve ON ve.submissao_id = s.id
-      LEFT JOIN vw_submissao_total_oral vo   ON vo.submissao_id = s.id
-      WHERE s.chamada_id=$1
-      ORDER BY total_geral DESC, s.id ASC
-    `, [chamadaId]);
+    const chamadaId = toIntOrNull(req.params.chamadaId);
+    if (chamadaId === null) { const e = new Error("chamadaId inválido."); e.status = 400; throw e; }
 
-    console.log("[listarSubmissoesAdmin]", {
-      chamadaId,
-      total: rows.length,
-      ms: Date.now() - t0,
-    });
+    const rows = await db.any(`
+           WITH base AS (
+              SELECT
+                s.id,
+                s.titulo,
+                s.usuario_id,
+                s.status,
+                s.linha_tematica_codigo,
+                s.inicio_experiencia,
+                u.nome  AS autor_nome,
+                u.email AS autor_email,
+                c.titulo AS chamada_titulo,
+                COALESCE(ve.total_ponderado,0) AS total_escrita,
+                COALESCE(vo.total_oral_ponderado,0) AS total_oral,
+                (COALESCE(ve.total_ponderado,0)+COALESCE(vo.total_oral_ponderado,0)) AS total_geral,
+      
+                COALESCE(n.soma_notas, 0)::numeric       AS soma_notas,
+                COALESCE(n.qtd_itens, 0)                 AS qtd_itens,
+                COALESCE(n.qtd_avaliadores, 0)           AS qtd_avaliadores,
+                ROUND(COALESCE(n.soma_notas,0) / 4.0, 1) AS nota_media
+              FROM trabalhos_submissoes s
+              JOIN usuarios u              ON u.id = s.usuario_id
+              JOIN trabalhos_chamadas c    ON c.id = s.chamada_id
+              LEFT JOIN vw_submissao_total_escrita ve ON ve.submissao_id = s.id
+              LEFT JOIN vw_submissao_total_oral   vo ON vo.submissao_id = s.id
+              LEFT JOIN LATERAL (
+                SELECT
+                  SUM(tai.nota)                       AS soma_notas,
+                  COUNT(*)                            AS qtd_itens,
+                  COUNT(DISTINCT tai.avaliador_id)    AS qtd_avaliadores
+                FROM trabalhos_avaliacoes_itens tai
+                WHERE tai.submissao_id = s.id
+              ) n ON TRUE
+              WHERE s.chamada_id = $1
+            )
+            SELECT
+              ROW_NUMBER() OVER (ORDER BY nota_media DESC NULLS LAST, total_geral DESC, id ASC) AS posicao,
+              *
+            FROM base
+            ORDER BY nota_media DESC NULLS LAST, total_geral DESC, id ASC
+          `, [chamadaId]);
+
+    console.log("[listarSubmissoesAdmin]", { chamadaId, total: rows.length, ms: Date.now() - t0 });
     res.json(rows);
   } catch (err) {
-    console.error("[listarSubmissoesAdmin][erro]", {
-      message: err.message, code: err.code, stack: err.stack,
-      ms: Date.now() - t0,
-    });
+    console.error("[listarSubmissoesAdmin][erro]", { message: err.message, code: err.code, ms: Date.now() - t0 });
     next(err);
   }
 };
 
+/* ────────────────────────────────────────────────────────────────
+ * AVALIAÇÃO (ESCRITA)
+ * ──────────────────────────────────────────────────────────────── */
 exports.avaliarEscrita = async (req, res, next) => {
   const t0 = Date.now();
   try {
     const { itens = [] } = req.body;
-    const subId = Number(req.params.id);
+    const subId = toIntOrNull(req.params.id);
+    assert(subId !== null, "id inválido.");
     assert(Array.isArray(itens) && itens.length, "Envie itens para avaliação.");
 
-    const userId = req.user?.id;
+    const authUser = res?.locals?.user ?? req.user ?? null;
+    const userId = toIntOrNull(authUser?.id);
+    assert(userId !== null, "Não autorizado.");
+
     const isAdm   = await isAdmin(userId);
     const canView = await canUserReviewOrView(userId, subId);
     const permitido = isAdm || canView;
 
     console.log("[avaliarEscrita][perm]", { subId, userId, isAdm, canView, permitido });
-
-    if (!permitido) return res.status(403).json({ erro: "Apenas avaliadores atribuídos ou administradores podem avaliar." });
+    if (!permitido) {
+      return res.status(403).json({ erro: "Apenas avaliadores atribuídos ou administradores podem avaliar." });
+    }
 
     const lims = await db.any(`
       SELECT id, escala_min, escala_max
@@ -697,8 +777,10 @@ exports.avaliarEscrita = async (req, res, next) => {
       const lim = byId.get(it.criterio_id);
       assert(lim, "Critério inválido.");
       const nota = parseInt(it.nota, 10);
-      assert(Number.isInteger(nota) && nota >= lim.escala_min && nota <= lim.escala_max,
-        `Nota deve estar entre ${lim.escala_min} e ${lim.escala_max}.`);
+      assert(
+        Number.isInteger(nota) && nota >= lim.escala_min && nota <= lim.escala_max,
+        `Nota deve estar entre ${lim.escala_min} e ${lim.escala_max}.`
+      );
 
       await db.none(`
         INSERT INTO trabalhos_avaliacoes_itens (submissao_id, avaliador_id, criterio_id, nota, comentarios)
@@ -709,13 +791,13 @@ exports.avaliarEscrita = async (req, res, next) => {
       inseridos++;
     }
 
+    // Se estava "submetido", avança para "em_avaliacao"
     let rowCount = 0;
     const SQL_UPD = `
       UPDATE trabalhos_submissoes
          SET status='em_avaliacao', atualizado_em=NOW()
        WHERE id=$1 AND status='submetido'
     `;
-
     if (typeof db.result === "function") {
       const r = await db.result(SQL_UPD, [subId]);
       rowCount = r?.rowCount || 0;
@@ -758,12 +840,38 @@ exports.avaliarEscrita = async (req, res, next) => {
       }
     }
 
+    // ✅ MATERIALIZA nota_media (0–10)
+    try {
+      if (typeof atualizarNotaMediaMaterializada === "function") {
+        await atualizarNotaMediaMaterializada(subId, db);
+      } else {
+        const r = await db.one(`
+          WITH por_avaliador AS (
+            SELECT avaliador_id, SUM(nota)::int AS total
+            FROM trabalhos_avaliacoes_itens
+            WHERE submissao_id = $1
+            GROUP BY avaliador_id
+          )
+          SELECT ROUND(COALESCE(SUM(total),0)::numeric / 4, 1) AS nota10
+          FROM por_avaliador
+        `, [subId]);
+        const nota10 = Number(r?.nota10 || 0);
+        await db.none(
+          `UPDATE trabalhos_submissoes SET nota_media=$2, atualizado_em=NOW() WHERE id=$1`,
+          [subId, nota10]
+        );
+      }
+    } catch (e) {
+      console.error("[avaliarEscrita][nota_media][erro]", e);
+      // não bloqueia a resposta ao avaliador
+    }
+
     console.log("[avaliarEscrita][OK]", { subId, userId, ms: Date.now() - t0 });
     res.json({ ok: true });
   } catch (err) {
     console.error("[avaliarEscrita][erro]", {
-      subId: Number(req.params.id),
-      userId: req.user?.id,
+      subId: toIntOrNull(req.params.id),
+      userId: (res?.locals?.user ?? req.user ?? {})?.id,
       message: err.message, code: err.code, stack: err.stack,
       ms: Date.now() - t0,
     });
@@ -771,20 +879,26 @@ exports.avaliarEscrita = async (req, res, next) => {
   }
 };
 
+/* ────────────────────────────────────────────────────────────────
+ * AVALIAÇÃO (ORAL)
+ * ──────────────────────────────────────────────────────────────── */
 exports.avaliarOral = async (req, res, next) => {
   const t0 = Date.now();
   try {
     const { itens = [] } = req.body;
-    const subId = Number(req.params.id);
+    const subId = toIntOrNull(req.params.id);
+    assert(subId !== null, "id inválido.");
     assert(Array.isArray(itens) && itens.length, "Envie itens para avaliação oral.");
 
-    const userId = req.user?.id;
+    const authUser = res?.locals?.user ?? req.user ?? null;
+    const userId = toIntOrNull(authUser?.id);
+    assert(userId !== null, "Não autorizado.");
+
     const isAdm   = await isAdmin(userId);
     const canView = await canUserReviewOrView(userId, subId);
     const permitido = isAdm || canView;
 
     console.log("[avaliarOral][perm]", { subId, userId, isAdm, canView, permitido });
-
     if (!permitido) return res.status(403).json({ erro: "Apenas avaliadores atribuídos ou administradores podem avaliar." });
 
     const lims = await db.any(`
@@ -811,8 +925,8 @@ exports.avaliarOral = async (req, res, next) => {
     res.json({ ok: true });
   } catch (err) {
     console.error("[avaliarOral][erro]", {
-      subId: Number(req.params.id),
-      userId: req.user?.id,
+      subId: toIntOrNull(req.params.id),
+      userId: (res?.locals?.user ?? req.user ?? {})?.id,
       message: err.message, code: err.code, stack: err.stack,
       ms: Date.now() - t0,
     });
@@ -823,7 +937,8 @@ exports.avaliarOral = async (req, res, next) => {
 exports.consolidarClassificacao = async (req, res, next) => {
   const t0 = Date.now();
   try {
-    const chamadaId = Number(req.params.chamadaId);
+    const chamadaId = toIntOrNull(req.params.chamadaId);
+    assert(chamadaId !== null, "chamadaId inválido.");
 
     const top40 = await db.any(`
       SELECT id FROM vw_submissoes_consolidadas
@@ -871,7 +986,7 @@ exports.consolidarClassificacao = async (req, res, next) => {
     res.json({ ok: true, exposicao: top40.length, oral: aprovadosOral.length });
   } catch (err) {
     console.error("[consolidarClassificacao][erro]", {
-      chamadaId: Number(req.params.chamadaId),
+      chamadaId: toIntOrNull(req.params.chamadaId),
       message: err.message, code: err.code, stack: err.stack,
       ms: Date.now() - t0,
     });
@@ -882,7 +997,9 @@ exports.consolidarClassificacao = async (req, res, next) => {
 exports.definirStatusFinal = async (req, res, next) => {
   const t0 = Date.now();
   try {
-    const id = Number(req.params.id);
+    const id = toIntOrNull(req.params.id);
+    assert(id !== null, "id inválido.");
+
     const { status, observacoes_admin = null } = req.body;
     const permitidos = ['reprovado','aprovado_exposicao','aprovado_oral'];
     assert(permitidos.includes(status), "Status inválido.");
@@ -914,7 +1031,7 @@ exports.definirStatusFinal = async (req, res, next) => {
     res.json({ ok: true });
   } catch (err) {
     console.error("[definirStatusFinal][erro]", {
-      submissaoId: Number(req.params.id),
+      submissaoId: toIntOrNull(req.params.id),
       message: err.message, code: err.code, stack: err.stack,
       ms: Date.now() - t0,
     });
@@ -943,29 +1060,38 @@ exports.listarSubmissoesAdminTodas = async (_req, res, next) => {
         c.titulo AS chamada_titulo,
         u.nome  AS autor_nome,
         u.email AS autor_email,
-        COALESCE(ve.total_ponderado, 0)        AS total_escrita,
-        COALESCE(vo.total_oral_ponderado, 0)   AS total_oral,
-        (COALESCE(ve.total_ponderado,0) + COALESCE(vo.total_oral_ponderado,0)) AS total_geral
+        COALESCE(ve.total_ponderado, 0)      AS total_escrita,
+        COALESCE(vo.total_oral_ponderado, 0) AS total_oral,
+        (COALESCE(ve.total_ponderado,0) + COALESCE(vo.total_oral_ponderado,0)) AS total_geral,
+
+        /* 🔎 Debug + nota */
+        COALESCE(n.soma_notas, 0)::numeric       AS soma_notas,
+        COALESCE(n.qtd_itens, 0)                 AS qtd_itens,
+        COALESCE(n.qtd_avaliadores, 0)           AS qtd_avaliadores,
+        ROUND(COALESCE(n.soma_notas,0) / 4.0, 1) AS nota_media
+
       FROM trabalhos_submissoes s
       JOIN usuarios u              ON u.id = s.usuario_id
       JOIN trabalhos_chamadas c    ON c.id = s.chamada_id
       LEFT JOIN trabalhos_chamada_linhas tcl ON tcl.id = s.linha_tematica_id
       LEFT JOIN vw_submissao_total_escrita ve ON ve.submissao_id = s.id
       LEFT JOIN vw_submissao_total_oral   vo ON vo.submissao_id = s.id
+      /* ← calcula por submissão, mesmo se não houver itens (fica NULL) */
+      LEFT JOIN LATERAL (
+        SELECT
+          SUM(tai.nota)                       AS soma_notas,
+          COUNT(*)                            AS qtd_itens,
+          COUNT(DISTINCT tai.avaliador_id)    AS qtd_avaliadores
+        FROM trabalhos_avaliacoes_itens tai
+        WHERE tai.submissao_id = s.id
+      ) n ON TRUE
       ORDER BY s.criado_em DESC, s.id ASC
     `);
 
-    console.log("[listarSubmissoesAdminTodas]", {
-      total: rows.length,
-      ms: Date.now() - t0,
-    });
-
+    console.log("[listarSubmissoesAdminTodas]", { total: rows.length, ms: Date.now() - t0 });
     res.json(rows);
   } catch (err) {
-    console.error("[listarSubmissoesAdminTodas][erro]", {
-      message: err.message, code: err.code, stack: err.stack,
-      ms: Date.now() - t0,
-    });
+    console.error("[listarSubmissoesAdminTodas][erro]", { message: err.message, code: err.code, ms: Date.now() - t0 });
     next(err);
   }
 };
@@ -974,7 +1100,9 @@ exports.listarSubmissoesAdminTodas = async (_req, res, next) => {
 exports.listarSubmissoesDoAvaliador = async (req, res, next) => {
   const t0 = Date.now();
   try {
-    const uid = req.user.id;
+    const authUser = res?.locals?.user ?? req.user ?? null;
+    const uid = toIntOrNull(authUser?.id);
+    if (uid === null) { const e = new Error("Não autorizado."); e.status = 401; throw e; }
 
     const rows = await req.db.any(`
       SELECT
@@ -1012,7 +1140,7 @@ exports.listarSubmissoesDoAvaliador = async (req, res, next) => {
     res.json(rows);
   } catch (err) {
     console.error("[listarSubmissoesDoAvaliador][erro]", {
-      avaliador: req.user?.id,
+      avaliador: (res?.locals?.user ?? req.user ?? {})?.id,
       message: err.message, code: err.code, stack: err.stack,
       ms: Date.now() - t0,
     });
@@ -1024,10 +1152,13 @@ exports.listarSubmissoesDoAvaliador = async (req, res, next) => {
 exports.obterParaAvaliacao = async (req, res, next) => {
   const t0 = Date.now();
   try {
-    const uid  = req.user.id;
-    const sid  = Number(req.params.id);
+    const authUser = res?.locals?.user ?? req.user ?? null;
+    const uid  = toIntOrNull(authUser?.id);
+    const sid  = toIntOrNull(req.params.id);
+    assert(uid !== null, "Não autorizado.");
+    assert(sid !== null, "id inválido.");
 
-    const isAdminUser = Array.isArray(req.user.perfil) && req.user.perfil.includes("administrador");
+    const isAdminUser = Array.isArray(authUser?.perfil) && authUser.perfil.includes("administrador");
     const designado = await req.db.oneOrNone(
       `SELECT 1 FROM trabalhos_submissoes_avaliadores WHERE submissao_id=$1 AND avaliador_id=$2`,
       [sid, uid]
@@ -1066,7 +1197,7 @@ exports.obterParaAvaliacao = async (req, res, next) => {
     const criterios = await req.db.any(`
       SELECT
         id,
-        titulo AS criterio,       -- ✅ usa a coluna existente
+        titulo AS criterio,
         COALESCE(escala_min, 0)  AS escala_min,
         COALESCE(escala_max, 10) AS escala_max,
         COALESCE(peso, 1)::int   AS peso,
@@ -1096,11 +1227,10 @@ exports.obterParaAvaliacao = async (req, res, next) => {
         status: s.status,
         inicio_experiencia: s.inicio_experiencia,
         linha_tematica_codigo: s.linha_tematica_codigo,
-       linha_tematica_nome:   s.linha_tematica_nome,
+        linha_tematica_nome:   s.linha_tematica_nome,
         chamada_titulo: s.chamada_titulo,
         poster_nome: s.poster_nome,
         poster_url: `/api/submissoes/${s.id}/poster`,
-        // ⬇️ textos para o avaliador ler
         introducao: s.introducao,
         objetivos: s.objetivos,
         metodo: s.metodo,
@@ -1113,33 +1243,11 @@ exports.obterParaAvaliacao = async (req, res, next) => {
     });
   } catch (err) {
     console.error("[obterParaAvaliacao][erro]", {
-      subId: Number(req.params.id),
-      avaliador: req.user?.id,
+      subId: toIntOrNull(req.params.id),
+      avaliador: (res?.locals?.user ?? req.user ?? {})?.id,
       message: err.message, code: err.code, stack: err.stack,
       ms: Date.now() - t0,
     });
     next(err);
   }
-};
-
-// ========== PERMISSÃO FINA DENTRO DO AVALIAR ==========
-const _isAdminOrDesignado = async (dbConn, user, submissaoId) => {
-  const isAdminUser = Array.isArray(user.perfil) && user.perfil.includes("administrador");
-  if (isAdminUser) return true;
-  const r = await dbConn.oneOrNone(
-    `SELECT 1 FROM trabalhos_submissoes_avaliadores WHERE submissao_id=$1 AND avaliador_id=$2`,
-    [submissaoId, user.id]
-  );
-  return !!r;
-};
-
-const _oldAvaliarEscrita = exports.avaliarEscrita;
-exports.avaliarEscrita = async (req, res, next) => {
-  try {
-    const subId = Number(req.params.id);
-    if (!(await _isAdminOrDesignado(req.db, req.user, subId))) {
-      const e = new Error("Sem permissão para avaliar esta submissão."); e.status = 403; throw e;
-    }
-    return _oldAvaliarEscrita(req, res, next);
-  } catch (err) { next(err); }
 };

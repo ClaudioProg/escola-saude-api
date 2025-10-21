@@ -13,10 +13,12 @@ import {
   Upload,
   Eye,
   EyeOff,
+  Paperclip,
 } from "lucide-react";
 import api, { apiGetFile, downloadBlob } from "../services/api";
 import Footer from "../components/Footer";
 import { useOnceEffect } from "../hooks/useOnceEffect";
+import RankingModal from "../components/RankingModal";
 
 /* ————————————————— Utils ————————————————— */
 const fmt = (v, alt = "—") => (v === 0 || !!v ? String(v) : alt);
@@ -36,6 +38,11 @@ const linhaKeyFromSub = (s) =>
       s?.linha_tematica_codigo ??
       ""
   );
+
+  // Soma os totais individuais dos avaliadores (evita ReferenceError de "avaliacionesTotal")
+function avaliacoesTotal(arr) {
+    return (arr || []).reduce((acc, a) => acc + (Number(a.total || 0)), 0);
+  }
 
 // ——— Download seguro (funciona com/sem interceptor que retorna só data)
 async function safeOpenBlobFromApi(getter, fallbackName = "arquivo") {
@@ -165,8 +172,36 @@ function StatusBadge({ status }) {
   }
 }
 
+// ————————————————— Anexos (detecção robusta) —————————————————
+const truthy = (v) => {
+    if (v == null) return false;
+    if (typeof v === "string") {
+      const t = v.trim().toLowerCase();
+      return t.length > 0 && t !== "0" && t !== "false" && t !== "none" && t !== "null";
+    }
+    if (typeof v === "number") return v > 0;
+    if (Array.isArray(v)) return v.length > 0;
+    return !!v;
+  };
+  const hasAnexoRaw = (s) => {
+    const c = [
+      // nomes mais comuns que vêm no detalhe
+      s?.poster_nome, s?.posterNome, s?.poster_arquivo_nome, s?.nome_poster, s?.poster,
+      s?.banner_nome, s?.bannerNome, s?.banner_arquivo_nome, s?.nome_banner, s?.banner,
+      // possíveis flags booleanas do backend
+      s?.has_poster, s?.tem_poster, s?.poster_enviado, s?.possui_poster,
+      s?.has_banner, s?.tem_banner, s?.banner_enviado, s?.possui_banner,
+      s?.has_anexo, s?.tem_anexo, s?.possui_anexo,
+      // coleções genéricas
+      s?.anexos, s?.arquivos,
+    ];
+    return c.some(truthy);
+  };
+  const hasAnexo = (s) => truthy(s?._hasAnexo) || hasAnexoRaw(s);
+
+
 /* ————————————————— Drawer/Modal de detalhes ————————————————— */
-function DetalhesSubmissao({ open, onClose, s }) {
+function DetalhesSubmissao({ open, onClose, s, onDetectAnexo }) {
   const [full, setFull] = useState(null);
   const [loading, setLoading] = useState(true);
   const dialogRef = useRef(null);
@@ -212,10 +247,32 @@ function DetalhesSubmissao({ open, onClose, s }) {
     (async () => {
       try {
         setLoading(true);
-        const r = await api.get(`/submissoes/${s.id}`, { signal: ac.signal });
-        const sub = Array.isArray(r) ? r[0] : (r?.data ?? r);
-        setFull(sub || {});
-
+        // tenta /submissoes/:id; se 404, tenta /admin/submissoes/:id
+ let sub;
+ try {
+   const r = await api.get(`/submissoes/${s.id}`, { signal: ac.signal });
+   sub = Array.isArray(r) ? r[0] : (r?.data ?? r);
+ } catch (e) {
+   const status = e?.status || e?.response?.status;
+   if (status === 404) {
+     try {
+       const r2 = await api.get(`/admin/submissoes/${s.id}`, { signal: ac.signal });
+       sub = Array.isArray(r2) ? r2[0] : (r2?.data ?? r2);
+     } catch (e2) {
+       throw e2;
+     }
+   } else {
+     throw e;
+   }
+ }
+ setFull(sub || {});
+         // Se no detalhe aparecerem campos de anexo, sinaliza o pai para refletir na lista
+         try {
+          const tem = hasAnexoRaw(sub);
+           if (tem && typeof onDetectAnexo === "function" && s?.id != null) {
+            onDetectAnexo(s.id, true);
+           }
+         } catch {}
         try {
           const nr = await api.get(`/admin/submissoes/${s.id}/avaliacoes`, { signal: ac.signal });
           const payload = nr?.data || {};
@@ -333,12 +390,14 @@ function DetalhesSubmissao({ open, onClose, s }) {
 
   const totalObtido = useMemo(() => {
     if (totalGeral > 0) return totalGeral;
-    return (avaliacoes || []).reduce((acc, a) => acc + (Number(a.total || 0)), 0);
+    // fallback confiável usando o helper (sem mudar sua lógica original)
+    return avaliacoesTotal(avaliacoes);
   }, [avaliacoes, totalGeral]);
 
   const mediaFinal = useMemo(() => {
     if (notaDivididaPor4 > 0) return notaDivididaPor4.toFixed(1);
-    return (totalObtido / 4).toFixed(1);
+    const base = Number.isFinite(totalObtido) ? totalObtido : 0;
+    return (base / 4).toFixed(1);
   }, [notaDivididaPor4, totalObtido]);
 
   const toggleVisibilidadeNota = async () => {
@@ -386,8 +445,24 @@ function DetalhesSubmissao({ open, onClose, s }) {
               </div>
 
               <div className="bg-zinc-50 dark:bg-zinc-800/50 rounded-xl p-4">
-                <p className="text-sm text-zinc-500">Nota (média)</p>
-                <p className="text-lg font-semibold">{fmtNum(mediaFinal, 1)} / 10</p>
+              <p className="text-sm text-zinc-500 flex items-center gap-2">
+                  Nota (média)
+                 {qtdAtribuidos >= 2 && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200">
+                      2 avaliadores concluído
+                    </span>
+                  )}
+                </p>
+                <p
+                  className={
+                    "text-lg font-semibold " +
+                    (qtdAtribuidos >= 2
+                      ? "text-emerald-700 dark:text-emerald-300"
+                      : "text-zinc-900 dark:text-zinc-100")
+                  }
+                >
+                  {fmtNum(mediaFinal, 1)} / 10
+                </p>
                 {avaliacoes?.length > 0 && (
                   <p className="text-xs text-zinc-500 mt-1">
                     Soma dos avaliadores: {totalObtido} / 40 (2 avaliadores × 4 critérios)
@@ -505,7 +580,12 @@ function DetalhesSubmissao({ open, onClose, s }) {
                           </tr>
                         );
                       })}
-                      <tr className="font-bold bg-amber-100/40 dark:bg-zinc-700/40">
+                      <tr
+                       className={
+                          "font-bold bg-amber-100/40 dark:bg-zinc-700/40 " +
+                          (qtdAtribuidos >= 2 ? "text-emerald-700 dark:text-emerald-300" : "")
+                        }
+                      >
                         <td colSpan={5} className="p-2 text-right">Total Geral</td>
                         <td className="p-2">{totalObtido} / 40</td>
                       </tr>
@@ -701,6 +781,7 @@ export default function AdminSubmissoes() {
   const [chamadas, setChamadas] = useState([]);
   const [detalheOpen, setDetalheOpen] = useState(false);
   const [selecionada, setSelecionada] = useState(null);
+  const [rankingOpen, setRankingOpen] = useState(false);
 
   const unwrap = (r) => (Array.isArray(r) ? r : r?.data ?? []);
 
@@ -713,8 +794,48 @@ export default function AdminSubmissoes() {
           api.get("/admin/submissoes", { signal: ac.signal }),
           api.get("/chamadas/ativas", { signal: ac.signal }),
         ]);
-        setSubmissoes(unwrap(subs));
+        // 1) normaliza flag local de anexo para o que já veio na lista
+        const base = unwrap(subs).map((it) => ({ ...it, _hasAnexo: hasAnexoRaw(it) }));
+        setSubmissoes(base);
         setChamadas(unwrap(ch));
+
+        // 2) para quem ainda está sem anexo, confirmar via detalhe em background (sem logar 404)
+        const idsParaChecar = base.filter((s) => !s._hasAnexo).map((s) => s.id);
+        const conc = 6; // limite de concorrência
+        let idx = 0;
+        const axiosOk = (s) => (s >= 200 && s < 300) || s === 404; // 404 não rejeita
+        const run = async (id) => {
+          // tenta primeiro /submissoes/:id (menos chance de 404), depois /admin/...
+          const tryPublic = await api.get(`/submissoes/${id}`, {
+            signal: ac.signal,
+            validateStatus: axiosOk,
+          });
+          if (tryPublic?.status !== 404) {
+            const sub = Array.isArray(tryPublic?.data) ? tryPublic.data[0] : (tryPublic?.data ?? tryPublic);
+            return { id, ok: hasAnexoRaw(sub) };
+          }
+          const tryAdmin = await api.get(`/admin/submissoes/${id}`, {
+            signal: ac.signal,
+            validateStatus: axiosOk,
+          });
+          if (tryAdmin?.status !== 404) {
+            const sub = Array.isArray(tryAdmin?.data) ? tryAdmin.data[0] : (tryAdmin?.data ?? tryAdmin);
+            return { id, ok: hasAnexoRaw(sub) };
+          }
+          return { id, ok: false };
+        };
+        const workers = Array.from({ length: conc }, async () => {
+          while (idx < idsParaChecar.length) {
+            const id = idsParaChecar[idx++];
+            const res = await run(id);
+            if (res.ok) {
+              setSubmissoes((prev) =>
+                prev.map((it) => (it.id === id ? { ...it, _hasAnexo: true } : it))
+              );
+            }
+          }
+        });
+        Promise.allSettled(workers);
       } catch (err) {
         if (err?.name !== "AbortError") console.error("Erro ao carregar:", err);
       } finally {
@@ -803,6 +924,17 @@ export default function AdminSubmissoes() {
             <h2 className="font-semibold text-zinc-800 dark:text-zinc-100">Filtros</h2>
           </div>
 
+          <div className="ml-auto">
+    <button
+      type="button"
+      onClick={() => setRankingOpen(true)}
+      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-700 text-white hover:bg-amber-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-700"
+    >
+      <Award className="w-4 h-4" />
+      Ranking
+    </button>
+  </div>
+
           <div className="flex-1 grid sm:grid-cols-2 lg:grid-cols-5 gap-4">
             {/* Chamada */}
             <label className="sr-only" htmlFor="filtro-chamada">Filtrar por chamada</label>
@@ -847,10 +979,10 @@ export default function AdminSubmissoes() {
             >
               <option value="">Todas as linhas</option>
               {linhasTematicas.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.nome}{l.codigo ? ` — ${l.codigo}` : ""}
-                </option>
-              ))}
+    <option key={l.id} value={l.id}>
+      {l.nome}
+   </option>
+  ))}
             </select>
 
             {/* Busca */}
@@ -871,29 +1003,52 @@ export default function AdminSubmissoes() {
 
         {/* Tabela (desktop) */}
         <section className="hidden md:block overflow-x-auto bg-white dark:bg-zinc-900 rounded-2xl shadow border dark:border-zinc-800" aria-label="Tabela de submissões">
-          <table className="w-full border-collapse text-sm">
-            <caption className="sr-only">Lista de submissões filtradas</caption>
-            <thead className="bg-amber-600 text-white">
-              <tr>
-                <th scope="col" className="p-3 text-left">Título</th>
-                <th scope="col" className="p-3 text-left">Autor</th>
-                <th scope="col" className="p-3 text-left">Chamada</th>
-                <th scope="col" className="p-3 text-left">Área / Eixo</th>
-                <th scope="col" className="p-3 text-center">Status</th>
-                <th scope="col" className="p-3 text-center">Nota (média)</th>
-                <th scope="col" className="p-3 text-center">Detalhes</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtradas.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="text-center py-6 text-zinc-600">Nenhuma submissão encontrada.</td>
-                </tr>
-              )}
+  <table className="w-full border-collapse text-sm">
+    <caption className="sr-only">Lista de submissões filtradas</caption>
+    <thead className="bg-amber-600 text-white">
+      <tr>
+        <th scope="col" className="p-3 text-left">Título</th>
+        <th scope="col" className="p-3 text-left">Autor</th>
+        <th scope="col" className="p-3 text-left">Chamada</th>
+        <th scope="col" className="p-3 text-center">Status</th>
+        <th scope="col" className="p-3 text-center">Nota (média)</th>
+        <th scope="col" className="p-3 text-center">Detalhes</th>
+      </tr>
+    </thead>
+    <tbody>
+      {filtradas.length === 0 && (
+        <tr>
+          <td colSpan={6} className="text-center py-6 text-zinc-600">Nenhuma submissão encontrada.</td>
+        </tr>
+      )}
 
               {filtradas.map((s) => (
-                <tr key={s.id} className="border-b dark:border-zinc-800 hover:bg-amber-50/60 dark:hover:bg-zinc-800/40 transition">
-                  <td className="p-3 max-w-[28ch] truncate" title={s.titulo}>{s.titulo}</td>
+                <tr
+                  key={s.id}
+                  className={
+                    "border-b dark:border-zinc-800 hover:bg-amber-50/60 dark:hover:bg-zinc-800/40 transition " +
+                    (hasAnexo(s)
+                      ? "border-l-4 border-l-emerald-500"
+                      : "border-l-4 border-l-zinc-300 dark:border-l-zinc-700")
+                  }
+                >
+<td className="p-3 align-top" title={s.titulo}>
+    <div className="flex items-start gap-2">
+      <span className="font-medium text-zinc-800 dark:text-zinc-100 whitespace-normal break-words">{s.titulo}</span>
+      <span
+      className={
+        "shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium " +
+        (hasAnexo(s)
+          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200"
+          : "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300")
+      }
+      title={hasAnexo(s) ? "Este trabalho possui anexo (pôster ou banner)" : "Nenhum anexo enviado"}
+    >
+      <Paperclip className="h-3 w-3" />
+     {hasAnexo(s) ? "Anexo" : "Sem anexo"}
+    </span>
+  </div>
+ </td>
                   <td className="p-3">
                     <div className="flex flex-col">
                       <span className="font-medium text-zinc-800 dark:text-zinc-100">{s.autor_nome}</span>
@@ -901,10 +1056,6 @@ export default function AdminSubmissoes() {
                     </div>
                   </td>
                   <td className="p-3 text-zinc-700 dark:text-zinc-300">{s.chamada_titulo}</td>
-                  <td className="p-3 text-zinc-700 dark:text-zinc-300">
-                    <span className="block">{fmt(s.area_tematica || s.area)}</span>
-                    <span className="block text-xs text-zinc-500">{fmt(s.eixo)}</span>
-                  </td>
                   <td className="p-3 text-center"><StatusBadge status={s.status} /></td>
                   <td className="p-3 text-center font-semibold text-zinc-800 dark:text-zinc-100">
                     {fmt(s.nota_media, "—")}
@@ -934,20 +1085,32 @@ export default function AdminSubmissoes() {
           {filtradas.map((s) => (
             <div key={s.id} className="bg-white dark:bg-zinc-900 rounded-2xl shadow border dark:border-zinc-800 p-4 space-y-2">
               <div className="flex items-start justify-between gap-2">
-                <div>
-                  <p className="font-semibold text-zinc-800 dark:text-zinc-100">{s.titulo}</p>
-                  <p className="text-xs text-zinc-500">{s.chamada_titulo}</p>
-                </div>
+              <div>
+  <div className="flex items-center gap-2">
+      <p className="font-semibold text-zinc-800 dark:text-zinc-100 whitespace-normal break-words">{s.titulo}</p>
+
+    <span
+     className={
+        "shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium " +
+        (hasAnexo(s)
+          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200"
+          : "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300")
+      }
+      title={hasAnexo(s) ? "Este trabalho possui anexo (pôster ou banner)" : "Nenhum anexo enviado"}
+    >
+      <Paperclip className="h-3 w-3" />
+      {hasAnexo(s) ? "Anexo" : "Sem anexo"}
+    </span>
+  </div>
+  <p className="text-xs text-zinc-500">{s.chamada_titulo}</p>
+</div>
                 <StatusBadge status={s.status} />
               </div>
               <p className="text-sm text-zinc-700 dark:text-zinc-300">
                 <span className="font-medium">{s.autor_nome}</span>
                 <span className="text-zinc-500"> · {s.autor_email}</span>
               </p>
-              <p className="text-xs text-zinc-500">
-                {fmt(s.area_tematica || s.area)} · {fmt(s.eixo)}
-              </p>
-              <div className="flex items-center justify-between pt-1">
+                          <div className="flex items-center justify-between pt-1">
                 <span className="text-sm font-semibold">Nota: {fmt(s.nota_media, "—")}</span>
                 <button
                   onClick={() => { setSelecionada(s); setDetalheOpen(true); }}
@@ -965,10 +1128,31 @@ export default function AdminSubmissoes() {
       <Footer />
 
       <AnimatePresence>
-        {detalheOpen && (
-          <DetalhesSubmissao open={detalheOpen} onClose={() => setDetalheOpen(false)} s={selecionada} />
-        )}
-      </AnimatePresence>
+      {detalheOpen && (
+    <DetalhesSubmissao
+      open={detalheOpen}
+      onClose={() => setDetalheOpen(false)}
+      s={selecionada}
+      onDetectAnexo={(id, has) => {
+       if (!has) return;
+        setSubmissoes((prev) =>
+          prev.map((it) => (it.id === id ? { ...it, _hasAnexo: true } : it))
+        );
+      }}
+    />
+  )}
+  {rankingOpen && (
+    <RankingModal
+      open={rankingOpen}
+      onClose={() => setRankingOpen(false)}
+      itens={filtradas /* use filtradas pra respeitar filtros; troque por submissoes se quiser tudo */}
+      onStatusChange={(id, status) => {
+        setSubmissoes((prev) => prev.map((it) => (it.id === id ? { ...it, status } : it)));
+      }}
+    />
+  )}
+</AnimatePresence>
+
     </div>
   );
 }

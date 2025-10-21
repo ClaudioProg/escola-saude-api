@@ -186,7 +186,8 @@ export default function UsuarioSubmissoes() {
   };
 
   const isDentroPrazo = (row) => !!(row?.dentro_prazo ?? row?.dentroPrazo);
-  const canEdit = (row) => isDentroPrazo(row) && !BLOQUEADOS.has(row.status);
+  // Pode editar enquanto estiver dentro do prazo (independente do status)
+ const canEdit = (row) => isDentroPrazo(row);
   const canDelete = (row) => {                   // ⬅️ regra de exclusão
     const st = String(row?.status || "").toLowerCase();
     return st === "rascunho" || st === "submetido";
@@ -393,7 +394,9 @@ const prazoFmt = toBrDateTimeSafe(prazoStr);
                                     <Pencil className="w-4 h-4" /> Editar
                                   </button>
                                 ) : (
-                                  <span className="text-gray-400 text-xs">Edição indisponível</span>
+                                  <span className="text-gray-400 text-xs">
++   {isDentroPrazo(m) ? "Edição indisponível" : "Fora do prazo"}
++ </span>
                                 )}
 
                                 {podeExcluir && (

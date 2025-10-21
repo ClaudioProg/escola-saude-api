@@ -45,9 +45,14 @@ function authMiddleware(req, res, next) {
 
     if (process.env.NODE_ENV !== "production" && !warned) {
       warned = true;
-      console.warn(
-        "[authMiddleware] Aviso: `req.user` está DEPRECIADO. Use `req.user`. Fornecendo ambos por compatibilidade temporária."
-      );
+      // padroniza: sempre colocar o usuário em res.locals.user (fonte única)
+ // manter req.user apenas por compat (será removido depois)
+ const user = decoded || null; // de onde você já extrai o payload do JWT
+ res.locals.user = user;
+ req.user = user; // compat
+ if (!user || !user.id || !Number.isFinite(Number(user.id))) {
+   return res.status(401).json({ erro: "Não autorizado" });
+ }
     }
 
     return next();

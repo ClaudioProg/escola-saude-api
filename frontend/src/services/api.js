@@ -75,10 +75,21 @@ function buildHeaders(auth = true, extra = {}) {
 // ───────────────────────────────────────────────────────────────────
 // Querystring
 // ───────────────────────────────────────────────────────────────────
+// Valores inválidos para query (ex.: NaN) não devem ir para o backend
+function isBadParamValue(v) {
+    if (v === null || v === undefined || v === "") return true;
+    // número NaN
+    if (typeof v === "number" && Number.isNaN(v)) return true;
+    // string "NaN" (ou variantes com espaços)
+    if (typeof v === "string" && v.trim().toLowerCase() === "nan") return true;
+    return false;
+  }
+
 export function qs(params = {}) {
   const q = new URLSearchParams();
   Object.entries(params || {}).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && v !== "") q.append(k, v);
+    // só envia se o valor for válido
+    if (!isBadParamValue(v)) q.append(k, v);
   });
   const s = q.toString();
   return s ? `?${s}` : "";
@@ -860,7 +871,9 @@ export function apiResetCertificadosTurma(turmaId, body = {}) {
 
 /** HEAD: existe modelo para a chamada? (true/false) */
 export async function apiChamadaModeloExists(chamadaId) {
-  if (!chamadaId) throw new Error("chamadaId é obrigatório");
+  if (!chamadaId && chamadaId !== 0) throw new Error("chamadaId é obrigatório");
+  const idNum = Number(chamadaId);
+  if (!Number.isFinite(idNum)) throw new Error("chamadaId inválido");
   return apiHead(`/chamadas/${chamadaId}/modelo-banner`, {
     auth: true,
     on401: "silent",
@@ -870,7 +883,9 @@ export async function apiChamadaModeloExists(chamadaId) {
 
 /** GET (Response crua): baixar modelo da chamada (use .blob() e Content-Disposition) */
 export async function apiChamadaModeloDownload(chamadaId) {
-  if (!chamadaId) throw new Error("chamadaId é obrigatório");
+  if (!chamadaId && chamadaId !== 0) throw new Error("chamadaId é obrigatório");
+  const idNum = Number(chamadaId);
+  if (!Number.isFinite(idNum)) throw new Error("chamadaId inválido");
   return apiGetResponse(`/chamadas/${chamadaId}/modelo-banner`, {
     auth: true,
     on401: "silent",
@@ -880,7 +895,9 @@ export async function apiChamadaModeloDownload(chamadaId) {
 
 /** POST (multipart): enviar/atualizar modelo (.ppt/.pptx) – campo `file` */
 export async function apiChamadaModeloUpload(chamadaId, fileOrFormData) {
-  if (!chamadaId) throw new Error("chamadaId é obrigatório");
+  if (!chamadaId && chamadaId !== 0) throw new Error("chamadaId é obrigatório");
+  const idNum = Number(chamadaId);
+  if (!Number.isFinite(idNum)) throw new Error("chamadaId inválido");
   // força o nome do campo correto esperado pelo backend
   return apiUpload(`/chamadas/${chamadaId}/modelo-banner`, fileOrFormData, {
     fieldName: "file",
@@ -889,7 +906,9 @@ export async function apiChamadaModeloUpload(chamadaId, fileOrFormData) {
 
 /** GET admin (JSON): meta para o painel (exists/filename/size/mtime/mime) */
 export async function apiChamadaModeloAdminMeta(chamadaId) {
-  if (!chamadaId) throw new Error("chamadaId é obrigatório");
+  if (!chamadaId && chamadaId !== 0) throw new Error("chamadaId é obrigatório");
+  const idNum = Number(chamadaId);
+  if (!Number.isFinite(idNum)) throw new Error("chamadaId inválido");
   return apiGet(`/admin/chamadas/${chamadaId}/modelo-banner`, {
     auth: true,
     on401: "silent",

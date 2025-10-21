@@ -22,6 +22,42 @@ function normPerfis(p) {
 }
 const asInt = (v) => Number.parseInt(v, 10);
 
+/** Obtém o ID do usuário autenticado, aceitando req.user, req.usuario e req.auth.userId. */
+function getUserIdOptional(req) {
+  const raw =
+    req?.user?.id ??
+    req?.usuario?.id ??
+    req?.auth?.userId ??
+    null;
+
+  if (raw == null) return null;
+  const uid = Number(String(raw).trim());
+  if (!Number.isFinite(uid) || uid <= 0) return null;
+  return uid;
+}
+
+/** Igual ao acima, mas lança 401 quando não houver usuário e 400 para ID inválido. */
+function getUserIdOrThrow(req) {
+  const raw =
+    req?.user?.id ??
+    req?.usuario?.id ??
+    req?.auth?.userId ??
+    null;
+
+  if (raw == null) {
+    const e = new Error("Não autenticado");
+    e.status = 401;
+    throw e;
+  }
+  const uid = Number(String(raw).trim());
+  if (!Number.isFinite(uid) || uid <= 0) {
+    const e = new Error("id inválido.");
+    e.status = 400;
+    throw e;
+  }
+  return uid;
+}
+
 async function isAdmin(userOrId, dbConn = db) {
   try {
     if (userOrId && typeof userOrId === "object") {
@@ -191,7 +227,7 @@ async function atribuirAvaliadores(req, res) {
     }
 
     await db.tx(async (t) => {
-      const assignedBy = Number(req?.user?.id) || null;
+      const assignedBy = getUserIdOptional(req);
 
       if (replace) {
         // revoga quem não está no destino
@@ -250,49 +286,49 @@ async function listarAvaliacoesDaSubmissao(req, res) {
 
   try {
     // 1) Meta (chamada_id + nota_visivel + linha_tematica_nome)
-let meta = null;
-try {
-  meta = await db.oneOrNone(
-    `
-    SELECT
-      s.chamada_id,
-      COALESCE(s.nota_visivel,false) AS nota_visivel,
-      s.linha_tematica_id,
-      tcl.nome AS linha_tematica_nome
-    FROM trabalhos_submissoes s
-    LEFT JOIN trabalhos_chamada_linhas tcl
-      ON tcl.id = s.linha_tematica_id
-    WHERE s.id = $1
-    `,
-    [id]
-  );
-  log("avaliacoes.meta:", j(meta));
-} catch (e) {
-  if (e?.code === "42703") {
-    // sem a coluna nota_visivel → fallback, ainda trazendo o nome
-    log("avaliacoes.meta: coluna nota_visivel ausente → fallback");
-    meta = await db.oneOrNone(
-      `
-      SELECT
-        s.chamada_id,
-        s.linha_tematica_id,
-        tcl.nome AS linha_tematica_nome
-      FROM trabalhos_submissoes s
-      LEFT JOIN trabalhos_chamada_linhas tcl
-        ON tcl.id = s.linha_tematica_id
-      WHERE s.id = $1
-      `,
-      [id]
-    );
-    meta = { ...meta, nota_visivel: false };
-  } else {
-    throw e;
-  }
-}
-if (!meta) {
-  log("avaliacoes.meta: submissao não encontrada");
-  return res.status(404).json({ error: "Submissão não encontrada." });
-}
+    let meta = null;
+    try {
+      meta = await db.oneOrNone(
+        `
+        SELECT
+          s.chamada_id,
+          COALESCE(s.nota_visivel,false) AS nota_visivel,
+          s.linha_tematica_id,
+          tcl.nome AS linha_tematica_nome
+        FROM trabalhos_submissoes s
+        LEFT JOIN trabalhos_chamada_linhas tcl
+          ON tcl.id = s.linha_tematica_id
+        WHERE s.id = $1
+        `,
+        [id]
+      );
+      log("avaliacoes.meta:", j(meta));
+    } catch (e) {
+      if (e?.code === "42703") {
+        // sem a coluna nota_visivel → fallback, ainda trazendo o nome
+        log("avaliacoes.meta: coluna nota_visivel ausente → fallback");
+        meta = await db.oneOrNone(
+          `
+          SELECT
+            s.chamada_id,
+            s.linha_tematica_id,
+            tcl.nome AS linha_tematica_nome
+          FROM trabalhos_submissoes s
+          LEFT JOIN trabalhos_chamada_linhas tcl
+            ON tcl.id = s.linha_tematica_id
+          WHERE s.id = $1
+          `,
+          [id]
+        );
+        meta = { ...meta, nota_visivel: false };
+      } else {
+        throw e;
+      }
+    }
+    if (!meta) {
+      log("avaliacoes.meta: submissao não encontrada");
+      return res.status(404).json({ error: "Submissão não encontrada." });
+    }
 
     // 2) Critérios (ordem 1..4)
     const criterios = await db.any(
@@ -513,13 +549,98 @@ async function baixarBanner(req, res) {
   }
 }
 
+// ── Helpers de consolidação de nota ───────────────────────────────────────────
+async function calcularTotaisDaSubmissao(submissaoId, dbConn = db) {
+  // total por avaliador
+  const porAvaliador = await dbConn.any(
+    `
+    with por_avaliador as (
+      select a.avaliador_id, sum(ai.nota)::int as total
+      from trabalhos_avaliacoes_itens ai
+      join trabalhos_avaliacoes a
+        on a.id = ai.avaliacao_id
+      where a.submissao_id = $1
+      group by a.avaliador_id
+    )
+    select coalesce(sum(total),0)::int as total_geral,
+           round(coalesce(sum(total),0)::numeric / 4, 1) as nota_dividida_por_4
+    from por_avaliador
+    `,
+    [submissaoId]
+  );
+  const row = porAvaliador[0] || { total_geral: 0, nota_dividida_por_4: 0 };
+  return {
+    totalGeral: Number(row.total_geral || 0),
+    nota10: Number(row.nota_dividida_por_4 || 0),
+  };
+}
+
+async function atualizarNotaMediaMaterializada(submissaoId, dbConn = db) {
+  const { nota10 } = await calcularTotaisDaSubmissao(submissaoId, dbConn);
+  await dbConn.none(
+    `update trabalhos_submissoes set nota_media = $2, atualizado_em = now() where id = $1`,
+    [submissaoId, nota10]
+  );
+  return nota10;
+}
+
+/** GET /api/admin/submissoes */
+async function listarSubmissoesAdmin(req, res) {
+  try {
+    const rows = await db.any(`
+      select
+        s.id, s.titulo, s.status, s.chamada_id,
+        s.autor_nome, s.autor_email,
+        s.area_tematica as area, s.eixo,
+        c.titulo as chamada_titulo,
+        coalesce(
+          s.nota_media,
+          (
+            with por_avaliador as (
+              select a.avaliador_id, sum(ai.nota)::int as total
+              from trabalhos_avaliacoes_itens ai
+              join trabalhos_avaliacoes a on a.id = ai.avaliacao_id
+              where a.submissao_id = s.id
+              group by a.avaliador_id
+            )
+            select round(coalesce(sum(total),0)::numeric / 4, 1)
+            from por_avaliador
+          )
+        ) as nota_media
+      from trabalhos_submissoes s
+      left join trabalhos_chamadas c on c.id = s.chamada_id
+      order by s.id desc
+    `);
+    res.json(rows);
+  } catch (err) {
+    console.error("[listarSubmissoesAdmin]", err);
+    res.status(500).json({ error: "Erro ao listar submissões." });
+  }
+}
+
 /* ===================== Exports ===================== */
 module.exports = {
+  // helpers
+  getUserIdOptional,
+  getUserIdOrThrow,
+
+  // perms
   isAdmin,
   canUserReviewOrView,
+
+  // avaliadores
   listarAvaliadoresDaSubmissao,
   atribuirAvaliadores,
+
+  // avaliações
   listarAvaliacoesDaSubmissao,
   definirNotaVisivel,
+
+  // arquivos
   baixarBanner,
+
+  // notas materializadas
+  calcularTotaisDaSubmissao,
+  atualizarNotaMediaMaterializada,
+  listarSubmissoesAdmin,
 };
