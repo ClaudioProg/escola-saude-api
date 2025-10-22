@@ -613,7 +613,7 @@ export default function InstrutorPresenca() {
       doc.addImage(dataUrl, "PNG", centerX - qrW / 2, 50, qrW, qrW);
       doc.setFontSize(12);
       doc.setTextColor(60);
-      doc.text("Escaneie este QR Code para confirmar sua presença", centerX, 50 + qrW + 14, { align: "center" });
+      doc.text("Faça o Login na Plataforma e após, Escaneie este QR Code para confirmar sua presença", centerX, 50 + qrW + 14, { align: "center" });
       doc.setFontSize(10);
       doc.setTextColor(100);
       doc.text(url, centerX, 50 + qrW + 22, { align: "center" });

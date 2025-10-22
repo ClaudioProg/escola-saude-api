@@ -1,6 +1,5 @@
-// ✅ src/pages/Eventos.jsx (revisado)
+// ✅ src/pages/Eventos.jsx (revisado — sem publicar/despublicar)
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
 import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
@@ -119,7 +118,6 @@ export default function Eventos() {
   const [filtro, setFiltro] = useState("programado");
   const reduceMotion = useReducedMotion();
 
-  const navigate = useNavigate();
   let usuario = {};
   try { usuario = JSON.parse(localStorage.getItem("usuario") || "{}"); } catch {}
   const usuarioId = Number(usuario?.id) || null;
@@ -357,10 +355,10 @@ export default function Eventos() {
       <div className="px-2 sm:px-4 py-6 max-w-6xl mx-auto">
         {/* Filtros */}
         <section aria-label="Filtros de eventos" className="mb-5">
-        <FiltrosEventos
-  filtroSelecionado={filtro}
-  onFiltroChange={setFiltroNormalizado}
-/>
+          <FiltrosEventos
+            filtroSelecionado={filtro}
+            onFiltroChange={setFiltroNormalizado}
+          />
         </section>
 
         {carregandoEventos ? (

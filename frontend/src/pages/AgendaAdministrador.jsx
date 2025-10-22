@@ -22,7 +22,7 @@ import EventoDetalheModal from "../components/EventoDetalheModal";
 import LegendaEventos from "../components/LegendaEventos";
 import { apiGet } from "../services/api";
 
-/* ========= HeaderHero (mobile-first, paleta nova) ========= */
+/* ========= HeaderHero ========= */
 function HeaderHero({ nome, carregando, onRefresh, onHoje }) {
   return (
     <header
@@ -37,9 +37,8 @@ function HeaderHero({ nome, carregando, onRefresh, onHoje }) {
       </a>
 
       <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4 sm:py-6 text-center flex flex-col items-center gap-2 sm:gap-3">
-        {/* Ícone + título na MESMA linha */}
         <div className="flex items-center gap-2">
-         <CalendarDays className="h-6 w-6 sm:h-7 sm:w-7" aria-hidden="true" />
+          <CalendarDays className="h-6 w-6 sm:h-7 sm:w-7" aria-hidden="true" />
           <h1 className="text-lg sm:text-2xl font-extrabold tracking-tight">
             Agenda Geral de Eventos
           </h1>
@@ -61,8 +60,9 @@ function HeaderHero({ nome, carregando, onRefresh, onHoje }) {
             type="button"
             onClick={onRefresh}
             disabled={carregando}
-            className={`inline-flex justify-center items-center gap-2 px-4 py-2 text-sm rounded-md transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 w-full sm:w-auto
-              ${carregando ? "opacity-60 cursor-not-allowed bg-white/15" : "bg-white/15 hover:bg-white/25"} text-white`}
+            className={`inline-flex justify-center items-center gap-2 px-4 py-2 text-sm rounded-md transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 w-full sm:w-auto ${
+              carregando ? "opacity-60 cursor-not-allowed bg-white/15" : "bg-white/15 hover:bg-white/25"
+            } text-white`}
             aria-label="Atualizar agenda"
           >
             {carregando ? "Atualizando…" : "Atualizar"}
@@ -73,9 +73,7 @@ function HeaderHero({ nome, carregando, onRefresh, onHoje }) {
   );
 }
 
-/* =========================================================================
-   Helpers de data
-   ========================================================================= */
+/* ========= Helpers de data ========= */
 const stripTZ = (s) =>
   String(s).trim().replace(/\.\d{3,}\s*Z?$/i, "").replace(/([+-]\d{2}:\d{2}|Z)$/i, "");
 
@@ -127,7 +125,7 @@ function deriveStatus(ev) {
   return ev.status || "programado";
 }
 
-/* ========= Cores (status + tipo) — paleta distinta ========= */
+/* ========= Cores ========= */
 const colorByStatus = {
   programado: { bg: "bg-lime-100", text: "text-lime-900", ring: "ring-lime-300" },
   andamento:  { bg: "bg-amber-100", text: "text-amber-900", ring: "ring-amber-300" },
@@ -146,36 +144,40 @@ function getBadgeColors(ev) {
   return colorByStatus[st] || colorByStatus.programado;
 }
 
-/* ========= Badge de evento no dia ========= */
-function DiaBadge({ children, onClick, color = "teal" }) {
-  const cores = {
-    teal: "bg-teal-600 text-white",
-    amber: "bg-amber-600 text-white",
-    rose: "bg-rose-600 text-white",
-    gray: "bg-gray-500 text-white",
-  };
+/* ========= Badge do dia (CLICA E ABRE MODAL) ========= */
+function DiaBadge({ evento, onClick }) {
+  const c = getBadgeColors(evento);
+  const titulo = String(evento?.titulo ?? evento?.nome ?? "Evento");
+  const di = ymd(evento?.data_inicio ?? evento?.dataInicio ?? evento?.data);
+  const df = ymd(evento?.data_fim ?? evento?.data_termino ?? evento?.dataTermino ?? evento?.data);
+  const label = di && df && di !== df
+    ? `${format(new Date(di), "dd/MM")} – ${format(new Date(df), "dd/MM")}`
+    : (di ? format(new Date(di), "dd/MM") : "");
+
   const handleKey = (e) => {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      onClick?.(e);
+      onClick?.(evento);
     }
   };
+
   return (
     <span
       role="button"
       tabIndex={0}
-      onClick={(e) => { e.stopPropagation(); onClick?.(e); }}
+      onClick={(e) => { e.stopPropagation(); onClick?.(evento); }}
       onKeyDown={handleKey}
-      className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${cores[color]} cursor-pointer`}
-      // garante que o clique não "clica" o dia do calendário
+      className={`inline-flex items-center justify-center w-full px-2 py-1 rounded-md text-[10px] font-semibold ring-1 ${c.ring} ${c.bg} ${c.text} truncate cursor-pointer`}
+      title={`${titulo}${label ? ` — ${label}` : ""}`}
+      aria-label={`${titulo}${label ? ` — ${label}` : ""}`}
     >
-      {children}
+      {/* conteúdo compacto para não quebrar o tile */}
+      — 
     </span>
   );
 }
 
-
-/* ========= Badge de TOTAL ========= */
+/* ========= Badge de total ========= */
 function TotalBadge({ label, value, variant = "programado" }) {
   const c = colorByStatus[variant] || colorByStatus.programado;
   return (
@@ -214,7 +216,7 @@ export default function AgendaAdministrador() {
     return saved ? new Date(saved) : new Date();
   });
 
-  // filtros extras (mobile-friendly)
+  // filtros
   const [busca, setBusca] = useState(() => localStorage.getItem("agenda:busca") || "");
   const [buscaDebounced, setBuscaDebounced] = useState(busca);
   const [filtroStatus, setFiltroStatus] = useState(
@@ -260,27 +262,19 @@ export default function AgendaAdministrador() {
       if (mounted.current) setCarregando(false);
     }
   }
-  useEffect(() => {
-    carregar();
-  }, []);
+  useEffect(() => { carregar(); }, []);
 
-  // persistência de view e filtros
-  useEffect(() => {
-    localStorage.setItem("agenda:viewDate", viewDate.toISOString());
-  }, [viewDate]);
-  useEffect(() => {
-    localStorage.setItem("agenda:status", filtroStatus);
-  }, [filtroStatus]);
-  useEffect(() => {
-    localStorage.setItem("agenda:tipo", filtroTipo);
-  }, [filtroTipo]);
+  // persistência
+  useEffect(() => { localStorage.setItem("agenda:viewDate", viewDate.toISOString()); }, [viewDate]);
+  useEffect(() => { localStorage.setItem("agenda:status", filtroStatus); }, [filtroStatus]);
+  useEffect(() => { localStorage.setItem("agenda:tipo", filtroTipo); }, [filtroTipo]);
   useEffect(() => {
     localStorage.setItem("agenda:busca", busca);
     const t = setTimeout(() => setBuscaDebounced(busca.trim().toLowerCase()), 250);
     return () => clearTimeout(t);
   }, [busca]);
 
-  // 1) usa ocorrencias; 2) senão, datas das turmas; 3) fallback de intervalo
+  // map dia -> eventos
   const eventosBasePorData = useMemo(() => {
     const map = {};
     for (const evento of events) {
@@ -308,7 +302,6 @@ export default function AgendaAdministrador() {
       }
       for (const dia of ocorrencias) (map[dia] ||= []).push(evento);
     }
-    // ordena por início dentro do dia
     for (const k of Object.keys(map)) {
       map[k].sort((a, b) => {
         const aStart = toLocalDate(
@@ -324,7 +317,7 @@ export default function AgendaAdministrador() {
     return map;
   }, [events]);
 
-  // aplica filtros/status/tipo/busca
+  // filtros
   const eventosPorData = useMemo(() => {
     if (filtroStatus === "todos" && filtroTipo === "todos" && !buscaDebounced) {
       return eventosBasePorData;
@@ -347,7 +340,7 @@ export default function AgendaAdministrador() {
     return out;
   }, [eventosBasePorData, filtroStatus, filtroTipo, buscaDebounced]);
 
-  // Contagem de eventos no mês visível
+  // contagens
   const contagemMes = useMemo(() => {
     const ini = startOfMonth(viewDate);
     const fim = endOfMonth(viewDate);
@@ -359,7 +352,6 @@ export default function AgendaAdministrador() {
     return total;
   }, [eventosPorData, viewDate]);
 
-  // Totais por status (sobre o conjunto filtrado por mês atual)
   const totais = useMemo(() => {
     const ini = startOfMonth(viewDate);
     const fim = endOfMonth(viewDate);
@@ -379,7 +371,7 @@ export default function AgendaAdministrador() {
 
   const irParaHoje = () => setViewDate(new Date());
 
-  // ⚡ evita recriar função por tile
+  // conteúdo do tile (com clique funcional)
   const renderTileContent = useCallback(
     ({ date }) => {
       const key = format(date, "yyyy-MM-dd");
@@ -391,11 +383,11 @@ export default function AgendaAdministrador() {
       const visiveis = diaEventos.slice(0, MAX);
 
       return (
-        <div className="mt-1 w-full px-1 space-y-1">
-          {visiveis.map((ev) => (
+        <div className="mt-1 w-full px-1 space-y-1 min-w-0">
+          {visiveis.map((ev, idx) => (
             <DiaBadge
-              key={`${String(ev.id ?? ev.titulo ?? "")}-${key}`}
-              ev={ev}
+              key={`${String(ev.id ?? ev.titulo ?? "")}-${key}-${idx}`}
+              evento={ev}
               onClick={setSelecionado}
             />
           ))}
@@ -420,7 +412,7 @@ export default function AgendaAdministrador() {
   );
 
   return (
-    <div className="flex flex-col min-h-screen bg-gelo dark:bg-gray-900 text-black dark:text-white">
+    <div className="flex flex-col min-h-screen bg-gelo dark:bg-gray-900 text-black dark:text-white overflow-x-hidden">
       <HeaderHero nome={nome} carregando={carregando} onRefresh={carregar} onHoje={irParaHoje} />
 
       {carregando && (
@@ -435,7 +427,7 @@ export default function AgendaAdministrador() {
         </div>
       )}
 
-      <main id="conteudo" className="flex-1 max-w-7xl mx-auto px-3 sm:px-4 py-5 sm:py-6">
+      <main id="conteudo" className="flex-1 max-w-7xl mx-auto px-3 sm:px-4 py-5 sm:py-6 min-w-0">
         <p ref={liveRef} className="sr-only" aria-live="polite" />
 
         <section className="bg-white dark:bg-zinc-800 rounded-xl p-3 sm:p-5 shadow-md">
@@ -459,9 +451,9 @@ export default function AgendaAdministrador() {
             </div>
           ) : (
             <>
-              {/* Filtros (mobile-first): busca + selects */}
+              {/* Filtros */}
               <div className="flex flex-col gap-3 sm:gap-4 mb-3 sm:mb-4">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 min-w-0">
                   <label htmlFor="busca-evento" className="sr-only">
                     Buscar evento pelo nome
                   </label>
@@ -472,14 +464,14 @@ export default function AgendaAdministrador() {
                     placeholder="Buscar evento pelo nome…"
                     value={busca}
                     onChange={(e) => setBusca(e.target.value)}
-                    className="flex-1 px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 dark:bg-zinc-900 dark:text-white text-sm"
+                    className="flex-1 px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 dark:bg-zinc-900 dark:text-white text-sm min-w-0"
                     aria-describedby="dica-busca"
                   />
                   {busca && (
                     <button
                       type="button"
                       onClick={() => setBusca("")}
-                      className="px-3 py-2 rounded-md bg-gray-200 dark:bg-gray-700 text-sm"
+                      className="px-3 py-2 rounded-md bg-gray-200 dark:bg-gray-700 text-sm shrink-0"
                       aria-label="Limpar busca"
                     >
                       Limpar
@@ -542,7 +534,7 @@ export default function AgendaAdministrador() {
                 </p>
               </div>
 
-              {/* Mês + contagem + badges (empilham no mobile) */}
+              {/* Mês + contagem + badges */}
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-3">
                 <div className="text-sm text-gray-600 dark:text-gray-300">
                   Mês visível:{" "}
@@ -599,7 +591,11 @@ export default function AgendaAdministrador() {
         </div>
 
         {selecionado && (
-          <EventoDetalheModal evento={selecionado} aoFechar={() => setSelecionado(null)} visivel />
+          <EventoDetalheModal
+            evento={selecionado}
+            aoFechar={() => setSelecionado(null)}
+            visivel
+          />
         )}
       </main>
 

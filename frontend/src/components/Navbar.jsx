@@ -290,13 +290,11 @@ export default function Navbar() {
   const menusAdmin = useMemo(
     () => [
       // “soltos”
-      { label: "Painel Administrador",  path: "/dashboard-analitico",    icon: BarChart3 },
-      { label: "Visão Geral",           path: "/administrador",          icon: LayoutDashboard },
+      { label: "Dashboard Administrador",  path: "/dashboard-analitico",    icon: BarChart3 },
+      { label: "Painel do Administrador",  path: "/administrador",          icon: LayoutDashboard },
       { label: "Agenda",                path: "/agenda-administrador",   icon: ListChecks },
       { label: "Certificados Avulsos",  path: "/certificados-avulsos",   icon: FileText },
       { label: "QR Code Presença",      path: "/admin/qr-codes",         icon: QrCode },
-      // relatórios
-      { label: "Relatórios Customizados", path: "/relatorios-customizados", icon: ClipboardList },
       // trabalhos
       { label: "Criar Submissão de Trabalho", path: "/admin/chamadas/new", icon: PlusCircle },
       { label: "Gerenciar Submissão de Trabalho", path: "__open_submissions__", icon: FolderOpenDot },
@@ -307,6 +305,8 @@ export default function Navbar() {
       { label: "Gestão de Inscrições",  path: "/admin/cancelar-inscricoes", icon: XCircle },
       { label: "Gestão de Presença",    path: "/gestao-presenca",        icon: QrCode },
       { label: "Gestão de Certificados", path: "/gestao-certificados",   icon: History },
+      // relatórios
+      { label: "Relatórios Customizados", path: "/relatorios-customizados", icon: ClipboardList },
     ],
     []
   );

@@ -1,8 +1,9 @@
-//src/routes/eventosRoute.js
+// src/routes/eventosRoute.js
 const express = require('express');
 const router = express.Router();
 
-const eventosController = require('../controllers/eventosController');
+// ⚠️ Use o mesmo nome do arquivo do controller (no seu caso é eventoController.js)
+const eventosController = require('../controllers/eventosController'); // <-- singular
 const authMiddleware = require('../auth/authMiddleware');
 const authorizeRoles = require('../auth/authorizeRoles');
 
@@ -25,6 +26,23 @@ router.get('/:id/visivel', authMiddleware, eventosController.verificarVisibilida
 router.get('/:id/detalhes', authMiddleware, eventosController.obterDetalhesEventoComRestricao);
 
 /* ===============================
+   Publicação (precisa vir ANTES de '/:id')
+   =============================== */
+router.post(
+  '/:id/publicar',
+  authMiddleware,
+  authorizeRoles('administrador'),
+  eventosController.publicarEvento
+);
+
+router.post(
+  '/:id/despublicar',
+  authMiddleware,
+  authorizeRoles('administrador'),
+  eventosController.despublicarEvento
+);
+
+/* ===============================
    Rotas já existentes
    =============================== */
 
@@ -37,6 +55,12 @@ router.get('/instrutor', authMiddleware, eventosController.listarEventosDoinstru
 // 📋 Listar todos os eventos (usuário autenticado)
 router.get('/', authMiddleware, eventosController.listarEventos);
 
+// 🔍 Buscar evento por ID (usuário autenticado) — sem aplicar regra de visibilidade
+router.get('/:id', authMiddleware, eventosController.buscarEventoPorId);
+
+// 📚 Listar turmas de um evento (usuário autenticado)
+router.get('/:id/turmas', authMiddleware, eventosController.listarTurmasDoEvento);
+
 // ➕ Criar novo evento (somente administrador)
 router.post(
   '/',
@@ -44,9 +68,6 @@ router.post(
   authorizeRoles('administrador'),
   eventosController.criarEvento
 );
-
-// 🔍 Buscar evento por ID (usuário autenticado) — sem aplicar regra de visibilidade
-router.get('/:id', authMiddleware, eventosController.buscarEventoPorId);
 
 // ✏️ Atualizar evento (somente administrador)
 router.put(
@@ -63,8 +84,5 @@ router.delete(
   authorizeRoles('administrador'),
   eventosController.excluirEvento
 );
-
-// 📚 Listar turmas de um evento (usuário autenticado)
-router.get('/:id/turmas', authMiddleware, eventosController.listarTurmasDoEvento);
 
 module.exports = router;

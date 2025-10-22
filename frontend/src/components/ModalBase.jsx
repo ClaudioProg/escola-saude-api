@@ -1,5 +1,6 @@
 // 📁 src/components/ModalBase.jsx
-import React, { useEffect, useRef } from "react";
+/* eslint-disable react/prop-types */
+import React, { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 /**
@@ -7,26 +8,15 @@ import { createPortal } from "react-dom";
  * - isOpen: boolean
  * - onClose: () => void
  * - level?: number (empilhamento; 0 evento, 1 turma, 2...)
- * - children: ReactNode | ReactNode[]
+ * - children: ReactNode
  * - maxWidth?: string Tailwind (ex.: "max-w-3xl") — default "max-w-2xl"
  * - labelledBy?: string (id de um título dentro do modal)
  * - describedBy?: string (id de uma descrição dentro do modal)
- * - className?: string (classes extras para o container visual)
+ * - className?: string (classes extras)
  * - closeOnBackdrop?: boolean (default: true)
  * - closeOnEsc?: boolean (default: true)
  * - initialFocusRef?: React.RefObject<HTMLElement>
  */
-
-// Garante o root do portal
-const ensureModalRoot = () => {
-  let root = document.getElementById("modal-root");
-  if (!root) {
-    root = document.createElement("div");
-    root.id = "modal-root";
-    document.body.appendChild(root);
-  }
-  return root;
-};
 
 const FOCUSABLE_SEL = [
   "a[href]",
@@ -55,30 +45,46 @@ export default function ModalBase({
   closeOnEsc = true,
   initialFocusRef,
 }) {
-  if (!isOpen) return null;
+  // ⚠️ nunca crie nós DOM no render; faça em efeitos
+  const [portalEl, setPortalEl] = useState(null);
+  useEffect(() => {
+    if (!isOpen) return;
+    let root = document.getElementById("modal-root");
+    if (!root) {
+      root = document.createElement("div");
+      root.id = "modal-root";
+      document.body.appendChild(root);
+    }
+    setPortalEl(root);
+  }, [isOpen]);
 
-  const modalRoot = ensureModalRoot();
-  const BASE_Z = 1000 + level * 20;
+  // IDs ARIA estáveis por render (sem Math.random)
+  const autoTitleId = useId();
+  const autoDescId = useId();
+  const titleId = labelledBy || `modal-title-${autoTitleId}`;
+  const descId = describedBy || `modal-desc-${autoDescId}`;
 
-  const containerRef = useRef(null);
+  const overlayRef = useRef(null);
   const contentRef = useRef(null);
   const lastActiveRef = useRef(null);
+  const mouseDownTarget = useRef(null);
 
-  // IDs ARIA estáveis e **sempre presentes** (evita alternar estrutura)
-  const titleIdRef = useRef(`modal-title-${Math.random().toString(36).slice(2)}`);
-  const descIdRef = useRef(`modal-desc-${Math.random().toString(36).slice(2)}`);
+  const BASE_Z = 1000 + level * 20;
 
-  // 🔒 trava scroll
+  // trava scroll ao abrir
   useEffect(() => {
-    const originalOverflow = document.body.style.overflow;
+    if (!isOpen) return;
+    const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
-      document.body.style.overflow = originalOverflow;
+      document.body.style.overflow = prev;
     };
-  }, []);
+  }, [isOpen]);
 
-  // 🎯 foco + ESC + restaura foco
+  // foco + trap + ESC + restaura foco
   useEffect(() => {
+    if (!isOpen) return;
+
     lastActiveRef.current = document.activeElement;
 
     const focusFallback = () => {
@@ -88,9 +94,8 @@ export default function ModalBase({
       }
       const first = contentRef.current?.querySelector(FOCUSABLE_SEL);
       if (first) first.focus();
-      else contentRef.current?.focus();
+      else contentRef.current?.focus?.();
     };
-
     const t = setTimeout(focusFallback, 10);
 
     const onKeyDown = (e) => {
@@ -100,22 +105,22 @@ export default function ModalBase({
         return;
       }
       if (e.key === "Tab") {
-        const nodes = Array.from(contentRef.current?.querySelectorAll(FOCUSABLE_SEL) ?? []);
+        const nodes = Array.from(contentRef.current?.querySelectorAll(FOCUSABLE_SEL) || []);
         if (!nodes.length) {
           e.preventDefault();
           return;
         }
         const first = nodes[0];
         const last = nodes[nodes.length - 1];
-        const current = document.activeElement;
+        const cur = document.activeElement;
 
         if (e.shiftKey) {
-          if (current === first || !contentRef.current.contains(current)) {
+          if (cur === first || !contentRef.current.contains(cur)) {
             e.preventDefault();
             last.focus();
           }
         } else {
-          if (current === last || !contentRef.current.contains(current)) {
+          if (cur === last || !contentRef.current.contains(cur)) {
             e.preventDefault();
             first.focus();
           }
@@ -131,42 +136,47 @@ export default function ModalBase({
         lastActiveRef.current.focus();
       }
     };
-  }, [onClose, closeOnEsc, initialFocusRef]);
+  }, [isOpen, onClose, closeOnEsc, initialFocusRef]);
 
-  // 🧱 normaliza filhos para array com keys estáveis
-  const safeChildren = React.Children.toArray(children);
-
-  // 🖱️ backdrop
-  const handleBackdropClick = () => {
+  // clique fora (robusto: considera mousedown+mouseup no overlay)
+  const onMouseDown = (e) => {
+    mouseDownTarget.current = e.target;
+  };
+  const onMouseUp = (e) => {
     if (!closeOnBackdrop) return;
-    onClose?.();
+    if (mouseDownTarget.current === overlayRef.current && e.target === overlayRef.current) {
+      onClose?.();
+    }
   };
 
-  // Estrutura fixa quando aberto
+  if (!isOpen || !portalEl) return null;
+
+  // 🔒 Árvore 100% estável dentro do portal (sempre um único nó raiz)
   const node = (
     <div
-      ref={containerRef}
       role="presentation"
-      className="fixed inset-0 z-[1000] flex items-end sm:items-center justify-center p-2 sm:p-4"
+      className="fixed inset-0 flex items-end sm:items-center justify-center p-2 sm:p-4"
       style={{ zIndex: BASE_Z }}
       data-modal-container=""
     >
       {/* Backdrop */}
       <div
+        ref={overlayRef}
         className="fixed inset-0 bg-black/50 backdrop-blur-[2px] motion-safe:transition-opacity motion-safe:duration-200"
         style={{ zIndex: BASE_Z }}
         aria-hidden="true"
-        onMouseDown={handleBackdropClick}
+        onMouseDown={onMouseDown}
+        onMouseUp={onMouseUp}
         data-modal-backdrop=""
       />
 
-      {/* Wrapper de centralização */}
+      {/* Wrapper centralizador */}
       <div
         className="relative w-full sm:w-auto"
         style={{ zIndex: BASE_Z + 1 }}
         data-modal-wrapper=""
       >
-        {/* Diálogo */}
+        {/* Dialog */}
         <div
           ref={contentRef}
           className={[
@@ -180,26 +190,26 @@ export default function ModalBase({
           tabIndex={-1}
           role="dialog"
           aria-modal="true"
-          aria-labelledby={labelledBy || titleIdRef.current}
-          aria-describedby={describedBy || descIdRef.current}
+          aria-labelledby={titleId}
+          aria-describedby={descId}
           data-modal-content=""
         >
-          {/* Área rolável do conteúdo */}
+          {/* Região rolável do conteúdo */}
           <div className="overflow-y-auto overscroll-contain" data-modal-scroll-region="">
-            {safeChildren}
+            {React.Children.toArray(children)}
           </div>
 
-          {/* ⚠️ SEMPRE presentes — mantêm árvore estável */}
-          <h2 id={titleIdRef.current} className="sr-only">
+          {/* Elementos ARIA sempre presentes (mantêm estrutura idêntica) */}
+          <h2 id={titleId} className="sr-only">
             Janela modal
           </h2>
-          <p id={descIdRef.current} className="sr-only">
+          <p id={descId} className="sr-only">
             Conteúdo de diálogo modal
           </p>
         </div>
       </div>
 
-      {/* Keyframes locais */}
+      {/* Keyframes locais (estáticos) */}
       <style>{`
         @keyframes modalIn {
           from { transform: translateY(8%); opacity: 0; }
@@ -213,5 +223,5 @@ export default function ModalBase({
     </div>
   );
 
-  return createPortal(node, modalRoot);
+  return createPortal(node, portalEl);
 }

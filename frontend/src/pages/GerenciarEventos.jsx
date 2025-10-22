@@ -1,9 +1,18 @@
 /* eslint-disable no-console */
-// 📁 src/pages/GerenciarEventos.jsx (revisto - cores sólidas, sem degradês que “apagam”)
+// ✅ src/pages/GerenciarEventos.jsx (admin) — publicar/despublicar + UI moderna
 import { useEffect, useRef, useState } from "react";
 import { toast } from "react-toastify";
 import { motion } from "framer-motion";
-import { Pencil, Trash2, PlusCircle, Lock, RefreshCcw, Wrench } from "lucide-react";
+import {
+  Pencil,
+  Trash2,
+  PlusCircle,
+  Lock,
+  RefreshCcw,
+  Wrench,
+  Eye,
+  EyeOff,
+} from "lucide-react";
 
 import { apiGet, apiPost, apiPut, apiDelete } from "../services/api";
 import ModalEvento from "../components/ModalEvento";
@@ -276,17 +285,11 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
   return clean(body);
 }
 
-/* ---------------- HeaderHero (cor única por página, sem degradê p/ branco) ---------------- */
+/* ---------------- HeaderHero (cor sólida; sem degradês) ---------------- */
 function HeaderHero({ onCriar, onAtualizar, atualizando }) {
   return (
-    <header
-      className="relative isolate overflow-hidden bg-indigo-700 text-white"
-      role="banner"
-    >
-      <a
-        href="#conteudo"
-        className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2"
-      >
+    <header className="relative isolate overflow-hidden bg-indigo-700 text-white" role="banner">
+      <a href="#conteudo" className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2">
         Ir para o conteúdo
       </a>
 
@@ -300,7 +303,7 @@ function HeaderHero({ onCriar, onAtualizar, atualizando }) {
           </div>
 
           <p className="text-sm sm:text-base text-white/90 max-w-2xl">
-            Crie, edite e restrinja a visibilidade dos seus eventos e turmas.
+            Crie, publique e edite seus eventos e turmas.
           </p>
 
           <div className="mt-2.5 sm:mt-3.5 flex flex-wrap items-center justify-center gap-2">
@@ -344,6 +347,7 @@ export default function GerenciarEventos() {
   const [erro, setErro] = useState("");
   const [loading, setLoading] = useState(true);
   const [modalAberto, setModalAberto] = useState(false);
+  const [publishingId, setPublishingId] = useState(null); // 🔁 loading por item (publicar/despublicar)
   const liveRef = useRef(null); // aria-live
 
   const setLive = (msg) => { if (liveRef.current) liveRef.current.textContent = msg; };
@@ -582,6 +586,42 @@ export default function GerenciarEventos() {
     }
   };
 
+  /* -------- publicar / despublicar (admin) -------- */
+  const togglePublicacao = async (evento) => {
+    if (!evento?.id) return;
+    const id = Number(evento.id);
+    const publicado = !!evento.publicado;
+    const acao = publicado ? "despublicar" : "publicar";
+
+    const conf = window.confirm(
+      publicado
+        ? `Despublicar "${evento.titulo}"? Ele deixará de aparecer para os usuários.`
+        : `Publicar "${evento.titulo}"? Ele ficará visível para os usuários.`
+    );
+    if (!conf) return;
+
+    setPublishingId(id);
+    // estado otimista
+    setEventos((prev) =>
+      prev.map((e) => (Number(e.id) === id ? { ...e, publicado: !publicado } : e))
+    );
+
+    try {
+      await apiPost(`/api/eventos/${id}/${acao}`, {});
+      toast.success(publicado ? "Evento despublicado." : "Evento publicado.");
+    } catch (e) {
+      // rollback se falhar
+      setEventos((prev) =>
+        prev.map((e) => (Number(e.id) === id ? { ...e, publicado } : e))
+      );
+      const msg = e?.message || "Falha ao alterar publicação.";
+      toast.error(`❌ ${msg}`);
+      console.error("togglePublicacao error:", e);
+    } finally {
+      setPublishingId(null);
+    }
+  };
+
   const anyLoading = loading;
 
   return (
@@ -589,7 +629,7 @@ export default function GerenciarEventos() {
       {/* live region acessível */}
       <p ref={liveRef} className="sr-only" aria-live="polite" />
 
-      {/* Header hero (cor única da página) */}
+      {/* Header hero (cor sólida) */}
       <HeaderHero
         onCriar={abrirModalCriar}
         onAtualizar={recarregarEventos}
@@ -616,52 +656,106 @@ export default function GerenciarEventos() {
           <NenhumDado mensagem="Nenhum evento cadastrado." />
         ) : (
           <ul className="space-y-4 sm:space-y-6">
-            {eventos.map((ev) => (
-              <motion.li
-                key={ev.id || ev.titulo}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="bg-white dark:bg-zinc-800 p-4 sm:p-5 rounded-xl shadow border border-gray-200 dark:border-zinc-700 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="font-semibold text-lg text-lousa dark:text-white">
-                    {ev.titulo}
-                  </span>
+            {eventos.map((ev) => {
+              const publicado = !!ev.publicado;
+              return (
+                <motion.li
+                  key={ev.id || ev.titulo}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="bg-white dark:bg-zinc-800 p-4 sm:p-5 rounded-xl shadow border border-gray-200 dark:border-zinc-700"
+                >
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    {/* Título + badges */}
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <span className="font-semibold text-lg text-lousa dark:text-white">
+                        {ev.titulo}
+                      </span>
 
-                  {/* Badge de restrição (sólida, sem degradê) */}
-                  {ev?.restrito && (
-                    <span
-                      title={
-                        ev.restrito_modo === "lista_registros"
-                          ? "Restrito a uma lista de registros"
-                          : "Visível a todos os servidores (com registro cadastrado)"
-                      }
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 border border-amber-300 dark:border-amber-800"
-                    >
-                      <Lock size={12} aria-hidden="true" />
-                      {ev.restrito_modo === "lista_registros" ? "Lista" : "Servidores"}
-                    </span>
+                      {/* Badge de publicação (sólida) */}
+                      <span
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border ${
+                          publicado
+                            ? "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-200 border-indigo-200 dark:border-indigo-800"
+                            : "bg-zinc-100 text-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-200 border-zinc-200 dark:border-zinc-700"
+                        }`}
+                        title={publicado ? "Visível aos usuários" : "Oculto aos usuários"}
+                      >
+                        {publicado ? "Publicado" : "Rascunho"}
+                      </span>
+
+                      {/* Badge de restrição (sólida) */}
+                      {ev?.restrito && (
+                        <span
+                          title={
+                            ev.restrito_modo === "lista_registros"
+                              ? "Restrito a uma lista de registros"
+                              : "Visível a todos os servidores (com registro cadastrado)"
+                          }
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 border border-amber-300 dark:border-amber-800"
+                        >
+                          <Lock size={12} aria-hidden="true" />
+                          {ev.restrito_modo === "lista_registros" ? "Lista" : "Servidores"}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Ações */}
+                    <div className="flex flex-wrap gap-2 justify-end">
+                      <button
+                        onClick={() => togglePublicacao(ev)}
+                        disabled={publishingId === Number(ev.id)}
+                        className={`px-3 py-1.5 rounded flex items-center gap-1 border text-sm font-medium
+                          ${
+                            publicado
+                              ? "border-indigo-300 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-200 dark:hover:bg-indigo-900/30"
+                              : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                          } disabled:opacity-60`}
+                        aria-label={publicado ? `Despublicar evento ${ev.titulo}` : `Publicar evento ${ev.titulo}`}
+                        aria-pressed={publicado ? "true" : "false"}
+                      >
+                        {publishingId === Number(ev.id) ? (
+                          <span className="animate-pulse">…</span>
+                        ) : publicado ? (
+                          <>
+                            <EyeOff size={16} aria-hidden="true" /> Despublicar
+                          </>
+                        ) : (
+                          <>
+                            <Eye size={16} aria-hidden="true" /> Publicar
+                          </>
+                        )}
+                      </button>
+
+                      <button
+                        onClick={() => abrirModalEditar(ev)}
+                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded flex items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
+                        aria-label={`Editar evento ${ev.titulo}`}
+                      >
+                        <Pencil size={16} aria-hidden="true" /> Editar
+                      </button>
+
+                      <button
+                        onClick={() => excluirEvento(ev.id)}
+                        className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded flex items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-300"
+                        aria-label={`Excluir evento ${ev.titulo}`}
+                      >
+                        <Trash2 size={16} aria-hidden="true" /> Excluir
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Subinfo opcional */}
+                  {(ev?.publico_alvo || ev?.tipo || ev?.local) && (
+                    <div className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
+                      {ev?.tipo && <span className="mr-3">Tipo: <span className="font-medium">{ev.tipo}</span></span>}
+                      {ev?.local && <span className="mr-3">Local: <span className="font-medium">{ev.local}</span></span>}
+                      {ev?.publico_alvo && <span>Público-alvo: <span className="font-medium">{ev.publico_alvo}</span></span>}
+                    </div>
                   )}
-                </div>
-
-                <div className="flex gap-2 justify-end">
-                  <button
-                    onClick={() => abrirModalEditar(ev)}
-                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded flex items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
-                    aria-label={`Editar evento ${ev.titulo}`}
-                  >
-                    <Pencil size={16} aria-hidden="true" /> Editar
-                  </button>
-                  <button
-                    onClick={() => excluirEvento(ev.id)}
-                    className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded flex items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-300"
-                    aria-label={`Excluir evento ${ev.titulo}`}
-                  >
-                    <Trash2 size={16} aria-hidden="true" /> Excluir
-                  </button>
-                </div>
-              </motion.li>
-            ))}
+                </motion.li>
+              );
+            })}
           </ul>
         )}
       </div>

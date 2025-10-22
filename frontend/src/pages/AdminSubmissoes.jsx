@@ -14,11 +14,14 @@ import {
   Eye,
   EyeOff,
   Paperclip,
+  Users,
+  Download,
 } from "lucide-react";
 import api, { apiGetFile, downloadBlob } from "../services/api";
 import Footer from "../components/Footer";
 import { useOnceEffect } from "../hooks/useOnceEffect";
 import RankingModal from "../components/RankingModal";
+import ModalAvaliadores from "../components/ModalAvaliadores";
 
 /* ————————————————— Utils ————————————————— */
 const fmt = (v, alt = "—") => (v === 0 || !!v ? String(v) : alt);
@@ -785,6 +788,70 @@ function DetalhesSubmissao({ open, onClose, s, onDetectAnexo }) {
   );
 }
 
+  // Exporta a tabela visível em CSV amigável ao Excel (PT-BR)
+ const handleExportCSV = (items = []) => {
+    const SEP = ";";                 // Excel PT-BR usa ; como separador padrão
+    const BOM = "\uFEFF";            // garante acentuação correta
+    const safe = (v) => {
+      const s = (v ?? "").toString().replace(/\r?\n/g, " ").trim();
+      // escapa aspas dobrando-as
+      return `"${s.replace(/"/g, '""')}"`;
+    };
+
+    const header = [
+      "Título",
+      "Autor",
+      "E-mail",
+      "Chamada",
+      "Submetido em",
+      "Status",
+      "Nota (média)",
+      "Anexo"
+    ].join(SEP);
+
+    const rows = items.map((s) => {
+      const dt = s.status === "rascunho" ? "—" : fmtDateTimeBR(s.submetido_em || s.criado_em);
+      const statusTxt = (
+        s.status === "submetido"         ? "Submetido" :
+        s.status === "em_avaliacao"      ? "Em avaliação" :
+        s.status === "aprovado_exposicao"? "Aprovado (Exposição)" :
+        s.status === "aprovado_oral"     ? "Aprovado (Oral)" :
+        s.status === "reprovado"         ? "Reprovado" :
+        (s.status || "—")
+      );
+      const anexoTxt = hasAnexo(s) ? "Sim" : "Não";
+
+      return [
+        safe(s.titulo),
+        safe(s.autor_nome),
+        safe(s.autor_email),
+        safe(s.chamada_titulo),
+        safe(dt),
+        safe(statusTxt),
+        // mantém como texto para o Excel não trocar vírgula/ponto
+        safe(fmt(s.nota_media, "—")),
+        safe(anexoTxt),
+      ].join(SEP);
+    });
+
+    const csv = [header, ...rows].join("\n");
+    const blob = new Blob([BOM + csv], { type: "text/csv;charset=utf-8" });
+
+    const ts = new Date();
+    const stamp = `${ts.getFullYear()}${String(ts.getMonth()+1).padStart(2,"0")}${String(ts.getDate()).padStart(2,"0")}-${String(ts.getHours()).padStart(2,"0")}${String(ts.getMinutes()).padStart(2,"0")}`;
+    const filename = `submissoes_admin_${stamp}.csv`;
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  };
+
+
 /* ————————————————— Página principal ————————————————— */
 export default function AdminSubmissoes() {
   const [submissoes, setSubmissoes] = useState([]);
@@ -798,6 +865,7 @@ export default function AdminSubmissoes() {
   const [detalheOpen, setDetalheOpen] = useState(false);
   const [selecionada, setSelecionada] = useState(null);
   const [rankingOpen, setRankingOpen] = useState(false);
+  const [avaliadoresOpen, setAvaliadoresOpen] = useState(false);
 
   const unwrap = (r) => (Array.isArray(r) ? r : r?.data ?? []);
 
@@ -940,14 +1008,33 @@ export default function AdminSubmissoes() {
             <h2 className="font-semibold text-zinc-800 dark:text-zinc-100">Filtros</h2>
           </div>
 
-          <div className="ml-auto">
-    <button
+          <div className="ml-auto flex items-center gap-2">
+   <button
       type="button"
       onClick={() => setRankingOpen(true)}
       className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-700 text-white hover:bg-amber-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-700"
+      title="Abrir ranking"
     >
       <Award className="w-4 h-4" />
       Ranking
+    </button>
+    <button
+     type="button"
+      onClick={() => setAvaliadoresOpen(true)}
+      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-600"
+      title="Ver avaliadores com encaminhamentos"
+    >
+      <Users className="w-4 h-4" />
+      Avaliadores
+    </button>
+    <button
+      type="button"
+      onClick={() => handleExportCSV(filtradas)}
+     className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-700 text-white hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-slate-700"
+     title="Exportar resumo (CSV)"
+    >
+      <Download className="w-4 h-4" />
+      Exportar CSV
     </button>
   </div>
 
@@ -1176,6 +1263,12 @@ export default function AdminSubmissoes() {
       onStatusChange={(id, status) => {
         setSubmissoes((prev) => prev.map((it) => (it.id === id ? { ...it, status } : it)));
       }}
+    />
+  )}
+  {avaliadoresOpen && (
+    <ModalAvaliadores
+      isOpen={avaliadoresOpen}
+      onClose={() => setAvaliadoresOpen(false)}
     />
   )}
 </AnimatePresence>

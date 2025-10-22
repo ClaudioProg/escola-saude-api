@@ -77,62 +77,7 @@ export default function HomeEscola() {
         <section className="mt-8" aria-label="Destaques">
           <h2 className="text-xl font-semibold mb-3">Destaques</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* 0) Mostra Semana David Capistrano */}
-            <DestaqueLongo
-              imgSrc="/banners/mostra.png"
-              imgAlt="Cartaz da Mostra Semana David Capistrano 2025"
-              titulo="Participe da Mostra Semana David Capistrano 2025!"
-              subtitulo="Inscrições abertas até 20 de outubro de 2025"
-              badge="PRORROGADO"
-            >
-              <p>
-                A Escola da Saúde convida todos os profissionais das unidades de administração direta e publicizadas da Secretaria Municipal de Saúde de Santos a participarem da 4ª Mostra de Experiências Exitosas da Semana de Saúde Pública David Capistrano 2025.
-              </p>
-              <p>
-                Este é um importante espaço de valorização e compartilhamento de práticas que contribuíram para a melhoria das ações e serviços de saúde em nosso município.
-              </p>
-              <p>
-                <strong>📅 Prazo para submissão: até 20 de outubro de 2025, às 23h59 (horário de Brasília).</strong>
-              </p>
-              <p>
-                <strong>🌐 Local de inscrição: </strong>
-                <a
-                  href="https://escoladasaude.vercel.app/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-emerald-700 dark:text-emerald-300 underline underline-offset-2"
-                >
-                  https://escoladasaude.vercel.app/
-                </a>
-              </p>
-              <p>
-                👉 Acesse a aba <em>“Usuário - Submissão de Trabalhos”</em> para preencher o formulário e enviar seu texto e pôster conforme as orientações do regulamento.
-              </p>
-              <p>
-                Os trabalhos concorrerão ao Prêmio Santista David Capistrano 2025, com entrega durante a Semana de Saúde Pública.
-              </p>
-              <p>👉 Participe e compartilhe suas experiências que fazem a diferença na saúde pública de Santos!</p>
-              <p>
-                Em caso de dúvidas, entre em contato pelo e-mail: <strong>escoladasaude@santos.sp.gov.br</strong>
-              </p>
-              <p>
-                Atenciosamente,<br />
-                <strong>Escola da Saúde – Secretaria Municipal de Saúde de Santos</strong>
-              </p>
-              <p className="mt-4 font-semibold">
-                📄 Confira a publicação oficial no Diário Oficial de Santos:
-                <br />
-                <a
-                  href="https://diariooficial.santos.sp.gov.br/edicoes/inicio/download/2025-10-07"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-emerald-700 dark:text-emerald-300 underline underline-offset-2 break-all"
-                >
-                  https://diariooficial.santos.sp.gov.br/edicoes/inicio/download/2025-10-07
-                </a>
-              </p>
-            </DestaqueLongo>
-
+            
             {/* 1) Semana David Capistrano */}
             <DestaqueLongo
               imgSrc="/banners/semana-david-capistrano.png"

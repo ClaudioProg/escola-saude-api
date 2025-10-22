@@ -1,4 +1,4 @@
-// ✅ src/controllers/eventoController.js
+// ✅ src/controllers/eventosController.js
 /* eslint-disable no-console */
 const { pool, query } = require('../db');
 const { normalizeRegistro, normalizeListaRegistros } = require('../utils/registro');
@@ -61,37 +61,38 @@ const getUsuarioId = (req) => (req.user?.id ?? req.user?.id ?? null);
 /* =====================================================================
    🔐 Núcleo de checagem por REGISTRO (reuso interno)
    ===================================================================== */
+   /* =====================================================================
+   🔐 Núcleo de checagem por REGISTRO (reuso interno)
+   ===================================================================== */
 async function podeVerPorRegistro({ client, usuarioId, eventoId, req }) {
-  // Admin sempre pode ver
-  if (usuarioId && (isAdmin(req))) return { ok: true };
+  const admin = isAdmin(req);
 
   const evQ = await client.query(
-    `SELECT id, restrito, restrito_modo FROM eventos WHERE id = $1`,
+    `SELECT id, restrito, restrito_modo, publicado
+       FROM eventos
+      WHERE id = $1`,
     [eventoId]
   );
   const evento = evQ.rows[0];
   if (!evento) return { ok: false, motivo: 'EVENTO_NAO_ENCONTRADO' };
 
-  // Instrutor do evento também pode ver
-  if (usuarioId) {
-    const isInstrutorDoEvento = (await client.query(
-      `SELECT 1 FROM evento_instrutor WHERE evento_id = $1 AND instrutor_id = $2 LIMIT 1`,
-      [eventoId, usuarioId]
-    )).rowCount > 0;
-    if (isInstrutorDoEvento) return { ok: true };
+  // 🚫 Não publicado → só admin enxerga (páginas públicas não devem ver rascunho)
+  if (!admin && !evento.publicado) {
+    return { ok: false, motivo: 'NAO_PUBLICADO' };
   }
 
-  // Sem restrição
+  // Admin pode ver qualquer coisa
+  if (admin) return { ok: true };
+
+  // 🔒 Regras de restrição por registro (para usuários não-admin)
   if (!evento.restrito) return { ok: true };
 
-  // Com restrição
   if (!usuarioId) return { ok: false, motivo: 'NAO_AUTENTICADO' };
   const uQ = await client.query(`SELECT registro FROM usuarios WHERE id = $1`, [usuarioId]);
   const regNorm = normalizeRegistro(uQ.rows?.[0]?.registro || '');
 
   if (evento.restrito_modo === MODO_TODOS) {
-    if (regNorm) return { ok: true };
-    return { ok: false, motivo: 'SEM_REGISTRO' };
+    return regNorm ? { ok: true } : { ok: false, motivo: 'SEM_REGISTRO' };
   }
 
   if (evento.restrito_modo === MODO_LISTA) {
@@ -109,73 +110,103 @@ async function podeVerPorRegistro({ client, usuarioId, eventoId, req }) {
 }
 
 /* =====================================================================
+   🚀 Publicar / Despublicar evento (admin)
+   ===================================================================== */
+   async function publicarEvento(req, res) {
+    if (!isAdmin(req)) return res.status(403).json({ erro: 'PERMISSAO_NEGADA' });
+  
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ erro: 'EVENTO_ID_INVALIDO' });
+  
+    try {
+      const r = await query(`UPDATE eventos SET publicado = TRUE WHERE id = $1 RETURNING id, publicado`, [id]);
+      if (r.rowCount === 0) return res.status(404).json({ erro: 'EVENTO_NAO_ENCONTRADO' });
+      return res.json({ ok: true, mensagem: 'Evento publicado.', evento: r.rows[0] });
+    } catch (e) {
+      console.error('❌ publicarEvento:', e);
+      return res.status(500).json({ erro: 'ERRO_INTERNO' });
+    }
+  }
+  
+  async function despublicarEvento(req, res) {
+    if (!isAdmin(req)) return res.status(403).json({ erro: 'PERMISSAO_NEGADA' });
+  
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ erro: 'EVENTO_ID_INVALIDO' });
+  
+    try {
+      const r = await query(`UPDATE eventos SET publicado = FALSE WHERE id = $1 RETURNING id, publicado`, [id]);
+      if (r.rowCount === 0) return res.status(404).json({ erro: 'EVENTO_NAO_ENCONTRADO' });
+      return res.json({ ok: true, mensagem: 'Evento despublicado.', evento: r.rows[0] });
+    } catch (e) {
+      console.error('❌ despublicarEvento:', e);
+      return res.status(500).json({ erro: 'ERRO_INTERNO' });
+    }
+  }
+
+/* =====================================================================
    📄 Listar todos os eventos (com resumo)
    ===================================================================== */
 async function listarEventos(req, res) {
   try {
     const usuarioId = getUsuarioId(req);
+    const admin = isAdmin(req);
 
     const sql = `
-      SELECT 
-        e.*,
-
-        /* lista de registros já cadastrados (sempre retornada) */
-        COALESCE((
-          SELECT array_agg(er.registro_norm ORDER BY er.registro_norm)
-          FROM evento_registros er
-          WHERE er.evento_id = e.id
-        ), '{}'::text[]) AS registros_permitidos,
-
-        /* ✅ nova contagem */
-        (SELECT COUNT(*) FROM evento_registros er WHERE er.evento_id = e.id)
-          AS count_registros_permitidos,
-
-        COALESCE(
-          json_agg(DISTINCT jsonb_build_object('id', u.id, 'nome', u.nome))
-          FILTER (WHERE u.id IS NOT NULL),
-          '[]'
-        ) AS instrutor,
-
-        (SELECT MIN(t.data_inicio)    FROM turmas t WHERE t.evento_id = e.id) AS data_inicio_geral,
-        (SELECT MAX(t.data_fim)       FROM turmas t WHERE t.evento_id = e.id) AS data_fim_geral,
-        (SELECT MIN(t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id) AS horario_inicio_geral,
-        (SELECT MAX(t.horario_fim)    FROM turmas t WHERE t.evento_id = e.id) AS horario_fim_geral,
-
-        (
-          CASE
-            WHEN CURRENT_TIMESTAMP < (
-              SELECT MIN(t.data_inicio + t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id
-            ) THEN 'programado'
-            WHEN CURRENT_TIMESTAMP BETWEEN
-              (SELECT MIN(t.data_inicio + t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id)
-              AND
-              (SELECT MAX(t.data_fim + t.horario_fim) FROM turmas t WHERE t.evento_id = e.id)
-            THEN 'andamento'
-            ELSE 'encerrado'
-          END
-        ) AS status,
-
-        (
-          SELECT COUNT(*) > 0
-          FROM inscricoes i
-          JOIN turmas t ON t.id = i.turma_id
-          WHERE i.usuario_id = $1 AND t.evento_id = e.id
-        ) AS ja_inscrito,
-
-        (
-          SELECT COUNT(*) > 0
-          FROM evento_instrutor ei
-          WHERE ei.evento_id = e.id
-            AND ei.instrutor_id = $2
-        ) AS ja_instrutor
-
-      FROM eventos e
-      LEFT JOIN evento_instrutor ei ON ei.evento_id = e.id
-      LEFT JOIN usuarios u         ON u.id  = ei.instrutor_id
-      GROUP BY e.id
-      ORDER BY (SELECT MAX(t.data_fim + t.horario_fim) FROM turmas t WHERE t.evento_id = e.id) DESC NULLS LAST,
-               e.id DESC;
-    `;
+  WITH sou_instrutor AS (
+    SELECT DISTINCT evento_id FROM evento_instrutor WHERE instrutor_id = $2
+  )
+  SELECT 
+    e.*,
+    COALESCE((
+      SELECT array_agg(er.registro_norm ORDER BY er.registro_norm)
+      FROM evento_registros er
+      WHERE er.evento_id = e.id
+    ), '{}'::text[]) AS registros_permitidos,
+    (SELECT COUNT(*) FROM evento_registros er WHERE er.evento_id = e.id)
+      AS count_registros_permitidos,
+    COALESCE(
+      json_agg(DISTINCT jsonb_build_object('id', u.id, 'nome', u.nome))
+      FILTER (WHERE u.id IS NOT NULL),
+      '[]'
+    ) AS instrutor,
+    (SELECT MIN(t.data_inicio)    FROM turmas t WHERE t.evento_id = e.id) AS data_inicio_geral,
+    (SELECT MAX(t.data_fim)       FROM turmas t WHERE t.evento_id = e.id) AS data_fim_geral,
+    (SELECT MIN(t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id) AS horario_inicio_geral,
+    (SELECT MAX(t.horario_fim)    FROM turmas t WHERE t.evento_id = e.id) AS horario_fim_geral,
+    (
+      CASE
+        WHEN CURRENT_TIMESTAMP < (
+          SELECT MIN(t.data_inicio + t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id
+        ) THEN 'programado'
+        WHEN CURRENT_TIMESTAMP BETWEEN
+          (SELECT MIN(t.data_inicio + t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id)
+          AND
+          (SELECT MAX(t.data_fim + t.horario_fim) FROM turmas t WHERE t.evento_id = e.id)
+        THEN 'andamento'
+        ELSE 'encerrado'
+      END
+    ) AS status,
+    (
+      SELECT COUNT(*) > 0
+      FROM inscricoes i
+      JOIN turmas t ON t.id = i.turma_id
+      WHERE i.usuario_id = $1 AND t.evento_id = e.id
+    ) AS ja_inscrito,
+    (
+      SELECT COUNT(*) > 0
+      FROM evento_instrutor ei
+      WHERE ei.evento_id = e.id
+        AND ei.instrutor_id = $2
+    ) AS ja_instrutor
+  FROM eventos e
+  LEFT JOIN evento_instrutor ei ON ei.evento_id = e.id
+  LEFT JOIN usuarios u         ON u.id  = ei.instrutor_id
+  WHERE ${admin ? 'TRUE' : '(e.publicado = TRUE OR e.id IN (SELECT evento_id FROM sou_instrutor))'}
+  GROUP BY e.id
+  ORDER BY (SELECT MAX(t.data_fim + t.horario_fim) FROM turmas t WHERE t.evento_id = e.id) DESC NULLS LAST,
+           e.id DESC;
+`;
 
     const params = [usuarioId, usuarioId];
     const result = await query(sql, params);
@@ -190,7 +221,7 @@ async function listarEventos(req, res) {
    🆕 Listar eventos "para mim" (aplica regra por registro no SQL)
    ===================================================================== */
 async function listarEventosParaMim(req, res) {
-  const usuarioId = req.user?.id ?? req.user?.id ?? null;
+  const usuarioId = req.user?.id ?? null;
   if (!usuarioId) return res.status(401).json({ ok: false, erro: 'NAO_AUTENTICADO' });
 
   const client = await pool.connect();
@@ -203,32 +234,32 @@ async function listarEventosParaMim(req, res) {
       WITH base AS (
         SELECT
           e.id, e.titulo, e.descricao, e.local, e.tipo, e.unidade_id,
-          e.publico_alvo, e.restrito, e.restrito_modo
+          e.publico_alvo, e.restrito, e.restrito_modo, e.publicado
         FROM eventos e
         WHERE
-             e.restrito = FALSE
-          OR (e.restrito = TRUE  AND e.restrito_modo = $3 AND $4 <> '')             -- "somente servidores"
-          OR (e.restrito = TRUE  AND e.restrito_modo = $5 AND EXISTS (               -- "lista específica"
-                SELECT 1 FROM evento_registros er
-                 WHERE er.evento_id = e.id AND er.registro_norm = $4
-              ))
+          e.publicado = TRUE
+          AND (
+               e.restrito = FALSE
+            OR (e.restrito = TRUE  AND e.restrito_modo = $3 AND $4 <> '')
+            OR (e.restrito = TRUE  AND e.restrito_modo = $5 AND EXISTS (
+                  SELECT 1 FROM evento_registros er
+                   WHERE er.evento_id = e.id AND er.registro_norm = $4
+                ))
+          )
       )
       SELECT 
         e.id, e.titulo, e.descricao, e.local, e.tipo, e.unidade_id,
-        e.publico_alvo, e.restrito, e.restrito_modo,
+        e.publico_alvo, e.restrito, e.restrito_modo, e.publicado,
 
-        /* SEMPRE devolver a lista para UI poder exibir/editar */
         COALESCE((
           SELECT array_agg(er.registro_norm ORDER BY er.registro_norm)
           FROM evento_registros er
           WHERE er.evento_id = e.id
         ), '{}'::text[]) AS registros_permitidos,
 
-        /* ✅ nova contagem */
         (SELECT COUNT(*) FROM evento_registros er WHERE er.evento_id = e.id)
           AS count_registros_permitidos,
 
-        /* instrutores do evento */
         COALESCE((
           SELECT json_agg(DISTINCT jsonb_build_object('id', u.id, 'nome', u.nome))
           FROM evento_instrutor ei
@@ -236,28 +267,23 @@ async function listarEventosParaMim(req, res) {
           WHERE ei.evento_id = e.id
         ), '[]'::json) AS instrutor,
 
-        /* datas/horários gerais (via turmas) */
         (SELECT MIN(t.data_inicio)    FROM turmas t WHERE t.evento_id = e.id) AS data_inicio_geral,
         (SELECT MAX(t.data_fim)       FROM turmas t WHERE t.evento_id = e.id) AS data_fim_geral,
         (SELECT MIN(t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id) AS horario_inicio_geral,
         (SELECT MAX(t.horario_fim)    FROM turmas t WHERE t.evento_id = e.id) AS horario_fim_geral,
 
-        /* status consolidado */
-        (
-          CASE
-            WHEN CURRENT_TIMESTAMP < (
-              SELECT MIN(t.data_inicio + t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id
-            ) THEN 'programado'
-            WHEN CURRENT_TIMESTAMP BETWEEN
-              (SELECT MIN(t.data_inicio + t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id)
-              AND
-              (SELECT MAX(t.data_fim + t.horario_fim) FROM turmas t WHERE t.evento_id = e.id)
-            THEN 'andamento'
-            ELSE 'encerrado'
-          END
-        ) AS status,
+        CASE
+          WHEN CURRENT_TIMESTAMP < (
+            SELECT MIN(t.data_inicio + t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id
+          ) THEN 'programado'
+          WHEN CURRENT_TIMESTAMP BETWEEN
+            (SELECT MIN(t.data_inicio + t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id)
+            AND
+            (SELECT MAX(t.data_fim + t.horario_fim) FROM turmas t WHERE t.evento_id = e.id)
+          THEN 'andamento'
+          ELSE 'encerrado'
+        END AS status,
 
-        /* flags por usuário */
         (
           SELECT COUNT(*) > 0
           FROM inscricoes i
@@ -288,6 +314,7 @@ async function listarEventosParaMim(req, res) {
   }
 }
 
+  
 /* =====================================================================
    ➕ Criar evento (persiste turmas + datas_turma + restrição)
    ===================================================================== */
@@ -338,8 +365,11 @@ async function criarEvento(req, res) {
 
     // evento
     const eventoResult = await client.query(
-      `INSERT INTO eventos (titulo, descricao, local, tipo, unidade_id, publico_alvo, restrito, restrito_modo)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      `INSERT INTO eventos (
+         titulo, descricao, local, tipo, unidade_id, publico_alvo,
+         restrito, restrito_modo, publicado
+       )
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,FALSE)
        RETURNING *`,
       [titulo, descricao, local, tipo, unidade_id, publico_alvo, restritoVal, modoVal]
     );
@@ -434,6 +464,12 @@ async function buscarEventoPorId(req, res) {
       return res.status(404).json({ erro: 'Evento não encontrado' });
     }
     const evento = eventoResult.rows[0];
+    
+// 🔒 não-admin não pode ver detalhes de rascunho
+if (!isAdmin(req) && !evento.publicado) {
+  return res.status(404).json({ erro: 'NAO_PUBLICADO' }); // 404 p/ não “denunciar”
+}
+
 
     // checagem de visibilidade (se não-admin)
     if (!admin) {
@@ -628,13 +664,14 @@ async function verificarVisibilidadeEvento(req, res) {
   const client = await pool.connect();
   try {
     const r = await podeVerPorRegistro({ client, usuarioId, eventoId, req });
-    if (!r.ok) return res.status(403).json({ ok: false, motivo: r.motivo });
+    if (!r.ok) {
+      const code = r.motivo === 'NAO_PUBLICADO' ? 404 : 403; // ✅ rascunho responde 404
+      return res.status(code).json({ ok: false, motivo: r.motivo });
+    }
     return res.json({ ok: true });
   } catch (e) {
     console.error('ERRO verificarVisibilidadeEvento:', e);
     return res.status(500).json({ ok: false, erro: 'ERRO_INTERNO' });
-  } finally {
-    client.release();
   }
 }
 
@@ -682,6 +719,7 @@ async function listarTurmasDoEvento(req, res) {
       LEFT JOIN evento_instrutor ei ON ei.evento_id = e.id
       LEFT JOIN usuarios u ON u.id = ei.instrutor_id
       WHERE e.id = $1
+  AND e.publicado = TRUE
       GROUP BY t.id, e.id
       ORDER BY t.data_inicio, t.id
     `,
@@ -1121,8 +1159,9 @@ async function listarEventosDoinstrutor(req, res) {
           AS count_registros_permitidos
 
       FROM eventos e
-      JOIN evento_instrutor ei ON ei.evento_id = e.id
-      WHERE ei.instrutor_id = $1
+JOIN evento_instrutor ei ON ei.evento_id = e.id
+WHERE ei.instrutor_id = $1
+  AND e.publicado = TRUE  
       ORDER BY e.id
       `,
       [usuarioId]
@@ -1293,4 +1332,7 @@ module.exports = {
   listarEventosParaMim,
   verificarVisibilidadeEvento,
   obterDetalhesEventoComRestricao,
+  // 🆕 publicar/despublicar
+  publicarEvento,
+  despublicarEvento,
 };

@@ -1,3 +1,4 @@
+//src/controllers/trabalhosControllers.js
 /* eslint-disable no-console */
 const path = require("path");
 const fs = require("fs");
@@ -8,6 +9,10 @@ const { db } = require("../db");
 
 // Raiz persistente (para resolver caminhos legados/relativos)
 const { UPLOADS_DIR } = require("../paths");
+
+// Fuso padrão do projeto (comparações de prazos)
+const ZONA = "America/Sao_Paulo";
+const TZ_SQL = `now() AT TIME ZONE '${ZONA}'`; // → timestamp sem tz no fuso -03:00
 
 // Notificações
 const {
@@ -78,7 +83,7 @@ function logDownload(label, ctx) {
 
 async function getChamadaValidacao(chamadaId) {
   const c = await db.oneOrNone(`
-    SELECT * , (now() <= prazo_final_br) AS dentro_prazo
+    SELECT * , (${TZ_SQL} <= prazo_final_br) AS dentro_prazo
     FROM trabalhos_chamadas WHERE id=$1
   `, [chamadaId]);
   if (!c) { const e = new Error("Chamada inexistente."); e.status = 404; throw e; }
@@ -217,7 +222,7 @@ exports.atualizarSubmissao = async (req, res, next) => {
       SELECT s.*, c.id AS chamada_id, c.titulo AS chamada_titulo,
              c.periodo_experiencia_inicio, c.periodo_experiencia_fim,
              c.max_coautores, c.limites,
-             (now() <= c.prazo_final_br) AS dentro_prazo
+             (${TZ_SQL} <= c.prazo_final_br) AS dentro_prazo
       FROM trabalhos_submissoes s
       JOIN trabalhos_chamadas c ON c.id = s.chamada_id
       WHERE s.id=$1
@@ -338,7 +343,7 @@ exports.removerSubmissao = async (req, res, next) => {
     if (userId === null) { const e = new Error("Não autorizado."); e.status = 401; throw e; }
 
     const meta = await db.oneOrNone(`
-      SELECT s.*, c.prazo_final_br, (now() <= c.prazo_final_br) AS dentro_prazo
+      SELECT s.*, c.prazo_final_br, (${TZ_SQL} <= c.prazo_final_br) AS dentro_prazo
       FROM trabalhos_submissoes s
       JOIN trabalhos_chamadas c ON c.id = s.chamada_id
       WHERE s.id=$1
@@ -376,7 +381,7 @@ exports.atualizarPoster = async (req, res, next) => {
     const sub = await db.oneOrNone(
       `SELECT s.id, s.usuario_id, s.titulo AS trabalho_titulo,
               c.id AS chamada_id, c.titulo AS chamada_titulo, c.aceita_poster,
-              (now() <= c.prazo_final_br) AS dentro_prazo,
+              (${TZ_SQL} <= c.prazo_final_br) AS dentro_prazo,
               s.status
          FROM trabalhos_submissoes s
          JOIN trabalhos_chamadas c ON c.id = s.chamada_id
@@ -508,7 +513,7 @@ exports.atualizarBanner = async (req, res, next) => {
     const sub = await db.oneOrNone(
       `SELECT s.id, s.usuario_id, s.titulo AS trabalho_titulo,
               c.id AS chamada_id, c.titulo AS chamada_titulo,
-              (now() <= c.prazo_final_br) AS dentro_prazo
+              (${TZ_SQL} <= c.prazo_final_br) AS dentro_prazo
          FROM trabalhos_submissoes s
          JOIN trabalhos_chamadas c ON c.id = s.chamada_id
         WHERE s.id=$1`,
@@ -626,7 +631,7 @@ exports.minhasSubmissoes = async (req, res, next) => {
     const rows = await db.any(`
       SELECT s.*, a.nome_original AS poster_nome,
              c.titulo AS chamada_titulo, c.prazo_final_br,
-             (now() <= c.prazo_final_br) AS dentro_prazo
+             (${TZ_SQL} <= c.prazo_final_br) AS dentro_prazo
       FROM trabalhos_submissoes s
       JOIN trabalhos_chamadas c ON c.id = s.chamada_id
       LEFT JOIN trabalhos_arquivos a ON a.id = s.poster_arquivo_id
@@ -655,7 +660,7 @@ exports.obterSubmissao = async (req, res, next) => {
              /* 🔁 Enquanto não há banner_arquivo_id, espelhamos do poster: */
              pa.nome_original AS banner_nome, pa.caminho AS banner_caminho,
              c.titulo AS chamada_titulo, c.max_coautores,
-             (now() <= c.prazo_final_br) AS dentro_prazo
+             (${TZ_SQL} <= c.prazo_final_br) AS dentro_prazo
       FROM trabalhos_submissoes s
       JOIN trabalhos_chamadas c ON c.id = s.chamada_id
       LEFT JOIN trabalhos_arquivos pa ON pa.id = s.poster_arquivo_id

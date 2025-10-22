@@ -52,13 +52,26 @@ function getPeriodoEvento(evento, turmas) {
   if (diAggY && dfAggY) return fmt(diAggY, dfAggY);
 
   if (Array.isArray(turmas) && turmas.length) {
-    const starts = turmas.map(t => ymd(t?.data_inicio)).filter(Boolean).map(d => toLocalDateFromYMD(d,"12:00")?.getTime()).filter(Boolean);
-    const ends   = turmas.map(t => ymd(t?.data_fim)).filter(Boolean).map(d => toLocalDateFromYMD(d,"12:00")?.getTime()).filter(Boolean);
+    const starts = turmas
+      .map((t) => ymd(t?.data_inicio))
+      .filter(Boolean)
+      .map((d) => toLocalDateFromYMD(d, "12:00")?.getTime())
+      .filter(Boolean);
+    const ends = turmas
+      .map((t) => ymd(t?.data_fim))
+      .filter(Boolean)
+      .map((d) => toLocalDateFromYMD(d, "12:00")?.getTime())
+      .filter(Boolean);
     if (starts.length && ends.length) {
-      const a = new Date(Math.min(...starts)), b = new Date(Math.max(...ends));
-      const aY = `${a.getFullYear()}-${String(a.getMonth()+1).padStart(2,"0")}-${String(a.getDate()).padStart(2,"0")}`;
-      const bY = `${b.getFullYear()}-${String(b.getMonth()+1).padStart(2,"0")}-${String(b.getDate()).padStart(2,"0")}`;
-      return fmt(aY,bY);
+      const a = new Date(Math.min(...starts)),
+        b = new Date(Math.max(...ends));
+      const aY = `${a.getFullYear()}-${String(a.getMonth() + 1).padStart(2, "0")}-${String(
+        a.getDate()
+      ).padStart(2, "0")}`;
+      const bY = `${b.getFullYear()}-${String(b.getMonth() + 1).padStart(2, "0")}-${String(
+        b.getDate()
+      ).padStart(2, "0")}`;
+      return fmt(aY, bY);
     }
   }
   return "Período não informado";
@@ -71,35 +84,40 @@ function getStatusEvento({ evento, turmas }) {
   const hiAgg = onlyHHmm(evento?.horario_inicio_geral || "00:00");
   const hfAgg = onlyHHmm(evento?.horario_fim_geral || "23:59");
   let inicioDT = diAgg ? toLocalDateFromYMD(diAgg, hiAgg) : null;
-  let fimDT    = dfAgg ? toLocalDateFromYMD(dfAgg, hfAgg) : null;
+  let fimDT = dfAgg ? toLocalDateFromYMD(dfAgg, hfAgg) : null;
 
   if (!inicioDT || !fimDT) {
-    const starts=[], ends=[];
-    (turmas||[]).forEach(t=>{
-      const di=ymd(t.data_inicio), df=ymd(t.data_fim);
-      const hi=onlyHHmm(t.horario_inicio||"00:00"), hf=onlyHHmm(t.horario_fim||"23:59");
-      const s = di ? toLocalDateFromYMD(di,hi) : null;
-      const e = df ? toLocalDateFromYMD(df,hf) : null;
-      if (s) starts.push(s.getTime()); if (e) ends.push(e.getTime());
+    const starts = [],
+      ends = [];
+    (turmas || []).forEach((t) => {
+      const di = ymd(t.data_inicio),
+        df = ymd(t.data_fim);
+      const hi = onlyHHmm(t.horario_inicio || "00:00"),
+        hf = onlyHHmm(t.horario_fim || "23:59");
+      const s = di ? toLocalDateFromYMD(di, hi) : null;
+      const e = df ? toLocalDateFromYMD(df, hf) : null;
+      if (s) starts.push(s.getTime());
+      if (e) ends.push(e.getTime());
     });
     if (starts.length) inicioDT = new Date(Math.min(...starts));
-    if (ends.length)   fimDT    = new Date(Math.max(...ends));
+    if (ends.length) fimDT = new Date(Math.max(...ends));
   }
-  if (!inicioDT || !fimDT) return "desconhecido";
+  if (!inicioDT || !fimDT) return "todos"; // fallback neutro
   if (agora < inicioDT) return "programado";
   if (agora > fimDT) return "encerrado";
-  return "andamento";
+  return "em_andamento";
 }
 
 /* ===== presença visual ===== */
 function pctColorHex(p) {
-  if (p >= 90) return "#0284c7";  // sky-600
-  if (p >= 76) return "#059669";  // emerald-600
-  if (p >= 51) return "#d97706";  // amber-600
-  return "#e11d48";               // rose-600
+  if (p >= 90) return "#0284c7"; // sky-600
+  if (p >= 76) return "#059669"; // emerald-600
+  if (p >= 51) return "#d97706"; // amber-600
+  return "#e11d48"; // rose-600
 }
 function PctPill({ value }) {
-  const n = typeof value === "string" ? parseInt(value.replace(/\D/g, ""), 10) : Number(value || 0);
+  const n =
+    typeof value === "string" ? parseInt(value.replace(/\D/g, ""), 10) : Number(value || 0);
   const pct = Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : 0;
   const color = pctColorHex(pct);
   return (
@@ -115,13 +133,14 @@ function PctPill({ value }) {
 
 /* ===== Regra dinâmica ≥75% sobre encontros ocorridos ===== */
 function isElegivel75(u, resumo) {
-  const total = typeof u?.total_ocorridos === "number"
-    ? u.total_ocorridos
-    : (resumo?.encontrosOcorridos ?? 0);
+  const total =
+    typeof u?.total_ocorridos === "number"
+      ? u.total_ocorridos
+      : resumo?.encontrosOcorridos ?? 0;
   if (total <= 0) return false;
 
   if (typeof u?.presentes_ocorridos === "number") {
-    return (u.presentes_ocorridos / total) >= 0.75 - 1e-9;
+    return u.presentes_ocorridos / total >= 0.75 - 1e-9;
   }
   const n =
     typeof u?.frequencia_num === "number"
@@ -130,50 +149,73 @@ function isElegivel75(u, resumo) {
   return n >= 75;
 }
 
-/* ===== Constrói uma visão uniforme de presenças por turma =====
-   Aceita:
-   - Array simples: [{usuario_id, presente, frequencia_num, ...}]
-   - Bloco detalhado: { usuarios:[{id|usuario_id, presencas:[{data,presente}] , ...}], resumo? }
-*/
+/* ===== Constrói visão uniforme de presenças por turma ===== */
 function mapPresencasParaLista(presencasPorTurma, turmaId) {
   const raw = presencasPorTurma?.[turmaId];
-  // caso 1: já seja um array simples
-  if (Array.isArray(raw)) return raw;
-
-  // caso 2: objeto com lista
-  const lista = normalizaArr(raw);
-  if (lista.length) return lista;
-
-  // caso 3: detalhado
-  const usuarios = Array.isArray(raw?.usuarios) ? raw.usuarios : [];
   const resumo = raw?.resumo || raw?.detalhado?.resumo || {};
-  const out = [];
-  for (const u of usuarios) {
+
+  const coerceFreqNum = (u) => {
+    if (typeof u?.frequencia_num === "number") return u.frequencia_num;
+    const parsed = parseInt(String(u?.frequencia || "").replace(/\D/g, ""), 10);
+    if (!Number.isNaN(parsed)) return parsed;
+    const totalOc = u?.total_ocorridos ?? resumo?.encontrosOcorridos ?? 0;
+    const presOc =
+      u?.presentes_ocorridos ??
+      (Array.isArray(u?.presencas) ? u.presencas.filter((p) => p?.presente).length : 0);
+    return totalOc > 0 ? Math.round((presOc / totalOc) * 100) : 0;
+  };
+
+  const normalizeOne = (u) => {
     const id = u?.usuario_id ?? u?.id ?? null;
-    if (!id) continue;
-
-    // tenta usar métricas prontas; senão, calcula a partir de presenças
-    let frequenciaNum =
-      typeof u?.frequencia_num === "number"
-        ? u.frequencia_num
-        : parseInt(String(u?.frequencia || "0").replace(/\D/g, ""), 10) || undefined;
-
-    if (typeof frequenciaNum !== "number" || Number.isNaN(frequenciaNum)) {
-      const totalOc = u?.total_ocorridos ?? resumo?.encontrosOcorridos ?? 0;
-      const presOc = u?.presentes_ocorridos ?? (Array.isArray(u?.presencas) ? u.presencas.filter(p=>p?.presente).length : 0);
-      frequenciaNum = totalOc > 0 ? Math.round((presOc / totalOc) * 100) : 0;
-    }
-
-    out.push({
+    if (!id) return null;
+    const freqNum = coerceFreqNum(u);
+    // se já vier elegivel, usa; senão, calcula pela regra ≥75% considerando apenas encontros ocorridos
+    const elegivel =
+      typeof u?.elegivel === "boolean"
+        ? u.elegivel
+        : isElegivel75({ ...u, frequencia_num: freqNum }, resumo);
+    return {
       usuario_id: id,
-      presente: isElegivel75(u, resumo), // ≥75% nos ocorridos
-      frequencia_num: frequenciaNum,
-      frequencia: `${frequenciaNum}%`,
       cpf: u?.cpf,
-    });
+      frequencia_num: freqNum,
+      frequencia: `${freqNum}%`,
+      elegivel,
+      // padroniza: 'presente' espelha 'elegivel' (≥75%)
+      presente: elegivel,
+    };
+  };
+
+  // Caso 1: já seja array simples
+  if (Array.isArray(raw)) {
+    return raw.map(normalizeOne).filter(Boolean);
   }
-  return out;
+
+  // Caso 2: objeto com lista
+  const lista = normalizaArr(raw);
+  if (lista.length) {
+    return lista.map(normalizeOne).filter(Boolean);
+  }
+
+  // Caso 3: estrutura detalhada (usuarios + presencas)
+  const usuarios = Array.isArray(raw?.usuarios) ? raw.usuarios : [];
+  return usuarios.map(normalizeOne).filter(Boolean);
 }
+
+/* ===== Barrinha/cores por status ===== */
+const STATUS_STYLES = {
+  programado: {
+    bar: "from-emerald-600 via-emerald-500 to-emerald-400",
+  },
+  em_andamento: {
+    bar: "from-amber-600 via-amber-500 to-amber-400",
+  },
+  encerrado: {
+    bar: "from-rose-600 via-rose-500 to-rose-400",
+  },
+  todos: {
+    bar: "from-indigo-500 to-fuchsia-500",
+  },
+};
 
 /* ========================= UI helpers ========================= */
 function MiniStat({ value, label, className = "" }) {
@@ -181,7 +223,9 @@ function MiniStat({ value, label, className = "" }) {
     <div className="min-w-[86px]">
       <div className="inline-flex flex-col items-center justify-center px-3 py-2 rounded-xl border border-zinc-200 bg-white shadow-sm dark:bg-zinc-800 dark:border-zinc-600">
         <div className={`leading-none font-extrabold text-2xl ${className}`}>{value}</div>
-        <div className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">{label}</div>
+        <div className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          {label}
+        </div>
       </div>
     </div>
   );
@@ -215,10 +259,12 @@ export default function CardEventoadministrador({
       const presencas = mapPresencasParaLista(presencasPorTurma, t.id);
 
       totalInscritos += inscritos.length;
-      totalElegiveis += presencas.filter((p) => p?.presente === true).length;
+      totalElegiveis += presencas.filter((p) => p?.elegivel === true || p?.presente === true).length;
     }
 
-    const presencaMedia = totalInscritos ? Math.round((totalElegiveis / totalInscritos) * 100).toString() : "0";
+    const presencaMedia = totalInscritos
+      ? Math.round((totalElegiveis / totalInscritos) * 100).toString()
+      : "0";
     return { totalInscritos, totalPresentes: totalElegiveis, presencaMedia };
   }, [expandido, turmas, inscritosPorTurma, presencasPorTurma]);
 
@@ -234,24 +280,38 @@ export default function CardEventoadministrador({
   }, [expandido, turmas]);
 
   const nomeinstrutor = useMemo(() => {
-    if (Array.isArray(evento.instrutor)) return evento.instrutor.map(i=>i?.nome).filter(Boolean).join(", ") || "—";
-    if (typeof evento.instrutor === "object" && evento.instrutor?.nome) return evento.instrutor.nome;
+    if (Array.isArray(evento.instrutor))
+      return evento.instrutor.map((i) => i?.nome).filter(Boolean).join(", ") || "—";
+    if (typeof evento.instrutor === "object" && evento.instrutor?.nome)
+      return evento.instrutor.nome;
     return "—";
   }, [evento]);
 
   const statusEvento = getStatusEvento({ evento, turmas });
+  const styles = STATUS_STYLES[statusEvento] || STATUS_STYLES.todos;
 
   return (
-    <section className="bg-white dark:bg-zinc-800 p-6 rounded-2xl shadow-lg mb-6 border border-gray-200 dark:border-zinc-700 transition">
+    <section
+      className="relative overflow-hidden bg-white dark:bg-zinc-800 p-6 rounded-2xl shadow-lg mb-6 border border-gray-200 dark:border-zinc-700 transition"
+      aria-label={`Evento: ${evento?.titulo || evento?.nome || ""}`}
+    >
+      {/* 🔹 barrinha colorida superior */}
+      <div className={`pointer-events-none absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r ${styles.bar}`} />
+
       {/* TOPO */}
-      <div className="flex justify-between items-start gap-4">
+      <div className="flex justify-between items-start gap-4 min-w-0">
         <div className="min-w-0">
-          <h3 className="text-2xl font-bold text-green-900 dark:text-green-200 truncate" title={evento.titulo}>
+          <h3
+            className="text-2xl font-bold text-green-900 dark:text-green-200 truncate"
+            title={evento.titulo}
+          >
             {evento.titulo}
           </h3>
-          <div className="text-sm text-gray-700 dark:text-gray-200 flex items-center gap-2 mt-1 mb-1">
-            <span className="font-semibold">Instrutor:</span>
-            <span className="truncate" title={nomeinstrutor}>{nomeinstrutor}</span>
+          <div className="text-sm text-gray-700 dark:text-gray-200 flex items-center gap-2 mt-1 mb-1 min-w-0">
+            <span className="font-semibold shrink-0">Instrutor:</span>
+            <span className="truncate" title={nomeinstrutor}>
+              {nomeinstrutor}
+            </span>
           </div>
           <p className="text-sm text-gray-600 dark:text-gray-300 flex items-center gap-2 mt-0.5">
             <CalendarDays size={16} aria-hidden="true" />
@@ -277,8 +337,16 @@ export default function CardEventoadministrador({
           <h4 className="sr-only">Estatísticas do evento</h4>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6">
             <MiniStat value={stats.totalInscritos} label="inscritos" />
-            <MiniStat value={stats.totalPresentes} label="presentes (≥75%)" className="text-emerald-600" />
-            <MiniStat value={`${stats.presencaMedia}%`} label="presença média (≥75%)" className="text-sky-600" />
+            <MiniStat
+              value={stats.totalPresentes}
+              label="presentes (≥75%)"
+              className="text-emerald-600"
+            />
+            <MiniStat
+              value={`${stats.presencaMedia}%`}
+              label="presença média (≥75%)"
+              className="text-sky-600"
+            />
           </div>
 
           {Array.isArray(turmas) && turmas.length ? (
@@ -287,8 +355,10 @@ export default function CardEventoadministrador({
                 const inscritos = normalizaArr(inscritosPorTurma?.[turma.id]);
                 const presencas = mapPresencasParaLista(presencasPorTurma, turma.id);
 
-                const elegiveis = presencas.filter((p) => p?.presente === true).length;
-                const pctElegiveis = inscritos.length ? Math.round((elegiveis / inscritos.length) * 100) : 0;
+                const elegiveis = presencas.filter((p) => p?.elegivel === true || p?.presente === true).length;
+                const pctElegiveis = inscritos.length
+                  ? Math.round((elegiveis / inscritos.length) * 100)
+                  : 0;
 
                 return (
                   <div key={turma.id} className="space-y-3">
@@ -304,8 +374,16 @@ export default function CardEventoadministrador({
                     />
                     <div className="flex flex-wrap items-center gap-3 px-2">
                       <MiniStat value={inscritos.length} label="inscritos" />
-                      <MiniStat value={elegiveis} label="presentes (≥75%)" className="text-emerald-600" />
-                      <MiniStat value={`${pctElegiveis}%`} label="presença (≥75%)" className="text-sky-600" />
+                      <MiniStat
+                        value={elegiveis}
+                        label="presentes (≥75%)"
+                        className="text-emerald-600"
+                      />
+                      <MiniStat
+                        value={`${pctElegiveis}%`}
+                        label="presença (≥75%)"
+                        className="text-sky-600"
+                      />
                     </div>
 
                     {/* Lista de inscritos */}
@@ -339,27 +417,45 @@ export default function CardEventoadministrador({
                           <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
                             {inscritos
                               .slice()
-                              .sort((a,b)=>String(a?.nome||"").localeCompare(String(b?.nome||"")))
+                              .sort((a, b) =>
+                                String(a?.nome || "").localeCompare(String(b?.nome || ""))
+                              )
                               .map((i) => {
                                 const cpf = formatarCPF(i?.cpf);
-                                const idade = (Number.isFinite(i?.idade) ? i.idade : idadeDe(i?.data_nascimento || i?.nascimento));
+                                const idade = Number.isFinite(i?.idade)
+                                  ? i.idade
+                                  : idadeDe(i?.data_nascimento || i?.nascimento);
                                 const registro = i?.registro || i?.matricula || null;
 
-                                const pcdVisual   = !!(i?.pcd_visual || i?.def_visual || i?.deficiencia_visual);
-                                const pcdAuditiva = !!(i?.pcd_auditiva || i?.def_auditiva || i?.deficiencia_auditiva || i?.surdo);
-                                const pcdFisica   = !!(i?.pcd_fisica || i?.def_fisica || i?.deficiencia_fisica);
-                                const pcdIntelect = !!(i?.pcd_intelectual || i?.def_mental || i?.def_intelectual);
+                                const pcdVisual =
+                                  !!(i?.pcd_visual || i?.def_visual || i?.deficiencia_visual);
+                                const pcdAuditiva =
+                                  !!(i?.pcd_auditiva ||
+                                  i?.def_auditiva ||
+                                  i?.deficiencia_auditiva ||
+                                  i?.surdo);
+                                const pcdFisica =
+                                  !!(i?.pcd_fisica || i?.def_fisica || i?.deficiencia_fisica);
+                                const pcdIntelect =
+                                  !!(i?.pcd_intelectual || i?.def_mental || i?.def_intelectual);
                                 const pcdMultipla = !!(i?.pcd_multipla || i?.def_multipla);
-                                const pcdTEA      = !!(i?.pcd_autismo || i?.tea || i?.transtorno_espectro_autista);
+                                const pcdTEA =
+                                  !!(i?.pcd_autismo || i?.tea || i?.transtorno_espectro_autista);
 
                                 // frequência do aluno (usando presenças mapeadas)
-                                const presAluno = mapPresencasParaLista(presencasPorTurma, turma.id)
-                                  .find(p =>
-                                    (p.usuario_id === i.id || p.usuario_id === i.usuario_id || p.cpf === i.cpf)
-                                  );
-                                const freqStr = presAluno?.frequencia_num != null
-                                  ? `${presAluno.frequencia_num}%`
-                                  : presAluno?.frequencia || null;
+                                const presAluno = mapPresencasParaLista(
+                                  presencasPorTurma,
+                                  turma.id
+                                ).find(
+                                  (p) =>
+                                    p.usuario_id === i.id ||
+                                    p.usuario_id === i.usuario_id ||
+                                    p.cpf === i.cpf
+                                );
+                                const freqStr =
+                                  presAluno?.frequencia_num != null
+                                    ? `${presAluno.frequencia_num}%`
+                                    : presAluno?.frequencia || null;
 
                                 return (
                                   <li key={i.id || i.usuario_id || i.cpf} className="py-2">
@@ -382,19 +478,55 @@ export default function CardEventoadministrador({
                                       </div>
                                       {/* PcD */}
                                       <div className="flex items-center gap-1 text-zinc-700 dark:text-zinc-200">
-                                        {pcdVisual   && <Eye size={16} title="Deficiência visual" />}
-                                        {pcdAuditiva && <Ear size={16} title="Deficiência auditiva" />}
-                                        {pcdFisica   && <Accessibility size={16} title="Deficiência física/motora" />}
-                                        {pcdIntelect && <span title="Deficiência intelectual/mental" role="img" aria-label="Deficiência intelectual">🧠</span>}
-                                        {pcdMultipla && <span title="Deficiência múltipla" role="img" aria-label="Deficiência múltipla">🔗</span>}
-                                        {pcdTEA      && <span title="TEA" role="img" aria-label="autismo">🧩</span>}
-                                        {!pcdVisual && !pcdAuditiva && !pcdFisica && !pcdIntelect && !pcdMultipla && !pcdTEA && (
-                                          <span className="text-zinc-400">—</span>
+                                        {pcdVisual && <Eye size={16} title="Deficiência visual" />}
+                                        {pcdAuditiva && (
+                                          <Ear size={16} title="Deficiência auditiva" />
                                         )}
+                                        {pcdFisica && (
+                                          <Accessibility
+                                            size={16}
+                                            title="Deficiência física/motora"
+                                          />
+                                        )}
+                                        {pcdIntelect && (
+                                          <span
+                                            title="Deficiência intelectual/mental"
+                                            role="img"
+                                            aria-label="Deficiência intelectual"
+                                          >
+                                            🧠
+                                          </span>
+                                        )}
+                                        {pcdMultipla && (
+                                          <span
+                                            title="Deficiência múltipla"
+                                            role="img"
+                                            aria-label="Deficiência múltipla"
+                                          >
+                                            🔗
+                                          </span>
+                                        )}
+                                        {pcdTEA && (
+                                          <span title="TEA" role="img" aria-label="autismo">
+                                            🧩
+                                          </span>
+                                        )}
+                                        {!pcdVisual &&
+                                          !pcdAuditiva &&
+                                          !pcdFisica &&
+                                          !pcdIntelect &&
+                                          !pcdMultipla &&
+                                          !pcdTEA && (
+                                            <span className="text-zinc-400">—</span>
+                                          )}
                                       </div>
                                       {/* Frequência */}
                                       <div className="sm:text-right">
-                                        {freqStr ? <PctPill value={freqStr} /> : <span className="text-zinc-400 text-sm">—</span>}
+                                        {freqStr ? (
+                                          <PctPill value={freqStr} />
+                                        ) : (
+                                          <span className="text-zinc-400 text-sm">—</span>
+                                        )}
                                       </div>
                                     </div>
 
@@ -427,7 +559,10 @@ export default function CardEventoadministrador({
 /* ========================= UI: Stat Card (mantido p/ topo) ========================= */
 function StatCard({ icon, label, value, title }) {
   return (
-    <div className="bg-white dark:bg-zinc-700 rounded-xl p-4 flex flex-col items-start shadow border border-gray-200 dark:border-zinc-600" title={title || label}>
+    <div
+      className="bg-white dark:bg-zinc-700 rounded-xl p-4 flex flex-col items-start shadow border border-gray-200 dark:border-zinc-600"
+      title={title || label}
+    >
       <div className="flex items-center gap-2 text-gray-600 dark:text-gray-300 mb-1">
         {icon}
         <span className="text-sm">{label}</span>

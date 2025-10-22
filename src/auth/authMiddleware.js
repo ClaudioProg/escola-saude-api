@@ -1,60 +1,65 @@
+// 📁 api/middlewares/auth.js
 /* eslint-disable no-console */
 const jwt = require("jsonwebtoken");
-const { db } = require("../db"); // ✅ import único e correto
+const cookie = require("cookie"); // só se você ainda não usa cookie-parser
+const { db } = require("../db");
 
-let warned = false; // avisa 1x em dev sobre req.user
+function toArrayLower(v) {
+  if (!v) return [];
+  const arr = Array.isArray(v) ? v : (typeof v === "string" ? v.split(",") : []);
+  return arr.map(s => String(s).toLowerCase().trim()).filter(Boolean);
+}
 
-/**
- * Middleware base: valida JWT e injeta req.user
- */
-function authMiddleware(req, res, next) {
+function normalizeUser(raw) {
+  const id = Number(raw?.sub ?? raw?.id ?? raw?.userId);
+  if (!Number.isFinite(id) || id <= 0) return null;
+  const roles = raw?.perfis ?? raw?.perfil ?? raw?.roles ?? [];
+  return {
+    id,
+    nome: raw?.nome ?? null,
+    cpf: raw?.cpf ?? null,
+    perfil: toArrayLower(roles), // array normalizado
+    raw,
+  };
+}
+
+function extractToken(req) {
+  // 1) Authorization: Bearer
   const h = req.headers.authorization || "";
   const m = h.match(/^Bearer\s+(.+)$/i);
-  if (!m) {
-    return res.status(401).json({ erro: "Não autenticado." });
-  }
+  if (m) return m[1];
 
-  const token = m[1];
+  // 2) Cookies (cookie-parser ou manual)
+  const c = req.cookies || cookie.parse(req.headers.cookie || "");
+  return (
+    c.token || c.jwt || c.access_token || c.auth || null
+  );
+}
 
+function authMiddleware(req, res, next) {
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-    // aceita sub (padrão JWT) ou id
-    const userId = decoded.sub ?? decoded.id;
-    if (!userId) {
-      return res.status(403).json({ erro: "Token inválido: id ausente." });
+    // Se outro middleware já setou req.user, só normaliza e segue
+    if (req.user && req.user.id) {
+      req.user = {
+        ...req.user,
+        id: Number(req.user.id),
+        perfil: toArrayLower(req.user.perfil ?? req.user.perfis ?? req.user.roles),
+      };
+      res.locals.user = req.user;
+      req.db = req.db ?? db;
+      return next();
     }
 
-    // normaliza perfil -> array
-    const perfil = Array.isArray(decoded.perfil)
-      ? decoded.perfil
-      : typeof decoded.perfil === "string"
-        ? decoded.perfil.split(",").map((p) => p.trim()).filter(Boolean)
-        : [];
+    const token = extractToken(req);
+    if (!token) return res.status(401).json({ erro: "Não autenticado." });
 
-    const user = {
-      id: String(userId),
-      cpf: decoded.cpf ?? null,
-      nome: decoded.nome ?? null,
-      perfil,
-    };
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = normalizeUser(decoded);
+    if (!user) return res.status(403).json({ erro: "Token inválido: id ausente." });
 
     req.db = req.db ?? db;
     req.user = user;
-    req.user = user; // compat temporária
-
-    if (process.env.NODE_ENV !== "production" && !warned) {
-      warned = true;
-      // padroniza: sempre colocar o usuário em res.locals.user (fonte única)
- // manter req.user apenas por compat (será removido depois)
- const user = decoded || null; // de onde você já extrai o payload do JWT
- res.locals.user = user;
- req.user = user; // compat
- if (!user || !user.id || !Number.isFinite(Number(user.id))) {
-   return res.status(401).json({ erro: "Não autorizado" });
- }
-    }
-
+    res.locals.user = user;
     return next();
   } catch (e) {
     console.error("🔴 JWT inválido:", e.message);
@@ -62,30 +67,24 @@ function authMiddleware(req, res, next) {
   }
 }
 
-/**
- * Wrapper: permite apenas usuários autenticados (qualquer papel)
- */
 function authAny(req, res, next) {
   return authMiddleware(req, res, next);
 }
 
-/**
- * Wrapper: exige perfil de administrador
- */
 function authAdmin(req, res, next) {
   return authMiddleware(req, res, (err) => {
     if (err) return next(err);
     const perfis = req.user?.perfil ?? [];
-    if (!perfis.includes("administrador")) {
+    // aceita "administrador" (oficial) e "admin" (fallback)
+    if (!(perfis.includes("administrador") || perfis.includes("admin"))) {
       return res.status(403).json({ erro: "Acesso restrito a administradores." });
     }
     next();
   });
 }
 
-/* ───────────────── Exports ───────────────── */
-module.exports = authMiddleware;           // default CJS
-module.exports.default = authMiddleware;   // compat
+module.exports = authMiddleware;
+module.exports.default = authMiddleware;
 module.exports.authMiddleware = authMiddleware;
 module.exports.authAny = authAny;
 module.exports.authAdmin = authAdmin;

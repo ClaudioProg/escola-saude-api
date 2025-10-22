@@ -2,7 +2,17 @@
 import { useEffect, useMemo, useRef, useState, useCallback, Suspense, lazy } from "react";
 import { toast } from "react-toastify";
 import Skeleton from "react-loading-skeleton";
-import { Users, RefreshCcw, ShieldCheck, Search } from "lucide-react";
+import {
+  Users,
+  RefreshCcw,
+  ShieldCheck,
+  Search,
+  Filter,
+  CheckCircle2,
+  Download,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
 
 import { apiGet, apiPut } from "../services/api";
 import Footer from "../components/Footer";
@@ -12,7 +22,8 @@ const ModalEditarPerfil = lazy(() => import("../components/ModalEditarPerfil"));
 
 const PERFIS_PERMITIDOS = ["usuario", "instrutor", "administrador"];
 
-/* ============ helpers ============ */
+/* ================= helpers ================= */
+const sLower = (v) => String(v ?? "").toLowerCase(); // ✔ string-safe sempre
 const onlyDigits = (s) => String(s || "").replace(/\D+/g, "");
 const maskCpf = (cpf, revealed = false) => {
   const d = onlyDigits(cpf).padStart(11, "0").slice(-11);
@@ -29,9 +40,59 @@ const idadeFrom = (isoOrDate) => {
   if (m < 0 || (m === 0 && today.getDate() < d.getDate())) age--;
   return age;
 };
+// CSV helpers
+const csvEscape = (v) => {
+  const s = String(v ?? "");
+  return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+const downloadBlob = (filename, blob) => {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+};
 
-/* ============ HeaderHero (três cores) ============ */
-function HeaderHero({ onAtualizar, atualizando, total }) {
+/* ============ Mini components ============ */
+function MiniStat({ label, value = "—", accent = "indigo" }) {
+  const map = {
+    indigo: "from-indigo-500 to-indigo-300",
+    emerald: "from-emerald-500 to-emerald-300",
+    amber: "from-amber-500 to-amber-300",
+    violet: "from-violet-500 to-violet-300",
+    fuchsia: "from-fuchsia-500 to-fuchsia-300",
+  };
+  return (
+    <div className="rounded-2xl bg-white/10 p-3 text-white backdrop-blur">
+      <div className={`inline-block rounded-lg bg-gradient-to-br ${map[accent] ?? map.indigo} px-2 py-1 text-xs font-semibold text-white`}>
+        {label}
+      </div>
+      <div className="mt-1 text-2xl font-extrabold">{value}</div>
+    </div>
+  );
+}
+
+function Chip({ active, onClick, children, ariaLabel }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active ? "true" : "false"}
+      aria-label={ariaLabel}
+      className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition
+        ${active ? "bg-violet-700 text-white" : "bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 hover:bg-zinc-300 dark:hover:bg-zinc-700"}`}
+    >
+      {active && <CheckCircle2 className="h-3.5 w-3.5" />}
+      {children}
+    </button>
+  );
+}
+
+/* ============ HeaderHero (3 cores + ministats) ============ */
+function HeaderHero({ onAtualizar, atualizando, total, kpis }) {
   return (
     <header
       className="relative isolate overflow-hidden bg-gradient-to-br from-indigo-900 via-violet-800 to-fuchsia-700 text-white"
@@ -52,46 +113,58 @@ function HeaderHero({ onAtualizar, atualizando, total }) {
         }}
         aria-hidden="true"
       />
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-10 md:py-12 min-h-[150px] sm:min-h-[180px]">
-        <div className="flex flex-col items-center text-center gap-3 sm:gap-4">
-          <div className="inline-flex items-center justify-center gap-2">
-            <Users className="w-6 h-6" aria-hidden="true" />
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-              Gestão de Usuários
-            </h1>
+      <div className="mx-auto max-w-6xl px-4 sm:px-6 py-8 sm:py-10 md:py-12">
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col items-center text-center gap-3">
+            <div className="inline-flex items-center justify-center gap-2">
+              <Users className="h-6 w-6" aria-hidden="true" />
+              <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
+                Gestão de Usuários
+              </h1>
+            </div>
+
+            <p className="text-sm sm:text-base text-white/90 max-w-2xl">
+              Busque, visualize e atualize perfis com segurança.
+            </p>
+
+            <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+              <button
+                type="button"
+                onClick={onAtualizar}
+                disabled={atualizando}
+                className={`inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition
+                ${atualizando ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-white/15 hover:bg-white/25"} text-white`}
+                aria-label="Atualizar lista de usuários"
+                aria-busy={atualizando ? "true" : "false"}
+              >
+                <RefreshCcw className="h-4 w-4" aria-hidden="true" />
+                {atualizando ? "Atualizando…" : "Atualizar"}
+              </button>
+
+              {typeof total === "number" && (
+                <span className="inline-flex items-center rounded-full bg-white/10 px-3 py-2 text-xs">
+                  {total} usuário{total === 1 ? "" : "s"}
+                </span>
+              )}
+            </div>
           </div>
 
-          <p className="text-sm sm:text-base text-white/90 max-w-2xl">
-            Busque, visualize e atualize perfis com segurança.
-          </p>
-
-          <div className="mt-2 sm:mt-3 flex flex-wrap items-center justify-center gap-2">
-            <button
-              type="button"
-              onClick={onAtualizar}
-              disabled={atualizando}
-              className={`inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition
-                ${atualizando ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-white/15 hover:bg-white/25"} text-white`}
-              aria-label="Atualizar lista de usuários"
-              aria-busy={atualizando ? "true" : "false"}
-            >
-              <RefreshCcw className="w-4 h-4" aria-hidden="true" />
-              {atualizando ? "Atualizando…" : "Atualizar"}
-            </button>
-
-            {typeof total === "number" && (
-              <span className="inline-flex items-center rounded-full bg-white/10 px-3 py-2 text-xs">
-                {total} usuário{total === 1 ? "" : "s"}
-              </span>
-            )}
+          {/* Ministats no próprio hero */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <MiniStat label="Totais" value={kpis.total} accent="indigo" />
+            <MiniStat label="Usuários" value={kpis.usuario} accent="emerald" />
+            <MiniStat label="Instrutores" value={kpis.instrutor} accent="amber" />
+            <MiniStat label="Administradores" value={kpis.administrador} accent="violet" />
           </div>
         </div>
       </div>
+
       <div className="absolute bottom-0 left-0 right-0 h-px bg-white/25" aria-hidden="true" />
     </header>
   );
 }
 
+/* ============ Página ============ */
 export default function GestaoUsuarios() {
   const [usuarios, setUsuarios] = useState([]);
   const [carregandoUsuarios, setCarregandoUsuarios] = useState(true);
@@ -99,13 +172,19 @@ export default function GestaoUsuarios() {
   const [busca, setBusca] = useState("");
   const [usuarioSelecionado, setUsuarioSelecionado] = useState(null);
   const [revealCpfIds, setRevealCpfIds] = useState(() => new Set());
-  const [hydrating, setHydrating] = useState(false); // mantém a flag, mas não hidrata em massa
+  const [hydrating, setHydrating] = useState(false); // mantém flag
   const searchRef = useRef(null);
   const liveRef = useRef(null);
 
-  // cache para o resumo por usuário (carregado sob demanda)
-  const [resumoCache, setResumoCache] = useState(() => new Map());       // id -> { cursos_concluidos_75, certificados_emitidos }
-  const [loadingResumo, setLoadingResumo] = useState(() => new Set());    // ids em carregamento
+  // cache para o resumo por usuário (sob demanda)
+  const [resumoCache, setResumoCache] = useState(() => new Map());    // id -> { cursos_concluidos_75, certificados_emitidos }
+  const [loadingResumo, setLoadingResumo] = useState(() => new Set()); // ids em carregamento
+
+  // NOVOS: filtros avançados + paginação
+  const [fUnidade, setFUnidade] = useState("todas");
+  const [fCargo, setFCargo] = useState("todos");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
 
   const setLive = (msg) => { if (liveRef.current) liveRef.current.textContent = msg; };
 
@@ -142,13 +221,13 @@ export default function GestaoUsuarios() {
         escolaridade_nome: u?.escolaridade_nome || u?.escolaridade || u?.escolaridade_id || null,
         cargo_nome: u?.cargo_nome || u?.cargo || u?.cargo_id || null,
         deficiencia_nome: u?.deficiencia_nome || u?.deficiencia || u?.deficiencia_id || null,
-        // valores que só virão quando o usuário abrir o “detalhe”:
+        // detalhes sob demanda:
         cursos_concluidos_75: undefined,
         certificados_emitidos: undefined,
       }));
 
       setUsuarios(enriched);
-      setResumoCache(new Map());     // limpa cache de resumos ao recarregar
+      setResumoCache(new Map()); // limpa cache ao recarregar
       setLive(`Usuários carregados: ${enriched.length}.`);
     } catch (e) {
       const msg = e?.message || "Erro ao carregar usuários.";
@@ -165,10 +244,19 @@ export default function GestaoUsuarios() {
 
   useEffect(() => { carregarUsuarios(); }, [carregarUsuarios]);
 
+  /* ---------- KPIs por perfil (para ministats) ---------- */
+  const kpis = useMemo(() => {
+    const total = usuarios.length;
+    const usuario = usuarios.filter((u) => sLower(u?.perfil) === "usuario").length;
+    const instrutor = usuarios.filter((u) => sLower(u?.perfil) === "instrutor").length;
+    const administrador = usuarios.filter((u) => sLower(u?.perfil) === "administrador").length;
+    return { total: String(total), usuario: String(usuario), instrutor: String(instrutor), administrador: String(administrador) };
+  }, [usuarios]);
+
   /* ---------- carregar resumo de UM usuário, sob demanda ---------- */
   async function carregarResumoUsuario(id) {
     if (!id) return;
-    if (resumoCache.has(id) || loadingResumo.has(id)) return; // já em cache ou em andamento
+    if (resumoCache.has(id) || loadingResumo.has(id)) return;
 
     setLoadingResumo((prev) => new Set(prev).add(id));
     try {
@@ -182,7 +270,6 @@ export default function GestaoUsuarios() {
         next.set(id, resumo);
         return next;
       });
-      // opcional: refletir no array principal (para aparecer no card imediatamente)
       setUsuarios((prev) => prev.map((u) => (u.id === id ? { ...u, ...resumo } : u)));
     } catch (e) {
       console.error("❌ resumo usuário", id, e);
@@ -199,7 +286,7 @@ export default function GestaoUsuarios() {
   /* ---------- salvar perfil ---------- */
   async function salvarPerfil(id, perfil) {
     let perfilStr = Array.isArray(perfil) ? perfil[0] : perfil;
-    perfilStr = String(perfilStr ?? "").trim().toLowerCase();
+    perfilStr = sLower(perfilStr).trim();
     if (!PERFIS_PERMITIDOS.includes(perfilStr)) {
       toast.error("Perfil inválido.");
       return;
@@ -220,22 +307,69 @@ export default function GestaoUsuarios() {
   /* ---------- busca com debounce ---------- */
   const [debouncedQ, setDebouncedQ] = useState("");
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedQ((busca || "").toLowerCase().trim()), 250);
+    const t = setTimeout(() => setDebouncedQ(sLower(busca).trim()), 250);
     return () => clearTimeout(t);
   }, [busca]);
 
-  /* ---------- filtro ---------- */
+  /* ---------- filtros por perfil (chips) ---------- */
+  const [fPerfis, setFPerfis] = useState(() => new Set(PERFIS_PERMITIDOS)); // já minúsculos
+  const togglePerfil = (p) => {
+    const key = sLower(p);
+    setFPerfis((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      if (next.size === 0) PERFIS_PERMITIDOS.forEach((x) => next.add(x)); // evita zerar tudo
+      return next;
+    });
+  };
+  const resetPerfis = () => setFPerfis(new Set(PERFIS_PERMITIDOS));
+
+  /* ---------- opções únicas (Unidade / Cargo) ---------- */
+  const { unidadesOpts, cargosOpts } = useMemo(() => {
+    const unidades = new Set();
+    const cargos = new Set();
+    (usuarios || []).forEach((u) => {
+      const un = (u?.unidade_nome ?? "").toString().trim();
+      const cg = (u?.cargo_nome ?? "").toString().trim();
+      if (un) unidades.add(un);
+      if (cg) cargos.add(cg);
+    });
+    const toSorted = (s) => Array.from(s).sort((a, b) => a.localeCompare(b, "pt-BR"));
+    return { unidadesOpts: toSorted(unidades), cargosOpts: toSorted(cargos) };
+  }, [usuarios]);
+
+  /* ---------- filtro final ---------- */
   const usuariosFiltrados = useMemo(() => {
     const q = debouncedQ;
-    if (!q) return usuarios;
+    const perfilOk = (p) => fPerfis.has(sLower(p));
+
     return (usuarios || []).filter((u) => {
-      const nome = (u?.nome || "").toLowerCase();
-      const email = (u?.email || "").toLowerCase();
-      const cpf = (u?.cpf || "").toLowerCase();
-      const registro = (u?.registro || "").toLowerCase();
+      if (!perfilOk(u?.perfil)) return false;
+
+      // Unidade/Cargo
+      if (fUnidade !== "todas" && String(u?.unidade_nome ?? "").trim() !== fUnidade) return false;
+      if (fCargo !== "todos" && String(u?.cargo_nome ?? "").trim() !== fCargo) return false;
+
+      if (!q) return true;
+
+      const nome = sLower(u?.nome);
+      const email = sLower(u?.email);
+      const cpf = sLower(u?.cpf);           // pode vir number → sLower resolve
+      const registro = sLower(u?.registro); // idem
+
       return nome.includes(q) || email.includes(q) || cpf.includes(q) || registro.includes(q);
     });
-  }, [usuarios, debouncedQ]);
+  }, [usuarios, debouncedQ, fPerfis, fUnidade, fCargo]);
+
+  /* ---------- paginação client-side ---------- */
+  const totalItems = usuariosFiltrados.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  useEffect(() => { setPage(1); }, [debouncedQ, fPerfis, fUnidade, fCargo, pageSize]); // reset ao mudar filtros
+  const pageClamped = Math.min(page, totalPages);
+  const sliceStart = (pageClamped - 1) * pageSize;
+  const sliceEnd = sliceStart + pageSize;
+  const usuariosPaginados = useMemo(() => usuariosFiltrados.slice(sliceStart, sliceEnd), [usuariosFiltrados, sliceStart, sliceEnd]);
 
   /* ---------- CPF reveal/ocultar por item ---------- */
   const onToggleCpf = (id) => {
@@ -247,10 +381,34 @@ export default function GestaoUsuarios() {
     });
   };
 
-  const anyLoading = carregandoUsuarios; // não hidratamos mais em massa
+  /* ---------- export CSV (lista filtrada, não paginada) ---------- */
+  const onExportCsv = () => {
+    try {
+      const headers = ["id", "nome", "email", "perfil", "unidade", "cargo", "escolaridade", "idade"];
+      const rows = usuariosFiltrados.map((u) => [
+        u?.id ?? "",
+        u?.nome ?? "",
+        u?.email ?? "",
+        u?.perfil ?? "",
+        u?.unidade_nome ?? "",
+        u?.cargo_nome ?? "",
+        u?.escolaridade_nome ?? "",
+        Number.isFinite(u?.idade) ? u.idade : "",
+      ]);
+      const content = [headers, ...rows].map((r) => r.map(csvEscape).join(";")).join("\n");
+      const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
+      downloadBlob(`usuarios_${new Date().toISOString().slice(0,10)}.csv`, blob);
+      toast.success("📄 CSV exportado da lista filtrada.");
+    } catch (e) {
+      console.error("CSV erro", e);
+      toast.error("Não foi possível exportar o CSV.");
+    }
+  };
+
+  const anyLoading = carregandoUsuarios;
 
   return (
-    <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
+    <div className="flex min-h-screen flex-col bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
       {/* live region acessível */}
       <p ref={liveRef} className="sr-only" aria-live="polite" />
 
@@ -259,72 +417,179 @@ export default function GestaoUsuarios() {
         onAtualizar={carregarUsuarios}
         atualizando={carregandoUsuarios || hydrating}
         total={usuarios?.length || 0}
+        kpis={kpis}
       />
 
       {/* progress bar fina */}
-      {(anyLoading) && (
+      {anyLoading && (
         <div
-          className="sticky top-0 left-0 w-full h-1 bg-fuchsia-100 z-40"
+          className="sticky top-0 z-40 h-1 w-full bg-fuchsia-100"
           role="progressbar"
           aria-valuemin={0}
           aria-valuemax={100}
           aria-label="Carregando dados"
         >
-          <div className="h-full bg-fuchsia-700 animate-pulse w-1/3" />
+          <div className="h-full w-1/3 animate-pulse bg-fuchsia-700" />
         </div>
       )}
 
-      <main id="conteudo" className="flex-1 max-w-6xl mx-auto px-3 sm:px-4 py-6">
-        {/* 🔍 Busca (sem KPIs agregados) */}
-        <section className="mb-5" aria-label="Busca">
-          <label className="sr-only" htmlFor="busca-usuarios">
-            Buscar por nome, e-mail, CPF ou registro
-          </label>
-          <div className="relative max-w-lg">
-            <Search
-              className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500"
-              aria-hidden="true"
-            />
-            <input
-              ref={searchRef}
-              id="busca-usuarios"
-              type="text"
-              autoComplete="off"
-              placeholder="Buscar por nome, e-mail, CPF ou registro…"
-              value={busca}
-              onChange={(e) => setBusca(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-violet-700 focus:outline-none dark:bg-gray-800 dark:text-white"
-              aria-describedby="resultados-count"
-            />
-            <p id="resultados-count" className="sr-only" aria-live="polite">
-              {usuariosFiltrados.length} resultado(s).
-            </p>
+      <main id="conteudo" className="mx-auto w-full max-w-6xl flex-1 px-3 sm:px-4 py-6">
+        {/* Barra de ações sticky (mobile-first) */}
+        <section
+          aria-label="Ferramentas de busca e filtros"
+          className="sticky top-1 z-30 mb-5 rounded-2xl border border-zinc-200 bg-white/80 p-3 backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/80"
+        >
+          <div className="flex flex-col gap-3">
+            {/* Linha 1: Busca */}
+            <div className="relative w-full">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" aria-hidden="true" />
+              <input
+                ref={searchRef}
+                id="busca-usuarios"
+                type="text"
+                autoComplete="off"
+                placeholder="Buscar por nome, e-mail, CPF ou registro… (/)"
+                value={busca}
+                onChange={(e) => setBusca(e.target.value)}
+                className="w-full rounded-xl border px-9 py-2 text-sm ring-offset-2 focus:outline-none focus:ring-2 focus:ring-violet-700 dark:border-zinc-700 dark:bg-zinc-800"
+                aria-describedby="resultados-count"
+              />
+              <p id="resultados-count" className="sr-only" aria-live="polite">
+                {usuariosFiltrados.length} resultado(s).
+              </p>
+            </div>
+
+            {/* Linha 2: filtros e ações */}
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              {/* Chips de perfil */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1 text-xs text-zinc-500">
+                  <Filter className="h-3.5 w-3.5" /> Perfis:
+                </span>
+                {PERFIS_PERMITIDOS.map((p) => (
+                  <Chip
+                    key={p}
+                    active={fPerfis.has(p)}
+                    onClick={() => togglePerfil(p)}
+                    ariaLabel={`Filtrar por perfil ${p}`}
+                  >
+                    {p}
+                  </Chip>
+                ))}
+                <button
+                  type="button"
+                  onClick={resetPerfis}
+                  className="text-xs underline decoration-dotted underline-offset-4 opacity-80 hover:opacity-100"
+                >
+                  limpar
+                </button>
+              </div>
+
+              {/* Selects Unidade / Cargo + Export */}
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={fUnidade}
+                  onChange={(e) => setFUnidade(e.target.value)}
+                  className="rounded-xl border px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-violet-700 dark:border-zinc-700 dark:bg-zinc-800"
+                  aria-label="Filtrar por unidade"
+                  title="Filtrar por unidade"
+                >
+                  <option value="todas">Todas as Unidades</option>
+                  {unidadesOpts.map((u) => (
+                    <option key={u} value={u}>{u}</option>
+                  ))}
+                </select>
+
+                <select
+                  value={fCargo}
+                  onChange={(e) => setFCargo(e.target.value)}
+                  className="rounded-xl border px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-violet-700 dark:border-zinc-700 dark:bg-zinc-800"
+                  aria-label="Filtrar por cargo"
+                  title="Filtrar por cargo"
+                >
+                  <option value="todos">Todos os Cargos</option>
+                  {cargosOpts.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+
+                <button
+                  type="button"
+                  onClick={onExportCsv}
+                  disabled={!usuariosFiltrados.length}
+                  className="inline-flex items-center gap-2 rounded-xl bg-violet-700 px-3 py-2 text-xs font-medium text-white hover:bg-violet-800 disabled:cursor-not-allowed disabled:opacity-60"
+                  title="Exportar CSV da lista filtrada"
+                >
+                  <Download className="h-4 w-4" />
+                  Exportar CSV
+                </button>
+              </div>
+            </div>
           </div>
         </section>
 
         {/* lista */}
         {carregandoUsuarios ? (
           <div className="space-y-4" aria-busy="true" aria-live="polite">
-            {[...Array(5)].map((_, i) => (
-              <Skeleton key={i} height={96} className="rounded-lg" />
+            {[...Array(6)].map((_, i) => (
+              <Skeleton key={i} height={96} className="rounded-2xl" />
             ))}
           </div>
         ) : erro ? (
-          <p className="text-red-500 text-center" role="alert">
+          <p className="text-center text-red-500" role="alert">
             {erro}
           </p>
         ) : (
-          <TabelaUsuarios
-            usuarios={Array.isArray(usuariosFiltrados) ? usuariosFiltrados : []}
-            onEditar={(usuario) => setUsuarioSelecionado(usuario)}
-            onToggleCpf={onToggleCpf}
-            isCpfRevealed={(id) => revealCpfIds.has(id)}
-            maskCpfFn={maskCpf}
-            /* 🔽 NOVO: carregamento sob demanda do resumo */
-            onCarregarResumo={carregarResumoUsuario}
-            isResumoLoading={(id) => loadingResumo.has(id)}
-            hasResumo={(id) => resumoCache.has(id)}
-          />
+          <>
+            <TabelaUsuarios
+              usuarios={Array.isArray(usuariosPaginados) ? usuariosPaginados : []}
+              onEditar={(usuario) => setUsuarioSelecionado(usuario)}
+              onToggleCpf={onToggleCpf}
+              isCpfRevealed={(id) => revealCpfIds.has(id)}
+              maskCpfFn={maskCpf}
+              /* carregamento sob demanda do resumo */
+              onCarregarResumo={carregarResumoUsuario}
+              isResumoLoading={(id) => loadingResumo.has(id)}
+              hasResumo={(id) => resumoCache.has(id)}
+            />
+
+            {/* Paginação */}
+            <div className="mt-4 flex flex-col items-center justify-between gap-3 sm:flex-row">
+              <div className="text-xs text-zinc-600 dark:text-zinc-400">
+                Mostrando <strong>{usuariosPaginados.length}</strong> de <strong>{totalItems}</strong> resultado(s)
+                — página {pageClamped} de {totalPages}
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-zinc-600 dark:text-zinc-400">Por página:</label>
+                <select
+                  value={pageSize}
+                  onChange={(e) => setPageSize(Number(e.target.value) || 25)}
+                  className="rounded-xl border px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-violet-700 dark:border-zinc-700 dark:bg-zinc-800"
+                >
+                  {[10, 25, 50, 100].map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={pageClamped <= 1}
+                  className="inline-flex items-center gap-1 rounded-xl border px-2 py-1.5 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                >
+                  <ChevronLeft className="h-4 w-4" /> Anterior
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={pageClamped >= totalPages}
+                  className="inline-flex items-center gap-1 rounded-xl border px-2 py-1.5 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                >
+                  Próxima <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          </>
         )}
 
         {/* modal (lazy) */}

@@ -618,6 +618,136 @@ async function listarSubmissoesAdmin(req, res) {
   }
 }
 
+/* ===================== Resumo de Avaliadores ===================== */
+/** GET /api/admin/avaliadores/resumo
+ * Retorna, por avaliador com encaminhamentos ativos:
+ *  - pendentes: submissões atribuídas a ele sem nenhuma nota dele ainda
+ *  - avaliados: submissões atribuídas a ele com pelo menos 1 nota dele
+ *  - total = pendentes + avaliados
+ */
+// Substitua toda a função por esta:
+async function resumoAvaliadores(req, res) {
+  try {
+    // segurança: só admin
+    const uid = getUserIdOptional(req);
+    const admin = await isAdmin(uid, db);
+    if (!admin) return res.status(403).json({ error: "Acesso negado." });
+
+    // helper: tenta uma lista de SQLs até uma funcionar
+    async function tryMany(sqlList) {
+      let lastErr = null;
+      for (const sql of sqlList) {
+        try {
+          return await db.any(sql);
+        } catch (e) {
+          // 42P01 = relation doesn't exist | 42703 = column doesn't exist
+          if (e?.code === "42P01" || e?.code === "42703") {
+            lastErr = e;
+            continue;
+          }
+          throw e; // outros erros: relança
+        }
+      }
+      if (lastErr) throw lastErr;
+      return [];
+    }
+
+    // Variantes:
+    //  - TSA nomeada como trabalhos_submissoes_avaliadores (mais comum)
+    //  - Itens com submissao_id (mais comum) OU trabalho_id (varia)
+    //  - fallback de prefixos: com/sem "trabalhos_"
+    const SQLs = [
+      // Variante A: nomes "trabalhos_*" + coluna submissao_id
+      `
+      WITH tsa_ativos AS (
+        SELECT DISTINCT tsa.avaliador_id, tsa.submissao_id
+        FROM trabalhos_submissoes_avaliadores tsa
+        WHERE tsa.revoked_at IS NULL
+      ),
+      avaliou AS (
+        SELECT DISTINCT ai.avaliador_id, ai.submissao_id
+        FROM trabalhos_avaliacoes_itens ai
+      )
+      SELECT
+        u.id, COALESCE(u.nome,'') AS nome, COALESCE(u.email,'') AS email,
+        COUNT(*) FILTER (WHERE av.avaliador_id IS NULL)     AS pendentes,
+        COUNT(*) FILTER (WHERE av.avaliador_id IS NOT NULL) AS avaliados
+      FROM tsa_ativos t
+      JOIN usuarios u ON u.id = t.avaliador_id
+      LEFT JOIN avaliou av
+        ON av.avaliador_id = t.avaliador_id
+       AND av.submissao_id = t.submissao_id
+      GROUP BY u.id, u.nome, u.email
+      ORDER BY COUNT(*) FILTER (WHERE av.avaliador_id IS NULL) DESC, u.nome ASC
+      `,
+
+      // Variante B: itens com trabalho_id (alguns schemas usam isso)
+      `
+      WITH tsa_ativos AS (
+        SELECT DISTINCT tsa.avaliador_id, tsa.submissao_id
+        FROM trabalhos_submissoes_avaliadores tsa
+        WHERE tsa.revoked_at IS NULL
+      ),
+      avaliou AS (
+        SELECT DISTINCT ai.avaliador_id, ai.trabalho_id AS submissao_id
+        FROM trabalhos_avaliacoes_itens ai
+      )
+      SELECT
+        u.id, COALESCE(u.nome,'') AS nome, COALESCE(u.email,'') AS email,
+        COUNT(*) FILTER (WHERE av.avaliador_id IS NULL)     AS pendentes,
+        COUNT(*) FILTER (WHERE av.avaliador_id IS NOT NULL) AS avaliados
+      FROM tsa_ativos t
+      JOIN usuarios u ON u.id = t.avaliador_id
+      LEFT JOIN avaliou av
+        ON av.avaliador_id = t.avaliador_id
+       AND av.submissao_id = t.submissao_id
+      GROUP BY u.id, u.nome, u.email
+      ORDER BY COUNT(*) FILTER (WHERE av.avaliador_id IS NULL) DESC, u.nome ASC
+      `,
+
+      // Variante C: sem prefixo "trabalhos_" nas tabelas
+      `
+      WITH tsa_ativos AS (
+        SELECT DISTINCT tsa.avaliador_id, tsa.submissao_id
+        FROM submissoes_avaliadores tsa
+        WHERE tsa.revoked_at IS NULL
+      ),
+      avaliou AS (
+        SELECT DISTINCT ai.avaliador_id, ai.submissao_id
+        FROM avaliacoes_itens ai
+      )
+      SELECT
+        u.id, COALESCE(u.nome,'') AS nome, COALESCE(u.email,'') AS email,
+        COUNT(*) FILTER (WHERE av.avaliador_id IS NULL)     AS pendentes,
+        COUNT(*) FILTER (WHERE av.avaliador_id IS NOT NULL) AS avaliados
+      FROM tsa_ativos t
+      JOIN usuarios u ON u.id = t.avaliador_id
+      LEFT JOIN avaliou av
+        ON av.avaliador_id = t.avaliador_id
+       AND av.submissao_id = t.submissao_id
+      GROUP BY u.id, u.nome, u.email
+      ORDER BY COUNT(*) FILTER (WHERE av.avaliador_id IS NULL) DESC, u.nome ASC
+      `,
+    ];
+
+    const rows = await tryMany(SQLs);
+
+    const avaliadores = rows.map(r => ({
+      id: r.id,
+      nome: r.nome,
+      email: r.email,
+      pendentes: Number(r.pendentes || 0),
+      avaliados: Number(r.avaliados || 0),
+      total: Number(r.pendentes || 0) + Number(r.avaliados || 0),
+    }));
+
+    return res.json({ avaliadores });
+  } catch (err) {
+    console.error("[resumoAvaliadores]", err);
+    return res.status(500).json({ error: "Erro ao gerar resumo de avaliadores." });
+  }
+}
+
 /* ===================== Exports ===================== */
 module.exports = {
   // helpers
@@ -631,6 +761,7 @@ module.exports = {
   // avaliadores
   listarAvaliadoresDaSubmissao,
   atribuirAvaliadores,
+  resumoAvaliadores,  // ✅ adicione esta linha
 
   // avaliações
   listarAvaliacoesDaSubmissao,

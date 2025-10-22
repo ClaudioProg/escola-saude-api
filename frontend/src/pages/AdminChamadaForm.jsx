@@ -1,6 +1,6 @@
 // 📁 src/pages/AdminChamadaForm.jsx
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import {
   Settings2, Save, Plus, Trash2, Pencil, Eye, EyeOff,
   CheckCircle2, XCircle, X, Loader2, FileText, AlertCircle, Upload, Download
@@ -194,7 +194,6 @@ function Modal({ open, onClose, title, children, footer, size = "lg", labelledBy
 }
 
 /* ─── Header (gradiente exclusivo desta página) ─── */
-/* ─── Header (gradiente exclusivo desta página) ─── */
 function HeaderHero({ counts = { total: "—", abertas: "—", encerradas: "—", publicadas: "—" } }) {
   return (
     <motion.header
@@ -233,12 +232,15 @@ function HeaderHero({ counts = { total: "—", abertas: "—", encerradas: "—"
 /* ─── Skeleton Item ─── */
 function ChamadaSkeleton() {
   return (
-    <div className="animate-pulse rounded-xl border p-3 dark:border-zinc-800">
-      <div className="h-4 w-1/2 rounded bg-zinc-200 dark:bg-zinc-700" />
-      <div className="mt-2 flex items-center gap-2">
-        <div className="h-4 w-24 rounded bg-zinc-200 dark:bg-zinc-700" />
-        <div className="h-4 w-20 rounded bg-zinc-200 dark:bg-zinc-700" />
-        <div className="h-4 w-40 rounded bg-zinc-200 dark:bg-zinc-700" />
+    <div className="relative overflow-hidden rounded-xl border p-3 dark:border-zinc-800">
+      <div className="absolute left-0 top-0 h-1 w-full bg-gradient-to-r from-indigo-400 via-violet-400 to-cyan-400" />
+      <div className="animate-pulse">
+        <div className="h-4 w-1/2 rounded bg-zinc-200 dark:bg-zinc-700" />
+        <div className="mt-2 flex items-center gap-2">
+          <div className="h-4 w-24 rounded bg-zinc-200 dark:bg-zinc-700" />
+          <div className="h-4 w-20 rounded bg-zinc-200 dark:bg-zinc-700" />
+          <div className="h-4 w-40 rounded bg-zinc-200 dark:bg-zinc-700" />
+        </div>
       </div>
     </div>
   );
@@ -246,6 +248,7 @@ function ChamadaSkeleton() {
 
 /* ─── Painel ─── */
 function ChamadasPainel({ onEditar, onNova, refreshSignal, onCountsChange }) {
+  const reduceMotion = useReducedMotion();
   const [lista, setLista] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
@@ -275,7 +278,7 @@ function ChamadasPainel({ onEditar, onNova, refreshSignal, onCountsChange }) {
   }, [lista]);
 
   // Avisa o topo quando os contadores mudarem
- useEffect(() => { onCountsChange?.(counts); }, [counts, onCountsChange]);
+  useEffect(() => { onCountsChange?.(counts); }, [counts, onCountsChange]);
 
   const visiveis = useMemo(() => {
     if (filtro === "todas") return lista;
@@ -309,9 +312,26 @@ function ChamadasPainel({ onEditar, onNova, refreshSignal, onCountsChange }) {
     return String(valor);
   };
 
+  // cor da barrinha no topo do card
+  const barColor = (c) => {
+    if (c.dentro_prazo === false) return "from-rose-600 via-rose-500 to-rose-400";
+    if (c.publicado) return "from-emerald-600 via-emerald-500 to-emerald-400";
+    return "from-indigo-600 via-violet-500 to-cyan-500";
+  };
+
   return (
     <Card>
-       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+      {/* barra fina global durante carregamento */}
+      {loading && (
+        <div
+          className="sticky top-0 left-0 -mx-4 sm:-mx-6 mb-3 h-1 bg-indigo-100"
+          role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-label="Carregando chamadas"
+        >
+          <div className={`h-full bg-indigo-600 w-1/3 ${reduceMotion ? "" : "animate-pulse"}`} />
+        </div>
+      )}
+
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         {/* Filtro como toggle group acessível */}
         <div role="group" aria-label="Filtro de chamadas" className="flex items-center gap-2">
           {["abertas", "encerradas", "todas"].map((key) => (
@@ -355,11 +375,14 @@ function ChamadasPainel({ onEditar, onNova, refreshSignal, onCountsChange }) {
           {visiveis.map((c) => (
             <div
               key={c.id}
-              className="flex flex-col gap-2 rounded-xl border p-3 text-sm dark:border-zinc-800 md:flex-row md:items-center md:justify-between"
+              className="relative overflow-hidden rounded-xl border p-3 text-sm dark:border-zinc-800 md:flex md:items-center md:justify-between"
             >
-              <div className="min-w-0">
+              {/* 🔹 Barrinha no topo do card (status) */}
+              <div className={`pointer-events-none absolute left-0 top-0 h-1 w-full bg-gradient-to-r ${barColor(c)}`} />
+
+              <div className="min-w-0 pr-1">
                 <div className="truncate font-medium">{c.titulo}</div>
-                <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
                   {c.publicado ? (
                     <Badge tone="emerald"><CheckCircle2 className="mr-1 h-3 w-3" aria-hidden="true" />Publicado</Badge>
                   ) : (
@@ -374,11 +397,11 @@ function ChamadasPainel({ onEditar, onNova, refreshSignal, onCountsChange }) {
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="mt-2 flex flex-wrap items-center gap-2 md:mt-0">
                 <button
                   type="button"
                   className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:hover:bg-zinc-800"
-                  onClick={() => onEditar?.(c.id)} title="Editar"
+                  onClick={() => onEditar?.(c.id)} title="Editar" aria-label={`Editar chamada ${c.titulo}`}
                 >
                   <Pencil className="h-4 w-4" aria-hidden="true" /> Editar
                 </button>
@@ -388,7 +411,7 @@ function ChamadasPainel({ onEditar, onNova, refreshSignal, onCountsChange }) {
                     type="button"
                     disabled={mutatingId === c.id}
                     className="inline-flex items-center gap-1 rounded-lg bg-zinc-100 px-2.5 py-1.5 hover:bg-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-zinc-800 dark:hover:bg-zinc-700"
-                    onClick={() => publicar(c.id, false)} title="Despublicar"
+                    onClick={() => publicar(c.id, false)} title="Despublicar" aria-label={`Despublicar chamada ${c.titulo}`}
                   >
                     <EyeOff className="h-4 w-4" aria-hidden="true" /> Despublicar
                   </button>
@@ -397,7 +420,7 @@ function ChamadasPainel({ onEditar, onNova, refreshSignal, onCountsChange }) {
                     type="button"
                     disabled={mutatingId === c.id}
                     className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1.5 text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    onClick={() => publicar(c.id, true)} title="Publicar"
+                    onClick={() => publicar(c.id, true)} title="Publicar" aria-label={`Publicar chamada ${c.titulo}`}
                   >
                     <Eye className="h-4 w-4" aria-hidden="true" /> Publicar
                   </button>
@@ -407,7 +430,7 @@ function ChamadasPainel({ onEditar, onNova, refreshSignal, onCountsChange }) {
                   type="button"
                   disabled={mutatingId === c.id}
                   className="inline-flex items-center gap-1 rounded-lg bg-rose-600 px-2.5 py-1.5 text-white hover:bg-rose-700 focus:outline-none focus:ring-2 focus:ring-rose-500"
-                  onClick={() => setConfirmId(c.id)} title="Excluir"
+                  onClick={() => setConfirmId(c.id)} title="Excluir" aria-label={`Excluir chamada ${c.titulo}`}
                 >
                   <Trash2 className="h-4 w-4" aria-hidden="true" /> Excluir
                 </button>

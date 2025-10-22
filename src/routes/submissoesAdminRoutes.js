@@ -89,4 +89,18 @@ router.get(
   trabalhosCtrl.obterSubmissao
 );
 
+ // Versão ADMIN (a que o front usa)
+ router.get(
+   "/admin/avaliadores/resumo",
+   requireAdmin,
+   ctrl.resumoAvaliadores
+ );
+
+ // (Opcional) manter um alias também protegido
+ router.get(
+   "/avaliadores/resumo",
+   requireAdmin,
+   ctrl.resumoAvaliadores
+ );
+
 module.exports = router;

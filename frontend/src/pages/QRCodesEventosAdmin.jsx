@@ -1,4 +1,4 @@
-// ✅ src/pages/QRCodesEventosAdmin.jsx (mobile-first, a11y, UX, cores exclusivas)
+// ✅ src/pages/QRCodesEventosAdmin.jsx (mobile-first, a11y, UX, com barrinha nos cards)
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { toast } from "react-toastify";
 import { QrCode, RefreshCcw, Search, X, Loader2 } from "lucide-react";
@@ -56,6 +56,23 @@ const tituloEvento = (ev) => safeStr(ev?.titulo || ev?.nome || `Evento #${ev?.id
 const tituloTurma = (t) => safeStr(t?.nome || `Turma #${t?.id ?? "—"}`, 170);
 const normaliza = (s) => String(s || "").toLowerCase();
 
+/* 🎨 Barrinha de cor determinística por card */
+const STRIPES = [
+  "from-emerald-700 to-teal-500",
+  "from-sky-700 to-cyan-500",
+  "from-indigo-700 to-violet-600",
+  "from-pink-700 to-rose-600",
+  "from-amber-600 to-yellow-500",
+  "from-lime-700 to-green-600",
+  "from-fuchsia-700 to-pink-600",
+];
+const hash = (s) => {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+};
+const stripeClassFor = (seed) => STRIPES[hash(String(seed)) % STRIPES.length];
+
 /* ---------------- Cache (sessionStorage) ---------------- */
 const CACHE_KEY = "qr:eventos:v1";
 const CACHE_TTL = 3 * 60 * 1000; // 3 min
@@ -99,7 +116,6 @@ export default function QRCodesEventosAdmin() {
 
   /* ---------------- Carregar dados (Abort + Cache) ---------------- */
   const carregar = useCallback(async () => {
-    // cancela requests anteriores
     abortRef.current?.abort?.();
     const ac = new AbortController();
     abortRef.current = ac;
@@ -109,11 +125,9 @@ export default function QRCodesEventosAdmin() {
     setLive("Carregando eventos e turmas…");
 
     try {
-      // services/api geralmente já prefixa /api
       const listaEventos = await apiGet("eventos", { on403: "silent", signal: ac.signal });
       const eventosArr = Array.isArray(listaEventos) ? listaEventos : [];
 
-      // turmas por evento em paralelo
       const withTurmas = await Promise.all(
         eventosArr.map(async (ev) => {
           try {
@@ -145,7 +159,6 @@ export default function QRCodesEventosAdmin() {
     }
   }, [setLive]);
 
-  // primeiro paint: tenta cache e depois atualiza
   useEffect(() => {
     const cached = readCache();
     if (cached) {
@@ -189,7 +202,6 @@ export default function QRCodesEventosAdmin() {
             : "";
           return evMatch || tTitle.includes(q) || normaliza(instr).includes(q);
         });
-        // mantém o evento se o próprio nome casar OU se sobrar alguma turma filtrada
         const keepEvento = evMatch || turmasFiltradas.length > 0;
         return keepEvento ? { ...e, turmas: turmasFiltradas } : null;
       })
@@ -210,7 +222,7 @@ export default function QRCodesEventosAdmin() {
   /* ---------------- Ações ---------------- */
   const handleGerarPDF = useCallback(
     async (t, evTitle, instrutores) => {
-      if (gerando) return; // evita duplo clique/global gerando
+      if (gerando) return;
       const turmaId = t?.id;
       setGerando(turmaId);
       try {
@@ -230,11 +242,10 @@ export default function QRCodesEventosAdmin() {
     [handleGerarPDF]
   );
 
-  // "Gerar todos" por evento
   const gerarTodosDoEvento = useCallback(
     async (ev) => {
       if (!Array.isArray(ev?.turmas) || !ev.turmas.length || gerando) return;
-      setGerando(-1); // sentinela global
+      setGerando(-1);
       try {
         const instrutores =
           (Array.isArray(ev?.instrutor)
@@ -258,7 +269,7 @@ export default function QRCodesEventosAdmin() {
   );
 
   return (
-    <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
+    <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white overflow-x-hidden">
       <HeaderHero onRefresh={carregar} carregando={carregandoDados} />
 
       {/* barra de progresso fina no topo */}
@@ -275,8 +286,7 @@ export default function QRCodesEventosAdmin() {
         </div>
       )}
 
-      <main id="conteudo" tabIndex={-1} role="main" className="flex-1 px-3 sm:px-4 py-6 max-w-6xl mx-auto">
-        {/* Live region acessível */}
+      <main id="conteudo" tabIndex={-1} role="main" className="flex-1 px-3 sm:px-4 py-6 max-w-6xl mx-auto min-w-0">
         <p ref={liveRef} className="sr-only" aria-live="polite" role="status" />
         {!!erro && (
           <p ref={erroRef} className="sr-only" role="alert" aria-live="assertive">
@@ -356,14 +366,18 @@ export default function QRCodesEventosAdmin() {
           ) : (
             eventosFiltrados.map((ev) => {
               const evTitle = tituloEvento(ev);
+              const stripe = stripeClassFor(ev.id ?? evTitle);
 
               return (
                 <article
                   key={ev.id}
-                  className="bg-white dark:bg-zinc-800 rounded-xl shadow p-4"
+                  className="relative bg-white dark:bg-zinc-800 rounded-2xl shadow border border-zinc-200 dark:border-zinc-700 p-4"
                   role="group"
                   aria-label={`Evento ${evTitle}`}
                 >
+                  {/* 🔹 Barrinha colorida no topo do card */}
+                  <div className={`pointer-events-none absolute inset-x-0 -top-px h-2 rounded-t-2xl bg-gradient-to-r ${stripe}`} />
+
                   <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                     <h3 className="text-base sm:text-lg font-semibold text-lousa dark:text-white break-words">
                       {evTitle}
@@ -398,7 +412,6 @@ export default function QRCodesEventosAdmin() {
                   ) : (
                     <ul className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
                       {ev.turmas.map((t) => {
-                        // tenta pegar instrutores do evento ou da turma
                         const nomesInstrutores =
                           (Array.isArray(ev?.instrutor) && ev.instrutor.length
                             ? ev.instrutor.map((i) => i?.nome).filter(Boolean)
@@ -413,9 +426,14 @@ export default function QRCodesEventosAdmin() {
                         return (
                           <li
                             key={t.id}
-                            className="border rounded-lg p-3 flex items-center justify-between gap-3 dark:border-zinc-700"
+                            className="relative border rounded-xl p-3 flex items-center justify-between gap-3 dark:border-zinc-700 bg-white/70 dark:bg-zinc-900/40"
                           >
-                            <div className="min-w-0">
+                            {/* 👉 Filete lateral para hierarquia da turma */}
+                            <span
+                              aria-hidden="true"
+                              className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-xl bg-gradient-to-b ${stripe}`}
+                            />
+                            <div className="min-w-0 pl-2">
                               <p className="font-medium text-gray-800 dark:text-gray-100 truncate">
                                 {tTitle}
                               </p>

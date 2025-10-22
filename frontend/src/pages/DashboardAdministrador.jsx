@@ -1,4 +1,4 @@
-// ✅ src/pages/DashboardAdministrador.jsx (mobile-first + a11y refinado)
+// ✅ src/pages/DashboardAdministrador.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "react-toastify";
 
@@ -8,7 +8,7 @@ import { apiGet } from "../services/api";
 import Skeleton from "react-loading-skeleton";
 import { useReducedMotion } from "framer-motion";
 
-/* ========= HeaderHero (mobile-first) ========= */
+/* ========= HeaderHero (mobile-first | página com identidade própria) ========= */
 function HeaderHero({ nome, carregando, onRefresh }) {
   return (
     <header
@@ -66,6 +66,72 @@ const formatarDataBR = (isoYMD) => {
   const d = ymd(isoYMD);
   return d ? d.split("-").reverse().join("/") : "";
 };
+
+/* ========================= MiniStats ========================= */
+function MiniStats({ eventos, turmasPorEvento /*, presencasPorTurma, inscritosPorTurma*/ }) {
+  // status por evento
+  const contadores = useMemo(() => {
+    let programado = 0, andamento = 0, encerrado = 0;
+    const agora = new Date();
+
+    for (const ev of eventos) {
+      const diAgg = ymd(ev.data_inicio_geral || ev.data_inicio || ev.data);
+      const dfAgg = ymd(ev.data_fim_geral || ev.data_fim || ev.data);
+      const hiAgg = onlyHHmm(ev.horario_inicio_geral || ev.horario_inicio || "00:00");
+      const hfAgg = onlyHHmm(ev.horario_fim_geral || ev.horario_fim || "23:59");
+
+      let inicioDT = diAgg ? toLocalDate(diAgg, hiAgg) : null;
+      let fimDT = dfAgg ? toLocalDate(dfAgg, hfAgg) : null;
+
+      // fallback por turmas
+      if (!inicioDT || !fimDT) {
+        const turmas = turmasPorEvento?.[ev.id] || [];
+        const starts = [], ends = [];
+        for (const t of turmas) {
+          const di = ymd(t.data_inicio);
+          const df = ymd(t.data_fim);
+          const hi = onlyHHmm(t.horario_inicio || "00:00");
+          const hf = onlyHHmm(t.horario_fim || "23:59");
+          const s = di ? toLocalDate(di, hi) : null;
+          const e = df ? toLocalDate(df, hf) : null;
+          if (s) starts.push(s.getTime());
+          if (e) ends.push(e.getTime());
+        }
+        if (starts.length) inicioDT = new Date(Math.min(...starts));
+        if (ends.length) fimDT = new Date(Math.max(...ends));
+      }
+
+      if (!inicioDT || !fimDT) continue;
+      if (inicioDT > agora) programado++;
+      else if (inicioDT <= agora && fimDT >= agora) andamento++;
+      else if (fimDT < agora) encerrado++;
+    }
+
+    return { programado, andamento, encerrado };
+  }, [eventos, turmasPorEvento]);
+
+  const cards = [
+    { key: "programado", label: "Programados", value: contadores.programado, color: "from-emerald-700 to-emerald-500" },
+    { key: "em_andamento", label: "Em andamento", value: contadores.andamento, color: "from-amber-600 to-amber-400" },
+    { key: "encerrado", label: "Encerrados", value: contadores.encerrado, color: "from-rose-700 to-rose-500" },
+  ];
+
+  return (
+    <section aria-label="Indicadores gerais"
+      className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-4 sm:mb-6"
+    >
+      {cards.map(c => (
+        <div key={c.key}
+          className={`rounded-2xl text-white p-4 shadow ring-1 ring-black/5 bg-gradient-to-br ${c.color} min-w-0`}
+        >
+          <p className="text-xs/5 opacity-90">{c.label}</p>
+          <p className="text-2xl font-extrabold mt-1">{c.value}</p>
+        </div>
+      ))}
+    </section>
+  );
+}
+
 /* ================================================== */
 
 export default function DashboardAdministrador() {
@@ -124,7 +190,6 @@ export default function DashboardAdministrador() {
     setCarregando(true);
     try {
       setLive("Carregando eventos…");
-      // ✅ padronizado sem /api (o client já prefixa)
       const data = await apiGet("eventos", { on403: "silent" });
       if (!mounted.current) return;
       setEventos(Array.isArray(data) ? data : []);
@@ -135,7 +200,6 @@ export default function DashboardAdministrador() {
       toast.error("❌ Erro ao carregar eventos");
       setErro("Erro ao carregar eventos");
       setLive("Falha ao carregar eventos.");
-      // melhora a11y: foca na mensagem de erro
       setTimeout(() => erroRef.current?.focus(), 0);
     } finally {
       if (mounted.current) setCarregando(false);
@@ -204,15 +268,13 @@ export default function DashboardAdministrador() {
 
       const occurred = datas.filter((d) => {
         const di = String(d?.data || d).slice(0, 10);
-        const hi = onlyHHmm(d?.horario_inicio || "23:59"); // se hoje, só ocorre após o horário
-        // Se data < hoje → ocorreu; se data === hoje → ocorreu se horário <= agora
+        const hi = onlyHHmm(d?.horario_inicio || "23:59");
         return di < hojeY || (di === hojeY && hi <= hhmmAgora);
       });
 
       const ocorridosSet = new Set(occurred.map((d) => String(d?.data || d).slice(0, 10)));
       const totalOcorridos = occurred.length || 0;
 
-      // ✅ frequência baseada SOMENTE nos ocorridos (usa exato para elegibilidade)
       const lista = usuarios.map((u) => {
         const presentesEmOcorridos = (u.presencas || []).reduce((acc, p) => {
           const dia = String(p?.data_presenca || p?.data).slice(0, 10);
@@ -222,7 +284,7 @@ export default function DashboardAdministrador() {
         const percExato =
           totalOcorridos > 0 ? (presentesEmOcorridos / totalOcorridos) * 100 : 0;
         const freqNum = Math.round(percExato);
-        const elegivel = percExato >= 75; // regra usa o exato, não o arredondado
+        const elegivel = percExato >= 75;
 
         return {
           usuario_id: u.id,
@@ -241,7 +303,7 @@ export default function DashboardAdministrador() {
 
           elegivel,
           perc_exato: percExato,
-          frequencia_num: freqNum, // exibição
+          frequencia_num: freqNum,
           frequencia: `${freqNum}%`,
 
           presentes_ocorridos: presentesEmOcorridos,
@@ -339,6 +401,7 @@ export default function DashboardAdministrador() {
       const doc = new jsPDF();
       doc.setFontSize(16);
       doc.text("Relatório de Presença por Turma", 14, 20);
+      // ✅ options em um único objeto (fix)
       autoTable(doc, {
         startY: 30,
         head: [["Nome", "CPF", "Presença (≥75%)"]],
@@ -375,7 +438,7 @@ export default function DashboardAdministrador() {
 
       let pres = presencasPorTurma[turmaId];
       if (!pres) {
-        pres = await carregarPresencas(turmaId); // ✅ usa retorno para evitar race
+        pres = await carregarPresencas(turmaId);
       }
 
       const todasTurmas = Object.values(turmasPorEvento).flat();
@@ -410,7 +473,6 @@ export default function DashboardAdministrador() {
         );
       if (hi || hf) doc.text(`Horário: ${hi} às ${hf}`, 14, 36);
 
-      // ✅ Resumo com a nova regra
       const totalInscritos = inscritos.length;
       const listaPres = pres?.lista || [];
       const elegiveis = listaPres.filter((u) => u.elegivel === true).length;
@@ -437,6 +499,7 @@ export default function DashboardAdministrador() {
         return idade >= 0 && idade < 140 ? `${idade}` : "";
       };
 
+      // Tabela
       autoTable(doc, {
         startY: 48,
         head: [["Nome", "CPF", "Idade", "Registro", "PcD", "Frequência"]],
@@ -526,6 +589,40 @@ export default function DashboardAdministrador() {
     return true;
   };
 
+  // helper: deduz o status do evento (programado | em_andamento | encerrado)
+  function getStatusEvento(evento) {
+    const agora = new Date();
+    const diAgg = ymd(evento.data_inicio_geral || evento.data_inicio || evento.data);
+    const dfAgg = ymd(evento.data_fim_geral || evento.data_fim || evento.data);
+    const hiAgg = onlyHHmm(evento.horario_inicio_geral || evento.horario_inicio || "00:00");
+    const hfAgg = onlyHHmm(evento.horario_fim_geral || evento.horario_fim || "23:59");
+
+    const toDT = (d, h) => (d ? toLocalDate(d, h) : null);
+    let inicioDT = toDT(diAgg, hiAgg);
+    let fimDT = toDT(dfAgg, hfAgg);
+
+    if (!inicioDT || !fimDT) {
+      const turmas = turmasPorEvento?.[evento.id] || [];
+      const starts = [], ends = [];
+      for (const t of turmas) {
+        const di = ymd(t.data_inicio), df = ymd(t.data_fim);
+        const hi = onlyHHmm(t.horario_inicio || "00:00");
+        const hf = onlyHHmm(t.horario_fim || "23:59");
+        const s = di ? toLocalDate(di, hi) : null;
+        const e = df ? toLocalDate(df, hf) : null;
+        if (s) starts.push(s.getTime());
+        if (e) ends.push(e.getTime());
+      }
+      if (starts.length) inicioDT = new Date(Math.min(...starts));
+      if (ends.length)   fimDT    = new Date(Math.max(...ends));
+    }
+
+    if (!inicioDT || !fimDT) return "todos";
+    if (inicioDT > agora) return "programado";
+    if (inicioDT <= agora && fimDT >= agora) return "em_andamento";
+    return "encerrado";
+  }
+
   const eventosOrdenados = useMemo(() => {
     return [...eventos].sort((a, b) => {
       const aDT = toLocalDate(
@@ -566,7 +663,7 @@ export default function DashboardAdministrador() {
   };
 
   return (
-    <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
+    <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white overflow-x-hidden">
       <HeaderHero nome={nome} carregando={carregando} onRefresh={carregarEventos} />
 
       {carregando && (
@@ -583,52 +680,58 @@ export default function DashboardAdministrador() {
         </div>
       )}
 
-      <main id="conteudo" className="flex-1 max-w-6xl mx-auto px-3 sm:px-4 py-5 sm:py-6">
+      <main id="conteudo" className="flex-1 max-w-6xl mx-auto px-3 sm:px-4 py-5 sm:py-6 min-w-0">
         <p ref={liveRef} className="sr-only" aria-live="polite" aria-atomic="true" />
 
-        {/* Filtros: chips + busca (mobile-friendly) */}
+        {/* 🔢 MiniStats no topo */}
+        <MiniStats
+          eventos={eventos}
+          turmasPorEvento={turmasPorEvento}
+          presencasPorTurma={presencasPorTurma}
+          inscritosPorTurma={inscritosPorTurma}
+        />
+
+        {/* Filtros: chips + busca (agora com WRAP, sem rolagem horizontal) */}
         <section
           className="bg-white dark:bg-gray-800 rounded-xl shadow p-3 sm:p-4 mb-4 sm:mb-6"
           aria-label="Filtros por status do evento"
         >
           <div className="flex flex-col gap-3">
-            <div className="-mx-3 px-3 overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-700">
-              <nav
-                className="flex gap-2 sm:gap-3 min-w-fit snap-x"
-                role="tablist"
-                aria-label="Filtros por status"
-                onKeyDown={onTabKeyDown}
-              >
-                {[
-                  { key: "todos", label: "Todos" },
-                  { key: "programado", label: "Programados" },
-                  { key: "em_andamento", label: "Em andamento" },
-                  { key: "encerrado", label: "Encerrados" },
-                ].map(({ key, label }) => {
-                  const active = filtroStatus === key;
-                  return (
-                    <button
-                      key={key}
-                      role="tab"
-                      tabIndex={active ? 0 : -1}
-                      aria-selected={active}
-                      aria-controls={`painel-${key}`}
-                      onClick={() => setFiltroStatus(key)}
-                      className={`snap-start px-4 py-2 rounded-full text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500
-                        ${
-                          active
-                            ? "bg-pink-600 text-white"
-                            : "bg-gray-200 text-gray-900 hover:bg-gray-300 dark:bg-gray-700 dark:text-white"
-                        }`}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
-              </nav>
-            </div>
+            <nav
+              className="flex flex-wrap gap-2 sm:gap-3 min-w-0"
+              role="tablist"
+              aria-label="Filtros por status"
+              onKeyDown={onTabKeyDown}
+            >
+              {[
+                { key: "todos", label: "Todos" },
+                { key: "programado", label: "Programados" },
+                { key: "em_andamento", label: "Em andamento" },
+                { key: "encerrado", label: "Encerrados" },
+              ].map(({ key, label }) => {
+                const active = filtroStatus === key;
+                return (
+                  <button
+                    key={key}
+                    role="tab"
+                    tabIndex={active ? 0 : -1}
+                    aria-selected={active}
+                    aria-controls={`painel-${key}`}
+                    onClick={() => setFiltroStatus(key)}
+                    className={`px-4 py-2 rounded-full text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2
+                      ${
+                        active
+                          ? "bg-pink-600 text-white focus-visible:ring-pink-500"
+                          : "bg-gray-200 text-gray-900 hover:bg-gray-300 dark:bg-gray-700 dark:text-white focus-visible:ring-gray-400"
+                      }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </nav>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 min-w-0">
               <label htmlFor="busca-evento" className="sr-only">
                 Buscar evento pelo nome
               </label>
@@ -639,7 +742,7 @@ export default function DashboardAdministrador() {
                 placeholder="Buscar evento pelo nome…"
                 value={busca}
                 onChange={(e) => setBusca(e.target.value)}
-                className="flex-1 px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 dark:bg-zinc-800 dark:text-white text-sm"
+                className="flex-1 px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 dark:bg-zinc-800 dark:text-white text-sm min-w-0"
                 aria-describedby="dica-busca"
               />
               <button
@@ -647,7 +750,7 @@ export default function DashboardAdministrador() {
                 onClick={() => setBusca("")}
                 disabled={!busca}
                 aria-disabled={!busca}
-                className={`px-3 py-2 rounded-md text-sm ${
+                className={`px-3 py-2 rounded-md text-sm shrink-0 ${
                   !busca
                     ? "bg-gray-200/60 dark:bg-gray-700/60 cursor-not-allowed"
                     : "bg-gray-200 dark:bg-gray-700"
@@ -688,7 +791,7 @@ export default function DashboardAdministrador() {
           id={`painel-${filtroStatus}`}
           role="tabpanel"
           aria-label="Lista de eventos filtrados"
-          className="space-y-3 sm:space-y-4"
+          className="space-y-3 sm:space-y-4 min-w-0"
         >
           {carregando && (
             <>
@@ -700,24 +803,25 @@ export default function DashboardAdministrador() {
 
           {!carregando &&
             eventosFiltrados.map((evento) => (
-              <CardEventoadministrador
-                key={evento.id}
-                evento={evento}
-                expandido={eventoExpandido === evento.id}
-                toggleExpandir={toggleExpandir}
-                turmas={turmasPorEvento[evento.id] || []}
-                carregarInscritos={carregarInscritos}
-                inscritosPorTurma={inscritosPorTurma}
-                carregarAvaliacoes={carregarAvaliacoes}
-                avaliacoesPorTurma={avaliacoesPorTurma}
-                presencasPorTurma={presencasPorTurma}
-                carregarPresencas={carregarPresencas}
-                gerarRelatorioPDF={gerarRelatorioPDF}
-                gerarPdfInscritosTurma={gerarPdfInscritosTurma}
-                // ✅ Novas helpers para o card exibir % correta (≥ 75%)
-                calcularPctTurma={(turmaId) => porcentagemPresencaTurma(turmaId)}
-                calcularPctEvento={(eventoId) => porcentagemPresencaEvento(eventoId)}
-              />
+              <div key={evento.id} className="min-w-0">
+                <CardEventoadministrador
+                  evento={evento}
+                  expandido={eventoExpandido === evento.id}
+                  toggleExpandir={toggleExpandir}
+                  turmas={turmasPorEvento[evento.id] || []}
+                  carregarInscritos={carregarInscritos}
+                  inscritosPorTurma={inscritosPorTurma}
+                  carregarAvaliacoes={carregarAvaliacoes}
+                  avaliacoesPorTurma={avaliacoesPorTurma}
+                  presencasPorTurma={presencasPorTurma}
+                  carregarPresencas={carregarPresencas}
+                  gerarRelatorioPDF={gerarRelatorioPDF}
+                  gerarPdfInscritosTurma={gerarPdfInscritosTurma}
+                  // ✅ helpers para % correta (≥ 75%)
+                  calcularPctTurma={(turmaId) => porcentagemPresencaTurma(turmaId)}
+                  calcularPctEvento={(eventoId) => porcentagemPresencaEvento(eventoId)}
+                />
+              </div>
             ))}
 
           {!carregando && eventosFiltrados.length === 0 && (

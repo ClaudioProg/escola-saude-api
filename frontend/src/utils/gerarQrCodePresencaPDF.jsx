@@ -122,12 +122,12 @@ export async function gerarQrCodePresencaPDF(
 
     // Título do evento
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(22);
+    doc.setFontSize(26);
     doc.text(String(nomeEvento || "Evento"), centerX, 26, { align: "center" });
 
     // Instrutor
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(14);
+    doc.setFontSize(12);
     doc.text(`Instrutor: ${nomeInstrutor || "—"}`, centerX, 36, { align: "center" });
 
     // QR centralizado
@@ -137,10 +137,10 @@ export async function gerarQrCodePresencaPDF(
     doc.addImage(dataUrl, "PNG", qrX, qrY, qrWmm, qrWmm);
 
     // Mensagem
-    doc.setFontSize(12);
+    doc.setFontSize(14);
     doc.setTextColor(60);
     doc.text(
-      "Escaneie este QR Code para confirmar sua presença",
+      "Faça o Login na Plataforma e após, Escaneie este QR Code para confirmar sua presença",
       centerX,
       qrY + qrWmm + 14,
       { align: "center" }
