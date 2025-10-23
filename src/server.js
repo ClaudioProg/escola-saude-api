@@ -93,8 +93,7 @@ app.use(
       directives: {
         "default-src": ["'self'"],
         "base-uri": ["'self'"],
-        "font-src": ["'self'", "data:", "https:"],
-        // ⬇️ permite data: e blob: para inline/preview
+        "font-src": ["'self'", "data:", "https:", "https://fonts.gstatic.com"],
         "img-src": ["'self'", "data:", "https:", "blob:"],
         "object-src": ["'none'"],
         "script-src": [
@@ -105,7 +104,13 @@ app.use(
           "'strict-dynamic'",
           ...(IS_DEV ? ["'unsafe-eval'", "'unsafe-inline'"] : []),
         ],
-        "style-src": ["'self'", "'unsafe-inline'"],
+        // ⬇️ adições importantes aqui
+        "style-src": [
+          "'self'",
+          "'unsafe-inline'",                 // mantenha por enquanto (pode endurecer depois)
+          "https://fonts.googleapis.com",
+          "https://accounts.google.com/gsi/style",
+        ],
         "connect-src": [
           "'self'",
           "https://escola-saude-api.onrender.com",
@@ -115,7 +120,6 @@ app.use(
           ...(IS_DEV ? ["ws:", "http://localhost:5173", "http://127.0.0.1:5173"] : []),
         ],
         "frame-src": ["https://accounts.google.com"],
-        // ⬇️ inclui blob: para players/viewers modernos
         "media-src": ["'self'", "https:", "blob:"],
         "worker-src": ["'self'", "blob:"],
         "frame-ancestors": ["'self'"],

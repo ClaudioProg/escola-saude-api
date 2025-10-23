@@ -16,6 +16,65 @@ import { useOnceEffect } from "../hooks/useOnceEffect";
 /* ─────────────── utils ─────────────── */
 const fmt = (v, alt = "—") => (v === 0 || !!v ? String(v) : alt);
 
+/* ===== helpers de nota do avaliador (0–10) ===== */
+function extrairQuatroCriterios(obj) {
+  if (!obj) return [0, 0, 0, 0];
+  if (Array.isArray(obj.notas) && obj.notas.length >= 4) {
+    return obj.notas.slice(0, 4).map((n) => (Number.isFinite(+n) ? +n : 0));
+  }
+  const possiveis = [
+    ["criterio1", "criterio2", "criterio3", "criterio4"],
+    ["criterio_1", "criterio_2", "criterio_3", "criterio_4"],
+    ["c1", "c2", "c3", "c4"],
+    ["nota1", "nota2", "nota3", "nota4"],
+  ];
+  for (const conj of possiveis) {
+    const vals = conj.map((k) => Number(obj?.[k]));
+    if (vals.some((v) => Number.isFinite(v))) {
+      return vals.map((v) => (Number.isFinite(v) ? v : 0));
+    }
+  }
+  // também suportar payload de itens [{criterio_id, nota}]
+  if (Array.isArray(obj.itens) && obj.itens.length >= 4) {
+    const notas = obj.itens.map((i) => Number(i?.nota)).filter((x) => Number.isFinite(x));
+    if (notas.length >= 4) return notas.slice(0, 4);
+  }
+  return [0, 0, 0, 0];
+}
+function calcularNota10De(av) {
+  const [a, b, c, d] = extrairQuatroCriterios(av);
+  const total20 = a + b + c + d;
+  const nota10 = total20 / 2;
+  return Number.isFinite(nota10) ? Number(nota10.toFixed(1)) : null;
+}
+function pegarMinhaAvaliacao(item, meuId) {
+  if (!item) return null;
+  // objetos diretos comuns
+  const diretas = [
+    item.minha_avaliacao,
+    item.avaliacao_do_usuario,
+    item.avaliacao,
+    item.minhaAvaliacao,
+  ].filter(Boolean);
+  if (diretas.length) return diretas[0];
+
+  // listas possíveis
+  const listas = [item.avaliacoes, item.itens, item.respostas].filter(Array.isArray).flat();
+  if (!listas.length) return null;
+
+  const match = listas.find(
+    (r) =>
+      String(r?.avaliador_id ?? r?.usuario_id ?? r?.id_avaliador ?? r?.id_usuario ?? "") ===
+      String(meuId)
+  );
+  return match || null;
+}
+function minhaNota10(item, meuId) {
+  const av = pegarMinhaAvaliacao(item, meuId);
+  if (!av) return null;
+  return calcularNota10De(av);
+}
+
 /* ─────────────── Badge simples de status ─────────────── */
 function StatusBadge({ status }) {
   const base =
@@ -50,7 +109,7 @@ function StatusBadge({ status }) {
         <span
           className={`${base} bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200`}
         >
-          Oral
+          Apresentação Oral
         </span>
       );
     case "reprovado":
@@ -308,6 +367,12 @@ export default function AvaliadorSubmissoes() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [focusId, setFocusId] = useState(null);
 
+  // usuário logado (para localizar sua avaliação)
+  const usuario = useMemo(() => {
+    try { return JSON.parse(localStorage.getItem("usuario") || "{}"); } catch { return {}; }
+  }, []);
+  const meuId = usuario?.id;
+
   useOnceEffect(() => {
     const ac = new AbortController();
     (async () => {
@@ -396,6 +461,7 @@ export default function AvaliadorSubmissoes() {
                 <th className="p-3 text-left">Linha temática</th>
                 <th className="p-3 text-center">Status</th>
                 <th className="p-3 text-center">Meu status</th>
+                <th className="p-3 text-center">Minha nota (/10)</th>{/* NOVA COLUNA */}
                 <th className="p-3 text-center">Avaliar</th>
               </tr>
             </thead>
@@ -403,51 +469,57 @@ export default function AvaliadorSubmissoes() {
               {filtradas.length === 0 && (
                 <tr>
                   <td
-                    colSpan={6}
+                    colSpan={7}
                     className="text-center py-6 text-zinc-600 dark:text-zinc-400"
                   >
                     Nada encontrado.
                   </td>
                 </tr>
               )}
-              {filtradas.map((s) => (
-                <tr
-                  key={s.id}
-                  className="border-b dark:border-zinc-800 hover:bg-emerald-50/70 dark:hover:bg-zinc-800/40 transition-colors"
-                >
-                  <td
-                    className="p-3 max-w-[36ch] truncate"
-                    title={s.titulo}
+              {filtradas.map((s) => {
+                const nota = minhaNota10(s, meuId);
+                return (
+                  <tr
+                    key={s.id}
+                    className="border-b dark:border-zinc-800 hover:bg-emerald-50/70 dark:hover:bg-zinc-800/40 transition-colors"
                   >
-                    {s.titulo}
-                  </td>
-                  <td className="p-3">{s.chamada_titulo}</td>
-                  <td className="p-3">{fmt(s.linha_tematica_nome)}</td>
-                  <td className="p-3 text-center">
-                    <StatusBadge status={s.status} />
-                  </td>
-                  <td className="p-3 text-center">
-                    {s.ja_avaliado ? (
-                      <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300">
-                        <Check className="w-4 h-4" /> enviado
-                      </span>
-                    ) : (
-                      "—"
-                    )}
-                  </td>
-                  <td className="p-3 text-center">
-                    <button
-                      onClick={() => {
-                        setFocusId(s.id);
-                        setDrawerOpen(true);
-                      }}
-                      className="px-3 py-1.5 rounded-full bg-emerald-600 text-white hover:bg-emerald-700"
+                    <td
+                      className="p-3 max-w-[36ch] truncate"
+                      title={s.titulo}
                     >
-                      Abrir
-                    </button>
-                  </td>
-                </tr>
-              ))}
+                      {s.titulo}
+                    </td>
+                    <td className="p-3">{s.chamada_titulo}</td>
+                    <td className="p-3">{fmt(s.linha_tematica_nome)}</td>
+                    <td className="p-3 text-center">
+                      <StatusBadge status={s.status} />
+                    </td>
+                    <td className="p-3 text-center">
+                      {s.ja_avaliado ? (
+                        <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300">
+                          <Check className="w-4 h-4" /> enviado
+                        </span>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="p-3 text-center">
+                      {nota != null ? nota.toFixed(1) : "—"}
+                    </td>
+                    <td className="p-3 text-center">
+                      <button
+                        onClick={() => {
+                          setFocusId(s.id);
+                          setDrawerOpen(true);
+                        }}
+                        className="px-3 py-1.5 rounded-full bg-emerald-600 text-white hover:bg-emerald-700"
+                      >
+                        Abrir
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </section>
@@ -463,8 +535,10 @@ export default function AvaliadorSubmissoes() {
             onClose={(ev) => {
               setDrawerOpen(false);
               if (ev?.saved) {
-                // refresh “meu status”
-                api.get("/avaliador/submissoes").then((r) => setLista(Array.isArray(r?.data) ? r.data : r));
+                // refresh “meu status” + possíveis notas
+                api.get("/avaliador/submissoes").then((r) =>
+                  setLista(Array.isArray(r?.data) ? r.data : r)
+                );
               }
             }}
           />

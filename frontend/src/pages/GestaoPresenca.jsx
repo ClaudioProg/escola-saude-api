@@ -3,22 +3,18 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "react-toastify";
 import { useNavigate } from "react-router-dom";
-import { ClipboardCheck, RefreshCcw } from "lucide-react";
+import { ClipboardCheck, RefreshCcw, UsersRound, CalendarDays } from "lucide-react";
 
 import { apiGet } from "../services/api";
 import Footer from "../components/Footer";
 import Spinner from "../components/Spinner";
 import ListaTurmasPresenca from "../components/ListaTurmasPresenca";
 
-/* ---------------- HeaderHero (verde-azulado, título central, altura média) ---------------- */
-/* ---------------- HeaderHero (cor única, sem degradê) ---------------- */
-function HeaderHero({ onAtualizar, atualizando }) {
+/* ---------------- HeaderHero (teal sólido) ---------------- */
+function HeaderHero({ onAtualizar, atualizando, agrupamento, setAgrupamento }) {
   return (
     <header className="bg-teal-700 text-white" role="banner">
-      <a
-        href="#conteudo"
-        className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2"
-      >
+      <a href="#conteudo" className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2">
         Ir para o conteúdo
       </a>
 
@@ -26,9 +22,7 @@ function HeaderHero({ onAtualizar, atualizando }) {
         <div className="flex flex-col items-center text-center gap-3 sm:gap-4">
           <div className="inline-flex items-center justify-center gap-2">
             <ClipboardCheck className="w-6 h-6" />
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-              Gestão de presenças
-            </h1>
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Gestão de presenças</h1>
           </div>
 
           <p className="text-sm sm:text-base text-white/90 max-w-2xl">
@@ -49,6 +43,34 @@ function HeaderHero({ onAtualizar, atualizando }) {
               {atualizando ? "Atualizando…" : "Atualizar"}
             </button>
           </div>
+
+          {/* seletor de agrupamento (global) */}
+          <div className="mt-2 inline-flex items-center gap-1 bg-white/10 rounded-xl p-1">
+            <button
+              type="button"
+              onClick={() => setAgrupamento("pessoa")}
+              className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+                agrupamento === "pessoa" ? "bg-white text-teal-700" : "text-white/90 hover:bg-white/10"
+              }`}
+              aria-pressed={agrupamento === "pessoa"}
+              title="Agrupar por pessoa (cada usuário e suas datas)"
+            >
+              <UsersRound className="w-4 h-4" />
+              Pessoas
+            </button>
+            <button
+              type="button"
+              onClick={() => setAgrupamento("data")}
+              className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+                agrupamento === "data" ? "bg-white text-teal-700" : "text-white/90 hover:bg-white/10"
+              }`}
+              aria-pressed={agrupamento === "data"}
+              title="Agrupar por data (cada data e todos os usuários)"
+            >
+              <CalendarDays className="w-4 h-4" />
+              Datas
+            </button>
+          </div>
         </div>
       </div>
 
@@ -66,6 +88,7 @@ export default function PaginaGestaoPresencas() {
   const [presencasPorTurma, setPresencasPorTurma] = useState({});
   const [carregandoEventos, setCarregandoEventos] = useState(true);
   const [erro, setErro] = useState("");
+  const [agrupamento, setAgrupamento] = useState("pessoa"); // "pessoa" | "data"
   const liveRef = useRef(null);
 
   const setLive = (msg) => {
@@ -151,7 +174,12 @@ export default function PaginaGestaoPresencas() {
       <p ref={liveRef} className="sr-only" aria-live="polite" />
 
       {/* Header hero */}
-      <HeaderHero onAtualizar={carregarEventos} atualizando={carregandoEventos} />
+      <HeaderHero
+        onAtualizar={carregarEventos}
+        atualizando={carregandoEventos}
+        agrupamento={agrupamento}
+        setAgrupamento={setAgrupamento}
+      />
 
       {/* barra de progresso fina quando carregando */}
       {anyLoading && (
@@ -166,7 +194,7 @@ export default function PaginaGestaoPresencas() {
         </div>
       )}
 
-      <main className="flex-1 max-w-6xl mx-auto px-3 sm:px-4 py-6">
+      <main id="conteudo" className="flex-1 max-w-6xl mx-auto px-3 sm:px-4 py-6">
         {erro && (
           <p className="text-center text-red-600 dark:text-red-400 mb-4" role="alert" aria-live="assertive">
             {erro}
@@ -190,6 +218,7 @@ export default function PaginaGestaoPresencas() {
             avaliacoesPorTurma={avaliacoesPorTurma}
             navigate={navigate}
             modoadministradorPresencas
+            agrupamento={agrupamento}  // ⬅️ "pessoa" | "data"
           />
         )}
       </main>

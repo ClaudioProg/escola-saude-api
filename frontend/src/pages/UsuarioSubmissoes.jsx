@@ -9,7 +9,9 @@ import {
   Pencil,
   Download,
   ExternalLink,
-  Trash2,            // ⬅️ novo ícone
+  Trash2,
+  Award,         // ⬅️ ícone para “Exposição”
+  CheckCircle,   // ⬅️ ícone para “Apresentação oral”
 } from "lucide-react";
 import api, { apiGetFile, downloadBlob, apiHead } from "../services/api";
 import ModalVerEdital from "../components/ModalVerEdital";
@@ -17,35 +19,52 @@ import ModalInscreverTrabalho from "../components/ModalInscreverTrabalho";
 import Footer from "../components/Footer";
 
 /* ───────────────── Helpers ───────────────── */
-// ⚠️ SEM fuso-horário: apenas reformatamos o texto vindo do backend.
-// Aceita:
-//  - "YYYY-MM-DD"
-//  - "YYYY-MM-DD HH:MM"  | "YYYY-MM-DD HH:MM:SS"
-//  - "YYYY-MM-DDTHH:MM"  | "YYYY-MM-DDTHH:MM:SS"
-// Se já vier em BR, devolvemos como está.
 function toBrDateTimeSafe(input) {
-   if (!input) return "—";
-    const s = String(input).trim();
-    // já está no formato BR? (procura dd/mm/aaaa)
-   if (/^\d{2}\/\d{2}\/\d{4}/.test(s)) return s;
-  
-    // YYYY-MM-DD [T]HH:MM[:SS]
-    const mDT = s.match(
-      /^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})(?::(\d{2}))?/
-    );
-    if (mDT) {
-      const [, yy, mm, dd, hh, mi] = mDT;
-      return `${dd}/${mm}/${yy} ${hh}:${mi}`;
-    }
-  
-    // YYYY-MM-DD
-    const mD = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (mD) {
-      const [, yy, mm, dd] = mD;
-      return `${dd}/${mm}/${yy}`;
-    }
-    return s; // fallback cru
+  if (!input) return "—";
+  const s = String(input).trim();
+  if (/^\d{2}\/\d{2}\/\d{4}/.test(s)) return s;
+  const mDT = s.match(/^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (mDT) {
+    const [, yy, mm, dd, hh, mi] = mDT;
+    return `${dd}/${mm}/${yy} ${hh}:${mi}`;
   }
+  const mD = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (mD) {
+    const [, yy, mm, dd] = mD;
+    return `${dd}/${mm}/${yy}`;
+  }
+  return s;
+}
+
+/** Aprovação parcial: helpers retrocompatíveis (Escrita = Exposição) */
+const okEscrita = (s) =>
+  String(s?.status_escrita || "").toLowerCase() === "aprovado" ||
+  String(s?.status || "").toLowerCase() === "aprovado_escrita" ||
+  String(s?.status || "").toLowerCase() === "aprovado_exposicao";
+
+const okOral = (s) =>
+  String(s?.status_oral || "").toLowerCase() === "aprovado" ||
+  String(s?.status || "").toLowerCase() === "aprovado_oral" ||
+  String(s?.status || "").toLowerCase() === "aprovado_exposicao";
+
+/** Finalizado? (compatível com várias chaves comuns + _finalizado local) */
+const isFinalizado = (s) =>
+  Boolean(
+    s?._finalizado ||
+      s?.finalizado ||
+      s?.avaliacao_finalizada ||
+      s?.avaliacaoFinalizada ||
+      s?.fechado ||
+      s?.encerrado
+  );
+
+/** Esconder pendências quando reprovado, finalizado ou quando ambas aprovações já existem */
+const esconderPendencias = (s) => {
+  const st = String(s?.status || "").toLowerCase();
+  const reprov = st === "reprovado";
+  const ambasOk = okEscrita(s) && okOral(s);
+  return reprov || ambasOk || isFinalizado(s);
+};
 
 /* ───────────────── HeaderHero ───────────────── */
 function HeaderHero() {
@@ -103,11 +122,12 @@ function Chip({ children, tone = "default", title }) {
 /* ───────────────── PosterCell ───────────────── */
 function PosterCell({ id, nome }) {
   const [downloading, setDownloading] = useState(false);
+  const safeNome = nome || "poster.pptx";
   const baixar = async () => {
     try {
       setDownloading(true);
       const { blob, filename } = await apiGetFile(`/submissoes/${id}/poster`);
-      downloadBlob(filename || nome || "poster.pptx", blob);
+      downloadBlob(filename || safeNome, blob);
     } catch (e) {
       alert(e?.message || "Falha ao baixar o pôster.");
     } finally {
@@ -128,7 +148,7 @@ function PosterCell({ id, nome }) {
   );
 }
 
-const BLOQUEADOS = new Set(["em_avaliacao", "aprovado_exposicao", "aprovado_oral", "reprovado"]);
+const BLOQUEADOS = new Set(["em_avaliacao", "aprovado_exposicao", "aprovado_oral", "aprovado_escrita", "reprovado"]);
 
 export default function UsuarioSubmissoes() {
   const [chamadas, setChamadas] = useState([]);
@@ -138,14 +158,14 @@ export default function UsuarioSubmissoes() {
   const [modalInscricao, setModalInscricao] = useState(null);
   const [modeloMap, setModeloMap] = useState({});
   const [baixandoMap, setBaixandoMap] = useState({});
-  const [excluindoId, setExcluindoId] = useState(null); // ⬅️ controle de exclusão
+  const [excluindoId, setExcluindoId] = useState(null);
 
   async function baixarModeloBanner(chId) {
     if (!chId) return;
     try {
       setBaixandoMap((m) => ({ ...m, [chId]: true }));
       const { blob, filename } = await apiGetFile(`/chamadas/${chId}/modelo-banner`);
-      downloadBlob(filename || "modelo-poster.pptx", blob);
+      downloadBlob(filename || "modelo-banner.pptx", blob);
     } catch (e) {
       alert(e?.message || "Falha ao baixar o modelo de pôster.");
     } finally {
@@ -186,21 +206,23 @@ export default function UsuarioSubmissoes() {
   };
 
   const isDentroPrazo = (row) => !!(row?.dentro_prazo ?? row?.dentroPrazo);
-  // Pode editar enquanto estiver dentro do prazo (independente do status)
- const canEdit = (row) => isDentroPrazo(row);
-  const canDelete = (row) => {                   // ⬅️ regra de exclusão
+  const canEdit = (row) => {
+    const st = String(row?.status || "").toLowerCase();
+    return isDentroPrazo(row) && !BLOQUEADOS.has(st);
+  };
+  const canDelete = (row) => {
     const st = String(row?.status || "").toLowerCase();
     return st === "rascunho" || st === "submetido";
   };
 
-  // contadores por status (para os 4 stats)
+  // contadores por status
   const countByStatus = useMemo(() => {
     const c = { submetido: 0, em_avaliacao: 0, aprovado: 0, reprovado: 0 };
     for (const m of minhas) {
       const st = String(m.status || "").toLowerCase();
       if (st === "submetido") c.submetido++;
       else if (st === "em_avaliacao") c.em_avaliacao++;
-      else if (st === "aprovado_exposicao" || st === "aprovado_oral") c.aprovado++;
+      else if (st === "aprovado_exposicao" || st === "aprovado_oral" || st === "aprovado_escrita") c.aprovado++;
       else if (st === "reprovado") c.reprovado++;
     }
     return c;
@@ -213,8 +235,7 @@ export default function UsuarioSubmissoes() {
     if (!ok) return;
     try {
       setExcluindoId(id);
-      await api.delete?.(`/submissoes/${id}`);         // usa api.delete se disponível
-      // fallback: caso não exista api.delete, tenta via método genérico:
+      await api.delete?.(`/submissoes/${id}`);
       if (!api.delete) await api({ method: "DELETE", url: `/submissoes/${id}` });
       await handleSucesso();
       alert("Submissão excluída com sucesso.");
@@ -240,7 +261,7 @@ export default function UsuarioSubmissoes() {
 
       <main id="conteudo" className="flex-1">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 sm:py-10 space-y-10">
-          {/* ────── Stats: 4 cards de status (como solicitado) ────── */}
+          {/* ────── Stats ────── */}
           <section aria-labelledby="metricas">
             <h2 id="metricas" className="sr-only">Métricas de Submissões</h2>
 
@@ -282,8 +303,8 @@ export default function UsuarioSubmissoes() {
                 {chamadas.map((ch) => {
                   const temModelo = !!modeloMap[ch.id];
                   const prazoStr =
-  ch.prazo_final_br || ch.prazo_final || ch.prazoFinal || ch.prazo || null;
-const prazoFmt = toBrDateTimeSafe(prazoStr);
+                    ch.prazo_final_br || ch.prazo_final || ch.prazoFinal || ch.prazo || null;
+                  const prazoFmt = toBrDateTimeSafe(prazoStr);
                   const carregando = !!baixandoMap[ch.id];
                   const dentro = !!(ch?.dentro_prazo ?? ch?.dentroPrazo);
 
@@ -299,8 +320,9 @@ const prazoFmt = toBrDateTimeSafe(prazoStr);
                             <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-xs font-medium">
                               {dentro ? <Chip tone="verde" title="Dentro do prazo">Dentro do prazo</Chip> : <Chip tone="vermelho" title="Fora do prazo">Fora do prazo</Chip>}
                               <span className="text-slate-600 dark:text-slate-300">
-  Prazo final (data e horário): <strong>{prazoFmt}</strong>
-</span>                            </div>
+                                Prazo final (data e horário): <strong>{prazoFmt}</strong>
+                              </span>
+                            </div>
                           </div>
 
                           <div className="mt-4 flex flex-wrap gap-3 items-center justify-center sm:justify-start">
@@ -354,12 +376,13 @@ const prazoFmt = toBrDateTimeSafe(prazoStr);
             ) : (
               <Card className="p-0 overflow-hidden">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm min-w-[760px]">
+                  <table className="w-full text-sm min-w-[880px]">
                     <thead className="bg-violet-700 text-white">
                       <tr>
                         <th className="p-3 text-left font-semibold">Título</th>
                         <th className="p-3 text-left font-semibold">Chamada</th>
                         <th className="p-3 text-center font-semibold">Status</th>
+                        <th className="p-3 text-center font-semibold">Aprovações</th>
                         <th className="p-3 text-center font-semibold">Pôster</th>
                         <th className="p-3 text-center font-semibold">Ações</th>
                       </tr>
@@ -367,22 +390,69 @@ const prazoFmt = toBrDateTimeSafe(prazoStr);
                     <tbody>
                       {minhas.map((m) => {
                         const st = String(m.status ?? "").toLowerCase();
+                        const isReprovado = st === "reprovado";
+
                         const statusChip =
                           st === "submetido" ? <Chip tone="azul">submetido</Chip> :
                           st === "em_avaliacao" ? <Chip tone="amarelo">em avaliação</Chip> :
-                          st === "aprovado_exposicao" || st === "aprovado_oral" ? <Chip tone="verde">aprovado</Chip> :
-                          st === "reprovado" ? <Chip tone="vermelho">reprovado</Chip> :
+                          st === "aprovado_exposicao" || st === "aprovado_oral" || st === "aprovado_escrita" ? <Chip tone="verde">aprovado</Chip> :
+                          isReprovado ? <Chip tone="vermelho">reprovado</Chip> :
                           <Chip>—</Chip>;
 
                         const podeEditar = canEdit(m);
                         const podeExcluir = canDelete(m);
+
+                        const showOnlyApproved = esconderPendencias(m);
+                        const algumAprovado = okEscrita(m) || okOral(m);
+
+                        const badgesAprovacoes = !isReprovado && (
+                          <div className="flex flex-col items-center gap-1">
+                            {algumAprovado ? (
+                              <>
+                                {/* Chip único “Aprovada” */}
+                                <Chip tone="verde" title="Pelo menos uma modalidade aprovada">Aprovada</Chip>
+
+                                {/* Exposição aprovada */}
+                                {okEscrita(m) && (
+                                  <Chip tone="verde" title="Exposição aprovada">
+                                    <Award className="w-3.5 h-3.5 mr-1" />
+                                    Exposição
+                                  </Chip>
+                                )}
+
+                                {/* Apresentação oral aprovada */}
+                                {okOral(m) && (
+                                  <Chip tone="verde" title="Apresentação oral aprovada">
+                                    <CheckCircle className="w-3.5 h-3.5 mr-1" />
+                                    Apresentação oral
+                                  </Chip>
+                                )}
+                              </>
+                            ) : (
+                              // Nenhuma aprovada
+                              showOnlyApproved ? (
+                                <Chip>Pendente</Chip>
+                              ) : (
+                                <>
+                                  <Chip title="Exposição pendente">Exposição pendente</Chip>
+                                  <Chip title="Apresentação oral pendente">Apresentação oral pendente</Chip>
+                                </>
+                              )
+                            )}
+                          </div>
+                        );
 
                         return (
                           <tr key={m.id} className="border-b last:border-b-0 border-black/5 dark:border-white/10 hover:bg-violet-50/50 dark:hover:bg-zinc-800/40 transition">
                             <td className="p-3 align-top">{m.titulo}</td>
                             <td className="p-3 align-top">{m.chamada_titulo}</td>
                             <td className="p-3 text-center align-top">{statusChip}</td>
-                            <td className="p-3 text-center align-top"><PosterCell id={m.id} nome={m.poster_nome} /></td>
+                            <td className="p-3 text-center align-top">
+                              {badgesAprovacoes || <span className="text-zinc-400 text-xs">—</span>}
+                            </td>
+                            <td className="p-3 text-center align-top">
+                              <PosterCell id={m.id} nome={m.poster_nome || m.posterNome} />
+                            </td>
                             <td className="p-3 text-center align-top">
                               <div className="inline-flex items-center gap-2">
                                 {podeEditar ? (
@@ -395,8 +465,8 @@ const prazoFmt = toBrDateTimeSafe(prazoStr);
                                   </button>
                                 ) : (
                                   <span className="text-gray-400 text-xs">
-+   {isDentroPrazo(m) ? "Edição indisponível" : "Fora do prazo"}
-+ </span>
+                                    {isDentroPrazo(m) ? "Edição indisponível" : "Fora do prazo"}
+                                  </span>
                                 )}
 
                                 {podeExcluir && (

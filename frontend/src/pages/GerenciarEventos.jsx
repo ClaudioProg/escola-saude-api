@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
-// ✅ src/pages/GerenciarEventos.jsx (admin) — publicar/despublicar + UI moderna
-import { useEffect, useRef, useState } from "react";
+// ✅ src/pages/GerenciarEventos.jsx (admin) — publicar/despublicar + UI moderna + barra colorida no topo
+import { useEffect, useRef, useState, useMemo } from "react";
 import { toast } from "react-toastify";
 import { motion } from "framer-motion";
 import {
@@ -9,7 +9,6 @@ import {
   PlusCircle,
   Lock,
   RefreshCcw,
-  Wrench,
   Eye,
   EyeOff,
 } from "lucide-react";
@@ -296,7 +295,7 @@ function HeaderHero({ onCriar, onAtualizar, atualizando }) {
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-7 sm:py-8 md:py-9 min-h-[140px] sm:min-h-[170px]">
         <div className="flex flex-col items-center text-center gap-2.5 sm:gap-3">
           <div className="inline-flex items-center justify-center gap-2">
-            <Wrench className="w-6 h-6" aria-hidden="true" />
+            <svg width="0" height="0" aria-hidden="true" />{/* evita layout shift de ícone */}
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
               Gerenciar Eventos
             </h1>
@@ -336,6 +335,44 @@ function HeaderHero({ onCriar, onAtualizar, atualizando }) {
       <div className="absolute bottom-0 left-0 right-0 h-px bg-white/25" aria-hidden="true" />
     </header>
   );
+}
+
+/* ========= Status do evento + cores de barra ========= */
+const toLocalDate = (ymdStr, hh = "00", mm = "00") =>
+  ymdStr ? new Date(`${ymdStr}T${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:00`) : null;
+
+function deduzStatus(ev) {
+  const agora = new Date();
+
+  const di = ymd(ev.data_inicio_geral || ev.data_inicio || ev.data);
+  const df = ymd(ev.data_fim_geral || ev.data_fim || ev.data);
+  const hi = hhmm(ev.horario_inicio_geral || ev.horario_inicio || "00:00");
+  const hf = hhmm(ev.horario_fim_geral || ev.horario_fim || "23:59");
+
+  const [hiH, hiM] = (hi || "00:00").split(":");
+  const [hfH, hfM] = (hf || "23:59").split(":");
+
+  let inicioDT = toLocalDate(di, hiH, hiM);
+  let fimDT = toLocalDate(df, hfH, hfM);
+
+  // se tiver ranges inconsistentes, tenta só data
+  if (!inicioDT && di) inicioDT = toLocalDate(di, "00", "00");
+  if (!fimDT && df) fimDT = toLocalDate(df, "23", "59");
+
+  if (!inicioDT || !fimDT) return "programado"; // fallback amigável visualmente
+
+  if (inicioDT > agora) return "programado";
+  if (inicioDT <= agora && fimDT >= agora) return "em_andamento";
+  return "encerrado";
+}
+
+function statusBarClasses(status) {
+  // padrão do Cláudio:
+  // programado → verde, em andamento → amarelo, encerrado → vermelho (gradiente)
+  if (status === "programado") return "bg-gradient-to-r from-emerald-700 via-emerald-600 to-emerald-500";
+  if (status === "em_andamento") return "bg-gradient-to-r from-amber-700 via-amber-600 to-amber-400";
+  if (status === "encerrado") return "bg-gradient-to-r from-rose-800 via-rose-700 to-rose-500";
+  return "bg-gradient-to-r from-slate-400 to-slate-300";
 }
 
 /* =============================
@@ -625,7 +662,7 @@ export default function GerenciarEventos() {
   const anyLoading = loading;
 
   return (
-    <main className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
+    <main className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white overflow-x-hidden">
       {/* live region acessível */}
       <p ref={liveRef} className="sr-only" aria-live="polite" />
 
@@ -643,7 +680,7 @@ export default function GerenciarEventos() {
         </div>
       )}
 
-      <div id="conteudo" className="px-2 sm:px-4 py-6 max-w-6xl mx-auto w-full">
+      <div id="conteudo" className="px-2 sm:px-4 py-6 max-w-6xl mx-auto w-full min-w-0">
         {!!erro && !loading && (
           <p className="text-red-500 text-center mb-4" role="alert">
             {erro}
@@ -658,30 +695,45 @@ export default function GerenciarEventos() {
           <ul className="space-y-4 sm:space-y-6">
             {eventos.map((ev) => {
               const publicado = !!ev.publicado;
+              const status = deduzStatus(ev);
+              const bar = statusBarClasses(status);
+
               return (
                 <motion.li
                   key={ev.id || ev.titulo}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="bg-white dark:bg-zinc-800 p-4 sm:p-5 rounded-xl shadow border border-gray-200 dark:border-zinc-700"
+                  className="relative bg-white dark:bg-zinc-800 p-4 sm:p-5 rounded-2xl shadow border border-gray-200 dark:border-zinc-700 overflow-hidden min-w-0"
                 >
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  {/* 🔶 Barra colorida superior (gradiente por status) */}
+                  <div className={`absolute top-0 left-0 right-0 h-1.5 ${bar}`} aria-hidden="true" />
+
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between min-w-0">
                     {/* Título + badges */}
-                    <div className="flex items-center gap-3 flex-wrap">
-                      <span className="font-semibold text-lg text-lousa dark:text-white">
+                    <div className="flex items-center gap-3 flex-wrap min-w-0">
+                      <span className="font-semibold text-lg text-lousa dark:text-white break-words">
                         {ev.titulo}
                       </span>
 
                       {/* Badge de publicação (sólida) */}
                       <span
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border ${
-                          publicado
-                            ? "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-200 border-indigo-200 dark:border-indigo-800"
-                            : "bg-zinc-100 text-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-200 border-zinc-200 dark:border-zinc-700"
-                        }`}
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border
+                          ${
+                            publicado
+                              ? "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-200 border-indigo-200 dark:border-indigo-800"
+                              : "bg-zinc-100 text-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-200 border-zinc-200 dark:border-zinc-700"
+                          }`}
                         title={publicado ? "Visível aos usuários" : "Oculto aos usuários"}
                       >
                         {publicado ? "Publicado" : "Rascunho"}
+                      </span>
+
+                      {/* Status textual (opcional) */}
+                      <span
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-800 dark:bg-zinc-900/40 dark:text-zinc-200 border border-gray-200 dark:border-zinc-700"
+                        title="Status calculado por data/horário"
+                      >
+                        {status === "programado" ? "Programado" : status === "em_andamento" ? "Em andamento" : "Encerrado"}
                       </span>
 
                       {/* Badge de restrição (sólida) */}
@@ -747,10 +799,22 @@ export default function GerenciarEventos() {
 
                   {/* Subinfo opcional */}
                   {(ev?.publico_alvo || ev?.tipo || ev?.local) && (
-                    <div className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
-                      {ev?.tipo && <span className="mr-3">Tipo: <span className="font-medium">{ev.tipo}</span></span>}
-                      {ev?.local && <span className="mr-3">Local: <span className="font-medium">{ev.local}</span></span>}
-                      {ev?.publico_alvo && <span>Público-alvo: <span className="font-medium">{ev.publico_alvo}</span></span>}
+                    <div className="mt-2 text-sm text-zinc-600 dark:text-zinc-300 break-words">
+                      {ev?.tipo && (
+                        <span className="mr-3">
+                          Tipo: <span className="font-medium">{ev.tipo}</span>
+                        </span>
+                      )}
+                      {ev?.local && (
+                        <span className="mr-3">
+                          Local: <span className="font-medium">{ev.local}</span>
+                        </span>
+                      )}
+                      {ev?.publico_alvo && (
+                        <span>
+                          Público-alvo: <span className="font-medium">{ev.publico_alvo}</span>
+                        </span>
+                      )}
                     </div>
                   )}
                 </motion.li>

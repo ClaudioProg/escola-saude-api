@@ -121,6 +121,46 @@ async function mapearPresencasTrue(turma_id) {
   return map;
 }
 
+/** Mapa detalhado de presenças por (usuario|data) com timestamp de confirmação */
+async function mapearPresencasDetalhe(turma_id) {
+  const presQ = await db.query(
+    `SELECT usuario_id,
+            data_presenca::date AS data_dia,
+            presente,
+            confirmado_em
+       FROM presencas
+      WHERE turma_id = $1`,
+    [turma_id]
+  );
+
+  // chave: "usuarioId|YYYY-MM-DD" → { presente: boolean, confirmado_em: string|null }
+  const map = new Map();
+
+  for (const r of presQ.rows || []) {
+    const dataYMD = ymd(r.data_dia);
+    const k = `${String(r.usuario_id)}|${dataYMD}`;
+    const v = { presente: r.presente === true, confirmado_em: r.confirmado_em };
+    const prev = map.get(k);
+
+    // Se houver duplicidade no mesmo dia, prioriza:
+    // 1) quem tem presente=true
+    // 2) o mais recente confirmado_em
+    if (!prev) {
+      map.set(k, v);
+    } else {
+      if (!prev.presente && v.presente) {
+        map.set(k, v);
+      } else if (prev.presente === v.presente) {
+        const a = prev.confirmado_em ? new Date(prev.confirmado_em).getTime() : 0;
+        const b = v.confirmado_em ? new Date(v.confirmado_em).getTime() : 0;
+        if (b > a) map.set(k, v);
+      }
+    }
+  }
+
+  return map;
+}
+
 /* ------------------------------------------------------------------ *
  * PATCH /api/presencas/confirmar  (instrutor)
  * Body: { usuario_id, turma_id, data }
@@ -179,15 +219,12 @@ async function confirmarPresencaInstrutor(req, res) {
         .json({ erro: "O prazo de 48h para confirmação já expirou." });
     }
 
-    await db.query(
-      `
-      INSERT INTO presencas (usuario_id, turma_id, data_presenca, presente)
-      VALUES ($1, $2, $3, TRUE)
+    await db.query(`
+      INSERT INTO presencas (usuario_id, turma_id, data_presenca, presente, confirmado_em)
+      VALUES ($1, $2, $3, TRUE, NOW())
       ON CONFLICT (usuario_id, turma_id, data_presenca)
-      DO UPDATE SET presente = EXCLUDED.presente
-      `,
-      [usuario_id, turma_id, dataISO]
-    );
+      DO UPDATE SET presente = EXCLUDED.presente, confirmado_em = NOW()
+    `, [usuario_id, turma_id, dataISO]);
 
     await verificarElegibilidadeParaAvaliacao(usuario_id, turma_id);
     return res
@@ -244,15 +281,12 @@ async function registrarPresenca(req, res) {
         .json({ erro: "Data fora do período desta turma." });
     }
 
-    await db.query(
-      `
-      INSERT INTO presencas (usuario_id, turma_id, data_presenca, presente)
-      VALUES ($1, $2, $3, TRUE)
+    await db.query(`
+      INSERT INTO presencas (usuario_id, turma_id, data_presenca, presente, confirmado_em)
+      VALUES ($1, $2, $3, TRUE, NOW())
       ON CONFLICT (usuario_id, turma_id, data_presenca)
-      DO UPDATE SET presente = EXCLUDED.presente
-      `,
-      [usuario_id, turma_id, dataISO]
-    );
+      DO UPDATE SET presente = EXCLUDED.presente, confirmado_em = NOW()
+    `, [usuario_id, turma_id, dataISO]);
 
     await verificarElegibilidadeParaAvaliacao(usuario_id, turma_id);
     res.status(201).json({ mensagem: "Presença registrada com sucesso." });
@@ -316,15 +350,12 @@ async function confirmarPresencaViaQR(req, res) {
         .json({ erro: "Hoje não está dentro do período desta turma." });
     }
 
-    await db.query(
-      `
-      INSERT INTO presencas (usuario_id, turma_id, data_presenca, presente)
-      VALUES ($1, $2, $3, TRUE)
+    await db.query(`
+      INSERT INTO presencas (usuario_id, turma_id, data_presenca, presente, confirmado_em)
+      VALUES ($1, $2, $3, TRUE, NOW())
       ON CONFLICT (usuario_id, turma_id, data_presenca)
-      DO UPDATE SET presente = EXCLUDED.presente
-      `,
-      [usuario_id, turma_id, hoje]
-    );
+      DO UPDATE SET presente = EXCLUDED.presente, confirmado_em = NOW()
+    `, [usuario_id, turma_id, hoje]);
 
     await verificarElegibilidadeParaAvaliacao(usuario_id, turma_id);
 
@@ -389,15 +420,12 @@ async function confirmarPresencaViaToken({ usuario_id, turma_id, data_ref }) {
   }
 
   // 2) Upsert idempotente em presencas
-  await db.query(
-    `
-    INSERT INTO presencas (usuario_id, turma_id, data_presenca, presente)
-    VALUES ($1, $2, $3, TRUE)
+  await db.query(`
+    INSERT INTO presencas (usuario_id, turma_id, data_presenca, presente, confirmado_em)
+    VALUES ($1, $2, $3, TRUE, NOW())
     ON CONFLICT (usuario_id, turma_id, data_presenca)
-    DO UPDATE SET presente = EXCLUDED.presente
-    `,
-    [usuario_id, turma_id, data_ref]
-  );
+    DO UPDATE SET presente = EXCLUDED.presente, confirmado_em = NOW()
+  `, [usuario_id, turma_id, data_ref]);
 
   // 3) Pós-ação opcional: checar elegibilidade de avaliação
   try {
@@ -480,12 +508,12 @@ async function validarPresenca(req, res) {
   }
 
   try {
-    const upd = await db.query(
-      `UPDATE presencas SET presente = TRUE
-       WHERE usuario_id = $1 AND turma_id = $2 AND data_presenca = $3
-       RETURNING *`,
-      [usuario_id, turma_id, data_presenca]
-    );
+    const upd = await db.query(`
+      UPDATE presencas
+      SET presente = TRUE, confirmado_em = NOW()
+      WHERE usuario_id = $1 AND turma_id = $2 AND data_presenca = $3
+      RETURNING *
+    `, [usuario_id, turma_id, data_presenca]);
     if (upd.rowCount === 0) {
       return res
         .status(404)
@@ -516,15 +544,12 @@ async function confirmarHojeManual(req, res) {
   const hojeISO = hojeYMD(); // TZ BR
 
   try {
-    await db.query(
-      `
-      INSERT INTO presencas (usuario_id, turma_id, data_presenca, presente)
-      VALUES ($1, $2, $3, TRUE)
+    await db.query(`
+      INSERT INTO presencas (usuario_id, turma_id, data_presenca, presente, confirmado_em)
+      VALUES ($1, $2, $3, TRUE, NOW())
       ON CONFLICT (usuario_id, turma_id, data_presenca)
-      DO NOTHING
-      `,
-      [usuario_id, turma_id, hojeISO]
-    );
+      DO UPDATE SET presente = EXCLUDED.presente, confirmado_em = NOW()
+    `, [usuario_id, turma_id, hojeISO]);
 
     await verificarElegibilidadeParaAvaliacao(usuario_id, turma_id);
     res.status(201).json({ mensagem: "Presença registrada com sucesso." });
@@ -640,15 +665,22 @@ async function relatorioPresencasPorTurma(req, res) {
     );
 
     // Presenças TRUE mapeadas por (usuario|data)
-    const presMap = await mapearPresencasTrue(turma_id);
+    const presDetMap = await mapearPresencasDetalhe(turma_id);
 
     const usuariosArr = usuariosQ.rows.map((u) => {
       const presentesDatas = [];
       const presencas = datasArr.map((data) => {
-        const presente = !!presMap.get(`${String(u.id)}|${data}`);
+        const key = `${String(u.id)}|${data}`;
+        const info = presDetMap.get(key);
+        const presente = !!info?.presente;
         if (presente) presentesDatas.push(data);
-        return { data, presente }; // mantém formato amigável ao frontend
+        return {
+          data,
+          presente,
+          confirmado_em: info?.confirmado_em || null, // ← NOVO: timestamp (timestamptz do PG)
+        };
       });
+      
 
       const presentesSet = new Set(presentesDatas);
       const ausenciasDatas = datasArr.filter((d) => !presentesSet.has(d));
@@ -815,15 +847,12 @@ async function confirmarPresencaSimples(req, res) {
   }
 
   try {
-    await db.query(
-      `
-      INSERT INTO presencas (usuario_id, turma_id, data_presenca, presente)
-      VALUES ($1, $2, $3, TRUE)
+    await db.query(`
+      INSERT INTO presencas (usuario_id, turma_id, data_presenca, presente, confirmado_em)
+      VALUES ($1, $2, $3, TRUE, NOW())
       ON CONFLICT (usuario_id, turma_id, data_presenca)
-      DO UPDATE SET presente = EXCLUDED.presente
-      `,
-      [usuario_id, turma_id, dataISO]
-    );
+      DO UPDATE SET presente = EXCLUDED.presente, confirmado_em = NOW()
+    `, [usuario_id, turma_id, dataISO]);
 
     await verificarElegibilidadeParaAvaliacao(usuario_id, turma_id);
     return res

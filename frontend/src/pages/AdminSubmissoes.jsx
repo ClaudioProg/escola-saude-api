@@ -58,6 +58,18 @@ const linhaKeyFromSub = (s) =>
       ""
   );
 
+  /* ——— Aprovações parciais (retrocompatível) ——— */
+const hasAprovExposicao = (s) => {
+  const se = String(s?.status_escrita || "").toLowerCase();
+  const st = String(s?.status || "").toLowerCase();
+  return se === "aprovado" || st === "aprovado_exposicao" || st === "aprovado_escrita" || Boolean(s?._exposicao_aprovada);
+};
+const hasAprovOral = (s) => {
+  const so = String(s?.status_oral || "").toLowerCase();
+  const st = String(s?.status || "").toLowerCase();
+  return so === "aprovado" || st === "aprovado_oral" || Boolean(s?._oral_aprovada);
+};
+
   // Soma os totais individuais dos avaliadores (evita ReferenceError de "avaliacionesTotal")
 function avaliacoesTotal(arr) {
     return (arr || []).reduce((acc, a) => acc + (Number(a.total || 0)), 0);
@@ -183,12 +195,59 @@ function StatusBadge({ status }) {
     case "aprovado_exposicao":
       return <span className={`${base} bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-200`}><Award className="w-3 h-3" /> Exposição</span>;
     case "aprovado_oral":
-      return <span className={`${base} bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200`}><CheckCircle className="w-3 h-3" /> Oral</span>;
+      return <span className={`${base} bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200`}><CheckCircle className="w-3 h-3" /> Apresentação Oral</span>;
+    case "aprovado_escrita": // ⬅️ NOVO
+      return <span className={`${base} bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200`}><CheckCircle className="w-3 h-3" /> Escrita</span>;
     case "reprovado":
       return <span className={`${base} bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-200`}><XCircle className="w-3 h-3" /> Reprovado</span>;
     default:
       return <span className={`${base} bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200`}>{status || "—"}</span>;
   }
+}
+
+/* ————————————————— Status + Aprovações lado a lado ————————————————— */
+/* ————————————————— Status + Aprovações lado a lado ————————————————— */
+function StatusAndApprovals({ s }) {
+  const okExpo = hasAprovExposicao(s);
+  const okOral = hasAprovOral(s);
+  const algumAprovado = okExpo || okOral;
+
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <StatusBadge status={s.status} />
+
+      <div className="inline-flex flex-wrap items-center justify-center gap-1">
+        {algumAprovado ? (
+          <>
+            {/* 1) Sempre que houver qualquer aprovação, mostra “Aprovada” uma única vez */}
+            <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">
+              Aprovada
+            </span>
+
+            {/* 2) Exposição aprovada */}
+            {okExpo && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">
+                <Award className="w-3.5 h-3.5" />
+                Exposição
+              </span>
+            )}
+
+            {/* 3) Apresentação oral aprovada */}
+            {okOral && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">
+                <CheckCircle className="w-3.5 h-3.5" />
+                Apresentação oral
+              </span>
+            )}
+          </>
+        ) : (
+          <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
+            Pendente
+          </span>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ————————————————— Anexos (detecção robusta) —————————————————
@@ -789,58 +848,63 @@ function DetalhesSubmissao({ open, onClose, s, onDetectAnexo }) {
 }
 
   // Exporta a tabela visível em CSV amigável ao Excel (PT-BR)
- const handleExportCSV = (items = []) => {
-    const SEP = ";";                 // Excel PT-BR usa ; como separador padrão
-    const BOM = "\uFEFF";            // garante acentuação correta
+  const handleExportCSV = (items = []) => {
+    const SEP = ";";
+    const BOM = "\uFEFF";
     const safe = (v) => {
       const s = (v ?? "").toString().replace(/\r?\n/g, " ").trim();
-      // escapa aspas dobrando-as
       return `"${s.replace(/"/g, '""')}"`;
     };
-
+  
     const header = [
       "Título",
       "Autor",
       "E-mail",
       "Chamada",
       "Submetido em",
-      "Status",
+      "Status (principal)",
+      "Exposição",
+      "Apresentação oral",
       "Nota (média)",
-      "Anexo"
+      "Anexo",
     ].join(SEP);
-
+  
     const rows = items.map((s) => {
       const dt = s.status === "rascunho" ? "—" : fmtDateTimeBR(s.submetido_em || s.criado_em);
-      const statusTxt = (
-        s.status === "submetido"         ? "Submetido" :
-        s.status === "em_avaliacao"      ? "Em avaliação" :
-        s.status === "aprovado_exposicao"? "Aprovado (Exposição)" :
-        s.status === "aprovado_oral"     ? "Aprovado (Oral)" :
-        s.status === "reprovado"         ? "Reprovado" :
+      const statusPrincipal = (
+        s.status === "submetido"          ? "Submetido" :
+        s.status === "em_avaliacao"       ? "Em avaliação" :
+        s.status === "aprovado_exposicao" ? "Aprovado (Exposição)" :
+        s.status === "aprovado_oral"      ? "Aprovado (Oral)" :
+        s.status === "aprovado_escrita"   ? "Aprovado (Escrita)" :
+        s.status === "reprovado"          ? "Reprovado" :
         (s.status || "—")
       );
-      const anexoTxt = hasAnexo(s) ? "Sim" : "Não";
-
+  
+      const escritaTxt = hasAprovExposicao(s) ? "Aprovada" : "Pendente";
+      const oralTxt    = hasAprovOral(s)      ? "Aprovada" : "Pendente";
+      const anexoTxt   = hasAnexo(s) ? "Sim" : "Não";
+  
       return [
         safe(s.titulo),
         safe(s.autor_nome),
         safe(s.autor_email),
         safe(s.chamada_titulo),
         safe(dt),
-        safe(statusTxt),
-        // mantém como texto para o Excel não trocar vírgula/ponto
+        safe(statusPrincipal),
+        safe(escritaTxt),
+        safe(oralTxt),
         safe(fmt(s.nota_media, "—")),
         safe(anexoTxt),
       ].join(SEP);
     });
-
+  
     const csv = [header, ...rows].join("\n");
     const blob = new Blob([BOM + csv], { type: "text/csv;charset=utf-8" });
-
     const ts = new Date();
     const stamp = `${ts.getFullYear()}${String(ts.getMonth()+1).padStart(2,"0")}${String(ts.getDate()).padStart(2,"0")}-${String(ts.getHours()).padStart(2,"0")}${String(ts.getMinutes()).padStart(2,"0")}`;
     const filename = `submissoes_admin_${stamp}.csv`;
-
+  
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -850,7 +914,6 @@ function DetalhesSubmissao({ open, onClose, s, onDetectAnexo }) {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1500);
   };
-
 
 /* ————————————————— Página principal ————————————————— */
 export default function AdminSubmissoes() {
@@ -954,22 +1017,26 @@ export default function AdminSubmissoes() {
     const termo = debouncedBusca.trim().toLowerCase();
     return submissoes.filter((s) => {
       const matchChamada = !filtroChamada || Number(s.chamada_id) === Number(filtroChamada);
-      const matchStatus = !filtroStatus || s.status === filtroStatus;
+  
+      const matchStatus = !filtroStatus
+        ? true
+        : (
+            (filtroStatus === "aprovado_escrita" && hasAprovExposicao(s)) ||
+            (filtroStatus === "aprovado_oral" && hasAprovOral(s)) ||
+            (filtroStatus !== "aprovado_escrita" && filtroStatus !== "aprovado_oral" && s.status === filtroStatus)
+          );
+  
       const matchLinha = !filtroLinha || linhaKeyFromSub(s) === String(filtroLinha);
+  
       const matchBusca =
         !termo ||
         [
-          s.titulo,
-          s.autor_nome,
-          s.autor_email,
-          s.chamada_titulo,
-          s.area_tematica,
-          s.eixo,
-          s.linha_tematica_nome,
-          s.linha_tematica_codigo,
+          s.titulo, s.autor_nome, s.autor_email, s.chamada_titulo,
+          s.area_tematica, s.eixo, s.linha_tematica_nome, s.linha_tematica_codigo,
         ]
           .map((v) => (v ? String(v).toLowerCase() : ""))
           .some((t) => t.includes(termo));
+  
       return matchChamada && matchStatus && matchLinha && matchBusca;
     });
   }, [submissoes, filtroChamada, filtroStatus, filtroLinha, debouncedBusca]);
@@ -978,7 +1045,7 @@ export default function AdminSubmissoes() {
   const stats = useMemo(() => {
     const total = submissoes.length;
     const aprovadas = submissoes.filter((s) =>
-      ["aprovado_oral", "aprovado_exposicao"].includes(s.status)
+      ["aprovado_oral", "aprovado_exposicao", "aprovado_escrita"].includes(s.status) // ⬅️ inclui escrita
     ).length;
     const reprovadas = submissoes.filter((s) => s.status === "reprovado").length;
     const emAvaliacao = submissoes.filter((s) => s.status === "em_avaliacao").length;
@@ -1068,6 +1135,7 @@ export default function AdminSubmissoes() {
               <option value="em_avaliacao">Em avaliação</option>
               <option value="aprovado_exposicao">Aprovado (Exposição)</option>
               <option value="aprovado_oral">Aprovado (Oral)</option>
+              <option value="aprovado_escrita">Aprovado (Escrita)</option> {/* ⬅️ NOVO */}
               <option value="reprovado">Reprovado</option>
             </select>
 
@@ -1165,7 +1233,9 @@ export default function AdminSubmissoes() {
                       ? "—"
                       : fmtDateTimeBR(s.submetido_em || s.criado_em)}
                   </td>
-                  <td className="p-3 text-center"><StatusBadge status={s.status} /></td>
+                  <td className="p-3 text-center">
+  <StatusAndApprovals s={s} />
+</td>
                   <td className="p-3 text-center font-semibold text-zinc-800 dark:text-zinc-100">
                     {fmt(s.nota_media, "—")}
                   </td>
@@ -1194,28 +1264,26 @@ export default function AdminSubmissoes() {
           {filtradas.map((s) => (
             <div key={s.id} className="bg-white dark:bg-zinc-900 rounded-2xl shadow border dark:border-zinc-800 p-4 space-y-2">
               <div className="flex items-start justify-between gap-2">
-              <div>
-  <div className="flex items-center gap-2">
+  <div>
+    <div className="flex items-center gap-2">
       <p className="font-semibold text-zinc-800 dark:text-zinc-100 whitespace-normal break-words">{s.titulo}</p>
-
-    <span
-     className={
+      <span className={
         "shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium " +
         (hasAnexo(s)
           ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200"
           : "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300")
-      }
-      title={hasAnexo(s) ? "Este trabalho possui anexo (pôster ou banner)" : "Nenhum anexo enviado"}
-    >
-      <Paperclip className="h-3 w-3" />
-      {hasAnexo(s) ? "Anexo" : "Sem anexo"}
-    </span>
+      }>
+        <Paperclip className="h-3 w-3" />
+        {hasAnexo(s) ? "Anexo" : "Sem anexo"}
+      </span>
+    </div>
+    <p className="text-xs text-zinc-500">{s.chamada_titulo}</p>
   </div>
-  <p className="text-xs text-zinc-500">{s.chamada_titulo}</p>
+
+  {/* novo: status + dois chips */}
+  <StatusAndApprovals s={s} />
 </div>
-                <StatusBadge status={s.status} />
-              </div>
-              <p className="text-sm text-zinc-700 dark:text-zinc-300">
+                              <p className="text-sm text-zinc-700 dark:text-zinc-300">
                 <span className="font-medium">{s.autor_nome}</span>
                 <span className="text-zinc-500"> · {s.autor_email}</span>
               </p>
@@ -1255,17 +1323,23 @@ export default function AdminSubmissoes() {
       }}
     />
   )}
-  {rankingOpen && (
-    <RankingModal
-      open={rankingOpen}
-      onClose={() => setRankingOpen(false)}
-      itens={filtradas /* use filtradas pra respeitar filtros; troque por submissoes se quiser tudo */}
-      onStatusChange={(id, status) => {
-        setSubmissoes((prev) => prev.map((it) => (it.id === id ? { ...it, status } : it)));
-      }}
-    />
-  )}
-  {avaliadoresOpen && (
+  <RankingModal
+  open={rankingOpen}
+  onClose={() => setRankingOpen(false)}
+  itens={filtradas /* ou submissoes, se quiser rankear tudo */}
+  onStatusChange={(id, patch) => {
+    setSubmissoes(prev =>
+      prev.map(it => {
+        if (it.id !== id) return it;
+        // se veio string, trata como { status: "..." }
+        if (typeof patch === "string") return { ...it, status: patch };
+        // se veio objeto, faz merge (preserva _oral_aprovada / _exposicao_aprovada / _finalizado etc.)
+        return { ...it, ...patch };
+      })
+    );
+  }}
+/>
+   {avaliadoresOpen && (
     <ModalAvaliadores
       isOpen={avaliadoresOpen}
       onClose={() => setAvaliadoresOpen(false)}

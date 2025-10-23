@@ -17,7 +17,41 @@ import {
   Filter,
 } from "lucide-react";
 
-/* ───────────────── HeaderHero (padronizado: 3 cores fixas, ícone+título mesma linha) ───────────────── */
+/* ───────────────── Helpers de data/hora + status (para barra colorida) ───────────────── */
+const ymd = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
+const hhmm = (s) => (typeof s === "string" ? s.slice(0, 5) : "");
+const toDT = (d, h = "00:00") =>
+  d ? new Date(`${d}T${hhmm(h) || "00:00"}:00`) : null;
+
+function deduzStatus(ev) {
+  const agora = new Date();
+  const di = ymd(ev.data_inicio_geral || ev.data_inicio || ev.data);
+  const df = ymd(ev.data_fim_geral || ev.data_fim || ev.data);
+  const hi = hhmm(ev.horario_inicio_geral || ev.horario_inicio || "00:00");
+  const hf = hhmm(ev.horario_fim_geral || ev.horario_fim || "23:59");
+
+  let inicio = toDT(di, hi);
+  let fim = toDT(df, hf);
+  if (!inicio && di) inicio = toDT(di, "00:00");
+  if (!fim && df) fim = toDT(df, "23:59");
+
+  if (!inicio || !fim) return "programado";
+  if (inicio > agora) return "programado";
+  if (inicio <= agora && fim >= agora) return "em_andamento";
+  return "encerrado";
+}
+
+function barByStatus(status) {
+  if (status === "programado")
+    return "bg-gradient-to-r from-emerald-700 via-emerald-600 to-emerald-500";
+  if (status === "em_andamento")
+    return "bg-gradient-to-r from-amber-700 via-amber-600 to-amber-400";
+  if (status === "encerrado")
+    return "bg-gradient-to-r from-rose-800 via-rose-700 to-rose-500";
+  return "bg-gradient-to-r from-slate-400 to-slate-300";
+}
+
+/* ───────────────── HeaderHero (padronizado) ───────────────── */
 function HeaderHero({ totalEventos, totalTurmas, onSearch, searchValue }) {
   const buscaRef = useRef(null);
   return (
@@ -74,7 +108,7 @@ function HeaderHero({ totalEventos, totalTurmas, onSearch, searchValue }) {
   );
 }
 
-/* ───────────────── Modal de confirmação (leve e acessível) ───────────────── */
+/* ───────────────── Modal de confirmação ───────────────── */
 function ConfirmModal({ open, title, message, onCancel, onConfirm, confirmLabel = "Confirmar", danger }) {
   const ref = useRef(null);
   useEffect(() => {
@@ -125,6 +159,28 @@ function ConfirmModal({ open, title, message, onCancel, onConfirm, confirmLabel 
       </div>
     </div>
   );
+}
+
+// Tenta múltiplas rotas de backend e normaliza o retorno
+async function fetchTurmasDoEvento(eventoId) {
+  const rotas = [
+    `/api/turmas/evento/${eventoId}`,      // mais comum
+    `/api/eventos/${eventoId}/turmas`,     // alternativa
+    `/api/eventos/${eventoId}`,            // pode vir { turmas: [...] }
+    `/api/turmas?evento_id=${eventoId}`,   // legado (nem sempre existe)
+  ];
+
+  for (const url of rotas) {
+    try {
+      const resp = await apiGet(url, { on403: "silent" });
+      if (Array.isArray(resp)) return resp;                    // ex.: [ {id,...}, ... ]
+      if (Array.isArray(resp?.turmas)) return resp.turmas;     // ex.: { turmas: [...] }
+      if (Array.isArray(resp?.lista)) return resp.lista;       // ex.: { lista: [...] }
+    } catch (e) {
+      // ignora e tenta a próxima rota
+    }
+  }
+  return [];
 }
 
 /* ───────────────── Página ───────────────── */
@@ -186,28 +242,26 @@ export default function CancelarInscricoesAdmin() {
   async function toggleEvento(eventoId) {
     const willOpen = !abertoEvento[eventoId];
     setAbertoEvento((prev) => ({ ...prev, [eventoId]: willOpen }));
-    if (willOpen && !turmasPorEvento[eventoId]) {
-      try {
-        setLoadingTurmas((p) => ({ ...p, [eventoId]: true }));
-        setLive(`Carregando turmas do evento ${eventoId}…`);
-        let turmas = [];
-        try {
-          turmas = await apiGet(`/api/turmas?evento_id=${eventoId}`, { on403: "silent" });
-        } catch {
-          turmas = await apiGet(`/api/turmas/evento/${eventoId}`, { on403: "silent" });
-        }
-        if (!Array.isArray(turmas)) turmas = [];
-        setTurmasPorEvento((prev) => ({ ...prev, [eventoId]: turmas }));
-        setLive(`Turmas do evento ${eventoId} carregadas: ${turmas.length}.`);
-      } catch (e) {
-        const msg = e?.response?.data?.erro || e?.message || "Falha ao carregar turmas do evento.";
-        toast.error(msg);
-        setLive("Falha ao carregar turmas do evento.");
-      } finally {
-        setLoadingTurmas((p) => ({ ...p, [eventoId]: false }));
-      }
+  
+    if (!willOpen) return; // fechando → não carrega
+    if (turmasPorEvento[eventoId]) return; // já tem cache
+    if (loadingTurmas[eventoId]) return; // já está carregando
+  
+    try {
+      setLoadingTurmas((p) => ({ ...p, [eventoId]: true }));
+      setLive(`Carregando turmas do evento ${eventoId}…`);
+      const turmas = await fetchTurmasDoEvento(eventoId);
+      setTurmasPorEvento((prev) => ({ ...prev, [eventoId]: turmas }));
+      setLive(`Turmas do evento ${eventoId} carregadas: ${turmas.length}.`);
+    } catch (e) {
+      const msg = e?.response?.data?.erro || e?.message || "Falha ao carregar turmas do evento.";
+      toast.error(msg);
+      setLive("Falha ao carregar turmas do evento.");
+    } finally {
+      setLoadingTurmas((p) => ({ ...p, [eventoId]: false }));
     }
   }
+  
 
   async function toggleTurma(turmaId) {
     const willOpen = !abertaTurma[turmaId];
@@ -221,12 +275,26 @@ export default function CancelarInscricoesAdmin() {
     try {
       setLoadingInscritos((p) => ({ ...p, [turmaId]: true }));
       setLive(`Carregando inscritos da turma ${turmaId}…`);
-      const inscritos = await apiGet(`/api/inscricoes/turma/${turmaId}`, { on403: "silent" });
-      setInscritosPorTurma((prev) => ({ ...prev, [turmaId]: Array.isArray(inscritos) ? inscritos : [] }));
+  
+      const rotas = [
+        `/api/inscricoes/turma/${turmaId}`,
+        `/api/turmas/${turmaId}/inscricoes`,
+        `/api/inscricoes?turma_id=${turmaId}`,
+      ];
+  
+      let inscritos = [];
+      for (const url of rotas) {
+        try {
+          const r = await apiGet(url, { on403: "silent" });
+          if (Array.isArray(r)) { inscritos = r; break; }
+          if (Array.isArray(r?.lista)) { inscritos = r.lista; break; }
+          if (Array.isArray(r?.inscritos)) { inscritos = r.inscritos; break; }
+        } catch {}
+      }
+  
+      setInscritosPorTurma((prev) => ({ ...prev, [turmaId]: inscritos }));
       setSelecionados((prev) => ({ ...prev, [turmaId]: new Set() }));
-      setLive(
-        `Inscritos da turma ${turmaId} carregados: ${Array.isArray(inscritos) ? inscritos.length : 0}.`
-      );
+      setLive(`Inscritos da turma ${turmaId} carregados: ${inscritos.length}.`);
     } catch (e) {
       const msg = e?.response?.data?.erro || e?.message || "Falha ao buscar inscritos.";
       toast.error(msg);
@@ -236,6 +304,7 @@ export default function CancelarInscricoesAdmin() {
       setLoadingInscritos((p) => ({ ...p, [turmaId]: false }));
     }
   }
+  
 
   function toggleSelecionado(turmaId, usuarioId) {
     setSelecionados((prev) => {
@@ -313,7 +382,7 @@ export default function CancelarInscricoesAdmin() {
     Object.values(loadingInscritos).some(Boolean);
 
   return (
-    <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
+    <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white overflow-x-hidden">
       {/* Live region acessível */}
       <p ref={liveRef} className="sr-only" aria-live="polite" />
 
@@ -339,26 +408,37 @@ export default function CancelarInscricoesAdmin() {
       )}
 
       {/* Conteúdo */}
-      <main className="flex-1 max-w-6xl mx-auto px-4 sm:px-6 py-6">
-        <section className="bg-white dark:bg-zinc-900 rounded-2xl shadow ring-1 ring-black/5 overflow-hidden">
-          {loadingEventos ? (
+      <main className="flex-1 max-w-6xl mx-auto px-3 sm:px-6 py-6 min-w-0">
+        {loadingEventos ? (
+          <section className="bg-white dark:bg-zinc-900 rounded-2xl shadow ring-1 ring-black/5 overflow-hidden">
             <div className="p-6 flex items-center justify-center">
               <Spinner />
             </div>
-          ) : eventosFiltrados.length === 0 ? (
+          </section>
+        ) : eventosFiltrados.length === 0 ? (
+          <section className="bg-white dark:bg-zinc-900 rounded-2xl shadow ring-1 ring-black/5 overflow-hidden">
             <div className="p-8 text-center">
               <p className="text-sm text-gray-600 dark:text-gray-300">
                 Nenhum evento encontrado {busca ? "para o filtro aplicado." : "no momento."}
               </p>
             </div>
-          ) : (
-            eventosFiltrados.map((ev) => {
+          </section>
+        ) : (
+          // ⬇️ grade fluida de cards (um card por evento)
+          <ul className="grid grid-cols-1 gap-4 sm:gap-6">
+            {eventosFiltrados.map((ev) => {
               const aberto = !!abertoEvento[ev.id];
               const turmas = turmasPorEvento[ev.id] || [];
               const carregandoTurmas = !!loadingTurmas[ev.id];
+              const status = deduzStatus(ev);
+              const bar = barByStatus(status);
 
               return (
-                <div key={ev.id} className="border-b border-gray-100 dark:border-zinc-800">
+                <li key={ev.id} className="relative rounded-2xl bg-white dark:bg-zinc-900 shadow ring-1 ring-black/5 overflow-hidden">
+                  {/* Barra superior colorida */}
+                  <div className={`absolute top-0 left-0 right-0 h-1.5 ${bar}`} aria-hidden="true" />
+
+                  {/* Cabeçalho do card (clicável para expandir) */}
                   <button
                     type="button"
                     onClick={() => toggleEvento(ev.id)}
@@ -366,25 +446,32 @@ export default function CancelarInscricoesAdmin() {
                     aria-expanded={aberto}
                     aria-controls={`evento-${ev.id}-conteudo`}
                   >
-                    {aberto ? <ChevronDown className="mt-0.5" /> : <ChevronRight className="mt-0.5" />}
-                    <div className="flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <div className="font-semibold">{ev.titulo || `Evento #${ev.id}`}</div>
+                    {aberto ? <ChevronDown className="mt-0.5 shrink-0" /> : <ChevronRight className="mt-0.5 shrink-0" />}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-2 min-w-0">
+                        <div className="font-semibold break-words">
+                          {ev.titulo || `Evento #${ev.id}`}
+                        </div>
                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-emerald-100 text-emerald-900">
                           {turmas?.length || 0} turmas
                         </span>
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-800 dark:bg-zinc-800 dark:text-zinc-200">
+                          {status === "programado" ? "Programado" : status === "em_andamento" ? "Em andamento" : "Encerrado"}
+                        </span>
                       </div>
-                      <div className="text-xs text-gray-600 dark:text-gray-300 flex items-center gap-2 mt-0.5">
+                      <div className="text-xs text-gray-600 dark:text-gray-300 flex flex-wrap items-center gap-2 mt-0.5">
                         <Building2 className="w-3.5 h-3.5" aria-hidden="true" />
-                        <span>{ev.local || "Local a definir"}</span>
+                        <span className="break-words">{ev.local || "Local a definir"}</span>
                         <span className="mx-1">•</span>
                         <CalendarClock className="w-3.5 h-3.5" aria-hidden="true" />
-                        <span>Carga horária: {ev.carga_horaria_total ?? ev.carga_horaria ?? "—"}</span>
+                        <span>
+                          Carga horária: {ev.carga_horaria_total ?? ev.carga_horaria ?? "—"}
+                        </span>
                       </div>
                     </div>
                   </button>
 
-                  {/* Turmas */}
+                  {/* Conteúdo (turmas + inscritos) */}
                   {aberto && (
                     <div id={`evento-${ev.id}-conteudo`} className="bg-gray-50/70 dark:bg-zinc-900/40">
                       {carregandoTurmas ? (
@@ -403,6 +490,7 @@ export default function CancelarInscricoesAdmin() {
 
                           return (
                             <div key={t.id} className="border-t border-gray-100 dark:border-zinc-800">
+                              {/* Cabeçalho da turma */}
                               <button
                                 type="button"
                                 onClick={() => toggleTurma(t.id)}
@@ -410,10 +498,10 @@ export default function CancelarInscricoesAdmin() {
                                 aria-expanded={aberta}
                                 aria-controls={`turma-${t.id}-conteudo`}
                               >
-                                {aberta ? <ChevronDown className="mt-0.5" /> : <ChevronRight className="mt-0.5" />}
-                                <div className="flex-1">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <div className="font-medium">
+                                {aberta ? <ChevronDown className="mt-0.5 shrink-0" /> : <ChevronRight className="mt-0.5 shrink-0" />}
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex flex-wrap items-center gap-2 min-w-0">
+                                    <div className="font-medium break-words">
                                       {t.nome || `Turma #${t.id}`}{" "}
                                       <span className="text-xs text-gray-500">({t.carga_horaria ?? "—"}h)</span>
                                     </div>
@@ -423,9 +511,7 @@ export default function CancelarInscricoesAdmin() {
                                   </div>
                                   <div className="text-xs text-gray-600 dark:text-gray-300">
                                     {t.data_inicio
-                                      ? `Início: ${t.data_inicio} ${
-                                          t.horario_inicio ? `às ${String(t.horario_inicio).slice(0, 5)}` : ""
-                                        }`
+                                      ? `Início: ${t.data_inicio} ${t.horario_inicio ? `às ${String(t.horario_inicio).slice(0, 5)}` : ""}`
                                       : "Datas a definir"}
                                   </div>
                                 </div>
@@ -496,7 +582,7 @@ export default function CancelarInscricoesAdmin() {
                                                     {marcado ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
                                                   </button>
                                                 </td>
-                                                <td className="px-3 py-2">{u.nome}</td>
+                                                <td className="px-3 py-2 break-words">{u.nome}</td>
                                                 <td className="px-3 py-2">{u.cpf}</td>
                                                 <td className="px-3 py-2">
                                                   {u.presente ? (
@@ -533,11 +619,11 @@ export default function CancelarInscricoesAdmin() {
                       )}
                     </div>
                   )}
-                </div>
+                </li>
               );
-            })
-          )}
-        </section>
+            })}
+          </ul>
+        )}
       </main>
 
       <ConfirmModal

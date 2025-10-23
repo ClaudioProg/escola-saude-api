@@ -85,6 +85,12 @@ function rangeDaTurma(t) {
   return { di, df };
 }
 
+// Prioriza o status vindo do backend; se não vier, usa o cálculo local atual
+function statusBackendOuFallback(evento) {
+  if (typeof evento?.status === "string" && evento.status) return evento.status;
+  return statusDoEvento(evento);
+}
+
 /* ------------------------------------------------------------------ */
 /*  Helpers para buscar apenas eventos visíveis                       */
 /* ------------------------------------------------------------------ */
@@ -323,7 +329,7 @@ export default function Eventos() {
 
   // 🔎 regra: nunca mostrar encerrados sem inscrição prévia
   const eventosFiltrados = eventos.filter((evento) => {
-    const st = statusDoEvento(evento);
+    const st = statusBackendOuFallback(evento);   // ✅ usa backend primeiro
     const inscrito = jaInscritoNoEvento(evento);
     if (st === "encerrado" && !inscrito) return false;
     if (filtro === "todos") return true;
@@ -378,8 +384,8 @@ export default function Eventos() {
               .sort((a, b) => (keyFim(b) > keyFim(a) ? 1 : keyFim(b) < keyFim(a) ? -1 : 0))
               .map((evento, idx) => {
                 const ehInstrutor = Boolean(evento.ja_instrutor);
-                const st = statusDoEvento(evento);
-                const chipCfg = chip[st];
+                const st = statusBackendOuFallback(evento);     // ✅ usa backend primeiro
+const chipCfg = chip[st];
 
                 return (
                   <motion.article

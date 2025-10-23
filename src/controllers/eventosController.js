@@ -174,19 +174,18 @@ async function listarEventos(req, res) {
     (SELECT MAX(t.data_fim)       FROM turmas t WHERE t.evento_id = e.id) AS data_fim_geral,
     (SELECT MIN(t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id) AS horario_inicio_geral,
     (SELECT MAX(t.horario_fim)    FROM turmas t WHERE t.evento_id = e.id) AS horario_fim_geral,
-    (
       CASE
-        WHEN CURRENT_TIMESTAMP < (
-          SELECT MIN(t.data_inicio + t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id
-        ) THEN 'programado'
-        WHEN CURRENT_TIMESTAMP BETWEEN
-          (SELECT MIN(t.data_inicio + t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id)
-          AND
-          (SELECT MAX(t.data_fim + t.horario_fim) FROM turmas t WHERE t.evento_id = e.id)
-        THEN 'andamento'
-        ELSE 'encerrado'
-      END
-    ) AS status,
+  WHEN CURRENT_TIMESTAMP::timestamp < (
+    SELECT MIN(t.data_inicio::date + COALESCE(t.horario_inicio::time, '00:00'::time))
+    FROM turmas t WHERE t.evento_id = e.id
+  ) THEN 'programado'
+  WHEN CURRENT_TIMESTAMP::timestamp <= (
+    SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time))
+    FROM turmas t WHERE t.evento_id = e.id
+  ) THEN 'andamento'
+  ELSE 'encerrado'
+END AS status,
+
     (
       SELECT COUNT(*) > 0
       FROM inscricoes i
@@ -204,8 +203,9 @@ async function listarEventos(req, res) {
   LEFT JOIN usuarios u         ON u.id  = ei.instrutor_id
   WHERE ${admin ? 'TRUE' : '(e.publicado = TRUE OR e.id IN (SELECT evento_id FROM sou_instrutor))'}
   GROUP BY e.id
-  ORDER BY (SELECT MAX(t.data_fim + t.horario_fim) FROM turmas t WHERE t.evento_id = e.id) DESC NULLS LAST,
-           e.id DESC;
+  ORDER BY (SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time,'23:59'::time))
+          FROM turmas t WHERE t.evento_id = e.id) DESC NULLS LAST,
+         e.id DESC;
 `;
 
     const params = [usuarioId, usuarioId];
@@ -273,16 +273,16 @@ async function listarEventosParaMim(req, res) {
         (SELECT MAX(t.horario_fim)    FROM turmas t WHERE t.evento_id = e.id) AS horario_fim_geral,
 
         CASE
-          WHEN CURRENT_TIMESTAMP < (
-            SELECT MIN(t.data_inicio + t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id
-          ) THEN 'programado'
-          WHEN CURRENT_TIMESTAMP BETWEEN
-            (SELECT MIN(t.data_inicio + t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id)
-            AND
-            (SELECT MAX(t.data_fim + t.horario_fim) FROM turmas t WHERE t.evento_id = e.id)
-          THEN 'andamento'
-          ELSE 'encerrado'
-        END AS status,
+  WHEN CURRENT_TIMESTAMP::timestamp < (
+    SELECT MIN(t.data_inicio::date + COALESCE(t.horario_inicio::time, '00:00'::time))
+    FROM turmas t WHERE t.evento_id = e.id
+  ) THEN 'programado'
+  WHEN CURRENT_TIMESTAMP::timestamp <= (
+    SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time))
+    FROM turmas t WHERE t.evento_id = e.id
+  ) THEN 'andamento'
+  ELSE 'encerrado'
+END AS status,
 
         (
           SELECT COUNT(*) > 0
@@ -299,8 +299,9 @@ async function listarEventosParaMim(req, res) {
 
       FROM base e
       ORDER BY
-        (SELECT MAX(t.data_fim + t.horario_fim) FROM turmas t WHERE t.evento_id = e.id) DESC NULLS LAST,
-        e.id DESC;
+  (SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time,'23:59'::time))
+     FROM turmas t WHERE t.evento_id = e.id) DESC NULLS LAST,
+  e.id DESC;
     `;
 
     const params = [usuarioId, usuarioId, MODO_TODOS, regNorm, MODO_LISTA];
@@ -464,6 +465,30 @@ async function buscarEventoPorId(req, res) {
       return res.status(404).json({ erro: 'Evento não encontrado' });
     }
     const evento = eventoResult.rows[0];
+
+    // 🔄 Status do evento (mesma regra das listas)
+    const { rows: stEv } = await client.query(
+      `
+      SELECT
+        CASE
+          WHEN CURRENT_TIMESTAMP::timestamp < (
+            SELECT MIN(t.data_inicio::date + COALESCE(t.horario_inicio::time,'00:00'::time))
+            FROM turmas t
+            WHERE t.evento_id = $1
+          ) THEN 'programado'
+          WHEN CURRENT_TIMESTAMP::timestamp <= (
+            SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time,'23:59'::time))
+            FROM turmas t
+            WHERE t.evento_id = $1
+          ) THEN 'andamento'
+          ELSE 'encerrado'
+        END AS status
+      `,
+      [id]
+    );
+const status_evento = stEv[0]?.status || 'programado';
+
+
     
 // 🔒 não-admin não pode ver detalhes de rascunho
 if (!isAdmin(req) && !evento.publicado) {
@@ -600,21 +625,38 @@ if (!isAdmin(req) && !evento.publicado) {
       );
       const inscritos = Number(inscritosQ.rows[0]?.total || 0);
 
-      turmas.push({
-        id: t.id,
-        evento_id: t.evento_id,
-        nome: t.nome,
-        data_inicio,
-        data_fim,
-        horario_inicio: horario_inicio || null,
-        horario_fim: horario_fim || null,
-        vagas_total: t.vagas_total,
-        carga_horaria: t.carga_horaria,
-        inscritos,
-        inscritos_confirmados: inscritos,
-        vagas_preenchidas: inscritos,
-        datas,
-      });
+      const hiCalc = (horario_inicio && horario_inicio.length) ? horario_inicio : '00:00';
+const hfCalc = (horario_fim    && horario_fim.length)    ? horario_fim    : '23:59';
+
+const { rows: stT } = await client.query(
+  `
+  SELECT
+  CASE
+    WHEN CURRENT_TIMESTAMP::timestamp < ($1::date + $2::time) THEN 'programado'
+    WHEN CURRENT_TIMESTAMP::timestamp <= ($3::date + $4::time) THEN 'andamento'
+    ELSE 'encerrado'
+  END AS status
+  `,
+  [data_inicio, hiCalc, data_fim, hfCalc]
+);
+const status_turma = stT[0]?.status || 'programado';
+
+turmas.push({
+  id: t.id,
+  evento_id: t.evento_id,
+  nome: t.nome,
+  data_inicio,
+  data_fim,
+  horario_inicio: horario_inicio || null,
+  horario_fim: horario_fim || null,
+  vagas_total: t.vagas_total,
+  carga_horaria: t.carga_horaria,
+  inscritos,
+  inscritos_confirmados: inscritos,
+  vagas_preenchidas: inscritos,
+  datas,
+  status: status_turma,            // ✅ status consistente por turma
+});
     }
 
     const jaInstrutorResult = await client.query(
@@ -634,8 +676,9 @@ if (!isAdmin(req) && !evento.publicado) {
 
     const eventoCompleto = {
       ...evento,
+      status: status_evento, // ✅ agora o detalhe também tem status
       registros_permitidos,
-      count_registros_permitidos,   // ✅
+      count_registros_permitidos,
       instrutor: instrutorResult.rows,
       turmas,
       ja_instrutor: Boolean(jaInstrutorResult.rows?.[0]?.eh),
@@ -740,7 +783,30 @@ async function listarTurmasDoEvento(req, res) {
         horario_inicio: toHm(d.horario_inicio),
         horario_fim: toHm(d.horario_fim),
       })).filter(x => x.data);
-      turmas.push({ ...r, datas });
+      
+      // 🔄 calcula status da turma com a MESMA regra das listas
+      const data_ini = toYmd(r.data_inicio) || (datas[0]?.data) || null;
+      const data_fim = toYmd(r.data_fim)    || (datas.at(-1)?.data) || null;
+      const hiCalc   = toHm(r.horario_inicio) || (datas[0]?.horario_inicio) || '00:00';
+      const hfCalc   = toHm(r.horario_fim)    || (datas.at(-1)?.horario_fim) || '23:59';
+      
+      let status_turma = 'programado';
+      if (data_ini && data_fim) {
+        const st = await query(
+          `
+          SELECT
+            CASE
+              WHEN CURRENT_TIMESTAMP::timestamp < ($1::date + $2::time) THEN 'programado'
+              WHEN CURRENT_TIMESTAMP::timestamp <= ($3::date + $4::time) THEN 'andamento'
+              ELSE 'encerrado'
+            END AS status
+          `,
+          [data_ini, hiCalc, data_fim, hfCalc]
+        );
+        status_turma = st.rows?.[0]?.status || 'programado';
+      }
+      
+      turmas.push({ ...r, datas, status: status_turma });
     }
 
     res.json(turmas);
@@ -1063,11 +1129,10 @@ async function getAgendaEventos(req, res) {
       MAX(t.horario_fim)    AS horario_fim,
 
       CASE 
-        WHEN CURRENT_TIMESTAMP < MIN(t.data_inicio + t.horario_inicio) THEN 'programado'
-        WHEN CURRENT_TIMESTAMP BETWEEN MIN(t.data_inicio + t.horario_inicio)
-                                 AND MAX(t.data_fim + t.horario_fim) THEN 'andamento'
-        ELSE 'encerrado'
-      END AS status,
+  WHEN CURRENT_TIMESTAMP::timestamp < MIN(t.data_inicio::date + COALESCE(t.horario_inicio::time,'00:00'::time)) THEN 'programado'
+  WHEN CURRENT_TIMESTAMP::timestamp <= MAX(t.data_fim::date + COALESCE(t.horario_fim::time,'23:59'::time)) THEN 'andamento'
+  ELSE 'encerrado'
+END AS status,
 
       CASE
         WHEN EXISTS (
@@ -1100,7 +1165,8 @@ async function getAgendaEventos(req, res) {
     FROM eventos e
     JOIN turmas t ON t.evento_id = e.id
     GROUP BY e.id, e.titulo
-    ORDER BY MAX(t.data_fim + t.horario_fim) DESC NULLS LAST;
+    ORDER BY MAX(t.data_fim::date + COALESCE(t.horario_fim::time,'23:59'::time)) DESC NULLS LAST;
+
   `;
 
   try {
@@ -1136,16 +1202,16 @@ async function listarEventosDoinstrutor(req, res) {
       SELECT DISTINCT 
         e.*,
         CASE 
-          WHEN CURRENT_TIMESTAMP < (
-            SELECT MIN(t.data_inicio + t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id
-          ) THEN 'programado'
-          WHEN CURRENT_TIMESTAMP BETWEEN
-            (SELECT MIN(t.data_inicio + t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id)
-            AND
-            (SELECT MAX(t.data_fim + t.horario_fim) FROM turmas t WHERE t.evento_id = e.id)
-          THEN 'andamento'
-          ELSE 'encerrado'
-        END AS status,
+  WHEN CURRENT_TIMESTAMP::timestamp < (
+    SELECT MIN(t.data_inicio::date + COALESCE(t.horario_inicio::time,'00:00'::time))
+    FROM turmas t WHERE t.evento_id = e.id
+  ) THEN 'programado'
+  WHEN CURRENT_TIMESTAMP::timestamp <= (
+    SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time,'23:59'::time))
+    FROM turmas t WHERE t.evento_id = e.id
+  ) THEN 'andamento'
+  ELSE 'encerrado'
+END AS status,
 
         /* também devolve a lista para UI de edição */
         COALESCE((

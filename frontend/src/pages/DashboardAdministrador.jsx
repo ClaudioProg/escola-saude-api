@@ -22,23 +22,28 @@ function HeaderHero({ nome, carregando, onRefresh }) {
         Ir para o conteúdo
       </a>
 
-      <div className="max-w-6xl mx-auto px-3 sm:px-6 py-4 sm:py-6 text-center flex flex-col items-center gap-2 sm:gap-3">
-        <h1 className="text-lg sm:text-2xl font-extrabold tracking-tight break-words">
+      {/* ⬇️ max-w-full + min-w-0 evita overflow em telas estreitas */}
+      <div className="max-w-6xl mx-auto px-3 sm:px-6 py-4 sm:py-6 text-center flex flex-col items-center gap-2 sm:gap-3 max-w-full min-w-0">
+        {/* ⬇️ quebra inteligente de títulos longos */}
+        <h1 className="text-lg sm:text-2xl font-extrabold tracking-tight break-words max-w-full">
           Painel do Administrador
         </h1>
 
-        <p className="text-xs sm:text-sm text-white/90 px-2">
+        <p className="text-xs sm:text-sm text-white/90 px-2 break-words whitespace-normal max-w-full">
           {nome ? `Bem-vindo(a), ${nome}.` : "Bem-vindo(a)."} Gerencie eventos,
           turmas, inscrições, presenças e avaliações.
         </p>
 
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
+        {/* ⬇️ evitar overflow: w-full no mobile + min-w-0 */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto min-w-0">
           <button
             type="button"
             onClick={onRefresh}
             disabled={carregando}
-            className={`inline-flex justify-center items-center gap-2 px-4 py-2 text-sm rounded-md transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70
-              ${carregando ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-white/20 hover:bg-white/25"} text-white w-full sm:w-auto`}
+            className={`inline-flex justify-center items-center gap-2 px-4 py-2 text-sm rounded-md transition focus-visible:outline-none focus-visible:ring-2
+              ${
+                carregando ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-white/20 hover:bg-white/25"
+              } text-white w-full sm:w-auto break-words whitespace-normal`}
             aria-label="Atualizar lista de eventos"
           >
             {carregando ? "Atualizando…" : "Atualizar"}
@@ -124,8 +129,8 @@ function MiniStats({ eventos, turmasPorEvento /*, presencasPorTurma, inscritosPo
         <div key={c.key}
           className={`rounded-2xl text-white p-4 shadow ring-1 ring-black/5 bg-gradient-to-br ${c.color} min-w-0`}
         >
-          <p className="text-xs/5 opacity-90">{c.label}</p>
-          <p className="text-2xl font-extrabold mt-1">{c.value}</p>
+          <p className="text-xs/5 opacity-90 break-words whitespace-normal">{c.label}</p>
+          <p className="text-2xl font-extrabold mt-1 break-words">{c.value}</p>
         </div>
       ))}
     </section>
@@ -401,7 +406,6 @@ export default function DashboardAdministrador() {
       const doc = new jsPDF();
       doc.setFontSize(16);
       doc.text("Relatório de Presença por Turma", 14, 20);
-      // ✅ options em um único objeto (fix)
       autoTable(doc, {
         startY: 30,
         head: [["Nome", "CPF", "Presença (≥75%)"]],
@@ -663,7 +667,8 @@ export default function DashboardAdministrador() {
   };
 
   return (
-    <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white overflow-x-hidden">
+    // ⬇️ overflow-x-hidden global + min-w-0 evita viewport “expandir”
+    <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white overflow-x-hidden min-w-0">
       <HeaderHero nome={nome} carregando={carregando} onRefresh={carregarEventos} />
 
       {carregando && (
@@ -680,7 +685,8 @@ export default function DashboardAdministrador() {
         </div>
       )}
 
-      <main id="conteudo" className="flex-1 max-w-6xl mx-auto px-3 sm:px-4 py-5 sm:py-6 min-w-0">
+      {/* ⬇️ max-w-full + min-w-0 + overflow-x-hidden no main */}
+      <main id="conteudo" className="flex-1 max-w-6xl mx-auto px-3 sm:px-4 py-5 sm:py-6 min-w-0 max-w-full overflow-x-hidden">
         <p ref={liveRef} className="sr-only" aria-live="polite" aria-atomic="true" />
 
         {/* 🔢 MiniStats no topo */}
@@ -691,14 +697,14 @@ export default function DashboardAdministrador() {
           inscritosPorTurma={inscritosPorTurma}
         />
 
-        {/* Filtros: chips + busca (agora com WRAP, sem rolagem horizontal) */}
+        {/* Filtros: chips + busca (wrap, sem scroll horizontal) */}
         <section
-          className="bg-white dark:bg-gray-800 rounded-xl shadow p-3 sm:p-4 mb-4 sm:mb-6"
+          className="bg-white dark:bg-gray-800 rounded-xl shadow p-3 sm:p-4 mb-4 sm:mb-6 min-w-0 overflow-hidden"
           aria-label="Filtros por status do evento"
         >
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-3 min-w-0">
             <nav
-              className="flex flex-wrap gap-2 sm:gap-3 min-w-0"
+              className="flex flex-wrap gap-2 sm:gap-3 min-w-0 w-full"
               role="tablist"
               aria-label="Filtros por status"
               onKeyDown={onTabKeyDown}
@@ -718,7 +724,7 @@ export default function DashboardAdministrador() {
                     aria-selected={active}
                     aria-controls={`painel-${key}`}
                     onClick={() => setFiltroStatus(key)}
-                    className={`px-4 py-2 rounded-full text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2
+                    className={`px-4 py-2 rounded-full text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 break-words whitespace-normal max-w-full
                       ${
                         active
                           ? "bg-pink-600 text-white focus-visible:ring-pink-500"
@@ -731,7 +737,8 @@ export default function DashboardAdministrador() {
               })}
             </nav>
 
-            <div className="flex items-center gap-2 min-w-0">
+            {/* ⬇️ linha da busca: evitar overflow com min-w-0 e permitir o botão encolher */}
+            <div className="flex items-center gap-2 min-w-0 w-full">
               <label htmlFor="busca-evento" className="sr-only">
                 Buscar evento pelo nome
               </label>
@@ -742,7 +749,7 @@ export default function DashboardAdministrador() {
                 placeholder="Buscar evento pelo nome…"
                 value={busca}
                 onChange={(e) => setBusca(e.target.value)}
-                className="flex-1 px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 dark:bg-zinc-800 dark:text-white text-sm min-w-0"
+                className="flex-1 px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 dark:bg-zinc-800 dark:text-white text-sm min-w-0 w-0"
                 aria-describedby="dica-busca"
               />
               <button
@@ -750,7 +757,7 @@ export default function DashboardAdministrador() {
                 onClick={() => setBusca("")}
                 disabled={!busca}
                 aria-disabled={!busca}
-                className={`px-3 py-2 rounded-md text-sm shrink-0 ${
+                className={`px-3 py-2 rounded-md text-sm ${
                   !busca
                     ? "bg-gray-200/60 dark:bg-gray-700/60 cursor-not-allowed"
                     : "bg-gray-200 dark:bg-gray-700"
@@ -760,7 +767,7 @@ export default function DashboardAdministrador() {
                 Limpar
               </button>
             </div>
-            <p id="dica-busca" className="text-xs text-gray-600 dark:text-gray-300">
+            <p id="dica-busca" className="text-xs text-gray-600 dark:text-gray-300 break-words">
               Dica: digite parte do nome do evento para filtrar rapidamente.
             </p>
           </div>
@@ -774,7 +781,7 @@ export default function DashboardAdministrador() {
             role="alert"
           >
             <div className="flex items-center gap-2 justify-between">
-              <p className="text-sm">{erro}</p>
+              <p className="text-sm break-words">{erro}</p>
               <button
                 type="button"
                 onClick={carregarEventos}
@@ -803,7 +810,8 @@ export default function DashboardAdministrador() {
 
           {!carregando &&
             eventosFiltrados.map((evento) => (
-              <div key={evento.id} className="min-w-0">
+              // ⬇️ wrapper evita que um conteúdo interno force largura
+              <div key={evento.id} className="min-w-0 overflow-hidden">
                 <CardEventoadministrador
                   evento={evento}
                   expandido={eventoExpandido === evento.id}
@@ -825,7 +833,7 @@ export default function DashboardAdministrador() {
             ))}
 
           {!carregando && eventosFiltrados.length === 0 && (
-            <p className="text-center text-gray-600 dark:text-gray-300 text-sm sm:text-base px-2">
+            <p className="text-center text-gray-600 dark:text-gray-300 text-sm sm:text-base px-2 break-words">
               Nenhum evento encontrado para o filtro selecionado.
             </p>
           )}
