@@ -23,8 +23,11 @@ const {
 } = require("./notificacoesController");
 
 // ⬇️ helpers de autorização (admin/avaliador)
-const { canUserReviewOrView, isAdmin } = require("./submissoesAdminController");
-const { atualizarNotaMediaMaterializada } = require("./submissoesAdminController");
+const {
+  canUserReviewOrView,
+  isAdmin,
+  atualizarNotaMediaMaterializada,
+} = require("./submissoesAdminController");
 
 /* ───────────────── Helpers comuns ───────────────── */
 function isYYYYMM(s) { return typeof s === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(s); }
@@ -696,54 +699,116 @@ exports.listarSubmissoesAdmin = async (req, res, next) => {
     const chamadaId = toIntOrNull(req.params.chamadaId);
     if (chamadaId === null) { const e = new Error("chamadaId inválido."); e.status = 400; throw e; }
 
-    const rows = await db.any(`
-           WITH base AS (
-              SELECT
-                s.id,
-                s.titulo,
-                s.usuario_id,
-                s.status,
-                s.linha_tematica_codigo,
-                s.inicio_experiencia,
-                s.criado_em,
-                s.atualizado_em,
-                u.nome  AS autor_nome,
-                u.email AS autor_email,
-                c.titulo AS chamada_titulo,
-                COALESCE(ve.total_ponderado,0) AS total_escrita,
-                COALESCE(vo.total_oral_ponderado,0) AS total_oral,
-                (COALESCE(ve.total_ponderado,0)+COALESCE(vo.total_oral_ponderado,0)) AS total_geral,
-      
-                COALESCE(n.soma_notas, 0)::numeric       AS soma_notas,
-                COALESCE(n.qtd_itens, 0)                 AS qtd_itens,
-                COALESCE(n.qtd_avaliadores, 0)           AS qtd_avaliadores,
-                ROUND(COALESCE(n.soma_notas,0) / 4.0, 1) AS nota_media
-              FROM trabalhos_submissoes s
-              JOIN usuarios u              ON u.id = s.usuario_id
-              JOIN trabalhos_chamadas c    ON c.id = s.chamada_id
-              LEFT JOIN vw_submissao_total_escrita ve ON ve.submissao_id = s.id
-              LEFT JOIN vw_submissao_total_oral   vo ON vo.submissao_id = s.id
-              LEFT JOIN LATERAL (
-                SELECT
-                  SUM(tai.nota)                       AS soma_notas,
-                  COUNT(*)                            AS qtd_itens,
-                  COUNT(DISTINCT tai.avaliador_id)    AS qtd_avaliadores
-                FROM trabalhos_avaliacoes_itens tai
-                WHERE tai.submissao_id = s.id
-              ) n ON TRUE
-              WHERE s.chamada_id = $1
-            )
+    let rows;
+    try {
+      rows = await db.any(`
+        WITH base AS (
+          SELECT
+            s.id,
+            s.titulo,
+            s.usuario_id,
+            s.status,
+            s.status_escrita,
+            s.status_oral,
+            s.linha_tematica_codigo,
+            s.inicio_experiencia,
+            s.criado_em,
+            s.atualizado_em,
+            u.nome  AS autor_nome,
+            u.email AS autor_email,
+            c.titulo AS chamada_titulo,
+            COALESCE(ve.total_ponderado,0) AS total_escrita,
+            COALESCE(vo.total_oral_ponderado,0) AS total_oral,
+            (COALESCE(ve.total_ponderado,0)+COALESCE(vo.total_oral_ponderado,0)) AS total_geral,
+            COALESCE(n.soma_notas, 0)::numeric       AS soma_notas,
+            COALESCE(n.qtd_itens, 0)                 AS qtd_itens,
+            COALESCE(n.qtd_avaliadores, 0)           AS qtd_avaliadores,
+            ROUND(COALESCE(n.soma_notas,0) / 4.0, 1) AS nota_media
+          FROM trabalhos_submissoes s
+          JOIN usuarios u              ON u.id = s.usuario_id
+          JOIN trabalhos_chamadas c    ON c.id = s.chamada_id
+          LEFT JOIN vw_submissao_total_escrita ve ON ve.submissao_id = s.id
+          LEFT JOIN vw_submissao_total_oral   vo ON vo.submissao_id = s.id
+          LEFT JOIN LATERAL (
             SELECT
-              ROW_NUMBER() OVER (ORDER BY nota_media DESC NULLS LAST, total_geral DESC, id ASC) AS posicao,
-              *
-            FROM base
-            ORDER BY nota_media DESC NULLS LAST, total_geral DESC, id ASC
-          `, [chamadaId]);
+              SUM(tai.nota)                       AS soma_notas,
+              COUNT(*)                            AS qtd_itens,
+              COUNT(DISTINCT tai.avaliador_id)    AS qtd_avaliadores
+            FROM trabalhos_avaliacoes_itens tai
+            WHERE tai.submissao_id = s.id
+          ) n ON TRUE
+          WHERE s.chamada_id = $1
+        )
+        SELECT
+          ROW_NUMBER() OVER (ORDER BY nota_media DESC NULLS LAST, total_geral DESC, id ASC) AS posicao,
+          *
+        FROM base
+        ORDER BY nota_media DESC NULLS LAST, total_geral DESC, id ASC
+      `, [chamadaId]);
+    } catch (errSelect) {
+      if (errSelect?.code === "42703") {
+        // fallback sem as colunas novas
+        rows = await db.any(`
+          WITH base AS (
+            SELECT
+              s.id,
+              s.titulo,
+              s.usuario_id,
+              s.status,
+              NULL::text AS status_escrita,
+              NULL::text AS status_oral,
+              s.linha_tematica_codigo,
+              s.inicio_experiencia,
+              s.criado_em,
+              s.atualizado_em,
+              u.nome  AS autor_nome,
+              u.email AS autor_email,
+              c.titulo AS chamada_titulo,
+              COALESCE(ve.total_ponderado,0) AS total_escrita,
+              COALESCE(vo.total_oral_ponderado,0) AS total_oral,
+              (COALESCE(ve.total_ponderado,0)+COALESCE(vo.total_oral_ponderado,0)) AS total_geral,
+              COALESCE(n.soma_notas, 0)::numeric       AS soma_notas,
+              COALESCE(n.qtd_itens, 0)                 AS qtd_itens,
+              COALESCE(n.qtd_avaliadores, 0)           AS qtd_avaliadores,
+              ROUND(COALESCE(n.soma_notas,0) / 4.0, 1) AS nota_media
+            FROM trabalhos_submissoes s
+            JOIN usuarios u              ON u.id = s.usuario_id
+            JOIN trabalhos_chamadas c    ON c.id = s.chamada_id
+            LEFT JOIN vw_submissao_total_escrita ve ON ve.submissao_id = s.id
+            LEFT JOIN vw_submissao_total_oral   vo ON vo.submissao_id = s.id
+            LEFT JOIN LATERAL (
+              SELECT
+                SUM(tai.nota)                       AS soma_notas,
+                COUNT(*)                            AS qtd_itens,
+                COUNT(DISTINCT tai.avaliador_id)    AS qtd_avaliadores
+              FROM trabalhos_avaliacoes_itens tai
+              WHERE tai.submissao_id = s.id
+            ) n ON TRUE
+            WHERE s.chamada_id = $1
+          )
+          SELECT
+            ROW_NUMBER() OVER (ORDER BY nota_media DESC NULLS LAST, total_geral DESC, id ASC) AS posicao,
+            *
+          FROM base
+          ORDER BY nota_media DESC NULLS LAST, total_geral DESC, id ASC
+        `, [chamadaId]);
+      } else {
+        throw errSelect;
+      }
+    }
 
-    console.log("[listarSubmissoesAdmin]", { chamadaId, total: rows.length, ms: Date.now() - t0 });
+    console.log("[listarSubmissoesAdmin]", {
+      chamadaId,
+      total: rows.length,
+      ms: Date.now() - t0,
+    });
     res.json(rows);
   } catch (err) {
-    console.error("[listarSubmissoesAdmin][erro]", { message: err.message, code: err.code, ms: Date.now() - t0 });
+    console.error("[listarSubmissoesAdmin][erro]", {
+      message: err.message,
+      code: err.code,
+      ms: Date.now() - t0,
+    });
     next(err);
   }
 };
@@ -1007,39 +1072,159 @@ exports.definirStatusFinal = async (req, res, next) => {
     const id = toIntOrNull(req.params.id);
     assert(id !== null, "id inválido.");
 
-    const { status, observacoes_admin = null } = req.body;
-    const permitidos = ['reprovado','aprovado_exposicao','aprovado_oral'];
-    assert(permitidos.includes(status), "Status inválido.");
+    const novoStatus = String(req.body?.status || "").trim().toLowerCase();
+    const observacoes_admin = req.body?.observacoes_admin || null;
 
-    await db.none(`
-      UPDATE trabalhos_submissoes
-      SET status=$1, observacoes_admin=$2, atualizado_em=NOW()
-      WHERE id=$3
-    `, [status, observacoes_admin, id]);
+    const permitidos = ["reprovado", "aprovado_exposicao", "aprovado_oral"];
+    assert(permitidos.includes(novoStatus), "Status inválido.");
 
-    const meta = await db.one(`
-      SELECT s.usuario_id, s.titulo AS trabalho_titulo, c.titulo AS chamada_titulo
+    // 1) Buscar estado atual da submissão,
+    // tentando ler também status_escrita/status_oral (mas caindo pra NULL se não existirem)
+    let atual;
+    try {
+      atual = await db.oneOrNone(
+        `
+        SELECT id,
+               status,
+               status_escrita,
+               status_oral
+        FROM trabalhos_submissoes
+        WHERE id=$1
+        `,
+        [id]
+      );
+    } catch (errSelect) {
+      if (errSelect?.code === "42703") {
+        // coluna não existe ainda -> fallback sem elas
+        atual = await db.oneOrNone(
+          `
+          SELECT id,
+                 status,
+                 NULL::text AS status_escrita,
+                 NULL::text AS status_oral
+          FROM trabalhos_submissoes
+          WHERE id=$1
+          `,
+          [id]
+        );
+      } else {
+        throw errSelect;
+      }
+    }
+
+    if (!atual) {
+      const e = new Error("Submissão não encontrada.");
+      e.status = 404;
+      throw e;
+    }
+
+    // 2) Começamos mantendo o que já está
+    let statusPrincipal = atual.status || null;
+    let statusEscrita   = atual.status_escrita || null;
+    let statusOral      = atual.status_oral || null;
+
+    // 3) Aplicar a mudança pedida AGORA, sem apagar aprovações anteriores
+    if (novoStatus === "aprovado_exposicao") {
+      statusPrincipal = "aprovado_exposicao";
+      statusEscrita   = "aprovado"; // garante selo "Exposição"
+      // NÃO zera statusOral; se já era aprovado_oral, mantemos
+    } else if (novoStatus === "aprovado_oral") {
+      statusPrincipal = "aprovado_oral";
+      statusOral      = "aprovado"; // garante selo "Apresentação oral"
+      // NÃO zera statusEscrita; se já era aprovado_exposicao, mantemos
+    } else if (novoStatus === "reprovado") {
+      statusPrincipal = "reprovado";
+      statusEscrita   = null;
+      statusOral      = null;
+    } else {
+      // fallback genérico (só pra segurança)
+      statusPrincipal = novoStatus;
+    }
+
+    // 4) Tentar atualizar COMPLETO (status + parciais)
+    // se o banco ainda não tiver as colunas status_escrita / status_oral
+    // cai no catch e faz um UPDATE reduzido.
+    async function updateCompleto() {
+      return db.none(
+        `
+        UPDATE trabalhos_submissoes
+           SET status=$2,
+               status_escrita=$3,
+               status_oral=$4,
+               observacoes_admin=$5,
+               atualizado_em=NOW()
+         WHERE id=$1
+        `,
+        [id, statusPrincipal, statusEscrita, statusOral, observacoes_admin]
+      );
+    }
+
+    async function updateSomenteStatus() {
+      return db.none(
+        `
+        UPDATE trabalhos_submissoes
+           SET status=$2,
+               observacoes_admin=$3,
+               atualizado_em=NOW()
+         WHERE id=$1
+        `,
+        [id, statusPrincipal, observacoes_admin]
+      );
+    }
+
+    try {
+      await updateCompleto();
+    } catch (errUpd) {
+      if (errUpd?.code === "42703") {
+        // banco velho sem as colunas parciais -> salva só o status principal
+        await updateSomenteStatus();
+      } else {
+        throw errUpd;
+      }
+    }
+
+    // 5) Notificação pro autor continua igual
+    const meta = await db.one(
+      `
+      SELECT s.usuario_id,
+             s.titulo AS trabalho_titulo,
+             c.titulo AS chamada_titulo
       FROM trabalhos_submissoes s
       JOIN trabalhos_chamadas c ON c.id = s.chamada_id
       WHERE s.id=$1
-    `, [id]);
+      `,
+      [id]
+    );
 
     await notificarStatusSubmissao({
       usuario_id: meta.usuario_id,
       chamada_titulo: meta.chamada_titulo,
       trabalho_titulo: meta.trabalho_titulo,
-      status,
+      status: statusPrincipal,
     });
 
     console.log("[definirStatusFinal][OK]", {
-      submissaoId: id, status, ms: Date.now() - t0,
+      submissaoId: id,
+      status: statusPrincipal,
+      status_escrita: statusEscrita,
+      status_oral: statusOral,
+      ms: Date.now() - t0,
     });
 
-    res.json({ ok: true });
+    // responde já devolvendo os campos calculados
+    res.json({
+      ok: true,
+      id,
+      status: statusPrincipal,
+      status_escrita: statusEscrita,
+      status_oral: statusOral,
+    });
   } catch (err) {
     console.error("[definirStatusFinal][erro]", {
       submissaoId: toIntOrNull(req.params.id),
-      message: err.message, code: err.code, stack: err.stack,
+      message: err.message,
+      code: err.code,
+      stack: err.stack,
       ms: Date.now() - t0,
     });
     next(err);
@@ -1053,54 +1238,115 @@ exports.definirStatusFinal = async (req, res, next) => {
 exports.listarSubmissoesAdminTodas = async (_req, res, next) => {
   const t0 = Date.now();
   try {
-    const rows = await db.any(`
-      SELECT
-        s.id,
-        s.titulo,
-        s.usuario_id,
-        s.status,
-        s.linha_tematica_codigo,
-        s.linha_tematica_id,
-        tcl.nome AS linha_tematica_nome,
-        s.inicio_experiencia,
-        s.chamada_id,
-        s.criado_em,
-        s.atualizado_em,
-        c.titulo AS chamada_titulo,
-        u.nome  AS autor_nome,
-        u.email AS autor_email,
-        COALESCE(ve.total_ponderado, 0)      AS total_escrita,
-        COALESCE(vo.total_oral_ponderado, 0) AS total_oral,
-        (COALESCE(ve.total_ponderado,0) + COALESCE(vo.total_oral_ponderado,0)) AS total_geral,
-
-        /* 🔎 Debug + nota */
-        COALESCE(n.soma_notas, 0)::numeric       AS soma_notas,
-        COALESCE(n.qtd_itens, 0)                 AS qtd_itens,
-        COALESCE(n.qtd_avaliadores, 0)           AS qtd_avaliadores,
-        ROUND(COALESCE(n.soma_notas,0) / 4.0, 1) AS nota_media
-
-      FROM trabalhos_submissoes s
-      JOIN usuarios u              ON u.id = s.usuario_id
-      JOIN trabalhos_chamadas c    ON c.id = s.chamada_id
-      LEFT JOIN trabalhos_chamada_linhas tcl ON tcl.id = s.linha_tematica_id
-      LEFT JOIN vw_submissao_total_escrita ve ON ve.submissao_id = s.id
-      LEFT JOIN vw_submissao_total_oral   vo ON vo.submissao_id = s.id
-      /* ← calcula por submissão, mesmo se não houver itens (fica NULL) */
-      LEFT JOIN LATERAL (
+    // primeiro tentamos buscar com as colunas novas
+    let rows;
+    try {
+      rows = await db.any(`
         SELECT
-          SUM(tai.nota)                       AS soma_notas,
-          COUNT(*)                            AS qtd_itens,
-          COUNT(DISTINCT tai.avaliador_id)    AS qtd_avaliadores
-        FROM trabalhos_avaliacoes_itens tai
-        WHERE tai.submissao_id = s.id
-      ) n ON TRUE
-      ORDER BY s.criado_em DESC, s.id ASC
-    `);
+          s.id,
+          s.titulo,
+          s.usuario_id,
+          s.status,
+          s.status_escrita,
+          s.status_oral,
+          s.linha_tematica_codigo,
+          s.linha_tematica_id,
+          tcl.nome AS linha_tematica_nome,
+          s.inicio_experiencia,
+          s.chamada_id,
+          s.criado_em,
+          s.atualizado_em,
+          c.titulo AS chamada_titulo,
+          u.nome  AS autor_nome,
+          u.email AS autor_email,
+          COALESCE(ve.total_ponderado, 0)      AS total_escrita,
+          COALESCE(vo.total_oral_ponderado, 0) AS total_oral,
+          (COALESCE(ve.total_ponderado,0) + COALESCE(vo.total_oral_ponderado,0)) AS total_geral,
 
-    console.log("[listarSubmissoesAdminTodas]", { total: rows.length, ms: Date.now() - t0 });
+          COALESCE(n.soma_notas, 0)::numeric       AS soma_notas,
+          COALESCE(n.qtd_itens, 0)                 AS qtd_itens,
+          COALESCE(n.qtd_avaliadores, 0)           AS qtd_avaliadores,
+          ROUND(COALESCE(n.soma_notas,0) / 4.0, 1) AS nota_media
+
+        FROM trabalhos_submissoes s
+        JOIN usuarios u              ON u.id = s.usuario_id
+        JOIN trabalhos_chamadas c    ON c.id = s.chamada_id
+        LEFT JOIN trabalhos_chamada_linhas tcl ON tcl.id = s.linha_tematica_id
+        LEFT JOIN vw_submissao_total_escrita ve ON ve.submissao_id = s.id
+        LEFT JOIN vw_submissao_total_oral   vo ON vo.submissao_id = s.id
+        LEFT JOIN LATERAL (
+          SELECT
+            SUM(tai.nota)                       AS soma_notas,
+            COUNT(*)                            AS qtd_itens,
+            COUNT(DISTINCT tai.avaliador_id)    AS qtd_avaliadores
+          FROM trabalhos_avaliacoes_itens tai
+          WHERE tai.submissao_id = s.id
+        ) n ON TRUE
+        ORDER BY s.criado_em DESC, s.id ASC
+      `);
+    } catch (errSelect) {
+      if (errSelect?.code === "42703") {
+        // banco antigo sem status_escrita / status_oral
+        rows = await db.any(`
+          SELECT
+            s.id,
+            s.titulo,
+            s.usuario_id,
+            s.status,
+            NULL::text AS status_escrita,
+            NULL::text AS status_oral,
+            s.linha_tematica_codigo,
+            s.linha_tematica_id,
+            tcl.nome AS linha_tematica_nome,
+            s.inicio_experiencia,
+            s.chamada_id,
+            s.criado_em,
+            s.atualizado_em,
+            c.titulo AS chamada_titulo,
+            u.nome  AS autor_nome,
+            u.email AS autor_email,
+            COALESCE(ve.total_ponderado, 0)      AS total_escrita,
+            COALESCE(vo.total_oral_ponderado, 0) AS total_oral,
+            (COALESCE(ve.total_ponderado,0) + COALESCE(vo.total_oral_ponderado,0)) AS total_geral,
+
+            COALESCE(n.soma_notas, 0)::numeric       AS soma_notas,
+            COALESCE(n.qtd_itens, 0)                 AS qtd_itens,
+            COALESCE(n.qtd_avaliadores, 0)           AS qtd_avaliadores,
+            ROUND(COALESCE(n.soma_notas,0) / 4.0, 1) AS nota_media
+
+          FROM trabalhos_submissoes s
+          JOIN usuarios u              ON u.id = s.usuario_id
+          JOIN trabalhos_chamadas c    ON c.id = s.chamada_id
+          LEFT JOIN trabalhos_chamada_linhas tcl ON tcl.id = s.linha_tematica_id
+          LEFT JOIN vw_submissao_total_escrita ve ON ve.submissao_id = s.id
+          LEFT JOIN vw_submissao_total_oral   vo ON vo.submissao_id = s.id
+          LEFT JOIN LATERAL (
+            SELECT
+              SUM(tai.nota)                       AS soma_notas,
+              COUNT(*)                            AS qtd_itens,
+              COUNT(DISTINCT tai.avaliador_id)    AS qtd_avaliadores
+            FROM trabalhos_avaliacoes_itens tai
+            WHERE tai.submissao_id = s.id
+          ) n ON TRUE
+          ORDER BY s.criado_em DESC, s.id ASC
+        `);
+      } else {
+        throw errSelect;
+      }
+    }
+
+    console.log("[listarSubmissoesAdminTodas]", {
+      total: rows.length,
+      ms: Date.now() - t0,
+    });
+
     res.json(rows);
   } catch (err) {
-    console.error("[listarSubmissoesAdminTodas][erro]", { message: err.message, code: err.code, ms: Date.now() - t0 });
+    console.error("[listarSubmissoesAdminTodas][erro]", {
+      message: err.message,
+      code: err.code,
+      ms: Date.now() - t0,
+    });
     next(err);
   }
 };
@@ -1111,9 +1357,13 @@ exports.listarSubmissoesDoAvaliador = async (req, res, next) => {
   try {
     const authUser = res?.locals?.user ?? req.user ?? null;
     const uid = toIntOrNull(authUser?.id);
-    if (uid === null) { const e = new Error("Não autorizado."); e.status = 401; throw e; }
+    if (uid === null) {
+      const e = new Error("Não autorizado.");
+      e.status = 401;
+      throw e;
+    }
 
-    const rows = await req.db.any(`
+    const rows = await db.any(`
       SELECT
         s.id,
         s.titulo,
@@ -1150,7 +1400,9 @@ exports.listarSubmissoesDoAvaliador = async (req, res, next) => {
   } catch (err) {
     console.error("[listarSubmissoesDoAvaliador][erro]", {
       avaliador: (res?.locals?.user ?? req.user ?? {})?.id,
-      message: err.message, code: err.code, stack: err.stack,
+      message: err.message,
+      code: err.code,
+      stack: err.stack,
       ms: Date.now() - t0,
     });
     next(err);
@@ -1168,15 +1420,17 @@ exports.obterParaAvaliacao = async (req, res, next) => {
     assert(sid !== null, "id inválido.");
 
     const isAdminUser = Array.isArray(authUser?.perfil) && authUser.perfil.includes("administrador");
-    const designado = await req.db.oneOrNone(
+    const designado = await db.oneOrNone(
       `SELECT 1 FROM trabalhos_submissoes_avaliadores WHERE submissao_id=$1 AND avaliador_id=$2`,
       [sid, uid]
     );
     if (!isAdminUser && !designado) {
-      const e = new Error("Sem permissão para avaliar este trabalho."); e.status = 403; throw e;
+      const e = new Error("Sem permissão para avaliar este trabalho.");
+      e.status = 403;
+      throw e;
     }
 
-    const s = await req.db.oneOrNone(`
+    const s = await db.oneOrNone(`
       SELECT
         s.id,
         s.titulo,
@@ -1201,9 +1455,13 @@ exports.obterParaAvaliacao = async (req, res, next) => {
       LEFT JOIN trabalhos_arquivos a ON a.id = s.poster_arquivo_id
       WHERE s.id=$1
     `, [sid]);
-    if (!s) { const e = new Error("Submissão não encontrada."); e.status = 404; throw e; }
+    if (!s) {
+      const e = new Error("Submissão não encontrada.");
+      e.status = 404;
+      throw e;
+    }
 
-    const criterios = await req.db.any(`
+    const criterios = await db.any(`
       SELECT
         id,
         titulo AS criterio,
@@ -1216,14 +1474,15 @@ exports.obterParaAvaliacao = async (req, res, next) => {
       ORDER BY ordem ASC, id ASC
     `, [s.chamada_id]);
 
-    const meusItens = await req.db.any(`
+    const meusItens = await db.any(`
       SELECT criterio_id, nota, COALESCE(comentarios,'') AS comentarios
       FROM trabalhos_avaliacoes_itens
       WHERE submissao_id=$1 AND avaliador_id=$2
     `, [sid, uid]);
 
     console.log("[obterParaAvaliacao]", {
-      subId: sid, avaliador: uid,
+      subId: sid,
+      avaliador: uid,
       criterios: criterios.length,
       itensExistentes: meusItens.length,
       ms: Date.now() - t0,
@@ -1236,7 +1495,7 @@ exports.obterParaAvaliacao = async (req, res, next) => {
         status: s.status,
         inicio_experiencia: s.inicio_experiencia,
         linha_tematica_codigo: s.linha_tematica_codigo,
-        linha_tematica_nome:   s.linha_tematica_nome,
+        linha_tematica_nome: s.linha_tematica_nome,
         chamada_titulo: s.chamada_titulo,
         poster_nome: s.poster_nome,
         poster_url: `/api/submissoes/${s.id}/poster`,
@@ -1254,9 +1513,12 @@ exports.obterParaAvaliacao = async (req, res, next) => {
     console.error("[obterParaAvaliacao][erro]", {
       subId: toIntOrNull(req.params.id),
       avaliador: (res?.locals?.user ?? req.user ?? {})?.id,
-      message: err.message, code: err.code, stack: err.stack,
+      message: err.message,
+      code: err.code,
+      stack: err.stack,
       ms: Date.now() - t0,
     });
     next(err);
   }
 };
+

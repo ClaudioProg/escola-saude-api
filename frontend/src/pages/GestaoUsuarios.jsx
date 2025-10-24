@@ -1,5 +1,13 @@
 // 📁 src/pages/GestaoUsuarios.jsx
-import { useEffect, useMemo, useRef, useState, useCallback, Suspense, lazy } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useCallback,
+  Suspense,
+  lazy,
+} from "react";
 import { toast } from "react-toastify";
 import Skeleton from "react-loading-skeleton";
 import {
@@ -23,13 +31,18 @@ const ModalEditarPerfil = lazy(() => import("../components/ModalEditarPerfil"));
 const PERFIS_PERMITIDOS = ["usuario", "instrutor", "administrador"];
 
 /* ================= helpers ================= */
-const sLower = (v) => String(v ?? "").toLowerCase(); // ✔ string-safe sempre
+const sLower = (v) => String(v ?? "").toLowerCase();
 const onlyDigits = (s) => String(s || "").replace(/\D+/g, "");
 const maskCpf = (cpf, revealed = false) => {
   const d = onlyDigits(cpf).padStart(11, "0").slice(-11);
   if (!d || d.length !== 11) return "—";
-  if (!revealed) return d.replace(/^(\d{3})\d{3}(\d{3})\d{2}$/, "$1.***.$2-**");
-  return d.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, "$1.$2.$3-$4");
+  if (!revealed) {
+    return d.replace(/^(\d{3})\d{3}(\d{3})\d{2}$/, "$1.***.$2-**");
+  }
+  return d.replace(
+    /^(\d{3})(\d{3})(\d{3})(\d{2})$/,
+    "$1.$2.$3-$4",
+  );
 };
 const idadeFrom = (isoOrDate) => {
   const d = isoOrDate ? new Date(isoOrDate) : null;
@@ -40,6 +53,7 @@ const idadeFrom = (isoOrDate) => {
   if (m < 0 || (m === 0 && today.getDate() < d.getDate())) age--;
   return age;
 };
+
 // CSV helpers
 const csvEscape = (v) => {
   const s = String(v ?? "");
@@ -67,7 +81,11 @@ function MiniStat({ label, value = "—", accent = "indigo" }) {
   };
   return (
     <div className="rounded-2xl bg-white/10 p-3 text-white backdrop-blur">
-      <div className={`inline-block rounded-lg bg-gradient-to-br ${map[accent] ?? map.indigo} px-2 py-1 text-xs font-semibold text-white`}>
+      <div
+        className={`inline-block rounded-lg bg-gradient-to-br ${
+          map[accent] ?? map.indigo
+        } px-2 py-1 text-xs font-semibold text-white`}
+      >
         {label}
       </div>
       <div className="mt-1 text-2xl font-extrabold">{value}</div>
@@ -83,7 +101,11 @@ function Chip({ active, onClick, children, ariaLabel }) {
       aria-pressed={active ? "true" : "false"}
       aria-label={ariaLabel}
       className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition
-        ${active ? "bg-violet-700 text-white" : "bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 hover:bg-zinc-300 dark:hover:bg-zinc-700"}`}
+        ${
+          active
+            ? "bg-violet-700 text-white"
+            : "bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 hover:bg-zinc-300 dark:hover:bg-zinc-700"
+        }`}
     >
       {active && <CheckCircle2 className="h-3.5 w-3.5" />}
       {children}
@@ -133,7 +155,11 @@ function HeaderHero({ onAtualizar, atualizando, total, kpis }) {
                 onClick={onAtualizar}
                 disabled={atualizando}
                 className={`inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition
-                ${atualizando ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-white/15 hover:bg-white/25"} text-white`}
+                ${
+                  atualizando
+                    ? "opacity-60 cursor-not-allowed bg-white/20"
+                    : "bg-white/15 hover:bg-white/25"
+                } text-white`}
                 aria-label="Atualizar lista de usuários"
                 aria-busy={atualizando ? "true" : "false"}
               >
@@ -152,14 +178,29 @@ function HeaderHero({ onAtualizar, atualizando, total, kpis }) {
           {/* Ministats no próprio hero */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <MiniStat label="Totais" value={kpis.total} accent="indigo" />
-            <MiniStat label="Usuários" value={kpis.usuario} accent="emerald" />
-            <MiniStat label="Instrutores" value={kpis.instrutor} accent="amber" />
-            <MiniStat label="Administradores" value={kpis.administrador} accent="violet" />
+            <MiniStat
+              label="Usuários"
+              value={kpis.usuario}
+              accent="emerald"
+            />
+            <MiniStat
+              label="Instrutores"
+              value={kpis.instrutor}
+              accent="amber"
+            />
+            <MiniStat
+              label="Administradores"
+              value={kpis.administrador}
+              accent="violet"
+            />
           </div>
         </div>
       </div>
 
-      <div className="absolute bottom-0 left-0 right-0 h-px bg-white/25" aria-hidden="true" />
+      <div
+        className="absolute bottom-0 left-0 right-0 h-px bg-white/25"
+        aria-hidden="true"
+      />
     </header>
   );
 }
@@ -172,23 +213,28 @@ export default function GestaoUsuarios() {
   const [busca, setBusca] = useState("");
   const [usuarioSelecionado, setUsuarioSelecionado] = useState(null);
   const [revealCpfIds, setRevealCpfIds] = useState(() => new Set());
-  const [hydrating, setHydrating] = useState(false); // mantém flag
+  const [hydrating, setHydrating] = useState(false);
+
   const searchRef = useRef(null);
   const liveRef = useRef(null);
 
-  // cache para o resumo por usuário (sob demanda)
-  const [resumoCache, setResumoCache] = useState(() => new Map());    // id -> { cursos_concluidos_75, certificados_emitidos }
-  const [loadingResumo, setLoadingResumo] = useState(() => new Set()); // ids em carregamento
+  // cache de resumo sob demanda
+  const [resumoCache, setResumoCache] = useState(() => new Map()); // id -> { cursos_concluidos_75, certificados_emitidos }
+  const [loadingResumo, setLoadingResumo] = useState(
+    () => new Set(),
+  ); // ids carregando
 
-  // NOVOS: filtros avançados + paginação
-  const [fUnidade, setFUnidade] = useState("todas");
+  // filtros + paginação
+  const [fUnidade, setFUnidade] = useState("todas"); // agora guarda SIGLA (ou "todas")
   const [fCargo, setFCargo] = useState("todos");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
 
-  const setLive = (msg) => { if (liveRef.current) liveRef.current.textContent = msg; };
+  const setLive = (msg) => {
+    if (liveRef.current) liveRef.current.textContent = msg;
+  };
 
-  // atalho: "/" foca busca
+  // atalho "/"
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -200,7 +246,7 @@ export default function GestaoUsuarios() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  /* ---------- carregar (sem hidratação pesada) ---------- */
+  /* ---------- carregar usuários ---------- */
   const carregarUsuarios = useCallback(async () => {
     try {
       setCarregandoUsuarios(true);
@@ -208,26 +254,54 @@ export default function GestaoUsuarios() {
       setLive("Carregando usuários…");
 
       const data = await apiGet("/api/usuarios", { on403: "silent" });
-      const base =
-        Array.isArray(data) ? data :
-        Array.isArray(data?.lista) ? data.lista :
-        Array.isArray(data?.usuarios) ? data.usuarios : [];
 
-      const enriched = base.map((u) => ({
-        ...u,
-        idade: idadeFrom(u?.data_nascimento) ?? undefined,
-        cpf_masked: maskCpf(u?.cpf),
-        unidade_nome: u?.unidade_nome || u?.unidade || u?.unidade_id || null,
-        escolaridade_nome: u?.escolaridade_nome || u?.escolaridade || u?.escolaridade_id || null,
-        cargo_nome: u?.cargo_nome || u?.cargo || u?.cargo_id || null,
-        deficiencia_nome: u?.deficiencia_nome || u?.deficiencia || u?.deficiencia_id || null,
-        // detalhes sob demanda:
-        cursos_concluidos_75: undefined,
-        certificados_emitidos: undefined,
-      }));
+      const base = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.lista)
+        ? data.lista
+        : Array.isArray(data?.usuarios)
+        ? data.usuarios
+        : [];
+
+      const enriched = base.map((u) => {
+        // tenta montar sigla e nome da unidade
+        const unidade_sigla =
+          u?.unidade_sigla ||
+          u?.sigla_unidade ||
+          u?.unidade_abrev ||
+          u?.unidade_sigla_nome ||
+          null;
+
+        const unidade_nome =
+          u?.unidade_nome ||
+          u?.unidade ||
+          u?.unidade_id ||
+          null;
+
+        return {
+          ...u,
+          idade: idadeFrom(u?.data_nascimento) ?? undefined,
+          cpf_masked: maskCpf(u?.cpf),
+          unidade_sigla,
+          unidade_nome,
+          escolaridade_nome:
+            u?.escolaridade_nome ||
+            u?.escolaridade ||
+            u?.escolaridade_id ||
+            null,
+          cargo_nome: u?.cargo_nome || u?.cargo || u?.cargo_id || null,
+          deficiencia_nome:
+            u?.deficiencia_nome ||
+            u?.deficiencia ||
+            u?.deficiencia_id ||
+            null,
+          cursos_concluidos_75: undefined,
+          certificados_emitidos: undefined,
+        };
+      });
 
       setUsuarios(enriched);
-      setResumoCache(new Map()); // limpa cache ao recarregar
+      setResumoCache(new Map());
       setLive(`Usuários carregados: ${enriched.length}.`);
     } catch (e) {
       const msg = e?.message || "Erro ao carregar usuários.";
@@ -242,35 +316,58 @@ export default function GestaoUsuarios() {
     }
   }, []);
 
-  useEffect(() => { carregarUsuarios(); }, [carregarUsuarios]);
+  useEffect(() => {
+    carregarUsuarios();
+  }, [carregarUsuarios]);
 
-  /* ---------- KPIs por perfil (para ministats) ---------- */
+  /* ---------- KPIs ---------- */
   const kpis = useMemo(() => {
     const total = usuarios.length;
-    const usuario = usuarios.filter((u) => sLower(u?.perfil) === "usuario").length;
-    const instrutor = usuarios.filter((u) => sLower(u?.perfil) === "instrutor").length;
-    const administrador = usuarios.filter((u) => sLower(u?.perfil) === "administrador").length;
-    return { total: String(total), usuario: String(usuario), instrutor: String(instrutor), administrador: String(administrador) };
+    const usuario = usuarios.filter(
+      (u) => sLower(u?.perfil) === "usuario",
+    ).length;
+    const instrutor = usuarios.filter(
+      (u) => sLower(u?.perfil) === "instrutor",
+    ).length;
+    const administrador = usuarios.filter(
+      (u) => sLower(u?.perfil) === "administrador",
+    ).length;
+    return {
+      total: String(total),
+      usuario: String(usuario),
+      instrutor: String(instrutor),
+      administrador: String(administrador),
+    };
   }, [usuarios]);
 
-  /* ---------- carregar resumo de UM usuário, sob demanda ---------- */
+  /* ---------- carregar resumo POR usuário ---------- */
   async function carregarResumoUsuario(id) {
     if (!id) return;
     if (resumoCache.has(id) || loadingResumo.has(id)) return;
 
     setLoadingResumo((prev) => new Set(prev).add(id));
     try {
-      const r = await apiGet(`/api/usuarios/${id}/resumo`, { on404: "silent" });
+      const r = await apiGet(`/api/usuarios/${id}/resumo`, {
+        on404: "silent",
+      });
       const resumo = {
-        cursos_concluidos_75: Number(r?.cursos_concluidos_75 ?? 0),
-        certificados_emitidos: Number(r?.certificados_emitidos ?? 0),
+        cursos_concluidos_75: Number(
+          r?.cursos_concluidos_75 ?? 0,
+        ),
+        certificados_emitidos: Number(
+          r?.certificados_emitidos ?? 0,
+        ),
       };
       setResumoCache((prev) => {
         const next = new Map(prev);
         next.set(id, resumo);
         return next;
       });
-      setUsuarios((prev) => prev.map((u) => (u.id === id ? { ...u, ...resumo } : u)));
+      setUsuarios((prev) =>
+        prev.map((u) =>
+          u.id === id ? { ...u, ...resumo } : u,
+        ),
+      );
     } catch (e) {
       console.error("❌ resumo usuário", id, e);
       toast.error("Erro ao carregar detalhes do usuário.");
@@ -296,9 +393,12 @@ export default function GestaoUsuarios() {
       await apiPut(`/api/usuarios/${id}/perfil`, { perfil: perfilStr });
       toast.success("✅ Perfil atualizado com sucesso!");
       setUsuarioSelecionado(null);
-      carregarUsuarios(); // refresh leve
+      carregarUsuarios();
     } catch (err) {
-      const msg = err?.message || err?.erro || "❌ Erro ao atualizar perfil.";
+      const msg =
+        err?.message ||
+        err?.erro ||
+        "❌ Erro ao atualizar perfil.";
       console.error("❌ Erro ao atualizar perfil:", err);
       toast.error(msg);
     }
@@ -307,39 +407,68 @@ export default function GestaoUsuarios() {
   /* ---------- busca com debounce ---------- */
   const [debouncedQ, setDebouncedQ] = useState("");
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedQ(sLower(busca).trim()), 250);
+    const t = setTimeout(
+      () => setDebouncedQ(sLower(busca).trim()),
+      250,
+    );
     return () => clearTimeout(t);
   }, [busca]);
 
-  /* ---------- filtros por perfil (chips) ---------- */
-  const [fPerfis, setFPerfis] = useState(() => new Set(PERFIS_PERMITIDOS)); // já minúsculos
+  /* ---------- filtros por perfil ---------- */
+  const [fPerfis, setFPerfis] = useState(
+    () => new Set(PERFIS_PERMITIDOS),
+  );
   const togglePerfil = (p) => {
     const key = sLower(p);
     setFPerfis((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
-      if (next.size === 0) PERFIS_PERMITIDOS.forEach((x) => next.add(x)); // evita zerar tudo
+      if (next.size === 0)
+        PERFIS_PERMITIDOS.forEach((x) => next.add(x));
       return next;
     });
   };
   const resetPerfis = () => setFPerfis(new Set(PERFIS_PERMITIDOS));
 
   /* ---------- opções únicas (Unidade / Cargo) ---------- */
+  // cada unidade é { sigla, nome }, mas vamos exibir só sigla no select
   const { unidadesOpts, cargosOpts } = useMemo(() => {
-    const unidades = new Set();
+    const unidadesMap = new Map();
     const cargos = new Set();
+
     (usuarios || []).forEach((u) => {
-      const un = (u?.unidade_nome ?? "").toString().trim();
+      const siglaRaw = (u?.unidade_sigla ?? "").toString().trim();
+      const nomeRaw = (u?.unidade_nome ?? "").toString().trim();
       const cg = (u?.cargo_nome ?? "").toString().trim();
-      if (un) unidades.add(un);
+
+      if (siglaRaw || nomeRaw) {
+        const siglaKey = siglaRaw || nomeRaw || "(sem)";
+        if (!unidadesMap.has(siglaKey)) {
+          unidadesMap.set(siglaKey, {
+            sigla: siglaRaw || siglaKey,
+            nome: nomeRaw || siglaRaw || siglaKey,
+          });
+        }
+      }
+
       if (cg) cargos.add(cg);
     });
-    const toSorted = (s) => Array.from(s).sort((a, b) => a.localeCompare(b, "pt-BR"));
-    return { unidadesOpts: toSorted(unidades), cargosOpts: toSorted(cargos) };
+
+    const unidadesArr = Array.from(unidadesMap.values()).sort(
+      (a, b) =>
+        a.sigla.localeCompare(b.sigla, "pt-BR") ||
+        a.nome.localeCompare(b.nome, "pt-BR"),
+    );
+
+    const cargosArr = Array.from(cargos).sort((a, b) =>
+      a.localeCompare(b, "pt-BR"),
+    );
+
+    return { unidadesOpts: unidadesArr, cargosOpts: cargosArr };
   }, [usuarios]);
 
-  /* ---------- filtro final ---------- */
+  /* ---------- filtro final (usa sigla da unidade) ---------- */
   const usuariosFiltrados = useMemo(() => {
     const q = debouncedQ;
     const perfilOk = (p) => fPerfis.has(sLower(p));
@@ -347,31 +476,60 @@ export default function GestaoUsuarios() {
     return (usuarios || []).filter((u) => {
       if (!perfilOk(u?.perfil)) return false;
 
-      // Unidade/Cargo
-      if (fUnidade !== "todas" && String(u?.unidade_nome ?? "").trim() !== fUnidade) return false;
-      if (fCargo !== "todos" && String(u?.cargo_nome ?? "").trim() !== fCargo) return false;
+      // Unidade (comparando sigla, ou nome se sigla não existir)
+      if (
+        fUnidade !== "todas" &&
+        String(u?.unidade_sigla || u?.unidade_nome || "")
+          .trim()
+          .toLowerCase() !== fUnidade.toLowerCase()
+      ) {
+        return false;
+      }
+
+      // Cargo
+      if (
+        fCargo !== "todos" &&
+        String(u?.cargo_nome ?? "").trim() !== fCargo
+      ) {
+        return false;
+      }
 
       if (!q) return true;
 
       const nome = sLower(u?.nome);
       const email = sLower(u?.email);
-      const cpf = sLower(u?.cpf);           // pode vir number → sLower resolve
-      const registro = sLower(u?.registro); // idem
+      const cpf = sLower(u?.cpf);
+      const registro = sLower(u?.registro);
 
-      return nome.includes(q) || email.includes(q) || cpf.includes(q) || registro.includes(q);
+      return (
+        nome.includes(q) ||
+        email.includes(q) ||
+        cpf.includes(q) ||
+        registro.includes(q)
+      );
     });
   }, [usuarios, debouncedQ, fPerfis, fUnidade, fCargo]);
 
   /* ---------- paginação client-side ---------- */
   const totalItems = usuariosFiltrados.length;
-  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
-  useEffect(() => { setPage(1); }, [debouncedQ, fPerfis, fUnidade, fCargo, pageSize]); // reset ao mudar filtros
+  const totalPages = Math.max(
+    1,
+    Math.ceil(totalItems / pageSize),
+  );
+
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedQ, fPerfis, fUnidade, fCargo, pageSize]);
+
   const pageClamped = Math.min(page, totalPages);
   const sliceStart = (pageClamped - 1) * pageSize;
   const sliceEnd = sliceStart + pageSize;
-  const usuariosPaginados = useMemo(() => usuariosFiltrados.slice(sliceStart, sliceEnd), [usuariosFiltrados, sliceStart, sliceEnd]);
+  const usuariosPaginados = useMemo(
+    () => usuariosFiltrados.slice(sliceStart, sliceEnd),
+    [usuariosFiltrados, sliceStart, sliceEnd],
+  );
 
-  /* ---------- CPF reveal/ocultar por item ---------- */
+  /* ---------- CPF reveal/ocultar ---------- */
   const onToggleCpf = (id) => {
     setRevealCpfIds((prev) => {
       const next = new Set(prev);
@@ -381,23 +539,39 @@ export default function GestaoUsuarios() {
     });
   };
 
-  /* ---------- export CSV (lista filtrada, não paginada) ---------- */
+  /* ---------- export CSV ---------- */
   const onExportCsv = () => {
     try {
-      const headers = ["id", "nome", "email", "perfil", "unidade", "cargo", "escolaridade", "idade"];
+      const headers = [
+        "id",
+        "nome",
+        "email",
+        "perfil",
+        "unidade_sigla",
+        "cargo",
+        "escolaridade",
+        "idade",
+      ];
       const rows = usuariosFiltrados.map((u) => [
         u?.id ?? "",
         u?.nome ?? "",
         u?.email ?? "",
         u?.perfil ?? "",
-        u?.unidade_nome ?? "",
+        u?.unidade_sigla || u?.unidade_nome || "",
         u?.cargo_nome ?? "",
         u?.escolaridade_nome ?? "",
         Number.isFinite(u?.idade) ? u.idade : "",
       ]);
-      const content = [headers, ...rows].map((r) => r.map(csvEscape).join(";")).join("\n");
-      const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
-      downloadBlob(`usuarios_${new Date().toISOString().slice(0,10)}.csv`, blob);
+      const content = [headers, ...rows]
+        .map((r) => r.map(csvEscape).join(";"))
+        .join("\n");
+      const blob = new Blob([content], {
+        type: "text/csv;charset=utf-8",
+      });
+      downloadBlob(
+        `usuarios_${new Date().toISOString().slice(0, 10)}.csv`,
+        blob,
+      );
       toast.success("📄 CSV exportado da lista filtrada.");
     } catch (e) {
       console.error("CSV erro", e);
@@ -410,7 +584,11 @@ export default function GestaoUsuarios() {
   return (
     <div className="flex min-h-screen flex-col bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
       {/* live region acessível */}
-      <p ref={liveRef} className="sr-only" aria-live="polite" />
+      <p
+        ref={liveRef}
+        className="sr-only"
+        aria-live="polite"
+      />
 
       {/* header */}
       <HeaderHero
@@ -433,7 +611,10 @@ export default function GestaoUsuarios() {
         </div>
       )}
 
-      <main id="conteudo" className="mx-auto w-full max-w-6xl flex-1 px-3 sm:px-4 py-6">
+      <main
+        id="conteudo"
+        className="mx-auto w-full max-w-6xl flex-1 px-3 sm:px-4 py-6"
+      >
         {/* Barra de ações sticky (mobile-first) */}
         <section
           aria-label="Ferramentas de busca e filtros"
@@ -442,7 +623,10 @@ export default function GestaoUsuarios() {
           <div className="flex flex-col gap-3">
             {/* Linha 1: Busca */}
             <div className="relative w-full">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" aria-hidden="true" />
+              <Search
+                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500"
+                aria-hidden="true"
+              />
               <input
                 ref={searchRef}
                 id="busca-usuarios"
@@ -454,7 +638,11 @@ export default function GestaoUsuarios() {
                 className="w-full rounded-xl border px-9 py-2 text-sm ring-offset-2 focus:outline-none focus:ring-2 focus:ring-violet-700 dark:border-zinc-700 dark:bg-zinc-800"
                 aria-describedby="resultados-count"
               />
-              <p id="resultados-count" className="sr-only" aria-live="polite">
+              <p
+                id="resultados-count"
+                className="sr-only"
+                aria-live="polite"
+              >
                 {usuariosFiltrados.length} resultado(s).
               </p>
             </div>
@@ -487,17 +675,24 @@ export default function GestaoUsuarios() {
 
               {/* Selects Unidade / Cargo + Export */}
               <div className="flex flex-wrap items-center gap-2">
+                {/* UNIDADE agora mostra só a sigla visualmente */}
                 <select
                   value={fUnidade}
                   onChange={(e) => setFUnidade(e.target.value)}
                   className="rounded-xl border px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-violet-700 dark:border-zinc-700 dark:bg-zinc-800"
-                  aria-label="Filtrar por unidade"
-                  title="Filtrar por unidade"
+                  aria-label="Filtrar por unidade (sigla)"
+                  title="Filtrar por unidade (sigla)"
                 >
                   <option value="todas">Todas as Unidades</option>
-                  {unidadesOpts.map((u) => (
-                    <option key={u} value={u}>{u}</option>
-                  ))}
+                  {unidadesOpts.map((u) => {
+                    const optValue = u.sigla || u.nome || "";
+                    const optLabel = u.sigla || u.nome || "";
+                    return (
+                      <option key={optValue} value={optValue}>
+                        {optLabel}
+                      </option>
+                    );
+                  })}
                 </select>
 
                 <select
@@ -509,7 +704,9 @@ export default function GestaoUsuarios() {
                 >
                   <option value="todos">Todos os Cargos</option>
                   {cargosOpts.map((c) => (
-                    <option key={c} value={c}>{c}</option>
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
                   ))}
                 </select>
 
@@ -530,62 +727,101 @@ export default function GestaoUsuarios() {
 
         {/* lista */}
         {carregandoUsuarios ? (
-          <div className="space-y-4" aria-busy="true" aria-live="polite">
+          <div
+            className="space-y-4"
+            aria-busy="true"
+            aria-live="polite"
+          >
             {[...Array(6)].map((_, i) => (
-              <Skeleton key={i} height={96} className="rounded-2xl" />
+              <Skeleton
+                key={i}
+                height={96}
+                className="rounded-2xl"
+              />
             ))}
           </div>
         ) : erro ? (
-          <p className="text-center text-red-500" role="alert">
+          <p
+            className="text-center text-red-500"
+            role="alert"
+          >
             {erro}
           </p>
         ) : (
           <>
             <TabelaUsuarios
-              usuarios={Array.isArray(usuariosPaginados) ? usuariosPaginados : []}
-              onEditar={(usuario) => setUsuarioSelecionado(usuario)}
+              usuarios={
+                Array.isArray(usuariosPaginados)
+                  ? usuariosPaginados
+                  : []
+              }
+              onEditar={(usuario) =>
+                setUsuarioSelecionado(usuario)
+              }
               onToggleCpf={onToggleCpf}
-              isCpfRevealed={(id) => revealCpfIds.has(id)}
+              isCpfRevealed={(id) =>
+                revealCpfIds.has(id)
+              }
               maskCpfFn={maskCpf}
               /* carregamento sob demanda do resumo */
               onCarregarResumo={carregarResumoUsuario}
-              isResumoLoading={(id) => loadingResumo.has(id)}
+              isResumoLoading={(id) =>
+                loadingResumo.has(id)
+              }
               hasResumo={(id) => resumoCache.has(id)}
             />
 
             {/* Paginação */}
             <div className="mt-4 flex flex-col items-center justify-between gap-3 sm:flex-row">
               <div className="text-xs text-zinc-600 dark:text-zinc-400">
-                Mostrando <strong>{usuariosPaginados.length}</strong> de <strong>{totalItems}</strong> resultado(s)
-                — página {pageClamped} de {totalPages}
+                Mostrando <strong>{usuariosPaginados.length}</strong>{" "}
+                de <strong>{totalItems}</strong>{" "}
+                resultado(s) — página {pageClamped} de{" "}
+                {totalPages}
               </div>
               <div className="flex items-center gap-2">
-                <label className="text-xs text-zinc-600 dark:text-zinc-400">Por página:</label>
+                <label className="text-xs text-zinc-600 dark:text-zinc-400">
+                  Por página:
+                </label>
                 <select
                   value={pageSize}
-                  onChange={(e) => setPageSize(Number(e.target.value) || 25)}
+                  onChange={(e) =>
+                    setPageSize(
+                      Number(e.target.value) || 25,
+                    )
+                  }
                   className="rounded-xl border px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-violet-700 dark:border-zinc-700 dark:bg-zinc-800"
                 >
                   {[10, 25, 50, 100].map((n) => (
-                    <option key={n} value={n}>{n}</option>
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
                   ))}
                 </select>
 
                 <button
                   type="button"
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  onClick={() =>
+                    setPage((p) => Math.max(1, p - 1))
+                  }
                   disabled={pageClamped <= 1}
                   className="inline-flex items-center gap-1 rounded-xl border px-2 py-1.5 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
                 >
-                  <ChevronLeft className="h-4 w-4" /> Anterior
+                  <ChevronLeft className="h-4 w-4" />{" "}
+                  Anterior
                 </button>
                 <button
                   type="button"
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  onClick={() =>
+                    setPage((p) =>
+                      Math.min(totalPages, p + 1),
+                    )
+                  }
                   disabled={pageClamped >= totalPages}
                   className="inline-flex items-center gap-1 rounded-xl border px-2 py-1.5 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
                 >
-                  Próxima <ChevronRight className="h-4 w-4" />
+                  Próxima{" "}
+                  <ChevronRight className="h-4 w-4" />
                 </button>
               </div>
             </div>
@@ -605,9 +841,14 @@ export default function GestaoUsuarios() {
 
         {/* rodapé de segurança */}
         <div className="mt-8 flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
-          <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+          <ShieldCheck
+            className="h-4 w-4"
+            aria-hidden="true"
+          />
           <span>
-            CPFs ficam ocultos por padrão. Clique em “revelar” por usuário para exibir (não é persistido).
+            CPFs ficam ocultos por padrão. Clique em
+            “revelar” por usuário para exibir (não é
+            persistido).
           </span>
         </div>
       </main>

@@ -7,11 +7,14 @@ import CardTurmaadministrador from "./CardTurmaadministrador";
 import { idadeDe } from "../utils/data";
 
 /* ========================= Helpers ========================= */
-const isDateOnly = (str) => typeof str === "string" && /^\d{4}-\d{2}-\d{2}$/.test(str);
+const isDateOnly = (str) =>
+  typeof str === "string" && /^\d{4}-\d{2}-\d{2}$/.test(str);
 const ymd = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
 const onlyHHmm = (s) => (typeof s === "string" ? s.slice(0, 5) : "");
 const toLocalDateFromYMD = (ymdStr, hhmm = "12:00") =>
-  ymdStr ? new Date(`${ymdStr}T${(hhmm || "12:00").slice(0, 5)}:00`) : null;
+  ymdStr
+    ? new Date(`${ymdStr}T${(hhmm || "12:00").slice(0, 5)}:00`)
+    : null;
 
 function toLocalDate(input) {
   if (!input) return null;
@@ -31,11 +34,15 @@ function formatarDataLocal(d) {
   return dt.toLocaleDateString("pt-BR");
 }
 const formatarCPF = (v) =>
-  (String(v ?? "").replace(/\D/g, "").slice(0, 11).padStart(11, "0") || "")
-    .replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
+  (String(v ?? "")
+    .replace(/\D/g, "")
+    .slice(0, 11)
+    .padStart(11, "0") || ""
+  ).replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
 
 // Normaliza lista (aceita array direto ou objeto { lista: [] })
-const normalizaArr = (v) => (Array.isArray(v) ? v : Array.isArray(v?.lista) ? v.lista : []);
+const normalizaArr = (v) =>
+  Array.isArray(v) ? v : Array.isArray(v?.lista) ? v.lista : [];
 
 /* ===== período & status do evento (anti-fuso) ===== */
 function getPeriodoEvento(evento, turmas) {
@@ -47,7 +54,9 @@ function getPeriodoEvento(evento, turmas) {
     const b = toLocalDateFromYMD(fimY, "12:00");
     if (!a || !b || isNaN(a) || isNaN(b)) return "Período não informado";
     const same = a.toDateString() === b.toDateString();
-    return same ? formatarDataLocal(a) : `${formatarDataLocal(a)} até ${formatarDataLocal(b)}`;
+    return same
+      ? formatarDataLocal(a)
+      : `${formatarDataLocal(a)} até ${formatarDataLocal(b)}`;
   };
   if (diAggY && dfAggY) return fmt(diAggY, dfAggY);
 
@@ -63,14 +72,14 @@ function getPeriodoEvento(evento, turmas) {
       .map((d) => toLocalDateFromYMD(d, "12:00")?.getTime())
       .filter(Boolean);
     if (starts.length && ends.length) {
-      const a = new Date(Math.min(...starts)),
-        b = new Date(Math.max(...ends));
-      const aY = `${a.getFullYear()}-${String(a.getMonth() + 1).padStart(2, "0")}-${String(
-        a.getDate()
-      ).padStart(2, "0")}`;
-      const bY = `${b.getFullYear()}-${String(b.getMonth() + 1).padStart(2, "0")}-${String(
-        b.getDate()
-      ).padStart(2, "0")}`;
+      const a = new Date(Math.min(...starts));
+      const b = new Date(Math.max(...ends));
+      const aY = `${a.getFullYear()}-${String(
+        a.getMonth() + 1
+      ).padStart(2, "0")}-${String(a.getDate()).padStart(2, "0")}`;
+      const bY = `${b.getFullYear()}-${String(
+        b.getMonth() + 1
+      ).padStart(2, "0")}-${String(b.getDate()).padStart(2, "0")}`;
       return fmt(aY, bY);
     }
   }
@@ -87,8 +96,8 @@ function getStatusEvento({ evento, turmas }) {
   let fimDT = dfAgg ? toLocalDateFromYMD(dfAgg, hfAgg) : null;
 
   if (!inicioDT || !fimDT) {
-    const starts = [],
-      ends = [];
+    const starts = [];
+    const ends = [];
     (turmas || []).forEach((t) => {
       const di = ymd(t.data_inicio),
         df = ymd(t.data_fim);
@@ -117,13 +126,21 @@ function pctColorHex(p) {
 }
 function PctPill({ value }) {
   const n =
-    typeof value === "string" ? parseInt(value.replace(/\D/g, ""), 10) : Number(value || 0);
-  const pct = Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : 0;
+    typeof value === "string"
+      ? parseInt(value.replace(/\D/g, ""), 10)
+      : Number(value || 0);
+  const pct = Number.isFinite(n)
+    ? Math.max(0, Math.min(100, n))
+    : 0;
   const color = pctColorHex(pct);
   return (
     <span
       className="inline-flex items-center justify-center px-2 py-1 rounded-lg text-xs font-bold"
-      style={{ color, background: "rgba(2, 8, 23, 0.03)", border: `1px solid ${color}20` }}
+      style={{
+        color,
+        background: "rgba(2, 8, 23, 0.03)",
+        border: `1px solid ${color}20`,
+      }}
       title={`${pct}% de presença`}
     >
       {pct}%
@@ -140,65 +157,103 @@ function isElegivel75(u, resumo) {
   if (total <= 0) return false;
 
   if (typeof u?.presentes_ocorridos === "number") {
-    return u.presentes_ocorridos / total >= 0.75 - 1e-9;
+    return (
+      u.presentes_ocorridos / total >= 0.75 - 1e-9
+    );
   }
   const n =
     typeof u?.frequencia_num === "number"
       ? u.frequencia_num
-      : parseInt(String(u?.frequencia || "0").replace(/\D/g, ""), 10) || 0;
+      : parseInt(
+          String(u?.frequencia || "0").replace(
+            /\D/g,
+            ""
+          ),
+          10
+        ) || 0;
   return n >= 75;
 }
 
 /* ===== Constrói visão uniforme de presenças por turma ===== */
-function mapPresencasParaLista(presencasPorTurma, turmaId) {
+function mapPresencasParaLista(
+  presencasPorTurma,
+  turmaId
+) {
   const raw = presencasPorTurma?.[turmaId];
-  const resumo = raw?.resumo || raw?.detalhado?.resumo || {};
+  const resumo =
+    raw?.resumo || raw?.detalhado?.resumo || {};
 
   const coerceFreqNum = (u) => {
-    if (typeof u?.frequencia_num === "number") return u.frequencia_num;
-    const parsed = parseInt(String(u?.frequencia || "").replace(/\D/g, ""), 10);
+    if (typeof u?.frequencia_num === "number")
+      return u.frequencia_num;
+    const parsed = parseInt(
+      String(u?.frequencia || "").replace(
+        /\D/g,
+        ""
+      ),
+      10
+    );
     if (!Number.isNaN(parsed)) return parsed;
-    const totalOc = u?.total_ocorridos ?? resumo?.encontrosOcorridos ?? 0;
+    const totalOc =
+      u?.total_ocorridos ??
+      resumo?.encontrosOcorridos ??
+      0;
     const presOc =
       u?.presentes_ocorridos ??
-      (Array.isArray(u?.presencas) ? u.presencas.filter((p) => p?.presente).length : 0);
-    return totalOc > 0 ? Math.round((presOc / totalOc) * 100) : 0;
+      (Array.isArray(u?.presencas)
+        ? u.presencas.filter((p) => p?.presente)
+            .length
+        : 0);
+    return totalOc > 0
+      ? Math.round((presOc / totalOc) * 100)
+      : 0;
   };
 
   const normalizeOne = (u) => {
     const id = u?.usuario_id ?? u?.id ?? null;
     if (!id) return null;
     const freqNum = coerceFreqNum(u);
-    // se já vier elegivel, usa; senão, calcula pela regra ≥75% considerando apenas encontros ocorridos
+
     const elegivel =
       typeof u?.elegivel === "boolean"
         ? u.elegivel
-        : isElegivel75({ ...u, frequencia_num: freqNum }, resumo);
+        : isElegivel75(
+            { ...u, frequencia_num: freqNum },
+            resumo
+          );
+
     return {
       usuario_id: id,
       cpf: u?.cpf,
       frequencia_num: freqNum,
       frequencia: `${freqNum}%`,
       elegivel,
-      // padroniza: 'presente' espelha 'elegivel' (≥75%)
-      presente: elegivel,
+      presente: elegivel, // espelha ≥75%
     };
   };
 
   // Caso 1: já seja array simples
   if (Array.isArray(raw)) {
-    return raw.map(normalizeOne).filter(Boolean);
+    return raw
+      .map(normalizeOne)
+      .filter(Boolean);
   }
 
   // Caso 2: objeto com lista
   const lista = normalizaArr(raw);
   if (lista.length) {
-    return lista.map(normalizeOne).filter(Boolean);
+    return lista
+      .map(normalizeOne)
+      .filter(Boolean);
   }
 
   // Caso 3: estrutura detalhada (usuarios + presencas)
-  const usuarios = Array.isArray(raw?.usuarios) ? raw.usuarios : [];
-  return usuarios.map(normalizeOne).filter(Boolean);
+  const usuarios = Array.isArray(raw?.usuarios)
+    ? raw.users || raw.usuarios
+    : [];
+  return usuarios
+    .map(normalizeOne)
+    .filter(Boolean);
 }
 
 /* ===== Barrinha/cores por status ===== */
@@ -213,7 +268,7 @@ const STATUS_STYLES = {
     bar: "from-rose-600 via-rose-500 to-rose-400",
   },
   todos: {
-    bar: "from-indigo-500 to-fuchsia-500",
+    bar: "from-indigo-500 via-fuchsia-500 to-pink-500",
   },
 };
 
@@ -222,7 +277,11 @@ function MiniStat({ value, label, className = "" }) {
   return (
     <div className="min-w-[86px]">
       <div className="inline-flex flex-col items-center justify-center px-3 py-2 rounded-xl border border-zinc-200 bg-white shadow-sm dark:bg-zinc-800 dark:border-zinc-600">
-        <div className={`leading-none font-extrabold text-2xl ${className}`}>{value}</div>
+        <div
+          className={`leading-none font-extrabold text-2xl ${className}`}
+        >
+          {value}
+        </div>
         <div className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
           {label}
         </div>
@@ -245,86 +304,171 @@ export default function CardEventoadministrador({
   carregarPresencas,
   gerarRelatorioPDF,
   gerarPdfInscritosTurma,
+
+  // 🆕 classes injetáveis para controle de quebra de linha
+  classNomeEventoMultiLinha,
+  classInstrutoresMultiLinha,
 }) {
   // ===== Estatísticas do EVENTO (usando regra ≥ 75% dinâmica)
   const stats = useMemo(() => {
-    if (!expandido || !Array.isArray(turmas) || !turmas.length) {
-      return { totalInscritos: 0, totalPresentes: 0, presencaMedia: "0" };
+    if (
+      !expandido ||
+      !Array.isArray(turmas) ||
+      !turmas.length
+    ) {
+      return {
+        totalInscritos: 0,
+        totalPresentes: 0,
+        presencaMedia: "0",
+      };
     }
     let totalInscritos = 0;
     let totalElegiveis = 0;
 
     for (const t of turmas) {
-      const inscritos = normalizaArr(inscritosPorTurma?.[t.id]);
-      const presencas = mapPresencasParaLista(presencasPorTurma, t.id);
+      const inscritos = normalizaArr(
+        inscritosPorTurma?.[t.id]
+      );
+      const presencas = mapPresencasParaLista(
+        presencasPorTurma,
+        t.id
+      );
 
       totalInscritos += inscritos.length;
-      totalElegiveis += presencas.filter((p) => p?.elegivel === true || p?.presente === true).length;
+      totalElegiveis += presencas.filter(
+        (p) =>
+          p?.elegivel === true ||
+          p?.presente === true
+      ).length;
     }
 
     const presencaMedia = totalInscritos
-      ? Math.round((totalElegiveis / totalInscritos) * 100).toString()
+      ? Math.round(
+          (totalElegiveis / totalInscritos) * 100
+        ).toString()
       : "0";
-    return { totalInscritos, totalPresentes: totalElegiveis, presencaMedia };
-  }, [expandido, turmas, inscritosPorTurma, presencasPorTurma]);
+
+    return {
+      totalInscritos,
+      totalPresentes: totalElegiveis,
+      presencaMedia,
+    };
+  }, [
+    expandido,
+    turmas,
+    inscritosPorTurma,
+    presencasPorTurma,
+  ]);
 
   // ===== Preload blocos ao expandir
   useEffect(() => {
     if (!expandido || !Array.isArray(turmas)) return;
     for (const turma of turmas) {
-      if (!inscritosPorTurma?.[turma.id]) carregarInscritos?.(turma.id);
-      if (!presencasPorTurma?.[turma.id]) carregarPresencas?.(turma.id);
-      if (!avaliacoesPorTurma?.[turma.id]) carregarAvaliacoes?.(turma.id);
+      if (!inscritosPorTurma?.[turma.id])
+        carregarInscritos?.(turma.id);
+      if (!presencasPorTurma?.[turma.id])
+        carregarPresencas?.(turma.id);
+      if (!avaliacoesPorTurma?.[turma.id])
+        carregarAvaliacoes?.(turma.id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expandido, turmas]);
 
   const nomeinstrutor = useMemo(() => {
     if (Array.isArray(evento.instrutor))
-      return evento.instrutor.map((i) => i?.nome).filter(Boolean).join(", ") || "—";
-    if (typeof evento.instrutor === "object" && evento.instrutor?.nome)
+      return (
+        evento.instrutor
+          .map((i) => i?.nome)
+          .filter(Boolean)
+          .join(", ") || "—"
+      );
+    if (
+      typeof evento.instrutor === "object" &&
+      evento.instrutor?.nome
+    )
       return evento.instrutor.nome;
     return "—";
   }, [evento]);
 
-  const statusEvento = getStatusEvento({ evento, turmas });
-  const styles = STATUS_STYLES[statusEvento] || STATUS_STYLES.todos;
+  const tituloEvento =
+    evento?.titulo || evento?.nome || "—";
+
+  const statusEvento = getStatusEvento({
+    evento,
+    turmas,
+  });
+  const styles =
+    STATUS_STYLES[statusEvento] ||
+    STATUS_STYLES.todos;
+
+  // fallbacks de classe pros textos, caso o pai não forneça
+  const nomeEventoClass =
+    classNomeEventoMultiLinha ||
+    "break-words whitespace-normal text-xl font-bold text-green-900 dark:text-green-200 leading-snug";
+  const instrutoresClass =
+    classInstrutoresMultiLinha ||
+    "break-words whitespace-normal text-sm text-gray-700 dark:text-gray-200 leading-snug";
 
   return (
     <section
-      className="relative overflow-hidden bg-white dark:bg-zinc-800 p-6 rounded-2xl shadow-lg mb-6 border border-gray-200 dark:border-zinc-700 transition"
-      aria-label={`Evento: ${evento?.titulo || evento?.nome || ""}`}
+      className="relative overflow-hidden bg-white dark:bg-zinc-800 p-6 rounded-2xl shadow-lg border border-gray-200 dark:border-zinc-700 transition"
+      aria-label={`Evento: ${tituloEvento}`}
     >
-      {/* 🔹 barrinha colorida superior */}
-      <div className={`pointer-events-none absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r ${styles.bar}`} />
+      {/* 🔹 barrinha degradê superior (3 cores) */}
+      <div
+        className={`pointer-events-none absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r ${styles.bar}`}
+      />
 
       {/* TOPO */}
       <div className="flex justify-between items-start gap-4 min-w-0">
-        <div className="min-w-0">
+        {/* bloco da esquerda */}
+        <div className="min-w-0 flex-1">
+          {/* Título do evento - AGORA QUEBRA LINHA */}
           <h3
-            className="text-2xl font-bold text-green-900 dark:text-green-200 truncate"
-            title={evento.titulo}
+            className={nomeEventoClass + " min-w-0"}
+            title={tituloEvento}
           >
-            {evento.titulo}
+            {tituloEvento}
           </h3>
-          <div className="text-sm text-gray-700 dark:text-gray-200 flex items-center gap-2 mt-1 mb-1 min-w-0">
-            <span className="font-semibold shrink-0">Instrutor:</span>
-            <span className="truncate" title={nomeinstrutor}>
+
+          {/* Instrutor - AGORA QUEBRA LINHA */}
+          <div className="flex flex-col sm:flex-row sm:flex-wrap gap-y-0.5 gap-x-2 mt-2 mb-1 min-w-0">
+            <span className="text-xs font-semibold text-gray-800 dark:text-gray-100 shrink-0">
+              Instrutor:
+            </span>
+
+            <span
+              className={
+                instrutoresClass +
+                " flex-1 min-w-0"
+              }
+              title={nomeinstrutor}
+            >
               {nomeinstrutor}
             </span>
           </div>
-          <p className="text-sm text-gray-600 dark:text-gray-300 flex items-center gap-2 mt-0.5">
-            <CalendarDays size={16} aria-hidden="true" />
+
+          {/* Período */}
+          <p className="text-sm text-gray-600 dark:text-gray-300 flex items-center gap-2 mt-0.5 break-words whitespace-normal leading-snug">
+            <CalendarDays
+              size={16}
+              aria-hidden="true"
+            />
             {getPeriodoEvento(evento, turmas)}
           </p>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
-          <BadgeStatus status={statusEvento} size="sm" variant="soft" />
+        {/* bloco da direita */}
+        <div className="flex flex-col items-end gap-2 shrink-0">
+          <BadgeStatus
+            status={statusEvento}
+            size="sm"
+            variant="soft"
+          />
           <button
             onClick={() => toggleExpandir(evento.id)}
             aria-expanded={expandido}
-            className="text-sm px-4 py-1 bg-green-900 text-white rounded-full hover:bg-green-900/90 transition"
+            className="text-sm px-4 py-1 bg-green-900 text-white rounded-full hover:bg-green-900/90 transition whitespace-nowrap"
           >
             {expandido ? "Recolher" : "Ver Turmas"}
           </button>
@@ -334,9 +478,16 @@ export default function CardEventoadministrador({
       {/* STATS + TURMAS */}
       {expandido && (
         <>
-          <h4 className="sr-only">Estatísticas do evento</h4>
+          <h4 className="sr-only">
+            Estatísticas do evento
+          </h4>
+
+          {/* indicativos do evento */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6">
-            <MiniStat value={stats.totalInscritos} label="inscritos" />
+            <MiniStat
+              value={stats.totalInscritos}
+              label="inscritos"
+            />
             <MiniStat
               value={stats.totalPresentes}
               label="presentes (≥75%)"
@@ -352,28 +503,58 @@ export default function CardEventoadministrador({
           {Array.isArray(turmas) && turmas.length ? (
             <div className="mt-6 space-y-6">
               {turmas.map((turma) => {
-                const inscritos = normalizaArr(inscritosPorTurma?.[turma.id]);
-                const presencas = mapPresencasParaLista(presencasPorTurma, turma.id);
+                const inscritos =
+                  normalizaArr(
+                    inscritosPorTurma?.[turma.id]
+                  );
+                const presencas =
+                  mapPresencasParaLista(
+                    presencasPorTurma,
+                    turma.id
+                  );
 
-                const elegiveis = presencas.filter((p) => p?.elegivel === true || p?.presente === true).length;
+                const elegiveis = presencas.filter(
+                  (p) =>
+                    p?.elegivel === true ||
+                    p?.presente === true
+                ).length;
                 const pctElegiveis = inscritos.length
-                  ? Math.round((elegiveis / inscritos.length) * 100)
+                  ? Math.round(
+                      (elegiveis /
+                        inscritos.length) *
+                        100
+                    )
                   : 0;
 
                 return (
-                  <div key={turma.id} className="space-y-3">
+                  <div
+                    key={turma.id}
+                    className="space-y-3"
+                  >
                     {/* Cabeçalho da turma + ministats */}
                     <CardTurmaadministrador
                       turma={turma}
                       inscritos={inscritos}
-                      carregarInscritos={carregarInscritos}
-                      carregarAvaliacoes={carregarAvaliacoes}
-                      carregarPresencas={carregarPresencas}
-                      gerarRelatorioPDF={gerarRelatorioPDF}
+                      carregarInscritos={
+                        carregarInscritos
+                      }
+                      carregarAvaliacoes={
+                        carregarAvaliacoes
+                      }
+                      carregarPresencas={
+                        carregarPresencas
+                      }
+                      gerarRelatorioPDF={
+                        gerarRelatorioPDF
+                      }
                       somenteInfo
                     />
+
                     <div className="flex flex-wrap items-center gap-3 px-2">
-                      <MiniStat value={inscritos.length} label="inscritos" />
+                      <MiniStat
+                        value={inscritos.length}
+                        label="inscritos"
+                      />
                       <MiniStat
                         value={elegiveis}
                         label="presentes (≥75%)"
@@ -388,20 +569,29 @@ export default function CardEventoadministrador({
 
                     {/* Lista de inscritos */}
                     <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/40 p-4">
-                      <div className="flex items-center justify-between gap-2">
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                         <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
                           Inscritos da turma
                         </p>
                         <button
-                          onClick={() => gerarPdfInscritosTurma?.(turma.id)}
+                          onClick={() =>
+                            gerarPdfInscritosTurma?.(
+                              turma.id
+                            )
+                          }
                           className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium bg-green-900 text-white hover:bg-green-900/90"
                         >
-                          <FileDown size={16} /> Gerar PDF (curso + inscritos)
+                          <FileDown size={16} />
+                          <span className="whitespace-nowrap">
+                            Gerar PDF (curso + inscritos)
+                          </span>
                         </button>
                       </div>
 
                       {inscritos.length === 0 ? (
-                        <p className="text-xs text-zinc-500 mt-2">Nenhum inscrito.</p>
+                        <p className="text-xs text-zinc-500 mt-2">
+                          Nenhum inscrito.
+                        </p>
                       ) : (
                         <div className="mt-3 w-full overflow-x-auto">
                           {/* Cabeçalho (sm+) */}
@@ -411,80 +601,152 @@ export default function CardEventoadministrador({
                             <div>Registro</div>
                             <div>Idade</div>
                             <div>PcD</div>
-                            <div className="text-right">Frequência</div>
+                            <div className="text-right">
+                              Frequência
+                            </div>
                           </div>
 
                           <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
                             {inscritos
                               .slice()
                               .sort((a, b) =>
-                                String(a?.nome || "").localeCompare(String(b?.nome || ""))
+                                String(
+                                  a?.nome || ""
+                                ).localeCompare(
+                                  String(
+                                    b?.nome || ""
+                                  )
+                                )
                               )
                               .map((i) => {
-                                const cpf = formatarCPF(i?.cpf);
-                                const idade = Number.isFinite(i?.idade)
-                                  ? i.idade
-                                  : idadeDe(i?.data_nascimento || i?.nascimento);
-                                const registro = i?.registro || i?.matricula || null;
+                                const cpf =
+                                  formatarCPF(
+                                    i?.cpf
+                                  );
+                                const idade =
+                                  Number.isFinite(
+                                    i?.idade
+                                  )
+                                    ? i.idade
+                                    : idadeDe(
+                                        i?.data_nascimento ||
+                                          i?.nascimento
+                                      );
+                                const registro =
+                                  i?.registro ||
+                                  i?.matricula ||
+                                  null;
 
-                                const pcdVisual =
-                                  !!(i?.pcd_visual || i?.def_visual || i?.deficiencia_visual);
-                                const pcdAuditiva =
-                                  !!(i?.pcd_auditiva ||
+                                const pcdVisual = !!(
+                                  i?.pcd_visual ||
+                                  i?.def_visual ||
+                                  i?.deficiencia_visual
+                                );
+                                const pcdAuditiva = !!(
+                                  i?.pcd_auditiva ||
                                   i?.def_auditiva ||
                                   i?.deficiencia_auditiva ||
-                                  i?.surdo);
-                                const pcdFisica =
-                                  !!(i?.pcd_fisica || i?.def_fisica || i?.deficiencia_fisica);
-                                const pcdIntelect =
-                                  !!(i?.pcd_intelectual || i?.def_mental || i?.def_intelectual);
-                                const pcdMultipla = !!(i?.pcd_multipla || i?.def_multipla);
-                                const pcdTEA =
-                                  !!(i?.pcd_autismo || i?.tea || i?.transtorno_espectro_autista);
+                                  i?.surdo
+                                );
+                                const pcdFisica = !!(
+                                  i?.pcd_fisica ||
+                                  i?.def_fisica ||
+                                  i?.deficiencia_fisica
+                                );
+                                const pcdIntelect = !!(
+                                  i?.pcd_intelectual ||
+                                  i?.def_mental ||
+                                  i?.def_intelectual
+                                );
+                                const pcdMultipla = !!(
+                                  i?.pcd_multipla ||
+                                  i?.def_multipla
+                                );
+                                const pcdTEA = !!(
+                                  i?.pcd_autismo ||
+                                  i?.tea ||
+                                  i?.transtorno_espectro_autista
+                                );
 
                                 // frequência do aluno (usando presenças mapeadas)
-                                const presAluno = mapPresencasParaLista(
-                                  presencasPorTurma,
-                                  turma.id
-                                ).find(
-                                  (p) =>
-                                    p.usuario_id === i.id ||
-                                    p.usuario_id === i.usuario_id ||
-                                    p.cpf === i.cpf
-                                );
+                                const presAluno =
+                                  mapPresencasParaLista(
+                                    presencasPorTurma,
+                                    turma.id
+                                  ).find(
+                                    (p) =>
+                                      p.usuario_id ===
+                                        i.id ||
+                                      p.usuario_id ===
+                                        i.usuario_id ||
+                                      p.cpf === i.cpf
+                                  );
                                 const freqStr =
-                                  presAluno?.frequencia_num != null
+                                  presAluno?.frequencia_num !=
+                                  null
                                     ? `${presAluno.frequencia_num}%`
-                                    : presAluno?.frequencia || null;
+                                    : presAluno?.frequencia ||
+                                      null;
 
                                 return (
-                                  <li key={i.id || i.usuario_id || i.cpf} className="py-2">
+                                  <li
+                                    key={
+                                      i.id ||
+                                      i.usuario_id ||
+                                      i.cpf
+                                    }
+                                    className="py-2"
+                                  >
                                     <div className="grid grid-cols-1 sm:grid-cols-[minmax(220px,1fr)_150px_120px_80px_140px_100px] gap-2 sm:gap-3 items-center px-2">
                                       {/* Nome */}
-                                      <div className="text-sm text-zinc-900 dark:text-zinc-100">
-                                        {i?.nome || "—"}
+                                      <div className="text-sm text-zinc-900 dark:text-zinc-100 break-words whitespace-normal leading-snug">
+                                        {i?.nome ||
+                                          "—"}
                                       </div>
+
                                       {/* CPF */}
                                       <div className="text-sm text-zinc-600 dark:text-zinc-300 font-mono tabular-nums">
                                         {cpf}
                                       </div>
+
                                       {/* Registro */}
-                                      <div className="text-sm text-zinc-600 dark:text-zinc-300">
-                                        {registro || "—"}
+                                      <div className="text-sm text-zinc-600 dark:text-zinc-300 break-words whitespace-normal leading-snug">
+                                        {registro ||
+                                          "—"}
                                       </div>
+
                                       {/* Idade */}
                                       <div className="text-sm text-zinc-600 dark:text-zinc-300">
-                                        {Number.isFinite(idade) ? `${idade}` : "—"}
+                                        {Number.isFinite(
+                                          idade
+                                        )
+                                          ? `${idade}`
+                                          : "—"}
                                       </div>
+
                                       {/* PcD */}
-                                      <div className="flex items-center gap-1 text-zinc-700 dark:text-zinc-200">
-                                        {pcdVisual && <Eye size={16} title="Deficiência visual" />}
+                                      <div className="flex items-center gap-1 text-zinc-700 dark:text-zinc-200 flex-wrap text-sm leading-snug">
+                                        {pcdVisual && (
+                                          <Eye
+                                            size={
+                                              16
+                                            }
+                                            title="Deficiência visual"
+                                          />
+                                        )}
                                         {pcdAuditiva && (
-                                          <Ear size={16} title="Deficiência auditiva" />
+                                          <Ear
+                                            size={
+                                              16
+                                            }
+                                            title="Deficiência auditiva"
+                                          />
                                         )}
                                         {pcdFisica && (
                                           <Accessibility
-                                            size={16}
+                                            size={
+                                              16
+                                            }
                                             title="Deficiência física/motora"
                                           />
                                         )}
@@ -507,7 +769,11 @@ export default function CardEventoadministrador({
                                           </span>
                                         )}
                                         {pcdTEA && (
-                                          <span title="TEA" role="img" aria-label="autismo">
+                                          <span
+                                            title="TEA"
+                                            role="img"
+                                            aria-label="autismo"
+                                          >
                                             🧩
                                           </span>
                                         )}
@@ -517,24 +783,52 @@ export default function CardEventoadministrador({
                                           !pcdIntelect &&
                                           !pcdMultipla &&
                                           !pcdTEA && (
-                                            <span className="text-zinc-400">—</span>
+                                            <span className="text-zinc-400">
+                                              —
+                                            </span>
                                           )}
                                       </div>
+
                                       {/* Frequência */}
                                       <div className="sm:text-right">
                                         {freqStr ? (
-                                          <PctPill value={freqStr} />
+                                          <PctPill
+                                            value={
+                                              freqStr
+                                            }
+                                          />
                                         ) : (
-                                          <span className="text-zinc-400 text-sm">—</span>
+                                          <span className="text-zinc-400 text-sm">
+                                            —
+                                          </span>
                                         )}
                                       </div>
                                     </div>
 
                                     {/* Mobile meta abaixo do nome */}
-                                    <div className="sm:hidden mt-1 pl-2 text-[12px] text-zinc-600 dark:text-zinc-300">
-                                      <span className="mr-2">CPF: {cpf}</span>
-                                      {registro && <span className="mr-2">Reg.: {registro}</span>}
-                                      {Number.isFinite(idade) && <span>Idade: {idade}</span>}
+                                    <div className="sm:hidden mt-1 pl-2 text-[12px] text-zinc-600 dark:text-zinc-300 flex flex-wrap gap-x-2 gap-y-1 leading-snug break-words whitespace-normal">
+                                      <span>
+                                        CPF:{" "}
+                                        {cpf}
+                                      </span>
+                                      {registro && (
+                                        <span>
+                                          Reg.:{" "}
+                                          {
+                                            registro
+                                          }
+                                        </span>
+                                      )}
+                                      {Number.isFinite(
+                                        idade
+                                      ) && (
+                                        <span>
+                                          Idade:{" "}
+                                          {
+                                            idade
+                                          }
+                                        </span>
+                                      )}
                                     </div>
                                   </li>
                                 );
@@ -548,7 +842,9 @@ export default function CardEventoadministrador({
               })}
             </div>
           ) : (
-            <div className="text-gray-600 dark:text-gray-300 mt-4">Nenhuma turma cadastrada.</div>
+            <div className="text-gray-600 dark:text-gray-300 mt-4">
+              Nenhuma turma cadastrada.
+            </div>
           )}
         </>
       )}
@@ -567,7 +863,9 @@ function StatCard({ icon, label, value, title }) {
         {icon}
         <span className="text-sm">{label}</span>
       </div>
-      <div className="text-xl font-bold text-green-900 dark:text-green-200">{value}</div>
+      <div className="text-xl font-bold text-green-900 dark:text-green-200">
+        {value}
+      </div>
     </div>
   );
 }
@@ -575,7 +873,10 @@ function StatCard({ icon, label, value, title }) {
 StatCard.propTypes = {
   icon: PropTypes.node,
   label: PropTypes.string.isRequired,
-  value: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+  value: PropTypes.oneOfType([
+    PropTypes.string,
+    PropTypes.number,
+  ]),
   title: PropTypes.string,
 };
 
@@ -592,4 +893,8 @@ CardEventoadministrador.propTypes = {
   carregarPresencas: PropTypes.func,
   gerarRelatorioPDF: PropTypes.func,
   gerarPdfInscritosTurma: PropTypes.func,
+
+  // 🆕 adicionadas:
+  classNomeEventoMultiLinha: PropTypes.string,
+  classInstrutoresMultiLinha: PropTypes.string,
 };

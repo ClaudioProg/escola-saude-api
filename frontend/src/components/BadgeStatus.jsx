@@ -28,7 +28,17 @@ function toKey(status) {
   const s = normalize(status);
 
   // em andamento
-  if (["andamento", "em andamento", "ao vivo", "rolando", "in progress"].includes(s))
+  if (
+    [
+      "andamento",
+      "em andamento",
+      "em_andamento",
+      "ao vivo",
+      "rolando",
+      "in progress",
+      "em-andamento",
+    ].includes(s)
+  )
     return "andamento";
 
   // programado
@@ -37,62 +47,85 @@ function toKey(status) {
 
   // encerrado
   if (
-    ["encerrado", "finalizado", "concluido", "concluído", "done", "finalizado com sucesso"].includes(s)
+    [
+      "encerrado",
+      "finalizado",
+      "concluido",
+      "concluído",
+      "done",
+      "finalizado com sucesso",
+      "encerrado_com_sucesso",
+    ].includes(s)
   )
     return "encerrado";
 
   // aguardando / pendente
-  if (["aguardando", "pendente", "waiting", "to do", "todo"].includes(s)) return "aguardando";
+  if (["aguardando", "pendente", "waiting", "to do", "todo"].includes(s))
+    return "aguardando";
 
   // cancelado
-  if (["cancelado", "cancelada", "canceled", "cancelled"].includes(s)) return "cancelado";
+  if (["cancelado", "cancelada", "canceled", "cancelled"].includes(s))
+    return "cancelado";
 
   // suspenso / pausado
-  if (["suspenso", "pausado", "paused", "interrompido"].includes(s)) return "suspenso";
+  if (["suspenso", "pausado", "paused", "interrompido"].includes(s))
+    return "suspenso";
 
   // rascunho / draft
   if (["rascunho", "draft"].includes(s)) return "rascunho";
 
-  // ativo / inativo (auxiliar p/ outros contextos)
+  // ativo / inativo
   if (["ativo", "active"].includes(s)) return "ativo";
-  if (["inativo", "inactive", "desativado", "disabled"].includes(s)) return "inativo";
+  if (["inativo", "inactive", "desativado", "desativada", "disabled"].includes(s))
+    return "inativo";
+
+  // todos (usado no dashboard pra estado "neutro")
+  if (["todos", "all", "geral", "neutro"].includes(s)) return "todos";
 
   return "desconhecido";
 }
 
 /* =========================================================
    Config por status (label + cor base)
-   Padrão institucional (#54):
-   - Programado → VERDE
-   - Em andamento → AMARELO
-   - Encerrado → VERMELHO
    ========================================================= */
 const STATUS_CONFIG = {
-  andamento:  { label: "Em andamento", color: "amber"   }, // 🟨
-  programado: { label: "Programado",   color: "green"   }, // 🟩
-  encerrado:  { label: "Encerrado",    color: "red"     }, // 🟥
+  andamento: { label: "Em andamento", color: "amber" }, // 🟨
+  programado: { label: "Programado", color: "green" }, // 🟩
+  encerrado: { label: "Encerrado", color: "red" }, // 🟥
 
-  aguardando: { label: "Aguardando",   color: "amber"   },
-  cancelado:  { label: "Cancelado",    color: "rose"    },
-  suspenso:   { label: "Suspenso",     color: "orange"  },
-  rascunho:   { label: "Rascunho",     color: "zinc"    },
-  ativo:      { label: "Ativo",        color: "emerald" },
-  inativo:    { label: "Inativo",      color: "zinc"    },
-  desconhecido:{label: "Desconhecido", color: "gray"    },
+  aguardando: { label: "Aguardando", color: "amber" },
+  cancelado: { label: "Cancelado", color: "rose" },
+  suspenso: { label: "Suspenso", color: "orange" },
+  rascunho: { label: "Rascunho", color: "zinc" },
+  ativo: { label: "Ativo", color: "emerald" },
+  inativo: { label: "Inativo", color: "zinc" },
+
+  // estado neutro / genérico
+  todos: { label: "—", color: "zinc" },
+
+  desconhecido: { label: "Desconhecido", color: "gray" },
 };
 
 /* =========================================================
-   Gradientes 3 cores para sólido (harmoniza com resto do app)
+   Gradientes 3 cores para sólido
    ========================================================= */
 const GRADS = {
-  green:   "bg-gradient-to-br from-emerald-600 via-emerald-700 to-emerald-800 text-white border-emerald-900/50",
-  amber:   "bg-gradient-to-br from-amber-500 via-amber-600 to-amber-700 text-black border-amber-800/50",
-  red:     "bg-gradient-to-br from-red-600 via-red-700 to-red-800 text-white border-red-900/50",
-  rose:    "bg-gradient-to-br from-rose-600 via-rose-700 to-rose-800 text-white border-rose-900/50",
-  orange:  "bg-gradient-to-br from-orange-600 via-orange-700 to-orange-800 text-white border-orange-900/50",
-  emerald: "bg-gradient-to-br from-emerald-600 via-emerald-700 to-emerald-800 text-white border-emerald-900/50",
-  zinc:    "bg-gradient-to-br from-zinc-600 via-zinc-700 to-zinc-800 text-white border-zinc-900/50",
-  gray:    "bg-gradient-to-br from-gray-600 via-gray-700 to-gray-800 text-white border-gray-900/50",
+  green:
+    "bg-gradient-to-br from-emerald-600 via-emerald-700 to-emerald-800 text-white border-emerald-900/50",
+  amber:
+    "bg-gradient-to-br from-amber-500 via-amber-600 to-amber-700 text-black border-amber-900/50",
+  red:
+    "bg-gradient-to-br from-red-600 via-red-700 to-red-800 text-white border-red-900/50",
+  rose:
+    "bg-gradient-to-br from-rose-600 via-rose-700 to-rose-800 text-white border-rose-900/50",
+  orange:
+    "bg-gradient-to-br from-orange-600 via-orange-700 to-orange-800 text-white border-orange-900/50",
+  emerald:
+    "bg-gradient-to-br from-emerald-600 via-emerald-700 to-emerald-800 text-white border-emerald-900/50",
+  zinc:
+    "bg-gradient-to-br from-zinc-600 via-zinc-700 to-zinc-800 text-white border-zinc-900/50",
+  gray:
+    "bg-gradient-to-br from-gray-600 via-gray-700 to-gray-800 text-white border-gray-900/50",
 };
 
 /* =========================================================
@@ -194,6 +227,8 @@ function StatusIcon({ k }) {
     case "inativo":
     case "rascunho":
       return <Circle size={14} aria-hidden="true" />;
+    case "todos":
+      return <Circle size={14} aria-hidden="true" />;
     default:
       return <CircleAlert size={14} aria-hidden="true" />;
   }
@@ -211,9 +246,9 @@ export default function BadgeStatus({
   className = "",
   title, // tooltip opcional
 
-  // Novos opcionais (retrocompatíveis)
+  // opcionais / retrocompatíveis
   pulseWhenLive = true, // animação sutil quando em andamento
-  labels,               // { key: "Novo rótulo" } para overrides
+  labels, // { key: "Novo rótulo" } para sobrescrever texto se quiser
 }) {
   const key = toKey(status);
   const baseCfg = STATUS_CONFIG[key] || STATUS_CONFIG.desconhecido;
@@ -223,18 +258,28 @@ export default function BadgeStatus({
   const base =
     "inline-flex items-center font-semibold border select-none " +
     "focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 " +
-    // foco acompanha o status (varia por cor):
-    (color === "green"   ? "focus-visible:ring-emerald-300/70 " :
-     color === "amber"   ? "focus-visible:ring-amber-400/70 "   :
-     color === "red"     ? "focus-visible:ring-red-400/70 "     :
-     color === "rose"    ? "focus-visible:ring-rose-400/70 "    :
-     color === "orange"  ? "focus-visible:ring-orange-400/70 "  :
-     color === "emerald" ? "focus-visible:ring-emerald-300/70 " :
-     color === "zinc"    ? "focus-visible:ring-zinc-400/70 "    :
-                           "focus-visible:ring-gray-400/70 ");
+    (color === "green"
+      ? "focus-visible:ring-emerald-300/70 "
+      : color === "amber"
+      ? "focus-visible:ring-amber-400/70 "
+      : color === "red"
+      ? "focus-visible:ring-red-400/70 "
+      : color === "rose"
+      ? "focus-visible:ring-rose-400/70 "
+      : color === "orange"
+      ? "focus-visible:ring-orange-400/70 "
+      : color === "emerald"
+      ? "focus-visible:ring-emerald-300/70 "
+      : color === "zinc"
+      ? "focus-visible:ring-zinc-400/70 "
+      : "focus-visible:ring-gray-400/70 ");
 
   const radius =
-    rounded === "full" ? "rounded-full" : rounded === "lg" ? "rounded-lg" : "rounded-md";
+    rounded === "full"
+      ? "rounded-full"
+      : rounded === "lg"
+      ? "rounded-lg"
+      : "rounded-md";
 
   const classes = [
     base,
@@ -245,7 +290,7 @@ export default function BadgeStatus({
     className,
   ].join(" ");
 
-  // Animação sutil para "Em andamento"
+  // anima pulso leve quando está "Em andamento"
   const shouldPulse = pulseWhenLive && key === "andamento";
 
   return (
@@ -262,7 +307,11 @@ export default function BadgeStatus({
         <motion.span
           className="inline-flex"
           animate={shouldPulse ? { scale: [1, 1.06, 1] } : undefined}
-          transition={shouldPulse ? { duration: 1.1, repeat: Infinity, ease: "easeInOut" } : undefined}
+          transition={
+            shouldPulse
+              ? { duration: 1.1, repeat: Infinity, ease: "easeInOut" }
+              : undefined
+          }
         >
           <StatusIcon k={key} />
         </motion.span>

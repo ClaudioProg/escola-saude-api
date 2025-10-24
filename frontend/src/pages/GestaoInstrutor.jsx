@@ -4,7 +4,13 @@ import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { toast } from "react-toastify";
 import Skeleton from "react-loading-skeleton";
 import Modal from "react-modal";
-import { RefreshCcw, Search, GraduationCap, Download, SortAsc } from "lucide-react";
+import {
+  RefreshCcw,
+  Search,
+  GraduationCap,
+  Download,
+  SortAsc,
+} from "lucide-react";
 
 import { apiGet } from "../services/api";
 import TabelaInstrutor from "../components/TabelaInstrutor";
@@ -71,7 +77,10 @@ function HeaderHero({ onRefresh, carregando, busca, setBusca, kpis }) {
   }, []);
 
   return (
-    <header className="bg-violet-800 text-white" role="banner">
+    <header
+      className="bg-violet-800 text-white overflow-x-hidden"
+      role="banner"
+    >
       <a
         href="#conteudo"
         className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2"
@@ -96,13 +105,13 @@ function HeaderHero({ onRefresh, carregando, busca, setBusca, kpis }) {
           <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <MiniStat label="Total" value={kpis.total} />
             <MiniStat label="Encontrados" value={kpis.encontrados} />
-            <MiniStat label="Com e-mail" value={kpis.comEmail} />
-            <MiniStat label="Sem e-mail" value={kpis.semEmail} />
+            <MiniStat label="Com assinatura" value={kpis.comAssinatura} />
+            <MiniStat label="Sem assinatura" value={kpis.semAssinatura} />
           </div>
 
           {/* Ações / Busca inline para mobile */}
           <div className="mt-3 flex w-full max-w-2xl flex-col gap-2 sm:flex-row">
-            <div className="relative flex-1">
+            <div className="relative flex-1 min-w-0">
               <label htmlFor="busca-instrutor" className="sr-only">
                 Buscar por nome ou e-mail
               </label>
@@ -127,7 +136,11 @@ function HeaderHero({ onRefresh, carregando, busca, setBusca, kpis }) {
               onClick={onRefresh}
               disabled={carregando}
               className={`inline-flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition
-                ${carregando ? "cursor-not-allowed opacity-60 bg-white/20" : "bg-white/15 hover:bg-white/25"} text-white`}
+                ${
+                  carregando
+                    ? "cursor-not-allowed opacity-60 bg-white/20"
+                    : "bg-white/15 hover:bg-white/25"
+                } text-white`}
               aria-label="Atualizar lista de instrutores"
               aria-busy={carregando ? "true" : "false"}
             >
@@ -155,7 +168,8 @@ export default function GestaoInstrutor() {
   const [instrutorSelecionado, setInstrutorSelecionado] = useState(null);
 
   const liveRef = useRef(null);
-  const setLive = (msg) => liveRef.current && (liveRef.current.textContent = msg);
+  const setLive = (msg) =>
+    liveRef.current && (liveRef.current.textContent = msg);
 
   /* ---------- carregar lista ---------- */
   const carregarInstrutores = useCallback(async () => {
@@ -165,10 +179,13 @@ export default function GestaoInstrutor() {
       setLive("Carregando instrutores…");
       const data = await apiGet("/api/instrutor", { on403: "silent" });
       const lista =
-        Array.isArray(data) ? data :
-        Array.isArray(data?.lista) ? data.lista :
-        Array.isArray(data?.instrutores) ? data.instrutores :
-        [];
+        Array.isArray(data)
+          ? data
+          : Array.isArray(data?.lista)
+          ? data.lista
+          : Array.isArray(data?.instrutores)
+          ? data.instrutores
+          : [];
       setInstrutores(lista);
       setLive(`Instrutores carregados: ${lista.length}.`);
     } catch (err) {
@@ -182,7 +199,9 @@ export default function GestaoInstrutor() {
     }
   }, []);
 
-  useEffect(() => { carregarInstrutores(); }, [carregarInstrutores]);
+  useEffect(() => {
+    carregarInstrutores();
+  }, [carregarInstrutores]);
 
   /* ---------- busca com debounce ---------- */
   const [q, setQ] = useState("");
@@ -194,7 +213,9 @@ export default function GestaoInstrutor() {
   /* ---------- filtro + ordenação ---------- */
   const filtrados = useMemo(() => {
     const base = (instrutores || []).filter(
-      (p) => sLower(p?.nome).includes(q) || sLower(p?.email).includes(q)
+      (p) =>
+        sLower(p?.nome).includes(q) ||
+        sLower(p?.email).includes(q)
     );
 
     const sorted = [...base].sort((a, b) => {
@@ -203,10 +224,19 @@ export default function GestaoInstrutor() {
       const ae = sLower(a?.email);
       const be = sLower(b?.email);
       switch (ordenarPor) {
-        case "nome_desc": return bn.localeCompare(an) || be.localeCompare(ae);
-        case "email_asc": return ae.localeCompare(be) || an.localeCompare(bn);
+        case "nome_desc":
+          return (
+            bn.localeCompare(an) || be.localeCompare(ae)
+          );
+        case "email_asc":
+          return (
+            ae.localeCompare(be) || an.localeCompare(bn)
+          );
         case "nome_asc":
-        default: return an.localeCompare(bn) || ae.localeCompare(be);
+        default:
+          return (
+            an.localeCompare(bn) || ae.localeCompare(be)
+          );
       }
     });
 
@@ -217,9 +247,25 @@ export default function GestaoInstrutor() {
   const kpis = useMemo(() => {
     const total = instrutores.length;
     const encontrados = filtrados.length;
-    const comEmail = filtrados.filter((x) => !!String(x?.email || "").trim()).length;
-    const semEmail = encontrados - comEmail;
-    return { total: String(total), encontrados: String(encontrados), comEmail: String(comEmail), semEmail: String(semEmail) };
+
+    // Tentamos inferir se o instrutor "tem assinatura" olhando campos comuns.
+    // Ajuste aqui se seu campo for diferente.
+    const temAssinatura = (x) =>
+      x?.assinado === true ||
+      x?.assinatura === true ||
+      x?.tem_assinatura === true ||
+      x?.possui_assinatura === true ||
+      x?.assinatura_valida === true;
+
+    const comAssinatura = filtrados.filter((x) => temAssinatura(x)).length;
+    const semAssinatura = encontrados - comAssinatura;
+
+    return {
+      total: String(total),
+      encontrados: String(encontrados),
+      comAssinatura: String(comAssinatura),
+      semAssinatura: String(semAssinatura),
+    };
   }, [instrutores, filtrados]);
 
   /* ---------- histórico (modal) ---------- */
@@ -228,13 +274,19 @@ export default function GestaoInstrutor() {
     setModalHistoricoAberto(true);
     try {
       setLive(`Carregando histórico de ${instrutor?.nome}…`);
-      const data = await apiGet(`/api/instrutor/${instrutor.id}/eventos-avaliacoes`, { on403: "silent" });
+      const data = await apiGet(
+        `/api/instrutor/${instrutor.id}/eventos-avaliacoes`,
+        { on403: "silent" }
+      );
       const eventos = (Array.isArray(data) ? data : []).map((ev) => ({
         id: ev.evento_id,
         titulo: ev.evento,
         data_inicio_ymd: ymd(ev.data_inicio),
         data_fim_ymd: ymd(ev.data_fim),
-        nota_media: ev.nota_media !== null && ev.nota_media !== undefined ? Number(ev.nota_media) : null,
+        nota_media:
+          ev.nota_media !== null && ev.nota_media !== undefined
+            ? Number(ev.nota_media)
+            : null,
       }));
       setHistorico(eventos);
       setLive("Histórico carregado.");
@@ -248,17 +300,22 @@ export default function GestaoInstrutor() {
   /* ---------- exportação CSV da lista filtrada ---------- */
   const onExportCsv = () => {
     try {
-      const headers = [
-        "id", "nome", "email",
-      ];
+      const headers = ["id", "nome", "email"];
       const rows = filtrados.map((p) => [
         p?.id ?? "",
         p?.nome ?? "",
         p?.email ?? "",
       ]);
-      const content = [headers, ...rows].map((r) => r.map(csvEscape).join(";")).join("\n");
-      const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
-      downloadBlob(`instrutores_${new Date().toISOString().slice(0,10)}.csv`, blob);
+      const content = [headers, ...rows]
+        .map((r) => r.map(csvEscape).join(";"))
+        .join("\n");
+      const blob = new Blob([content], {
+        type: "text/csv;charset=utf-8",
+      });
+      downloadBlob(
+        `instrutores_${new Date().toISOString().slice(0, 10)}.csv`,
+        blob
+      );
       toast.success("📄 CSV exportado.");
     } catch (e) {
       console.error("CSV erro", e);
@@ -267,7 +324,7 @@ export default function GestaoInstrutor() {
   };
 
   return (
-    <main className="flex min-h-screen flex-col bg-gelo text-black dark:bg-zinc-900 dark:text-white">
+    <main className="flex min-h-screen flex-col bg-gelo text-black dark:bg-zinc-900 dark:text-white overflow-x-hidden">
       {/* Live region acessível */}
       <p ref={liveRef} className="sr-only" aria-live="polite" />
 
@@ -296,13 +353,16 @@ export default function GestaoInstrutor() {
       {/* Barra sticky de ferramentas */}
       <section
         aria-label="Ferramentas de lista"
-        className="sticky top-1 z-30 mx-auto mb-4 w-full max-w-6xl rounded-2xl border border-zinc-200 bg-white/80 p-3 backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/80"
+        className="sticky top-1 z-30 mx-auto mb-4 w-full max-w-6xl rounded-2xl border border-zinc-200 bg-white/80 p-3 backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/80 overflow-x-hidden"
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           {/* Ordenação */}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 min-w-0">
             <SortAsc className="h-4 w-4 text-zinc-500" aria-hidden="true" />
-            <label htmlFor="ord" className="text-xs text-zinc-600 dark:text-zinc-300">
+            <label
+              htmlFor="ord"
+              className="text-xs text-zinc-600 dark:text-zinc-300"
+            >
               Ordenar por
             </label>
             <select
@@ -318,7 +378,7 @@ export default function GestaoInstrutor() {
           </div>
 
           {/* Exportar CSV */}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 min-w-0">
             <button
               type="button"
               onClick={onExportCsv}
@@ -329,14 +389,18 @@ export default function GestaoInstrutor() {
               Exportar CSV
             </button>
             <span className="text-xs text-zinc-500">
-              {filtrados.length} item{filtrados.length === 1 ? "" : "s"} na visualização
+              {filtrados.length} item{filtrados.length === 1 ? "" : "s"} na
+              visualização
             </span>
           </div>
         </div>
       </section>
 
       {/* Conteúdo */}
-      <div id="conteudo" className="mx-auto w-full max-w-6xl px-3 py-6 sm:px-4">
+      <div
+        id="conteudo"
+        className="mx-auto w-full max-w-6xl px-3 py-6 sm:px-4 overflow-x-hidden"
+      >
         {carregandoDados ? (
           <div className="space-y-4" aria-busy="true" aria-live="polite">
             {[...Array(4)].map((_, i) => (
@@ -387,7 +451,9 @@ export default function GestaoInstrutor() {
           {/* conteúdo rolável */}
           <div className="flex-1 overflow-y-auto px-4 py-4">
             {historico.length === 0 ? (
-              <p className="text-gray-500 dark:text-gray-300">Nenhum evento encontrado.</p>
+              <p className="text-gray-500 dark:text-gray-300">
+                Nenhum evento encontrado.
+              </p>
             ) : (
               <ul className="space-y-3">
                 {historico.map((evento) => (
@@ -397,12 +463,15 @@ export default function GestaoInstrutor() {
                   >
                     <p className="font-semibold">{evento.titulo}</p>
                     <p className="text-sm">
-                      Data: {ymdToBR(evento.data_inicio_ymd)} até {ymdToBR(evento.data_fim_ymd)}
+                      Data: {ymdToBR(evento.data_inicio_ymd)} até{" "}
+                      {ymdToBR(evento.data_fim_ymd)}
                     </p>
                     <p className="text-sm">
                       Média de avaliação:{" "}
                       <strong>
-                        {evento.nota_media !== null ? evento.nota_media.toFixed(1) : "N/A"}
+                        {evento.nota_media !== null
+                          ? evento.nota_media.toFixed(1)
+                          : "N/A"}
                       </strong>
                     </p>
                   </li>

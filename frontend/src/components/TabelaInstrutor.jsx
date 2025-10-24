@@ -117,11 +117,11 @@ StarRow.propTypes = {
 
 function BadgeAssinatura({ ok }) {
   return ok ? (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-700 dark:bg-green-600/30 dark:text-green-300">
-      <CheckCircle2 size={14} /> Assinatura
+    <span className="shrink-0 inline-flex items-center gap-1 rounded-full border border-green-300 bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700 dark:border-green-600 dark:bg-green-600/30 dark:text-green-300">
+      <CheckCircle2 size={14} /> Assinado
     </span>
   ) : (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700 dark:bg-red-700/30 dark:text-red-300">
+    <span className="shrink-0 inline-flex items-center gap-1 rounded-full border border-red-300 bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700 dark:border-red-700 dark:bg-red-700/30 dark:text-red-300">
       <XCircle size={14} /> Sem assinatura
     </span>
   );
@@ -154,33 +154,36 @@ function InstrutorCard({ data, onVisualizar }) {
 
   return (
     <article
-      className="p-4 bg-white dark:bg-gray-800 rounded-2xl shadow transition hover:shadow-md focus-within:shadow-md outline-none"
+      className="outline-none rounded-2xl bg-white p-4 text-left shadow transition hover:shadow-md focus-within:shadow-md dark:bg-gray-800"
       aria-label={`Instrutor: ${nome}`}
       tabIndex={0}
     >
       <div className="flex flex-col gap-3">
-        {/* Header: nome + email */}
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="font-semibold text-gray-900 dark:text-white text-lg truncate">
+        {/* Header: nome + badge de assinatura */}
+        <div className="flex flex-wrap items-start justify-between gap-x-2 gap-y-1">
+          {/* bloco nome/email */}
+          <div className="min-w-0 flex-1">
+            <p className="text-lg font-semibold text-gray-900 dark:text-white break-words text-pretty">
               {nome}
             </p>
-            <p className="text-sm text-gray-600 dark:text-gray-300 break-all">
+            <p className="break-all text-sm text-gray-600 dark:text-gray-300">
               {email}
             </p>
           </div>
+
+          {/* badge de assinatura */}
           <BadgeAssinatura ok={!!possuiAssinatura} />
         </div>
 
         {/* Mini-stats */}
-        <div className="text-sm text-gray-600 dark:text-gray-300 space-y-1">
+        <div className="space-y-1 text-sm text-gray-600 dark:text-gray-300">
           <p>
             Eventos ministrados:{" "}
             <strong className="font-mono tabular-nums text-gray-800 dark:text-gray-100">
               {eventosNum}
             </strong>
           </p>
-          <p className="flex items-center gap-2">
+          <p className="flex flex-wrap items-center gap-2">
             Média de avaliação: <StarRow value={media_avaliacao} />
           </p>
         </div>
@@ -190,8 +193,11 @@ function InstrutorCard({ data, onVisualizar }) {
           <button
             onClick={handleVisualizar}
             disabled={!id}
-            className={`flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium px-4 py-2 rounded-lg shadow focus:outline-none focus:ring-2 focus:ring-green-700/40
-                       ${!id ? "opacity-60 cursor-not-allowed hover:bg-green-600" : ""}`}
+            className={`flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white shadow transition hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-700/40 ${
+              !id
+                ? "cursor-not-allowed opacity-60 hover:bg-green-600"
+                : ""
+            }`}
             aria-label={`Ver histórico de ${nome}`}
             aria-disabled={!id || undefined}
             title={!id ? "Indisponível" : "Ver histórico"}

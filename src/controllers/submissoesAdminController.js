@@ -1,5 +1,7 @@
-// 📁 api/controllers/submissoesAdminController.js
 /* eslint-disable no-console */
+
+const path = require("path");
+const fs = require("fs");
 
 // DB resiliente (aceita `module.exports = db` ou `module.exports = { db }`)
 const dbModule = require("../db");
@@ -127,6 +129,35 @@ async function canUserReviewOrView(userOrId, submissaoId, dbConn = db) {
     console.error("[canUserReviewOrView] erro:", err.message);
     return false;
   }
+}
+
+/* ===================== Flags de aprovação parcial ===================== */
+/**
+ * Dado um row vindo do banco, deduz:
+ *  - se exposição/escrita está aprovada
+ *  - se apresentação oral está aprovada
+ *
+ * Isso replica exatamente a lógica do front:
+ *   hasAprovExposicao / hasAprovOral
+ */
+function deriveAprovFlags(row) {
+  const st = String(row?.status || "").toLowerCase();
+  const se = String(row?.status_escrita || "").toLowerCase(); // pode não existir
+  const so = String(row?.status_oral || "").toLowerCase();    // pode não existir
+
+  const exposicaoAprovada =
+    se === "aprovado" ||
+    st === "aprovado_exposicao" ||
+    st === "aprovado_escrita";
+
+  const oralAprovada =
+    so === "aprovado" ||
+    st === "aprovado_oral";
+
+  return {
+    _exposicao_aprovada: exposicaoAprovada,
+    _oral_aprovada: oralAprovada,
+  };
 }
 
 /* ===================== Avaliadores ===================== */
@@ -470,8 +501,6 @@ async function definirNotaVisivel(req, res) {
 }
 
 /* ===================== Banner (download) ===================== */
-const path = require("path");
-const fs = require("fs");
 
 // mime simples por extensão
 function guessMimeByExt(filename = "") {
@@ -551,27 +580,25 @@ async function baixarBanner(req, res) {
 
 // ── Helpers de consolidação de nota ───────────────────────────────────────────
 async function calcularTotaisDaSubmissao(submissaoId, dbConn = db) {
-  // total por avaliador
-  const porAvaliador = await dbConn.any(
+  const rs = await dbConn.one(
     `
-    with por_avaliador as (
-      select a.avaliador_id, sum(ai.nota)::int as total
-      from trabalhos_avaliacoes_itens ai
-      join trabalhos_avaliacoes a
-        on a.id = ai.avaliacao_id
-      where a.submissao_id = $1
-      group by a.avaliador_id
+    WITH por_avaliador AS (
+      SELECT avaliador_id, SUM(nota)::int AS total
+      FROM trabalhos_avaliacoes_itens
+      WHERE submissao_id = $1
+      GROUP BY avaliador_id
     )
-    select coalesce(sum(total),0)::int as total_geral,
-           round(coalesce(sum(total),0)::numeric / 4, 1) as nota_dividida_por_4
-    from por_avaliador
+    SELECT
+      COALESCE(SUM(total),0)::int                            AS total_geral,
+      ROUND(COALESCE(SUM(total),0)::numeric / 4, 1)          AS nota_dividida_por_4
+    FROM por_avaliador
     `,
     [submissaoId]
   );
-  const row = porAvaliador[0] || { total_geral: 0, nota_dividida_por_4: 0 };
+
   return {
-    totalGeral: Number(row.total_geral || 0),
-    nota10: Number(row.nota_dividida_por_4 || 0),
+    totalGeral: Number(rs?.total_geral || 0),
+    nota10:     Number(rs?.nota_dividida_por_4 || 0),
   };
 }
 
@@ -586,35 +613,102 @@ async function atualizarNotaMediaMaterializada(submissaoId, dbConn = db) {
 
 /** GET /api/admin/submissoes */
 async function listarSubmissoesAdmin(req, res) {
-  try {
-    const rows = await db.any(`
-      select
-        s.id, s.titulo, s.status, s.chamada_id,
-        s.autor_nome, s.autor_email,
-        s.area_tematica as area, s.eixo,
-        c.titulo as chamada_titulo,
-        coalesce(
+  async function queryComParciais() {
+    return db.any(`
+      SELECT
+        s.id,
+        s.titulo,
+        s.status,
+        s.status_escrita,
+        s.status_oral,
+        s.chamada_id,
+        s.autor_nome,
+        s.autor_email,
+        s.area_tematica AS area,
+        s.eixo,
+        c.titulo AS chamada_titulo,
+        COALESCE(
           s.nota_media,
           (
-            with por_avaliador as (
-              select a.avaliador_id, sum(ai.nota)::int as total
-              from trabalhos_avaliacoes_itens ai
-              join trabalhos_avaliacoes a on a.id = ai.avaliacao_id
-              where a.submissao_id = s.id
-              group by a.avaliador_id
+            WITH por_avaliador AS (
+              SELECT a.avaliador_id, SUM(ai.nota)::int AS total
+              FROM trabalhos_avaliacoes_itens ai
+              JOIN trabalhos_avaliacoes a ON a.id = ai.avaliacao_id
+              WHERE a.submissao_id = s.id
+              GROUP BY a.avaliador_id
             )
-            select round(coalesce(sum(total),0)::numeric / 4, 1)
-            from por_avaliador
+            SELECT ROUND(COALESCE(SUM(total),0)::numeric / 4, 1)
+            FROM por_avaliador
           )
-        ) as nota_media
-      from trabalhos_submissoes s
-      left join trabalhos_chamadas c on c.id = s.chamada_id
-      order by s.id desc
+        ) AS nota_media
+      FROM trabalhos_submissoes s
+      LEFT JOIN trabalhos_chamadas c ON c.id = s.chamada_id
+      ORDER BY s.id DESC
     `);
-    res.json(rows);
+  }
+
+  // fallback SEM as colunas parciais
+  async function querySemParciais() {
+    return db.any(`
+      SELECT
+        s.id,
+        s.titulo,
+        s.status,
+        NULL::text AS status_escrita,
+        NULL::text AS status_oral,
+        s.chamada_id,
+        s.autor_nome,
+        s.autor_email,
+        s.area_tematica AS area,
+        s.eixo,
+        c.titulo AS chamada_titulo,
+        COALESCE(
+          s.nota_media,
+          (
+            WITH por_avaliador AS (
+              SELECT a.avaliador_id, SUM(ai.nota)::int AS total
+              FROM trabalhos_avaliacoes_itens ai
+              JOIN trabalhos_avaliacoes a ON a.id = ai.avaliacao_id
+              WHERE a.submissao_id = s.id
+              GROUP BY a.avaliador_id
+            )
+            SELECT ROUND(COALESCE(SUM(total),0)::numeric / 4, 1)
+            FROM por_avaliador
+          )
+        ) AS nota_media
+      FROM trabalhos_submissoes s
+      LEFT JOIN trabalhos_chamadas c ON c.id = s.chamada_id
+      ORDER BY s.id DESC
+    `);
+  }
+
+  try {
+    let rows;
+    try {
+      // Tenta versão "rica"
+      rows = await queryComParciais();
+    } catch (errRich) {
+      // 42703 = coluna não existe
+      if (errRich?.code === "42703") {
+        rows = await querySemParciais();
+      } else {
+        throw errRich;
+      }
+    }
+
+    // Agora enriquecemos cada linha com as flags _exposicao_aprovada e _oral_aprovada
+    const enriched = rows.map((r) => {
+      const flags = deriveAprovFlags(r);
+      return {
+        ...r,
+        ...flags,
+      };
+    });
+
+    return res.json(enriched);
   } catch (err) {
     console.error("[listarSubmissoesAdmin]", err);
-    res.status(500).json({ error: "Erro ao listar submissões." });
+    return res.status(500).json({ error: "Erro ao listar submissões." });
   }
 }
 
@@ -747,6 +841,17 @@ async function resumoAvaliadores(req, res) {
     return res.status(500).json({ error: "Erro ao gerar resumo de avaliadores." });
   }
 }
+
+//** POST /api/admin/submissoes/:id/status
+//* Atualiza status principal + parciais sem nunca apagar aprovações já dadas.
+/* Aceita body como:
+* {
+*   status: "aprovado_exposicao" | "aprovado_oral" | "reprovado" | ...
+*   status_escrita: "aprovado" | null | undefined
+*   status_oral: "aprovado" | null | undefined
+*   observacoes_admin: string|null (ignorado aqui por enquanto)
+* }
+*/
 
 /* ===================== Exports ===================== */
 module.exports = {

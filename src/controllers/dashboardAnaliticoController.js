@@ -1,12 +1,14 @@
+// 📁 src/controllers/dashboardAnaliticoController.js
 const db = require("../db");
-const {
-  formatarGrafico,
-  formatarGraficoPresenca,
-  calcularMediaPresenca,
-} = require("../utils/graficos");
+const { formatarGrafico } = require("../utils/graficos");
 
 /**
  * 📊 Gera os dados para o painel analítico (administrador), com filtros por ano, mês e tipo de evento.
+ * 
+ * Regras principais:
+ * - Presença: considera “presente” quem tiver frequência ≥ 75% nas datas que já ocorreram.
+ * - Percentual geral = (soma de pessoas elegíveis) / (soma de inscritos) × 100
+ * 
  * @route GET /api/dashboard-analitico
  */
 async function obterDashboard(req, res) {
@@ -33,135 +35,186 @@ async function obterDashboard(req, res) {
 
   try {
     console.log("Dashboard analítico requisitado:", { ano, mes, tipo });
-    // Total de eventos distintos (com base nas turmas)
-    const totalEventos = await db.query(
-      `SELECT COUNT(DISTINCT e.id)
-       FROM eventos e
-       JOIN turmas t ON t.evento_id = e.id
-       ${where}`,
+
+    /* =====================================================
+       1️⃣ Métricas básicas
+    ====================================================== */
+    const totalEventosQ = await db.query(
+      `
+      SELECT COUNT(DISTINCT e.id) AS total
+      FROM eventos e
+      JOIN turmas t ON t.evento_id = e.id
+      ${where}
+      `,
       params
     );
 
-    // Total de inscritos únicos
-    const inscritosUnicos = await db.query(
-      `SELECT COUNT(DISTINCT i.usuario_id)
-       FROM inscricoes i
-       JOIN turmas t ON i.turma_id = t.id
-       JOIN eventos e ON t.evento_id = e.id
-       ${where}`,
+    const inscritosUnicosQ = await db.query(
+      `
+      SELECT COUNT(DISTINCT i.usuario_id) AS total
+      FROM inscricoes i
+      JOIN turmas t ON i.turma_id = t.id
+      JOIN eventos e ON t.evento_id = e.id
+      ${where}
+      `,
       params
     );
 
-    // Média das notas do evento (exclui desempenho_instrutor)
-    const mediaAvaliacoes = await db.query(
-      `SELECT ROUND(AVG((
-          COALESCE(CASE a.divulgacao_evento WHEN 'Ótimo' THEN 5 WHEN 'Bom' THEN 4 WHEN 'Regular' THEN 3 WHEN 'Ruim' THEN 2 WHEN 'Péssimo' THEN 1 ELSE NULL END, 0) +
-          COALESCE(CASE a.recepcao WHEN 'Ótimo' THEN 5 WHEN 'Bom' THEN 4 WHEN 'Regular' THEN 3 WHEN 'Ruim' THEN 2 WHEN 'Péssimo' THEN 1 ELSE NULL END, 0) +
-          COALESCE(CASE a.credenciamento WHEN 'Ótimo' THEN 5 WHEN 'Bom' THEN 4 WHEN 'Regular' THEN 3 WHEN 'Ruim' THEN 2 WHEN 'Péssimo' THEN 1 ELSE NULL END, 0) +
-          COALESCE(CASE a.material_apoio WHEN 'Ótimo' THEN 5 WHEN 'Bom' THEN 4 WHEN 'Regular' THEN 3 WHEN 'Ruim' THEN 2 WHEN 'Péssimo' THEN 1 ELSE NULL END, 0) +
-          COALESCE(CASE a.pontualidade WHEN 'Ótimo' THEN 5 WHEN 'Bom' THEN 4 WHEN 'Regular' THEN 3 WHEN 'Ruim' THEN 2 WHEN 'Péssimo' THEN 1 ELSE NULL END, 0) +
-          COALESCE(CASE a.sinalizacao_local WHEN 'Ótimo' THEN 5 WHEN 'Bom' THEN 4 WHEN 'Regular' THEN 3 WHEN 'Ruim' THEN 2 WHEN 'Péssimo' THEN 1 ELSE NULL END, 0) +
-          COALESCE(CASE a.conteudo_temas WHEN 'Ótimo' THEN 5 WHEN 'Bom' THEN 4 WHEN 'Regular' THEN 3 WHEN 'Ruim' THEN 2 WHEN 'Péssimo' THEN 1 ELSE NULL END, 0) +
-          COALESCE(CASE a.estrutura_local WHEN 'Ótimo' THEN 5 WHEN 'Bom' THEN 4 WHEN 'Regular' THEN 3 WHEN 'Ruim' THEN 2 WHEN 'Péssimo' THEN 1 ELSE NULL END, 0) +
-          COALESCE(CASE a.acessibilidade WHEN 'Ótimo' THEN 5 WHEN 'Bom' THEN 4 WHEN 'Regular' THEN 3 WHEN 'Ruim' THEN 2 WHEN 'Péssimo' THEN 1 ELSE NULL END, 0) +
-          COALESCE(CASE a.limpeza WHEN 'Ótimo' THEN 5 WHEN 'Bom' THEN 4 WHEN 'Regular' THEN 3 WHEN 'Ruim' THEN 2 WHEN 'Péssimo' THEN 1 ELSE NULL END, 0) +
-          COALESCE(CASE a.inscricao_online WHEN 'Ótimo' THEN 5 WHEN 'Bom' THEN 4 WHEN 'Regular' THEN 3 WHEN 'Ruim' THEN 2 WHEN 'Péssimo' THEN 1 ELSE NULL END, 0) +
-          COALESCE(CASE a.exposicao_trabalhos WHEN 'Ótimo' THEN 5 WHEN 'Bom' THEN 4 WHEN 'Regular' THEN 3 WHEN 'Ruim' THEN 2 WHEN 'Péssimo' THEN 1 ELSE NULL END, 0) +
-          COALESCE(CASE a.apresentacao_oral_mostra WHEN 'Ótimo' THEN 5 WHEN 'Bom' THEN 4 WHEN 'Regular' THEN 3 WHEN 'Ruim' THEN 2 WHEN 'Péssimo' THEN 1 ELSE NULL END, 0) +
-          COALESCE(CASE a.apresentacao_tcrs WHEN 'Ótimo' THEN 5 WHEN 'Bom' THEN 4 WHEN 'Regular' THEN 3 WHEN 'Ruim' THEN 2 WHEN 'Péssimo' THEN 1 ELSE NULL END, 0) +
-          COALESCE(CASE a.oficinas WHEN 'Ótimo' THEN 5 WHEN 'Bom' THEN 4 WHEN 'Regular' THEN 3 WHEN 'Ruim' THEN 2 WHEN 'Péssimo' THEN 1 ELSE NULL END, 0)
-        )::numeric /
-        (
-          (CASE WHEN a.divulgacao_evento IS NOT NULL THEN 1 ELSE 0 END) +
-          (CASE WHEN a.recepcao IS NOT NULL THEN 1 ELSE 0 END) +
-          (CASE WHEN a.credenciamento IS NOT NULL THEN 1 ELSE 0 END) +
-          (CASE WHEN a.material_apoio IS NOT NULL THEN 1 ELSE 0 END) +
-          (CASE WHEN a.pontualidade IS NOT NULL THEN 1 ELSE 0 END) +
-          (CASE WHEN a.sinalizacao_local IS NOT NULL THEN 1 ELSE 0 END) +
-          (CASE WHEN a.conteudo_temas IS NOT NULL THEN 1 ELSE 0 END) +
-          (CASE WHEN a.estrutura_local IS NOT NULL THEN 1 ELSE 0 END) +
-          (CASE WHEN a.acessibilidade IS NOT NULL THEN 1 ELSE 0 END) +
-          (CASE WHEN a.limpeza IS NOT NULL THEN 1 ELSE 0 END) +
-          (CASE WHEN a.inscricao_online IS NOT NULL THEN 1 ELSE 0 END) +
-          (CASE WHEN a.exposicao_trabalhos IS NOT NULL THEN 1 ELSE 0 END) +
-          (CASE WHEN a.apresentacao_oral_mostra IS NOT NULL THEN 1 ELSE 0 END) +
-          (CASE WHEN a.apresentacao_tcrs IS NOT NULL THEN 1 ELSE 0 END) +
-          (CASE WHEN a.oficinas IS NOT NULL THEN 1 ELSE 0 END)
-        )::numeric
-      ), 2) as media_evento
+    const mediaAvaliacoesQ = await db.query(
+      `
+      SELECT ROUND(AVG((
+        COALESCE(CASE a.divulgacao_evento WHEN 'Ótimo' THEN 5 WHEN 'Bom' THEN 4 WHEN 'Regular' THEN 3 WHEN 'Ruim' THEN 2 WHEN 'Péssimo' THEN 1 END, 0) +
+        COALESCE(CASE a.recepcao WHEN 'Ótimo' THEN 5 WHEN 'Bom' THEN 4 WHEN 'Regular' THEN 3 WHEN 'Ruim' THEN 2 WHEN 'Péssimo' THEN 1 END, 0) +
+        COALESCE(CASE a.credenciamento WHEN 'Ótimo' THEN 5 WHEN 'Bom' THEN 4 WHEN 'Regular' THEN 3 WHEN 'Ruim' THEN 2 WHEN 'Péssimo' THEN 1 END, 0) +
+        COALESCE(CASE a.material_apoio WHEN 'Ótimo' THEN 5 WHEN 'Bom' THEN 4 WHEN 'Regular' THEN 3 WHEN 'Ruim' THEN 2 WHEN 'Péssimo' THEN 1 END, 0) +
+        COALESCE(CASE a.pontualidade WHEN 'Ótimo' THEN 5 WHEN 'Bom' THEN 4 WHEN 'Regular' THEN 3 WHEN 'Ruim' THEN 2 WHEN 'Péssimo' THEN 1 END, 0) +
+        COALESCE(CASE a.sinalizacao_local WHEN 'Ótimo' THEN 5 WHEN 'Bom' THEN 4 WHEN 'Regular' THEN 3 WHEN 'Ruim' THEN 2 WHEN 'Péssimo' THEN 1 END, 0) +
+        COALESCE(CASE a.conteudo_temas WHEN 'Ótimo' THEN 5 WHEN 'Bom' THEN 4 WHEN 'Regular' THEN 3 WHEN 'Ruim' THEN 2 WHEN 'Péssimo' THEN 1 END, 0) +
+        COALESCE(CASE a.estrutura_local WHEN 'Ótimo' THEN 5 WHEN 'Bom' THEN 4 WHEN 'Regular' THEN 3 WHEN 'Ruim' THEN 2 WHEN 'Péssimo' THEN 1 END, 0) +
+        COALESCE(CASE a.acessibilidade WHEN 'Ótimo' THEN 5 WHEN 'Bom' THEN 4 WHEN 'Regular' THEN 3 WHEN 'Ruim' THEN 2 WHEN 'Péssimo' THEN 1 END, 0) +
+        COALESCE(CASE a.limpeza WHEN 'Ótimo' THEN 5 WHEN 'Bom' THEN 4 WHEN 'Regular' THEN 3 WHEN 'Ruim' THEN 2 WHEN 'Péssimo' THEN 1 END, 0) +
+        COALESCE(CASE a.inscricao_online WHEN 'Ótimo' THEN 5 WHEN 'Bom' THEN 4 WHEN 'Regular' THEN 3 WHEN 'Ruim' THEN 2 WHEN 'Péssimo' THEN 1 END, 0)
+      )::numeric / 11), 2) AS media_evento
       FROM avaliacoes a
       JOIN turmas t ON a.turma_id = t.id
       JOIN eventos e ON t.evento_id = e.id
-      ${where}`,
+      ${where};
+      `,
       params
     );
 
-    // Média do desempenho do instrutor
-    const mediainstrutor = await db.query(
-      `SELECT ROUND(AVG(
-          CASE a.desempenho_instrutor
-            WHEN 'Ótimo' THEN 5
-            WHEN 'Bom' THEN 4
-            WHEN 'Regular' THEN 3
-            WHEN 'Ruim' THEN 2
-            WHEN 'Péssimo' THEN 1
-            ELSE NULL
-          END
-        )::numeric, 2) as media_instrutor
-       FROM avaliacoes a
-       JOIN turmas t ON a.turma_id = t.id
-       JOIN eventos e ON t.evento_id = e.id
-       ${where}`,
+    const mediainstrutorQ = await db.query(
+      `
+      SELECT ROUND(AVG(
+        CASE a.desempenho_instrutor
+          WHEN 'Ótimo' THEN 5
+          WHEN 'Bom' THEN 4
+          WHEN 'Regular' THEN 3
+          WHEN 'Ruim' THEN 2
+          WHEN 'Péssimo' THEN 1
+          ELSE NULL
+        END
+      )::numeric, 2) AS media_instrutor
+      FROM avaliacoes a
+      JOIN turmas t ON a.turma_id = t.id
+      JOIN eventos e ON t.evento_id = e.id
+      ${where};
+      `,
       params
     );
 
-    // Presença por evento
-    const presencaPorEvento = await db.query(
-      `SELECT 
-         e.titulo, 
-         COUNT(p.*) AS total_presentes, 
-         COUNT(DISTINCT i.usuario_id) AS total_inscritos
-       FROM eventos e
-       JOIN turmas t ON t.evento_id = e.id
-       LEFT JOIN inscricoes i ON i.turma_id = t.id
-       LEFT JOIN presencas p 
-         ON p.usuario_id = i.usuario_id 
-         AND p.turma_id = t.id 
-         AND p.presente = true
-       ${where}
-       GROUP BY e.titulo`,
+    /* =====================================================
+       2️⃣ Presença ≥ 75%
+    ====================================================== */
+    const presencaQuery = await db.query(
+      `
+      WITH turmas_filtradas AS (
+        SELECT t.id AS turma_id, t.evento_id
+        FROM turmas t
+        JOIN eventos e ON e.id = t.evento_id
+        ${where}
+      ),
+      encontros_ocorridos AS (
+        SELECT p.turma_id, COUNT(DISTINCT p.data_presenca::date) AS total_encontros
+        FROM presencas p
+        JOIN turmas_filtradas tf ON tf.turma_id = p.turma_id
+        WHERE p.data_presenca::date <= NOW()::date
+        GROUP BY p.turma_id
+      ),
+      freq_usuario_turma AS (
+        SELECT i.usuario_id, i.turma_id, eo.total_encontros,
+               SUM(CASE WHEN p.presente THEN 1 ELSE 0 END) AS presencas_feitas
+        FROM inscricoes i
+        JOIN turmas_filtradas tf ON tf.turma_id = i.turma_id
+        LEFT JOIN presencas p ON p.turma_id = i.turma_id AND p.usuario_id = i.usuario_id
+        LEFT JOIN encontros_ocorridos eo ON eo.turma_id = i.turma_id
+        GROUP BY i.usuario_id, i.turma_id, eo.total_encontros
+      ),
+      elegiveis_por_turma AS (
+        SELECT fut.usuario_id, fut.turma_id, tf.evento_id,
+               CASE WHEN fut.total_encontros > 0 
+                    THEN (fut.presencas_feitas::decimal / fut.total_encontros::decimal) >= 0.75
+                    ELSE false END AS elegivel_75
+        FROM freq_usuario_turma fut
+        JOIN turmas_filtradas tf ON tf.turma_id = fut.turma_id
+      ),
+      resumo_evento AS (
+        SELECT e.id AS evento_id, e.titulo AS evento_titulo,
+               COUNT(DISTINCT i.usuario_id) AS total_inscritos_evento,
+               COUNT(DISTINCT CASE WHEN ept.elegivel_75 THEN ept.usuario_id END) AS total_elegiveis_evento
+        FROM eventos e
+        JOIN turmas_filtradas tf ON tf.evento_id = e.id
+        JOIN inscricoes i ON i.turma_id = tf.turma_id
+        LEFT JOIN elegiveis_por_turma ept ON ept.evento_id = e.id AND ept.usuario_id = i.usuario_id
+        GROUP BY e.id, e.titulo
+      )
+      SELECT re.evento_titulo AS titulo,
+             re.total_inscritos_evento AS total_inscritos,
+             re.total_elegiveis_evento AS total_presentes,
+             CASE WHEN re.total_inscritos_evento > 0
+                  THEN ROUND((re.total_elegiveis_evento::decimal / re.total_inscritos_evento::decimal) * 100, 2)
+                  ELSE 0 END AS percentual
+      FROM resumo_evento re
+      ORDER BY re.evento_titulo;
+      `,
       params
     );
 
-    // Eventos por mês
-    const eventosPorMes = await db.query(
-      `SELECT TO_CHAR(t.data_inicio, 'Mon') as mes, COUNT(*) as total
-       FROM eventos e
-       JOIN turmas t ON t.evento_id = e.id
-       ${where}
-       GROUP BY mes ORDER BY MIN(t.data_inicio)`,
+    let totalInscritosGlobal = 0;
+    let totalElegiveisGlobal = 0;
+
+    for (const row of presencaQuery.rows) {
+      totalInscritosGlobal += Number(row.total_inscritos) || 0;
+      totalElegiveisGlobal += Number(row.total_presentes) || 0;
+    }
+
+    const percentualPresencaGlobal =
+      totalInscritosGlobal > 0
+        ? (totalElegiveisGlobal / totalInscritosGlobal) * 100
+        : 0;
+
+    /* =====================================================
+       3️⃣ Eventos por mês / tipo
+    ====================================================== */
+    const eventosPorMesQ = await db.query(
+      `
+      SELECT TO_CHAR(t.data_inicio, 'Mon') AS mes,
+             COUNT(*) AS total,
+             EXTRACT(MONTH FROM t.data_inicio) AS mes_num
+      FROM eventos e
+      JOIN turmas t ON t.evento_id = e.id
+      ${where}
+      GROUP BY mes, mes_num
+      ORDER BY mes_num;
+      `,
       params
     );
 
-    // Eventos por tipo
-    const eventosPorTipo = await db.query(
-      `SELECT e.tipo, COUNT(DISTINCT e.id) as total
-       FROM eventos e
-       JOIN turmas t ON t.evento_id = e.id
-       ${where}
-       GROUP BY e.tipo`,
+    const eventosPorTipoQ = await db.query(
+      `
+      SELECT e.tipo, COUNT(DISTINCT e.id) AS total
+      FROM eventos e
+      JOIN turmas t ON t.evento_id = e.id
+      ${where}
+      GROUP BY e.tipo
+      ORDER BY e.tipo;
+      `,
       params
     );
 
+    /* =====================================================
+       4️⃣ Resposta final
+    ====================================================== */
     res.json({
-      totalEventos: parseInt(totalEventos.rows[0]?.count || 0),
-      inscritosUnicos: parseInt(inscritosUnicos.rows[0]?.count || 0),
-      mediaAvaliacoes: parseFloat(mediaAvaliacoes.rows[0]?.media_evento || 0),
-      mediainstrutor: parseFloat(mediainstrutor.rows[0]?.media_instrutor || 0),
-      percentualPresenca: calcularMediaPresenca(presencaPorEvento.rows && presencaPorEvento.rows.length ? presencaPorEvento.rows : []),
-      eventosPorMes: formatarGrafico(eventosPorMes.rows && eventosPorMes.rows.length ? eventosPorMes.rows : [], "mes"),
-      eventosPorTipo: formatarGrafico(eventosPorTipo.rows && eventosPorTipo.rows.length ? eventosPorTipo.rows : [], "tipo"),
-      presencaPorEvento: formatarGraficoPresenca(presencaPorEvento.rows && presencaPorEvento.rows.length ? presencaPorEvento.rows : []),
+      totalEventos: parseInt(totalEventosQ.rows[0]?.total || 0),
+      inscritosUnicos: parseInt(inscritosUnicosQ.rows[0]?.total || 0),
+      mediaAvaliacoes: parseFloat(mediaAvaliacoesQ.rows[0]?.media_evento || 0),
+      mediainstrutor: parseFloat(mediainstrutorQ.rows[0]?.media_instrutor || 0),
+      percentualPresenca: Number(percentualPresencaGlobal.toFixed(2)),
+
+      eventosPorMes: formatarGrafico(eventosPorMesQ.rows || [], "mes"),
+      eventosPorTipo: formatarGrafico(eventosPorTipoQ.rows || [], "tipo"),
+      presencaPorEvento: formatarGrafico(presencaQuery.rows || [], "titulo"),
     });
   } catch (error) {
     console.error("❌ Erro ao gerar dashboard:", error);
@@ -169,6 +222,4 @@ async function obterDashboard(req, res) {
   }
 }
 
-module.exports = {
-  obterDashboard,
-};
+module.exports = { obterDashboard };
