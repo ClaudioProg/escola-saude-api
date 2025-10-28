@@ -746,27 +746,28 @@ async function obterDetalhesEventoComRestricao(req, res) {
 /* =====================================================================
    📆 Listar turmas de um evento (com datas reais)
    ===================================================================== */
-async function listarTurmasDoEvento(req, res) {
-  const { id } = req.params;
-
-  try {
-    const result = await query(
-      `
-      SELECT 
-        t.id, t.nome, t.data_inicio, t.data_fim, t.horario_inicio, t.horario_fim,
-        t.vagas_total, t.carga_horaria,
-        e.titulo, e.descricao, e.local,
-        COALESCE(array_agg(DISTINCT u.nome) FILTER (WHERE u.nome IS NOT NULL), '{}') AS instrutor
-      FROM eventos e
-      JOIN turmas t ON t.evento_id = e.id
-      LEFT JOIN evento_instrutor ei ON ei.evento_id = e.id
-      LEFT JOIN usuarios u ON u.id = ei.instrutor_id
-      WHERE e.id = $1
-  AND e.publicado = TRUE
-      GROUP BY t.id, e.id
-      ORDER BY t.data_inicio, t.id
-    `,
-      [id]
+   async function listarTurmasDoEvento(req, res) {
+    const { id } = req.params;
+    const admin = isAdmin(req); // ⬅ já temos isAdmin no controller
+  
+    try {
+      const result = await query(
+        `
+        SELECT 
+          t.id, t.nome, t.data_inicio, t.data_fim, t.horario_inicio, t.horario_fim,
+          t.vagas_total, t.carga_horaria,
+          e.titulo, e.descricao, e.local,
+          COALESCE(array_agg(DISTINCT u.nome) FILTER (WHERE u.nome IS NOT NULL), '{}') AS instrutor
+        FROM eventos e
+        JOIN turmas t ON t.evento_id = e.id
+        LEFT JOIN evento_instrutor ei ON ei.evento_id = e.id
+        LEFT JOIN usuarios u ON u.id = ei.instrutor_id
+        WHERE e.id = $1
+        ${admin ? "" : "AND e.publicado = TRUE"}
+        GROUP BY t.id, e.id
+        ORDER BY t.data_inicio, t.id
+        `,
+        [id]
     );
 
     const turmas = [];

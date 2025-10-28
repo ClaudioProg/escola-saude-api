@@ -300,6 +300,9 @@ function SubmissionCard({
 }) {
   const gradientBar = "from-violet-600 via-fuchsia-500 to-indigo-500";
 
+  // vamos calcular se está dentro do prazo uma vez aqui
+  const dentroPrazo = !!(subm?.dentro_prazo || subm?.dentroPrazo);
+
   return (
     <div className="rounded-2xl border border-black/5 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm flex flex-col overflow-hidden">
       {/* Barrinha topo */}
@@ -344,11 +347,14 @@ function SubmissionCard({
               Editar
             </button>
           ) : (
-            <span className="text-gray-500 dark:text-gray-400 text-xs leading-tight">
-              {subm?.dentro_prazo || subm?.dentroPrazo
-                ? "Edição indisponível"
-                : "Fora do prazo"}
-            </span>
+            // Se não pode editar:
+            // - se ainda está dentro do prazo → mostra "Edição indisponível"
+            // - se está fora do prazo → NÃO mostra nada (remove 'Fora do prazo')
+            dentroPrazo && (
+              <span className="text-gray-500 dark:text-gray-400 text-xs leading-tight">
+                Edição indisponível
+              </span>
+            )
           )}
 
           {podeExcluir && (

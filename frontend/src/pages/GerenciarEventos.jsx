@@ -160,23 +160,46 @@ const normRegistros = (arr) =>
 /* =============================
    Fetch auxiliares
    ============================= */
-async function fetchTurmasDoEvento(eventoId) {
-  const urls = [
-    `/api/eventos/${eventoId}/turmas`,
-    `/api/turmas/por-evento/${eventoId}`,
-    `/api/turmas/evento/${eventoId}`,
-    `/api/eventos/${eventoId}`,
-  ];
-  for (const url of urls) {
-    try {
-      const resp = await apiGet(url, { on403: "silent" });
-      if (Array.isArray(resp)) return resp;
-      if (Array.isArray(resp?.turmas)) return resp.turmas;
-      if (Array.isArray(resp?.lista)) return resp.lista;
-    } catch {}
+   async function fetchTurmasDoEvento(eventoId) {
+    const urls = [
+      // 1️⃣ primeiro pega a rota administrativa completa
+      `/api/eventos/${eventoId}`,
+  
+      // 2️⃣ depois tenta rotas alternativas / de fallback
+      `/api/eventos/${eventoId}/turmas`,
+      `/api/turmas/por-evento/${eventoId}`,
+      `/api/turmas/evento/${eventoId}`,
+    ];
+  
+    for (const url of urls) {
+      try {
+        const resp = await apiGet(url, { on403: "silent" });
+  
+        // se a resposta JÁ É um evento inteiro
+        if (resp && resp.id && Array.isArray(resp.turmas)) {
+          return resp.turmas;
+        }
+  
+        // se a resposta é um array direto de turmas
+        if (Array.isArray(resp)) {
+          return resp;
+        }
+  
+        // se a resposta veio embrulhada
+        if (Array.isArray(resp?.turmas)) {
+          return resp.turmas;
+        }
+        if (Array.isArray(resp?.lista)) {
+          return resp.lista;
+        }
+      } catch {
+        // tenta próxima URL
+      }
+    }
+  
+    return [];
   }
-  return [];
-}
+  
 
 async function fetchEventoCompleto(eventoId) {
   try {
@@ -460,14 +483,16 @@ export default function GerenciarEventos() {
   const salvarEvento = async (dadosDoModal) => {
     try {
       const isEdicao = Boolean(eventoSelecionado?.id);
-
+  
       if (isEdicao) {
+        // ====== MODO EDIÇÃO ======
         let baseServidor = await fetchEventoCompleto(eventoSelecionado.id);
         if (!baseServidor) {
           const turmasDoEvento =
             Array.isArray(eventoSelecionado?.turmas) && eventoSelecionado.turmas.length
               ? eventoSelecionado.turmas
               : await fetchTurmasDoEvento(eventoSelecionado.id);
+  
           baseServidor = {
             ...eventoSelecionado,
             turmas: turmasDoEvento,
@@ -482,9 +507,9 @@ export default function GerenciarEventos() {
             restrito_modo: eventoSelecionado?.restrito_modo || null,
           };
         }
-
+  
         const body = buildUpdateBody(baseServidor, dadosDoModal);
-
+  
         // validações rápidas
         if (!Array.isArray(body.instrutor) || body.instrutor.length === 0) {
           toast.error("Selecione ao menos um instrutor.");
@@ -494,7 +519,7 @@ export default function GerenciarEventos() {
           toast.error("Inclua ao menos uma turma com campos obrigatórios.");
           return;
         }
-
+  
         try {
           await apiPut(`/api/eventos/${eventoSelecionado.id}`, body);
         } catch (err) {
@@ -502,16 +527,19 @@ export default function GerenciarEventos() {
             toast.warn(
               "Este evento tem turmas com inscritos. Vou salvar apenas os dados gerais e a regra de restrição."
             );
-
+  
             const fonteRegsModal =
-              Array.isArray(dadosDoModal?.registros_permitidos) ? dadosDoModal.registros_permitidos :
-              Array.isArray(dadosDoModal?.registros)            ? dadosDoModal.registros            :
-              undefined;
-
-            const regsEventOnly = (Array.isArray(fonteRegsModal) && fonteRegsModal.length > 0)
-              ? normRegistros(fonteRegsModal)
-              : normRegistros(baseServidor?.registros_permitidos || []);
-
+              Array.isArray(dadosDoModal?.registros_permitidos)
+                ? dadosDoModal.registros_permitidos
+                : Array.isArray(dadosDoModal?.registros)
+                ? dadosDoModal.registros
+                : undefined;
+  
+            const regsEventOnly =
+              Array.isArray(fonteRegsModal) && fonteRegsModal.length > 0
+                ? normRegistros(fonteRegsModal)
+                : normRegistros(baseServidor?.registros_permitidos || []);
+  
             const bodyEventOnly = clean({
               titulo: (dadosDoModal?.titulo ?? baseServidor?.titulo ?? "").trim(),
               descricao: (dadosDoModal?.descricao ?? baseServidor?.descricao ?? "").trim(),
@@ -526,103 +554,140 @@ export default function GerenciarEventos() {
               ),
               restrito: Boolean(
                 dadosDoModal?.restrito ??
-                  (typeof baseServidor?.restrito === "boolean" ? baseServidor.restrito : false)
+                  (typeof baseServidor?.restrito === "boolean"
+                    ? baseServidor.restrito
+                    : false)
               ),
               restrito_modo:
                 (dadosDoModal?.restrito ?? baseServidor?.restrito)
-                  ? (dadosDoModal?.restrito_modo ?? baseServidor?.restrito_modo ?? null)
+                  ? (dadosDoModal?.restrito_modo ??
+                      baseServidor?.restrito_modo ??
+                      null)
                   : null,
               registros_permitidos:
                 (dadosDoModal?.restrito ?? baseServidor?.restrito) &&
-                (dadosDoModal?.restrito_modo ?? baseServidor?.restrito_modo) === "lista_registros"
+                (dadosDoModal?.restrito_modo ?? baseServidor?.restrito_modo) ===
+                  "lista_registros"
                   ? regsEventOnly
                   : undefined,
             });
-
+  
             await apiPut(`/api/eventos/${eventoSelecionado.id}`, bodyEventOnly);
-
+  
             await recarregarEventos();
-            toast.success("✅ Dados gerais e restrição atualizados. As turmas não foram alteradas.");
+            toast.success(
+              "✅ Dados gerais e restrição atualizados. As turmas não foram alteradas."
+            );
             setModalAberto(false);
             return;
           }
           throw err;
         }
-      } else {
-        // criação
-        const base = {
-          titulo: (dadosDoModal?.titulo || "").trim(),
-          tipo: (dadosDoModal?.tipo || "").trim(),
-          unidade_id: dadosDoModal?.unidade_id,
-          descricao: (dadosDoModal?.descricao || "").trim(),
-          local: (dadosDoModal?.local || "").trim(),
-          publico_alvo: (dadosDoModal?.publico_alvo || "").trim(),
-        };
-
-        const instrutores = extractInstrutorIds(dadosDoModal?.instrutor);
-        if (!instrutores.length) {
-          toast.error("Selecione ao menos um instrutor.");
-          return;
-        }
-
-        const di = ymd(dadosDoModal?.data_inicio_geral ?? dadosDoModal?.data_inicio);
-        const df = ymd(dadosDoModal?.data_fim_geral ?? dadosDoModal?.data_fim);
-        const hi = hhmm(dadosDoModal?.horario_inicio_geral ?? dadosDoModal?.horario_inicio ?? "08:00");
-        const hf = hhmm(dadosDoModal?.horario_fim_geral ?? dadosDoModal?.horario_fim ?? "17:00");
-
-        const turmas = normalizeTurmas(
-          dadosDoModal?.turmas?.length
-            ? dadosDoModal.turmas
-            : [
-                {
-                  nome: base.titulo || "Turma Única",
-                  data_inicio: di,
-                  data_fim: df,
-                  horario_inicio: hi,
-                  horario_fim: hf,
-                  vagas_total: 1,
-                  carga_horaria: 1,
-                  encontros: [],
-                },
-              ]
-        );
-
-        const restrito = Boolean(dadosDoModal?.restrito);
-        const restrito_modo = restrito
-          ? (dadosDoModal?.restrito_modo || "todos_servidores")
-          : null;
-
-        const regsFonte =
-          Array.isArray(dadosDoModal?.registros_permitidos) ? dadosDoModal.registros_permitidos :
-          Array.isArray(dadosDoModal?.registros)            ? dadosDoModal.registros            :
-          undefined;
-
-        const registros = restrito && restrito_modo === "lista_registros"
+  
+        // chegou aqui = PUT normal deu certo
+        await recarregarEventos();
+        toast.success("✅ Evento salvo com sucesso.");
+  
+        // traz estado oficial do servidor pra manter o modal coerente
+        const atualizado = await fetchEventoCompleto(eventoSelecionado.id);
+        const turmasNovas = await fetchTurmasDoEvento(eventoSelecionado.id);
+  
+        setEventoSelecionado({
+          ...atualizado,
+          turmas: turmasNovas,
+        });
+  
+        setModalAberto(false);
+        return;
+      }
+  
+      // ====== MODO CRIAÇÃO ======
+      const base = {
+        titulo: (dadosDoModal?.titulo || "").trim(),
+        tipo: (dadosDoModal?.tipo || "").trim(),
+        unidade_id: dadosDoModal?.unidade_id,
+        descricao: (dadosDoModal?.descricao || "").trim(),
+        local: (dadosDoModal?.local || "").trim(),
+        publico_alvo: (dadosDoModal?.publico_alvo || "").trim(),
+      };
+  
+      const instrutores = extractInstrutorIds(dadosDoModal?.instrutor);
+      if (!instrutores.length) {
+        toast.error("Selecione ao menos um instrutor.");
+        return;
+      }
+  
+      const di = ymd(
+        dadosDoModal?.data_inicio_geral ?? dadosDoModal?.data_inicio
+      );
+      const df = ymd(
+        dadosDoModal?.data_fim_geral ?? dadosDoModal?.data_fim
+      );
+      const hi = hhmm(
+        dadosDoModal?.horario_inicio_geral ??
+          dadosDoModal?.horario_inicio ??
+          "08:00"
+      );
+      const hf = hhmm(
+        dadosDoModal?.horario_fim_geral ??
+          dadosDoModal?.horario_fim ??
+          "17:00"
+      );
+  
+      const turmas = normalizeTurmas(
+        dadosDoModal?.turmas?.length
+          ? dadosDoModal.turmas
+          : [
+              {
+                nome: base.titulo || "Turma Única",
+                data_inicio: di,
+                data_fim: df,
+                horario_inicio: hi,
+                horario_fim: hf,
+                vagas_total: 1,
+                carga_horaria: 1,
+                encontros: [],
+              },
+            ]
+      );
+  
+      const restrito = Boolean(dadosDoModal?.restrito);
+      const restrito_modo = restrito
+        ? dadosDoModal?.restrito_modo || "todos_servidores"
+        : null;
+  
+      const regsFonte = Array.isArray(dadosDoModal?.registros_permitidos)
+        ? dadosDoModal.registros_permitidos
+        : Array.isArray(dadosDoModal?.registros)
+        ? dadosDoModal.registros
+        : undefined;
+  
+      const registros =
+        restrito && restrito_modo === "lista_registros"
           ? normRegistros(regsFonte || [])
           : undefined;
-
-        const bodyCreate = clean({
-          ...base,
-          instrutor: instrutores,
-          turmas,
-          restrito,
-          restrito_modo,
-          registros_permitidos: registros, // canônico
-        });
-
-        await apiPost("/api/eventos", bodyCreate);
-      }
-
+  
+      const bodyCreate = clean({
+        ...base,
+        instrutor: instrutores,
+        turmas,
+        restrito,
+        restrito_modo,
+        registros_permitidos: registros,
+      });
+  
+      await apiPost("/api/eventos", bodyCreate);
+  
       await recarregarEventos();
       toast.success("✅ Evento salvo com sucesso.");
       setModalAberto(false);
+      return;
     } catch (err) {
       console.error("❌ salvar evento:", err?.message, err);
       if (err?.data) console.log("err.data:", err.data);
       toast.error(err?.message || "Erro ao salvar o evento.");
     }
   };
-
   /* -------- publicar / despublicar (admin) -------- */
   const togglePublicacao = async (evento) => {
     if (!evento?.id) return;
