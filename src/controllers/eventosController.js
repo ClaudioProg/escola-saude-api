@@ -1332,7 +1332,7 @@ async function listarTurmasDoEvento(req, res) {
 }
 
 // ======================================================================
-// 🔄 Atualizar evento (metadados, restrição e turmas) — COMPLETO
+// 🔄 Atualizar evento (metadados, restrição e turmas) — COMPLETO + LOGS
 // ======================================================================
 async function atualizarEvento(req, res) {
   console.group(
@@ -1343,7 +1343,7 @@ async function atualizarEvento(req, res) {
   );
 
   const eventoId = Number(req.params.id);
-  console.log("eventoId:", eventoId);
+  console.log("eventoId recebido:", eventoId);
   if (!eventoId) {
     console.warn("⛔ EVENTO_ID_INVALIDO");
     console.groupEnd();
@@ -1377,19 +1377,26 @@ async function atualizarEvento(req, res) {
 
   const client = await pool.connect();
   try {
+    console.log("→ BEGIN TRANSACTION atualizarEvento");
     await client.query("BEGIN");
 
     // estado atual do evento
+    console.log("→ Buscando estado atual do evento no banco...");
     const curQ = await client.query(
       `SELECT restrito, restrito_modo FROM eventos WHERE id = $1`,
       [eventoId]
     );
+    console.log("→ Resultado SELECT restrito/restrito_modo:", curQ.rows);
+
     if (curQ.rowCount === 0) {
       console.warn("⛔ evento não encontrado:", eventoId);
-      await client.query("ROLLBACK");
+      await client.query("ROLLBACK").catch((e) =>
+        console.error("⚠️ Falha no ROLLBACK após evento não encontrado:", e)
+      );
       console.groupEnd();
       return res.status(404).json({ erro: "Evento não encontrado" });
     }
+
     const atual = curQ.rows[0];
     console.log("estado atual restrito:", atual);
 
@@ -1401,7 +1408,9 @@ async function atualizarEvento(req, res) {
     if (typeof restrito_modo !== "undefined") {
       if (restritoFinal && !ALLOWED_MODOS.has(String(restrito_modo))) {
         console.warn("⛔ restrito_modo inválido:", restrito_modo);
-        await client.query("ROLLBACK");
+        await client.query("ROLLBACK").catch((e) =>
+          console.error("⚠️ Falha no ROLLBACK após modo inválido:", e)
+        );
         console.groupEnd();
         return res.status(400).json({
           erro:
@@ -1416,6 +1425,7 @@ async function atualizarEvento(req, res) {
     console.log("restritoFinal:", restritoFinal, "modoFinal:", modoFinal);
 
     // 1) Atualiza campos simples do evento
+    console.log("→ UPDATE eventos (campos simples)...");
     await client.query(
       `
       UPDATE eventos SET
@@ -1454,24 +1464,30 @@ async function atualizarEvento(req, res) {
         [eventoId]
       );
       for (const instrutor_id of instrutor) {
-        console.log("→ vinculando instrutor", instrutor_id);
+        console.log("→ vinculando instrutor", instrutor_id, "ao evento", eventoId);
         await client.query(
           `INSERT INTO evento_instrutor (evento_id, instrutor_id)
            VALUES ($1,$2)`,
           [eventoId, instrutor_id]
         );
       }
+      console.log("✅ instrutores atualizados");
+    } else {
+      console.log("→ Instrutores NÃO enviados no payload. Mantendo como está.");
     }
 
     // 2.1) Lista de registros por restrição
+    console.log("→ Avaliando restrição / evento_registros...");
     if (!restritoFinal || modoFinal === MODO_TODOS) {
       console.log(
-        "→ restrição OFF ou modo TODOS. Limpando evento_registros"
+        "→ restrição OFF ou modo TODOS. Limpando evento_registros para evento:",
+        eventoId
       );
       await client.query(
         `DELETE FROM evento_registros WHERE evento_id = $1`,
         [eventoId]
       );
+      console.log("✅ evento_registros limpo");
     } else if (modoFinal === MODO_LISTA) {
       if (listaFoiEnviada) {
         console.log(
@@ -1485,19 +1501,25 @@ async function atualizarEvento(req, res) {
         console.log("regList normalizada:", regList);
 
         if (regList.length === 0) {
-          console.warn("⛔ regList vazia/ruim");
-          await client.query("ROLLBACK");
+          console.warn("⛔ regList vazia/ruim, abortando atualização e rollback.");
+          await client.query("ROLLBACK").catch((e) =>
+            console.error("⚠️ Falha no ROLLBACK após regList vazia:", e)
+          );
           console.groupEnd();
           return res
             .status(400)
             .json({ erro: "Registros inválidos." });
         }
 
+        console.log("→ Limpando evento_registros antigos...");
         await client.query(
           `DELETE FROM evento_registros WHERE evento_id = $1`,
           [eventoId]
         );
+
+        console.log("→ Inserindo novos evento_registros...");
         for (const r of regList) {
+          console.log("→ inserindo registro_norm:", r);
           await client.query(
             `INSERT INTO evento_registros (evento_id, registro_norm)
              VALUES ($1,$2)
@@ -1505,19 +1527,23 @@ async function atualizarEvento(req, res) {
             [eventoId, r]
           );
         }
+        console.log("✅ registros atualizados");
       } else {
         console.log(
           "→ modo LISTA mas listaFoiEnviada=FALSE, mantendo vínculos atuais"
         );
       }
+    } else {
+      console.log("→ modoFinal não identificado (sem alteração em evento_registros)");
     }
 
     // 3) Se turmas NÃO veio no body, paramos aqui
     if (!Array.isArray(turmas)) {
       console.log(
-        "turmas não enviada no body. Finalizando somente metadados/restrição."
+        "🟡 turmas NÃO enviada no body. Finalizando somente metadados/restrição."
       );
       await client.query("COMMIT");
+      console.log("✅ COMMIT concluído (sem mexer em turmas)");
       console.groupEnd();
       return res.json({
         ok: true,
@@ -1525,9 +1551,10 @@ async function atualizarEvento(req, res) {
       });
     }
 
-    console.log("→ sincronizando turmas:", turmas.length);
+    console.log("→ sincronizando turmas. Quantidade recebida:", turmas.length);
 
     // estado atual das turmas
+    console.log("→ Buscando turmas atuais do evento no banco...");
     const { rows: atuais } = await client.query(
       `
       SELECT
@@ -1543,7 +1570,7 @@ async function atualizarEvento(req, res) {
       [eventoId]
     );
 
-    console.log("turmas atuais:", atuais);
+    console.log("turmas atuais do banco:", atuais);
 
     const mapaAtuais = new Map(atuais.map((t) => [t.id, t]));
     const idsPayload = new Set(
@@ -1563,7 +1590,9 @@ async function atualizarEvento(req, res) {
         "⛔ tentativa de remover turma com inscritos:",
         bloqueadasRemocao
       );
-      await client.query("ROLLBACK");
+      await client.query("ROLLBACK").catch((e) =>
+        console.error("⚠️ Falha no ROLLBACK após tentativa de remoção bloqueada:", e)
+      );
       console.groupEnd();
       return res.status(409).json({
         erro: "TURMA_COM_INSCRITOS",
@@ -1581,15 +1610,18 @@ async function atualizarEvento(req, res) {
 
     // helper normalizar datas vindas do front
     const extrairDatas = (t) => {
+      console.log("→ [extrairDatas] entrada t:", t);
       if (Array.isArray(t?.datas) && t.datas.length) {
-        return t.datas.map((d) => ({
+        const out = t.datas.map((d) => ({
           data: toYmd(d?.data),
           horario_inicio: hhmm(d?.horario_inicio || ""),
           horario_fim: hhmm(d?.horario_fim || ""),
         }));
+        console.log("→ [extrairDatas] via t.datas =>", out);
+        return out;
       }
       if (Array.isArray(t?.encontros) && t.encontros.length) {
-        return t.encontros.map((e) =>
+        const out = t.encontros.map((e) =>
           typeof e === "string"
             ? {
                 data: toYmd(e),
@@ -1602,18 +1634,23 @@ async function atualizarEvento(req, res) {
                 horario_fim: hhmm(e?.fim || ""),
               }
         );
+        console.log("→ [extrairDatas] via t.encontros =>", out);
+        return out;
       }
+      console.log("→ [extrairDatas] nenhuma data encontrada");
       return [];
     };
 
+    // loop principal das turmas do payload
     for (const t of turmas) {
-      console.group("📝 sync turma payload:", t);
+      console.group("📝 [sync turma] turma payload recebida:", t);
 
       const id = Number(t.id);
+      console.log("→ turma id interpretado:", id);
 
       // 3.a) NOVA TURMA
       if (!Number.isFinite(id)) {
-        console.log("→ nova turma (sem id)");
+        console.log("→ nova turma (sem id ou id inválido)");
 
         const nome = String(t.nome || "Turma").trim();
         const vagas_total = Number.isFinite(Number(t.vagas_total))
@@ -1623,8 +1660,14 @@ async function atualizarEvento(req, res) {
           ? Number(t.carga_horaria)
           : null;
 
+        console.log("→ nova turma campos básicos:", {
+          nome,
+          vagas_total,
+          carga_horaria,
+        });
+
         const baseDatas = extrairDatas(t);
-        console.log("baseDatas:", baseDatas);
+        console.log("→ baseDatas calculada p/ nova turma:", baseDatas);
 
         if (!baseDatas.length) {
           console.warn("⛔ nova turma sem datas:", nome);
@@ -1643,39 +1686,63 @@ async function atualizarEvento(req, res) {
             String(a.data).localeCompare(String(b.data))
           );
 
+        console.log("→ ordenadas (datas da nova turma):", ordenadas);
+
         const data_inicio = ordenadas[0].data;
         const data_fim = ordenadas.at(-1).data;
 
         const hiPayload = hhmm(t?.horario_inicio || "") || null;
         const hfPayload = hhmm(t?.horario_fim || "") || null;
 
-        const insTurma = await client.query(
-          `INSERT INTO turmas (
-             evento_id,
-             nome,
-             vagas_total,
-             carga_horaria,
-             data_inicio,
-             data_fim,
-             horario_inicio,
-             horario_fim
-           )
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-           RETURNING id`,
-          [
-            eventoId,
-            nome,
-            vagas_total,
-            carga_horaria,
-            data_inicio,
-            data_fim,
-            hiPayload,
-            hfPayload,
-          ]
-        );
+        console.log("→ INSERT turmas (nova):", {
+          evento_id: eventoId,
+          nome,
+          vagas_total,
+          carga_horaria,
+          data_inicio,
+          data_fim,
+          hiPayload,
+          hfPayload,
+        });
+
+        let insTurma;
+        try {
+          insTurma = await client.query(
+            `INSERT INTO turmas (
+               evento_id,
+               nome,
+               vagas_total,
+               carga_horaria,
+               data_inicio,
+               data_fim,
+               horario_inicio,
+               horario_fim
+             )
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+             RETURNING id`,
+            [
+              eventoId,
+              nome,
+              vagas_total,
+              carga_horaria,
+              data_inicio,
+              data_fim,
+              hiPayload,
+              hfPayload,
+            ]
+          );
+        } catch (errInsertNovaTurma) {
+          console.error(
+            "❌ ERRO no INSERT da nova turma:",
+            errInsertNovaTurma
+          );
+          throw errInsertNovaTurma;
+        }
+
         const turmaId = insTurma.rows[0].id;
         console.log("✅ nova turma criada ID:", turmaId);
 
+        // inserir datas_turma da nova turma
         for (const d of ordenadas) {
           if (!d.data) continue;
           const inicioSeguro =
@@ -1684,18 +1751,28 @@ async function atualizarEvento(req, res) {
             d.horario_fim || hfPayload || "17:00";
 
           console.log(
-            "→ datas_turma nova:",
+            "→ INSERT datas_turma (nova turma):",
             turmaId,
             d.data,
             inicioSeguro,
             fimSeguro
           );
 
-          await client.query(
-            `INSERT INTO datas_turma (turma_id, data, horario_inicio, horario_fim)
-             VALUES ($1,$2,$3,$4)`,
-            [turmaId, d.data, inicioSeguro, fimSeguro]
-          );
+          try {
+            await client.query(
+              `INSERT INTO datas_turma (turma_id, data, horario_inicio, horario_fim)
+               VALUES ($1,$2,$3,$4)`,
+              [turmaId, d.data, inicioSeguro, fimSeguro]
+            );
+          } catch (errInsertDataNovaTurma) {
+            console.error(
+              "❌ ERRO no INSERT datas_turma da nova turma ID",
+              turmaId,
+              ":",
+              errInsertDataNovaTurma
+            );
+            throw errInsertDataNovaTurma;
+          }
         }
 
         console.groupEnd();
@@ -1705,9 +1782,11 @@ async function atualizarEvento(req, res) {
       // 3.b) TURMA EXISTENTE
       console.log("→ turma existente id:", id);
       const atualT = mapaAtuais.get(id);
+      console.log("→ dados atuais da turma no banco:", atualT);
+
       if (!atualT) {
         console.warn(
-          "⚠️ turma não pertence ao evento ou não encontrada:",
+          "⚠️ turma não pertence ao evento ou não encontrada no banco:",
           id
         );
         console.groupEnd();
@@ -1715,7 +1794,7 @@ async function atualizarEvento(req, res) {
       }
 
       const inscritos = atualT.inscritos || 0;
-      console.log("inscritos:", inscritos);
+      console.log("→ inscritos atuais na turma:", inscritos);
 
       const veioDatas =
         Array.isArray(t?.datas) || Array.isArray(t?.encontros);
@@ -1729,12 +1808,14 @@ async function atualizarEvento(req, res) {
 
       if (inscritos > 0 && (veioDatas || vaiDiminuirAbaixoInscritos)) {
         console.warn(
-          "⛔ alteração bloqueada em turma com inscritos:",
-          id,
-          "veioDatas?",
-          veioDatas,
-          "vaiDiminuirAbaixoInscritos?",
-          vaiDiminuirAbaixoInscritos
+          "⛔ alteração BLOQUEADA em turma com inscritos:",
+          {
+            id,
+            veioDatas,
+            vaiDiminuirAbaixoInscritos,
+            inscritos,
+            novoVagas,
+          }
         );
         bloqueios.push({
           id,
@@ -1757,24 +1838,41 @@ async function atualizarEvento(req, res) {
       const hiPayload = hhmm(t?.horario_inicio || "") || null;
       const hfPayload = hhmm(t?.horario_fim || "") || null;
 
-      console.log("→ UPDATE turmas (campos simples) id:", id);
-      await client.query(
-        `UPDATE turmas
-           SET nome           = COALESCE($2, nome),
-               vagas_total    = COALESCE($3, vagas_total),
-               carga_horaria  = COALESCE($4, carga_horaria),
-               horario_inicio = COALESCE($5, horario_inicio),
-               horario_fim    = COALESCE($6, horario_fim)
-         WHERE id = $1`,
-        [
+      console.log("→ UPDATE turmas (campos simples) id:", id, {
+        nome: t.nome ?? null,
+        vagas_total: novoVagas != null ? novoVagas : null,
+        carga_horaria: cargaHorariaNumero,
+        horario_inicio: hiPayload,
+        horario_fim: hfPayload,
+      });
+
+      try {
+        await client.query(
+          `UPDATE turmas
+             SET nome           = COALESCE($2, nome),
+                 vagas_total    = COALESCE($3, vagas_total),
+                 carga_horaria  = COALESCE($4, carga_horaria),
+                 horario_inicio = COALESCE($5, horario_inicio),
+                 horario_fim    = COALESCE($6, horario_fim)
+           WHERE id = $1`,
+          [
+            id,
+            t.nome ?? null,
+            novoVagas != null ? novoVagas : null,
+            cargaHorariaNumero,
+            hiPayload,
+            hfPayload,
+          ]
+        );
+      } catch (errUpdateTurmaExistente) {
+        console.error(
+          "❌ ERRO no UPDATE da turma existente ID",
           id,
-          t.nome ?? null,
-          novoVagas != null ? novoVagas : null,
-          cargaHorariaNumero,
-          hiPayload,
-          hfPayload,
-        ]
-      );
+          ":",
+          errUpdateTurmaExistente
+        );
+        throw errUpdateTurmaExistente;
+      }
 
       // se não há inscritos e o payload trouxe novas datas,
       // substitui datas_turma
@@ -1785,11 +1883,15 @@ async function atualizarEvento(req, res) {
         );
 
         const baseDatas = extrairDatas(t);
+        console.log("→ baseDatas (turma existente):", baseDatas);
+
         const ordenadas = [...baseDatas]
           .filter((d) => d.data)
           .sort((a, b) =>
             String(a.data).localeCompare(String(b.data))
           );
+
+        console.log("→ ordenadas (datas novas):", ordenadas);
 
         const di =
           ordenadas[0]?.data || t.data_inicio || null;
@@ -1800,11 +1902,21 @@ async function atualizarEvento(req, res) {
           t.data_inicio ||
           null;
 
-        console.log("→ limpando datas_turma antigas da turma", id);
-        await client.query(
-          `DELETE FROM datas_turma WHERE turma_id=$1`,
-          [id]
-        );
+        console.log("→ DELETE datas_turma antigas da turma", id);
+        try {
+          await client.query(
+            `DELETE FROM datas_turma WHERE turma_id=$1`,
+            [id]
+          );
+        } catch (errDeleteDatasTurma) {
+          console.error(
+            "❌ ERRO no DELETE datas_turma da turma ID",
+            id,
+            ":",
+            errDeleteDatasTurma
+          );
+          throw errDeleteDatasTurma;
+        }
 
         for (const d of ordenadas) {
           if (!d.data) continue;
@@ -1814,49 +1926,71 @@ async function atualizarEvento(req, res) {
             d.horario_fim || hfPayload || "17:00";
 
           console.log(
-            "→ criando datas_turma:",
+            "→ INSERT datas_turma (turma existente):",
             id,
             d.data,
             inicioSeguro,
             fimSeguro
           );
 
-          await client.query(
-            `INSERT INTO datas_turma (turma_id, data, horario_inicio, horario_fim)
-             VALUES ($1,$2,$3,$4)`,
-            [id, d.data, inicioSeguro, fimSeguro]
-          );
+          try {
+            await client.query(
+              `INSERT INTO datas_turma (turma_id, data, horario_inicio, horario_fim)
+               VALUES ($1,$2,$3,$4)`,
+              [id, d.data, inicioSeguro, fimSeguro]
+            );
+          } catch (errInsertDatasTurmaExistente) {
+            console.error(
+              "❌ ERRO no INSERT datas_turma da turma EXISTENTE ID",
+              id,
+              ":",
+              errInsertDatasTurmaExistente
+            );
+            throw errInsertDatasTurmaExistente;
+          }
         }
 
         if (di && df) {
           console.log(
-            "→ atualizando período da turma id:",
+            "→ UPDATE período data_inicio/data_fim da turma ID:",
             id,
             "di:",
             di,
             "df:",
             df
           );
-          await client.query(
-            `UPDATE turmas
-                SET data_inicio=$2,
-                    data_fim=$3
-              WHERE id=$1`,
-            [id, di, df]
-          );
+          try {
+            await client.query(
+              `UPDATE turmas
+                  SET data_inicio=$2,
+                      data_fim=$3
+                WHERE id=$1`,
+              [id, di, df]
+            );
+          } catch (errUpdatePeriodoTurma) {
+            console.error(
+              "❌ ERRO no UPDATE período (data_inicio/data_fim) da turma ID",
+              id,
+              ":",
+              errUpdatePeriodoTurma
+            );
+            throw errUpdatePeriodoTurma;
+          }
         }
       }
 
-      console.groupEnd();
-    }
+      console.groupEnd(); // fim grupo turma existente
+    } // fim loop turmas
 
     // Se houve bloqueios, aborta
     if (bloqueios.length) {
       console.warn(
-        "⛔ bloqueios durante atualização de turmas. rollback.",
+        "⛔ bloqueios durante atualização de turmas. rollback necessário:",
         bloqueios
       );
-      await client.query("ROLLBACK");
+      await client.query("ROLLBACK").catch((e) =>
+        console.error("⚠️ Falha no ROLLBACK após bloqueios:", e)
+      );
       console.groupEnd();
       return res.status(409).json({
         erro: "TURMA_COM_INSCRITOS",
@@ -1869,31 +2003,58 @@ async function atualizarEvento(req, res) {
     // remove turmas (sem inscritos) que sumiram
     for (const t of remover) {
       console.log(
-        "🗑 removendo turma sem inscritos e que sumiu do payload:",
-        t.id
+        "🗑 removendo turma SEM inscritos que sumiu do payload:",
+        t.id,
+        t.nome
       );
-      await client.query(
-        `DELETE FROM datas_turma WHERE turma_id=$1`,
-        [t.id]
-      );
-      await client.query(`DELETE FROM turmas WHERE id=$1`, [t.id]);
+      try {
+        await client.query(
+          `DELETE FROM datas_turma WHERE turma_id=$1`,
+          [t.id]
+        );
+        await client.query(`DELETE FROM turmas WHERE id=$1`, [t.id]);
+      } catch (errDeleteTurma) {
+        console.error(
+          "❌ ERRO ao remover turma ID",
+          t.id,
+          ":",
+          errDeleteTurma
+        );
+        throw errDeleteTurma;
+      }
     }
 
+    console.log("→ Tentando COMMIT final do evento:", eventoId);
     await client.query("COMMIT");
-    console.log("✅ Evento atualizado com sucesso:", eventoId);
+    console.log("✅ COMMIT concluído. Evento atualizado com sucesso:", eventoId);
     console.groupEnd();
+
     return res.json({
       ok: true,
       mensagem: "Evento atualizado com sucesso.",
     });
   } catch (err) {
-    await client.query("ROLLBACK");
-    console.error("❌ atualizarEvento erro:", err);
+    console.error("🔥 [CATCH atualizarEvento] erro capturado:", err);
+    console.error("🔥 err.message:", err?.message);
+    console.error("🔥 err.stack (primeiras linhas):", err?.stack?.split("\n").slice(0, 5));
+
+    try {
+      await client.query("ROLLBACK");
+      console.log("↩️ ROLLBACK executado com sucesso após erro.");
+    } catch (rollbackErr) {
+      console.error("⚠️ Falha ao executar ROLLBACK:", rollbackErr);
+    }
+
     console.groupEnd();
     return res.status(500).json({
       erro: "Erro ao atualizar evento com turmas",
+      detalhe: err?.message || null,
+      stack_preview: err?.stack
+        ? err.stack.split("\n").slice(0, 3)
+        : null,
     });
   } finally {
+    console.log("🔚 finally atualizarEvento → liberando client");
     client.release();
   }
 }
