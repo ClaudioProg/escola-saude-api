@@ -215,22 +215,23 @@ export default function ModalTurma({
 
   const montarPayload = () => {
     const carga_horaria = calcularCargaHorariaTotal(encontrosOrdenados);
-    const horario_inicio = hhmm(encontrosOrdenados[0]?.inicio, "00:00");
-    const horario_fim = hhmm(encontrosOrdenados[0]?.fim, "00:00");
-
-    // Retornamos 'encontros' (preferido) e também 'datas' (compat)
+  
+    // usa defaults amigáveis iguais ao backend (08:00 / 17:00)
+    const horario_inicio_base = hhmm(encontrosOrdenados[0]?.inicio, "08:00");
+    const horario_fim_base = hhmm(encontrosOrdenados[0]?.fim, "17:00");
+  
     const encontrosPayload = encontrosOrdenados.map((e) => ({
       data: e.data,
-      inicio: hhmm(e.inicio, horario_inicio),
-      fim: hhmm(e.fim, horario_fim),
+      inicio: hhmm(e.inicio, horario_inicio_base),
+      fim: hhmm(e.fim, horario_fim_base),
     }));
-
+  
     const datasPayload = encontrosOrdenados.map((e) => ({
       data: e.data,
-      horario_inicio: hhmm(e.inicio, horario_inicio),
-      horario_fim: hhmm(e.fim, horario_fim),
+      horario_inicio: hhmm(e.inicio, horario_inicio_base),
+      horario_fim: hhmm(e.fim, horario_fim_base),
     }));
-
+  
     return {
       ...(initialTurma?.id ? { id: initialTurma.id } : {}),
       nome: nome.trim(),
@@ -238,13 +239,13 @@ export default function ModalTurma({
       carga_horaria,
       data_inicio,
       data_fim,
-      horario_inicio,
-      horario_fim,
+      horario_inicio: horario_inicio_base,
+      horario_fim: horario_fim_base,
       encontros: encontrosPayload,
       datas: datasPayload,
     };
   };
-
+  
   const handleSalvar = () => {
     if (!validar()) return;
     const payload = montarPayload();

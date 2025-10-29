@@ -319,135 +319,235 @@ END AS status,
 /* =====================================================================
    ➕ Criar evento (persiste turmas + datas_turma + restrição)
    ===================================================================== */
-async function criarEvento(req, res) {
-  const {
-    titulo, descricao, local, tipo, unidade_id, publico_alvo,
-    instrutor = [], turmas = [],
-    restrito = false, restrito_modo = null,
-    // aceita ambos os nomes:
-    registros,
-    registros_permitidos,
-  } = req.body || {};
-
-  if (!titulo?.trim()) return res.status(400).json({ erro: "Campo 'titulo' é obrigatório." });
-  if (!descricao?.trim()) return res.status(400).json({ erro: "Campo 'descricao' é obrigatório." });
-  if (!local?.trim()) return res.status(400).json({ erro: "Campo 'local' é obrigatório." });
-  if (!tipo?.trim()) return res.status(400).json({ erro: "Campo 'tipo' é obrigatório." });
-  if (!publico_alvo?.trim()) return res.status(400).json({ erro: "Campo 'publico_alvo' é obrigatório." });
-  if (!unidade_id) return res.status(400).json({ erro: "Campo 'unidade_id' é obrigatório." });
-  if (!Array.isArray(instrutor) || instrutor.length === 0) {
-    return res.status(400).json({ erro: 'Ao menos um instrutor deve ser selecionado.' });
-  }
-  if (!Array.isArray(turmas) || turmas.length === 0) {
-    return res.status(400).json({ erro: 'Ao menos uma turma deve ser criada.' });
-  }
-
-  // validação da regra de restrição
-  let restritoVal = !!restrito;
-  let modoVal = null;
-  let regList = [];
-  if (restritoVal) {
-    if (!ALLOWED_MODOS.has(String(restrito_modo))) {
-      return res.status(400).json({ erro: "restrito_modo inválido. Use 'todos_servidores' ou 'lista_registros'." });
+   async function criarEvento(req, res) {
+    const {
+      titulo, descricao, local, tipo, unidade_id, publico_alvo,
+      instrutor = [], turmas = [],
+      restrito = false, restrito_modo = null,
+      // aceita ambos os nomes:
+      registros,
+      registros_permitidos,
+    } = req.body || {};
+  
+    // validações básicas do evento
+    if (!titulo?.trim()) return res.status(400).json({ erro: "Campo 'titulo' é obrigatório." });
+    if (!descricao?.trim()) return res.status(400).json({ erro: "Campo 'descricao' é obrigatório." });
+    if (!local?.trim()) return res.status(400).json({ erro: "Campo 'local' é obrigatório." });
+    if (!tipo?.trim()) return res.status(400).json({ erro: "Campo 'tipo' é obrigatório." });
+    if (!publico_alvo?.trim()) return res.status(400).json({ erro: "Campo 'publico_alvo' é obrigatório." });
+    if (!unidade_id) return res.status(400).json({ erro: "Campo 'unidade_id' é obrigatório." });
+  
+    if (!Array.isArray(instrutor) || instrutor.length === 0) {
+      return res.status(400).json({ erro: 'Ao menos um instrutor deve ser selecionado.' });
     }
-    modoVal = String(restrito_modo);
-    if (modoVal === MODO_LISTA) {
-      const input = typeof registros_permitidos !== 'undefined' ? registros_permitidos : registros;
-      regList = normalizeListaRegistros(input);
-      if (regList.length === 0) {
-        return res.status(400).json({ erro: "Registros informados são inválidos." });
+    if (!Array.isArray(turmas) || turmas.length === 0) {
+      return res.status(400).json({ erro: 'Ao menos uma turma deve ser criada.' });
+    }
+  
+    // validação da regra de restrição
+    let restritoVal = !!restrito;
+    let modoVal = null;
+    let regList = [];
+    if (restritoVal) {
+      if (!ALLOWED_MODOS.has(String(restrito_modo))) {
+        return res.status(400).json({
+          erro: "restrito_modo inválido. Use 'todos_servidores' ou 'lista_registros'."
+        });
+      }
+      modoVal = String(restrito_modo);
+      if (modoVal === MODO_LISTA) {
+        const input = (typeof registros_permitidos !== 'undefined')
+          ? registros_permitidos
+          : registros;
+        regList = normalizeListaRegistros(input);
+        if (regList.length === 0) {
+          return res.status(400).json({ erro: "Registros informados são inválidos." });
+        }
       }
     }
-  }
-
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    // evento
-    const eventoResult = await client.query(
-      `INSERT INTO eventos (
-         titulo, descricao, local, tipo, unidade_id, publico_alvo,
-         restrito, restrito_modo, publicado
-       )
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,FALSE)
-       RETURNING *`,
-      [titulo, descricao, local, tipo, unidade_id, publico_alvo, restritoVal, modoVal]
-    );
-    const evento = eventoResult.rows[0];
-    const eventoId = evento.id;
-
-    // instrutores
-    for (const instrutorId of instrutor) {
-      await client.query(
-        `INSERT INTO evento_instrutor (evento_id, instrutor_id) VALUES ($1, $2)`,
-        [eventoId, instrutorId]
+  
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+  
+      // 1. Cria o evento base
+      const eventoResult = await client.query(
+        `
+        INSERT INTO eventos (
+          titulo, descricao, local, tipo, unidade_id, publico_alvo,
+          restrito, restrito_modo, publicado
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,FALSE)
+        RETURNING *
+        `,
+        [titulo, descricao, local, tipo, unidade_id, publico_alvo, restritoVal, modoVal]
       );
-    }
-
-    // turmas + datas
-    for (const t of turmas) {
-      const nome = (t?.nome || '').trim();
-      const data_inicio = iso(t?.data_inicio);
-      const data_fim = iso(t?.data_fim);
-      const horario_inicio = hhmm(t?.horario_inicio || '08:00', '08:00');
-      const horario_fim = hhmm(t?.horario_fim || '17:00', '17:00');
-      const vagas_total = t?.vagas_total ?? t?.vagas ?? null;
-      const carga_horaria = t?.carga_horaria != null ? Number(t.carga_horaria) : null;
-
-      if (!nome || !data_inicio || !data_fim || vagas_total == null || carga_horaria == null) {
+      const evento = eventoResult.rows[0];
+      const eventoId = evento.id;
+  
+      // 2. Instrutores (lista completa)
+      for (const instrutorId of instrutor) {
+        await client.query(
+          `INSERT INTO evento_instrutor (evento_id, instrutor_id) VALUES ($1,$2)`,
+          [eventoId, instrutorId]
+        );
+      }
+  
+      // helper reutilizado (igual ideia do atualizarEvento)
+      const extrairDatas = (t) => {
+        if (Array.isArray(t?.datas) && t.datas.length) {
+          return t.datas.map(d => ({
+            data: toYmd(d?.data),
+            horario_inicio: hhmm(d?.horario_inicio || ''),
+            horario_fim:    hhmm(d?.horario_fim || ''),
+          }));
+        }
+        if (Array.isArray(t?.encontros) && t.encontros.length) {
+          return t.encontros.map(e =>
+            (typeof e === 'string')
+              ? {
+                  data: toYmd(e),
+                  horario_inicio: null,
+                  horario_fim: null
+                }
+              : {
+                  data: toYmd(e?.data),
+                  horario_inicio: hhmm(e?.inicio || ''),
+                  horario_fim:    hhmm(e?.fim || ''),
+                }
+          );
+        }
+        return [];
+      };
+  
+      // 3. Cria cada turma e respectivas datas_turma
+      const bloqueios = [];
+  
+      for (const t of turmas) {
+        const nome = String(t.nome || 'Turma').trim();
+  
+        const vagas_total = Number.isFinite(Number(t.vagas_total))
+          ? Number(t.vagas_total)
+          : (Number.isFinite(Number(t.vagas)) ? Number(t.vagas) : null);
+  
+        const carga_horaria = Number.isFinite(Number(t.carga_horaria))
+          ? Number(t.carga_horaria)
+          : null;
+  
+        const baseDatas = extrairDatas(t);
+        if (!baseDatas.length) {
+          bloqueios.push({ id: null, nome, motivo: 'TURMA_SEM_DATAS' });
+          continue;
+        }
+  
+        // ordena encontros por data e calcula período
+        const ordenadas = [...baseDatas]
+          .filter(d => d.data)
+          .sort((a, b) => String(a.data).localeCompare(String(b.data)));
+  
+        const data_inicio = ordenadas[0].data;
+        const data_fim    = ordenadas.at(-1).data;
+  
+        // horário "padrão" opcional que veio da turma
+        const hiPayload = hhmm(t?.horario_inicio || '') || null;
+        const hfPayload = hhmm(t?.horario_fim    || '') || null;
+  
+        // valida mínimos obrigatórios da turma
+        if (!nome || !data_inicio || !data_fim || vagas_total == null || carga_horaria == null) {
+          bloqueios.push({ id: null, nome, motivo: 'TURMA_CAMPOS_OBRIGATORIOS' });
+          continue;
+        }
+  
+        // cria turma
+        const turmaIns = await client.query(
+          `
+          INSERT INTO turmas (
+            evento_id,
+            nome,
+            vagas_total,
+            carga_horaria,
+            data_inicio,
+            data_fim,
+            horario_inicio,
+            horario_fim
+          )
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+          RETURNING id
+          `,
+          [
+            eventoId,
+            nome,
+            vagas_total,
+            carga_horaria,
+            data_inicio,
+            data_fim,
+            hiPayload,
+            hfPayload
+          ]
+        );
+        const turmaId = turmaIns.rows[0].id;
+  
+        // cria datas_turma
+        for (const d of ordenadas) {
+          if (!d.data) continue;
+  
+          const inicioSeguro =
+            d.horario_inicio ||
+            hiPayload ||
+            '08:00';
+  
+          const fimSeguro =
+            d.horario_fim ||
+            hfPayload ||
+            '17:00';
+  
+          await client.query(
+            `
+            INSERT INTO datas_turma (turma_id, data, horario_inicio, horario_fim)
+            VALUES ($1,$2,$3,$4)
+            `,
+            [turmaId, d.data, inicioSeguro, fimSeguro]
+          );
+        }
+      }
+  
+      // se alguma turma falhou validação básica (sem datas, etc.), aborta tudo
+      if (bloqueios.length) {
         await client.query('ROLLBACK');
-        return res.status(400).json({ erro: 'Todos os campos da turma são obrigatórios.' });
+        return res.status(400).json({
+          erro: 'TURMA_INVALIDA',
+          detalhe: 'Algumas turmas não têm datas ou campos obrigatórios.',
+          turmas_bloqueadas: bloqueios
+        });
       }
-
-      const turmaIns = await client.query(
-        `INSERT INTO turmas (evento_id, nome, data_inicio, data_fim, horario_inicio, horario_fim, vagas_total, carga_horaria)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-         RETURNING id`,
-        [eventoId, nome, data_inicio, data_fim, horario_inicio, horario_fim, vagas_total, carga_horaria]
-      );
-      const turmaId = turmaIns.rows[0].id;
-
-      const baseHi = horario_inicio;
-      const baseHf = horario_fim;
-      const encontros = Array.isArray(t?.datas) && t.datas.length
-        ? t.datas.map(e => ({ data: iso(e?.data || ''), inicio: hhmm(e?.horario_inicio, baseHi), fim: hhmm(e?.horario_fim, baseHf) }))
-        : Array.isArray(t?.encontros) && t.encontros.length
-          ? t.encontros.map(e => (typeof e === 'string'
-              ? { data: iso(e), inicio: baseHi, fim: baseHf }
-              : { data: iso(e?.data || ''), inicio: hhmm(e?.inicio, baseHi), fim: hhmm(e?.fim, baseHf) }))
-          : [];
-
-      for (const e of encontros.filter(x => x.data && x.inicio && x.fim)) {
-        await client.query(
-          `INSERT INTO datas_turma (turma_id, data, horario_inicio, horario_fim)
-           VALUES ($1, $2, $3, $4)`,
-          [turmaId, e.data, e.inicio, e.fim]
-        );
+  
+      // 4. restrição por lista (modo LISTA)
+      if (restritoVal && modoVal === MODO_LISTA && regList.length) {
+        for (const r of regList) {
+          await client.query(
+            `
+            INSERT INTO evento_registros (evento_id, registro_norm)
+            VALUES ($1,$2)
+            ON CONFLICT DO NOTHING
+            `,
+            [eventoId, r]
+          );
+        }
       }
+  
+      await client.query('COMMIT');
+      res.status(201).json({
+        mensagem: 'Evento criado com sucesso',
+        evento
+      });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error('❌ Erro ao criar evento:', err.message, err.stack);
+      res.status(500).json({ erro: 'Erro ao criar evento' });
+    } finally {
+      client.release();
     }
-
-    // restrição por lista
-    if (restritoVal && modoVal === MODO_LISTA && regList.length) {
-      for (const r of regList) {
-        await client.query(
-          `INSERT INTO evento_registros (evento_id, registro_norm) VALUES ($1,$2)
-           ON CONFLICT DO NOTHING`,
-          [eventoId, r]
-        );
-      }
-    }
-
-    await client.query('COMMIT');
-    res.status(201).json({ mensagem: 'Evento criado com sucesso', evento });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    console.error('❌ Erro ao criar evento:', err.message, err.stack);
-    res.status(500).json({ erro: 'Erro ao criar evento' });
-  } finally {
-    client.release();
   }
-}
 
 /* =====================================================================
    🔍 Buscar evento por ID (com checagem de visibilidade)

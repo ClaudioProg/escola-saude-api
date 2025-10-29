@@ -278,15 +278,21 @@ export default function ModalEvento({
 
       // restrição inicial
       const restr = !!evento.restrito;
-      setRestrito(restr);
+setRestrito(restr);
 
-      const modoFromVis =
-        evento.vis_reg_tipo === "lista"
-          ? "lista_registros"
-          : "todos_servidores";
+// tenta pegar direto do backend
+let modo = evento.restrito_modo;
 
-      const modo = evento.restrito_modo || (restr ? modoFromVis : "");
-      setRestritoModo(modo);
+// fallback legado (vis_reg_tipo) se vier vazio
+if (!modo && restr) {
+  modo =
+    evento.vis_reg_tipo === "lista"
+      ? "lista_registros"
+      : "todos_servidores";
+}
+
+// se não for restrito, não deixa modo poluído
+setRestritoModo(restr ? (modo || "todos_servidores") : "");
 
       // registros permitidos
       const lista =
@@ -328,15 +334,15 @@ export default function ModalEvento({
         if (typeof det.restrito === "boolean") {
           setRestrito(!!det.restrito);
         }
-
-        if (det.restrito_modo || det.vis_reg_tipo) {
-          setRestritoModo(
-            det.restrito_modo ||
-              (det.vis_reg_tipo === "lista"
-                ? "lista_registros"
-                : "todos_servidores")
-          );
+        
+        let modo = det.restrito_modo;
+        if (!modo && det.restrito) {
+          modo =
+            det.vis_reg_tipo === "lista"
+              ? "lista_registros"
+              : "todos_servidores";
         }
+        setRestritoModo(det.restrito ? (modo || "todos_servidores") : "");
 
         const lista = Array.isArray(det.registros_permitidos)
           ? det.registros_permitidos
@@ -542,27 +548,31 @@ export default function ModalEvento({
     );
 
     // monta payload final
-    const payload = {
-      id: evento?.id,
-      titulo,
-      descricao,
-      local,
-      tipo,
-      unidade_id: Number(unidadeId),
-      publico_alvo: publicoAlvo,
+    // DEPOIS
+const payload = {
+  id: evento?.id,
+  titulo,
+  descricao,
+  local,
+  tipo,
+  unidade_id: Number(unidadeId),
+  publico_alvo: publicoAlvo,
 
-      instrutor: instrutorValidado,
-      turmas: turmasCompletas,
+  instrutor: instrutorValidado,
+  turmas: turmasCompletas,
 
-      restrito: !!restrito,
-      restrito_modo: restrito ? restritoModo || "todos_servidores" : "",
+  restrito: !!restrito,
+  restrito_modo: restrito
+    ? (restritoModo || "todos_servidores")
+    : null,
 
-      ...(restrito &&
-      restritoModo === "lista_registros" &&
-      regs6.length > 0
-        ? { registros_permitidos: regs6 }
-        : {}),
-    };
+  ...(restrito &&
+  restritoModo === "lista_registros" &&
+  regs6.length > 0
+    ? { registros_permitidos: regs6 }
+    : {}),
+};
+
 
     console.log("[PUT evento] payload:", payload);
     onSalvar(payload);

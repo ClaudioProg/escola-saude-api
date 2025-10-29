@@ -425,29 +425,15 @@ const toLocalDate = (ymdStr, hh = "00", mm = "00") =>
   ymdStr ? new Date(`${ymdStr}T${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:00`) : null;
 
 function deduzStatus(ev) {
-  const agora = new Date();
-
-  const di = ymd(ev.data_inicio_geral || ev.data_inicio || ev.data);
-  const df = ymd(ev.data_fim_geral || ev.data_fim || ev.data);
-  const hi = hhmm(ev.horario_inicio_geral || ev.horario_inicio || "00:00");
-  const hf = hhmm(ev.horario_fim_geral || ev.horario_fim || "23:59");
-
-  const [hiH, hiM] = (hi || "00:00").split(":");
-  const [hfH, hfM] = (hf || "23:59").split(":");
-
-  let inicioDT = toLocalDate(di, hiH, hiM);
-  let fimDT = toLocalDate(df, hfH, hfM);
-
-  // se tiver ranges inconsistentes, tenta só data
-  if (!inicioDT && di) inicioDT = toLocalDate(di, "00", "00");
-  if (!fimDT && df) fimDT = toLocalDate(df, "23", "59");
-
-  if (!inicioDT || !fimDT) return "programado"; // fallback amigável visualmente
-
-  if (inicioDT > agora) return "programado";
-  if (inicioDT <= agora && fimDT >= agora) return "em_andamento";
-  return "encerrado";
+  // backend retorna: 'programado' | 'andamento' | 'encerrado'
+  // seu CSS usa 'em_andamento', então vamos ajustar só esse nome
+  if (ev?.status === "andamento") return "em_andamento";
+  if (ev?.status === "programado") return "programado";
+  if (ev?.status === "encerrado") return "encerrado";
+  // fallback visual
+  return "programado";
 }
+
 
 function statusBarClasses(status) {
   // padrão do Cláudio:
