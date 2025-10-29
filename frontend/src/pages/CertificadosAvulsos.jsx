@@ -289,20 +289,47 @@ export default function CertificadosAvulsos() {
 
   const enviarPorEmail = useCallback(async (id) => {
     if (acaoLoading.id) return; // evita cliques concorrentes
+  
+    // se quiser tratar igual ao PDF: se a pessoa marcou "2ª assinatura"
+    // mas não selecionou ninguém, bloqueia e avisa
+    if (usarAssinatura2 && !assinatura2Id) {
+      toast.info("Selecione a 2ª assinatura antes de enviar o e-mail.");
+      return;
+    }
+  
     setAcaoLoading({ id, tipo: "email" });
+  
     try {
       toast.info("📤 Enviando…");
-      await apiPost(`certificados-avulsos/${id}/enviar`);
+  
+      // monta os mesmos query params que usamos no PDF
+      const params = new URLSearchParams();
+      if (palestrante) {
+        params.set("palestrante", "1");
+      }
+      if (usarAssinatura2 && assinatura2Id) {
+        params.set("assinatura2_id", String(assinatura2Id));
+      }
+  
+      const url = params.toString()
+        ? `certificados-avulsos/${id}/enviar?${params.toString()}`
+        : `certificados-avulsos/${id}/enviar`;
+  
+      await apiPost(url);
+  
       toast.success("✅ E-mail enviado!");
       setLista((prev) =>
-        prev.map((item) => (item.id === id ? { ...item, enviado: true } : item))
+        prev.map((item) =>
+          item.id === id ? { ...item, enviado: true } : item
+        )
       );
-    } catch {
+    } catch (err) {
+      console.error("erro ao enviar email:", err);
       toast.error("❌ Erro ao enviar e-mail.");
     } finally {
       setAcaoLoading({ id: null, tipo: null });
     }
-  }, [acaoLoading.id]);
+  }, [acaoLoading.id, palestrante, usarAssinatura2, assinatura2Id]);
 
   const gerarPDF = useCallback(
     async (id) => {

@@ -817,31 +817,32 @@ async function obterDetalhesEventoComRestricao(req, res) {
   }
 }
 
-/* =====================================================================
-   🔄 Atualizar evento (metadados, restrição e turmas)
-   ===================================================================== */
+// ======================================================================
+// 🔄 Atualizar evento (metadados, restrição e turmas) — COMPLETO
+// ======================================================================
 async function atualizarEvento(req, res) {
   const eventoId = Number(req.params.id);
   if (!eventoId) return res.status(400).json({ erro: 'EVENTO_ID_INVALIDO' });
 
   const {
     titulo, descricao, local, tipo, unidade_id, publico_alvo,
-    instrutor,   // [ids]
-    turmas,      // opcional
+    instrutor,            // [ids]
+    turmas,               // opcional
     restrito, restrito_modo,
     registros,
     registros_permitidos,
   } = req.body || {};
 
-  // flags para saber se o cliente tentou mexer na lista
-  const listaFoiEnviada = Object.prototype.hasOwnProperty.call(req.body || {}, 'registros')
-                       || Object.prototype.hasOwnProperty.call(req.body || {}, 'registros_permitidos');
+  // flags: o cliente tentou mexer na lista de registros?
+  const listaFoiEnviada =
+    Object.prototype.hasOwnProperty.call(req.body || {}, 'registros') ||
+    Object.prototype.hasOwnProperty.call(req.body || {}, 'registros_permitidos');
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
-    // 🔎 estado atual
+    // 🔎 estado atual do evento
     const curQ = await client.query(
       `SELECT restrito, restrito_modo FROM eventos WHERE id = $1`,
       [eventoId]
@@ -852,13 +853,17 @@ async function atualizarEvento(req, res) {
     }
     const atual = curQ.rows[0];
 
-    // 🎛️ determina estado final (se não veio no body, mantém o atual)
-    const restritoFinal = (typeof restrito !== 'undefined') ? !!restrito : !!atual.restrito;
+    // 🎛️ determina estado final de restrição
+    const restritoFinal =
+      (typeof restrito !== 'undefined') ? !!restrito : !!atual.restrito;
+
     let modoFinal;
     if (typeof restrito_modo !== 'undefined') {
       if (restritoFinal && !ALLOWED_MODOS.has(String(restrito_modo))) {
         await client.query('ROLLBACK');
-        return res.status(400).json({ erro: "restrito_modo inválido. Use 'todos_servidores' ou 'lista_registros'." });
+        return res.status(400).json({
+          erro: "restrito_modo inválido. Use 'todos_servidores' ou 'lista_registros'."
+        });
       }
       modoFinal = restritoFinal ? String(restrito_modo || '') : null;
     } else {
@@ -869,14 +874,14 @@ async function atualizarEvento(req, res) {
     await client.query(
       `
       UPDATE eventos SET
-        titulo       = COALESCE($2, titulo),
-        descricao    = COALESCE($3, descricao),
-        local        = COALESCE($4, local),
-        tipo         = COALESCE($5, tipo),
-        unidade_id   = COALESCE($6, unidade_id),
-        publico_alvo = COALESCE($7, publico_alvo),
-        restrito     = $8,
-        restrito_modo= $9
+        titulo        = COALESCE($2, titulo),
+        descricao     = COALESCE($3, descricao),
+        local         = COALESCE($4, local),
+        tipo          = COALESCE($5, tipo),
+        unidade_id    = COALESCE($6, unidade_id),
+        publico_alvo  = COALESCE($7, publico_alvo),
+        restrito      = $8,
+        restrito_modo = $9
       WHERE id = $1
       `,
       [
@@ -892,50 +897,73 @@ async function atualizarEvento(req, res) {
       ]
     );
 
-    // 2) Instrutores
+    // 2) Instrutores (substitui lista inteira, se enviada)
     if (Array.isArray(instrutor)) {
-      await client.query(`DELETE FROM evento_instrutor WHERE evento_id = $1`, [eventoId]);
+      await client.query(
+        `DELETE FROM evento_instrutor WHERE evento_id = $1`,
+        [eventoId]
+      );
       for (const instrutor_id of instrutor) {
         await client.query(
-          `INSERT INTO evento_instrutor (evento_id, instrutor_id) VALUES ($1,$2)`,
+          `INSERT INTO evento_instrutor (evento_id, instrutor_id)
+           VALUES ($1,$2)`,
           [eventoId, instrutor_id]
         );
       }
     }
 
-    // 2.1) Lista de registros
+    // 2.1) Lista de registros por restrição
     if (!restritoFinal || modoFinal === MODO_TODOS) {
-      // sem restrição ou modo "todos" → limpa vínculos
-      await client.query(`DELETE FROM evento_registros WHERE evento_id = $1`, [eventoId]);
+      // sem restrição ou "todos" → limpa vínculos
+      await client.query(
+        `DELETE FROM evento_registros WHERE evento_id = $1`,
+        [eventoId]
+      );
     } else if (modoFinal === MODO_LISTA) {
       if (listaFoiEnviada) {
-        const input = (typeof registros_permitidos !== 'undefined') ? registros_permitidos : registros;
+        const input = (typeof registros_permitidos !== 'undefined')
+          ? registros_permitidos
+          : registros;
         const regList = normalizeListaRegistros(input);
         if (regList.length === 0) {
           await client.query('ROLLBACK');
           return res.status(400).json({ erro: 'Registros inválidos.' });
         }
-        await client.query(`DELETE FROM evento_registros WHERE evento_id = $1`, [eventoId]);
+        await client.query(
+          `DELETE FROM evento_registros WHERE evento_id = $1`,
+          [eventoId]
+        );
         for (const r of regList) {
           await client.query(
-            `INSERT INTO evento_registros (evento_id, registro_norm) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+            `INSERT INTO evento_registros (evento_id, registro_norm)
+             VALUES ($1,$2)
+             ON CONFLICT DO NOTHING`,
             [eventoId, r]
           );
         }
       }
-      // se não foi enviada lista e modo continua lista → preserva a atual
+      // se não veio nova lista e modo continua 'lista', preserva vínculos atuais
     }
 
-    // 3) Edição das turmas (igual antes)
+    // 3) Se turmas não veio no body, finaliza aqui
     if (!Array.isArray(turmas)) {
       await client.query('COMMIT');
-      return res.json({ ok: true, mensagem: 'Evento atualizado (metadados e restrição).' });
+      return res.json({
+        ok: true,
+        mensagem: 'Evento atualizado (metadados e restrição).'
+      });
     }
 
+    // -- A PARTIR DAQUI: sincronizar turmas ------------------
+
+    // estado atual das turmas do evento
     const { rows: atuais } = await client.query(
       `
       SELECT
-        t.id, t.nome, t.vagas_total,
+        t.id,
+        t.nome,
+        t.vagas_total,
+        t.carga_horaria,
         (SELECT COUNT(*)::int FROM inscricoes i WHERE i.turma_id = t.id) AS inscritos
       FROM turmas t
       WHERE t.evento_id = $1
@@ -943,126 +971,261 @@ async function atualizarEvento(req, res) {
       `,
       [eventoId]
     );
+
     const mapaAtuais = new Map(atuais.map(t => [t.id, t]));
     const idsPayload = new Set(
-      turmas.filter(t => Number.isFinite(Number(t.id))).map(t => Number(t.id))
+      turmas
+        .filter(t => Number.isFinite(Number(t.id)))
+        .map(t => Number(t.id))
     );
 
+    // turmas que seriam removidas (sumiram do payload)
     const remover = atuais.filter(t => !idsPayload.has(t.id));
     const bloqueadasRemocao = remover.filter(t => (t.inscritos || 0) > 0);
     if (bloqueadasRemocao.length) {
       await client.query('ROLLBACK');
       return res.status(409).json({
         erro: 'TURMA_COM_INSCRITOS',
-        detalhe: 'Não é permitido REMOVER turmas que já possuem inscritos.',
-        turmas_bloqueadas: bloqueadasRemocao.map(t => ({ id: t.id, nome: t.nome, inscritos: t.inscritos })),
+        detalhe:
+          'Não é permitido REMOVER turmas que já possuem inscritos.',
+        turmas_bloqueadas: bloqueadasRemocao.map(t => ({
+          id: t.id,
+          nome: t.nome,
+          inscritos: t.inscritos
+        })),
       });
     }
 
+    // bloqueios de alteração (ex.: tentar mudar datas com inscritos)
     const bloqueios = [];
+
+    // helper pra normalizar array de datas/encontros vindo do front
+    const extrairDatas = (t) => {
+      if (Array.isArray(t?.datas) && t.datas.length) {
+        return t.datas.map(d => ({
+          data: toYmd(d?.data),
+          horario_inicio: hhmm(d?.horario_inicio || ''),
+          horario_fim:    hhmm(d?.horario_fim || ''),
+        }));
+      }
+      if (Array.isArray(t?.encontros) && t.encontros.length) {
+        return t.encontros.map(e =>
+          (typeof e === 'string')
+            ? {
+                data: toYmd(e),
+                horario_inicio: null,
+                horario_fim: null
+              }
+            : {
+                data: toYmd(e?.data),
+                horario_inicio: hhmm(e?.inicio || ''),
+                horario_fim:    hhmm(e?.fim || ''),
+              }
+        );
+      }
+      return [];
+    };
+
     for (const t of turmas) {
       const id = Number(t.id);
 
+      // -----------------------------------------
+      // 3.a) NOVA TURMA (não tem id ainda)
+      // -----------------------------------------
       if (!Number.isFinite(id)) {
         const nome = String(t.nome || 'Turma').trim();
-        const vagas_total = Number(t.vagas_total) || 0;
+        const vagas_total = Number.isFinite(Number(t.vagas_total))
+          ? Number(t.vagas_total)
+          : null;
+        const carga_horaria = Number.isFinite(Number(t.carga_horaria))
+          ? Number(t.carga_horaria)
+          : null;
 
-        const baseDatas = Array.isArray(t.datas) ? t.datas
-                        : Array.isArray(t.encontros) ? t.encontros.map(e => ({
-                            data: e.data, horario_inicio: e.inicio, horario_fim: e.fim
-                          }))
-                        : [];
+        const baseDatas = extrairDatas(t);
         if (!baseDatas.length) {
           bloqueios.push({ id: null, nome, motivo: 'TURMA_SEM_DATAS' });
           continue;
         }
-        const datasOrdenadas = [...baseDatas].sort((a,b)=>String(a.data).localeCompare(String(b.data)));
-        const data_inicio = datasOrdenadas[0].data;
-        const data_fim    = datasOrdenadas.at(-1).data;
 
+        const ordenadas = [...baseDatas]
+          .filter(d => d.data)
+          .sort((a, b) =>
+            String(a.data).localeCompare(String(b.data))
+          );
+
+        const data_inicio = ordenadas[0].data;
+        const data_fim    = ordenadas.at(-1).data;
+
+        const hiPayload = hhmm(t?.horario_inicio || '') || null;
+        const hfPayload = hhmm(t?.horario_fim    || '') || null;
+
+        // ⬇️ aqui já persistimos carga_horaria na INSERT
         const insTurma = await client.query(
-          `INSERT INTO turmas (evento_id, nome, vagas_total, data_inicio, data_fim)
-           VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-          [eventoId, nome, vagas_total || null, data_inicio, data_fim]
+          `INSERT INTO turmas (
+             evento_id,
+             nome,
+             vagas_total,
+             carga_horaria,
+             data_inicio,
+             data_fim,
+             horario_inicio,
+             horario_fim
+           )
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+           RETURNING id`,
+          [
+            eventoId,
+            nome,
+            vagas_total,
+            carga_horaria,
+            data_inicio,
+            data_fim,
+            hiPayload,
+            hfPayload
+          ]
         );
         const turmaId = insTurma.rows[0].id;
 
-        for (const d of datasOrdenadas) {
-          await client.query(
-            `INSERT INTO datas_turma (turma_id, data, horario_inicio, horario_fim)
-             VALUES ($1,$2,$3,$4)`,
-            [turmaId, d.data, d.horario_inicio || null, d.horario_fim || null]
-          );
-        }
-        continue;
-      }
-
-      const atualT = mapaAtuais.get(id);
-      if (!atualT) continue;
-
-      const inscritos = atualT.inscritos || 0;
-
-      const veioDatas = Array.isArray(t.datas) || Array.isArray(t.encontros);
-      const vaiDiminuirVagas = Number.isFinite(Number(t.vagas_total)) &&
-                               Number(t.vagas_total) < inscritos;
-
-      if (inscritos > 0 && (veioDatas || vaiDiminuirVagas)) {
-        bloqueios.push({
-          id: id,
-          nome: atualT.nome,
-          inscritos,
-          motivo: veioDatas ? 'ALTERACAO_DE_DATAS' : 'DIMINUICAO_DE_VAGAS'
-        });
-        continue;
-      }
-
-      await client.query(
-        `UPDATE turmas
-           SET nome = COALESCE($2, nome),
-               vagas_total = COALESCE($3, vagas_total)
-         WHERE id = $1`,
-        [id, t.nome ?? null,
-         Number.isFinite(Number(t.vagas_total)) && Number(t.vagas_total) > (atualT.vagas_total||0)
-           ? Number(t.vagas_total)
-           : null]
-      );
-
-      if (inscritos === 0 && veioDatas) {
-        const baseDatas = Array.isArray(t.datas) ? t.datas
-                        : t.encontros.map(e => ({ data: e.data, horario_inicio: e.inicio, horario_fim: e.fim }));
-        const ordenadas = [...baseDatas].sort((a,b)=>String(a.data).localeCompare(String(b.data)));
-        const di = ordenadas[0]?.data;
-        const df = ordenadas.at(-1)?.data;
-
-        await client.query(`DELETE FROM datas_turma WHERE turma_id=$1`, [id]);
         for (const d of ordenadas) {
           await client.query(
             `INSERT INTO datas_turma (turma_id, data, horario_inicio, horario_fim)
              VALUES ($1,$2,$3,$4)`,
-            [id, d.data, d.horario_inicio || null, d.horario_fim || null]
+            [
+              turmaId,
+              d.data,
+              d.horario_inicio || hiPayload,
+              d.horario_fim || hfPayload
+            ]
           );
         }
+
+        continue;
+      }
+
+      // -----------------------------------------
+      // 3.b) TURMA EXISTENTE
+      // -----------------------------------------
+      const atualT = mapaAtuais.get(id);
+      if (!atualT) continue; // turma não pertence a este evento? ignora
+
+      const inscritos = atualT.inscritos || 0;
+
+      const veioDatas =
+        Array.isArray(t?.datas) || Array.isArray(t?.encontros);
+
+      const novoVagas = Number.isFinite(Number(t?.vagas_total))
+        ? Number(t.vagas_total)
+        : null;
+
+      const vaiDiminuirAbaixoInscritos =
+        (novoVagas != null) && (novoVagas < inscritos);
+
+      // ❌ bloqueia se tem inscritos e quer mexer em DATAS
+      // ou reduzir vagas abaixo do total de inscritos
+      if (inscritos > 0 && (veioDatas || vaiDiminuirAbaixoInscritos)) {
+        bloqueios.push({
+          id,
+          nome: atualT.nome,
+          inscritos,
+          motivo: veioDatas
+            ? 'ALTERACAO_DE_DATAS'
+            : 'DIMINUICAO_DE_VAGAS_ABAIXO_INSCRITOS'
+        });
+        continue;
+      }
+
+      // valores opcionais vindos do form
+      const cargaHorariaNumero = Number.isFinite(Number(t?.carga_horaria))
+        ? Number(t.carga_horaria)
+        : null;
+
+      const hiPayload = hhmm(t?.horario_inicio || '') || null;
+      const hfPayload = hhmm(t?.horario_fim    || '') || null;
+
+      // ✅ AQUI é o ponto crítico:
+      // atualizamos também carga_horaria
+      await client.query(
+        `UPDATE turmas
+           SET nome           = COALESCE($2, nome),
+               vagas_total    = COALESCE($3, vagas_total),
+               carga_horaria  = COALESCE($4, carga_horaria),
+               horario_inicio = COALESCE($5, horario_inicio),
+               horario_fim    = COALESCE($6, horario_fim)
+         WHERE id = $1`,
+        [
+          id,
+          t.nome ?? null,
+          (novoVagas != null) ? novoVagas : null,
+          cargaHorariaNumero,
+          hiPayload,
+          hfPayload
+        ]
+      );
+
+      // 📅 se não há inscritos e o payload trouxe novas datas,
+      //    substitui o calendário da turma
+      if (inscritos === 0 && veioDatas) {
+        const baseDatas = extrairDatas(t);
+        const ordenadas = [...baseDatas]
+          .filter(d => d.data)
+          .sort((a, b) =>
+            String(a.data).localeCompare(String(b.data))
+          );
+
+        const di = ordenadas[0]?.data || null;
+        const df = ordenadas.at(-1)?.data || null;
+
+        await client.query(
+          `DELETE FROM datas_turma WHERE turma_id=$1`,
+          [id]
+        );
+
+        for (const d of ordenadas) {
+          await client.query(
+            `INSERT INTO datas_turma (turma_id, data, horario_inicio, horario_fim)
+             VALUES ($1,$2,$3,$4)`,
+            [
+              id,
+              d.data,
+              d.horario_inicio || hiPayload,
+              d.horario_fim || hfPayload
+            ]
+          );
+        }
+
         if (di && df) {
           await client.query(
-            `UPDATE turmas SET data_inicio=$2, data_fim=$3 WHERE id=$1`,
+            `UPDATE turmas
+                SET data_inicio=$2,
+                    data_fim=$3
+              WHERE id=$1`,
             [id, di, df]
           );
         }
       }
-    }
+    } // fim for turmas
 
+    // se houve bloqueios, aborta tudo e avisa
     if (bloqueios.length) {
       await client.query('ROLLBACK');
       return res.status(409).json({
         erro: 'TURMA_COM_INSCRITOS',
-        detalhe: 'Algumas turmas possuem inscritos: não é permitido alterar grade de datas ou reduzir vagas.',
+        detalhe:
+          'Algumas turmas possuem inscritos: não é permitido alterar grade de datas ou reduzir vagas abaixo do total de inscritos.',
         turmas_bloqueadas: bloqueios
       });
     }
 
+    // remove turmas (sem inscritos) que sumiram do payload
     for (const t of remover) {
-      await client.query(`DELETE FROM datas_turma WHERE turma_id=$1`, [t.id]);
-      await client.query(`DELETE FROM turmas WHERE id=$1`, [t.id]);
+      await client.query(
+        `DELETE FROM datas_turma WHERE turma_id=$1`,
+        [t.id]
+      );
+      await client.query(
+        `DELETE FROM turmas WHERE id=$1`,
+        [t.id]
+      );
     }
 
     await client.query('COMMIT');
@@ -1070,7 +1233,9 @@ async function atualizarEvento(req, res) {
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('❌ atualizarEvento:', err);
-    return res.status(500).json({ erro: 'Erro ao atualizar evento com turmas' });
+    return res.status(500).json({
+      erro: 'Erro ao atualizar evento com turmas'
+    });
   } finally {
     client.release();
   }

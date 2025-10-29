@@ -213,99 +213,159 @@ async function fetchEventoCompleto(eventoId) {
 /* =============================
    Modo “espelho” para PUT (merge com servidor)
    ============================= */
-function buildUpdateBody(baseServidor, dadosDoModal) {
-  const body = {};
-
-  // campos simples
-  body.titulo = (dadosDoModal?.titulo ?? baseServidor?.titulo ?? "").trim();
-  body.descricao = (dadosDoModal?.descricao ?? baseServidor?.descricao ?? "").trim();
-  body.local = (dadosDoModal?.local ?? baseServidor?.local ?? "").trim();
-  body.tipo = (dadosDoModal?.tipo ?? baseServidor?.tipo ?? "").trim();
-  body.unidade_id = Number(dadosDoModal?.unidade_id ?? baseServidor?.unidade_id);
-  body.publico_alvo = (dadosDoModal?.publico_alvo ?? baseServidor?.publico_alvo ?? "").trim();
-
-  // instrutor
-  const instrutoresFromModal = extractInstrutorIds(dadosDoModal?.instrutor);
-  const instrutoresFromServer = extractInstrutorIds(baseServidor?.instrutor);
-  body.instrutor = instrutoresFromModal.length ? instrutoresFromModal : instrutoresFromServer;
-
-  // restrição
-  const restrito = Boolean(
-    dadosDoModal?.restrito ??
-      (typeof baseServidor?.restrito === "boolean" ? baseServidor.restrito : false)
-  );
-  body.restrito = restrito;
-
-  const modo = restrito
-    ? (dadosDoModal?.restrito_modo ?? baseServidor?.restrito_modo ?? null)
-    : null;
-  body.restrito_modo = modo;
-
-  if (restrito && modo === "lista_registros") {
-    const fonteModal =
-      Array.isArray(dadosDoModal?.registros_permitidos) ? dadosDoModal.registros_permitidos :
-      Array.isArray(dadosDoModal?.registros)            ? dadosDoModal.registros            :
-      undefined;
-
-    const fonte = (Array.isArray(fonteModal) && fonteModal.length > 0)
-      ? fonteModal
-      : (Array.isArray(baseServidor?.registros_permitidos) ? baseServidor.registros_permitidos : []);
-
-    const regs = normRegistros(fonte);
-    if (regs.length) body.registros_permitidos = regs; // nome canônico
+   function buildUpdateBody(baseServidor, dadosDoModal) {
+    const body = {};
+  
+    // ===== campos simples do evento =====
+    body.titulo = (dadosDoModal?.titulo ?? baseServidor?.titulo ?? "").trim();
+    body.descricao = (dadosDoModal?.descricao ?? baseServidor?.descricao ?? "").trim();
+    body.local = (dadosDoModal?.local ?? baseServidor?.local ?? "").trim();
+    body.tipo = (dadosDoModal?.tipo ?? baseServidor?.tipo ?? "").trim();
+    body.unidade_id = Number(dadosDoModal?.unidade_id ?? baseServidor?.unidade_id);
+    body.publico_alvo = (dadosDoModal?.publico_alvo ?? baseServidor?.publico_alvo ?? "").trim();
+  
+    // ===== instrutor =====
+    const instrutoresFromModal = extractInstrutorIds(dadosDoModal?.instrutor);
+    const instrutoresFromServer = extractInstrutorIds(baseServidor?.instrutor);
+    body.instrutor = instrutoresFromModal.length
+      ? instrutoresFromModal
+      : instrutoresFromServer;
+  
+    // ===== restrição / visibilidade =====
+    const restrito = Boolean(
+      dadosDoModal?.restrito ??
+        (typeof baseServidor?.restrito === "boolean"
+          ? baseServidor.restrito
+          : false)
+    );
+    body.restrito = restrito;
+  
+    const modo = restrito
+      ? (dadosDoModal?.restrito_modo ??
+          baseServidor?.restrito_modo ??
+          null)
+      : null;
+    body.restrito_modo = modo;
+  
+    if (restrito && modo === "lista_registros") {
+      const fonteModal = Array.isArray(dadosDoModal?.registros_permitidos)
+        ? dadosDoModal.registros_permitidos
+        : Array.isArray(dadosDoModal?.registros)
+        ? dadosDoModal.registros
+        : undefined;
+  
+      const fonte =
+        Array.isArray(fonteModal) && fonteModal.length > 0
+          ? fonteModal
+          : Array.isArray(baseServidor?.registros_permitidos)
+          ? baseServidor.registros_permitidos
+          : [];
+  
+      const regs = normRegistros(fonte);
+      if (regs.length) {
+        body.registros_permitidos = regs;
+      }
+    }
+  
+    // ===== turmas =====
+    // O backend quer:
+    //   [
+    //     {
+    //       id?: number,
+    //       nome: string,
+    //       vagas_total: number,
+    //       datas: [{data:"YYYY-MM-DD", horario_inicio:"HH:MM", horario_fim:"HH:MM"}]
+    //     },
+    //     {...}
+    //   ]
+    //
+    // Regras:
+    // - Se o modal trouxe turmas editadas, usamos elas.
+    // - Se o modal não mexeu, mandamos a foto atual do servidor.
+    // - NÃO vamos mais sintetizar "Turma Única" aqui durante edição;
+    //   isso só faz sentido na criação do evento novo.
+    //
+    // Também vamos limpar cada turma pra garantir formato consistente.
+    function mapTurmaForPayload(t) {
+      if (!t) return null;
+  
+      const idNum = Number(t.id);
+      const nome = (t.nome || "Turma").trim();
+  
+      // número de vagas
+      const vagas_total = Number.isFinite(Number(t.vagas_total))
+        ? Number(t.vagas_total)
+        : Number(t.vagas);
+  
+      // montar as datas/encontros
+      // aceitamos tanto `datas` já pronta quanto `encontros`
+      let brutas = [];
+      if (Array.isArray(t.datas)) {
+        brutas = t.datas;
+      } else if (Array.isArray(t.encontros)) {
+        brutas = t.encontros.map((e) =>
+          typeof e === "string"
+            ? {
+                data: e.slice(0, 10),
+                horario_inicio: hhmm(t.horario_inicio || "08:00"),
+                horario_fim: hhmm(t.horario_fim || "17:00"),
+              }
+            : {
+                data: e.data?.slice(0, 10),
+                horario_inicio: hhmm(
+                  e.inicio || e.horario_inicio || t.horario_inicio || "08:00"
+                ),
+                horario_fim: hhmm(
+                  e.fim || e.horario_fim || t.horario_fim || "17:00"
+                ),
+              }
+        );
+      } else {
+        brutas = [];
+      }
+  
+      const datas = brutas
+        .map((d) => ({
+          data: (d.data || "").slice(0, 10),
+          horario_inicio: hhmm(
+            d.horario_inicio || d.inicio || t.horario_inicio || "08:00"
+          ),
+          horario_fim: hhmm(
+            d.horario_fim || d.fim || t.horario_fim || "17:00"
+          ),
+        }))
+        .filter((d) => d.data); // só mantém datas válidas
+  
+      const turmaPayload = clean({
+        ...(Number.isFinite(idNum) ? { id: idNum } : {}),
+        nome,
+        vagas_total: Number.isFinite(vagas_total) ? vagas_total : undefined,
+        datas,
+      });
+  
+      return turmaPayload;
+    }
+  
+    let turmasFonte = [];
+    if (Array.isArray(dadosDoModal?.turmas) && dadosDoModal.turmas.length > 0) {
+      turmasFonte = dadosDoModal.turmas;
+    } else if (
+      Array.isArray(baseServidor?.turmas) &&
+      baseServidor.turmas.length > 0
+    ) {
+      turmasFonte = baseServidor.turmas;
+    }
+  
+    const turmasPayload = turmasFonte
+      .map(mapTurmaForPayload)
+      .filter(Boolean);
+  
+    if (turmasPayload.length > 0) {
+      body.turmas = turmasPayload;
+    }
+  
+    return clean(body);
   }
-
-  // turmas (com fallback)
-  const di = ymd(
-    dadosDoModal?.data_inicio_geral ??
-      dadosDoModal?.data_inicio ??
-      baseServidor?.data_inicio_geral ??
-      baseServidor?.data_inicio
-  );
-  const df = ymd(
-    dadosDoModal?.data_fim_geral ??
-      dadosDoModal?.data_fim ??
-      baseServidor?.data_fim_geral ??
-      baseServidor?.data_fim
-  );
-  const hi = hhmm(
-    dadosDoModal?.horario_inicio_geral ??
-      dadosDoModal?.horario_inicio ??
-      baseServidor?.horario_inicio_geral ??
-      baseServidor?.horario_inicio ??
-      "08:00"
-  );
-  const hf = hhmm(
-    dadosDoModal?.horario_fim_geral ??
-      dadosDoModal?.horario_fim ??
-      baseServidor?.horario_fim_geral ??
-      baseServidor?.horario_fim ??
-      "17:00"
-  );
-
-  let turmasFonte = [];
-  if (Array.isArray(dadosDoModal?.turmas) && dadosDoModal.turmas.length > 0) {
-    turmasFonte = dadosDoModal.turmas;
-  } else if (Array.isArray(baseServidor?.turmas) && baseServidor.turmas.length > 0) {
-    turmasFonte = baseServidor.turmas;
-  } else {
-    turmasFonte = [
-      {
-        nome: body.titulo || "Turma Única",
-        data_inicio: di,
-        data_fim: df,
-        horario_inicio: hi,
-        horario_fim: hf,
-        vagas_total: 1,
-        carga_horaria: 1,
-        encontros: [],
-      },
-    ];
-  }
-  body.turmas = normalizeTurmas(turmasFonte);
-
-  return clean(body);
-}
 
 /* ---------------- HeaderHero (cor sólida; sem degradês) ---------------- */
 function HeaderHero({ onCriar, onAtualizar, atualizando }) {

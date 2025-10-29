@@ -33,12 +33,14 @@ function minutesBetween(hhmmIni, hhmmFim) {
   return (h2 * 60 + m2) - (h1 * 60 + m1);
 }
 
+// regra: se um encontro tiver ≥6h (360min), desconta 1h almoço
 function somaHorasDatas(datas = []) {
-  // Regra: se uma data tiver >= 6h (360 min), desconta 1h (almoço)
   let totalMin = 0;
   for (const d of datas) {
     const mins = minutesBetween(d.horario_inicio, d.horario_fim);
-    if (mins > 0) totalMin += mins >= 360 ? (mins - 60) : mins;
+    if (mins > 0) {
+      totalMin += mins >= 360 ? mins - 60 : mins;
+    }
   }
   return totalMin / 60;
 }
@@ -76,23 +78,56 @@ async function criarTurma(req, res) {
     if (!evento_id || !nome) {
       return res.status(400).json({ erro: "Evento e nome são obrigatórios." });
     }
+
     const v = validarDatasPayload(datas);
     if (!v.ok) return res.status(400).json({ erro: v.msg });
 
+    // normaliza e ordena cronologicamente
     const datasOrdenadas = ordenarDatas(datas);
+
     const data_inicio = datasOrdenadas[0].data;
     const data_fim = datasOrdenadas[datasOrdenadas.length - 1].data;
 
+    // vamos usar o primeiro encontro como "horário padrão" da turma
+    const horario_inicio = datasOrdenadas[0]?.horario_inicio || null;
+    const horario_fim = datasOrdenadas[0]?.horario_fim || null;
+
+    // carga horária planejada (horas totais considerando desconto almoço)
+    const carga_horaria_calc = somaHorasDatas(datasOrdenadas);
+    const carga_horaria_int = Math.round(carga_horaria_calc); // salva como inteiro (ex.: 6h)
+
     await client.query("BEGIN");
 
+    // salva todos os campos relevantes na tabela turmas
     const { rows: insTurma } = await client.query(
-      `INSERT INTO turmas (evento_id, nome, data_inicio, data_fim, vagas_total)
-       VALUES ($1,$2,$3,$4,$5)
-       RETURNING id`,
-      [evento_id, nome, data_inicio, data_fim, vagas_total]
+      `
+      INSERT INTO turmas (
+        evento_id,
+        nome,
+        data_inicio,
+        data_fim,
+        horario_inicio,
+        horario_fim,
+        vagas_total,
+        carga_horaria
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      RETURNING id
+      `,
+      [
+        evento_id,
+        nome,
+        data_inicio,
+        data_fim,
+        horario_inicio,
+        horario_fim,
+        vagas_total,
+        carga_horaria_int,
+      ]
     );
     const turma_id = insTurma[0].id;
 
+    // persiste encontros no datas_turma
     const insertData = `
       INSERT INTO datas_turma (turma_id, data, horario_inicio, horario_fim)
       VALUES ($1, $2, $3, $4)
@@ -129,21 +164,45 @@ async function atualizarTurma(req, res) {
     if (!v.ok) return res.status(400).json({ erro: v.msg });
 
     const datasOrdenadas = ordenarDatas(datas);
+
     const data_inicio = datasOrdenadas[0].data;
     const data_fim = datasOrdenadas[datasOrdenadas.length - 1].data;
 
+    const horario_inicio = datasOrdenadas[0]?.horario_inicio || null;
+    const horario_fim = datasOrdenadas[0]?.horario_fim || null;
+
+    const carga_horaria_calc = somaHorasDatas(datasOrdenadas);
+    const carga_horaria_int = Math.round(carga_horaria_calc);
+
     await client.query("BEGIN");
 
+    // atualiza os campos que o front edita
     await client.query(
-      `UPDATE turmas 
-         SET nome = COALESCE($2, nome),
-             vagas_total = COALESCE($3, vagas_total),
-             data_inicio = $4,
-             data_fim = $5
-       WHERE id=$1`,
-      [turma_id, nome || null, vagas_total, data_inicio, data_fim]
+      `
+      UPDATE turmas 
+      SET 
+        nome            = COALESCE($2, nome),
+        vagas_total     = COALESCE($3, vagas_total),
+        data_inicio     = $4,
+        data_fim        = $5,
+        horario_inicio  = $6,
+        horario_fim     = $7,
+        carga_horaria   = $8
+      WHERE id = $1
+      `,
+      [
+        turma_id,
+        nome || null,
+        vagas_total,
+        data_inicio,
+        data_fim,
+        horario_inicio,
+        horario_fim,
+        carga_horaria_int,
+      ]
     );
 
+    // recria as datas da turma
     await client.query(`DELETE FROM datas_turma WHERE turma_id=$1`, [turma_id]);
 
     const insertData = `
@@ -296,11 +355,11 @@ async function listarTurmasPorEvento(req, res) {
         const datas = datasPorTurma[t.id] || [];
         const carga_horaria_real = somaHorasDatas(datas);
 
-        const min = datas[0]?.data || (t.data_inicio ? String(t.data_inicio).slice(0,10) : null);
-        const max = datas[datas.length - 1]?.data || (t.data_fim ? String(t.data_fim).slice(0,10) : null);
+        const min = datas[0]?.data || (t.data_inicio ? String(t.data_inicio).slice(0, 10) : null);
+        const max = datas[datas.length - 1]?.data || (t.data_fim ? String(t.data_fim).slice(0, 10) : null);
 
-        const hiModa = moda(datas.map(d => d.horario_inicio).filter(Boolean));
-        const hfModa = moda(datas.map(d => d.horario_fim).filter(Boolean));
+        const hiModa = moda(datas.map((d) => d.horario_inicio).filter(Boolean));
+        const hfModa = moda(datas.map((d) => d.horario_fim).filter(Boolean));
 
         const inscritos = inscritosPorTurma[t.id] || [];
         const totalInscritos = inscritos.length;
@@ -313,20 +372,24 @@ async function listarTurmasPorEvento(req, res) {
           evento_titulo: t.evento_titulo,
           data_inicio: min,
           data_fim: max,
-          horario_inicio: hiModa || (t.horario_inicio ? String(t.horario_inicio).slice(0,5) : null),
-          horario_fim:   hfModa || (t.horario_fim   ? String(t.horario_fim).slice(0,5)   : null),
+          horario_inicio:
+            hiModa || (t.horario_inicio ? String(t.horario_inicio).slice(0, 5) : null),
+          horario_fim:
+            hfModa || (t.horario_fim ? String(t.horario_fim).slice(0, 5) : null),
           vagas_total,
           vagas_disponiveis,
-          carga_horaria: t.carga_horaria,      // planejada
-          carga_horaria_real,                  // calculada pelos encontros
-          datas,                               // encontros reais
-          inscritos,                           // lista de inscritos
+          carga_horaria: t.carga_horaria, // planejada e salva na tabela
+          carga_horaria_real, // calculada a partir das datas_turma
+          datas, // encontros reais
+          inscritos, // lista de inscritos
           // meta/facilidades:
           inscritos_confirmados: totalInscritos,
           vagas_preenchidas: totalInscritos,
         };
       })
-      .sort((a, b) => String(a.data_inicio || '').localeCompare(String(b.data_inicio || '')));
+      .sort((a, b) =>
+        String(a.data_inicio || "").localeCompare(String(b.data_inicio || ""))
+      );
 
     return res.json(resposta);
   } catch (err) {
@@ -424,11 +487,19 @@ async function listarTurmasDoInstrutor(req, res) {
 
     const turmasComInscritos = turmas.map((turma) => {
       const datas = datasPorTurma[turma.id] || [];
-      const min = datas[0]?.data || (turma.data_inicio ? String(turma.data_inicio).slice(0,10) : null);
-      const max = datas[datas.length - 1]?.data || (turma.data_fim ? String(turma.data_fim).slice(0,10) : null);
+      const min =
+        datas[0]?.data ||
+        (turma.data_inicio ? String(turma.data_inicio).slice(0, 10) : null);
+      const max =
+        datas[datas.length - 1]?.data ||
+        (turma.data_fim ? String(turma.data_fim).slice(0, 10) : null);
 
       // fimTurma: até 48h após o último dia (ajuste se necessário)
-      const fimTurma = max ? new Date(`${max}T23:59:59`) : (turma.data_fim ? new Date(turma.data_fim) : new Date());
+      const fimTurma = max
+        ? new Date(`${max}T23:59:59`)
+        : turma.data_fim
+        ? new Date(turma.data_fim)
+        : new Date();
       fimTurma.setTime(fimTurma.getTime() + 48 * 60 * 60 * 1000);
 
       const inscritos = inscritosResult.rows
@@ -441,7 +512,8 @@ async function listarTurmasDoInstrutor(req, res) {
             const chave = `${turma.id}-${inscrito.usuario_id}-${dataISO}`;
 
             const presente = !!mapaPresencas[chave];
-            const pode_confirmar = !presente && hoje <= fimTurma && dataAula < hoje;
+            const pode_confirmar =
+              !presente && hoje <= fimTurma && dataAula < hoje;
 
             let status = "aguardando";
             if (presente) status = "presente";
@@ -469,7 +541,9 @@ async function listarTurmasDoInstrutor(req, res) {
     });
 
     // Ordena pelo início real
-    turmasComInscritos.sort((a, b) => String(a.data_inicio).localeCompare(String(b.data_inicio)));
+    turmasComInscritos.sort((a, b) =>
+      String(a.data_inicio).localeCompare(String(b.data_inicio))
+    );
 
     return res.json(turmasComInscritos);
   } catch (error) {
@@ -534,7 +608,9 @@ async function excluirTurma(req, res) {
     }
 
     // 1) Levantar contagens relacionadas
-    const { rows: [agg] } = await client.query(
+    const {
+      rows: [agg],
+    } = await client.query(
       `
       SELECT
         (SELECT COUNT(*)::int FROM presencas    WHERE turma_id = $1) AS presencas,
@@ -550,7 +626,7 @@ async function excluirTurma(req, res) {
       return res.status(409).json({
         erro: "TURMA_COM_REGISTROS",
         detalhe: "Turma possui presenças ou certificados. Exclusão bloqueada.",
-        contagens: agg
+        contagens: agg,
       });
     }
 
@@ -574,7 +650,11 @@ async function excluirTurma(req, res) {
     }
 
     await client.query("COMMIT");
-    return res.json({ ok: true, mensagem: "Turma excluída com sucesso.", turma_id: turmaId });
+    return res.json({
+      ok: true,
+      mensagem: "Turma excluída com sucesso.",
+      turma_id: turmaId,
+    });
   } catch (err) {
     console.error("❌ Erro ao excluir turma:", err);
     await client.query("ROLLBACK");
@@ -704,12 +784,16 @@ async function listarTurmasComUsuarios(req, res) {
         data_fim: maxDataPorTurma[t.id] || null,
         usuarios: inscritosPorTurma[t.id] || [],
       }))
-      .sort((a, b) => String(b.data_inicio || "").localeCompare(String(a.data_inicio || ""))); // mais novo → mais antigo
+      .sort((a, b) =>
+        String(b.data_inicio || "").localeCompare(String(a.data_inicio || ""))
+      ); // mais novo → mais antigo
 
     return res.json(resposta);
   } catch (err) {
     console.error("❌ Erro ao buscar turmas com usuarios:", err);
-    return res.status(500).json({ erro: "Erro interno ao buscar turmas com usuarios." });
+    return res.status(500).json({
+      erro: "Erro interno ao buscar turmas com usuarios.",
+    });
   }
 }
 
