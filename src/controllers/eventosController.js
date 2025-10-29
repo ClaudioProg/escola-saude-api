@@ -1049,9 +1049,7 @@ async function atualizarEvento(req, res) {
 
         const ordenadas = [...baseDatas]
           .filter(d => d.data)
-          .sort((a, b) =>
-            String(a.data).localeCompare(String(b.data))
-          );
+          .sort((a, b) => String(a.data).localeCompare(String(b.data)));
 
         const data_inicio = ordenadas[0].data;
         const data_fim    = ordenadas.at(-1).data;
@@ -1059,7 +1057,6 @@ async function atualizarEvento(req, res) {
         const hiPayload = hhmm(t?.horario_inicio || '') || null;
         const hfPayload = hhmm(t?.horario_fim    || '') || null;
 
-        // ⬇️ aqui já persistimos carga_horaria na INSERT
         const insTurma = await client.query(
           `INSERT INTO turmas (
              evento_id,
@@ -1087,14 +1084,25 @@ async function atualizarEvento(req, res) {
         const turmaId = insTurma.rows[0].id;
 
         for (const d of ordenadas) {
+          // horários sempre com fallback seguro
+          const inicioSeguro =
+            d.horario_inicio ||
+            hiPayload ||
+            '08:00';
+
+          const fimSeguro =
+            d.horario_fim ||
+            hfPayload ||
+            '17:00';
+
           await client.query(
             `INSERT INTO datas_turma (turma_id, data, horario_inicio, horario_fim)
              VALUES ($1,$2,$3,$4)`,
             [
               turmaId,
               d.data,
-              d.horario_inicio || hiPayload,
-              d.horario_fim || hfPayload
+              inicioSeguro,
+              fimSeguro
             ]
           );
         }
@@ -1134,7 +1142,6 @@ async function atualizarEvento(req, res) {
         continue;
       }
 
-      // valores opcionais vindos do form
       const cargaHorariaNumero = Number.isFinite(Number(t?.carga_horaria))
         ? Number(t.carga_horaria)
         : null;
@@ -1142,8 +1149,6 @@ async function atualizarEvento(req, res) {
       const hiPayload = hhmm(t?.horario_inicio || '') || null;
       const hfPayload = hhmm(t?.horario_fim    || '') || null;
 
-      // ✅ AQUI é o ponto crítico:
-      // atualizamos também carga_horaria
       await client.query(
         `UPDATE turmas
            SET nome           = COALESCE($2, nome),
@@ -1168,31 +1173,50 @@ async function atualizarEvento(req, res) {
         const baseDatas = extrairDatas(t);
         const ordenadas = [...baseDatas]
           .filter(d => d.data)
-          .sort((a, b) =>
-            String(a.data).localeCompare(String(b.data))
-          );
+          .sort((a, b) => String(a.data).localeCompare(String(b.data)));
 
-        const di = ordenadas[0]?.data || null;
-        const df = ordenadas.at(-1)?.data || null;
+        // datas_inicio/fim com fallback pra não deixar NULL
+        const di = ordenadas[0]?.data || t.data_inicio || null;
+        const df =
+          ordenadas.at(-1)?.data ||
+          t.data_fim ||
+          ordenadas[0]?.data ||
+          t.data_inicio ||
+          null;
 
+        // limpa datas antigas
         await client.query(
           `DELETE FROM datas_turma WHERE turma_id=$1`,
           [id]
         );
 
+        // recria datas com horários obrigatórios sempre presentes
         for (const d of ordenadas) {
+          if (!d.data) continue;
+
+          const inicioSeguro =
+            d.horario_inicio ||
+            hiPayload ||
+            '08:00';
+
+          const fimSeguro =
+            d.horario_fim ||
+            hfPayload ||
+            '17:00';
+
           await client.query(
             `INSERT INTO datas_turma (turma_id, data, horario_inicio, horario_fim)
              VALUES ($1,$2,$3,$4)`,
             [
               id,
               d.data,
-              d.horario_inicio || hiPayload,
-              d.horario_fim || hfPayload
+              inicioSeguro,
+              fimSeguro
             ]
           );
         }
 
+        // atualiza período da turma se temos início/fim
         if (di && df) {
           await client.query(
             `UPDATE turmas
