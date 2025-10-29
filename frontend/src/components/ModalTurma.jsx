@@ -27,6 +27,9 @@ import ModalBase from "./ModalBase"; // ⬅️ portal + z-index empilhável
 
 /* ===================== Helpers ===================== */
 
+// Limite de caracteres do nome da turma
+const NOME_TURMA_MAX = 100;
+
 // Retorna "HH:MM" válida OU "" (sem fallback!)
 const parseHora = (val) => {
   if (typeof val !== "string") return "";
@@ -38,12 +41,8 @@ const parseHora = (val) => {
     const raw = s.length === 3 ? "0" + s : s;
     const H = raw.slice(0, 2);
     const M = raw.slice(2, 4);
-    const hh = String(
-      Math.min(23, Math.max(0, parseInt(H || "0", 10)))
-    ).padStart(2, "0");
-    const mm = String(
-      Math.min(59, Math.max(0, parseInt(M || "0", 10)))
-    ).padStart(2, "0");
+    const hh = String(Math.min(23, Math.max(0, parseInt(H || "0", 10)))).padStart(2, "0");
+    const mm = String(Math.min(59, Math.max(0, parseInt(M || "0", 10)))).padStart(2, "0");
     return `${hh}:${mm}`;
   }
 
@@ -68,6 +67,23 @@ const isoDay = (v) => {
   } catch {
     return "";
   }
+};
+
+// Aceita "YYYY-MM-DD" ou "DD/MM/YYYY". Retorna "YYYY-MM-DD" ou "".
+const parseDataFlex = (s) => {
+  if (!s) return "";
+  const t = String(s).trim();
+
+  // ISO
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+
+  // BR
+  const m = t.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (m) {
+    const dd = m[1], mm = m[2], yyyy = m[3];
+    return `${yyyy}-${mm}-${dd}`;
+  }
+  return "";
 };
 
 // soma horas de cada encontro; se >= 8h no dia, desconta 1h (pausa almoço)
@@ -145,6 +161,75 @@ const encontrosDoInitial = (t) => {
   return [{ data: "", inicio: "", fim: "" }];
 };
 
+// true se houver sobreposição (dentro do mesmo dia)
+const temSobreposicao = (encontros) => {
+  const byDay = encontros.reduce((acc, e) => {
+    const d = isoDay(e.data);
+    if (!d) return acc;
+    (acc[d] ||= []).push(e);
+    return acc;
+  }, {});
+  for (const d of Object.keys(byDay)) {
+    const arr = byDay[d]
+      .map((e) => ({
+        ini: hhmm(e.inicio, "00:00"),
+        fim: hhmm(e.fim, "00:00"),
+      }))
+      .sort((a, b) => (a.ini < b.ini ? -1 : a.ini > b.ini ? 1 : 0));
+
+    for (let i = 1; i < arr.length; i++) {
+      if (arr[i].ini < arr[i - 1].fim) {
+        return true; // sobreposição: início atual < fim anterior
+      }
+    }
+  }
+  return false;
+};
+
+// normaliza + remove duplicados exatos (data+inicio+fim)
+const dedupEncontros = (lista) => {
+  const seen = new Set();
+  const out = [];
+  for (const e of lista) {
+    const key = `${isoDay(e.data)}|${hhmm(e.inicio, "")}|${hhmm(e.fim, "")}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ data: isoDay(e.data), inicio: hhmm(e.inicio, ""), fim: hhmm(e.fim, "") });
+  }
+  return out;
+};
+
+// tenta extrair encontros de um texto colado (linhas), aceita:
+//  - "21/11/2025 08:00-12:00"
+//  - "2025-11-22 13:30 17:30"
+//  - "2025-11-23" (usa horários padrão fornecidos)
+const parseEncontrosFromText = (text, defInicio = "08:00", defFim = "17:00") => {
+  const linhas = String(text || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const out = [];
+  for (const l of linhas) {
+    // BR com faixa "HH:MM-HH:MM"
+    let m = l.match(/^(\d{2}\/\d{2}\/\d{4})\s+(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$/);
+    if (m) {
+      const d = parseDataFlex(m[1]);
+      const ini = hhmm(m[2], defInicio);
+      const fim = hhmm(m[3], defFim);
+      if (d && ini && fim) { out.push({ data: d, inicio: ini, fim }); continue; }
+    }
+    // ISO com dois horários separados por espaço
+    m = l.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2})\s+(\d{1,2}:\d{2})$/);
+    if (m) {
+      const d = parseDataFlex(m[1]);
+      const ini = hhmm(m[2], defInicio);
+      const fim = hhmm(m[3], defFim);
+      if (d && ini && fim) { out.push({ data: d, inicio: ini, fim }); continue; }
+    }
+    // Apenas data (BR ou ISO)
+    const dOnly = parseDataFlex(l);
+    if (dOnly) out.push({ data: dOnly, inicio: defInicio, fim: defFim });
+  }
+  return out;
+};
+
 /* ===================== Componente ===================== */
 
 export default function ModalTurma({
@@ -162,6 +247,22 @@ export default function ModalTurma({
   );
   // cada encontro no estado: { data:'YYYY-MM-DD', inicio:'HH:MM', fim:'HH:MM' }
   const [encontros, setEncontros] = useState(encontrosDoInitial(initialTurma));
+
+  // 🔹 Quick-Add (geração por intervalo)
+  const [qaInicio, setQaInicio] = useState("");
+  const [qaFim, setQaFim] = useState("");
+  const [qaHoraInicio, setQaHoraInicio] = useState("08:00");
+  const [qaHoraFim, setQaHoraFim] = useState("17:00");
+  const [qaDias, setQaDias] = useState({
+    dom: false,
+    seg: true,
+    ter: true,
+    qua: true,
+    qui: true,
+    sex: true,
+    sab: false,
+  });
+  const diasIdx = ["dom", "seg", "ter", "qua", "qui", "sex", "sab"];
 
   // Reidrata quando abrir/editar
   useEffect(() => {
@@ -218,53 +319,112 @@ export default function ModalTurma({
   const addEncontro = () => {
     console.group("[addEncontro]");
     const last = encontros[encontros.length - 1] || {};
-    console.log("encontros antes:", encontros, "last:", last);
-
-    setEncontros((prev) => {
-      const novo = [
-        ...prev,
-        {
-          data: "",
-          inicio: hhmm(last.inicio, ""),
-          fim: hhmm(last.fim, ""),
-        },
-      ];
-      console.log("encontros depois:", novo);
-      console.groupEnd();
-      return novo;
-    });
+    setEncontros((prev) => [
+      ...prev,
+      {
+        data: "",
+        inicio: hhmm(last.inicio, ""),
+        fim: hhmm(last.fim, ""),
+      },
+    ]);
+    console.groupEnd();
   };
 
   const removeEncontro = (idx) => {
     console.group("[removeEncontro]");
-    console.log("idx:", idx, "encontros atuais:", encontros);
-
     setEncontros((prev) => {
       if (prev.length <= 1) {
-        console.warn(
-          "Tentou remover último encontro, bloqueando para manter pelo menos 1"
-        );
+        toast.info("Mantenha pelo menos um encontro.");
         console.groupEnd();
         return prev;
       }
-      const novo = prev.filter((_, i) => i !== idx);
-      console.log("encontros depois:", novo);
-      console.groupEnd();
-      return novo;
+      return prev.filter((_, i) => i !== idx);
     });
+    console.groupEnd();
   };
 
   const updateEncontro = (idx, field, value) => {
     console.group("[updateEncontro]");
-    console.log("idx:", idx, "field:", field, "value:", value);
-    console.log("antes:", encontros);
+    setEncontros((prev) => prev.map((e, i) => (i === idx ? { ...e, [field]: value } : e)));
+    console.groupEnd();
+  };
+
+  // Gera encontros por intervalo de datas + dias da semana
+  const gerarEncontrosIntervalo = () => {
+    console.group("[gerarEncontrosIntervalo]");
+    const ini = parseDataFlex(qaInicio);
+    const fim = parseDataFlex(qaFim);
+    const hi = hhmm(qaHoraInicio, "08:00");
+    const hf = hhmm(qaHoraFim, "17:00");
+
+    if (!ini || !fim) {
+      toast.warning("Informe início e fim do período.");
+      console.groupEnd();
+      return;
+    }
+    if (hf <= hi) {
+      toast.error("Horário final deve ser maior que o inicial.");
+      console.groupEnd();
+      return;
+    }
+
+    const start = new Date(`${ini}T00:00:00`);
+    const end = new Date(`${fim}T00:00:00`);
+    if (end < start) {
+      toast.error("Período inválido.");
+      console.groupEnd();
+      return;
+    }
+
+    const diasPermitidos = diasIdx
+      .map((k, idx) => (qaDias[k] ? idx : null))
+      .filter((x) => x != null); // 0=dom,...,6=sab
+
+    if (diasPermitidos.length === 0) {
+      toast.info("Selecione pelo menos um dia da semana.");
+      console.groupEnd();
+      return;
+    }
+
+    const novos = [];
+    const cursor = new Date(start);
+    while (cursor <= end) {
+      const dow = cursor.getDay(); // 0..6
+      if (diasPermitidos.includes(dow)) {
+        const d = cursor.toISOString().slice(0, 10);
+        novos.push({ data: d, inicio: hi, fim: hf });
+      }
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    if (novos.length === 0) {
+      toast.info("Nenhuma data gerada para os dias selecionados.");
+      console.groupEnd();
+      return;
+    }
 
     setEncontros((prev) => {
-      const novo = prev.map((e, i) => (i === idx ? { ...e, [field]: value } : e));
-      console.log("depois:", novo);
-      console.groupEnd();
-      return novo;
+      const merged = dedupEncontros([...prev, ...novos]);
+      console.log("→ encontros após geração:", merged);
+      return merged;
     });
+    console.groupEnd();
+  };
+
+  // Colar em massa (linhas soltas)
+  const onPasteEncontros = (evt) => {
+    const txt = evt.clipboardData?.getData("text") || "";
+    if (!txt) return;
+    evt.preventDefault();
+
+    const hi = hhmm(qaHoraInicio, "08:00");
+    const hf = hhmm(qaHoraFim, "17:00");
+    const parsed = parseEncontrosFromText(txt, hi, hf);
+    if (!parsed.length) {
+      toast.info("Nada reconhecido nas linhas coladas.");
+      return;
+    }
+    setEncontros((prev) => dedupEncontros([...prev, ...parsed]));
   };
 
   /* ===================== validação e salvar ===================== */
@@ -277,8 +437,12 @@ export default function ModalTurma({
     });
 
     if (!nome.trim()) {
-      console.warn("❌ Falta nome");
       toast.warning("Informe o nome da turma.");
+      console.groupEnd();
+      return false;
+    }
+    if (nome.length > NOME_TURMA_MAX) {
+      toast.error(`O nome da turma não pode exceder ${NOME_TURMA_MAX} caracteres.`);
       console.groupEnd();
       return false;
     }
@@ -287,15 +451,11 @@ export default function ModalTurma({
       Number(vagasTotal) <= 0 ||
       !Number.isFinite(Number(vagasTotal))
     ) {
-      console.warn("❌ Vagas inválidas:", vagasTotal);
-      toast.warning(
-        "Quantidade de vagas deve ser um número maior ou igual a 1."
-      );
+      toast.warning("Quantidade de vagas deve ser um número maior ou igual a 1.");
       console.groupEnd();
       return false;
     }
     if (!encontrosOrdenados.length) {
-      console.warn("❌ Nenhum encontro informado");
       toast.warning("Inclua pelo menos uma data de encontro.");
       console.groupEnd();
       return false;
@@ -303,7 +463,6 @@ export default function ModalTurma({
     for (let i = 0; i < encontrosOrdenados.length; i++) {
       const e = encontrosOrdenados[i];
       if (!e.data || !e.inicio || !e.fim) {
-        console.warn("❌ Encontro incompleto:", i, e);
         toast.error(`Preencha data e horários do encontro #${i + 1}.`);
         console.groupEnd();
         return false;
@@ -311,11 +470,15 @@ export default function ModalTurma({
       const [h1, m1] = hhmm(e.inicio, "00:00").split(":").map(Number);
       const [h2, m2] = hhmm(e.fim, "00:00").split(":").map(Number);
       if (h2 * 60 + (m2 || 0) <= h1 * 60 + (m1 || 0)) {
-        console.warn("❌ Horários inválidos no encontro:", i, e);
         toast.error(`Horários inválidos no encontro #${i + 1}.`);
         console.groupEnd();
         return false;
       }
+    }
+    if (temSobreposicao(encontrosOrdenados)) {
+      toast.error("Há encontros sobrepostos no mesmo dia. Ajuste os horários.");
+      console.groupEnd();
+      return false;
     }
 
     console.log("✅ validação OK");
@@ -374,7 +537,6 @@ export default function ModalTurma({
 
     // Limpa somente se for criação (em edição o controle é do pai)
     if (!initialTurma) {
-      console.log("🧹 resetando estado pois é nova turma");
       setNome("");
       setVagasTotal("");
       setEncontros([{ data: "", inicio: "", fim: "" }]);
@@ -427,10 +589,7 @@ export default function ModalTurma({
             </div>
             <div className="text-sm font-semibold">
               {data_inicio && data_fim
-                ? `${data_inicio
-                    .split("-")
-                    .reverse()
-                    .join("/")} — ${data_fim
+                ? `${data_inicio.split("-").reverse().join("/")} — ${data_fim
                     .split("-")
                     .reverse()
                     .join("/")}`
@@ -455,13 +614,103 @@ export default function ModalTurma({
           </div>
         </section>
 
+        {/* Quick-Add por intervalo */}
+        <section className="px-5 pt-4">
+          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 p-3 bg-slate-50/60 dark:bg-zinc-800/40">
+            <div className="text-sm font-semibold mb-2">Gerar encontros por intervalo</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="flex items-center gap-2">
+                <CalendarDays className="text-slate-500" size={18} aria-hidden />
+                <div className="flex items-center gap-2 w-full">
+                  <input
+                    type="date"
+                    value={qaInicio}
+                    onChange={(e) => setQaInicio(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-zinc-900"
+                    aria-label="Início do período"
+                  />
+                  <span className="text-xs text-slate-600">a</span>
+                  <input
+                    type="date"
+                    value={qaFim}
+                    onChange={(e) => setQaFim(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-zinc-900"
+                    aria-label="Fim do período"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Clock className="text-slate-500" size={18} aria-hidden />
+                <div className="flex items-center gap-2 w-full">
+                  <input
+                    type="time"
+                    value={qaHoraInicio}
+                    onChange={(e) => setQaHoraInicio(hhmm(e.target.value, "08:00"))}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-zinc-900"
+                    aria-label="Horário inicial padrão"
+                  />
+                  <span className="text-xs text-slate-600">às</span>
+                  <input
+                    type="time"
+                    value={qaHoraFim}
+                    onChange={(e) => setQaHoraFim(hhmm(e.target.value, "17:00"))}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-zinc-900"
+                    aria-label="Horário final padrão"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-3 items-center">
+              {diasIdx.map((k, i) => (
+                <label key={k} className="inline-flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={qaDias[k]}
+                    onChange={(e) => setQaDias((d) => ({ ...d, [k]: e.target.checked }))}
+                  />
+                  <span className="uppercase">
+                    {["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"][i]}
+                  </span>
+                </label>
+              ))}
+              <div className="ml-auto">
+                <button
+                  type="button"
+                  onClick={gerarEncontrosIntervalo}
+                  className="inline-flex items-center gap-2 rounded-xl px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold"
+                >
+                  <PlusCircle size={16} />
+                  Gerar
+                </button>
+              </div>
+            </div>
+
+            {/* Área de colar em massa */}
+            <div className="mt-3">
+              <label className="text-xs text-slate-600 dark:text-slate-300">
+                Colar encontros (um por linha). Exemplos:
+                <code className="ml-1">21/11/2025 08:00-12:00</code> •
+                <code className="ml-1">2025-11-22 13:30 17:30</code> •
+                <code className="ml-1">2025-11-23</code>
+              </label>
+              <textarea
+                onPaste={onPasteEncontros}
+                placeholder="Cole aqui (Enter separa linhas)"
+                className="mt-1 w-full min-h[80px] px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-zinc-900"
+              />
+            </div>
+          </div>
+        </section>
+
         {/* Conteúdo (rolável) */}
         <form
           onSubmit={(e) => {
             e.preventDefault();
             handleSalvar();
           }}
-          className="px-5 pt-4 pb-24 overflow-y-auto max-h-[60vh] bg-white dark:bg-zinc-900"
+          className="px-5 pt-4 pb-24 overflow-y-auto max-h[60vh] bg-white dark:bg-zinc-900"
         >
           {/* Nome */}
           <div className="relative mb-4">
@@ -474,13 +723,32 @@ export default function ModalTurma({
               type="text"
               value={nome}
               onChange={(e) => {
-                console.log("[ModalTurma] nome ->", e.target.value);
-                setNome(e.target.value);
+                // garante corte a 100 e estado consistente
+                const v = e.target.value.slice(0, NOME_TURMA_MAX);
+                setNome(v);
               }}
               placeholder="Nome da turma"
-              className="w-full pl-10 py-2 border rounded-xl shadow-sm dark:bg-zinc-900 dark:text-white border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              maxLength={NOME_TURMA_MAX}
+              className="w-full pl-10 pr-14 py-2 border rounded-xl shadow-sm dark:bg-zinc-900 dark:text-white border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
               autoComplete="off"
+              aria-describedby="nome-turma-help nome-turma-count"
             />
+
+            {/* contador */}
+            <div
+              id="nome-turma-count"
+              className={`absolute right-3 top-2 text-xs ${
+                nome.length >= NOME_TURMA_MAX * 0.9
+                  ? "text-amber-600"
+                  : "text-slate-500"
+              }`}
+            >
+              {nome.length}/{NOME_TURMA_MAX}
+            </div>
+
+            <p id="nome-turma-help" className="mt-1 text-xs text-slate-500">
+              Máximo de {NOME_TURMA_MAX} caracteres.
+            </p>
           </div>
 
           {/* Encontros */}
@@ -503,12 +771,6 @@ export default function ModalTurma({
                     type="date"
                     value={isoDay(e.data)}
                     onChange={(ev) => {
-                      console.log(
-                        "[ModalTurma] encontro change data idx:",
-                        idx,
-                        "->",
-                        ev.target.value
-                      );
                       updateEncontro(idx, "data", ev.target.value);
                     }}
                     className="w-full pl-10 py-2 border rounded-xl shadow-sm dark:bg-zinc-900 dark:text-white border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -525,12 +787,6 @@ export default function ModalTurma({
                     type="time"
                     value={hhmm(e.inicio, "")}
                     onChange={(ev) => {
-                      console.log(
-                        "[ModalTurma] encontro change inicio idx:",
-                        idx,
-                        "->",
-                        ev.target.value
-                      );
                       updateEncontro(idx, "inicio", ev.target.value);
                     }}
                     className="w-full pl-10 py-2 border rounded-xl shadow-sm dark:bg-zinc-900 dark:text-white border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -548,12 +804,6 @@ export default function ModalTurma({
                       type="time"
                       value={hhmm(e.fim, "")}
                       onChange={(ev) => {
-                        console.log(
-                          "[ModalTurma] encontro change fim idx:",
-                          idx,
-                          "->",
-                          ev.target.value
-                        );
                         updateEncontro(idx, "fim", ev.target.value);
                       }}
                       className="w-full pl-10 py-2 border rounded-xl shadow-sm dark:bg-zinc-900 dark:text-white border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -563,10 +813,6 @@ export default function ModalTurma({
                       <button
                         type="button"
                         onClick={() => {
-                          console.log(
-                            "[ModalTurma] remover encontro idx:",
-                            idx
-                          );
                           removeEncontro(idx);
                         }}
                         className="px-3 py-2 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:border-rose-900/40 dark:bg-rose-900/20 dark:text-rose-200 dark:hover:bg-rose-900/30"
@@ -586,10 +832,7 @@ export default function ModalTurma({
             <div className="flex justify-center">
               <button
                 type="button"
-                onClick={() => {
-                  console.log("[ModalTurma] adicionar novo encontro");
-                  addEncontro();
-                }}
+                onClick={addEncontro}
                 className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-full transition"
               >
                 <PlusCircle size={16} />
@@ -609,7 +852,6 @@ export default function ModalTurma({
               type="number"
               value={vagasTotal}
               onChange={(e) => {
-                console.log("[ModalTurma] vagasTotal ->", e.target.value);
                 setVagasTotal(e.target.value);
               }}
               placeholder="Quantidade de vagas"
@@ -630,10 +872,6 @@ export default function ModalTurma({
                 type="button"
                 className="flex items-center gap-2 px-3 py-2 rounded-xl bg-rose-600 text-white hover:bg-rose-700 transition"
                 onClick={() => {
-                  console.log(
-                    "[ModalTurma] clique em Excluir turma id:",
-                    initialTurma?.id
-                  );
                   onExcluir();
                 }}
                 title="Excluir turma"
@@ -647,7 +885,6 @@ export default function ModalTurma({
           <div className="flex gap-3">
             <button
               onClick={() => {
-                console.log("[ModalTurma] clique Cancelar");
                 onClose();
               }}
               className="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-slate-100 hover:bg-slate-300 dark:hover:bg-slate-700 transition"
@@ -656,10 +893,7 @@ export default function ModalTurma({
               Cancelar
             </button>
             <button
-              onClick={() => {
-                console.log("[ModalTurma] clique Salvar Turma");
-                handleSalvar();
-              }}
+              onClick={handleSalvar}
               className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 transition"
               type="button"
             >

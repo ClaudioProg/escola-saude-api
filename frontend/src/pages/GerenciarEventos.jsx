@@ -87,10 +87,7 @@ const cargaHorariaFromEncontros = (encs) => {
   for (const e of encs) {
     const [h1, m1] = (e.inicio || "00:00").split(":").map(Number);
     const [h2, m2] = (e.fim || "00:00").split(":").map(Number);
-    const diffH = Math.max(
-      0,
-      (h2 * 60 + (m2 || 0) - (h1 * 60 + (m1 || 0))) / 60
-    );
+    const diffH = Math.max(0, (h2 * 60 + (m2 || 0) - (h1 * 60 + (m1 || 0))) / 60);
     total += diffH >= 8 ? diffH - 1 : diffH;
   }
   return Math.round(total);
@@ -130,9 +127,7 @@ function normalizeTurmas(turmas = []) {
       : Number(t.vagas);
     const vagasOk = Number.isFinite(vagas) && vagas > 0 ? vagas : 1;
 
-    let ch = Number.isFinite(Number(t.carga_horaria))
-      ? Number(t.carga_horaria)
-      : 0;
+    let ch = Number.isFinite(Number(t.carga_horaria)) ? Number(t.carga_horaria) : 0;
     if (ch <= 0 && encontros.length) ch = cargaHorariaFromEncontros(encontros);
     if (ch <= 0) ch = 1;
 
@@ -166,10 +161,7 @@ const normRegistros = (arr) =>
    Fetch auxiliares
    ============================= */
 async function fetchTurmasDoEvento(eventoId) {
-  console.log(
-    "📦 [fetchTurmasDoEvento] Tentando carregar turmas do evento:",
-    eventoId
-  );
+  console.log("📦 [fetchTurmasDoEvento] Tentando carregar turmas do evento:", eventoId);
   const urls = [
     `/api/eventos/${eventoId}`,
     `/api/eventos/${eventoId}/turmas`,
@@ -188,36 +180,22 @@ async function fetchTurmasDoEvento(eventoId) {
       if (Array.isArray(resp?.turmas)) return resp.turmas;
       if (Array.isArray(resp?.lista)) return resp.lista;
     } catch (err) {
-      console.warn(
-        "⚠️ [fetchTurmasDoEvento] Falha em",
-        url,
-        err?.message || err
-      );
+      console.warn("⚠️ [fetchTurmasDoEvento] Falha em", url, err?.message || err);
     }
   }
-  console.warn(
-    "🚫 [fetchTurmasDoEvento] Nenhuma turma encontrada para",
-    eventoId
-  );
+  console.warn("🚫 [fetchTurmasDoEvento] Nenhuma turma encontrada para", eventoId);
   return [];
 }
 
 async function fetchEventoCompleto(eventoId) {
-  console.log(
-    "📦 [fetchEventoCompleto] Iniciando busca do evento:",
-    eventoId
-  );
+  console.log("📦 [fetchEventoCompleto] Iniciando busca do evento:", eventoId);
   try {
     const resp = await apiGet(`/api/eventos/${eventoId}`, { on403: "silent" });
     const ev = resp?.evento || resp;
     console.log("✅ [fetchEventoCompleto] Resposta obtida:", ev);
     if (ev?.id) return ev;
   } catch (err) {
-    console.error(
-      "❌ [fetchEventoCompleto] Falha ao buscar evento:",
-      err?.message,
-      err
-    );
+    console.error("❌ [fetchEventoCompleto] Falha ao buscar evento:", err?.message, err);
   }
   return null;
 }
@@ -234,38 +212,26 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
 
   // ===== campos simples do evento =====
   body.titulo = (dadosDoModal?.titulo ?? baseServidor?.titulo ?? "").trim();
-  body.descricao = (
-    dadosDoModal?.descricao ?? baseServidor?.descricao ?? ""
-  ).trim();
+  body.descricao = (dadosDoModal?.descricao ?? baseServidor?.descricao ?? "").trim();
   body.local = (dadosDoModal?.local ?? baseServidor?.local ?? "").trim();
   body.tipo = (dadosDoModal?.tipo ?? baseServidor?.tipo ?? "").trim();
-  body.unidade_id = Number(
-    dadosDoModal?.unidade_id ?? baseServidor?.unidade_id
-  );
-  body.publico_alvo = (
-    dadosDoModal?.publico_alvo ?? baseServidor?.publico_alvo ?? ""
-  ).trim();
+  body.unidade_id = Number(dadosDoModal?.unidade_id ?? baseServidor?.unidade_id);
+  body.publico_alvo = (dadosDoModal?.publico_alvo ?? baseServidor?.publico_alvo ?? "").trim();
 
   // ===== instrutor =====
   const instrutoresFromModal = extractInstrutorIds(dadosDoModal?.instrutor);
   const instrutoresFromServer = extractInstrutorIds(baseServidor?.instrutor);
-  body.instrutor = instrutoresFromModal.length
-    ? instrutoresFromModal
-    : instrutoresFromServer;
+  body.instrutor = instrutoresFromModal.length ? instrutoresFromModal : instrutoresFromServer;
 
   // ===== restrição / visibilidade =====
   const restrito = Boolean(
     dadosDoModal?.restrito ??
-      (typeof baseServidor?.restrito === "boolean"
-        ? baseServidor.restrito
-        : false)
+      (typeof baseServidor?.restrito === "boolean" ? baseServidor.restrito : false)
   );
   body.restrito = restrito;
 
   const modo = restrito
-    ? dadosDoModal?.restrito_modo ??
-      baseServidor?.restrito_modo ??
-      null
+    ? dadosDoModal?.restrito_modo ?? baseServidor?.restrito_modo ?? null
     : null;
   body.restrito_modo = modo;
 
@@ -284,22 +250,20 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
         : [];
 
     const regs = normRegistros(fonte);
-    if (regs.length) {
-      body.registros_permitidos = regs;
-    }
+    if (regs.length) body.registros_permitidos = regs;
   }
 
   // ===== turmas =====
   function mapTurmaForPayload(t) {
     if (!t) return null;
-  
+
     const idNum = Number(t.id);
     const nome = (t.nome || "Turma").trim();
-  
+
     const vagas_total = Number.isFinite(Number(t.vagas_total))
       ? Number(t.vagas_total)
       : Number(t.vagas);
-  
+
     // montar as datas/encontros
     let brutas = [];
     if (Array.isArray(t.datas)) {
@@ -314,54 +278,29 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
             }
           : {
               data: e.data?.slice(0, 10),
-              horario_inicio: hhmm(
-                e.inicio ||
-                  e.horario_inicio ||
-                  t.horario_inicio ||
-                  "08:00"
-              ),
-              horario_fim: hhmm(
-                e.fim ||
-                  e.horario_fim ||
-                  t.horario_fim ||
-                  "17:00"
-              ),
+              horario_inicio: hhmm(e.inicio || e.horario_inicio || t.horario_inicio || "08:00"),
+              horario_fim: hhmm(e.fim || e.horario_fim || t.horario_fim || "17:00"),
             }
       );
     } else {
-    brutas = [];
+      brutas = [];
     }
-  
+
     const datas = brutas
       .map((d) => ({
         data: (d.data || "").slice(0, 10),
-        horario_inicio: hhmm(
-          d.horario_inicio ||
-            d.inicio ||
-            t.horario_inicio ||
-            "08:00"
-        ),
-        horario_fim: hhmm(
-          d.horario_fim ||
-            d.fim ||
-            t.horario_fim ||
-            "17:00"
-        ),
+        horario_inicio: hhmm(d.horario_inicio || d.inicio || t.horario_inicio || "08:00"),
+        horario_fim: hhmm(d.horario_fim || d.fim || t.horario_fim || "17:00"),
       }))
       .filter((d) => d.data);
-  
+
     // calcular carga_horaria daqui:
-    const encontrosCalc = datas.map((d) => ({
-      inicio: d.horario_inicio,
-      fim: d.horario_fim,
-    }));
-    let ch = Number.isFinite(Number(t.carga_horaria))
-      ? Number(t.carga_horaria)
-      : 0;
+    const encontrosCalc = datas.map((d) => ({ inicio: d.horario_inicio, fim: d.horario_fim }));
+    let ch = Number.isFinite(Number(t.carga_horaria)) ? Number(t.carga_horaria) : 0;
     if (ch <= 0 && encontrosCalc.length) {
       ch = cargaHorariaFromEncontros(encontrosCalc);
     }
-  
+
     const turmaPayload = clean({
       ...(Number.isFinite(idNum) ? { id: idNum } : {}),
       nome,
@@ -369,17 +308,14 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
       carga_horaria: ch > 0 ? ch : undefined,
       datas,
     });
-  
+
     return turmaPayload;
   }
 
   let turmasFonte = [];
   if (Array.isArray(dadosDoModal?.turmas) && dadosDoModal.turmas.length > 0) {
     turmasFonte = dadosDoModal.turmas;
-  } else if (
-    Array.isArray(baseServidor?.turmas) &&
-    baseServidor.turmas.length > 0
-  ) {
+  } else if (Array.isArray(baseServidor?.turmas) && baseServidor.turmas.length > 0) {
     turmasFonte = baseServidor.turmas;
   }
 
@@ -399,10 +335,7 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
 /* ---------------- HeaderHero (cor sólida; sem degradês) ---------------- */
 function HeaderHero({ onCriar, onAtualizar, atualizando }) {
   return (
-    <header
-      className="relative isolate overflow-hidden bg-indigo-700 text-white"
-      role="banner"
-    >
+    <header className="relative isolate overflow-hidden bg-indigo-700 text-white" role="banner">
       <a
         href="#conteudo"
         className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2"
@@ -415,14 +348,10 @@ function HeaderHero({ onCriar, onAtualizar, atualizando }) {
           <div className="inline-flex items-center justify-center gap-2">
             <svg width="0" height="0" aria-hidden="true" />
             {/* evita layout shift de ícone */}
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-              Gerenciar Eventos
-            </h1>
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Gerenciar Eventos</h1>
           </div>
 
-          <p className="text-sm sm:text-base text-white/90 max-w-2xl">
-            Crie, publique e edite seus eventos e turmas.
-          </p>
+          <p className="text-sm sm:text-base text-white/90 max-w-2xl">Crie, publique e edite seus eventos e turmas.</p>
 
           <div className="mt-2.5 sm:mt-3.5 flex flex-wrap items-center justify-center gap-2">
             <button
@@ -430,11 +359,7 @@ function HeaderHero({ onCriar, onAtualizar, atualizando }) {
               onClick={onAtualizar}
               disabled={atualizando}
               className={`inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition
-                ${
-                  atualizando
-                    ? "opacity-60 cursor-not-allowed bg-white/20"
-                    : "bg-white/15 hover:bg-white/25"
-                } text-white`}
+                ${atualizando ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-white/15 hover:bg-white/25"} text-white`}
               aria-label="Atualizar lista de eventos"
               aria-busy={atualizando ? "true" : "false"}
             >
@@ -455,31 +380,18 @@ function HeaderHero({ onCriar, onAtualizar, atualizando }) {
         </div>
       </div>
 
-      <div
-        className="absolute bottom-0 left-0 right-0 h-px bg-white/25"
-        aria-hidden="true"
-      />
+      <div className="absolute bottom-0 left-0 right-0 h-px bg-white/25" aria-hidden="true" />
     </header>
   );
 }
 
 /* ========= Status do evento + cores de barra ========= */
-const toLocalDate = (ymdStr, hh = "00", mm = "00") =>
-  ymdStr
-    ? new Date(
-        `${ymdStr}T${String(hh).padStart(2, "0")}:${String(mm).padStart(
-          2,
-          "0"
-        )}:00`
-      )
-    : null;
-
 function deduzStatus(ev) {
-  // backend retorna: 'programado' | 'andamento' | 'encerrado'
-  // seu CSS usa 'em_andamento', então vamos ajustar só esse nome
-  if (ev?.status === "andamento") return "em_andamento";
-  if (ev?.status === "programado") return "programado";
-  if (ev?.status === "encerrado") return "encerrado";
+  // backend: 'programado' | 'andamento' | 'encerrado'
+  const raw = String(ev?.status || "").toLowerCase();
+  if (raw === "andamento") return "em_andamento";
+  if (raw === "programado") return "programado";
+  if (raw === "encerrado") return "encerrado";
   // fallback visual
   return "programado";
 }
@@ -515,6 +427,7 @@ export default function GerenciarEventos() {
     console.group("[recarregarEventos]");
     try {
       setErro("");
+      setLoading(true); // ✅ mostra barra fina e desabilita botão "Atualizar"
       setLive("Carregando eventos…");
       console.log("➡️  GET /api/eventos ...");
       const data = await apiGet("/api/eventos", { on403: "silent" });
@@ -539,18 +452,14 @@ export default function GerenciarEventos() {
       toast.error(`❌ ${msg}`);
       setLive("Falha ao carregar eventos.");
     } finally {
+      setLoading(false); // ✅ garante liberação do loading em qualquer cenário
       console.groupEnd();
     }
   }
 
   useEffect(() => {
     (async () => {
-      setLoading(true);
-      try {
-        await recarregarEventos();
-      } finally {
-        setLoading(false);
-      }
+      await recarregarEventos();
     })();
   }, []);
 
@@ -563,31 +472,29 @@ export default function GerenciarEventos() {
   const abrirModalEditar = async (evento) => {
     console.group("[abrirModalEditar]");
     console.log("📝 Evento base recebido:", evento);
-  
+
     // 1. Abre modal imediatamente com o que já temos
     setEventoSelecionado(evento);
     setModalAberto(true);
-  
+
     // 2. Busca detalhes em segundo plano e atualiza estado depois
     (async () => {
       let turmas = Array.isArray(evento.turmas) ? evento.turmas : [];
       if ((!turmas || turmas.length === 0) && evento?.id) {
-        console.log(
-          "ℹ️ Evento não tinha turmas carregadas, buscando turmas do backend..."
-        );
+        console.log("ℹ️ Evento não tinha turmas carregadas, buscando turmas do backend...");
         turmas = await fetchTurmasDoEvento(evento.id);
       }
-  
+
       const base = (await fetchEventoCompleto(evento.id)) || evento;
       console.log("📦 Evento completo (merge):", base);
-  
+
       const combinado = {
         ...evento,
         ...base,
         turmas,
       };
       console.log("🔀 Objeto final (refinado) enviado pro ModalEvento:", combinado);
-  
+
       setEventoSelecionado(combinado);
       console.groupEnd();
     })();
@@ -628,12 +535,9 @@ export default function GerenciarEventos() {
         let baseServidor = await fetchEventoCompleto(eventoSelecionado.id);
 
         if (!baseServidor) {
-          console.warn(
-            "⚠️ fetchEventoCompleto falhou/voltou vazio, montando baseServidor manualmente."
-          );
+          console.warn("⚠️ fetchEventoCompleto falhou/voltou vazio, montando baseServidor manualmente.");
           const turmasDoEvento =
-            Array.isArray(eventoSelecionado?.turmas) &&
-            eventoSelecionado.turmas.length
+            Array.isArray(eventoSelecionado?.turmas) && eventoSelecionado.turmas.length
               ? eventoSelecionado.turmas
               : await fetchTurmasDoEvento(eventoSelecionado.id);
 
@@ -655,56 +559,39 @@ export default function GerenciarEventos() {
         console.log("📦 baseServidor (para merge PUT):", baseServidor);
 
         const body = buildUpdateBody(baseServidor, dadosDoModal);
-        console.log(
-          "🧩 [PUT evento] body preparado:",
-          JSON.stringify(body, null, 2)
-        );
+        console.log("🧩 [PUT evento] body preparado:", JSON.stringify(body, null, 2));
 
         // validações rápidas
         if (!Array.isArray(body.instrutor) || body.instrutor.length === 0) {
           toast.error("Selecione ao menos um instrutor.");
-          console.warn(
-            "⚠️ Cancelando PUT: sem instrutor válido no body final."
-          );
+          console.warn("⚠️ Cancelando PUT: sem instrutor válido no body final.");
           console.groupEnd(); // edição
           console.groupEnd(); // salvarEvento
           return;
         }
         if (!Array.isArray(body.turmas) || body.turmas.length === 0) {
           toast.error("Inclua ao menos uma turma com campos obrigatórios.");
-          console.warn(
-            "⚠️ Cancelando PUT: sem turmas válidas no body final."
-          );
+          console.warn("⚠️ Cancelando PUT: sem turmas válidas no body final.");
           console.groupEnd();
           console.groupEnd();
           return;
         }
 
         try {
-          console.log(
-            "🚀 [PUT evento] Enviando atualização para /api/eventos/" +
-              eventoSelecionado.id
-          );
+          console.log("🚀 [PUT evento] Enviando atualização para /api/eventos/" + eventoSelecionado.id);
           await apiPut(`/api/eventos/${eventoSelecionado.id}`, body);
           console.log("✅ [PUT evento] Atualização concluída com sucesso!");
         } catch (err) {
           console.error("❌ [PUT evento] Falha no envio:", err);
 
           // fallback quando há inscritos em turmas
-          if (
-            err?.status === 409 &&
-            err?.data?.erro === "TURMA_COM_INSCRITOS"
-          ) {
-            console.warn(
-              "⚠️ [PUT evento] Turmas com inscritos detectadas, aplicando fallback."
-            );
+          if (err?.status === 409 && err?.data?.erro === "TURMA_COM_INSCRITOS") {
+            console.warn("⚠️ [PUT evento] Turmas com inscritos detectadas, aplicando fallback.");
             toast.warn(
               "Este evento tem turmas com inscritos. Vou salvar apenas os dados gerais e a regra de restrição."
             );
 
-            const fonteRegsModal = Array.isArray(
-              dadosDoModal?.registros_permitidos
-            )
+            const fonteRegsModal = Array.isArray(dadosDoModal?.registros_permitidos)
               ? dadosDoModal.registros_permitidos
               : Array.isArray(dadosDoModal?.registros)
               ? dadosDoModal.registros
@@ -716,73 +603,38 @@ export default function GerenciarEventos() {
                 : normRegistros(baseServidor?.registros_permitidos || []);
 
             const bodyEventOnly = clean({
-              titulo: (
-                dadosDoModal?.titulo ??
-                baseServidor?.titulo ??
-                ""
-              ).trim(),
-              descricao: (
-                dadosDoModal?.descricao ??
-                baseServidor?.descricao ??
-                ""
-              ).trim(),
-              local: (
-                dadosDoModal?.local ??
-                baseServidor?.local ??
-                ""
-              ).trim(),
-              tipo: (
-                dadosDoModal?.tipo ??
-                baseServidor?.tipo ??
-                ""
-              ).trim(),
-              unidade_id:
-                dadosDoModal?.unidade_id ?? baseServidor?.unidade_id,
-              publico_alvo: (
-                dadosDoModal?.publico_alvo ??
-                baseServidor?.publico_alvo ??
-                ""
-              ).trim(),
+              titulo: (dadosDoModal?.titulo ?? baseServidor?.titulo ?? "").trim(),
+              descricao: (dadosDoModal?.descricao ?? baseServidor?.descricao ?? "").trim(),
+              local: (dadosDoModal?.local ?? baseServidor?.local ?? "").trim(),
+              tipo: (dadosDoModal?.tipo ?? baseServidor?.tipo ?? "").trim(),
+              unidade_id: dadosDoModal?.unidade_id ?? baseServidor?.unidade_id,
+              publico_alvo: (dadosDoModal?.publico_alvo ?? baseServidor?.publico_alvo ?? "").trim(),
               instrutor: extractInstrutorIds(
-                (Array.isArray(dadosDoModal?.instrutor) &&
-                dadosDoModal.instrutor.length
+                (Array.isArray(dadosDoModal?.instrutor) && dadosDoModal.instrutor.length
                   ? dadosDoModal.instrutor
                   : baseServidor?.instrutor) || []
               ),
               restrito: Boolean(
                 dadosDoModal?.restrito ??
-                  (typeof baseServidor?.restrito === "boolean"
-                    ? baseServidor.restrito
-                    : false)
+                  (typeof baseServidor?.restrito === "boolean" ? baseServidor.restrito : false)
               ),
               restrito_modo:
                 (dadosDoModal?.restrito ?? baseServidor?.restrito)
-                  ? dadosDoModal?.restrito_modo ??
-                    baseServidor?.restrito_modo ??
-                    null
+                  ? dadosDoModal?.restrito_modo ?? baseServidor?.restrito_modo ?? null
                   : null,
               registros_permitidos:
                 (dadosDoModal?.restrito ?? baseServidor?.restrito) &&
-                (dadosDoModal?.restrito_modo ??
-                  baseServidor?.restrito_modo) === "lista_registros"
+                (dadosDoModal?.restrito_modo ?? baseServidor?.restrito_modo) === "lista_registros"
                   ? regsEventOnly
                   : undefined,
             });
 
-            console.log(
-              "🩹 [PUT fallback - somente evento] bodyEventOnly:",
-              JSON.stringify(bodyEventOnly, null, 2)
-            );
+            console.log("🩹 [PUT fallback - somente evento] bodyEventOnly:", JSON.stringify(bodyEventOnly, null, 2));
 
-            await apiPut(
-              `/api/eventos/${eventoSelecionado.id}`,
-              bodyEventOnly
-            );
+            await apiPut(`/api/eventos/${eventoSelecionado.id}`, bodyEventOnly);
 
             await recarregarEventos();
-            toast.success(
-              "✅ Dados gerais e restrição atualizados. As turmas não foram alteradas."
-            );
+            toast.success("✅ Dados gerais e restrição atualizados. As turmas não foram alteradas.");
             setModalAberto(false);
 
             console.groupEnd(); // edição
@@ -806,10 +658,7 @@ export default function GerenciarEventos() {
           ...atualizado,
           turmas: turmasNovas,
         };
-        console.log(
-          "🔄 Atualizando estado local do modal com versão oficial do backend:",
-          objAtualizado
-        );
+        console.log("🔄 Atualizando estado local do modal com versão oficial do backend:", objAtualizado);
 
         setEventoSelecionado(objAtualizado);
         setModalAberto(false);
@@ -839,22 +688,10 @@ export default function GerenciarEventos() {
         return;
       }
 
-      const di = ymd(
-        dadosDoModal?.data_inicio_geral ?? dadosDoModal?.data_inicio
-      );
-      const df = ymd(
-        dadosDoModal?.data_fim_geral ?? dadosDoModal?.data_fim
-      );
-      const hi = hhmm(
-        dadosDoModal?.horario_inicio_geral ??
-          dadosDoModal?.horario_inicio ??
-          "08:00"
-      );
-      const hf = hhmm(
-        dadosDoModal?.horario_fim_geral ??
-          dadosDoModal?.horario_fim ??
-          "17:00"
-      );
+      const di = ymd(dadosDoModal?.data_inicio_geral ?? dadosDoModal?.data_inicio);
+      const df = ymd(dadosDoModal?.data_fim_geral ?? dadosDoModal?.data_fim);
+      const hi = hhmm(dadosDoModal?.horario_inicio_geral ?? dadosDoModal?.horario_inicio ?? "08:00");
+      const hf = hhmm(dadosDoModal?.horario_fim_geral ?? dadosDoModal?.horario_fim ?? "17:00");
 
       const turmas = normalizeTurmas(
         dadosDoModal?.turmas?.length
@@ -874,9 +711,7 @@ export default function GerenciarEventos() {
       );
 
       const restrito = Boolean(dadosDoModal?.restrito);
-      const restrito_modo = restrito
-        ? dadosDoModal?.restrito_modo || "todos_servidores"
-        : null;
+      const restrito_modo = restrito ? dadosDoModal?.restrito_modo || "todos_servidores" : null;
 
       const regsFonte = Array.isArray(dadosDoModal?.registros_permitidos)
         ? dadosDoModal.registros_permitidos
@@ -898,10 +733,7 @@ export default function GerenciarEventos() {
         registros_permitidos: registros,
       });
 
-      console.log(
-        "🚀 [POST evento] Criando evento com body:",
-        JSON.stringify(bodyCreate, null, 2)
-      );
+      console.log("🚀 [POST evento] Criando evento com body:", JSON.stringify(bodyCreate, null, 2));
       await apiPost("/api/eventos", bodyCreate);
       console.log("✅ [POST evento] Evento criado com sucesso.");
 
@@ -946,24 +778,16 @@ export default function GerenciarEventos() {
 
     // estado otimista
     setEventos((prev) =>
-      prev.map((e) =>
-        Number(e.id) === id ? { ...e, publicado: !publicado } : e
-      )
+      prev.map((e) => (Number(e.id) === id ? { ...e, publicado: !publicado } : e))
     );
 
     try {
       await apiPost(`/api/eventos/${id}/${acao}`, {});
-      toast.success(
-        publicado ? "Evento despublicado." : "Evento publicado."
-      );
+      toast.success(publicado ? "Evento despublicado." : "Evento publicado.");
       console.log("✅ Publicação atualizada com sucesso no backend.");
     } catch (e) {
       // rollback se falhar
-      setEventos((prev) =>
-        prev.map((e) =>
-          Number(e.id) === id ? { ...e, publicado } : e
-        )
-      );
+      setEventos((prev) => prev.map((ev) => (Number(ev.id) === id ? { ...ev, publicado } : ev)));
       const msg = e?.message || "Falha ao alterar publicação.";
       toast.error(`❌ ${msg}`);
       console.error("❌ togglePublicacao error:", e);
@@ -981,11 +805,7 @@ export default function GerenciarEventos() {
       <p ref={liveRef} className="sr-only" aria-live="polite" />
 
       {/* Header hero (cor sólida) */}
-      <HeaderHero
-        onCriar={abrirModalCriar}
-        onAtualizar={recarregarEventos}
-        atualizando={anyLoading}
-      />
+      <HeaderHero onCriar={abrirModalCriar} onAtualizar={recarregarEventos} atualizando={anyLoading} />
 
       {/* barra de carregamento fina no topo */}
       {anyLoading && (
@@ -998,10 +818,7 @@ export default function GerenciarEventos() {
         </div>
       )}
 
-      <div
-        id="conteudo"
-        className="px-2 sm:px-4 py-6 max-w-6xl mx-auto w-full min-w-0"
-      >
+      <div id="conteudo" className="px-2 sm:px-4 py-6 max-w-6xl mx-auto w-full min-w-0">
         {!!erro && !loading && (
           <p className="text-red-500 text-center mb-4" role="alert">
             {erro}
@@ -1027,10 +844,7 @@ export default function GerenciarEventos() {
                   className="relative bg-white dark:bg-zinc-800 p-4 sm:p-5 rounded-2xl shadow border border-gray-200 dark:border-zinc-700 overflow-hidden min-w-0"
                 >
                   {/* 🔶 Barra colorida superior (gradiente por status) */}
-                  <div
-                    className={`absolute top-0 left-0 right-0 h-1.5 ${bar}`}
-                    aria-hidden="true"
-                  />
+                  <div className={`absolute top-0 left-0 right-0 h-1.5 ${bar}`} aria-hidden="true" />
 
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between min-w-0">
                     {/* Título + badges */}
@@ -1047,11 +861,7 @@ export default function GerenciarEventos() {
                               ? "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-200 border-indigo-200 dark:border-indigo-800"
                               : "bg-zinc-100 text-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-200 border-zinc-200 dark:border-zinc-700"
                           }`}
-                        title={
-                          publicado
-                            ? "Visível aos usuários"
-                            : "Oculto aos usuários"
-                        }
+                        title={publicado ? "Visível aos usuários" : "Oculto aos usuários"}
                       >
                         {publicado ? "Publicado" : "Rascunho"}
                       </span>
@@ -1079,9 +889,7 @@ export default function GerenciarEventos() {
                           className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 border border-amber-300 dark:border-amber-800"
                         >
                           <Lock size={12} aria-hidden="true" />
-                          {ev.restrito_modo === "lista_registros"
-                            ? "Lista"
-                            : "Servidores"}
+                          {ev.restrito_modo === "lista_registros" ? "Lista" : "Servidores"}
                         </span>
                       )}
                     </div>
@@ -1089,6 +897,7 @@ export default function GerenciarEventos() {
                     {/* Ações */}
                     <div className="flex flex-wrap gap-2 justify-end">
                       <button
+                        type="button"
                         onClick={() => togglePublicacao(ev)}
                         disabled={publishingId === Number(ev.id)}
                         className={`px-3 py-1.5 rounded flex items-center gap-1 border text-sm font-medium
@@ -1097,11 +906,7 @@ export default function GerenciarEventos() {
                               ? "border-indigo-300 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-200 dark:hover:bg-indigo-900/30"
                               : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
                           } disabled:opacity-60`}
-                        aria-label={
-                          publicado
-                            ? `Despublicar evento ${ev.titulo}`
-                            : `Publicar evento ${ev.titulo}`
-                        }
+                        aria-label={publicado ? `Despublicar evento ${ev.titulo}` : `Publicar evento ${ev.titulo}`}
                         aria-pressed={publicado ? "true" : "false"}
                       >
                         {publishingId === Number(ev.id) ? (
@@ -1118,6 +923,7 @@ export default function GerenciarEventos() {
                       </button>
 
                       <button
+                        type="button"
                         onClick={() => abrirModalEditar(ev)}
                         className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded flex items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
                         aria-label={`Editar evento ${ev.titulo}`}
@@ -1126,6 +932,7 @@ export default function GerenciarEventos() {
                       </button>
 
                       <button
+                        type="button"
                         onClick={() => excluirEvento(ev.id)}
                         className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded flex items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-300"
                         aria-label={`Excluir evento ${ev.titulo}`}
@@ -1140,22 +947,17 @@ export default function GerenciarEventos() {
                     <div className="mt-2 text-sm text-zinc-600 dark:text-zinc-300 break-words">
                       {ev?.tipo && (
                         <span className="mr-3">
-                          Tipo:{" "}
-                          <span className="font-medium">{ev.tipo}</span>
+                          Tipo: <span className="font-medium">{ev.tipo}</span>
                         </span>
                       )}
                       {ev?.local && (
                         <span className="mr-3">
-                          Local:{" "}
-                          <span className="font-medium">{ev.local}</span>
+                          Local: <span className="font-medium">{ev.local}</span>
                         </span>
                       )}
                       {ev?.publico_alvo && (
                         <span>
-                          Público-alvo:{" "}
-                          <span className="font-medium">
-                            {ev.publico_alvo}
-                          </span>
+                          Público-alvo: <span className="font-medium">{ev.publico_alvo}</span>
                         </span>
                       )}
                     </div>
