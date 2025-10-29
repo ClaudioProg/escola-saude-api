@@ -292,17 +292,15 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
   // ===== turmas =====
   function mapTurmaForPayload(t) {
     if (!t) return null;
-
+  
     const idNum = Number(t.id);
     const nome = (t.nome || "Turma").trim();
-
-    // número de vagas
+  
     const vagas_total = Number.isFinite(Number(t.vagas_total))
       ? Number(t.vagas_total)
       : Number(t.vagas);
-
+  
     // montar as datas/encontros
-    // aceitamos tanto `datas` já pronta quanto `encontros`
     let brutas = [];
     if (Array.isArray(t.datas)) {
       brutas = t.datas;
@@ -331,9 +329,9 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
             }
       );
     } else {
-      brutas = [];
+    brutas = [];
     }
-
+  
     const datas = brutas
       .map((d) => ({
         data: (d.data || "").slice(0, 10),
@@ -350,15 +348,28 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
             "17:00"
         ),
       }))
-      .filter((d) => d.data); // só mantém datas válidas
-
+      .filter((d) => d.data);
+  
+    // calcular carga_horaria daqui:
+    const encontrosCalc = datas.map((d) => ({
+      inicio: d.horario_inicio,
+      fim: d.horario_fim,
+    }));
+    let ch = Number.isFinite(Number(t.carga_horaria))
+      ? Number(t.carga_horaria)
+      : 0;
+    if (ch <= 0 && encontrosCalc.length) {
+      ch = cargaHorariaFromEncontros(encontrosCalc);
+    }
+  
     const turmaPayload = clean({
       ...(Number.isFinite(idNum) ? { id: idNum } : {}),
       nome,
       vagas_total: Number.isFinite(vagas_total) ? vagas_total : undefined,
+      carga_horaria: ch > 0 ? ch : undefined,
       datas,
     });
-
+  
     return turmaPayload;
   }
 
@@ -552,28 +563,34 @@ export default function GerenciarEventos() {
   const abrirModalEditar = async (evento) => {
     console.group("[abrirModalEditar]");
     console.log("📝 Evento base recebido:", evento);
-
-    let turmas = Array.isArray(evento.turmas) ? evento.turmas : [];
-    if (turmas.length === 0 && evento?.id) {
-      console.log(
-        "ℹ️ Evento não tinha turmas carregadas, buscando turmas do backend..."
-      );
-      turmas = await fetchTurmasDoEvento(evento.id);
-    }
-
-    const base = (await fetchEventoCompleto(evento.id)) || evento;
-    console.log("📦 Evento completo (merge):", base);
-
-    const combinado = {
-      ...evento,
-      ...base,
-      turmas,
-    };
-    console.log("🔀 Objeto final enviado pro ModalEvento:", combinado);
-
-    setEventoSelecionado(combinado);
+  
+    // 1. Abre modal imediatamente com o que já temos
+    setEventoSelecionado(evento);
     setModalAberto(true);
-    console.groupEnd();
+  
+    // 2. Busca detalhes em segundo plano e atualiza estado depois
+    (async () => {
+      let turmas = Array.isArray(evento.turmas) ? evento.turmas : [];
+      if ((!turmas || turmas.length === 0) && evento?.id) {
+        console.log(
+          "ℹ️ Evento não tinha turmas carregadas, buscando turmas do backend..."
+        );
+        turmas = await fetchTurmasDoEvento(evento.id);
+      }
+  
+      const base = (await fetchEventoCompleto(evento.id)) || evento;
+      console.log("📦 Evento completo (merge):", base);
+  
+      const combinado = {
+        ...evento,
+        ...base,
+        turmas,
+      };
+      console.log("🔀 Objeto final (refinado) enviado pro ModalEvento:", combinado);
+  
+      setEventoSelecionado(combinado);
+      console.groupEnd();
+    })();
   };
 
   const excluirEvento = async (eventoId) => {

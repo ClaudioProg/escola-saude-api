@@ -62,7 +62,7 @@ function isInstrutorPerfil(req) {
   const p = getPerfisFromReq(req);
   return p.includes("instrutor") || p.includes("administrador");
 }
-const getUsuarioId = (req) => req.user?.id ?? req.user?.id ?? null;
+const getUsuarioId = (req) => (req.user?.id ?? null);
 
 /* =====================================================================
    🔐 Núcleo de checagem por REGISTRO (reuso interno)
@@ -483,13 +483,7 @@ async function criarEvento(req, res) {
       .status(400)
       .json({ erro: "Campo 'titulo' é obrigatório." });
   }
-  if (!descricao?.trim()) {
-    console.warn("⛔ descricao ausente");
-    console.groupEnd();
-    return res
-      .status(400)
-      .json({ erro: "Campo 'descricao' é obrigatório." });
-  }
+ 
   if (!local?.trim()) {
     console.warn("⛔ local ausente");
     console.groupEnd();
@@ -504,13 +498,7 @@ async function criarEvento(req, res) {
       .status(400)
       .json({ erro: "Campo 'tipo' é obrigatório." });
   }
-  if (!publico_alvo?.trim()) {
-    console.warn("⛔ publico_alvo ausente");
-    console.groupEnd();
-    return res
-      .status(400)
-      .json({ erro: "Campo 'publico_alvo' é obrigatório." });
-  }
+  
   if (!unidade_id) {
     console.warn("⛔ unidade_id ausente");
     console.groupEnd();
@@ -534,6 +522,9 @@ async function criarEvento(req, res) {
       .status(400)
       .json({ erro: "Ao menos uma turma deve ser criada." });
   }
+
+  const descFinal = (descricao || "").trim();
+const publicoFinal = (publico_alvo || "").trim();
 
   // validação da regra de restrição
   let restritoVal = !!restrito;
@@ -581,18 +572,19 @@ async function criarEvento(req, res) {
         )
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,FALSE)
         RETURNING *
-        `,
+      `,
       [
         titulo,
-        descricao,
+        descFinal,
         local,
         tipo,
         unidade_id,
-        publico_alvo,
+        publicoFinal,
         restritoVal,
         modoVal,
       ]
     );
+    
     const evento = eventoResult.rows[0];
     const eventoId = evento.id;
     console.log("✅ evento criado ID:", eventoId);

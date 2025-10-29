@@ -411,55 +411,58 @@ export default function ModalEvento({
     console.groupEnd();
   }, [evento, isOpen]);
 
-  // quando abre modal de edição, faz GET fresh do evento p/ garantir restrição
-  useEffect(() => {
-    if (!isOpen || !evento?.id) return;
+  // faz GET fresh do evento (restrição/lista de registros) só se precisar
+useEffect(() => {
+  if (!isOpen || !evento?.id) return;
 
-    console.group("[ModalEvento useEffect GET fresh restrição]");
-    console.log("Buscando detalhes fresh do evento id:", evento.id);
+  // 🔒 evita GET redundante se já temos registros carregados
+  if (registros.length > 0) return;
 
-    (async () => {
-      try {
-        const det = await apiGet(`/api/eventos/${evento.id}`);
-        console.log("✅ GET /api/eventos/:id resposta:", det);
+  console.group("[ModalEvento useEffect GET fresh restrição]");
+  console.log("Buscando detalhes fresh do evento id:", evento.id);
 
-        if (typeof det.restrito === "boolean") {
-          console.log("Atualizando restrito ->", !!det.restrito);
-          setRestrito(!!det.restrito);
-        }
+  (async () => {
+    try {
+      const det = await apiGet(`/api/eventos/${evento.id}`);
+      console.log("✅ GET /api/eventos/:id resposta:", det);
 
-        let modo = det.restrito_modo;
-        if (!modo && det.restrito) {
-          modo =
-            det.vis_reg_tipo === "lista"
-              ? "lista_registros"
-              : "todos_servidores";
-        }
-        console.log("Atualizando restrito_modo ->", modo);
-        setRestritoModo(det.restrito ? (modo || "todos_servidores") : "");
-
-        const lista = Array.isArray(det.registros_permitidos)
-          ? det.registros_permitidos
-          : Array.isArray(det.registros)
-          ? det.registros
-          : [];
-        const parsed = (lista || [])
-          .map(normReg)
-          .filter((r) => /^\d{6}$/.test(r));
-        console.log("Atualizando registros ->", parsed);
-        setRegistros([...new Set(parsed)]);
-      } catch (err) {
-        console.warn(
-          "⚠️ Falha ao atualizar restrição fresh do evento:",
-          err?.message,
-          err
-        );
-        // silencioso
-      } finally {
-        console.groupEnd();
+      if (typeof det.restrito === "boolean") {
+        console.log("Atualizando restrito ->", !!det.restrito);
+        setRestrito(!!det.restrito);
       }
-    })();
-  }, [isOpen, evento?.id]);
+
+      let modo = det.restrito_modo;
+      if (!modo && det.restrito) {
+        modo =
+          det.vis_reg_tipo === "lista"
+            ? "lista_registros"
+            : "todos_servidores";
+      }
+      console.log("Atualizando restrito_modo ->", modo);
+      setRestritoModo(det.restrito ? (modo || "todos_servidores") : "");
+
+      const lista = Array.isArray(det.registros_permitidos)
+        ? det.registros_permitidos
+        : Array.isArray(det.registros)
+        ? det.registros
+        : [];
+      const parsed = (lista || [])
+        .map(normReg)
+        .filter((r) => /^\d{6}$/.test(r));
+      console.log("Atualizando registros ->", parsed);
+      setRegistros([...new Set(parsed)]);
+    } catch (err) {
+      console.warn(
+        "⚠️ Falha ao atualizar restrição fresh do evento:",
+        err?.message,
+        err
+      );
+      // silencioso
+    } finally {
+      console.groupEnd();
+    }
+  })();
+}, [isOpen, evento?.id, registros.length]);
 
   // carrega unidades
   useEffect(() => {
