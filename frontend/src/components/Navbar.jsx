@@ -304,6 +304,7 @@ export default function Navbar() {
       { label: "Gestão de Eventos",     path: "/gerenciar-eventos",      icon: CalendarDays },
       { label: "Gestão de Inscrições",  path: "/admin/cancelar-inscricoes", icon: XCircle },
       { label: "Gestão de Presença",    path: "/gestao-presenca",        icon: QrCode },
+      { label: "Gestão de Avaliações",  path: "/admin/avaliacoes",       icon: ClipboardList },
       { label: "Gestão de Certificados", path: "/gestao-certificados",   icon: History },
       // relatórios
       { label: "Relatórios Customizados", path: "/relatorios-customizados", icon: ClipboardList },

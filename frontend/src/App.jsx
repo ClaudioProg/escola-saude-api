@@ -57,6 +57,7 @@ const AgendaAdministrador    = lazy(() => import("./pages/AgendaAdministrador"))
 const Avaliacao              = lazy(() => import("./pages/Avaliacao"));
 const GestaoPresencas        = lazy(() => import("./pages/GestaoPresenca"));
 const CancelarInscricoesAdmin= lazy(() => import("./pages/CancelarInscricoesAdmin"));
+const AdminAvaliacoes        = lazy(() => import("./pages/AdminAvaliacoes"));
 
 // ✅ Página de confirmação via QR (com/sem token)
 const ConfirmarPresenca      = lazy(() => import("./pages/ConfirmarPresenca"));
@@ -429,6 +430,15 @@ export default function App() {
             <Route path="/gestao-presenca" element={<PrivateRoute permitido={["administrador"]}><GestaoPresencas /></PrivateRoute>} />
             <Route path="/admin/qr-codes" element={<PrivateRoute permitido={["administrador"]}><QRCodesEventosAdmin /></PrivateRoute>} />
             <Route path="/admin/cancelar-inscricoes" element={<PrivateRoute permitido={["administrador"]}><CancelarInscricoesAdmin /></PrivateRoute>} />
+
+            <Route
+  path="/admin/avaliacoes"
+  element={
+    <PrivateRoute permitido={["administrador"]}>
+      <AdminAvaliacoes />
+    </PrivateRoute>
+  }
+/>
 
             {/* 404 */}
             <Route path="*" element={<NotFound />} />
