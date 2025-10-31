@@ -76,8 +76,10 @@ export default function ModalBase({
   const overlayRef = useRef(null);
   const contentRef = useRef(null);
   const lastActiveRef = useRef(null);
-  const mouseDownTarget = useRef(null);
-  const hasFocusedOnceRef = useRef(false);
+
+  // 🔧 chaves do problema original
+  const openedOnceRef = useRef(false); // indica se já inicializamos foco nesta abertura
+  const prevIsOpenRef = useRef(false); // detecta transição fechado→aberto
 
   const BASE_Z = 1000 + level * 20;
 
@@ -91,37 +93,59 @@ export default function ModalBase({
     };
   }, [isOpen]);
 
-  // Foco inicial — só se for topmost e se foco ainda não estiver dentro
+  // 🔒 Foco inicial — SOMENTE na transição de fechado → aberto e apenas se for topmost
   useEffect(() => {
-    if (!isOpen) return;
-    lastActiveRef.current = document.activeElement;
-    hasFocusedOnceRef.current = false;
+    // transição
+    const justOpened = isOpen && !prevIsOpenRef.current;
+    const justClosed = !isOpen && prevIsOpenRef.current;
 
-    const tryFocus = () => {
-      const root = contentRef.current;
-      if (!root) return;
+    if (justOpened) {
+      lastActiveRef.current = document.activeElement; // para restaurar depois
+      openedOnceRef.current = false; // vamos focar uma vez
 
-      const active = document.activeElement;
-      if (active && root.contains(active)) return; // não rouba foco existente
+      // roda no próximo tick para garantir DOM montado
+      const id = setTimeout(() => {
+        if (!isOpen) return;
+        const root = contentRef.current;
+        if (!root) return;
 
-      const top = getTopmostLevel();
-      const isTopmost = level >= top;
-      if (!isTopmost || hasFocusedOnceRef.current) return;
+        // não roubar se já há foco dentro
+        const active = document.activeElement;
+        if (active && root.contains(active)) {
+          openedOnceRef.current = true;
+          return;
+        }
 
-      const el =
-        initialFocusRef?.current ||
-        root.querySelector("[data-initial-focus]") ||
-        root.querySelector(FOCUSABLE_SEL) ||
-        root;
+        const top = getTopmostLevel();
+        const isTopmost = level >= top;
+        if (!isTopmost || openedOnceRef.current) return;
 
-      if (el && typeof el.focus === "function") {
-        el.focus();
-        hasFocusedOnceRef.current = true;
+        const el =
+          initialFocusRef?.current ||
+          root.querySelector("[data-initial-focus]") ||
+          root.querySelector(FOCUSABLE_SEL) ||
+          root;
+
+        el?.focus?.();
+        openedOnceRef.current = true; // ✅ não vai mais focar nessa abertura
+      }, 0);
+
+      return () => clearTimeout(id);
+    }
+
+    if (justClosed) {
+      // Restaurar foco anterior ao fechar
+      const prev = lastActiveRef.current;
+      if (prev && typeof prev.focus === "function") {
+        try {
+          prev.focus();
+        } catch {}
       }
-    };
+      openedOnceRef.current = false; // reseta para a próxima abertura
+    }
 
-    const t = setTimeout(tryFocus, 15);
-    return () => clearTimeout(t);
+    // marca estado atual
+    prevIsOpenRef.current = isOpen;
   }, [isOpen, level, initialFocusRef]);
 
   // Teclado: ESC só fecha se topmost + foco dentro; Tab trap apenas dentro do modal
@@ -166,18 +190,11 @@ export default function ModalBase({
     document.addEventListener("keydown", onKeyDown, true);
     return () => {
       document.removeEventListener("keydown", onKeyDown, true);
-      const prev = lastActiveRef.current;
-      if (prev && typeof prev.focus === "function") {
-        try {
-          prev.focus();
-        } catch {
-          /* ignore */
-        }
-      }
     };
   }, [isOpen, onClose, closeOnEsc, level]);
 
   // clique fora: fecha só se topmost
+  const mouseDownTarget = useRef(null);
   const onMouseDown = (e) => {
     mouseDownTarget.current = e.target;
   };

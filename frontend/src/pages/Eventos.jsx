@@ -1,5 +1,5 @@
-// ✅ src/pages/Eventos.jsx (revisado — sem publicar/despublicar)
-import { useEffect, useState } from "react";
+// ✅ src/pages/Eventos.jsx (revisado — com conflito GLOBAL)
+import { useEffect, useState, useMemo } from "react";
 import { toast } from "react-toastify";
 import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
@@ -85,6 +85,88 @@ function rangeDaTurma(t) {
   return { di, df };
 }
 
+// Horários "mais prováveis" da turma (espelha a lógica do backend)
+const HHMM = (s, fb = null) =>
+  typeof s === "string" && /^\d{2}:\d{2}/.test(s) ? s.slice(0, 5) : fb;
+
+function horarioMaisProvavel(t) {
+  const conta = new Map();
+  const add = (hi, hf) => {
+    const a = HHMM(hi, null), b = HHMM(hf, null);
+    if (!a || !b) return;
+    const k = `${a}-${b}`;
+    conta.set(k, (conta.get(k) || 0) + 1);
+  };
+
+  if (Array.isArray(t?.encontros)) {
+    for (const e of t.encontros) add(e?.inicio || e?.horario_inicio, e?.fim || e?.horario_fim);
+  } else if (Array.isArray(t?.datas)) {
+    for (const e of t.datas) add(e?.horario_inicio, e?.horario_fim);
+  } else if (Array.isArray(t?._datas)) {
+    for (const e of t._datas) add(e?.horario_inicio, e?.horario_fim);
+  }
+
+  if (conta.size) {
+    let best = null, bc = -1;
+    for (const [k, c] of conta.entries()) {
+      if (c > bc) { best = k; bc = c; }
+    }
+    const [hi, hf] = best.split("-");
+    return { hi, hf };
+  }
+
+  // fallbacks
+  const hi = HHMM(t?.horario_inicio, null);
+  const hf = HHMM(t?.horario_fim, null);
+  if (hi && hf) return { hi, hf };
+  return { hi: null, hf: null };
+}
+
+const horariosSobrepoem = (ai, af, bi, bf) => {
+  if (!ai || !af || !bi || !bf) return false;
+  return ai < bf && bi < af;
+};
+
+// Interseção de datas (YYYY-MM-DD)
+const datasIntersectam = (aIni, aFim, bIni, bFim) => {
+  if (!aIni || !aFim || !bIni || !bFim) return false;
+  return aIni <= bFim && bIni <= aFim;
+};
+
+/** Calcula IDs de turmas em conflito dentro de um evento (só para congresso) */
+function calcularConflitosNoEvento(turmas, inscricoesIds) {
+  const minhas = new Set(inscricoesIds.map(Number));
+  const jaInscritas = turmas.filter((t) => minhas.has(Number(t.id)));
+  if (!jaInscritas.length) return new Set();
+
+  // pré-calcula resumos
+  const resumo = new Map(
+    turmas.map((t) => {
+      const r = rangeDaTurma(t);
+      const h = horarioMaisProvavel(t);
+      return [Number(t.id), { di: r.di, df: r.df, hi: h.hi, hf: h.hf }];
+    })
+  );
+
+  const conflitos = new Set();
+  for (const t of turmas) {
+    const A = resumo.get(Number(t.id));
+    if (!A) continue;
+    for (const m of jaInscritas) {
+      if (Number(m.id) === Number(t.id)) continue;
+      const B = resumo.get(Number(m.id));
+      if (!B) continue;
+      const datasOk = A.di && A.df && B.di && B.df && A.di <= B.df && B.di <= A.df;
+      if (!datasOk) continue;
+      if (horariosSobrepoem(A.hi, A.hf, B.hi, B.hf)) {
+        conflitos.add(Number(t.id));
+        break;
+      }
+    }
+  }
+  return conflitos;
+}
+
 // Prioriza o status vindo do backend; se não vier, usa o cálculo local atual
 function statusBackendOuFallback(evento) {
   if (typeof evento?.status === "string" && evento.status) return evento.status;
@@ -115,7 +197,10 @@ export default function Eventos() {
   const [eventos, setEventos] = useState([]);
   const [turmasPorEvento, setTurmasPorEvento] = useState({});
   const [turmasVisiveis, setTurmasVisiveis] = useState({});
-  const [inscricoesConfirmadas, setInscricoesConfirmadas] = useState([]);
+  const [inscricoesConfirmadas, setInscricoesConfirmadas] = useState([]);     // [turma_id]
+  const [inscricoesDetalhes, setInscricoesDetalhes] = useState([]);           // objetos com data_inicio/fim e horario_inicio/fim
+  const [conflitosPorEvento, setConflitosPorEvento] = useState({});           // { [eventoId]: Set<number> }
+  const [conflitosGlobais, setConflitosGlobais] = useState(new Set());        // Set<turma_id> em conflito GLOBAL
   const [erro, setErro] = useState("");
   const [inscrevendo, setInscrevendo] = useState(null);
   const [carregandoTurmas, setCarregandoTurmas] = useState(null);
@@ -154,10 +239,12 @@ export default function Eventos() {
     async function carregarInscricoes() {
       try {
         const inscricoes = await apiGet("/api/inscricoes/minhas");
-        const idsTurmas = (Array.isArray(inscricoes) ? inscricoes : [])
+        const arr = Array.isArray(inscricoes) ? inscricoes : [];
+        const idsTurmas = arr
           .map((i) => Number(i?.turma_id))
           .filter((n) => Number.isFinite(n));
         setInscricoesConfirmadas(idsTurmas);
+        setInscricoesDetalhes(arr); // mantém detalhes para comparar conflito GLOBAL
       } catch {
         toast.error("Erro ao carregar inscrições do usuário.");
       }
@@ -201,6 +288,75 @@ export default function Eventos() {
     return null;
   }
 
+  // Recalcula conflitos (CONGRESSO: dentro do evento)
+  useEffect(() => {
+    const novo = {};
+    for (const evt of eventos) {
+      const evtId = Number(evt.id);
+      const turmas = turmasPorEvento[evtId] || [];
+      if (!turmas.length) continue;
+      const tipo = String(evt?.tipo || "").toLowerCase();
+      if (tipo !== "congresso") continue;
+
+      const conflitos = calcularConflitosNoEvento(turmas, inscricoesConfirmadas);
+      if (conflitos.size) novo[evtId] = conflitos;
+    }
+    setConflitosPorEvento(novo);
+  }, [eventos, turmasPorEvento, inscricoesConfirmadas]);
+
+  // 🔁 Recalcula conflito GLOBAL sempre que turmas carregadas ou inscrições mudarem
+  useEffect(() => {
+    const globais = new Set();
+
+    // Monta mapa de resumo para cada turma carregada (em todos os eventos abertos)
+    const todasTurmas = [];
+    for (const turmas of Object.values(turmasPorEvento)) {
+      if (Array.isArray(turmas)) todasTurmas.push(...turmas);
+    }
+
+    const resumoTurma = (t) => {
+      const { di, df } = rangeDaTurma(t);
+      const { hi, hf } = horarioMaisProvavel(t);
+      return { di, df, hi, hf };
+    };
+
+    // Para cada turma carregada, verifica se conflita com QUALQUER inscrição existente
+    for (const t of todasTurmas) {
+      const rA = resumoTurma(t);
+      if (!rA.di || !rA.df || !rA.hi || !rA.hf) continue; // precisa de período e horário
+      for (const i of inscricoesDetalhes) {
+        const diB = ymd(i?.data_inicio);
+        const dfB = ymd(i?.data_fim);
+        const hiB = HHMM(i?.horario_inicio, null);
+        const hfB = HHMM(i?.horario_fim, null);
+        if (!diB || !dfB || !hiB || !hfB) continue;
+
+        if (datasIntersectam(rA.di, rA.df, diB, dfB) && horariosSobrepoem(rA.hi, rA.hf, hiB, hfB)) {
+          globais.add(Number(t.id));
+          break;
+        }
+      }
+    }
+
+    setConflitosGlobais(globais);
+  }, [turmasPorEvento, inscricoesDetalhes]);
+
+  // Helper: verifica conflito GLOBAL on-the-fly para uma turma específica (caso ainda não esteja no Set)
+  const temConflitoGlobalComMinhasInscricoes = (turma) => {
+    const { di, df } = rangeDaTurma(turma);
+    const { hi, hf } = horarioMaisProvavel(turma);
+    if (!di || !df || !hi || !hf) return false;
+    for (const i of inscricoesDetalhes) {
+      const diB = ymd(i?.data_inicio);
+      const dfB = ymd(i?.data_fim);
+      const hiB = HHMM(i?.horario_inicio, null);
+      const hfB = HHMM(i?.horario_fim, null);
+      if (!diB || !dfB || !hiB || !hfB) continue;
+      if (datasIntersectam(di, df, diB, dfB) && horariosSobrepoem(hi, hf, hiB, hfB)) return true;
+    }
+    return false;
+  };
+
   async function inscrever(turmaId) {
     if (inscrevendo) return;
 
@@ -219,6 +375,40 @@ export default function Eventos() {
       return;
     }
 
+    // Objeto da turma (se estiver carregada)
+    const turmaObj =
+      (eventoIdLocal && (turmasPorEvento[eventoIdLocal] || []).find(t => Number(t.id) === Number(turmaId))) ||
+      null;
+
+    // 🔒 Bloqueio preventivo para CONGRESSO (conflito dentro do evento)
+    const tipoEvento = String(eventoReferente?.tipo || "").toLowerCase();
+    if (tipoEvento === "congresso") {
+      const setConf = conflitosPorEvento[eventoIdLocal];
+      if (setConf && setConf.has(Number(turmaId))) {
+        toast.warn("Conflito de horário com outra inscrição deste evento.");
+        return;
+      }
+      if (!setConf && turmaObj) {
+        // fallback local
+        const turmas = turmasPorEvento[eventoIdLocal] || [];
+        const setCalc = calcularConflitosNoEvento(turmas, inscricoesConfirmadas);
+        if (setCalc.has(Number(turmaId))) {
+          toast.warn("Conflito de horário com outra inscrição deste evento.");
+          return;
+        }
+      }
+    }
+
+    // 🔒 Bloqueio preventivo GLOBAL (entre eventos)
+    if (conflitosGlobais.has(Number(turmaId))) {
+      toast.warn("Conflito de horário com outra turma já inscrita.");
+      return;
+    }
+    if (!conflitosGlobais.has(Number(turmaId)) && turmaObj && temConflitoGlobalComMinhasInscricoes(turmaObj)) {
+      toast.warn("Conflito de horário com outra turma já inscrita.");
+      return;
+    }
+
     setInscrevendo(turmaId);
     try {
       await apiPost("/api/inscricoes", { turma_id: turmaId });
@@ -226,10 +416,12 @@ export default function Eventos() {
 
       try {
         const inscricoesUsuario = await apiGet("/api/inscricoes/minhas");
-        const novasInscricoes = (Array.isArray(inscricoesUsuario) ? inscricoesUsuario : [])
+        const arr = Array.isArray(inscricoesUsuario) ? inscricoesUsuario : [];
+        const novasInscricoes = arr
           .map((i) => Number(i?.turma_id))
           .filter((n) => Number.isFinite(n));
         setInscricoesConfirmadas(novasInscricoes);
+        setInscricoesDetalhes(arr);
       } catch { toast.warn("⚠️ Não foi possível atualizar inscrições confirmadas."); }
 
       await atualizarEventos();
@@ -329,7 +521,7 @@ export default function Eventos() {
 
   // 🔎 regra: nunca mostrar encerrados sem inscrição prévia
   const eventosFiltrados = eventos.filter((evento) => {
-    const st = statusBackendOuFallback(evento);   // ✅ usa backend primeiro
+    const st = statusBackendOuFallback(evento);
     const inscrito = jaInscritoNoEvento(evento);
     if (st === "encerrado" && !inscrito) return false;
     if (filtro === "todos") return true;
@@ -384,8 +576,25 @@ export default function Eventos() {
               .sort((a, b) => (keyFim(b) > keyFim(a) ? 1 : keyFim(b) < keyFim(a) ? -1 : 0))
               .map((evento, idx) => {
                 const ehInstrutor = Boolean(evento.ja_instrutor);
-                const st = statusBackendOuFallback(evento);     // ✅ usa backend primeiro
-const chipCfg = chip[st];
+                const st = statusBackendOuFallback(evento);
+                const chipCfg = chip[st];
+
+                // Subconjunto de conflitos GLOBAIS que pertencem a este evento (para desabilitar botões no card)
+                const turmasEvento = turmasDoEvento(evento);
+                const conflitosGlobaisDoEvento = new Set(
+                  turmasEvento
+                    .filter((t) => conflitosGlobais.has(Number(t.id)))
+                    .map((t) => Number(t.id))
+                );
+
+                // Conflitos internos (só congressos)
+                const conflitosInternos = conflitosPorEvento[evento.id] || new Set();
+
+                // União: internos (congresso) + globais (entre eventos)
+                const conflitosSet = new Set([
+                  ...Array.from(conflitosInternos),
+                  ...Array.from(conflitosGlobaisDoEvento),
+                ]);
 
                 return (
                   <motion.article
@@ -470,6 +679,8 @@ const chipCfg = chip[st];
                           gerarRelatorioPDF={() => {}}
                           mostrarStatusTurma={false}
                           exibirRealizadosTotal
+                          // 👇 agora recebe a união de conflitos internos (congresso) + globais
+                          turmasEmConflito={[...conflitosSet]}
                         />
                       </div>
                     )}

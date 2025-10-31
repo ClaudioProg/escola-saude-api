@@ -1,4 +1,4 @@
-// frontend/src/components/ListaTurmasEvento.jsx
+// ✅ frontend/src/components/ListaTurmasEvento.jsx
 /* eslint-disable no-console */
 import React, { useMemo } from "react";
 import PropTypes from "prop-types";
@@ -71,10 +71,12 @@ const extrairHorasDeEncontros = (encontrosInline) => {
 
   (encontrosInline || []).forEach((e) => {
     const hi = parseHora(
-      (typeof e === "object" && (e.inicio || e.horario_inicio)) || (typeof e === "string" ? null : undefined)
+      (typeof e === "object" && (e.inicio || e.horario_inicio)) ||
+        (typeof e === "string" ? null : undefined)
     );
     const hf = parseHora(
-      (typeof e === "object" && (e.fim || e.horario_fim)) || (typeof e === "string" ? null : undefined)
+      (typeof e === "object" && (e.fim || e.horario_fim)) ||
+        (typeof e === "string" ? null : undefined)
     );
     if (hi) his.add(hi);
     if (hf) hfs.add(hf);
@@ -137,11 +139,14 @@ export default function ListaTurmasEvento({
   mostrarStatusTurma = true,
   /** 🆕 controla se mostra “realizados/total” quando há encontros */
   exibirRealizadosTotal = false,
+  /** 🆕 turmas em conflito (IDs) — união de conflitos internos e globais */
+  turmasEmConflito = [],
 }) {
   const isCongresso = String(eventoTipo || "").toLowerCase() === "congresso";
   const jaInscritoTurma = (tid) => inscricoesConfirmadas.map(Number).includes(Number(tid));
 
   const HOJE_ISO = useMemo(() => ymdLocal(hoje), [hoje]);
+  const conflitosSet = useMemo(() => new Set((turmasEmConflito || []).map(Number)), [turmasEmConflito]);
 
   return (
     <div id={`turmas-${eventoId}`} className="mt-4 space-y-4">
@@ -185,12 +190,15 @@ export default function ListaTurmasEvento({
         const statusTurma = getStatusPorJanela({ di, df, hi, hf, agora: hoje });
 
         const bloqueadoPorInstrutor = Boolean(jaInstrutorDoEvento);
-        const disabled = bloqueadoPorInstrutor || carregando || jaInscrito || lotada || bloquearOutras;
+        const emConflito = conflitosSet.has(Number(t.id)); // 🆕 conflito vindo do pai
+        const disabled =
+          bloqueadoPorInstrutor || carregando || jaInscrito || lotada || bloquearOutras || emConflito;
 
         const motivo =
           (bloqueadoPorInstrutor && "Você é instrutor deste evento") ||
           (jaInscrito && "Você já está inscrito nesta turma") ||
           (bloquearOutras && "Você já está inscrito em uma turma deste evento") ||
+          (emConflito && "Conflito de horário com outra turma já inscrita") ||
           (lotada && "Turma lotada") ||
           (!temLimiteVagas && "") ||
           "";
@@ -284,22 +292,24 @@ export default function ListaTurmasEvento({
                 </div>
               </div>
 
-              {/* Chip: Lotada tem prioridade; senão, mostra status real quando permitido */}
-              {(lotada || mostrarStatusTurma) && (
-                <span
-                  className={`text-xs px-2 py-1 rounded-full border ${
-                    lotada
-                      ? "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-200 dark:border-rose-800"
-                      : statusTurma === "Em andamento"
-                      ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-800"
-                      : statusTurma === "Encerrado"
-                      ? "bg-yellow-50 text-yellow-700 border-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-200 dark:border-yellow-800"
-                      : "bg-gray-50 text-gray-700 border-gray-200 dark:bg-gray-800/50 dark:text-gray-200 dark:border-gray-700"
-                  }`}
-                >
-                  {lotada ? "Lotada" : statusTurma}
-                </span>
-              )}
+              {/* Chip de status (sem mostrar "Conflito de horário") */}
+<div className="flex flex-col items-end gap-2">
+  {(lotada || mostrarStatusTurma) && (
+    <span
+      className={`text-xs px-2 py-1 rounded-full border ${
+        lotada
+          ? "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-200 dark:border-rose-800"
+          : statusTurma === "Em andamento"
+          ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-800"
+          : statusTurma === "Encerrado"
+          ? "bg-yellow-50 text-yellow-700 border-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-200 dark:border-yellow-800"
+          : "bg-gray-50 text-gray-700 border-gray-200 dark:bg-gray-800/50 dark:text-gray-200 dark:border-gray-700"
+      }`}
+    >
+      {lotada ? "Lotada" : statusTurma}
+    </span>
+  )}
+</div>
             </div>
 
             {/* Barra de vagas / info de vagas */}
@@ -343,6 +353,8 @@ export default function ListaTurmasEvento({
                     ? "Você é instrutor do evento"
                     : jaInscrito
                     ? "Inscrito nesta turma"
+                    : emConflito
+                    ? "Conflito de horário com outra turma já inscrita"
                     : lotada
                     ? "Turma sem vagas"
                     : bloquearOutras
@@ -356,6 +368,8 @@ export default function ListaTurmasEvento({
                   ? "Instrutor do evento"
                   : jaInscrito
                   ? "Inscrito"
+                  : emConflito
+                  ? "Conflito de horário"
                   : bloquearOutras
                   ? "Indisponível"
                   : lotada
@@ -408,4 +422,8 @@ ListaTurmasEvento.propTypes = {
   mostrarStatusTurma: PropTypes.bool,
   /** quando true, mostra o badge “realizados/total” */
   exibirRealizadosTotal: PropTypes.bool,
+  /** 🆕 lista de IDs de turmas em conflito para desabilitar CTA e sinalizar */
+  turmasEmConflito: PropTypes.arrayOf(
+    PropTypes.oneOfType([PropTypes.number, PropTypes.string])
+  ),
 };

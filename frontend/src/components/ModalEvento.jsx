@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 // 📁 src/components/ModalEvento.jsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "react-toastify";
 import {
   MapPin,
@@ -191,8 +191,11 @@ export default function ModalEvento({
   const [registroInput, setRegistroInput] = useState("");
   const [registros, setRegistros] = useState([]);
 
-  // ================= Derivados =================
-  // Ordena por nome e filtra papéis instrutor/admin
+  // ================= Refs/Sentinelas para reidratação =================
+  const prevEventoKeyRef = useRef(null); // 'NEW' | number | null
+  const prevOpenRef = useRef(false);
+
+  // ================= Derivados / Helpers de Instrutor =================
   const opcoesInstrutor = useMemo(() => {
     const filtrado = (usuarios || [])
       .filter((usuario) => {
@@ -204,12 +207,10 @@ export default function ModalEvento({
         return perfil.includes("instrutor") || perfil.includes("administrador");
       })
       .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
-    console.log("[opcoesInstrutor] filtrado:", filtrado);
     return filtrado;
   }, [usuarios]);
 
   function handleSelecionarInstrutor(index, valor) {
-    console.log("[handleSelecionarInstrutor] index:", index, "novo valor:", valor);
     const nova = [...instrutorSelecionado];
     nova[index] = valor;
     setInstrutorSelecionado(nova);
@@ -233,28 +234,20 @@ export default function ModalEvento({
     );
   }
 
-  // ================= Effects =================
-  // carrega dados iniciais do evento no formulário
-  useEffect(() => {
-    console.group("[ModalEvento useEffect evento/isOpen]");
-    console.log("isOpen:", isOpen, "evento:", evento);
+  // Popula estados a partir de um "evento" (ou reseta para novo)
+  function rehidratarDoEvento(src) {
+    if (src) {
+      setTitulo(src.titulo || "");
+      setDescricao(src.descricao || "");
+      setLocal(src.local || "");
+      setTipo(src.tipo || "");
+      setUnidadeId(src.unidade_id ? String(src.unidade_id) : "");
+      setPublicoAlvo(src.publico_alvo || "");
 
-    if (evento) {
-      console.log("➡️ Modo edição, populando estados com evento existente...");
-
-      setTitulo(evento.titulo || "");
-      setDescricao(evento.descricao || "");
-      setLocal(evento.local || "");
-      setTipo(evento.tipo || "");
-      setUnidadeId(evento.unidade_id || "");
-      setPublicoAlvo(evento.publico_alvo || "");
-
-      // instrutores que já vieram no evento
-      const instrutoresIds = getInstrutoresIds(evento).map(String).filter(Boolean);
+      const instrutoresIds = getInstrutoresIds(src).map(String).filter(Boolean);
       setInstrutorSelecionado(instrutoresIds.length ? instrutoresIds : [""]);
 
-      // turmas vindas do backend normalizadas
-      const turmasNormalizadas = (evento.turmas || []).map((t) => {
+      const turmasNormalizadas = (src.turmas || []).map((t) => {
         const n = normalizarDatasTurma(t);
         let cargaCalc = Number.isFinite(Number(t.carga_horaria))
           ? Number(t.carga_horaria)
@@ -275,28 +268,24 @@ export default function ModalEvento({
       });
       setTurmas(turmasNormalizadas);
 
-      // restrição inicial
-      const restr = !!evento.restrito;
+      const restr = !!src.restrito;
       setRestrito(restr);
 
-      let modo = evento.restrito_modo;
+      let modo = src.restrito_modo;
       if (!modo && restr) {
-        modo = evento.vis_reg_tipo === "lista" ? "lista_registros" : "todos_servidores";
+        modo = src.vis_reg_tipo === "lista" ? "lista_registros" : "todos_servidores";
       }
       setRestritoModo(restr ? (modo || "todos_servidores") : "");
 
-      // registros permitidos
       const lista =
-        (Array.isArray(evento.registros_permitidos) ? evento.registros_permitidos : null) ??
-        (Array.isArray(evento.registros) ? evento.registros : []);
-      const onlySix = (lista || [])
-        .map(normReg)
-        .filter((r) => /^\d{6}$/.test(r));
+        (Array.isArray(src.registros_permitidos) ? src.registros_permitidos : null) ??
+        (Array.isArray(src.registros) ? src.registros : []);
+      const onlySix = (lista || []).map(normReg).filter((r) => /^\d{6}$/.test(r));
       const uniq = Array.from(new Set(onlySix));
       setRegistros(uniq);
       setRegistroInput("");
     } else {
-      // reset se for "novo evento"
+      // novo evento
       setTitulo("");
       setDescricao("");
       setLocal("");
@@ -312,9 +301,30 @@ export default function ModalEvento({
       setRegistros([]);
       setRegistroInput("");
     }
+  }
 
-    console.groupEnd();
-  }, [evento, isOpen]);
+  // ================= Effects =================
+  // Reidrata somente quando abrir ou quando trocar o id do evento
+  useEffect(() => {
+    if (!isOpen) {
+      prevOpenRef.current = false;
+      prevEventoKeyRef.current = null;
+      return;
+    }
+    const curKey = evento?.id != null ? Number(evento.id) : "NEW";
+
+    if (!prevOpenRef.current) {
+      rehidratarDoEvento(evento || null);
+      prevOpenRef.current = true;
+      prevEventoKeyRef.current = curKey;
+      return;
+    }
+
+    if (prevEventoKeyRef.current !== curKey) {
+      rehidratarDoEvento(evento || null);
+      prevEventoKeyRef.current = curKey;
+    }
+  }, [isOpen, evento?.id]); // ✅ evita resets enquanto digita
 
   // GET fresh do evento (restrição/lista de registros) só se precisar
   useEffect(() => {
@@ -338,9 +348,7 @@ export default function ModalEvento({
           : Array.isArray(det.registros)
           ? det.registros
           : [];
-        const parsed = (lista || [])
-          .map(normReg)
-          .filter((r) => /^\d{6}$/.test(r));
+        const parsed = (lista || []).map(normReg).filter((r) => /^\d{6}$/.test(r));
         setRegistros([...new Set(parsed)]);
       } catch (err) {
         console.warn("⚠️ Falha ao atualizar restrição fresh do evento:", err?.message, err);
@@ -640,7 +648,7 @@ export default function ModalEvento({
                   console.log("[ModalEvento] clique no X fechar");
                   onClose();
                 }}
-                className="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-black/5 dark:hover:bg.white/10/0 dark:hover:bg-white/10"
+                className="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-black/5 dark:hover:bg-white/10"
                 aria-label="Fechar"
               >
                 <X className="w-5 h-5" aria-hidden="true" />
@@ -677,7 +685,7 @@ export default function ModalEvento({
                     value={titulo}
                     onChange={(e) => setTitulo(e.target.value)}
                     placeholder="Ex.: Curso de Atualização em Urgência"
-                    className="w-full pl-10 pr-3 py-2 rounded-xl border border-black/10 dark:border.white/10/0 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm"
+                    className="w-full pl-10 pr-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm"
                     required
                   />
                 </div>
@@ -739,7 +747,7 @@ export default function ModalEvento({
                   <div key={`instrutor-${index}`} className="relative">
                     <div className="flex items-center gap-2">
                       <select
-                        value={valor}
+                        value={String(valor ?? "")}
                         onChange={(e) => handleSelecionarInstrutor(index, e.target.value)}
                         className="w-full pl-3 pr-10 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm"
                         required={index === 0}
@@ -747,7 +755,7 @@ export default function ModalEvento({
                       >
                         <option value="">Selecione o instrutor</option>
                         {getInstrutorDisponivel(index).map((i) => (
-                          <option key={i.id} value={i.id}>
+                          <option key={i.id} value={String(i.id)}>
                             {i.nome}
                           </option>
                         ))}
@@ -811,10 +819,10 @@ export default function ModalEvento({
                     size={18}
                     aria-hidden="true"
                   />
-                <select
+                  <select
                     id="evento-tipo"
-                    value={tipo}
-                    onChange={(e) => setTipo(e.target.value)}
+                    value={String(tipo ?? "")}
+                    onChange={(e) => setTipo(String(e.target.value))}
                     className="w-full pl-10 pr-10 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm"
                     required
                   >
@@ -841,14 +849,14 @@ export default function ModalEvento({
                   />
                   <select
                     id="evento-unidade"
-                    value={unidadeId}
-                    onChange={(e) => setUnidadeId(e.target.value)}
+                    value={String(unidadeId ?? "")}
+                    onChange={(e) => setUnidadeId(String(e.target.value))}
                     className="w-full pl-10 pr-10 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm"
                     required
                   >
                     <option value="">Selecione a unidade</option>
                     {unidades.map((u) => (
-                      <option key={u.id} value={u.id}>
+                      <option key={u.id} value={String(u.id)}>
                         {u.nome}
                       </option>
                     ))}

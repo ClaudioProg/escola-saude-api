@@ -101,103 +101,174 @@ export default function HomeEscola() {
               <p>👉 Venha participar, trazer sua experiência e fortalecer ainda mais a nossa rede de cuidado.</p>
               <p>
                 <strong className="text-red-600 dark:text-red-400 font-bold">
-                  Inscrições serão abertas em breve!
+                  INSCRIÇÕES ABERTAS !!!
                 </strong>
               </p>
               <p>Porque o SUS se constrói todos os dias, com a contribuição de cada trabalhadora e trabalhador da saúde.</p>
             </DestaqueLongo>
 
-            {/* 2) Outubro Rosa */}
-            <DestaqueLongo
-              imgSrc="/banners/outubro-rosa.jpg"
-              imgAlt="Arte da campanha Outubro Rosa"
-              titulo="🌷 Outubro Rosa: um mês pela vida"
-              subtitulo="Prevenção do câncer de mama"
-              badge="Campanha"
-            >
-              <p>
-                Outubro é marcado mundialmente como o mês de conscientização sobre o câncer de mama, uma das doenças que mais acometem mulheres no Brasil e no mundo. Esta campanha nasceu para lembrar a importância da prevenção e do diagnóstico precoce, que pode salvar milhares de vidas.
-              </p>
-              <p>
-                A cor rosa que vemos iluminar prédios, ruas e símbolos neste mês não é apenas um detalhe visual: é um chamado para que todas as pessoas – mulheres e também homens, que em menor número também podem ser acometidos – estejam atentos aos cuidados com a saúde.
-              </p>
-              <p><strong>💡 Prevenção e autocuidado</strong></p>
-              <p>Autoexame das mamas: deve ser feito regularmente, conhecendo o próprio corpo e identificando alterações como nódulos, retrações ou secreções.</p>
-              <p>Consultas médicas e exames periódicos: a mamografia é o principal exame para o diagnóstico precoce e deve ser realizada conforme orientação médica, especialmente a partir dos 40 anos.</p>
-              <p>Hábitos de vida saudáveis: manter uma alimentação equilibrada, praticar atividade física e evitar o consumo excessivo de álcool e tabaco são medidas que ajudam na prevenção.</p>
-              <p><strong>🌍 Um compromisso coletivo</strong></p>
-              <p>
-                O Outubro Rosa é mais do que uma campanha: é um convite para o cuidado consigo mesmo e com quem está ao nosso lado. Compartilhe informações, incentive amigas, colegas e familiares a realizarem seus exames. Cada gesto pode fazer a diferença.
-              </p>
-              <p><strong>Cuidar da saúde é um ato de amor e de coragem. Previna-se. Valorize a vida. 💖</strong></p>
-            </DestaqueLongo>
+            {/* 2) Novembro Azul */}
+<DestaqueLongo
+  imgSrc="/banners/novembro-azul.png"
+  imgAlt="Arte da campanha Novembro Azul"
+  titulo="💙 Novembro Azul: um mês pela vida"
+  subtitulo="Prevenção do câncer de próstata"
+  badge="Campanha"
+>
+  <p>
+    Novembro é o mês dedicado à conscientização sobre a saúde do homem, com ênfase na prevenção
+    e no diagnóstico precoce do câncer de próstata — o segundo tipo mais comum entre os homens
+    brasileiros, atrás apenas do câncer de pele.
+  </p>
 
-            {/* 3) Saúde Mental */}
-            <DestaqueLongo
-              imgSrc="/banners/saude-mental.png"
-              imgAlt="Arte do Dia Mundial da Saúde Mental"
-              titulo="💙 Dia Mundial da Saúde Mental"
-              subtitulo="10 de Outubro"
-              badge="Saúde"
-            >
-              <p>
-                O Dia Mundial da Saúde Mental foi instituído em 1992 pela Federação Mundial para a Saúde Mental (World Federation for Mental Health), com apoio da Organização Mundial da Saúde (OMS). Desde então, a data é lembrada anualmente em mais de 150 países como um chamado à reflexão e à ação sobre um tema que toca a todos nós: o cuidado com a saúde mental.
-              </p>
-              <p>
-                Falar de saúde mental já foi cercado de tabus. Hoje sabemos que cuidar da mente é tão essencial quanto cuidar do corpo. Depressão, ansiedade, estresse, burnout e outros transtornos afetam milhões de pessoas, comprometendo qualidade de vida, relações sociais e a saúde física.
-              </p>
-              <p><strong>🌱 A importância da data</strong></p>
-              <p>Conscientizar, informar e promover acolhimento. Criar ambientes mais saudáveis, relações mais empáticas e sociedades mais inclusivas.</p>
-              <p><strong>💡 Orientações e cuidados</strong></p>
-              <p>Fale sobre o que sente; procure ajuda profissional; cuide do sono, alimentação e atividade física; pratique pausas e lazer; cultive vínculos.</p>
-              <p><strong>🌍 Um compromisso coletivo</strong></p>
-              <p>Construir uma cultura de respeito, empatia e solidariedade, combatendo preconceitos e abrindo espaço para o diálogo.</p>
-              <p><strong>Neste 10 de outubro, lembre-se: cuidar da mente é cuidar da vida. 💙</strong></p>
-            </DestaqueLongo>
+  <p>
+    A cor azul que ilumina monumentos, prédios e espaços públicos neste período simboliza um
+    lembrete importante: cuidar da saúde também é um gesto de responsabilidade e amor-próprio.
+    O Novembro Azul convida todos os homens a romperem preconceitos e a procurarem acompanhamento
+    médico regular.
+  </p>
 
-            {/* 4) Vacinação */}
-            <DestaqueLongo
-              imgSrc="/banners/vacinacao.png"
-              imgAlt="Arte do Dia Nacional de Vacinação"
-              titulo="💉 Dia Nacional da Vacinação"
-              subtitulo="17 de Outubro"
-              badge="Saúde"
-            >
-              <p>
-                O Dia Nacional da Vacinação reforça a imunização como uma das ferramentas mais eficazes de prevenção de doenças. Cada dose aplicada representa um ato de cuidado consigo e com a comunidade.
-              </p>
-              <p>
-                Graças às vacinas, controlamos ou erradicamos doenças como varíola, poliomielite e sarampo. Vacinas são seguras e passam por rigorosos processos de pesquisa e controle de qualidade.
-              </p>
-              <p><strong>🌱 A importância da data</strong></p>
-              <p>Reconhecer o papel da vacinação e valorizar o trabalho dos profissionais de saúde que garantem a cobertura vacinal.</p>
-              <p><strong>💡 Orientações</strong></p>
-              <p>Mantenha a caderneta em dia; vacine-se em todas as fases da vida; participe das campanhas; proteja-se e proteja quem você ama.</p>
-              <p><strong>🌍 Um compromisso de todos</strong></p>
-              <p><strong>Neste 17 de outubro, reafirme o compromisso com a vida: vacine-se. 💉💙</strong></p>
-            </DestaqueLongo>
+  <p><strong>💡 Prevenção e autocuidado</strong></p>
 
-            {/* 5) Sífilis */}
-            <DestaqueLongo
-              imgSrc="/banners/sifilis.png"
-              imgAlt="Arte do Dia Nacional de Combate à Sífilis"
-              titulo="💗 Dia Nacional de Combate à Sífilis e à Sífilis Congênita: um alerta pela vida"
-              subtitulo="Terceiro sábado de Outubro"
-              badge="Saúde"
-            >
-              <p>
-                A data é dedicada à conscientização sobre prevenção, diagnóstico e tratamento da sífilis, IST que tem cura, mas ainda representa um desafio para a saúde pública.
-              </p>
-              <p>
-                A sífilis pode ser transmitida por contato sexual sem proteção e da mãe para o bebê durante a gestação (sífilis congênita). O pré-natal adequado e o tratamento correto evitam complicações graves.
-              </p>
-              <p><strong>🌿 Prevenção e cuidado</strong></p>
-              <p>Use preservativo em todas as relações sexuais. Na gestação, realize o teste rápido em todas as consultas. Se positivo, trate com penicilina (disponível no SUS).</p>
-              <p><strong>🌺 Compromisso coletivo</strong></p>
-              <p>Quebrar tabus, informar e incentivar o cuidado mútuo. A informação é o primeiro passo para vencer a sífilis.</p>
-              <p><strong>✨ Cuidar da saúde sexual é um gesto de amor e proteção à vida.</strong></p>
-            </DestaqueLongo>
-          </div>
+  <p>
+    <strong>Consultas e exames de rotina:</strong> o acompanhamento com o urologista é fundamental,
+    especialmente a partir dos 45 anos (ou 40, para quem tem histórico familiar de câncer de próstata).
+    O exame de toque retal e o exame de sangue PSA são aliados no diagnóstico precoce.
+  </p>
+
+  <p>
+    <strong>Estilo de vida saudável:</strong> manter uma alimentação balanceada, praticar atividades
+    físicas, evitar o tabagismo e o consumo excessivo de álcool contribuem para reduzir o risco de
+    doenças crônicas e câncer.
+  </p>
+
+  <p>
+    <strong>Escuta e cuidado integral:</strong> cuidar da saúde mental, buscar apoio quando necessário
+    e manter vínculos afetivos também fazem parte do bem-estar masculino.
+  </p>
+
+  <p><strong>🌍 Um compromisso com a vida</strong></p>
+
+  <p>
+    O Novembro Azul é mais do que uma campanha: é um movimento pela valorização da saúde,
+    da informação e da vida. Falar sobre prevenção é um ato de coragem e amor — por si e
+    por quem está ao seu lado.
+  </p>
+
+  <p>
+    <strong>Cuide-se. Faça seus exames. Valorize a vida. 💙</strong>
+  </p>
+</DestaqueLongo>
+
+
+            {/* 3) Novembro Roxo */}
+<DestaqueLongo
+  imgSrc="/banners/novembro-roxo.png"
+  imgAlt="Arte da campanha Novembro Roxo"
+  titulo="💜 Novembro Roxo: juntos pela prematuridade"
+  subtitulo="Conscientização sobre o nascimento prematuro"
+  badge="Campanha"
+>
+  <p>
+    O Novembro Roxo é o mês mundial de sensibilização sobre a prematuridade, uma condição que
+    afeta milhões de bebês todos os anos. A campanha tem como objetivo conscientizar sobre as
+    causas, consequências e, principalmente, sobre a importância da prevenção e do cuidado
+    adequado com os bebês que nascem antes das 37 semanas de gestação.
+  </p>
+
+  <p>
+    O roxo, cor símbolo da campanha, representa sensibilidade, compaixão e transformação.
+    Ele nos lembra que cada vida prematura é uma história de força, amor e esperança — e que
+    o apoio das famílias, profissionais de saúde e da sociedade faz toda a diferença na jornada
+    desses pequenos guerreiros.
+  </p>
+
+  <p><strong>💡 Cuidados e prevenção</strong></p>
+
+  <p>
+    <strong>Pré-natal regular:</strong> realizar o acompanhamento médico adequado é essencial
+    para identificar e tratar precocemente condições que podem levar ao parto prematuro, como
+    infecções, hipertensão e diabetes gestacional.
+  </p>
+
+  <p>
+    <strong>Estilo de vida saudável:</strong> manter uma alimentação equilibrada, evitar o
+    consumo de álcool e cigarro e praticar atividades físicas leves, conforme orientação médica,
+    ajudam na saúde da gestante e do bebê.
+  </p>
+
+  <p>
+    <strong>Apoio e acolhimento:</strong> famílias de bebês prematuros precisam de suporte
+    emocional e informações adequadas para lidar com os desafios da UTI neonatal e com os
+    cuidados após a alta hospitalar.
+  </p>
+
+  <p><strong>🌍 Um compromisso com o começo da vida</strong></p>
+
+  <p>
+    O Novembro Roxo é um chamado à empatia e à responsabilidade coletiva. Cuidar da gestante,
+    promover o parto seguro e apoiar as famílias de prematuros é garantir um início de vida
+    mais saudável e humano para todos.
+  </p>
+
+  <p>
+    <strong>Prematuro não é pequeno. É forte. É vida que floresce com cuidado e amor. 💜</strong>
+  </p>
+</DestaqueLongo>
+
+{/* 4) Dia Nacional de Combate à Tuberculose */}
+<DestaqueLongo
+  imgSrc="/banners/combate-tuberculose.png"
+  imgAlt="Arte da campanha Dia Nacional de Combate à Tuberculose"
+  titulo="❤️ 17 de Novembro: Dia Nacional de Combate à Tuberculose"
+  subtitulo="Conscientização, prevenção e tratamento"
+  badge="Data de saúde"
+>
+  <p>
+    No dia 17 de novembro é celebrado o <strong>Dia Nacional de Combate à Tuberculose</strong>,
+    uma data dedicada à conscientização sobre a importância da prevenção, do diagnóstico precoce
+    e do tratamento adequado dessa doença infecciosa que ainda representa um desafio para a saúde pública.
+  </p>
+
+  <p>
+    Causada pela bactéria <em>Mycobacterium tuberculosis</em>, a tuberculose afeta principalmente
+    os pulmões, mas pode atingir outros órgãos do corpo. É uma doença curável, desde que o tratamento
+    seja iniciado e mantido corretamente até o fim, conforme orientação médica.
+  </p>
+
+  <p><strong>💡 Prevenção e cuidados</strong></p>
+
+  <p>
+    <strong>Diagnóstico precoce:</strong> a tosse persistente por mais de três semanas é o principal
+    sintoma e deve ser investigada. O exame de escarro é gratuito e disponível nas Unidades de Saúde.
+  </p>
+
+  <p>
+    <strong>Tratamento gratuito:</strong> o tratamento da tuberculose é oferecido gratuitamente
+    pelo Sistema Único de Saúde (SUS) e dura, em média, seis meses. É essencial não interromper
+    o uso dos medicamentos antes do término, mesmo que os sintomas desapareçam.
+  </p>
+
+  <p>
+    <strong>Prevenção e proteção:</strong> manter os ambientes ventilados e iluminados, cobrir a boca
+    ao tossir ou espirrar, e realizar a vacinação com a BCG (indicada para crianças) são medidas
+    importantes para evitar o contágio.
+  </p>
+
+  <p><strong>🌍 Um compromisso coletivo</strong></p>
+
+  <p>
+    O combate à tuberculose exige informação, solidariedade e vigilância. Cada gesto conta —
+    desde buscar o diagnóstico até apoiar quem está em tratamento. Com cuidado, empatia e adesão
+    ao tratamento, é possível vencer a doença.
+  </p>
+
+  <p>
+    <strong>Tosse persistente? Procure a Unidade de Saúde mais próxima. Cuidar da saúde é o melhor caminho. ❤️</strong>
+  </p>
+</DestaqueLongo>
+
+           </div>
         </section>
       </div>
 
