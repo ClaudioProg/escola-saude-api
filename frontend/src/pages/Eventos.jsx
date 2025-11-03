@@ -414,40 +414,52 @@ export default function Eventos() {
 
   // 🔁 Recalcula conflito GLOBAL sempre que turmas carregadas ou inscrições mudarem
   useEffect(() => {
-    const globais = new Set();
+  const globais = new Set();
 
-    // Monta mapa de resumo para cada turma carregada (em todos os eventos abertos)
-    const todasTurmas = [];
-    for (const turmas of Object.values(turmasPorEvento)) {
-      if (Array.isArray(turmas)) todasTurmas.push(...turmas);
-    }
+  // Monta mapa de resumo para cada turma carregada (em todos os eventos abertos)
+  const todasTurmas = [];
+  for (const turmas of Object.values(turmasPorEvento)) {
+    if (Array.isArray(turmas)) todasTurmas.push(...turmas);
+  }
 
-    const resumoTurma = (t) => {
-      const { di, df } = rangeDaTurma(t);
-      const { hi, hf } = horarioMaisProvavel(t);
-      return { di, df, hi, hf };
-    };
+  const resumoTurma = (t) => {
+    const { di, df } = rangeDaTurma(t);
+    const { hi, hf } = horarioMaisProvavel(t);
+    return { di, df, hi, hf };
+  };
 
-    // Para cada turma carregada, verifica se conflita com QUALQUER inscrição existente
-    for (const t of todasTurmas) {
-      const rA = resumoTurma(t);
-      if (!rA.di || !rA.df || !rA.hi || !rA.hf) continue; // precisa de período e horário
-      for (const i of inscricoesDetalhes) {
-        const diB = ymd(i?.data_inicio);
-        const dfB = ymd(i?.data_fim);
-        const hiB = HHMM(i?.horario_inicio, null);
-        const hfB = HHMM(i?.horario_fim, null);
-        if (!diB || !dfB || !hiB || !hfB) continue;
+  // Para cada turma carregada, verifica se conflita com QUALQUER inscrição existente
+  for (const t of todasTurmas) {
+    const rA = resumoTurma(t);
+    if (!rA.di || !rA.df || !rA.hi || !rA.hf) continue; // precisa de período e horário
 
-        if (datasIntersectam(rA.di, rA.df, diB, dfB) && horariosSobrepoem(rA.hi, rA.hf, hiB, hfB)) {
-          globais.add(Number(t.id));
-          break;
-        }
+    for (const i of inscricoesDetalhes) {
+      const diB = ymd(i?.data_inicio);
+      const dfB = ymd(i?.data_fim);
+      const hiB = HHMM(i?.horario_inicio, null);
+      const hfB = HHMM(i?.horario_fim, null);
+      if (!diB || !dfB || !hiB || !hfB) continue;
+
+      if (datasIntersectam(rA.di, rA.df, diB, dfB) && horariosSobrepoem(rA.hi, rA.hf, hiB, hfB)) {
+        // ✅ LOG NO ESCopo CERTO (com variáveis válidas)
+        console.warn("[CONFLITO-GLOBAL] Turma em conflito", {
+          turma_id: Number(t.id),
+          turma_range: { di: rA.di, df: rA.df, hi: rA.hi, hf: rA.hf },
+          contra_inscricao: {
+            turma_id: Number(i?.turma_id),
+            di: diB, df: dfB, hi: hiB, hf: hfB,
+          }
+        });
+
+        globais.add(Number(t.id));
+        break;
       }
     }
+  }
 
-    setConflitosGlobais(globais);
-  }, [turmasPorEvento, inscricoesDetalhes]);
+  setConflitosGlobais(globais);
+}, [turmasPorEvento, inscricoesDetalhes]);
+
 
   // Helper: verifica conflito GLOBAL on-the-fly para uma turma específica (caso ainda não esteja no Set)
   const temConflitoGlobalComMinhasInscricoes = (turma) => {
