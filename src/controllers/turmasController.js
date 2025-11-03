@@ -422,6 +422,67 @@ async function listarTurmasPorEvento(req, res) {
   }
 }
 
+/* ===== 🚀 Endpoint leve: obter apenas turmas de um evento (sem inscritos) ===== */
+// GET /api/eventos/:evento_id/turmas-simples
+async function obterTurmasPorEvento(req, res) {
+  const { evento_id } = req.params;
+  try {
+    const { rows } = await db.query(
+      `
+      SELECT 
+        t.id, 
+        t.nome,
+        t.data_inicio,
+        t.data_fim,
+        t.horario_inicio,
+        t.horario_fim,
+        t.vagas_total,
+        t.carga_horaria
+      FROM turmas t
+      WHERE t.evento_id = $1
+      ORDER BY t.data_inicio, t.horario_inicio
+      `,
+      [evento_id]
+    );
+
+    const turmaIds = rows.map((t) => t.id);
+    if (turmaIds.length === 0) return res.json([]);
+
+    const datasResult = await db.query(
+      `
+      SELECT turma_id, data::date AS data,
+             to_char(horario_inicio, 'HH24:MI') AS horario_inicio,
+             to_char(horario_fim,   'HH24:MI')   AS horario_fim
+      FROM datas_turma
+      WHERE turma_id = ANY($1::int[])
+      ORDER BY turma_id, data
+      `,
+      [turmaIds]
+    );
+
+    const datasPorTurma = {};
+    for (const d of datasResult.rows) {
+      if (!datasPorTurma[d.turma_id]) datasPorTurma[d.turma_id] = [];
+      datasPorTurma[d.turma_id].push({
+        data: d.data.toISOString().slice(0, 10),
+        horario_inicio: d.horario_inicio || null,
+        horario_fim: d.horario_fim || null,
+      });
+    }
+
+    const resposta = rows.map((t) => ({
+      ...t,
+      datas: datasPorTurma[t.id] || [],
+    }));
+
+    return res.json(resposta);
+  } catch (err) {
+    console.error("❌ obterTurmasPorEvento erro:", err);
+    return res.status(500).json({ erro: "Erro ao buscar turmas do evento." });
+  }
+}
+
+
 /* ===== 👨‍🏫 Listar turmas do instrutor (com datas reais + presenças) ===== */
 // GET /api/turmas/instrutor
 async function listarTurmasDoInstrutor(req, res) {
@@ -806,6 +867,7 @@ module.exports = {
   obterDetalhesTurma,
   listarTurmasComUsuarios,
   listarTurmasDoInstrutor,
+  obterTurmasPorEvento,
 
   // ✅ aliases retrocompatíveis
   editarTurma: atualizarTurma,

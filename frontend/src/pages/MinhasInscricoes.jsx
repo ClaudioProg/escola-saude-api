@@ -208,21 +208,38 @@ export default function MinhasInscricoes() {
     try {
       const data = await apiGet("/api/inscricoes/minhas");
       const arr = Array.isArray(data) ? data : [];
-
-      const ordenadas = [...arr].sort((a, b) => {
-        const aEnd = safeTs(a.data_fim || a.data_inicio, a.horario_fim || a.horario_inicio || "23:59:59");
-        const bEnd = safeTs(b.data_fim || b.data_inicio, b.horario_fim || b.horario_inicio || "23:59:59");
-        return bEnd - aEnd;
-      });
-
-      const ativas = ordenadas.filter((item) => {
+  
+      // helpers de ordenação: início e fim em timestamp local
+      const tsInicio = (x) =>
+        safeTs(
+          (x?.data_inicio || x?.data_fim || ""),         // se faltar início, usa fim
+          (x?.horario_inicio || "00:00:00")
+        );
+  
+      const tsFim = (x) =>
+        safeTs(
+          (x?.data_fim || x?.data_inicio || ""),         // se faltar fim, usa início
+          (x?.horario_fim || x?.horario_inicio || "23:59:59")
+        );
+  
+      // filtra somente ativos (programado / em andamento)
+      const ativas = arr.filter((item) => {
         const status = obterStatusEvento(item.data_inicio, item.data_fim, item.horario_inicio, item.horario_fim);
         const fimISO = (item.data_fim || item.data_inicio || "").slice(0, 10);
         const hojeISO = new Date().toISOString().slice(0, 10);
         const encerradoPeloISO = fimISO && fimISO < hojeISO;
         return (status === "Programado" || status === "Em andamento") && !encerradoPeloISO;
       });
-
+  
+      // ✅ ordena por início (data+hora) ASC, depois fim ASC, depois título
+      ativas.sort((a, b) => {
+        const sa = tsInicio(a), sb = tsInicio(b);
+        if (sa !== sb) return sa - sb;
+        const ea = tsFim(a), eb = tsFim(b);
+        if (ea !== eb) return ea - eb;
+        return String(a?.titulo || "").localeCompare(String(b?.titulo || ""), "pt-BR");
+      });
+  
       setInscricoes(ativas);
       setErro("");
       setUpdatedAt(new Date().toLocaleString());

@@ -1604,6 +1604,38 @@ async function listarDatasDaTurma(req, res) {
   }
 }
 
+/* =====================================================================
+   📋 Listar turmas simples (usado no frontend de inscrição/eventos)
+   ===================================================================== */
+   async function listarTurmasSimples(req, res) {
+    const eventoId = Number(req.params.id);
+    if (!Number.isFinite(eventoId)) {
+      return res.status(400).json({ erro: "ID de evento inválido." });
+    }
+  
+    try {
+      const sql = `
+        SELECT 
+          t.id,
+          t.nome,
+          to_char(t.data_inicio, 'YYYY-MM-DD') AS data_inicio,
+          to_char(t.data_fim, 'YYYY-MM-DD') AS data_fim,
+          to_char(t.horario_inicio, 'HH24:MI') AS horario_inicio,
+          to_char(t.horario_fim, 'HH24:MI') AS horario_fim,
+          t.vagas_total,
+          (SELECT COUNT(*) FROM inscricoes i WHERE i.turma_id = t.id) AS inscritos
+        FROM turmas t
+        WHERE t.evento_id = $1
+        ORDER BY t.data_inicio, t.id;
+      `;
+      const { rows } = await query(sql, [eventoId]);
+      return res.json(rows);
+    } catch (err) {
+      console.error("listarTurmasSimples erro:", err);
+      return res.status(500).json({ erro: "Erro ao listar turmas simples." });
+    }
+  }
+
 /* ===================================================================== */
 module.exports = {
   listarEventos,
@@ -1612,6 +1644,7 @@ module.exports = {
   atualizarEvento,
   excluirEvento,
   listarTurmasDoEvento,
+  listarTurmasSimples,
   getAgendaEventos,
   listarEventosDoinstrutor,
   listarDatasDaTurma,

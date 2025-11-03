@@ -8,7 +8,7 @@ const inscricoesController = require("../controllers/inscricoesController");
 
 // serviços/DB para validar acesso por registro
 const db = require("../db");
-const { podeVerEvento } = require('../services/eventoAcessoRegistroService');
+const { podeVerEvento } = require("../services/eventoAcessoRegistroService");
 
 /**
  * 🛡️ Middleware: valida se o usuário pode se inscrever na turma informada
@@ -20,6 +20,7 @@ async function checarAcessoPorRegistroNaTurma(req, res, next) {
       req.body?.turma_id ||
       req.body?.turmaId ||
       req.params?.turma_id ||
+      req.params?.turmaId || // cobre /conflito/:turmaId
       req.query?.turma_id;
 
     if (!turmaId) {
@@ -92,11 +93,23 @@ router.get(
 );
 
 /* ──────────────────────────────────────────────────────────
+   🔎 Checagem de conflito (para o frontend pintar o card/botão)
+   ────────────────────────────────────────────────────────── */
+
+// ✅ Checa conflito para UMA turma (mesmo evento + global)
+router.get(
+  "/conflito/:turmaId",
+  auth,
+  checarAcessoPorRegistroNaTurma,
+  inscricoesController.conflitoPorTurma // ⬅️ certifique-se de exportar no controller
+);
+
+/* ──────────────────────────────────────────────────────────
    🧯 LEGADO: DELETE /inscricoes/:id
    Tenta tratar :id como inscricao_id; se não achar, tenta como turma_id
    para cancelar a própria inscrição. Mantém compatibilidade com frontend antigo.
    ────────────────────────────────────────────────────────── */
-router.delete("/:id", auth, async (req, res, next) => {
+router.delete("/:id", auth, async (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ erro: "ID inválido." });
 
@@ -109,13 +122,15 @@ router.delete("/:id", auth, async (req, res, next) => {
     if (ins.rowCount) {
       const { usuario_id, turma_id } = ins.rows[0] || {};
       // se próprio usuário OU admin, permitir via controller admin (reuso)
-      const isAdmin =
-        (req.user?.perfil || req.user?.perfil || []).includes(
-          "administrador"
-        );
+      const perfis = []
+        .concat(req.user?.perfil || [])
+        .concat(req.user?.perfis || []);
+      const isAdmin = perfis.includes("administrador");
       const isSelf = Number(usuario_id) === Number(req.user?.id || req.user?.id);
       if (!isAdmin && !isSelf) {
-        return res.status(403).json({ erro: "Sem permissão para cancelar esta inscrição." });
+        return res
+          .status(403)
+          .json({ erro: "Sem permissão para cancelar esta inscrição." });
       }
       req.params.turmaId = turma_id;
       req.params.usuarioId = usuario_id;

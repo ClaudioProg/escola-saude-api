@@ -1,5 +1,5 @@
-// ✅ src/pages/Eventos.jsx (revisado — com conflito GLOBAL)
-import { useEffect, useState, useMemo } from "react";
+// ✅ src/pages/Eventos.jsx (revisado — com conflito GLOBAL + rotas corretas)
+import { useEffect, useState } from "react";
 import { toast } from "react-toastify";
 import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
@@ -267,12 +267,119 @@ export default function Eventos() {
   }
 
   async function carregarTurmas(eventoId) {
-    setTurmasVisiveis((prev) => ({ ...prev, [eventoId]: !prev[eventoId] }));
+    // Se já está aberto, recolhe.
+    if (turmasVisiveis[eventoId]) {
+      setTurmasVisiveis((prev) => ({ ...prev, [eventoId]: false }));
+      return;
+    }
+  
+    // Abre e busca se necessário
+    setTurmasVisiveis((prev) => ({ ...prev, [eventoId]: true }));
     if (!turmasPorEvento[eventoId] && !carregandoTurmas) {
       setCarregandoTurmas(eventoId);
       try {
-        const turmas = await apiGet(`/api/turmas/evento/${eventoId}`);
-        setTurmasPorEvento((prev) => ({ ...prev, [eventoId]: Array.isArray(turmas) ? turmas : [] }));
+        // 1) tenta a rota leve
+        let turmas = await apiGet(`/api/eventos/${eventoId}/turmas-simples`);
+  
+        // 2) se não for array, usa fallback completo + normalização
+        if (!Array.isArray(turmas)) {
+          try {
+            const full = await apiGet(`/api/eventos/${eventoId}/turmas`);
+            turmas = Array.isArray(full)
+              ? full.map((t) => ({
+                  id: t.id,
+                  evento_id: t.evento_id,
+                  nome: t.nome,
+                  vagas_total: t.vagas_total,
+                  carga_horaria: t.carga_horaria,
+                  data_inicio: t.data_inicio?.slice(0, 10) || null,
+                  data_fim: t.data_fim?.slice(0, 10) || null,
+                  horario_inicio: t.horario_inicio?.slice(0, 5) || null,
+                  horario_fim: t.horario_fim?.slice(0, 5) || null,
+                  _datas: Array.isArray(t.datas)
+                    ? t.datas.map((d) => ({
+                        data: d.data,
+                        horario_inicio: d.horario_inicio,
+                        horario_fim: d.horario_fim,
+                      }))
+                    : [],
+                }))
+              : [];
+          } catch {
+            turmas = [];
+          }
+        }
+  
+        // 3) se a resposta "simples" veio mas sem horários/cronograma, busca uma vez o full e mescla
+        const precisaEnriquecer = Array.isArray(turmas) && turmas.some((t) =>
+          !t?.horario_inicio && !t?.horario_fim &&
+          !(Array.isArray(t?.encontros) && t.encontros.length) &&
+          !(Array.isArray(t?.datas) && t.datas.length) &&
+          !(Array.isArray(t?._datas) && t._datas.length)
+        );
+  
+        if (precisaEnriquecer) {
+          try {
+            const full = await apiGet(`/api/eventos/${eventoId}/turmas`);
+            const porId = new Map(
+              (Array.isArray(full) ? full : []).map((t) => [Number(t.id), t])
+            );
+  
+            turmas = turmas.map((t) => {
+              const f = porId.get(Number(t.id));
+              if (!f) return t;
+  
+              // tenta puxar horários diretamente
+              let hi = f.horario_inicio?.slice?.(0, 5) || null;
+              let hf = f.horario_fim?.slice?.(0, 5) || null;
+  
+              // se ainda não houver, tenta inferir a partir de datas/encontros
+              const datasArr = Array.isArray(f.datas) ? f.datas : [];
+              if ((!hi || !hf) && datasArr.length) {
+                const conta = new Map();
+                for (const d of datasArr) {
+                  const a = (d?.horario_inicio || "").slice(0, 5);
+                  const b = (d?.horario_fim || "").slice(0, 5);
+                  if (/^\d{2}:\d{2}$/.test(a) && /^\d{2}:\d{2}$/.test(b)) {
+                    const k = `${a}-${b}`;
+                    conta.set(k, (conta.get(k) || 0) + 1);
+                  }
+                }
+                if (conta.size) {
+                  let best = null, bc = -1;
+                  for (const [k, c] of conta.entries()) if (c > bc) { best = k; bc = c; }
+                  if (best) [hi, hf] = best.split("-");
+                }
+              }
+  
+              // garante datas início/fim também
+              const di = t.data_inicio || f.data_inicio?.slice?.(0, 10) || null;
+              const df = t.data_fim || f.data_fim?.slice?.(0, 10) || null;
+  
+              return {
+                ...t,
+                data_inicio: di,
+                data_fim: df,
+                horario_inicio: t.horario_inicio || hi || null,
+                horario_fim: t.horario_fim || hf || null,
+                _datas: t._datas || (Array.isArray(f.datas)
+                  ? f.datas.map((d) => ({
+                      data: d.data,
+                      horario_inicio: d.horario_inicio,
+                      horario_fim: d.horario_fim,
+                    }))
+                  : []),
+              };
+            });
+          } catch {
+            // se falhar o enriquecimento, segue com o que temos
+          }
+        }
+  
+        setTurmasPorEvento((prev) => ({
+          ...prev,
+          [eventoId]: Array.isArray(turmas) ? turmas : [],
+        }));
       } catch {
         toast.error("Erro ao carregar turmas");
       } finally {
@@ -434,7 +541,8 @@ export default function Eventos() {
 
       if (eventoId) {
         try {
-          const turmasAtualizadas = await apiGet(`/api/turmas/evento/${eventoId}`);
+          // ✅ recarrega usando o endpoint leve
+          const turmasAtualizadas = await apiGet(`/api/eventos/${eventoId}/turmas-simples`);
           setTurmasPorEvento((prev) => ({
             ...prev,
             [eventoId]: Array.isArray(turmasAtualizadas) ? turmasAtualizadas : [],
@@ -679,7 +787,7 @@ export default function Eventos() {
                           gerarRelatorioPDF={() => {}}
                           mostrarStatusTurma={false}
                           exibirRealizadosTotal
-                          // 👇 agora recebe a união de conflitos internos (congresso) + globais
+                          // 👇 união de conflitos internos (congresso) + globais (entre eventos)
                           turmasEmConflito={[...conflitosSet]}
                         />
                       </div>

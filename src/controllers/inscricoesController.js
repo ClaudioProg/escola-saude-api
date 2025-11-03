@@ -7,6 +7,7 @@ const { criarNotificacao } = require('./notificacoesController');
 
 /* ────────────────────────────────────────────────────────────────
    Helpers de datas/horários a partir de datas_turma
+   (mantidos para compor e-mail e mensagens; sem usar Date())
    ──────────────────────────────────────────────────────────────── */
 
 /**
@@ -71,116 +72,55 @@ async function getResumoTurma(turmaId) {
 }
 
 /* ────────────────────────────────────────────────────────────────
-   Helpers de conflito (datas/horários em formato string)
+   🔒 Checagens de conflito — 100% no SQL (sem fuso, sem Date())
    ──────────────────────────────────────────────────────────────── */
 
-const ymd = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
-const hhmm = (s, fb = "00:00") =>
-  typeof s === "string" && /^\d{2}:\d{2}/.test(s) ? s.slice(0, 5) : fb;
-
-// interseção de períodos (YYYY-MM-DD) via comparação lexical
-function datasIntersectam(aIni, aFim, bIni, bFim) {
-  if (!aIni || !aFim || !bIni || !bFim) return false;
-  return aIni <= bFim && bIni <= aFim;
-}
-
-// sobreposição de faixas horárias (HH:MM) — regra: (Aini < Bfim) && (Bini < Afim)
-function horariosSobrepoem(ai, af, bi, bf) {
-  const [AAi, AAf, Bbi, Bbf] = [ai, af, bi, bf].map((x) => hhmm(x, "00:00"));
-  return AAi < Bbf && Bbi < AAf;
+/**
+ * Usa a função SQL criada: fn_tem_conflito_inscricao_mesmo_evento(usuario_id, turma_id)
+ * Retorna true/false.
+ */
+async function conflitoMesmoEventoSQL(usuarioId, turmaId) {
+  const q = `
+    SELECT fn_tem_conflito_inscricao_mesmo_evento($1, $2) AS conflito
+  `;
+  const { rows } = await db.query(q, [usuarioId, turmaId]);
+  return !!rows?.[0]?.conflito;
 }
 
 /**
- * Verifica conflito para CONGRESSO: dentro do MESMO evento, se o usuário
- * já tem inscrição em outra turma cujo período (datas) intersecciona e
- * os horários se sobrepõem, deve bloquear.
+ * Conflito GLOBAL (qualquer evento):
+ * Compara a janela da turma-alvo com TODAS as inscrições do usuário,
+ * usando TIMESTAMP WITHOUT TIME ZONE (date + time “ingênuos”).
+ * Regras de normalização e overlap idênticas às da função SQL.
  */
-async function checarConflitoCongresso(dbConn, usuarioId, eventoId, turmaIdAlvo, resumoAlvo) {
-  const { rows: outras } = await dbConn.query(
-    `
-      SELECT t2.id AS turma_id, t2.nome
+async function conflitoGlobalSQL(usuarioId, turmaIdAlvo) {
+  const q = `
+    WITH alvo AS (
+      SELECT
+        /* ini/fim "ingênuos": date + time, sem timezone */
+        (COALESCE(t.data_inicio, CURRENT_DATE)::timestamp
+           + COALESCE(t.horario_inicio, time '00:00')) AS ini,
+        (COALESCE(COALESCE(t.data_fim, t.data_inicio), CURRENT_DATE)::timestamp
+           + COALESCE(t.horario_fim, time '23:59:59')) AS fim
+      FROM turmas t
+      WHERE t.id = $2
+    )
+    SELECT EXISTS (
+      SELECT 1
         FROM inscricoes i
         JOIN turmas t2 ON t2.id = i.turma_id
-       WHERE i.usuario_id = $1
-         AND t2.evento_id = $2
-         AND t2.id <> $3
-    `,
-    [usuarioId, eventoId, turmaIdAlvo]
-  );
-
-  const aIni = ymd(resumoAlvo?.data_inicio);
-  const aFim = ymd(resumoAlvo?.data_fim);
-  const aHi = hhmm(resumoAlvo?.horario_inicio);
-  const aHf = hhmm(resumoAlvo?.horario_fim);
-
-  for (const r of outras) {
-    const res = await getResumoTurma(r.turma_id);
-    const bIni = ymd(res?.data_inicio);
-    const bFim = ymd(res?.data_fim);
-    const bHi = hhmm(res?.horario_inicio);
-    const bHf = hhmm(res?.horario_fim);
-
-    if (datasIntersectam(aIni, aFim, bIni, bFim) && horariosSobrepoem(aHi, aHf, bHi, bHf)) {
-      return {
-        conflito: true,
-        turma: {
-          id: r.turma_id,
-          nome: r.nome,
-          data_inicio: bIni,
-          data_fim: bFim,
-          horario_inicio: bHi,
-          horario_fim: bHf
-        },
-      };
-    }
-  }
-
-  return { conflito: false };
-}
-
-/**
- * 🔎 Conflito GLOBAL: verifica se o usuário já tem QUALQUER inscrição
- * (em QUALQUER evento) cujo período e horário conflitam com a turma-alvo.
- */
-async function checarConflitoGlobal(dbConn, usuarioId, turmaIdAlvo, resumoAlvo) {
-  const { rows: outras } = await dbConn.query(
-    `
-      SELECT i.turma_id, t.evento_id, t.nome
-        FROM inscricoes i
-        JOIN turmas t ON t.id = i.turma_id
+        JOIN alvo a ON TRUE
        WHERE i.usuario_id = $1
          AND i.turma_id <> $2
-    `,
-    [usuarioId, turmaIdAlvo]
-  );
-
-  const aIni = ymd(resumoAlvo?.data_inicio);
-  const aFim = ymd(resumoAlvo?.data_fim);
-  const aHi  = hhmm(resumoAlvo?.horario_inicio);
-  const aHf  = hhmm(resumoAlvo?.horario_fim);
-
-  for (const r of outras) {
-    const res = await getResumoTurma(r.turma_id);
-    const bIni = ymd(res?.data_inicio);
-    const bFim = ymd(res?.data_fim);
-    const bHi  = hhmm(res?.horario_inicio);
-    const bHf  = hhmm(res?.horario_fim);
-
-    if (datasIntersectam(aIni, aFim, bIni, bFim) && horariosSobrepoem(aHi, aHf, bHi, bHf)) {
-      return {
-        conflito: true,
-        turma: {
-          id: r.turma_id,
-          nome: r.nome,
-          data_inicio: bIni,
-          data_fim: bFim,
-          horario_inicio: bHi,
-          horario_fim: bHf
-        },
-      };
-    }
-  }
-  return { conflito: false };
+         /* overlap estrito: a_ini < b_fim AND b_ini < a_fim */
+         AND ((COALESCE(t2.data_inicio, CURRENT_DATE)::timestamp
+                + COALESCE(t2.horario_inicio, time '00:00')) < a.fim)
+         AND (a.ini < (COALESCE(COALESCE(t2.data_fim, t2.data_inicio), CURRENT_DATE)::timestamp
+                       + COALESCE(t2.horario_fim, time '23:59:59')))
+    ) AS conflito;
+  `;
+  const { rows } = await db.query(q, [usuarioId, turmaIdAlvo]);
+  return !!rows?.[0]?.conflito;
 }
 
 /* ────────────────────────────────────────────────────────────────
@@ -205,7 +145,7 @@ async function inscreverEmTurma(req, res) {
     }
     const turma = turmaRows[0];
 
-    // Resumo calculado (período e horários verdadeiros)
+    // Resumo calculado (período e horários apenas para exibição/e-mail)
     const resumo = await getResumoTurma(turma_id);
 
     // 2) Evento (tipo + dados p/ notificação/e-mail)
@@ -267,28 +207,22 @@ async function inscreverEmTurma(req, res) {
       }
     }
 
-    // 5A) Regra congresso: bloquear conflito de horário dentro do mesmo evento
+    // 5A) Congresso: bloquear conflito DENTRO DO MESMO EVENTO (via função SQL)
     if (isCongresso) {
-      const conf = await checarConflitoCongresso(db, usuario_id, turma.evento_id, turma_id, resumo);
-      if (conf?.conflito) {
-        const c = conf.turma;
+      const temConflitoMesmoEvento = await conflitoMesmoEventoSQL(usuario_id, turma_id);
+      if (temConflitoMesmoEvento) {
         return res.status(409).json({
-          erro:
-            `Conflito de horário dentro deste evento: você já está inscrito(a) na turma ` +
-            `"${c.nome}" (${c.data_inicio}–${c.data_fim} ${c.horario_inicio}–${c.horario_fim}).`
+          erro: 'Conflito de horário dentro deste evento com outra turma já inscrita.'
         });
       }
     }
 
-    // 5B) NOVA REGRA GLOBAL: bloquear conflito de horário com QUALQUER outra inscrição
+    // 5B) Regra GLOBAL: bloquear conflito de horário com QUALQUER outra inscrição (via SQL)
     {
-      const confGlobal = await checarConflitoGlobal(db, usuario_id, turma_id, resumo);
-      if (confGlobal?.conflito) {
-        const c = confGlobal.turma;
+      const temConflitoGlobal = await conflitoGlobalSQL(usuario_id, turma_id);
+      if (temConflitoGlobal) {
         return res.status(409).json({
-          erro:
-            `Conflito de horário com outra turma já inscrita: ` +
-            `"${c.nome}" (${c.data_inicio}–${c.data_fim} ${c.horario_inicio}–${c.horario_fim}).`
+          erro: 'Conflito de horário com outra turma já inscrita em seu histórico.'
         });
       }
     }
@@ -320,7 +254,7 @@ async function inscreverEmTurma(req, res) {
       if (e?.code === 'P0001') {
         // Pode vir de trigger que valida conflito — trate como 409
         return res.status(409).json({
-          erro: e?.message || 'Inscrição bloqueada por conflito de horário no mesmo evento.'
+          erro: e?.message || 'Inscrição bloqueada por conflito de horário.'
         });
       }
       if (e?.code === '23505') {
@@ -345,7 +279,7 @@ async function inscreverEmTurma(req, res) {
     );
     const usuario = userRows[0];
 
-    // 9) Datas legíveis
+    // 9) Datas legíveis (sem criar Date())
     const dataIni = resumo?.data_inicio ? formatarDataBR(resumo.data_inicio) : '';
     const dataFim = resumo?.data_fim ? formatarDataBR(resumo.data_fim) : '';
     const hi = (resumo?.horario_inicio || '').slice(0, 5);
@@ -356,21 +290,21 @@ async function inscreverEmTurma(req, res) {
       'a definir';
 
     // --- NOTIFICAÇÃO (best-effort)
-    try {
-      const mensagem = [
-        `✅ Sua inscrição foi confirmada com sucesso no evento "${evento.titulo}".`,
-        '',
-        `- Turma: ${turma.nome}`,
-        `- Período: ${periodoStr}`,
-        `- Horário: ${hi} às ${hf}`,
-        `- Carga horária: ${turma.carga_horaria} horas`,
-        `- Local: ${evento.local}`,
-      ].join('\n');
+try {
+  const mensagem = [
+    `✅ Sua inscrição foi confirmada com sucesso no evento "${evento.titulo}".`,
+    '',
+    `- Turma: ${turma.nome}`,
+    `- Período: ${periodoStr}`,
+    `- Horário: ${hi} às ${hf}`,
+    `- Carga horária: ${turma.carga_horaria} horas`,
+    `- Local: ${evento.local}`,
+  ].join('\n');
 
-      await criarNotificacao(usuario_id, mensagem, null);
-    } catch (e) {
-      console.warn('⚠️ Falha ao criar notificação (não bloqueante):', e?.message);
-    }
+  await criarNotificacao(usuario_id, mensagem, null);
+} catch (e) {
+  console.warn('⚠️ Falha ao criar notificação (não bloqueante):', e?.message);
+}
 
     // 10) E-mail (best-effort)
     try {
@@ -544,9 +478,9 @@ async function obterMinhasInscricoes(req, res) {
         i.id AS inscricao_id, 
         e.id AS evento_id, 
         t.id AS turma_id,
-        t.nome AS turma_nome,                       -- ✅ AQUI
+        t.nome AS turma_nome,
         e.titulo, 
-        e.local,                                    -- ✅ já temos o local
+        e.local,
     
         to_char(
           COALESCE(
@@ -726,6 +660,55 @@ async function listarInscritosPorTurma(req, res) {
   }
 }
 
+/* ────────────────────────────────────────────────────────────────
+   🔎 Checagem de conflito para o frontend (uma turma específica)
+   ──────────────────────────────────────────────────────────────── */
+   async function conflitoPorTurma(req, res) {
+    try {
+      const usuarioId = Number(req.user?.id);
+      const turmaId = Number(req.params?.turmaId || req.params?.turma_id);
+  
+      if (!usuarioId || !turmaId) {
+        return res.status(400).json({ erro: "Parâmetros inválidos." });
+      }
+  
+      // 1️⃣ Dados básicos da turma (para saber a que evento pertence)
+      const { rows: trows } = await db.query(
+        "SELECT evento_id FROM turmas WHERE id = $1",
+        [turmaId]
+      );
+      if (!trows.length) {
+        return res.status(404).json({ erro: "Turma não encontrada." });
+      }
+      const eventoId = trows[0].evento_id;
+  
+      // 2️⃣ Checagem de conflito dentro do mesmo evento (congressos etc.)
+      const conflitoMesmoEvento = await conflitoMesmoEventoSQL(usuarioId, turmaId);
+  
+      // 3️⃣ Checagem global (qualquer outro evento)
+      const conflitoGlobal = await conflitoGlobalSQL(usuarioId, turmaId);
+  
+      // 4️⃣ Consolidado (se houver qualquer conflito)
+      const conflitoGeral = conflitoMesmoEvento || conflitoGlobal;
+  
+      return res.json({
+        usuario_id: usuarioId,
+        turma_id: turmaId,
+        evento_id: eventoId,
+        conflitoMesmoEvento,
+        conflitoGlobal,
+        conflito: conflitoGeral,
+      });
+    } catch (err) {
+      console.error("❌ Erro em conflitoPorTurma:", {
+        message: err?.message,
+        detail: err?.detail,
+        stack: err?.stack,
+      });
+      return res.status(500).json({ erro: "Erro ao verificar conflito de horários." });
+    }
+  }
+
 /* ✅ Exportar */
 module.exports = {
   inscreverEmTurma,
@@ -733,4 +716,5 @@ module.exports = {
   cancelarInscricaoAdmin,
   obterMinhasInscricoes,
   listarInscritosPorTurma,
+  conflitoPorTurma,
 };

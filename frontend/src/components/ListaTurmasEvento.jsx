@@ -293,23 +293,23 @@ export default function ListaTurmasEvento({
               </div>
 
               {/* Chip de status (sem mostrar "Conflito de horário") */}
-<div className="flex flex-col items-end gap-2">
-  {(lotada || mostrarStatusTurma) && (
-    <span
-      className={`text-xs px-2 py-1 rounded-full border ${
-        lotada
-          ? "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-200 dark:border-rose-800"
-          : statusTurma === "Em andamento"
-          ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-800"
-          : statusTurma === "Encerrado"
-          ? "bg-yellow-50 text-yellow-700 border-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-200 dark:border-yellow-800"
-          : "bg-gray-50 text-gray-700 border-gray-200 dark:bg-gray-800/50 dark:text-gray-200 dark:border-gray-700"
-      }`}
-    >
-      {lotada ? "Lotada" : statusTurma}
-    </span>
-  )}
-</div>
+              <div className="flex flex-col items-end gap-2">
+                {(lotada || mostrarStatusTurma) && (
+                  <span
+                    className={`text-xs px-2 py-1 rounded-full border ${
+                      lotada
+                        ? "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-200 dark:border-rose-800"
+                        : statusTurma === "Em andamento"
+                        ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-800"
+                        : statusTurma === "Encerrado"
+                        ? "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-200 dark:border-rose-800"
+                        : "bg-gray-50 text-gray-700 border-gray-200 dark:bg-gray-800/50 dark:text-gray-200 dark:border-gray-700"
+                    }`}
+                  >
+                    {lotada ? "Lotada" : statusTurma}
+                  </span>
+                )}
+              </div>
             </div>
 
             {/* Barra de vagas / info de vagas */}

@@ -9,14 +9,14 @@ const compression = require("compression");
 const helmet = require("helmet");
 const crypto = require("crypto");
 
-// ⚠️ .env
+// ⚙️ .env
 dotenv.config();
 
-/* ───────── DB (adapter com any/oneOrNone/tx) ───────── */
+/* ───────── DB (adapter) ───────── */
 const rawDb = require("./db");
 const db = rawDb?.db ?? rawDb;
 
-/* 🔒 Paths persistentes (UNIFICADOS) */
+/* ───────── Paths ───────── */
 const {
   DATA_ROOT,
   UPLOADS_DIR,
@@ -25,48 +25,40 @@ const {
   ensureDir,
 } = require("./paths");
 
-/* ───────── Rotas existentes ───────── */
-const assinaturaRoutes            = require("./routes/assinaturaRoutes");
-const turmasRouteAdministrador   = require("./routes/turmasRouteAdministrador");
-const agendaRoute                = require("./routes/agendaRoute");
-const avaliacoesRoute            = require("./routes/avaliacoesRoute");
-const certificadosRoute          = require("./routes/certificadosRoute");
-const certificadosAdminRoutes    = require("./routes/certificadosAdminRoutes");
-const certificadosAvulsosRoutes  = require("./routes/certificadosAvulsosRoutes");
-const eventosRoute               = require("./routes/eventosRoute");
-const inscricoesRoute            = require("./routes/inscricoesRoute");
-const loginRoute                 = require("./routes/loginRoute");
-const presencasRoute             = require("./routes/presencasRoute");
-const relatorioPresencasRoute    = require("./routes/relatorioPresencasRoute");
-const turmasRoute                = require("./routes/turmasRoute");
-const instrutorRoute             = require("./routes/instrutorRoutes");
-const relatoriosRoute            = require("./routes/relatoriosRoutes");
-const dashboardAnaliticoRoutes   = require("./routes/dashboardAnaliticoRoutes");
-const dashboardUsuarioRoute      = require("./routes/dashboardUsuarioRoute");
-const notificacoesRoute          = require("./routes/notificacoesRoute");
-const authGoogleRoute            = require("./auth/authGoogle");
-const unidadesRoutes             = require("./routes/unidadesRoutes");
-const usuarioPublicoController   = require("./controllers/usuarioPublicoController");
-const datasEventoRoute           = require("./routes/datasEventoRoute");
-const perfilRoutes               = require("./routes/perfilRoutes");
-const publicLookupsRoutes        = require("./routes/publicLookupsRoutes");
-const usuariosRoute              = require("./routes/usuariosRoute");
-const metricasRoutes             = require("./routes/metricasRoutes");
-const solicitacoesCursoRoute         = require("./routes/solicitacoesCursoRoute");
-const adminAvaliacoesRoutes       = require("./routes/adminAvaliacoesRoutes");
-
-/* 🆕 Submissão de Trabalhos */
-const chamadasRoutes             = require("./routes/chamadasRoutes");
-const trabalhosRoutes            = require("./routes/trabalhosRoutes");
-
-/* 🆕 Upload/Modelo de Banner (por chamada) */
-const chamadasModeloRoutes       = require("./routes/chamadasModeloRoutes");
-
-/* 🆕 Estatísticas de usuários (Doughnuts do Dashboard Analítico) */
-const usuariosEstatisticasRoute  = require("./routes/usuariosEstatisticasRoute");
-
-/* 🆕 Admin de Submissões (router completo) */
-const submissoesAdminRoutes      = require("./routes/submissoesAdminRoutes");
+/* ───────── Rotas ───────── */
+const assinaturaRoutes = require("./routes/assinaturaRoutes");
+const turmasRouteAdministrador = require("./routes/turmasRouteAdministrador");
+const agendaRoute = require("./routes/agendaRoute");
+const avaliacoesRoute = require("./routes/avaliacoesRoute");
+const certificadosRoute = require("./routes/certificadosRoute");
+const certificadosAdminRoutes = require("./routes/certificadosAdminRoutes");
+const certificadosAvulsosRoutes = require("./routes/certificadosAvulsosRoutes");
+const eventosRoute = require("./routes/eventosRoute");
+const inscricoesRoute = require("./routes/inscricoesRoute");
+const loginRoute = require("./routes/loginRoute");
+const presencasRoute = require("./routes/presencasRoute");
+const relatorioPresencasRoute = require("./routes/relatorioPresencasRoute");
+const turmasRoute = require("./routes/turmasRoute");
+const instrutorRoute = require("./routes/instrutorRoutes");
+const relatoriosRoute = require("./routes/relatoriosRoutes");
+const dashboardAnaliticoRoutes = require("./routes/dashboardAnaliticoRoutes");
+const dashboardUsuarioRoute = require("./routes/dashboardUsuarioRoute");
+const notificacoesRoute = require("./routes/notificacoesRoute");
+const authGoogleRoute = require("./auth/authGoogle");
+const unidadesRoutes = require("./routes/unidadesRoutes");
+const usuarioPublicoController = require("./controllers/usuarioPublicoController");
+const datasEventoRoute = require("./routes/datasEventoRoute");
+const perfilRoutes = require("./routes/perfilRoutes");
+const publicLookupsRoutes = require("./routes/publicLookupsRoutes");
+const usuariosRoute = require("./routes/usuariosRoute");
+const metricasRoutes = require("./routes/metricasRoutes");
+const solicitacoesCursoRoute = require("./routes/solicitacoesCursoRoute");
+const adminAvaliacoesRoutes = require("./routes/adminAvaliacoesRoutes");
+const chamadasRoutes = require("./routes/chamadasRoutes");
+const trabalhosRoutes = require("./routes/trabalhosRoutes");
+const chamadasModeloRoutes = require("./routes/chamadasModeloRoutes");
+const usuariosEstatisticasRoute = require("./routes/usuariosEstatisticasRoute");
+const submissoesAdminRoutes = require("./routes/submissoesAdminRoutes");
 
 const IS_DEV = process.env.NODE_ENV !== "production";
 const app = express();
@@ -81,7 +73,7 @@ app.use((_, res, next) => {
   next();
 });
 
-// Helmet com CSP
+// Helmet + CSP
 app.use(
   helmet({
     crossOriginEmbedderPolicy: false,
@@ -93,8 +85,7 @@ app.use(
       useDefaults: true,
       directives: {
         "default-src": ["'self'"],
-        "base-uri": ["'self'"],
-        "font-src": ["'self'", "data:", "https:", "https://fonts.gstatic.com"],
+        "font-src": ["'self'", "data:", "https://fonts.gstatic.com"],
         "img-src": ["'self'", "data:", "https:", "blob:"],
         "object-src": ["'none'"],
         "script-src": [
@@ -105,10 +96,9 @@ app.use(
           "'strict-dynamic'",
           ...(IS_DEV ? ["'unsafe-eval'", "'unsafe-inline'"] : []),
         ],
-        // ⬇️ adições importantes aqui
         "style-src": [
           "'self'",
-          "'unsafe-inline'",                 // mantenha por enquanto (pode endurecer depois)
+          "'unsafe-inline'",
           "https://fonts.googleapis.com",
           "https://accounts.google.com/gsi/style",
         ],
@@ -121,13 +111,8 @@ app.use(
           ...(IS_DEV ? ["ws:", "http://localhost:5173", "http://127.0.0.1:5173"] : []),
         ],
         "frame-src": ["https://accounts.google.com"],
-        "media-src": ["'self'", "https:", "blob:"],
-        "worker-src": ["'self'", "blob:"],
-        "frame-ancestors": ["'self'"],
       },
     },
-    noSniff: true,
-    frameguard: { action: "sameorigin" },
   })
 );
 
@@ -152,7 +137,7 @@ const vercelRegex = /^https:\/\/[a-z0-9-]+\.vercel\.app$/i;
 
 const corsOptions = {
   origin(origin, cb) {
-    if (!origin) return cb(null, true);
+    if (!origin) return cb(null, true); // curl/postman ou mesma origem
     if (allowedOrigins.includes(origin) || vercelRegex.test(origin)) return cb(null, true);
     const err = new Error("CORS bloqueado: " + origin);
     err.status = 403;
@@ -160,20 +145,12 @@ const corsOptions = {
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
-  allowedHeaders: [
-    "Accept",
-    "Accept-Language",
-    "Content-Type",
-    "Authorization",
-    "X-Requested-With",
-    "Origin",
-    "Referer",
-    "Cache-Control",
-    "Pragma",
-  ],
+  // ⬇️ Deixe sem `allowedHeaders` para refletir automaticamente os headers solicitados no preflight
+  // allowedHeaders: <REMOVIDO>,
   exposedHeaders: ["Content-Disposition", "Content-Length", "X-Perfil-Incompleto"],
   maxAge: 86400,
 };
+
 app.use(cors(corsOptions));
 app.use((_, res, next) => {
   res.setHeader("Vary", "Origin");
@@ -181,11 +158,16 @@ app.use((_, res, next) => {
 });
 app.options("*", cors(corsOptions), (_req, res) => res.sendStatus(204));
 
+app.use((_, res, next) => {
+  res.setHeader("Vary", "Origin");
+  next();
+});
+
 /* ───────── Parsers ───────── */
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-/* ───────── Persistência de arquivos ───────── */
+/* ───────── Diretórios ───────── */
 ensureDir(DATA_ROOT);
 ensureDir(UPLOADS_DIR);
 ensureDir(MODELOS_CHAMADAS_DIR);
@@ -195,20 +177,18 @@ console.log("[FILES] UPLOADS_DIR:", UPLOADS_DIR);
 console.log("[FILES] MODELOS_CHAMADAS_DIR:", MODELOS_CHAMADAS_DIR);
 console.log("[FILES] CERT_DIR:", CERT_DIR);
 
-// /uploads (público)
 app.use(
   "/uploads",
   cors(corsOptions),
   express.static(UPLOADS_DIR, {
     maxAge: "1h",
-    fallthrough: true,
     setHeaders(res) {
       res.setHeader("Cache-Control", "public, max-age=3600");
     },
   })
 );
 
-/* ───────── Static do SPA (opcional) ───────── */
+/* ───────── Static (SPA) ───────── */
 const PUBLIC_DIR = path.join(__dirname, "public");
 if (fs.existsSync(PUBLIC_DIR)) {
   app.use(
@@ -222,7 +202,7 @@ if (fs.existsSync(PUBLIC_DIR)) {
   );
 }
 
-/* ───────── DB fallback global ───────── */
+/* ───────── DB global ───────── */
 app.use((req, _res, next) => {
   if (!req.db) req.db = db;
   next();
@@ -248,11 +228,9 @@ const recuperarSenhaLimiter = rateLimit({
   message: { erro: "Muitas solicitações, aguarde antes de tentar novamente." },
 });
 
-/* ───────── Rotas públicas ───────── */
+/* ───────── Rotas ───────── */
 app.use("/api", publicLookupsRoutes);
 app.use("/api/login", loginLimiter, loginRoute);
-
-/* ───────── Rotas API ───────── */
 app.use("/api/administrador/turmas", turmasRouteAdministrador);
 app.use("/api/agenda", agendaRoute);
 app.use("/api/avaliacoes", avaliacoesRoute);
@@ -280,28 +258,22 @@ app.use("/api/perfil", perfilRoutes);
 app.use("/api/solicitacoes", solicitacoesCursoRoute);
 app.use("/api/admin", submissoesAdminRoutes);
 app.use("/api/admin/avaliacoes", adminAvaliacoesRoutes);
-
-/* 🆕 Submissões de Trabalhos */
 app.use("/api", chamadasRoutes);
 app.use("/api", trabalhosRoutes);
-
-/* 🆕 Admin de Submissões (avaliadores, notas, banner inline) */
-app.use("/api", submissoesAdminRoutes);
-
-/* 🆕 Modelo de banner por chamada */
 app.use("/api", chamadasModeloRoutes);
 
 /* ───────── Recuperação de senha ───────── */
 app.post("/api/usuarios/recuperar-senha", recuperarSenhaLimiter, usuarioPublicoController.recuperarSenha);
 
-/* ───────── Health & Root ───────── */
-app.get("/api/health", (_req, res) => res.status(200).json({ ok: true, env: process.env.NODE_ENV || "dev" }));
+/* ───────── Health & SPA fallback ───────── */
+app.get("/api/health", (_req, res) =>
+  res.status(200).json({ ok: true, env: process.env.NODE_ENV || "dev" })
+);
 
-// Root/SPA: se houver public/index.html, serve com nonce; senão mostra mensagem da API
 app.get("/", (req, res, next) => {
   const indexPath = path.join(PUBLIC_DIR, "index.html");
   if (fs.existsSync(indexPath)) {
-   try {
+    try {
       const html = fs.readFileSync(indexPath, "utf8").replaceAll("{{CSP_NONCE}}", res.locals.cspNonce);
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       return res.status(200).send(html);
@@ -312,7 +284,6 @@ app.get("/", (req, res, next) => {
   return res.send("🟢 API da Escola da Saúde rodando!");
 });
 
-// SPA fallback: qualquer rota não-API e não-uploads devolve index.html com nonce
 app.get(/^\/(?!api\/|uploads\/).+/, (req, res, next) => {
   const indexPath = path.join(PUBLIC_DIR, "index.html");
   if (!fs.existsSync(indexPath)) return next();
@@ -325,26 +296,20 @@ app.get(/^\/(?!api\/|uploads\/).+/, (req, res, next) => {
   }
 });
 
-/* ───────── 404 ───────── */
+/* ───────── 404 / Errors ───────── */
 app.use((req, res) => {
   if (req.url.startsWith("/uploads/") && req.method === "GET") return res.status(404).end();
   return res.status(404).json({ erro: "Rota não encontrada" });
 });
 
-/* ───────── Error handler ───────── */
 app.use((err, _req, res, _next) => {
   if (err?.code === "LIMIT_FILE_SIZE")
     return res.status(400).json({ erro: "Arquivo muito grande (máx. 50MB)." });
-  if (err?.message && /Apenas arquivos \.(ppt|pptx)/i.test(err.message))
-    return res.status(400).json({ erro: "Apenas arquivos .ppt ou .pptx" });
-  if (["poster", "banner", "file"].includes(err?.field))
-    return res.status(400).json({ erro: err.message || "Falha no upload." });
-
   console.error("Erro inesperado:", err.stack || err.message || err);
   res.status(err.status || 500).json({ erro: err.message || "Erro interno do servidor" });
 });
 
-/* ───────── Start & Shutdown ───────── */
+/* ───────── Start / Shutdown ───────── */
 const PORT = process.env.PORT || 3000;
 const server = app.listen(PORT, () => {
   console.log(`🟢🚀 Servidor rodando na porta ${PORT} 🟢`);

@@ -63,10 +63,55 @@ const getToken = () => {
   }
 };
 
+// 🆕 ——— Contexto de data/hora do cliente (para o backend interpretar "date-only")
+function getClientTZ() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+function getClientOffsetMinutes() {
+  try {
+    return -new Date().getTimezoneOffset(); // ex.: -180 (Brasil -03:00) vira 180
+  } catch {
+    return 0;
+  }
+}
+function todayLocalYMD() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+function buildClientContextHeaders() {
+  // Convenção: o backend pode usar esses headers para resolver "date-only" como YMD local.
+  return {
+    "X-Client-TZ": getClientTZ(),                      // e.g. America/Sao_Paulo
+    "X-Client-Offset-Minutes": String(getClientOffsetMinutes()), // e.g. 180
+    "X-Client-Today": todayLocalYMD(),                 // e.g. 2025-11-03
+    "X-Client-Now-UTC": new Date().toISOString(),      // carimbo confiável
+    "X-Date-Only-Semantics": "YMD_LOCAL",              // dica semântica p/ o servidor
+  };
+}
+
+// 🆕 Debug de conflitos (liga/desliga por sessão)
+const DEBUG_CONF_KEY = "debug_conflitos";
+export function setDebugConflitos(on = true) {
+  try { sessionStorage.setItem(DEBUG_CONF_KEY, on ? "1" : "0"); } catch {}
+}
+function getDebugConflitos() {
+  try { return sessionStorage.getItem(DEBUG_CONF_KEY) === "1"; } catch { return false; }
+}
+
 function buildHeaders(auth = true, extra = {}) {
   const jwt = getToken();
-  return {
+  const base = {
     "Content-Type": "application/json",
+    ...buildClientContextHeaders(),                // 🆕 sempre manda contexto do cliente
+    ...(getDebugConflitos() ? { "X-Debug-Conflitos": "1" } : {}), // 🆕 opcional
+  };
+  return {
+    ...base,
     ...(auth && jwt ? { Authorization: `Bearer ${jwt}` } : {}),
     ...extra,
   };
@@ -77,19 +122,23 @@ function buildHeaders(auth = true, extra = {}) {
 // ───────────────────────────────────────────────────────────────────
 // Valores inválidos para query (ex.: NaN) não devem ir para o backend
 function isBadParamValue(v) {
-    if (v === null || v === undefined || v === "") return true;
-    // número NaN
-    if (typeof v === "number" && Number.isNaN(v)) return true;
-    // string "NaN" (ou variantes com espaços)
-    if (typeof v === "string" && v.trim().toLowerCase() === "nan") return true;
-    return false;
-  }
+  if (v === null || v === undefined || v === "") return true;
+  // número NaN
+  if (typeof v === "number" && Number.isNaN(v)) return true;
+  // string "NaN" (ou variantes com espaços)
+  if (typeof v === "string" && v.trim().toLowerCase() === "nan") return true;
+  return false;
+}
 
 export function qs(params = {}) {
   const q = new URLSearchParams();
   Object.entries(params || {}).forEach(([k, v]) => {
-    // só envia se o valor for válido
-    if (!isBadParamValue(v)) q.append(k, v);
+    // suporta array: ?k=a&k=b
+    if (Array.isArray(v)) {
+      v.forEach((vi) => { if (!isBadParamValue(vi)) q.append(k, vi); });
+    } else {
+      if (!isBadParamValue(v)) q.append(k, v);
+    }
   });
   const s = q.toString();
   return s ? `?${s}` : "";
@@ -266,7 +315,7 @@ async function warmup(authNeeded) {
       credentials: "include",
       mode: "cors",
       cache: "no-store",
-      headers: authNeeded && jwt ? { Authorization: `Bearer ${jwt}` } : {},
+      headers: authNeeded && jwt ? { Authorization: `Bearer ${jwt}`, ...buildClientContextHeaders() } : buildClientContextHeaders(),
       redirect: "follow",
       referrerPolicy: "strict-origin-when-cross-origin",
       keepalive: true,
@@ -364,7 +413,7 @@ async function doFetch(
 
   const jwt = getToken();
 
-  const init = {
+  let init = {
     ...initBase,
     headers: buildHeaders(auth, headers),
   };
@@ -373,6 +422,8 @@ async function doFetch(
     // Não setar Content-Type manualmente em FormData
     init.headers = {
       ...(auth && jwt ? { Authorization: `Bearer ${jwt}` } : {}),
+      ...buildClientContextHeaders(),                         // 🆕 também em multipart
+      ...(getDebugConflitos() ? { "X-Debug-Conflitos": "1" } : {}),
       ...headers,
     };
     init.body = body;
@@ -468,7 +519,9 @@ export async function apiHead(path, opts = {}) {
   const jwt = getToken();
   const res = await fetch(url, {
     method: "HEAD",
-    headers: auth && jwt ? { Authorization: `Bearer ${jwt}`, ...(headers || {}) } : (headers || {}),
+    headers: auth && jwt
+      ? { Authorization: `Bearer ${jwt}`, ...buildClientContextHeaders(), ...(getDebugConflitos() ? { "X-Debug-Conflitos": "1" } : {}), ...(headers || {}) }
+      : { ...buildClientContextHeaders(), ...(getDebugConflitos() ? { "X-Debug-Conflitos": "1" } : {}), ...(headers || {}) },
     credentials: "include",
     mode: "cors",
     cache: "no-store",
@@ -504,7 +557,9 @@ export async function apiGetResponse(path, opts = {}) {
   const jwt = getToken();
   const res = await fetch(url, {
     method: "GET",
-    headers: auth && jwt ? { Authorization: `Bearer ${jwt}`, ...(headers || {}) } : (headers || {}),
+    headers: auth && jwt
+      ? { Authorization: `Bearer ${jwt}`, ...buildClientContextHeaders(), ...(getDebugConflitos() ? { "X-Debug-Conflitos": "1" } : {}), ...(headers || {}) }
+      : { ...buildClientContextHeaders(), ...(getDebugConflitos() ? { "X-Debug-Conflitos": "1" } : {}), ...(headers || {}) },
     credentials: "include",
     mode: "cors",
     cache: "no-store",
@@ -604,6 +659,8 @@ export async function apiPostFile(path, body, opts = {}) {
     method: "POST",
     headers: {
       ...(auth && jwt ? { Authorization: `Bearer ${jwt}` } : {}),
+      ...buildClientContextHeaders(),                        // 🆕
+      ...(getDebugConflitos() ? { "X-Debug-Conflitos": "1" } : {}),
       "Content-Type": "application/json",
       Accept: "*/*",
       ...headers,
@@ -685,6 +742,8 @@ export async function apiGetFile(path, opts = {}) {
     method: "GET",
     headers: {
       ...(auth && jwt ? { Authorization: `Bearer ${jwt}` } : {}),
+      ...buildClientContextHeaders(),                        // 🆕
+      ...(getDebugConflitos() ? { "X-Debug-Conflitos": "1" } : {}),
       Accept: "*/*",
       ...headers,
     },
