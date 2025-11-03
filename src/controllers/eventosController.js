@@ -1609,31 +1609,26 @@ async function listarDatasDaTurma(req, res) {
    ===================================================================== */
    async function listarTurmasSimples(req, res) {
     const eventoId = Number(req.params.id);
-    if (!Number.isFinite(eventoId)) {
-      return res.status(400).json({ erro: "ID de evento inválido." });
-    }
+    const turmas = await pool.query(
+      `SELECT t.id, t.nome, t.evento_id, t.vagas_total, t.carga_horaria,
+              t.data_inicio, t.data_fim, t.horario_inicio, t.horario_fim,
+              COALESCE(
+                json_agg(json_build_object(
+                  'data', dt.data,
+                  'horario_inicio', dt.horario_inicio,
+                  'horario_fim', dt.horario_fim
+                ) ORDER BY dt.data) FILTER (WHERE dt.id IS NOT NULL),
+                '[]'
+              ) AS datas
+       FROM turmas t
+       LEFT JOIN datas_turma dt ON dt.turma_id = t.id
+       WHERE t.evento_id = $1
+       GROUP BY t.id
+       ORDER BY t.data_inicio ASC`,
+      [eventoId]
+    );
   
-    try {
-      const sql = `
-        SELECT 
-          t.id,
-          t.nome,
-          to_char(t.data_inicio, 'YYYY-MM-DD') AS data_inicio,
-          to_char(t.data_fim, 'YYYY-MM-DD') AS data_fim,
-          to_char(t.horario_inicio, 'HH24:MI') AS horario_inicio,
-          to_char(t.horario_fim, 'HH24:MI') AS horario_fim,
-          t.vagas_total,
-          (SELECT COUNT(*) FROM inscricoes i WHERE i.turma_id = t.id) AS inscritos
-        FROM turmas t
-        WHERE t.evento_id = $1
-        ORDER BY t.data_inicio, t.id;
-      `;
-      const { rows } = await query(sql, [eventoId]);
-      return res.json(rows);
-    } catch (err) {
-      console.error("listarTurmasSimples erro:", err);
-      return res.status(500).json({ erro: "Erro ao listar turmas simples." });
-    }
+    res.json(turmas.rows);
   }
 
 /* ===================================================================== */

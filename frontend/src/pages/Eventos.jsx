@@ -286,25 +286,26 @@ export default function Eventos() {
           try {
             const full = await apiGet(`/api/eventos/${eventoId}/turmas`);
             turmas = Array.isArray(full)
-              ? full.map((t) => ({
-                  id: t.id,
-                  evento_id: t.evento_id,
-                  nome: t.nome,
-                  vagas_total: t.vagas_total,
-                  carga_horaria: t.carga_horaria,
-                  data_inicio: t.data_inicio?.slice(0, 10) || null,
-                  data_fim: t.data_fim?.slice(0, 10) || null,
-                  horario_inicio: t.horario_inicio?.slice(0, 5) || null,
-                  horario_fim: t.horario_fim?.slice(0, 5) || null,
-                  _datas: Array.isArray(t.datas)
-                    ? t.datas.map((d) => ({
-                        data: d.data,
-                        horario_inicio: d.horario_inicio,
-                        horario_fim: d.horario_fim,
-                      }))
-                    : [],
-                }))
-              : [];
+  ? full.map((t) => ({
+      id: t.id,
+      evento_id: t.evento_id,
+      nome: t.nome,
+      vagas_total: t.vagas_total,
+      carga_horaria: t.carga_horaria,
+      data_inicio: t.data_inicio?.slice(0, 10) || null,
+      data_fim: t.data_fim?.slice(0, 10) || null,
+      horario_inicio: t.horario_inicio?.slice(0, 5) || null,
+      horario_fim: t.horario_fim?.slice(0, 5) || null,
+      _datas: Array.isArray(t.datas)
+        ? t.datas.map((d) => ({
+            data: d.data,
+            horario_inicio: d.horario_inicio,
+            horario_fim: d.horario_fim,
+          }))
+        : [],
+    }))
+  : [];
+
           } catch {
             turmas = [];
           }
