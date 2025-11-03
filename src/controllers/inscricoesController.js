@@ -88,39 +88,55 @@ async function conflitoMesmoEventoSQL(usuarioId, turmaId) {
 }
 
 /**
- * Conflito GLOBAL (qualquer evento):
- * Compara a janela da turma-alvo com TODAS as inscrições do usuário,
- * usando TIMESTAMP WITHOUT TIME ZONE (date + time “ingênuos”).
- * Regras de normalização e overlap idênticas às da função SQL.
+ * 🧠 Conflito GLOBAL baseado em datas reais da tabela datas_turma.
+ * Retorna true se houver pelo menos uma data coincidente entre a turma-alvo e
+ * qualquer turma já inscrita pelo usuário, e se os horários se sobrepuserem.
  */
 async function conflitoGlobalSQL(usuarioId, turmaIdAlvo) {
   const q = `
     WITH alvo AS (
-      SELECT
-        /* ini/fim "ingênuos": date + time, sem timezone */
-        (COALESCE(t.data_inicio, CURRENT_DATE)::timestamp
-           + COALESCE(t.horario_inicio, time '00:00')) AS ini,
-        (COALESCE(COALESCE(t.data_fim, t.data_inicio), CURRENT_DATE)::timestamp
-           + COALESCE(t.horario_fim, time '23:59:59')) AS fim
-      FROM turmas t
-      WHERE t.id = $2
+      SELECT dt.data, dt.horario_inicio, dt.horario_fim
+      FROM datas_turma dt
+      WHERE dt.turma_id = $2
     )
     SELECT EXISTS (
       SELECT 1
-        FROM inscricoes i
-        JOIN turmas t2 ON t2.id = i.turma_id
-        JOIN alvo a ON TRUE
-       WHERE i.usuario_id = $1
-         AND i.turma_id <> $2
-         /* overlap estrito: a_ini < b_fim AND b_ini < a_fim */
-         AND ((COALESCE(t2.data_inicio, CURRENT_DATE)::timestamp
-                + COALESCE(t2.horario_inicio, time '00:00')) < a.fim)
-         AND (a.ini < (COALESCE(COALESCE(t2.data_fim, t2.data_inicio), CURRENT_DATE)::timestamp
-                       + COALESCE(t2.horario_fim, time '23:59:59')))
+      FROM inscricoes i
+      JOIN datas_turma d2 ON d2.turma_id = i.turma_id
+      JOIN alvo a ON a.data = d2.data
+      WHERE i.usuario_id = $1
+        AND i.turma_id <> $2
+        AND (
+          (a.horario_inicio, a.horario_fim)
+          OVERLAPS
+          (d2.horario_inicio, d2.horario_fim)
+        )
     ) AS conflito;
   `;
-  const { rows } = await db.query(q, [usuarioId, turmaIdAlvo]);
-  return !!rows?.[0]?.conflito;
+
+  try {
+    const { rows } = await db.query(q, [usuarioId, turmaIdAlvo]);
+    const conflito = !!rows?.[0]?.conflito;
+
+    // 🧩 Log estratégico em modo dev
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[CONFLITO-GLOBAL]", {
+        usuarioId,
+        turmaIdAlvo,
+        conflito,
+      });
+    }
+
+    return conflito;
+  } catch (err) {
+    console.error("❌ Erro em conflitoGlobalSQL:", {
+      message: err?.message,
+      detail: err?.detail,
+      code: err?.code,
+      stack: err?.stack,
+    });
+    return false; // fallback seguro
+  }
 }
 
 /* ────────────────────────────────────────────────────────────────
