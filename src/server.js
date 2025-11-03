@@ -8,6 +8,7 @@ const rateLimit = require("express-rate-limit");
 const compression = require("compression");
 const helmet = require("helmet");
 const crypto = require("crypto");
+const morgan = require("morgan"); // ⬅️ NEW
 
 // ⚙️ .env
 dotenv.config();
@@ -137,7 +138,7 @@ const vercelRegex = /^https:\/\/[a-z0-9-]+\.vercel\.app$/i;
 
 const corsOptions = {
   origin(origin, cb) {
-    if (!origin) return cb(null, true); // curl/postman ou mesma origem
+    if (!origin) return cb(null, true);
     if (allowedOrigins.includes(origin) || vercelRegex.test(origin)) return cb(null, true);
     const err = new Error("CORS bloqueado: " + origin);
     err.status = 403;
@@ -145,8 +146,6 @@ const corsOptions = {
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
-  // ⬇️ Deixe sem `allowedHeaders` para refletir automaticamente os headers solicitados no preflight
-  // allowedHeaders: <REMOVIDO>,
   exposedHeaders: ["Content-Disposition", "Content-Length", "X-Perfil-Incompleto"],
   maxAge: 86400,
 };
@@ -157,7 +156,6 @@ app.use((_, res, next) => {
   next();
 });
 app.options("*", cors(corsOptions), (_req, res) => res.sendStatus(204));
-
 app.use((_, res, next) => {
   res.setHeader("Vary", "Origin");
   next();
@@ -208,10 +206,14 @@ app.use((req, _res, next) => {
   next();
 });
 
-/* ───────── Logger dev ───────── */
+/* ───────── Logger (sempre ativo) ───────── */
+app.use(
+  morgan(':date[iso] :method :url :status :res[content-length] - :response-time ms')
+);
+// (Opcional) log curto adicional em dev
 if (IS_DEV) {
   app.use((req, _res, next) => {
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+    console.log("[DEV-REQ]", { method: req.method, url: req.url });
     next();
   });
 }
@@ -226,6 +228,23 @@ const recuperarSenhaLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
   message: { erro: "Muitas solicitações, aguarde antes de tentar novamente." },
+});
+
+/* ───────── Rotas de diagnóstico ───────── */
+app.get("/__version", (req, res) => {
+  res.json({
+    service: process.env.RENDER_SERVICE_NAME || "escola-saude-api",
+    commit: process.env.RENDER_GIT_COMMIT || "local",
+    node: process.version,
+    now: new Date().toISOString(),
+  });
+});
+app.get("/__ping", (req, res) => {
+  console.log("[PING]", {
+    ip: req.headers["x-forwarded-for"] || req.ip,
+    ua: req.headers["user-agent"],
+  });
+  res.json({ ok: true });
 });
 
 /* ───────── Rotas ───────── */
@@ -274,7 +293,9 @@ app.get("/", (req, res, next) => {
   const indexPath = path.join(PUBLIC_DIR, "index.html");
   if (fs.existsSync(indexPath)) {
     try {
-      const html = fs.readFileSync(indexPath, "utf8").replaceAll("{{CSP_NONCE}}", res.locals.cspNonce);
+      const html = fs
+        .readFileSync(indexPath, "utf8")
+        .replaceAll("{{CSP_NONCE}}", res.locals.cspNonce);
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       return res.status(200).send(html);
     } catch (e) {
@@ -288,7 +309,9 @@ app.get(/^\/(?!api\/|uploads\/).+/, (req, res, next) => {
   const indexPath = path.join(PUBLIC_DIR, "index.html");
   if (!fs.existsSync(indexPath)) return next();
   try {
-    const html = fs.readFileSync(indexPath, "utf8").replaceAll("{{CSP_NONCE}}", res.locals.cspNonce);
+    const html = fs
+      .readFileSync(indexPath, "utf8")
+      .replaceAll("{{CSP_NONCE}}", res.locals.cspNonce);
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     return res.status(200).send(html);
   } catch (e) {
