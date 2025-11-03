@@ -869,77 +869,90 @@ async function obterDetalhesEventoComRestricao(req, res) {
 /* =====================================================================
    📆 Listar turmas de um evento (com datas reais)
    ===================================================================== */
-async function listarTurmasDoEvento(req, res) {
-  const { id } = req.params;
-  const admin = isAdmin(req);
-
-  try {
-    const result = await query(
-      `
+   async function listarTurmasDoEvento(req, res) {
+    const { id } = req.params;
+    const admin = isAdmin(req);
+  
+    try {
+      const result = await query(
+        `
         SELECT 
           t.id, t.nome, t.data_inicio, t.data_fim, t.horario_inicio, t.horario_fim,
           t.vagas_total, t.carga_horaria,
           e.titulo, e.descricao, e.local,
+          /* 🔢 conta inscritos por turma (inclui 0 com LEFT JOIN) */
+          COUNT(DISTINCT i.id) AS inscritos_total,
+          /* 👨‍🏫 nomes dos instrutores do evento */
           COALESCE(array_agg(DISTINCT u.nome) FILTER (WHERE u.nome IS NOT NULL), '{}') AS instrutor
         FROM eventos e
         JOIN turmas t ON t.evento_id = e.id
         LEFT JOIN evento_instrutor ei ON ei.evento_id = e.id
         LEFT JOIN usuarios u ON u.id = ei.instrutor_id
+        LEFT JOIN inscricoes i ON i.turma_id = t.id    -- 👈 novo join
         WHERE e.id = $1
         ${admin ? "" : "AND e.publicado = TRUE"}
         GROUP BY t.id, e.id
         ORDER BY t.data_inicio, t.id
         `,
-      [id]
-    );
-
-    const turmas = [];
-    for (const r of result.rows) {
-      const datasQ = await query(
-        `SELECT data, horario_inicio, horario_fim 
-           FROM datas_turma
-          WHERE turma_id = $1
-          ORDER BY data ASC`,
-        [r.id]
+        [id]
       );
-      const datas = (datasQ.rows || [])
-        .map((d) => ({
-          data: toYmd(d.data),
-          horario_inicio: toHm(d.horario_inicio),
-          horario_fim: toHm(d.horario_fim),
-        }))
-        .filter((x) => x.data);
-
-      const data_ini = toYmd(r.data_inicio) || datas[0]?.data || null;
-      const data_fim = toYmd(r.data_fim) || datas.at(-1)?.data || null;
-      const hiCalc = toHm(r.horario_inicio) || datas[0]?.horario_inicio || "00:00";
-      const hfCalc = toHm(r.horario_fim) || datas.at(-1)?.horario_fim || "23:59";
-
-      let status_turma = "programado";
-      if (data_ini && data_fim) {
-        const st = await query(
-          `
-          SELECT
-            CASE
-              WHEN CURRENT_TIMESTAMP::timestamp < ($1::date + $2::time) THEN 'programado'
-              WHEN CURRENT_TIMESTAMP::timestamp <= ($3::date + $4::time) THEN 'andamento'
-              ELSE 'encerrado'
-            END AS status
-          `,
-          [data_ini, hiCalc, data_fim, hfCalc]
+  
+      const turmas = [];
+      for (const r of result.rows) {
+        // Datas/horários por encontro (datas_turma)
+        const datasQ = await query(
+          `SELECT data, horario_inicio, horario_fim 
+             FROM datas_turma
+            WHERE turma_id = $1
+            ORDER BY data ASC`,
+          [r.id]
         );
-        status_turma = st.rows?.[0]?.status || "programado";
+        const datas = (datasQ.rows || [])
+          .map((d) => ({
+            data: toYmd(d.data),
+            horario_inicio: toHm(d.horario_inicio),
+            horario_fim: toHm(d.horario_fim),
+          }))
+          .filter((x) => x.data);
+  
+        const data_ini = toYmd(r.data_inicio) || datas[0]?.data || null;
+        const data_fim = toYmd(r.data_fim) || datas.at(-1)?.data || null;
+        const hiCalc = toHm(r.horario_inicio) || datas[0]?.horario_inicio || "00:00";
+        const hfCalc = toHm(r.horario_fim) || datas.at(-1)?.horario_fim || "23:59";
+  
+        // Status calculado
+        let status_turma = "programado";
+        if (data_ini && data_fim) {
+          const st = await query(
+            `
+            SELECT
+              CASE
+                WHEN CURRENT_TIMESTAMP::timestamp < ($1::date + $2::time) THEN 'programado'
+                WHEN CURRENT_TIMESTAMP::timestamp <= ($3::date + $4::time) THEN 'andamento'
+                ELSE 'encerrado'
+              END AS status
+            `,
+            [data_ini, hiCalc, data_fim, hfCalc]
+          );
+          status_turma = st.rows?.[0]?.status || "programado";
+        }
+  
+        turmas.push({
+          ...r,
+          // COUNT do Postgres pode vir string — normalizamos
+          inscritos_total: Number(r.inscritos_total) || 0,
+          datas,
+          status: status_turma,
+        });
       }
-
-      turmas.push({ ...r, datas, status: status_turma });
+  
+      res.json(turmas);
+    } catch (err) {
+      console.error("listarTurmasDoEvento erro:", err.message);
+      res.status(500).json({ erro: "Erro ao buscar turmas do evento." });
     }
-
-    res.json(turmas);
-  } catch (err) {
-    console.error("listarTurmasDoEvento erro:", err.message);
-    res.status(500).json({ erro: "Erro ao buscar turmas do evento." });
   }
-}
+
 
 // ======================================================================
 // 🔄 Atualizar evento (metadados, restrição e turmas) — COMPLETO
