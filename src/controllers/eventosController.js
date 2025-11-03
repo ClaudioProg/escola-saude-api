@@ -874,32 +874,35 @@ async function obterDetalhesEventoComRestricao(req, res) {
     const admin = isAdmin(req);
   
     try {
-      const result = await query(
+      const base = await query(
         `
         SELECT 
-          t.id, t.nome, t.data_inicio, t.data_fim, t.horario_inicio, t.horario_fim,
+          t.id, t.evento_id, t.nome,
+          t.data_inicio, t.data_fim, t.horario_inicio, t.horario_fim,
           t.vagas_total, t.carga_horaria,
           e.titulo, e.descricao, e.local,
-          /* 🔢 conta inscritos por turma (inclui 0 com LEFT JOIN) */
-          COUNT(DISTINCT i.id) AS inscritos_total,
-          /* 👨‍🏫 nomes dos instrutores do evento */
           COALESCE(array_agg(DISTINCT u.nome) FILTER (WHERE u.nome IS NOT NULL), '{}') AS instrutor
         FROM eventos e
         JOIN turmas t ON t.evento_id = e.id
         LEFT JOIN evento_instrutor ei ON ei.evento_id = e.id
         LEFT JOIN usuarios u ON u.id = ei.instrutor_id
-        LEFT JOIN inscricoes i ON i.turma_id = t.id    -- 👈 novo join
         WHERE e.id = $1
-        ${admin ? "" : "AND e.publicado = TRUE"}
+          ${admin ? "" : "AND e.publicado = TRUE"}
         GROUP BY t.id, e.id
-        ORDER BY t.data_inicio, t.id
+        ORDER BY t.data_inicio NULLS LAST, t.id
         `,
         [id]
       );
   
       const turmas = [];
-      for (const r of result.rows) {
-        // Datas/horários por encontro (datas_turma)
+      for (const r of base.rows) {
+        // ✅ contagem isolada (evita distorção por JOINs)
+        const inscQ = await query(
+          `SELECT COUNT(*)::int AS total FROM inscricoes WHERE turma_id = $1`,
+          [r.id]
+        );
+        const inscritos_total = inscQ.rows?.[0]?.total ?? 0;
+  
         const datasQ = await query(
           `SELECT data, horario_inicio, horario_fim 
              FROM datas_turma
@@ -917,10 +920,9 @@ async function obterDetalhesEventoComRestricao(req, res) {
   
         const data_ini = toYmd(r.data_inicio) || datas[0]?.data || null;
         const data_fim = toYmd(r.data_fim) || datas.at(-1)?.data || null;
-        const hiCalc = toHm(r.horario_inicio) || datas[0]?.horario_inicio || "00:00";
-        const hfCalc = toHm(r.horario_fim) || datas.at(-1)?.horario_fim || "23:59";
+        const hiCalc  = toHm(r.horario_inicio) || datas[0]?.horario_inicio || "00:00";
+        const hfCalc  = toHm(r.horario_fim)    || datas.at(-1)?.horario_fim || "23:59";
   
-        // Status calculado
         let status_turma = "programado";
         if (data_ini && data_fim) {
           const st = await query(
@@ -938,9 +940,20 @@ async function obterDetalhesEventoComRestricao(req, res) {
         }
   
         turmas.push({
-          ...r,
-          // COUNT do Postgres pode vir string — normalizamos
-          inscritos_total: Number(r.inscritos_total) || 0,
+          id: r.id,
+          evento_id: r.evento_id,
+          nome: r.nome,
+          titulo: r.titulo,
+          descricao: r.descricao,
+          local: r.local,
+          vagas_total: r.vagas_total,
+          carga_horaria: r.carga_horaria,
+          data_inicio: data_ini,
+          data_fim: data_fim,
+          horario_inicio: hiCalc,
+          horario_fim: hfCalc,
+          instrutor: r.instrutor,
+          inscritos_total,          // 👈 campo garantido
           datas,
           status: status_turma,
         });
@@ -948,11 +961,10 @@ async function obterDetalhesEventoComRestricao(req, res) {
   
       res.json(turmas);
     } catch (err) {
-      console.error("listarTurmasDoEvento erro:", err.message);
+      console.error("listarTurmasDoEvento erro:", err);
       res.status(500).json({ erro: "Erro ao buscar turmas do evento." });
     }
   }
-
 
 // ======================================================================
 // 🔄 Atualizar evento (metadados, restrição e turmas) — COMPLETO
@@ -1620,29 +1632,81 @@ async function listarDatasDaTurma(req, res) {
 /* =====================================================================
    📋 Listar turmas simples (usado no frontend de inscrição/eventos)
    ===================================================================== */
-   async function listarTurmasSimples(req, res) {
-    const eventoId = Number(req.params.id);
-    const turmas = await pool.query(
-      `SELECT t.id, t.nome, t.evento_id, t.vagas_total, t.carga_horaria,
-              t.data_inicio, t.data_fim, t.horario_inicio, t.horario_fim,
-              COALESCE(
-                json_agg(json_build_object(
-                  'data', dt.data,
-                  'horario_inicio', dt.horario_inicio,
-                  'horario_fim', dt.horario_fim
-                ) ORDER BY dt.data) FILTER (WHERE dt.id IS NOT NULL),
-                '[]'
-              ) AS datas
-       FROM turmas t
-       LEFT JOIN datas_turma dt ON dt.turma_id = t.id
-       WHERE t.evento_id = $1
-       GROUP BY t.id
-       ORDER BY t.data_inicio ASC`,
-      [eventoId]
+   // controllers/eventosController.js
+
+async function listarTurmasSimples(req, res) {
+  const { id } = req.params;
+  const admin = isAdmin(req);
+
+  try {
+    // Busca básica das turmas do evento
+    const turmasQ = await query(
+      `
+      SELECT
+        t.id, t.evento_id, t.nome,
+        t.data_inicio, t.data_fim, t.horario_inicio, t.horario_fim,
+        t.vagas_total, t.carga_horaria
+      FROM turmas t
+      JOIN eventos e ON e.id = t.evento_id
+      WHERE t.evento_id = $1
+        ${admin ? "" : "AND e.publicado = TRUE"}
+      ORDER BY t.data_inicio NULLS LAST, t.id
+      `,
+      [id]
     );
-  
-    res.json(turmas.rows);
+
+    const turmas = [];
+    for (const r of turmasQ.rows) {
+      // ✅ contagem de inscritos sem depender de GROUP BY externo
+      const inscQ = await query(
+        `SELECT COUNT(*)::int AS total FROM inscricoes i WHERE i.turma_id = $1`,
+        [r.id]
+      );
+      const inscritos_total = inscQ.rows?.[0]?.total ?? 0;
+
+      // Datas por encontro (datas_turma) para fallback de datas/horários
+      const datasQ = await query(
+        `SELECT data, horario_inicio, horario_fim
+           FROM datas_turma
+          WHERE turma_id = $1
+          ORDER BY data ASC`,
+        [r.id]
+      );
+      const datas = (datasQ.rows || [])
+        .map(d => ({
+          data: toYmd(d.data),
+          horario_inicio: toHm(d.horario_inicio),
+          horario_fim: toHm(d.horario_fim),
+        }))
+        .filter(x => x.data);
+
+      // Fallbacks
+      const data_ini = toYmd(r.data_inicio) || datas[0]?.data || null;
+      const data_fim = toYmd(r.data_fim) || datas.at(-1)?.data || null;
+      const hiCalc  = toHm(r.horario_inicio) || datas[0]?.horario_inicio || null;
+      const hfCalc  = toHm(r.horario_fim)    || datas.at(-1)?.horario_fim || null;
+
+      turmas.push({
+        id: r.id,
+        evento_id: r.evento_id,
+        nome: r.nome,
+        data_inicio: data_ini,
+        data_fim: data_fim,
+        horario_inicio: hiCalc,
+        horario_fim: hfCalc,
+        vagas_total: r.vagas_total,
+        carga_horaria: r.carga_horaria,
+        inscritos_total,           // 👈 campo garantido
+        _datas: datas,             // usado no frontend para cronograma
+      });
+    }
+
+    res.json(turmas);
+  } catch (err) {
+    console.error("listarTurmasSimples erro:", err);
+    res.status(500).json({ erro: "Erro ao buscar turmas." });
   }
+}
 
 /* ===================================================================== */
 module.exports = {

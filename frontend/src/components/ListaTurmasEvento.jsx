@@ -116,11 +116,12 @@ const getVagasTotal = (t) =>
 
 const getPreenchidas = (t) =>
   toInt(
+    t?.inscritos_total ??                // 👈 novo
     t?.vagas_preenchidas ??
-      t?.inscritos_confirmados ??
-      t?.inscritos ??
-      t?.confirmados ??
-      t?.matriculados,
+    t?.inscritos_confirmados ??
+    t?.inscritos ??
+    t?.confirmados ??
+    t?.matriculados,
     0
   );
 
@@ -396,6 +397,7 @@ ListaTurmasEvento.propTypes = {
       horario_fim: PropTypes.string,
       vagas_total: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
       vagas_preenchidas: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+      inscritos_total: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
       inscritos_confirmados: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
       inscritos: PropTypes.oneOfType([
         PropTypes.number,
