@@ -8,7 +8,7 @@ const rateLimit = require("express-rate-limit");
 const compression = require("compression");
 const helmet = require("helmet");
 const crypto = require("crypto");
-const morgan = require("morgan"); // ⬅️ NEW
+const morgan = require("morgan"); // ⬅️ logger
 
 // ⚙️ .env
 dotenv.config();
@@ -146,7 +146,13 @@ const corsOptions = {
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
-  exposedHeaders: ["Content-Disposition", "Content-Length", "X-Perfil-Incompleto"],
+  exposedHeaders: [
+    "Content-Disposition",
+    "Content-Length",
+    "Last-Modified",
+    "ETag",
+    "X-Perfil-Incompleto",
+  ],
   maxAge: 86400,
 };
 
@@ -156,10 +162,6 @@ app.use((_, res, next) => {
   next();
 });
 app.options("*", cors(corsOptions), (_req, res) => res.sendStatus(204));
-app.use((_, res, next) => {
-  res.setHeader("Vary", "Origin");
-  next();
-});
 
 /* ───────── Parsers ───────── */
 app.use(express.json({ limit: "10mb" }));
@@ -206,11 +208,8 @@ app.use((req, _res, next) => {
   next();
 });
 
-/* ───────── Logger (sempre ativo) ───────── */
-app.use(
-  morgan(':date[iso] :method :url :status :res[content-length] - :response-time ms')
-);
-// (Opcional) log curto adicional em dev
+/* ───────── Logger ───────── */
+app.use(morgan(':date[iso] :method :url :status :res[content-length] - :response-time ms'));
 if (IS_DEV) {
   app.use((req, _res, next) => {
     console.log("[DEV-REQ]", { method: req.method, url: req.url });
@@ -275,11 +274,12 @@ app.use("/api/assinatura", assinaturaRoutes);
 app.use("/api/datas", datasEventoRoute);
 app.use("/api/perfil", perfilRoutes);
 app.use("/api/solicitacoes", solicitacoesCursoRoute);
+app.use("/api", chamadasModeloRoutes);
 app.use("/api/admin", submissoesAdminRoutes);
 app.use("/api/admin/avaliacoes", adminAvaliacoesRoutes);
 app.use("/api", chamadasRoutes);
 app.use("/api", trabalhosRoutes);
-app.use("/api", chamadasModeloRoutes);
+
 
 /* ───────── Recuperação de senha ───────── */
 app.post("/api/usuarios/recuperar-senha", recuperarSenhaLimiter, usuarioPublicoController.recuperarSenha);

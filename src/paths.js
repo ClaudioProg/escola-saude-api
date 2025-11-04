@@ -5,18 +5,23 @@ const os = require("os");
 
 const IS_DEV = process.env.NODE_ENV !== "production";
 
+/* ───────────────── Utils de FS ───────────────── */
+
 /** Cria diretório recursivamente (idempotente) */
 function ensureDir(p) {
+  if (!p) return;
   try {
     fs.mkdirSync(p, { recursive: true });
   } catch (e) {
-    if (e && e.code !== "EEXIST") throw e;
+    // Qualquer erro diferente de EEXIST deve emergir
+    if (e?.code !== "EEXIST") throw e;
   }
 }
 
 /** Verifica se o caminho é gravável criando/removendo um probe */
 function isWritable(dir) {
   try {
+    if (!dir) return false;
     ensureDir(dir);
     const probeDir = path.join(dir, ".probe");
     const probeFile = path.join(probeDir, "w");
@@ -29,15 +34,14 @@ function isWritable(dir) {
   }
 }
 
-/**
- * Ordem de candidatos (primeiro gravável vence):
- * - FILES_BASE (você pode definir no Render)
- * - DATA_DIR (compat c/ configs antigas)
- * - RENDER_DISK_PATH (se usar Disk no Render)
- * - /var/data (padrão de Disk no Render)
- * - ./data (no projeto)
- * - ./.data (no projeto)
- * - /tmp/escola-saude (sempre gravável; volátil)
+/* ───────────────── DATA_ROOT (ordem de candidatos) ─────────────────
+ * Primeiro diretório gravável na lista vence:
+ * - FILES_BASE (custom; recomendado definir no Render)
+ * - DATA_DIR (compat legado)
+ * - RENDER_DISK_PATH (quando usa Disk no Render)
+ * - /var/data (padrão comum em montagens de disco)
+ * - ./data e ./.data (no projeto)
+ * - /tmp/escola-saude (sempre disponível; volátil)
  */
 const candidates = [
   process.env.FILES_BASE,
@@ -50,37 +54,40 @@ const candidates = [
 ].filter(Boolean);
 
 let DATA_ROOT = candidates.find(isWritable);
-// Último recurso
 if (!DATA_ROOT) {
+  // Último recurso: tmp
   DATA_ROOT = path.join(os.tmpdir(), "escola-saude");
   ensureDir(DATA_ROOT);
 }
 
-// Estrutura padrão de subpastas
-const UPLOADS_DIR             = path.join(DATA_ROOT, "uploads");
-const MODELOS_CHAMADAS_DIR    = path.join(UPLOADS_DIR, "modelos", "chamadas");
-const CERT_DIR                = path.join(DATA_ROOT, "certificados"); // <- PDFs
-const TMP_DIR                 = path.join(DATA_ROOT, "tmp");
+/* ───────────────── Estrutura de subpastas ───────────────── */
+const UPLOADS_DIR          = path.join(DATA_ROOT, "uploads");
+const MODELOS_CHAMADAS_DIR = path.join(UPLOADS_DIR, "modelos", "chamadas"); // .ppt/.pptx (banner/oral)
+const CERT_DIR             = path.join(DATA_ROOT, "certificados");          // PDFs gerados
+const TMP_DIR              = path.join(DATA_ROOT, "tmp");                   // arquivos temporários
+const POSTERS_DIR          = path.join(UPLOADS_DIR, "posters");             // uploads de pôster (submissões)
 
-// Garante criação
-[DATA_ROOT, UPLOADS_DIR, MODELOS_CHAMADAS_DIR, CERT_DIR, TMP_DIR].forEach(ensureDir);
+/* ───────────────── Garantia de criação ───────────────── */
+[
+  DATA_ROOT,
+  UPLOADS_DIR,
+  MODELOS_CHAMADAS_DIR,
+  CERT_DIR,
+  TMP_DIR,
+  POSTERS_DIR,
+].forEach(ensureDir);
 
-// Logs úteis (evita poluir testes)
+/* ───────────────── Logs úteis ───────────────── */
 if (process.env.NODE_ENV !== "test") {
   console.log("[FILES] DATA_ROOT:", DATA_ROOT);
   console.log("[FILES] UPLOADS_DIR:", UPLOADS_DIR);
   console.log("[FILES] MODELOS_CHAMADAS_DIR:", MODELOS_CHAMADAS_DIR);
   console.log("[FILES] CERT_DIR:", CERT_DIR);
   console.log("[FILES] TMP_DIR:", TMP_DIR);
+  console.log("[FILES] POSTERS_DIR:", POSTERS_DIR);
 }
 
-// abaixo das outras constantes
-const POSTERS_DIR = path.join(UPLOADS_DIR, "posters");
-
-// garanta criação
-[DATA_ROOT, UPLOADS_DIR, MODELOS_CHAMADAS_DIR, CERT_DIR, TMP_DIR, POSTERS_DIR].forEach(ensureDir);
-
-// no module.exports
+/* ───────────────── Exports ───────────────── */
 module.exports = {
   IS_DEV,
   DATA_ROOT,
@@ -88,7 +95,7 @@ module.exports = {
   MODELOS_CHAMADAS_DIR,
   CERT_DIR,
   TMP_DIR,
+  POSTERS_DIR,
   ensureDir,
   isWritable,
-  POSTERS_DIR,              // 👈 exporte isto
 };

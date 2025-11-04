@@ -39,12 +39,6 @@ function toBrDateTimeSafe(input) {
 }
 
 /* ───────────────── Helpers de status/aprovação ───────────────── */
-/**
- * Exposição (pôster / escrita)
- * Nova regra:
- *  - status_escrita === "aprovado"
- *  - OU status global legado "aprovado_exposicao" ou "aprovado_escrita"
- */
 const okEscrita = (s) => {
   const escritaLower = String(s?.status_escrita || "").toLowerCase();
   const stLower = String(s?.status || "").toLowerCase();
@@ -52,27 +46,20 @@ const okEscrita = (s) => {
     escritaLower === "aprovado" ||
     stLower === "aprovado_exposicao" ||
     stLower === "aprovado_escrita" ||
-    Boolean(s?._exposicao_aprovada) // caso futuro/optimistic
+    Boolean(s?._exposicao_aprovada)
   );
 };
 
-/**
- * Apresentação oral
- * Nova regra:
- *  - status_oral === "aprovado"
- *  - OU status global legado "aprovado_oral"
- */
 const okOral = (s) => {
   const oralLower = String(s?.status_oral || "").toLowerCase();
   const stLower = String(s?.status || "").toLowerCase();
   return (
     oralLower === "aprovado" ||
     stLower === "aprovado_oral" ||
-    Boolean(s?._oral_aprovada) // caso futuro/optimistic
+    Boolean(s?._oral_aprovada)
   );
 };
 
-/** (possíveis sinônimos no backend — mantemos, mas nem usamos muito) */
 const isFinalizado = (s) =>
   Boolean(
     s?._finalizado ||
@@ -83,7 +70,6 @@ const isFinalizado = (s) =>
       s?.encerrado
   );
 
-/** status textual em chip bonito para o cabeçalho do card */
 function StatusChip({ status }) {
   const st = String(status ?? "").toLowerCase();
   let tone = "default";
@@ -118,11 +104,6 @@ function StatusChip({ status }) {
   );
 }
 
-/**
- * Renderiza a seção "Status + Aprovações" do card.
- * - Sempre mostra o status principal (rascunho, submetido, em avaliação, aprovado, reprovado)
- * - Se aprovado → mostra chips extras: Exposição e/ou Apresentação oral
- */
 function AprovacoesSection({ subm }) {
   const st = String(subm?.status || "").toLowerCase();
 
@@ -131,8 +112,8 @@ function AprovacoesSection({ subm }) {
   const isEmAvaliacao = st === "em_avaliacao";
   const isReprovado = st === "reprovado";
 
-  const expoOk = okEscrita(subm); // Exposição
-  const oralOk = okOral(subm); // Apresentação oral
+  const expoOk = okEscrita(subm);
+  const oralOk = okOral(subm);
 
   const isAprovado =
     st === "aprovado_exposicao" ||
@@ -142,10 +123,8 @@ function AprovacoesSection({ subm }) {
     expoOk ||
     oralOk;
 
-  // status principal (sempre aparece)
   const statusChip = <StatusChip status={st} />;
 
-  // chips complementares (somente se aprovado)
   const extraChips = [];
   if (isAprovado && expoOk) {
     extraChips.push(
@@ -172,10 +151,8 @@ function AprovacoesSection({ subm }) {
   );
 }
 
-
-/* ───────────────── HeaderHero com degradê da página ───────────────── */
+/* ───────────────── HeaderHero ───────────────── */
 function HeaderHero() {
-  // Página de submissão do usuário → tema roxo/indigo/azul
   const gradient = "from-violet-800 via-fuchsia-600 to-indigo-600";
   return (
     <header
@@ -297,11 +274,14 @@ function SubmissionCard({
   onEditar,
   onExcluir,
   excluindo,
+  onBaixarModeloOral,        // 🔹 novo: callback para baixar o modelo oral
+  hasModeloOral,             // 🔹 novo: existe modelo oral?
+  baixandoModeloOral = false // 🔹 novo: loading do download oral
 }) {
   const gradientBar = "from-violet-600 via-fuchsia-500 to-indigo-500";
 
-  // vamos calcular se está dentro do prazo uma vez aqui
   const dentroPrazo = !!(subm?.dentro_prazo || subm?.dentroPrazo);
+  const oralAprovada = okOral(subm);
 
   return (
     <div className="rounded-2xl border border-black/5 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm flex flex-col overflow-hidden">
@@ -326,6 +306,36 @@ function SubmissionCard({
         {/* Aprovações (chips Exposição / Oral, se houver) */}
         <AprovacoesSection subm={subm} />
 
+        {/* Seção de modelo de slides (oral) — só se aprovado para oral */}
+        {oralAprovada && (
+          <div className="text-sm">
+            <p className="text-[11px] uppercase text-zinc-500 dark:text-zinc-400 font-medium mb-1">
+              Apresentação oral — modelo de slides
+            </p>
+
+            {hasModeloOral ? (
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 text-indigo-600 dark:text-indigo-400 hover:underline disabled:opacity-60"
+                onClick={onBaixarModeloOral}
+                disabled={baixandoModeloOral}
+                title="Baixar modelo de slides (oral)"
+              >
+                {baixandoModeloOral ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Download className="w-4 h-4" />
+                )}
+                Baixar modelo (oral)
+              </button>
+            ) : (
+              <span className="text-gray-400 dark:text-gray-600 italic">
+                Modelo indisponível para esta chamada.
+              </span>
+            )}
+          </div>
+        )}
+
         {/* Pôster */}
         <div className="text-sm">
           <p className="text-[11px] uppercase text-zinc-500 dark:text-zinc-400 font-medium mb-1">
@@ -347,9 +357,6 @@ function SubmissionCard({
               Editar
             </button>
           ) : (
-            // Se não pode editar:
-            // - se ainda está dentro do prazo → mostra "Edição indisponível"
-            // - se está fora do prazo → NÃO mostra nada (remove 'Fora do prazo')
             dentroPrazo && (
               <span className="text-gray-500 dark:text-gray-400 text-xs leading-tight">
                 Edição indisponível
@@ -388,6 +395,109 @@ const BLOQUEADOS = new Set([
   "reprovado",
 ]);
 
+/* ───────────────── Regras & Dicas ───────────────── */
+function NumberBullet({ n }) {
+  return (
+    <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-violet-600 text-white text-sm font-semibold">
+      {n}
+    </span>
+  );
+}
+
+function RegrasEDicasCard({ progresso = null }) {
+  return (
+    <div className="rounded-2xl bg-white/90 dark:bg-zinc-900/80 backdrop-blur border border-black/5 dark:border-white/10 shadow-sm p-5">
+      <div className="flex items-center gap-2 mb-3">
+        <svg
+          className="w-5 h-5 text-violet-600 dark:text-violet-400"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20 10 10 0 000-20z" />
+        </svg>
+        <h3 className="text-base sm:text-lg font-bold text-zinc-900 dark:text-zinc-50">
+          Regras &amp; Dicas
+        </h3>
+      </div>
+
+      <ul className="space-y-5">
+        <li className="flex gap-3">
+          <NumberBullet n={1} />
+          <div>
+            <p className="font-semibold text-zinc-900 dark:text-zinc-50">
+              Conteúdo do anexo
+            </p>
+            <p className="text-sm text-zinc-600 dark:text-zinc-300">
+              Prezados(as) autores(as), no <strong>anexo (Apresentação oral — modelo de slides)</strong> deve ser inserido o
+              <strong> texto da apresentação da experiência</strong>, observando o modelo
+              indicado no edital. Utilize um único arquivo, conforme formatos aceitos pela chamada.
+            </p>
+          </div>
+        </li>
+
+        <li className="flex gap-3">
+          <NumberBullet n={2} />
+          <div>
+            <p className="font-semibold text-zinc-900 dark:text-zinc-50">
+              Critérios de avaliação da apresentação
+            </p>
+            <div className="text-sm text-zinc-600 dark:text-zinc-300 space-y-2">
+              <p>
+                A banca avaliadora atribuirá pontuação <strong>de 1 a 5</strong> para cada critério abaixo.
+                A <strong>nota da banca</strong> corresponderá à <strong>média aritmética</strong> das notas dos avaliadores.
+              </p>
+              <ul className="list-disc pl-5 space-y-1">
+                <li>
+                  <strong>Clareza e objetividade</strong> na apresentação (oral e visual).
+                </li>
+                <li>
+                  <strong>Coesão</strong> da apresentação com o trabalho escrito submetido.
+                </li>
+                <li>
+                  <strong>Aproveitamento e respeito ao tempo</strong> de apresentação, observando
+                  o número de slides e o tempo de fala.
+                </li>
+              </ul>
+            </div>
+          </div>
+        </li>
+
+        <li className="flex gap-3">
+          <NumberBullet n={3} />
+          <div>
+            <p className="font-semibold text-zinc-900 dark:text-zinc-50">
+              Tempo de apresentação
+            </p>
+            <p className="text-sm text-zinc-600 dark:text-zinc-300">
+              O tempo destinado a cada apresentação é de <strong>10 (dez) minutos</strong>, com
+              controle realizado pela equipe da organização. O <strong>descumprimento do tempo</strong>{' '}
+              estabelecido configura <strong>critério para perdas de pontos</strong> na Mostra, conforme regulamento.
+            </p>
+          </div>
+        </li>
+      </ul>
+
+      {typeof progresso === "number" && (
+        <div className="mt-5">
+          <div className="flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400 mb-1">
+            <span>Progresso geral</span>
+            <span>{progresso}%</span>
+          </div>
+          <div className="h-2 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden">
+            <div
+              className="h-2 bg-violet-600"
+              style={{ width: `${Math.min(Math.max(progresso, 0), 100)}%` }}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ───────────────── Página principal ───────────────── */
 export default function UsuarioSubmissoes() {
   const [chamadas, setChamadas] = useState([]);
@@ -400,6 +510,10 @@ export default function UsuarioSubmissoes() {
   const [modeloMap, setModeloMap] = useState({});
   const [baixandoMap, setBaixandoMap] = useState({});
   const [excluindoId, setExcluindoId] = useState(null);
+
+  // 🔶 novos mapas para o modelo de slides (apresentação oral)
+  const [modeloOralMap, setModeloOralMap] = useState({});
+  const [baixandoOralMap, setBaixandoOralMap] = useState({});
 
   /* ───── baixar modelo de pôster (chamada) ───── */
   async function baixarModeloBanner(chId) {
@@ -417,6 +531,26 @@ export default function UsuarioSubmissoes() {
     }
   }
 
+  /* ───── baixar modelo de slides (oral) por chamada ───── */
+async function baixarModeloOral(chId) {
+  if (!chId) return;
+  try {
+    setBaixandoOralMap((m) => ({ ...m, [chId]: true }));
+    try {
+      const { blob, filename } = await apiGetFile(`/chamadas/${chId}/modelo-oral`);
+      downloadBlob(filename || `modelo-oral-${chId}.pptx`, blob);
+    } catch (errBase) {
+      const { blob, filename } = await apiGetFile(`/chamadas/${chId}/modelo-oral/download`);
+      downloadBlob(filename || `modelo-oral-${chId}.pptx`, blob);
+    }
+  } catch (e) {
+    alert(e?.message || "Falha ao baixar o modelo de slides (oral).");
+  } finally {
+    setBaixandoOralMap((m) => ({ ...m, [chId]: false }));
+  }
+}
+
+
   /* ───── carregar dados iniciais ───── */
   useEffect(() => {
     async function loadData() {
@@ -433,7 +567,7 @@ export default function UsuarioSubmissoes() {
         setMinhas(minhasArr);
 
         // checar se cada chamada tem modelo de banner disponível
-        const checks = await Promise.all(
+        const checksBanner = await Promise.all(
           chamadasArr.map(async (ch) => {
             try {
               const ok = await apiHead(`/chamadas/${ch.id}/modelo-banner`, {
@@ -447,7 +581,24 @@ export default function UsuarioSubmissoes() {
             }
           })
         );
-        setModeloMap(Object.fromEntries(checks));
+        setModeloMap(Object.fromEntries(checksBanner));
+
+        // 🔶 checar se cada chamada tem modelo ORAL disponível
+        const checksOral = await Promise.all(
+          chamadasArr.map(async (ch) => {
+            try {
+              const ok = await apiHead(`/chamadas/${ch.id}/modelo-oral`, {
+                auth: true,
+                on401: "silent",
+                on403: "silent",
+              });
+              return [ch.id, !!ok];
+            } catch {
+              return [ch.id, false];
+            }
+          })
+        );
+        setModeloOralMap(Object.fromEntries(checksOral));
       } catch (err) {
         console.error("Erro ao carregar dados:", err);
       } finally {
@@ -476,10 +627,7 @@ export default function UsuarioSubmissoes() {
     return st === "rascunho" || st === "submetido";
   };
 
-  /* ───── contadores por status (stats cards) ─────
-     Agora, "Aprovado" conta se tiver qualquer modalidade aprovada
-     (Exposição e/ou Oral), não só status legado.
-  */
+  /* ───── contadores por status ───── */
   const countByStatus = useMemo(() => {
     const c = {
       submetido: 0,
@@ -605,6 +753,13 @@ export default function UsuarioSubmissoes() {
               </Card>
             </div>
           </section>
+
+          {/* ────── Regras & Dicas ────── */}
+<section aria-labelledby="regras-dicas">
+  <h2 id="regras-dicas" className="sr-only">Regras e Dicas</h2>
+  {/* se quiser mostrar uma barra de progresso, passe um número (0–100). */}
+  <RegrasEDicasCard progresso={56} />
+</section>
 
           {/* ────── Chamadas Abertas ────── */}
           <section aria-labelledby="chamadas-abertas">
@@ -752,6 +907,10 @@ export default function UsuarioSubmissoes() {
                   const podeEditar = canEdit(m);
                   const podeExcluir = canDelete(m);
 
+                  const chId = m.chamada_id ?? m.chamadaId ?? m.chamada?.id;
+                  const hasModeloOral = !!modeloOralMap[chId];
+                  const baixandoOral = !!baixandoOralMap[chId];
+
                   return (
                     <SubmissionCard
                       key={m.id}
@@ -761,6 +920,10 @@ export default function UsuarioSubmissoes() {
                       excluindo={excluindoId === m.id}
                       onEditar={() => setModalInscricao({ submissaoId: m.id })}
                       onExcluir={() => handleExcluir(m.id)}
+                      // 🔶 props para o botão de modelo oral
+                      hasModeloOral={hasModeloOral}
+                      baixandoModeloOral={baixandoOral}
+                      onBaixarModeloOral={() => baixarModeloOral(chId)}
                     />
                   );
                 })}

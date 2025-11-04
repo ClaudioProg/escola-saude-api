@@ -547,13 +547,20 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
   const [infoOk, setInfoOk] = useState("");
   const abortRef = useRef(null);
 
-  // modelo de banner (POR CHAMADA)
-  const [modeloMeta, setModeloMeta] = useState(null);
-  const [modeloBusy, setModeloBusy] = useState(false);
-  const [modeloErr, setModeloErr] = useState("");
-  const [modeloOk, setModeloOk] = useState("");
-  const [modeloDownloading, setModeloDownloading] = useState(false);
-  const hadUploadCorsRef = useRef(false); // marca se houve CORS/401/403 no upload
+// modelo de banner (POR CHAMADA)
+const [modeloMeta, setModeloMeta] = useState(null);
+const [modeloBusy, setModeloBusy] = useState(false);
+const [modeloErr, setModeloErr] = useState("");
+const [modeloOk, setModeloOk] = useState("");
+const [modeloDownloading, setModeloDownloading] = useState(false);
+const hadUploadCorsRef = useRef(false); // marca se houve CORS/401/403 no upload
+
+// 🔶 modelo de slides (apresentação oral) — (novo)
+const [oralMeta, setOralMeta] = useState(null);
+const [oralBusy, setOralBusy] = useState(false);
+const [oralErr, setOralErr] = useState("");
+const [oralOk, setOralOk] = useState("");
+const hadUploadCorsOralRef = useRef(false);
 
   const inputBase =
     "w-full rounded-xl border px-3 py-2 ring-offset-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-800";
@@ -572,14 +579,73 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
     return "";
   };
 
-  // carrega para edição + meta do modelo da CHAMADA
+// 📤 importar modelo de slides (apresentação oral) — (novo)
+const onImportModeloOral = async (file) => {
+  if (!file) return;
+  setOralErr(""); setOralOk(""); setInfoOk(""); setOralBusy(true);
+  try {
+    if (!isEdit) throw new Error("Salve a chamada para habilitar o upload do modelo.");
+    if (!/\.(pptx?|PPTX?)$/.test(file.name)) throw new Error("Envie arquivo .ppt ou .pptx");
+    if (file.size > 50 * 1024 * 1024) throw new Error("Arquivo muito grande (máx 50MB).");
+
+    const tryOnce = async () => {
+      await apiUploadSvc(`chamadas/${chamadaId}/modelo-oral`, file, { fieldName: "file" });
+      const meta = await apiGet(`admin/chamadas/${chamadaId}/modelo-oral`);
+      setOralMeta(meta || null);
+    };
+
+    const attempts = [0, 400, 1000];
+    let lastErr = null;
+    hadUploadCorsOralRef.current = false;
+
+    for (let i = 0; i < attempts.length; i++) {
+      try {
+        if (i > 0) setInfoOk(`Conexão instável, tentando novamente (${i + 1}/${attempts.length})…`);
+        await tryOnce();
+        lastErr = null;
+        break;
+      } catch (e) {
+        lastErr = e;
+        const msg = String(e?.message || "");
+        const status = e?.status || e?.response?.status;
+        if (status === 401 || status === 403 || /Failed to fetch|CORS/i.test(msg)) {
+          hadUploadCorsOralRef.current = true;
+          try { await apiGet("perfil/me"); } catch {}
+          await sleep(attempts[i]);
+          continue;
+        }
+        break;
+      }
+    }
+    if (lastErr) throw lastErr;
+
+    setOralOk("Modelo de slides (oral) importado com sucesso.");
+    setInfoOk("");
+  } catch (e) {
+    setOralErr(e?.message || "Falha ao importar o modelo de slides (oral).");
+  } finally {
+    setOralBusy(false);
+  }
+};
+
+// 📥 baixar modelo de slides (oral)
+const handleDownloadOral = useCallback(async () => {
+  try {
+    const { blob, filename } = await apiGetFile(`admin/chamadas/${chamadaId}/modelo-oral/download`);
+    downloadBlob(filename || `modelo-oral-chamada-${chamadaId}.pptx`, blob);
+    setOralOk("Download iniciado.");
+  } catch (e) {
+    console.error("Erro ao baixar modelo oral:", e);
+    setOralErr(e?.message || "Falha ao baixar o modelo de slides (oral).");
+  }
+}, [chamadaId]);
+
+ // carrega para edição + meta do modelo da CHAMADA
   useEffect(() => {
     if (!open) return;
     setErr(""); setInfoOk(""); setModeloErr(""); setModeloOk("");
-    if (!isEdit) {
-      setForm((prev) => ({ ...prev, titulo: "", linhas: [], criterios: [], criterios_orais: [] }));
-      setModeloMeta(null);
-    }
+    if (!isEdit) { /* limpa form ... */ setModeloMeta(null); setOralMeta(null); } // (ajuste)
+  
     (async () => {
       try {
         if (isEdit) {
@@ -620,21 +686,28 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
           });
 
           try {
-            const meta = await apiGet(`admin/chamadas/${chamadaId}/modelo-banner`);
-            setModeloMeta(meta || null);
+            const metaBanner = await apiGet(`admin/chamadas/${chamadaId}/modelo-banner`);
+            setModeloMeta(metaBanner || null);
           } catch {
             setModeloMeta(null);
+          }
+  
+          // 🔶 modelo-oral — (novo)
+          try {
+            const metaOral = await apiGet(`admin/chamadas/${chamadaId}/modelo-oral`);
+            setOralMeta(metaOral || null);
+          } catch {
+            setOralMeta(null);
           }
         }
       } catch (e) {
         setErr(e?.message || "Falha ao carregar a chamada para edição.");
       } finally { setLoading(false); }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, isEdit, chamadaId]);
 
-  // util: espera ms
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  /* ===== util ===== */
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
   // 📥 baixar modelo (.ppt/.pptx)
   const onDownloadModelo = async () => {
@@ -705,17 +778,19 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
 
   const onSave = async () => {
     setErr(""); setInfoOk("");
-
-    if (hadUploadCorsRef.current) {
-      try { await apiGet("perfil/me"); } catch {}
-      await sleep(150);
-      hadUploadCorsRef.current = false;
-    }
-
+  
+    if (hadUploadCorsRef.current) { /* ... */ }
+  
     if (modeloBusy) {
       setErr("Aguarde terminar o envio do modelo de banner antes de salvar.");
       return;
     }
+    // 🔶 checagem do oral — (novo)
+    if (oralBusy) {
+      setErr("Aguarde terminar o envio do modelo de slides (oral) antes de salvar.");
+      return;
+    }
+  
     const ver = validar();
     if (ver) { setErr(ver); return; }
     setSaving(true);
@@ -812,11 +887,11 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
           )}
           <button type="button" onClick={onClose} className="rounded-xl px-4 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800">Cancelar</button>
           <button
-            type="button"
-            onClick={onSave}
-            disabled={saving || modeloBusy}
-            className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-white transition hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-zinc-400 dark:disabled:bg-zinc-700"
-          >
+  type="button"
+  onClick={onSave}
+  disabled={saving || modeloBusy || oralBusy}
+  className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-white ..."
+>
             {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />} {saving ? "Salvando..." : "Salvar"}
           </button>
         </>
@@ -954,7 +1029,7 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
             </Field>
           </section>
 
-                    {/* 4) Autores */}
+          {/* 4) Autores */}
           <section id="s4" className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <h2 className="sm:col-span-2 mb-2 text-base font-semibold">Limite de autores e coautores</h2>
             <Field label="Máximo de coautores" htmlFor="coaut">
@@ -1128,7 +1203,58 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
                 {infoOk && !modeloOk && !modeloErr && <div className="text-center text-xs text-emerald-600">{infoOk}</div>}
               </div>
             </Field>
-          </section>
+
+             {/* 🔶 INSERIR AQUI: Modelo de slides (apresentação oral) — (novo) */}
+  {/* 🔻 COLE O BLOCO A PARTIR DA LINHA ABAIXO */}
+  <Field label="Modelo de slides (apresentação oral)">
+  {!isEdit && (
+    <div className="mb-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-amber-900 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
+      <div className="flex items-start gap-2 text-sm">
+        <AlertCircle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
+        <div><strong>Salve a chamada</strong> para habilitar o envio do modelo de slides (.pptx).</div>
+      </div>
+    </div>
+  )}
+
+  <div className="flex flex-col items-center justify-center gap-3">
+    <div className="flex flex-wrap items-center justify-center gap-2">
+      {/* Upload do modelo (oral) */}
+      <label
+        className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm text-white ${
+          isEdit && !oralBusy ? "bg-amber-600 hover:bg-amber-700 cursor-pointer" : "bg-zinc-400 cursor-not-allowed"
+        }`}
+        title={isEdit ? "Importar modelo de slides (.pptx)" : "Salve a chamada para habilitar o upload"}
+      >
+        <input
+          type="file"
+          accept=".ppt,.pptx,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+          className="hidden"
+          disabled={!isEdit || oralBusy}
+          onChange={(e) => onImportModeloOral(e.target.files?.[0] || null)}
+        />
+        {oralBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Upload className="h-4 w-4" aria-hidden="true" />}
+        {oralBusy ? "Enviando…" : "Importar modelo (oral .pptx)"}
+      </label>
+      </div>
+
+    <div className="mt-1 text-center text-xs text-zinc-500">
+      Esse arquivo será usado para as <strong>apresentações orais</strong> desta chamada.
+      {oralMeta?.exists === true && (
+        <>
+          {" "}<strong>Modelo disponível</strong>
+          {oralMeta.filename ? ` — ${oralMeta.filename}` : ""}
+          {Number.isFinite(oralMeta?.size) ? ` (${formatBytes(oralMeta.size)})` : ""}
+          {oralMeta.mtime ? ` — atualizado em ${new Date(oralMeta.mtime).toLocaleString()}` : ""}
+        </>
+      )}
+      {oralMeta?.exists === false && (<span className="text-rose-600"> Nenhum modelo importado ainda para apresentação oral.</span>)}
+    </div>
+
+    {oralOk &&  <div className="text-center text-xs text-emerald-600">{oralOk}</div>}
+    {oralErr && <div className="text-center text-xs text-rose-600">{oralErr}</div>}
+  </div>
+</Field>
+         </section>
 
           {/* 9) Disposições finais */}
           <section id="s9" className="grid grid-cols-1 gap-4">
@@ -1173,12 +1299,12 @@ export default function AdminChamadaForm() {
       <HeaderHero counts={counts} />
       <main className="mx-auto w-full max-w-screen-xl p-4 sm:px-6 lg:px-8">
         <div className="mb-6">
-        <ChamadasPainel
+          <ChamadasPainel
             onEditar={openEditar}
             onNova={openNovo}
             refreshSignal={refreshSignal}
             onCountsChange={setCounts}
-         />
+          />
         </div>
       </main>
       <Footer />

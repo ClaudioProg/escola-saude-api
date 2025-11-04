@@ -854,6 +854,270 @@ async function resumoAvaliadores(req, res) {
 */
 
 /* ===================== Exports ===================== */
+
+/* ===================== Upload de modelo (banner/oral) ===================== */
+const os = require("os");
+const crypto = require("crypto");
+
+// mini ensureDir local (fallback)
+async function ensureDirLocal(dir) {
+  return fs.promises.mkdir(dir, { recursive: true });
+}
+
+// pasta base para armazenar modelos de chamada
+function modelosBaseDir() {
+  // tenta usar paths.js se existir
+  try {
+    const p = require("../paths");
+    return p.MODELOS_CHAMADAS_DIR || path.resolve("uploads", "modelos_chamadas");
+  } catch {
+    return path.resolve("uploads", "modelos_chamadas");
+  }
+}
+
+function sanitizeFilename(name = "") {
+  const base = String(name).normalize("NFKD").replace(/[^\w.\-]+/g, "_");
+  return base || `arquivo_${Date.now()}`;
+}
+
+// Salva/atualiza registro em trabalhos_arquivos para a chamada + tipo
+async function upsertModeloArquivo({ chamadaId, filePath, original, mime, size, tipo }, dbConn = db) {
+  // tenta encontrar já existente para (chamadaId, tipo)
+  const row = await dbConn.oneOrNone(
+    `SELECT a.id
+       FROM trabalhos_arquivos a
+       JOIN trabalhos_chamadas c ON c.id = $1
+      WHERE a.ref_table = 'trabalhos_chamadas'
+        AND a.ref_id = $1
+        AND a.tipo = $2
+      ORDER BY a.id DESC
+      LIMIT 1`,
+    [chamadaId, tipo]
+  );
+
+  if (row) {
+    await dbConn.none(
+      `UPDATE trabalhos_arquivos
+          SET caminho=$2, nome_original=$3, mime_type=$4, tamanho=$5, atualizado_em=NOW(), tipo=$6
+        WHERE id=$1`,
+      [row.id, filePath, original, mime, size, tipo]
+    );
+    return row.id;
+  }
+
+  const rs = await dbConn.one(
+    `INSERT INTO trabalhos_arquivos (ref_table, ref_id, caminho, nome_original, mime_type, tamanho, tipo, criado_em)
+     VALUES ('trabalhos_chamadas', $1, $2, $3, $4, $5, $6, NOW())
+     RETURNING id`,
+    [chamadaId, filePath, original, mime, size, tipo]
+  );
+  return rs.id;
+}
+
+// Obtém meta do modelo de uma chamada por tipo
+async function getModeloMeta(chamadaId, tipo, dbConn = db) {
+  const row = await dbConn.oneOrNone(
+    `SELECT id, caminho, nome_original, mime_type, tamanho, atualizado_em AS mtime
+       FROM trabalhos_arquivos
+      WHERE ref_table='trabalhos_chamadas'
+        AND ref_id=$1
+        AND tipo=$2
+      ORDER BY id DESC
+      LIMIT 1`,
+    [chamadaId, tipo]
+  );
+  if (!row) return { exists: false };
+
+  const filePath = path.isAbsolute(row.caminho)
+    ? row.caminho
+    : path.resolve("uploads", String(row.caminho || "").replace(/^uploads[\\/]/i, ""));
+
+  const exists = fs.existsSync(filePath);
+  return {
+    exists,
+    id: row.id,
+    filename: row.nome_original || null,
+    size: Number(row.tamanho) || null,
+    mime: row.mime_type || null,
+    mtime: row.mtime || null,
+    resolved_path: filePath,
+  };
+}
+
+// ===== Handlers públicos =====
+
+/** GET /api/admin/chamadas/:id/modelo-banner */
+async function getModeloBannerMeta(req, res) {
+  const chamadaId = asInt(req.params.id);
+  if (!Number.isInteger(chamadaId) || chamadaId <= 0) {
+    return res.status(400).json({ error: "ID inválido" });
+  }
+  try {
+    // segurança: admin
+    const uid = getUserIdOptional(req);
+    if (!(await isAdmin(uid, db))) return res.status(403).json({ error: "Acesso negado." });
+
+    const meta = await getModeloMeta(chamadaId, "template_banner", db);
+    return res.json(meta);
+  } catch (err) {
+    console.error("[getModeloBannerMeta]", err);
+    return res.status(500).json({ error: "Falha ao obter modelo de banner." });
+  }
+}
+
+/** GET /api/admin/chamadas/:id/modelo-banner/download */
+async function downloadModeloBanner(req, res) {
+  const chamadaId = asInt(req.params.id);
+  if (!Number.isInteger(chamadaId) || chamadaId <= 0) {
+    return res.status(400).json({ error: "ID inválido" });
+  }
+  try {
+    // segurança: admin
+    const uid = getUserIdOptional(req);
+    if (!(await isAdmin(uid, db))) return res.status(403).json({ error: "Acesso negado." });
+
+    const meta = await getModeloMeta(chamadaId, "template_banner", db);
+    if (!meta.exists) return res.status(404).json({ error: "Modelo não encontrado." });
+
+    res.setHeader("Content-Type", meta.mime || "application/octet-stream");
+    res.setHeader("Content-Disposition", `attachment; filename="${sanitizeFilename(meta.filename || `modelo-banner-${chamadaId}.pptx`)}"`);
+    fs.createReadStream(meta.resolved_path).pipe(res);
+  } catch (err) {
+    console.error("[downloadModeloBanner]", err);
+    return res.status(500).json({ error: "Falha ao baixar modelo de banner." });
+  }
+}
+
+/** POST /api/chamadas/:id/modelo-banner  (multipart/form-data; field: file) */
+async function uploadModeloBanner(req, res) {
+  const chamadaId = asInt(req.params.id);
+  if (!Number.isInteger(chamadaId) || chamadaId <= 0) {
+    return res.status(400).json({ error: "ID inválido" });
+  }
+  try {
+    // segurança: admin
+    const uid = getUserIdOptional(req);
+    if (!(await isAdmin(uid, db))) return res.status(403).json({ error: "Acesso negado." });
+
+    // valida multipart
+    if (!req.file) return res.status(400).json({ error: "Envie um arquivo no campo 'file'." });
+    const original = req.file.originalname || "modelo.pptx";
+    const mime = req.file.mimetype || "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+    const size = req.file.size || 0;
+    if (!/\.pptx?$|powerpoint/i.test(original)) {
+      return res.status(400).json({ error: "Arquivo inválido: envie .ppt ou .pptx." });
+    }
+
+    // move arquivo do tmp para pasta final
+    const baseDir = modelosBaseDir();
+    const dir = path.resolve(baseDir, String(chamadaId));
+    await ensureDirLocal(dir);
+    const safeName = sanitizeFilename(original);
+    const stamp = crypto.randomBytes(4).toString("hex");
+    const finalPath = path.resolve(dir, `${stamp}__${safeName}`);
+
+    await fs.promises.rename(req.file.path, finalPath);
+
+    // grava registro
+    await upsertModeloArquivo({
+      chamadaId,
+      filePath: finalPath,
+      original,
+      mime,
+      size,
+      tipo: "template_banner",
+    }, db);
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("[uploadModeloBanner]", err);
+    return res.status(500).json({ error: "Falha ao enviar modelo de banner." });
+  }
+}
+
+/** GET /api/admin/chamadas/:id/modelo-oral */
+async function getModeloOralMeta(req, res) {
+  const chamadaId = asInt(req.params.id);
+  if (!Number.isInteger(chamadaId) || chamadaId <= 0) {
+    return res.status(400).json({ error: "ID inválido" });
+  }
+  try {
+    const uid = getUserIdOptional(req);
+    if (!(await isAdmin(uid, db))) return res.status(403).json({ error: "Acesso negado." });
+
+    const meta = await getModeloMeta(chamadaId, "template_slide_oral", db);
+    return res.json(meta);
+  } catch (err) {
+    console.error("[getModeloOralMeta]", err);
+    return res.status(500).json({ error: "Falha ao obter modelo de slides (oral)." });
+  }
+}
+
+/** GET /api/admin/chamadas/:id/modelo-oral/download */
+async function downloadModeloOral(req, res) {
+  const chamadaId = asInt(req.params.id);
+  if (!Number.isInteger(chamadaId) || chamadaId <= 0) {
+    return res.status(400).json({ error: "ID inválido" });
+  }
+  try {
+    const uid = getUserIdOptional(req);
+    if (!(await isAdmin(uid, db))) return res.status(403).json({ error: "Acesso negado." });
+
+    const meta = await getModeloMeta(chamadaId, "template_slide_oral", db);
+    if (!meta.exists) return res.status(404).json({ error: "Modelo não encontrado." });
+
+    res.setHeader("Content-Type", meta.mime || "application/octet-stream");
+    res.setHeader("Content-Disposition", `attachment; filename="${sanitizeFilename(meta.filename || `modelo-oral-${chamadaId}.pptx`)}"`);
+    fs.createReadStream(meta.resolved_path).pipe(res);
+  } catch (err) {
+    console.error("[downloadModeloOral]", err);
+    return res.status(500).json({ error: "Falha ao baixar modelo de slides (oral)." });
+  }
+}
+
+/** POST /api/chamadas/:id/modelo-oral  (multipart/form-data; field: file) */
+async function uploadModeloOral(req, res) {
+  const chamadaId = asInt(req.params.id);
+  if (!Number.isInteger(chamadaId) || chamadaId <= 0) {
+    return res.status(400).json({ error: "ID inválido" });
+  }
+  try {
+    const uid = getUserIdOptional(req);
+    if (!(await isAdmin(uid, db))) return res.status(403).json({ error: "Acesso negado." });
+
+    if (!req.file) return res.status(400).json({ error: "Envie um arquivo no campo 'file'." });
+    const original = req.file.originalname || "modelo-oral.pptx";
+    const mime = req.file.mimetype || "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+    const size = req.file.size || 0;
+    if (!/\.pptx?$|powerpoint/i.test(original)) {
+      return res.status(400).json({ error: "Arquivo inválido: envie .ppt ou .pptx." });
+    }
+
+    const baseDir = modelosBaseDir();
+    const dir = path.resolve(baseDir, String(chamadaId));
+    await ensureDirLocal(dir);
+    const safeName = sanitizeFilename(original);
+    const stamp = crypto.randomBytes(4).toString("hex");
+    const finalPath = path.resolve(dir, `${stamp}__${safeName}`);
+
+    await fs.promises.rename(req.file.path, finalPath);
+
+    await upsertModeloArquivo({
+      chamadaId,
+      filePath: finalPath,
+      original,
+      mime,
+      size,
+      tipo: "template_slide_oral",
+    }, db);
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("[uploadModeloOral]", err);
+    return res.status(500).json({ error: "Falha ao enviar modelo de slides (oral)." });
+  }
+}
+
 module.exports = {
   // helpers
   getUserIdOptional,
@@ -874,6 +1138,14 @@ module.exports = {
 
   // arquivos
   baixarBanner,
+
+  // modelos (NOVOS)
+  getModeloBannerMeta,
+  downloadModeloBanner,
+  uploadModeloBanner,
+  getModeloOralMeta,
+  downloadModeloOral,
+  uploadModeloOral,
 
   // notas materializadas
   calcularTotaisDaSubmissao,
