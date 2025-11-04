@@ -239,12 +239,23 @@ export default function Eventos() {
     async function carregarInscricoes() {
       try {
         const inscricoes = await apiGet("/api/inscricoes/minhas");
-        const arr = Array.isArray(inscricoes) ? inscricoes : [];
-        const idsTurmas = arr
-          .map((i) => Number(i?.turma_id))
-          .filter((n) => Number.isFinite(n));
-        setInscricoesConfirmadas(idsTurmas);
-        setInscricoesDetalhes(arr); // mantém detalhes para comparar conflito GLOBAL
+        const detalhadas = await Promise.all(
+          inscricoes.map(async (i) => {
+            try {
+              const datas = await apiGet(`/api/turmas/${i.turma_id}/datas`);
+              return { ...i, _datas: datas }; // datas = [{data, horario_inicio, horario_fim}]
+            } catch {
+              return i;
+            }
+          })
+        );
+        setInscricoesDetalhes(detalhadas);
+const arr = Array.isArray(detalhadas) ? detalhadas : [];
+const idsTurmas = arr
+  .map((i) => Number(i?.turma_id))
+  .filter((n) => Number.isFinite(n));
+setInscricoesConfirmadas(idsTurmas);
+// 👆 não sobrescreve inscricoesDetalhes (mantém as _datas reais)
       } catch {
         toast.error("Erro ao carregar inscrições do usuário.");
       }
@@ -436,10 +447,27 @@ export default function Eventos() {
     for (const i of inscricoesDetalhes) {
       if (Number(i?.turma_id) === Number(t.id)) continue; // ✅ ignora turma igual
   
-      const diB = ymd(i?.data_inicio);
-      const dfB = ymd(i?.data_fim);
-      const hiB = HHMM(i?.horario_inicio, null);
-      const hfB = HHMM(i?.horario_fim, null);
+      let diB = ymd(i?.data_inicio);
+let dfB = ymd(i?.data_fim);
+let hiB = HHMM(i?.horario_inicio, null);
+let hfB = HHMM(i?.horario_fim, null);
+
+// 🆕 Prioriza datas_turma reais se existirem
+if (Array.isArray(i?._datas) && i._datas.length) {
+  const datasValidas = i._datas.map(d => ({
+    data: ymd(d.data),
+    hi: HHMM(d.horario_inicio, null),
+    hf: HHMM(d.horario_fim, null),
+  }));
+  for (const d of datasValidas) {
+    if (!d.data || !d.hi || !d.hf) continue;
+    if (d.data === rA.di && horariosSobrepoem(rA.hi, rA.hf, d.hi, d.hf)) {
+      globais.add(Number(t.id));
+      break;
+    }
+  }
+  continue; // já validou datas específicas
+}
       if (!diB || !dfB || !hiB || !hfB) continue;
   
       if (datasIntersectam(rA.di, rA.df, diB, dfB) && horariosSobrepoem(rA.hi, rA.hf, hiB, hfB)) {
@@ -463,17 +491,42 @@ export default function Eventos() {
     const { di, df } = rangeDaTurma(turma);
     const { hi, hf } = horarioMaisProvavel(turma);
     if (!di || !df || !hi || !hf) return false;
+  
     for (const i of inscricoesDetalhes) {
+      // ignora a própria turma
+      if (Number(i?.turma_id) === Number(turma?.id)) continue;
+  
+      // 1) Prioriza datas_turma reais, se existirem
+      if (Array.isArray(i?._datas) && i._datas.length) {
+        for (const d of i._datas) {
+          const dataB = ymd(d?.data);
+          const hiB = HHMM(d?.horario_inicio, null);
+          const hfB = HHMM(d?.horario_fim, null);
+          if (!dataB || !hiB || !hfB) continue;
+  
+          // conflito: mesma data e sobreposição de horário
+          if (dataB === di && horariosSobrepoem(hi, hf, hiB, hfB)) {
+            return true;
+          }
+        }
+        continue; // já avaliou granularmente
+      }
+  
+      // 2) Fallback para intervalos genéricos
       const diB = ymd(i?.data_inicio);
       const dfB = ymd(i?.data_fim);
       const hiB = HHMM(i?.horario_inicio, null);
       const hfB = HHMM(i?.horario_fim, null);
       if (!diB || !dfB || !hiB || !hfB) continue;
-      if (datasIntersectam(di, df, diB, dfB) && horariosSobrepoem(hi, hf, hiB, hfB)) return true;
+  
+      if (datasIntersectam(di, df, diB, dfB) && horariosSobrepoem(hi, hf, hiB, hfB)) {
+        return true;
+      }
     }
+  
     return false;
   };
-
+  
   async function inscrever(turmaId) {
     if (inscrevendo) return;
 
