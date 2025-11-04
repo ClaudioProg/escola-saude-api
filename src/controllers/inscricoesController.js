@@ -88,54 +88,138 @@ async function conflitoMesmoEventoSQL(usuarioId, turmaId) {
 }
 
 /**
- * 🧠 Conflito GLOBAL baseado em datas reais da tabela datas_turma.
- * Retorna true se houver pelo menos uma data coincidente entre a turma-alvo e
- * qualquer turma já inscrita pelo usuário, e se os horários se sobrepuserem.
+ * Conflito GLOBAL entre a turma-alvo e QUALQUER outra inscrição do usuário.
+ * Critério:
+ *   - compara SOMENTE no mesmo dia (a partir de datas_turma)
+ *   - intervalo meia-aberto [início, fim) com tsrange -> bordas contíguas NÃO conflitam
+ * Fallback: se a turma-alvo não tiver datas_turma, tenta usar (data_inicio/data_fim + horários)
  */
 async function conflitoGlobalSQL(usuarioId, turmaIdAlvo) {
-  const q = `
+  // 1) Primeiro, verifica se a turma-alvo tem datas_turma
+  const { rows: alvoTemDatas } = await db.query(
+    `SELECT EXISTS(SELECT 1 FROM datas_turma WHERE turma_id = $1) AS tem;`,
+    [turmaIdAlvo]
+  );
+  const temDatasAlvo = !!alvoTemDatas?.[0]?.tem;
+
+  if (temDatasAlvo) {
+    // Caminho principal: datas_turma + tsrange [)
+    const q = `
+      WITH alvo AS (
+        SELECT
+          dt.data::date AS data,
+          dt.horario_inicio::time AS hi,
+          dt.horario_fim::time  AS hf
+        FROM datas_turma dt
+        WHERE dt.turma_id = $2
+      ),
+      slots_alvo AS (
+        SELECT tsrange(
+                 (a.data + a.hi)::timestamp,
+                 (a.data + a.hf)::timestamp,
+                 '[)'
+               ) AS rng
+        FROM alvo a
+        WHERE a.hi IS NOT NULL AND a.hf IS NOT NULL
+      ),
+      outras AS (
+        SELECT i.turma_id
+        FROM inscricoes i
+        WHERE i.usuario_id = $1
+          AND i.turma_id <> $2
+      ),
+      slots_outras AS (
+        SELECT tsrange(
+                 (d2.data + d2.horario_inicio)::timestamp,
+                 (d2.data + d2.horario_fim)::timestamp,
+                 '[)'
+               ) AS rng
+        FROM datas_turma d2
+        JOIN outras o ON o.turma_id = d2.turma_id
+        WHERE d2.horario_inicio IS NOT NULL AND d2.horario_fim IS NOT NULL
+      )
+      SELECT EXISTS (
+        SELECT 1
+        FROM slots_alvo sa
+        JOIN slots_outras so ON sa.rng && so.rng
+      ) AS conflito;
+    `;
+
+    try {
+      const { rows } = await db.query(q, [usuarioId, turmaIdAlvo]);
+      const conflito = !!rows?.[0]?.conflito;
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[CONFLITO-GLOBAL/DT]", { usuarioId, turmaIdAlvo, conflito });
+      }
+      return conflito;
+    } catch (err) {
+      console.error("❌ Erro em conflitoGlobalSQL (datas_turma):", {
+        message: err?.message, detail: err?.detail, code: err?.code, stack: err?.stack,
+      });
+      return false;
+    }
+  }
+
+  // 2) Fallback: sem datas_turma para a turma-alvo — usa fronteiras da própria turma
+  // Observação: ainda garante meia-aberto e só acusa conflito quando MESMO DIA.
+  const qFallback = `
     WITH alvo AS (
-      SELECT dt.data, dt.horario_inicio, dt.horario_fim
-      FROM datas_turma dt
-      WHERE dt.turma_id = $2
+      SELECT
+        to_char(t.data_inicio, 'YYYY-MM-DD') AS di,
+        to_char(t.data_fim,    'YYYY-MM-DD') AS df,
+        left(t.horario_inicio::text, 5)      AS hi,
+        left(t.horario_fim::text,    5)      AS hf
+      FROM turmas t
+      WHERE t.id = $2
+    ),
+    outras AS (
+      SELECT i.turma_id
+      FROM inscricoes i
+      WHERE i.usuario_id = $1
+        AND i.turma_id <> $2
+    ),
+    slots_alvo AS (
+      SELECT
+        CASE 
+          WHEN a.di IS NOT NULL AND a.df IS NOT NULL AND a.di = a.df AND a.hi ~ '^[0-9]{2}:[0-9]{2}$' AND a.hf ~ '^[0-9]{2}:[0-9]{2}$'
+          THEN tsrange( (a.di || 'T' || a.hi)::timestamp,
+                        (a.df || 'T' || a.hf)::timestamp,
+                        '[)' )
+          ELSE NULL
+        END AS rng
+      FROM alvo a
+    ),
+    slots_outras AS (
+      -- prioriza datas_turma das outras turmas; se não houver, ignora (evita falso-positivo)
+      SELECT tsrange(
+               (d2.data::date + d2.horario_inicio::time)::timestamp,
+               (d2.data::date + d2.horario_fim::time)::timestamp,
+               '[)'
+             ) AS rng
+      FROM datas_turma d2
+      JOIN outras o ON o.turma_id = d2.turma_id
+      WHERE d2.horario_inicio IS NOT NULL AND d2.horario_fim IS NOT NULL
     )
     SELECT EXISTS (
       SELECT 1
-      FROM inscricoes i
-      JOIN datas_turma d2 ON d2.turma_id = i.turma_id
-      JOIN alvo a ON a.data = d2.data
-      WHERE i.usuario_id = $1
-        AND i.turma_id <> $2
-        AND (
-          (a.horario_inicio, a.horario_fim)
-          OVERLAPS
-          (d2.horario_inicio, d2.horario_fim)
-        )
+      FROM slots_alvo sa
+      JOIN slots_outras so ON sa.rng && so.rng
+      WHERE sa.rng IS NOT NULL
     ) AS conflito;
   `;
 
   try {
-    const { rows } = await db.query(q, [usuarioId, turmaIdAlvo]);
+    const { rows } = await db.query(qFallback, [usuarioId, turmaIdAlvo]);
     const conflito = !!rows?.[0]?.conflito;
-
-    // 🧩 Log estratégico em modo dev
     if (process.env.NODE_ENV !== "production") {
-      console.log("[CONFLITO-GLOBAL]", {
-        usuarioId,
-        turmaIdAlvo,
-        conflito,
-      });
+      console.log("[CONFLITO-GLOBAL/FALLBACK]", { usuarioId, turmaIdAlvo, conflito });
     }
-
     return conflito;
   } catch (err) {
-    console.error("❌ Erro em conflitoGlobalSQL:", {
-      message: err?.message,
-      detail: err?.detail,
-      code: err?.code,
-      stack: err?.stack,
+    console.error("❌ Erro em conflitoGlobalSQL (fallback):", {
+      message: err?.message, detail: err?.detail, code: err?.code, stack: err?.stack,
     });
-    return false; // fallback seguro
+    return false;
   }
 }
 
