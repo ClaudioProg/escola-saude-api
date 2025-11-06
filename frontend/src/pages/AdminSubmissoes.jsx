@@ -362,7 +362,8 @@ export default function AdminSubmissoes() {
     <div className="min-h-screen flex flex-col bg-gelo dark:bg-zinc-950">
       <HeaderHero stats={stats} />
 
-      <main className="flex-1 px-4 sm:px-8 py-10 max-w-7xl mx-auto w-full space-y-10">
+      <main className="flex-1 px-4 sm:px-6 lg:px-8 2xl:px-10 py-10 mx-auto w-full space-y-10
+                       xl:max-w-[1680px] 2xl:max-w-[1920px]">
         {/* Toolbar de ações (separada dos filtros) */}
 <section
   className="bg-white dark:bg-zinc-900 rounded-2xl shadow p-5 border dark:border-zinc-800 space-y-4"
@@ -471,21 +472,21 @@ export default function AdminSubmissoes() {
 </section>
 
         {/* Tabela (desktop) */}
-        <section className="hidden md:block overflow-x-auto bg-white dark:bg-zinc-900 rounded-2xl shadow border dark:border-zinc-800" aria-label="Tabela de submissões">
-          <table className="w-full border-collapse text-sm">
+        <section className="hidden md:block overflow-x-auto 2xl:overflow-x-visible bg-white dark:bg-zinc-900 rounded-2xl shadow border dark:border-zinc-800" aria-label="Tabela de submissões">
+         <table className="w-full table-auto text-sm">
             <caption className="sr-only">Lista de submissões filtradas</caption>
             <thead className="bg-amber-600 text-white">
               <tr>
-                <th scope="col" className="p-3 text-left">Título</th>
-                <th scope="col" className="p-3 text-left">Autor</th>
-                <th scope="col" className="p-3 text-left">Chamada</th>
-                <th scope="col" className="p-3 text-left">Linha temática</th>
-                <th scope="col" className="p-3 text-center">Submetido em</th>
-                <th scope="col" className="p-3 text-center">Status</th>
-                <th scope="col" className="p-3 text-center">Nota (escrita)</th>
-                <th scope="col" className="p-3 text-center">Nota (oral)</th>
-                <th scope="col" className="p-3 text-center">Nota (final)</th>
-                <th scope="col" className="p-3 text-center">Ações</th>
+              <th scope="col" className="p-3 text-left w-[28%] min-w-[360px]">Título</th>
+                <th scope="col" className="p-3 text-left w-[16%] min-w-[220px]">Autor</th>
+                <th scope="col" className="p-3 text-left w-[16%] min-w-[220px]">Chamada</th>
+                <th scope="col" className="p-3 text-left w-[16%] min-w-[220px]">Linha temática</th>
+                <th scope="col" className="p-3 text-center w-[10%] min-w-[140px]">Submetido em</th>
+                <th scope="col" className="p-3 text-center w-[10%] min-w-[140px]">Status</th>
+                <th scope="col" className="p-3 text-center w-[6%]  min-w-[90px]">Nota (escrita)</th>
+                <th scope="col" className="p-3 text-center w-[6%]  min-w-[90px]">Nota (oral)</th>
+                <th scope="col" className="p-3 text-center w-[6%]  min-w-[90px]">Nota (final)</th>
+                <th scope="col" className="p-3 text-center w-[12%] min-w-[180px]">Ações</th>
               </tr>
             </thead>
             <tbody>
@@ -772,7 +773,8 @@ function HeaderHero({ stats }) {
   return (
     <motion.header initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }} className="w-full text-white">
       <div className="bg-gradient-to-br from-amber-700 via-orange-600 to-yellow-600">
-        <div className="mx-auto max-w-7xl px-6 py-10 sm:py-12">
+      <div className="mx-auto px-4 sm:px-6 lg:px-8 2xl:px-10
+                 xl:max-w-[1680px] 2xl:max-w-[1920px] py-10 sm:py-12 text-center">
           <div className="flex items-center justify-center gap-3">
             <ClipboardList className="h-9 w-9" aria-hidden="true" />
             <h1 className="text-2xl sm:text-3xl font-extrabold leading-tight text-center">Submissão de Trabalhos — Administração</h1>
