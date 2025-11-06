@@ -128,20 +128,21 @@ function TabelaSubmissoes({ itens, notasMap, onAbrir, variant = "pending" }) {
   const headClass = variant === "pending" ? "bg-green-800 text-white" : "bg-amber-500 text-white";
 
   return (
-    <div className="hidden md:block overflow-x-auto rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm overflow-hidden">
-      <table className="min-w-full text-sm">
-        <thead>
-          <tr className={headClass}>
-            <th className="px-4 py-3 text-left">Título</th>
-            <th className="px-4 py-3 text-left">Chamada</th>
-            <th className="px-4 py-3 text-left">Linha</th>
-            <th className="px-4 py-3 text-left">Status</th>
-            <th className="px-4 py-3 text-left">Nota escrita</th>
-            <th className="px-4 py-3 text-left">Nota oral</th>
-            <th className="px-4 py-3 text-left">Ações</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+    <div className="md:block rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm overflow-hidden">
+         <div className="overflow-x-auto">
+           <table className="w-full text-sm table-auto">
+              <thead>
+                <tr className={headClass}>
+                <th className="px-4 py-3 text-left w-[34%] min-w-[360px]">Título</th>
+             <th className="px-4 py-3 text-left w-[16%] whitespace-nowrap">Chamada</th>
+             <th className="px-4 py-3 text-left w-[18%]">Linha</th>
+            <th className="px-4 py-3 text-left w-[10%] whitespace-nowrap">Status</th>
+             <th className="px-4 py-3 text-left w-[8%] whitespace-nowrap">Nota escrita</th>
+             <th className="px-4 py-3 text-left w-[8%] whitespace-nowrap">Nota oral</th>
+             <th className="px-4 py-3 text-left w-[6%] whitespace-nowrap">Ações</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
           {itens.map((s) => {
             const notaW = notasMap[`${s.id}-escrita`];
             const notaO = notasMap[`${s.id}-oral`];
@@ -183,6 +184,7 @@ function TabelaSubmissoes({ itens, notasMap, onAbrir, variant = "pending" }) {
           })}
         </tbody>
       </table>
+    </div>
     </div>
   );
 }
@@ -500,7 +502,7 @@ export default function AvaliadorSubmissoes() {
       {/* Header */}
       <motion.header initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} className="w-full">
         <div className="bg-gradient-to-br from-emerald-700 via-teal-600 to-amber-500 text-white">
-          <div className="mx-auto max-w-7xl px-6 py-10 sm:py-12 text-center">
+        <div className="mx-auto px-4 sm:px-6 lg:px-8 2xl:px-10 py-10 sm:py-12 text-center 2xl:max-w-[1800px] xl:max-w-[1680px]">
             <div className="flex flex-col items-center gap-3">
               <div className="flex items-center gap-3">
                 <ClipboardList className="h-8 w-8" />
@@ -514,9 +516,9 @@ export default function AvaliadorSubmissoes() {
         </div>
       </motion.header>
 
-      <main className="flex-1 px-4 sm:px-8 py-10 max-w-7xl mx-auto w-full space-y-8">
+      <main className="flex-1 px-4 sm:px-6 lg:px-8 2xl:px-10 py-8 mx-auto w-full space-y-8 xl:max-w-[1680px] 2xl:max-w-[1800px]">
         {/* Ministats */}
-        <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <section className="grid grid-cols-2 md:grid-cols-4 2xl:grid-cols-4 gap-4 2xl:gap-6">
           <div className="rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-4 shadow-sm">
             <p className="text-[11px] uppercase text-zinc-500 dark:text-zinc-400 font-medium">Total recebidos</p>
             <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-50">{totalSubmissoes}</p>
