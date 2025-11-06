@@ -86,7 +86,7 @@ router.get("/submissoes/:id(\\d+)/banner", ctrl.baixarBanner);
 router.get(
   "/submissoes/:id(\\d+)",
   requireAuth,
-  trabalhosCtrl.obterSubmissao
+  ctrl.obterSubmissao
 );
 
  // Versão ADMIN (a que o front usa)
@@ -102,5 +102,26 @@ router.get(
    requireAdmin,
    ctrl.resumoAvaliadores
  );
+
+ // ❌ Revogar (excluir lógico) avaliador
+router.delete(
+  "/admin/submissoes/:id(\\d+)/avaliadores",
+  requireAdmin,
+  ctrl.revogarAvaliadorFlex
+);
+
+// 🔁 Restaurar vínculo revogado
+router.patch(
+  "/admin/submissoes/:id(\\d+)/avaliadores/restore",
+  requireAdmin,
+  ctrl.restaurarAvaliadorFlex
+);
+
+// (Opcional) Alias POST caso seu cliente não envie body em DELETE
+router.post(
+  "/admin/submissoes/:id(\\d+)/avaliadores/revogar",
+  requireAdmin,
+  ctrl.revogarAvaliadorFlex
+);
 
 module.exports = router;

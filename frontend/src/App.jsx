@@ -66,7 +66,6 @@ const ConfirmarPresenca      = lazy(() => import("./pages/ConfirmarPresenca"));
 const ManualUsuario          = lazy(() => import("./pages/usuario/Manual"));
 
 // 🆕 Páginas públicas novas
-const AjudaCadastro          = lazy(() => import("./pages/AjudaCadastro"));
 const Privacidade            = lazy(() => import("./pages/Privacidade"));
 
 // 🆕 Home pós-login (portal da Escola)
@@ -337,7 +336,6 @@ export default function App() {
             <Route path="/cadastro" element={<Cadastro />} />
 
             {/* 🆕 públicas novas */}
-            <Route path="/ajuda/cadastro" element={<AjudaCadastro />} />
             <Route path="/ajuda/cadastro.html" element={<HtmlAliasRedirect />} />
             <Route path="/privacidade" element={<Privacidade />} />
             <Route path="/privacidade.html" element={<HtmlAliasRedirect />} />

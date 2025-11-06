@@ -1,8 +1,14 @@
-// ✅ frontend/src/components/ListaTurmasEvento.jsx
+// ✅ frontend/src/components/ListaTurmasEvento.jsx (revamp visual)
 /* eslint-disable no-console */
 import React, { useMemo } from "react";
 import PropTypes from "prop-types";
-import { CalendarDays, Clock3 } from "lucide-react";
+import {
+  CalendarDays,
+  Clock3,
+  Users,
+  AlertTriangle,
+  CheckCircle2,
+} from "lucide-react";
 
 /* ========================== Helpers ========================== */
 const clamp = (n, a = 0, b = 100) => Math.max(a, Math.min(b, n));
@@ -116,17 +122,25 @@ const getVagasTotal = (t) =>
 
 const getPreenchidas = (t) =>
   toInt(
-    t?.inscritos_total ??                // 👈 novo
-    t?.vagas_preenchidas ??
-    t?.inscritos_confirmados ??
-    t?.inscritos ??
-    t?.confirmados ??
-    t?.matriculados,
+    t?.inscritos_total ??
+      t?.vagas_preenchidas ??
+      t?.inscritos_confirmados ??
+      t?.inscritos ??
+      t?.confirmados ??
+      t?.matriculados,
     0
   );
 
-/* ======================== Componente ======================== */
+/* UI helpers */
+const barraClassPorPerc = (p) => {
+  if (p >= 90) return "bg-rose-600";
+  if (p >= 70) return "bg-amber-500";
+  return "bg-emerald-600";
+};
+const chipBase =
+  "text-[11px] px-2 py-1 rounded-full border inline-flex items-center gap-1 font-medium whitespace-nowrap";
 
+/* ======================== Componente ======================== */
 export default function ListaTurmasEvento({
   turmas = [],
   eventoId,
@@ -138,9 +152,9 @@ export default function ListaTurmasEvento({
   jaInscritoNoEvento = false,
   jaInstrutorDoEvento = false,
   mostrarStatusTurma = true,
-  /** 🆕 controla se mostra “realizados/total” quando há encontros */
+  /** mostra “realizados/total” em encontros */
   exibirRealizadosTotal = false,
-  /** 🆕 turmas em conflito (IDs) — união de conflitos internos e globais */
+  /** IDs de turmas em conflito — internos + globais */
   turmasEmConflito = [],
 }) {
   const isCongresso = String(eventoTipo || "").toLowerCase() === "congresso";
@@ -150,17 +164,16 @@ export default function ListaTurmasEvento({
   const conflitosSet = useMemo(() => new Set((turmasEmConflito || []).map(Number)), [turmasEmConflito]);
 
   return (
-    <div id={`turmas-${eventoId}`} className="mt-4 space-y-4">
+    <div id={`turmas-${eventoId}`} className="mt-4 space-y-5">
       {(turmas || []).map((t) => {
         const jaInscrito = jaInscritoTurma(t.id);
 
         // bloquear outras turmas se não for congresso
         const bloquearOutras = !isCongresso && jaInscritoNoEvento && !jaInscrito;
 
-        // vagas / preenchidas (robustos)
+        // vagas / preenchidas
         const vagas = getVagasTotal(t);
         const preenchidasRaw = getPreenchidas(t);
-        // se o usuário já está inscrito, garanta pelo menos 1 inscrito para UX (quando backend devolve 0)
         const inscritos = jaInscrito && preenchidasRaw === 0 ? 1 : preenchidasRaw;
 
         const temLimiteVagas = vagas > 0;
@@ -169,18 +182,18 @@ export default function ListaTurmasEvento({
         const di = String(t.data_inicio || "").slice(0, 10);
         const df = String(t.data_fim || "").slice(0, 10);
 
-        // Encontros: aceita vários formatos + dedup + ordenação
+        // encontros
         const encontrosInline =
           (Array.isArray(t.encontros) && t.encontros.length ? t.encontros : null) ||
           (Array.isArray(t.datas) && t.datas.length ? t.datas : null) ||
           (Array.isArray(t._datas) && t._datas.length ? t._datas : null);
 
         const encontros = (encontrosInline || []).map((d) => isoDiaLocal(d)).filter(Boolean);
-        const encontrosOrdenados = Array.from(new Set(encontros)).sort(); // dedup + sort
+        const encontrosOrdenados = Array.from(new Set(encontros)).sort();
         const qtdEncontros = encontrosOrdenados.length;
         const realizados = encontrosOrdenados.filter((d) => d <= HOJE_ISO).length;
 
-        // Horários reais (turma > encontros consistentes > indefinido)
+        // horários
         const { hi: hiEncontros, hf: hfEncontros } = extrairHorasDeEncontros(encontrosInline);
         const hi = parseHora(t.horario_inicio) || hiEncontros || null;
         const hf = parseHora(t.horario_fim) || hfEncontros || null;
@@ -191,7 +204,7 @@ export default function ListaTurmasEvento({
         const statusTurma = getStatusPorJanela({ di, df, hi, hf, agora: hoje });
 
         const bloqueadoPorInstrutor = Boolean(jaInstrutorDoEvento);
-        const emConflito = conflitosSet.has(Number(t.id)); // 🆕 conflito vindo do pai
+        const emConflito = conflitosSet.has(Number(t.id));
         const disabled =
           bloqueadoPorInstrutor || carregando || jaInscrito || lotada || bloquearOutras || emConflito;
 
@@ -205,17 +218,63 @@ export default function ListaTurmasEvento({
           "";
 
         return (
-          <div
+          <article
             key={t.id || `${t.nome || "Turma"}-${di}-${hi || "??"}`}
-            className="rounded-2xl border border-gray-200 dark:border-gray-700 p-4 bg-white dark:bg-neutral-900"
+            className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-neutral-900 shadow-sm hover:shadow-xl transition-shadow overflow-hidden"
           >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h4 className="font-semibold text-lousa dark:text-white mb-1">
+            {/* Faixa de destaque */}
+            <div className="h-1.5 w-full bg-gradient-to-r from-rose-500 via-fuchsia-500 to-indigo-500" />
+
+            <div className="p-4 sm:p-5">
+              {/* Header: nome + chips de status */}
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                <h4 className="text-lg sm:text-xl font-extrabold text-zinc-900 dark:text-white">
                   {t.nome || "Turma"}
                 </h4>
 
-                <div className="text-sm text-gray-600 dark:text-gray-300 flex items-center gap-2">
+                <div className="flex flex-wrap gap-2">
+                  {/* Status principal */}
+                  {(lotada || mostrarStatusTurma) && (
+                    <span
+                      className={`${chipBase} ${
+                        lotada
+                          ? "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-200 dark:border-rose-800"
+                          : statusTurma === "Em andamento"
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-800"
+                          : statusTurma === "Encerrado"
+                          ? "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-200 dark:border-rose-800"
+                          : "bg-gray-50 text-gray-700 border-gray-200 dark:bg-gray-800/50 dark:text-gray-200 dark:border-gray-700"
+                      }`}
+                    >
+                      {lotada ? "Lotada" : statusTurma}
+                    </span>
+                  )}
+
+                  {/* Chip “Inscrito” */}
+                  {jaInscrito && (
+                    <span
+                      className={`${chipBase} bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-200 dark:border-indigo-700`}
+                      title="Você está inscrito nesta turma"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" /> Inscrito
+                    </span>
+                  )}
+
+                  {/* Chip de conflito */}
+                  {emConflito && (
+                    <span
+                      className={`${chipBase} bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-200 dark:border-amber-800`}
+                      title="Conflito de horário com outra turma já inscrita"
+                    >
+                      <AlertTriangle className="w-3.5 h-3.5" /> Conflito
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Metas: datas, horários, carga horária */}
+              <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
                   <CalendarDays className="w-4 h-4" />
                   <span>
                     {di && df ? (
@@ -233,152 +292,134 @@ export default function ListaTurmasEvento({
                   </span>
                 </div>
 
-                <div className="text-sm text-gray-600 dark:text-gray-300 flex items-center gap-2">
+                <div className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
                   <Clock3 className="w-4 h-4" />
-                  <span>
-                    {hi && hf ? <>Horário: {hi} às {hf}</> : <>Horário: a definir</>}
-                  </span>
+                  <span>{hi && hf ? <>Horário: {hi} às {hf}</> : <>Horário: a definir</>}</span>
                 </div>
+              </div>
 
-                {Number.isFinite(Number(t.carga_horaria)) && (
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    Carga horária: {Number(t.carga_horaria)}h
-                  </p>
-                )}
+              {Number.isFinite(Number(t.carga_horaria)) && (
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Carga horária: {Number(t.carga_horaria)}h
+                </p>
+              )}
 
-                {/* Encontros (datas_turma) */}
-                <div className="mt-2 text-center">
-                  {qtdEncontros > 0 ? (
-                    <>
-                      <div className="flex items-center justify-center gap-2 mb-1">
-                        <div className="text-xs font-medium text-gray-600 dark:text-gray-300">
-                          {qtdEncontros} encontro{qtdEncontros > 1 ? "s" : ""}:
-                        </div>
-
+              {/* Encontros */}
+              <div className="mt-3">
+                {qtdEncontros > 0 ? (
+                  <>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2 text-xs font-medium text-gray-600 dark:text-gray-300">
+                        {qtdEncontros} encontro{qtdEncontros > 1 ? "s" : ""}
                         {exibirRealizadosTotal && (
                           <span
-                            className="text-[11px] px-2 py-0.5 rounded-full 
-                                       bg-emerald-50 text-emerald-700 border border-emerald-200
-                                       dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-800"
-                            title="Encontros já realizados até hoje"
+                            className="ml-1 text-[11px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-800"
+                            title="Encontros realizados até hoje"
                             aria-label={`Realizados: ${realizados} de ${qtdEncontros}`}
                           >
                             {realizados}/{qtdEncontros} realizados
                           </span>
                         )}
                       </div>
+                    </div>
 
-                      <div className="flex flex-wrap gap-2 justify-center">
-                        {encontrosOrdenados.map((d, idx) => (
-                          <span
-                            key={idx}
-                            className={[
-                              "px-2 py-1 text-xs rounded-full border",
-                              d <= HOJE_ISO
-                                ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-800"
-                                : "bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-200 dark:border-indigo-700",
-                            ].join(" ")}
-                            title={d <= HOJE_ISO ? "Já ocorreu" : "Ainda por ocorrer"}
-                          >
-                            {br(d)}
-                          </span>
-                        ))}
-                      </div>
-                    </>
-                  ) : (
-                    <span className="opacity-70 text-xs">
-                      Cronograma por encontros ainda não definido
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Chip de status (sem mostrar "Conflito de horário") */}
-              <div className="flex flex-col items-end gap-2">
-                {(lotada || mostrarStatusTurma) && (
-                  <span
-                    className={`text-xs px-2 py-1 rounded-full border ${
-                      lotada
-                        ? "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-200 dark:border-rose-800"
-                        : statusTurma === "Em andamento"
-                        ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-800"
-                        : statusTurma === "Encerrado"
-                        ? "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-200 dark:border-rose-800"
-                        : "bg-gray-50 text-gray-700 border-gray-200 dark:bg-gray-800/50 dark:text-gray-200 dark:border-gray-700"
-                    }`}
-                  >
-                    {lotada ? "Lotada" : statusTurma}
+                    <div className="flex flex-wrap gap-2">
+                      {encontrosOrdenados.map((d, idx) => (
+                        <span
+                          key={idx}
+                          className={[
+                            "px-2 py-1 text-xs rounded-full border",
+                            d <= HOJE_ISO
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-800"
+                              : "bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-200 dark:border-indigo-700",
+                          ].join(" ")}
+                          title={d <= HOJE_ISO ? "Já ocorreu" : "Ainda por ocorrer"}
+                        >
+                          {br(d)}
+                        </span>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <span className="opacity-70 text-xs">
+                    Cronograma por encontros ainda não definido
                   </span>
                 )}
               </div>
-            </div>
 
-            {/* Barra de vagas / info de vagas */}
-            <div className="mt-3">
-              <div className="flex justify-between text-xs text-gray-600 dark:text-gray-400 mb-1">
-                <span>
-                  {temLimiteVagas
-                    ? `${inscritos} de ${vagas} vagas preenchidas`
-                    : `${inscritos} inscrito${inscritos === 1 ? "" : "s"} (sem limite de vagas)`}
-                </span>
-                {temLimiteVagas && <span>{perc}%</span>}
-              </div>
-              {temLimiteVagas && (
-                <div className="h-2 rounded bg-gray-200 dark:bg-gray-700 overflow-hidden" aria-hidden="true">
-                  <div className="h-2 bg-emerald-500 dark:bg-emerald-600" style={{ width: `${perc}%` }} />
+              {/* Vagas */}
+              <div className="mt-4">
+                <div className="flex justify-between items-center text-xs text-gray-600 dark:text-gray-400 mb-1">
+                  <div className="inline-flex items-center gap-1">
+                    <Users className="w-3.5 h-3.5" />
+                    <span>
+                      {temLimiteVagas
+                        ? `${inscritos} de ${vagas} vagas preenchidas`
+                        : `${inscritos} inscrito${inscritos === 1 ? "" : "s"} (sem limite de vagas)`}
+                    </span>
+                  </div>
+                  {temLimiteVagas && <span>{perc}%</span>}
                 </div>
-              )}
-            </div>
+                {temLimiteVagas && (
+                  <div className="h-2 rounded bg-gray-200 dark:bg-gray-700 overflow-hidden" aria-hidden="true">
+                    <div
+                      className={`h-2 ${barraClassPorPerc(perc)} transition-all`}
+                      style={{ width: `${perc}%` }}
+                    />
+                  </div>
+                )}
+              </div>
 
-            {/* CTA centralizado */}
-            <div className="mt-4 flex gap-2 justify-center">
-              <button
-                type="button"
-                onClick={() => {
-                  if (disabled) return;
-                  if (jaInstrutorDoEvento) return;
-                  inscrever?.(t.id);
-                }}
-                disabled={disabled}
-                aria-disabled={disabled}
-                title={motivo}
-                className={[
-                  "w-full sm:w-auto px-5 py-2 rounded-lg font-semibold transition",
-                  "min-w-[180px] focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-500",
-                  disabled
-                    ? "bg-gray-300 text-gray-600 cursor-not-allowed dark:bg-gray-700 dark:text-gray-400"
-                    : "bg-lousa text-white hover:opacity-90",
-                ].join(" ")}
-                aria-label={
-                  jaInstrutorDoEvento
-                    ? "Você é instrutor do evento"
+              {/* CTA */}
+              <div className="mt-5 flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (disabled) return;
+                    if (jaInstrutorDoEvento) return;
+                    inscrever?.(t.id);
+                  }}
+                  disabled={disabled}
+                  aria-disabled={disabled}
+                  title={motivo}
+                  className={[
+                    "w-full sm:w-auto px-5 py-2 rounded-xl font-semibold transition min-w-[190px]",
+                    "focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-500",
+                    disabled
+                      ? "bg-gray-300 text-gray-600 cursor-not-allowed dark:bg-gray-700 dark:text-gray-400"
+                      : "bg-emerald-600 text-white hover:bg-emerald-700",
+                  ].join(" ")}
+                  aria-label={
+                    jaInstrutorDoEvento
+                      ? "Você é instrutor do evento"
+                      : jaInscrito
+                      ? "Inscrito nesta turma"
+                      : emConflito
+                      ? "Conflito de horário com outra turma já inscrita"
+                      : lotada
+                      ? "Turma sem vagas"
+                      : bloquearOutras
+                      ? "Inscrição indisponível (já inscrito em outra turma do evento)"
+                      : "Inscrever-se na turma"
+                  }
+                >
+                  {Number(inscrevendo) === Number(t.id)
+                    ? "Processando..."
+                    : jaInstrutorDoEvento
+                    ? "Instrutor do evento"
                     : jaInscrito
-                    ? "Inscrito nesta turma"
+                    ? "Inscrito"
                     : emConflito
-                    ? "Conflito de horário com outra turma já inscrita"
-                    : lotada
-                    ? "Turma sem vagas"
+                    ? "Conflito de horário"
                     : bloquearOutras
-                    ? "Inscrição indisponível (já inscrito em outra turma do evento)"
-                    : "Inscrever-se na turma"
-                }
-              >
-                {Number(inscrevendo) === Number(t.id)
-                  ? "Processando..."
-                  : jaInstrutorDoEvento
-                  ? "Instrutor do evento"
-                  : jaInscrito
-                  ? "Inscrito"
-                  : emConflito
-                  ? "Conflito de horário"
-                  : bloquearOutras
-                  ? "Indisponível"
-                  : lotada
-                  ? "Sem vagas"
-                  : "Inscrever-se"}
-              </button>
+                    ? "Indisponível"
+                    : lotada
+                    ? "Sem vagas"
+                    : "Inscrever-se"}
+                </button>
+              </div>
             </div>
-          </div>
+          </article>
         );
       })}
     </div>
@@ -424,7 +465,7 @@ ListaTurmasEvento.propTypes = {
   mostrarStatusTurma: PropTypes.bool,
   /** quando true, mostra o badge “realizados/total” */
   exibirRealizadosTotal: PropTypes.bool,
-  /** 🆕 lista de IDs de turmas em conflito para desabilitar CTA e sinalizar */
+  /** lista de IDs de turmas em conflito para desabilitar CTA e sinalizar */
   turmasEmConflito: PropTypes.arrayOf(
     PropTypes.oneOfType([PropTypes.number, PropTypes.string])
   ),

@@ -395,19 +395,123 @@ const BLOQUEADOS = new Set([
   "reprovado",
 ]);
 
-/* ───────────────── Regras & Dicas ───────────────── */
+/* ───────────────── Regras & Dicas (2 colunas / 2 cards) ───────────────── */
+
 function NumberBullet({ n }) {
   return (
-    <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-violet-600 text-white text-sm font-semibold">
+    <span
+      className="
+        inline-flex items-center justify-center
+        w-7 h-7 rounded-full
+        bg-fuchsia-600 text-white text-xs font-bold
+        shadow-sm select-none shrink-0
+      "
+    >
       {n}
     </span>
   );
 }
 
-function RegrasEDicasCard({ progresso = null }) {
+
+function RegrasEDicasCardCol({ itens = [], start = 1 }) {
   return (
-    <div className="rounded-2xl bg-white/90 dark:bg-zinc-900/80 backdrop-blur border border-black/5 dark:border-white/10 shadow-sm p-5">
-      <div className="flex items-center gap-2 mb-3">
+    <div
+  className="
+    rounded-2xl
+    bg-[#fde6ef]/90 dark:bg-zinc-900/80
+    backdrop-blur
+    border border-fuchsia-200/40 dark:border-white/10
+    shadow-sm
+    p-5
+    transition-all duration-300
+    hover:shadow-md hover:border-fuchsia-300
+  "
+>
+
+      <ol
+        className="
+          space-y-5
+          list-none
+          pl-0
+          [&>li]:list-none
+          [&>li]:marker:hidden
+          [&>li]:before:hidden
+        "
+        start={start}
+      >
+        {itens.map((it, i) => {
+          const n = start + i;
+          return (
+            <li key={n} className="flex gap-3 list-none marker:hidden before:hidden">
+              <NumberBullet n={n} />
+
+              <div className="text-sm leading-6">
+                <p className="font-semibold text-zinc-900 dark:text-zinc-50 mb-1">
+                  {it.titulo}
+                </p>
+                <div className="[text-align:justify] text-zinc-700 dark:text-zinc-300">
+                  {it.conteudo}
+                </div>
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
+
+/** Seção completa (split 50/50 em 2 cards). Aceita progresso opcional (mostra no 2º card). */
+function RegrasEDicasSection({ progresso = null }) {
+  const itens = [
+    {
+      titulo: "Conteúdo do anexo",
+      conteudo: (
+        <p>
+          Prezados(as) autores(as), no <strong>anexo (Apresentação oral — modelo de slides)</strong> deve ser inserido o
+          <strong> texto da apresentação da experiência</strong>, observando o modelo indicado no edital.
+          Utilize um único arquivo, conforme formatos aceitos pela chamada.
+        </p>
+      ),
+    },
+    {
+      titulo: "Critérios de avaliação da apresentação",
+      conteudo: (
+        <>
+          <p>
+            A banca avaliadora atribuirá pontuação <strong>de 1 a 5</strong> para cada critério abaixo.
+            A <strong>nota da banca</strong> corresponderá à <strong>média aritmética</strong> das notas dos avaliadores.
+          </p>
+          <ul className="list-disc pl-5 space-y-1">
+            <li><strong>Clareza e objetividade</strong> na apresentação (oral e visual).</li>
+            <li><strong>Coesão</strong> da apresentação com o trabalho escrito submetido.</li>
+            <li><strong>Aproveitamento e respeito ao tempo</strong> de apresentação, observando o número de slides e o tempo de fala.</li>
+          </ul>
+        </>
+      ),
+    },
+    {
+      titulo: "Tempo de apresentação",
+      conteudo: (
+        <p>
+          O tempo destinado a cada apresentação é de <strong>10 (dez) minutos</strong>, com controle realizado pela equipe da organização.
+          O <strong>descumprimento do tempo</strong> estabelecido configura <strong>critério para perdas de pontos</strong> na Mostra, conforme regulamento.
+        </p>
+      ),
+    },
+    // Se quiser mais itens, adicione aqui…
+  ];
+
+  // Divide 50/50 para duas colunas (se ímpar, a 1ª coluna fica com +1)
+  const metade = Math.ceil(itens.length / 2);
+  const col1 = itens.slice(0, metade);
+  const col2 = itens.slice(metade);
+
+  return (
+    <section className="w-full max-w-6xl mx-auto mb-10 px-4">
+      <div className="flex items-center gap-2 mb-4">
+        {/* Ícone em linha com o título, mantendo a identidade da página */}
         <svg
           className="w-5 h-5 text-violet-600 dark:text-violet-400"
           fill="none"
@@ -423,78 +527,41 @@ function RegrasEDicasCard({ progresso = null }) {
         </h3>
       </div>
 
-      <ul className="space-y-5">
-        <li className="flex gap-3">
-          <NumberBullet n={1} />
-          <div>
-            <p className="font-semibold text-zinc-900 dark:text-zinc-50">
-              Conteúdo do anexo
-            </p>
-            <p className="text-sm text-zinc-600 dark:text-zinc-300">
-              Prezados(as) autores(as), no <strong>anexo (Apresentação oral — modelo de slides)</strong> deve ser inserido o
-              <strong> texto da apresentação da experiência</strong>, observando o modelo
-              indicado no edital. Utilize um único arquivo, conforme formatos aceitos pela chamada.
-            </p>
-          </div>
-        </li>
+      {/* 2 colunas / 2 cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <RegrasEDicasCardCol itens={col1} start={1} />
 
-        <li className="flex gap-3">
-          <NumberBullet n={2} />
-          <div>
-            <p className="font-semibold text-zinc-900 dark:text-zinc-50">
-              Critérios de avaliação da apresentação
-            </p>
-            <div className="text-sm text-zinc-600 dark:text-zinc-300 space-y-2">
-              <p>
-                A banca avaliadora atribuirá pontuação <strong>de 1 a 5</strong> para cada critério abaixo.
-                A <strong>nota da banca</strong> corresponderá à <strong>média aritmética</strong> das notas dos avaliadores.
-              </p>
-              <ul className="list-disc pl-5 space-y-1">
-                <li>
-                  <strong>Clareza e objetividade</strong> na apresentação (oral e visual).
-                </li>
-                <li>
-                  <strong>Coesão</strong> da apresentação com o trabalho escrito submetido.
-                </li>
-                <li>
-                  <strong>Aproveitamento e respeito ao tempo</strong> de apresentação, observando
-                  o número de slides e o tempo de fala.
-                </li>
-              </ul>
-            </div>
-          </div>
-        </li>
-
-        <li className="flex gap-3">
-          <NumberBullet n={3} />
-          <div>
-            <p className="font-semibold text-zinc-900 dark:text-zinc-50">
-              Tempo de apresentação
-            </p>
-            <p className="text-sm text-zinc-600 dark:text-zinc-300">
-              O tempo destinado a cada apresentação é de <strong>10 (dez) minutos</strong>, com
-              controle realizado pela equipe da organização. O <strong>descumprimento do tempo</strong>{' '}
-              estabelecido configura <strong>critério para perdas de pontos</strong> na Mostra, conforme regulamento.
-            </p>
-          </div>
-        </li>
-      </ul>
-
-      {typeof progresso === "number" && (
-        <div className="mt-5">
-          <div className="flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400 mb-1">
-            <span>Progresso geral</span>
-            <span>{progresso}%</span>
-          </div>
-          <div className="h-2 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden">
+        <div className="relative">
+          <RegrasEDicasCardCol itens={col2} start={metade + 1} />
+          {typeof progresso === "number" && (
             <div
-              className="h-2 bg-violet-600"
-              style={{ width: `${Math.min(Math.max(progresso, 0), 100)}%` }}
-            />
-          </div>
+            className="
+              mt-3
+              rounded-2xl
+              bg-[#fde6ef]/90 dark:bg-zinc-900/80
+              backdrop-blur
+              border border-fuchsia-200/40 dark:border-white/10
+              shadow-sm
+              p-4
+              transition-all duration-300
+              hover:shadow-md hover:border-fuchsia-300
+            "
+          >
+              <div className="flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400 mb-1">
+                <span>Progresso geral</span>
+                <span>{Math.min(Math.max(progresso, 0), 100)}%</span>
+              </div>
+              <div className="h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden">
+  <div
+    className="h-1.5 bg-fuchsia-600 transition-all duration-300"
+    style={{ width: `${Math.min(Math.max(progresso, 0), 100)}%` }}
+  />
+</div>
+            </div>
+          )}
         </div>
-      )}
-    </div>
+      </div>
+    </section>
   );
 }
 
@@ -757,8 +824,7 @@ async function baixarModeloOral(chId) {
           {/* ────── Regras & Dicas ────── */}
 <section aria-labelledby="regras-dicas">
   <h2 id="regras-dicas" className="sr-only">Regras e Dicas</h2>
-  {/* se quiser mostrar uma barra de progresso, passe um número (0–100). */}
-  <RegrasEDicasCard progresso={56} />
+  <RegrasEDicasSection progresso={56} />
 </section>
 
           {/* ────── Chamadas Abertas ────── */}

@@ -1,5 +1,5 @@
 // 📁 src/pages/AdminSubmissoes.jsx
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Loader2,
@@ -7,22 +7,26 @@ import {
   ClipboardList,
   Award,
   Search,
-  Upload,
-  Eye,
-  EyeOff,
-  Paperclip,
   Users,
+  Paperclip,
   Download,
+  Mic,
 } from "lucide-react";
-import api, { apiGetFile, downloadBlob } from "../services/api";
+import api from "../services/api";
 import Footer from "../components/Footer";
 import { useOnceEffect } from "../hooks/useOnceEffect";
 import RankingModal from "../components/RankingModal";
+import RankingOralModal from "../components/RankingOralModal";
 import ModalAvaliadores from "../components/ModalAvaliadores";
+
+// ⬇️ novos modais externos
+import ModalDetalhesSubmissao from "../components/ModalDetalhesSubmissao";
+import ModalAtribuirAvaliadores from "../components/ModalAtribuirAvaliadores";
 
 /* ————————————————— Utils ————————————————— */
 const fmt = (v, alt = "—") => (v === 0 || !!v ? String(v) : alt);
 const fmtNum = (v, d = 2) => Number(v ?? 0).toFixed(d);
+const fmtNota = (v) => (v === 0 || v ? fmtNum(v, 2) : "—");
 
 function fmtDateTimeBR(v) {
   if (!v) return "—";
@@ -56,18 +60,7 @@ const linhaKeyFromSub = (s) =>
       ""
   );
 
-/* ——— Aprovações parciais (alinhado com RankingModal e com o banco novo) ———
-   Regras:
-   Exposição (pôster):
-     - coluna nova status_escrita === "aprovado"
-     - OU status global legacy "aprovado_exposicao" ou "aprovado_escrita"
-     - OU flag otimista local _exposicao_aprovada
-
-   Oral:
-     - coluna nova status_oral === "aprovado"
-     - OU status global legacy "aprovado_oral"
-     - OU flag otimista local _oral_aprovada
-*/
+/* ——— Aprovações parciais (alinhado com RankingModal e com o banco novo) ——— */
 const hasAprovExposicao = (s) => {
   const escritaLower = String(s?.status_escrita || "").toLowerCase();
   const stLower = String(s?.status || "").toLowerCase();
@@ -89,280 +82,12 @@ const hasAprovOral = (s) => {
   );
 };
 
-// soma os totais individuais dos avaliadores
-function avaliacoesTotal(arr) {
-  return (arr || []).reduce((acc, a) => acc + Number(a.total || 0), 0);
-}
-
-// ——— Download helper
-async function safeOpenBlobFromApi(getter, fallbackName = "arquivo") {
-  try {
-    const res = await getter({
-      responseType: "blob",
-      withCredentials: true,
-      transformResponse: [(d) => d],
-    });
-
-    let blob,
-      headers = {};
-    if (res instanceof Blob) {
-      blob = res;
-    } else if (res && (res.data instanceof Blob || res.data)) {
-      headers = res.headers || {};
-      blob =
-        res.data instanceof Blob
-          ? res.data
-          : new Blob([res.data], {
-              type: headers["content-type"] || "application/octet-stream",
-            });
-    } else {
-      throw new Error("Resposta inesperada do servidor.");
-    }
-
-    const cd =
-      headers["content-disposition"] || headers["Content-Disposition"] || "";
-    const m = String(cd).match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
-    const filename = m ? decodeURIComponent(m[1]) : fallbackName;
-
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.target = "_blank";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 3000);
-  } catch (err) {
-    const errBlob = err?.response?.data;
-    if (errBlob instanceof Blob) {
-      try {
-        const txt = await errBlob.text();
-        try {
-          const j = JSON.parse(txt);
-          const msg = j?.erro || j?.message || txt;
-          throw new Error(msg);
-        } catch {
-          throw new Error(txt);
-        }
-      } catch {
-        /* ignore */
-      }
-    }
-    throw err instanceof Error
-      ? err
-      : new Error(err?.message || "Falha no download.");
-  }
-}
-
-/* ————————————————— HeaderHero (mantém degradê 3 cores) ————————————————— */
-function StatPill({ label, value, tone = "amber" }) {
-  const tones =
-    {
-      amber: {
-        text: "text-amber-50",
-        bg: "bg-amber-500/20",
-        border: "border-amber-300/40",
-      },
-      green: {
-        text: "text-emerald-50",
-        bg: "bg-emerald-500/20",
-        border: "border-emerald-300/40",
-      },
-      blue: {
-        text: "text-blue-50",
-        bg: "bg-blue-500/20",
-        border: "border-blue-300/40",
-      },
-      red: {
-        text: "text-rose-50",
-        bg: "bg-rose-500/20",
-        border: "border-rose-300/40",
-      },
-      slate: {
-        text: "text-slate-50",
-        bg: "bg-slate-500/20",
-        border: "border-slate-300/40",
-      },
-    }[tone] || {
-      text: "text-slate-50",
-      bg: "bg-slate-500/20",
-      border: "border-slate-300/40",
-    };
-
-  return (
-    <div
-      className={`rounded-2xl border ${tones.border} ${tones.bg} backdrop-blur px-3 py-3 text-left`}
-    >
-      <p className="text-xs uppercase tracking-wide text-white/85">{label}</p>
-      <p className={`mt-1 font-bold text-lg sm:text-2xl ${tones.text}`}>
-        {value}
-      </p>
-    </div>
-  );
-}
-
-function HeaderHero({ stats }) {
-  const { total, aprovadas, emAvaliacao, reprovadas } = stats || {};
-  return (
-    <motion.header
-      initial={{ opacity: 0, y: -8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.25 }}
-      className="w-full text-white"
-    >
-      <div className="bg-gradient-to-br from-amber-700 via-orange-600 to-yellow-600">
-        <div className="mx-auto max-w-7xl px-6 py-10 sm:py-12">
-          <div className="flex items-center justify-center gap-3">
-            <ClipboardList className="h-9 w-9" aria-hidden="true" />
-            <h1 className="text-2xl sm:text-3xl font-extrabold leading-tight text-center">
-              Submissão de Trabalhos — Administração
-            </h1>
-          </div>
-          <p className="mt-2 text-center text-sm sm:text-base opacity-90">
-            Acompanhe, filtre e audite todos os trabalhos submetidos às
-            chamadas.
-          </p>
-
-          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <StatPill label="Total" value={fmt(total, "—")} tone="amber" />
-            <StatPill
-              label="Aprovadas"
-              value={fmt(aprovadas, "—")}
-              tone="green"
-            />
-            <StatPill
-              label="Em avaliação"
-              value={fmt(emAvaliacao, "—")}
-              tone="blue"
-            />
-            <StatPill
-              label="Reprovadas"
-              value={fmt(reprovadas, "—")}
-              tone="red"
-            />
-          </div>
-        </div>
-      </div>
-    </motion.header>
-  );
-}
-
-/* ————————————————— Status + chips de aprovação ————————————————— */
-/* Normaliza o status bruto do backend para o rótulo principal */
-function normalizarStatusPrincipal(raw) {
-  const st = String(raw || "").toLowerCase();
-
-  if (st === "rascunho") return "rascunho";
-  if (st === "submetido") return "submetido";
-  if (st === "em_avaliacao") return "em avaliação";
-
-  if (
-    st === "aprovado" ||
-    st === "aprovado_exposicao" ||
-    st === "aprovado_oral" ||
-    st === "aprovado_escrita"
-  ) {
-    return "aprovado";
-  }
-
-  if (st === "reprovado") return "reprovado";
-
-  return st || "—";
-}
-
-/* Badge visual do status principal */
-function StatusBadge({ status }) {
-  const label = normalizarStatusPrincipal(status);
-
-  const base =
-    "px-2 py-1 rounded-full text-[11px] font-medium inline-flex items-center gap-1 justify-center whitespace-nowrap";
-
-  switch (label) {
-    case "rascunho":
-      return (
-        <span className={`${base} bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200`}>
-          Rascunho
-        </span>
-      );
-    case "submetido":
-      return (
-        <span className={`${base} bg-blue-100 text-blue-700`}>Submetido</span>
-      );
-    case "em avaliação":
-      return (
-        <span className={`${base} bg-amber-100 text-amber-700`}>
-          Em avaliação
-        </span>
-      );
-    case "aprovado":
-      return (
-        <span className={`${base} bg-emerald-100 text-emerald-700`}>
-          Aprovado
-        </span>
-      );
-    case "reprovado":
-      return (
-        <span className={`${base} bg-rose-100 text-rose-700`}>
-          Reprovado
-        </span>
-      );
-    default:
-      return (
-        <span className={`${base} bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200`}>
-          {label}
-        </span>
-      );
-  }
-}
-
-/* Mostra status + chips "Exposição" / "Apresentação oral" se aprovado */
-function StatusAndApprovals({ s }) {
-  const principal = normalizarStatusPrincipal(s?.status);
-
-  const expoOk =
-    String(s?.status_escrita || "").toLowerCase() === "aprovado" ||
-    Boolean(s?._exposicao_aprovada);
-
-  const oralOk =
-    String(s?.status_oral || "").toLowerCase() === "aprovado" ||
-    Boolean(s?._oral_aprovada);
-
-  const mostrarModalidades = principal === "aprovado" && (expoOk || oralOk);
-
-  return (
-    <div className="flex flex-col items-center gap-1 text-center">
-      <StatusBadge status={s.status} />
-      {mostrarModalidades && (
-        <div className="inline-flex flex-wrap justify-center gap-1.5">
-          {expoOk && (
-            <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">
-              Exposição
-            </span>
-          )}
-          {oralOk && (
-            <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">
-              Apresentação oral
-            </span>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ————————————————— Anexos helpers —————————————————
 const truthy = (v) => {
   if (v == null) return false;
   if (typeof v === "string") {
     const t = v.trim().toLowerCase();
-    return (
-      t.length > 0 &&
-      t !== "0" &&
-      t !== "false" &&
-      t !== "none" &&
-      t !== "null"
-    );
+    return t.length > 0 && t !== "0" && t !== "false" && t !== "none" && t !== "null";
   }
   if (typeof v === "number") return v > 0;
   if (Array.isArray(v)) return v.length > 0;
@@ -371,848 +96,67 @@ const truthy = (v) => {
 
 const hasAnexoRaw = (s) => {
   const c = [
-    s?.poster_nome,
-    s?.posterNome,
-    s?.poster_arquivo_nome,
-    s?.nome_poster,
-    s?.poster,
-    s?.banner_nome,
-    s?.bannerNome,
-    s?.banner_arquivo_nome,
-    s?.nome_banner,
-    s?.banner,
-    s?.has_poster,
-    s?.tem_poster,
-    s?.poster_enviado,
-    s?.possui_poster,
-    s?.has_banner,
-    s?.tem_banner,
-    s?.banner_enviado,
-    s?.possui_banner,
-    s?.has_anexo,
-    s?.tem_anexo,
-    s?.possui_anexo,
-    s?.anexos,
-    s?.arquivos,
+    s?.poster_nome, s?.posterNome, s?.poster_arquivo_nome, s?.nome_poster, s?.poster,
+    s?.banner_nome, s?.bannerNome, s?.banner_arquivo_nome, s?.nome_banner, s?.banner,
+    s?.has_poster, s?.tem_poster, s?.poster_enviado, s?.possui_poster,
+    s?.has_banner, s?.tem_banner, s?.banner_enviado, s?.possui_banner,
+    s?.has_anexo, s?.tem_anexo, s?.possui_anexo, s?.anexos, s?.arquivos,
   ];
   return c.some(truthy);
 };
 
 const hasAnexo = (s) => truthy(s?._hasAnexo) || hasAnexoRaw(s);
 
-/* ————————————————— Drawer/Modal de detalhes ————————————————— */
-function DetalhesSubmissao({ open, onClose, s, onDetectAnexo }) {
-  const [full, setFull] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const dialogRef = useRef(null);
-  const lastFocusRef = useRef(null);
+/* ————————————————— Status + chips de aprovação ————————————————— */
+function normalizarStatusPrincipal(raw) {
+  const st = String(raw || "").toLowerCase();
+  if (st === "rascunho") return "rascunho";
+  if (st === "submetido") return "submetido";
+  if (st === "em_avaliacao") return "em avaliação";
+  if (["aprovado", "aprovado_exposicao", "aprovado_oral", "aprovado_escrita"].includes(st)) return "aprovado";
+  if (st === "reprovado") return "reprovado";
+  return st || "—";
+}
 
-  // avaliadores / atribuições
-  const [avaliadoresElegiveis, setAvaliadoresElegiveis] = useState([]);
-  const [avaliador1, setAvaliador1] = useState("");
-  const [avaliador2, setAvaliador2] = useState("");
-  const [savingAtrib, setSavingAtrib] = useState(false);
-  const [carregandoAvaliadores, setCarregandoAvaliadores] = useState(false);
-  const [atribuicoesAtuais, setAtribuicoesAtuais] = useState([]);
-
-  // notas
-  const [avaliacoes, setAvaliacoes] = useState([]);
-  const [notaVisivel, setNotaVisivel] = useState(false);
-  const [totalGeral, setTotalGeral] = useState(0);
-  const [notaDivididaPor4, setNotaDivididaPor4] = useState(0);
-
-  // helpers
-  const qtdAtribuidos = atribuicoesAtuais?.length || 0;
-  const faltam = Math.max(0, 2 - qtdAtribuidos);
-  function buildAvaliadoresPayload(a1, a2) {
-    const ids = [a1, a2].map(String).filter(Boolean);
-    const uniq = Array.from(new Set(ids));
-    return uniq.map(Number);
+function StatusBadge({ status }) {
+  const label = normalizarStatusPrincipal(status);
+  const base =
+    "px-2 py-1 rounded-full text-[11px] font-medium inline-flex items-center gap-1 justify-center whitespace-nowrap";
+  switch (label) {
+    case "rascunho":
+      return <span className={`${base} bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200`}>Rascunho</span>;
+    case "submetido":
+      return <span className={`${base} bg-blue-100 text-blue-700`}>Submetido</span>;
+    case "em avaliação":
+      return <span className={`${base} bg-amber-100 text-amber-700`}>Em avaliação</span>;
+    case "aprovado":
+      return <span className={`${base} bg-emerald-100 text-emerald-700`}>Aprovado</span>;
+    case "reprovado":
+      return <span className={`${base} bg-rose-100 text-rose-700`}>Reprovado</span>;
+    default:
+      return <span className={`${base} bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200`}>{label}</span>;
   }
+}
 
-  // ESC e foco
-  useEffect(() => {
-    if (!open) return;
-    lastFocusRef.current = document.activeElement;
-    const onKey = (e) => {
-      if (e.key === "Escape") onClose?.();
-    };
-    document.addEventListener("keydown", onKey);
-    setTimeout(() => {
-      dialogRef.current?.querySelector?.("[data-autofocus]")?.focus?.();
-    }, 0);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      lastFocusRef.current?.focus?.();
-    };
-  }, [open, onClose]);
-
-  // 1. carregar dados completos da submissão + avaliações/notas
-  useEffect(() => {
-    if (!open || !s?.id) return;
-    const ac = new AbortController();
-
-    (async () => {
-      try {
-        setLoading(true);
-
-        // submissão completa
-        let sub;
-        try {
-          const r = await api.get(`/submissoes/${s.id}`, {
-            signal: ac.signal,
-          });
-          sub = Array.isArray(r) ? r[0] : r?.data ?? r;
-        } catch (e) {
-          const status = e?.status || e?.response?.status;
-          if (status === 404) {
-            const r2 = await api.get(`/admin/submissoes/${s.id}`, {
-              signal: ac.signal,
-            });
-              // eslint-disable-next-line
-            sub = Array.isArray(r2) ? r2[0] : r2?.data ?? r2;
-          } else {
-            throw e;
-          }
-        }
-        setFull(sub || {});
-
-        // se descobrirmos anexo agora, avisa o pai
-        try {
-          const tem = hasAnexoRaw(sub);
-          if (tem && typeof onDetectAnexo === "function" && s?.id != null) {
-            onDetectAnexo(s.id, true);
-          }
-        } catch {
-          /* silencioso */
-        }
-
-        // avaliações / notas
-        try {
-          const nr = await api.get(`/admin/submissoes/${s.id}/avaliacoes`, {
-            signal: ac.signal,
-          });
-
-          const payload = nr?.data || {};
-          const itens = Array.isArray(payload.itens) ? payload.itens : [];
-
-          const normalizados = itens.map((it) => {
-            const nome =
-              it.avaliador_nome ?? it.nome ?? `#${it.avaliador_id ?? ""}`;
-            const notas = Array.isArray(it.notas)
-              ? it.notas
-              : [
-                  it.criterio1,
-                  it.criterio2,
-                  it.criterio3,
-                  it.criterio4,
-                ].map((n) => Number(n || 0));
-            const total = Number.isFinite(it.total_do_avaliador)
-              ? it.total_do_avaliador
-              : notas.reduce(
-                  (acc, n) => acc + (Number.isFinite(n) ? n : 0),
-                  0
-                );
-            return { nome, notas, total };
-          });
-
-          setAvaliacoes(normalizados);
-          setNotaVisivel(!!payload.nota_visivel);
-          setTotalGeral(Number(payload.total_geral || 0));
-          setNotaDivididaPor4(Number(payload.nota_dividida_por_4 || 0));
-          if (payload?.linha_tematica_nome) {
-            setFull((prev) => ({
-              ...(prev || {}),
-              linha_tematica_nome: payload.linha_tematica_nome,
-            }));
-          }
-        } catch {
-          /* sem notas, tudo bem */
-        }
-      } catch (e) {
-        if (e?.name !== "AbortError") {
-          console.error("[Admin] Falha ao obter detalhes da submissão:", e);
-          setFull({});
-        }
-      } finally {
-        setLoading(false);
-      }
-    })();
-
-    return () => ac.abort();
-  }, [open, s?.id]); // <- NÃO inclui onDetectAnexo
-
-  // 2. carregar avaliadores elegíveis + atribuições atuais
-  useEffect(() => {
-    if (!open || !s?.id) return;
-    const ac = new AbortController();
-
-    (async () => {
-      try {
-        setCarregandoAvaliadores(true);
-
-        // lista de possíveis avaliadores
-        const r = await api.get(
-          "/usuarios/avaliadores?roles=instrutor,administrador",
-          { signal: ac.signal }
-        );
-        const arr = Array.isArray(r?.data) ? r.data : Array.isArray(r) ? r : [];
-        setAvaliadoresElegiveis(arr);
-
-        // atribuições atuais da submissão
-        try {
-          const ar = await api.get(`/admin/submissoes/${s.id}/avaliadores`, {
-            signal: ac.signal,
-          });
-          const list = Array.isArray(ar?.data)
-            ? ar.data
-            : Array.isArray(ar)
-            ? ar
-            : [];
-          setAtribuicoesAtuais(list);
-
-          // preencher selects com o que já está atribuído
-          if (list.length >= 1) {
-            setAvaliador1(
-              String(list[0].id || list[0].avaliador_id || "") || ""
-            );
-          }
-          if (list.length >= 2) {
-            setAvaliador2(
-              String(list[1].id || list[1].avaliador_id || "") || ""
-            );
-          }
-        } catch {
-          /* se falhar leitura de atribuições, só segue */
-        }
-      } catch (e) {
-        if (e?.name !== "AbortError") {
-          console.error("Falha ao listar avaliadores:", e);
-        }
-      } finally {
-        setCarregandoAvaliadores(false);
-      }
-    })();
-
-    return () => ac.abort();
-  }, [open, s?.id]);
-
-  if (!open || !s) return null;
-
-  const data = { ...s, ...(full || {}) };
-  const titulo = data.titulo;
-  const inicioExp = data.inicio_experiencia || data.inicioExperiencia;
-  const linhaTemNome =
-    data.linha_tematica_nome ||
-    data.linhaTematicaNome ||
-    data.linha_tematica_nome_normalizado ||
-    null;
-
-  const coautores = Array.isArray(data.coautores) ? data.coautores : [];
-  const posterNome = data.poster_nome || data.posterNome || "";
-  const bannerNome = data.banner_nome || data.bannerNome || "";
-  const historico = Array.isArray(data.historico_status || data.historicoStatus)
-    ? data.historico_status || data.historicoStatus
-    : [];
-
-  const handleBaixarPoster = async () => {
-    if (!data?.id) return;
-    try {
-      const { blob, filename } = await apiGetFile(
-        `/submissoes/${data.id}/poster`
-      );
-      downloadBlob(filename || posterNome || `poster_${data.id}.pptx`, blob);
-    } catch (e) {
-      console.error("Falha ao baixar pôster:", e);
-      alert("Não foi possível baixar o pôster.");
-    }
-  };
-
-  const handleBaixarBanner = async () => {
-    if (!data?.id) return;
-    try {
-      const { blob, filename } = await apiGetFile(
-        `/submissoes/${data.id}/banner`
-      );
-      downloadBlob(filename || bannerNome || `banner_${data.id}`, blob);
-    } catch (e) {
-      if (e?.status === 404) {
-        console.warn("Banner não disponível para esta submissão.");
-        return;
-      }
-      console.error("Falha ao baixar banner:", e);
-      alert("Não foi possível baixar o banner.");
-    }
-  };
-
-  const totalObtido = useMemo(() => {
-    if (totalGeral > 0) return totalGeral;
-    return avaliacoesTotal(avaliacoes);
-  }, [avaliacoes, totalGeral]);
-
-  const mediaFinal = useMemo(() => {
-    if (notaDivididaPor4 > 0) return notaDivididaPor4.toFixed(1);
-    const base = Number.isFinite(totalObtido) ? totalObtido : 0;
-    return (base / 4).toFixed(1);
-  }, [notaDivididaPor4, totalObtido]);
-
-  const toggleVisibilidadeNota = async () => {
-    try {
-      if (!notaVisivel && qtdAtribuidos < 2) {
-        alert(
-          "Para liberar a nota ao autor, é necessário ter 2 avaliadores atribuídos."
-        );
-        return;
-      }
-      const novo = !notaVisivel;
-      await api.post(`/admin/submissoes/${data.id}/nota-visivel`, {
-        visivel: novo,
-      });
-      setNotaVisivel(novo);
-    } catch (e) {
-      console.error(e);
-      alert("Não foi possível alterar a visibilidade da nota.");
-    }
-  };
+function StatusAndApprovals({ s }) {
+  const principal = normalizarStatusPrincipal(s?.status);
+  const expoOk =
+    String(s?.status_escrita || "").toLowerCase() === "aprovado" ||
+    Boolean(s?._exposicao_aprovada);
+  const oralOk =
+    String(s?.status_oral || "").toLowerCase() === "aprovado" ||
+    Boolean(s?._oral_aprovada);
+  const mostrarModalidades = principal === "aprovado" && (expoOk || oralOk);
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="detalhe-title"
-    >
-      <div
-        className="absolute inset-0 bg-black/40"
-        onClick={onClose}
-        aria-hidden="true"
-      />
-      <motion.div
-        ref={dialogRef}
-        initial={{ y: 40, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        exit={{ y: 40, opacity: 0 }}
-        transition={{ duration: 0.25 }}
-        className="relative bg-white dark:bg-zinc-900 rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-4xl max-h-[85vh] overflow-y-auto"
-      >
-        <div className="p-5 sm:p-6 border-b dark:border-zinc-800">
-          <h3
-            id="detalhe-title"
-            className="text-lg sm:text-xl font-bold text-lousa dark:text-white"
-          >
-            {fmt(titulo)}
-          </h3>
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            ID #{fmt(data.id)} · {fmt(data.chamada_titulo || data.chamada)}
-          </p>
+    <div className="flex flex-col items-center gap-1 text-center">
+      <StatusBadge status={s.status} />
+      {mostrarModalidades && (
+        <div className="inline-flex flex-wrap justify-center gap-1.5">
+          {expoOk && <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">Exposição</span>}
+          {oralOk && <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">Apresentação oral</span>}
         </div>
-
-        {loading ? (
-          <div className="p-6 text-sm text-zinc-600 dark:text-zinc-400 flex items-center gap-2">
-            <Loader2 className="h-4 w-4 animate-spin" /> Carregando detalhes…
-          </div>
-        ) : (
-          <div className="p-5 sm:p-6 space-y-6">
-            {/* Status + Nota */}
-            <section className="grid sm:grid-cols-2 gap-4">
-              <div className="bg-zinc-50 dark:bg-zinc-800/50 rounded-xl p-4">
-                <p className="text-sm text-zinc-500">Status</p>
-                <div className="mt-1">
-                  <StatusAndApprovals s={data} />
-                </div>
-              </div>
-
-              <div className="bg-zinc-50 dark:bg-zinc-800/50 rounded-xl p-4">
-                <p className="text-sm text-zinc-500 flex items-center gap-2">
-                  Nota (média)
-                  {qtdAtribuidos >= 2 && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200">
-                      2 avaliadores concluído
-                    </span>
-                  )}
-                </p>
-                <p
-                  className={
-                    "text-lg font-semibold " +
-                    (qtdAtribuidos >= 2
-                      ? "text-emerald-700 dark:text-emerald-300"
-                      : "text-zinc-900 dark:text-zinc-100")
-                  }
-                >
-                  {fmtNum(mediaFinal, 1)} / 10
-                </p>
-                {avaliacoes?.length > 0 && (
-                  <p className="text-xs text-zinc-500 mt-1">
-                    Soma dos avaliadores: {totalObtido} / 40 (2 avaliadores × 4
-                    critérios)
-                  </p>
-                )}
-              </div>
-            </section>
-
-            {/* Info contextual */}
-            <section className="grid sm:grid-cols-2 gap-4">
-              <div className="bg-zinc-50 dark:bg-zinc-800/50 rounded-xl p-4">
-                <h5 className="text-sm font-semibold text-zinc-700 dark:text-zinc-200">
-                  Início da experiência
-                </h5>
-                <p className="text-sm text-zinc-700 dark:text-zinc-300 mt-1">
-                  {fmtMonthBR(inicioExp)}
-                </p>
-              </div>
-              <div className="bg-zinc-50 dark:bg-zinc-800/50 rounded-xl p-4">
-                <h5 className="text-sm font-semibold text-zinc-700 dark:text-zinc-200">
-                  Linha temática
-                </h5>
-                <p className="text-sm text-zinc-700 dark:text-zinc-300 mt-1">
-                  {fmt(linhaTemNome)}
-                </p>
-              </div>
-            </section>
-
-            {/* Coautores */}
-            <section>
-              <h4 className="font-semibold text-zinc-800 dark:text-zinc-100">
-                Coautores
-              </h4>
-              {coautores.length === 0 ? (
-                <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-1">
-                  —
-                </p>
-              ) : (
-                <ul className="mt-2 space-y-2">
-                  {coautores.map((c, i) => (
-                    <li
-                      key={i}
-                      className="text-sm bg-zinc-50 dark:bg-zinc-800/50 rounded-lg p-3"
-                    >
-                      <p className="font-medium text-zinc-800 dark:text-zinc-100">
-                        {fmt(c.nome)}
-                      </p>
-                      <p className="text-zinc-600 dark:text-zinc-400">
-                        CPF: {fmt(c.cpf)} · {fmt(c.vinculo)}
-                        {fmt(c.email, "") && (
-                          <>
-                            {" "}
-                            ·{" "}
-                            <a
-                              className="underline decoration-dotted"
-                              href={`mailto:${c.email}`}
-                            >
-                              {c.email}
-                            </a>
-                          </>
-                        )}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
-
-            {/* Texto submetido */}
-            {[
-              ["Introdução", data.introducao],
-              ["Objetivos", data.objetivos],
-              ["Método", data.metodo],
-              ["Resultados", data.resultados],
-              ["Considerações finais", data.consideracoes],
-              ["Bibliografia", data.bibliografia],
-            ].map(([label, value]) => (
-              <section key={label}>
-                <h4 className="font-semibold text-zinc-800 dark:text-zinc-100">
-                  {label}
-                </h4>
-                <p className="text-sm text-zinc-700 dark:text-zinc-300 mt-1 whitespace-pre-wrap">
-                  {fmt(value)}
-                </p>
-              </section>
-            ))}
-
-            {/* Arquivos */}
-            <section className="grid sm:grid-cols-2 gap-4">
-              <div>
-                <h4 className="font-semibold text-zinc-800 dark:text-zinc-100">
-                  Pôster (PPT/PPTX)
-                </h4>
-                {posterNome ? (
-                  <p className="text-sm mt-1">
-                    Arquivo: <strong>{posterNome}</strong>
-                    <button
-                      type="button"
-                      onClick={handleBaixarPoster}
-                      className="ml-3 inline-flex items-center gap-1 rounded-md bg-amber-700 px-3 py-1.5 text-white hover:bg-amber-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-700"
-                    >
-                      <Upload className="h-4 w-4" /> baixar
-                    </button>
-                  </p>
-                ) : (
-                  <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-1">
-                    —
-                  </p>
-                )}
-              </div>
-
-              <div>
-                <h4 className="font-semibold text-zinc-800 dark:text-zinc-100">
-                  Banner / outros arquivos
-                </h4>
-                {bannerNome ? (
-                  <p className="text-sm mt-1">
-                    Arquivo: <strong>{bannerNome}</strong>
-                    <button
-                      type="button"
-                      onClick={handleBaixarBanner}
-                      className="ml-3 inline-flex items-center gap-1 rounded-md bg-amber-700 px-3 py-1.5 text-white hover:bg-amber-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-700"
-                    >
-                      <Upload className="h-4 w-4" /> baixar
-                    </button>
-                  </p>
-                ) : (
-                  <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-1">
-                    —
-                  </p>
-                )}
-              </div>
-            </section>
-
-            {/* Notas dos avaliadores */}
-            {avaliacoes?.length > 0 && (
-              <section className="bg-amber-50/40 dark:bg-zinc-800/50 rounded-xl p-4">
-                <div className="flex items-center justify-between">
-                  <h4 className="font-semibold text-zinc-800 dark:text-zinc-100">
-                    Notas dos avaliadores
-                  </h4>
-                  <button
-                    onClick={toggleVisibilidadeNota}
-                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md bg-amber-700 text-white hover:bg-amber-800"
-                  >
-                    {notaVisivel ? (
-                      <EyeOff className="h-4 w-4" />
-                    ) : (
-                      <Eye className="h-4 w-4" />
-                    )}
-                    {notaVisivel ? "Ocultar do autor" : "Liberar ao autor"}
-                  </button>
-                </div>
-
-                <div className="overflow-x-auto mt-3">
-                  <table className="min-w-full text-sm text-center border border-zinc-200 dark:border-zinc-700">
-                    <thead className="bg-amber-100 dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100">
-                      <tr>
-                        <th className="p-2">Avaliador</th>
-                        <th className="p-2">Critério 1</th>
-                        <th className="p-2">Critério 2</th>
-                        <th className="p-2">Critério 3</th>
-                        <th className="p-2">Critério 4</th>
-                        <th className="p-2">Total</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {avaliacoes.map((a, i) => {
-                        const n = Array.isArray(a.notas) ? a.notas : [];
-                        const [c1 = 0, c2 = 0, c3 = 0, c4 = 0] = n;
-                        const tot = Number.isFinite(a.total)
-                          ? a.total
-                          : c1 + c2 + c3 + c4;
-                        return (
-                          <tr
-                            key={i}
-                            className="border-t dark:border-zinc-700"
-                          >
-                            <td className="p-2 font-medium">{a.nome}</td>
-                            <td className="p-2">{c1}</td>
-                            <td className="p-2">{c2}</td>
-                            <td className="p-2">{c3}</td>
-                            <td className="p-2">{c4}</td>
-                            <td className="p-2 font-semibold">{tot}</td>
-                          </tr>
-                        );
-                      })}
-                      <tr
-                        className={
-                          "font-bold bg-amber-100/40 dark:bg-zinc-700/40 " +
-                          (qtdAtribuidos >= 2
-                            ? "text-emerald-700 dark:text-emerald-300"
-                            : "")
-                        }
-                      >
-                        <td colSpan={5} className="p-2 text-right">
-                          Total Geral
-                        </td>
-                        <td className="p-2">{totalObtido} / 40</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-
-                <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-2">
-                  A média final exibida acima é o total dividido por 4 (4
-                  critérios × 2 avaliadores → máximo 40 ÷ 4 = 10).
-                </p>
-              </section>
-            )}
-
-            {/* Encaminhar para avaliação */}
-<section className="bg-zinc-50 dark:bg-zinc-800/50 rounded-xl p-4">
-  <h4 className="font-semibold text-zinc-800 dark:text-zinc-100 text-center">
-    Encaminhar para avaliação
-  </h4>
-  <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-1 text-center">
-    Você pode encaminhar com <strong>apenas 1 avaliador agora</strong> e adicionar
-    o segundo depois. O sistema exige{" "}
-    <strong>2 avaliadores ao final</strong> para a média oficial.
-  </p>
-
-  <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
-    <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
-      Atribuições: {qtdAtribuidos}/2
-    </span>
-    {faltam > 0 ? (
-      <span
-        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-200"
-        aria-live="polite"
-      >
-        Faltam {faltam}
-      </span>
-    ) : (
-      <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200">
-        Pronto para média final
-      </span>
-    )}
-  </div>
-
-  {atribuicoesAtuais?.length > 0 && (
-    <div className="mt-2 text-xs text-zinc-600 dark:text-zinc-400 text-center">
-      Já atribuídos:&nbsp;
-      {atribuicoesAtuais.map((u, i) => (
-        <span key={i} className="inline-block mr-2">
-          {u.nome ||
-            u.avaliador_nome ||
-            `#${u.id || u.avaliador_id}`}
-        </span>
-      ))}
-    </div>
-  )}
-
-  <div className="mt-4 grid sm:grid-cols-2 gap-3">
-    <label className="text-sm">
-      <span className="block mb-1 text-zinc-600 dark:text-zinc-300">
-        Avaliador 1
-      </span>
-      <select
-        value={avaliador1}
-        onChange={(e) => setAvaliador1(e.target.value)}
-        disabled={carregandoAvaliadores}
-        className="border rounded-md px-3 py-2 text-sm w-full dark:border-zinc-700 dark:bg-zinc-800"
-        aria-label="Selecionar primeiro avaliador"
-      >
-        <option value="">
-          {carregandoAvaliadores ? "Carregando..." : "Selecione…"}
-        </option>
-        {avaliadoresElegiveis.map((u) => (
-          <option key={u.id} value={u.id}>
-            {u.nome} — {u.email}
-          </option>
-        ))}
-      </select>
-    </label>
-
-    <label className="text-sm">
-      <span className="block mb-1 text-zinc-600 dark:text-zinc-300">
-        Avaliador 2 (opcional agora)
-      </span>
-      <select
-        value={avaliador2}
-        onChange={(e) => setAvaliador2(e.target.value)}
-        disabled={carregandoAvaliadores}
-        className="border rounded-md px-3 py-2 text-sm w-full dark:border-zinc-700 dark:bg-zinc-800"
-        aria-label="Selecionar segundo avaliador"
-      >
-        <option value="">
-          {carregandoAvaliadores ? "Carregando..." : "Selecione…"}
-        </option>
-        {avaliadoresElegiveis.map((u) => (
-          <option key={u.id} value={u.id}>
-            {u.nome} — {u.email}
-          </option>
-        ))}
-      </select>
-    </label>
-  </div>
-
-  {/* ⬇⬇⬇ AQUI É O BOTÃO QUE VOCÊ VAI SUBSTITUIR ⬇⬇⬇ */}
-  <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
-    <button
-      type="button"
-      disabled={savingAtrib}
-      onClick={async () => {
-        if (!data?.id) return;
-
-        // lista final desejada pelos selects
-        const desejados = buildAvaliadoresPayload(avaliador1, avaliador2); // [id1, id2] sem duplicatas
-
-        // validações básicas no front
-        if (desejados.length === 0) {
-          alert("Selecione pelo menos 1 avaliador.");
-          return;
-        }
-        if (desejados.length > 2) {
-          alert("Máximo de 2 avaliadores.");
-          return;
-        }
-
-        // lista atual que já está salva no backend
-        const atuaisIds = atribuicoesAtuais.map((a) =>
-          Number(a.id || a.avaliador_id)
-        );
-
-        // caso clássico: já existem 2 atribuídos e você quer trocar.
-        // backend não deixa substituir direto, só "somar", e somar daria >2.
-        if (
-          atuaisIds.length >= 2 &&
-          (
-            // se há alguma diferença entre os atuais e os desejados
-            desejados.some((id) => !atuaisIds.includes(id)) ||
-            atuaisIds.some((id) => !desejados.includes(id))
-          )
-        ) {
-          alert(
-            "Este trabalho já tem 2 avaliadores atribuídos. Remoção/troca completa ainda não é suportada pelo servidor."
-          );
-          return;
-        }
-
-        // vamos mandar só quem ainda não está atribuído
-        const novos = desejados.filter((id) => !atuaisIds.includes(id));
-
-        if (novos.length === 0) {
-          alert("Nada novo para salvar – esses avaliadores já estão atribuídos.");
-          return;
-        }
-
-        // se total final passaria de 2, vai dar 400
-        if (atuaisIds.length + novos.length > 2) {
-          alert(
-            "O total de avaliadores não pode exceder 2. Remova um antes de adicionar outro (essa remoção ainda não está disponível na interface)."
-          );
-          return;
-        }
-
-        try {
-          setSavingAtrib(true);
-
-          // enviamos só os NOVOS pro backend
-          await api.post(`/admin/submissoes/${data.id}/avaliadores`, {
-            avaliadores: novos,
-          });
-
-          // merge local (atuais + novos), cortando em 2 só por segurança
-          const novosObjs = novos.map((id) => {
-            const found = avaliadoresElegiveis.find(
-              (u) => String(u.id) === String(id)
-            );
-            return found || { id, nome: `#${id}` };
-          });
-
-          const merged = [...atribuicoesAtuais, ...novosObjs].slice(0, 2);
-
-          // atualiza estado visível
-          setAtribuicoesAtuais(merged);
-
-          // atualiza selects pra refletir o que ficou salvo
-          if (merged[0]) {
-            setAvaliador1(
-              String(merged[0].id || merged[0].avaliador_id || "")
-            );
-          }
-          if (merged[1]) {
-            setAvaliador2(
-              String(merged[1].id || merged[1].avaliador_id || "")
-            );
-          }
-
-          alert(
-            merged.length === 2
-              ? "Dois avaliadores atribuídos."
-              : "Avaliador atribuído."
-          );
-        } catch (e) {
-          console.error("Falha ao salvar avaliadores:", e);
-          alert(
-            e?.response?.data?.error ||
-              e?.message ||
-              "Não foi possível salvar as atribuições."
-          );
-        } finally {
-          setSavingAtrib(false);
-        }
-      }}
-      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-700 text-white hover:bg-amber-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-700"
-    >
-      {savingAtrib ? (
-        <Loader2 className="h-4 w-4 animate-spin" />
-      ) : (
-        <ClipboardList className="h-4 w-4" />
       )}
-      Salvar avaliadores
-    </button>
-
-    <span
-      className={`text-xs px-3 py-1.5 rounded-full ${
-        faltam > 0
-          ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-200"
-          : "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200"
-      }`}
-      role="status"
-      aria-live="polite"
-    >
-      {faltam > 0
-        ? `Ainda faltam ${faltam} avaliador(es) para fechar a média.`
-        : "Dois avaliadores atribuídos — pronto para consolidar nota oficial."}
-    </span>
-  </div>
-  {/* ⬆⬆⬆ FIM DO BLOCO DO BOTÃO NOVO ⬆⬆⬆ */}
-</section>
-
-            {/* Histórico */}
-            <section>
-              <h4 className="font-semibold text-zinc-800 dark:text-zinc-100">
-                Histórico de status
-              </h4>
-              {historico.length === 0 ? (
-                <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-1">
-                  —
-                </p>
-              ) : (
-                <ul className="mt-2 space-y-2">
-                  {historico.map((h, i) => (
-                    <li key={i} className="text-sm flex items-center gap-2">
-                      <StatusBadge status={h.status} />
-                      <span className="text-zinc-600 dark:text-zinc-400">
-                        {fmt(h.quem || h.usuario, "—")}
-                      </span>
-                      <span className="text-zinc-500 text-xs">
-                        {fmt(h.em || h.data, "—")}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
-          </div>
-        )}
-
-        <div className="p-4 sm:p-5 border-t dark:border-zinc-800 flex justify-end">
-          <button
-            onClick={onClose}
-            data-autofocus
-            className="px-4 py-2 rounded-lg bg-amber-700 text-white hover:bg-amber-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-700"
-          >
-            Fechar
-          </button>
-        </div>
-      </motion.div>
     </div>
   );
 }
@@ -1227,37 +171,24 @@ const handleExportCSV = (items = []) => {
   };
 
   const header = [
-    "Título",
-    "Autor",
-    "E-mail",
-    "Chamada",
-    "Submetido em",
-    "Status (principal)",
-    "Exposição",
-    "Apresentação oral",
-    "Nota (média)",
-    "Anexo",
+    "Título","Autor","E-mail","Chamada","Linha temática","Submetido em",
+    "Status (principal)","Exposição","Apresentação oral",
+    "Nota (escrita)","Nota (oral)","Nota (final)","Anexo",
   ].join(SEP);
 
   const rows = items.map((s) => {
     const dt =
-      s.status === "rascunho"
+      String(s.status || "").toLowerCase() === "rascunho"
         ? "—"
-        : fmtDateTimeBR(s.submetido_em || s.criado_em);
+        : fmtDateTimeBR(s.submetido_em || s.criado_em); // ⬅️ fallback robusto
 
     const st = String(s.status || "").toLowerCase();
-
-    const statusPrincipal = st.startsWith("aprovado_")
-      ? "Aprovado"
-      : st === "submetido"
-      ? "Submetido"
-      : st === "em_avaliacao"
-      ? "Em avaliação"
-      : st === "reprovado"
-      ? "Reprovado"
-      : st === "rascunho"
-      ? "Rascunho"
-      : s.status || "—";
+    const statusPrincipal =
+      st.startsWith("aprovado_") ? "Aprovado" :
+      st === "submetido" ? "Submetido" :
+      st === "em_avaliacao" ? "Em avaliação" :
+      st === "reprovado" ? "Reprovado" :
+      st === "rascunho" ? "Rascunho" : s.status || "—";
 
     const escritaTxt = hasAprovExposicao(s) ? "Aprovada" : "Pendente";
     const oralTxt = hasAprovOral(s) ? "Aprovada" : "Pendente";
@@ -1268,26 +199,24 @@ const handleExportCSV = (items = []) => {
       safe(s.autor_nome),
       safe(s.autor_email),
       safe(s.chamada_titulo),
+      safe(s.linha_tematica_nome || s.linhaTematicaNome || ""),
       safe(dt),
       safe(statusPrincipal),
       safe(escritaTxt),
       safe(oralTxt),
-      safe(fmt(s.nota_media, "—")),
+      safe(fmtNota(s.nota_escrita)),
+      safe(fmtNota(s.nota_oral)),
+      safe(fmtNota(s.nota_final)),
       safe(anexoTxt),
     ].join(SEP);
   });
 
   const csv = [header, ...rows].join("\n");
-  const blob = new Blob([BOM + csv], {
-    type: "text/csv;charset=utf-8",
-  });
+  const blob = new Blob([BOM + csv], { type: "text/csv;charset=utf-8" });
   const ts = new Date();
-  const stamp = `${ts.getFullYear()}${String(ts.getMonth() + 1).padStart(
-    2,
-    "0"
-  )}${String(ts.getDate()).padStart(2, "0")}-${String(
-    ts.getHours()
-  ).padStart(2, "0")}${String(ts.getMinutes()).padStart(2, "0")}`;
+  const stamp =
+    `${ts.getFullYear()}${String(ts.getMonth() + 1).padStart(2, "0")}${String(ts.getDate()).padStart(2, "0")}-` +
+    `${String(ts.getHours()).padStart(2, "0")}${String(ts.getMinutes()).padStart(2, "0")}`;
   const filename = `submissoes_admin_${stamp}.csv`;
 
   const url = URL.createObjectURL(blob);
@@ -1303,6 +232,7 @@ const handleExportCSV = (items = []) => {
 /* ————————————————— Página principal ————————————————— */
 export default function AdminSubmissoes() {
   const [submissoes, setSubmissoes] = useState([]);
+  const [oralOpen, setOralOpen] = useState(false);
   const [filtroChamada, setFiltroChamada] = useState("");
   const [filtroStatus, setFiltroStatus] = useState("");
   const [filtroLinha, setFiltroLinha] = useState("");
@@ -1314,6 +244,10 @@ export default function AdminSubmissoes() {
   const [selecionada, setSelecionada] = useState(null);
   const [rankingOpen, setRankingOpen] = useState(false);
   const [avaliadoresOpen, setAvaliadoresOpen] = useState(false);
+
+  // ⬇️ novo estado para o modal de inclusão de avaliadores
+  const [atribOpen, setAtribOpen] = useState(false);
+  const [subIdAtrib, setSubIdAtrib] = useState(null);
 
   const unwrap = (r) => (Array.isArray(r) ? r : r?.data ?? []);
 
@@ -1327,37 +261,24 @@ export default function AdminSubmissoes() {
           api.get("/chamadas/ativas", { signal: ac.signal }),
         ]);
 
-        const base = unwrap(subs).map((it) => ({
-          ...it,
-          _hasAnexo: hasAnexoRaw(it),
-        }));
+        const base = unwrap(subs).map((it) => ({ ...it, _hasAnexo: hasAnexoRaw(it) }));
         setSubmissoes(base);
         setChamadas(unwrap(ch));
 
-        // checar anexos depois (não trava UI)
+        // checagem preguiçosa de anexos
         const idsParaChecar = base.filter((s) => !s._hasAnexo).map((s) => s.id);
         const conc = 6;
         let idx = 0;
         const axiosOk = (s) => (s >= 200 && s < 300) || s === 404;
         const run = async (id) => {
-          const tryPublic = await api.get(`/submissoes/${id}`, {
-            signal: ac.signal,
-            validateStatus: axiosOk,
-          });
+          const tryPublic = await api.get(`/submissoes/${id}`, { signal: ac.signal, validateStatus: axiosOk });
           if (tryPublic?.status !== 404) {
-            const sub = Array.isArray(tryPublic?.data)
-              ? tryPublic.data[0]
-              : tryPublic?.data ?? tryPublic;
+            const sub = Array.isArray(tryPublic?.data) ? tryPublic.data[0] : tryPublic?.data ?? tryPublic;
             return { id, ok: hasAnexoRaw(sub) };
           }
-          const tryAdmin = await api.get(`/admin/submissoes/${id}`, {
-            signal: ac.signal,
-            validateStatus: axiosOk,
-          });
+          const tryAdmin = await api.get(`/admin/submissoes/${id}`, { signal: ac.signal, validateStatus: axiosOk });
           if (tryAdmin?.status !== 404) {
-            const sub = Array.isArray(tryAdmin?.data)
-              ? tryAdmin.data[0]
-              : tryAdmin?.data ?? tryAdmin;
+            const sub = Array.isArray(tryAdmin?.data) ? tryAdmin.data[0] : tryAdmin?.data ?? tryAdmin;
             return { id, ok: hasAnexoRaw(sub) };
           }
           return { id, ok: false };
@@ -1367,11 +288,7 @@ export default function AdminSubmissoes() {
             const id = idsParaChecar[idx++];
             const res = await run(id);
             if (res.ok) {
-              setSubmissoes((prev) =>
-                prev.map((it) =>
-                  it.id === id ? { ...it, _hasAnexo: true } : it
-                )
-              );
+              setSubmissoes((prev) => prev.map((it) => (it.id === id ? { ...it, _hasAnexo: true } : it)));
             }
           }
         });
@@ -1390,82 +307,46 @@ export default function AdminSubmissoes() {
     return () => clearTimeout(t);
   }, [busca]);
 
-  // Linhas temáticas únicas (filtro dropdown)
   const linhasTematicas = useMemo(() => {
     const map = new Map();
     for (const s of submissoes) {
       const key = linhaKeyFromSub(s);
       const nome = s?.linha_tematica_nome ?? s?.linhaTematicaNome ?? null;
-      const codigo =
-        s?.linha_tematica_codigo ?? s?.linha_tematicaCodigo ?? null;
+      const codigo = s?.linha_tematica_codigo ?? s?.linha_tematicaCodigo ?? null;
       if (!key || !nome) continue;
-      if (!map.has(key))
-        map.set(key, {
-          id: key,
-          nome: String(nome),
-          codigo: codigo ? String(codigo) : null,
-        });
+      if (!map.has(key)) map.set(key, { id: key, nome: String(nome), codigo: codigo ? String(codigo) : null });
     }
     return Array.from(map.values()).sort((a, b) =>
-      a.nome.localeCompare(b.nome, "pt-BR", {
-        sensitivity: "base",
-      })
+      a.nome.localeCompare(b.nome, "pt-BR", { sensitivity: "base" })
     );
   }, [submissoes]);
 
-  // aplica filtros
   const filtradas = useMemo(() => {
     const termo = debouncedBusca.trim().toLowerCase();
-
     return submissoes.filter((s) => {
-      const matchChamada =
-        !filtroChamada || Number(s.chamada_id) === Number(filtroChamada);
-
-      // status especial "aprovado_escrita" no filtro => aprovado para exposição
+      const matchChamada = !filtroChamada || Number(s.chamada_id) === Number(filtroChamada);
       const matchStatus = !filtroStatus
         ? true
         : (filtroStatus === "aprovado_escrita" && hasAprovExposicao(s)) ||
           (filtroStatus === "aprovado_oral" && hasAprovOral(s)) ||
-          ((filtroStatus !== "aprovado_escrita" &&
-            filtroStatus !== "aprovado_oral") &&
-            s.status === filtroStatus);
-
-      const matchLinha =
-        !filtroLinha || linhaKeyFromSub(s) === String(filtroLinha);
-
+          ((filtroStatus !== "aprovado_escrita" && filtroStatus !== "aprovado_oral") && s.status === filtroStatus);
+      const matchLinha = !filtroLinha || linhaKeyFromSub(s) === String(filtroLinha);
       const matchBusca =
         !termo ||
-        [
-          s.titulo,
-          s.autor_nome,
-          s.autor_email,
-          s.chamada_titulo,
-          s.area_tematica,
-          s.eixo,
-          s.linha_tematica_nome,
-          s.linha_tematica_codigo,
-        ]
+        [s.titulo, s.autor_nome, s.autor_email, s.chamada_titulo, s.area_tematica, s.eixo, s.linha_tematica_nome, s.linha_tematica_codigo]
           .map((v) => (v ? String(v).toLowerCase() : ""))
           .some((t) => t.includes(termo));
-
       return matchChamada && matchStatus && matchLinha && matchBusca;
     });
   }, [submissoes, filtroChamada, filtroStatus, filtroLinha, debouncedBusca]);
 
-  // KPIs topo
   const stats = useMemo(() => {
     const total = submissoes.length;
     const aprovadas = submissoes.filter((s) =>
-      ["aprovado_oral", "aprovado_exposicao", "aprovado_escrita"].includes(
-        String(s.status || "").toLowerCase()
-      )
+      ["aprovado_oral", "aprovado_exposicao", "aprovado_escrita"].includes(String(s.status || "").toLowerCase())
     ).length;
-    const reprovadas = submissoes.filter(
-      (s) => String(s.status || "").toLowerCase() === "reprovado"
-    ).length;
-    const emAvaliacao = submissoes.filter(
-      (s) => String(s.status || "").toLowerCase() === "em_avaliacao"
-    ).length;
+    const reprovadas = submissoes.filter((s) => String(s.status || "").toLowerCase() === "reprovado").length;
+    const emAvaliacao = submissoes.filter((s) => String(s.status || "").toLowerCase() === "em_avaliacao").length;
     return { total, aprovadas, reprovadas, emAvaliacao };
   }, [submissoes]);
 
@@ -1482,171 +363,135 @@ export default function AdminSubmissoes() {
       <HeaderHero stats={stats} />
 
       <main className="flex-1 px-4 sm:px-8 py-10 max-w-7xl mx-auto w-full space-y-10">
-        {/* Filtros */}
-        <section
-          className="bg-white dark:bg-zinc-900 rounded-2xl shadow p-5 flex flex-col lg:flex-row lg:flex-wrap gap-4 items-stretch lg:items-center border dark:border-zinc-800"
-          aria-label="Filtros"
-        >
-          {/* Título "Filtros" */}
-          <div className="flex items-center gap-2">
-            <Filter className="w-5 h-5 text-amber-600" aria-hidden="true" />
-            <h2 className="font-semibold text-zinc-800 dark:text-zinc-100">
-              Filtros
-            </h2>
-          </div>
+        {/* Toolbar de ações (separada dos filtros) */}
+<section
+  className="bg-white dark:bg-zinc-900 rounded-2xl shadow p-5 border dark:border-zinc-800 space-y-4"
+  aria-label="Ações e filtros"
+>
+  {/* Ações / botões */}
+  <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+    <div className="flex items-center gap-2">
+      <Filter className="w-5 h-5 text-amber-600" aria-hidden="true" />
+      <h2 className="font-semibold text-zinc-800 dark:text-zinc-100">Painel</h2>
+    </div>
 
-          {/* Ações principais */}
-          <div className="w-full lg:w-auto flex flex-wrap gap-2 order-2 lg:order-none lg:ml-auto justify-start lg:justify-end">
-            <button
-              type="button"
-              onClick={() => setRankingOpen(true)}
-              className="inline-flex flex-1 lg:flex-none items-center justify-center gap-2 px-4 py-2 rounded-lg bg-amber-700 text-white hover:bg-amber-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-700"
-              title="Abrir ranking"
-            >
-              <Award className="w-4 h-4" />
-              Ranking
-            </button>
+    <div className="flex flex-1 flex-wrap gap-2 sm:justify-end">
+      <button
+        type="button"
+        onClick={() => setRankingOpen(true)}
+        className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-amber-700 text-white hover:bg-amber-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-700"
+        title="Abrir ranking"
+      >
+        <Award className="w-4 h-4" />
+        Ranking Escrita
+      </button>
 
-            <button
-              type="button"
-              onClick={() => setAvaliadoresOpen(true)}
-              className="inline-flex flex-1 lg:flex-none items-center justify-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-600"
-              title="Ver avaliadores com encaminhamentos"
-            >
-              <Users className="w-4 h-4" />
-              Avaliadores
-            </button>
+      <button
+  onClick={() => setOralOpen(true)}
+  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700"
+>
+  <Mic className="w-4 h-4" />
+  Ranking Oral
+</button>
 
-            <button
-              type="button"
-              onClick={() => handleExportCSV(filtradas)}
-              className="inline-flex flex-1 lg:flex-none items-center justify-center gap-2 px-4 py-2 rounded-lg bg-slate-700 text-white hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-slate-700"
-              title="Exportar resumo (CSV)"
-            >
-              <Download className="w-4 h-4" />
-              Exportar CSV
-            </button>
-          </div>
+      <button
+        type="button"
+        onClick={() => setAvaliadoresOpen(true)}
+        className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-600"
+        title="Ver avaliadores com encaminhamentos"
+      >
+        <Users className="w-4 h-4" />
+        Avaliadores
+      </button>
 
-          {/* Campos de filtro */}
-          <div className="w-full order-3 lg:order-none grid sm:grid-cols-2 lg:grid-cols-5 gap-4 flex-1">
-            {/* Chamada */}
-            <label className="sr-only" htmlFor="filtro-chamada">
-              Filtrar por chamada
-            </label>
-            <select
-              id="filtro-chamada"
-              value={filtroChamada}
-              onChange={(e) => setFiltroChamada(e.target.value)}
-              className="border rounded-md px-3 py-2 text-sm w-full dark:border-zinc-700 dark:bg-zinc-800"
-              aria-label="Filtrar por chamada"
-            >
-              <option value="">Todas as chamadas</option>
-              {chamadas.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.titulo}
-                </option>
-              ))}
-            </select>
+      <button
+        type="button"
+        onClick={() => handleExportCSV(filtradas)}
+        className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-slate-700 text-white hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-slate-700"
+        title="Exportar resumo (CSV)"
+      >
+        <Download className="w-4 h-4" />
+        Exportar CSV
+      </button>
+    </div>
+  </div>
 
-            {/* Status */}
-            <label className="sr-only" htmlFor="filtro-status">
-              Filtrar por status
-            </label>
-            <select
-              id="filtro-status"
-              value={filtroStatus}
-              onChange={(e) => setFiltroStatus(e.target.value)}
-              className="border rounded-md px-3 py-2 text-sm w-full dark:border-zinc-700 dark:bg-zinc-800"
-              aria-label="Filtrar por status"
-            >
-              <option value="">Todos os status</option>
-              <option value="submetido">Submetido</option>
-              <option value="em_avaliacao">Em avaliação</option>
-              <option value="aprovado_exposicao">Aprovado (Exposição)</option>
-              <option value="aprovado_oral">Aprovado (Oral)</option>
-              <option value="aprovado_escrita">Aprovado (Escrita)</option>
-              <option value="reprovado">Reprovado</option>
-            </select>
+  {/* Filtros amplos */}
+  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <select
+      value={filtroChamada}
+      onChange={(e) => setFiltroChamada(e.target.value)}
+      className="border rounded-md px-3 py-2 text-sm w-full dark:border-zinc-700 dark:bg-zinc-800"
+      aria-label="Filtrar por chamada"
+    >
+      <option value="">Todas as chamadas</option>
+      {chamadas.map((c) => (
+        <option key={c.id} value={c.id}>{c.titulo}</option>
+      ))}
+    </select>
 
-            {/* Linha temática */}
-            <label className="sr-only" htmlFor="filtro-linha">
-              Filtrar por linha temática
-            </label>
-            <select
-              id="filtro-linha"
-              value={filtroLinha}
-              onChange={(e) => setFiltroLinha(e.target.value)}
-              className="border rounded-md px-3 py-2 text-sm w-full dark:border-zinc-700 dark:bg-zinc-800"
-              aria-label="Filtrar por linha temática"
-            >
-              <option value="">Todas as linhas</option>
-              {linhasTematicas.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.nome}
-                </option>
-              ))}
-            </select>
+    <select
+      value={filtroStatus}
+      onChange={(e) => setFiltroStatus(e.target.value)}
+      className="border rounded-md px-3 py-2 text-sm w-full dark:border-zinc-700 dark:bg-zinc-800"
+      aria-label="Filtrar por status"
+    >
+      <option value="">Todos os status</option>
+      <option value="submetido">Submetido</option>
+      <option value="em_avaliacao">Em avaliação</option>
+      <option value="aprovado_exposicao">Aprovado (Exposição)</option>
+      <option value="aprovado_oral">Aprovado (Oral)</option>
+      <option value="aprovado_escrita">Aprovado (Escrita)</option>
+      <option value="reprovado">Reprovado</option>
+    </select>
 
-            {/* Busca */}
-            <div className="relative">
-              <label className="sr-only" htmlFor="busca">
-                Buscar
-              </label>
-              <Search
-                className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400"
-                aria-hidden="true"
-              />
-              <input
-                id="busca"
-                value={busca}
-                onChange={(e) => setBusca(e.target.value)}
-                className="border rounded-md pl-9 pr-3 py-2 text-sm w-full dark:border-zinc-700 dark:bg-zinc-800"
-                placeholder="Buscar por título, autor, linha, eixo…"
-                aria-label="Buscar"
-              />
-            </div>
-          </div>
-        </section>
+    <select
+      value={filtroLinha}
+      onChange={(e) => setFiltroLinha(e.target.value)}
+      className="border rounded-md px-3 py-2 text-sm w-full dark:border-zinc-700 dark:bg-zinc-800"
+      aria-label="Filtrar por linha temática"
+    >
+      <option value="">Todas as linhas</option>
+      {linhasTematicas.map((l) => (
+        <option key={l.id} value={l.id}>{l.nome}</option>
+      ))}
+    </select>
+
+    <div className="relative">
+      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" aria-hidden="true" />
+      <input
+        value={busca}
+        onChange={(e) => setBusca(e.target.value)}
+        className="border rounded-md pl-9 pr-3 py-2 text-sm w-full dark:border-zinc-700 dark:bg-zinc-800"
+        placeholder="Buscar por título, autor, linha, eixo…"
+        aria-label="Buscar"
+      />
+    </div>
+  </div>
+</section>
 
         {/* Tabela (desktop) */}
-        <section
-          className="hidden md:block overflow-x-auto bg-white dark:bg-zinc-900 rounded-2xl shadow border dark:border-zinc-800"
-          aria-label="Tabela de submissões"
-        >
+        <section className="hidden md:block overflow-x-auto bg-white dark:bg-zinc-900 rounded-2xl shadow border dark:border-zinc-800" aria-label="Tabela de submissões">
           <table className="w-full border-collapse text-sm">
             <caption className="sr-only">Lista de submissões filtradas</caption>
             <thead className="bg-amber-600 text-white">
               <tr>
-                <th scope="col" className="p-3 text-left">
-                  Título
-                </th>
-                <th scope="col" className="p-3 text-left">
-                  Autor
-                </th>
-                <th scope="col" className="p-3 text-left">
-                  Chamada
-                </th>
-                <th scope="col" className="p-3 text-center">
-                  Submetido em
-                </th>
-                <th scope="col" className="p-3 text-center">
-                  Status
-                </th>
-                <th scope="col" className="p-3 text-center">
-                  Nota (média)
-                </th>
-                <th scope="col" className="p-3 text-center">
-                  Detalhes
-                </th>
+                <th scope="col" className="p-3 text-left">Título</th>
+                <th scope="col" className="p-3 text-left">Autor</th>
+                <th scope="col" className="p-3 text-left">Chamada</th>
+                <th scope="col" className="p-3 text-left">Linha temática</th>
+                <th scope="col" className="p-3 text-center">Submetido em</th>
+                <th scope="col" className="p-3 text-center">Status</th>
+                <th scope="col" className="p-3 text-center">Nota (escrita)</th>
+                <th scope="col" className="p-3 text-center">Nota (oral)</th>
+                <th scope="col" className="p-3 text-center">Nota (final)</th>
+                <th scope="col" className="p-3 text-center">Ações</th>
               </tr>
             </thead>
             <tbody>
               {filtradas.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="text-center py-6 text-zinc-600">
-                    Nenhuma submissão encontrada.
-                  </td>
+                  <td colSpan={10} className="text-center py-6 text-zinc-600">Nenhuma submissão encontrada.</td>
                 </tr>
               )}
 
@@ -1655,28 +500,18 @@ export default function AdminSubmissoes() {
                   key={s.id}
                   className={
                     "border-b dark:border-zinc-800 hover:bg-amber-50/60 dark:hover:bg-zinc-800/40 transition " +
-                    (hasAnexo(s)
-                      ? "border-l-4 border-l-emerald-500"
-                      : "border-l-4 border-l-zinc-300 dark:border-l-zinc-700")
+                    (hasAnexo(s) ? "border-l-4 border-l-emerald-500" : "border-l-4 border-l-zinc-300 dark:border-l-zinc-700")
                   }
                 >
                   <td className="p-3 align-top" title={s.titulo}>
                     <div className="flex items-start gap-2">
-                      <span className="font-medium text-zinc-800 dark:text-zinc-100 whitespace-normal break-words">
-                        {s.titulo}
-                      </span>
+                      <span className="font-medium text-zinc-800 dark:text-zinc-100 whitespace-normal break-words">{s.titulo}</span>
                       <span
                         className={
                           "shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium " +
-                          (hasAnexo(s)
-                            ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200"
-                            : "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300")
+                          (hasAnexo(s) ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200" : "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300")
                         }
-                        title={
-                          hasAnexo(s)
-                            ? "Este trabalho possui anexo (pôster ou banner)"
-                            : "Nenhum anexo enviado"
-                        }
+                        title={hasAnexo(s) ? "Este trabalho possui anexo (pôster ou banner)" : "Nenhum anexo enviado"}
                       >
                         <Paperclip className="h-3 w-3" />
                         {hasAnexo(s) ? "Anexo" : "Sem anexo"}
@@ -1686,12 +521,8 @@ export default function AdminSubmissoes() {
 
                   <td className="p-3">
                     <div className="flex flex-col">
-                      <span className="font-medium text-zinc-800 dark:text-zinc-100 whitespace-normal break-words">
-                        {s.autor_nome}
-                      </span>
-                      <span className="text-xs text-zinc-500 whitespace-normal break-words">
-                        {s.autor_email}
-                      </span>
+                      <span className="font-medium text-zinc-800 dark:text-zinc-100 whitespace-normal break-words">{s.autor_nome}</span>
+                      <span className="text-xs text-zinc-500 whitespace-normal break-words">{s.autor_email}</span>
                     </div>
                   </td>
 
@@ -1699,10 +530,12 @@ export default function AdminSubmissoes() {
                     {s.chamada_titulo}
                   </td>
 
+                  <td className="p-3 text-zinc-700 dark:text-zinc-300 whitespace-normal break-words">
+                    {s.linha_tematica_nome || s.linhaTematicaNome || "—"}
+                  </td>
+
                   <td className="p-3 text-center">
-                    {s.status === "rascunho"
-                      ? "—"
-                      : fmtDateTimeBR(s.submetido_em || s.criado_em)}
+                    {String(s.status || "").toLowerCase() === "rascunho" ? "—" : fmtDateTimeBR(s.submetido_em || s.criado_em)}
                   </td>
 
                   <td className="p-3 text-center">
@@ -1710,20 +543,32 @@ export default function AdminSubmissoes() {
                   </td>
 
                   <td className="p-3 text-center font-semibold text-zinc-800 dark:text-zinc-100">
-                    {fmt(s.nota_media, "—")}
+                    {fmtNota(s.nota_escrita)}
+                  </td>
+                  <td className="p-3 text-center font-semibold text-zinc-800 dark:text-zinc-100">
+                    {fmtNota(s.nota_oral)}
+                  </td>
+                  <td className="p-3 text-center font-semibold text-zinc-800 dark:text-zinc-100">
+                    {fmtNota(s.nota_final)}
                   </td>
 
-                  <td className="p-3 text-center">
-                    <button
-                      onClick={() => {
-                        setSelecionada(s);
-                        setDetalheOpen(true);
-                      }}
-                      className="px-3 py-1.5 rounded-full bg-amber-700 text-white hover:bg-amber-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-700"
-                      aria-label={`Abrir detalhes de ${s.titulo}`}
-                    >
-                      Ver
-                    </button>
+                  <td className="p-3">
+                    <div className="flex items-center justify-center gap-2">
+                      <button
+                        onClick={() => { setSelecionada(s); setDetalheOpen(true); }}
+                        className="px-3 py-1.5 rounded-full bg-amber-700 text-white hover:bg-amber-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-700"
+                        aria-label={`Abrir detalhes de ${s.titulo}`}
+                      >
+                        Ver
+                      </button>
+                      <button
+                        onClick={() => { setSubIdAtrib(s.id); setAtribOpen(true); }}
+                        className="px-3 py-1.5 rounded-full bg-emerald-600 text-white hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-600"
+                        aria-label={`Incluir avaliadores para ${s.titulo}`}
+                      >
+                        Incluir avaliadores
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -1732,10 +577,7 @@ export default function AdminSubmissoes() {
         </section>
 
         {/* Cards (mobile) */}
-        <section
-          className="md:hidden grid grid-cols-1 gap-3"
-          aria-label="Cards de submissões"
-        >
+        <section className="md:hidden grid grid-cols-1 gap-3" aria-label="Cards de submissões">
           {filtradas.length === 0 && (
             <div className="text-center py-6 text-zinc-600 bg-white dark:bg-zinc-900 rounded-2xl shadow border dark:border-zinc-800">
               Nenhuma submissão encontrada.
@@ -1743,34 +585,26 @@ export default function AdminSubmissoes() {
           )}
 
           {filtradas.map((s) => (
-            <div
-              key={s.id}
-              className="bg-white dark:bg-zinc-900 rounded-2xl shadow border dark:border-zinc-800 p-4 space-y-2"
-            >
+            <div key={s.id} className="bg-white dark:bg-zinc-900 rounded-2xl shadow border dark:border-zinc-800 p-4 space-y-2">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="flex items-start gap-2">
-                    <p className="font-semibold text-zinc-800 dark:text-zinc-100 whitespace-normal break-words">
-                      {s.titulo}
-                    </p>
+                    <p className="font-semibold text-zinc-800 dark:text-zinc-100 whitespace-normal break-words">{s.titulo}</p>
                     <span
                       className={
                         "shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium " +
-                        (hasAnexo(s)
-                          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200"
-                          : "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300")
+                        (hasAnexo(s) ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200" : "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300")
                       }
                     >
                       <Paperclip className="h-3 w-3" />
                       {hasAnexo(s) ? "Anexo" : "Sem anexo"}
                     </span>
                   </div>
-
+                  <p className="text-xs text-zinc-500 whitespace-normal break-words">{s.chamada_titulo}</p>
                   <p className="text-xs text-zinc-500 whitespace-normal break-words">
-                    {s.chamada_titulo}
+                    {s.linha_tematica_nome || s.linhaTematicaNome || "—"}
                   </p>
                 </div>
-
                 <StatusAndApprovals s={s} />
               </div>
 
@@ -1779,25 +613,41 @@ export default function AdminSubmissoes() {
                 <span className="text-zinc-500"> · {s.autor_email}</span>
               </p>
 
-              {s.status !== "rascunho" && (
+              {String(s.status || "").toLowerCase() !== "rascunho" && (
                 <p className="text-xs text-zinc-500">
                   Submetido em: {fmtDateTimeBR(s.submetido_em || s.criado_em)}
                 </p>
               )}
 
-              <div className="flex items-center justify-between pt-1">
-                <span className="text-sm font-semibold">
-                  Nota: {fmt(s.nota_media, "—")}
-                </span>
+              <div className="grid grid-cols-3 gap-2 text-center pt-1">
+                <div className="rounded-lg bg-zinc-50 dark:bg-zinc-800 p-2">
+                  <p className="text-[10px] text-zinc-500">Escrita</p>
+                  <p className="text-sm font-semibold">{fmtNota(s.nota_escrita)}</p>
+                </div>
+                <div className="rounded-lg bg-zinc-50 dark:bg-zinc-800 p-2">
+                  <p className="text-[10px] text-zinc-500">Oral</p>
+                  <p className="text-sm font-semibold">{fmtNota(s.nota_oral)}</p>
+                </div>
+                <div className="rounded-lg bg-zinc-50 dark:bg-zinc-800 p-2">
+                  <p className="text-[10px] text-zinc-500">Final</p>
+                  <p className="text-sm font-semibold">{fmtNota(s.nota_final)}</p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end pt-2 gap-2">
                 <button
-                  onClick={() => {
-                    setSelecionada(s);
-                    setDetalheOpen(true);
-                  }}
+                  onClick={() => { setSelecionada(s); setDetalheOpen(true); }}
                   className="px-3 py-1.5 rounded-full bg-amber-700 text-white"
                   aria-label={`Abrir detalhes de ${s.titulo}`}
                 >
                   Ver
+                </button>
+                <button
+                  onClick={() => { setSubIdAtrib(s.id); setAtribOpen(true); }}
+                  className="px-3 py-1.5 rounded-full bg-emerald-600 text-white"
+                  aria-label={`Incluir avaliadores para ${s.titulo}`}
+                >
+                  Avaliadores
                 </button>
               </div>
             </div>
@@ -1809,19 +659,23 @@ export default function AdminSubmissoes() {
 
       <AnimatePresence>
         {detalheOpen && (
-          <DetalhesSubmissao
-            key={`detalhes-${selecionada?.id ?? "novo"}`}
+          <ModalDetalhesSubmissao
             open={detalheOpen}
             onClose={() => setDetalheOpen(false)}
-            s={selecionada}
+            submissao={selecionada}
             onDetectAnexo={(id, has) => {
               if (!has) return;
-              setSubmissoes((prev) =>
-                prev.map((it) =>
-                  it.id === id ? { ...it, _hasAnexo: true } : it
-                )
-              );
+              setSubmissoes((prev) => prev.map((it) => (it.id === id ? { ...it, _hasAnexo: true } : it)));
             }}
+          />
+        )}
+
+        {atribOpen && (
+          <ModalAtribuirAvaliadores
+            isOpen={atribOpen}
+            submissaoId={subIdAtrib}
+            onClose={() => setAtribOpen(false)}
+            onChanged={() => {}}
           />
         )}
 
@@ -1835,19 +689,10 @@ export default function AdminSubmissoes() {
               setSubmissoes((prev) =>
                 prev.map((it) => {
                   if (it.id !== id) return it;
-
-                  const p =
-                    typeof patch === "string" ? { status: patch } : patch || {};
-
-                  const stLower = String(
-                    p.status || it.status || ""
-                  ).toLowerCase();
-                  const escritaLower = String(
-                    p.status_escrita || it.status_escrita || ""
-                  ).toLowerCase();
-                  const oralLower = String(
-                    p.status_oral || it.status_oral || ""
-                  ).toLowerCase();
+                  const p = typeof patch === "string" ? { status: patch } : patch || {};
+                  const stLower = String(p.status || it.status || "").toLowerCase();
+                  const escritaLower = String(p.status_escrita || it.status_escrita || "").toLowerCase();
+                  const oralLower = String(p.status_oral || it.status_oral || "").toLowerCase();
 
                   const aprovExpoAgora =
                     p._exposicao_aprovada === true ||
@@ -1867,13 +712,9 @@ export default function AdminSubmissoes() {
                   const novaOral = aprovOralAntes || aprovOralAgora;
 
                   let statusFinal = it.status;
-                  if (stLower === "reprovado") {
-                    statusFinal = "reprovado";
-                  } else if (novaExpo || novaOral) {
-                    statusFinal = "aprovado";
-                  } else if (p.status) {
-                    statusFinal = p.status;
-                  }
+                  if (stLower === "reprovado") statusFinal = "reprovado";
+                  else if (novaExpo || novaOral) statusFinal = "aprovado";
+                  else if (p.status) statusFinal = p.status;
 
                   return {
                     ...it,
@@ -1889,6 +730,12 @@ export default function AdminSubmissoes() {
           />
         )}
 
+<RankingOralModal
+  open={oralOpen}
+  onClose={() => setOralOpen(false)}
+  itens={filtradas}
+/>
+
         {avaliadoresOpen && (
           <ModalAvaliadores
             key="avaliadores-modal"
@@ -1898,5 +745,47 @@ export default function AdminSubmissoes() {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+/* ————————————————— HeaderHero (mantém degradê 3 cores) ————————————————— */
+function StatPill({ label, value, tone = "amber" }) {
+  const tones =
+    {
+      amber: { text: "text-amber-50", bg: "bg-amber-500/20", border: "border-amber-300/40" },
+      green: { text: "text-emerald-50", bg: "bg-emerald-500/20", border: "border-emerald-300/40" },
+      blue: { text: "text-blue-50", bg: "bg-blue-500/20", border: "border-blue-300/40" },
+      red: { text: "text-rose-50", bg: "bg-rose-500/20", border: "border-rose-300/40" },
+      slate: { text: "text-slate-50", bg: "bg-slate-500/20", border: "border-slate-300/40" },
+    }[tone] || { text: "text-slate-50", bg: "bg-slate-500/20", border: "border-slate-300/40" };
+
+  return (
+    <div className={`rounded-2xl border ${tones.border} ${tones.bg} backdrop-blur px-3 py-3 text-left`}>
+      <p className="text-xs uppercase tracking-wide text-white/85">{label}</p>
+      <p className={`mt-1 font-bold text-lg sm:text-2xl ${tones.text}`}>{value}</p>
+    </div>
+  );
+}
+
+function HeaderHero({ stats }) {
+  const { total, aprovadas, emAvaliacao, reprovadas } = stats || {};
+  return (
+    <motion.header initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }} className="w-full text-white">
+      <div className="bg-gradient-to-br from-amber-700 via-orange-600 to-yellow-600">
+        <div className="mx-auto max-w-7xl px-6 py-10 sm:py-12">
+          <div className="flex items-center justify-center gap-3">
+            <ClipboardList className="h-9 w-9" aria-hidden="true" />
+            <h1 className="text-2xl sm:text-3xl font-extrabold leading-tight text-center">Submissão de Trabalhos — Administração</h1>
+          </div>
+          <p className="mt-2 text-center text-sm sm:text-base opacity-90">Acompanhe, filtre e audite todos os trabalhos submetidos às chamadas.</p>
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <StatPill label="Total" value={fmt(total, "—")} tone="amber" />
+            <StatPill label="Aprovadas" value={fmt(aprovadas, "—")} tone="green" />
+            <StatPill label="Em avaliação" value={fmt(emAvaliacao, "—")} tone="blue" />
+            <StatPill label="Reprovadas" value={fmt(reprovadas, "—")} tone="red" />
+          </div>
+        </div>
+      </div>
+    </motion.header>
   );
 }

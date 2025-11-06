@@ -132,18 +132,10 @@ async function canUserReviewOrView(userOrId, submissaoId, dbConn = db) {
 }
 
 /* ===================== Flags de aprovação parcial ===================== */
-/**
- * Dado um row vindo do banco, deduz:
- *  - se exposição/escrita está aprovada
- *  - se apresentação oral está aprovada
- *
- * Isso replica exatamente a lógica do front:
- *   hasAprovExposicao / hasAprovOral
- */
 function deriveAprovFlags(row) {
   const st = String(row?.status || "").toLowerCase();
-  const se = String(row?.status_escrita || "").toLowerCase(); // pode não existir
-  const so = String(row?.status_oral || "").toLowerCase();    // pode não existir
+  const se = String(row?.status_escrita || "").toLowerCase();
+  const so = String(row?.status_oral || "").toLowerCase();
 
   const exposicaoAprovada =
     se === "aprovado" ||
@@ -160,148 +152,212 @@ function deriveAprovFlags(row) {
   };
 }
 
-/* ===================== Avaliadores ===================== */
-/** GET /api/admin/submissoes/:id/avaliadores */
-async function listarAvaliadoresDaSubmissao(req, res) {
-  const id = asInt(req.params.id);
-  log("GET /admin/submissoes/:id/avaliadores →", { id });
+/* =======================================================================
+   🔶 Avaliadores FLEX (sem limite) — oral/escrita
+   ======================================================================= */
+
+/** GET /api/admin/submissoes/:id/avaliadores?tipo=oral|escrita|todos */
+async function listarAvaliadoresFlex(req, res) {
+  const submissaoId = asInt(req.params.id);
+  const tipo = String(req.query.tipo || "todos").toLowerCase();
+
+  log("GET /admin/submissoes/:id/avaliadores →", { submissaoId, tipo });
+
   try {
-    if (!Number.isInteger(id) || id <= 0) {
+    const uid = getUserIdOptional(req);
+    if (!(await isAdmin(uid, db))) return res.status(403).json({ error: "Acesso negado." });
+
+    if (!Number.isInteger(submissaoId) || submissaoId <= 0) {
       return res.status(400).json({ error: "ID inválido" });
     }
 
-    const rows = await db.any(
-      `SELECT u.id, u.nome, u.email
-         FROM trabalhos_submissoes_avaliadores tsa
-         JOIN usuarios u ON u.id = tsa.avaliador_id
-        WHERE tsa.submissao_id = $1
-          AND tsa.revoked_at IS NULL
-        ORDER BY u.nome ASC`,
-      [id]
-    );
-    log("listarAvaliadoresDaSubmissao: qtd=", rows.length);
-    res.json(rows);
+    const base = `
+      SELECT a.submissao_id,
+             a.avaliador_id,
+             a.tipo,
+             a.assigned_by,
+             a.created_at,
+             u.nome  AS avaliador_nome,
+             u.email AS avaliador_email
+        FROM trabalhos_submissoes_avaliadores a
+        JOIN usuarios u ON u.id = a.avaliador_id
+       WHERE a.submissao_id = $1
+         AND a.revoked_at IS NULL
+    `;
+    const sql = (tipo === "oral" || tipo === "escrita")
+      ? base + ` AND a.tipo = $2::tipo_avaliacao ORDER BY a.tipo, u.nome ASC`
+      : base + ` ORDER BY a.tipo, u.nome ASC`;
+
+    const params = (tipo === "oral" || tipo === "escrita") ? [submissaoId, tipo] : [submissaoId];
+    const rows = await db.any(sql, params);
+    return res.json(rows);
   } catch (err) {
-    console.error("[listarAvaliadoresDaSubmissao]", err);
-    res.status(500).json({ error: "Erro ao listar avaliadores da submissão." });
+    console.error("[listarAvaliadoresFlex]", err);
+    return res.status(500).json({ error: "Erro ao listar avaliadores da submissão." });
   }
 }
 
 /** POST /api/admin/submissoes/:id/avaliadores
- *  Aceita 1 ou 2 IDs. Mescla com os atuais (sem duplicar).
- *  Só atualiza status para 'em_avaliacao' quando totalizar 2.
- *  Se body.replace === true, substitui os atuais pelos informados (1 ou 2).
+ * body:
+ *   { avaliadorId, tipo } | { id, tipo }
+ *   ou { itens: [{ avaliadorId|id, tipo }, ...] }
  */
-async function atribuirAvaliadores(req, res) {
-  const id = asInt(req.params.id);
-  const { avaliadores, replace = false } = req.body || {};
-  log("POST /admin/submissoes/:id/avaliadores →", { id, avaliadores, replace });
-
-  if (!Number.isInteger(id) || id <= 0) {
-    return res.status(400).json({ error: "ID inválido" });
-  }
-  if (!Array.isArray(avaliadores) || avaliadores.length < 1 || avaliadores.length > 2) {
-    return res.status(400).json({ error: "Envie 1 ou 2 avaliadores." });
-  }
-
-  // normaliza para strings p/ Set e compara depois como número
-  const incoming = Array.from(new Set(avaliadores.map(v => String(v).trim()))).filter(Boolean);
-  if (incoming.length === 0) {
-    return res.status(400).json({ error: "Nenhum avaliador informado." });
-  }
-  if (incoming.length > 2) {
-    return res.status(400).json({ error: "Máximo de 2 avaliadores." });
-  }
+async function incluirAvaliadores(req, res) {
+  const submissaoId = asInt(req.params.id);
 
   try {
-    // atuais não revogados
-    const atuaisRows = await db.any(
-      `SELECT avaliador_id
-         FROM trabalhos_submissoes_avaliadores
-        WHERE submissao_id=$1 AND revoked_at IS NULL
-        ORDER BY avaliador_id`,
-      [id]
-    );
-    const atuais = new Set(atuaisRows.map(r => String(r.avaliador_id)));
+    const uid = getUserIdOptional(req);
+    if (!(await isAdmin(uid, db))) return res.status(403).json({ error: "Acesso negado." });
 
-    // destino final (merge ou replace)
-    let destinoSet;
-    if (replace) {
-      destinoSet = new Set(incoming);
+    if (!Number.isInteger(submissaoId) || submissaoId <= 0) {
+      return res.status(400).json({ error: "ID inválido" });
+    }
+
+    // Normalização
+    let itens = [];
+    if (Array.isArray(req.body?.itens)) {
+      itens = req.body.itens;
+    } else if (req.body && (req.body.avaliadorId || req.body.id)) {
+      itens = [req.body];
+    } else if (Array.isArray(req.body?.avaliadores)) {
+      // compat: { avaliadores:[id,id], tipo:'escrita'|'oral' }
+      const tipoCompat = String(req.body.tipo || "escrita").toLowerCase();
+      itens = req.body.avaliadores.map((id) => ({ avaliadorId: Number(id), tipo: tipoCompat }));
     } else {
-      destinoSet = new Set([...atuais, ...incoming]);
-    }
-    const destino = Array.from(destinoSet);
-
-    if (destino.length > 2) {
-      return res.status(400).json({ error: "O total de avaliadores não pode exceder 2." });
-    }
-    if (destino.length === 2 && destino[0] === destino[1]) {
-      return res.status(400).json({ error: "Avaliadores devem ser distintos." });
+      return res.status(400).json({ error: "Envie {avaliadorId, tipo} ou {itens:[...]}." });
     }
 
-    // Valida elegibilidade apenas dos NOVOS (quem ainda não está atribuído)
-    const novos = destino.filter(idStr => !atuais.has(idStr));
-    if (novos.length > 0) {
-      // valida perfis elegíveis
-      const novosNums = novos.map(n => Number(n)).filter(Number.isFinite);
-      const elegiveis = await db.any(
-        `SELECT id
-           FROM usuarios
-          WHERE id = ANY($1)
-            AND LOWER(COALESCE(perfil,'')) IN ('instrutor','administrador')`,
-        [novosNums]
-      );
-      if (elegiveis.length !== novosNums.length) {
-        return res.status(400).json({ error: "Usuários inválidos para avaliação." });
-      }
+    itens = itens.map((r) => ({
+      avaliadorId: Number(r.avaliadorId ?? r.id),
+      tipo: String(r.tipo || "").toLowerCase(),
+    }))
+    .filter((r) => Number.isInteger(r.avaliadorId) && r.avaliadorId > 0 && (r.tipo === "oral" || r.tipo === "escrita"));
+
+    if (!itens.length) {
+      return res.status(400).json({ error: "Itens inválidos." });
     }
+
+    // Elegibilidade
+    const ids = Array.from(new Set(itens.map(r => r.avaliadorId)));
+    const elegiveis = await db.any(
+      `SELECT id FROM usuarios
+        WHERE id = ANY($1)
+          AND LOWER(COALESCE(perfil,'')) IN ('instrutor','administrador')`,
+      [ids]
+    );
+    const okIds = new Set(elegiveis.map(x => x.id));
+    const invalidos = ids.filter(id => !okIds.has(id));
+    if (invalidos.length) {
+      return res.status(400).json({ error: `Usuário(s) sem perfil elegível: ${invalidos.join(", ")}` });
+    }
+
+    const assignedBy = uid || null;
+    const results = [];
 
     await db.tx(async (t) => {
-      const assignedBy = getUserIdOptional(req);
-
-      if (replace) {
-        // revoga quem não está no destino
-        const destinoNums = destino.map(d => Number(d)).filter(Number.isFinite);
-        await t.none(
-          `UPDATE trabalhos_submissoes_avaliadores
-              SET revoked_at = NOW()
-            WHERE submissao_id=$1
-              AND revoked_at IS NULL
-              AND avaliador_id <> ALL($2::int[])`,
-          [id, destinoNums.length ? destinoNums : [0]] // evita erro de array vazio
-        );
-      }
-      // (modo merge): não revoga ninguém — apenas insere/reativa os novos
-
-      // upsert/reativa cada id do destino
-      for (const idStr of destino) {
-        const uid = Number(idStr);
-        await t.none(
-          `INSERT INTO trabalhos_submissoes_avaliadores (submissao_id, avaliador_id, assigned_by)
-           VALUES ($1,$2,$3)
-           ON CONFLICT (submissao_id, avaliador_id)
-           DO UPDATE SET revoked_at=NULL, assigned_by=EXCLUDED.assigned_by`,
-          [id, uid, assignedBy]
-        );
-      }
-
-      // só marca 'em_avaliacao' quando totalizar 2 ativos
-      if (destino.length === 2) {
-        await t.none(
-          `UPDATE trabalhos_submissoes
-              SET status='em_avaliacao', atualizado_em=NOW()
-            WHERE id=$1 AND status IN ('submetido','em_avaliacao')`,
-          [id]
-        );
+      for (const it of itens) {
+        try {
+          const row = await t.one(
+            `INSERT INTO trabalhos_submissoes_avaliadores
+               (submissao_id, avaliador_id, tipo, assigned_by, created_at)
+             VALUES ($1,$2,$3::tipo_avaliacao,$4, NOW())
+             ON CONFLICT (submissao_id, avaliador_id, tipo)
+             DO UPDATE SET revoked_at = NULL, assigned_by = EXCLUDED.assigned_by
+             RETURNING submissao_id, avaliador_id, tipo, assigned_by, created_at`,
+            [submissaoId, it.avaliadorId, it.tipo, assignedBy]
+          );
+          results.push(row);
+        } catch (e) {
+          if (e.code === "23505") continue; // já ativo por algum motivo
+          throw e;
+        }
       }
     });
 
-    log("atribuirAvaliadores: OK (total ativos =", destino.length, ")");
-    return res.json({ ok: true, total_atribuidos: destino.length });
+    return res.status(201).json({ ok: true, inseridos: results.length, itens: results });
   } catch (err) {
-    console.error("[atribuirAvaliadores]", err);
-    return res.status(500).json({ error: "Erro ao atribuir avaliadores." });
+    console.error("[incluirAvaliadores]", err);
+  const devMsg = (process.env.NODE_ENV !== "production") && (err.detail || err.message || err.code);
+  return res.status(500).json({ error: devMsg || "Falha ao incluir avaliadores." });
+  }
+}
+
+/** DELETE /api/admin/submissoes/:id/avaliadores
+ * body: { avaliadorId, tipo } (exclusão lógica)
+ */
+async function revogarAvaliadorFlex(req, res) {
+  const submissaoId = asInt(req.params.id);
+  const avaliadorId = asInt(req.body?.avaliadorId ?? req.body?.id);
+  const tipo = String(req.body?.tipo || "").toLowerCase();
+
+  try {
+    const uid = getUserIdOptional(req);
+    if (!(await isAdmin(uid, db))) return res.status(403).json({ error: "Acesso negado." });
+
+    if (!Number.isInteger(submissaoId) || submissaoId <= 0 ||
+        !Number.isInteger(avaliadorId) || avaliadorId <= 0 ||
+        !["oral","escrita"].includes(tipo)) {
+      return res.status(400).json({ error: "Parâmetros inválidos." });
+    }
+
+    const { rowCount } = await db.result(
+      `UPDATE trabalhos_submissoes_avaliadores
+          SET revoked_at = NOW()
+        WHERE submissao_id = $1
+          AND avaliador_id = $2
+          AND tipo = $3::tipo_avaliacao
+          AND revoked_at IS NULL`,
+      [submissaoId, avaliadorId, tipo]
+    );
+
+    if (!rowCount) return res.status(404).json({ error: "Vínculo ativo não encontrado." });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("[revogarAvaliadorFlex]", err);
+    return res.status(500).json({ error: "Falha ao revogar avaliador." });
+  }
+}
+
+/** PATCH /api/admin/submissoes/:id/avaliadores/restore
+ * body: { avaliadorId, tipo } (restaura último vínculo dessa combinação)
+ */
+async function restaurarAvaliadorFlex(req, res) {
+  const submissaoId = asInt(req.params.id);
+  const avaliadorId = asInt(req.body?.avaliadorId ?? req.body?.id);
+  const tipo = String(req.body?.tipo || "").toLowerCase();
+
+  try {
+    const uid = getUserIdOptional(req);
+    if (!(await isAdmin(uid, db))) return res.status(403).json({ error: "Acesso negado." });
+
+    if (!Number.isInteger(submissaoId) || submissaoId <= 0 ||
+        !Number.isInteger(avaliadorId) || avaliadorId <= 0 ||
+        !["oral","escrita"].includes(tipo)) {
+      return res.status(400).json({ error: "Parâmetros inválidos." });
+    }
+
+    const { rowCount } = await db.result(
+      `WITH alvo AS (
+         SELECT ctid
+           FROM trabalhos_submissoes_avaliadores
+          WHERE submissao_id = $1
+            AND avaliador_id = $2
+            AND tipo = $3::tipo_avaliacao
+          ORDER BY revoked_at DESC NULLS LAST, created_at DESC
+          LIMIT 1
+       )
+       UPDATE trabalhos_submissoes_avaliadores a
+          SET revoked_at = NULL
+        WHERE a.ctid IN (SELECT ctid FROM alvo)`,
+      [submissaoId, avaliadorId, tipo]
+    );
+
+    if (!rowCount) return res.status(404).json({ error: "Nada para restaurar." });
+    return res.json({ ok: true });
+  } catch (err) {
+    if (err.code === "23505") return res.status(409).json({ error: "Já existe vínculo ativo idêntico." });
+    console.error("[restaurarAvaliadorFlex]", err);
+    return res.status(500).json({ error: "Falha ao restaurar avaliador." });
   }
 }
 
@@ -336,7 +392,6 @@ async function listarAvaliacoesDaSubmissao(req, res) {
       log("avaliacoes.meta:", j(meta));
     } catch (e) {
       if (e?.code === "42703") {
-        // sem a coluna nota_visivel → fallback, ainda trazendo o nome
         log("avaliacoes.meta: coluna nota_visivel ausente → fallback");
         meta = await db.oneOrNone(
           `
@@ -420,7 +475,7 @@ async function listarAvaliacoesDaSubmissao(req, res) {
         if (idx !== null && idx >= 0 && idx < NOTAS_LEN) {
           item.notas[idx] += notaVal;
         } else {
-          item.__extras += notaVal; // critério sem ordem mapeada
+          item.__extras += notaVal;
           if (r.criterio_id) item.comentarios.push(`[critério ${r.criterio_id} sem ordem] +${notaVal}`);
         }
       }
@@ -450,7 +505,7 @@ async function listarAvaliacoesDaSubmissao(req, res) {
       nota_dividida_por_4: totalGeral / 4,
       qtd_avaliadores: resposta.length,
       nota_visivel: !!meta.nota_visivel,
-      linha_tematica_nome: meta.linha_tematica_nome || null, // ← aqui!
+      linha_tematica_nome: meta.linha_tematica_nome || null,
     });
   } catch (err) {
     console.error("[listarAvaliacoesDaSubmissao] code:", err?.code, "message:", err?.message);
@@ -557,7 +612,7 @@ async function baixarBanner(req, res) {
     res.setHeader("X-File-Path", filePath); // help debug
     res.setHeader(
       "Content-Disposition",
-      `inline; filename="${path.basename(row.nome_original || "poster")}"`
+      `inline; filename="${path.basename(row.nome_original || "poster")}"`,
     );
 
     fs.createReadStream(filePath)
@@ -612,9 +667,11 @@ async function atualizarNotaMediaMaterializada(submissaoId, dbConn = db) {
 }
 
 /** GET /api/admin/submissoes */
+/** GET /api/admin/submissoes */
 async function listarSubmissoesAdmin(req, res) {
-  async function queryComParciais() {
-    return db.any(`
+  // ====== V1: com revoked_at ======
+  const SQL_V1 = `
+    WITH base AS (
       SELECT
         s.id,
         s.titulo,
@@ -622,136 +679,180 @@ async function listarSubmissoesAdmin(req, res) {
         s.status_escrita,
         s.status_oral,
         s.chamada_id,
-        s.autor_nome,
-        s.autor_email,
-        s.area_tematica AS area,
-        s.eixo,
+        s.criado_em AS submetido_em,   -- << usado no front
+        u.nome  AS autor_nome,
+        u.email AS autor_email,
         c.titulo AS chamada_titulo,
-        COALESCE(
-          s.nota_media,
-          (
-            WITH por_avaliador AS (
-              SELECT a.avaliador_id, SUM(ai.nota)::int AS total
-              FROM trabalhos_avaliacoes_itens ai
-              JOIN trabalhos_avaliacoes a ON a.id = ai.avaliacao_id
-              WHERE a.submissao_id = s.id
-              GROUP BY a.avaliador_id
-            )
-            SELECT ROUND(COALESCE(SUM(total),0)::numeric / 4, 1)
-            FROM por_avaliador
-          )
-        ) AS nota_media
-      FROM trabalhos_submissoes s
-      LEFT JOIN trabalhos_chamadas c ON c.id = s.chamada_id
-      ORDER BY s.id DESC
-    `);
-  }
+        COALESCE(s.nota_visivel, false) AS nota_visivel,
+        tcl.nome AS linha_tematica_nome,
 
-  // fallback SEM as colunas parciais
-  async function querySemParciais() {
-    return db.any(`
-      SELECT
-        s.id,
-        s.titulo,
-        s.status,
-        NULL::text AS status_escrita,
-        NULL::text AS status_oral,
-        s.chamada_id,
-        s.autor_nome,
-        s.autor_email,
-        s.area_tematica AS area,
-        s.eixo,
-        c.titulo AS chamada_titulo,
-        COALESCE(
-          s.nota_media,
-          (
-            WITH por_avaliador AS (
-              SELECT a.avaliador_id, SUM(ai.nota)::int AS total
-              FROM trabalhos_avaliacoes_itens ai
-              JOIN trabalhos_avaliacoes a ON a.id = ai.avaliacao_id
-              WHERE a.submissao_id = s.id
-              GROUP BY a.avaliador_id
-            )
-            SELECT ROUND(COALESCE(SUM(total),0)::numeric / 4, 1)
-            FROM por_avaliador
+        /* média geral histórica (compat) */
+        (
+          WITH por_avaliador AS (
+            SELECT ai.avaliador_id, SUM(ai.nota)::int AS total
+            FROM trabalhos_avaliacoes_itens ai
+            WHERE ai.submissao_id = s.id
+            GROUP BY ai.avaliador_id
           )
-        ) AS nota_media
+          SELECT ROUND(COALESCE(SUM(total), 0)::numeric / 4, 1)
+          FROM por_avaliador
+        ) AS nota_media,
+
+        /* cálculos por tipo (podem ser NULL se não houver vínculos) */
+        (
+          WITH por_avaliador AS (
+            SELECT ai.avaliador_id, SUM(ai.nota)::int AS total
+            FROM trabalhos_avaliacoes_itens ai
+            WHERE ai.submissao_id = s.id
+            GROUP BY ai.avaliador_id
+          ),
+          vinc AS (
+            SELECT DISTINCT ON (submissao_id, avaliador_id)
+                   submissao_id, avaliador_id, tipo
+            FROM trabalhos_submissoes_avaliadores
+            WHERE submissao_id = s.id AND revoked_at IS NULL
+            ORDER BY submissao_id, avaliador_id, created_at DESC NULLS LAST
+          )
+          SELECT ROUND(COALESCE(SUM(p.total) FILTER (WHERE v.tipo='escrita'),0)::numeric / 4, 1)
+          FROM por_avaliador p
+          JOIN vinc v ON v.avaliador_id = p.avaliador_id
+        ) AS nota_escrita_calc,
+
+        (
+          WITH por_avaliador AS (
+            SELECT ai.avaliador_id, SUM(ai.nota)::int AS total
+            FROM trabalhos_avaliacoes_itens ai
+            WHERE ai.submissao_id = s.id
+            GROUP BY ai.avaliador_id
+          ),
+          vinc AS (
+            SELECT DISTINCT ON (submissao_id, avaliador_id)
+                   submissao_id, avaliador_id, tipo
+            FROM trabalhos_submissoes_avaliadores
+            WHERE submissao_id = s.id AND revoked_at IS NULL
+            ORDER BY submissao_id, avaliador_id, created_at DESC NULLS LAST
+          )
+          SELECT ROUND(COALESCE(SUM(p.total) FILTER (WHERE v.tipo='oral'),0)::numeric / 4, 1)
+          FROM por_avaliador p
+          JOIN vinc v ON v.avaliador_id = p.avaliador_id
+        ) AS nota_oral_calc,
+
+        s.nota_escrita AS nota_escrita_col,
+        s.nota_oral    AS nota_oral_col,
+        s.nota_final   AS nota_final_col
       FROM trabalhos_submissoes s
-      LEFT JOIN trabalhos_chamadas c ON c.id = s.chamada_id
+      LEFT JOIN usuarios                 u   ON u.id  = s.usuario_id
+      LEFT JOIN trabalhos_chamada_linhas tcl ON tcl.id = s.linha_tematica_id
+      LEFT JOIN trabalhos_chamadas       c   ON c.id  = s.chamada_id
       ORDER BY s.id DESC
-    `);
-  }
+    )
+    SELECT
+      b.id, b.titulo, b.status, b.status_escrita, b.status_oral, b.chamada_id,
+      b.submetido_em,
+      b.autor_nome, b.autor_email, b.chamada_titulo,
+      b.nota_visivel, b.linha_tematica_nome,
+      b.nota_media,
+
+      /* usa coluna se houver, senão cálculo */
+      COALESCE(b.nota_escrita_col, b.nota_escrita_calc) AS nota_escrita,
+      COALESCE(b.nota_oral_col,    b.nota_oral_calc)    AS nota_oral,
+
+      /* final: usa coluna se houver; senão média das que existirem */
+      COALESCE(
+        b.nota_final_col,
+        CASE
+          WHEN b.nota_escrita_col IS NULL AND b.nota_oral_col IS NULL
+            THEN CASE
+                   WHEN b.nota_escrita_calc IS NULL THEN b.nota_oral_calc
+                   WHEN b.nota_oral_calc    IS NULL THEN b.nota_escrita_calc
+                   ELSE ROUND((b.nota_escrita_calc + b.nota_oral_calc)/2.0, 1)
+                 END
+          ELSE CASE
+                 WHEN b.nota_escrita_col IS NULL THEN b.nota_oral_col
+                 WHEN b.nota_oral_col    IS NULL THEN b.nota_escrita_col
+                 ELSE ROUND((b.nota_escrita_col + b.nota_oral_col)/2.0, 1)
+               END
+        END
+      ) AS nota_final
+    FROM base b
+  `;
+
+  // ====== V2: igual, mas sem checar revoked_at ======
+  const SQL_V2 = SQL_V1.replace(/ AND revoked_at IS NULL/g, "");
+
+  // ====== V3: mínimo, ainda com linha_tematica_nome e submetido_em ======
+  const SQL_V3 = `
+    SELECT
+      s.id, s.titulo, s.status, s.status_escrita, s.status_oral, s.chamada_id,
+      s.criado_em AS submetido_em,
+      u.nome  AS autor_nome, u.email AS autor_email,
+      c.titulo AS chamada_titulo,
+      COALESCE(s.nota_visivel, false) AS nota_visivel,
+      tcl.nome AS linha_tematica_nome,
+      (
+        WITH por_avaliador AS (
+          SELECT ai.avaliador_id, SUM(ai.nota)::int AS total
+          FROM trabalhos_avaliacoes_itens ai
+          WHERE ai.submissao_id = s.id
+          GROUP BY ai.avaliador_id
+        )
+        SELECT ROUND(COALESCE(SUM(total), 0)::numeric / 4, 1)
+      ) AS nota_media,
+      s.nota_escrita AS nota_escrita,
+      s.nota_oral    AS nota_oral,
+      s.nota_final   AS nota_final
+    FROM trabalhos_submissoes s
+    LEFT JOIN usuarios                 u   ON u.id  = s.usuario_id
+    LEFT JOIN trabalhos_chamada_linhas tcl ON tcl.id = s.linha_tematica_id
+    LEFT JOIN trabalhos_chamadas       c   ON c.id  = s.chamada_id
+    ORDER BY s.id DESC
+  `;
 
   try {
     let rows;
     try {
-      // Tenta versão "rica"
-      rows = await queryComParciais();
-    } catch (errRich) {
-      // 42703 = coluna não existe
-      if (errRich?.code === "42703") {
-        rows = await querySemParciais();
+      rows = await db.any(SQL_V1);
+    } catch (e1) {
+      if (e1?.code === "42703" || e1?.code === "42P01") {
+        rows = await db.any(SQL_V2);
       } else {
-        throw errRich;
+        try { rows = await db.any(SQL_V2); }
+        catch { rows = await db.any(SQL_V3); }
       }
     }
-
-    // Agora enriquecemos cada linha com as flags _exposicao_aprovada e _oral_aprovada
-    const enriched = rows.map((r) => {
-      const flags = deriveAprovFlags(r);
-      return {
-        ...r,
-        ...flags,
-      };
-    });
-
+    const enriched = rows.map((r) => ({ ...r, ...deriveAprovFlags(r) }));
     return res.json(enriched);
   } catch (err) {
-    console.error("[listarSubmissoesAdmin]", err);
+    console.error("[listarSubmissoesAdmin] code:", err?.code, "msg:", err?.message);
     return res.status(500).json({ error: "Erro ao listar submissões." });
   }
 }
 
 /* ===================== Resumo de Avaliadores ===================== */
-/** GET /api/admin/avaliadores/resumo
- * Retorna, por avaliador com encaminhamentos ativos:
- *  - pendentes: submissões atribuídas a ele sem nenhuma nota dele ainda
- *  - avaliados: submissões atribuídas a ele com pelo menos 1 nota dele
- *  - total = pendentes + avaliados
- */
-// Substitua toda a função por esta:
+/** GET /api/admin/avaliadores/resumo */
 async function resumoAvaliadores(req, res) {
   try {
-    // segurança: só admin
     const uid = getUserIdOptional(req);
     const admin = await isAdmin(uid, db);
     if (!admin) return res.status(403).json({ error: "Acesso negado." });
 
-    // helper: tenta uma lista de SQLs até uma funcionar
     async function tryMany(sqlList) {
       let lastErr = null;
       for (const sql of sqlList) {
         try {
           return await db.any(sql);
         } catch (e) {
-          // 42P01 = relation doesn't exist | 42703 = column doesn't exist
           if (e?.code === "42P01" || e?.code === "42703") {
-            lastErr = e;
-            continue;
+            lastErr = e; continue;
           }
-          throw e; // outros erros: relança
+          throw e;
         }
       }
       if (lastErr) throw lastErr;
       return [];
     }
 
-    // Variantes:
-    //  - TSA nomeada como trabalhos_submissoes_avaliadores (mais comum)
-    //  - Itens com submissao_id (mais comum) OU trabalho_id (varia)
-    //  - fallback de prefixos: com/sem "trabalhos_"
     const SQLs = [
-      // Variante A: nomes "trabalhos_*" + coluna submissao_id
       `
       WITH tsa_ativos AS (
         SELECT DISTINCT tsa.avaliador_id, tsa.submissao_id
@@ -774,8 +875,6 @@ async function resumoAvaliadores(req, res) {
       GROUP BY u.id, u.nome, u.email
       ORDER BY COUNT(*) FILTER (WHERE av.avaliador_id IS NULL) DESC, u.nome ASC
       `,
-
-      // Variante B: itens com trabalho_id (alguns schemas usam isso)
       `
       WITH tsa_ativos AS (
         SELECT DISTINCT tsa.avaliador_id, tsa.submissao_id
@@ -798,8 +897,6 @@ async function resumoAvaliadores(req, res) {
       GROUP BY u.id, u.nome, u.email
       ORDER BY COUNT(*) FILTER (WHERE av.avaliador_id IS NULL) DESC, u.nome ASC
       `,
-
-      // Variante C: sem prefixo "trabalhos_" nas tabelas
       `
       WITH tsa_ativos AS (
         SELECT DISTINCT tsa.avaliador_id, tsa.submissao_id
@@ -842,19 +939,6 @@ async function resumoAvaliadores(req, res) {
   }
 }
 
-//** POST /api/admin/submissoes/:id/status
-//* Atualiza status principal + parciais sem nunca apagar aprovações já dadas.
-/* Aceita body como:
-* {
-*   status: "aprovado_exposicao" | "aprovado_oral" | "reprovado" | ...
-*   status_escrita: "aprovado" | null | undefined
-*   status_oral: "aprovado" | null | undefined
-*   observacoes_admin: string|null (ignorado aqui por enquanto)
-* }
-*/
-
-/* ===================== Exports ===================== */
-
 /* ===================== Upload de modelo (banner/oral) ===================== */
 const os = require("os");
 const crypto = require("crypto");
@@ -866,7 +950,6 @@ async function ensureDirLocal(dir) {
 
 // pasta base para armazenar modelos de chamada
 function modelosBaseDir() {
-  // tenta usar paths.js se existir
   try {
     const p = require("../paths");
     return p.MODELOS_CHAMADAS_DIR || path.resolve("uploads", "modelos_chamadas");
@@ -882,7 +965,6 @@ function sanitizeFilename(name = "") {
 
 // Salva/atualiza registro em trabalhos_arquivos para a chamada + tipo
 async function upsertModeloArquivo({ chamadaId, filePath, original, mime, size, tipo }, dbConn = db) {
-  // tenta encontrar já existente para (chamadaId, tipo)
   const row = await dbConn.oneOrNone(
     `SELECT a.id
        FROM trabalhos_arquivos a
@@ -944,8 +1026,6 @@ async function getModeloMeta(chamadaId, tipo, dbConn = db) {
   };
 }
 
-// ===== Handlers públicos =====
-
 /** GET /api/admin/chamadas/:id/modelo-banner */
 async function getModeloBannerMeta(req, res) {
   const chamadaId = asInt(req.params.id);
@@ -953,7 +1033,6 @@ async function getModeloBannerMeta(req, res) {
     return res.status(400).json({ error: "ID inválido" });
   }
   try {
-    // segurança: admin
     const uid = getUserIdOptional(req);
     if (!(await isAdmin(uid, db))) return res.status(403).json({ error: "Acesso negado." });
 
@@ -972,7 +1051,6 @@ async function downloadModeloBanner(req, res) {
     return res.status(400).json({ error: "ID inválido" });
   }
   try {
-    // segurança: admin
     const uid = getUserIdOptional(req);
     if (!(await isAdmin(uid, db))) return res.status(403).json({ error: "Acesso negado." });
 
@@ -995,11 +1073,9 @@ async function uploadModeloBanner(req, res) {
     return res.status(400).json({ error: "ID inválido" });
   }
   try {
-    // segurança: admin
     const uid = getUserIdOptional(req);
     if (!(await isAdmin(uid, db))) return res.status(403).json({ error: "Acesso negado." });
 
-    // valida multipart
     if (!req.file) return res.status(400).json({ error: "Envie um arquivo no campo 'file'." });
     const original = req.file.originalname || "modelo.pptx";
     const mime = req.file.mimetype || "application/vnd.openxmlformats-officedocument.presentationml.presentation";
@@ -1008,7 +1084,6 @@ async function uploadModeloBanner(req, res) {
       return res.status(400).json({ error: "Arquivo inválido: envie .ppt ou .pptx." });
     }
 
-    // move arquivo do tmp para pasta final
     const baseDir = modelosBaseDir();
     const dir = path.resolve(baseDir, String(chamadaId));
     await ensureDirLocal(dir);
@@ -1018,7 +1093,6 @@ async function uploadModeloBanner(req, res) {
 
     await fs.promises.rename(req.file.path, finalPath);
 
-    // grava registro
     await upsertModeloArquivo({
       chamadaId,
       filePath: finalPath,
@@ -1118,6 +1192,43 @@ async function uploadModeloOral(req, res) {
   }
 }
 
+async function obterSubmissao(req, res) {
+  try {
+    const id = Number.parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ error: "ID inválido" });
+    }
+
+    const uid = getUserIdOptional(req);
+
+    // Busca a submissão (ajuste colunas conforme seu schema)
+    const row = await db.oneOrNone(
+      `SELECT s.*,
+              c.titulo AS chamada_titulo
+         FROM trabalhos_submissoes s
+         LEFT JOIN trabalhos_chamadas c ON c.id = s.chamada_id
+        WHERE s.id = $1`,
+      [id]
+    );
+    if (!row) return res.status(404).json({ error: "Submissão não encontrada." });
+
+    // Permissão: admin, avaliador vinculado ou autor
+    const allowed =
+      (await isAdmin(uid, db)) ||
+      (await canUserReviewOrView(uid, id, db)) ||
+      (Number(row.autor_id) === Number(uid));
+
+    if (!allowed) return res.status(403).json({ error: "Acesso negado." });
+
+    // Enriquecer com flags parciais (escrita/oral)
+    const flags = deriveAprovFlags(row);
+    return res.json({ ...row, ...flags });
+  } catch (err) {
+    console.error("[obterSubmissao]", err);
+    return res.status(500).json({ error: "Erro ao obter submissão." });
+  }
+}
+
 module.exports = {
   // helpers
   getUserIdOptional,
@@ -1127,10 +1238,16 @@ module.exports = {
   isAdmin,
   canUserReviewOrView,
 
-  // avaliadores
-  listarAvaliadoresDaSubmissao,
-  atribuirAvaliadores,
-  resumoAvaliadores,  // ✅ adicione esta linha
+  // 🔶 avaliadores (novo fluxo)
+  listarAvaliadoresFlex,
+  incluirAvaliadores,
+  revogarAvaliadorFlex,
+  restaurarAvaliadorFlex,
+  resumoAvaliadores,
+
+  // compat: mantém nomes antigos apontando para o novo fluxo
+  listarAvaliadoresDaSubmissao: listarAvaliadoresFlex,
+  atribuirAvaliadores: incluirAvaliadores,
 
   // avaliações
   listarAvaliacoesDaSubmissao,
@@ -1139,13 +1256,14 @@ module.exports = {
   // arquivos
   baixarBanner,
 
-  // modelos (NOVOS)
+  // modelos
   getModeloBannerMeta,
   downloadModeloBanner,
   uploadModeloBanner,
   getModeloOralMeta,
   downloadModeloOral,
   uploadModeloOral,
+  obterSubmissao,
 
   // notas materializadas
   calcularTotaisDaSubmissao,

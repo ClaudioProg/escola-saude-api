@@ -117,6 +117,147 @@ function podeExcluirOuEditarPeloAutor(sub, ch) {
   return { ok: true };
 }
 
+// ── normalização 0–10 para qualquer escala/peso
+function clamp01(x){ return Math.max(0, Math.min(1, x)); }
+function nota10Normalizada({ itens, criterios }) {
+  // itens: [{ criterio_id, nota }]  (oral: já mapeamos para criterio_id)
+  // criterios: [{ id, escala_min, escala_max, peso }]
+  const byId = new Map(criterios.map(c => [c.id, c]));
+  let num = 0, den = 0;
+  for (const it of itens) {
+    const c = byId.get(it.criterio_id);
+    if (!c) continue;
+    const min = Number(c.escala_min ?? 0);
+    const max = Number(c.escala_max ?? 10);
+    const w   = Number.isFinite(c.peso) ? Number(c.peso) : 1;
+    const r   = Number(it.nota);
+    if (!Number.isFinite(r) || max <= min) continue;
+    const score = clamp01((r - min) / (max - min));
+    num += w * score;
+    den += w;
+  }
+  if (den === 0) return null;
+  return Number((10 * (num / den)).toFixed(1));
+}
+
+/** 
+ * Persiste nota_escrita, nota_oral e nota_final (50/50) a partir dos itens já gravados.
+ * - nota_escrita: média das notas normalizadas (0–10) por avaliador (critérios "escrita"), depois média simples entre avaliadores
+ * - nota_oral: idem para "orais"
+ * - nota_final: 50/50 quando ambas existem; senão, usa a que existir
+ */
+async function atualizarNotasPersistidas50_50(subId) {
+  // ===== ESCRITA =====
+  try {
+    const criteriosE = await db.any(`
+      SELECT id,
+             COALESCE(escala_min,0)  AS escala_min,
+             COALESCE(escala_max,10) AS escala_max,
+             COALESCE(peso,1)        AS peso
+      FROM trabalhos_chamada_criterios
+      WHERE chamada_id = (SELECT chamada_id FROM trabalhos_submissoes WHERE id=$1)
+      ORDER BY id
+    `, [subId]);
+
+    const itensE = await db.any(`
+      SELECT avaliador_id, criterio_id, nota
+      FROM trabalhos_avaliacoes_itens
+      WHERE submissao_id=$1
+      ORDER BY avaliador_id
+    `, [subId]);
+
+    const porAvaliadorE = new Map();
+    for (const row of itensE) {
+      const arr = porAvaliadorE.get(row.avaliador_id) || [];
+      arr.push({ criterio_id: row.criterio_id, nota: Number(row.nota) });
+      porAvaliadorE.set(row.avaliador_id, arr);
+    }
+
+    const notasIndE = [];
+    for (const arr of porAvaliadorE.values()) {
+      const n10 = nota10Normalizada({ itens: arr, criterios: criteriosE });
+      if (n10 != null) notasIndE.push(n10);
+    }
+    const mediaE = notasIndE.length
+      ? Number((notasIndE.reduce((a,b)=>a+b,0) / notasIndE.length).toFixed(1))
+      : null;
+
+    await db.none(`
+      UPDATE trabalhos_submissoes
+         SET nota_escrita=$2,
+             atualizado_em=NOW()
+       WHERE id=$1
+    `, [subId, mediaE]);
+  } catch (e) {
+    console.error("[atualizarNotasPersistidas50_50][escrita][erro]", e);
+  }
+
+  // ===== ORAL =====
+  try {
+    const criteriosO = await db.any(`
+      SELECT id,
+             COALESCE(escala_min,0)  AS escala_min,
+             COALESCE(escala_max,10) AS escala_max,
+             COALESCE(peso,1)        AS peso
+      FROM trabalhos_chamada_criterios_orais
+      WHERE chamada_id = (SELECT chamada_id FROM trabalhos_submissoes WHERE id=$1)
+      ORDER BY id
+    `, [subId]);
+
+    const itensO = await db.any(`
+      SELECT avaliador_id, criterio_oral_id AS criterio_id, nota
+      FROM trabalhos_apresentacoes_orais_itens
+      WHERE submissao_id=$1
+      ORDER BY avaliador_id
+    `, [subId]);
+
+    const porAvaliadorO = new Map();
+    for (const row of itensO) {
+      const arr = porAvaliadorO.get(row.avaliador_id) || [];
+      arr.push({ criterio_id: row.criterio_id, nota: Number(row.nota) });
+      porAvaliadorO.set(row.avaliador_id, arr);
+    }
+
+    const notasIndO = [];
+    for (const arr of porAvaliadorO.values()) {
+      const n10 = nota10Normalizada({ itens: arr, criterios: criteriosO });
+      if (n10 != null) notasIndO.push(n10);
+    }
+    const mediaO = notasIndO.length
+      ? Number((notasIndO.reduce((a,b)=>a+b,0) / notasIndO.length).toFixed(1))
+      : null;
+
+    await db.none(`
+      UPDATE trabalhos_submissoes
+         SET nota_oral=$2,
+             atualizado_em=NOW()
+       WHERE id=$1
+    `, [subId, mediaO]);
+  } catch (e) {
+    console.error("[atualizarNotasPersistidas50_50][oral][erro]", e);
+  }
+
+  // ===== FINAL (50/50 quando ambas) =====
+  try {
+    await db.none(`
+      UPDATE trabalhos_submissoes
+         SET nota_final = ROUND(
+               CASE
+                 WHEN nota_escrita IS NOT NULL AND nota_oral IS NOT NULL
+                   THEN (nota_escrita + nota_oral)/2.0
+                 WHEN nota_escrita IS NOT NULL THEN nota_escrita
+                 WHEN nota_oral    IS NOT NULL THEN nota_oral
+                 ELSE NULL
+               END, 1
+             ),
+             atualizado_em = NOW()
+       WHERE id=$1
+    `, [subId]);
+  } catch (e) {
+    console.error("[atualizarNotasPersistidas50_50][final][erro]", e);
+  }
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * CRIAR SUBMISSÃO (autor)
  * ────────────────────────────────────────────────────────────────── */
@@ -700,102 +841,116 @@ exports.listarSubmissoesAdmin = async (req, res, next) => {
     if (chamadaId === null) { const e = new Error("chamadaId inválido."); e.status = 400; throw e; }
 
     let rows;
-    try {
-      rows = await db.any(`
-        WITH base AS (
-          SELECT
-            s.id,
-            s.titulo,
-            s.usuario_id,
-            s.status,
-            s.status_escrita,
-            s.status_oral,
-            s.linha_tematica_codigo,
-            s.inicio_experiencia,
-            s.criado_em,
-            s.atualizado_em,
-            u.nome  AS autor_nome,
-            u.email AS autor_email,
-            c.titulo AS chamada_titulo,
-            COALESCE(ve.total_ponderado,0) AS total_escrita,
-            COALESCE(vo.total_oral_ponderado,0) AS total_oral,
-            (COALESCE(ve.total_ponderado,0)+COALESCE(vo.total_oral_ponderado,0)) AS total_geral,
-            COALESCE(n.soma_notas, 0)::numeric       AS soma_notas,
-            COALESCE(n.qtd_itens, 0)                 AS qtd_itens,
-            COALESCE(n.qtd_avaliadores, 0)           AS qtd_avaliadores,
-            ROUND(COALESCE(n.soma_notas,0) / 4.0, 1) AS nota_media
-          FROM trabalhos_submissoes s
-          JOIN usuarios u              ON u.id = s.usuario_id
-          JOIN trabalhos_chamadas c    ON c.id = s.chamada_id
-          LEFT JOIN vw_submissao_total_escrita ve ON ve.submissao_id = s.id
-          LEFT JOIN vw_submissao_total_oral   vo ON vo.submissao_id = s.id
-          LEFT JOIN LATERAL (
-            SELECT
-              SUM(tai.nota)                       AS soma_notas,
-              COUNT(*)                            AS qtd_itens,
-              COUNT(DISTINCT tai.avaliador_id)    AS qtd_avaliadores
-            FROM trabalhos_avaliacoes_itens tai
-            WHERE tai.submissao_id = s.id
-          ) n ON TRUE
-          WHERE s.chamada_id = $1
-        )
+           try {
+  rows = await db.any(`
+    WITH base AS (
+      SELECT
+        s.id,
+        s.titulo,
+        s.usuario_id,
+        s.status,
+        s.status_escrita,
+        s.status_oral,
+        s.nota_escrita,         -- novo
+        s.nota_oral,            -- novo
+        s.nota_final,           -- novo
+        s.linha_tematica_codigo,
+        s.inicio_experiencia,
+        s.criado_em,
+        s.atualizado_em,
+        u.nome  AS autor_nome,
+        u.email AS autor_email,
+        c.titulo AS chamada_titulo,
+        COALESCE(ve.total_ponderado,0)      AS total_escrita,
+        COALESCE(vo.total_oral_ponderado,0) AS total_oral,
+        (COALESCE(ve.total_ponderado,0)+COALESCE(vo.total_oral_ponderado,0)) AS total_geral,
+        COALESCE(n.soma_notas, 0)::numeric    AS soma_notas,
+        COALESCE(n.qtd_itens, 0)              AS qtd_itens,
+        COALESCE(n.qtd_avaliadores, 0)        AS qtd_avaliadores,
+        COALESCE(
+          s.nota_media,
+          ROUND(COALESCE(n.soma_notas,0) / 4.0, 1)
+        ) AS nota_media
+      FROM trabalhos_submissoes s
+      JOIN usuarios u              ON u.id = s.usuario_id
+      JOIN trabalhos_chamadas c    ON c.id = s.chamada_id
+      LEFT JOIN vw_submissao_total_escrita ve ON ve.submissao_id = s.id
+      LEFT JOIN vw_submissao_total_oral   vo ON vo.submissao_id = s.id
+      LEFT JOIN LATERAL (
         SELECT
-          ROW_NUMBER() OVER (ORDER BY nota_media DESC NULLS LAST, total_geral DESC, id ASC) AS posicao,
-          *
-        FROM base
-        ORDER BY nota_media DESC NULLS LAST, total_geral DESC, id ASC
-      `, [chamadaId]);
-    } catch (errSelect) {
-      if (errSelect?.code === "42703") {
-        // fallback sem as colunas novas
-        rows = await db.any(`
-          WITH base AS (
-            SELECT
-              s.id,
-              s.titulo,
-              s.usuario_id,
-              s.status,
-              NULL::text AS status_escrita,
-              NULL::text AS status_oral,
-              s.linha_tematica_codigo,
-              s.inicio_experiencia,
-              s.criado_em,
-              s.atualizado_em,
-              u.nome  AS autor_nome,
-              u.email AS autor_email,
-              c.titulo AS chamada_titulo,
-              COALESCE(ve.total_ponderado,0) AS total_escrita,
-              COALESCE(vo.total_oral_ponderado,0) AS total_oral,
-              (COALESCE(ve.total_ponderado,0)+COALESCE(vo.total_oral_ponderado,0)) AS total_geral,
-              COALESCE(n.soma_notas, 0)::numeric       AS soma_notas,
-              COALESCE(n.qtd_itens, 0)                 AS qtd_itens,
-              COALESCE(n.qtd_avaliadores, 0)           AS qtd_avaliadores,
-              ROUND(COALESCE(n.soma_notas,0) / 4.0, 1) AS nota_media
-            FROM trabalhos_submissoes s
-            JOIN usuarios u              ON u.id = s.usuario_id
-            JOIN trabalhos_chamadas c    ON c.id = s.chamada_id
-            LEFT JOIN vw_submissao_total_escrita ve ON ve.submissao_id = s.id
-            LEFT JOIN vw_submissao_total_oral   vo ON vo.submissao_id = s.id
-            LEFT JOIN LATERAL (
-              SELECT
-                SUM(tai.nota)                       AS soma_notas,
-                COUNT(*)                            AS qtd_itens,
-                COUNT(DISTINCT tai.avaliador_id)    AS qtd_avaliadores
-              FROM trabalhos_avaliacoes_itens tai
-              WHERE tai.submissao_id = s.id
-            ) n ON TRUE
-            WHERE s.chamada_id = $1
-          )
+          SUM(tai.nota)                       AS soma_notas,
+          COUNT(*)                            AS qtd_itens,
+          COUNT(DISTINCT tai.avaliador_id)    AS qtd_avaliadores
+        FROM trabalhos_avaliacoes_itens tai
+        WHERE tai.submissao_id = s.id
+      ) n ON TRUE
+      WHERE s.chamada_id = $1
+    )
+    SELECT
+      ROW_NUMBER() OVER (
+        ORDER BY nota_media DESC NULLS LAST,
+                 total_geral DESC,
+                 id ASC
+      ) AS posicao,
+      *
+    FROM base
+    ORDER BY nota_media DESC NULLS LAST, total_geral DESC, id ASC;
+  `, [chamadaId]);
+} catch (errSelect) {
+  if (errSelect?.code === "42703") {
+    // fallback sem colunas novas
+    rows = await db.any(`
+      WITH base AS (
+        SELECT
+          s.id,
+          s.titulo,
+          s.usuario_id,
+          s.status,
+          NULL::text AS status_escrita,
+          NULL::text AS status_oral,
+          s.linha_tematica_codigo,
+          s.inicio_experiencia,
+          s.criado_em,
+          s.atualizado_em,
+          u.nome  AS autor_nome,
+          u.email AS autor_email,
+          c.titulo AS chamada_titulo,
+          COALESCE(ve.total_ponderado,0) AS total_escrita,
+          COALESCE(vo.total_oral_ponderado,0) AS total_oral,
+          (COALESCE(ve.total_ponderado,0)+COALESCE(vo.total_oral_ponderado,0)) AS total_geral,
+          COALESCE(n.soma_notas, 0)::numeric       AS soma_notas,
+          COALESCE(n.qtd_itens, 0)                 AS qtd_itens,
+          COALESCE(n.qtd_avaliadores, 0)           AS qtd_avaliadores,
+          ROUND(COALESCE(n.soma_notas,0) / 4.0, 1) AS nota_media
+        FROM trabalhos_submissoes s
+        JOIN usuarios u              ON u.id = s.usuario_id
+        JOIN trabalhos_chamadas c    ON c.id = s.chamada_id
+        LEFT JOIN vw_submissao_total_escrita ve ON ve.submissao_id = s.id
+        LEFT JOIN vw_submissao_total_oral   vo ON vo.submissao_id = s.id
+        LEFT JOIN LATERAL (
           SELECT
-            ROW_NUMBER() OVER (ORDER BY nota_media DESC NULLS LAST, total_geral DESC, id ASC) AS posicao,
-            *
-          FROM base
-          ORDER BY nota_media DESC NULLS LAST, total_geral DESC, id ASC
-        `, [chamadaId]);
-      } else {
-        throw errSelect;
-      }
-    }
+            SUM(tai.nota)                       AS soma_notas,
+            COUNT(*)                            AS qtd_itens,
+            COUNT(DISTINCT tai.avaliador_id)    AS qtd_avaliadores
+          FROM trabalhos_avaliacoes_itens tai
+          WHERE tai.submissao_id = s.id
+        ) n ON TRUE
+        WHERE s.chamada_id = $1
+      )
+      SELECT
+        ROW_NUMBER() OVER (
+          ORDER BY nota_media DESC NULLS LAST,
+                   total_geral DESC,
+                   id ASC
+        ) AS posicao,
+        *
+      FROM base
+      ORDER BY nota_media DESC NULLS LAST, total_geral DESC, id ASC;
+    `, [chamadaId]);
+  } else {
+    throw errSelect;
+  }
+}
 
     console.log("[listarSubmissoesAdmin]", {
       chamadaId,
@@ -814,7 +969,7 @@ exports.listarSubmissoesAdmin = async (req, res, next) => {
 };
 
 /* ────────────────────────────────────────────────────────────────
- * AVALIAÇÃO (ESCRITA)
+ * AVALIAÇÃO (ESCRITA) — ATUALIZADA (persistindo nota_escrita e nota_final 50/50)
  * ──────────────────────────────────────────────────────────────── */
 exports.avaliarEscrita = async (req, res, next) => {
   const t0 = Date.now();
@@ -912,30 +1067,11 @@ exports.avaliarEscrita = async (req, res, next) => {
       }
     }
 
-    // ✅ MATERIALIZA nota_media (0–10)
+    // ✅ Persistir nota_escrita e nota_final (50/50) a partir dos itens gravados
     try {
-      if (typeof atualizarNotaMediaMaterializada === "function") {
-        await atualizarNotaMediaMaterializada(subId, db);
-      } else {
-        const r = await db.one(`
-          WITH por_avaliador AS (
-            SELECT avaliador_id, SUM(nota)::int AS total
-            FROM trabalhos_avaliacoes_itens
-            WHERE submissao_id = $1
-            GROUP BY avaliador_id
-          )
-          SELECT ROUND(COALESCE(SUM(total),0)::numeric / 4, 1) AS nota10
-          FROM por_avaliador
-        `, [subId]);
-        const nota10 = Number(r?.nota10 || 0);
-        await db.none(
-          `UPDATE trabalhos_submissoes SET nota_media=$2, atualizado_em=NOW() WHERE id=$1`,
-          [subId, nota10]
-        );
-      }
+      await atualizarNotasPersistidas50_50(subId);
     } catch (e) {
-      console.error("[avaliarEscrita][nota_media][erro]", e);
-      // não bloqueia a resposta ao avaliador
+      console.error("[avaliarEscrita][persist50_50][erro]", e);
     }
 
     console.log("[avaliarEscrita][OK]", { subId, userId, ms: Date.now() - t0 });
@@ -951,8 +1087,10 @@ exports.avaliarEscrita = async (req, res, next) => {
   }
 };
 
+
 /* ────────────────────────────────────────────────────────────────
- * AVALIAÇÃO (ORAL)
+ * AVALIAÇÃO (ORAL) — ATUALIZADA (persistindo nota_oral e nota_final 50/50)
+ * Aceita criterio_id ou criterio_oral_id
  * ──────────────────────────────────────────────────────────────── */
 exports.avaliarOral = async (req, res, next) => {
   const t0 = Date.now();
@@ -971,29 +1109,52 @@ exports.avaliarOral = async (req, res, next) => {
     const permitido = isAdm || canView;
 
     console.log("[avaliarOral][perm]", { subId, userId, isAdm, canView, permitido });
-    if (!permitido) return res.status(403).json({ erro: "Apenas avaliadores atribuídos ou administradores podem avaliar." });
+    if (!permitido) {
+      return res.status(403).json({ erro: "Apenas avaliadores atribuídos ou administradores podem avaliar." });
+    }
 
+    // limites dos CRITÉRIOS ORAIS da chamada
     const lims = await db.any(`
-      SELECT id, escala_min, escala_max FROM trabalhos_chamada_criterios_orais
+      SELECT id, escala_min, escala_max
+      FROM trabalhos_chamada_criterios_orais
       WHERE chamada_id = (SELECT chamada_id FROM trabalhos_submissoes WHERE id=$1)
     `, [subId]);
     const byId = new Map(lims.map(x => [x.id, x]));
 
     let inseridos = 0;
     for (const it of itens) {
-      const lim = byId.get(it.criterio_oral_id);
+      // aceita tanto "criterio_id" (front) quanto "criterio_oral_id" (legado)
+      const criterioId = toIntOrNull(it?.criterio_id ?? it?.criterio_oral_id);
+      assert(Number.isFinite(criterioId), "Critério oral inválido.");
+      const lim = byId.get(criterioId);
       assert(lim, "Critério oral inválido.");
-      assert(Number.isInteger(it.nota) && it.nota >= lim.escala_min && it.nota <= lim.escala_max, `Nota deve estar entre ${lim.escala_min} e ${lim.escala_max}.`);
+
+      const nota = toIntOrNull(it?.nota);
+      assert(
+        Number.isInteger(nota) && nota >= lim.escala_min && nota <= lim.escala_max,
+        `Nota deve estar entre ${lim.escala_min} e ${lim.escala_max}.`
+      );
+
       await db.none(`
-        INSERT INTO trabalhos_apresentacoes_orais_itens (submissao_id, avaliador_id, criterio_oral_id, nota, comentarios)
+        INSERT INTO trabalhos_apresentacoes_orais_itens
+          (submissao_id, avaliador_id, criterio_oral_id, nota, comentarios)
         VALUES ($1,$2,$3,$4,$5)
         ON CONFLICT (submissao_id, avaliador_id, criterio_oral_id)
         DO UPDATE SET nota=EXCLUDED.nota, comentarios=EXCLUDED.comentarios, criado_em=NOW()
-      `, [subId, userId, it.criterio_oral_id, it.nota, it.comentarios || null]);
+      `, [subId, userId, criterioId, nota, it?.comentarios || null]);
+
       inseridos++;
     }
 
     console.log("[avaliarOral][OK]", { subId, userId, itens: itens.length, inseridos, ms: Date.now() - t0 });
+
+    // ✅ Persistir nota_oral e nota_final (50/50) a partir dos itens gravados
+    try {
+      await atualizarNotasPersistidas50_50(subId);
+    } catch (e) {
+      console.error("[avaliarOral][persist50_50][erro]", e);
+    }
+
     res.json({ ok: true });
   } catch (err) {
     console.error("[avaliarOral][erro]", {
@@ -1242,31 +1403,37 @@ exports.listarSubmissoesAdminTodas = async (_req, res, next) => {
     let rows;
     try {
       rows = await db.any(`
-        SELECT
-          s.id,
-          s.titulo,
-          s.usuario_id,
-          s.status,
-          s.status_escrita,
-          s.status_oral,
-          s.linha_tematica_codigo,
-          s.linha_tematica_id,
-          tcl.nome AS linha_tematica_nome,
-          s.inicio_experiencia,
-          s.chamada_id,
-          s.criado_em,
-          s.atualizado_em,
-          c.titulo AS chamada_titulo,
-          u.nome  AS autor_nome,
-          u.email AS autor_email,
-          COALESCE(ve.total_ponderado, 0)      AS total_escrita,
-          COALESCE(vo.total_oral_ponderado, 0) AS total_oral,
-          (COALESCE(ve.total_ponderado,0) + COALESCE(vo.total_oral_ponderado,0)) AS total_geral,
-
-          COALESCE(n.soma_notas, 0)::numeric       AS soma_notas,
-          COALESCE(n.qtd_itens, 0)                 AS qtd_itens,
-          COALESCE(n.qtd_avaliadores, 0)           AS qtd_avaliadores,
-          ROUND(COALESCE(n.soma_notas,0) / 4.0, 1) AS nota_media
+      SELECT
+  s.id,
+  s.titulo,
+  s.usuario_id,
+  s.status,
+  s.status_escrita,
+  s.status_oral,
+  -- ⬇️ ADICIONE
+  s.nota_escrita,
+  s.nota_oral,
+  s.nota_final,
+  s.linha_tematica_codigo,
+  s.linha_tematica_id,
+  tcl.nome AS linha_tematica_nome,
+  s.inicio_experiencia,
+  s.chamada_id,
+  s.criado_em,
+  s.atualizado_em,
+  c.titulo AS chamada_titulo,
+  u.nome  AS autor_nome,
+  u.email AS autor_email,
+  COALESCE(ve.total_ponderado, 0)      AS total_escrita,
+  COALESCE(vo.total_oral_ponderado, 0) AS total_oral,
+  (COALESCE(ve.total_ponderado,0) + COALESCE(vo.total_oral_ponderado,0)) AS total_geral,
+  COALESCE(n.soma_notas, 0)::numeric    AS soma_notas,
+  COALESCE(n.qtd_itens, 0)              AS qtd_itens,
+  COALESCE(n.qtd_avaliadores, 0)        AS qtd_avaliadores,
+  COALESCE(
+    s.nota_media,
+    ROUND(COALESCE(n.soma_notas,0) / 4.0, 1)
+  ) AS nota_media
 
         FROM trabalhos_submissoes s
         JOIN usuarios u              ON u.id = s.usuario_id
@@ -1356,11 +1523,9 @@ exports.listarSubmissoesDoAvaliador = async (req, res, next) => {
   const t0 = Date.now();
   try {
     const authUser = res?.locals?.user ?? req.user ?? null;
-    const uid = toIntOrNull(authUser?.id);
-    if (uid === null) {
-      const e = new Error("Não autorizado.");
-      e.status = 401;
-      throw e;
+    const uid = Number(authUser?.id);
+    if (!Number.isFinite(uid)) {
+      const e = new Error("Não autorizado."); e.status = 401; throw e;
     }
 
     const rows = await db.any(`
@@ -1373,37 +1538,39 @@ exports.listarSubmissoesDoAvaliador = async (req, res, next) => {
         tcl.nome AS linha_tematica_nome,
         s.inicio_experiencia,
         c.titulo AS chamada_titulo,
-        COALESCE(ve.total_ponderado,0) AS total_escrita,
+        COALESCE(ve.total_ponderado,0)      AS total_escrita,
         COALESCE(vo.total_oral_ponderado,0) AS total_oral,
         (COALESCE(ve.total_ponderado,0)+COALESCE(vo.total_oral_ponderado,0)) AS total_geral,
-        EXISTS (
-          SELECT 1 FROM trabalhos_avaliacoes_itens tai
-          WHERE tai.submissao_id = s.id AND tai.avaliador_id = $1
-        ) AS ja_avaliado
+        tsa.tipo,
+        CASE
+          WHEN tsa.tipo = 'oral' THEN EXISTS (
+            SELECT 1
+            FROM trabalhos_apresentacoes_orais_itens tai
+            WHERE tai.submissao_id = s.id AND tai.avaliador_id = $1
+          )
+          ELSE EXISTS (
+            SELECT 1
+            FROM trabalhos_avaliacoes_itens tai
+            WHERE tai.submissao_id = s.id AND tai.avaliador_id = $1
+          )
+        END AS ja_avaliado
       FROM trabalhos_submissoes_avaliadores tsa
       JOIN trabalhos_submissoes s ON s.id = tsa.submissao_id
-      JOIN trabalhos_chamadas c   ON c.id = s.chamada_id
+      JOIN trabalhos_chamadas   c ON c.id = s.chamada_id
       LEFT JOIN trabalhos_chamada_linhas tcl ON tcl.id = s.linha_tematica_id
       LEFT JOIN vw_submissao_total_escrita ve ON ve.submissao_id = s.id
       LEFT JOIN vw_submissao_total_oral   vo ON vo.submissao_id = s.id
       WHERE tsa.avaliador_id = $1
+        AND tsa.revoked_at IS NULL
       ORDER BY s.id DESC
     `, [uid]);
 
-    console.log("[listarSubmissoesDoAvaliador]", {
-      avaliador: uid,
-      total: rows.length,
-      ms: Date.now() - t0,
-    });
-
+    console.log("[listarSubmissoesDoAvaliador]", { avaliador: uid, total: rows.length, ms: Date.now() - t0 });
     res.json(rows);
   } catch (err) {
     console.error("[listarSubmissoesDoAvaliador][erro]", {
       avaliador: (res?.locals?.user ?? req.user ?? {})?.id,
-      message: err.message,
-      code: err.code,
-      stack: err.stack,
-      ms: Date.now() - t0,
+      message: err.message, code: err.code, stack: err.stack, ms: Date.now() - t0,
     });
     next(err);
   }
@@ -1418,12 +1585,18 @@ exports.obterParaAvaliacao = async (req, res, next) => {
     const sid  = toIntOrNull(req.params.id);
     assert(uid !== null, "Não autorizado.");
     assert(sid !== null, "id inválido.");
+    const tipoReq = String(req.query?.tipo || "").toLowerCase();
+    const TIPO = (tipoReq === "oral" || tipoReq === "escrita") ? tipoReq : null;
 
     const isAdminUser = Array.isArray(authUser?.perfil) && authUser.perfil.includes("administrador");
-    const designado = await db.oneOrNone(
-      `SELECT 1 FROM trabalhos_submissoes_avaliadores WHERE submissao_id=$1 AND avaliador_id=$2`,
-      [sid, uid]
-    );
+    const designado = await db.oneOrNone(`
+      SELECT 1
+        FROM trabalhos_submissoes_avaliadores
+       WHERE submissao_id=$1
+         AND avaliador_id=$2
+         ${TIPO ? "AND tipo = $3" : ""}
+       LIMIT 1
+    `, TIPO ? [sid, uid, TIPO] : [sid, uid]);
     if (!isAdminUser && !designado) {
       const e = new Error("Sem permissão para avaliar este trabalho.");
       e.status = 403;
@@ -1461,24 +1634,48 @@ exports.obterParaAvaliacao = async (req, res, next) => {
       throw e;
     }
 
-    const criterios = await db.any(`
-      SELECT
-        id,
-        titulo AS criterio,
-        COALESCE(escala_min, 0)  AS escala_min,
-        COALESCE(escala_max, 10) AS escala_max,
-        COALESCE(peso, 1)::int   AS peso,
-        COALESCE(ordem, id)::int AS ordem
-      FROM trabalhos_chamada_criterios
-      WHERE chamada_id = $1
-      ORDER BY ordem ASC, id ASC
-    `, [s.chamada_id]);
+        // Critérios por tipo
+    let criterios, meusItens;
+    if (TIPO === "oral") {
+      criterios = await db.any(`
+        SELECT
+          id,
+          titulo AS criterio,
+         COALESCE(escala_min, 0)  AS escala_min,
+          COALESCE(escala_max, 10) AS escala_max,
+          COALESCE(peso, 1)::int   AS peso,
+          COALESCE(ordem, id)::int AS ordem
+        FROM trabalhos_chamada_criterios_orais
+        WHERE chamada_id = $1
+       ORDER BY ordem ASC, id ASC
+      `, [s.chamada_id]);
+      // normaliza para {criterio_id, nota, comentarios}
+     const itensOral = await db.any(`
+        SELECT criterio_oral_id AS criterio_id, nota, COALESCE(comentarios,'') AS comentarios
+        FROM trabalhos_apresentacoes_orais_itens
+        WHERE submissao_id=$1 AND avaliador_id=$2
+      `, [sid, uid]);
+      meusItens = itensOral;
+    } else {
+      criterios = await db.any(`
+        SELECT
+          id,
+          titulo AS criterio,
+          COALESCE(escala_min, 0)  AS escala_min,
+         COALESCE(escala_max, 10) AS escala_max,
+          COALESCE(peso, 1)::int   AS peso,
+          COALESCE(ordem, id)::int AS ordem
+        FROM trabalhos_chamada_criterios
+        WHERE chamada_id = $1
+        ORDER BY ordem ASC, id ASC
+      `, [s.chamada_id]);
+      meusItens = await db.any(`
+        SELECT criterio_id, nota, COALESCE(comentarios,'') AS comentarios
+        FROM trabalhos_avaliacoes_itens
+        WHERE submissao_id=$1 AND avaliador_id=$2
+      `, [sid, uid]);
+    }
 
-    const meusItens = await db.any(`
-      SELECT criterio_id, nota, COALESCE(comentarios,'') AS comentarios
-      FROM trabalhos_avaliacoes_itens
-      WHERE submissao_id=$1 AND avaliador_id=$2
-    `, [sid, uid]);
 
     console.log("[obterParaAvaliacao]", {
       subId: sid,
@@ -1506,6 +1703,7 @@ exports.obterParaAvaliacao = async (req, res, next) => {
         consideracoes: s.consideracoes,
         bibliografia: s.bibliografia,
       },
+      tipo: TIPO || "escrita",
       criterios,
       avaliacaoAtual: meusItens,
     });
@@ -1522,3 +1720,58 @@ exports.obterParaAvaliacao = async (req, res, next) => {
   }
 };
 
+// src/controllers/trabalhosController.js
+exports.contagemMinhasAvaliacoes = async (req, res, next) => {
+  try {
+    const authUser = res?.locals?.user ?? req.user ?? null;
+    const uid = Number(authUser?.id);
+    if (!Number.isFinite(uid)) return res.status(401).json({ erro: "Não autorizado." });
+
+    const row = await db.one(
+      `
+      WITH atrib AS (
+        SELECT
+          tsa.submissao_id,
+          /* força TEXT e trata nulo/vazio sem tocar no enum */
+          CASE
+            WHEN tsa.tipo::text IS NULL OR tsa.tipo::text = '' THEN 'escrita'
+            ELSE tsa.tipo::text
+          END AS tipo_txt
+        FROM trabalhos_submissoes_avaliadores tsa
+        WHERE tsa.avaliador_id = $1
+          AND tsa.revoked_at IS NULL
+      ),
+      done_escrita AS (
+        SELECT DISTINCT submissao_id
+        FROM trabalhos_avaliacoes_itens
+        WHERE avaliador_id = $1
+      ),
+      done_oral AS (
+        SELECT DISTINCT submissao_id
+        FROM trabalhos_apresentacoes_orais_itens
+        WHERE avaliador_id = $1
+      ),
+      pend AS (
+        SELECT a.submissao_id
+        FROM atrib a
+        LEFT JOIN done_escrita de
+          ON (a.tipo_txt <> 'oral') AND de.submissao_id = a.submissao_id
+        LEFT JOIN done_oral dor
+          ON (a.tipo_txt = 'oral')  AND dor.submissao_id = a.submissao_id
+        WHERE (a.tipo_txt = 'oral'  AND dor.submissao_id IS NULL)
+           OR (a.tipo_txt <> 'oral' AND de.submissao_id IS NULL)
+      )
+      SELECT
+        (SELECT COUNT(*) FROM atrib)                           AS total,
+        (SELECT COUNT(*) FROM pend)                            AS pendentes,
+        (SELECT COUNT(*) FROM atrib) - (SELECT COUNT(*) FROM pend) AS avaliados
+      `,
+      [uid]
+    );
+
+    res.json(row);
+  } catch (err) {
+    console.error("Erro inesperado em contagemMinhasAvaliacoes:", err);
+    next(err);
+  }
+};

@@ -1,11 +1,11 @@
-// ✅ src/pages/Eventos.jsx (revisado — com conflito GLOBAL + rotas corretas)
+// ✅ src/pages/Eventos.jsx (revamp com Regras&Dicas + banho visual + 2 colunas + local)
 import { useEffect, useState } from "react";
 import { toast } from "react-toastify";
 import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
 import { motion, useReducedMotion } from "framer-motion";
 
-import { CalendarDays, RefreshCw } from "lucide-react";
+import { CalendarDays, RefreshCw, MapPin, Info } from "lucide-react";
 import Footer from "../components/Footer";
 import NadaEncontrado from "../components/NadaEncontrado";
 import BotaoPrimario from "../components/BotaoPrimario";
@@ -13,13 +13,14 @@ import FiltrosEventos from "../components/FiltrosEventos";
 import ListaTurmasEvento from "../components/ListaTurmasEvento";
 import { apiGet, apiPost } from "../services/api";
 
-/* ───────────────── Hero centralizado (sem breadcrumbs) ───────────────── */
+/* ───────────────── Hero ───────────────── */
 function EventosHero({ onRefresh }) {
   return (
-    <header
-      className="bg-gradient-to-br from-indigo-900 via-violet-800 to-indigo-700 text-white"
-      role="banner"
-    >
+    <header className="text-white relative overflow-hidden" role="banner">
+      {/* banho visual no topo */}
+      <div className="absolute inset-0 bg-gradient-to-br from-rose-900 via-fuchsia-800 to-indigo-800" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_10%,rgba(255,255,255,0.08),transparent_40%),radial-gradient(circle_at_80%_30%,rgba(255,255,255,0.06),transparent_45%)]" />
+
       <a
         href="#conteudo"
         className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2"
@@ -27,26 +28,89 @@ function EventosHero({ onRefresh }) {
         Ir para o conteúdo
       </a>
 
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-10 flex flex-col items-center text-center gap-3">
-        <div className="inline-flex items-center gap-2">
-          <span className="text-2xl" aria-hidden="true">🎓</span>
-          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
+      <div className="relative max-w-6xl mx-auto px-4 sm:px-6 py-10 sm:py-12 text-center">
+        <div className="inline-flex items-center gap-3">
+          <span className="text-3xl" aria-hidden="true">🎓</span>
+          <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight drop-shadow">
             Eventos disponíveis
           </h1>
         </div>
-        <p className="text-sm sm:text-base text-white/90">
+        <p className="mt-2 text-sm sm:text-base text-white/90">
           Inscreva-se em turmas abertas ou consulte detalhes dos eventos.
         </p>
-        <BotaoPrimario
-          onClick={onRefresh}
-          variante="secundario"
-          icone={<RefreshCw className="w-4 h-4" aria-hidden="true" />}
-          aria-label="Atualizar lista de eventos"
-        >
-          Atualizar
-        </BotaoPrimario>
+        <div className="mt-4">
+          <BotaoPrimario
+            onClick={onRefresh}
+            variante="secundario"
+            icone={<RefreshCw className="w-4 h-4" aria-hidden="true" />}
+            aria-label="Atualizar lista de eventos"
+          >
+            Atualizar
+          </BotaoPrimario>
+        </div>
       </div>
     </header>
+  );
+}
+
+/* ───────────────── Regras & Dicas (vermelho, sem progresso) ───────────────── */
+function RegrasEDicas() {
+  const Card = ({ num, titulo, children }) => (
+    <div className="rounded-2xl p-5 sm:p-6 shadow-md border border-rose-200/60 dark:border-rose-800/40 bg-gradient-to-br from-rose-50 via-rose-50 to-rose-100 dark:from-rose-950/40 dark:via-rose-900/40 dark:to-rose-900/30">
+      <div className="flex items-start gap-3">
+        <div className="shrink-0 w-7 h-7 rounded-full bg-rose-600 text-white grid place-items-center text-sm font-bold">
+          {num}
+        </div>
+        <div className="min-w-0">
+          <h4 className="font-semibold text-rose-900 dark:text-rose-200">{titulo}</h4>
+          <div className="mt-2 text-sm text-rose-950/90 dark:text-rose-100/90 leading-relaxed">{children}</div>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <section aria-labelledby="regras-title" className="my-6">
+      <div className="flex items-center gap-2 mb-3">
+        <Info className="w-5 h-5 text-rose-700 dark:text-rose-300" />
+        <h2 id="regras-title" className="text-lg font-bold text-rose-900 dark:text-rose-200">
+          Regras & Dicas
+        </h2>
+      </div>
+
+      {/* máximo 2 colunas */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <Card num="1" titulo="Como se inscrever">
+          <p>
+            Abra o evento, clique em <strong>Ver turmas</strong>, escolha a turma desejada e confirme em
+            <strong> Inscrever-se</strong>. Se a turma exigir pré-requisitos ou registro profissional,
+            verifique seu <strong>Perfil</strong> antes.
+          </p>
+        </Card>
+
+        <Card num="2" titulo="Como cancelar">
+          <p>
+            Você pode cancelar sua inscrição pela página <strong>Meus cursos</strong> enquanto a turma ainda não começou
+            ou de acordo com as regras do edital do evento.
+          </p>
+        </Card>
+
+        <Card num="3" titulo="Após o término do evento">
+          <p>
+            Ao finalizar, acesse <strong>Avaliações Pendentes</strong> e preencha a
+            <strong> avaliação</strong>. Após o envio da avaliação, o <strong>certificado</strong> fica disponível na página <strong>Meus Certificados</strong>, 
+            para download.
+          </p>
+        </Card>
+
+        <Card num="4" titulo="Dica rápida">
+          <p>
+            Evite conflitos de horário: ao se inscrever, o sistema alerta se houver choque com outra turma
+            em que você já está inscrito.
+          </p>
+        </Card>
+      </div>
+    </section>
   );
 }
 
@@ -85,7 +149,7 @@ function rangeDaTurma(t) {
   return { di, df };
 }
 
-// Horários "mais prováveis" da turma (espelha a lógica do backend)
+// Horários "mais prováveis"
 const HHMM = (s, fb = null) =>
   typeof s === "string" && /^\d{2}:\d{2}/.test(s) ? s.slice(0, 5) : fb;
 
@@ -114,8 +178,6 @@ function horarioMaisProvavel(t) {
     const [hi, hf] = best.split("-");
     return { hi, hf };
   }
-
-  // fallbacks
   const hi = HHMM(t?.horario_inicio, null);
   const hf = HHMM(t?.horario_fim, null);
   if (hi && hf) return { hi, hf };
@@ -126,8 +188,6 @@ const horariosSobrepoem = (ai, af, bi, bf) => {
   if (!ai || !af || !bi || !bf) return false;
   return ai < bf && bi < af;
 };
-
-// Interseção de datas (YYYY-MM-DD)
 const datasIntersectam = (aIni, aFim, bIni, bFim) => {
   if (!aIni || !aFim || !bIni || !bFim) return false;
   return aIni <= bFim && bIni <= aFim;
@@ -166,15 +226,13 @@ function calcularConflitosNoEvento(turmas, inscricoesIds) {
   }
   return conflitos;
 }
-
-// Prioriza o status vindo do backend; se não vier, usa o cálculo local atual
 function statusBackendOuFallback(evento) {
   if (typeof evento?.status === "string" && evento.status) return evento.status;
   return statusDoEvento(evento);
 }
 
 /* ------------------------------------------------------------------ */
-/*  Helpers para buscar apenas eventos visíveis                       */
+/*  Helpers para buscar eventos visíveis                              */
 /* ------------------------------------------------------------------ */
 function extrairListaEventos(res) {
   if (Array.isArray(res)) return res;
@@ -198,9 +256,9 @@ export default function Eventos() {
   const [turmasPorEvento, setTurmasPorEvento] = useState({});
   const [turmasVisiveis, setTurmasVisiveis] = useState({});
   const [inscricoesConfirmadas, setInscricoesConfirmadas] = useState([]);     // [turma_id]
-  const [inscricoesDetalhes, setInscricoesDetalhes] = useState([]);           // objetos com data_inicio/fim e horario_inicio/fim
+  const [inscricoesDetalhes, setInscricoesDetalhes] = useState([]);           // objetos
   const [conflitosPorEvento, setConflitosPorEvento] = useState({});           // { [eventoId]: Set<number> }
-  const [conflitosGlobais, setConflitosGlobais] = useState(new Set());        // Set<turma_id> em conflito GLOBAL
+  const [conflitosGlobais, setConflitosGlobais] = useState(new Set());        // Set<turma_id>
   const [erro, setErro] = useState("");
   const [inscrevendo, setInscrevendo] = useState(null);
   const [carregandoTurmas, setCarregandoTurmas] = useState(null);
@@ -243,19 +301,14 @@ export default function Eventos() {
           inscricoes.map(async (i) => {
             try {
               const datas = await apiGet(`/api/turmas/${i.turma_id}/datas`);
-              return { ...i, _datas: datas }; // datas = [{data, horario_inicio, horario_fim}]
-            } catch {
-              return i;
-            }
+              return { ...i, _datas: datas };
+            } catch { return i; }
           })
         );
         setInscricoesDetalhes(detalhadas);
-const arr = Array.isArray(detalhadas) ? detalhadas : [];
-const idsTurmas = arr
-  .map((i) => Number(i?.turma_id))
-  .filter((n) => Number.isFinite(n));
-setInscricoesConfirmadas(idsTurmas);
-// 👆 não sobrescreve inscricoesDetalhes (mantém as _datas reais)
+        const arr = Array.isArray(detalhadas) ? detalhadas : [];
+        const idsTurmas = arr.map((i) => Number(i?.turma_id)).filter((n) => Number.isFinite(n));
+        setInscricoesConfirmadas(idsTurmas);
       } catch {
         toast.error("Erro ao carregar inscrições do usuário.");
       }
@@ -278,74 +331,56 @@ setInscricoesConfirmadas(idsTurmas);
   }
 
   async function carregarTurmas(eventoId) {
-    // Se já está aberto, recolhe.
     if (turmasVisiveis[eventoId]) {
       setTurmasVisiveis((prev) => ({ ...prev, [eventoId]: false }));
       return;
     }
-  
-    // Abre e busca se necessário
     setTurmasVisiveis((prev) => ({ ...prev, [eventoId]: true }));
     if (!turmasPorEvento[eventoId] && !carregandoTurmas) {
       setCarregandoTurmas(eventoId);
       try {
-        // 1) tenta a rota leve
         let turmas = await apiGet(`/api/eventos/${eventoId}/turmas-simples`);
-  
-        // 2) se não for array, usa fallback completo + normalização
         if (!Array.isArray(turmas)) {
           try {
             const full = await apiGet(`/api/eventos/${eventoId}/turmas`);
             turmas = Array.isArray(full)
-  ? full.map((t) => ({
-      id: t.id,
-      evento_id: t.evento_id,
-      nome: t.nome,
-      vagas_total: t.vagas_total,
-      carga_horaria: t.carga_horaria,
-      data_inicio: t.data_inicio?.slice(0, 10) || null,
-      data_fim: t.data_fim?.slice(0, 10) || null,
-      horario_inicio: t.horario_inicio?.slice(0, 5) || null,
-      horario_fim: t.horario_fim?.slice(0, 5) || null,
-      _datas: Array.isArray(t.datas)
-        ? t.datas.map((d) => ({
-            data: d.data,
-            horario_inicio: d.horario_inicio,
-            horario_fim: d.horario_fim,
-          }))
-        : [],
-    }))
-  : [];
-
-          } catch {
-            turmas = [];
-          }
+              ? full.map((t) => ({
+                  id: t.id,
+                  evento_id: t.evento_id,
+                  nome: t.nome,
+                  vagas_total: t.vagas_total,
+                  carga_horaria: t.carga_horaria,
+                  data_inicio: t.data_inicio?.slice(0, 10) || null,
+                  data_fim: t.data_fim?.slice(0, 10) || null,
+                  horario_inicio: t.horario_inicio?.slice(0, 5) || null,
+                  horario_fim: t.horario_fim?.slice(0, 5) || null,
+                  _datas: Array.isArray(t.datas)
+                    ? t.datas.map((d) => ({
+                        data: d.data,
+                        horario_inicio: d.horario_inicio,
+                        horario_fim: d.horario_fim,
+                      }))
+                    : [],
+                }))
+              : [];
+          } catch { turmas = []; }
         }
-  
-        // 3) se a resposta "simples" veio mas sem horários/cronograma, busca uma vez o full e mescla
+
         const precisaEnriquecer = Array.isArray(turmas) && turmas.some((t) =>
           !t?.horario_inicio && !t?.horario_fim &&
           !(Array.isArray(t?.encontros) && t.encontros.length) &&
           !(Array.isArray(t?.datas) && t.datas.length) &&
           !(Array.isArray(t?._datas) && t._datas.length)
         );
-  
         if (precisaEnriquecer) {
           try {
             const full = await apiGet(`/api/eventos/${eventoId}/turmas`);
-            const porId = new Map(
-              (Array.isArray(full) ? full : []).map((t) => [Number(t.id), t])
-            );
-  
+            const porId = new Map((Array.isArray(full) ? full : []).map((t) => [Number(t.id), t]));
             turmas = turmas.map((t) => {
               const f = porId.get(Number(t.id));
               if (!f) return t;
-  
-              // tenta puxar horários diretamente
               let hi = f.horario_inicio?.slice?.(0, 5) || null;
               let hf = f.horario_fim?.slice?.(0, 5) || null;
-  
-              // se ainda não houver, tenta inferir a partir de datas/encontros
               const datasArr = Array.isArray(f.datas) ? f.datas : [];
               if ((!hi || !hf) && datasArr.length) {
                 const conta = new Map();
@@ -363,11 +398,8 @@ setInscricoesConfirmadas(idsTurmas);
                   if (best) [hi, hf] = best.split("-");
                 }
               }
-  
-              // garante datas início/fim também
               const di = t.data_inicio || f.data_inicio?.slice?.(0, 10) || null;
               const df = t.data_fim || f.data_fim?.slice?.(0, 10) || null;
-  
               return {
                 ...t,
                 data_inicio: di,
@@ -383,15 +415,10 @@ setInscricoesConfirmadas(idsTurmas);
                   : []),
               };
             });
-          } catch {
-            // se falhar o enriquecimento, segue com o que temos
-          }
+          } catch {}
         }
-  
-        setTurmasPorEvento((prev) => ({
-          ...prev,
-          [eventoId]: Array.isArray(turmas) ? turmas : [],
-        }));
+
+        setTurmasPorEvento((prev) => ({ ...prev, [eventoId]: Array.isArray(turmas) ? turmas : [] }));
       } catch {
         toast.error("Erro ao carregar turmas");
       } finally {
@@ -407,7 +434,6 @@ setInscricoesConfirmadas(idsTurmas);
     return null;
   }
 
-  // Recalcula conflitos (CONGRESSO: dentro do evento)
   useEffect(() => {
     const novo = {};
     for (const evt of eventos) {
@@ -416,141 +442,101 @@ setInscricoesConfirmadas(idsTurmas);
       if (!turmas.length) continue;
       const tipo = String(evt?.tipo || "").toLowerCase();
       if (tipo !== "congresso") continue;
-
       const conflitos = calcularConflitosNoEvento(turmas, inscricoesConfirmadas);
       if (conflitos.size) novo[evtId] = conflitos;
     }
     setConflitosPorEvento(novo);
   }, [eventos, turmasPorEvento, inscricoesConfirmadas]);
 
-  // 🔁 Recalcula conflito GLOBAL sempre que turmas carregadas ou inscrições mudarem
   useEffect(() => {
-  const globais = new Set();
-
-  // Monta mapa de resumo para cada turma carregada (em todos os eventos abertos)
-  const todasTurmas = [];
-  for (const turmas of Object.values(turmasPorEvento)) {
-    if (Array.isArray(turmas)) todasTurmas.push(...turmas);
-  }
-
-  const resumoTurma = (t) => {
-    const { di, df } = rangeDaTurma(t);
-    const { hi, hf } = horarioMaisProvavel(t);
-    return { di, df, hi, hf };
-  };
-
-  // Para cada turma carregada, verifica se conflita com QUALQUER inscrição existente
-  for (const t of todasTurmas) {
-    const rA = resumoTurma(t);
-    if (!rA.di || !rA.df || !rA.hi || !rA.hf) continue;
-  
-    for (const i of inscricoesDetalhes) {
-      if (Number(i?.turma_id) === Number(t.id)) continue; // ✅ ignora turma igual
-  
-      let diB = ymd(i?.data_inicio);
-let dfB = ymd(i?.data_fim);
-let hiB = HHMM(i?.horario_inicio, null);
-let hfB = HHMM(i?.horario_fim, null);
-
-// 🆕 Prioriza datas_turma reais se existirem
-if (Array.isArray(i?._datas) && i._datas.length) {
-  const datasValidas = i._datas.map(d => ({
-    data: ymd(d.data),
-    hi: HHMM(d.horario_inicio, null),
-    hf: HHMM(d.horario_fim, null),
-  }));
-  for (const d of datasValidas) {
-    if (!d.data || !d.hi || !d.hf) continue;
-    if (d.data === rA.di && horariosSobrepoem(rA.hi, rA.hf, d.hi, d.hf)) {
-      globais.add(Number(t.id));
-      break;
+    const globais = new Set();
+    const todasTurmas = [];
+    for (const turmas of Object.values(turmasPorEvento)) {
+      if (Array.isArray(turmas)) todasTurmas.push(...turmas);
     }
-  }
-  continue; // já validou datas específicas
-}
-      if (!diB || !dfB || !hiB || !hfB) continue;
-  
-      if (datasIntersectam(rA.di, rA.df, diB, dfB) && horariosSobrepoem(rA.hi, rA.hf, hiB, hfB)) {
-        console.warn("[CONFLITO-GLOBAL]", {
-          turma_id: Number(t.id),
-          ...rA,
-          contra: { turma_id: Number(i?.turma_id), di: diB, df: dfB, hi: hiB, hf: hfB },
-        });
-        globais.add(Number(t.id));
-        break;
+    const resumoTurma = (t) => {
+      const { di, df } = rangeDaTurma(t);
+      const { hi, hf } = horarioMaisProvavel(t);
+      return { di, df, hi, hf };
+    };
+    for (const t of todasTurmas) {
+      const rA = resumoTurma(t);
+      if (!rA.di || !rA.df || !rA.hi || !rA.hf) continue;
+      for (const i of inscricoesDetalhes) {
+        if (Number(i?.turma_id) === Number(t.id)) continue;
+        let diB = ymd(i?.data_inicio);
+        let dfB = ymd(i?.data_fim);
+        let hiB = HHMM(i?.horario_inicio, null);
+        let hfB = HHMM(i?.horario_fim, null);
+        if (Array.isArray(i?._datas) && i._datas.length) {
+          const datasValidas = i._datas.map(d => ({
+            data: ymd(d.data),
+            hi: HHMM(d.horario_inicio, null),
+            hf: HHMM(d.horario_fim, null),
+          }));
+          for (const d of datasValidas) {
+            if (!d.data || !d.hi || !d.hf) continue;
+            if (d.data === rA.di && horariosSobrepoem(rA.hi, rA.hf, d.hi, d.hf)) {
+              globais.add(Number(t.id));
+              break;
+            }
+          }
+          continue;
+        }
+        if (!diB || !dfB || !hiB || !hfB) continue;
+        if (datasIntersectam(rA.di, rA.df, diB, dfB) && horariosSobrepoem(rA.hi, rA.hf, hiB, hfB)) {
+          globais.add(Number(t.id));
+          break;
+        }
       }
     }
-  }
+    setConflitosGlobais(globais);
+  }, [turmasPorEvento, inscricoesDetalhes]);
 
-  setConflitosGlobais(globais);
-}, [turmasPorEvento, inscricoesDetalhes]);
-
-
-  // Helper: verifica conflito GLOBAL on-the-fly para uma turma específica (caso ainda não esteja no Set)
   const temConflitoGlobalComMinhasInscricoes = (turma) => {
     const { di, df } = rangeDaTurma(turma);
     const { hi, hf } = horarioMaisProvavel(turma);
     if (!di || !df || !hi || !hf) return false;
-  
     for (const i of inscricoesDetalhes) {
-      // ignora a própria turma
       if (Number(i?.turma_id) === Number(turma?.id)) continue;
-  
-      // 1) Prioriza datas_turma reais, se existirem
       if (Array.isArray(i?._datas) && i._datas.length) {
         for (const d of i._datas) {
           const dataB = ymd(d?.data);
           const hiB = HHMM(d?.horario_inicio, null);
           const hfB = HHMM(d?.horario_fim, null);
           if (!dataB || !hiB || !hfB) continue;
-  
-          // conflito: mesma data e sobreposição de horário
-          if (dataB === di && horariosSobrepoem(hi, hf, hiB, hfB)) {
-            return true;
-          }
+          if (dataB === di && horariosSobrepoem(hi, hf, hiB, hfB)) return true;
         }
-        continue; // já avaliou granularmente
+        continue;
       }
-  
-      // 2) Fallback para intervalos genéricos
       const diB = ymd(i?.data_inicio);
       const dfB = ymd(i?.data_fim);
       const hiB = HHMM(i?.horario_inicio, null);
       const hfB = HHMM(i?.horario_fim, null);
       if (!diB || !dfB || !hiB || !hfB) continue;
-  
-      if (datasIntersectam(di, df, diB, dfB) && horariosSobrepoem(hi, hf, hiB, hfB)) {
-        return true;
-      }
+      if (datasIntersectam(di, df, diB, dfB) && horariosSobrepoem(hi, hf, hiB, hfB)) return true;
     }
-  
     return false;
   };
-  
+
   async function inscrever(turmaId) {
     if (inscrevendo) return;
-
     const eventoIdLocal = findEventoIdByTurmaIdLocal(turmaId);
     const eventoReferente =
       (eventoIdLocal && eventos.find((e) => Number(e.id) === Number(eventoIdLocal))) || null;
-
     const ehInstrutor =
       Boolean(eventoReferente?.ja_instrutor) ||
       (Array.isArray(eventoReferente?.instrutor) &&
         usuarioId &&
         eventoReferente.instrutor.some((i) => Number(i.id) === Number(usuarioId)));
-
     if (ehInstrutor) {
       toast.warn("Você é instrutor deste evento e não pode se inscrever como participante.");
       return;
     }
-
-    // Objeto da turma (se estiver carregada)
     const turmaObj =
       (eventoIdLocal && (turmasPorEvento[eventoIdLocal] || []).find(t => Number(t.id) === Number(turmaId))) ||
       null;
 
-    // 🔒 Bloqueio preventivo para CONGRESSO (conflito dentro do evento)
     const tipoEvento = String(eventoReferente?.tipo || "").toLowerCase();
     if (tipoEvento === "congresso") {
       const setConf = conflitosPorEvento[eventoIdLocal];
@@ -559,7 +545,6 @@ if (Array.isArray(i?._datas) && i._datas.length) {
         return;
       }
       if (!setConf && turmaObj) {
-        // fallback local
         const turmas = turmasPorEvento[eventoIdLocal] || [];
         const setCalc = calcularConflitosNoEvento(turmas, inscricoesConfirmadas);
         if (setCalc.has(Number(turmaId))) {
@@ -568,8 +553,6 @@ if (Array.isArray(i?._datas) && i._datas.length) {
         }
       }
     }
-
-    // 🔒 Bloqueio preventivo GLOBAL (entre eventos)
     if (conflitosGlobais.has(Number(turmaId))) {
       toast.warn("Conflito de horário com outra turma já inscrita.");
       return;
@@ -583,17 +566,13 @@ if (Array.isArray(i?._datas) && i._datas.length) {
     try {
       await apiPost("/api/inscricoes", { turma_id: turmaId });
       toast.success("✅ Inscrição realizada com sucesso!");
-
       try {
         const inscricoesUsuario = await apiGet("/api/inscricoes/minhas");
         const arr = Array.isArray(inscricoesUsuario) ? inscricoesUsuario : [];
-        const novasInscricoes = arr
-          .map((i) => Number(i?.turma_id))
-          .filter((n) => Number.isFinite(n));
+        const novasInscricoes = arr.map((i) => Number(i?.turma_id)).filter((n) => Number.isFinite(n));
         setInscricoesConfirmadas(novasInscricoes);
         setInscricoesDetalhes(arr);
       } catch { toast.warn("⚠️ Não foi possível atualizar inscrições confirmadas."); }
-
       await atualizarEventos();
 
       const eventoId =
@@ -601,10 +580,8 @@ if (Array.isArray(i?._datas) && i._datas.length) {
         Object.keys(turmasPorEvento).find((id) =>
           (turmasPorEvento[id] || []).some((t) => Number(t.id) === Number(turmaId))
         );
-
       if (eventoId) {
         try {
-          // ✅ recarrega usando o endpoint leve
           const turmasAtualizadas = await apiGet(`/api/eventos/${eventoId}/turmas-simples`);
           setTurmasPorEvento((prev) => ({
             ...prev,
@@ -620,7 +597,6 @@ if (Array.isArray(i?._datas) && i._datas.length) {
         err?.data?.erro ?? err?.response?.erro ?? err?.response?.data?.erro ??
         err?.data?.message ?? err?.response?.data?.message;
       const msg = serverMsg || err?.message || "Erro ao se inscrever.";
-
       if (status === 409) toast.warn(msg);
       else if (status === 400) toast.error(msg);
       else if (status === 403 && err?.response?.data?.motivo) {
@@ -643,14 +619,12 @@ if (Array.isArray(i?._datas) && i._datas.length) {
     if (Array.isArray(evento?.turmas) && evento.turmas.length) return evento.turmas;
     return [];
   }
-
   function jaInscritoNoEvento(evento) {
     const ts = turmasDoEvento(evento);
     if (!ts.length) return false;
     const setTurmaIds = new Set(inscricoesConfirmadas);
     return ts.some((t) => setTurmaIds.has(Number(t.id)));
   }
-
   function statusDoEvento(evento) {
     const ts = turmasDoEvento(evento);
     if (ts.length) {
@@ -674,7 +648,7 @@ if (Array.isArray(i?._datas) && i._datas.length) {
     return "programado";
   }
 
-  // Chips sólidos legíveis (sem degradê)
+  // Chips sólidos
   const chip = {
     programado: { text: "Programado", cls: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800" },
     andamento:  { text: "Em andamento", cls: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200 border border-amber-200 dark:border-amber-800" },
@@ -690,7 +664,7 @@ if (Array.isArray(i?._datas) && i._datas.length) {
     setFiltro("programado");
   };
 
-  // 🔎 regra: nunca mostrar encerrados sem inscrição prévia
+  // nunca mostrar encerrados sem inscrição prévia
   const eventosFiltrados = eventos.filter((evento) => {
     const st = statusBackendOuFallback(evento);
     const inscrito = jaInscritoNoEvento(evento);
@@ -722,6 +696,9 @@ if (Array.isArray(i?._datas) && i._datas.length) {
       <EventosHero onRefresh={atualizarEventos} />
 
       <div className="px-2 sm:px-4 py-6 max-w-6xl mx-auto">
+        {/* Regras & Dicas em vermelho, no topo da lista */}
+        <RegrasEDicas />
+
         {/* Filtros */}
         <section aria-label="Filtros de eventos" className="mb-5">
           <FiltrosEventos
@@ -731,8 +708,8 @@ if (Array.isArray(i?._datas) && i._datas.length) {
         </section>
 
         {carregandoEventos ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4" aria-busy="true" aria-live="polite">
-            {[...Array(6)].map((_, i) => (<Skeleton key={i} height={200} className="rounded-2xl" />))}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4" aria-busy="true" aria-live="polite">
+            {[...Array(6)].map((_, i) => (<Skeleton key={i} height={220} className="rounded-2xl" />))}
           </div>
         ) : erro ? (
           <p className="text-red-500 text-center">{erro}</p>
@@ -742,7 +719,8 @@ if (Array.isArray(i?._datas) && i._datas.length) {
             sugestao="Experimente outra opção acima ou aguarde novas turmas."
           />
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          // 🔥 Máximo 2 colunas
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {[...eventosFiltrados]
               .sort((a, b) => (keyFim(b) > keyFim(a) ? 1 : keyFim(b) < keyFim(a) ? -1 : 0))
               .map((evento, idx) => {
@@ -750,111 +728,128 @@ if (Array.isArray(i?._datas) && i._datas.length) {
                 const st = statusBackendOuFallback(evento);
                 const chipCfg = chip[st];
 
-                // Subconjunto de conflitos GLOBAIS que pertencem a este evento (para desabilitar botões no card)
                 const turmasEvento = turmasDoEvento(evento);
                 const conflitosGlobaisDoEvento = new Set(
-                  turmasEvento
-                    .filter((t) => conflitosGlobais.has(Number(t.id)))
-                    .map((t) => Number(t.id))
+                  turmasEvento.filter((t) => conflitosGlobais.has(Number(t.id))).map((t) => Number(t.id))
                 );
-
-                // Conflitos internos (só congressos)
                 const conflitosInternos = conflitosPorEvento[evento.id] || new Set();
-
-                // União: internos (congresso) + globais (entre eventos)
                 const conflitosSet = new Set([
                   ...Array.from(conflitosInternos),
                   ...Array.from(conflitosGlobaisDoEvento),
                 ]);
 
+                const localEvento =
+                  evento.local ||
+                  evento.localizacao ||
+                  evento.endereco ||
+                  evento.localidade ||
+                  null;
+
                 return (
                   <motion.article
                     key={evento.id ?? idx}
-                    initial={{ opacity: 0, y: 12 }}
+                    initial={{ opacity: 0, y: 14 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: reduceMotion ? 0 : 0.35 }}
-                    className="bg-white dark:bg-neutral-900 rounded-2xl p-5 shadow border border-gray-200 dark:border-gray-700"
+                    className="group rounded-2xl overflow-hidden border border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-neutral-900 shadow-md hover:shadow-xl transition-shadow"
                     aria-labelledby={`evt-${evento.id}-titulo`}
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <h3 id={`evt-${evento.id}-titulo`} className="text-xl font-semibold text-lousa dark:text-white mb-1">
-                        {evento.titulo}
-                      </h3>
-                      <span className={`text-xs px-2 py-1 rounded-full ${chipCfg.cls}`} role="status">
-                        {chipCfg.text}
-                      </span>
-                    </div>
+                    {/* faixa destaque */}
+                    <div className="h-1.5 w-full bg-gradient-to-r from-rose-500 via-fuchsia-500 to-indigo-500" />
 
-                    {evento.descricao && (
-                      <p className="text-sm text-gray-700 dark:text-gray-300 mb-2">{evento.descricao}</p>
-                    )}
-
-                    {ehInstrutor && (
-                      <div className="mb-2 text-xs font-medium inline-flex items-center gap-2 px-2 py-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 border border-amber-200 dark:border-amber-800">
-                        Você é instrutor deste evento
+                    <div className="p-5">
+                      <div className="flex items-start justify-between gap-3">
+                        <h3 id={`evt-${evento.id}-titulo`} className="text-xl font-extrabold text-zinc-900 dark:text-white">
+                          {evento.titulo}
+                        </h3>
+                        <span className={`text-xs px-2 py-1 rounded-full ${chipCfg.cls}`} role="status">
+                          {chipCfg.text}
+                        </span>
                       </div>
-                    )}
 
-                    <p className="text-sm italic text-gray-600 mt-1">
-                      Instrutor(es):{" "}
-                      <span className="text-gray-800 dark:text-white">
-                        {Array.isArray(evento.instrutor) && evento.instrutor.length
-                          ? evento.instrutor.map((i) => i.nome).join(", ")
-                          : "A definir"}
-                      </span>
-                    </p>
+                      {evento.descricao && (
+                        <p className="mt-1.5 text-[15px] text-zinc-700 dark:text-zinc-300">
+                          {evento.descricao}
+                        </p>
+                      )}
 
-                    {evento.publico_alvo && (
-                      <p className="text-sm italic text-gray-600 mt-1">
-                        Público-alvo:{" "}
-                        <span className="text-gray-800 dark:text-white">{evento.publico_alvo}</span>
-                      </p>
-                    )}
-
-                    <div className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-2 mb-3">
-                      <CalendarDays className="w-4 h-4" aria-hidden="true" />
-                      <span>
-                        {evento.data_inicio_geral && evento.data_fim_geral
-                          ? `${formatarDataCurtaSeguro(evento.data_inicio_geral)} até ${formatarDataCurtaSeguro(evento.data_fim_geral)}`
-                          : "Datas a definir"}
-                      </span>
-                    </div>
-
-                    <BotaoPrimario
-                      onClick={() => carregarTurmas(evento.id)}
-                      disabled={carregandoTurmas === evento.id}
-                      aria-expanded={!!turmasVisiveis[evento.id]}
-                      aria-controls={`turmas-${evento.id}`}
-                    >
-                      {carregandoTurmas === evento.id
-                        ? "Carregando..."
-                        : turmasVisiveis[evento.id]
-                        ? "Ocultar turmas"
-                        : "Ver turmas"}
-                    </BotaoPrimario>
-
-                    {turmasVisiveis[evento.id] && turmasPorEvento[evento.id] && (
-                      <div id={`turmas-${evento.id}`} className="mt-3">
-                        <ListaTurmasEvento
-                          turmas={turmasPorEvento[evento.id]}
-                          eventoId={evento.id}
-                          eventoTipo={evento.tipo}
-                          hoje={new Date()}
-                          inscricoesConfirmadas={inscricoesConfirmadas}
-                          inscrever={inscrever}
-                          inscrevendo={inscrevendo}
-                          jaInscritoNoEvento={jaInscritoNoEvento(evento)}
-                          jaInstrutorDoEvento={!!evento.ja_instrutor}
-                          carregarInscritos={() => {}}
-                          carregarAvaliacoes={() => {}}
-                          gerarRelatorioPDF={() => {}}
-                          mostrarStatusTurma={false}
-                          exibirRealizadosTotal
-                          // 👇 união de conflitos internos (congresso) + globais (entre eventos)
-                          turmasEmConflito={[...conflitosSet]}
-                        />
+                      {/* Local do curso */}
+                      <div className="mt-3 flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+                        <MapPin className="w-4 h-4 text-rose-600 dark:text-rose-300" aria-hidden="true" />
+                        <span>{localEvento || "Local a definir"}</span>
                       </div>
-                    )}
+
+                      {/* Datas gerais */}
+                      <div className="mt-1 text-sm text-gray-500 dark:text-gray-400 flex items-center gap-2">
+                        <CalendarDays className="w-4 h-4" aria-hidden="true" />
+                        <span>
+                          {evento.data_inicio_geral && evento.data_fim_geral
+                            ? `${formatarDataCurtaSeguro(evento.data_inicio_geral)} até ${formatarDataCurtaSeguro(evento.data_fim_geral)}`
+                            : "Datas a definir"}
+                        </span>
+                      </div>
+
+                      {ehInstrutor && (
+                        <div className="mt-2 text-xs font-semibold inline-flex items-center gap-2 px-2 py-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 border border-amber-200 dark:border-amber-800">
+                          Você é instrutor deste evento
+                        </div>
+                      )}
+
+                      {/* Instrutores / Público */}
+                      <div className="mt-3 grid grid-cols-1 gap-1.5 text-sm">
+                        <p className="text-zinc-600 dark:text-zinc-400">
+                          <span className="font-medium text-zinc-800 dark:text-zinc-200">Instrutor(es): </span>
+                          <span className="text-zinc-800 dark:text-white">
+                            {Array.isArray(evento.instrutor) && evento.instrutor.length
+                              ? evento.instrutor.map((i) => i.nome).join(", ")
+                              : "A definir"}
+                          </span>
+                        </p>
+                        {evento.publico_alvo && (
+                          <p className="text-zinc-600 dark:text-zinc-400">
+                            <span className="font-medium text-zinc-800 dark:text-zinc-200">Público-alvo: </span>
+                            <span className="text-zinc-800 dark:text-white">{evento.publico_alvo}</span>
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="mt-4">
+                        <BotaoPrimario
+                          onClick={() => carregarTurmas(evento.id)}
+                          disabled={carregandoTurmas === evento.id}
+                          aria-expanded={!!turmasVisiveis[evento.id]}
+                          aria-controls={`turmas-${evento.id}`}
+                        >
+                          {carregandoTurmas === evento.id
+                            ? "Carregando..."
+                            : turmasVisiveis[evento.id]
+                            ? "Ocultar turmas"
+                            : "Ver turmas"}
+                        </BotaoPrimario>
+                      </div>
+
+                      {turmasVisiveis[evento.id] && turmasPorEvento[evento.id] && (
+                        <div id={`turmas-${evento.id}`} className="mt-4">
+                          <ListaTurmasEvento
+                            turmas={turmasPorEvento[evento.id]}
+                            eventoId={evento.id}
+                            eventoTipo={evento.tipo}
+                            hoje={new Date()}
+                            inscricoesConfirmadas={inscricoesConfirmadas}
+                            inscrever={inscrever}
+                            inscrevendo={inscrevendo}
+                            jaInscritoNoEvento={jaInscritoNoEvento(evento)}
+                            jaInstrutorDoEvento={!!evento.ja_instrutor}
+                            carregarInscritos={() => {}}
+                            carregarAvaliacoes={() => {}}
+                            gerarRelatorioPDF={() => {}}
+                            mostrarStatusTurma={false}
+                            exibirRealizadosTotal
+                            turmasEmConflito={[...conflitosSet]}
+                          />
+                        </div>
+                      )}
+                    </div>
                   </motion.article>
                 );
               })}

@@ -11,6 +11,8 @@ const authorizeRoles = require("../auth/authorizeRoles");
 const requireAdmin = [requireAuth, authorizeRoles("administrador")];
 
 // Controllers
+// ATENÇÃO: use o nome correto do arquivo do controller.
+// Se o arquivo é src/controllers/trabalhosControllers.js (plural), mude a linha abaixo.
 const ctrl = require("../controllers/trabalhosController");
 const adminCtrl = require("../controllers/submissoesAdminController");
 
@@ -18,69 +20,24 @@ const adminCtrl = require("../controllers/submissoesAdminController");
 const upload = multer({ dest: path.join(process.cwd(), "uploads/tmp") });
 
 /* ─────────────────────────── ROTAS DE USUÁRIO ─────────────────────────── */
-/**
- * GET /api/submissoes/minhas
- * → Lista todas as submissões do usuário autenticado.
- * ⚠️ Deve vir antes de qualquer rota com :id(\\d+)!
- */
 router.get("/submissoes/minhas", requireAuth, ctrl.minhasSubmissoes);
-
-/**
- * POST /api/chamadas/:chamadaId/submissoes
- * → Criar submissão na chamada informada
- */
-router.post(
-  "/chamadas/:chamadaId(\\d+)/submissoes",
-  requireAuth,
-  ctrl.criarSubmissao
-);
-
-/**
- * GET /api/submissoes/:id
- * → Detalhe de uma submissão (autor, avaliador ou admin)
- * Usa regex numérica para não capturar /minhas.
- */
+router.post("/chamadas/:chamadaId(\\d+)/submissoes", requireAuth, ctrl.criarSubmissao);
 router.get("/submissoes/:id(\\d+)", requireAuth, ctrl.obterSubmissao);
-
-/**
- * PUT /api/submissoes/:id
- * → Atualiza uma submissão (autor dentro do prazo ou admin)
- */
 router.put("/submissoes/:id(\\d+)", requireAuth, ctrl.atualizarSubmissao);
-
-/**
- * DELETE /api/submissoes/:id
- * → Remove uma submissão (autor: rascunho/submetido; admin pode sempre)
- */
 router.delete("/submissoes/:id(\\d+)", requireAuth, ctrl.removerSubmissao);
 
-
-/* Downloads (inline; autorização fina no controller) */
+// Downloads
 router.get("/submissoes/:id(\\d+)/poster", requireAuth, ctrl.baixarPoster);
 router.get("/submissoes/:id(\\d+)/banner", requireAuth, ctrl.baixarBanner);
 
-/* Uploads (pôster e banner) */
-router.post(
-  "/submissoes/:id(\\d+)/poster",
-  requireAuth,
-  upload.single("poster"),
-  ctrl.atualizarPoster
-);
-router.post(
-  "/submissoes/:id(\\d+)/banner",
-  requireAuth,
-  upload.single("banner"),
-  ctrl.atualizarBanner
-);
+// Uploads
+router.post("/submissoes/:id(\\d+)/poster", requireAuth, upload.single("poster"), ctrl.atualizarPoster);
+router.post("/submissoes/:id(\\d+)/banner", requireAuth, upload.single("banner"), ctrl.atualizarBanner);
 
 /* ─────────────────────────── ROTAS ADMIN ─────────────────────────── */
-// Lista todas as submissões (sem filtrar por chamada)
 router.get("/admin/submissoes", requireAdmin, ctrl.listarSubmissoesAdminTodas);
-
-// Lista por chamada (compat)
 router.get("/admin/chamadas/:chamadaId/submissoes", requireAdmin, ctrl.listarSubmissoesAdmin);
 
-// Avaliações / Notas / Avaliadores (AdminSubmissoes.jsx)
 router.get("/admin/submissoes/:id(\\d+)/avaliacoes", requireAdmin, adminCtrl.listarAvaliacoesDaSubmissao);
 router.post("/admin/submissoes/:id(\\d+)/nota-visivel", requireAdmin, adminCtrl.definirNotaVisivel);
 router.get("/admin/submissoes/:id(\\d+)/avaliadores", requireAdmin, adminCtrl.listarAvaliadoresDaSubmissao);
@@ -95,8 +52,12 @@ router.post("/admin/chamadas/:chamadaId/classificar", requireAdmin, ctrl.consoli
 router.post("/admin/submissoes/:id(\\d+)/status", requireAdmin, ctrl.definirStatusFinal);
 
 /* ─────────────────────────── PAINEL DO AVALIADOR ─────────────────────────── */
+// NOVA rota de contagem (usa a mesma regra do admin para “avaliado”)
+router.get("/avaliador/minhas-contagens", requireAuth, ctrl.contagemMinhasAvaliacoes);
+
 router.get("/avaliador/submissoes", requireAuth, ctrl.listarSubmissoesDoAvaliador);
 router.get("/avaliador/submissoes/:id(\\d+)", requireAuth, ctrl.obterParaAvaliacao);
 router.post("/avaliador/submissoes/:id(\\d+)/avaliar", requireAuth, ctrl.avaliarEscrita);
+router.post("/avaliador/submissoes/:id(\\d+)/avaliar-oral", requireAuth, ctrl.avaliarOral);
 
 module.exports = router;

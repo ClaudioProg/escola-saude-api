@@ -9,119 +9,113 @@
   import Footer from "../components/Footer";
   import { apiGetPublic, apiPost } from "../services/api";
 
+function NumberBullet({ n }) {
+  return (
+    <span
+      className="
+        inline-flex items-center justify-center
+        w-7 h-7 rounded-full
+        bg-emerald-600 text-white text-[12px] font-bold
+        shadow-sm select-none shrink-0
+      "
+      aria-label={`Item ${n}`}
+    >
+      {n}
+    </span>
+  );
+}
 
-  function RegrasDicasCadastro() {
-    return (
-      <section
-        aria-labelledby="regras-cadastro"
-        className="w-full max-w-3xl mx-auto mb-6"
-      >
-        <div className="bg-white text-zinc-900 rounded-2xl shadow-sm border border-black/5 p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <ShieldCheck className="w-5 h-5 text-violet-700" aria-hidden="true" />
-            <h2 id="regras-cadastro" className="text-base font-bold">
-              Regras &amp; Dicas para criar sua conta
-            </h2>
-          </div>
+function RegrasDicasCadastro({ IconeCabecalho = ShieldCheck }) {
+  const regras = [
+    { titulo: "Como começar", conteudo: (<p>Na tela inicial, clique em <strong>“Criar Conta”</strong> e preencha todos os campos obrigatórios.</p>) },
+    { titulo: "Nome completo (formatação correta)", conteudo: (
+      <>
+        <p>Digite o nome com apenas a primeira letra de cada palavra em maiúsculo. Evite tudo maiúsculo ou tudo minúsculo.</p>
+        <ul className="mt-2 space-y-1 text-sm">
+          <li>✅ <strong>José Raimundo da Silva</strong></li>
+          <li>❌ JOSÉ RAIMUNDO DA SILVA</li>
+          <li>❌ josé raimundo da silva</li>
+        </ul>
+      </>
+    )},
+    { titulo: "Registro (Servidores da Prefeitura de Santos)", conteudo: (
+      <p>Este campo é <strong>exclusivo para servidores</strong> da Prefeitura de Santos. Se você não é servidor, <strong>deixe em branco</strong>.</p>
+    )},
+    { titulo: "Unidade de vínculo", conteudo: (<p>Se você não trabalha na Prefeitura de Santos, escolha <strong>“Outros”</strong>.</p>) },
+    { titulo: "E-mail e CPF", conteudo: (<p>Confira com atenção. Esses dados serão usados para <strong>login</strong> e <strong>recuperação de senha</strong>.</p>) },
+    { titulo: "Senha forte (obrigatória)", conteudo: (
+      <>
+        <p>Mínimo de <strong>8 caracteres</strong>, contendo <strong>maiúscula</strong>, <strong>minúscula</strong>, <strong>número</strong> e <strong>símbolo</strong>. Evite reutilizar senhas de outros serviços.</p>
+        <p className="text-xs text-zinc-600 mt-1">Ex.: <code className="px-1 py-0.5 bg-zinc-100 rounded">Saude@2025</code> (apenas um exemplo, não use exatamente este).</p>
+      </>
+    )},
+    { titulo: "Demais campos de perfil", conteudo: (
+      <p>Preencha <em>Gênero</em>, <em>Orientação sexual</em>, <em>Cor/raça</em>, <em>Escolaridade</em>, <em>Deficiência</em> e <em>Cargo</em>. Se não possuir deficiência, selecione <strong>“Não possuo”</strong>.</p>
+    )},
+    { titulo: "Conferência e envio", conteudo: (<p>Revise os dados e clique em <strong>Cadastrar</strong> para finalizar.</p>) },
+  ];
+
+  const metade = Math.ceil(regras.length / 2);
+  const col1 = regras.slice(0, metade);
+  const col2 = regras.slice(metade);
+
+  const Card = ({ children }) => (
+    <div
+      className="
+        rounded-2xl
+        bg-[#eaf7f0]/90 dark:bg-zinc-900/80
+        backdrop-blur
+        border border-emerald-200/50 dark:border-white/10
+        shadow-sm p-6
+        transition-all duration-300
+        hover:shadow-md hover:border-emerald-300
+      "
+    >
+      {children}
+    </div>
+  );
+
+  const Lista = ({ itens, start }) => (
+    <ol
+      start={start}
+      className="
+        list-none pl-0 space-y-4 [text-align:justify]
+        [&>li]:list-none [&>li]:marker:hidden [&>li]:before:hidden
+      "
+    >
+      {itens.map((regra, i) => {
+        const n = start + i;
+        return (
+          <li key={n} className="flex gap-3 list-none">
+            <NumberBullet n={n} />
+            <div className="text-sm text-zinc-700 leading-6">
+              <p className="font-semibold text-zinc-900 mb-1">{regra.titulo}</p>
+              {regra.conteudo}
+            </div>
+          </li>
+        );
+      })}
+    </ol>
+  );
+
+  return (
+    <section className="w-full max-w-6xl mx-auto mb-8 px-4">
+      <div className="flex items-center gap-2 mb-4">
+        <IconeCabecalho className="w-5 h-5 text-emerald-700" aria-hidden="true" />
+        <h2 className="text-base font-bold text-zinc-900">
+          Regras &amp; Dicas para criar sua conta
+        </h2>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <Card><Lista itens={col1} start={1} /></Card>
+        <Card><Lista itens={col2} start={metade + 1} /></Card>
+      </div>
+    </section>
+  );
+}
   
-          <ol className="space-y-4">
-            <li className="flex items-start gap-3">
-              <span className="flex-none w-6 h-6 rounded-full bg-violet-600 text-white text-xs font-bold grid place-items-center">1</span>
-              <div>
-                <p className="font-semibold">Como começar</p>
-                <p className="text-sm text-zinc-700">
-                  Na tela inicial, clique em <strong>“Criar Conta”</strong> e preencha todos os campos obrigatórios.
-                </p>
-              </div>
-            </li>
-  
-            <li className="flex items-start gap-3">
-              <span className="flex-none w-6 h-6 rounded-full bg-violet-600 text-white text-xs font-bold grid place-items-center">2</span>
-              <div>
-                <p className="font-semibold">Nome completo (formatação correta)</p>
-                <p className="text-sm text-zinc-700">
-                  Digite o nome com apenas a primeira letra de cada palavra em maiúsculo. Evite tudo maiúsculo ou tudo minúsculo.
-                </p>
-                <ul className="mt-1 text-sm">
-                  <li>✅ <strong>José Raimundo da Silva</strong></li>
-                  <li>❌ JOSÉ RAIMUNDO DA SILVA</li>
-                  <li>❌ josé raimundo da silva</li>
-                </ul>
-              </div>
-            </li>
-  
-            <li className="flex items-start gap-3">
-              <span className="flex-none w-6 h-6 rounded-full bg-violet-600 text-white text-xs font-bold grid place-items-center">3</span>
-              <div>
-                <p className="font-semibold">Registro (Servidores da Prefeitura de Santos)</p>
-                <p className="text-sm text-zinc-700">
-                  Este campo é <strong>exclusivo para servidores</strong> da Prefeitura de Santos. Se você não é servidor, <strong>deixe em branco</strong>.
-                  Quando preenchido, use o formato <code className="px-1 py-0.5 bg-zinc-100 rounded">00.000-0</code>.
-                </p>
-              </div>
-            </li>
-  
-            <li className="flex items-start gap-3">
-              <span className="flex-none w-6 h-6 rounded-full bg-violet-600 text-white text-xs font-bold grid place-items-center">4</span>
-              <div>
-                <p className="font-semibold">Unidade de vínculo</p>
-                <p className="text-sm text-zinc-700">
-                  Se você não trabalha na Prefeitura de Santos, escolha <strong>“Outros”</strong>.
-                </p>
-              </div>
-            </li>
-  
-            <li className="flex items-start gap-3">
-              <span className="flex-none w-6 h-6 rounded-full bg-violet-600 text-white text-xs font-bold grid place-items-center">5</span>
-              <div>
-                <p className="font-semibold">E-mail e CPF</p>
-                <p className="text-sm text-zinc-700">
-                  Confira com atenção. Esses dados serão usados para <strong>login</strong> e <strong>recuperação de senha</strong>.
-                </p>
-              </div>
-            </li>
-  
-            <li className="flex items-start gap-3">
-              <span className="flex-none w-6 h-6 rounded-full bg-violet-600 text-white text-xs font-bold grid place-items-center">6</span>
-              <div>
-                <p className="font-semibold">Senha forte (obrigatória)</p>
-                <p className="text-sm text-zinc-700">
-                  Mínimo de <strong>8 caracteres</strong>, contendo <strong>maiúscula</strong>, <strong>minúscula</strong>, <strong>número</strong> e <strong>símbolo</strong>.
-                  Evite reutilizar senhas de outros serviços.
-                </p>
-                <p className="text-xs text-zinc-600 mt-1">
-                  Ex.: <code className="px-1 py-0.5 bg-zinc-100 rounded">Saude@2025</code> (apenas um exemplo, não use exatamente este).
-                </p>
-              </div>
-            </li>
-  
-            <li className="flex items-start gap-3">
-              <span className="flex-none w-6 h-6 rounded-full bg-violet-600 text-white text-xs font-bold grid place-items-center">7</span>
-              <div>
-                <p className="font-semibold">Demais campos de perfil</p>
-                <p className="text-sm text-zinc-700">
-                  Preencha <em>Gênero</em>, <em>Orientação sexual</em>, <em>Cor/raça</em>, <em>Escolaridade</em>, <em>Deficiência</em> e <em>Cargo</em>.
-                  Se não possuir deficiência, selecione <strong>“Não possuo”</strong>.
-                </p>
-              </div>
-            </li>
-  
-            <li className="flex items-start gap-3">
-              <span className="flex-none w-6 h-6 rounded-full bg-violet-600 text-white text-xs font-bold grid place-items-center">8</span>
-              <div>
-                <p className="font-semibold">Conferência e envio</p>
-                <p className="text-sm text-zinc-700">
-                  Revise os dados e clique em <strong>Cadastrar</strong> para finalizar.
-                </p>
-              </div>
-            </li>
-          </ol>
-        </div>
-      </section>
-    );
-  }
-  
-  export default function Cadastro() {
+    export default function Cadastro() {
     // ───────────────────────────── refs para foco
     const refNome = useRef(null);
     const refCpf = useRef(null);
@@ -826,19 +820,14 @@
               </BotaoSecundario>
             </div>
 
+            
+
+            <p className="text-xs text-white/70 text-center mt-2">
+              Ao se cadastrar, você concorda com o uso dos seus dados para controle de eventos, presença e certificação.
+            </p>
             {/* 🔗 Links públicos */}
             <p className="text-xs text-white/80 text-center mt-2 flex flex-wrap items-center justify-center gap-2">
               <HelpCircle size={14} aria-hidden="true" />
-              Dúvidas?
-              <a
-                href="/ajuda/cadastro"
-                target="_blank"
-                rel="noreferrer"
-                className="underline underline-offset-2 hover:opacity-90"
-              >
-                Central de Ajuda
-              </a>
-              <span>•</span>
               <a
                 href="/privacidade"
                 target="_blank"
@@ -847,10 +836,6 @@
               >
                 Privacidade
               </a>
-            </p>
-
-            <p className="text-xs text-white/70 text-center mt-2">
-              Ao se cadastrar, você concorda com o uso dos seus dados para controle de eventos, presença e certificação.
             </p>
           </form>
           </div>

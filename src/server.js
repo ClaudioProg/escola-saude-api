@@ -275,7 +275,7 @@ app.use("/api/datas", datasEventoRoute);
 app.use("/api/perfil", perfilRoutes);
 app.use("/api/solicitacoes", solicitacoesCursoRoute);
 app.use("/api", chamadasModeloRoutes);
-app.use("/api/admin", submissoesAdminRoutes);
+app.use("/api", submissoesAdminRoutes);
 app.use("/api/admin/avaliacoes", adminAvaliacoesRoutes);
 app.use("/api", chamadasRoutes);
 app.use("/api", trabalhosRoutes);
