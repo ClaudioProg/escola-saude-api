@@ -272,11 +272,51 @@ export default function DashboardAnalitico() {
   const presencaPorEventoData = useMemo(() => {
     const base = ensureChart(dados?.presencaPorEvento);
     if (!base.datasets.length) return base;
-    const datasets = base.datasets.map((ds) => ({
+  
+    const labels = Array.isArray(base.labels) ? base.labels : [];
+    const datasets = Array.isArray(base.datasets) ? base.datasets : [];
+    const meta = Array.isArray(base.meta) ? base.meta : (Array.isArray(dados?.presencaPorEventoMeta) ? dados.presencaPorEventoMeta : null);
+  
+    let indices = labels.map((_, i) => i);
+  
+    // Tenta filtrar/sortear por eventos encerrados usando metadados (quando existirem)
+    if (Array.isArray(meta) && meta.length === labels.length) {
+      const normalizados = meta.map((m, i) => ({
+        i,
+        status: String(m?.status ?? "").toLowerCase(),
+        encerradoEm:
+          m?.encerradoEm || m?.data_fim || m?.dataFim || m?.fim || null,
+      }));
+  
+      // Considera "encerrado" se status = encerrado ou se houver data de encerramento
+      let encerrados = normalizados.filter(
+        (m) => m.status === "encerrado" || !!m.encerradoEm
+      );
+  
+      if (encerrados.length) {
+        // Ordena por data de encerramento quando disponível; sem data vai para o início
+        encerrados.sort((a, b) => {
+          const da = a.encerradoEm ? new Date(a.encerradoEm).getTime() : 0;
+          const db = b.encerradoEm ? new Date(b.encerradoEm).getTime() : 0;
+          return da - db;
+        });
+        indices = encerrados.map((m) => m.i).slice(-5); // 5 mais recentes
+      } else {
+        indices = indices.slice(-5); // fallback
+      }
+    } else {
+      indices = indices.slice(-5); // fallback quando não há meta
+    }
+  
+    const fLabels = indices.map((i) => labels[i]);
+    const fDatasets = datasets.map((ds) => ({
       ...ds,
-      data: (ds.data || []).map((v) => Number(clampPct(v).toFixed(1))),
+      data: indices.map((i) =>
+        Number(clampPct((ds.data || [])[i]).toFixed(1))
+      ),
     }));
-    return { ...base, datasets };
+  
+    return { labels: fLabels, datasets: fDatasets };
   }, [dados]);
 
   const barPctOptions = useMemo(
@@ -296,11 +336,10 @@ export default function DashboardAnalitico() {
 
   const pieFaixa = useMemo(() => toPieDataset(stats.faixa_etaria || []), [stats]);
   const pieUnidade = useMemo(() => {
-    const arr = (stats.por_unidade || []).map((x) => {
-      let sigla = String(x?.label ?? "").trim();
-      if (sigla.includes("-")) sigla = sigla.split("-")[0].trim();
-      return { ...x, label: sigla || "Não informado" };
-    });
+    const arr = (stats.por_unidade || []).map((x) => ({
+      ...x,
+      label: String(x?.label ?? "Não informado").trim() || "Não informado",
+    }));
     return toPieDataset(arr);
   }, [stats]);
   const pieEscol = useMemo(() => toPieDataset(stats.por_escolaridade || []), [stats]);

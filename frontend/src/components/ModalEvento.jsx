@@ -15,6 +15,9 @@ import {
   Users,
   Clock,
   CalendarDays,
+  Paperclip,
+  Image as ImageIcon,
+  File as FileIcon,
 } from "lucide-react";
 import ModalBase from "./ModalBase";
 import ModalTurma from "./ModalTurma";
@@ -132,6 +135,57 @@ const getInstrutoresIds = (ev) => {
   return arr.map((i) => Number(i?.id ?? i)).filter((x) => Number.isFinite(x));
 };
 
+const extractIds = (arr) =>
+  Array.isArray(arr)
+    ? arr
+        .map((v) => Number(v?.id ?? v))
+        .filter((n) => Number.isFinite(n))
+    : [];
+
+    function normalizarCargo(v) {
+      const s = String(v || "").trim();
+      if (!s) return "";
+      // Título: primeira letra maiúscula como você prefere
+      return s
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .replace(/\b\w/g, (m) => m.toUpperCase());
+    }
+    
+    function extrairCargoUsuario(u) {
+      if (!u) return "";
+      // tenta várias chaves comuns
+      const candidatosBrutos = [
+        u.cargo,
+        u.cargo_nome,
+        u.funcao,
+        u.funcao_nome,
+        u.ocupacao,
+        u.profissao,
+        u.role,
+        u.cargoSigla,
+        u.cargo_sigla,
+        u?.cargo?.nome,
+        u?.cargo?.descricao,
+      ];
+    
+      // se algum vier como array/obj, pega string interna
+      const candidatos = candidatosBrutos.flatMap((c) => {
+        if (!c) return [];
+        if (Array.isArray(c)) return c.map((x) => String(x || ""));
+        if (typeof c === "object") {
+          return [String(c.nome || c.descricao || c.titulo || "")];
+        }
+        return [String(c)];
+      });
+    
+      for (const c of candidatos) {
+        const limpo = normalizarCargo(c);
+        if (limpo) return limpo;
+      }
+      return "";
+    }
+
 /* ========================= Cache simples em memória ========================= */
 let cacheUnidades = null;
 let cacheUsuarios = null;
@@ -156,7 +210,6 @@ export default function ModalEvento({
   // Dados auxiliares
   const [unidades, setUnidades] = useState([]);
   const [usuarios, setUsuarios] = useState([]);
-  const [instrutorSelecionado, setInstrutorSelecionado] = useState([""]);
 
   // Turmas
   const [turmas, setTurmas] = useState([]);
@@ -169,6 +222,19 @@ export default function ModalEvento({
   const [restritoModo, setRestritoModo] = useState("");
   const [registroInput, setRegistroInput] = useState("");
   const [registros, setRegistros] = useState([]);
+
+  // Novos filtros de visibilidade
+  const [cargosPermitidos, setCargosPermitidos] = useState([]);
+  const [cargoAdd, setCargoAdd] = useState("");
+  const [fallbackCargos, setFallbackCargos] = useState([]);
+
+const [unidadesPermitidas, setUnidadesPermitidas] = useState([]);
+  const [unidadeAddId, setUnidadeAddId] = useState("");
+
+  // Uploads
+  const [folderFile, setFolderFile] = useState(null); // png/jpg
+  const [programacaoFile, setProgramacaoFile] = useState(null); // pdf
+  const [folderPreview, setFolderPreview] = useState(null);
 
   // Controle de rehidratação e transição
   const prevEventoKeyRef = useRef(null);
@@ -225,11 +291,15 @@ export default function ModalEvento({
         setTipo("");
         setUnidadeId("");
         setPublicoAlvo("");
-        setInstrutorSelecionado([""]);
         setTurmas([]);
         setRestrito(false);
         setRestritoModo("");
         setRegistros([]);
+        setCargosPermitidos([]);
+        setUnidadesPermitidas([]);
+        setFolderFile(null);
+        setProgramacaoFile(null);
+        setFolderPreview(null);
       } else {
         // existente
         setTitulo(evento.titulo || "");
@@ -239,41 +309,37 @@ export default function ModalEvento({
         setUnidadeId(evento.unidade_id ? String(evento.unidade_id) : "");
         setPublicoAlvo(evento.publico_alvo || "");
 
-        const instrutoresIds = getInstrutoresIds(evento).map(String);
-        setInstrutorSelecionado(instrutoresIds.length ? instrutoresIds : [""]);
-
         /* ========= TURMAS — sempre buscar via rota leve ========= */
-(async () => {
-  try {
-    const resp = await apiGet(`/api/eventos/${evento.id}/turmas-simples`);
-    const turmasBack = Array.isArray(resp) ? resp : [];
+        (async () => {
+          try {
+            const resp = await apiGet(`/api/eventos/${evento.id}/turmas-simples`);
+            const turmasBack = Array.isArray(resp) ? resp : [];
 
-    const turmasNormalizadas = turmasBack.map((t) => {
-      const n = normalizarDatasTurma(t);
-      const cargaCalc = Number.isFinite(Number(t.carga_horaria))
-        ? Number(t.carga_horaria)
-        : calcularCargaHorariaDatas(n.datas);
-      return {
-        ...t,
-        datas: n.datas,
-        data_inicio: n.data_inicio,
-        data_fim: n.data_fim,
-        horario_inicio: n.horario_inicio,
-        horario_fim: n.horario_fim,
-        carga_horaria: Number.isFinite(cargaCalc) ? cargaCalc : 0,
-        vagas_total: Number.isFinite(Number(t.vagas_total))
-          ? Number(t.vagas_total)
-          : 0,
-      };
-    });
+            const turmasNormalizadas = turmasBack.map((t) => {
+              const n = normalizarDatasTurma(t);
+              const cargaCalc = Number.isFinite(Number(t.carga_horaria))
+                ? Number(t.carga_horaria)
+                : calcularCargaHorariaDatas(n.datas);
+              return {
+                ...t,
+                datas: n.datas,
+                data_inicio: n.data_inicio,
+                data_fim: n.data_fim,
+                horario_inicio: n.horario_inicio,
+                horario_fim: n.horario_fim,
+                carga_horaria: Number.isFinite(cargaCalc) ? cargaCalc : 0,
+                vagas_total: Number.isFinite(Number(t.vagas_total))
+                  ? Number(t.vagas_total)
+                  : 0,
+              };
+            });
 
-    setTurmas(turmasNormalizadas);
-  } catch (err) {
-    console.warn("Falha ao carregar turmas-simples:", err);
-    setTurmas(evento.turmas || []);
-  }
-})();
-
+            setTurmas(turmasNormalizadas);
+          } catch (err) {
+            console.warn("Falha ao carregar turmas-simples:", err);
+            setTurmas(evento.turmas || []);
+          }
+        })();
 
         // restrição
         const restr = !!evento.restrito;
@@ -290,6 +356,24 @@ export default function ModalEvento({
         setRegistros(
           [...new Set((lista || []).map(normReg).filter((r) => /^\d{6}$/.test(r)))]
         );
+
+        // novos filtros
+        setCargosPermitidos(
+          Array.isArray(evento.cargos_permitidos)
+            ? [...new Set(evento.cargos_permitidos.map((s) => String(s || "").trim()).filter(Boolean))]
+            : []
+        );
+
+        setUnidadesPermitidas(
+          Array.isArray(evento.unidades_permitidas)
+            ? extractIds(evento.unidades_permitidas)
+            : []
+        );
+
+        // previews (se backend devolve urls, você pode exibir aqui; mantive local somente)
+        setFolderFile(null);
+        setProgramacaoFile(null);
+        setFolderPreview(null);
       }
     });
 
@@ -299,7 +383,7 @@ export default function ModalEvento({
   /* ========= GET fresh da restrição, apenas quando necessário ========= */
   useEffect(() => {
     if (!isOpen || !evento?.id) return;
-    if (registros.length > 0) return;
+    if (registros.length > 0 && cargosPermitidos.length > 0 && unidadesPermitidas.length > 0) return;
     (async () => {
       try {
         const det = await apiGet(`/api/eventos/${evento.id}`);
@@ -317,47 +401,61 @@ export default function ModalEvento({
           ? det.registros
           : [];
         const parsed = (lista || []).map(normReg).filter((r) => /^\d{6}$/.test(r));
-        setRegistros([...new Set(parsed)]);
-      } catch (err) {
-        // silencioso para não travar a UX
+        if (parsed.length && registros.length === 0) setRegistros([...new Set(parsed)]);
+
+        if (Array.isArray(det.cargos_permitidos) && cargosPermitidos.length === 0) {
+          setCargosPermitidos(
+            [...new Set(det.cargos_permitidos.map((s) => String(s || "").trim()).filter(Boolean))]
+          );
+        }
+        if (Array.isArray(det.unidades_permitidas) && unidadesPermitidas.length === 0) {
+          setUnidadesPermitidas(extractIds(det.unidades_permitidas));
+        }
+      } catch {
+        // silencioso
       }
     })();
-  }, [isOpen, evento?.id, registros.length]);
+  }, [isOpen, evento?.id]); // estados checados dentro
 
-  /* ========= Opções de instrutor ========= */
-  const opcoesInstrutor = useMemo(() => {
-    return (usuarios || [])
-      .filter((usuario) => {
-        const perfil = (
-          Array.isArray(usuario.perfil)
-            ? usuario.perfil.join(",")
-            : String(usuario.perfil || "")
-        ).toLowerCase();
-        return perfil.includes("instrutor") || perfil.includes("administrador");
-      })
-      .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
-  }, [usuarios]);
+    /* ========= Opções de instrutor (para exibir nomes nas turmas) ========= */
+    const cargosSugestoes = useMemo(() => {
+      const dosUsuarios = (usuarios || [])
+        .map((u) => extrairCargoUsuario(u))
+        .filter(Boolean);
+    
+      // junta extraídos dos usuários + fallback do backend
+      const todos = [...dosUsuarios, ...fallbackCargos]
+        .map(normalizarCargo)
+        .filter(Boolean);
+    
+      const setUnicos = new Set(todos);
+      const jaUsados = new Set(cargosPermitidos.map((c) => c.toLowerCase()));
+    
+      return [...setUnicos]
+        .filter((c) => !jaUsados.has(c.toLowerCase()))
+        .sort((a, b) => a.localeCompare(b));
+    }, [usuarios, fallbackCargos, cargosPermitidos]);
+    
 
-  const getInstrutorDisponivel = (index) => {
-    const selecionados = instrutorSelecionado.map(String);
-    const atual = selecionados[index];
-    return opcoesInstrutor.filter(
-      (i) => !selecionados.includes(String(i.id)) || String(i.id) === String(atual)
-    );
-  };
+/* ========= Opções de instrutor (para exibir nomes nas turmas) ========= */
+const opcoesInstrutor = useMemo(() => {
+  return (usuarios || [])
+    .filter((usuario) => {
+      const perfil = (
+        Array.isArray(usuario.perfil)
+          ? usuario.perfil.join(",")
+          : String(usuario.perfil || "")
+      ).toLowerCase();
+      return perfil.includes("instrutor") || perfil.includes("administrador");
+    })
+    .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
+}, [usuarios]);
 
-  function handleSelecionarInstrutor(index, valor) {
-    const nova = [...instrutorSelecionado];
-    nova[index] = valor;
-    setInstrutorSelecionado(nova);
-  }
-  function adicionarInstrutor() {
-    setInstrutorSelecionado((l) => [...l, ""]);
-  }
-  function removerInstrutor(index) {
-    const nova = instrutorSelecionado.filter((_, i) => i !== index);
-    setInstrutorSelecionado(nova.length ? nova : [""]);
-  }
+
+  const nomePorId = (id) => {
+    const u = (usuarios || []).find((x) => Number(x.id) === Number(id));
+    return u?.nome || String(id);
+    };
 
   /* ================= Handlers de registros (restrição) ================= */
   const addRegistro = () => {
@@ -373,6 +471,56 @@ export default function ModalEvento({
     setRegistroInput("");
   };
   const removeRegistro = (r) => setRegistros((prev) => prev.filter((x) => x !== r));
+
+  /* ================= Filtros: Cargos e Unidades ================= */
+  const addCargo = () => {
+    const v = String(cargoAdd || "").trim();
+    if (!v) return;
+    setCargosPermitidos(prev => {
+      const exists = prev.some(x => x.toLowerCase() === v.toLowerCase());
+      return exists ? prev : [...prev, v];
+    });
+    setCargoAdd("");
+  };
+  const removeCargo = (v) =>
+    setCargosPermitidos((prev) => prev.filter((x) => x !== v));
+
+  const addUnidade = () => {
+    const id = Number(unidadeAddId);
+    if (!Number.isFinite(id) || id <= 0) return;
+    setUnidadesPermitidas((prev) => (prev.includes(id) ? prev : [...prev, id]));
+    setUnidadeAddId("");
+  };
+  const removeUnidade = (id) =>
+    setUnidadesPermitidas((prev) => prev.filter((x) => x !== id));
+
+  /* ================= Uploads ================= */
+  const onChangeFolder = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (!/^image\/(png|jpeg)$/.test(f.type)) {
+      toast.error("Envie uma imagem PNG ou JPG.");
+      return;
+    }
+    setFolderFile(f);
+    const reader = new FileReader();
+    reader.onload = () => setFolderPreview(reader.result);
+    reader.readAsDataURL(f);
+  };
+  const onChangeProgramacao = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (f.type !== "application/pdf") {
+      toast.error("Envie um PDF válido.");
+      return;
+    }
+    setProgramacaoFile(f);
+  };
+  const limparFolder = () => {
+    setFolderFile(null);
+    setFolderPreview(null);
+  };
+  const limparProgramacao = () => setProgramacaoFile(null);
 
   /* ================= Turma: criar / editar / remover ================= */
   function abrirCriarTurma() {
@@ -431,13 +579,6 @@ export default function ModalEvento({
       toast.error("❌ Tipo de evento inválido.");
       return;
     }
-    const instrutorValidado = instrutorSelecionado
-      .map((v) => Number(String(v).trim()))
-      .filter((id) => Number.isFinite(id));
-    if (instrutorValidado.length === 0) {
-      toast.error("Selecione ao menos um instrutor.");
-      return;
-    }
     if (!turmas.length) {
       toast.warning("⚠️ Adicione pelo menos uma turma.");
       return;
@@ -457,14 +598,31 @@ export default function ModalEvento({
           return;
         }
       }
+      // valida assinante ∈ instrutores (se assinante existir)
+      if (t.assinante_id != null) {
+        const instrs = extractIds(t.instrutores || []);
+        if (!instrs.includes(Number(t.assinante_id))) {
+          toast.error(`O assinante da turma "${t.nome}" precisa estar entre os instrutores dessa turma.`);
+          return;
+        }
+      }
     }
     if (restrito) {
-      if (!["todos_servidores", "lista_registros"].includes(restritoModo)) {
+      const modosValidos = ["todos_servidores", "lista_registros", "cargos", "unidades"];
+      if (!modosValidos.includes(restritoModo)) {
         toast.error("Defina o modo de restrição do evento.");
         return;
       }
       if (restritoModo === "lista_registros" && registros.length === 0) {
         toast.error("Inclua pelo menos um registro (6 dígitos) para este evento.");
+        return;
+      }
+      if (restritoModo === "cargos" && cargosPermitidos.length === 0) {
+        toast.error("Inclua ao menos um cargo permitido.");
+        return;
+      }
+      if (restritoModo === "unidades" && unidadesPermitidas.length === 0) {
+        toast.error("Inclua ao menos uma unidade permitida.");
         return;
       }
     }
@@ -481,6 +639,11 @@ export default function ModalEvento({
           horario_inicio: d.horario_inicio,
           horario_fim: d.horario_fim,
         })),
+        // novos campos por turma (se o ModalTurma já enviar, preservamos)
+        ...(Array.isArray(t.instrutores) ? { instrutores: extractIds(t.instrutores) } : {}),
+        ...(Number.isFinite(Number(t.assinante_id))
+          ? { assinante_id: Number(t.assinante_id) }
+          : {}),
       };
     });
 
@@ -494,13 +657,21 @@ export default function ModalEvento({
       tipo,
       unidade_id: Number(unidadeId),
       publico_alvo: publicoAlvo,
-      instrutor: instrutorValidado,
       turmas: turmasCompletas,
       restrito: !!restrito,
       restrito_modo: restrito ? restritoModo || "todos_servidores" : null,
       ...(restrito && restritoModo === "lista_registros" && regs6.length > 0
         ? { registros_permitidos: regs6 }
         : {}),
+      ...(restrito && restritoModo === "cargos" && cargosPermitidos.length > 0
+        ? { cargos_permitidos: cargosPermitidos }
+        : {}),
+      ...(restrito && restritoModo === "unidades" && unidadesPermitidas.length > 0
+        ? { unidades_permitidas: unidadesPermitidas }
+        : {}),
+      // uploads seguem para o container pai salvar após o POST/PUT
+      ...(folderFile ? { folderFile } : {}),
+      ...(programacaoFile ? { programacaoFile } : {}),
     };
 
     onSalvar(payload);
@@ -520,6 +691,9 @@ export default function ModalEvento({
       const first = qtd ? t.datas[0] : null;
       const hi = first ? hh(first.horario_inicio) : hh(t.horario_inicio);
       const hf = first ? hh(first.horario_fim) : hh(t.horario_fim);
+
+      const instrs = extractIds(t.instrutores || []);
+      const assinante = Number.isFinite(Number(t.assinante_id)) ? Number(t.assinante_id) : null;
 
       return (
         <div
@@ -593,11 +767,55 @@ export default function ModalEvento({
                 <span>{Number(t.carga_horaria) || 0}h</span>
               </span>
             </div>
+
+            {/* Resumo instrutores/assinante */}
+            <div className="flex flex-wrap gap-2 items-center pt-1">
+              {instrs.length > 0 && (
+                <div className="text-xs">
+                  <span className="font-semibold">Instrutores: </span>
+                  <span>
+                    {instrs.map((id, idx) => (
+                      <span key={id}>
+                        {nomePorId(id)}
+                        {idx < instrs.length - 1 ? ", " : ""}
+                      </span>
+                    ))}
+                  </span>
+                </div>
+              )}
+              {Number.isFinite(assinante) && (
+                <div className="text-xs">
+                  <span className="font-semibold">Assinante: </span>
+                  <span>{nomePorId(assinante)}</span>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       );
     });
-  }, [turmas, removendoId]);
+  }, [turmas, removendoId, usuarios]);
+
+  useEffect(() => {
+    (async () => {
+      if (restritoModo !== "cargos") return;
+      if ((cargosSugestoes || []).length > 0) return;
+  
+      try {
+        const lista = await apiGet("/api/eventos/cargos/sugerir?limit=50");
+        const jaUsados = new Set(cargosPermitidos.map((c) => c.toLowerCase()));
+        const norm = (Array.isArray(lista) ? lista : [])
+          .map(normalizarCargo)
+          .filter((s) => s && !jaUsados.has(s.toLowerCase()));
+  
+        setFallbackCargos(norm); // ← agora popula o fallback
+      } catch {
+        // silencioso
+      }
+    })();
+  }, [restritoModo, cargosSugestoes, cargosPermitidos]);
+  
+  
 
   /* ========================= Render ========================= */
   return (
@@ -695,52 +913,6 @@ export default function ModalEvento({
                       className="w-full pl-10 pr-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm"
                     />
                   </div>
-                </div>
-
-                {/* INSTRUTOR(ES) */}
-                <div className="grid gap-2">
-                  <span className="text-sm font-medium">Instrutor(es)</span>
-                  {instrutorSelecionado.map((valor, index) => (
-                    <div key={`instrutor-${index}`} className="relative">
-                      <div className="flex items-center gap-2">
-                        <select
-                          value={String(valor ?? "")}
-                          onChange={(e) => handleSelecionarInstrutor(index, e.target.value)}
-                          className="w-full pl-3 pr-10 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm"
-                          required={index === 0}
-                          aria-label={index === 0 ? "Instrutor principal" : `Instrutor adicional ${index}`}
-                        >
-                          <option value="">Selecione o instrutor</option>
-                          {getInstrutorDisponivel(index).map((i) => (
-                            <option key={i.id} value={String(i.id)}>
-                              {i.nome}
-                            </option>
-                          ))}
-                        </select>
-
-                        {index > 0 ? (
-                          <button
-                            type="button"
-                            onClick={() => removerInstrutor(index)}
-                            className="inline-flex items-center gap-1 rounded-lg px-3 py-2 border border-red-200 dark:border-red-900/40 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20"
-                            title="Remover este instrutor"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                            Remover
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={adicionarInstrutor}
-                            className="inline-flex items-center gap-2 rounded-xl px-4 py-2 bg-teal-700 hover:bg-teal-600 text-white font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500"
-                          >
-                            <PlusCircle className="w-4 h-4" />
-                            Incluir outro
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
                 </div>
 
                 {/* LOCAL */}
@@ -868,6 +1040,29 @@ export default function ModalEvento({
                         </span>
                       </label>
 
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          name="restrito_modo"
+                          value="cargos"
+                          checked={restritoModo === "cargos"}
+                          onChange={() => setRestritoModo("cargos")}
+                        />
+                        <span>Restringir por cargos</span>
+                      </label>
+
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          name="restrito_modo"
+                          value="unidades"
+                          checked={restritoModo === "unidades"}
+                          onChange={() => setRestritoModo("unidades")}
+                        />
+                        <span>Restringir por unidades</span>
+                      </label>
+
+                      {/* Sub-seções */}
                       {restritoModo === "lista_registros" && (
                         <div className="mt-2 space-y-2">
                           <div className="flex gap-2">
@@ -949,9 +1144,179 @@ export default function ModalEvento({
                           </div>
                         </div>
                       )}
+
+{restritoModo === "cargos" && (
+  <div className="mt-2 space-y-2">
+    <div className="flex gap-2">
+      <select
+        value={String(cargoAdd || "")}
+        onChange={(e) => setCargoAdd(e.target.value)}
+        className="w-full px-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900"
+      >
+        <option value="">Selecione o cargo</option>
+        {cargosSugestoes.map((c) => (
+          <option key={c} value={c}>{c}</option>
+        ))}
+      </select>
+      <button
+        type="button"
+        onClick={addCargo}
+        className="px-3 py-2 rounded-xl bg-teal-700 hover:bg-teal-600 text-white font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500"
+      >
+        Adicionar
+      </button>
+    </div>
+
+    <div className="flex flex-wrap gap-2">
+      {cargosPermitidos.map((c) => (
+        <span
+          key={c}
+          className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-slate-200 text-slate-800 dark:bg-zinc-800 dark:text-zinc-200 text-xs"
+        >
+          {c}
+          <button
+            type="button"
+            className="ml-1 text-red-600 dark:text-red-400"
+            title="Remover"
+            onClick={() => removeCargo(c)}
+            aria-label={`Remover cargo ${c}`}
+          >
+            ×
+          </button>
+        </span>
+      ))}
+    </div>
+
+    {cargosSugestoes.length === 0 && (
+      <p className="text-xs text-slate-600 dark:text-slate-300">
+        Sem sugestões no momento.
+      </p>
+    )}
+  </div>
+)}
+                      {restritoModo === "unidades" && (
+                        <div className="mt-2 space-y-2">
+                          <div className="flex gap-2">
+                            <select
+                              value={String(unidadeAddId || "")}
+                              onChange={(e) => setUnidadeAddId(e.target.value)}
+                              className="w-full px-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900"
+                            >
+                              <option value="">Selecione a unidade</option>
+                              {unidades
+                                .filter((u) => !unidadesPermitidas.includes(Number(u.id)))
+                                .map((u) => (
+                                  <option key={u.id} value={String(u.id)}>
+                                    {u.nome}
+                                  </option>
+                                ))}
+                            </select>
+                            <button
+                              type="button"
+                              onClick={addUnidade}
+                              className="px-3 py-2 rounded-xl bg-teal-700 hover:bg-teal-600 text-white font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500"
+                            >
+                              Adicionar
+                            </button>
+                          </div>
+
+                          <div className="flex flex-wrap gap-2">
+                            {unidadesPermitidas.map((id) => {
+                              const u = unidades.find((x) => Number(x.id) === Number(id));
+                              return (
+                                <span
+                                  key={id}
+                                  className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-slate-200 text-slate-800 dark:bg-zinc-800 dark:text-zinc-200 text-xs"
+                                >
+                                  {u?.nome || `Unidade ${id}`}
+                                  <button
+                                    type="button"
+                                    className="ml-1 text-red-600 dark:text-red-400"
+                                    title="Remover"
+                                    onClick={() => removeUnidade(id)}
+                                    aria-label={`Remover unidade ${id}`}
+                                  >
+                                    ×
+                                  </button>
+                                </span>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </fieldset>
+
+                {/* UPLOADS */}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {/* Folder (PNG/JPG) */}
+                  <div className="grid gap-1">
+                    <label className="text-sm font-medium flex items-center gap-2">
+                      <ImageIcon size={16} /> Folder do evento (PNG/JPG)
+                    </label>
+                    <label className="flex items-center gap-2 px-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 cursor-pointer">
+                      <Paperclip size={16} />
+                      <span className="text-sm">
+                        {folderFile ? folderFile.name : "Selecionar imagem…"}
+                      </span>
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg"
+                        className="hidden"
+                        onChange={onChangeFolder}
+                      />
+                    </label>
+                    {folderPreview && (
+                      <div className="mt-2">
+                        <img
+                          src={folderPreview}
+                          alt="Pré-visualização do folder"
+                          className="max-h-40 rounded-lg border border-black/10 dark:border-white/10"
+                        />
+                        <div className="mt-2">
+                          <button
+                            type="button"
+                            onClick={limparFolder}
+                            className="text-xs underline text-red-700 dark:text-red-300"
+                          >
+                            Remover imagem
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Programação (PDF) */}
+                  <div className="grid gap-1">
+                    <label className="text-sm font-medium flex items-center gap-2">
+                      <FileIcon size={16} /> Programação (PDF)
+                    </label>
+                    <label className="flex items-center gap-2 px-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 cursor-pointer">
+                      <Paperclip size={16} />
+                      <span className="text-sm">
+                        {programacaoFile ? programacaoFile.name : "Selecionar PDF…"}
+                      </span>
+                      <input
+                        type="file"
+                        accept="application/pdf"
+                        className="hidden"
+                        onChange={onChangeProgramacao}
+                      />
+                    </label>
+                    {programacaoFile && (
+                      <div className="mt-1">
+                        <button
+                          type="button"
+                          onClick={limparProgramacao}
+                          className="text-xs underline text-red-700 dark:text-red-300"
+                        >
+                          Remover PDF
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
 
                 {/* TURMAS */}
                 <div>
@@ -1016,6 +1381,7 @@ export default function ModalEvento({
         isOpen={modalTurmaAberto}
         onClose={() => setModalTurmaAberto(false)}
         initialTurma={editandoTurmaIndex != null ? turmas[editandoTurmaIndex] : null}
+        usuarios={opcoesInstrutor}        
         onSalvar={(turmaPayload) => {
           const normalizada = normalizarDatasTurma(turmaPayload);
           const turmaFinal = {

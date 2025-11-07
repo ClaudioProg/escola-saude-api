@@ -1,5 +1,8 @@
 /* eslint-disable no-console */
-// ✅ src/pages/GerenciarEventos.jsx (admin) — publicar/despublicar + UI moderna + barra colorida no topo
+// ✅ src/pages/GerenciarEventos.jsx (admin)
+// Agora: sem bloqueios de edição, instrutores por TURMA, assinante por turma,
+// restrição por cargos/unidades e upload de folder (png/jpg) + programação (pdf).
+
 import { useEffect, useRef, useState } from "react";
 import { toast } from "react-toastify";
 import { motion } from "framer-motion";
@@ -42,13 +45,29 @@ const hhmm = (s) => {
   return v ? v.slice(0, 5) : "";
 };
 
-// aceita [{id, nome}] ou [id] ou mix
-const extractInstrutorIds = (arr) => {
+// extrai ids numéricos
+const extractIds = (arr) => {
   if (!Array.isArray(arr)) return [];
   return arr
     .map((i) => (typeof i === "object" ? i?.id : i))
     .map((x) => Number(String(x).trim()))
     .filter((n) => Number.isFinite(n));
+};
+
+// extrai strings limpas (para cargos)
+const extractStrs = (arr) => {
+  if (!Array.isArray(arr)) return [];
+  return Array.from(
+    new Set(
+      arr
+        .map((v) =>
+          String(
+            typeof v === "object" ? v?.codigo || v?.sigla || v?.nome || "" : v
+          ).trim()
+        )
+        .filter(Boolean)
+    )
+  );
 };
 
 /* ======== Helpers p/ encontros/datas ======== */
@@ -59,8 +78,11 @@ const cargaHorariaFromEncontros = (encs) => {
   for (const e of encs) {
     const [h1, m1] = String(e.inicio || "00:00").split(":").map(Number);
     const [h2, m2] = String(e.fim || "00:00").split(":").map(Number);
-    const diffH = Math.max(0, (h2 * 60 + (m2 || 0) - (h1 * 60 + (m1 || 0))) / 60);
-    total += diffH >= 8 ? diffH - 1 : diffH;
+    const diffH = Math.max(
+      0,
+      (h2 * 60 + (m2 || 0) - (h1 * 60 + (m1 || 0))) / 60
+    );
+    total += diffH >= 8 ? diffH - 1 : diffH; // desconta 1h se >= 8h
   }
   return Math.round(total);
 };
@@ -102,14 +124,26 @@ function normalizeTurmas(turmas = []) {
       .filter((d) => d.data)
       .sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : 0));
 
-    const encontrosCalc = datas.map((d) => ({ inicio: d.horario_inicio, fim: d.horario_fim }));
+    const encontrosCalc = datas.map((d) => ({
+      inicio: d.horario_inicio,
+      fim: d.horario_fim,
+    }));
     let ch = Number(t.carga_horaria);
-    if (!Number.isFinite(ch) || ch <= 0) ch = cargaHorariaFromEncontros(encontrosCalc) || 1;
+    if (!Number.isFinite(ch) || ch <= 0)
+      ch = cargaHorariaFromEncontros(encontrosCalc) || 1;
 
     const vagas = Number.isFinite(Number(t.vagas_total))
       ? Number(t.vagas_total)
       : Number(t.vagas);
     const vagasOk = Number.isFinite(vagas) && vagas > 0 ? vagas : 1;
+
+    // ✅ instrutores e assinante por TURMA
+    const instrutores = extractIds(
+      t.instrutores || t.instrutor || t.professores || []
+    );
+    const assinante_id = Number(
+      t.assinante_id ?? t.instrutor_assinante ?? t.assinante
+    );
 
     return clean({
       ...(Number.isFinite(Number(t.id)) ? { id: Number(t.id) } : {}),
@@ -117,14 +151,18 @@ function normalizeTurmas(turmas = []) {
       vagas_total: vagasOk,
       carga_horaria: ch,
       datas,
+      instrutores,
+      assinante_id: Number.isFinite(assinante_id) ? assinante_id : undefined,
     });
   });
 }
 
-/* ========= Restrição: normalização de registros ========= */
+/* ========= Restrição: normalização ========= */
 const normRegistro = (v) => String(v || "").replace(/\D/g, "");
 const normRegistros = (arr) =>
-  Array.from(new Set((arr || []).map(normRegistro).filter((r) => /^\d{6}$/.test(r))));
+  Array.from(
+    new Set((arr || []).map(normRegistro).filter((r) => /^\d{6}$/.test(r)))
+  );
 
 /* =============================
    Fetch auxiliares
@@ -162,6 +200,68 @@ async function fetchEventoCompleto(eventoId) {
 }
 
 /* =============================
+   Upload helpers (folder/programação)
+   — Agora com Authorization + cookies
+   ============================= */
+function getAuthToken() {
+  try {
+    return localStorage.getItem("token") || localStorage.getItem("authToken") || "";
+  } catch {
+    return "";
+  }
+}
+
+async function authFetch(url, opts = {}) {
+  const token = getAuthToken();
+  const headers = new Headers(opts.headers || {});
+  if (token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  // NÃO setar Content-Type com FormData
+  return fetch(url, {
+    ...opts,
+    headers,
+    credentials: "include",
+  });
+}
+
+async function uploadFolder(eventoId, file) {
+  if (!file) return;
+  const fd = new FormData();
+  fd.append("folder", file);
+  const resp = await authFetch(`/api/eventos/${eventoId}/folder`, {
+    method: "POST",
+    body: fd,
+  });
+  if (!resp.ok) {
+    let msg = "Falha ao enviar folder (imagem).";
+    try {
+      const data = await resp.json();
+      if (data?.erro || data?.message) msg = data.erro || data.message;
+    } catch {}
+    throw new Error(msg);
+  }
+}
+
+async function uploadProgramacao(eventoId, file) {
+  if (!file) return;
+  const fd = new FormData();
+  fd.append("programacao", file);
+  const resp = await authFetch(`/api/eventos/${eventoId}/programacao`, {
+    method: "POST",
+    body: fd,
+  });
+  if (!resp.ok) {
+    let msg = "Falha ao enviar programação (PDF).";
+    try {
+      const data = await resp.json();
+      if (data?.erro || data?.message) msg = data.erro || data.message;
+    } catch {}
+    throw new Error(msg);
+  }
+}
+
+/* =============================
    Modo “espelho” para PUT (merge com servidor)
    ============================= */
 function buildUpdateBody(baseServidor, dadosDoModal) {
@@ -172,27 +272,25 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
   body.descricao = (dadosDoModal?.descricao ?? baseServidor?.descricao ?? "").trim();
   body.local = (dadosDoModal?.local ?? baseServidor?.local ?? "").trim();
   body.tipo = (dadosDoModal?.tipo ?? baseServidor?.tipo ?? "").trim();
-  body.unidade_id = Number(dadosDoModal?.unidade_id ?? baseServidor?.unidade_id);
+
+  const uniId = Number(dadosDoModal?.unidade_id ?? baseServidor?.unidade_id);
+  if (Number.isFinite(uniId)) body.unidade_id = uniId;
+
   body.publico_alvo = (dadosDoModal?.publico_alvo ?? baseServidor?.publico_alvo ?? "").trim();
 
-  // Instrutor(es)
-  const instrutoresFromModal = extractInstrutorIds(dadosDoModal?.instrutor);
-  const instrutoresFromServer = extractInstrutorIds(baseServidor?.instrutor);
-  body.instrutor = instrutoresFromModal.length ? instrutoresFromModal : instrutoresFromServer;
-
-  // Restrição
+  // Restrição/visibilidade
   const restrito = Boolean(
     dadosDoModal?.restrito ??
       (typeof baseServidor?.restrito === "boolean" ? baseServidor.restrito : false)
   );
   body.restrito = restrito;
 
-  const modo = restrito
+  body.restrito_modo = restrito
     ? dadosDoModal?.restrito_modo ?? baseServidor?.restrito_modo ?? null
     : null;
-  body.restrito_modo = modo;
 
-  if (restrito && modo === "lista_registros") {
+  // lista de registros (opcional, legado)
+  if (restrito && body.restrito_modo === "lista_registros") {
     const fonteModal =
       (Array.isArray(dadosDoModal?.registros_permitidos) && dadosDoModal.registros_permitidos) ||
       (Array.isArray(dadosDoModal?.registros) && dadosDoModal.registros) ||
@@ -204,7 +302,18 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
     if (regs.length) body.registros_permitidos = regs;
   }
 
-  // Turmas
+  // ✅ Novos filtros de visibilidade
+  const cargosModal = extractStrs(dadosDoModal?.cargos_permitidos);
+  const cargosServer = extractStrs(baseServidor?.cargos_permitidos);
+  if (restrito && cargosModal.length) body.cargos_permitidos = cargosModal;
+  else if (restrito && cargosServer.length) body.cargos_permitidos = cargosServer;
+
+  const unidsModal = extractIds(dadosDoModal?.unidades_permitidas);
+  const unidsServer = extractIds(baseServidor?.unidades_permitidas);
+  if (restrito && unidsModal.length) body.unidades_permitidas = unidsModal;
+  else if (restrito && unidsServer.length) body.unidades_permitidas = unidsServer;
+
+  // Turmas (agora carregam instrutores e assinante)
   let turmasFonte = [];
   if (Array.isArray(dadosDoModal?.turmas) && dadosDoModal.turmas.length > 0) {
     turmasFonte = dadosDoModal.turmas;
@@ -217,7 +326,7 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
   return clean(body);
 }
 
-/* ---------------- HeaderHero (cor sólida; sem degradês) ---------------- */
+/* ---------------- HeaderHero ---------------- */
 function HeaderHero({ onCriar, onAtualizar, atualizando }) {
   return (
     <header className="relative isolate overflow-hidden bg-indigo-700 text-white" role="banner">
@@ -298,7 +407,7 @@ export default function GerenciarEventos() {
   const [loading, setLoading] = useState(true);
   const [modalAberto, setModalAberto] = useState(false);
   const [publishingId, setPublishingId] = useState(null);
-  const [salvando, setSalvando] = useState(false); // ✅ passa para o ModalEvento
+  const [salvando, setSalvando] = useState(false); // passa para o ModalEvento
   const liveRef = useRef(null);
 
   const setLive = (msg) => {
@@ -346,7 +455,6 @@ export default function GerenciarEventos() {
   };
 
   const abrirModalEditar = async (evento) => {
-    // abre com o que já temos
     setEventoSelecionado(evento);
     setModalAberto(true);
 
@@ -356,15 +464,8 @@ export default function GerenciarEventos() {
       if ((!turmas || turmas.length === 0) && evento?.id) {
         turmas = await fetchTurmasDoEvento(evento.id);
       }
-
       const base = (await fetchEventoCompleto(evento.id)) || evento;
-
-      const combinado = {
-        ...evento,
-        ...base,
-        turmas,
-      };
-
+      const combinado = { ...evento, ...base, turmas };
       setEventoSelecionado(combinado);
     })();
   };
@@ -381,6 +482,17 @@ export default function GerenciarEventos() {
     }
   };
 
+  // valida as turmas: se houver assinante, ele deve estar na lista de instrutores
+  function validarTurmasComInstrutores(turmasNorm) {
+    for (const t of turmasNorm) {
+      const instrs = Array.isArray(t.instrutores) ? t.instrutores : [];
+      if (t.assinante_id && !instrs.includes(Number(t.assinante_id))) {
+        return `O assinante selecionado na turma "${t.nome}" precisa estar entre os instrutores da turma.`;
+      }
+    }
+    return null;
+  }
+
   const salvarEvento = async (dadosDoModal) => {
     try {
       setSalvando(true);
@@ -390,7 +502,6 @@ export default function GerenciarEventos() {
       // ====== EDIÇÃO ======
       if (isEdicao) {
         let baseServidor = await fetchEventoCompleto(eventoSelecionado.id);
-
         if (!baseServidor) {
           const turmasDoEvento =
             Array.isArray(eventoSelecionado?.turmas) && eventoSelecionado.turmas.length
@@ -406,76 +517,34 @@ export default function GerenciarEventos() {
             tipo: eventoSelecionado?.tipo || "",
             unidade_id: eventoSelecionado?.unidade_id,
             publico_alvo: eventoSelecionado?.publico_alvo || "",
-            instrutor: extractInstrutorIds(eventoSelecionado?.instrutor),
             restrito: Boolean(eventoSelecionado?.restrito),
             restrito_modo: eventoSelecionado?.restrito_modo || null,
+            // novos arrays podem já vir do servidor:
+            cargos_permitidos: eventoSelecionado?.cargos_permitidos || [],
+            unidades_permitidas: eventoSelecionado?.unidades_permitidas || [],
           };
         }
 
         const body = buildUpdateBody(baseServidor, dadosDoModal);
 
-        if (!Array.isArray(body.instrutor) || body.instrutor.length === 0) {
-          toast.error("Selecione ao menos um instrutor.");
-          return;
-        }
-        if (!Array.isArray(body.turmas) || body.turmas.length === 0) {
-          toast.error("Inclua ao menos uma turma com campos obrigatórios.");
-          return;
-        }
-
-        try {
-          await apiPut(`/api/eventos/${eventoSelecionado.id}`, body);
-        } catch (err) {
-          // Fallback quando há inscritos
-          if (err?.status === 409 && err?.data?.erro === "TURMA_COM_INSCRITOS") {
-            toast.warn(
-              "Este evento tem turmas com inscritos. Vou salvar apenas dados gerais e a regra de restrição."
-            );
-
-            const fonteRegsModal =
-              (Array.isArray(dadosDoModal?.registros_permitidos) && dadosDoModal.registros_permitidos) ||
-              (Array.isArray(dadosDoModal?.registros) && dadosDoModal.registros) ||
-              [];
-
-            const regsEventOnly = normRegistros(
-              fonteRegsModal.length ? fonteRegsModal : baseServidor?.registros_permitidos || []
-            );
-
-            const bodyEventOnly = clean({
-              titulo: (dadosDoModal?.titulo ?? baseServidor?.titulo ?? "").trim(),
-              descricao: (dadosDoModal?.descricao ?? baseServidor?.descricao ?? "").trim(),
-              local: (dadosDoModal?.local ?? baseServidor?.local ?? "").trim(),
-              tipo: (dadosDoModal?.tipo ?? baseServidor?.tipo ?? "").trim(),
-              unidade_id: dadosDoModal?.unidade_id ?? baseServidor?.unidade_id,
-              publico_alvo: (dadosDoModal?.publico_alvo ?? baseServidor?.publico_alvo ?? "").trim(),
-              instrutor: extractInstrutorIds(
-                (Array.isArray(dadosDoModal?.instrutor) && dadosDoModal.instrutor.length
-                  ? dadosDoModal.instrutor
-                  : baseServidor?.instrutor) || []
-              ),
-              restrito: Boolean(
-                dadosDoModal?.restrito ??
-                  (typeof baseServidor?.restrito === "boolean" ? baseServidor.restrito : false)
-              ),
-              restrito_modo:
-                (dadosDoModal?.restrito ?? baseServidor?.restrito)
-                  ? dadosDoModal?.restrito_modo ?? baseServidor?.restrito_modo ?? null
-                  : null,
-              registros_permitidos:
-                (dadosDoModal?.restrito ?? baseServidor?.restrito) &&
-                (dadosDoModal?.restrito_modo ?? baseServidor?.restrito_modo) === "lista_registros"
-                  ? regsEventOnly
-                  : undefined,
-            });
-
-            await apiPut(`/api/eventos/${eventoSelecionado.id}`, bodyEventOnly);
-
-            await recarregarEventos();
-            toast.success("✅ Dados gerais e restrição atualizados. As turmas não foram alteradas.");
-            setModalAberto(false);
+        // validação soft: instrutores/assinante por turma
+        if (Array.isArray(body.turmas) && body.turmas.length > 0) {
+          const msg = validarTurmasComInstrutores(body.turmas);
+          if (msg) {
+            toast.error(msg);
             return;
           }
-          throw err;
+        }
+
+        // Sem fallback/travas: atualiza sempre
+        await apiPut(`/api/eventos/${eventoSelecionado.id}`, body);
+
+        // Uploads (folder/programação) se enviados
+        if (dadosDoModal?.folderFile instanceof File) {
+          await uploadFolder(eventoSelecionado.id, dadosDoModal.folderFile);
+        }
+        if (dadosDoModal?.programacaoFile instanceof File) {
+          await uploadProgramacao(eventoSelecionado.id, dadosDoModal.programacaoFile);
         }
 
         await recarregarEventos();
@@ -498,13 +567,7 @@ export default function GerenciarEventos() {
         publico_alvo: (dadosDoModal?.publico_alvo || "").trim(),
       };
 
-      const instrutores = extractInstrutorIds(dadosDoModal?.instrutor);
-      if (!instrutores.length) {
-        toast.error("Selecione ao menos um instrutor.");
-        return;
-      }
-
-      // usa exatamente as turmas vindas do modal; se vazio, cria uma mínima
+      // turmas (com instrutores e assinante)
       const turmas =
         Array.isArray(dadosDoModal?.turmas) && dadosDoModal.turmas.length
           ? normalizeTurmas(dadosDoModal.turmas)
@@ -517,8 +580,16 @@ export default function GerenciarEventos() {
                 horario_fim: hhmm(dadosDoModal?.horario_fim || "17:00"),
                 vagas_total: 1,
                 carga_horaria: 1,
+                instrutores: extractIds(dadosDoModal?.instrutores) || [], // caso venha separadamente
+                assinante_id: Number(dadosDoModal?.assinante_id),
               },
             ]);
+
+      const msgTurma = validarTurmasComInstrutores(turmas);
+      if (msgTurma) {
+        toast.error(msgTurma);
+        return;
+      }
 
       const restrito = Boolean(dadosDoModal?.restrito);
       const restrito_modo = restrito ? dadosDoModal?.restrito_modo || "todos_servidores" : null;
@@ -531,16 +602,41 @@ export default function GerenciarEventos() {
       const registros =
         restrito && restrito_modo === "lista_registros" ? normRegistros(regsFonte) : undefined;
 
+      const cargos_permitidos =
+        restrito && Array.isArray(dadosDoModal?.cargos_permitidos)
+          ? extractStrs(dadosDoModal.cargos_permitidos)
+          : undefined;
+
+      const unidades_permitidas =
+        restrito && Array.isArray(dadosDoModal?.unidades_permitidas)
+          ? extractIds(dadosDoModal.unidades_permitidas)
+          : undefined;
+
       const bodyCreate = clean({
         ...base,
-        instrutor: instrutores,
         turmas,
         restrito,
         restrito_modo,
         registros_permitidos: registros,
+        cargos_permitidos,
+        unidades_permitidas,
       });
 
-      await apiPost("/api/eventos", bodyCreate);
+      const criado = await apiPost("/api/eventos", bodyCreate);
+
+      // id do evento recém criado (tenta cobrir formatos de retorno)
+      const novoId =
+        Number(criado?.id) ||
+        Number(criado?.evento?.id) ||
+        Number(criado?.dados?.id);
+
+      // Uploads após criar
+      if (novoId && dadosDoModal?.folderFile instanceof File) {
+        await uploadFolder(novoId, dadosDoModal.folderFile);
+      }
+      if (novoId && dadosDoModal?.programacaoFile instanceof File) {
+        await uploadProgramacao(novoId, dadosDoModal.programacaoFile);
+      }
 
       await recarregarEventos();
       toast.success("✅ Evento salvo com sucesso.");
@@ -589,14 +685,14 @@ export default function GerenciarEventos() {
     }
   };
 
-  const anyLoading = loading;
+  const anyLoading = loading; // <- evita o typo “theconst”
 
   return (
     <main className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white overflow-x-hidden">
       {/* live region acessível */}
       <p ref={liveRef} className="sr-only" aria-live="polite" />
 
-      {/* Header hero (cor sólida) */}
+      {/* Header hero */}
       <HeaderHero onCriar={abrirModalCriar} onAtualizar={recarregarEventos} atualizando={anyLoading} />
 
       {/* barra de carregamento fina no topo */}
@@ -635,7 +731,7 @@ export default function GerenciarEventos() {
                   animate={{ opacity: 1, y: 0 }}
                   className="relative bg-white dark:bg-zinc-800 p-4 sm:p-5 rounded-2xl shadow border border-gray-200 dark:border-zinc-700 overflow-hidden min-w-0"
                 >
-                  {/* 🔶 Barra colorida superior (gradiente por status) */}
+                  {/* Barra colorida superior (gradiente por status) */}
                   <div className={`absolute top-0 left-0 right-0 h-1.5 ${bar}`} aria-hidden="true" />
 
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between min-w-0">
@@ -645,7 +741,7 @@ export default function GerenciarEventos() {
                         {ev.titulo}
                       </span>
 
-                      {/* Badge de publicação (sólida) */}
+                      {/* Badge de publicação */}
                       <span
                         className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border
                           ${
@@ -676,12 +772,22 @@ export default function GerenciarEventos() {
                           title={
                             ev.restrito_modo === "lista_registros"
                               ? "Restrito a uma lista de registros"
-                              : "Visível a todos os servidores (com registro cadastrado)"
+                              : ev.restrito_modo === "cargos"
+                              ? "Restrito por cargos"
+                              : ev.restrito_modo === "unidades"
+                              ? "Restrito por unidades"
+                              : "Visível a todos os servidores"
                           }
                           className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 border border-amber-300 dark:border-amber-800"
                         >
                           <Lock size={12} aria-hidden="true" />
-                          {ev.restrito_modo === "lista_registros" ? "Lista" : "Servidores"}
+                          {ev.restrito_modo === "lista_registros"
+                            ? "Lista"
+                            : ev.restrito_modo === "cargos"
+                            ? "Cargos"
+                            : ev.restrito_modo === "unidades"
+                            ? "Unidades"
+                            : "Servidores"}
                         </span>
                       )}
                     </div>
@@ -765,7 +871,7 @@ export default function GerenciarEventos() {
         onClose={() => setModalAberto(false)}
         onSalvar={salvarEvento}
         evento={eventoSelecionado}
-        salvando={salvando}           
+        salvando={salvando}
         onTurmaRemovida={() => recarregarEventos()}
       />
 

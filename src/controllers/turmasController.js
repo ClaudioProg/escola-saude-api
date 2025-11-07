@@ -69,6 +69,29 @@ function moda(values = []) {
   return best;
 }
 
+/* ===== helpers internos ===== */
+
+async function setAssinanteSilencioso(client, turmaId, instrutorAssinanteId) {
+  if (!Number.isFinite(Number(instrutorAssinanteId))) return;
+  // tenta coluna 'instrutor_assinante_id'
+  try {
+    await client.query(
+      `UPDATE turmas SET instrutor_assinante_id = $2 WHERE id = $1`,
+      [turmaId, instrutorAssinanteId]
+    );
+    return;
+  } catch (_) {}
+  // fallback: tenta 'assinante_instrutor_id'
+  try {
+    await client.query(
+      `UPDATE turmas SET assinante_instrutor_id = $2 WHERE id = $1`,
+      [turmaId, instrutorAssinanteId]
+    );
+  } catch (_) {
+    // ignora silenciosamente se não existir coluna
+  }
+}
+
 /* ===== 🎯 Criar turma ===== */
 // POST /api/turmas
 async function criarTurma(req, res) {
@@ -79,6 +102,8 @@ async function criarTurma(req, res) {
       nome,
       vagas_total = null,
       datas = [], // [{data:'YYYY-MM-DD', horario_inicio:'HH:MM', horario_fim:'HH:MM'}]
+      instrutores = [],       // 👈 novo: lista de IDs
+      instrutor_assinante_id  // 👈 novo: ID do instrutor que assina certificado
     } = req.body;
 
     if (!evento_id || !nome) {
@@ -154,6 +179,21 @@ async function criarTurma(req, res) {
       ]);
     }
 
+    // 👇 vincula instrutores na turma
+    if (Array.isArray(instrutores) && instrutores.length > 0) {
+      for (const instrutorId of instrutores) {
+        await client.query(
+          `INSERT INTO turma_instrutor (turma_id, instrutor_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+          [turma_id, instrutorId]
+        );
+      }
+    }
+
+    // 👇 define assinante da turma (silencioso)
+    if (instrutor_assinante_id) {
+      await setAssinanteSilencioso(client, turma_id, Number(instrutor_assinante_id));
+    }
+
     await client.query("COMMIT");
     return res.status(201).json({ turma_id });
   } catch (e) {
@@ -175,7 +215,13 @@ async function atualizarTurma(req, res) {
       return res.status(400).json({ erro: "TURMA_ID_INVALIDO" });
     }
 
-    const { nome, vagas_total = null, datas = [] } = req.body;
+    const {
+      nome,
+      vagas_total = null,
+      datas = [],
+      instrutores,             // opcional: lista para substituir vínculos
+      instrutor_assinante_id   // opcional: define/atualiza assinante
+    } = req.body;
 
     if (nome != null && !nomeOk(nome)) {
       return res.status(422).json({
@@ -244,6 +290,22 @@ async function atualizarTurma(req, res) {
       ]);
     }
 
+    // substituir vínculos de instrutores, se enviado
+    if (Array.isArray(instrutores)) {
+      await client.query(`DELETE FROM turma_instrutor WHERE turma_id = $1`, [turma_id]);
+      for (const instrutorId of instrutores) {
+        await client.query(
+          `INSERT INTO turma_instrutor (turma_id, instrutor_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+          [turma_id, instrutorId]
+        );
+      }
+    }
+
+    // atualizar assinante, se enviado
+    if (instrutor_assinante_id != null) {
+      await setAssinanteSilencioso(client, turma_id, Number(instrutor_assinante_id));
+    }
+
     await client.query("COMMIT");
     return res.json({ ok: true });
   } catch (e) {
@@ -255,46 +317,38 @@ async function atualizarTurma(req, res) {
   }
 }
 
-/* ===== ➕ Adicionar instrutor(es) a um evento ===== */
-// POST /api/eventos/:id/instrutores
+/* ===== ➕ Adicionar instrutor(es) à TURMA ===== */
+// POST /api/turmas/:id/instrutores
 async function adicionarInstrutor(req, res) {
-  const { id: evento_id } = req.params;
+  const turma_id = Number(req.params.id);
   const { instrutores } = req.body; // array de ids
 
+  if (!Number.isFinite(turma_id)) {
+    return res.status(400).json({ erro: "TURMA_ID_INVALIDO" });
+  }
   if (!Array.isArray(instrutores) || instrutores.length === 0) {
     return res.status(400).json({ erro: "Lista de instrutores inválida." });
   }
 
   try {
-    const eventoExiste = await db.query(
-      "SELECT id FROM eventos WHERE id = $1",
-      [evento_id]
-    );
-    if (eventoExiste.rowCount === 0) {
-      return res.status(404).json({ erro: "Evento não encontrado." });
-    }
+    const t = await db.query(`SELECT id FROM turmas WHERE id = $1`, [turma_id]);
+    if (t.rowCount === 0) return res.status(404).json({ erro: "Turma não encontrada." });
 
     for (const instrutor_id of instrutores) {
-      const existe = await db.query(
-        `SELECT 1 FROM evento_instrutor WHERE evento_id = $1 AND instrutor_id = $2`,
-        [evento_id, instrutor_id]
+      await db.query(
+        `INSERT INTO turma_instrutor (turma_id, instrutor_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [turma_id, instrutor_id]
       );
-      if (existe.rowCount === 0) {
-        await db.query(
-          `INSERT INTO evento_instrutor (evento_id, instrutor_id) VALUES ($1, $2)`,
-          [evento_id, instrutor_id]
-        );
-      }
     }
 
-    return res.status(201).json({ mensagem: "Instrutor(es) adicionados com sucesso." });
+    return res.status(201).json({ mensagem: "Instrutor(es) adicionados à turma com sucesso." });
   } catch (err) {
     console.error("❌ adicionarInstrutor erro:", err);
-    return res.status(500).json({ erro: "Erro ao adicionar instrutor." });
+    return res.status(500).json({ erro: "Erro ao adicionar instrutor à turma." });
   }
 }
 
-/* ===== 📋 Listar turmas por evento (com datas e vagas) ===== */
+/* ===== 📋 Listar turmas por evento (com datas, vagas e instrutores) ===== */
 // GET /api/eventos/:evento_id/turmas
 // Usa datas_turma para período/horários reais.
 async function listarTurmasPorEvento(req, res) {
@@ -317,7 +371,7 @@ async function listarTurmasPorEvento(req, res) {
       FROM turmas t
       JOIN eventos e ON e.id = t.evento_id
       WHERE t.evento_id = $1
-      ORDER BY t.data_inicio, t.id
+      ORDER BY t.data_inicio NULLS LAST, t.id
       `,
       [evento_id]
     );
@@ -350,7 +404,7 @@ async function listarTurmasPorEvento(req, res) {
       });
     }
 
-    // (3) Inscritos
+    // (3) Inscritos (detalhes)
     const inscritosResult = await db.query(
       `
       SELECT 
@@ -378,7 +432,24 @@ async function listarTurmasPorEvento(req, res) {
       });
     }
 
-    // (4) Montagem final
+    // (4) Instrutores por turma
+    const instrutoresResult = await db.query(
+      `
+      SELECT ti.turma_id, u.id, u.nome, u.email
+      FROM turma_instrutor ti
+      JOIN usuarios u ON u.id = ti.instrutor_id
+      WHERE ti.turma_id = ANY($1::int[])
+      ORDER BY ti.turma_id, u.nome
+      `,
+      [turmaIds]
+    );
+    const instrPorTurma = {};
+    for (const r of instrutoresResult.rows) {
+      if (!instrPorTurma[r.turma_id]) instrPorTurma[r.turma_id] = [];
+      instrPorTurma[r.turma_id].push({ id: r.id, nome: r.nome, email: r.email });
+    }
+
+    // (5) Montagem final
     const resposta = turmas
       .map((t) => {
         const datas = datasPorTurma[t.id] || [];
@@ -408,6 +479,7 @@ async function listarTurmasPorEvento(req, res) {
           carga_horaria: t.carga_horaria,
           carga_horaria_real,
           datas,
+          instrutores: instrPorTurma[t.id] || [],
           inscritos,
           inscritos_confirmados: totalInscritos,
           vagas_preenchidas: totalInscritos,
@@ -440,7 +512,7 @@ async function obterTurmasPorEvento(req, res) {
         t.carga_horaria
       FROM turmas t
       WHERE t.evento_id = $1
-      ORDER BY t.data_inicio, t.horario_inicio
+      ORDER BY t.data_inicio NULLS LAST, t.horario_inicio NULLS LAST
       `,
       [evento_id]
     );
@@ -470,9 +542,27 @@ async function obterTurmasPorEvento(req, res) {
       });
     }
 
+    // incluir instrutores por turma (útil no frontend leve)
+    const instrutoresResult = await db.query(
+      `
+      SELECT ti.turma_id, u.id, u.nome
+      FROM turma_instrutor ti
+      JOIN usuarios u ON u.id = ti.instrutor_id
+      WHERE ti.turma_id = ANY($1::int[])
+      ORDER BY ti.turma_id, u.nome
+      `,
+      [turmaIds]
+    );
+    const instrPorTurma = {};
+    for (const r of instrutoresResult.rows) {
+      if (!instrPorTurma[r.turma_id]) instrPorTurma[r.turma_id] = [];
+      instrPorTurma[r.turma_id].push({ id: r.id, nome: r.nome });
+    }
+
     const resposta = rows.map((t) => ({
       ...t,
       datas: datasPorTurma[t.id] || [],
+      instrutores: instrPorTurma[t.id] || [],
     }));
 
     return res.json(resposta);
@@ -490,7 +580,7 @@ async function listarTurmasDoInstrutor(req, res) {
     const usuarioId = req.user?.id;
     if (!usuarioId) return res.status(401).json({ erro: "Não autenticado." });
 
-    // (1) Turmas onde usuário é instrutor
+    // (1) Turmas onde usuário é instrutor (via turma_instrutor)
     const turmasResult = await db.query(
       `
       SELECT 
@@ -499,12 +589,14 @@ async function listarTurmasDoInstrutor(req, res) {
         t.data_inicio,
         t.data_fim,
         t.vagas_total,
+        t.carga_horaria,
         e.id     AS evento_id,
         e.titulo AS evento_titulo
-      FROM evento_instrutor ei
-      JOIN eventos e ON e.id = ei.evento_id
-      JOIN turmas t  ON t.evento_id = e.id
-      WHERE ei.instrutor_id = $1
+      FROM turma_instrutor ti
+      JOIN turmas t  ON t.id = ti.turma_id
+      JOIN eventos e ON e.id = t.evento_id
+      WHERE ti.instrutor_id = $1
+      ORDER BY t.data_inicio NULLS LAST, t.id
       `,
       [usuarioId]
     );
@@ -553,14 +645,28 @@ async function listarTurmasDoInstrutor(req, res) {
     );
 
     // (4) Presenças
-    const presencasResult = await db.query(
-      `
-      SELECT turma_id, usuario_id, data_presenca::date AS data, presente
-      FROM presencas
-      WHERE turma_id = ANY($1::int[])
-      `,
-      [turmaIds]
-    );
+    // Observação: alguns bancos têm 'data' e outros 'data_presenca'; aqui usamos data_presenca.
+    // Se o seu tiver 'data', ajuste conforme necessário ou crie uma VIEW padronizada.
+    let presencasResult;
+    try {
+      presencasResult = await db.query(
+        `
+        SELECT turma_id, usuario_id, data_presenca::date AS data, presente
+        FROM presencas
+        WHERE turma_id = ANY($1::int[])
+        `,
+        [turmaIds]
+      );
+    } catch {
+      presencasResult = await db.query(
+        `
+        SELECT turma_id, usuario_id, data::date AS data, presente
+        FROM presencas
+        WHERE turma_id = ANY($1::int[])
+        `,
+        [turmaIds]
+      );
+    }
 
     // index de presenças p/ lookup rápido
     const mapaPresencas = {};
@@ -590,7 +696,7 @@ async function listarTurmasDoInstrutor(req, res) {
           const datasPresenca = datas.map((d) => {
             const dataISO = d.data;
             const hoje = new Date();
-            const dataAula = new Date(`${dataISO}T12:00:00`); // meio-dia evita problemas de DST
+            const dataAula = new Date(`${dataISO}T12:00:00`); // meio-dia evita DST
             const chave = `${turma.id}-${inscrito.usuario_id}-${dataISO}`;
 
             const presente = !!mapaPresencas[chave];
@@ -628,15 +734,17 @@ async function listarTurmasDoInstrutor(req, res) {
 /* ===== 👥 Listar instrutor(es) da turma ===== */
 // GET /api/turmas/:id/instrutores
 async function listarInstrutorDaTurma(req, res) {
-  const { id: turma_id } = req.params;
+  const turma_id = Number(req.params.id);
+
+  if (!Number.isFinite(turma_id)) {
+    return res.status(400).json({ erro: "TURMA_ID_INVALIDO" });
+  }
 
   try {
-    const turma = await db.query(`SELECT evento_id FROM turmas WHERE id = $1`, [turma_id]);
-    if (turma.rowCount === 0) {
+    const t = await db.query(`SELECT id FROM turmas WHERE id = $1`, [turma_id]);
+    if (t.rowCount === 0) {
       return res.status(404).json({ erro: "Turma não encontrada." });
     }
-
-    const evento_id = turma.rows[0].evento_id;
 
     const resultado = await db.query(
       `
@@ -644,18 +752,18 @@ async function listarInstrutorDaTurma(req, res) {
         u.id,
         u.nome,
         u.email
-      FROM evento_instrutor ei
-      JOIN usuarios u ON ei.instrutor_id = u.id
-      WHERE ei.evento_id = $1
+      FROM turma_instrutor ti
+      JOIN usuarios u ON ti.instrutor_id = u.id
+      WHERE ti.turma_id = $1
       ORDER BY u.nome
       `,
-      [evento_id]
+      [turma_id]
     );
 
     return res.json(resultado.rows);
   } catch (err) {
     console.error("❌ listarInstrutorDaTurma erro:", err);
-    return res.status(500).json({ erro: "Erro ao listar instrutor." });
+    return res.status(500).json({ erro: "Erro ao listar instrutor(es) da turma." });
   }
 }
 
@@ -701,14 +809,17 @@ async function excluirTurma(req, res) {
       await client.query("DELETE FROM inscricoes WHERE turma_id = $1", [turmaId]);
     }
 
-    // 4) exclui datas_turma
+    // 4) exclui vínculos de instrutores
+    await client.query("DELETE FROM turma_instrutor WHERE turma_id = $1", [turmaId]);
+
+    // 5) exclui datas_turma
     try {
       await client.query("DELETE FROM datas_turma WHERE turma_id = $1", [turmaId]);
     } catch (errDT) {
       logDev("excluirTurma: datas_turma ausente/legado:", errDT.message);
     }
 
-    // 5) exclui a própria turma
+    // 6) exclui a própria turma
     const delTurma = await client.query("DELETE FROM turmas WHERE id = $1", [turmaId]);
     if (delTurma.rowCount === 0) {
       await client.query("ROLLBACK");
@@ -739,9 +850,9 @@ async function obterDetalhesTurma(req, res) {
         COALESCE(
           (
             SELECT string_agg(DISTINCT u.nome, ', ' ORDER BY u.nome)
-            FROM evento_instrutor ei
-            JOIN usuarios u ON u.id = ei.instrutor_id
-            WHERE ei.evento_id = e.id
+            FROM turma_instrutor ti
+            JOIN usuarios u ON u.id = ti.instrutor_id
+            WHERE ti.turma_id = t.id
           ),
           'Instrutor não definido'
         ) AS nome_instrutor
@@ -804,27 +915,49 @@ async function listarTurmasComUsuarios(req, res) {
     }
 
     // Inscritos + flag presença
-    const inscritosResult = await db.query(
-      `
-      SELECT 
-        i.turma_id,
-        u.id AS usuario_id,
-        u.nome,
-        u.email,
-        u.cpf,
-        EXISTS (
-          SELECT 1 FROM presencas p
-          WHERE p.usuario_id = u.id
-            AND p.turma_id   = i.turma_id
-            AND p.presente   = TRUE
-        ) AS presente
-      FROM inscricoes i
-      JOIN usuarios u ON u.id = i.usuario_id
-      WHERE i.turma_id = ANY($1::int[])
-      ORDER BY u.nome
-      `,
-      [turmaIds]
-    );
+    let inscritosResult;
+    try {
+      inscritosResult = await db.query(
+        `
+        SELECT 
+          i.turma_id,
+          u.id AS usuario_id,
+          u.nome,
+          u.email,
+          u.cpf,
+          EXISTS (
+            SELECT 1 FROM presencas p
+            WHERE p.usuario_id = u.id
+              AND p.turma_id   = i.turma_id
+              AND p.presente   = TRUE
+          ) AS presente
+        FROM inscricoes i
+        JOIN usuarios u ON u.id = i.usuario_id
+        WHERE i.turma_id = ANY($1::int[])
+        ORDER BY u.nome
+        `,
+        [turmaIds]
+      );
+    } catch {
+      // fallback se a view/coluna variar
+      inscritosResult = await db.query(
+        `
+        SELECT 
+          i.turma_id,
+          u.id AS usuario_id,
+          u.nome,
+          u.email,
+          u.cpf,
+          FALSE AS presente
+        FROM inscricoes i
+        JOIN usuarios u ON u.id = i.usuario_id
+        WHERE i.turma_id = ANY($1::int[])
+        ORDER BY u.nome
+        `,
+        [turmaIds]
+      );
+    }
+
     const inscritosPorTurma = {};
     for (const row of inscritosResult.rows) {
       if (!inscritosPorTurma[row.turma_id]) inscritosPorTurma[row.turma_id] = [];
@@ -838,15 +971,17 @@ async function listarTurmasComUsuarios(req, res) {
     }
 
     const resposta = turmas
-      .map((t) => ({
-        id: t.id,
-        nome: t.nome,
-        evento_id: t.evento_id,
-        titulo_evento: t.titulo_evento,
-        data_inicio: minDataPorTurma[t.id] || null,
-        data_fim: maxDataPorTurma[t.id] || null,
-        usuarios: inscritosPorTurma[t.id] || [],
-      }))
+      .map((t) => ([
+        {
+          id: t.id,
+          nome: t.nome,
+          evento_id: t.evento_id,
+          titulo_evento: t.titulo_evento,
+          data_inicio: minDataPorTurma[t.id] || null,
+          data_fim: maxDataPorTurma[t.id] || null,
+          usuarios: inscritosPorTurma[t.id] || [],
+        }
+      ][0]))
       .sort((a, b) => String(b.data_inicio || "").localeCompare(String(a.data_inicio || ""))); // mais novo primeiro
 
     return res.json(resposta);
@@ -862,7 +997,7 @@ module.exports = {
   atualizarTurma,
   excluirTurma,
   listarTurmasPorEvento,
-  adicionarInstrutor,
+  adicionarInstrutor,         // agora por TURMA
   listarInstrutorDaTurma,
   obterDetalhesTurma,
   listarTurmasComUsuarios,

@@ -13,6 +13,9 @@ import {
 import { apiGet, apiPost, apiDelete } from "../services/api";
 import { Trash2, CalendarDays, Clock, FileText } from "lucide-react";
 
+/* ===== NOVO: abre 30min antes do início ===== */
+const MINUTOS_ANTECIPACAO = 30;
+
 /* ───────────────── Helpers ───────────────── */
 const ymd = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
 const hhmm = (s, fb = "00:00") =>
@@ -529,7 +532,8 @@ export default function ListaTurmasPresenca({
                                                 : false;
 
                                               const inicioAulaDT = new Date(`${dataISO}T${hiDia}:00`);
-                                              const abreJanela = new Date(inicioAulaDT.getTime() + 60 * 60 * 1000);
+                                              // ⬅️ ALTERADO: 30 min antes do início
+                                              const abreJanela = new Date(inicioAulaDT.getTime() - MINUTOS_ANTECIPACAO * 60 * 1000);
                                               const now = new Date();
 
                                               const hfSeguro = hhmm(turma.horario_fim, "23:59");
@@ -626,7 +630,8 @@ export default function ListaTurmasPresenca({
                                     const hfDia = dGrade?.hf || hf;
 
                                     const inicioDia = new Date(`${dataAtiva}T${hiDia}:00`);
-                                    const abreJanela = new Date(inicioDia.getTime() + 60 * 60 * 1000);
+                                    // ⬅️ ALTERADO: 30 min antes do início
+                                    const abreJanela = new Date(inicioDia.getTime() - MINUTOS_ANTECIPACAO * 60 * 1000);
                                     const agoraLocal = new Date();
                                     const antesDaJanela = agoraLocal < abreJanela;
 
@@ -682,7 +687,8 @@ export default function ListaTurmasPresenca({
                                               </div>
                                               {antesDaJanela && (
                                                 <div className="text-[11px] text-amber-600 dark:text-amber-300 mt-1">
-                                                  Confirmação manual libera ~1h após o início da aula.
+                                                  {/* ⬅️ TEXTO ATUALIZADO */}
+                                                  Confirmação manual libera 30 min antes do início.
                                                 </div>
                                               )}
                                             </div>
@@ -759,6 +765,14 @@ export default function ListaTurmasPresenca({
                                                     }
                                                   }
 
+                                                  // habilita confirmar dentro da janela: [início-30min, fim+15dias]
+                                                  const inicioDiaDT = new Date(`${dataAtiva}T${hiDia}:00`);
+                                                  const abreJanela = new Date(inicioDiaDT.getTime() - MINUTOS_ANTECIPACAO * 60 * 1000); // ⬅️ 30min antes
+                                                  const fimDiaDT = new Date(`${df || dataAtiva}T${hfDia}:00`);
+                                                  const fimMais15 = new Date((df ? fimDiaDT : inicioDiaDT).getTime() + 15 * 24 * 60 * 60 * 1000);
+                                                  const agoraLocal2 = new Date();
+                                                  const podeConfirmar = !presente && agoraLocal2 >= abreJanela && agoraLocal2 <= fimMais15;
+
                                                   return (
                                                     <tr key={`${u.id}-${dataAtiva}`} className="border-t border-zinc-200 dark:border-zinc-800">
                                                       <td className="py-2 pr-4 whitespace-nowrap overflow-hidden text-ellipsis">{u.nome}</td>
@@ -766,7 +780,7 @@ export default function ListaTurmasPresenca({
                                                       <td className="py-2 pr-4">{statusTxt}</td>
                                                       <td className="py-2 pr-4">{confirmadoStr}</td>
                                                       <td className="py-2 pr-4">
-                                                        {!presente && !antesDaJanela ? (
+                                                        {podeConfirmar ? (
                                                           <button
                                                             onClick={() => confirmarPresenca(dataAtiva, turma.id, u.id, u.nome)}
                                                             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/40"

@@ -25,8 +25,7 @@ function traduzPgError(err) {
 /* =============== LISTAR TODOS OS USUÁRIOS (ADMIN) =============== */
 async function listarUsuarios(req, res) {
   try {
-    const { rows } = await db.query(
-      `
+    const { rows } = await db.query(`
       SELECT
         u.id,
         u.nome,
@@ -39,7 +38,8 @@ async function listarUsuarios(req, res) {
         u.escolaridade_id,
         u.cargo_id,
         u.deficiencia_id,
-        -- nomes quando existirem nas tabelas de apoio (ajuste os nomes se forem diferentes)
+        -- nomes quando existirem nas tabelas de apoio
+        un.sigla AS unidade_sigla,
         un.nome  AS unidade_nome,
         es.nome  AS escolaridade_nome,
         ca.nome  AS cargo_nome,
@@ -50,10 +50,13 @@ async function listarUsuarios(req, res) {
       LEFT JOIN cargos         ca ON ca.id = u.cargo_id
       LEFT JOIN deficiencias   de ON de.id = u.deficiencia_id
       ORDER BY u.nome ASC
-      `
-    );
+    `);
 
-    const data = rows.map((u) => ({ ...u, perfil: toPerfilArray(u.perfil) }));
+    // ⚠️ Se o front ainda espera string em u.perfil, NÃO converta aqui.
+    // Se você já adaptou o front para aceitar array, pode aplicar a conversão:
+    // const data = rows.map(u => ({ ...u, perfil: toPerfilArray(u.perfil) }));
+    const data = rows; // mantém como vem do banco (CSV)
+
     res.json(data);
   } catch (err) {
     console.error("❌ Erro ao listar usuários:", err);
@@ -86,6 +89,7 @@ async function buscarUsuarioPorId(req, res) {
         u.escolaridade_id,
         u.cargo_id,
         u.deficiencia_id,
+        un.sigla AS unidade_sigla,
         un.nome  AS unidade_nome,
         es.nome  AS escolaridade_nome,
         ca.nome  AS cargo_nome,

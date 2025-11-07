@@ -256,6 +256,8 @@ async function _gerarPdfFisico({
   const dataHojeExtenso = dataExtensoBR(new Date());
   const cargaTexto      = horasTotal > 0 ? horasTotal : TURMA.carga_horaria;
   const tituloEvento    = TURMA.titulo || "evento";
+  const turmaNome =
+    TURMA.turma_nome || TURMA.nome_turma || TURMA.nome || `Turma #${turma_id}`;
 
   const doc = new PDFDocument({ size: "A4", layout: "landscape", margin: 40 });
   const writeStream = fs.createWriteStream(caminho);
@@ -314,11 +316,11 @@ async function _gerarPdfFisico({
   const corpoTexto =
     tipo === "instrutor"
       ? (mesmoDia
-          ? `Participou como instrutor do evento "${tituloEvento}", realizado em ${dataInicioBR}, com carga horária total de ${cargaTexto} horas.`
-          : `Participou como instrutor do evento "${tituloEvento}", realizado de ${dataInicioBR} a ${dataFimBR}, com carga horária total de ${cargaTexto} horas.`)
+          ? `Participou como instrutor do evento "${tituloEvento}" - "${turmaNome}", realizado em ${dataInicioBR}, com carga horária total de ${cargaTexto} horas.`
+          : `Participou como instrutor do evento "${tituloEvento}" - "${turmaNome}", realizado de ${dataInicioBR} a ${dataFimBR}, com carga horária total de ${cargaTexto} horas.`)
       : (mesmoDia
-          ? `Participou do evento "${tituloEvento}", realizado em ${dataInicioBR}, com carga horária total de ${cargaTexto} horas.`
-          : `Participou do evento "${tituloEvento}", realizado de ${dataInicioBR} a ${dataFimBR}, com carga horária total de ${cargaTexto} horas.`);
+          ? `Participou do evento "${tituloEvento}" - "${turmaNome}", realizado em ${dataInicioBR}, com carga horária total de ${cargaTexto} horas.`
+          : `Participou do evento "${tituloEvento}" - "${turmaNome}", realizado de ${dataInicioBR} a ${dataFimBR}, com carga horária total de ${cargaTexto} horas.`);
 
   doc.moveDown(1);
   doc.font("AlegreyaSans-Regular").fontSize(15)
@@ -358,41 +360,47 @@ async function _gerarPdfFisico({
     let nomeInstrutor = "Instrutor(a)";
     let assinaturaInstrutorBase64 = null;
     try {
+      // 🔄 NOVO: busca instrutor(es) da TURMA priorizando quem é assinante
       const { rows } = await db.query(`
-        SELECT u.nome AS nome_instrutor, a.imagem_base64
-          FROM evento_instrutor ei
-          JOIN usuarios u         ON u.id = ei.instrutor_id
-          LEFT JOIN assinaturas a ON a.usuario_id = ei.instrutor_id
-         WHERE ei.evento_id = $1
-         ORDER BY ei.instrutor_id ASC
+        SELECT u.nome AS nome_instrutor,
+               a.imagem_base64,
+               ti.is_assinante,
+               ti.ordem_assinatura
+          FROM turma_instrutor ti
+          JOIN usuarios u ON u.id = ti.instrutor_id
+     LEFT JOIN assinaturas a ON a.usuario_id = ti.instrutor_id
+         WHERE ti.turma_id = $1
+      ORDER BY ti.is_assinante DESC,
+               ti.ordem_assinatura ASC NULLS LAST,
+               ti.criado_em ASC
          LIMIT 1
-      `, [Number(evento_id)]);
+      `, [Number(turma_id)]);
       nomeInstrutor = rows[0]?.nome_instrutor || nomeInstrutor;
       assinaturaInstrutorBase64 = rows[0]?.imagem_base64 || null;
     } catch (e) {
-      console.warn("⚠️ Erro ao obter instrutor do evento:", e.message);
+      console.warn("⚠️ Erro ao obter instrutor da turma:", e.message);
     }
 
-        const SIGN_W = 150;
-const signX = RIGHT.x + (RIGHT.w - SIGN_W) / 2;
-const signY = baseY - 50;
-const SIGN_BOX = { x: signX, y: signY, w: SIGN_W };
+    const SIGN_W = 150;
+    const signX = RIGHT.x + (RIGHT.w - SIGN_W) / 2;
+    const signY = baseY - 50;
+    const SIGN_BOX = { x: signX, y: signY, w: SIGN_W };
 
-let desenhouAssinatura = false;
-if (assinaturaInstrutorBase64 && /^data:image\/(png|jpe?g|webp);base64,/.test(assinaturaInstrutorBase64)) {
-  try {
-    const buf = Buffer.from(assinaturaInstrutorBase64.split(",")[1], "base64");
-    // imagem dentro do mesmo box (largura fixa)
-    doc.image(buf, SIGN_BOX.x, SIGN_BOX.y, { width: SIGN_BOX.w });
-    desenhouAssinatura = true;
-  } catch (e) {
-    console.warn("⚠️ Assinatura do instrutor inválida (fallback cursivo):", e.message);
-  }
-}
-if (!desenhouAssinatura) {
-  // ✍️ sempre caberá dentro do SIGN_W
-  drawSignatureText(doc, nomeInstrutor, SIGN_BOX, { maxFont: 34, minFont: 16 });
-}
+    let desenhouAssinatura = false;
+    if (assinaturaInstrutorBase64 && /^data:image\/(png|jpe?g|webp);base64,/.test(assinaturaInstrutorBase64)) {
+      try {
+        const buf = Buffer.from(assinaturaInstrutorBase64.split(",")[1], "base64");
+        // imagem dentro do mesmo box (largura fixa)
+        doc.image(buf, SIGN_BOX.x, SIGN_BOX.y, { width: SIGN_BOX.w });
+        desenhouAssinatura = true;
+      } catch (e) {
+        console.warn("⚠️ Assinatura do instrutor inválida (fallback cursivo):", e.message);
+      }
+    }
+    if (!desenhouAssinatura) {
+      // ✍️ sempre caberá dentro do SIGN_W
+      drawSignatureText(doc, nomeInstrutor, SIGN_BOX, { maxFont: 34, minFont: 16 });
+    }
 
     // Nome impresso e cargo (sempre)
     doc.font("AlegreyaSans-Bold").fontSize(20)
@@ -444,6 +452,7 @@ async function gerarCertificado(req, res) {
       `
       SELECT 
         e.titulo, 
+        t.nome AS turma_nome,
         t.horario_inicio,
         t.horario_fim,
         t.data_inicio,
@@ -474,13 +483,13 @@ async function gerarCertificado(req, res) {
 
     // 🔐 Regras/autorizações por tipo
     if (tipo === "instrutor") {
-      // precisa estar vinculado ao evento
+      // ✅ precisa estar vinculado à TURMA
       const vinc = await db.query(
-        `SELECT 1 FROM evento_instrutor WHERE evento_id = $1 AND instrutor_id = $2 LIMIT 1`,
-        [Number(evento_id), Number(usuario_id)]
+        `SELECT 1 FROM turma_instrutor WHERE turma_id = $1 AND instrutor_id = $2 LIMIT 1`,
+        [Number(turma_id), Number(usuario_id)]
       );
       if (vinc.rowCount === 0) {
-        return res.status(403).json({ erro: "Você não está vinculado como instrutor neste evento." });
+        return res.status(403).json({ erro: "Você não está vinculado como instrutor nesta turma." });
       }
       // turma deve estar encerrada
       const fimTS = new Date(`${String(TURMA.data_fim).slice(0,10)}T${(TURMA.horario_fim || "23:59").slice(0,5)}:00`);
@@ -714,8 +723,15 @@ async function baixarCertificado(req, res) {
 
       // Carrega dados
       const eventoResult = await db.query(
-        `SELECT e.titulo, t.horario_inicio, t.horario_fim, t.data_inicio, t.data_fim, t.carga_horaria
-           FROM eventos e JOIN turmas t ON t.evento_id = e.id
+        `SELECT e.titulo,
+                t.nome AS turma_nome,
+                t.horario_inicio,
+                t.horario_fim,
+                t.data_inicio,
+                t.data_fim,
+                t.carga_horaria
+           FROM eventos e
+           JOIN turmas t ON t.evento_id = e.id
           WHERE e.id = $1 AND t.id = $2`,
         [cert.evento_id, cert.turma_id]
       );
@@ -929,17 +945,30 @@ async function listarCertificadosInstrutorElegiveis(req, res) {
       return res.status(400).json({ erro: "usuario_id ausente" });
     }
     const result = await db.query(
-      `SELECT t.id AS turma_id, e.id AS evento_id, e.titulo AS evento, t.nome AS nome_turma,
-              t.data_inicio, t.data_fim, t.horario_fim, c.id AS certificado_id, c.arquivo_pdf,
-              (c.arquivo_pdf IS NOT NULL) AS ja_gerado
-       FROM evento_instrutor ei
-       JOIN eventos e ON e.id = ei.evento_id
-       JOIN turmas t  ON t.evento_id = e.id
-       LEFT JOIN certificados c
-         ON c.usuario_id = $1 AND c.evento_id = e.id AND c.turma_id = t.id AND c.tipo = 'instrutor'
-       WHERE ei.instrutor_id = $1
-         AND to_timestamp(t.data_fim || ' ' || COALESCE(t.horario_fim,'23:59:59'),'YYYY-MM-DD HH24:MI:SS') < NOW()
-       ORDER BY t.data_fim DESC`,
+      `
+      SELECT
+        t.id AS turma_id,
+        e.id AS evento_id,
+        e.titulo AS evento,
+        t.nome AS nome_turma,
+        t.data_inicio,
+        t.data_fim,
+        t.horario_fim,
+        c.id AS certificado_id,
+        c.arquivo_pdf,
+        (c.arquivo_pdf IS NOT NULL) AS ja_gerado
+      FROM turma_instrutor ti
+      JOIN turmas t ON t.id = ti.turma_id
+      JOIN eventos e ON e.id = t.evento_id
+ LEFT JOIN certificados c
+        ON c.usuario_id = $1
+       AND c.evento_id = e.id
+       AND c.turma_id  = t.id
+       AND c.tipo      = 'instrutor'
+     WHERE ti.instrutor_id = $1
+       AND (t.data_fim::text || ' ' || COALESCE(t.horario_fim,'23:59'))::timestamp < NOW()
+     ORDER BY t.data_fim DESC
+      `,
       [instrutor_id]
     );
     return res.json(result.rows);
@@ -965,7 +994,7 @@ async function resetTurma(req, res) {
     await fsp.rm(pasta, { recursive: true, force: true });
 
     // 🗑️ 2) Limpa registros do banco
-    await db.none(
+    await db.query(
       `UPDATE certificados
          SET arquivo_pdf = NULL,
              atualizado_em = NOW()
@@ -974,7 +1003,7 @@ async function resetTurma(req, res) {
     );
 
     // (opcional) limpa cache
-    await db.none("DELETE FROM certificados_cache WHERE turma_id = $1", [id]).catch(() => {});
+    await db.query("DELETE FROM certificados_cache WHERE turma_id = $1", [id]).catch(() => {});
 
     console.log(`[RESET] Concluído para turma ${id}`);
     res.json({ ok: true, turma_id: id, resetado: true });

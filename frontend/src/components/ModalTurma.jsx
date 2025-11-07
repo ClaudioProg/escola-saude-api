@@ -1,7 +1,7 @@
 /* eslint-disable no-console */
 // 📁 src/components/ModalTurma.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CalendarDays, Clock, Hash, Type, PlusCircle, Trash2 } from "lucide-react";
+import { CalendarDays, Clock, Hash, Type, PlusCircle, Trash2, Users } from "lucide-react";
 import { toast } from "react-toastify";
 import ModalBase from "./ModalBase";
 
@@ -68,12 +68,26 @@ const encontrosDoInitial = (t) => {
   return [{ data: "", inicio: "", fim: "" }];
 };
 
+const extractIds = (arr) =>
+  Array.isArray(arr) ? arr.map((v) => Number(v?.id ?? v)).filter((n) => Number.isFinite(n)) : [];
+
 /* ===================== Componente ===================== */
-export default function ModalTurma({ isOpen, onClose, onSalvar, initialTurma = null, onExcluir }) {
-  // estados controlados pelo usuário (não devem ser sobrescritos enquanto digita)
+export default function ModalTurma({
+  isOpen,
+  onClose,
+  onSalvar,
+  initialTurma = null,
+  onExcluir,
+  usuarios = [], // <- recebido do ModalEvento para montar selects
+}) {
+  // estados controlados pelo usuário
   const [nome, setNome] = useState("");
   const [vagasTotal, setVagasTotal] = useState("");
   const [encontros, setEncontros] = useState([{ data: "", inicio: "", fim: "" }]);
+
+  // instrutores da turma e assinante
+  const [instrutoresSel, setInstrutoresSel] = useState([""]);
+  const [assinanteId, setAssinanteId] = useState("");
 
   // hidratar apenas ao ABRIR (ou quando muda o id)
   const refHydratedOpen = useRef(false);
@@ -84,14 +98,29 @@ export default function ModalTurma({ isOpen, onClose, onSalvar, initialTurma = n
       setNome(initialTurma?.nome || "");
       setVagasTotal(initialTurma?.vagas_total != null ? String(initialTurma.vagas_total) : "");
       setEncontros(encontrosDoInitial(initialTurma));
+
+      // hidratar instrutores e assinante
+      const ids = extractIds(initialTurma?.instrutores);
+      setInstrutoresSel(ids.length ? ids.map(String) : [""]);
+      setAssinanteId(
+        Number.isFinite(Number(initialTurma?.assinante_id)) ? String(initialTurma.assinante_id) : ""
+      );
+
       refHydratedOpen.current = true;
       setTimeout(() => autosizeNome(), 0);
     }
     if (!isOpen) {
       refHydratedOpen.current = false; // permite reidratar quando abrir novamente
     }
-    // reidrata se trocar de turma (id diferente) enquanto aberto
-  }, [isOpen, initialKey]); // ← NÃO depende do objeto inteiro
+  }, [isOpen, initialKey]);
+
+  // se assinante sair da lista de instrutores, limpar
+  useEffect(() => {
+    const setIds = new Set(instrutoresSel.filter(Boolean).map(String));
+    if (assinanteId && !setIds.has(String(assinanteId))) {
+      setAssinanteId("");
+    }
+  }, [instrutoresSel, assinanteId]);
 
   // auto-resize do título
   const refNome = useRef(null);
@@ -128,6 +157,41 @@ export default function ModalTurma({ isOpen, onClose, onSalvar, initialTurma = n
     setEncontros((prev) => prev.map((e, i) => (i === idx ? { ...e, [field]: value } : e)));
   };
 
+  /* ======= Instrutores / Assinante ======= */
+  const instrutoresOpcoes = useMemo(() => {
+    return (usuarios || [])
+      .filter((u) => {
+        const perfil = Array.isArray(u.perfil) ? u.perfil.join(",") : String(u.perfil || "");
+        const p = perfil.toLowerCase();
+        return p.includes("instrutor") || p.includes("administrador");
+      })
+      .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
+  }, [usuarios]);
+
+  const getInstrutorDisponivel = (index) => {
+    const selecionados = instrutoresSel.map(String);
+    const atual = selecionados[index];
+    return instrutoresOpcoes.filter(
+      (i) => !selecionados.includes(String(i.id)) || String(i.id) === String(atual)
+    );
+  };
+
+  const handleSelecionarInstrutor = (index, valor) => {
+    const nova = [...instrutoresSel];
+    nova[index] = valor;
+    setInstrutoresSel(nova);
+  };
+  const adicionarInstrutor = () => setInstrutoresSel((l) => [...l, ""]);
+  const removerInstrutor = (index) => {
+    const nova = instrutoresSel.filter((_, i) => i !== index);
+    setInstrutoresSel(nova.length ? nova : [""]);
+  };
+
+  const assinanteOpcoes = useMemo(() => {
+    const ids = new Set(instrutoresSel.filter(Boolean).map((x) => Number(x)));
+    return instrutoresOpcoes.filter((u) => ids.has(Number(u.id)));
+  }, [instrutoresSel, instrutoresOpcoes]);
+
   /* validação/salvar */
   const validar = () => {
     if (!nome.trim()) return toast.warning("Informe o nome da turma."), false;
@@ -144,12 +208,29 @@ export default function ModalTurma({ isOpen, onClose, onSalvar, initialTurma = n
       if (h2 * 60 + (m2 || 0) <= h1 * 60 + (m1 || 0))
         return toast.error(`Horários inválidos no encontro #${i + 1}.`), false;
     }
+
+    const instrSel = instrutoresSel
+      .map((v) => Number(String(v).trim()))
+      .filter((id) => Number.isFinite(id));
+    if (instrSel.length === 0) return toast.error("Selecione ao menos um instrutor para a turma."), false;
+
+    if (!assinanteId) return toast.error("Selecione o assinante da turma."), false;
+
+    if (!instrSel.includes(Number(assinanteId))) {
+      return toast.error("O assinante precisa estar entre os instrutores selecionados."), false;
+    }
+
     return true;
   };
 
   const montarPayload = () => {
     const horario_inicio_base = hhmm(encontrosOrdenados[0]?.inicio, "08:00");
     const horario_fim_base = hhmm(encontrosOrdenados[0]?.fim, "17:00");
+
+    const instrSel = instrutoresSel
+      .map((v) => Number(String(v).trim()))
+      .filter((id) => Number.isFinite(id));
+
     return {
       ...(initialTurma?.id ? { id: initialTurma.id } : {}),
       nome: nome.trim(),
@@ -159,8 +240,18 @@ export default function ModalTurma({ isOpen, onClose, onSalvar, initialTurma = n
       data_fim,
       horario_inicio: horario_inicio_base,
       horario_fim: horario_fim_base,
-      encontros: encontrosOrdenados.map((e) => ({ data: e.data, inicio: hhmm(e.inicio, horario_inicio_base), fim: hhmm(e.fim, horario_fim_base) })),
-      datas: encontrosOrdenados.map((e) => ({ data: e.data, horario_inicio: hhmm(e.inicio, horario_inicio_base), horario_fim: hhmm(e.fim, horario_fim_base) })),
+      encontros: encontrosOrdenados.map((e) => ({
+        data: e.data,
+        inicio: hhmm(e.inicio, horario_inicio_base),
+        fim: hhmm(e.fim, horario_fim_base),
+      })),
+      datas: encontrosOrdenados.map((e) => ({
+        data: e.data,
+        horario_inicio: hhmm(e.inicio, horario_inicio_base),
+        horario_fim: hhmm(e.fim, horario_fim_base),
+      })),
+      instrutores: instrSel,
+      assinante_id: Number(assinanteId),
     };
   };
 
@@ -171,6 +262,8 @@ export default function ModalTurma({ isOpen, onClose, onSalvar, initialTurma = n
       setNome("");
       setVagasTotal("");
       setEncontros([{ data: "", inicio: "", fim: "" }]);
+      setInstrutoresSel([""]);
+      setAssinanteId("");
       setTimeout(autosizeNome, 0);
     }
   };
@@ -194,15 +287,17 @@ export default function ModalTurma({ isOpen, onClose, onSalvar, initialTurma = n
             {initialTurma ? "Editar Turma" : "Nova Turma"}
           </h2>
           <p id={descId} className="text-white/90 text-sm mt-1">
-            Defina nome, encontros e vagas. A carga horária é estimada automaticamente.
+            Defina nome, instrutores, encontros e vagas. A carga horária é estimada automaticamente.
           </p>
         </header>
 
+        {/* Ministats */}
         <section className="px-5 pt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div className="rounded-2xl border border-indigo-100 dark:border-indigo-900 p-3 shadow-sm bg-white dark:bg-slate-900">
             <div className="text-xs text-slate-500 dark:text-slate-300 mb-1">Período</div>
             <div className="text-sm font-semibold">
-              {data_inicio && data_fim ? `${data_inicio.split("-").reverse().join("/")} — ${data_fim.split("-").reverse().join("/")}` : "—"}
+              {data_inicio && data_fim ? `${data_inicio.split("-").reverse().join("/")}` : "—"}
+              {data_inicio && data_fim ? ` — ${data_fim.split("-").reverse().join("/")}` : ""}
             </div>
           </div>
           <div className="rounded-2xl border border-indigo-100 dark:border-indigo-900 p-3 shadow-sm bg-white dark:bg-slate-900">
@@ -251,6 +346,73 @@ export default function ModalTurma({ isOpen, onClose, onSalvar, initialTurma = n
             <p id="nome-turma-help" className="mt-1 text-xs text-slate-500">
               Máximo de {NOME_TURMA_MAX} caracteres.
             </p>
+          </div>
+
+          {/* Instrutores e Assinante */}
+          <div className="mb-5 space-y-2">
+            <div className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
+              <Users size={16} /> Instrutores da turma
+            </div>
+
+            {instrutoresSel.map((valor, index) => (
+              <div key={`instrutor-${index}`} className="flex gap-2 items-center">
+                <select
+                  value={String(valor ?? "")}
+                  onChange={(e) => handleSelecionarInstrutor(index, e.target.value)}
+                  className="w-full pl-3 pr-10 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm"
+                  required={index === 0}
+                  aria-label={index === 0 ? "Instrutor principal" : `Instrutor adicional ${index}`}
+                >
+                  <option value="">Selecione o instrutor</option>
+                  {getInstrutorDisponivel(index).map((i) => (
+                    <option key={i.id} value={String(i.id)}>
+                      {i.nome}
+                    </option>
+                  ))}
+                </select>
+
+                {index > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => removerInstrutor(index)}
+                    className="inline-flex items-center gap-1 rounded-lg px-3 py-2 border border-rose-200 dark:border-rose-900/40 text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/20"
+                    title="Remover este instrutor"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Remover
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={adicionarInstrutor}
+                    className="inline-flex items-center gap-2 rounded-xl px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                  >
+                    <PlusCircle className="w-4 h-4" />
+                    Incluir outro
+                  </button>
+                )}
+              </div>
+            ))}
+
+            <div className="mt-3">
+              <label className="text-sm font-medium">Assinante do certificado *</label>
+              <select
+                value={String(assinanteId || "")}
+                onChange={(e) => setAssinanteId(e.target.value)}
+                className="w-full mt-1 pl-3 pr-10 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm"
+                required
+              >
+                <option value="">Selecione o assinante</option>
+                {assinanteOpcoes.map((u) => (
+                  <option key={u.id} value={String(u.id)}>
+                    {u.nome}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-slate-500 mt-1">
+                O assinante precisa estar entre os instrutores selecionados desta turma.
+              </p>
+            </div>
           </div>
 
           {/* Encontros */}

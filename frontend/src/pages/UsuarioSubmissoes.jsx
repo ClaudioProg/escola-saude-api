@@ -462,8 +462,8 @@ function RegrasEDicasCardCol({ itens = [], start = 1 }) {
 }
 
 
-/** Seção completa (split 50/50 em 2 cards). Aceita progresso opcional (mostra no 2º card). */
-function RegrasEDicasSection({ progresso = null }) {
+/** Seção completa (split 50/50 em 2 cards). */
+function RegrasEDicasSection() {
   const itens = [
     {
       titulo: "Conteúdo do anexo",
@@ -500,10 +500,8 @@ function RegrasEDicasSection({ progresso = null }) {
         </p>
       ),
     },
-    // Se quiser mais itens, adicione aqui…
   ];
 
-  // Divide 50/50 para duas colunas (se ímpar, a 1ª coluna fica com +1)
   const metade = Math.ceil(itens.length / 2);
   const col1 = itens.slice(0, metade);
   const col2 = itens.slice(metade);
@@ -511,7 +509,6 @@ function RegrasEDicasSection({ progresso = null }) {
   return (
     <section className="w-full max-w-6xl mx-auto mb-10 px-4">
       <div className="flex items-center gap-2 mb-4">
-        {/* Ícone em linha com o título, mantendo a identidade da página */}
         <svg
           className="w-5 h-5 text-violet-600 dark:text-violet-400"
           fill="none"
@@ -527,39 +524,9 @@ function RegrasEDicasSection({ progresso = null }) {
         </h3>
       </div>
 
-      {/* 2 colunas / 2 cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <RegrasEDicasCardCol itens={col1} start={1} />
-
-        <div className="relative">
-          <RegrasEDicasCardCol itens={col2} start={metade + 1} />
-          {typeof progresso === "number" && (
-            <div
-            className="
-              mt-3
-              rounded-2xl
-              bg-[#fde6ef]/90 dark:bg-zinc-900/80
-              backdrop-blur
-              border border-fuchsia-200/40 dark:border-white/10
-              shadow-sm
-              p-4
-              transition-all duration-300
-              hover:shadow-md hover:border-fuchsia-300
-            "
-          >
-              <div className="flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400 mb-1">
-                <span>Progresso geral</span>
-                <span>{Math.min(Math.max(progresso, 0), 100)}%</span>
-              </div>
-              <div className="h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden">
-  <div
-    className="h-1.5 bg-fuchsia-600 transition-all duration-300"
-    style={{ width: `${Math.min(Math.max(progresso, 0), 100)}%` }}
-  />
-</div>
-            </div>
-          )}
-        </div>
+        <RegrasEDicasCardCol itens={col2} start={metade + 1} />
       </div>
     </section>
   );
@@ -824,7 +791,7 @@ async function baixarModeloOral(chId) {
           {/* ────── Regras & Dicas ────── */}
 <section aria-labelledby="regras-dicas">
   <h2 id="regras-dicas" className="sr-only">Regras e Dicas</h2>
-  <RegrasEDicasSection progresso={56} />
+  <RegrasEDicasSection />
 </section>
 
           {/* ────── Chamadas Abertas ────── */}

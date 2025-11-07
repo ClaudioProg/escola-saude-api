@@ -75,6 +75,50 @@ const requireAdmin = [requireAuth, authorizeRoles("administrador")];
 
 /* ───────────────── Rotas ───────────────── */
 
+/**
+ * 🔎 Validação pública via QR
+ * GET /api/certificados/validar?usuario_id=...&evento_id=...&turma_id=...
+ * Resposta: { ok, valido, certificado? }
+ * Mantida pública para leitura por terceiros (validação offline/externa).
+ */
+router.get("/validar", async (req, res) => {
+  try {
+    const { usuario_id, evento_id, turma_id } = req.query;
+    const uid = Number(usuario_id);
+    const eid = Number(evento_id);
+    const tid = Number(turma_id);
+    if (!Number.isFinite(uid) || !Number.isFinite(eid) || !Number.isFinite(tid)) {
+      return res.status(400).json({ ok: false, erro: "Parâmetros inválidos." });
+    }
+
+    const db = require("../db");
+    const q = await db.query(
+      `
+      SELECT c.id, c.tipo, c.gerado_em, c.revalidado_em,
+             e.titulo,
+             t.nome AS turma,
+             t.data_inicio, t.data_fim
+        FROM certificados c
+        JOIN eventos e ON e.id = c.evento_id
+        JOIN turmas  t ON t.id = c.turma_id
+       WHERE c.usuario_id = $1 AND c.evento_id = $2 AND c.turma_id = $3
+       ORDER BY c.gerado_em DESC
+       LIMIT 1
+      `,
+      [uid, eid, tid]
+    );
+
+    if (q.rowCount === 0) {
+      return res.json({ ok: true, valido: false });
+    }
+
+    return res.json({ ok: true, valido: true, certificado: q.rows[0] });
+  } catch (err) {
+    console.error("[/certificados/validar] erro:", err?.stack || err);
+    return res.status(500).json({ ok: false, erro: "Falha ao validar certificado." });
+  }
+});
+
 // 🧾 Listar certificados emitidos do usuário autenticado
 router.get(
   "/usuario",
@@ -108,7 +152,7 @@ router.post(
   ctrl.gerarCertificado
 );
 
-// 📥 Baixar certificado (mantido público como está no seu fluxo)
+// 📥 Baixar certificado (mantido público para leitura via QR/terceiros)
 router.get("/:id/download", ctrl.baixarCertificado);
 
 // 🔁 Revalidar certificado (dono ou admin)
@@ -121,10 +165,6 @@ router.post(
 );
 
 /* ───────────────── Admin: Reset por Turma ───────────────── */
-router.post(
-  "/admin/turmas/:turmaId/reset",
-  requireAdmin,
-  ctrl.resetTurma
-);
+router.post("/admin/turmas/:turmaId/reset", requireAdmin, ctrl.resetTurma);
 
 module.exports = router;

@@ -10,6 +10,11 @@ import Footer from "../components/Footer";
 import Spinner from "../components/Spinner";
 import ListaTurmasPresenca from "../components/ListaTurmasPresenca";
 
+/* ---------------- helpers de data/tempo (TZ BR) ---------------- */
+function nowBR() {
+  return new Date();
+}
+
 /* ---------------- HeaderHero (teal sólido) ---------------- */
 function HeaderHero({ onAtualizar, atualizando, agrupamento, setAgrupamento }) {
   return (
@@ -167,6 +172,7 @@ export default function PaginaGestaoPresencas() {
   }
 
   const anyLoading = carregandoEventos;
+  const agora = nowBR(); // usado apenas para registrar o “hoje” se desejar
 
   return (
     <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
@@ -208,17 +214,20 @@ export default function PaginaGestaoPresencas() {
         ) : (
           <ListaTurmasPresenca
             eventos={eventos}
-            hoje={new Date()}
+            hoje={agora}
             carregarInscritos={carregarInscritos}
             carregarAvaliacoes={carregarAvaliacoes}
-            carregarPresencas={carregarPresencas}
-            presencasPorTurma={presencasPorTurma}
+            /* estes dois props não são usados pelo componente filho
+               (ele próprio carrega e mantém presenças internamente)
+               — pode remover se quiser deixar 100% limpo: */
+            // carregarPresencas={carregarPresencas}
+            // presencasPorTurma={presencasPorTurma}
             gerarRelatorioPDF={() => {}}
             inscritosPorTurma={inscritosPorTurma}
             avaliacoesPorTurma={avaliacoesPorTurma}
             navigate={navigate}
             modoadministradorPresencas
-            agrupamento={agrupamento}  // ⬅️ "pessoa" | "data"
+            agrupamento={agrupamento}
           />
         )}
       </main>

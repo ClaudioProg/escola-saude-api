@@ -54,6 +54,27 @@ const idadeFrom = (isoOrDate) => {
   return age;
 };
 
+// Normaliza perfil vindo como array ou CSV -> array minúscula
+const toPerfilArray = (p) => {
+  if (Array.isArray(p)) return p.map((x) => sLower(x)).filter(Boolean);
+  return String(p ?? "")
+    .split(",")
+    .map((x) => sLower(x.trim()))
+    .filter(Boolean);
+};
+
+// Idade a partir de "YYYY-MM-DD" sem criar Date
+const idadeFromISO = (iso) => {
+  const s = String(iso || "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const [yy, mm, dd] = s.split("-").map((x) => parseInt(x, 10));
+  const today = new Date();
+  let age = today.getFullYear() - yy;
+  const m = today.getMonth() + 1 - mm; // month 1-12
+  if (m < 0 || (m === 0 && today.getDate() < dd)) age--;
+  return Number.isFinite(age) ? age : null;
+};
+
 // CSV helpers
 const csvEscape = (v) => {
   const s = String(v ?? "");
@@ -246,6 +267,29 @@ export default function GestaoUsuarios() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  const [unidades, setUnidades] = useState([]);
+  const [unidadesMap, setUnidadesMap] = useState(() => new Map()); // id -> {sigla,nome}
+
+  const carregarUnidades = useCallback(async () => {
+    try {
+      const arr = await apiGet("/api/unidades", { on403: "silent" });
+      const norm = (Array.isArray(arr) ? arr : []).map((u) => ({
+        id: Number(u.id),
+        sigla: String(u.sigla ?? "").trim(),
+        nome: String(u.nome ?? "").trim(),
+      }));
+      setUnidades(norm);
+      const m = new Map();
+      norm.forEach((u) => m.set(u.id, { sigla: u.sigla, nome: u.nome }));
+      setUnidadesMap(m);
+    } catch (e) {
+      console.error("❌ /api/unidades falhou:", e);
+      setUnidades([]);
+      setUnidadesMap(new Map());
+      toast.error("Erro ao carregar unidades.");
+    }
+  }, []);
+
   /* ---------- carregar usuários ---------- */
   const carregarUsuarios = useCallback(async () => {
     try {
@@ -265,22 +309,24 @@ export default function GestaoUsuarios() {
 
       const enriched = base.map((u) => {
         // tenta montar sigla e nome da unidade
-        const unidade_sigla =
-          u?.unidade_sigla ||
-          u?.sigla_unidade ||
-          u?.unidade_abrev ||
-          u?.unidade_sigla_nome ||
-          null;
+        const unidade_sigla = (() => {
+          const raw =
+            u?.unidade_sigla ||
+            u?.sigla_unidade ||
+            u?.unidade_abrev ||
+            u?.unidade_sigla_nome ||
+            "";
+          return String(raw).trim().toUpperCase() || null;
+        })();
 
         const unidade_nome =
-          u?.unidade_nome ||
-          u?.unidade ||
-          u?.unidade_id ||
-          null;
+  u?.unidade_nome ||
+  null;
 
         return {
           ...u,
-          idade: idadeFrom(u?.data_nascimento) ?? undefined,
+          idade: idadeFromISO(u?.data_nascimento) ?? undefined,
+          perfil: toPerfilArray(u?.perfil), // <-- mantém array uniforme
           cpf_masked: maskCpf(u?.cpf),
           unidade_sigla,
           unidade_nome,
@@ -317,21 +363,25 @@ export default function GestaoUsuarios() {
   }, []);
 
   useEffect(() => {
+    carregarUnidades();
     carregarUsuarios();
-  }, [carregarUsuarios]);
+  }, [carregarUnidades, carregarUsuarios]);
 
   /* ---------- KPIs ---------- */
   const kpis = useMemo(() => {
     const total = usuarios.length;
-    const usuario = usuarios.filter(
-      (u) => sLower(u?.perfil) === "usuario",
-    ).length;
-    const instrutor = usuarios.filter(
-      (u) => sLower(u?.perfil) === "instrutor",
-    ).length;
-    const administrador = usuarios.filter(
-      (u) => sLower(u?.perfil) === "administrador",
-    ).length;
+  
+    let usuario = 0;
+    let instrutor = 0;
+    let administrador = 0;
+  
+    for (const u of usuarios) {
+      const perfis = toPerfilArray(u?.perfil);
+      if (perfis.includes("usuario")) usuario++;
+      if (perfis.includes("instrutor")) instrutor++;
+      if (perfis.includes("administrador")) administrador++;
+    }
+  
     return {
       total: String(total),
       usuario: String(usuario),
@@ -404,6 +454,8 @@ export default function GestaoUsuarios() {
     }
   }
 
+
+
   /* ---------- busca com debounce ---------- */
   const [debouncedQ, setDebouncedQ] = useState("");
   useEffect(() => {
@@ -432,58 +484,63 @@ export default function GestaoUsuarios() {
   const resetPerfis = () => setFPerfis(new Set(PERFIS_PERMITIDOS));
 
   /* ---------- opções únicas (Unidade / Cargo) ---------- */
-  // cada unidade é { sigla, nome }, mas vamos exibir só sigla no select
-  const { unidadesOpts, cargosOpts } = useMemo(() => {
-    const unidadesMap = new Map();
-    const cargos = new Set();
+  /* ---------- opções únicas (Unidade / Cargo) ---------- */
+const { unidadesOpts, cargosOpts } = useMemo(() => {
+  // SIGLAS realmente usadas na lista de usuários
+  const siglasUsadas = new Set();
 
-    (usuarios || []).forEach((u) => {
-      const siglaRaw = (u?.unidade_sigla ?? "").toString().trim();
-      const nomeRaw = (u?.unidade_nome ?? "").toString().trim();
-      const cg = (u?.cargo_nome ?? "").toString().trim();
+  (usuarios || []).forEach((u) => {
+    const fromJoin = String(u?.unidade_sigla || "").trim();
+    const fromId =
+      u?.unidade_id ? String(unidadesMap.get(u.unidade_id)?.sigla || "").trim() : "";
+    const s = (fromJoin || fromId).toUpperCase();
+    if (s) siglasUsadas.add(s);
+  });
 
-      if (siglaRaw || nomeRaw) {
-        const siglaKey = siglaRaw || nomeRaw || "(sem)";
-        if (!unidadesMap.has(siglaKey)) {
-          unidadesMap.set(siglaKey, {
-            sigla: siglaRaw || siglaKey,
-            nome: nomeRaw || siglaRaw || siglaKey,
-          });
-        }
-      }
+  // ordena; se vazio, fallback para todas as unidades conhecidas
+  let unidadesArr = Array.from(siglasUsadas).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  if (unidadesArr.length === 0) {
+    unidadesArr = Array.from(
+      new Set(
+        (unidades || [])
+          .map((u) => (u.sigla || u.nome || "").trim())
+          .filter(Boolean)
+          .map((s) => s.toUpperCase())
+      )
+    ).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }
 
-      if (cg) cargos.add(cg);
-    });
+  // CARGOS já vinha dos usuários (mantém)
+  const cargosArr = Array.from(
+    new Set(
+      (usuarios || [])
+        .map((u) => String(u?.cargo_nome || "").trim())
+        .filter(Boolean)
+    )
+  ).sort((a, b) => a.localeCompare(b, "pt-BR"));
 
-    const unidadesArr = Array.from(unidadesMap.values()).sort(
-      (a, b) =>
-        a.sigla.localeCompare(b.sigla, "pt-BR") ||
-        a.nome.localeCompare(b.nome, "pt-BR"),
-    );
-
-    const cargosArr = Array.from(cargos).sort((a, b) =>
-      a.localeCompare(b, "pt-BR"),
-    );
-
-    return { unidadesOpts: unidadesArr, cargosOpts: cargosArr };
-  }, [usuarios]);
+  return { unidadesOpts: unidadesArr, cargosOpts: cargosArr };
+}, [usuarios, unidades, unidadesMap]);
 
   /* ---------- filtro final (usa sigla da unidade) ---------- */
   const usuariosFiltrados = useMemo(() => {
     const q = debouncedQ;
-    const perfilOk = (p) => fPerfis.has(sLower(p));
+    const perfilOk = (p) => {
+      const roles = toPerfilArray(p);
+      return roles.some((r) => fPerfis.has(r));
+    };
 
     return (usuarios || []).filter((u) => {
       if (!perfilOk(u?.perfil)) return false;
 
-      // Unidade (comparando sigla, ou nome se sigla não existir)
-      if (
-        fUnidade !== "todas" &&
-        String(u?.unidade_sigla || u?.unidade_nome || "")
-          .trim()
-          .toLowerCase() !== fUnidade.toLowerCase()
-      ) {
-        return false;
+      /// Unidade (somente SIGLA)
+      if (fUnidade !== "todas") {
+        const siglaJoin = String(u?.unidade_sigla || "").trim(); // veio do /api/usuarios
+        const siglaViaId = u?.unidade_id
+          ? (unidadesMap.get(u.unidade_id)?.sigla || "")
+          : "";
+        const siglaUser = (siglaJoin || siglaViaId).toLowerCase();
+        if (siglaUser !== fUnidade.toLowerCase()) return false;
       }
 
       // Cargo
@@ -500,12 +557,14 @@ export default function GestaoUsuarios() {
       const email = sLower(u?.email);
       const cpf = sLower(u?.cpf);
       const registro = sLower(u?.registro);
+      const perfTxt = toPerfilArray(u?.perfil).join(" ");
 
       return (
         nome.includes(q) ||
         email.includes(q) ||
         cpf.includes(q) ||
-        registro.includes(q)
+        registro.includes(q) ||
+        perfTxt.includes(q)
       );
     });
   }, [usuarios, debouncedQ, fPerfis, fUnidade, fCargo]);
@@ -552,16 +611,22 @@ export default function GestaoUsuarios() {
         "escolaridade",
         "idade",
       ];
-      const rows = usuariosFiltrados.map((u) => [
-        u?.id ?? "",
-        u?.nome ?? "",
-        u?.email ?? "",
-        u?.perfil ?? "",
-        u?.unidade_sigla || u?.unidade_nome || "",
-        u?.cargo_nome ?? "",
-        u?.escolaridade_nome ?? "",
-        Number.isFinite(u?.idade) ? u.idade : "",
-      ]);
+      const rows = usuariosFiltrados.map((u) => {
+        const siglaViaId = u?.unidade_id
+          ? (unidadesMap.get(u.unidade_id)?.sigla || "")
+          : "";
+        const sigla = u?.unidade_sigla || siglaViaId || u?.unidade_nome || "";
+        return [
+          u?.id ?? "",
+          u?.nome ?? "",
+          u?.email ?? "",
+          toPerfilArray(u?.perfil).join(", "),
+          sigla,
+          u?.cargo_nome ?? "",
+          u?.escolaridade_nome ?? "",
+          Number.isFinite(u?.idade) ? u.idade : "",
+        ];
+      });
       const content = [headers, ...rows]
         .map((r) => r.map(csvEscape).join(";"))
         .join("\n");
@@ -677,23 +742,19 @@ export default function GestaoUsuarios() {
               <div className="flex flex-wrap items-center gap-2">
                 {/* UNIDADE agora mostra só a sigla visualmente */}
                 <select
-                  value={fUnidade}
-                  onChange={(e) => setFUnidade(e.target.value)}
-                  className="rounded-xl border px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-violet-700 dark:border-zinc-700 dark:bg-zinc-800"
-                  aria-label="Filtrar por unidade (sigla)"
-                  title="Filtrar por unidade (sigla)"
-                >
-                  <option value="todas">Todas as Unidades</option>
-                  {unidadesOpts.map((u) => {
-                    const optValue = u.sigla || u.nome || "";
-                    const optLabel = u.sigla || u.nome || "";
-                    return (
-                      <option key={optValue} value={optValue}>
-                        {optLabel}
-                      </option>
-                    );
-                  })}
-                </select>
+  value={fUnidade}
+  onChange={(e) => setFUnidade(e.target.value)}
+  className="rounded-xl border px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-violet-700 dark:border-zinc-700 dark:bg-zinc-800"
+  aria-label="Filtrar por unidade (sigla)"
+  title="Filtrar por unidade (sigla)"
+>
+  <option value="todas">Todas as Unidades</option>
+  {unidadesOpts.map((sigla) => (
+    <option key={sigla} value={sigla}>
+      {sigla}
+    </option>
+  ))}
+</select>
 
                 <select
                   value={fCargo}

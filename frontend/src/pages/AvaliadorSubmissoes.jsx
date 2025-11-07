@@ -128,7 +128,7 @@ function TabelaSubmissoes({ itens, notasMap, onAbrir, variant = "pending" }) {
   const headClass = variant === "pending" ? "bg-green-800 text-white" : "bg-amber-500 text-white";
 
   return (
-    <div className="md:block rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm overflow-hidden">
+    <div className="hidden md:block rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm overflow-hidden">
          <div className="overflow-x-auto">
            <table className="w-full text-sm table-auto">
               <thead>

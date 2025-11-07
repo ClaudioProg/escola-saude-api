@@ -30,6 +30,16 @@ router.put(
 );
 
 /* ────────────────────────────────
+   👨‍🏫 Vincular instrutor(es) à TURMA (somente administrador)
+   ──────────────────────────────── */
+router.post(
+  '/:id/instrutores',
+  authMiddleware,
+  authorizeRoles('administrador'),
+  turmaController.adicionarinstrutor // alias OK (turma_instrutor)
+);
+
+/* ────────────────────────────────
    ❌ Excluir turma (somente administrador)
    ──────────────────────────────── */
 router.delete(
@@ -45,7 +55,7 @@ router.delete(
 router.get(
   '/evento/:evento_id',
   authMiddleware,
-  (req, res) => turmaController.listarTurmasPorEvento(req, res)
+  turmaController.listarTurmasPorEvento
 );
 
 /* ────────────────────────────────
@@ -55,7 +65,7 @@ router.get(
 router.get(
   '/eventos/:evento_id/turmas-simples',
   authMiddleware,
-  (req, res) => turmaController.obterTurmasPorEvento(req, res)
+  turmaController.obterTurmasPorEvento
 );
 
 /* ────────────────────────────────
@@ -70,7 +80,7 @@ router.get(
 
 /* ────────────────────────────────
    👨‍🏫 Listar instrutor(es) da turma
-   (⚠️ manter após as rotas mais específicas para não colidir)
+   (⚠️ manter após rotas mais específicas para não colidir)
    ──────────────────────────────── */
 router.get(
   '/:id/instrutores',

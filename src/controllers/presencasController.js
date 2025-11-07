@@ -162,6 +162,32 @@ async function mapearPresencasDetalhe(turma_id) {
 }
 
 /* ------------------------------------------------------------------ *
+ * 🟢 NOVO: util para obter horário de início na data (datas_turma > turmas)
+ * Retorna "HH:MM" ou fallback "08:00"
+ * ------------------------------------------------------------------ */
+async function horarioInicioNaData(turma_id, dataYMD) {
+  try {
+    const q1 = await db.query(
+      `SELECT to_char(horario_inicio::time,'HH24:MI') AS hi
+         FROM datas_turma
+        WHERE turma_id = $1 AND data::date = $2::date
+        LIMIT 1`,
+      [turma_id, dataYMD]
+    );
+    if (q1.rowCount > 0 && q1.rows[0].hi) return q1.rows[0].hi;
+
+    const q2 = await db.query(
+      `SELECT to_char(horario_inicio::time,'HH24:MI') AS hi
+         FROM turmas WHERE id = $1 LIMIT 1`,
+      [turma_id]
+    );
+    return q2.rows[0]?.hi || "08:00";
+  } catch {
+    return "08:00";
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * PATCH /api/presencas/confirmar  (instrutor)
  * Body: { usuario_id, turma_id, data }
  * ------------------------------------------------------------------ */
@@ -300,6 +326,7 @@ async function registrarPresenca(req, res) {
  * POST /api/presencas/confirmarPresencaViaQR
  * Aceita body { turma_id } ou param :turma_id (rotas legadas)
  * Valida por datas_turma; se vazio, cai no intervalo da turma.
+ * 🟢 Agora libera 30 minutos ANTES do horário de início.
  * ------------------------------------------------------------------ */
 async function confirmarPresencaViaQR(req, res) {
   const usuario_id = req.user?.id;
@@ -350,6 +377,16 @@ async function confirmarPresencaViaQR(req, res) {
         .json({ erro: "Hoje não está dentro do período desta turma." });
     }
 
+    // 🟢 JANELA: liberar 30 min antes do horário de início
+    const hi = await horarioInicioNaData(turma_id, hoje); // "HH:MM"
+    const allowedAt = new Date(`${hoje}T${hi}:00-03:00`);
+    allowedAt.setMinutes(allowedAt.getMinutes() - 30);
+    if (new Date() < allowedAt) {
+      return res.status(409).json({
+        erro: `Confirmação disponível a partir de 30 minutos antes do início (${hi}).`,
+      });
+    }
+
     await db.query(`
       INSERT INTO presencas (usuario_id, turma_id, data_presenca, presente, confirmado_em)
       VALUES ($1, $2, $3, TRUE, NOW())
@@ -371,6 +408,7 @@ async function confirmarPresencaViaQR(req, res) {
 /* ------------------------------------------------------------------ *
  * POST /api/presencas/confirmar-via-token  (token assinado)
  * Body: { token }
+ *   → reutiliza confirmarPresencaViaQR e herda a janela -30min
  * ------------------------------------------------------------------ */
 async function confirmarViaToken(req, res) {
   try {
@@ -534,6 +572,7 @@ async function validarPresenca(req, res) {
 /* ------------------------------------------------------------------ *
  * POST /api/presencas/confirmar-hoje  (admin)
  * Body: { usuario_id, turma_id }
+ * 🟢 Agora permite a partir de 30 minutos antes do início da aula de HOJE
  * ------------------------------------------------------------------ */
 async function confirmarHojeManual(req, res) {
   const { usuario_id, turma_id } = req.body;
@@ -544,6 +583,22 @@ async function confirmarHojeManual(req, res) {
   const hojeISO = hojeYMD(); // TZ BR
 
   try {
+    // 🟢 Gating: só libera -30 min do início
+    const hi = await horarioInicioNaData(turma_id, hojeISO); // "HH:MM"
+    const allowedAt = new Date(`${hojeISO}T${hi}:00-03:00`);
+    allowedAt.setMinutes(allowedAt.getMinutes() - 30);
+    if (new Date() < allowedAt) {
+      return res.status(409).json({
+        erro: `Administrador só pode lançar presença de hoje a partir de 30 minutos antes do início (${hi}).`,
+      });
+    }
+
+    // também verifica se hoje está no período/datas
+    const datas = await obterDatasDaTurma(turma_id);
+    if (!datas.includes(hojeISO)) {
+      return res.status(400).json({ erro: "Hoje não é um dia válido desta turma." });
+    }
+
     await db.query(`
       INSERT INTO presencas (usuario_id, turma_id, data_presenca, presente, confirmado_em)
       VALUES ($1, $2, $3, TRUE, NOW())
@@ -716,6 +771,7 @@ async function relatorioPresencasPorTurma(req, res) {
 
 /* ------------------------------------------------------------------ *
  * GET /api/presencas/turma/:turma_id/pdf
+ * 🟢 Ajuste “aguardando” para 30 minutos (antes era 60)
  * ------------------------------------------------------------------ */
 async function exportarPresencasPDF(req, res) {
   const { turma_id } = req.params;
@@ -794,9 +850,9 @@ async function exportarPresencasPDF(req, res) {
         if (hit && hit.presente === true) {
           simbolo = "P"; // presente
         } else {
-          // aguardando até +60min do início (quando ainda não marcado)
+          // 🟢 aguardando até +30min do início
           const limite = new Date(`${data}T${horarioInicio}:00`);
-          limite.setMinutes(limite.getMinutes() + 60);
+          limite.setMinutes(limite.getMinutes() + 30);
           if (agora < limite && !hit) simbolo = "...";
         }
 
@@ -955,11 +1011,6 @@ async function listarTodasPresencasParaAdmin(req, res) {
 
 /* ------------------------------------------------------------------ *
  * GET /api/presencas/minhas
- * Retorna, por turma do usuário logado:
- * - total_encontros, presentes, ausencias
- * - datas.presentes[], datas.ausencias[] (YYYY-MM-DD)
- * - frequencia (%), status, elegivel_avaliacao
- * - periodo: data_inicio/data_fim + horarios (mais frequentes)
  * ------------------------------------------------------------------ */
 async function obterMinhasPresencas(req, res) {
   const usuario_id = req.user?.id;
@@ -1140,7 +1191,7 @@ async function obterMinhasPresencas(req, res) {
         elegivel_avaliacao: !!r.elegivel_avaliacao,
         datas: {
           presentes: r.datas_presentes || [],
-          ausencias: r.datas_ausentes || [],
+          ausentes: r.datas_ausentes || [],
         },
         base: {
           atual: Number(r.realizados) || 0,

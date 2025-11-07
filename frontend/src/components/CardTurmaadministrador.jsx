@@ -32,6 +32,25 @@ function clamp(n, mi, ma) {
   return Math.max(mi, Math.min(ma, v));
 }
 
+/* Resolve nome do assinante da turma:
+   1) usa turma.assinante_nome
+   2) se houver assinante_id, tenta achar em turma.instrutores (obj {id,nome} ou id) */
+function resolveAssinanteNome(turma) {
+  if (!turma) return null;
+  if (turma.assinante_nome) return turma.assinante_nome;
+
+  const assinanteId = Number(turma.assinante_id);
+  if (!Number.isFinite(assinanteId)) return null;
+
+  const arr = Array.isArray(turma.instrutores) ? turma.instrutores : [];
+  for (const it of arr) {
+    const id = Number(typeof it === "object" ? it.id : it);
+    const nome = typeof it === "object" ? it?.nome : null;
+    if (id === assinanteId) return nome || null;
+  }
+  return null;
+}
+
 /* ================================ Componente ================================ */
 export default function CardTurmaadministrador({
   turma,
@@ -89,6 +108,9 @@ export default function CardTurmaadministrador({
 
   const ir = (path) => typeof navigate === "function" && path && navigate(path);
 
+  // 🆕 assinante da turma (nome já resolvido)
+  const assinanteNome = resolveAssinanteNome(turma);
+
   return (
     <motion.div
       layout
@@ -136,6 +158,17 @@ export default function CardTurmaadministrador({
               {cargaTotal ? `Total: ${cargaTotal}h` : null}
             </div>
           )}
+
+          {/* 🆕 Tag do Assinante da Turma */}
+          <div className="mt-1 text-[13px]">
+            <span className="font-semibold text-zinc-700 dark:text-zinc-200 mr-1.5">Assinante:</span>
+            <span
+              className="inline-flex items-center px-2 py-0.5 rounded-full font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-200 dark:border-emerald-800"
+              title={assinanteNome || "—"}
+            >
+              {assinanteNome || "—"}
+            </span>
+          </div>
         </div>
 
         <BadgeStatus status={statusKey} variant="soft" size="sm" title="Status por data/horário" />
