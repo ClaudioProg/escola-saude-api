@@ -979,6 +979,7 @@ export async function apiChamadaModeloAdminMeta(chamadaId) {
 // Compat: facade estilo axios + default export
 // ───────────────────────────────────────────────────────────────────
 export { API_BASE_URL };
+export function isLoggedIn() { return !!getToken(); }  // ←🆕 exposto p/ o router
 
 export const api = {
   get: (path, opts) => apiGet(path, opts),

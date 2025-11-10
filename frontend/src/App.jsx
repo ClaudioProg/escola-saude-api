@@ -146,13 +146,22 @@ function ScrollToTop() {
 /* ──────────────────────────────────────────────────────────────
    Layout com Navbar + Skip Link
    ────────────────────────────────────────────────────────────── */
-function LayoutComNavbar({ children }) {
-  const location = useLocation();
-
-  const isPublicPath = useMemo(() => {
-    const p = location.pathname;
-    return (
-      p === "/login" ||
+   function LayoutComNavbar({ children }) {
+    const location = useLocation();
+  
+    const isPublicPath = useMemo(() => {
+      const p = location.pathname;
+  
+      // checa token local (sem ping)
+      let hasToken = false;
+      try {
+        const raw = localStorage.getItem("token");
+        hasToken = !!(raw && (raw.startsWith("Bearer ") ? raw.slice(7).trim() : raw.trim()));
+      } catch {}
+  
+      return (
+        (!hasToken && p === "/") || // raiz é "pública" só para evitar flash de navbar quando vai redirecionar ao login
+        p === "/login" ||
       p === "/cadastro" ||
       p === "/recuperar-senha" ||
       p === "/validar" ||
@@ -309,6 +318,24 @@ function AdminSubmissoesRouteWrapper() {
   return <AdminSubmissoes chamadaId={chamadaId ? Number(chamadaId) : undefined} />;
 }
 
+// 🧭 Gate da rota raiz: se não logado → /login; se logado → HomeEscola
+function AuthLanding() {
+  // checa apenas a presença de token (sem ping no backend para evitar forçar login à toa)
+  const token = (() => {
+    try {
+      const raw = localStorage.getItem("token");
+      if (!raw) return null;
+      return raw.startsWith("Bearer ") ? raw.slice(7).trim() : raw.trim();
+    } catch {
+      return null;
+    }
+  })();
+
+  return token
+    ? <PrivateRoute><HomeEscola /></PrivateRoute>
+    : <Navigate to="/login" replace />;
+}
+
 /* ──────────────────────────────────────────────────────────────
    App
    ────────────────────────────────────────────────────────────── */
@@ -359,7 +386,7 @@ export default function App() {
 
             {/* 🔐 protegidas */}
             {/* Início pós-login → HomeEscola */}
-            <Route path="/" element={<PrivateRoute><HomeEscola /></PrivateRoute>} />
+            <Route path="/" element={<AuthLanding />} />
 
             {/* Painel do Usuário (novo caminho) */}
             <Route path="/usuario/dashboard" element={<PrivateRoute><DashboardUsuario /></PrivateRoute>} />

@@ -12,8 +12,8 @@ const {
 /* =====================================================================
    Upload (folder.png/jpg e programacao.pdf)
    ===================================================================== */
-const UP_BASE = path.join(process.cwd(), "uploads", "eventos");
-fs.mkdirSync(UP_BASE, { recursive: true });
+   const { EVENTOS_DIR } = require("../paths");
+   const UP_BASE = EVENTOS_DIR;
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, UP_BASE),
@@ -947,21 +947,32 @@ async function listarTurmasDoEvento(req, res) {
         [r.id]
       );
       const datas = (datasQ.rows || [])
-        .map((d) => ({
-          data: toYmd(d.data),
-          horario_inicio: toHm(d.horario_inicio),
-          horario_fim: toHm(d.horario_fim),
-        }))
-        .filter((x) => x.data);
+  .map((d) => ({
+    data: toYmd(d.data),
+    horario_inicio: toHm(d.horario_inicio),
+    horario_fim: toHm(d.horario_fim),
+  }))
+  .filter((x) => x.data);
 
-      const instrQ = await query(
-        `SELECT u.id, u.nome, u.email
-           FROM turma_instrutor ti
-           JOIN usuarios u ON u.id = ti.instrutor_id
-          WHERE ti.turma_id = $1
-          ORDER BY u.nome`,
-        [r.id]
-      );
+/* +++ INÍCIO: contadores de vagas +++ */
+const { rows: vQ } = await query(
+  `SELECT COUNT(*)::int AS inscritos FROM inscricoes WHERE turma_id = $1`,
+  [r.id]
+);
+const inscritos = vQ?.[0]?.inscritos ?? 0;
+const vagasTotal = Number.isFinite(Number(r.vagas_total)) ? Number(r.vagas_total) : 0;
+const vagasPreenchidas = inscritos;
+const vagasDisponiveis = Math.max(vagasTotal - inscritos, 0);
+/* +++ FIM: contadores de vagas +++ */
+
+const instrQ = await query(
+  `SELECT u.id, u.nome, u.email
+     FROM turma_instrutor ti
+     JOIN usuarios u ON u.id = ti.instrutor_id
+    WHERE ti.turma_id = $1
+    ORDER BY u.nome`,
+  [r.id]
+);
 
       const hasAssCol = Object.prototype.hasOwnProperty.call(r, "instrutor_assinante_id");
       const assinante =
@@ -986,6 +997,9 @@ async function listarTurmasDoEvento(req, res) {
         instrutor_assinante_id: hasAssCol ? r.instrutor_assinante_id || null : null,
         instrutor_assinante: assinante,
         datas,
+        vagas_preenchidas: vagasPreenchidas,
+vagas_disponiveis: vagasDisponiveis,
+inscritos: vagasPreenchidas,
       });
     }
 
@@ -1711,22 +1725,38 @@ async function listarTurmasSimples(req, res) {
         }))
         .filter((x) => x.data);
 
-      turmas.push({
-        id: r.id,
-        evento_id: r.evento_id,
-        nome: r.nome,
-        data_inicio: toYmd(r.data_inicio) || datas[0]?.data || null,
-        data_fim: toYmd(r.data_fim) || datas.at(-1)?.data || null,
-        horario_inicio:
-          toHm(r.horario_inicio) || datas[0]?.horario_inicio || null,
-        horario_fim: toHm(r.horario_fim) || datas.at(-1)?.horario_fim || null,
-        vagas_total: r.vagas_total,
-        carga_horaria: r.carga_horaria,
-        instrutor_assinante_id: Object.prototype.hasOwnProperty.call(r, "instrutor_assinante_id")
-          ? r.instrutor_assinante_id || null
-          : null,
-        _datas: datas,
-      });
+        /* +++ INÍCIO: contadores de vagas +++ */
+const { rows: vQ } = await query(
+  `SELECT COUNT(*)::int AS inscritos FROM inscricoes WHERE turma_id = $1`,
+  [r.id]
+);
+const inscritos = vQ?.[0]?.inscritos ?? 0;
+const vagasTotal = Number.isFinite(Number(r.vagas_total)) ? Number(r.vagas_total) : 0;
+const vagasPreenchidas = inscritos;
+const vagasDisponiveis = Math.max(vagasTotal - inscritos, 0);
+/* +++ FIM: contadores de vagas +++ */
+
+turmas.push({
+  id: r.id,
+  evento_id: r.evento_id,
+  nome: r.nome,
+  data_inicio: toYmd(r.data_inicio) || datas[0]?.data || null,
+  data_fim: toYmd(r.data_fim) || datas.at(-1)?.data || null,
+  horario_inicio:
+    toHm(r.horario_inicio) || datas[0]?.horario_inicio || null,
+  horario_fim: toHm(r.horario_fim) || datas.at(-1)?.horario_fim || null,
+  vagas_total: r.vagas_total,
+  carga_horaria: r.carga_horaria,
+  instrutor_assinante_id: Object.prototype.hasOwnProperty.call(r, "instrutor_assinante_id")
+    ? r.instrutor_assinante_id || null
+    : null,
+  _datas: datas,
+
+  /* Novos campos */
+  vagas_preenchidas: vagasPreenchidas,
+  vagas_disponiveis: vagasDisponiveis,
+  inscritos: vagasPreenchidas, // (alias opcional)
+});
     }
 
     res.json(turmas);

@@ -62,6 +62,7 @@ if (!DATA_ROOT) {
 
 /* ───────────────── Estrutura de subpastas ───────────────── */
 const UPLOADS_DIR          = path.join(DATA_ROOT, "uploads");
+const EVENTOS_DIR          = path.join(UPLOADS_DIR, "eventos"); // <- imagens/pdf de eventos
 const MODELOS_CHAMADAS_DIR = path.join(UPLOADS_DIR, "modelos", "chamadas"); // .ppt/.pptx (banner/oral)
 const CERT_DIR             = path.join(DATA_ROOT, "certificados");          // PDFs gerados
 const TMP_DIR              = path.join(DATA_ROOT, "tmp");                   // arquivos temporários
@@ -71,6 +72,7 @@ const POSTERS_DIR          = path.join(UPLOADS_DIR, "posters");             // u
 [
   DATA_ROOT,
   UPLOADS_DIR,
+  EVENTOS_DIR,
   MODELOS_CHAMADAS_DIR,
   CERT_DIR,
   TMP_DIR,
@@ -81,6 +83,7 @@ const POSTERS_DIR          = path.join(UPLOADS_DIR, "posters");             // u
 if (process.env.NODE_ENV !== "test") {
   console.log("[FILES] DATA_ROOT:", DATA_ROOT);
   console.log("[FILES] UPLOADS_DIR:", UPLOADS_DIR);
+  console.log("[FILES] EVENTOS_DIR:", EVENTOS_DIR);
   console.log("[FILES] MODELOS_CHAMADAS_DIR:", MODELOS_CHAMADAS_DIR);
   console.log("[FILES] CERT_DIR:", CERT_DIR);
   console.log("[FILES] TMP_DIR:", TMP_DIR);
@@ -92,6 +95,7 @@ module.exports = {
   IS_DEV,
   DATA_ROOT,
   UPLOADS_DIR,
+  EVENTOS_DIR,
   MODELOS_CHAMADAS_DIR,
   CERT_DIR,
   TMP_DIR,

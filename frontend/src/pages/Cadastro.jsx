@@ -186,6 +186,13 @@ function RegrasDicasCadastro({ IconeCabecalho = ShieldCheck }) {
     }, []);
 
     // máscara registro 00.000-0
+    // helper: ordenar unidades por SIGLA (fallback para nome)
+const orderBySigla = (arr = []) =>
+  [...arr].sort((a, b) =>
+    String(a?.sigla ?? a?.nome ?? "")
+      .localeCompare(String(b?.sigla ?? b?.nome ?? ""), "pt-BR", { sensitivity: "base" })
+  );
+
     const maskRegistro = (raw) => {
       const d = String(raw || "").replace(/\D/g, "").slice(0, 6);
       let out = d;
@@ -212,9 +219,7 @@ function RegrasDicasCadastro({ IconeCabecalho = ShieldCheck }) {
           if (!alive) return;
           const ok = (p) => (p.status === "fulfilled" ? (p.value || []) : []);
 
-          setUnidades(
-            ok(uni).sort((a, b) => (a.sigla || a.nome || "").localeCompare(b.sigla || b.nome || ""))
-          );
+          setUnidades(orderBySigla(ok(uni)));
           setCargos(ok(car).sort((a, b) => (a.nome || "").localeCompare(b.nome || "")));
           setGeneros(ok(gen));
           setOrientacoes(ok(ori));

@@ -283,7 +283,7 @@ export default function Perfil() {
           apiGet("/api/escolaridades", { on403: "silent" }),
           apiGet("/api/deficiencias", { on403: "silent" }),
         ]);
-        setUnidades((uni || []).sort((a, b) => (a.nome || "").localeCompare(b.nome || "")));
+        setUnidades((uni || []).sort((a, b) => (a.sigla || a.nome || "").localeCompare(b.sigla || b.nome || "")));
         setCargos((car || []).sort((a, b) => stripPrefixNum(a.nome).localeCompare(stripPrefixNum(b.nome))));
         setGeneros(gen || []);
         setOrientacoes(ori || []);
@@ -649,7 +649,7 @@ export default function Perfil() {
               >
                 <option value="">Selecione…</option>
                 {unidades.map((u) => (
-                  <option key={u.id} value={String(u.id)}>{u.sigla}</option>
+                  <option key={u.id} value={String(u.id)}>{u.sigla || u.nome}</option>
                 ))}
               </select>
               {eUnidade && <p id="erro-unidade" className="text-xs text-red-500 mt-1">{eUnidade}</p>}
