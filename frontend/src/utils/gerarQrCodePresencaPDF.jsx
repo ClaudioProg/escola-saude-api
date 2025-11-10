@@ -115,41 +115,72 @@ export async function gerarQrCodePresencaPDF(
     // ────────────────────────────────────────────────────────────
     // Montagem do PDF
     // ────────────────────────────────────────────────────────────
-    const doc = new jsPDF({ orientation: orientacao });
-    const pageW = doc.internal.pageSize.getWidth();
-    const pageH = doc.internal.pageSize.getHeight();
-    const centerX = pageW / 2;
+    // ────────────────────────────────────────────────────────────
+// Montagem do PDF (com quebra de título + nome da turma + QR adaptável)
+// ────────────────────────────────────────────────────────────
+const doc = new jsPDF({ orientation: orientacao });
+const pageW = doc.internal.pageSize.getWidth();
+const pageH = doc.internal.pageSize.getHeight();
+const centerX = pageW / 2;
 
-    // Título do evento
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(26);
-    doc.text(String(nomeEvento || "Evento"), centerX, 26, { align: "center" });
+// Quebra título do evento em até 2 linhas
+const maxWidth = pageW - 20;
+doc.setFont("helvetica", "bold");
+doc.setFontSize(26);
+let eventLines = doc.splitTextToSize(String(nomeEvento || "Evento"), maxWidth);
+if (eventLines.length > 2) {
+  eventLines = eventLines.slice(0, 2);
+  const last = eventLines[1];
+  while (doc.getTextWidth(last + "…") > maxWidth) {
+    eventLines[1] = eventLines[1].slice(0, -1);
+  }
+  eventLines[1] += "…";
+}
+let y = 20;
+eventLines.forEach((line) => {
+  doc.text(line, centerX, y, { align: "center" });
+  y += 8;
+});
 
-    // Instrutor
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(12);
-    doc.text(`Instrutor: ${nomeInstrutor || "—"}`, centerX, 36, { align: "center" });
+// Nome da turma abaixo (um pouco menor)
+const turmaNome = turma?.nome || `Turma #${turma?.id ?? ""}`;
+doc.setFont("helvetica", "normal");
+doc.setFontSize(18);
+doc.text(turmaNome, centerX, y, { align: "center" });
+y += 12;
 
-    // QR centralizado
-    const qrWmm = qrLarguraPdf; // largura/altura do QR no PDF (mm)
-    const qrX = centerX - qrWmm / 2;
-    const qrY = 48;
-    doc.addImage(dataUrl, "PNG", qrX, qrY, qrWmm, qrWmm);
+// Instrutor (se existir)
+if (nomeInstrutor && nomeInstrutor.trim()) {
+  doc.setFontSize(11);
+  doc.text(`Instrutor: ${nomeInstrutor}`, centerX, y, { align: "center" });
+  y += 10;
+}
 
-    // Mensagem
-    doc.setFontSize(14);
-    doc.setTextColor(60);
-    doc.text(
-      "Faça o Login na Plataforma e após, Escaneie este QR Code para confirmar sua presença",
-      centerX,
-      qrY + qrWmm + 14,
-      { align: "center" }
-    );
+// Calcula espaço restante para QR
+const espacoRestante = pageH - y - 20;
+let qrWmm = Math.min(qrLarguraPdf, espacoRestante);
+if (qrWmm < 60) qrWmm = 60; // piso mínimo p/ não ficar minúsculo
 
-    // URL pequena (útil para digitar manualmente)
-    doc.setFontSize(10);
-    doc.setTextColor(100);
-    doc.text(url, centerX, qrY + qrWmm + 22, { align: "center" });
+const qrX = centerX - qrWmm / 2;
+const qrY = y;
+doc.addImage(dataUrl, "PNG", qrX, qrY, qrWmm, qrWmm);
+
+// Mensagem
+doc.setFontSize(13);
+doc.setTextColor(60);
+doc.text(
+  "Faça login na Plataforma e escaneie este QR para confirmar presença",
+  centerX,
+  qrY + qrWmm + 10,
+  { align: "center" }
+);
+
+// URL
+const urlStr = `${base}/presenca?turma=${turmaId}`;
+doc.setFontSize(9);
+doc.setTextColor(100);
+doc.text(urlStr, centerX, qrY + qrWmm + 18, { align: "center" });
+
 
     const nomePdf = nomeArquivo || `qr_presenca_turma_${turmaId}.pdf`;
     doc.save(nomePdf);

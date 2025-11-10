@@ -5,8 +5,24 @@ import { CalendarDays, Clock, Hash, Type, PlusCircle, Trash2, Users } from "luci
 import { toast } from "react-toastify";
 import ModalBase from "./ModalBase";
 
+/* ===================== Logger cirúrgico ===================== */
+// ✅ Vite/ESM-safe: usa apenas import.meta.env
+const IS_DEV = (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.DEV) ? true : false;
+
+const LOG_TAG = "[ModalTurma]";
+const stamp = () => new Date().toISOString().replace("T", " ").replace("Z", "");
+const log = (msg, data) => {
+  if (!IS_DEV) return;
+  if (data !== undefined) console.log(`${stamp()} ${LOG_TAG} ${msg}`, data);
+  else console.log(`${stamp()} ${LOG_TAG} ${msg}`);
+};
+const group = (title) => IS_DEV && console.groupCollapsed(`${stamp()} ${LOG_TAG} ${title}`);
+const groupEnd = () => IS_DEV && console.groupEnd();
+const time = (id) => IS_DEV && console.time(`${LOG_TAG} ${id}`);
+const timeEnd = (id) => IS_DEV && console.timeEnd(`${LOG_TAG} ${id}`);
+
 /* ===================== Helpers ===================== */
-const NOME_TURMA_MAX = 100;
+const NOME_TURMA_MAX = 200;
 
 const parseHora = (val) => {
   if (typeof val !== "string") return "";
@@ -30,7 +46,6 @@ const hhmm = (s, fb = "") => parseHora(s) || fb;
 const isoDay = (v) => {
   if (!v) return "";
   if (typeof v === "string") {
-    // já vem “YYYY-MM-DD” do backend
     const m = v.match(/^\d{4}-\d{2}-\d{2}/);
     return m ? m[0] : "";
   }
@@ -53,10 +68,10 @@ const calcularCargaHorariaTotal = (arr) => {
 const pickDatasArray = (t) => {
   if (!t) return null;
   const candidatos = [
-    t.datas,            // nosso formato principal do backend
-    t.encontros,        // alguma tela pode ter salvo assim
-    t.datas_turma,      // nome alternativo
-    t.datasReais,       // em alguns endpoints
+    t.datas,
+    t.encontros,
+    t.datas_turma,
+    t.datasReais,
   ].filter(Array.isArray);
 
   return candidatos.length ? candidatos[0] : null;
@@ -86,15 +101,12 @@ const encontrosDoInitial = (t) => {
   const baseHi = hhmm(t?.horario_inicio, "08:00");
   const baseHf = hhmm(t?.horario_fim, "17:00");
 
-  // 1) arrays “encontros”/“datas”/variantes
   const conv = datasParaEncontros(t);
   if (conv) return conv;
 
-  // 2) fallback com data_inicio/data_fim
   const di = isoDay(t?.data_inicio);
   const df = isoDay(t?.data_fim);
   if (di && df) {
-    // se início = fim, cria 1 encontro; se diferentes, cria 2 mínimos (editar depois)
     if (di === df) {
       return [{ data: di, inicio: baseHi, fim: baseHf }];
     }
@@ -105,7 +117,6 @@ const encontrosDoInitial = (t) => {
   }
   if (di) return [{ data: di, inicio: baseHi, fim: baseHf }];
 
-  // 3) vazio
   return [{ data: "", inicio: "", fim: "" }];
 };
 
@@ -136,7 +147,10 @@ export default function ModalTurma({
 
   useEffect(() => {
     if (isOpen && !refHydratedOpen.current) {
-      console.log("[ModalTurma] initialTurma recebido:", initialTurma);
+      group("Abertura do Modal • Hidratação inicial");
+      time("hydrate");
+
+      log("isOpen=true | initialTurma recebido:", initialTurma);
 
       setNome(initialTurma?.nome || "");
       setVagasTotal(
@@ -144,26 +158,34 @@ export default function ModalTurma({
       );
 
       const encontrosInit = encontrosDoInitial(initialTurma);
-      console.log("[ModalTurma] encontros parseados:", encontrosInit);
+      log("Encontros parseados a partir do initialTurma:", encontrosInit);
       setEncontros(encontrosInit);
 
-      // hidratar instrutores e assinante
       const ids = extractIds(initialTurma?.instrutores);
-      setInstrutoresSel(ids.length ? ids.map(String) : [""]);
+      const arrInstr = ids.length ? ids.map(String) : [""];
+      log("Instrutores (ids) hidratados:", arrInstr);
+      setInstrutoresSel(arrInstr);
 
-      // aceita os dois campos que podem vir do backend/estado
       const assinante =
         Number.isFinite(Number(initialTurma?.assinante_id))
           ? String(initialTurma.assinante_id)
           : Number.isFinite(Number(initialTurma?.instrutor_assinante_id))
           ? String(initialTurma.instrutor_assinante_id)
           : "";
+      log("Assinante hidratado:", assinante);
       setAssinanteId(assinante);
 
       refHydratedOpen.current = true;
-      setTimeout(() => autosizeNome(), 0);
+      setTimeout(() => {
+        autosizeNome();
+        timeEnd("hydrate");
+        groupEnd();
+      }, 0);
     }
     if (!isOpen) {
+      if (refHydratedOpen.current) {
+        log("Fechando modal — limpando flag de hidratação.");
+      }
       refHydratedOpen.current = false;
     }
   }, [isOpen, initialKey]); // muda ao trocar a turma
@@ -172,6 +194,10 @@ export default function ModalTurma({
   useEffect(() => {
     const setIds = new Set(instrutoresSel.filter(Boolean).map(String));
     if (assinanteId && !setIds.has(String(assinanteId))) {
+      log("Assinante atual não está mais na lista de instrutores; limpando assinante.", {
+        assinanteIdAntes: assinanteId,
+        instrutoresSel,
+      });
       setAssinanteId("");
     }
   }, [instrutoresSel, assinanteId]);
@@ -207,85 +233,133 @@ export default function ModalTurma({
   /* CRUD encontros */
   const addEncontro = () => {
     const last = encontros[encontros.length - 1] || {};
-    setEncontros((prev) => [
-      ...prev,
-      { data: "", inicio: hhmm(last.inicio, ""), fim: hhmm(last.fim, "") },
-    ]);
+    const novo = { data: "", inicio: hhmm(last.inicio, ""), fim: hhmm(last.fim, "") };
+    log("Adicionar encontro (preview):", novo);
+    setEncontros((prev) => {
+      const next = [...prev, novo];
+      log("Estado de encontros após adicionar:", next);
+      return next;
+    });
   };
   const removeEncontro = (idx) => {
-    setEncontros((prev) => (prev.length <= 1 ? prev : prev.filter((_, i) => i !== idx)));
+    log("Remover encontro solicitado:", { index: idx, totalAtual: encontros.length });
+    setEncontros((prev) => {
+      if (prev.length <= 1) {
+        log("Remoção ignorada: precisa manter ao menos um encontro.");
+        return prev;
+      }
+      const next = prev.filter((_, i) => i !== idx);
+      log("Encontros após remoção:", next);
+      return next;
+    });
   };
   const updateEncontro = (idx, field, value) => {
-    setEncontros((prev) => prev.map((e, i) => (i === idx ? { ...e, [field]: value } : e)));
+    log("Atualizar encontro:", { index: idx, field, value });
+    setEncontros((prev) =>
+      prev.map((e, i) => (i === idx ? { ...e, [field]: value } : e))
+    );
   };
 
   /* ======= Instrutores / Assinante ======= */
   const instrutoresOpcoes = useMemo(() => {
-    return (usuarios || [])
+    const list = (usuarios || [])
       .filter((u) => {
         const perfil = Array.isArray(u.perfil) ? u.perfil.join(",") : String(u.perfil || "");
         const p = perfil.toLowerCase();
         return p.includes("instrutor") || p.includes("administrador");
       })
       .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
+    return list;
   }, [usuarios]);
 
   const getInstrutorDisponivel = (index) => {
     const selecionados = instrutoresSel.map(String);
     const atual = selecionados[index];
-    return instrutoresOpcoes.filter(
+    const opcoes = instrutoresOpcoes.filter(
       (i) => !selecionados.includes(String(i.id)) || String(i.id) === String(atual)
     );
+    return opcoes;
   };
 
   const handleSelecionarInstrutor = (index, valor) => {
+    log("Selecionar/alterar instrutor:", { index, valor });
     const nova = [...instrutoresSel];
     nova[index] = valor;
     setInstrutoresSel(nova);
   };
-  const adicionarInstrutor = () => setInstrutoresSel((l) => [...l, ""]);
+  const adicionarInstrutor = () => {
+    log("Adicionar slot de instrutor.");
+    setInstrutoresSel((l) => {
+      const next = [...l, ""];
+      log("Instrutores após adicionar slot:", next);
+      return next;
+    });
+  };
   const removerInstrutor = (index) => {
-    const nova = instrutoresSel.filter((_, i) => i !== index);
-    setInstrutoresSel(nova.length ? nova : ["" ]);
+    log("Remover instrutor na posição:", index);
+    setInstrutoresSel((prev) => {
+      const next = prev.filter((_, i) => i !== index);
+      log("Instrutores após remoção:", next.length ? next : [""]);
+      return next.length ? next : [""];
+    });
   };
 
   const assinanteOpcoes = useMemo(() => {
     const ids = new Set(instrutoresSel.filter(Boolean).map((x) => Number(x)));
-    return instrutoresOpcoes.filter((u) => ids.has(Number(u.id)));
+    const list = instrutoresOpcoes.filter((u) => ids.has(Number(u.id)));
+    return list;
   }, [instrutoresSel, instrutoresOpcoes]);
 
   /* validação/salvar */
   const validar = () => {
-    if (!nome.trim()) return toast.warning("Informe o nome da turma."), false;
-    if (nome.length > NOME_TURMA_MAX) return toast.error(`O nome não pode exceder ${NOME_TURMA_MAX} caracteres.`), false;
-    if (vagasTotal === "" || Number(vagasTotal) <= 0 || !Number.isFinite(Number(vagasTotal)))
-      return toast.warning("Quantidade de vagas deve ser número ≥ 1."), false;
-    if (!encontrosOrdenados.length) return toast.warning("Inclua pelo menos uma data de encontro."), false;
+    time("validar");
+    if (!nome.trim()) { toast.warning("Informe o nome da turma."); log("Validação falhou: nome vazio."); timeEnd("validar"); return false; }
+    if (nome.length > NOME_TURMA_MAX) { toast.error(`O nome não pode exceder ${NOME_TURMA_MAX} caracteres.`); log("Validação falhou: nome longo.", { len: nome.length }); timeEnd("validar"); return false; }
+    if (vagasTotal === "" || Number(vagasTotal) <= 0 || !Number.isFinite(Number(vagasTotal))) {
+      toast.warning("Quantidade de vagas deve ser número ≥ 1."); log("Validação falhou: vagas inválidas.", { vagasTotal }); timeEnd("validar"); return false;
+    }
+    if (!encontrosOrdenados.length) { toast.warning("Inclua pelo menos uma data de encontro."); log("Validação falhou: sem encontros válidos."); timeEnd("validar"); return false; }
 
     for (let i = 0; i < encontrosOrdenados.length; i++) {
       const e = encontrosOrdenados[i];
-      if (!e.data || !e.inicio || !e.fim) return toast.error(`Preencha data e horários do encontro #${i + 1}.`), false;
+      if (!e.data || !e.inicio || !e.fim) { toast.error(`Preencha data e horários do encontro #${i + 1}.`); log("Validação falhou: campo vazio em encontro.", { index: i, e }); timeEnd("validar"); return false; }
       const [h1, m1] = hhmm(e.inicio, "00:00").split(":").map(Number);
       const [h2, m2] = hhmm(e.fim, "00:00").split(":").map(Number);
-      if (h2 * 60 + (m2 || 0) <= h1 * 60 + (m1 || 0))
-        return toast.error(`Horários inválidos no encontro #${i + 1}.`), false;
+      if (h2 * 60 + (m2 || 0) <= h1 * 60 + (m1 || 0)) {
+        toast.error(`Horários inválidos no encontro #${i + 1}.`);
+        log("Validação falhou: horário fim <= início.", { index: i, e });
+        timeEnd("validar");
+        return false;
+      }
     }
 
     const instrSel = instrutoresSel
       .map((v) => Number(String(v).trim()))
       .filter((id) => Number.isFinite(id));
-    if (instrSel.length === 0) return toast.error("Selecione ao menos um instrutor para a turma."), false;
+    if (instrSel.length === 0) { toast.error("Selecione ao menos um instrutor para a turma."); log("Validação falhou: nenhum instrutor selecionado."); timeEnd("validar"); return false; }
 
-    if (!assinanteId) return toast.error("Selecione o assinante da turma."), false;
+    if (!assinanteId) { toast.error("Selecione o assinante da turma."); log("Validação falhou: assinante vazio."); timeEnd("validar"); return false; }
 
     if (!instrSel.includes(Number(assinanteId))) {
-      return toast.error("O assinante precisa estar entre os instrutores selecionados."), false;
+      toast.error("O assinante precisa estar entre os instrutores selecionados.");
+      log("Validação falhou: assinante fora da lista de instrutores.", { instrSel, assinanteId });
+      timeEnd("validar");
+      return false;
     }
 
+    log("Validação OK.", {
+      nome,
+      vagasTotal: Number(vagasTotal),
+      encontrosValidos: encontrosOrdenados.length,
+      instrutoresSel,
+      assinanteId,
+    });
+    timeEnd("validar");
     return true;
   };
 
   const montarPayload = () => {
+    time("montarPayload");
     const horario_inicio_base = hhmm(encontrosOrdenados[0]?.inicio, "08:00");
     const horario_fim_base = hhmm(encontrosOrdenados[0]?.fim, "17:00");
 
@@ -293,7 +367,7 @@ export default function ModalTurma({
       .map((v) => Number(String(v).trim()))
       .filter((id) => Number.isFinite(id));
 
-    return {
+    const payload = {
       ...(initialTurma?.id ? { id: initialTurma.id } : {}),
       nome: nome.trim(),
       vagas_total: Number(vagasTotal),
@@ -313,22 +387,39 @@ export default function ModalTurma({
         horario_fim: hhmm(e.fim, horario_fim_base),
       })),
       instrutores: instrSel,
-      // manda os dois por compatibilidade
       assinante_id: Number(assinanteId),
       instrutor_assinante_id: Number(assinanteId),
     };
+
+    log("Payload montado:", payload);
+    timeEnd("montarPayload");
+    return payload;
   };
 
   const handleSalvar = () => {
-    if (!validar()) return;
-    onSalvar?.(montarPayload());
-    if (!initialTurma) {
-      setNome("");
-      setVagasTotal("");
-      setEncontros([{ data: "", inicio: "", fim: "" }]);
-      setInstrutoresSel([""]);
-      setAssinanteId("");
-      setTimeout(autosizeNome, 0);
+    group("Salvar Turma • fluxo de submit");
+    if (!validar()) {
+      groupEnd();
+      return;
+    }
+    const payload = montarPayload();
+    try {
+      log("Disparando onSalvar(payload).");
+      onSalvar?.(payload);
+      log("onSalvar chamado com sucesso.");
+      if (!initialTurma) {
+        log("Resetando formulário (nova turma).");
+        setNome("");
+        setVagasTotal("");
+        setEncontros([{ data: "", inicio: "", fim: "" }]);
+        setInstrutoresSel([""]);
+        setAssinanteId("");
+        setTimeout(autosizeNome, 0);
+      }
+    } catch (err) {
+      console.error(`${stamp()} ${LOG_TAG} Erro no onSalvar:`, err);
+    } finally {
+      groupEnd();
     }
   };
 
@@ -338,7 +429,10 @@ export default function ModalTurma({
   return (
     <ModalBase
       isOpen={isOpen}
-      onClose={onClose}
+      onClose={() => {
+        log("Clique em Cancelar/Fechar no ModalTurma.");
+        onClose?.();
+      }}
       level={1}
       maxWidth="max-w-2xl"
       labelledBy={titleId}
@@ -462,7 +556,10 @@ export default function ModalTurma({
               <label className="text-sm font-medium">Assinante do certificado *</label>
               <select
                 value={String(assinanteId || "")}
-                onChange={(e) => setAssinanteId(e.target.value)}
+                onChange={(e) => {
+                  log("Alterar assinante:", { de: assinanteId, para: e.target.value });
+                  setAssinanteId(e.target.value);
+                }}
                 className="w-full mt-1 pl-3 pr-10 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm"
                 required
               >
@@ -564,7 +661,10 @@ export default function ModalTurma({
               <button
                 type="button"
                 className="flex items-center gap-2 px-3 py-2 rounded-xl bg-rose-600 text-white hover:bg-rose-700 transition"
-                onClick={onExcluir}
+                onClick={() => {
+                  log("Clique em Excluir turma.", { turmaId: initialTurma?.id });
+                  onExcluir();
+                }}
                 title="Excluir turma"
               >
                 <Trash2 size={16} />
@@ -574,10 +674,21 @@ export default function ModalTurma({
           </div>
 
           <div className="flex gap-3">
-            <button onClick={onClose} className="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-slate-100 hover:bg-slate-300 dark:hover:bg-slate-700 transition" type="button">
+            <button
+              onClick={() => {
+                log("Clique em Cancelar no rodapé.");
+                onClose?.();
+              }}
+              className="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-slate-100 hover:bg-slate-300 dark:hover:bg-slate-700 transition"
+              type="button"
+            >
               Cancelar
             </button>
-            <button onClick={handleSalvar} className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 transition" type="button">
+            <button
+              onClick={handleSalvar}
+              className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 transition"
+              type="button"
+            >
               Salvar Turma
             </button>
           </div>

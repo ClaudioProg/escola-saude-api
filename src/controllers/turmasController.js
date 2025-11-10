@@ -4,7 +4,9 @@ const db = require("../db");
 
 /* ───────────────── Config & Utils ───────────────── */
 const IS_DEV = process.env.NODE_ENV !== "production";
-const logDev = (...a) => IS_DEV && console.log(...a);
+const logT = (...a) => IS_DEV && console.log("[TURMA]", ...a);
+const warnT = (...a) => IS_DEV && console.warn("[TURMA]", ...a);
+const errT = (...a) => console.error("[TURMA]", ...a);
 
 const LIMITE_NOME_TURMA = 100;
 const len = (s) => String(s ?? "").trim().length;
@@ -12,6 +14,7 @@ const nomeOk = (s) => len(s) <= LIMITE_NOME_TURMA;
 
 function validarDatasPayload(datas) {
   if (!Array.isArray(datas) || datas.length === 0) {
+    // 🔄 Para ATUALIZAÇÃO, quem decide se valida é quem chama.
     return { ok: false, msg: "Envie ao menos 1 data." };
   }
   for (const d of datas) {
@@ -50,7 +53,7 @@ function somaHorasDatas(datas = []) {
   return totalMin / 60;
 }
 
-// moda simples: pega o valor mais frequente; em empate, menor lexical
+// moda simples
 function moda(values = []) {
   const cnt = new Map();
   for (const v of values) {
@@ -69,17 +72,11 @@ function moda(values = []) {
 async function setAssinanteSilencioso(client, turmaId, instrutorAssinanteId) {
   if (!Number.isFinite(Number(instrutorAssinanteId))) return;
   try {
-    await client.query(
-      `UPDATE turmas SET instrutor_assinante_id = $2 WHERE id = $1`,
-      [turmaId, instrutorAssinanteId]
-    );
+    await client.query(`UPDATE turmas SET instrutor_assinante_id = $2 WHERE id = $1`, [turmaId, instrutorAssinanteId]);
     return;
   } catch (_) {}
   try {
-    await client.query(
-      `UPDATE turmas SET assinante_instrutor_id = $2 WHERE id = $1`,
-      [turmaId, instrutorAssinanteId]
-    );
+    await client.query(`UPDATE turmas SET assinante_instrutor_id = $2 WHERE id = $1`, [turmaId, instrutorAssinanteId]);
   } catch (_) {}
 }
 
@@ -92,10 +89,27 @@ async function criarTurma(req, res) {
       evento_id,
       nome,
       vagas_total = null,
-      datas = [], // [{data:'YYYY-MM-DD', horario_inicio:'HH:MM', horario_fim:'HH:MM'}]
-      instrutores = [],       // opcional: [ids]
-      instrutor_assinante_id, // opcional: id
+      // agora OPCIONAL:
+      datas, // [{data:'YYYY-MM-DD', horario_inicio:'HH:MM', horario_fim:'HH:MM'}]
+      // NOVOS campos diretos (opcionais) para casos sem 'datas'
+      data_inicio: di_payload,
+      data_fim: df_payload,
+      horario_inicio: hi_payload,
+      horario_fim: hf_payload,
+
+      instrutores = [],
+      instrutor_assinante_id,
     } = req.body;
+
+    logT("criarTurma body:", {
+      keys: Object.keys(req.body || {}),
+      evento_id,
+      nomeLen: len(nome),
+      vagas_total,
+      datasCount: Array.isArray(datas) ? datas.length : 0,
+      instrutoresCount: Array.isArray(instrutores) ? instrutores.length : 0,
+      instrutor_assinante_id,
+    });
 
     if (!evento_id || !nome) {
       return res.status(400).json({ erro: "Evento e nome são obrigatórios." });
@@ -110,15 +124,29 @@ async function criarTurma(req, res) {
       });
     }
 
-    const v = validarDatasPayload(datas);
-    if (!v.ok) return res.status(400).json({ erro: v.msg });
+    let datasOrdenadas = [];
+    let data_inicio = null, data_fim = null, horario_inicio = null, horario_fim = null, carga_int = null;
 
-    const datasOrdenadas = ordenarDatas(datas);
-    const data_inicio    = datasOrdenadas[0].data;
-    const data_fim       = datasOrdenadas[datasOrdenadas.length - 1].data;
-    const horario_inicio = datasOrdenadas[0]?.horario_inicio || null;
-    const horario_fim    = datasOrdenadas[0]?.horario_fim || null;
-    const carga_int      = Math.round(somaHorasDatas(datasOrdenadas));
+    // ✅ Se vier 'datas' NÃO vazias, validamos e calculamos tudo por elas
+    const temDatas = Array.isArray(datas) && datas.length > 0;
+    if (temDatas) {
+      const v = validarDatasPayload(datas);
+      if (!v.ok) return res.status(400).json({ erro: v.msg });
+
+      datasOrdenadas = ordenarDatas(datas);
+      data_inicio    = datasOrdenadas[0].data;
+      data_fim       = datasOrdenadas[datasOrdenadas.length - 1].data;
+      horario_inicio = datasOrdenadas[0]?.horario_inicio || null;
+      horario_fim    = datasOrdenadas[0]?.horario_fim    || null;
+      carga_int      = Math.round(somaHorasDatas(datasOrdenadas));
+    } else {
+      // ✅ Sem 'datas': usamos o que vier direto no payload (ou deixamos NULL)
+      data_inicio    = di_payload ?? null;
+      data_fim       = df_payload ?? di_payload ?? null;
+      horario_inicio = hi_payload ?? null;
+      horario_fim    = hf_payload ?? null;
+      carga_int      = null; // sem encontros não inferimos carga
+    }
 
     await client.query("BEGIN");
 
@@ -134,17 +162,23 @@ async function criarTurma(req, res) {
       [evento_id, String(nome).trim(), data_inicio, data_fim, horario_inicio, horario_fim, vagas_total, carga_int]
     );
     const turma_id = insTurma[0].id;
+    logT("criarTurma -> turma_id:", turma_id);
 
-    // datas_turma
-    const insertData = `
-      INSERT INTO datas_turma (turma_id, data, horario_inicio, horario_fim)
-      VALUES ($1, $2, $3, $4)
-    `;
-    for (const d of datasOrdenadas) {
-      await client.query(insertData, [turma_id, d.data, d.horario_inicio || null, d.horario_fim || null]);
+    // 📅 Grava datas_turma SOMENTE se 'datas' vieram
+    if (temDatas) {
+      const insertData = `
+        INSERT INTO datas_turma (turma_id, data, horario_inicio, horario_fim)
+        VALUES ($1, $2, $3, $4)
+      `;
+      for (const d of datasOrdenadas) {
+        await client.query(insertData, [turma_id, d.data, d.horario_inicio || null, d.horario_fim || null]);
+      }
+      logT("criarTurma -> datas gravadas:", datasOrdenadas.length);
+    } else {
+      logT("criarTurma -> nenhuma 'datas' enviada; criada sem encontros.");
     }
 
-    // vínculos de instrutores
+    // vínculos de instrutores (inalterado)
     if (Array.isArray(instrutores) && instrutores.length > 0) {
       for (const instrutorId of instrutores) {
         await client.query(
@@ -152,25 +186,27 @@ async function criarTurma(req, res) {
           [turma_id, instrutorId]
         );
       }
+      logT("criarTurma -> instrutores vinculados:", instrutores.length);
     }
 
-    // assinante
+    // assinante (inalterado)
     if (instrutor_assinante_id) {
       await setAssinanteSilencioso(client, turma_id, Number(instrutor_assinante_id));
+      logT("criarTurma -> assinante set:", instrutor_assinante_id);
     }
 
     await client.query("COMMIT");
     return res.status(201).json({ turma_id });
   } catch (e) {
     await client.query("ROLLBACK");
-    console.error("❌ criarTurma erro:", e);
+    errT("criarTurma erro:", e);
     return res.status(500).json({ erro: "Erro ao criar turma." });
   } finally {
     client.release();
   }
 }
 
-// PUT /api/turmas/:id
+// PUT /api/turmas/:id  (AGORA aceita atualização parcial sem datas)
 async function atualizarTurma(req, res) {
   const client = await db.getClient();
   try {
@@ -182,10 +218,12 @@ async function atualizarTurma(req, res) {
     const {
       nome,
       vagas_total = null,
-      datas = [],
-      instrutores,             // opcional: substitui vínculos
-      instrutor_assinante_id,  // opcional
+      datas,                  // opcional para atualização parcial
+      instrutores,            // opcional: substitui vínculos
+      instrutor_assinante_id, // opcional
     } = req.body;
+
+    logT("atualizarTurma id:", turma_id, "bodyKeys:", Object.keys(req.body || {}), "datasCount:", Array.isArray(datas) ? datas.length : "(nao enviado)");
 
     if (nome != null && !nomeOk(nome)) {
       return res.status(422).json({
@@ -197,61 +235,92 @@ async function atualizarTurma(req, res) {
       });
     }
 
-    const v = validarDatasPayload(datas);
-    if (!v.ok) return res.status(400).json({ erro: v.msg });
+    // Se datas vieram e tiverem conteúdo -> valida e prepara; caso contrário, atualização parcial SEM mexer em datas
+    let datasOrdenadas = [];
+    let data_inicio = null, data_fim = null, horario_inicio = null, horario_fim = null, carga_int = null;
+    const veioDatas = Array.isArray(datas) && datas.length > 0;
 
-    const datasOrdenadas = ordenarDatas(datas);
-    const data_inicio    = datasOrdenadas[0].data;
-    const data_fim       = datasOrdenadas[datasOrdenadas.length - 1].data;
-    const horario_inicio = datasOrdenadas[0]?.horario_inicio || null;
-    const horario_fim    = datasOrdenadas[0]?.horario_fim || null;
-    const carga_int      = Math.round(somaHorasDatas(datasOrdenadas));
+    if (veioDatas) {
+      const v = validarDatasPayload(datas);
+      if (!v.ok) return res.status(400).json({ erro: v.msg });
+
+      datasOrdenadas = ordenarDatas(datas);
+      data_inicio    = datasOrdenadas[0].data;
+      data_fim       = datasOrdenadas[datasOrdenadas.length - 1].data;
+      horario_inicio = datasOrdenadas[0]?.horario_inicio || null;
+      horario_fim    = datasOrdenadas[0]?.horario_fim || null;
+      carga_int      = Math.round(somaHorasDatas(datasOrdenadas));
+    }
 
     await client.query("BEGIN");
 
-    await client.query(
-      `
-      UPDATE turmas SET
-        nome            = COALESCE($2, nome),
-        vagas_total     = COALESCE($3, vagas_total),
-        data_inicio     = $4,
-        data_fim        = $5,
-        horario_inicio  = $6,
-        horario_fim     = $7,
-        carga_horaria   = $8
-      WHERE id = $1
-      `,
-      [turma_id, nome != null ? String(nome).trim() : null, vagas_total, data_inicio, data_fim, horario_inicio, horario_fim, carga_int]
-    );
+    // Monta UPDATE dinâmico (parcial)
+    const setCols = [];
+    const params = [turma_id];
 
-    await client.query(`DELETE FROM datas_turma WHERE turma_id=$1`, [turma_id]);
-    const insertData = `
-      INSERT INTO datas_turma (turma_id, data, horario_inicio, horario_fim)
-      VALUES ($1, $2, $3, $4)
-    `;
-    for (const d of datasOrdenadas) {
-      await client.query(insertData, [turma_id, d.data, d.horario_inicio || null, d.horario_fim || null]);
+    if (nome != null) {
+      setCols.push(`nome = $${params.length + 1}`);
+      params.push(String(nome).trim());
+    }
+    if (vagas_total != null) {
+      setCols.push(`vagas_total = $${params.length + 1}`);
+      params.push(vagas_total);
+    }
+    if (veioDatas) {
+      setCols.push(`data_inicio = $${params.length + 1}`); params.push(data_inicio);
+      setCols.push(`data_fim = $${params.length + 1}`);    params.push(data_fim);
+      setCols.push(`horario_inicio = $${params.length + 1}`); params.push(horario_inicio);
+      setCols.push(`horario_fim = $${params.length + 1}`);    params.push(horario_fim);
+      setCols.push(`carga_horaria = $${params.length + 1}`);  params.push(carga_int);
     }
 
+    if (setCols.length > 0) {
+      const up = await client.query(
+        `UPDATE turmas SET ${setCols.join(", ")} WHERE id = $1`,
+        params
+      );
+      logT("atualizarTurma UPDATE rowCount:", up.rowCount, "| set:", setCols);
+    } else {
+      logT("atualizarTurma: nada para atualizar em turmas (campos de corpo ausentes).");
+    }
+
+    // Regrava datas_turma SOMENTE se o payload trouxe datas
+    if (veioDatas) {
+      await client.query(`DELETE FROM datas_turma WHERE turma_id=$1`, [turma_id]);
+      const insertData = `
+        INSERT INTO datas_turma (turma_id, data, horario_inicio, horario_fim)
+        VALUES ($1, $2, $3, $4)
+      `;
+      for (const d of datasOrdenadas) {
+        await client.query(insertData, [turma_id, d.data, d.horario_inicio || null, d.horario_fim || null]);
+      }
+      logT("atualizarTurma -> datas regravadas:", datasOrdenadas.length);
+    }
+
+    // Substitui vínculos de instrutores se enviado
     if (Array.isArray(instrutores)) {
       await client.query(`DELETE FROM turma_instrutor WHERE turma_id = $1`, [turma_id]);
+      let added = 0;
       for (const instrutorId of instrutores) {
         await client.query(
           `INSERT INTO turma_instrutor (turma_id, instrutor_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
           [turma_id, instrutorId]
         );
+        added++;
       }
+      logT("atualizarTurma -> instrutores set:", added);
     }
 
     if (instrutor_assinante_id != null) {
       await setAssinanteSilencioso(client, turma_id, Number(instrutor_assinante_id));
+      logT("atualizarTurma -> assinante set:", instrutor_assinante_id);
     }
 
     await client.query("COMMIT");
     return res.json({ ok: true });
   } catch (e) {
     await client.query("ROLLBACK");
-    console.error("❌ atualizarTurma erro:", e);
+    errT("atualizarTurma erro:", e);
     return res.status(500).json({ erro: "Erro ao atualizar turma." });
   } finally {
     client.release();
@@ -271,14 +340,17 @@ async function obterTurmaCompleta(req, res) {
         t.data_inicio, t.data_fim,
         t.horario_inicio, t.horario_fim,
         t.vagas_total, t.carga_horaria,
-        t.instrutor_assinante_id
+        COALESCE(t.instrutor_assinante_id, t.assinante_instrutor_id) AS instrutor_assinante_id,
+        u.nome AS assinante_nome
       FROM turmas t
+      LEFT JOIN usuarios u ON u.id = COALESCE(t.instrutor_assinante_id, t.assinante_instrutor_id)
       WHERE t.id = $1
       `,
       [turma_id]
     );
     if (rowCount === 0) return res.status(404).json({ erro: "Turma não encontrada." });
     const t = rows[0];
+    logT("obterTurmaCompleta base:", { id: t.id, nome: t.nome });
 
     const datasResult = await db.query(
       `
@@ -312,16 +384,19 @@ async function obterTurmaCompleta(req, res) {
       ...t,
       horario_inicio: t.horario_inicio ? String(t.horario_inicio).slice(0, 5) : null,
       horario_fim: t.horario_fim ? String(t.horario_fim).slice(0, 5) : null,
+      assinante_id: t.instrutor_assinante_id ?? null,
+      instrutor_assinante_id: t.instrutor_assinante_id ?? null,
+      assinante_nome: t.assinante_nome ?? null,
       datas,
       instrutores: instrutoresResult.rows,
     });
   } catch (err) {
-    console.error("❌ obterTurmaCompleta erro:", err);
+    errT("obterTurmaCompleta erro:", err);
     return res.status(500).json({ erro: "Erro ao obter turma." });
   }
 }
 
-// GET /api/turmas/:id/datas  -> Datas reais da turma (datas_turma)
+// GET /api/turmas/:id/datas
 async function listarDatasDaTurma(req, res) {
   const turmaId = Number(req.params.id);
   if (!Number.isFinite(turmaId) || turmaId <= 0) {
@@ -329,18 +404,12 @@ async function listarDatasDaTurma(req, res) {
   }
 
   try {
-    // garante que a turma exista (opcional mas útil)
-    const chk = await db.query(`SELECT id FROM turmas WHERE id = $1`, [turmaId]);
-    if (chk.rowCount === 0) {
-      return res.status(404).json({ erro: "Turma não encontrada." });
-    }
-
     const { rows } = await db.query(
       `
       SELECT 
         data::date AS data,
         to_char(horario_inicio, 'HH24:MI') AS horario_inicio,
-        to_char(horario_fim,   'HH24:MI')   AS horario_fim
+        to_char(horario_fim,   'HH24:MI') AS horario_fim
       FROM datas_turma
       WHERE turma_id = $1
       ORDER BY data
@@ -348,24 +417,23 @@ async function listarDatasDaTurma(req, res) {
       [turmaId]
     );
 
-    const resposta = rows.map(r => ({
+    const datas = rows.map((r) => ({
       data: r.data.toISOString().slice(0, 10),
       horario_inicio: r.horario_inicio || null,
       horario_fim: r.horario_fim || null,
     }));
 
-    return res.json(resposta);
+    return res.json(datas);
   } catch (err) {
-    console.error("❌ listarDatasDaTurma erro:", err);
+    errT("listarDatasDaTurma erro:", err);
     return res.status(500).json({ erro: "Erro ao buscar datas da turma." });
   }
 }
 
 /* ───── vínculos de instrutores ───── */
-// POST /api/turmas/:id/instrutores
 async function adicionarInstrutor(req, res) {
   const turma_id = Number(req.params.id);
-  const { instrutores } = req.body; // [ids]
+  const { instrutores } = req.body;
   if (!Number.isFinite(turma_id)) return res.status(400).json({ erro: "TURMA_ID_INVALIDO" });
   if (!Array.isArray(instrutores) || instrutores.length === 0) {
     return res.status(400).json({ erro: "Lista de instrutores inválida." });
@@ -374,21 +442,23 @@ async function adicionarInstrutor(req, res) {
     const t = await db.query(`SELECT id FROM turmas WHERE id = $1`, [turma_id]);
     if (t.rowCount === 0) return res.status(404).json({ erro: "Turma não encontrada." });
 
+    let added = 0;
     for (const instrutor_id of instrutores) {
       await db.query(
         `INSERT INTO turma_instrutor (turma_id, instrutor_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
         [turma_id, instrutor_id]
       );
+      added++;
     }
+    logT("adicionarInstrutor -> adições:", added);
     return res.status(201).json({ mensagem: "Instrutor(es) adicionados à turma com sucesso." });
   } catch (err) {
-    console.error("❌ adicionarInstrutor erro:", err);
+    errT("adicionarInstrutor erro:", err);
     return res.status(500).json({ erro: "Erro ao adicionar instrutor à turma." });
   }
 }
 
 /* ───── listagens ───── */
-// GET /api/eventos/:evento_id/turmas (COMpleto)
 async function listarTurmasPorEvento(req, res) {
   const { evento_id } = req.params;
   try {
@@ -465,7 +535,7 @@ async function listarTurmasPorEvento(req, res) {
           data_inicio: min,
           data_fim: max,
           horario_inicio: hiModa || (t.horario_inicio ? String(t.horario_inicio).slice(0, 5) : null),
-          horario_fim:   hfModa || (t.horario_fim   ? String(t.horario_fim).slice(0, 5) : null),
+          horario_fim:   hfModa || (t.horario_fim   ? String(t.horario_fim   ).slice(0, 5) : null),
           vagas_total: Number(t.vagas_total ?? 0),
           carga_horaria: t.carga_horaria,
           carga_horaria_real,
@@ -475,9 +545,10 @@ async function listarTurmasPorEvento(req, res) {
       })
       .sort((a, b) => String(a.data_inicio || "").localeCompare(String(b.data_inicio || "")));
 
+    logT("listarTurmasPorEvento count:", resposta.length);
     return res.json(resposta);
   } catch (err) {
-    console.error("❌ listarTurmasPorEvento erro:", err);
+    errT("listarTurmasPorEvento erro:", err);
     return res.status(500).json({ erro: "Erro ao buscar turmas." });
   }
 }
@@ -491,7 +562,8 @@ async function obterTurmasPorEvento(req, res) {
       SELECT 
         t.id, t.nome, t.data_inicio, t.data_fim,
         t.horario_inicio, t.horario_fim,
-        t.vagas_total, t.carga_horaria
+        t.vagas_total, t.carga_horaria,
+        COALESCE(t.instrutor_assinante_id, t.assinante_instrutor_id) AS instrutor_assinante_id
       FROM turmas t
       WHERE t.evento_id = $1
       ORDER BY t.data_inicio NULLS LAST, t.horario_inicio NULLS LAST
@@ -539,17 +611,41 @@ async function obterTurmasPorEvento(req, res) {
       instrPorTurma[r.turma_id].push({ id: r.id, nome: r.nome });
     }
 
-    const resposta = rows.map((t) => ({
-      ...t,
-      horario_inicio: t.horario_inicio ? String(t.horario_inicio).slice(0, 5) : null,
-      horario_fim: t.horario_fim ? String(t.horario_fim).slice(0, 5) : null,
-      datas: datasPorTurma[t.id] || [],
-      instrutores: instrPorTurma[t.id] || [],
-    }));
+    const resposta = rows.map((t) => {
+      const datas = datasPorTurma[t.id] || [];
 
+      const encontros = datas.map((d) => ({
+        data: d.data,
+        inicio: d.horario_inicio || (t.horario_inicio ? String(t.horario_inicio).slice(0,5) : null),
+        fim:    d.horario_fim    || (t.horario_fim    ? String(t.horario_fim   ).slice(0,5) : null),
+      }));
+
+      const hiModa = moda(datas.map((d) => d.horario_inicio).filter(Boolean));
+      const hfModa = moda(datas.map((d) => d.horario_fim).filter(Boolean));
+
+      return {
+        id: t.id,
+        nome: t.nome,
+        data_inicio: t.data_inicio ? String(t.data_inicio).slice(0, 10) : null,
+        data_fim:    t.data_fim    ? String(t.data_fim).slice(0, 10)    : null,
+        horario_inicio: hiModa || (t.horario_inicio ? String(t.horario_inicio).slice(0, 5) : null),
+        horario_fim:    hfModa || (t.horario_fim    ? String(t.horario_fim   ).slice(0, 5) : null),
+        vagas_total: Number(t.vagas_total ?? 0),
+        carga_horaria: t.carga_horaria,
+        datas,
+        encontros,
+        _datas: datas,
+        instrutores: instrPorTurma[t.id] || [],
+        qtd_encontros: datas.length,
+        instrutor_assinante_id: t.instrutor_assinante_id ?? null,
+        assinante_id: t.instrutor_assinante_id ?? null,
+      };
+    });
+
+    logT("obterTurmasPorEvento count:", resposta.length);
     return res.json(resposta);
   } catch (err) {
-    console.error("❌ obterTurmasPorEvento erro:", err);
+    errT("obterTurmasPorEvento erro:", err);
     return res.status(500).json({ erro: "Erro ao buscar turmas do evento." });
   }
 }
@@ -573,7 +669,7 @@ async function listarInstrutorDaTurma(req, res) {
     );
     return res.json(resultado.rows);
   } catch (err) {
-    console.error("❌ listarInstrutorDaTurma erro:", err);
+    errT("listarInstrutorDaTurma erro:", err);
     return res.status(500).json({ erro: "Erro ao listar instrutor(es) da turma." });
   }
 }
@@ -600,7 +696,7 @@ async function obterDetalhesTurma(req, res) {
     if (resultado.rowCount === 0) return res.status(404).json({ erro: "Turma não encontrada." });
     return res.json(resultado.rows[0]);
   } catch (err) {
-    console.error("❌ obterDetalhesTurma erro:", err);
+    errT("obterDetalhesTurma erro:", err);
     return res.status(500).json({ erro: "Erro ao obter detalhes da turma." });
   }
 }
@@ -684,9 +780,10 @@ async function listarTurmasComUsuarios(req, res) {
       }))
       .sort((a, b) => String(b.data_inicio || "").localeCompare(String(a.data_inicio || "")));
 
+    logT("listarTurmasComUsuarios count:", resposta.length);
     return res.json(resposta);
   } catch (err) {
-    console.error("❌ listarTurmasComUsuarios erro:", err);
+    errT("listarTurmasComUsuarios erro:", err);
     return res.status(500).json({ erro: "Erro interno ao buscar turmas com usuarios." });
   }
 }
@@ -740,46 +837,11 @@ async function excluirTurma(req, res) {
     await client.query("COMMIT");
     return res.json({ ok: true, mensagem: "Turma excluída com sucesso.", turma_id: turmaId });
   } catch (err) {
-    console.error("❌ excluirTurma erro:", err);
+    errT("excluirTurma erro:", err);
     await client.query("ROLLBACK");
     return res.status(500).json({ erro: "Erro ao excluir turma." });
   } finally {
     client.release();
-  }
-}
-
-// ✅ dentro de src/controllers/turmasController.js
-
-async function listarDatasDaTurma(req, res) {
-  const turmaId = Number(req.params.id);
-  if (!Number.isFinite(turmaId) || turmaId <= 0) {
-    return res.status(400).json({ erro: "TURMA_ID_INVALIDO" });
-  }
-
-  try {
-    const { rows } = await db.query(
-      `
-      SELECT 
-        data::date AS data,
-        to_char(horario_inicio, 'HH24:MI') AS horario_inicio,
-        to_char(horario_fim,   'HH24:MI') AS horario_fim
-      FROM datas_turma
-      WHERE turma_id = $1
-      ORDER BY data
-      `,
-      [turmaId]
-    );
-
-    const datas = rows.map((r) => ({
-      data: r.data.toISOString().slice(0, 10),
-      horario_inicio: r.horario_inicio || null,
-      horario_fim: r.horario_fim || null,
-    }));
-
-    return res.json(datas);
-  } catch (err) {
-    console.error("❌ listarDatasDaTurma erro:", err);
-    return res.status(500).json({ erro: "Erro ao buscar datas da turma." });
   }
 }
 
@@ -791,8 +853,8 @@ module.exports = {
   excluirTurma,
   listarTurmasPorEvento,
   obterTurmasPorEvento,
-  obterTurmaCompleta,    // 👈 use no “Editar Turma”
-  adicionarInstrutor,    // por TURMA
+  obterTurmaCompleta,
+  adicionarInstrutor,
   listarInstrutorDaTurma,
   obterDetalhesTurma,
   listarTurmasComUsuarios,
@@ -802,6 +864,5 @@ module.exports = {
   editarTurma: atualizarTurma,
   adicionarinstrutor: adicionarInstrutor,
   listarinstrutorDaTurma: listarInstrutorDaTurma,
-  listarTurmasComusuarios: listarTurmasComUsuarios,
   listarTurmasDoinstrutor: () => {}, // removido aqui; use endpoints novos
 };

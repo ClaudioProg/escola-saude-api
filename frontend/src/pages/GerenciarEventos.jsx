@@ -138,22 +138,33 @@ function normalizeTurmas(turmas = []) {
     const vagasOk = Number.isFinite(vagas) && vagas > 0 ? vagas : 1;
 
     // ✅ instrutores e assinante por TURMA
-    const instrutores = extractIds(
-      t.instrutores || t.instrutor || t.professores || []
-    );
-    const assinante_id = Number(
-      t.assinante_id ?? t.instrutor_assinante ?? t.assinante
-    );
 
-    return clean({
-      ...(Number.isFinite(Number(t.id)) ? { id: Number(t.id) } : {}),
-      nome,
-      vagas_total: vagasOk,
-      carga_horaria: ch,
-      datas,
-      instrutores,
-      assinante_id: Number.isFinite(assinante_id) ? assinante_id : undefined,
-    });
+const instrutores = extractIds(
+  t.instrutores || t.instrutor || t.professores || []
+);
+
+// cobre todas as variantes possíveis vindas do servidor/modais
+const _assinanteRaw =
+  t.assinante_id ??
+  t.instrutor_assinante_id ??   // <- nome preferencial
+  t.instrutor_assinante ??      // <- legado/variante
+  t.assinante;
+
+const assinanteNum = Number(_assinanteRaw);
+const hasAssinante = Number.isFinite(assinanteNum);
+
+return clean({
+  ...(Number.isFinite(Number(t.id)) ? { id: Number(t.id) } : {}),
+  nome,
+  vagas_total: vagasOk,
+  carga_horaria: ch,
+  datas,
+  instrutores,
+  // Sempre enviar os dois campos, alinhados
+  ...(hasAssinante ? { assinante_id: assinanteNum } : {}),
+  ...(hasAssinante ? { instrutor_assinante_id: assinanteNum } : {}),
+});
+
   });
 }
 
@@ -486,12 +497,18 @@ export default function GerenciarEventos() {
   function validarTurmasComInstrutores(turmasNorm) {
     for (const t of turmasNorm) {
       const instrs = Array.isArray(t.instrutores) ? t.instrutores : [];
-      if (t.assinante_id && !instrs.includes(Number(t.assinante_id))) {
+      const assinante =
+        Number.isFinite(Number(t.assinante_id))
+          ? Number(t.assinante_id)
+          : Number(t.instrutor_assinante_id);
+  
+      if (Number.isFinite(assinante) && !instrs.includes(assinante)) {
         return `O assinante selecionado na turma "${t.nome}" precisa estar entre os instrutores da turma.`;
       }
     }
     return null;
   }
+  
 
   const salvarEvento = async (dadosDoModal) => {
     try {
@@ -525,27 +542,36 @@ export default function GerenciarEventos() {
           };
         }
 
-        const body = buildUpdateBody(baseServidor, dadosDoModal);
+        // ... dentro de salvarEvento, no bloco de edição (isEdicao === true)
+const body = buildUpdateBody(baseServidor, dadosDoModal);
 
-        // validação soft: instrutores/assinante por turma
-        if (Array.isArray(body.turmas) && body.turmas.length > 0) {
-          const msg = validarTurmasComInstrutores(body.turmas);
-          if (msg) {
-            toast.error(msg);
-            return;
-          }
-        }
+// ✅ incluir sinalizações de remoção vindas do Modal
+if (dadosDoModal?.remover_folder === true) {
+  body.remover_folder = true;
+}
+if (dadosDoModal?.remover_programacao === true) {
+  body.remover_programacao = true;
+}
 
-        // Sem fallback/travas: atualiza sempre
-        await apiPut(`/api/eventos/${eventoSelecionado.id}`, body);
+// validação soft...
+if (Array.isArray(body.turmas) && body.turmas.length > 0) {
+  const msg = validarTurmasComInstrutores(body.turmas);
+  if (msg) {
+    toast.error(msg);
+    return;
+  }
+}
 
-        // Uploads (folder/programação) se enviados
-        if (dadosDoModal?.folderFile instanceof File) {
-          await uploadFolder(eventoSelecionado.id, dadosDoModal.folderFile);
-        }
-        if (dadosDoModal?.programacaoFile instanceof File) {
-          await uploadProgramacao(eventoSelecionado.id, dadosDoModal.programacaoFile);
-        }
+// Sem fallback/travas: atualiza sempre
+await apiPut(`/api/eventos/${eventoSelecionado.id}`, body);
+
+// Uploads (folder/programação) se enviados
+if (dadosDoModal?.folderFile instanceof File) {
+  await uploadFolder(eventoSelecionado.id, dadosDoModal.folderFile);
+}
+if (dadosDoModal?.programacaoFile instanceof File) {
+  await uploadProgramacao(eventoSelecionado.id, dadosDoModal.programacaoFile);
+}
 
         await recarregarEventos();
         toast.success("✅ Evento salvo com sucesso.");
@@ -569,21 +595,21 @@ export default function GerenciarEventos() {
 
       // turmas (com instrutores e assinante)
       const turmas =
-        Array.isArray(dadosDoModal?.turmas) && dadosDoModal.turmas.length
-          ? normalizeTurmas(dadosDoModal.turmas)
-          : normalizeTurmas([
-              {
-                nome: base.titulo || "Turma Única",
-                data_inicio: ymd(dadosDoModal?.data_inicio),
-                data_fim: ymd(dadosDoModal?.data_fim),
-                horario_inicio: hhmm(dadosDoModal?.horario_inicio || "08:00"),
-                horario_fim: hhmm(dadosDoModal?.horario_fim || "17:00"),
-                vagas_total: 1,
-                carga_horaria: 1,
-                instrutores: extractIds(dadosDoModal?.instrutores) || [], // caso venha separadamente
-                assinante_id: Number(dadosDoModal?.assinante_id),
-              },
-            ]);
+  Array.isArray(dadosDoModal?.turmas) && dadosDoModal.turmas.length
+    ? normalizeTurmas(dadosDoModal.turmas)
+    : normalizeTurmas([{
+        nome: base.titulo || "Turma Única",
+        data_inicio: ymd(dadosDoModal?.data_inicio),
+        data_fim: ymd(dadosDoModal?.data_fim),
+        horario_inicio: hhmm(dadosDoModal?.horario_inicio || "08:00"),
+        horario_fim: hhmm(dadosDoModal?.horario_fim || "17:00"),
+        vagas_total: 1,
+        carga_horaria: 1,
+        instrutores: extractIds(dadosDoModal?.instrutores) || [],
+        // unifica a origem e replica
+        assinante_id: Number(dadosDoModal?.instrutor_assinante_id ?? dadosDoModal?.assinante_id),
+        instrutor_assinante_id: Number(dadosDoModal?.instrutor_assinante_id ?? dadosDoModal?.assinante_id),
+      }]);
 
       const msgTurma = validarTurmasComInstrutores(turmas);
       if (msgTurma) {

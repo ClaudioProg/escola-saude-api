@@ -216,13 +216,19 @@ function MiniStat({ value, label, className = "" }) {
 
 /* ===== Resolve nome do assinante por turma ===== */
 function resolveAssinanteNome(turma, evento) {
-  // 1) nome direto
+  // 0) se o backend já mandou o objeto pronto
+  if (turma?.instrutor_assinante?.nome) return turma.instrutor_assinante.nome;
+
+  // 1) nome direto (legado) — mantém por compat
   if (turma?.assinante_nome) return turma.assinante_nome;
 
-  const assinanteId = Number(turma?.assinante_id);
+  // 2) id novo (oficial)
+  const assinanteId = Number(
+    turma?.instrutor_assinante_id ?? turma?.assinante_id /* compat */
+  );
   if (!Number.isFinite(assinanteId)) return null;
 
-  // 2) procurar na própria turma
+  // 3) procurar na própria turma
   const turInstr = Array.isArray(turma?.instrutores) ? turma.instrutores : [];
   for (const it of turInstr) {
     const id = Number(it?.id ?? it);
@@ -230,7 +236,7 @@ function resolveAssinanteNome(turma, evento) {
     if (id === assinanteId) return nome || null;
   }
 
-  // 3) fallback: procurar na lista do evento
+  // 4) fallback: procurar na lista do evento
   const evInstr = Array.isArray(evento?.instrutor) ? evento.instrutor : [];
   for (const it of evInstr) {
     const id = Number(it?.id ?? it);

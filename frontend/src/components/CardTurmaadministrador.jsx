@@ -32,22 +32,31 @@ function clamp(n, mi, ma) {
   return Math.max(mi, Math.min(ma, v));
 }
 
-/* Resolve nome do assinante da turma:
-   1) usa turma.assinante_nome
-   2) se houver assinante_id, tenta achar em turma.instrutores (obj {id,nome} ou id) */
 function resolveAssinanteNome(turma) {
   if (!turma) return null;
-  if (turma.assinante_nome) return turma.assinante_nome;
 
-  const assinanteId = Number(turma.assinante_id);
+  // 0) Se o backend já retornou o objeto completo
+  if (turma?.instrutor_assinante?.nome) {
+    return turma.instrutor_assinante.nome;
+  }
+
+  // 1) Compatibilidade com o antigo (caso ainda exista em algum retorno)
+  if (turma?.assinante_nome) return turma.assinante_nome;
+
+  // 2) Novo campo oficial
+  const assinanteId = Number(
+    turma?.instrutor_assinante_id ?? turma?.assinante_id /* fallback legado */
+  );
   if (!Number.isFinite(assinanteId)) return null;
 
-  const arr = Array.isArray(turma.instrutores) ? turma.instrutores : [];
+  // 3) Procurar entre os instrutores da turma
+  const arr = Array.isArray(turma?.instrutores) ? turma.instrutores : [];
   for (const it of arr) {
     const id = Number(typeof it === "object" ? it.id : it);
     const nome = typeof it === "object" ? it?.nome : null;
     if (id === assinanteId) return nome || null;
   }
+
   return null;
 }
 

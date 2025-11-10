@@ -1,5 +1,5 @@
 /* eslint-disable no-console */
-// ✅ src/controllers/eventosController.js
+// ✅ src/controllers/eventosController.js — REVISADO (logs cirúrgicos + correções)
 const path = require("path");
 const fs = require("fs");
 const { pool, query } = require("../db");
@@ -9,12 +9,29 @@ const {
   normalizeListaRegistros,
 } = require("../utils/registro");
 
-/* =====================================================================
-   Upload (folder.png/jpg e programacao.pdf)
-   ===================================================================== */
-   const { EVENTOS_DIR } = require("../paths");
-   const UP_BASE = EVENTOS_DIR;
+/* ====================== Paths / Uploads ====================== */
+const { EVENTOS_DIR } = require("../paths");
+const UP_BASE = EVENTOS_DIR;
+fs.mkdirSync(UP_BASE, { recursive: true });
 
+/* ====================== Logger util ====================== */
+function mkRid() {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+function logStart(rid, msg, extra = {}) {
+  console.log(`[EVT][RID=${rid}] ▶ ${msg}`, extra && Object.keys(extra).length ? extra : "");
+}
+function logInfo(rid, msg, extra = {}) {
+  console.log(`[EVT][RID=${rid}] • ${msg}`, extra && Object.keys(extra).length ? extra : "");
+}
+function logWarn(rid, msg, extra = {}) {
+  console.warn(`[EVT][RID=${rid}] ⚠ ${msg}`, extra && Object.keys(extra).length ? extra : "");
+}
+function logError(rid, msg, err) {
+  console.error(`[EVT][RID=${rid}] ✖ ${msg}`, err?.stack || err?.message || err);
+}
+
+/* ====================== Multer ====================== */
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, UP_BASE),
   filename: (req, file, cb) => {
@@ -45,35 +62,11 @@ const uploadEventos = upload.fields([
   { name: "file", maxCount: 1 },
 ]);
 
-// 🔓 Visibilidade 100% livre (sem validações de combinação)
-function sanitizeVisibilidade(body) {
-  const restrito = !!body.restrito;
-  const modo = restrito ? (body.restrito_modo ?? null) : null;
+/* ====================== Visibilidade ====================== */
+const MODO_TODOS = "todos_servidores";
+const MODO_LISTA = "lista_registros";
 
-  // Se NÃO restrito: tudo vira NULL
-  if (!restrito) {
-    return {
-      restrito: false,
-      restrito_modo: null,
-      registros_permitidos: null,
-      cargos_permitidos: null,
-      unidades_permitidas: null,
-    };
-  }
-
-  // Se restrito: só repasse o que vier, sem impor defaults
-  return {
-    restrito: true,
-    restrito_modo: modo, // pode ser null, 'lista_registros', 'cargos', 'unidades'… tanto faz
-    registros_permitidos: Array.isArray(body.registros_permitidos) ? body.registros_permitidos : null,
-    cargos_permitidos:    Array.isArray(body.cargos_permitidos)    ? body.cargos_permitidos    : null,
-    unidades_permitidas:  Array.isArray(body.unidades_permitidas)  ? body.unidades_permitidas  : null,
-  };
-}
-
-/* =====================================================================
-   Helpers resilientes ao schema
-   ===================================================================== */
+/* ====================== Helpers gerais ====================== */
 function isMissingRelationOrColumn(err) {
   const c = err && (err.code || err?.original?.code);
   return c === "42P01" /* relation not found */ || c === "42703" /* column not found */;
@@ -97,9 +90,7 @@ async function tryQueryWithFallback(client, primary, fallback) {
   }
 }
 
-/* =====================================================================
-   Helpers de datas/horários (sem “pulo” de fuso)
-   ===================================================================== */
+/* ===== Datas/Horários (sem pulo de fuso) ===== */
 function hhmm(s, fb = "") {
   if (!s) return fb;
   const str = String(s).trim().slice(0, 5);
@@ -129,13 +120,15 @@ function toHm(v) {
 }
 const toIntArray = (v) =>
   Array.isArray(v) ? v.map((n) => Number(n)).filter(Number.isFinite) : [];
+const toIdArray = (v) =>
+  Array.isArray(v)
+    ? v
+        .map((x) => (typeof x === "object" && x !== null ? x.id : x))
+        .map((n) => Number(n))
+        .filter(Number.isFinite)
+    : [];
 
-/* =====================================================================
-   Helpers de perfis e usuário
-   ===================================================================== */
-const MODO_TODOS = "todos_servidores";
-const MODO_LISTA = "lista_registros";
-
+/* ===== Perfis/Usuário ===== */
 function getPerfisFromReq(req) {
   const raw = req.user?.perfil ?? req.user?.perfis ?? [];
   if (Array.isArray(raw)) return raw.map((p) => String(p).toLowerCase());
@@ -149,112 +142,7 @@ function isAdmin(req) {
 }
 const getUsuarioId = (req) => req.user?.id ?? null;
 
-/* =====================================================================
-   🔐 Regra de visibilidade
-   ===================================================================== */
-async function podeVerEvento({ client, usuarioId, eventoId, req }) {
-  const admin = isAdmin(req);
-
-  const evQ = await client.query(
-    `SELECT id, restrito, restrito_modo, publicado,
-            COALESCE(cargos_permitidos_ids, '{}')   AS cargos_permitidos_ids,
-            COALESCE(unidades_permitidas_ids, '{}') AS unidades_permitidas_ids
-       FROM eventos
-      WHERE id=$1`,
-    [eventoId]
-  );
-  const evento = evQ.rows[0];
-  if (!evento) return { ok: false, motivo: "EVENTO_NAO_ENCONTRADO" };
-  if (!admin && !evento.publicado) return { ok: false, motivo: "NAO_PUBLICADO" };
-  if (admin || !evento.restrito) return { ok: true };
-  if (!usuarioId) return { ok: false, motivo: "NAO_AUTENTICADO" };
-
-  const uQ = await client.query(
-    `SELECT registro, cargo_id, unidade_id
-       FROM usuarios
-      WHERE id=$1`,
-    [usuarioId]
-  );
-  const usuario = uQ.rows?.[0] || {};
-  const regNorm = normalizeRegistro(usuario.registro || "");
-  const cargoId = Number(usuario.cargo_id) || null;
-  const unidadeId = usuario.unidade_id ?? null;
-
-  // Retrocompat: registro
-  if (evento.restrito_modo === MODO_TODOS) {
-    if (regNorm) return { ok: true };
-  }
-  if (evento.restrito_modo === MODO_LISTA) {
-    if (regNorm) {
-      const hit = await client.query(
-        `SELECT 1 FROM evento_registros WHERE evento_id=$1 AND registro_norm=$2 LIMIT 1`,
-        [eventoId, regNorm]
-      );
-      if (hit.rowCount > 0) return { ok: true };
-    }
-  }
-
-  // Arrays (modelo novo)
-  const cargosIdsPermitidos = evento.cargos_permitidos_ids || [];
-  const unidadesIdsPermitidas = evento.unidades_permitidas_ids || [];
-
-  if (cargoId && cargosIdsPermitidos.includes(cargoId)) return { ok: true };
-  if (unidadeId != null && unidadesIdsPermitidas.includes(unidadeId)) return { ok: true };
-
-  return { ok: false, motivo: "SEM_PERMISSAO" };
-}
-
-/* =====================================================================
-   🚀 Publicar / Despublicar
-   ===================================================================== */
-async function publicarEvento(req, res) {
-  if (!isAdmin(req)) return res.status(403).json({ erro: "PERMISSAO_NEGADA" });
-  const id = Number(req.params.id);
-  if (!Number.isFinite(id))
-    return res.status(400).json({ erro: "EVENTO_ID_INVALIDO" });
-  try {
-    const r = await query(
-      `UPDATE eventos SET publicado=TRUE WHERE id=$1 RETURNING id, publicado`,
-      [id]
-    );
-    if (r.rowCount === 0)
-      return res.status(404).json({ erro: "EVENTO_NAO_ENCONTRADO" });
-    return res.json({
-      ok: true,
-      mensagem: "Evento publicado.",
-      evento: r.rows[0],
-    });
-  } catch (e) {
-    console.error("publicarEvento erro:", e);
-    return res.status(500).json({ erro: "ERRO_INTERNO" });
-  }
-}
-async function despublicarEvento(req, res) {
-  if (!isAdmin(req)) return res.status(403).json({ erro: "PERMISSAO_NEGADA" });
-  const id = Number(req.params.id);
-  if (!Number.isFinite(id))
-    return res.status(400).json({ erro: "EVENTO_ID_INVALIDO" });
-  try {
-    const r = await query(
-      `UPDATE eventos SET publicado=FALSE WHERE id=$1 RETURNING id, publicado`,
-      [id]
-    );
-    if (r.rowCount === 0)
-      return res.status(404).json({ erro: "EVENTO_NAO_ENCONTRADO" });
-    return res.json({
-      ok: true,
-      mensagem: "Evento despublicado.",
-      evento: r.rows[0],
-    });
-  } catch (e) {
-    console.error("despublicarEvento erro:", e);
-    return res.status(500).json({ erro: "ERRO_INTERNO" });
-  }
-}
-
-/* =====================================================================
-   Utilitários de extração / upload
-   ===================================================================== */
+/* ===== Upload utils ===== */
 function extrairDatasDaTurma(t) {
   if (Array.isArray(t?.datas) && t.datas.length) {
     return t.datas.map((d) => ({
@@ -277,7 +165,9 @@ function extrairDatasDaTurma(t) {
   return [];
 }
 function pegarUploadUrl(req, field) {
-  const f = req.files?.[field]?.[0] || req.files?.file?.[0];
+  const fSpecific = req.files?.[field]?.[0];
+  const fGeneric = req.files?.file?.[0];
+  const f = fSpecific || fGeneric;
   if (!f) return null;
   return `/uploads/eventos/${path.basename(f.path)}`;
 }
@@ -286,8 +176,10 @@ function pegarUploadUrl(req, field) {
    📄 Listar todos os eventos (resumo)
    ===================================================================== */
 async function listarEventos(req, res) {
+  const rid = mkRid();
   const usuarioId = getUsuarioId(req);
   const admin = isAdmin(req);
+  logStart(rid, "listarEventos", { usuarioId, admin });
 
   const richSQL = `
     WITH minhas_turmas AS (
@@ -298,22 +190,18 @@ async function listarEventos(req, res) {
     )
     SELECT 
       e.*,
-
       COALESCE((
         SELECT array_agg(er.registro_norm ORDER BY er.registro_norm)
         FROM evento_registros er WHERE er.evento_id = e.id
       ), '{}'::text[]) AS registros_permitidos,
       (SELECT COUNT(*) FROM evento_registros er WHERE er.evento_id = e.id) AS count_registros_permitidos,
-
       e.cargos_permitidos_ids,
       e.unidades_permitidas_ids,
-
       COALESCE((
         SELECT json_agg(json_build_object('id', c.id, 'nome', c.nome) ORDER BY c.nome)
         FROM cargos c
         WHERE c.id = ANY(e.cargos_permitidos_ids)
       ), '[]'::json) AS cargos_permitidos,
-
       COALESCE((
         SELECT json_agg(DISTINCT jsonb_build_object('id', u.id, 'nome', u.nome))
         FROM turmas t2
@@ -321,18 +209,15 @@ async function listarEventos(req, res) {
         JOIN usuarios u ON u.id = ti2.instrutor_id
         WHERE t2.evento_id = e.id
       ), '[]'::json) AS instrutor,
-
       COALESCE((
         SELECT json_agg(json_build_object('id', u2.id, 'nome', u2.nome) ORDER BY u2.nome)
         FROM unidades u2
         WHERE u2.id = ANY(e.unidades_permitidas_ids)
       ), '[]'::json) AS unidades_permitidas,
-
       (SELECT MIN(t.data_inicio)    FROM turmas t WHERE t.evento_id = e.id) AS data_inicio_geral,
       (SELECT MAX(t.data_fim)       FROM turmas t WHERE t.evento_id = e.id) AS data_fim_geral,
       (SELECT MIN(t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id) AS horario_inicio_geral,
       (SELECT MAX(t.horario_fim)    FROM turmas t WHERE t.evento_id = e.id) AS horario_fim_geral,
-
       CASE
         WHEN CURRENT_TIMESTAMP::timestamp < (
           SELECT MIN(t.data_inicio::date + COALESCE(t.horario_inicio::time,'00:00'::time))
@@ -344,21 +229,18 @@ async function listarEventos(req, res) {
         ) THEN 'andamento'
         ELSE 'encerrado'
       END AS status,
-
       (
         SELECT COUNT(*) > 0
         FROM inscricoes i
         JOIN turmas t ON t.id = i.turma_id
         WHERE i.usuario_id = $1 AND t.evento_id = e.id
       ) AS ja_inscrito,
-
       (
         SELECT COUNT(*) > 0
         FROM turmas t
         JOIN turma_instrutor ti ON ti.turma_id = t.id
         WHERE t.evento_id = e.id AND ti.instrutor_id = $2
       ) AS ja_instrutor
-
     FROM eventos e
     WHERE ${admin ? "TRUE" : "(e.publicado = TRUE OR e.id IN (SELECT evento_id FROM minhas_turmas))"}
     ORDER BY (SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time,'23:59'::time))
@@ -392,23 +274,24 @@ async function listarEventos(req, res) {
 
   try {
     const r = await query(richSQL, [usuarioId, usuarioId]);
+    logInfo(rid, "listarEventos OK", { count: r.rowCount });
     return res.json(r.rows);
   } catch (err) {
     const pgCode = err && (err.code || err?.original?.code);
     const isMissingRel = pgCode === "42P01";
     const isMissingCol = pgCode === "42703";
+    logWarn(rid, "listarEventos fallback", { pgCode, isMissingRel, isMissingCol });
     if (isMissingRel || isMissingCol) {
       try {
         const r2 = await query(compatSQL, []);
+        logInfo(rid, "listarEventos compat OK", { count: r2.rowCount });
         return res.json(r2.rows);
       } catch (err2) {
-        console.error("listarEventos compat erro:", err2.stack || err2.message);
-        return res
-          .status(500)
-          .json({ erro: "Erro ao listar eventos (compat)" });
+        logError(rid, "listarEventos compat erro", err2);
+        return res.status(500).json({ erro: "Erro ao listar eventos (compat)" });
       }
     }
-    console.error("listarEventos erro:", err.stack || err.message);
+    logError(rid, "listarEventos erro", err);
     return res.status(500).json({ erro: "Erro ao listar eventos" });
   }
 }
@@ -417,12 +300,13 @@ async function listarEventos(req, res) {
    🆕 Listar “para mim”
    ===================================================================== */
 async function listarEventosParaMim(req, res) {
+  const rid = mkRid();
   const usuarioId = getUsuarioId(req);
-  if (!usuarioId)
-    return res.status(401).json({ ok: false, erro: "NAO_AUTENTICADO" });
+  if (!usuarioId) return res.status(401).json({ ok: false, erro: "NAO_AUTENTICADO" });
 
   const client = await pool.connect();
   try {
+    logStart(rid, "listarEventosParaMim", { usuarioId });
     const { rows: base } = await client.query(
       `SELECT id FROM eventos WHERE publicado = TRUE`
     );
@@ -437,16 +321,17 @@ async function listarEventosParaMim(req, res) {
       });
       if (pode.ok) visiveis.push(r.id);
     }
-    if (visiveis.length === 0) return res.json({ ok: true, eventos: [] });
+    if (visiveis.length === 0) {
+      logInfo(rid, "Nada visível para o usuário");
+      return res.json({ ok: true, eventos: [] });
+    }
 
     const sql = `
       SELECT 
         e.*,
-
         COALESCE((SELECT array_agg(er.registro_norm ORDER BY er.registro_norm)
                   FROM evento_registros er WHERE er.evento_id = e.id),'{}'::text[]) AS registros_permitidos,
         (SELECT COUNT(*) FROM evento_registros er WHERE er.evento_id = e.id) AS count_registros_permitidos,
-
         e.cargos_permitidos_ids,
         e.unidades_permitidas_ids,
         COALESCE((
@@ -459,12 +344,10 @@ async function listarEventosParaMim(req, res) {
           FROM unidades u
           WHERE u.id = ANY(e.unidades_permitidas_ids)
         ), '[]'::json) AS unidades_permitidas,
-
         (SELECT MIN(t.data_inicio)    FROM turmas t WHERE t.evento_id = e.id) AS data_inicio_geral,
         (SELECT MAX(t.data_fim)       FROM turmas t WHERE t.evento_id = e.id) AS data_fim_geral,
         (SELECT MIN(t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id) AS horario_inicio_geral,
         (SELECT MAX(t.horario_fim)    FROM turmas t WHERE t.evento_id = e.id) AS horario_fim_geral,
-
         CASE
           WHEN CURRENT_TIMESTAMP::timestamp < (
             SELECT MIN(t.data_inicio::date + COALESCE(t.horario_inicio::time,'00:00'::time))
@@ -476,7 +359,6 @@ async function listarEventosParaMim(req, res) {
           ) THEN 'andamento'
           ELSE 'encerrado'
         END AS status
-
       FROM eventos e
       WHERE e.id = ANY($1::int[])
       ORDER BY (SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time,'23:59'::time))
@@ -484,9 +366,10 @@ async function listarEventosParaMim(req, res) {
                e.id DESC;
     `;
     const { rows } = await client.query(sql, [visiveis]);
+    logInfo(rid, "listarEventosParaMim OK", { count: rows.length });
     return res.json({ ok: true, eventos: rows });
   } catch (err) {
-    console.error("listarEventosParaMim erro:", err);
+    logError(rid, "listarEventosParaMim erro", err);
     return res.status(500).json({ ok: false, erro: "ERRO_INTERNO" });
   } finally {
     client.release();
@@ -497,6 +380,7 @@ async function listarEventosParaMim(req, res) {
    ➕ Criar evento
    ===================================================================== */
 async function criarEvento(req, res) {
+  const rid = mkRid();
   const {
     titulo,
     descricao,
@@ -504,16 +388,19 @@ async function criarEvento(req, res) {
     tipo,
     unidade_id,
     publico_alvo,
-
-    turmas = [], // [{ nome, vagas_total, carga_horaria, datas|encontros, instrutores: [id,...], instrutor_assinante_id }]
+    turmas = [],
     restrito = false,
     restrito_modo = null, // 'todos_servidores' | 'lista_registros'
     registros,
     registros_permitidos, // retrocompat
-
-    cargos_permitidos, // [cargo_id,...]
-    unidades_permitidas, // [unidade_id,...]
+    cargos_permitidos,
+    unidades_permitidas,
   } = req.body || {};
+
+  logStart(rid, "criarEvento payload", {
+    titulo, local, tipo, unidade_id, restrito, restrito_modo,
+    turmas_count: Array.isArray(turmas) ? turmas.length : 0
+  });
 
   if (!titulo?.trim())
     return res.status(400).json({ erro: "Campo 'titulo' é obrigatório." });
@@ -523,17 +410,15 @@ async function criarEvento(req, res) {
     return res.status(400).json({ erro: "Campo 'tipo' é obrigatório." });
   if (!unidade_id)
     return res.status(400).json({ erro: "Campo 'unidade_id' é obrigatório." });
-  if (!Array.isArray(turmas) || turmas.length === 0)
-    return res
-      .status(400)
-      .json({ erro: "Ao menos uma turma deve ser criada." });
+  const turmasArr = Array.isArray(turmas) ? turmas : [];
 
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
 
-    const folderUrl = pegarUploadUrl(req, "folder"); // png/jpg
-    const progPdfUrl = pegarUploadUrl(req, "programacao"); // pdf
+    const folderUrl = pegarUploadUrl(req, "folder");
+    const progPdfUrl = pegarUploadUrl(req, "programacao");
+    logInfo(rid, "uploads detectados", { folderUrl: !!folderUrl, progPdfUrl: !!progPdfUrl });
 
     const evIns = await client.query(
       `INSERT INTO eventos (
@@ -560,13 +445,11 @@ async function criarEvento(req, res) {
     );
     const evento = evIns.rows[0];
     const eventoId = evento.id;
+    logInfo(rid, "evento criado", { eventoId });
 
-    // Retrocompat: registros (modo lista)
+    // Registros (lista)
     if (restrito && restrito_modo === MODO_LISTA) {
-      const input =
-        typeof registros_permitidos !== "undefined"
-          ? registros_permitidos
-          : registros;
+      const input = typeof registros_permitidos !== "undefined" ? registros_permitidos : registros;
       const regList = normalizeListaRegistros(input);
       for (const r of regList) {
         await client.query(
@@ -575,57 +458,49 @@ async function criarEvento(req, res) {
           [eventoId, r]
         );
       }
+      logInfo(rid, "evento_registros sincronizados", { count: regList.length });
     }
 
-    // Sincroniza tabelas legadas (se existirem)
-    await execIgnoreMissing(
-      client,
-      `DELETE FROM evento_cargos WHERE evento_id=$1`,
-      [eventoId]
-    );
+    // Tabelas legadas
+    await execIgnoreMissing(client, `DELETE FROM evento_cargos WHERE evento_id=$1`, [eventoId]);
     for (const cid of toIntArray(cargos_permitidos)) {
       await execIgnoreMissing(
         client,
-        `INSERT INTO evento_cargos (evento_id, cargo)
-         VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+        `INSERT INTO evento_cargos (evento_id, cargo) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
         [eventoId, String(cid)]
       );
     }
-    await execIgnoreMissing(
-      client,
-      `DELETE FROM evento_unidades WHERE evento_id=$1`,
-      [eventoId]
-    );
+    await execIgnoreMissing(client, `DELETE FROM evento_unidades WHERE evento_id=$1`, [eventoId]);
     for (const uid of toIntArray(unidades_permitidas)) {
       await execIgnoreMissing(
         client,
-        `INSERT INTO evento_unidades (evento_id, unidade_id)
-         VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+        `INSERT INTO evento_unidades (evento_id, unidade_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
         [eventoId, uid]
       );
     }
 
     // Turmas
+    let turmasCriadas = 0;
     for (const t of turmas) {
       const nome = String(t.nome || "Turma").trim();
-      const vagas_total = Number.isFinite(Number(t.vagas_total))
-        ? Number(t.vagas_total)
-        : null;
-      const carga_horaria = Number.isFinite(Number(t.carga_horaria))
-        ? Number(t.carga_horaria)
-        : null;
+      const vagas_total = Number.isFinite(Number(t.vagas_total ?? t.vagas))
+   ? Number(t.vagas_total ?? t.vagas)
+   : null;
+      const carga_horaria = Number.isFinite(Number(t.carga_horaria)) ? Number(t.carga_horaria) : null;
 
-      const baseDatas = extrairDatasDaTurma(t);
-      const ordenadas = [...baseDatas]
-        .filter((d) => d.data)
-        .sort((a, b) => a.data.localeCompare(b.data));
-      const data_inicio = ordenadas[0]?.data || null;
-      const data_fim = ordenadas.at(-1)?.data || data_inicio || null;
+      // Agora não exigimos encontros para atualizar datas
+const baseDatas = extrairDatasDaTurma(t);
+const ordenadas = [...baseDatas]
+  .filter((d) => d.data)
+  .sort((a, b) => a.data.localeCompare(b.data));
+
+// Se não tiver encontros, apenas mantém valores antigos
+const data_inicio = ordenadas[0]?.data ?? t.data_inicio ?? null;
+const data_fim    = ordenadas.at(-1)?.data ?? t.data_fim    ?? null;
 
       const hiPayload = hhmm(t?.horario_inicio || "") || null;
       const hfPayload = hhmm(t?.horario_fim || "") || null;
 
-      // INSERT turmas com fallback para ausência de coluna instrutor_assinante_id
       const tryIns = await tryQueryWithFallback(
         client,
         {
@@ -635,17 +510,7 @@ async function criarEvento(req, res) {
                  )
                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
                  RETURNING id`,
-          values: [
-            eventoId,
-            nome,
-            vagas_total,
-            carga_horaria,
-            data_inicio,
-            data_fim,
-            hiPayload,
-            hfPayload,
-            null,
-          ],
+          values: [eventoId, nome, vagas_total, carga_horaria, data_inicio, data_fim, hiPayload, hfPayload, null],
         },
         {
           text: `INSERT INTO turmas (
@@ -654,16 +519,7 @@ async function criarEvento(req, res) {
                  )
                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
                  RETURNING id`,
-          values: [
-            eventoId,
-            nome,
-            vagas_total,
-            carga_horaria,
-            data_inicio,
-            data_fim,
-            hiPayload,
-            hfPayload,
-          ],
+          values: [eventoId, nome, vagas_total, carga_horaria, data_inicio, data_fim, hiPayload, hfPayload],
         }
       );
       const turmaId = tryIns.rows[0].id;
@@ -687,7 +543,6 @@ async function criarEvento(req, res) {
         );
       }
 
-      // Definir assinante (se a coluna existir)
       if (Number.isFinite(Number(t?.instrutor_assinante_id))) {
         const assinanteId = Number(t.instrutor_assinante_id);
         if (instrutores.includes(assinanteId)) {
@@ -698,15 +553,16 @@ async function criarEvento(req, res) {
           );
         }
       }
+      turmasCriadas++;
     }
+    logInfo(rid, "turmas criadas", { turmasCriadas });
 
     await client.query("COMMIT");
-    return res
-      .status(201)
-      .json({ mensagem: "Evento criado com sucesso", evento });
+    logInfo(rid, "criarEvento COMMIT");
+    return res.status(201).json({ mensagem: "Evento criado com sucesso", evento });
   } catch (err) {
-    await client.query("ROLLBACK");
-    console.error("criarEvento erro:", err);
+    logError(rid, "criarEvento erro", err);
+    try { await client.query("ROLLBACK"); } catch {}
     return res.status(500).json({ erro: "Erro ao criar evento" });
   } finally {
     client.release();
@@ -717,22 +573,20 @@ async function criarEvento(req, res) {
    🔍 Buscar por ID (com listas, turmas e flags)
    ===================================================================== */
 async function buscarEventoPorId(req, res) {
+  const rid = mkRid();
   const { id } = req.params;
   const usuarioId = getUsuarioId(req);
   const admin = isAdmin(req);
   const client = await pool.connect();
 
   try {
-    const eventoResult = await client.query(
-      `SELECT * FROM eventos WHERE id=$1`,
-      [id]
-    );
-    if (eventoResult.rowCount === 0)
-      return res.status(404).json({ erro: "Evento não encontrado" });
+    logStart(rid, "buscarEventoPorId", { id, usuarioId, admin });
+
+    const eventoResult = await client.query(`SELECT * FROM eventos WHERE id=$1`, [id]);
+    if (eventoResult.rowCount === 0) return res.status(404).json({ erro: "Evento não encontrado" });
     const evento = eventoResult.rows[0];
 
-    if (!admin && !evento.publicado)
-      return res.status(404).json({ erro: "NAO_PUBLICADO" });
+    if (!admin && !evento.publicado) return res.status(404).json({ erro: "NAO_PUBLICADO" });
 
     if (!admin && usuarioId) {
       const isInstrutorEv =
@@ -747,12 +601,7 @@ async function buscarEventoPorId(req, res) {
           )
         ).rowCount > 0;
       if (!isInstrutorEv) {
-        const can = await podeVerEvento({
-          client,
-          usuarioId,
-          eventoId: Number(id),
-          req,
-        });
+        const can = await podeVerEvento({ client, usuarioId, eventoId: Number(id), req });
         if (!can.ok) return res.status(403).json({ erro: "Evento restrito." });
       }
     }
@@ -781,7 +630,6 @@ async function buscarEventoPorId(req, res) {
       ),
     ]);
 
-    // Turmas detalhadas (com fallback p/ coluna ausente)
     const turmasResult = await tryQueryWithFallback(
       client,
       {
@@ -819,6 +667,8 @@ async function buscarEventoPorId(req, res) {
         }))
         .filter((x) => x.data);
 
+      const encontros_count = datas.length;
+
       const instrT = await client.query(
         `SELECT u.id, u.nome, u.email
            FROM turma_instrutor ti
@@ -832,8 +682,8 @@ async function buscarEventoPorId(req, res) {
         Object.prototype.hasOwnProperty.call(t, "instrutor_assinante_id")
           ? t.instrutor_assinante_id
           : null;
-      const assinante = assinanteId
-        ? instrT.rows.find((i) => i.id === assinanteId) || null
+      const assinante = Number.isFinite(Number(assinanteId))
+        ? instrT.rows.find((i) => i.id === Number(assinanteId)) || null
         : null;
 
       turmas.push({
@@ -846,10 +696,10 @@ async function buscarEventoPorId(req, res) {
         instrutor_assinante: assinante,
         instrutor_assinante_id: assinante ? assinante.id : null,
         datas,
+        encontros_count,
       });
     }
 
-    // Flags
     const [jaInstrutorResult, jaInscritoResult] = await Promise.all([
       client.query(
         `SELECT EXISTS(
@@ -873,6 +723,14 @@ async function buscarEventoPorId(req, res) {
       ),
     ]);
 
+    logInfo(rid, "buscarEventoPorId OK", {
+      id,
+      turmas: turmas.length,
+      registros: regsQ.rowCount,
+      cargos: cargosRows.rowCount,
+      unidades: unidadesRows.rowCount,
+    });
+
     return res.json({
       ...evento,
       registros_permitidos: regsQ.rows.map((r) => r.registro_norm),
@@ -890,7 +748,7 @@ async function buscarEventoPorId(req, res) {
       ja_inscrito: Boolean(jaInscritoResult.rows?.[0]?.eh),
     });
   } catch (err) {
-    console.error("buscarEventoPorId erro:", err);
+    logError(rid, "buscarEventoPorId erro", err);
     res.status(500).json({ erro: "Erro ao buscar evento por ID" });
   } finally {
     client.release();
@@ -898,11 +756,13 @@ async function buscarEventoPorId(req, res) {
 }
 
 /* =====================================================================
-   📆 Listar turmas de um evento (inclui assinante)
+   📆 Listar turmas do evento (inclui assinante)
    ===================================================================== */
 async function listarTurmasDoEvento(req, res) {
+  const rid = mkRid();
   const { id } = req.params;
   const admin = isAdmin(req);
+  logStart(rid, "listarTurmasDoEvento", { eventoId: id, admin });
 
   try {
     const base = await query(
@@ -921,7 +781,6 @@ async function listarTurmasDoEvento(req, res) {
       [id]
     ).catch(async (e) => {
       if (e.code !== "42703") throw e;
-      // Fallback sem a coluna
       return query(
         `
         SELECT 
@@ -947,38 +806,38 @@ async function listarTurmasDoEvento(req, res) {
         [r.id]
       );
       const datas = (datasQ.rows || [])
-  .map((d) => ({
-    data: toYmd(d.data),
-    horario_inicio: toHm(d.horario_inicio),
-    horario_fim: toHm(d.horario_fim),
-  }))
-  .filter((x) => x.data);
+        .map((d) => ({
+          data: toYmd(d.data),
+          horario_inicio: toHm(d.horario_inicio),
+          horario_fim: toHm(d.horario_fim),
+        }))
+        .filter((x) => x.data);
 
-/* +++ INÍCIO: contadores de vagas +++ */
-const { rows: vQ } = await query(
-  `SELECT COUNT(*)::int AS inscritos FROM inscricoes WHERE turma_id = $1`,
-  [r.id]
-);
-const inscritos = vQ?.[0]?.inscritos ?? 0;
-const vagasTotal = Number.isFinite(Number(r.vagas_total)) ? Number(r.vagas_total) : 0;
-const vagasPreenchidas = inscritos;
-const vagasDisponiveis = Math.max(vagasTotal - inscritos, 0);
-/* +++ FIM: contadores de vagas +++ */
+      const { rows: vQ } = await query(
+        `SELECT COUNT(*)::int AS inscritos FROM inscricoes WHERE turma_id = $1`,
+        [r.id]
+      );
+      const inscritos = vQ?.[0]?.inscritos ?? 0;
+      const vagasTotal = Number.isFinite(Number(r.vagas_total)) ? Number(r.vagas_total) : 0;
+      const vagasPreenchidas = inscritos;
+      const vagasDisponiveis = Math.max(vagasTotal - inscritos, 0);
 
-const instrQ = await query(
-  `SELECT u.id, u.nome, u.email
-     FROM turma_instrutor ti
-     JOIN usuarios u ON u.id = ti.instrutor_id
-    WHERE ti.turma_id = $1
-    ORDER BY u.nome`,
-  [r.id]
-);
+      const instrQ = await query(
+        `SELECT u.id, u.nome, u.email
+           FROM turma_instrutor ti
+           JOIN usuarios u ON u.id = ti.instrutor_id
+          WHERE ti.turma_id = $1
+          ORDER BY u.nome`,
+        [r.id]
+      );
 
       const hasAssCol = Object.prototype.hasOwnProperty.call(r, "instrutor_assinante_id");
       const assinante =
         hasAssCol && r.instrutor_assinante_id
           ? instrQ.rows.find((i) => i.id === r.instrutor_assinante_id) || null
           : null;
+
+      const encontros_count = datas.length;
 
       turmas.push({
         id: r.id,
@@ -994,26 +853,30 @@ const instrQ = await query(
         horario_inicio: toHm(r.horario_inicio),
         horario_fim: toHm(r.horario_fim),
         instrutores: instrQ.rows,
-        instrutor_assinante_id: hasAssCol ? r.instrutor_assinante_id || null : null,
+        instrutor_assinante_id: hasAssCol ? (r.instrutor_assinante_id || null) : null,
         instrutor_assinante: assinante,
         datas,
+        _datas: datas,
+        encontros_count,
         vagas_preenchidas: vagasPreenchidas,
-vagas_disponiveis: vagasDisponiveis,
-inscritos: vagasPreenchidas,
+        vagas_disponiveis: vagasDisponiveis,
+        inscritos: vagasPreenchidas,
       });
     }
 
+    logInfo(rid, "listarTurmasDoEvento OK", { turmas: turmas.length });
     res.json(turmas);
   } catch (err) {
-    console.error("listarTurmasDoEvento erro:", err);
+    logError(rid, "listarTurmasDoEvento erro", err);
     res.status(500).json({ erro: "Erro ao buscar turmas do evento." });
   }
 }
 
 /* =====================================================================
-   🔄 Atualizar evento (sem bloqueios) — resiliente a schema legado
+   🔄 Atualizar evento (única versão, sem duplicações)
    ===================================================================== */
 async function atualizarEvento(req, res) {
+  const rid = mkRid();
   const eventoId = Number(req.params.id);
   if (!eventoId) return res.status(400).json({ erro: "EVENTO_ID_INVALIDO" });
 
@@ -1024,23 +887,28 @@ async function atualizarEvento(req, res) {
     tipo,
     unidade_id,
     publico_alvo,
-
     turmas, // opcional
     restrito,
     restrito_modo, // retrocompat
     registros,
     registros_permitidos, // retrocompat
-
     cargos_permitidos, // array de IDs
     unidades_permitidas, // array de IDs
   } = req.body || {};
 
   const client = await pool.connect();
   try {
+    logStart(rid, "atualizarEvento BEGIN", {
+      eventoId,
+      hasTurmas: Array.isArray(turmas),
+      restrito,
+      restrito_modo,
+    });
     await client.query("BEGIN");
 
     const folderUrl = pegarUploadUrl(req, "folder");
     const progPdfUrl = pegarUploadUrl(req, "programacao");
+    logInfo(rid, "uploads detectados", { folderUrl: !!folderUrl, progPdfUrl: !!progPdfUrl });
 
     const setCols = [
       `titulo        = COALESCE($2, titulo)`,
@@ -1068,19 +936,28 @@ async function atualizarEvento(req, res) {
       setCols.push(`restrito_modo = $${params.length + 1}`);
       params.push(restrito ? restrito_modo || null : null);
     }
-    // 🔓 Se restrito = false → limpa totalmente visibilidade
-if (typeof restrito !== "undefined" && !restrito) {
-  setCols.push(`cargos_permitidos_ids = NULL`);
-  setCols.push(`unidades_permitidas_ids = NULL`);
+    if (typeof restrito !== "undefined" && !restrito) {
+      setCols.push(`restrito_modo = NULL`);
+      setCols.push(`cargos_permitidos_ids = NULL`);
+      setCols.push(`unidades_permitidas_ids = NULL`);
+    }
+    const remover_folder = String(req.body?.remover_folder ?? "").toLowerCase() === "true";
+const remover_programacao = String(req.body?.remover_programacao ?? "").toLowerCase() === "true";
+
+if (folderUrl) {
+  setCols.push(`folder_url = $${params.length + 1}`);
+  params.push(folderUrl);
+} else if (remover_folder) {
+  setCols.push(`folder_url = NULL`);
 }
-    if (folderUrl) {
-      setCols.push(`folder_url = $${params.length + 1}`);
-      params.push(folderUrl);
-    }
-    if (progPdfUrl) {
-      setCols.push(`programacao_pdf_url = $${params.length + 1}`);
-      params.push(progPdfUrl);
-    }
+
+if (progPdfUrl) {
+  setCols.push(`programacao_pdf_url = $${params.length + 1}`);
+  params.push(progPdfUrl);
+} else if (remover_programacao) {
+  setCols.push(`programacao_pdf_url = NULL`);
+}
+
     if (typeof cargos_permitidos !== "undefined") {
       setCols.push(`cargos_permitidos_ids = $${params.length + 1}`);
       params.push(toIntArray(cargos_permitidos));
@@ -1090,31 +967,22 @@ if (typeof restrito !== "undefined" && !restrito) {
       params.push(toIntArray(unidades_permitidas));
     }
 
-    await client.query(
-      `UPDATE eventos SET ${setCols.join(", ")} WHERE id = $1`,
+    const upd = await client.query(
+      `UPDATE eventos SET ${setCols.join(", ")} WHERE id = $1 RETURNING id`,
       params
     );
+    logInfo(rid, "UPDATE eventos", { rowCount: upd.rowCount });
 
     // Listas retrocompat (registros)
     if (typeof restrito !== "undefined" && !restrito) {
-      await client.query(`DELETE FROM evento_registros WHERE evento_id=$1`, [
-        eventoId,
-      ]);
+      await client.query(`DELETE FROM evento_registros WHERE evento_id=$1`, [eventoId]);
       await execIgnoreMissing(client, `DELETE FROM evento_cargos WHERE evento_id=$1`, [eventoId]);
       await execIgnoreMissing(client, `DELETE FROM evento_unidades WHERE evento_id=$1`, [eventoId]);
+      logInfo(rid, "visibilidade limpa (restrito=false)");
     } else {
-      if (
-        restrito_modo === MODO_LISTA ||
-        typeof registros !== "undefined" ||
-        typeof registros_permitidos !== "undefined"
-      ) {
-        await client.query(`DELETE FROM evento_registros WHERE evento_id=$1`, [
-          eventoId,
-        ]);
-        const input =
-          typeof registros_permitidos !== "undefined"
-            ? registros_permitidos
-            : registros;
+      if (restrito_modo === MODO_LISTA || typeof registros !== "undefined" || typeof registros_permitidos !== "undefined") {
+        await client.query(`DELETE FROM evento_registros WHERE evento_id=$1`, [eventoId]);
+        const input = typeof registros_permitidos !== "undefined" ? registros_permitidos : registros;
         const regList = normalizeListaRegistros(input);
         for (const r of regList) {
           await client.query(
@@ -1123,77 +991,73 @@ if (typeof restrito !== "undefined" && !restrito) {
             [eventoId, r]
           );
         }
+        logInfo(rid, "evento_registros sincronizados", { count: Array.isArray(regList) ? regList.length : 0 });
       }
-
-      // Sincroniza tabelas legadas com os arrays atuais (se vierem)
       if (typeof cargos_permitidos !== "undefined") {
         await execIgnoreMissing(client, `DELETE FROM evento_cargos WHERE evento_id=$1`, [eventoId]);
-        for (const cid of toIntArray(cargos_permitidos)) {
+        const cids = toIntArray(cargos_permitidos);
+        for (const cid of cids) {
           await execIgnoreMissing(
             client,
-            `INSERT INTO evento_cargos (evento_id, cargo)
-             VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+            `INSERT INTO evento_cargos (evento_id, cargo) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
             [eventoId, String(cid)]
           );
         }
+        logInfo(rid, "evento_cargos sincronizados", { count: cids.length });
       }
       if (typeof unidades_permitidas !== "undefined") {
         await execIgnoreMissing(client, `DELETE FROM evento_unidades WHERE evento_id=$1`, [eventoId]);
-        for (const uid of toIntArray(unidades_permitidas)) {
+        const uids = toIntArray(unidades_permitidas);
+        for (const uid of uids) {
           await execIgnoreMissing(
             client,
-            `INSERT INTO evento_unidades (evento_id, unidade_id)
-             VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+            `INSERT INTO evento_unidades (evento_id, unidade_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
             [eventoId, uid]
           );
         }
+        logInfo(rid, "evento_unidades sincronizados", { count: uids.length });
       }
     }
 
     // Turmas (SEM BLOQUEIOS)
     if (Array.isArray(turmas)) {
-      const { rows: atuais } = await client.query(
-        `SELECT id FROM turmas WHERE evento_id=$1`,
-        [eventoId]
-      );
+      const { rows: atuais } = await client.query(`SELECT id FROM turmas WHERE evento_id=$1`, [eventoId]);
       const payloadIds = new Set(
-        turmas
-          .filter((t) => Number.isFinite(Number(t.id)))
-          .map((t) => Number(t.id))
+        turmas.filter((t) => Number.isFinite(Number(t.id))).map((t) => Number(t.id))
       );
 
       // Remover ausentes
+      let removidas = 0;
       for (const t of atuais) {
         if (!payloadIds.has(t.id)) {
           await client.query(`DELETE FROM presencas WHERE turma_id=$1`, [t.id]);
-          await client.query(`DELETE FROM turma_instrutor WHERE turma_id=$1`, [
-            t.id,
-          ]);
-          await client.query(`DELETE FROM datas_turma WHERE turma_id=$1`, [
-            t.id,
-          ]);
+          await client.query(`DELETE FROM turma_instrutor WHERE turma_id=$1`, [t.id]);
+          await client.query(`DELETE FROM datas_turma WHERE turma_id=$1`, [t.id]);
           await client.query(`DELETE FROM inscricoes WHERE turma_id=$1`, [t.id]);
           await client.query(`DELETE FROM turmas WHERE id=$1`, [t.id]);
+          removidas++;
         }
       }
+      logInfo(rid, "turmas removidas", { removidas });
 
       // Criar/Atualizar
+      let criadas = 0;
+      let atualizadas = 0;
+
       for (const t of turmas) {
         const id = Number(t.id);
         const baseDatas = extrairDatasDaTurma(t);
-        const ordenadas = [...baseDatas]
-          .filter((d) => d.data)
-          .sort((a, b) => a.data.localeCompare(b.data));
-        const data_inicio = ordenadas[0]?.data || null;
-        const data_fim = ordenadas.at(-1)?.data || data_inicio || null;
+const ordenadas = [...baseDatas].filter((d) => d.data).sort((a, b) => a.data.localeCompare(b.data));
+
+// ✅ Se não vierem datas novas, mantemos as antigas
+const data_inicio = ordenadas[0]?.data ?? t.data_inicio ?? null;
+const data_fim    = ordenadas.at(-1)?.data ?? t.data_fim    ?? null;
 
         const nome = String(t.nome || "Turma").trim();
-        const vagas_total = Number.isFinite(Number(t.vagas_total))
-          ? Number(t.vagas_total)
-          : null;
-        const carga_horaria = Number.isFinite(Number(t.carga_horaria))
-          ? Number(t.carga_horaria)
-          : null;
+        const vagas_total = Number.isFinite(Number(t.vagas_total ?? t.vagas))
+   ? Number(t.vagas_total ?? t.vagas)
+   : null;
+        const carga_horaria = Number.isFinite(Number(t.carga_horaria)) ? Number(t.carga_horaria) : null;
         const hiPayload = hhmm(t?.horario_inicio || "") || null;
         const hfPayload = hhmm(t?.horario_fim || "") || null;
 
@@ -1208,17 +1072,7 @@ if (typeof restrito !== "undefined" && !restrito) {
                      )
                      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
                      RETURNING id`,
-              values: [
-                eventoId,
-                nome,
-                vagas_total,
-                carga_horaria,
-                data_inicio,
-                data_fim,
-                hiPayload,
-                hfPayload,
-                null,
-              ],
+              values: [eventoId, nome, vagas_total, carga_horaria, data_inicio, data_fim, hiPayload, hfPayload, null],
             },
             {
               text: `INSERT INTO turmas (
@@ -1227,23 +1081,12 @@ if (typeof restrito !== "undefined" && !restrito) {
                      )
                      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
                      RETURNING id`,
-              values: [
-                eventoId,
-                nome,
-                vagas_total,
-                carga_horaria,
-                data_inicio,
-                data_fim,
-                hiPayload,
-                hfPayload,
-              ],
+              values: [eventoId, nome, vagas_total, carga_horaria, data_inicio, data_fim, hiPayload, hfPayload],
             }
           );
           const turmaId = ins.rows[0].id;
 
-          await client.query(`DELETE FROM datas_turma WHERE turma_id=$1`, [
-            turmaId,
-          ]);
+          await client.query(`DELETE FROM datas_turma WHERE turma_id=$1`, [turmaId]);
           for (const d of ordenadas) {
             const inicioSeguro = d.horario_inicio || hiPayload || "08:00";
             const fimSeguro = d.horario_fim || hfPayload || "17:00";
@@ -1254,9 +1097,7 @@ if (typeof restrito !== "undefined" && !restrito) {
             );
           }
 
-          await client.query(`DELETE FROM turma_instrutor WHERE turma_id=$1`, [
-            turmaId,
-          ]);
+          await client.query(`DELETE FROM turma_instrutor WHERE turma_id=$1`, [turmaId]);
           const instrutores = Array.isArray(t?.instrutores) ? t.instrutores : [];
           for (const instrutorId of instrutores) {
             await client.query(
@@ -1276,6 +1117,8 @@ if (typeof restrito !== "undefined" && !restrito) {
               );
             }
           }
+
+          criadas++;
         } else {
           // EXISTENTE
           await tryQueryWithFallback(
@@ -1286,94 +1129,94 @@ if (typeof restrito !== "undefined" && !restrito) {
                            data_inicio=$5, data_fim=$6,
                            horario_inicio=$7, horario_fim=$8
                      WHERE id=$1`,
-              values: [
-                id,
-                nome,
-                vagas_total,
-                carga_horaria,
-                data_inicio,
-                data_fim,
-                hiPayload,
-                hfPayload,
-              ],
+              values: [id, nome, vagas_total, carga_horaria, data_inicio, data_fim, hiPayload, hfPayload],
             },
             {
-              // fallback é idêntico (não atualiza coluna extra aqui)
               text: `UPDATE turmas
                        SET nome=$2, vagas_total=$3, carga_horaria=$4,
                            data_inicio=$5, data_fim=$6,
                            horario_inicio=$7, horario_fim=$8
                      WHERE id=$1`,
-              values: [
-                id,
-                nome,
-                vagas_total,
-                carga_horaria,
-                data_inicio,
-                data_fim,
-                hiPayload,
-                hfPayload,
-              ],
+              values: [id, nome, vagas_total, carga_horaria, data_inicio, data_fim, hiPayload, hfPayload],
             }
           );
 
-          await client.query(`DELETE FROM datas_turma WHERE turma_id=$1`, [id]);
-          for (const d of ordenadas) {
-            const inicioSeguro = d.horario_inicio || hiPayload || "08:00";
-            const fimSeguro = d.horario_fim || hfPayload || "17:00";
-            await client.query(
-              `INSERT INTO datas_turma (turma_id, data, horario_inicio, horario_fim)
-               VALUES ($1,$2,$3,$4)`,
-              [id, d.data, inicioSeguro, fimSeguro]
-            );
-          }
-
-          if (Array.isArray(t?.instrutores)) {
-            await client.query(`DELETE FROM turma_instrutor WHERE turma_id=$1`, [
-              id,
-            ]);
-            for (const instrutorId of t.instrutores) {
+          if (ordenadas.length > 0) {
+            await client.query(`DELETE FROM datas_turma WHERE turma_id=$1`, [id]);
+            for (const d of ordenadas) {
+              const inicioSeguro = d.horario_inicio || hiPayload || "08:00";
+              const fimSeguro = d.horario_fim || hfPayload || "17:00";
               await client.query(
-                `INSERT INTO turma_instrutor (turma_id, instrutor_id)
-                 VALUES ($1,$2) ON CONFLICT DO NOTHING`,
-                [id, instrutorId]
+                `INSERT INTO datas_turma (turma_id, data, horario_inicio, horario_fim)
+                 VALUES ($1,$2,$3,$4)`,
+                [id, d.data, inicioSeguro, fimSeguro]
               );
             }
           }
 
-          // Atualiza assinante se a coluna existir
-          if (Number.isFinite(Number(t?.instrutor_assinante_id))) {
-            const assinanteId = Number(t.instrutor_assinante_id);
-            const chk = await client.query(
-              `SELECT 1 FROM turma_instrutor WHERE turma_id=$1 AND instrutor_id=$2 LIMIT 1`,
-              [id, assinanteId]
-            );
-            await execIgnoreMissing(
-              client,
-              `UPDATE turmas SET instrutor_assinante_id=$2 WHERE id=$1`,
-              [id, chk.rowCount > 0 ? assinanteId : null]
-            );
-          } else if (
-            t &&
-            Object.prototype.hasOwnProperty.call(t, "instrutor_assinante_id")
-          ) {
-            await execIgnoreMissing(
-              client,
-              `UPDATE turmas SET instrutor_assinante_id=NULL WHERE id=$1`,
+          // Sincronização de instrutores (se veio o campo)
+          if (Array.isArray(t?.instrutores)) {
+            const novos = new Set(toIdArray(t.instrutores));
+            const { rows: atuaisRows } = await client.query(
+              `SELECT instrutor_id FROM turma_instrutor WHERE turma_id=$1`,
               [id]
             );
+            const atuais = new Set(atuaisRows.map((r) => Number(r.instrutor_id)));
+            for (const oldId of atuais) {
+              if (!novos.has(oldId)) {
+                await client.query(
+                  `DELETE FROM turma_instrutor WHERE turma_id=$1 AND instrutor_id=$2`,
+                  [id, oldId]
+                );
+              }
+            }
+            for (const newId of novos) {
+              if (!atuais.has(newId)) {
+                await client.query(
+                  `INSERT INTO turma_instrutor (turma_id, instrutor_id)
+                   VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+                  [id, newId]
+                );
+              }
+            }
           }
+
+          // Assinante (só se o campo veio)
+          if (Object.prototype.hasOwnProperty.call(t, "instrutor_assinante_id")) {
+            const raw = t.instrutor_assinante_id;
+            if (raw === null) {
+              await execIgnoreMissing(
+                client,
+                `UPDATE turmas SET instrutor_assinante_id=NULL WHERE id=$1`,
+                [id]
+              );
+            } else if (Number.isFinite(Number(raw))) {
+              const assinanteId = Number(raw);
+              const chk = await client.query(
+                `SELECT 1 FROM turma_instrutor WHERE turma_id=$1 AND instrutor_id=$2 LIMIT 1`,
+                [id, assinanteId]
+              );
+              await execIgnoreMissing(
+                client,
+                `UPDATE turmas SET instrutor_assinante_id=$2 WHERE id=$1`,
+                [id, chk.rowCount > 0 ? assinanteId : null]
+              );
+            }
+          }
+
+          atualizadas++;
         }
       }
-    }
+
+      logInfo(rid, "turmas sincronizadas", { criadas, atualizadas });
+        }
 
     await client.query("COMMIT");
+    logInfo(rid, "atualizarEvento COMMIT", { eventoId });
     return res.json({ ok: true, mensagem: "Evento atualizado com sucesso." });
   } catch (err) {
-    console.error("atualizarEvento erro:", err);
-    try {
-      await client.query("ROLLBACK");
-    } catch {}
+    logError(rid, "atualizarEvento erro", err);
+    try { await client.query("ROLLBACK"); } catch {}
     return res.status(500).json({
       erro: "Erro ao atualizar evento",
       detalhe: err?.message || null,
@@ -1384,59 +1227,45 @@ if (typeof restrito !== "undefined" && !restrito) {
 }
 
 /* =====================================================================
-   ❌ Excluir evento (cascata manual)
+   🚀 Publicar / Despublicar
    ===================================================================== */
-async function excluirEvento(req, res) {
-  const { id } = req.params;
-  const client = await pool.connect();
+async function publicarEvento(req, res) {
+  const rid = mkRid();
+  if (!isAdmin(req)) return res.status(403).json({ erro: "PERMISSAO_NEGADA" });
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.status(400).json({ erro: "EVENTO_ID_INVALIDO" });
   try {
-    await client.query("BEGIN");
-    await client.query(
-      `DELETE FROM presencas WHERE turma_id IN (SELECT id FROM turmas WHERE evento_id=$1)`,
-      [id]
-    );
-    await client.query(
-      `DELETE FROM inscricoes WHERE turma_id IN (SELECT id FROM turmas WHERE evento_id=$1)`,
-      [id]
-    );
-    await client.query(
-      `DELETE FROM turma_instrutor WHERE turma_id IN (SELECT id FROM turmas WHERE evento_id=$1)`,
-      [id]
-    );
-    await client.query(
-      `DELETE FROM datas_turma WHERE turma_id IN (SELECT id FROM turmas WHERE evento_id=$1)`,
-      [id]
-    );
-    await client.query(`DELETE FROM turmas WHERE evento_id=$1`, [id]);
-    await client.query(`DELETE FROM evento_registros WHERE evento_id=$1`, [id]);
-    await execIgnoreMissing(client, `DELETE FROM evento_cargos WHERE evento_id=$1`, [id]);
-    await execIgnoreMissing(client, `DELETE FROM evento_unidades WHERE evento_id=$1`, [id]);
-    const result = await client.query(
-      `DELETE FROM eventos WHERE id=$1 RETURNING *`,
-      [id]
-    );
-    if (result.rowCount === 0) {
-      await client.query("ROLLBACK");
-      return res.status(404).json({ erro: "Evento não encontrado" });
-    }
-    await client.query("COMMIT");
-    return res.json({
-      mensagem: "Evento excluído com sucesso",
-      evento: result.rows[0],
-    });
-  } catch (err) {
-    await client.query("ROLLBACK");
-    console.error("excluirEvento erro:", err.message);
-    return res.status(500).json({ erro: "Erro ao excluir evento" });
-  } finally {
-    client.release();
+    const r = await query(`UPDATE eventos SET publicado=TRUE WHERE id=$1 RETURNING id, publicado`, [id]);
+    logInfo(rid, "publicarEvento", { id, rowCount: r.rowCount });
+    if (r.rowCount === 0) return res.status(404).json({ erro: "EVENTO_NAO_ENCONTRADO" });
+    return res.json({ ok: true, mensagem: "Evento publicado.", evento: r.rows[0] });
+  } catch (e) {
+    logError(rid, "publicarEvento erro", e);
+    return res.status(500).json({ erro: "ERRO_INTERNO" });
+  }
+}
+async function despublicarEvento(req, res) {
+  const rid = mkRid();
+  if (!isAdmin(req)) return res.status(403).json({ erro: "PERMISSAO_NEGADA" });
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.status(400).json({ erro: "EVENTO_ID_INVALIDO" });
+  try {
+    const r = await query(`UPDATE eventos SET publicado=FALSE WHERE id=$1 RETURNING id, publicado`, [id]);
+    logInfo(rid, "despublicarEvento", { id, rowCount: r.rowCount });
+    if (r.rowCount === 0) return res.status(404).json({ erro: "EVENTO_NAO_ENCONTRADO" });
+    return res.json({ ok: true, mensagem: "Evento despublicado.", evento: r.rows[0] });
+  } catch (e) {
+    logError(rid, "despublicarEvento erro", e);
+    return res.status(500).json({ erro: "ERRO_INTERNO" });
   }
 }
 
 /* =====================================================================
-   Agenda, datas, turmas simples
+   Agenda / Datas / Simples
    ===================================================================== */
 async function getAgendaEventos(req, res) {
+  const rid = mkRid();
+  logStart(rid, "getAgendaEventos");
   const sqlBase = (useDataPresenca = false) => `
     SELECT 
       e.id, e.titulo,
@@ -1478,21 +1307,21 @@ async function getAgendaEventos(req, res) {
     } catch {
       ({ rows } = await query(sqlBase(true), []));
     }
-    const out = rows.map((r) => ({
-      ...r,
-      ocorrencias: Array.isArray(r.ocorrencias) ? r.ocorrencias : [],
-    }));
+    const out = rows.map((r) => ({ ...r, ocorrencias: Array.isArray(r.ocorrencias) ? r.ocorrencias : [] }));
+    logInfo(rid, "getAgendaEventos OK", { count: out.length });
     res.set("X-Agenda-Handler", "eventosController:getAgendaEventos@livre");
     res.json(out);
   } catch (err) {
-    console.error("getAgendaEventos erro:", err);
+    logError(rid, "getAgendaEventos erro", err);
     res.status(500).json({ erro: "Erro ao buscar agenda" });
   }
 }
 
 async function listarEventosDoinstrutor(req, res) {
+  const rid = mkRid();
   const usuarioId = getUsuarioId(req);
   const client = await pool.connect();
+  logStart(rid, "listarEventosDoinstrutor", { usuarioId });
   try {
     const eventosResult = await client.query(
       `
@@ -1579,9 +1408,10 @@ async function listarEventosDoinstrutor(req, res) {
       eventos.push({ ...evento, instrutor: instrutorResult.rows, turmas });
     }
 
+    logInfo(rid, "listarEventosDoinstrutor OK", { eventos: eventos.length });
     res.json(eventos);
   } catch (err) {
-    console.error("listarEventosDoinstrutor erro:", err.message);
+    logError(rid, "listarEventosDoinstrutor erro", err);
     res.status(500).json({ erro: "Erro ao buscar eventos do instrutor" });
   } finally {
     client.release();
@@ -1589,10 +1419,12 @@ async function listarEventosDoinstrutor(req, res) {
 }
 
 async function listarDatasDaTurma(req, res) {
+  const rid = mkRid();
   const turmaId = Number(req.params.id);
   const via = String(req.query.via || "datas").toLowerCase();
-  if (!Number.isFinite(turmaId))
-    return res.status(400).json({ erro: "turma_id inválido" });
+  if (!Number.isFinite(turmaId)) return res.status(400).json({ erro: "turma_id inválido" });
+
+  logStart(rid, "listarDatasDaTurma", { turmaId, via });
 
   try {
     if (via === "datas") {
@@ -1605,6 +1437,7 @@ async function listarDatasDaTurma(req, res) {
         WHERE dt.turma_id=$1
         ORDER BY dt.data ASC`;
       const { rows } = await query(sql, [turmaId]);
+      logInfo(rid, "listarDatasDaTurma/datas OK", { count: rows.length });
       return res.json(rows);
     }
 
@@ -1629,12 +1462,15 @@ async function listarDatasDaTurma(req, res) {
         ORDER BY data ASC`;
       try {
         const { rows } = await query(sqlA, [turmaId]);
+        logInfo(rid, "listarDatasDaTurma/presencas A OK", { count: rows.length });
         return res.json(rows);
       } catch {
         try {
           const { rows } = await query(sqlB, [turmaId]);
+          logInfo(rid, "listarDatasDaTurma/presencas B OK", { count: rows.length });
           return res.json(rows);
         } catch {
+          logWarn(rid, "listarDatasDaTurma/presencas vazio");
           return res.json([]);
         }
       }
@@ -1653,125 +1489,22 @@ async function listarDatasDaTurma(req, res) {
       FROM t, generate_series(t.di, t.df, interval '1 day') AS gs
       ORDER BY data ASC`;
     const { rows } = await query(sql, [turmaId]);
+    logInfo(rid, "listarDatasDaTurma/generate_series OK", { count: rows.length });
     return res.json(rows);
   } catch (erro) {
-    console.error("listarDatasDaTurma erro:", erro);
-    return res
-      .status(500)
-      .json({ erro: "Erro ao buscar datas da turma.", detalhe: erro.message });
-  }
-}
-
-async function listarTurmasSimples(req, res) {
-  const { id } = req.params;
-  const admin = isAdmin(req);
-
-  try {
-    const turmasQ = await query(
-      `
-       SELECT 
-         t.id                AS id,
-         t.evento_id         AS evento_id,
-         t.nome              AS nome,
-         t.data_inicio       AS data_inicio,
-         t.data_fim          AS data_fim,
-         t.horario_inicio    AS horario_inicio,
-         t.horario_fim       AS horario_fim,
-         t.vagas_total       AS vagas_total,
-         t.carga_horaria     AS carga_horaria,
-         t.instrutor_assinante_id AS instrutor_assinante_id
-       FROM turmas t
-       JOIN eventos e ON e.id = t.evento_id
-       WHERE t.evento_id = $1 ${admin ? "" : "AND e.publicado = TRUE"}
-       ORDER BY t.data_inicio NULLS LAST, t.id
-       `,
-      [id]
-    ).catch(async (e) => {
-      if (e.code !== "42703") throw e;
-      // fallback sem a coluna
-      return query(
-        `
-         SELECT 
-           t.id                AS id,
-           t.evento_id         AS evento_id,
-           t.nome              AS nome,
-           t.data_inicio       AS data_inicio,
-           t.data_fim          AS data_fim,
-           t.horario_inicio    AS horario_inicio,
-           t.horario_fim       AS horario_fim,
-           t.vagas_total       AS vagas_total,
-           t.carga_horaria     AS carga_horaria
-         FROM turmas t
-         JOIN eventos e ON e.id = t.evento_id
-         WHERE t.evento_id = $1 ${admin ? "" : "AND e.publicado = TRUE"}
-         ORDER BY t.data_inicio NULLS LAST, t.id
-        `,
-        [id]
-      );
-    });
-
-    const turmas = [];
-    for (const r of turmasQ.rows) {
-      const datasQ = await query(
-        `SELECT data, horario_inicio, horario_fim FROM datas_turma
-          WHERE turma_id=$1 ORDER BY data ASC`,
-        [r.id]
-      );
-      const datas = (datasQ.rows || [])
-        .map((d) => ({
-          data: toYmd(d.data),
-          horario_inicio: toHm(d.horario_inicio),
-          horario_fim: toHm(d.horario_fim),
-        }))
-        .filter((x) => x.data);
-
-        /* +++ INÍCIO: contadores de vagas +++ */
-const { rows: vQ } = await query(
-  `SELECT COUNT(*)::int AS inscritos FROM inscricoes WHERE turma_id = $1`,
-  [r.id]
-);
-const inscritos = vQ?.[0]?.inscritos ?? 0;
-const vagasTotal = Number.isFinite(Number(r.vagas_total)) ? Number(r.vagas_total) : 0;
-const vagasPreenchidas = inscritos;
-const vagasDisponiveis = Math.max(vagasTotal - inscritos, 0);
-/* +++ FIM: contadores de vagas +++ */
-
-turmas.push({
-  id: r.id,
-  evento_id: r.evento_id,
-  nome: r.nome,
-  data_inicio: toYmd(r.data_inicio) || datas[0]?.data || null,
-  data_fim: toYmd(r.data_fim) || datas.at(-1)?.data || null,
-  horario_inicio:
-    toHm(r.horario_inicio) || datas[0]?.horario_inicio || null,
-  horario_fim: toHm(r.horario_fim) || datas.at(-1)?.horario_fim || null,
-  vagas_total: r.vagas_total,
-  carga_horaria: r.carga_horaria,
-  instrutor_assinante_id: Object.prototype.hasOwnProperty.call(r, "instrutor_assinante_id")
-    ? r.instrutor_assinante_id || null
-    : null,
-  _datas: datas,
-
-  /* Novos campos */
-  vagas_preenchidas: vagasPreenchidas,
-  vagas_disponiveis: vagasDisponiveis,
-  inscritos: vagasPreenchidas, // (alias opcional)
-});
-    }
-
-    res.json(turmas);
-  } catch (err) {
-    console.error("listarTurmasSimples erro:", err);
-    res.status(500).json({ erro: "Erro ao buscar turmas." });
+    logError(rid, "listarDatasDaTurma erro", erro);
+    return res.status(500).json({ erro: "Erro ao buscar datas da turma.", detalhe: erro.message });
   }
 }
 
 /* =====================================================================
-   🔎 Sugestão de cargos (auto-complete a partir de usuarios.cargo)
+   🔎 Sugestão de cargos
    ===================================================================== */
 async function sugerirCargos(req, res) {
+  const rid = mkRid();
   const q = String(req.query.q || "").trim();
   const limit = Math.min(Number(req.query.limit || 20), 50);
+  logStart(rid, "sugerirCargos", { q, limit });
 
   try {
     if (!q) {
@@ -1787,6 +1520,7 @@ async function sugerirCargos(req, res) {
         LIMIT $1
       `;
       const { rows } = await query(sql, [limit]);
+      logInfo(rid, "sugerirCargos sem q OK", { count: rows.length });
       return res.json(rows.map((r) => r.cargo));
     }
 
@@ -1799,81 +1533,236 @@ async function sugerirCargos(req, res) {
       LIMIT $2
     `;
     const { rows } = await query(sql, [`%${q}%`, limit]);
+    logInfo(rid, "sugerirCargos com q OK", { count: rows.length });
     return res.json(rows.map((r) => r.cargo));
   } catch (err) {
-    console.error("sugerirCargos erro:", err);
+    logError(rid, "sugerirCargos erro", err);
     return res.status(500).json({ erro: "Erro ao sugerir cargos" });
   }
 }
 
 /* =====================================================================
-   📎 Atualizar somente arquivos (banner_url e programacao_pdf_url)
+   📎 Atualizar somente arquivos (folder/programação)
    ===================================================================== */
-   async function atualizarArquivosDoEvento(req, res) {
-    try {
-      const id = Number(req.params.id);
-      if (!Number.isFinite(id)) {
-        return res.status(400).json({ erro: "EVENTO_ID_INVALIDO" });
-      }
-  
-      // arquivos (já processados por uploadEventos)
-      const folderUrl = pegarUploadUrl(req, "folder");        // png/jpg/jpeg
-      const progPdfUrl = pegarUploadUrl(req, "programacao");  // pdf
-  
-      if (!folderUrl && !progPdfUrl) {
-        return res.status(400).json({ erro: "Nenhum arquivo enviado." });
-      }
-  
-      const setCols = [];
-      const params = [id];
-  
-      if (folderUrl) {
-        setCols.push(`folder_url = $${params.length + 1}`);
-        params.push(folderUrl);
-      }
-      if (progPdfUrl) {
-        setCols.push(`programacao_pdf_url = $${params.length + 1}`);
-        params.push(progPdfUrl);
-      }
-  
-      const r = await query(
-        `UPDATE eventos
-            SET ${setCols.join(", ")}
-          WHERE id = $1
-          RETURNING id, folder_url, programacao_pdf_url`,
-        params
+async function atualizarArquivosDoEvento(req, res) {
+  const rid = mkRid();
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ erro: "EVENTO_ID_INVALIDO" });
+    }
+
+    const folderUrl = pegarUploadUrl(req, "folder");
+    const progPdfUrl = pegarUploadUrl(req, "programacao");
+
+    if (!folderUrl && !progPdfUrl) {
+      return res.status(400).json({ erro: "Nenhum arquivo enviado." });
+    }
+
+    const setCols = [];
+    const params = [id];
+
+    if (folderUrl) {
+      setCols.push(`folder_url = $${params.length + 1}`);
+      params.push(folderUrl);
+    }
+    if (progPdfUrl) {
+      setCols.push(`programacao_pdf_url = $${params.length + 1}`);
+      params.push(progPdfUrl);
+    }
+
+    const r = await query(
+      `UPDATE eventos
+          SET ${setCols.join(", ")}
+        WHERE id = $1
+        RETURNING id, folder_url, programacao_pdf_url`,
+      params
+    );
+
+    logInfo(rid, "atualizarArquivosDoEvento", { id, rowCount: r.rowCount });
+    if (r.rowCount === 0) {
+      return res.status(404).json({ erro: "Evento não encontrado." });
+    }
+
+    return res.json({
+      ok: true,
+      mensagem: "Arquivos do evento atualizados.",
+      arquivos: r.rows[0],
+    });
+  } catch (err) {
+    logError(rid, "atualizarArquivosDoEvento erro", err);
+    return res.status(500).json({ erro: "Erro ao atualizar arquivos do evento." });
+  }
+}
+
+/* ===================================================================== */
+async function podeVerEvento({ client, usuarioId, eventoId, req }) {
+  const admin = isAdmin(req);
+
+  const evQ = await client.query(
+    `SELECT id, restrito, restrito_modo, publicado,
+            COALESCE(cargos_permitidos_ids, '{}')   AS cargos_permitidos_ids,
+            COALESCE(unidades_permitidas_ids, '{}') AS unidades_permitidas_ids
+       FROM eventos
+      WHERE id=$1`,
+    [eventoId]
+  );
+  const evento = evQ.rows[0];
+  if (!evento) return { ok: false, motivo: "EVENTO_NAO_ENCONTRADO" };
+  if (!admin && !evento.publicado) return { ok: false, motivo: "NAO_PUBLICADO" };
+  if (admin || !evento.restrito) return { ok: true };
+  if (!usuarioId) return { ok: false, motivo: "NAO_AUTENTICADO" };
+
+  const uQ = await client.query(
+    `SELECT registro, cargo_id, unidade_id
+       FROM usuarios
+      WHERE id=$1`,
+    [usuarioId]
+  );
+  const usuario = uQ.rows?.[0] || {};
+  const regNorm = normalizeRegistro(usuario.registro || "");
+  const cargoId = Number(usuario.cargo_id) || null;
+  const unidadeId = usuario.unidade_id ?? null;
+
+  if (evento.restrito_modo === MODO_TODOS) {
+    if (regNorm) return { ok: true };
+  }
+  if (evento.restrito_modo === MODO_LISTA) {
+    if (regNorm) {
+      const hit = await client.query(
+        `SELECT 1 FROM evento_registros WHERE evento_id=$1 AND registro_norm=$2 LIMIT 1`,
+        [eventoId, regNorm]
       );
-  
-      if (r.rowCount === 0) {
-        return res.status(404).json({ erro: "Evento não encontrado." });
-      }
-  
-      return res.json({
-        ok: true,
-        mensagem: "Arquivos do evento atualizados.",
-        arquivos: r.rows[0],
-      });
-    } catch (err) {
-      console.error("atualizarArquivosDoEvento erro:", err);
-      return res.status(500).json({ erro: "Erro ao atualizar arquivos do evento." });
+      if (hit.rowCount > 0) return { ok: true };
     }
   }
+
+  const cargosIdsPermitidos = evento.cargos_permitidos_ids || [];
+  const unidadesIdsPermitidas = evento.unidades_permitidas_ids || [];
+
+  if (cargoId && cargosIdsPermitidos.includes(cargoId)) return { ok: true };
+  if (unidadeId != null && unidadesIdsPermitidas.includes(unidadeId)) return { ok: true };
+
+  return { ok: false, motivo: "SEM_PERMISSAO" };
+}
+
+/* ===================================================================== */
+async function excluirEvento(req, res) {
+  const rid = mkRid();
+  const { id } = req.params;
+  logStart(rid, "excluirEvento", { id });
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `DELETE FROM presencas WHERE turma_id IN (SELECT id FROM turmas WHERE evento_id=$1)`,
+      [id]
+    );
+    await client.query(
+      `DELETE FROM inscricoes WHERE turma_id IN (SELECT id FROM turmas WHERE evento_id=$1)`,
+      [id]
+    );
+    await client.query(
+      `DELETE FROM turma_instrutor WHERE turma_id IN (SELECT id FROM turmas WHERE evento_id=$1)`,
+      [id]
+    );
+    await client.query(
+      `DELETE FROM datas_turma WHERE turma_id IN (SELECT id FROM turmas WHERE evento_id=$1)`,
+      [id]
+    );
+    await client.query(`DELETE FROM turmas WHERE evento_id=$1`, [id]);
+    await client.query(`DELETE FROM evento_registros WHERE evento_id=$1`, [id]);
+    await execIgnoreMissing(client, `DELETE FROM evento_cargos WHERE evento_id=$1`, [id]);
+    await execIgnoreMissing(client, `DELETE FROM evento_unidades WHERE evento_id=$1`, [id]);
+    const result = await client.query(`DELETE FROM eventos WHERE id=$1 RETURNING *`, [id]);
+    if (result.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ erro: "Evento não encontrado" });
+    }
+    await client.query("COMMIT");
+    logInfo(rid, "excluirEvento COMMIT");
+    return res.json({ mensagem: "Evento excluído com sucesso", evento: result.rows[0] });
+  } catch (err) {
+    logError(rid, "excluirEvento erro", err);
+    try { await client.query("ROLLBACK"); } catch {}
+    return res.status(500).json({ erro: "Erro ao excluir evento" });
+  } finally {
+    client.release();
+  }
+}
+
+/* ───────────────────────── Logs utilitário ───────────────────────── */
+const IS_DEV = process.env.NODE_ENV !== "production";
+const logCtrl = (...a) => IS_DEV && console.log("[eventosController]", ...a);
+
+/* ───────────────── listarTurmasSimples (GET /eventos/:id/turmas-simples) ───────────────── */
+// 🔎 ADICIONE ESTE CÓDIGO
+// 🔁 src/controllers/eventosController.js → listarTurmasSimples
+async function listarTurmasSimples(req, res) {
+  const { id } = req.params;
+  if (!id || !Number.isFinite(Number(id))) {
+    return res.status(400).json({ erro: "Parâmetro 'id' inválido." });
+  }
+  try {
+    const sql = `
+      SELECT
+        t.id,
+        t.nome,
+        t.vagas_total,
+        t.carga_horaria,
+        t.data_inicio,
+        t.data_fim,
+        t.horario_inicio,
+        t.horario_fim,
+        -- 🔹 contagem de encontros
+        COALESCE((
+          SELECT COUNT(*)::int FROM datas_turma dt WHERE dt.turma_id = t.id
+        ), 0) AS encontros_count,
+        -- 🔹 lista de datas (já formatadas)
+        COALESCE((
+          SELECT json_agg(json_build_object(
+                   'data',          to_char(dt.data,'YYYY-MM-DD'),
+                   'horario_inicio',to_char(dt.horario_inicio,'HH24:MI'),
+                   'horario_fim',   to_char(dt.horario_fim,'HH24:MI')
+                 ) ORDER BY dt.data)
+          FROM datas_turma dt
+          WHERE dt.turma_id = t.id
+        ), '[]'::json) AS datas,
+        -- 🔹 instrutores da turma
+        COALESCE((
+          SELECT json_agg(json_build_object('id', u.id, 'nome', u.nome, 'email', u.email)
+                          ORDER BY u.nome)
+          FROM turma_instrutor ti
+          JOIN usuarios u ON u.id = ti.instrutor_id
+          WHERE ti.turma_id = t.id
+        ), '[]'::json) AS instrutores,
+        -- 🔹 assinante (se a coluna existir)
+        t.instrutor_assinante_id
+      FROM turmas t
+      WHERE t.evento_id = $1
+      ORDER BY t.data_inicio NULLS LAST, t.id
+    `;
+    const { rows } = await query(sql, [Number(id)]);
+    return res.json(rows || []);
+  } catch (err) {
+    console.error("[eventosController] listarTurmasSimples erro:", err);
+    return res.status(500).json({ erro: "Falha ao listar turmas." });
+  }
+}
 
 /* ===================================================================== */
 module.exports = {
   uploadEventos,
-
   listarEventos,
   criarEvento,
   buscarEventoPorId,
-  atualizarEvento,
+  atualizarEvento, // única versão (a duplicada foi removida)
   excluirEvento,
   listarTurmasDoEvento,
   listarTurmasSimples,
   getAgendaEventos,
   listarEventosDoinstrutor,
   listarDatasDaTurma,
-
   listarEventosParaMim,
   publicarEvento,
   despublicarEvento,
