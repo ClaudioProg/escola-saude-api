@@ -26,10 +26,15 @@ const parseHora = (val) => {
 };
 const hhmm = (s, fb = "") => parseHora(s) || fb;
 
+/** Mantém “YYYY-MM-DD” sem deslocar fuso */
 const isoDay = (v) => {
   if (!v) return "";
+  if (typeof v === "string") {
+    // já vem “YYYY-MM-DD” do backend
+    const m = v.match(/^\d{4}-\d{2}-\d{2}/);
+    return m ? m[0] : "";
+  }
   if (v instanceof Date) return v.toISOString().slice(0, 10);
-  if (typeof v === "string") return v.slice(0, 10);
   try { return new Date(v).toISOString().slice(0, 10); } catch { return ""; }
 };
 
@@ -39,32 +44,68 @@ const calcularCargaHorariaTotal = (arr) => {
     const [h1, m1] = hhmm(e.inicio, "00:00").split(":").map(Number);
     const [h2, m2] = hhmm(e.fim, "00:00").split(":").map(Number);
     const diffH = Math.max(0, (h2 * 60 + (m2 || 0) - (h1 * 60 + (m1 || 0))) / 60);
-    horas += diffH >= 8 ? diffH - 1 : diffH;
+    horas += diffH >= 8 ? diffH - 1 : diffH; // regra do almoço
   }
   return Math.round(horas);
+};
+
+/** Tenta extrair um array de datas/encontros de diferentes formatos de `t` */
+const pickDatasArray = (t) => {
+  if (!t) return null;
+  const candidatos = [
+    t.datas,            // nosso formato principal do backend
+    t.encontros,        // alguma tela pode ter salvo assim
+    t.datas_turma,      // nome alternativo
+    t.datasReais,       // em alguns endpoints
+  ].filter(Array.isArray);
+
+  return candidatos.length ? candidatos[0] : null;
 };
 
 const datasParaEncontros = (t) => {
   const baseHi = hhmm(t?.horario_inicio, "08:00");
   const baseHf = hhmm(t?.horario_fim, "17:00");
-  if (!Array.isArray(t?.datas)) return null;
-  const arr = t.datas
-    .map((d) => ({ data: isoDay(d?.data), inicio: hhmm(d?.horario_inicio, baseHi), fim: hhmm(d?.horario_fim, baseHf) }))
+
+  const arrDatas = pickDatasArray(t);
+  if (!arrDatas) return null;
+
+  const arr = arrDatas
+    .map((d) => ({
+      data: isoDay(d?.data || d),
+      inicio: hhmm(d?.inicio ?? d?.horario_inicio, baseHi),
+      fim: hhmm(d?.fim ?? d?.horario_fim, baseHf),
+    }))
     .filter((x) => x.data);
+
   return arr.length ? arr : null;
 };
 
+/** Aceita encontros tanto com {inicio,fim} quanto {horario_inicio,horario_fim}.
+ *  Fallback: se não houver array, tenta montar 1 encontro com data_inicio/data_fim. */
 const encontrosDoInitial = (t) => {
-  if (!t) return [{ data: "", inicio: "", fim: "" }];
-  if (Array.isArray(t.encontros) && t.encontros.length) {
-    const baseHi = hhmm(t?.horario_inicio, "08:00");
-    const baseHf = hhmm(t?.horario_fim, "17:00");
-    return t.encontros
-      .map((e) => ({ data: isoDay(e?.data || e), inicio: hhmm(e?.inicio, baseHi), fim: hhmm(e?.fim, baseHf) }))
-      .filter((x) => x.data);
-  }
+  const baseHi = hhmm(t?.horario_inicio, "08:00");
+  const baseHf = hhmm(t?.horario_fim, "17:00");
+
+  // 1) arrays “encontros”/“datas”/variantes
   const conv = datasParaEncontros(t);
   if (conv) return conv;
+
+  // 2) fallback com data_inicio/data_fim
+  const di = isoDay(t?.data_inicio);
+  const df = isoDay(t?.data_fim);
+  if (di && df) {
+    // se início = fim, cria 1 encontro; se diferentes, cria 2 mínimos (editar depois)
+    if (di === df) {
+      return [{ data: di, inicio: baseHi, fim: baseHf }];
+    }
+    return [
+      { data: di, inicio: baseHi, fim: baseHf },
+      { data: df, inicio: baseHi, fim: baseHf },
+    ];
+  }
+  if (di) return [{ data: di, inicio: baseHi, fim: baseHf }];
+
+  // 3) vazio
   return [{ data: "", inicio: "", fim: "" }];
 };
 
@@ -78,7 +119,7 @@ export default function ModalTurma({
   onSalvar,
   initialTurma = null,
   onExcluir,
-  usuarios = [], // <- recebido do ModalEvento para montar selects
+  usuarios = [],
 }) {
   // estados controlados pelo usuário
   const [nome, setNome] = useState("");
@@ -95,24 +136,37 @@ export default function ModalTurma({
 
   useEffect(() => {
     if (isOpen && !refHydratedOpen.current) {
+      console.log("[ModalTurma] initialTurma recebido:", initialTurma);
+
       setNome(initialTurma?.nome || "");
-      setVagasTotal(initialTurma?.vagas_total != null ? String(initialTurma.vagas_total) : "");
-      setEncontros(encontrosDoInitial(initialTurma));
+      setVagasTotal(
+        initialTurma?.vagas_total != null ? String(initialTurma.vagas_total) : ""
+      );
+
+      const encontrosInit = encontrosDoInitial(initialTurma);
+      console.log("[ModalTurma] encontros parseados:", encontrosInit);
+      setEncontros(encontrosInit);
 
       // hidratar instrutores e assinante
       const ids = extractIds(initialTurma?.instrutores);
       setInstrutoresSel(ids.length ? ids.map(String) : [""]);
-      setAssinanteId(
-        Number.isFinite(Number(initialTurma?.assinante_id)) ? String(initialTurma.assinante_id) : ""
-      );
+
+      // aceita os dois campos que podem vir do backend/estado
+      const assinante =
+        Number.isFinite(Number(initialTurma?.assinante_id))
+          ? String(initialTurma.assinante_id)
+          : Number.isFinite(Number(initialTurma?.instrutor_assinante_id))
+          ? String(initialTurma.instrutor_assinante_id)
+          : "";
+      setAssinanteId(assinante);
 
       refHydratedOpen.current = true;
       setTimeout(() => autosizeNome(), 0);
     }
     if (!isOpen) {
-      refHydratedOpen.current = false; // permite reidratar quando abrir novamente
+      refHydratedOpen.current = false;
     }
-  }, [isOpen, initialKey]);
+  }, [isOpen, initialKey]); // muda ao trocar a turma
 
   // se assinante sair da lista de instrutores, limpar
   useEffect(() => {
@@ -133,7 +187,12 @@ export default function ModalTurma({
 
   const encontrosOrdenados = useMemo(() => {
     const norm = [...(encontros || [])]
-      .map((e) => ({ ...e, data: isoDay(e.data), inicio: hhmm(e.inicio, ""), fim: hhmm(e.fim, "") }))
+      .map((e) => ({
+        ...e,
+        data: isoDay(e.data),
+        inicio: hhmm(e.inicio, ""),
+        fim: hhmm(e.fim, ""),
+      }))
       .filter((e) => e.data)
       .sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : 0));
     return norm;
@@ -148,7 +207,10 @@ export default function ModalTurma({
   /* CRUD encontros */
   const addEncontro = () => {
     const last = encontros[encontros.length - 1] || {};
-    setEncontros((prev) => [...prev, { data: "", inicio: hhmm(last.inicio, ""), fim: hhmm(last.fim, "") }]);
+    setEncontros((prev) => [
+      ...prev,
+      { data: "", inicio: hhmm(last.inicio, ""), fim: hhmm(last.fim, "") },
+    ]);
   };
   const removeEncontro = (idx) => {
     setEncontros((prev) => (prev.length <= 1 ? prev : prev.filter((_, i) => i !== idx)));
@@ -184,7 +246,7 @@ export default function ModalTurma({
   const adicionarInstrutor = () => setInstrutoresSel((l) => [...l, ""]);
   const removerInstrutor = (index) => {
     const nova = instrutoresSel.filter((_, i) => i !== index);
-    setInstrutoresSel(nova.length ? nova : [""]);
+    setInstrutoresSel(nova.length ? nova : ["" ]);
   };
 
   const assinanteOpcoes = useMemo(() => {
@@ -251,7 +313,9 @@ export default function ModalTurma({
         horario_fim: hhmm(e.fim, horario_fim_base),
       })),
       instrutores: instrSel,
+      // manda os dois por compatibilidade
       assinante_id: Number(assinanteId),
+      instrutor_assinante_id: Number(assinanteId),
     };
   };
 
@@ -296,13 +360,13 @@ export default function ModalTurma({
           <div className="rounded-2xl border border-indigo-100 dark:border-indigo-900 p-3 shadow-sm bg-white dark:bg-slate-900">
             <div className="text-xs text-slate-500 dark:text-slate-300 mb-1">Período</div>
             <div className="text-sm font-semibold">
-              {data_inicio && data_fim ? `${data_inicio.split("-").reverse().join("/")}` : "—"}
-              {data_inicio && data_fim ? ` — ${data_fim.split("-").reverse().join("/")}` : ""}
+              {data_inicio ? data_inicio.split("-").reverse().join("/") : "—"}
+              {data_fim && data_fim !== data_inicio ? ` — ${data_fim.split("-").reverse().join("/")}` : ""}
             </div>
           </div>
           <div className="rounded-2xl border border-indigo-100 dark:border-indigo-900 p-3 shadow-sm bg-white dark:bg-slate-900">
             <div className="text-xs text-slate-500 dark:text-slate-300 mb-1">Encontros</div>
-            <div className="text-sm font-semibold">{encontrosOrdenados.length || "—"}</div>
+            <div className="text-sm font-semibold">{encontros.length || "—"}</div>
           </div>
           <div className="rounded-2xl border border-indigo-100 dark:border-indigo-900 p-3 shadow-sm bg-white dark:bg-slate-900">
             <div className="text-xs text-slate-500 dark:text-slate-300 mb-1">Carga estimada</div>

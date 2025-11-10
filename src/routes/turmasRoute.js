@@ -1,116 +1,141 @@
 // ✅ 📁 src/routes/turmasRoute.js
-const express = require('express');
+const express = require("express");
 const router = express.Router();
 
-const turmaController = require('../controllers/turmasController'); // <- plural ✔
-const inscricoesController = require('../controllers/inscricoesController');
-const eventosController = require('../controllers/eventosController'); // usar listarDatasDaTurma
+const turmasController = require("../controllers/turmasController"); // unificado (plural)
+const inscricoesController = require("../controllers/inscricoesController");
 
-const authMiddleware = require('../auth/authMiddleware');
-const authorizeRoles = require('../auth/authorizeRoles');
+// eventosController é opcional aqui (só para listarDatasDaTurma)
+let eventosController = null;
+try {
+  eventosController = require("../controllers/eventosController");
+} catch (_) {
+  eventosController = null;
+}
+
+const authMiddleware = require("../auth/authMiddleware");
+const authorizeRoles = require("../auth/authorizeRoles");
+
+/* ───────── helpers defensivos ───────── */
+const hasFn = (obj, name) => !!obj && typeof obj[name] === "function";
+const ensureTurmas = (name) =>
+  hasFn(turmasController, name)
+    ? turmasController[name]
+    : (req, res) =>
+        res.status(500).json({
+          erro: `Handler ausente: turmasController.${name}`,
+        });
+
+// listarDatasDaTurma pode não existir no eventosController dependendo do branch
+const listarDatasDaTurmaHandler = hasFn(eventosController, "listarDatasDaTurma")
+  ? eventosController.listarDatasDaTurma
+  : (req, res) =>
+      res.status(501).json({
+        erro: "listarDatasDaTurma indisponível no eventosController.",
+      });
 
 /* ────────────────────────────────
    ➕ Criar nova turma (somente administrador)
    ──────────────────────────────── */
 router.post(
-  '/',
+  "/",
   authMiddleware,
-  authorizeRoles('administrador'),
-  turmaController.criarTurma
+  authorizeRoles("administrador"),
+  ensureTurmas("criarTurma")
 );
 
 /* ────────────────────────────────
    ✏️ Editar turma (somente administrador)
    ──────────────────────────────── */
 router.put(
-  '/:id',
+  "/:id",
   authMiddleware,
-  authorizeRoles('administrador'),
-  turmaController.editarTurma // alias de atualizarTurma
+  authorizeRoles("administrador"),
+  ensureTurmas("atualizarTurma") // nome canônico
 );
 
 /* ────────────────────────────────
    👨‍🏫 Vincular instrutor(es) à TURMA (somente administrador)
    ──────────────────────────────── */
 router.post(
-  '/:id/instrutores',
+  "/:id/instrutores",
   authMiddleware,
-  authorizeRoles('administrador'),
-  turmaController.adicionarinstrutor // alias OK (turma_instrutor)
+  authorizeRoles("administrador"),
+  ensureTurmas("adicionarInstrutor") // tabela turma_instrutor
 );
 
 /* ────────────────────────────────
    ❌ Excluir turma (somente administrador)
    ──────────────────────────────── */
 router.delete(
-  '/:id',
+  "/:id",
   authMiddleware,
-  authorizeRoles('administrador'),
-  turmaController.excluirTurma
+  authorizeRoles("administrador"),
+  ensureTurmas("excluirTurma")
 );
 
 /* ────────────────────────────────
-   📋 Listar turmas de um evento (usuário autenticado)
+   📋 Listar turmas de um evento (com datas reais, inscritos etc.)
    ──────────────────────────────── */
 router.get(
-  '/evento/:evento_id',
+  "/evento/:evento_id",
   authMiddleware,
-  turmaController.listarTurmasPorEvento
+  ensureTurmas("listarTurmasPorEvento")
 );
 
 /* ────────────────────────────────
    ⚡️ Endpoint leve (sem inscritos) — usado pelo ModalEvento
-   Caminho final: /api/turmas/eventos/:evento_id/turmas-simples
+   Caminho: /api/turmas/eventos/:evento_id/turmas-simples
    ──────────────────────────────── */
 router.get(
-  '/eventos/:evento_id/turmas-simples',
+  "/eventos/:evento_id/turmas-simples",
   authMiddleware,
-  turmaController.obterTurmasPorEvento
+  ensureTurmas("obterTurmasPorEvento")
 );
 
 /* ────────────────────────────────
-   📢 Listar turmas atribuídas ao instrutor
+   📢 Listar turmas atribuídas ao instrutor logado
    ──────────────────────────────── */
 router.get(
-  '/instrutor',
+  "/instrutor",
   authMiddleware,
-  authorizeRoles('administrador', 'instrutor'),
-  turmaController.listarTurmasDoinstrutor // alias OK
+  authorizeRoles("administrador", "instrutor"),
+  ensureTurmas("listarTurmasDoInstrutor")
 );
 
 /* ────────────────────────────────
    👨‍🏫 Listar instrutor(es) da turma
-   (⚠️ manter após rotas mais específicas para não colidir)
+   (⚠ manter após rotas mais específicas para não colidir)
    ──────────────────────────────── */
 router.get(
-  '/:id/instrutores',
+  "/:id/instrutores",
   authMiddleware,
-  turmaController.listarInstrutorDaTurma
+  ensureTurmas("listarInstrutorDaTurma")
 );
 
 /* ────────────────────────────────
-   📅 Datas reais da turma
+   📅 Datas reais da turma (datas_turma) — via eventosController
    ──────────────────────────────── */
 router.get(
-  '/:id/datas',
+  "/:id/datas",
   authMiddleware,
-  eventosController.listarDatasDaTurma
+  listarDatasDaTurmaHandler
 );
 
 /* ────────────────────────────────
-   🔍 Obter detalhes de uma turma
+   🔍 Obter detalhes de uma turma (título do evento + instrutores)
    ──────────────────────────────── */
 router.get(
-  '/:id/detalhes',
+  "/:id/detalhes",
   authMiddleware,
-  turmaController.obterDetalhesTurma
+  ensureTurmas("obterDetalhesTurma")
 );
 
 /* ────────────────────────────────
    📋 Listar inscritos de uma turma
    ──────────────────────────────── */
 router.get(
-  '/:turma_id/inscritos',
+  "/:turma_id/inscritos",
   authMiddleware,
   inscricoesController.listarInscritosPorTurma
 );
@@ -119,10 +144,10 @@ router.get(
    🧾 Listar turmas com usuários (admin)
    ──────────────────────────────── */
 router.get(
-  '/turmas-com-usuarios',
+  "/turmas-com-usuarios",
   authMiddleware,
-  authorizeRoles('administrador'),
-  turmaController.listarTurmasComusuarios // alias OK
+  authorizeRoles("administrador"),
+  ensureTurmas("listarTurmasComUsuarios") // nome canônico
 );
 
 module.exports = router;

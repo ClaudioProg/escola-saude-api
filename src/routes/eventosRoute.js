@@ -13,7 +13,7 @@ router.get('/protegido', authMiddleware, (req, res) => {
 });
 
 // ───────────────────────────────────────────────────────────────
-// 🎯 Eventos “para mim” (aplica regra de visibilidade do controller)
+// 🎯 Eventos “para mim”
 router.get('/para-mim/lista', authMiddleware, eventosController.listarEventosParaMim);
 
 // ───────────────────────────────────────────────────────────────
@@ -22,17 +22,17 @@ router.get('/agenda', authMiddleware, eventosController.getAgendaEventos);
 router.get('/instrutor', authMiddleware, eventosController.listarEventosDoinstrutor);
 
 // ───────────────────────────────────────────────────────────────
-// 📌 Utilitário: datas reais da turma (usa :id = turma_id)
+// 📌 Datas reais da turma (usa :id = turma_id)
 router.get('/turmas/:id/datas', authMiddleware, eventosController.listarDatasDaTurma);
 
 // ───────────────────────────────────────────────────────────────
-// 🔎 Auto-complete de cargos (deve vir ANTES de '/:id')
+// 🔎 Auto-complete de cargos (ANTES de '/:id')
 router.get('/cargos/sugerir', authMiddleware, eventosController.sugerirCargos);
 
 // ───────────────────────────────────────────────────────────────
 // 📅 CRUD principal de eventos
 
-// Listar todos (resumo + compat fallback)
+// Listar todos
 router.get('/', authMiddleware, eventosController.listarEventos);
 
 // Publicar / Despublicar (admin)
@@ -47,35 +47,33 @@ router.post('/:id/despublicar',
   eventosController.despublicarEvento
 );
 
-// Turmas por evento (precisam estar ANTES de '/:id' isolado)
+// Turmas por evento (ANTES de '/:id')
 router.get('/:id/turmas', authMiddleware, eventosController.listarTurmasDoEvento);
 router.get('/:id/turmas-simples', authMiddleware, eventosController.listarTurmasSimples);
 
-// 🔽🔽🔽 NOVAS ROTAS DE UPLOAD DIRETO DE ARQUIVOS 🔽🔽🔽
-// Observação: usamos o mesmo middleware de upload (folder/programacao)
-// e reaproveitamos o atualizarEvento, que só atualizará os campos enviados.
+// ───────────────────────────────────────────────────────────────
+// 📎 Upload direto de arquivos do evento (admin)
+// Usa o mesmo middleware (folder/programacao) e o handler dedicado.
 
-// Upload de banner (folder.png/jpg/jpeg)
 router.post('/:id/folder',
   authMiddleware,
   authorizeRoles('administrador'),
-  eventosController.uploadEventos, // aceita 'folder' e/ou 'programacao'
-  (req, res) => eventosController.atualizarEvento(req, res)
+  eventosController.uploadEventos,            // aceita 'folder' (png/jpg/jpeg)
+  eventosController.atualizarArquivosDoEvento // atualiza só o enviado
 );
 
-// Upload de programação (programacao.pdf)
 router.post('/:id/programacao',
   authMiddleware,
   authorizeRoles('administrador'),
-  eventosController.uploadEventos,
-  (req, res) => eventosController.atualizarEvento(req, res)
+  eventosController.uploadEventos,            // aceita 'programacao' (pdf)
+  eventosController.atualizarArquivosDoEvento
 );
-// 🔼🔼🔼 FIM DAS NOVAS ROTAS 🔼🔼🔼
 
+// ───────────────────────────────────────────────────────────────
 // Buscar por ID (com checagens e flags)
 router.get('/:id', authMiddleware, eventosController.buscarEventoPorId);
 
-// Criar (admin) — com upload (folder.png/jpg e programacao.pdf)
+// Criar (admin) — com upload (folder/programacao)
 router.post('/',
   authMiddleware,
   authorizeRoles('administrador'),
@@ -83,7 +81,7 @@ router.post('/',
   eventosController.criarEvento
 );
 
-// Atualizar (admin) — metadados, restrição e turmas, com upload
+// Atualizar (admin) — metadados/restrição/turmas, com upload opcional
 router.put('/:id',
   authMiddleware,
   authorizeRoles('administrador'),
@@ -96,13 +94,6 @@ router.delete('/:id',
   authMiddleware,
   authorizeRoles('administrador'),
   eventosController.excluirEvento
-);
-
-router.post('/:id/folder',
-  authMiddleware,
-  authorizeRoles('administrador'),
-  eventosController.uploadEventos,          // middleware do multer que você já tem
-  eventosController.atualizarArquivosDoEvento // novo handler (abaixo)
 );
 
 module.exports = router;

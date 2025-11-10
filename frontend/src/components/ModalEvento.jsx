@@ -232,9 +232,14 @@ const [unidadesPermitidas, setUnidadesPermitidas] = useState([]);
   const [unidadeAddId, setUnidadeAddId] = useState("");
 
   // Uploads
-  const [folderFile, setFolderFile] = useState(null); // png/jpg
-  const [programacaoFile, setProgramacaoFile] = useState(null); // pdf
-  const [folderPreview, setFolderPreview] = useState(null);
+const [folderFile, setFolderFile] = useState(null);       // novo upload (img)
+const [programacaoFile, setProgramacaoFile] = useState(null); // novo upload (pdf)
+const [folderPreview, setFolderPreview] = useState(null);
+
+// URLs/nomes já existentes vindos do backend
+const [folderUrlExistente, setFolderUrlExistente] = useState(null);
+const [programacaoUrlExistente, setProgramacaoUrlExistente] = useState(null);
+const [programacaoNomeExistente, setProgramacaoNomeExistente] = useState(null);
 
   // Controle de rehidratação e transição
   const prevEventoKeyRef = useRef(null);
@@ -300,6 +305,9 @@ const [unidadesPermitidas, setUnidadesPermitidas] = useState([]);
         setFolderFile(null);
         setProgramacaoFile(null);
         setFolderPreview(null);
+        setFolderUrlExistente(null);
+setProgramacaoUrlExistente(null);
+setProgramacaoNomeExistente(null);
       } else {
         // existente
         setTitulo(evento.titulo || "");
@@ -308,6 +316,18 @@ const [unidadesPermitidas, setUnidadesPermitidas] = useState([]);
         setTipo(evento.tipo || "");
         setUnidadeId(evento.unidade_id ? String(evento.unidade_id) : "");
         setPublicoAlvo(evento.publico_alvo || "");
+
+        // Uploads existentes vindos do backend (ajuste os nomes conforme seu eventosController)
+setFolderFile(null);
+setProgramacaoFile(null);
+setFolderPreview(null);
+
+// Tente estes campos; ajuste se seu backend devolver outros nomes:
+setFolderUrlExistente(evento.folder_url || evento.folder || null);
+setProgramacaoUrlExistente(evento.programacao_url || evento.programacao_pdf || null);
+
+// Opcional: nome “bonito” do PDF se backend enviar
+setProgramacaoNomeExistente(evento.programacao_nome || null);
 
         /* ========= TURMAS — sempre buscar via rota leve ========= */
         (async () => {
@@ -519,8 +539,16 @@ const opcoesInstrutor = useMemo(() => {
   const limparFolder = () => {
     setFolderFile(null);
     setFolderPreview(null);
+    // Se usuário quiser “remover” a imagem existente:
+    setFolderUrlExistente(null);
   };
-  const limparProgramacao = () => setProgramacaoFile(null);
+  
+  const limparProgramacao = () => {
+    setProgramacaoFile(null);
+    // Remover o PDF existente (marcamos null para o backend saber que não há novo)
+    setProgramacaoUrlExistente(null);
+    setProgramacaoNomeExistente(null);
+  };
 
   /* ================= Turma: criar / editar / remover ================= */
   function abrirCriarTurma() {
@@ -649,33 +677,49 @@ const opcoesInstrutor = useMemo(() => {
 
     const regs6 = Array.from(new Set(registros.filter((r) => /^\d{6}$/.test(r))));
 
-    const payload = {
-      id: evento?.id,
-      titulo,
-      descricao,
-      local,
-      tipo,
-      unidade_id: Number(unidadeId),
-      publico_alvo: publicoAlvo,
-      turmas: turmasCompletas,
-      restrito: !!restrito,
-      restrito_modo: restrito ? restritoModo || "todos_servidores" : null,
-      ...(restrito && restritoModo === "lista_registros" && regs6.length > 0
-        ? { registros_permitidos: regs6 }
-        : {}),
-      ...(restrito && restritoModo === "cargos" && cargosPermitidos.length > 0
-        ? { cargos_permitidos: cargosPermitidos }
-        : {}),
-      ...(restrito && restritoModo === "unidades" && unidadesPermitidas.length > 0
-        ? { unidades_permitidas: unidadesPermitidas }
-        : {}),
-      // uploads seguem para o container pai salvar após o POST/PUT
-      ...(folderFile ? { folderFile } : {}),
-      ...(programacaoFile ? { programacaoFile } : {}),
-    };
+    // 1) Monta o JSON puro (sem File)
+const payloadJson = {
+  id: evento?.id,
+  titulo,
+  descricao,
+  local,
+  tipo,
+  unidade_id: Number(unidadeId),
+  publico_alvo: publicoAlvo,
+  turmas: turmasCompletas,
+  restrito: !!restrito,
+  restrito_modo: restrito ? restritoModo || "todos_servidores" : null,
+  ...(restrito && restritoModo === "lista_registros" && regs6.length > 0
+    ? { registros_permitidos: regs6 }
+    : {}),
+  ...(restrito && restritoModo === "cargos" && cargosPermitidos.length > 0
+    ? { cargos_permitidos: cargosPermitidos }
+    : {}),
+  ...(restrito && restritoModo === "unidades" && unidadesPermitidas.length > 0
+    ? { unidades_permitidas: unidadesPermitidas }
+    : {}),
 
-    onSalvar(payload);
-  };
+  // Sinalizadores de remoção se o usuário apagou os existentes:
+  ...(folderUrlExistente === null ? { remover_folder: true } : {}),
+  ...(programacaoUrlExistente === null ? { remover_programacao: true } : {}),
+};
+
+// 2) Usa FormData para enviar arquivos
+const fd = new FormData();
+/* 
+   Importante: nomes dos campos:
+   - Ajuste para bater com o seu eventosController / multer.
+   - Sugestão: 'dados' (JSON) + 'folder' (img) + 'programacao' (pdf)
+*/
+fd.append("dados", new Blob([JSON.stringify(payloadJson)], { type: "application/json" }));
+if (folderFile) fd.append("folder", folderFile);
+if (programacaoFile) fd.append("programacao", programacaoFile);
+
+// 3) Delega ao pai (o container que chamou o Modal) fazer o POST/PUT
+//    O pai deve chamar api.post/put sem definir 'Content-Type' manualmente
+//    (deixa o browser setar o boundary do multipart).
+onSalvar(fd, { isMultipart: true });
+};
 
   const regCount =
     Array.isArray(registros) && registros.length > 0
@@ -685,12 +729,17 @@ const opcoesInstrutor = useMemo(() => {
   /* ========================= Render Turmas (memo) ========================= */
   const turmasRender = useMemo(() => {
     return (turmas || []).map((t, i) => {
-      const qtd = Array.isArray(t.datas) ? t.datas.length : 0;
-      const di = qtd ? minDate(t.datas) : t.data_inicio;
-      const df = qtd ? maxDate(t.datas) : t.data_fim;
-      const first = qtd ? t.datas[0] : null;
-      const hi = first ? hh(first.horario_inicio) : hh(t.horario_inicio);
-      const hf = first ? hh(first.horario_fim) : hh(t.horario_fim);
+      const baseDatas = (Array.isArray(t.datas) && t.datas.length)
+      ? t.datas
+      : encontrosParaDatas(t); // ← fallback seguro
+    
+    const qtd = Array.isArray(baseDatas) ? baseDatas.length : 0;
+    const di = qtd ? minDate(baseDatas) : t.data_inicio;
+    const df = qtd ? maxDate(baseDatas) : t.data_fim;
+    const first = qtd ? baseDatas[0] : null;
+    const hi = first ? hh(first.horario_inicio) : hh(t.horario_inicio);
+    const hf = first ? hh(first.horario_fim) : hh(t.horario_fim);
+    
 
       const instrs = extractIds(t.instrutores || []);
       const assinante = Number.isFinite(Number(t.assinante_id)) ? Number(t.assinante_id) : null;
@@ -739,11 +788,11 @@ const opcoesInstrutor = useMemo(() => {
 
             {qtd > 0 && (
               <ul className="text-xs text-slate-600 dark:text-slate-300 list-disc list-inside">
-                {t.datas.map((d, idx) => (
-                  <li key={`${t.id ?? i}-d-${idx}`} className="break-words">
-                    {formatarDataBrasileira(d.data)} — {hh(d.horario_inicio)} às {hh(d.horario_fim)}
-                  </li>
-                ))}
+                {baseDatas.map((d, idx) => (
+  <li key={`${t.id ?? i}-d-${idx}`} className="break-words">
+    {formatarDataBrasileira(d.data)} — {hh(d.horario_inicio)} às {hh(d.horario_fim)}
+  </li>
+))}
               </ul>
             )}
 
@@ -1251,72 +1300,127 @@ const opcoesInstrutor = useMemo(() => {
                 {/* UPLOADS */}
                 <div className="grid gap-3 sm:grid-cols-2">
                   {/* Folder (PNG/JPG) */}
-                  <div className="grid gap-1">
-                    <label className="text-sm font-medium flex items-center gap-2">
-                      <ImageIcon size={16} /> Folder do evento (PNG/JPG)
-                    </label>
-                    <label className="flex items-center gap-2 px-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 cursor-pointer">
-                      <Paperclip size={16} />
-                      <span className="text-sm">
-                        {folderFile ? folderFile.name : "Selecionar imagem…"}
-                      </span>
-                      <input
-                        type="file"
-                        accept="image/png,image/jpeg"
-                        className="hidden"
-                        onChange={onChangeFolder}
-                      />
-                    </label>
-                    {folderPreview && (
-                      <div className="mt-2">
-                        <img
-                          src={folderPreview}
-                          alt="Pré-visualização do folder"
-                          className="max-h-40 rounded-lg border border-black/10 dark:border-white/10"
-                        />
-                        <div className="mt-2">
-                          <button
-                            type="button"
-                            onClick={limparFolder}
-                            className="text-xs underline text-red-700 dark:text-red-300"
-                          >
-                            Remover imagem
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
+<div className="grid gap-1">
+  <label className="text-sm font-medium flex items-center gap-2">
+    <ImageIcon size={16} /> Folder do evento (PNG/JPG)
+  </label>
+
+  {/* Se já existe no backend e o usuário ainda não escolheu um novo */}
+  {!folderFile && folderUrlExistente && (
+    <div className="rounded-lg border border-black/10 dark:border-white/10 p-2">
+      <img
+        src={folderUrlExistente}
+        alt="Folder atual do evento"
+        className="max-h-40 rounded-md"
+      />
+      <div className="mt-2 flex items-center gap-3">
+        <a
+          href={folderUrlExistente}
+          target="_blank" rel="noreferrer"
+          className="text-xs underline text-teal-700 dark:text-teal-300"
+        >
+          Abrir imagem em nova aba
+        </a>
+        <button
+          type="button"
+          onClick={limparFolder}
+          className="text-xs underline text-red-700 dark:text-red-300"
+          title="Remover imagem existente"
+        >
+          Remover imagem
+        </button>
+      </div>
+    </div>
+  )}
+
+  {/* Input para novo upload (substitui a existente) */}
+  <label className="flex items-center gap-2 px-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 cursor-pointer">
+    <Paperclip size={16} />
+    <span className="text-sm">
+      {folderFile ? folderFile.name : "Selecionar imagem…"}
+    </span>
+    <input
+      type="file"
+      accept="image/png,image/jpeg"
+      className="hidden"
+      onChange={onChangeFolder}
+    />
+  </label>
+
+  {folderPreview && (
+    <div className="mt-2">
+      <img
+        src={folderPreview}
+        alt="Pré-visualização do folder"
+        className="max-h-40 rounded-lg border border-black/10 dark:border-white/10"
+      />
+      <div className="mt-2">
+        <button
+          type="button"
+          onClick={limparFolder}
+          className="text-xs underline text-red-700 dark:text-red-300"
+        >
+          Remover imagem
+        </button>
+      </div>
+    </div>
+  )}
+</div>
 
                   {/* Programação (PDF) */}
-                  <div className="grid gap-1">
-                    <label className="text-sm font-medium flex items-center gap-2">
-                      <FileIcon size={16} /> Programação (PDF)
-                    </label>
-                    <label className="flex items-center gap-2 px-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 cursor-pointer">
-                      <Paperclip size={16} />
-                      <span className="text-sm">
-                        {programacaoFile ? programacaoFile.name : "Selecionar PDF…"}
-                      </span>
-                      <input
-                        type="file"
-                        accept="application/pdf"
-                        className="hidden"
-                        onChange={onChangeProgramacao}
-                      />
-                    </label>
-                    {programacaoFile && (
-                      <div className="mt-1">
-                        <button
-                          type="button"
-                          onClick={limparProgramacao}
-                          className="text-xs underline text-red-700 dark:text-red-300"
-                        >
-                          Remover PDF
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
+<div className="grid gap-1">
+  <label className="text-sm font-medium flex items-center gap-2">
+    <FileIcon size={16} /> Programação (PDF)
+  </label>
+
+  {/* Link existente do backend, se houver e não escolheu novo arquivo */}
+  {!programacaoFile && programacaoUrlExistente && (
+    <div className="rounded-lg border border-black/10 dark:border-white/10 p-2 flex items-center justify-between">
+      <a
+        href={programacaoUrlExistente}
+        target="_blank" rel="noreferrer"
+        className="text-sm underline text-teal-700 dark:text-teal-300"
+      >
+        {programacaoNomeExistente || "Baixar programação (PDF)"}
+      </a>
+      <button
+        type="button"
+        onClick={limparProgramacao}
+        className="text-xs underline text-red-700 dark:text-red-300"
+        title="Remover PDF existente"
+      >
+        Remover PDF
+      </button>
+    </div>
+  )}
+
+  {/* Input para novo upload */}
+  <label className="flex items-center gap-2 px-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 cursor-pointer">
+    <Paperclip size={16} />
+    <span className="text-sm">
+      {programacaoFile ? programacaoFile.name : "Selecionar PDF…"}
+    </span>
+    <input
+      type="file"
+      accept="application/pdf"
+      className="hidden"
+      onChange={onChangeProgramacao}
+    />
+  </label>
+
+  {programacaoFile && (
+    <div className="mt-1">
+      <button
+        type="button"
+        onClick={limparProgramacao}
+        className="text-xs underline text-red-700 dark:text-red-300"
+      >
+        Remover PDF
+      </button>
+    </div>
+  )}
+</div>
+</div>
 
                 {/* TURMAS */}
                 <div>
