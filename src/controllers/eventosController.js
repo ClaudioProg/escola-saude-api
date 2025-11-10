@@ -677,7 +677,15 @@ async function buscarEventoPorId(req, res) {
           ORDER BY u.nome`,
         [t.id]
       );
-
+      
+      // 🔹 contagem de inscritos
+      const { rows: vQ } = await client.query(
+        `SELECT COUNT(*)::int AS inscritos FROM inscricoes WHERE turma_id = $1`,
+        [t.id]
+      );
+      const inscritos = vQ?.[0]?.inscritos ?? 0;
+      const vagasTotal = Number.isFinite(Number(t.vagas_total)) ? Number(t.vagas_total) : 0;
+      
       const assinanteId =
         Object.prototype.hasOwnProperty.call(t, "instrutor_assinante_id")
           ? t.instrutor_assinante_id
@@ -685,18 +693,27 @@ async function buscarEventoPorId(req, res) {
       const assinante = Number.isFinite(Number(assinanteId))
         ? instrT.rows.find((i) => i.id === Number(assinanteId)) || null
         : null;
-
+      
       turmas.push({
         ...t,
         data_inicio: toYmd(t.data_inicio),
         data_fim: toYmd(t.data_fim),
         horario_inicio: toHm(t.horario_inicio),
         horario_fim: toHm(t.horario_fim),
+      
+        // 🔹 instrutores por turma
         instrutores: instrT.rows,
         instrutor_assinante: assinante,
         instrutor_assinante_id: assinante ? assinante.id : null,
+      
+        // 🔹 datas e encontros
         datas,
         encontros_count,
+      
+        // 🔹 vagas/inscrições (usados no CardTurma)
+        inscritos,
+        vagas_preenchidas: inscritos,
+        vagas_disponiveis: Math.max(vagasTotal - inscritos, 0),
       });
     }
 
@@ -732,17 +749,15 @@ async function buscarEventoPorId(req, res) {
     });
 
     return res.json({
-      ...evento,
+      ...evento, // ⇐ inclui folder_url e programacao_pdf_url vindos do SELECT * FROM eventos
       registros_permitidos: regsQ.rows.map((r) => r.registro_norm),
-      cargos_permitidos_ids: Array.isArray(evento.cargos_permitidos_ids)
-        ? evento.cargos_permitidos_ids
-        : [],
-      unidades_permitidas_ids: Array.isArray(evento.unidades_permitidas_ids)
-        ? evento.unidades_permitidas_ids
-        : [],
+      cargos_permitidos_ids: Array.isArray(evento.cargos_permitidos_ids) ? evento.cargos_permitidos_ids : [],
+      unidades_permitidas_ids: Array.isArray(evento.unidades_permitidas_ids) ? evento.unidades_permitidas_ids : [],
       cargos_permitidos: cargosRows.rows,
       unidades_permitidas: unidadesRows.rows,
+      // 🔹 instrutor segue no nível do evento só como “consolidado”, mas:
       instrutor: instrEventoQ.rows,
+      // 🔹 onde importa de verdade (para o card): dentro de cada turma (já ajustado acima)
       turmas,
       ja_instrutor: Boolean(jaInstrutorResult.rows?.[0]?.eh),
       ja_inscrito: Boolean(jaInscritoResult.rows?.[0]?.eh),
@@ -1715,6 +1730,9 @@ async function listarTurmasSimples(req, res) {
         t.horario_inicio,
         t.horario_fim,
         -- 🔹 contagem de encontros
+        COALESCE((
+    SELECT COUNT(*)::int FROM inscricoes i WHERE i.turma_id = t.id
+  ), 0) AS inscritos,
         COALESCE((
           SELECT COUNT(*)::int FROM datas_turma dt WHERE dt.turma_id = t.id
         ), 0) AS encontros_count,
