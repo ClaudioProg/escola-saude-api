@@ -88,6 +88,59 @@ function drawSignatureText(doc, rawText, { x, y, w }, {
     size -= 1;
   }
 
+  // ───────────────── Assinante da Turma ─────────────────
+async function obterAssinanteDaTurma(turmaId) {
+  // 1ª tentativa: usar turmas.instrutor_assinante_id (ou o alias legado assinante_instrutor_id)
+  const q = await db.query(
+    `
+    SELECT 
+      u.id,
+      u.nome,
+      a.imagem_base64
+    FROM turmas t
+    LEFT JOIN usuarios    u ON u.id = COALESCE(t.instrutor_assinante_id, t.assinante_instrutor_id)
+    LEFT JOIN assinaturas a ON a.usuario_id = COALESCE(t.instrutor_assinante_id, t.assinante_instrutor_id)
+    WHERE t.id = $1
+    `,
+    [Number(turmaId)]
+  );
+
+  if (q.rowCount && q.rows[0]?.id) {
+    return {
+      id: q.rows[0].id,
+      nome: q.rows[0].nome || "Instrutor(a)",
+      imagem_base64: q.rows[0].imagem_base64 || null,
+      origem: "turma.instrutor_assinante_id",
+    };
+  }
+
+  // Fallback (em último caso): pegar 1 instrutor da turma
+  const fb = await db.query(
+    `
+    SELECT u.id, u.nome, a.imagem_base64
+      FROM turma_instrutor ti
+      JOIN usuarios u    ON u.id = ti.instrutor_id
+ LEFT JOIN assinaturas a ON a.usuario_id = ti.instrutor_id
+     WHERE ti.turma_id = $1
+     ORDER BY u.nome
+     LIMIT 1
+    `,
+    [Number(turmaId)]
+  );
+
+  if (fb.rowCount) {
+    return {
+      id: fb.rows[0].id,
+      nome: fb.rows[0].nome || "Instrutor(a)",
+      imagem_base64: fb.rows[0].imagem_base64 || null,
+      origem: "fallback.turma_instrutor",
+    };
+  }
+
+  // Sem instrutor definido
+  return { id: null, nome: "Instrutor(a)", imagem_base64: null, origem: "nenhum" };
+}
+
   // 2) centraliza manualmente dentro da caixa, SEM width e SEM line break
   const ww = doc.widthOfString(text);
   const xCentered = x + Math.max(0, (w - ww) / 2);
@@ -356,30 +409,17 @@ async function _gerarPdfFisico({
     doc.font("AlegreyaSans-Regular").fontSize(14)
        .text("Chefe da Escola da Saúde", LEFT.x, baseY + 25, { align: "center", width: LEFT.w });
 
-    // Direita: instrutor (nome + assinatura com fallback)
-    let nomeInstrutor = "Instrutor(a)";
-    let assinaturaInstrutorBase64 = null;
-    try {
-      // 🔄 NOVO: busca instrutor(es) da TURMA priorizando quem é assinante
-      const { rows } = await db.query(`
-        SELECT u.nome AS nome_instrutor,
-               a.imagem_base64,
-               ti.is_assinante,
-               ti.ordem_assinatura
-          FROM turma_instrutor ti
-          JOIN usuarios u ON u.id = ti.instrutor_id
-     LEFT JOIN assinaturas a ON a.usuario_id = ti.instrutor_id
-         WHERE ti.turma_id = $1
-      ORDER BY ti.is_assinante DESC,
-               ti.ordem_assinatura ASC NULLS LAST,
-               ti.criado_em ASC
-         LIMIT 1
-      `, [Number(turma_id)]);
-      nomeInstrutor = rows[0]?.nome_instrutor || nomeInstrutor;
-      assinaturaInstrutorBase64 = rows[0]?.imagem_base64 || null;
-    } catch (e) {
-      console.warn("⚠️ Erro ao obter instrutor da turma:", e.message);
-    }
+   // Direita: instrutor-assinante da TURMA (fonte única oficial)
+let nomeInstrutor = "Instrutor(a)";
+let assinaturaInstrutorBase64 = null;
+try {
+  const assinante = await obterAssinanteDaTurma(Number(turma_id));
+  nomeInstrutor = assinante.nome || nomeInstrutor;
+  assinaturaInstrutorBase64 = assinante.imagem_base64 || null;
+  logDev("[certificados] Assinante TURMA:", assinante.origem, nomeInstrutor ? "ok" : "vazio");
+} catch (e) {
+  console.warn("⚠️ Erro ao obter assinante da turma:", e.message);
+}
 
     const SIGN_W = 150;
     const signX = RIGHT.x + (RIGHT.w - SIGN_W) / 2;
