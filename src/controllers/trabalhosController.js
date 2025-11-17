@@ -1775,3 +1775,105 @@ exports.contagemMinhasAvaliacoes = async (req, res, next) => {
     next(err);
   }
 };
+
+// ========== REPOSITÓRIO PÚBLICO (USUÁRIOS LOGADOS) ==========
+// GET /api/trabalhos/repositorio
+// Lista trabalhos já avaliados, SEM notas, com acesso ao banner
+exports.listarRepositorioTrabalhos = async (req, res, next) => {
+  const t0 = Date.now();
+  try {
+    // Qualquer usuário logado pode ver o repositório
+    const authUser = res?.locals?.user ?? req.user ?? null;
+    const uid = toIntOrNull(authUser?.id);
+    if (uid === null) {
+      const e = new Error("Não autorizado.");
+      e.status = 401;
+      throw e;
+    }
+
+    // opcional: filtro por chamada via query ?chamadaId=123
+    const chamadaId = toIntOrNull(req.query?.chamadaId);
+    const params = [];
+    const where = [];
+
+    // ⚠️ critérios para "já foi avaliado"
+    //  - tem alguma nota persistida OU
+    //  - status final em: aprovado_exposicao, aprovado_oral, reprovado
+    where.push(`
+      (
+        s.nota_escrita IS NOT NULL
+        OR s.nota_oral IS NOT NULL
+        OR s.nota_final IS NOT NULL
+        OR s.status IN ('aprovado_exposicao', 'aprovado_oral', 'reprovado')
+      )
+    `);
+
+    if (chamadaId !== null) {
+      params.push(chamadaId);
+      where.push(`s.chamada_id = $${params.length}`);
+    }
+
+    const sql = `
+      SELECT
+        s.id,
+        s.titulo,
+        s.status,
+        s.inicio_experiencia,
+        s.linha_tematica_codigo,
+        s.linha_tematica_id,
+        tcl.nome AS linha_tematica_nome,
+        s.chamada_id,
+        c.titulo AS chamada_titulo,
+
+        -- Autor (sem dados sensíveis)
+        u.nome  AS autor_nome,
+        u.unidade_id,
+        un.nome AS autor_unidade_nome,
+
+        -- Campos científicos (para o repositório)
+        s.introducao,
+        s.objetivos,
+        s.metodo,
+        s.resultados,
+        s.consideracoes,
+        s.bibliografia,
+
+        -- Banner (usando a mesma lógica do poster_arquivo_id)
+        a.nome_original AS banner_nome,
+        CASE
+          WHEN a.id IS NOT NULL THEN CONCAT('/api/submissoes/', s.id, '/banner')
+          ELSE NULL
+        END AS banner_url
+
+      FROM trabalhos_submissoes s
+      JOIN usuarios u              ON u.id = s.usuario_id
+      JOIN trabalhos_chamadas c    ON c.id = s.chamada_id
+      LEFT JOIN trabalhos_chamada_linhas tcl ON tcl.id = s.linha_tematica_id
+      LEFT JOIN unidades un        ON un.id = u.unidade_id
+      LEFT JOIN trabalhos_arquivos a ON a.id = s.poster_arquivo_id
+      ${where.length ? "WHERE " + where.join(" AND ") : ""}
+      ORDER BY c.titulo ASC, tcl.nome ASC NULLS LAST, s.titulo ASC, s.id ASC
+    `;
+
+    const rows = await db.any(sql, params);
+
+    console.log("[listarRepositorioTrabalhos]", {
+      uid,
+      chamadaId: chamadaId ?? null,
+      total: rows.length,
+      ms: Date.now() - t0,
+    });
+
+    // 🔒 Não retornamos nenhuma coluna de nota aqui.
+    res.json(rows);
+  } catch (err) {
+    console.error("[listarRepositorioTrabalhos][erro]", {
+      message: err.message,
+      code: err.code,
+      stack: err.stack,
+      ms: Date.now() - t0,
+    });
+    next(err);
+  }
+};
+

@@ -34,6 +34,7 @@ const Teste                  = lazy(() => import("./pages/Teste"));
 const AgendamentoSala        = lazy(() => import("./pages/AgendamentoSala"));
 const SolicitacaoCurso       = lazy(() => import("./pages/SolicitacaoCurso"));
 const AgendaUsuario          = lazy(() => import("./pages/AgendaUsuario"));
+const RepositorioTrabalhos   = lazy(() => import("./pages/RepositorioTrabalhos"));
 
 const DashboardInstrutor     = lazy(() => import("./pages/DashboardInstrutor"));
 const AgendaInstrutor        = lazy(() => import("./pages/AgendaInstrutor"));
@@ -411,6 +412,15 @@ export default function App() {
             <Route path="/agendamento-sala" element={<PrivateRoute><AgendamentoSala /></PrivateRoute>} />
             <Route path="/solicitar-curso" element={<PrivateRoute><SolicitacaoCurso /></PrivateRoute>} />
             <Route path="/agenda" element={<PrivateRoute><AgendaUsuario /></PrivateRoute>} />
+            {/* 🆕 Repositório de trabalhos */}
+<Route
+  path="/repositorio-trabalhos"
+  element={
+    <PrivateRoute>
+      <RepositorioTrabalhos />
+    </PrivateRoute>
+  }
+/>
 
             {/* 🆕 Manual do Usuário */}
             <Route path="/usuario/manual" element={<PrivateRoute><ManualUsuario /></PrivateRoute>} />

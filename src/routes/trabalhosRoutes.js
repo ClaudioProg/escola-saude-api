@@ -21,6 +21,11 @@ const upload = multer({ dest: path.join(process.cwd(), "uploads/tmp") });
 
 /* ─────────────────────────── ROTAS DE USUÁRIO ─────────────────────────── */
 router.get("/submissoes/minhas", requireAuth, ctrl.minhasSubmissoes);
+
+// 💾 Repositório de trabalhos avaliados (sem notas, com banner)
+// GET /api/trabalhos/repositorio[?chamadaId=...]
+router.get("/repositorio", requireAuth, ctrl.listarRepositorioTrabalhos);
+
 router.post("/chamadas/:chamadaId(\\d+)/submissoes", requireAuth, ctrl.criarSubmissao);
 router.get("/submissoes/:id(\\d+)", requireAuth, ctrl.obterSubmissao);
 router.put("/submissoes/:id(\\d+)", requireAuth, ctrl.atualizarSubmissao);

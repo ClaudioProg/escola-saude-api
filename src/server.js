@@ -280,10 +280,9 @@ app.use("/api", chamadasModeloRoutes);
 app.use("/api", submissoesAdminRoutes);
 app.use("/api/admin/avaliacoes", adminAvaliacoesRoutes);
 app.use("/api", chamadasRoutes);
-app.use("/api", trabalhosRoutes);
+app.use("/api/trabalhos", trabalhosRoutes);
 app.use("/api/unidades", unidadesRoute);
 app.use("/api/votacoes", votacoesRoutes);
-
 
 /* ───────── Recuperação de senha ───────── */
 app.post("/api/usuarios/recuperar-senha", recuperarSenhaLimiter, usuarioPublicoController.recuperarSenha);

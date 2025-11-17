@@ -268,6 +268,7 @@ export default function Navbar() {
       { label: "Agendamento de Sala", path: "/agendamento-sala", icon: CalendarDays },
       { label: "Solicitar Curso", path: "/solicitar-curso", icon: Presentation },
       { label: "Submissão de Trabalhos", path: "/submissoes", icon: Presentation },
+      { label: "Repositório de Trabalhos", path: "/repositorio-trabalhos", icon: FolderOpenDot },
       { label: "Manual do Usuário", path: "/usuario/manual", icon: BookOpen },
       { label: "Escanear", path: "/scanner", icon: QrCode },
     ],
