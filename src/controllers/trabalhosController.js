@@ -711,7 +711,6 @@ exports.atualizarBanner = async (req, res, next) => {
   }
 };
 
-// GET /submissoes/:id/banner — inline (prefere BLOB; cai para disco)
 exports.baixarBanner = async (req, res, next) => {
   try {
     const subId = toIntOrNull(req.params.id);
@@ -721,13 +720,10 @@ exports.baixarBanner = async (req, res, next) => {
     const userId = toIntOrNull(authUser?.id);
     if (userId === null) return res.status(401).json({ erro: "Não autorizado." });
 
-    const ehAdministrador = await isAdmin(userId);
-    let permitido = ehAdministrador || (await canUserReviewOrView(userId, subId));
-    if (!permitido) {
-      const dono = await db.oneOrNone(`SELECT usuario_id FROM trabalhos_submissoes WHERE id=$1`, [subId]);
-      permitido = String(dono?.usuario_id) === String(userId);
-    }
-    if (!permitido) return res.status(403).json({ erro: "Acesso negado." });
+    // 🔓 Para o repositório: qualquer usuário logado pode baixar o banner
+    // (o filtro de "já foi avaliado / aprovado" já é feito em listarRepositorioTrabalhos)
+    // Se quiser deixar um log explícito:
+    logDownload("banner:auth", { subId, userId });
 
     const row = await db.oneOrNone(
       `SELECT a.id, a.caminho, a.nome_original, a.mime_type, a.arquivo
@@ -1841,7 +1837,7 @@ exports.listarRepositorioTrabalhos = async (req, res, next) => {
         -- Banner (usando a mesma lógica do poster_arquivo_id)
         a.nome_original AS banner_nome,
         CASE
-          WHEN a.id IS NOT NULL THEN CONCAT('/api/submissoes/', s.id, '/banner')
+          WHEN a.id IS NOT NULL THEN CONCAT('/api/trabalhos/submissoes/', s.id, '/banner')
           ELSE NULL
         END AS banner_url
 
