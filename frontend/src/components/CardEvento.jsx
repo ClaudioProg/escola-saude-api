@@ -1,5 +1,5 @@
 // 📁 src/components/CardEvento.jsx
-import { CalendarDays, Users, Star, BarChart } from "lucide-react";
+import { CalendarDays, Users, Star, BarChart, Image as ImageIcon } from "lucide-react";
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useCallback } from "react";
 import CardTurma from "./CardTurma";
@@ -133,6 +133,18 @@ function getPeriodoEvento(evento, turmas) {
 }
 
 /* =========================
+   URL helper p/ folder/programação
+   ========================= */
+function absUrl(u) {
+  if (!u) return null;
+  if (/^https?:\/\//i.test(u)) return u;
+  const base = import.meta.env?.VITE_API_BASE_URL || "";
+  // se houver base (ex.: https://escola-saude-api.onrender.com), concatena;
+  // caso contrário, mantém relativo (mesmo host do frontend reverse-proxy/spa)
+  return base ? `${base}${u}` : u;
+}
+
+/* =========================
    Componente
    ========================= */
 export default function CardEvento({
@@ -206,20 +218,14 @@ export default function CardEvento({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expandido, turmas]);
 
-  const nomeInstrutor = useMemo(() => {
-    if (Array.isArray(evento?.instrutor)) {
-      return evento.instrutor.map((i) => i?.nome).filter(Boolean).join(", ") || "—";
-    }
-    if (typeof evento?.instrutor === "object" && evento.instrutor?.nome) {
-      return evento.instrutor.nome;
-    }
-    return "—";
-  }, [evento]);
+  // 🔄 Instrutor em nível de evento foi removido. Agora cada CardTurma mostra seus instrutores.
 
   const periodoTexto = useMemo(() => getPeriodoEvento(evento, turmas), [evento, turmas]);
   const turmasId = `evento-${evento.id}-turmas`;
   const tituloId = `evento-${evento.id}-titulo`;
   const periodoId = `evento-${evento.id}-periodo`;
+
+  const folderUrl = absUrl(evento?.folder_url);
 
   return (
     <section
@@ -227,8 +233,29 @@ export default function CardEvento({
       aria-labelledby={tituloId}
       aria-describedby={periodoId}
     >
-      <div className="flex justify-between items-start gap-4">
-        <div className="min-w-0">
+      {/* Cabeçalho com coluna de imagem à esquerda */}
+      <div className="flex items-start gap-4">
+        {/* Coluna da imagem (folder) — esconde em xs para dar prioridade ao título */}
+        <div className="hidden sm:block shrink-0">
+          <div className="w-40 h-28 rounded-xl overflow-hidden border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-700 flex items-center justify-center">
+            {folderUrl ? (
+              <img
+                src={folderUrl}
+                alt={`Folder do evento: ${evento?.titulo ?? ""}`}
+                loading="lazy"
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <div className="flex flex-col items-center justify-center text-gray-400">
+                <ImageIcon className="w-8 h-8" aria-hidden="true" />
+                <span className="text-[11px] mt-1">Sem imagem</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Coluna central (título e período) */}
+        <div className="min-w-0 flex-1">
           <h3
             id={tituloId}
             className="text-2xl font-bold text-green-900 dark:text-green-200 text-left truncate"
@@ -238,32 +265,30 @@ export default function CardEvento({
             {evento.titulo}
           </h3>
 
-          <div className="text-sm text-gray-700 dark:text-gray-200 flex items-center gap-2 mt-1 mb-1">
-            <span className="font-semibold">Instrutor:</span>
-            <span className="truncate" title={nomeInstrutor}>
-              {nomeInstrutor}
-            </span>
-          </div>
+          {/* 🔎 Instrutor removido do nível do evento */}
 
           <p
             id={periodoId}
-            className="text-sm text-gray-600 dark:text-gray-300 flex items-center gap-2 mt-0.5"
+            className="text-sm text-gray-600 dark:text-gray-300 flex items-center gap-2 mt-1"
           >
             <CalendarDays size={16} aria-hidden="true" />
             {periodoTexto}
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => toggleExpandir(evento.id)}
-          aria-label={expandido ? "Recolher detalhes do evento" : "Ver detalhes do evento"}
-          aria-expanded={expandido}
-          aria-controls={turmasId}
-          className="text-sm px-4 py-1 rounded-full transition focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-500/60 bg-gradient-to-br from-[#0f2c1f] via-[#114b2d] to-[#166534] text-white hover:brightness-[1.05]"
-        >
-          {expandido ? "Recolher" : "Ver Turmas"}
-        </button>
+        {/* Botão abre/fecha */}
+        <div className="shrink-0">
+          <button
+            type="button"
+            onClick={() => toggleExpandir(evento.id)}
+            aria-label={expandido ? "Recolher detalhes do evento" : "Ver detalhes do evento"}
+            aria-expanded={expandido}
+            aria-controls={turmasId}
+            className="text-sm px-4 py-1 rounded-full transition focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-500/60 bg-gradient-to-br from-[#0f2c1f] via-[#114b2d] to-[#166534] text-white hover:brightness-[1.05]]"
+          >
+            {expandido ? "Recolher" : "Ver Turmas"}
+          </button>
+        </div>
       </div>
 
       {expandido && (
@@ -339,10 +364,8 @@ CardEvento.propTypes = {
   evento: PropTypes.shape({
     id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
     titulo: PropTypes.string.isRequired,
-    instrutor: PropTypes.oneOfType([
-      PropTypes.shape({ nome: PropTypes.string }),
-      PropTypes.arrayOf(PropTypes.shape({ nome: PropTypes.string })),
-    ]),
+    // 👇 instrutor removido do nível do evento
+    folder_url: PropTypes.string, // caminho/URL do folder (opcional)
     data_inicio_geral: PropTypes.oneOfType([PropTypes.string, PropTypes.instanceOf(Date)]),
     data_fim_geral: PropTypes.oneOfType([PropTypes.string, PropTypes.instanceOf(Date)]),
   }).isRequired,
@@ -353,6 +376,7 @@ CardEvento.propTypes = {
       id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
       data_inicio: PropTypes.oneOfType([PropTypes.string, PropTypes.instanceOf(Date)]),
       data_fim: PropTypes.oneOfType([PropTypes.string, PropTypes.instanceOf(Date)]),
+      // Cada turma deve trazer seus próprios instrutores (CardTurma usa isso)
     })
   ),
   carregarInscritos: PropTypes.func.isRequired,
@@ -369,11 +393,16 @@ CardEvento.propTypes = {
    ========================= */
 function StatCard({ icon, label, value, title, accent = "emerald" }) {
   const accents = {
-    emerald: "from-emerald-50 via-emerald-100 to-transparent border-emerald-200 dark:from-emerald-900/20 dark:via-emerald-900/10 dark:to-transparent dark:border-emerald-800/60",
-    teal: "from-teal-50 via-teal-100 to-transparent border-teal-200 dark:from-teal-900/20 dark:via-teal-900/10 dark:to-transparent dark:border-teal-800/60",
-    cyan: "from-cyan-50 via-cyan-100 to-transparent border-cyan-200 dark:from-cyan-900/20 dark:via-cyan-900/10 dark:to-transparent dark:border-cyan-800/60",
-    amber: "from-amber-50 via-amber-100 to-transparent border-amber-200 dark:from-amber-900/20 dark:via-amber-900/10 dark:to-transparent dark:border-amber-800/60",
-    violet: "from-violet-50 via-violet-100 to-transparent border-violet-200 dark:from-violet-900/20 dark:via-violet-900/10 dark:to-transparent dark:border-violet-800/60",
+    emerald:
+      "from-emerald-50 via-emerald-100 to-transparent border-emerald-200 dark:from-emerald-900/20 dark:via-emerald-900/10 dark:to-transparent dark:border-emerald-800/60",
+    teal:
+      "from-teal-50 via-teal-100 to-transparent border-teal-200 dark:from-teal-900/20 dark:via-teal-900/10 dark:to-transparent dark:border-teal-800/60",
+    cyan:
+      "from-cyan-50 via-cyan-100 to-transparent border-cyan-200 dark:from-cyan-900/20 dark:via-cyan-900/10 dark:to-transparent dark:border-cyan-800/60",
+    amber:
+      "from-amber-50 via-amber-100 to-transparent border-amber-200 dark:from-amber-900/20 dark:via-amber-900/10 dark:to-transparent dark:border-amber-800/60",
+    violet:
+      "from-violet-50 via-violet-100 to-transparent border-violet-200 dark:from-violet-900/20 dark:via-violet-900/10 dark:to-transparent dark:border-violet-800/60",
   };
   const grad = accents[accent] || accents.emerald;
 
@@ -381,7 +410,8 @@ function StatCard({ icon, label, value, title, accent = "emerald" }) {
     <div
       className={[
         "rounded-2xl p-4 shadow border",
-        "bg-gradient-to-br", grad,
+        "bg-gradient-to-br",
+        grad,
         "flex flex-col items-start",
       ].join(" ")}
       title={title || label}

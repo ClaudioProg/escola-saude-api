@@ -2,7 +2,7 @@
 import PropTypes from "prop-types";
 import { useState, useMemo } from "react";
 import { motion } from "framer-motion";
-import { Users, CalendarDays, Clock3 } from "lucide-react";
+import { Users, CalendarDays, Clock3, Megaphone } from "lucide-react";
 import { formatarDataBrasileira } from "../utils/data";
 import BadgeStatus from "../components/BadgeStatus";
 
@@ -98,7 +98,6 @@ export default function CardTurma({
   // ================== Deriva dados a partir de turma.datas ==================
   const { minData, maxData, horasTotal, horarioFimUltimoDia, datasOrdenadas } = useMemo(() => {
     const arr = Array.isArray(turma.datas) ? [...turma.datas] : [];
-    // normaliza strings e ordena por data
     arr.sort((a, b) => String(a?.data || "").localeCompare(String(b?.data || "")));
 
     const first = arr[0];
@@ -176,6 +175,12 @@ export default function CardTurma({
       ? datasOrdenadas.slice(0, 3).map((d) => formatarDataBrasileira(d.data)).join(" • ")
       : null;
 
+  // ======= Instrutores da turma (chips) =======
+  const instrutores = Array.isArray(turma.instrutores) ? turma.instrutores : [];
+  const assinanteId = Number.isFinite(Number(turma.instrutor_assinante_id))
+    ? Number(turma.instrutor_assinante_id)
+    : null;
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -214,8 +219,33 @@ export default function CardTurma({
               </span>
             )}
 
+            {/* ⬇️ Instrutores da turma (vindo do backend via turma_instrutor) */}
+            {instrutores.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 mt-1" aria-label="Instrutores">
+                {instrutores.map((p) => {
+                  const ehAssinante = assinanteId && Number(p.id) === assinanteId;
+                  return (
+                    <span
+                      key={p.id}
+                      className={[
+                        "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium",
+                        ehAssinante
+                          ? "bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-900/20 dark:text-amber-200 dark:border-amber-800/60"
+                          : "bg-emerald-50 text-emerald-800 border-emerald-300 dark:bg-emerald-900/20 dark:text-emerald-200 dark:border-emerald-800/60",
+                      ].join(" ")}
+                      title={ehAssinante ? "Instrutor assinante" : "Instrutor"}
+                      aria-label={ehAssinante ? `Instrutor (assinante): ${p.nome}` : `Instrutor: ${p.nome}`}
+                    >
+                      {ehAssinante && <Megaphone size={14} className="mr-1" aria-hidden="true" />}
+                      {p.nome}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+
             {/* Período */}
-            <span className="text-xs text-gray-600 dark:text-gray-300 block">
+            <span className="text-xs text-gray-600 dark:text-gray-300 block mt-1">
               <CalendarDays size={14} className="inline mr-1" />
               {periodoTexto}
             </span>
@@ -310,7 +340,35 @@ export default function CardTurma({
 
 /* ===== PropTypes / Defaults ===== */
 CardTurma.propTypes = {
-  turma: PropTypes.object.isRequired,
+  turma: PropTypes.shape({
+    id: PropTypes.oneOfType([PropTypes.number, PropTypes.string]).isRequired,
+    nome: PropTypes.string,
+    evento_titulo: PropTypes.string,
+    datas: PropTypes.arrayOf(
+      PropTypes.shape({
+        data: PropTypes.string,
+        horario_inicio: PropTypes.string,
+        horario_fim: PropTypes.string,
+      })
+    ),
+    data_inicio: PropTypes.oneOfType([PropTypes.string, PropTypes.instanceOf(Date)]),
+    data_fim: PropTypes.oneOfType([PropTypes.string, PropTypes.instanceOf(Date)]),
+    horario_inicio: PropTypes.string,
+    horario_fim: PropTypes.string,
+    vagas_total: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+    inscritos: PropTypes.array,
+    vagas_preenchidas: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+    instrutores: PropTypes.arrayOf(
+      PropTypes.shape({
+        id: PropTypes.oneOfType([PropTypes.number, PropTypes.string]).isRequired,
+        nome: PropTypes.string.isRequired,
+        email: PropTypes.string,
+      })
+    ),
+    instrutor_assinante_id: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+    carga_horaria_real: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  }).isRequired,
+
   eventoId: PropTypes.oneOfType([PropTypes.number, PropTypes.string]).isRequired,
   hoje: PropTypes.instanceOf(Date).isRequired,
   carregarInscritos: PropTypes.func.isRequired,

@@ -78,34 +78,79 @@ export default function HomeEscola() {
           <h2 className="text-xl font-semibold mb-3">Destaques</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             
-            {/* 1) Semana David Capistrano */}
-            <DestaqueLongo
-              imgSrc="/banners/semana-david-capistrano.png"
-              imgAlt="Cartaz da Semana David Capistrano 2025"
-              titulo="Participe da Semana David Capistrano 2025!"
-              subtitulo="11 a 14 de novembro de 2025"
-              badge="Evento especial"
-            >
-              <p>
-                De 11 a 14 de novembro de 2025, a Escola da Saúde Pública de Santos realiza na <strong>Universidade São Judas, campus Unimonte</strong>, mais uma edição da Semana Municipal de Saúde Pública Dr. David Capistrano, evento já consolidado no calendário oficial da cidade e reconhecido como espaço de encontro, reflexão e troca de experiências entre trabalhadoras e trabalhadores do SUS.
-              </p>
-              <p>
-                Ao longo dos quatro dias, a programação contará com mesas temáticas, mostra de trabalhos com premiação e oficinas práticas ministradas por servidores, estudantes e parceiros da rede de saúde. Será um momento único para compartilhar saberes, fortalecer vínculos e debater caminhos para o fortalecimento da saúde pública.
-              </p>
-              <p>
-                Em 2025, a Semana reafirma sua vocação de ser um evento construído pelos servidores e para os servidores, valorizando o protagonismo de quem, diariamente, atua na promoção do cuidado, da equidade e da qualidade no SUS. É a oportunidade de apresentar experiências exitosas, refletir sobre desafios atuais e construir soluções conjuntas que impactam diretamente o cotidiano da população.
-              </p>
-              <p>
-                A participação de cada profissional é fundamental para manter viva a memória e o legado do Dr. David Capistrano, que sempre defendeu uma saúde pública integral, inclusiva e transformadora.
-              </p>
-              <p>👉 Venha participar, trazer sua experiência e fortalecer ainda mais a nossa rede de cuidado.</p>
-              <p>
-                <strong className="text-red-600 dark:text-red-400 font-bold">
-                  INSCRIÇÕES ABERTAS !!!
-                </strong>
-              </p>
-              <p>Porque o SUS se constrói todos os dias, com a contribuição de cada trabalhadora e trabalhador da saúde.</p>
-            </DestaqueLongo>
+            {/* 1. Instalação do App PWA */}
+<DestaqueLongo
+  imgSrc="/banners/app-escola-saude.png"
+  imgAlt="Instale o App Escola da Saúde"
+  titulo="📲 Instale o App Escola da Saúde!"
+  subtitulo="Disponível como aplicativo PWA"
+  badge="Instalação rápida"
+>
+  <h3 className="font-bold mt-4">🍎 iPhone / iPad (iOS)</h3>
+  <ul className="list-disc ml-6">
+    <li><strong>Navegador obrigatório:</strong> Safari</li>
+    <li>Acesse: <strong>https://escola.santos.sp.gov.br</strong></li>
+    <li>Toque no botão <strong>Compartilhar</strong> (ícone de quadrado com seta)</li>
+    <li>Selecione <strong>Adicionar à Tela de Início</strong></li>
+    <li>Confirme em <strong>Adicionar</strong></li>
+    <li>📌 O app aparecerá na tela como um aplicativo normal</li>
+  </ul>
+
+  <h3 className="font-bold mt-4">📱 Samsung Galaxy / Android – Chrome</h3>
+  <ul className="list-disc ml-6">
+    <li>Acesse: <strong>https://escola.santos.sp.gov.br</strong></li>
+    <li>Toque no menu <strong>⋮</strong> (Três pontinhos)</li>
+    <li>Selecione <strong>Instalar aplicativo</strong> ou <strong>Adicionar à tela inicial</strong></li>
+    <li>Confirme em <strong>Instalar</strong></li>
+    <li>📌 O ícone aparecerá automaticamente na tela</li>
+  </ul>
+
+  <h3 className="font-bold mt-4">📱 Outros Android (Xiaomi, Motorola, Asus, Lenovo)</h3>
+  <ul className="list-disc ml-6">
+    <li>Abra o navegador <strong>Chrome</strong></li>
+    <li>Acesse: <strong>https://escola.santos.sp.gov.br</strong></li>
+    <li>Toque no menu <strong>⋮</strong></li>
+    <li>Toque em <strong>Instalar app</strong> ou <strong>Adicionar à tela inicial</strong></li>
+    <li>Toque em <strong>Instalar</strong></li>
+  </ul>
+
+  <h3 className="font-bold mt-4">🟦 Microsoft Edge (Android)</h3>
+  <ul className="list-disc ml-6">
+    <li>Acesse: <strong>https://escola.santos.sp.gov.br</strong></li>
+    <li>Toque no menu <strong>⋯</strong></li>
+    <li>Selecione <strong>Instalar aplicativo</strong></li>
+    <li>Confirme instalação</li>
+  </ul>
+
+  <h3 className="font-bold mt-4">🌐 Computador (Windows / Chromebook / Linux)</h3>
+  <ul className="list-disc ml-6">
+    <li>Abra o <strong>Chrome</strong> ou <strong>Edge</strong></li>
+    <li>Acesse: <strong>https://escola.santos.sp.gov.br</strong></li>
+    <li>Clique no ícone <strong>Instalar</strong> na barra de endereço</li>
+    <li>Confirme em <strong>Instalar</strong></li>
+    <li>📌 O app abrirá em uma janela própria, como um programa</li>
+  </ul>
+
+  <h3 className="font-bold mt-4">❓ Como saber que foi instalado corretamente?</h3>
+  <ul className="list-disc ml-6">
+    <li>✔ Ícone na tela inicial do celular</li>
+    <li>✔ Abre em tela cheia (sem barra do navegador)</li>
+    <li>✔ Funciona offline em algumas funcionalidades</li>
+    <li>✔ Notificações ativas (certificados, avaliações e presença)</li>
+  </ul>
+
+  <p className="mt-4 font-bold text-green-600 dark:text-green-400">
+    Toque no menu <strong>⋮ → Instalar app</strong> (Android)
+  </p>
+  <p className="font-bold text-blue-600 dark:text-blue-400">
+    Toque em <strong>Compartilhar → Adicionar à Tela de Início</strong> (iPhone)
+  </p>
+
+  <p className="mt-6 font-bold text-gray-800 dark:text-gray-200">
+    📍 Em breve, após finalização do programa, o app também estará disponível na
+    <strong className="text-green-600"> Google Play Store</strong>.
+  </p>
+</DestaqueLongo>
 
             {/* 2) Novembro Azul */}
 <DestaqueLongo

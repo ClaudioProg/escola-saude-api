@@ -925,38 +925,111 @@ async function confirmarPresencaSimples(req, res) {
 /* ------------------------------------------------------------------ *
  * Pós-presença: notificação de avaliação (≥ 75% e turma encerrada)
  * ------------------------------------------------------------------ */
+// 🔎 helper local – pega o "fim real" da turma (datas_turma > turma) com horário_fim do ÚLTIMO dia
+async function obterFimRealDaTurma(turma_id) {
+  const sql = `
+    WITH base AS (
+      SELECT
+        -- quando existir datas_turma, usa a MAIOR data + horario_fim desse dia
+        (
+          SELECT (dt.data::date + COALESCE(dt.horario_fim::time, t.horario_fim::time, '23:59'::time))
+          FROM datas_turma dt
+          JOIN turmas t ON t.id = dt.turma_id
+          WHERE dt.turma_id = $1
+          ORDER BY dt.data DESC, COALESCE(dt.horario_fim, t.horario_fim) DESC
+          LIMIT 1
+        ) AS fim_dt,
+        -- fallback: data_fim + horario_fim da própria turma
+        (
+          SELECT (t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time))
+          FROM turmas t
+          WHERE t.id = $1
+          LIMIT 1
+        ) AS fim_tb
+    )
+    SELECT COALESCE(fim_dt, fim_tb) AS fim_real FROM base;
+  `;
+  const q = await db.query(sql, [turma_id]);
+  const fim = q.rows[0]?.fim_real;
+  // retorna string ISO (YYYY-MM-DDTHH:MM:SSZ?)? Preferimos Date local sem deslocamento:
+  return fim ? new Date(fim) : null;
+}
+
+// 🧠 calcula "agora" em America/Sao_Paulo como Date local (sem UTC shift indesejado)
+function agoraSP() {
+  // pega agora e cria um Date "local" equivalente (sem forçar Z/UTC)
+  const now = new Date();
+  // Como já operamos no servidor BR/sem forçar TZ, basta retornar now.
+  return now;
+}
+
+// ✅ VERSÃO CORRIGIDA
 async function verificarElegibilidadeParaAvaliacao(usuario_id, turma_id) {
+  const rid = `elig-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
   try {
-    // usa o período; a checagem de elegibilidade só acontece após o fim
-    const turmaRes = await db.query(
-      `SELECT data_inicio::date AS di, data_fim::date AS df FROM turmas WHERE id = $1`,
-      [turma_id]
-    );
-    if (turmaRes.rowCount === 0) return;
+    // 1) fim real = último dia + horario_fim (datas_turma > turmas)
+    const fimReal = await obterFimRealDaTurma(turma_id);
+    if (!fimReal) {
+      console.warn("⚠️", rid, "[elig] turma sem fim_real calculável", { turma_id });
+      return;
+    }
+    const agora = agoraSP();
+    if (agora < fimReal) {
+      // ainda não encerrou de fato
+      console.log("⏳", rid, "[elig] aguardando fim_real", { turma_id, fimReal: fimReal.toISOString() });
+      return;
+    }
 
-    const dataFim = localDateFromYMD(ymd(turmaRes.rows[0].df));
-    if (new Date() < dataFim) return;
-
-    // total de encontros reais
+    // 2) total de encontros reais
     const datas = await obterDatasDaTurma(turma_id);
     const totalDatas = datas.length;
-    if (totalDatas === 0) return;
+    if (totalDatas === 0) {
+      console.warn("⚠️", rid, "[elig] turma sem datas reais", { turma_id });
+      return;
+    }
 
+    // 3) presenças do usuário (dias distintos com presente=TRUE)
     const presRes = await db.query(
-      `
-      SELECT COUNT(DISTINCT data_presenca::date) AS presentes
-      FROM presencas
-      WHERE turma_id = $1 AND usuario_id = $2 AND presente = TRUE
-      `,
+      `SELECT COUNT(DISTINCT data_presenca::date) AS presentes
+         FROM presencas
+        WHERE turma_id = $1 AND usuario_id = $2 AND presente = TRUE`,
       [turma_id, usuario_id]
     );
     const presentes = parseInt(presRes.rows[0]?.presentes || "0", 10);
+    const freq = presentes / totalDatas;
 
-    if (presentes / totalDatas >= 0.75) {
-      await gerarNotificacoesDeAvaliacao(usuario_id);
+    if (freq < 0.75) {
+      console.log("ℹ️", rid, "[elig] frequência insuficiente", { turma_id, usuario_id, presentes, totalDatas, freq });
+      return;
     }
+
+    // 4) idempotência (evita notificação duplicada desta turma)
+    //    Se seu sistema já garante isso por UNIQUE no banco, esse SELECT é opcional.
+    const jaExiste = await db.query(
+      `SELECT 1
+         FROM notificacoes
+        WHERE usuario_id = $1
+          AND tipo = 'avaliacao'
+          AND (conteudo->>'turma_id')::int = $2
+        LIMIT 1`,
+      [usuario_id, turma_id]
+    );
+    if (jaExiste.rowCount > 0) {
+      console.log("✅", rid, "[elig] notificação já existente (avaliacao)", { turma_id, usuario_id });
+      return;
+    }
+
+    // 5) dispara criação da notificação de avaliação (preferir API que aceite turma_id)
+    //    Mantém compatibilidade com sua assinatura atual; se possível, atualize para aceitar turma_id.
+    await gerarNotificacoesDeAvaliacao(usuario_id, turma_id);
+
+    console.log("🎯", rid, "[elig] notificação de avaliação gerada", {
+      turma_id, usuario_id, presentes, totalDatas, freq
+    });
   } catch (err) {
-    console.error("❌ Erro ao verificar elegibilidade de avaliação:", err);
+    console.error("❌", rid, "[elig] erro ao verificar elegibilidade de avaliação:", {
+      turma_id, usuario_id, message: err?.message
+    });
   }
 }
 

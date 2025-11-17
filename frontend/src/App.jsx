@@ -58,6 +58,7 @@ const Avaliacao              = lazy(() => import("./pages/Avaliacao"));
 const GestaoPresencas        = lazy(() => import("./pages/GestaoPresenca"));
 const CancelarInscricoesAdmin= lazy(() => import("./pages/CancelarInscricoesAdmin"));
 const AdminAvaliacoes        = lazy(() => import("./pages/AdminAvaliacoes"));
+const VotacoesUsuario        = lazy(() => import("./pages/VotacoesUsuario"));
 
 // ✅ Página de confirmação via QR (com/sem token)
 const ConfirmarPresenca      = lazy(() => import("./pages/ConfirmarPresenca"));
@@ -70,6 +71,9 @@ const Privacidade            = lazy(() => import("./pages/Privacidade"));
 
 // 🆕 Home pós-login (portal da Escola)
 const HomeEscola             = lazy(() => import("./pages/HomeEscola"));
+
+// 🆕 Admin – Votações
+const AdminVotacoes         = lazy(() => import("./pages/AdminVotacoes"));
 
 /* 🆕 PÁGINAS DE SUBMISSÕES DE TRABALHOS */
 // Admin – criar/editar chamada
@@ -455,7 +459,27 @@ export default function App() {
             <Route path="/gestao-presenca" element={<PrivateRoute permitido={["administrador"]}><GestaoPresencas /></PrivateRoute>} />
             <Route path="/admin/qr-codes" element={<PrivateRoute permitido={["administrador"]}><QRCodesEventosAdmin /></PrivateRoute>} />
             <Route path="/admin/cancelar-inscricoes" element={<PrivateRoute permitido={["administrador"]}><CancelarInscricoesAdmin /></PrivateRoute>} />
+            {/* 🗳️ Votações */}
+            <Route
+              path="/admin/votacoes"
+              element={
+                <PrivateRoute permitido={["administrador"]}>
+                  <AdminVotacoes />
+                </PrivateRoute>
+              }
+            />
+            {/* Página do eleitor (QR cai aqui) */}
+            <Route
+              path="/votacoes/:votacaoId"
+              element={
+                <PrivateRoute>
+                  <VotacoesUsuario />
+                </PrivateRoute>
+              }
+            />
 
+            {/* 404 */}
+            <Route path="*" element={<NotFound />} />
             <Route
   path="/admin/avaliacoes"
   element={

@@ -61,6 +61,7 @@ const chamadasModeloRoutes = require("./routes/chamadasModeloRoutes");
 const usuariosEstatisticasRoute = require("./routes/usuariosEstatisticasRoute");
 const submissoesAdminRoutes = require("./routes/submissoesAdminRoutes");
 const unidadesRoute = require("./routes/unidadesRoute");
+const votacoesRoutes = require("./routes/votacoesRoute");
 
 const IS_DEV = process.env.NODE_ENV !== "production";
 const app = express();
@@ -281,6 +282,7 @@ app.use("/api/admin/avaliacoes", adminAvaliacoesRoutes);
 app.use("/api", chamadasRoutes);
 app.use("/api", trabalhosRoutes);
 app.use("/api/unidades", unidadesRoute);
+app.use("/api/votacoes", votacoesRoutes);
 
 
 /* ───────── Recuperação de senha ───────── */

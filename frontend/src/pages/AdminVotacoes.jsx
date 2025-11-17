@@ -5,7 +5,8 @@ import {
   adminCriarOpcao, adminAtualizarOpcao, adminStatus, adminRanking
 } from "../services/votacoes";
 import { toast } from "react-toastify";
-import { Plus, Save, BarChart3, Play, Pause, StopCircle } from "lucide-react";
+import { Plus, Save, BarChart3, Play, Pause, StopCircle, Copy, Download, QrCode } from "lucide-react";
+import { QRCodeCanvas } from "qrcode.react";
 
 export default function AdminVotacoes() {
   const [lista, setLista] = useState([]);
@@ -13,23 +14,35 @@ export default function AdminVotacoes() {
   const [ranking, setRanking] = useState([]);
 
   useEffect(() => { recarregar(); }, []);
-  function recarregar() { adminListar().then(setLista).catch(() => toast.error("Falha ao listar.")); }
+  function recarregar() {
+    adminListar().then(setLista).catch(() => toast.error("Falha ao listar."));
+  }
 
   async function abrir(id) {
     const v = await adminObter(id);
-    setSel(v);
+    // garante defaults novos
+    setSel({
+      ...v,
+      endereco: v.endereco ?? "",
+      raio_m: Math.min(200, Number(v.raio_m || 200)),
+    });
     carregaRanking(id);
   }
 
   function novo() {
     setSel({
-      titulo: "", descricao: "",
-      tipo_selecao: "unica", max_escolhas: 1,
+      titulo: "",
+      tipo_selecao: "unica",
+      max_escolhas: 1,
       status: "rascunho",
       escopo: "global",
       regra_elegibilidade: "logado",
-      unidade_id: null, geo_lat: null, geo_lng: null, geo_raio_m: null,
-      evento_id: null, turma_id: null,
+      // 🔁 geofence por endereço (até 200 m)
+      endereco: "",
+      raio_m: 200,
+      // relacionamentos (mantidos)
+      evento_id: null,
+      turma_id: null,
       opcoes: []
     });
     setRanking([]);
@@ -37,9 +50,22 @@ export default function AdminVotacoes() {
 
   async function salvar() {
     try {
-      if (sel.id) await adminAtualizar(sel.id, sel);
+      const payload = {
+        ...sel,
+        // remove campos legados se vierem do backend antigo
+        descricao: undefined,
+        unidade_id: undefined,
+        geo_lat: undefined,
+        geo_lng: undefined,
+        geo_raio_m: undefined,
+        inicio: undefined,
+        fim: undefined,
+        // validações simples
+        raio_m: Math.max(1, Math.min(200, Number(sel.raio_m || 200))),
+      };
+      if (sel.id) await adminAtualizar(sel.id, payload);
       else {
-        const criado = await adminCriar(sel);
+        const criado = await adminCriar(payload);
         setSel(criado);
       }
       toast.success("Salvo!");
@@ -51,16 +77,13 @@ export default function AdminVotacoes() {
 
   async function addOpcao() {
     if (!sel?.id) return toast.info("Salve a votação primeiro.");
-    const o = await adminCriarOpcao(sel.id, { titulo: "Nova opção", ordem: (sel.opcoes?.length||0)+1 });
-    setSel({ ...sel, opcoes: [...(sel.opcoes||[]), o] });
+    const o = await adminCriarOpcao(sel.id, { titulo: "Nova opção", ordem: (sel.opcoes?.length || 0) + 1 });
+    setSel({ ...sel, opcoes: [...(sel.opcoes || []), o] });
   }
 
   async function salvarOpcao(o) {
     const upd = await adminAtualizarOpcao(sel.id, o.id, o);
-    setSel({
-      ...sel,
-      opcoes: (sel.opcoes||[]).map(x => x.id === o.id ? upd : x)
-    });
+    setSel({ ...sel, opcoes: (sel.opcoes || []).map(x => x.id === o.id ? upd : x) });
   }
 
   async function mudarStatus(status) {
@@ -75,8 +98,33 @@ export default function AdminVotacoes() {
     setRanking(r);
   }
 
+  const voteUrl = useMemo(() => {
+    if (!sel?.id) return "";
+    return `${window.location.origin}/votacoes/${sel.id}`;
+  }, [sel?.id]);
+
+  function copiarLink() {
+    if (!voteUrl) return;
+    navigator.clipboard.writeText(voteUrl).then(() => toast.success("Link copiado!"));
+  }
+
+  function baixarQrPng() {
+    try {
+      const canvas = document.getElementById("qr-votacao-canvas");
+      if (!canvas) return;
+      const pngUrl = canvas.toDataURL("image/png");
+      const a = document.createElement("a");
+      a.href = pngUrl;
+      a.download = `votacao_${sel.id}.png`;
+      a.click();
+    } catch {
+      toast.error("Não foi possível baixar a imagem do QR.");
+    }
+  }
+
   return (
     <main className="p-4 grid lg:grid-cols-2 gap-4">
+      {/* LISTA */}
       <section className="space-y-3">
         <header className="flex items-center gap-2">
           <h2 className="text-lg font-semibold">Votações</h2>
@@ -90,24 +138,29 @@ export default function AdminVotacoes() {
             <li key={v.id}>
               <button onClick={() => abrir(v.id)} className="w-full text-left rounded-xl border p-3">
                 <div className="font-medium">{v.titulo}</div>
-                <div className="text-xs opacity-70">{v.status} • {v.tipo_selecao}{v.tipo_selecao==='multipla' ? ` (max ${v.max_escolhas})` : ""}</div>
+                <div className="text-xs opacity-70">
+                  {v.status} • {v.tipo_selecao}{v.tipo_selecao === 'multipla' ? ` (max ${v.max_escolhas})` : ""}
+                </div>
               </button>
             </li>
           ))}
         </ul>
       </section>
 
+      {/* FORM + OPÇÕES + RANKING */}
       <section>
         {!sel ? (
           <div className="opacity-60 text-sm">Selecione ou crie uma votação.</div>
         ) : (
           <div className="space-y-3">
+            {/* DADOS BÁSICOS */}
             <div className="rounded-2xl border p-3">
               <div className="grid md:grid-cols-2 gap-3">
                 <label className="block">
                   <span className="text-xs">Título</span>
                   <input className="input" value={sel.titulo} onChange={e => setSel({ ...sel, titulo: e.target.value })} />
                 </label>
+
                 <label className="block">
                   <span className="text-xs">Tipo de seleção</span>
                   <select className="input" value={sel.tipo_selecao} onChange={e => setSel({ ...sel, tipo_selecao: e.target.value })}>
@@ -115,19 +168,20 @@ export default function AdminVotacoes() {
                     <option value="multipla">Múltiplas opções</option>
                   </select>
                 </label>
+
                 {sel.tipo_selecao === "multipla" && (
                   <label className="block">
                     <span className="text-xs">Máximo de escolhas</span>
-                    <input type="number" min={1} className="input" value={sel.max_escolhas}
-                      onChange={e => setSel({ ...sel, max_escolhas: Number(e.target.value) || 1 })} />
+                    <input
+                      type="number" min={1}
+                      className="input"
+                      value={sel.max_escolhas}
+                      onChange={e => setSel({ ...sel, max_escolhas: Number(e.target.value) || 1 })}
+                    />
                   </label>
                 )}
-                <label className="block md:col-span-2">
-                  <span className="text-xs">Descrição</span>
-                  <textarea className="input" rows={3} value={sel.descricao||""} onChange={e => setSel({ ...sel, descricao: e.target.value })} />
-                </label>
 
-                {/* Escopo e regra */}
+                {/* Escopo e regra (mantidos) */}
                 <label className="block">
                   <span className="text-xs">Escopo</span>
                   <select className="input" value={sel.escopo} onChange={e => setSel({ ...sel, escopo: e.target.value })}>
@@ -136,18 +190,20 @@ export default function AdminVotacoes() {
                     <option value="turma">Turma</option>
                   </select>
                 </label>
+
                 {sel.escopo === "evento" && (
                   <label className="block">
                     <span className="text-xs">Evento ID</span>
-                    <input className="input" value={sel.evento_id||""} onChange={e => setSel({ ...sel, evento_id: e.target.value })} />
+                    <input className="input" value={sel.evento_id || ""} onChange={e => setSel({ ...sel, evento_id: e.target.value })} />
                   </label>
                 )}
                 {sel.escopo === "turma" && (
                   <label className="block">
                     <span className="text-xs">Turma ID</span>
-                    <input className="input" value={sel.turma_id||""} onChange={e => setSel({ ...sel, turma_id: e.target.value })} />
+                    <input className="input" value={sel.turma_id || ""} onChange={e => setSel({ ...sel, turma_id: e.target.value })} />
                   </label>
                 )}
+
                 <label className="block">
                   <span className="text-xs">Regra de elegibilidade</span>
                   <select className="input" value={sel.regra_elegibilidade} onChange={e => setSel({ ...sel, regra_elegibilidade: e.target.value })}>
@@ -158,38 +214,45 @@ export default function AdminVotacoes() {
                   </select>
                 </label>
 
-                {/* Local (unidade e/ou geofence) */}
-                <label className="block">
-                  <span className="text-xs">Unidade (ID)</span>
-                  <input className="input" value={sel.unidade_id||""} onChange={e => setSel({ ...sel, unidade_id: e.target.value||null })} />
-                </label>
-                <label className="block">
-                  <span className="text-xs">Geofence lat</span>
-                  <input className="input" value={sel.geo_lat||""} onChange={e => setSel({ ...sel, geo_lat: e.target.value||null })} />
-                </label>
-                <label className="block">
-                  <span className="text-xs">Geofence lng</span>
-                  <input className="input" value={sel.geo_lng||""} onChange={e => setSel({ ...sel, geo_lng: e.target.value||null })} />
-                </label>
-                <label className="block">
-                  <span className="text-xs">Raio (m)</span>
-                  <input className="input" value={sel.geo_raio_m||""} onChange={e => setSel({ ...sel, geo_raio_m: e.target.value||null })} />
+                {/* ✅ Geofence por ENDEREÇO + RAIO (até 200m) */}
+                <label className="block md:col-span-2">
+                  <span className="text-xs">Endereço (para limitar a votação no local)</span>
+                  <input
+                    className="input"
+                    placeholder="Ex.: Av. Dr. Cláudio Luís da Costa, 123 – Santos/SP"
+                    value={sel.endereco || ""}
+                    onChange={e => setSel({ ...sel, endereco: e.target.value })}
+                  />
                 </label>
 
-                {/* Janela */}
-                <label className="block">
-                  <span className="text-xs">Início</span>
-                  <input type="datetime-local" className="input"
-                    value={sel.inicio ? sel.inicio : ""} onChange={e => setSel({ ...sel, inicio: e.target.value })} />
-                </label>
-                <label className="block">
-                  <span className="text-xs">Fim</span>
-                  <input type="datetime-local" className="input"
-                    value={sel.fim ? sel.fim : ""} onChange={e => setSel({ ...sel, fim: e.target.value })} />
-                </label>
+                <div className="md:col-span-2 grid sm:grid-cols-2 gap-3 items-center">
+                  <label className="block">
+                    <span className="text-xs">Raio (metros, máx. 200)</span>
+                    <input
+                      type="number"
+                      className="input"
+                      min={1}
+                      max={200}
+                      value={sel.raio_m ?? 200}
+                      onChange={e => setSel({ ...sel, raio_m: Math.max(1, Math.min(200, Number(e.target.value) || 200)) })}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs opacity-70">Ajuste rápido</span>
+                    <input
+                      type="range"
+                      min={50}
+                      max={200}
+                      step={10}
+                      value={sel.raio_m ?? 200}
+                      onChange={e => setSel({ ...sel, raio_m: Number(e.target.value) })}
+                      className="w-full"
+                    />
+                  </label>
+                </div>
               </div>
 
-              <div className="mt-3 flex gap-2">
+              <div className="mt-3 flex flex-wrap gap-2">
                 <button onClick={salvar} className="inline-flex items-center gap-2 rounded-xl px-3 py-2 bg-emerald-600 text-white">
                   <Save className="w-4 h-4" /> Salvar
                 </button>
@@ -205,6 +268,41 @@ export default function AdminVotacoes() {
               </div>
             </div>
 
+            {/* QR CODE DA VOTAÇÃO */}
+            {sel?.id && (
+              <div className="rounded-2xl border p-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <h3 className="font-semibold flex items-center gap-2">
+                    <QrCode className="w-4 h-4" /> QR Code da votação
+                  </h3>
+                  <div className="ml-auto flex gap-2">
+                    <button onClick={copiarLink} className="inline-flex items-center gap-2 rounded-xl px-3 py-2 border">
+                      <Copy className="w-4 h-4" /> Copiar link
+                    </button>
+                    <button onClick={baixarQrPng} className="inline-flex items-center gap-2 rounded-xl px-3 py-2 border">
+                      <Download className="w-4 h-4" /> Baixar PNG
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-center gap-3">
+                  <div className="rounded-xl p-3 border">
+                    <QRCodeCanvas
+                      id="qr-votacao-canvas"
+                      value={voteUrl}
+                      size={192}
+                      level="H"
+                      includeMargin
+                    />
+                  </div>
+                  <div className="text-xs opacity-70 break-all sm:max-w-[60%]">
+                    {voteUrl}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* OPÇÕES */}
             <div className="rounded-2xl border p-3">
               <div className="flex items-center gap-2 mb-2">
                 <h3 className="font-semibold">Opções</h3>
@@ -213,11 +311,11 @@ export default function AdminVotacoes() {
                 </button>
               </div>
               <ul className="space-y-2">
-                {(sel.opcoes||[]).map(o => (
+                {(sel.opcoes || []).map(o => (
                   <li key={o.id} className="grid md:grid-cols-4 gap-2 items-center">
-                    <input className="input md:col-span-2" value={o.titulo} onChange={e => o.titulo=e.target.value} onBlur={() => salvarOpcao(o)} />
-                    <input className="input" type="number" value={o.ordem} onChange={e => o.ordem=Number(e.target.value)||0} onBlur={() => salvarOpcao(o)} />
-                    <select className="input" value={o.ativo ? "1":"0"} onChange={e => {o.ativo=e.target.value==="1"; salvarOpcao(o);}}>
+                    <input className="input md:col-span-2" value={o.titulo} onChange={e => o.titulo = e.target.value} onBlur={() => salvarOpcao(o)} />
+                    <input className="input" type="number" value={o.ordem} onChange={e => o.ordem = Number(e.target.value) || 0} onBlur={() => salvarOpcao(o)} />
+                    <select className="input" value={o.ativo ? "1" : "0"} onChange={e => { o.ativo = e.target.value === "1"; salvarOpcao(o); }}>
                       <option value="1">Ativa</option>
                       <option value="0">Inativa</option>
                     </select>
@@ -226,6 +324,7 @@ export default function AdminVotacoes() {
               </ul>
             </div>
 
+            {/* RANKING */}
             <div className="rounded-2xl border p-3">
               <div className="flex items-center gap-2 mb-2">
                 <h3 className="font-semibold">Ranking</h3>

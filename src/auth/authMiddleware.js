@@ -1,4 +1,4 @@
-// 📁 api/middlewares/auth.js
+//src/auth/authMiddleware.js
 /* eslint-disable no-console */
 const jwt = require("jsonwebtoken");
 const cookie = require("cookie"); // só se você ainda não usa cookie-parser

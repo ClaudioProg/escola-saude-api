@@ -295,6 +295,7 @@ export default function Navbar() {
       { label: "Agenda",                path: "/agenda-administrador",   icon: ListChecks },
       { label: "Certificados Avulsos",  path: "/certificados-avulsos",   icon: FileText },
       { label: "QR Code Presença",      path: "/admin/qr-codes",         icon: QrCode },
+      { label: "Gestão de Votações",    path: "/admin/votacoes",         icon: ListChecks },
       // trabalhos
       { label: "Criar Submissão de Trabalho", path: "/admin/chamadas/new", icon: PlusCircle },
       { label: "Gerenciar Submissão de Trabalho", path: "__open_submissions__", icon: FolderOpenDot },
