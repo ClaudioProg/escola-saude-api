@@ -74,12 +74,11 @@ function registerFonts(doc) {
 function drawSignatureText(doc, rawText, { x, y, w }, {
   maxFont = 34, minFont = 16, font = "AlexBrush", color = "#111"
 } = {}) {
-  // força uma única linha (remove quebras/acúmulos de espaço)
   const text = String(rawText ?? "").replace(/\s+/g, " ").trim();
 
   doc.save().font(font);
 
-  // 1) reduz a fonte até o texto caber em w
+  // 1) reduz a fonte até caber em w
   let size = maxFont;
   while (size > minFont) {
     doc.fontSize(size);
@@ -88,97 +87,6 @@ function drawSignatureText(doc, rawText, { x, y, w }, {
     size -= 1;
   }
 
-  // ───────────────── Assinante da Turma ─────────────────
-// ───────────────── Assinante da Turma (NÍVEL GLOBAL) ─────────────────
-async function obterAssinanteDaTurma(turmaId) {
-  turmaId = Number(turmaId);
-
-  /* 1️⃣ Tenta o campo direto da turma */
-  const qTurma = await db.query(`
-    SELECT COALESCE(t.instrutor_assinante_id, t.assinante_instrutor_id) AS assinante_id
-    FROM turmas t WHERE t.id = $1
-  `, [turmaId]);
-
-  const assinanteId = Number(qTurma.rows?.[0]?.assinante_id || 0);
-  if (assinanteId) {
-    const r = await db.query(`
-      SELECT u.id, u.nome, a.imagem_base64
-      FROM usuarios u
-      LEFT JOIN assinaturas a ON a.usuario_id = u.id
-      WHERE u.id = $1
-      LIMIT 1
-    `, [assinanteId]);
-    if (r.rowCount) {
-      return {
-        id: r.rows[0].id,
-        nome: r.rows[0].nome || "Instrutor(a)",
-        imagem_base64: r.rows[0].imagem_base64 || null,
-        origem: "turma.instrutor_assinante_id",
-      };
-    }
-  }
-
-  /* 2️⃣ Procura instrutor marcado como assinante ou de menor ordem */
-  const qTI = await db.query(`
-    SELECT u.id, u.nome, a.imagem_base64
-    FROM turma_instrutor ti
-    JOIN usuarios u    ON u.id = ti.instrutor_id
-    LEFT JOIN assinaturas a ON a.usuario_id = ti.instrutor_id
-    WHERE ti.turma_id = $1
-    ORDER BY ti.is_assinante DESC, ti.ordem_assinatura ASC NULLS LAST, u.nome ASC
-    LIMIT 1
-  `, [turmaId]);
-  if (qTI.rowCount) {
-    return {
-      id: qTI.rows[0].id,
-      nome: qTI.rows[0].nome || "Instrutor(a)",
-      imagem_base64: qTI.rows[0].imagem_base64 || null,
-      origem: "turma_instrutor",
-    };
-  }
-
-  // logo antes do qSec
-const SEC_ID = Number(process.env.SECRETARIO_USUARIO_ID || 0);
-if (SEC_ID) {
-  const s = await db.query(`
-    SELECT u.id, u.nome, a.imagem_base64
-    FROM usuarios u
-    LEFT JOIN assinaturas a ON a.usuario_id = u.id
-    WHERE u.id = $1
-    LIMIT 1
-  `, [SEC_ID]);
-  if (s.rowCount) return { id: s.rows[0].id, nome: s.rows[0].nome, imagem_base64: s.rows[0].imagem_base64, origem: "secretario.env_id" };
-}
-
-  /* 3️⃣ Fallback: Secretário Municipal de Saúde */
-  // (1) Primeiro tenta localizar pelo e-mail institucional
-  const qSec = await db.query(`
-    SELECT u.id, u.nome, a.imagem_base64
-    FROM usuarios u
-    LEFT JOIN assinaturas a ON a.usuario_id = u.id
-    WHERE lower(u.email) = 'fabiolopez@santos.sp.gov.br'
-       OR unaccent(lower(u.nome)) ILIKE unaccent(lower('%fábio lopez%'))
-    LIMIT 1
-  `);
-
-  if (qSec.rowCount) {
-    return {
-      id: qSec.rows[0].id,
-      nome: qSec.rows[0].nome || "Fábio Lopez",
-      imagem_base64: qSec.rows[0].imagem_base64 || null,
-      origem: "secretario.municipal",
-    };
-  }
-
-  /* 4️⃣ Último recurso: nome fixo sem imagem */
-  return {
-    id: null,
-    nome: "Fábio Lopez",
-    imagem_base64: null,
-    origem: "secretario.fallback",
-  };
-}
-
   // 2) centraliza manualmente dentro da caixa, SEM width e SEM line break
   const ww = doc.widthOfString(text);
   const xCentered = x + Math.max(0, (w - ww) / 2);
@@ -186,10 +94,77 @@ if (SEC_ID) {
   // leve ajuste vertical para suavizar a “altura visual” da AlexBrush
   const textY = y + 25 + Math.max(0, (maxFont - size) / 3);
 
-  // 3) escreve em UMA linha (lineBreak:false evita qualquer quebra)
+  // 3) escreve em UMA linha
   doc.fillColor(color).text(text, xCentered, textY, { lineBreak: false });
-
   doc.restore();
+} // <-- fecha aqui corretamente
+
+
+// ✅ versão final — busca estritamente na turma, sem fallback genérico
+async function obterAssinanteDaTurma(turmaId) {
+  turmaId = Number(turmaId);
+
+  // 1️⃣ Busca o assinante direto na turma (instrutor_assinante_id ou legado assinante_instrutor_id)
+  const qTurma = await db.query(`
+    SELECT COALESCE(t.instrutor_assinante_id, t.assinante_instrutor_id) AS assinante_id
+    FROM turmas t
+    WHERE t.id = $1
+  `, [turmaId]);
+
+  const assinanteId = Number(qTurma.rows?.[0]?.assinante_id || 0);
+
+  if (assinanteId) {
+    const r = await db.query(`
+      SELECT u.id,
+             NULLIF(TRIM(u.nome), '') AS nome,
+             a.imagem_base64
+      FROM usuarios u
+      LEFT JOIN assinaturas a ON a.usuario_id = u.id
+      WHERE u.id = $1
+      LIMIT 1
+    `, [assinanteId]);
+
+    if (r.rowCount > 0 && r.rows[0].nome) {
+      return {
+        id: r.rows[0].id,
+        nome: r.rows[0].nome,
+        imagem_base64: r.rows[0].imagem_base64 || null,
+        origem: "turma.instrutor_assinante_id",
+      };
+    }
+  }
+
+  // 2️⃣ Se o campo estiver nulo, tenta pegar alguém vinculado à turma (marcado como assinante)
+  try {
+    const qTI = await db.query(`
+      SELECT u.id,
+             NULLIF(TRIM(u.nome), '') AS nome,
+             a.imagem_base64
+      FROM turma_instrutor ti
+      JOIN usuarios u ON u.id = ti.instrutor_id
+      LEFT JOIN assinaturas a ON a.usuario_id = ti.instrutor_id
+      WHERE ti.turma_id = $1
+      ORDER BY ti.is_assinante DESC NULLS LAST,
+               ti.ordem_assinatura ASC NULLS LAST,
+               u.nome ASC
+      LIMIT 1
+    `, [turmaId]);
+
+    if (qTI.rowCount > 0 && qTI.rows[0].nome) {
+      return {
+        id: qTI.rows[0].id,
+        nome: qTI.rows[0].nome,
+        imagem_base64: qTI.rows[0].imagem_base64 || null,
+        origem: "turma_instrutor",
+      };
+    }
+  } catch (e) {
+    // se a coluna is_assinante não existir, ignora o erro e segue para o fallback
+    if (e?.code !== "42703") throw e;
+  }
+
+  // 3️⃣ Nada encontrado — retorna campos vazios (mantém estrutura)
+  return { id: null, nome: "", imagem_base64: null, origem: "turma.sem_assinante" };
 }
 
 function safeImage(doc, absPath, opts = {}) {
@@ -439,7 +414,6 @@ async function _gerarPdfFisico({
   } else {
     // ✅ PARTICIPANTE: Rafaella à esquerda (somente texto) + instrutor à direita
     const LEFT  = { x: 100, w: 300 };
-    const RIGHT = { x: 440, w: 300 };
 
     // Esquerda: Rafaella (apenas texto; a assinatura está no fundo)
     doc.font("AlegreyaSans-Bold").fontSize(20)
@@ -447,44 +421,53 @@ async function _gerarPdfFisico({
     doc.font("AlegreyaSans-Regular").fontSize(14)
        .text("Chefe da Escola da Saúde", LEFT.x, baseY + 25, { align: "center", width: LEFT.w });
 
-   // Direita: instrutor-assinante da TURMA (fonte única oficial)
-let nomeInstrutor = "Instrutor(a)";
+   // Direita: instrutor-assinante da TURMA (apenas se existir)
+const RIGHT = { x: 440, w: 300 };
+const SIGN_W = 150;
+const signX = RIGHT.x + (RIGHT.w - SIGN_W) / 2;
+const signY = baseY - 50;
+const SIGN_BOX = { x: signX, y: signY, w: SIGN_W };
+
+let nomeInstrutor = "";
 let assinaturaInstrutorBase64 = null;
+
 try {
   const assinante = await obterAssinanteDaTurma(Number(turma_id));
-  nomeInstrutor = assinante.nome || nomeInstrutor;
-  assinaturaInstrutorBase64 = assinante.imagem_base64 || null;
-  logDev("[certificados] Assinante TURMA:", assinante.origem, nomeInstrutor ? "ok" : "vazio");
+  nomeInstrutor = (assinante?.nome || "").trim();
+  assinaturaInstrutorBase64 = assinante?.imagem_base64 || null;
+  logDev("[certificados] Assinante TURMA:", assinante?.origem, nomeInstrutor || "(vazio)");
 } catch (e) {
   console.warn("⚠️ Erro ao obter assinante da turma:", e.message);
 }
 
-    const SIGN_W = 150;
-    const signX = RIGHT.x + (RIGHT.w - SIGN_W) / 2;
-    const signY = baseY - 50;
-    const SIGN_BOX = { x: signX, y: signY, w: SIGN_W };
+// Só desenha algo se houver nome ou assinatura
+if (nomeInstrutor || assinaturaInstrutorBase64) {
+  let desenhouAssinatura = false;
 
-    let desenhouAssinatura = false;
-    if (assinaturaInstrutorBase64 && /^data:image\/(png|jpe?g|webp);base64,/.test(assinaturaInstrutorBase64)) {
-      try {
-        const buf = Buffer.from(assinaturaInstrutorBase64.split(",")[1], "base64");
-        // imagem dentro do mesmo box (largura fixa)
-        doc.image(buf, SIGN_BOX.x, SIGN_BOX.y, { width: SIGN_BOX.w });
-        desenhouAssinatura = true;
-      } catch (e) {
-        console.warn("⚠️ Assinatura do instrutor inválida (fallback cursivo):", e.message);
-      }
+  if (assinaturaInstrutorBase64 && /^data:image\/(png|jpe?g|webp);base64,/.test(assinaturaInstrutorBase64)) {
+    try {
+      const buf = Buffer.from(assinaturaInstrutorBase64.split(",")[1], "base64");
+      doc.image(buf, SIGN_BOX.x, SIGN_BOX.y, { width: SIGN_BOX.w });
+      desenhouAssinatura = true;
+    } catch (e) {
+      console.warn("⚠️ Assinatura do instrutor inválida:", e.message);
     }
-    if (!desenhouAssinatura) {
-      // ✍️ sempre caberá dentro do SIGN_W
-      drawSignatureText(doc, nomeInstrutor, SIGN_BOX, { maxFont: 34, minFont: 16 });
-    }
+  }
 
-    // Nome impresso e cargo (sempre)
+  // Se não houver imagem mas houver nome, desenha a “assinatura” cursiva
+  if (!desenhouAssinatura && nomeInstrutor) {
+    drawSignatureText(doc, nomeInstrutor, SIGN_BOX, { maxFont: 34, minFont: 16 });
+  }
+
+  // Nome impresso e cargo (apenas se houver nome)
+  if (nomeInstrutor) {
     doc.font("AlegreyaSans-Bold").fontSize(20)
-       .text(nomeInstrutor, RIGHT.x, baseY, { align: "center", width: RIGHT.w });
+      .text(nomeInstrutor, RIGHT.x, baseY, { align: "center", width: RIGHT.w });
     doc.font("AlegreyaSans-Regular").fontSize(14)
-       .text("Instrutor(a)", RIGHT.x, baseY + 25, { align: "center", width: RIGHT.w });
+      .text("Instrutor(a)", RIGHT.x, baseY + 25, { align: "center", width: RIGHT.w });
+  }
+}
+// Se não hou
   }
 
   // QR Code (validação)

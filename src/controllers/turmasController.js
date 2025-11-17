@@ -69,6 +69,35 @@ function moda(values = []) {
   return best;
 }
 
+/* ───────────────── Flag de assinante no vínculo turma_instrutor ───────────────── */
+let _hasIsAssinanteTI = null;
+async function hasIsAssinanteCol(client) {
+  if (_hasIsAssinanteTI === null) {
+    const q = await client.query(`
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.columns 
+        WHERE table_schema = 'public'
+          AND table_name = 'turma_instrutor'
+          AND column_name = 'is_assinante'
+      ) AS ok;
+    `);
+    _hasIsAssinanteTI = !!q.rows?.[0]?.ok;
+    logT("is_assinante em turma_instrutor:", _hasIsAssinanteTI ? "SIM" : "NÃO");
+  }
+  return _hasIsAssinanteTI;
+}
+
+async function marcarAssinanteEmTurmaInstrutor(client, turmaId, instrutorId) {
+  if (!Number.isFinite(Number(instrutorId))) return;
+  if (!(await hasIsAssinanteCol(client))) return;
+  await client.query(`UPDATE turma_instrutor SET is_assinante = FALSE WHERE turma_id = $1`, [turmaId]);
+  await client.query(
+    `UPDATE turma_instrutor SET is_assinante = TRUE WHERE turma_id = $1 AND instrutor_id = $2`,
+    [turmaId, instrutorId]
+  );
+}
+
 async function setAssinanteSilencioso(client, turmaId, instrutorAssinanteId) {
   if (!Number.isFinite(Number(instrutorAssinanteId))) return;
   try {
@@ -189,11 +218,12 @@ async function criarTurma(req, res) {
       logT("criarTurma -> instrutores vinculados:", instrutores.length);
     }
 
-    // assinante (inalterado)
-    if (instrutor_assinante_id) {
-      await setAssinanteSilencioso(client, turma_id, Number(instrutor_assinante_id));
-      logT("criarTurma -> assinante set:", instrutor_assinante_id);
-    }
+    // assinante (atualizado para marcar também no vínculo)
+if (instrutor_assinante_id) {
+  await setAssinanteSilencioso(client, turma_id, Number(instrutor_assinante_id));
+  await marcarAssinanteEmTurmaInstrutor(client, turma_id, Number(instrutor_assinante_id));
+  logT("criarTurma -> assinante set:", instrutor_assinante_id);
+}
 
     await client.query("COMMIT");
     return res.status(201).json({ turma_id });
@@ -310,11 +340,13 @@ async function atualizarTurma(req, res) {
       }
       logT("atualizarTurma -> instrutores set:", added);
     }
+    // se houver assinante informado, marca flag também no vínculo
 
-    if (instrutor_assinante_id != null) {
-      await setAssinanteSilencioso(client, turma_id, Number(instrutor_assinante_id));
-      logT("atualizarTurma -> assinante set:", instrutor_assinante_id);
-    }
+if (instrutor_assinante_id != null) {
+  await setAssinanteSilencioso(client, turma_id, Number(instrutor_assinante_id));
+  await marcarAssinanteEmTurmaInstrutor(client, turma_id, Number(instrutor_assinante_id));
+  logT("atualizarTurma -> assinante set:", instrutor_assinante_id);
+}
 
     await client.query("COMMIT");
     return res.json({ ok: true });
@@ -380,6 +412,15 @@ async function obterTurmaCompleta(req, res) {
       [turma_id]
     );
 
+    // busca o assinante marcado por vínculo (is_assinante = true)
+const assinTI = await db.query(`
+  SELECT u.id, u.nome
+  FROM turma_instrutor ti
+  JOIN usuarios u ON u.id = ti.instrutor_id
+  WHERE ti.turma_id = $1 AND ti.is_assinante = TRUE
+  LIMIT 1
+`, [turma_id]);
+
     return res.json({
       ...t,
       horario_inicio: t.horario_inicio ? String(t.horario_inicio).slice(0, 5) : null,
@@ -387,6 +428,7 @@ async function obterTurmaCompleta(req, res) {
       assinante_id: t.instrutor_assinante_id ?? null,
       instrutor_assinante_id: t.instrutor_assinante_id ?? null,
       assinante_nome: t.assinante_nome ?? null,
+      assinante_por_vinculo: assinTI.rows?.[0] || null,
       datas,
       instrutores: instrutoresResult.rows,
     });
