@@ -341,20 +341,32 @@
                </section>
    
                {/* Chips de turmas com contagem */}
-               <section aria-label="Turmas do evento" className="flex flex-wrap gap-2">
-                 {(payload.turmas || []).map((t) => (
-                   <span
-                     key={t.id}
-                     className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white dark:bg-gray-800 shadow text-sm"
-                   >
-                     {t.nome}
-                     <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-600 text-white">
-                       {t.total_respostas ?? 0}
-                     </span>
-                   </span>
-                 ))}
-                 {!payload.turmas?.length && <span className="text-sm text-gray-500">Sem turmas.</span>}
-               </section>
+               {/* Lista de turmas com número de respostas */}
+<section aria-label="Turmas do evento" className="mt-4">
+  {payload.turmas?.length ? (
+    <ul className="space-y-2">
+      {payload.turmas.map((t) => (
+        <li
+          key={t.id}
+          className="flex items-center gap-3 bg-white dark:bg-gray-800 rounded-full px-3 py-1.5 shadow text-sm"
+        >
+          {/* Número primeiro */}
+          <span className="inline-flex items-center justify-center w-7 h-7 text-xs font-bold rounded-full bg-orange-600 text-white">
+            {t.total_respostas ?? 0}
+          </span>
+
+          {/* Nome da turma depois, ocupando o restante da linha */}
+          <span className="flex-1 text-left">
+            {t.nome}
+          </span>
+        </li>
+      ))}
+    </ul>
+  ) : (
+    <span className="text-sm text-gray-500">Sem turmas.</span>
+  )}
+</section>
+
    
                {/* Objetivos: grelha com barras simples */}
                <section>

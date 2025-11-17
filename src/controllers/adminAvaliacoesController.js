@@ -123,15 +123,15 @@ exports.obterAvaliacoesDoEvento = async (req, res) => {
 
     // 2) Respostas (todas as turmas do evento)
     const respostasSql = `
-      SELECT 
-        a.id,
-        a.turma_id,
-        t.nome AS turma_nome,
-        a.usuario_id,
-        u.nome AS usuario_nome,
-        a.criado_em,
+    SELECT 
+      a.id,
+      a.turma_id,
+      t.nome AS turma_nome,
+      a.usuario_id,
+      u.nome AS usuario_nome,
+      a.data_avaliacao AS criado_em,
 
-        -- Campos objetivos (se não existirem na tabela, virão null com COALESCE)
+      -- Campos objetivos...
         ${CAMPOS_OBJETIVOS.map((c) => `COALESCE(a.${c}, NULL) AS ${c}`).join(", ")},
 
         -- Textos
@@ -140,7 +140,7 @@ exports.obterAvaliacoesDoEvento = async (req, res) => {
       JOIN turmas t ON t.id = a.turma_id
       LEFT JOIN usuarios u ON u.id = a.usuario_id
       WHERE t.evento_id = $1
-      ORDER BY a.criado_em DESC, a.id DESC;
+      ORDER BY a.data_avaliacao DESC, a.id DESC;
     `;
     const { rows: respostasRaw } = await query(respostasSql, [eventoId]);
 
@@ -214,21 +214,21 @@ exports.obterAvaliacoesDaTurma = async (req, res) => {
 
   try {
     const sql = `
-      SELECT 
-        a.id,
-        a.turma_id,
-        t.nome AS turma_nome,
-        a.usuario_id,
-        u.nome AS usuario_nome,
-        a.criado_em,
-        ${CAMPOS_OBJETIVOS.map((c) => `COALESCE(a.${c}, NULL) AS ${c}`).join(", ")},
-        ${CAMPOS_TEXTOS.map((c) => `COALESCE(a.${c}, NULL) AS ${c}`).join(", ")}
-      FROM avaliacoes a
-      JOIN turmas t ON t.id = a.turma_id
-      LEFT JOIN usuarios u ON u.id = a.usuario_id
-      WHERE a.turma_id = $1
-      ORDER BY a.criado_em DESC, a.id DESC;
-    `;
+    SELECT 
+      a.id,
+      a.turma_id,
+      t.nome AS turma_nome,
+      a.usuario_id,
+      u.nome AS usuario_nome,
+      a.data_avaliacao AS criado_em,
+      ${CAMPOS_OBJETIVOS.map((c) => `COALESCE(a.${c}, NULL) AS ${c}`).join(", ")},
+      ${CAMPOS_TEXTOS.map((c) => `COALESCE(a.${c}, NULL) AS ${c}`).join(", ")}
+    FROM avaliacoes a
+    JOIN turmas t ON t.id = a.turma_id
+    LEFT JOIN usuarios u ON u.id = a.usuario_id
+    WHERE a.turma_id = $1
+    ORDER BY a.data_avaliacao DESC, a.id DESC;
+  `;
     const { rows } = await query(sql, [turmaId]);
     res.json(rows || []);
   } catch (err) {

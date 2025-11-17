@@ -6,14 +6,11 @@ const router = express.Router();
 const authMiddleware = require("../auth/authMiddleware");
 const authorizeRoles = require("../auth/authorizeRoles");
 
-// ♻️ Reaproveita controllers existentes onde fizer sentido
-const {
-  avaliacoesPorTurma,   // lista todas as respostas da turma (admin)
-  avaliacoesPorEvento,  // agregado por evento (admin)
-} = require("../controllers/avaliacoesController");
-
-// 🆕 Controller específico para a visão administrativa (lista de eventos com resumo)
+// 🆕 Controller específico para a visão administrativa
 const adminCtrl = require("../controllers/adminAvaliacoesController");
+
+// (Opcional) ainda podemos reaproveitar algo do avaliacoesController se precisar
+// const { avaliacoesPorTurma } = require("../controllers/avaliacoesController");
 
 // Protege todo o grupo: só administradores
 router.use(authMiddleware, authorizeRoles("administrador"));
@@ -26,14 +23,15 @@ router.get("/eventos", adminCtrl.listarEventosComAvaliacoes);
 
 /**
  * GET /api/admin/avaliacoes/evento/:evento_id
- * Agregado por evento (reusa o controller já existente)
+ * 🔄 Agora usa o controller NOVO, que retorna:
+ * { respostas, agregados: { total, dist, medias, textos, mediaOficial }, turmas }
  */
-router.get("/evento/:evento_id", avaliacoesPorEvento);
+router.get("/evento/:evento_id", adminCtrl.obterAvaliacoesDoEvento);
 
 /**
  * GET /api/admin/avaliacoes/turma/:turma_id
- * Todas as respostas da turma (reusa o controller já existente)
+ * Pode usar a versão nova do admin (com mesmos campos da do evento)
  */
-router.get("/turma/:turma_id", avaliacoesPorTurma);
+router.get("/turma/:turma_id", adminCtrl.obterAvaliacoesDaTurma);
 
 module.exports = router;
