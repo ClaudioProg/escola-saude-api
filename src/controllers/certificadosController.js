@@ -89,56 +89,94 @@ function drawSignatureText(doc, rawText, { x, y, w }, {
   }
 
   // ───────────────── Assinante da Turma ─────────────────
+// ───────────────── Assinante da Turma (NÍVEL GLOBAL) ─────────────────
 async function obterAssinanteDaTurma(turmaId) {
-  // 1ª tentativa: usar turmas.instrutor_assinante_id (ou o alias legado assinante_instrutor_id)
-  const q = await db.query(
-    `
-    SELECT 
-      u.id,
-      u.nome,
-      a.imagem_base64
-    FROM turmas t
-    LEFT JOIN usuarios    u ON u.id = COALESCE(t.instrutor_assinante_id, t.assinante_instrutor_id)
-    LEFT JOIN assinaturas a ON a.usuario_id = COALESCE(t.instrutor_assinante_id, t.assinante_instrutor_id)
-    WHERE t.id = $1
-    `,
-    [Number(turmaId)]
-  );
+  turmaId = Number(turmaId);
 
-  if (q.rowCount && q.rows[0]?.id) {
-    return {
-      id: q.rows[0].id,
-      nome: q.rows[0].nome || "Instrutor(a)",
-      imagem_base64: q.rows[0].imagem_base64 || null,
-      origem: "turma.instrutor_assinante_id",
-    };
+  /* 1️⃣ Tenta o campo direto da turma */
+  const qTurma = await db.query(`
+    SELECT COALESCE(t.instrutor_assinante_id, t.assinante_instrutor_id) AS assinante_id
+    FROM turmas t WHERE t.id = $1
+  `, [turmaId]);
+
+  const assinanteId = Number(qTurma.rows?.[0]?.assinante_id || 0);
+  if (assinanteId) {
+    const r = await db.query(`
+      SELECT u.id, u.nome, a.imagem_base64
+      FROM usuarios u
+      LEFT JOIN assinaturas a ON a.usuario_id = u.id
+      WHERE u.id = $1
+      LIMIT 1
+    `, [assinanteId]);
+    if (r.rowCount) {
+      return {
+        id: r.rows[0].id,
+        nome: r.rows[0].nome || "Instrutor(a)",
+        imagem_base64: r.rows[0].imagem_base64 || null,
+        origem: "turma.instrutor_assinante_id",
+      };
+    }
   }
 
-  // Fallback (em último caso): pegar 1 instrutor da turma
-  const fb = await db.query(
-    `
+  /* 2️⃣ Procura instrutor marcado como assinante ou de menor ordem */
+  const qTI = await db.query(`
     SELECT u.id, u.nome, a.imagem_base64
-      FROM turma_instrutor ti
-      JOIN usuarios u    ON u.id = ti.instrutor_id
- LEFT JOIN assinaturas a ON a.usuario_id = ti.instrutor_id
-     WHERE ti.turma_id = $1
-     ORDER BY u.nome
-     LIMIT 1
-    `,
-    [Number(turmaId)]
-  );
-
-  if (fb.rowCount) {
+    FROM turma_instrutor ti
+    JOIN usuarios u    ON u.id = ti.instrutor_id
+    LEFT JOIN assinaturas a ON a.usuario_id = ti.instrutor_id
+    WHERE ti.turma_id = $1
+    ORDER BY ti.is_assinante DESC, ti.ordem_assinatura ASC NULLS LAST, u.nome ASC
+    LIMIT 1
+  `, [turmaId]);
+  if (qTI.rowCount) {
     return {
-      id: fb.rows[0].id,
-      nome: fb.rows[0].nome || "Instrutor(a)",
-      imagem_base64: fb.rows[0].imagem_base64 || null,
-      origem: "fallback.turma_instrutor",
+      id: qTI.rows[0].id,
+      nome: qTI.rows[0].nome || "Instrutor(a)",
+      imagem_base64: qTI.rows[0].imagem_base64 || null,
+      origem: "turma_instrutor",
     };
   }
 
-  // Sem instrutor definido
-  return { id: null, nome: "Instrutor(a)", imagem_base64: null, origem: "nenhum" };
+  // logo antes do qSec
+const SEC_ID = Number(process.env.SECRETARIO_USUARIO_ID || 0);
+if (SEC_ID) {
+  const s = await db.query(`
+    SELECT u.id, u.nome, a.imagem_base64
+    FROM usuarios u
+    LEFT JOIN assinaturas a ON a.usuario_id = u.id
+    WHERE u.id = $1
+    LIMIT 1
+  `, [SEC_ID]);
+  if (s.rowCount) return { id: s.rows[0].id, nome: s.rows[0].nome, imagem_base64: s.rows[0].imagem_base64, origem: "secretario.env_id" };
+}
+
+  /* 3️⃣ Fallback: Secretário Municipal de Saúde */
+  // (1) Primeiro tenta localizar pelo e-mail institucional
+  const qSec = await db.query(`
+    SELECT u.id, u.nome, a.imagem_base64
+    FROM usuarios u
+    LEFT JOIN assinaturas a ON a.usuario_id = u.id
+    WHERE lower(u.email) = 'fabiolopez@santos.sp.gov.br'
+       OR unaccent(lower(u.nome)) ILIKE unaccent(lower('%fábio lopez%'))
+    LIMIT 1
+  `);
+
+  if (qSec.rowCount) {
+    return {
+      id: qSec.rows[0].id,
+      nome: qSec.rows[0].nome || "Fábio Lopez",
+      imagem_base64: qSec.rows[0].imagem_base64 || null,
+      origem: "secretario.municipal",
+    };
+  }
+
+  /* 4️⃣ Último recurso: nome fixo sem imagem */
+  return {
+    id: null,
+    nome: "Fábio Lopez",
+    imagem_base64: null,
+    origem: "secretario.fallback",
+  };
 }
 
   // 2) centraliza manualmente dentro da caixa, SEM width e SEM line break
