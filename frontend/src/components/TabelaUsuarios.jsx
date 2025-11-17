@@ -225,10 +225,23 @@ function UsuarioItem({
 
           <div className="flex-1 min-w-0">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-              <h2 id={headingId} className="text-base sm:text-lg font-bold text-gray-900 dark:text-white truncate flex items-center gap-2">
-                <UserRound className="h-4 w-4 text-zinc-500 dark:text-zinc-300" />
-                <span className="truncate">{nome}</span>
-              </h2>
+            <h2
+  id={headingId}
+  className="text-base sm:text-lg font-bold text-gray-900 dark:text-white truncate flex items-center gap-2"
+>
+  <UserRound className="h-4 w-4 text-zinc-500 dark:text-zinc-300" />
+  <span className="truncate">{nome}</span>
+
+  {id != null && (
+    <span
+      className="ml-1 inline-flex items-center rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-mono text-zinc-600 dark:bg-zinc-800 dark:text-zinc-200"
+      title={`ID do usuário: ${id}`}
+      aria-label={`ID do usuário: ${id}`}
+    >
+      ID: {id}
+    </span>
+  )}
+</h2>
 
               <div className="flex items-center gap-2 shrink-0">
                 {/* Botão de expandir (carrega sob demanda) */}

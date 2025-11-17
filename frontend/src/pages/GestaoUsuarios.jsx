@@ -529,7 +529,7 @@ const { unidadesOpts, cargosOpts } = useMemo(() => {
       const roles = toPerfilArray(p);
       return roles.some((r) => fPerfis.has(r));
     };
-
+  
     return (usuarios || []).filter((u) => {
       if (!perfilOk(u?.perfil)) return false;
 
@@ -553,19 +553,21 @@ const { unidadesOpts, cargosOpts } = useMemo(() => {
 
       if (!q) return true;
 
-      const nome = sLower(u?.nome);
-      const email = sLower(u?.email);
-      const cpf = sLower(u?.cpf);
-      const registro = sLower(u?.registro);
-      const perfTxt = toPerfilArray(u?.perfil).join(" ");
+    const nome = sLower(u?.nome);
+    const email = sLower(u?.email);
+    const cpf = sLower(u?.cpf);
+    const registro = sLower(u?.registro);
+    const perfTxt = toPerfilArray(u?.perfil).join(" ");
+    const idStr = String(u?.id ?? "").toLowerCase();
 
-      return (
-        nome.includes(q) ||
-        email.includes(q) ||
-        cpf.includes(q) ||
-        registro.includes(q) ||
-        perfTxt.includes(q)
-      );
+    return (
+      nome.includes(q) ||
+      email.includes(q) ||
+      cpf.includes(q) ||
+      registro.includes(q) ||
+      perfTxt.includes(q) ||
+      idStr.includes(q)
+    );
     });
   }, [usuarios, debouncedQ, fPerfis, fUnidade, fCargo]);
 
@@ -697,7 +699,7 @@ const { unidadesOpts, cargosOpts } = useMemo(() => {
                 id="busca-usuarios"
                 type="text"
                 autoComplete="off"
-                placeholder="Buscar por nome, e-mail, CPF ou registro… (/)"
+                placeholder="Buscar por nome, e-mail, CPF, registro ou ID… (/)"
                 value={busca}
                 onChange={(e) => setBusca(e.target.value)}
                 className="w-full rounded-xl border px-9 py-2 text-sm ring-offset-2 focus:outline-none focus:ring-2 focus:ring-violet-700 dark:border-zinc-700 dark:bg-zinc-800"
