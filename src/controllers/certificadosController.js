@@ -106,7 +106,7 @@ async function obterAssinanteDaTurma(turmaId) {
 
   // 1️⃣ Busca o assinante direto na turma (instrutor_assinante_id ou legado assinante_instrutor_id)
   const qTurma = await db.query(`
-    SELECT COALESCE(t.instrutor_assinante_id, t.assinante_instrutor_id) AS assinante_id
+    SELECT COALESCE(t.instrutor_assinante_id) AS assinante_id
     FROM turmas t
     WHERE t.id = $1
   `, [turmaId]);

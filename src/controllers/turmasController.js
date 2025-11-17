@@ -372,10 +372,10 @@ async function obterTurmaCompleta(req, res) {
         t.data_inicio, t.data_fim,
         t.horario_inicio, t.horario_fim,
         t.vagas_total, t.carga_horaria,
-        COALESCE(t.instrutor_assinante_id, t.assinante_instrutor_id) AS instrutor_assinante_id,
+        COALESCE(t.instrutor_assinante_id) AS instrutor_assinante_id,
         u.nome AS assinante_nome
       FROM turmas t
-      LEFT JOIN usuarios u ON u.id = COALESCE(t.instrutor_assinante_id, t.assinante_instrutor_id)
+      LEFT JOIN usuarios u ON u.id = COALESCE(t.instrutor_assinante_id,)
       WHERE t.id = $1
       `,
       [turma_id]
@@ -605,7 +605,7 @@ async function obterTurmasPorEvento(req, res) {
         t.id, t.nome, t.data_inicio, t.data_fim,
         t.horario_inicio, t.horario_fim,
         t.vagas_total, t.carga_horaria,
-        COALESCE(t.instrutor_assinante_id, t.assinante_instrutor_id) AS instrutor_assinante_id
+        COALESCE(t.instrutor_assinante_id) AS instrutor_assinante_id
       FROM turmas t
       WHERE t.evento_id = $1
       ORDER BY t.data_inicio NULLS LAST, t.horario_inicio NULLS LAST
