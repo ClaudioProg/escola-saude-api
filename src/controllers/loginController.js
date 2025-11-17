@@ -57,6 +57,18 @@ async function loginUsuario(req, res) {
       perfil: perfilArray,
     });
 
+        // 🍪 Grava o token também em cookie httpOnly
+        const isProd = process.env.NODE_ENV === "production";
+
+        res.cookie("token", token, {
+          httpOnly: true,
+          secure: isProd,      // em prod (HTTPS) fica true
+          sameSite: "lax",     // como tudo roda no mesmo domínio/caminho, Lax é ok
+          maxAge: 7 * 24 * 60 * 60 * 1000, // 7 dias
+          path: "/",
+        });
+    
+
     // 🛎️ notifs de avaliação
     try {
       await gerarNotificacoesDeAvaliacao(usuario.id);

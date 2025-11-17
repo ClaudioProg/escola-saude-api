@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { apiGet } from "../services/api";
+import { baixarBannerTrabalho } from "../utils/downloadBannerTrabalho";
 import Footer from "../components/Footer";
 import {
   FileText,
@@ -197,6 +198,12 @@ function CardTrabalho({ trabalho }) {
 
   const toggle = () => setAberto((v) => !v);
 
+  const handleVerBanner = () => {
+    // usa o ID da submissão; o util chama /trabalhos/submissoes/:id/banner
+    const nomeDownload = banner_nome || `banner-trabalho-${id}`;
+    baixarBannerTrabalho(id, nomeDownload);
+  };
+
   const secao = (tituloSecao, texto) => {
     if (!texto) return null;
     return (
@@ -292,22 +299,21 @@ function CardTrabalho({ trabalho }) {
         </button>
 
         {banner_url ? (
-          <a
-            href={banner_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 rounded-full bg-fuchsia-600 hover:bg-fuchsia-700 text-white px-3 py-1.5 text-xs font-medium transition"
-          >
-            <ImageIcon className="w-3.5 h-3.5" />
-            Ver banner
-            <ExternalLink className="w-3 h-3" aria-hidden="true" />
-          </a>
-        ) : (
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400 px-3 py-1.5 text-xs">
-            <ImageIcon className="w-3.5 h-3.5" />
-            Banner não disponível
-          </span>
-        )}
+  <button
+    type="button"
+    onClick={handleVerBanner}
+    className="inline-flex items-center gap-1.5 rounded-full bg-fuchsia-600 hover:bg-fuchsia-700 text-white px-3 py-1.5 text-xs font-medium transition"
+  >
+    <ImageIcon className="w-3.5 h-3.5" />
+    Ver banner
+    <ExternalLink className="w-3 h-3" aria-hidden="true" />
+  </button>
+) : (
+  <span className="inline-flex items-center gap-1.5 rounded-full bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400 px-3 py-1.5 text-xs">
+    <ImageIcon className="w-3.5 h-3.5" />
+    Banner não disponível
+  </span>
+)}
       </div>
 
       {/* Detalhes expansíveis */}

@@ -1691,7 +1691,7 @@ exports.obterParaAvaliacao = async (req, res, next) => {
         linha_tematica_nome: s.linha_tematica_nome,
         chamada_titulo: s.chamada_titulo,
         poster_nome: s.poster_nome,
-        poster_url: `/api/submissoes/${s.id}/poster`,
+        poster_url: `/api/trabalhos/submissoes/${s.id}/poster`,
         introducao: s.introducao,
         objetivos: s.objetivos,
         metodo: s.metodo,
@@ -1837,9 +1837,9 @@ exports.listarRepositorioTrabalhos = async (req, res, next) => {
         -- Banner (usando a mesma lógica do poster_arquivo_id)
         a.nome_original AS banner_nome,
         CASE
-          WHEN a.id IS NOT NULL THEN CONCAT('/api/trabalhos/submissoes/', s.id, '/banner')
-          ELSE NULL
-        END AS banner_url
+  WHEN a.caminho IS NOT NULL THEN CONCAT('/uploads/', a.caminho)
+  ELSE NULL
+END AS banner_url
 
       FROM trabalhos_submissoes s
       JOIN usuarios u              ON u.id = s.usuario_id
