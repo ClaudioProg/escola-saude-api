@@ -421,53 +421,82 @@ async function _gerarPdfFisico({
     doc.font("AlegreyaSans-Regular").fontSize(14)
        .text("Chefe da Escola da Saúde", LEFT.x, baseY + 25, { align: "center", width: LEFT.w });
 
-   // Direita: instrutor-assinante da TURMA (apenas se existir)
-const RIGHT = { x: 440, w: 300 };
-const SIGN_W = 150;
-const signX = RIGHT.x + (RIGHT.w - SIGN_W) / 2;
-const signY = baseY - 50;
-const SIGN_BOX = { x: signX, y: signY, w: SIGN_W };
+    // Direita: instrutor-assinante da TURMA (apenas se existir)
+    const RIGHT = { x: 440, w: 300 };
+    const SIGN_W = 150;
+    const signX = RIGHT.x + (RIGHT.w - SIGN_W) / 2;
+    const signY = baseY - 50;
+    const SIGN_BOX = { x: signX, y: signY, w: SIGN_W };
 
-let nomeInstrutor = "";
-let assinaturaInstrutorBase64 = null;
+    let nomeInstrutor = "";
+    let assinaturaInstrutorBase64 = null;
+    let instrutorAssinanteId = null; // 👈 guarda o ID do assinante
 
-try {
-  const assinante = await obterAssinanteDaTurma(Number(turma_id));
-  nomeInstrutor = (assinante?.nome || "").trim();
-  assinaturaInstrutorBase64 = assinante?.imagem_base64 || null;
-  logDev("[certificados] Assinante TURMA:", assinante?.origem, nomeInstrutor || "(vazio)");
-} catch (e) {
-  console.warn("⚠️ Erro ao obter assinante da turma:", e.message);
-}
-
-// Só desenha algo se houver nome ou assinatura
-if (nomeInstrutor || assinaturaInstrutorBase64) {
-  let desenhouAssinatura = false;
-
-  if (assinaturaInstrutorBase64 && /^data:image\/(png|jpe?g|webp);base64,/.test(assinaturaInstrutorBase64)) {
     try {
-      const buf = Buffer.from(assinaturaInstrutorBase64.split(",")[1], "base64");
-      doc.image(buf, SIGN_BOX.x, SIGN_BOX.y, { width: SIGN_BOX.w });
-      desenhouAssinatura = true;
+      const assinante = await obterAssinanteDaTurma(Number(turma_id));
+      instrutorAssinanteId = assinante?.id ? Number(assinante.id) : null;
+      nomeInstrutor = (assinante?.nome || "").trim();
+      assinaturaInstrutorBase64 = assinante?.imagem_base64 || null;
+      logDev(
+        "[certificados] Assinante TURMA:",
+        assinante?.origem,
+        instrutorAssinanteId,
+        nomeInstrutor || "(vazio)"
+      );
     } catch (e) {
-      console.warn("⚠️ Assinatura do instrutor inválida:", e.message);
+      console.warn("⚠️ Erro ao obter assinante da turma:", e.message);
     }
-  }
 
-  // Se não houver imagem mas houver nome, desenha a “assinatura” cursiva
-  if (!desenhouAssinatura && nomeInstrutor) {
-    drawSignatureText(doc, nomeInstrutor, SIGN_BOX, { maxFont: 34, minFont: 16 });
-  }
+    // Só desenha algo se houver nome ou assinatura
+    if (nomeInstrutor || assinaturaInstrutorBase64) {
+      let desenhouAssinatura = false;
 
-  // Nome impresso e cargo (apenas se houver nome)
-  if (nomeInstrutor) {
-    doc.font("AlegreyaSans-Bold").fontSize(20)
-      .text(nomeInstrutor, RIGHT.x, baseY, { align: "center", width: RIGHT.w });
-    doc.font("AlegreyaSans-Regular").fontSize(14)
-      .text("Instrutor(a)", RIGHT.x, baseY + 25, { align: "center", width: RIGHT.w });
-  }
-}
-// Se não hou
+      if (
+        assinaturaInstrutorBase64 &&
+        /^data:image\/(png|jpe?g|webp);base64,/.test(assinaturaInstrutorBase64)
+      ) {
+        try {
+          const buf = Buffer.from(
+            assinaturaInstrutorBase64.split(",")[1],
+            "base64"
+          );
+          doc.image(buf, SIGN_BOX.x, SIGN_BOX.y, { width: SIGN_BOX.w });
+          desenhouAssinatura = true;
+        } catch (e) {
+          console.warn("⚠️ Assinatura do instrutor inválida:", e.message);
+        }
+      }
+
+      // Se não houver imagem mas houver nome, desenha a “assinatura” cursiva
+      if (!desenhouAssinatura && nomeInstrutor) {
+        drawSignatureText(doc, nomeInstrutor, SIGN_BOX, {
+          maxFont: 34,
+          minFont: 16,
+        });
+      }
+
+      // Nome impresso e cargo (apenas se houver nome)
+      if (nomeInstrutor) {
+        // 👇 regra especial: secretário de saúde (id 2474)
+        const cargoInstrutor =
+          instrutorAssinanteId === 2474 ? "Secretário de Saúde" : "Instrutor(a)";
+
+        doc
+          .font("AlegreyaSans-Bold")
+          .fontSize(20)
+          .text(nomeInstrutor, RIGHT.x, baseY, {
+            align: "center",
+            width: RIGHT.w,
+          });
+        doc
+          .font("AlegreyaSans-Regular")
+          .fontSize(14)
+          .text(cargoInstrutor, RIGHT.x, baseY + 25, {
+            align: "center",
+            width: RIGHT.w,
+          });
+      }
+    }
   }
 
   // QR Code (validação)
