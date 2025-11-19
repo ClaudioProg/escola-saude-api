@@ -1,4 +1,3 @@
-// ✅ src/controllers/certificadosAvulsosController.js
 /* eslint-disable no-console */
 const db = require("../db");
 const PDFDocument = require("pdfkit");
@@ -7,17 +6,99 @@ const fsp = fs.promises;
 const path = require("path");
 const nodemailer = require("nodemailer");
 
-/* ========================= Utils ========================= */
+/* ========================= Config & Utils ========================= */
 
 const IS_DEV = process.env.NODE_ENV !== "production";
 
 const onlyDigits = (v = "") => String(v).replace(/\D+/g, "");
-const boolish = (v) => {
-  const s = String(v ?? "").trim().toLowerCase();
-  return s === "1" || s === "true" || s === "yes" || s === "on";
-};
 const safeFilename = (s = "") =>
   String(s).replace(/[^a-z0-9._-]+/gi, "_").replace(/_+/g, "_");
+
+function validarEmail(email) {
+  if (!email) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim());
+}
+async function ensureDir(dir) {
+  await fsp.mkdir(dir, { recursive: true });
+}
+
+/* ========================= Modalidades ========================= */
+
+const MODALIDADES = [
+  "participante",
+  "instrutor",
+  "banca_avaliadora",
+  "oficineiro",
+  "mediador",
+  "banca_tcr_medica",
+  "banca_tcr_multi",
+  "residente_medica",
+  "residente_multi",
+  "mostra_banner",
+  "mostra_oral",
+  "comissao_organizadora",
+];
+
+// sinônimos aceitos no payload (para robustez do front antigo)
+const NORMALIZAR_MAP = new Map([
+  ["palestrante", "instrutor"],
+  ["instructor", "instrutor"],
+  ["banca_tcr_mfc", "banca_tcr_medica"],
+  ["residente_mfc", "residente_medica"],
+  ["banner", "mostra_banner"],
+  ["oral", "mostra_oral"],
+]);
+
+function normalizarModalidade(v) {
+  let s = String(v || "").trim().toLowerCase();
+  if (NORMALIZAR_MAP.has(s)) s = NORMALIZAR_MAP.get(s);
+  if (!MODALIDADES.includes(s)) s = "participante";
+  return s;
+}
+
+function modalidadeNaoTemCarga(modalidade) {
+  return modalidade === "banca_avaliadora" || modalidade === "comissao_organizadora";
+}
+
+function modalidadeExigeTitulo(modalidade) {
+  return (
+    modalidade === "residente_medica" ||
+    modalidade === "residente_multi" ||
+    modalidade === "mostra_banner" ||
+    modalidade === "mostra_oral" ||
+    modalidade === "oficineiro"
+  );
+}
+
+/* ========================= Datas & Identificadores ========================= */
+
+function dataHojePorExtenso() {
+  const hoje = new Date();
+  const meses = [
+    "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+    "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"
+  ];
+  const dd = String(hoje.getDate()).padStart(2, "0");
+  return `${dd} de ${meses[hoje.getMonth()]} de ${hoje.getFullYear()}`;
+}
+
+function formatarDataCurtaBR(data) {
+  if (!data) return "";
+  const d = new Date(data);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+function formatarPeriodo(dataInicio, dataFim) {
+  const di = dataInicio ? formatarDataCurtaBR(dataInicio) : null;
+  const df = dataFim ? formatarDataCurtaBR(dataFim) : di;
+  if (di && df) {
+    if (di === df) return `realizado em ${di}`;
+    return `realizado de ${di} a ${df}`;
+  }
+  if (di) return `realizado em ${di}`;
+  return ""; // sem período
+}
 
 function formatarIdentificador(valor) {
   if (!valor) return "";
@@ -39,41 +120,11 @@ function formatarIdentificador(valor) {
   return "";
 }
 
-function dataHojePorExtenso() {
-  const hoje = new Date();
-  const meses = [
-    "janeiro","fevereiro","março","abril","maio","junho",
-    "julho","agosto","setembro","outubro","novembro","dezembro"
-  ];
-  const dd = String(hoje.getDate()).padStart(2, "0");
-  return `${dd} de ${meses[hoje.getMonth()]} de ${hoje.getFullYear()}`;
-}
+/* ========================= Fundo / Fontes ========================= */
 
-function formatarDataCurtaBR(data) {
-  if (!data) return "";
-  const d = new Date(data);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
-}
-
-function validarEmail(email) {
-  if (!email) return false;
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim());
-}
-
-async function ensureDir(dir) {
-  await fsp.mkdir(dir, { recursive: true });
-}
-
-/* ===== Fundo por tipo ===== */
-function getFundoPath({ palestrante = false, temAssinatura2 = false }) {
-  // Regra:
-  // - Com 2ª assinatura → fundo_certificado.png
-  // - Sem 2ª assinatura → fundo_certificado_instrutor.png
-  const nomeArquivo = temAssinatura2
-    ? "fundo_certificado.png"
-    : "fundo_certificado_instrutor.png";
-
+function getFundoPath({ temAssinatura2 = false }) {
+  // Mantido: com 2ª assinatura → fundo_certificado.png; sem 2ª → fundo_certificado_instrutor.png
+  const nomeArquivo = temAssinatura2 ? "fundo_certificado.png" : "fundo_certificado_instrutor.png";
   const roots = [
     ...(process.env.CERT_FUNDO_DIR ? [process.env.CERT_FUNDO_DIR] : []),
     path.resolve(__dirname, "../../certificados"),
@@ -83,7 +134,6 @@ function getFundoPath({ palestrante = false, temAssinatura2 = false }) {
     path.resolve(process.cwd(), "assets"),
     path.resolve(process.cwd(), "public"),
   ];
-
   const candidates = roots.map((root) => path.join(root, nomeArquivo));
   let found = null;
   for (const p of candidates) {
@@ -92,8 +142,6 @@ function getFundoPath({ palestrante = false, temAssinatura2 = false }) {
   if (!found && IS_DEV) console.warn("⚠️ Fundo não encontrado:", candidates);
   return found;
 }
-
-/* ========== Montagem de PDF (compartilhado) ========== */
 
 function registerFonts(doc) {
   const fontsDir = path.join(__dirname, "..", "..", "fonts");
@@ -113,35 +161,100 @@ function registerFonts(doc) {
   }
 }
 
-/** Texto principal conforme regras (participante/palestrante + período) */
-function montarTextoPrincipal({ palestrante, tituloEvento, dataInicio, dataFim, carga }) {
-  const dataInicioBR = formatarDataCurtaBR(dataInicio);
-  const dataFimBR = formatarDataCurtaBR(dataFim);
-  const mesmoDia = dataInicio && dataFim && String(dataInicio) === String(dataFim);
-  const cargaTexto = carga;
+/* ========================= Texto por modalidade ========================= */
 
-  if (palestrante) {
-    return (mesmoDia
-      ? `Participou como instrutor do evento "${tituloEvento}", realizado em ${dataInicioBR}, com carga horária total de ${cargaTexto} horas.`
-      : `Participou como instrutor do evento "${tituloEvento}", realizado de ${dataInicioBR} a ${dataFimBR}, com carga horária total de ${cargaTexto} horas.`);
+function montarTextoModalidade({ modalidade, tituloEvento, dataInicio, dataFim, carga, tituloTrabalho }) {
+  const periodo = formatarPeriodo(dataInicio, dataFim);
+  const ev = tituloEvento || "";
+
+  // regra de carga horária: omitir se nula/indefinida/<=0 ou se modalidade não tem carga
+  const temCarga = !!(carga && Number(carga) > 0) && !modalidadeNaoTemCarga(modalidade);
+  const trechoCarga = temCarga ? `, com carga horária total de ${Number(carga)} horas.` : ".";
+
+  switch (modalidade) {
+    case "instrutor":
+      return periodo
+        ? `Participou como instrutor do evento "${ev}", ${periodo}${trechoCarga}`
+        : `Participou como instrutor do evento "${ev}"${trechoCarga}`;
+
+    case "banca_avaliadora":
+      return periodo
+        ? `Participou como Banca Avaliadora do evento "${ev}", ${periodo}.`
+        : `Participou como Banca Avaliadora do evento "${ev}".`;
+
+        case "oficineiro": {
+          const titulo = (tituloTrabalho || "").trim();
+          const trechoTitulo = titulo
+            ? ` na oficina intitulada "${titulo}"`
+            : "";
+          return periodo
+            ? `Participou como oficineiro do evento "${ev}"${trechoTitulo}, ${periodo}${trechoCarga}`
+            : `Participou como oficineiro do evento "${ev}"${trechoTitulo}${trechoCarga}`;
+        }
+
+    case "mediador":
+      return periodo
+        ? `Participou como mediador do evento "${ev}", ${periodo}${trechoCarga}`
+        : `Participou como mediador do evento "${ev}"${trechoCarga}`;
+
+    case "banca_tcr_medica":
+      return periodo
+        ? `Participou como Banca Avaliadora do Trabalho de Conclusão de Residência (TCR) do Programa de Residência Médica em Medicina de Família e Comunidade do evento "${ev}", ${periodo}.`
+        : `Participou como Banca Avaliadora do Trabalho de Conclusão de Residência (TCR) do Programa de Residência Médica em Medicina de Família e Comunidade do evento "${ev}".`;
+
+    case "banca_tcr_multi":
+      return periodo
+        ? `Participou como Banca Avaliadora do Trabalho de Conclusão de Residência (TCR) do Programa de Residência Multiprofissional do evento "${ev}", ${periodo}.`
+        : `Participou como Banca Avaliadora do Trabalho de Conclusão de Residência (TCR) do Programa de Residência Multiprofissional do evento "${ev}".`;
+
+    case "residente_medica": {
+      const titulo = (tituloTrabalho || "").trim();
+      return periodo
+        ? `Apresentou o Trabalho de Conclusão de Residência (TCR) do Programa de Residência Médica em Medicina de Família e Comunidade do evento "${ev}" intitulado "${titulo}", ${periodo}.`
+        : `Apresentou o Trabalho de Conclusão de Residência (TCR) do Programa de Residência Médica em Medicina de Família e Comunidade do evento "${ev}" intitulado "${titulo}".`;
+    }
+
+    case "residente_multi": {
+      const titulo = (tituloTrabalho || "").trim();
+      return periodo
+        ? `Apresentou o Trabalho de Conclusão de Residência (TCR) do Programa de Residência Multiprofissional do evento "${ev}" intitulado "${titulo}", ${periodo}.`
+        : `Apresentou o Trabalho de Conclusão de Residência (TCR) do Programa de Residência Multiprofissional do evento "${ev}" intitulado "${titulo}".`;
+    }
+
+    case "mostra_banner": {
+      const titulo = (tituloTrabalho || "").trim();
+      return periodo
+        ? `Apresentou o trabalho intitulado "${titulo}" na Modalidade Banner do evento "${ev}", ${periodo}.`
+        : `Apresentou o trabalho intitulado "${titulo}" na Modalidade Banner do evento "${ev}".`;
+    }
+
+    case "mostra_oral": {
+      const titulo = (tituloTrabalho || "").trim();
+      return periodo
+        ? `Apresentou o trabalho intitulado "${titulo}" na Modalidade Apresentação Oral do evento "${ev}", ${periodo}.`
+        : `Apresentou o trabalho intitulado "${titulo}" na Modalidade Apresentação Oral do evento "${ev}".`;
+    }
+
+    case "comissao_organizadora":
+      return periodo
+        ? `Participou como Comissão Organizadora do evento "${ev}", ${periodo}.`
+        : `Participou como Comissão Organizadora do evento "${ev}".`;
+
+    case "participante":
+    default:
+      return periodo
+        ? `Participou do evento "${ev}", ${periodo}${trechoCarga}`
+        : `Participou do evento "${ev}"${trechoCarga}`;
   }
-  return (mesmoDia
-    ? `Participou do evento "${tituloEvento}", realizado em ${dataInicioBR}, com carga horária total de ${cargaTexto} horas.`
-    : `Participou do evento "${tituloEvento}", realizado de ${dataInicioBR} a ${dataFimBR}, com carga horária total de ${cargaTexto} horas.`);
 }
 
-/**
- * Desenha o certificado.
- * @param {PDFDocument} doc
- * @param {object} certificado Linha de certificados_avulsos
- * @param {object} opts { palestrante?: boolean, assinatura2?: {nome, cargo, imgBuffer}? }
- */
+/* ========================= PDF ========================= */
+
 function desenharCertificado(doc, certificado, opts = {}) {
-  const { palestrante = false, assinatura2 = null } = opts;
-  const temAssinatura2 = Boolean(assinatura2);
+  const temAssinatura2 = Boolean(opts.assinatura2);
 
   // Fundo
-  const fundo = getFundoPath({ palestrante, temAssinatura2 });
+  const fundo = getFundoPath({ temAssinatura2 });
   if (fundo) {
     doc.image(fundo, 0, 0, { width: doc.page.width, height: doc.page.height }); // A4 landscape
   } else {
@@ -160,7 +273,7 @@ function desenharCertificado(doc, certificado, opts = {}) {
 
   doc.moveDown(2.5);
 
-  // Nome do participante
+  // Nome (ajuste dinâmico)
   const nome = certificado.nome || "";
   const nomeMaxWidth = 680;
   let nomeFontSize = 45;
@@ -178,13 +291,14 @@ function desenharCertificado(doc, certificado, opts = {}) {
       .text(idFmt, 0, doc.y - 5, { align: "center", width: doc.page.width });
   }
 
-  // Texto principal
-  const texto = montarTextoPrincipal({
-    palestrante,
+  // Texto principal (por modalidade)
+  const texto = montarTextoModalidade({
+    modalidade: certificado.modalidade || "participante",
     tituloEvento: certificado.curso || "",
     dataInicio: certificado.data_inicio,
     dataFim: certificado.data_fim,
-    carga: certificado.carga_horaria
+    carga: certificado.carga_horaria,
+    tituloTrabalho: certificado.titulo_trabalho,
   });
 
   doc.moveDown(1);
@@ -203,49 +317,42 @@ function desenharCertificado(doc, certificado, opts = {}) {
       width: 680,
     });
 
-    // Área de assinaturas
-const baseY = 470;
+  // Área de assinaturas
+  const baseY = 470;
 
-// Quando existir 2ª assinatura, desloca mais à esquerda a Rafaella.
-// (sem 2ª assinatura continua centralizado)
-const assinatura1X = temAssinatura2 ? 120 : 270; // <- mais à esquerda que antes
-const assinatura1W = 300;
+  // Se houver 2ª assinatura, desloca a assinatura institucional mais à esquerda
+  const assinatura1X = temAssinatura2 ? 120 : 270;
+  const assinatura1W = 300;
 
-// Assinatura institucional (Rafaella)
-doc.font("AlegreyaSans-Bold").fontSize(20)
-  .text("Rafaella Pitol Corrêa", assinatura1X, baseY, { align: "center", width: assinatura1W });
-doc.font("AlegreyaSans-Regular").fontSize(14)
-  .text("Chefe da Escola da Saúde", assinatura1X, baseY + 25, { align: "center", width: assinatura1W });
-
-// 2ª assinatura (Instrutor[a]) no local original (antes da mudança)
-if (temAssinatura2) {
-  const areaX = 440;  // ← posição original restaurada
-  const areaW = 300;
-
-  if (assinatura2.imgBuffer) {
-    try {
-      const assinaturaWidth = 150;
-      const assinaturaX = areaX + (areaW - assinaturaWidth) / 2;
-      const assinaturaY = baseY - 50;
-      doc.image(assinatura2.imgBuffer, assinaturaX, assinaturaY, { width: assinaturaWidth });
-    } catch (e) {
-      if (IS_DEV) console.warn("⚠️ Erro ao desenhar 2ª assinatura:", e.message);
-    }
-  }
-
+  // Assinatura institucional (Rafaella)
   doc.font("AlegreyaSans-Bold").fontSize(20)
-    .text(assinatura2.nome || "—", areaX, baseY, { align: "center", width: areaW });
+    .text("Rafaella Pitol Corrêa", assinatura1X, baseY, { align: "center", width: assinatura1W });
   doc.font("AlegreyaSans-Regular").fontSize(14)
-    .text("Instrutor(a)", areaX, baseY + 25, { align: "center", width: areaW });
-}
+    .text("Chefe da Escola da Saúde", assinatura1X, baseY + 25, { align: "center", width: assinatura1W });
+
+  // 2ª assinatura (Instrutor[a] ou responsável) — mantido rótulo “Instrutor(a)”
+  if (temAssinatura2) {
+    const areaX = 440;
+    const areaW = 300;
+
+    if (opts.assinatura2.imgBuffer) {
+      try {
+        const assinaturaWidth = 150;
+        const assinaturaX = areaX + (areaW - assinaturaWidth) / 2;
+        const assinaturaY = baseY - 50;
+        doc.image(opts.assinatura2.imgBuffer, assinaturaX, assinaturaY, { width: assinaturaWidth });
+      } catch (e) {
+        if (IS_DEV) console.warn("⚠️ Erro ao desenhar 2ª assinatura:", e.message);
+      }
+    }
+
+    doc.font("AlegreyaSans-Bold").fontSize(20)
+      .text(opts.assinatura2.nome || "—", areaX, baseY, { align: "center", width: areaW });
+    doc.font("AlegreyaSans-Regular").fontSize(14)
+      .text("Instrutor(a)", areaX, baseY + 25, { align: "center", width: areaW });
+  }
 }
 
-/**
- * Gera o PDF para um arquivo temporário e retorna o caminho.
- * @param {object} certificado
- * @param {string} filenamePrefix
- * @param {object} opts { palestrante?: boolean, assinatura2?: {nome,cargo,imgBuffer}? }
- */
 async function gerarPdfTemporario(certificado, filenamePrefix = "certificado", opts = {}) {
   const tempDir = path.join(__dirname, "..", "..", "temp");
   await ensureDir(tempDir);
@@ -278,34 +385,65 @@ async function gerarPdfTemporario(certificado, filenamePrefix = "certificado", o
 
 /**
  * POST /api/certificados-avulsos
+ * Body esperado:
+ *  - nome, cpf, email, curso (obrigatórios)
+ *  - data_inicio, data_fim (opcionais; se só enviar início, usamos em ambos)
+ *  - carga_horaria (opcional; se vazio → NULL; ignorada em modalidades sem carga)
+ *  - modalidade (opcional; default "participante")
+ *  - titulo_trabalho (obrigatório nas modalidades que exigem)
  */
 async function criarCertificadoAvulso(req, res) {
   try {
-    let { nome, cpf, email, curso, carga_horaria, data_inicio, data_fim } = req.body;
+    let {
+      nome,
+      cpf,
+      email,
+      curso,
+      carga_horaria,
+      data_inicio,
+      data_fim,
+      modalidade,
+      titulo_trabalho,
+    } = req.body;
 
-    // Normalizações/validações
+    // Normalizações
     nome = (nome || "").trim();
     curso = (curso || "").trim();
     email = (email || "").trim();
-    cpf = onlyDigits(cpf || ""); // <- garante só números
-    const carga = Number(carga_horaria);
+    cpf = onlyDigits(cpf || "");
+    modalidade = normalizarModalidade(modalidade);
 
-    if (!nome || !curso || !email || !Number.isFinite(carga) || carga <= 0) {
-      return res.status(400).json({ erro: "Dados obrigatórios inválidos." });
+    // Carga horária: aceitar vazio → NULL; valores <=0 também viram NULL
+    let carga = null;
+    if (carga_horaria !== undefined && String(carga_horaria).trim() !== "") {
+      const n = Number(carga_horaria);
+      if (Number.isFinite(n) && n > 0) carga = n;
+    }
+    // Modalidades sem carga → força NULL
+    if (modalidadeNaoTemCarga(modalidade)) carga = null;
+
+    // Validações mínimas
+    if (!nome || !curso || !email) {
+      return res.status(400).json({ erro: "Campos obrigatórios: nome, e-mail e curso." });
     }
     if (!validarEmail(email)) {
       return res.status(400).json({ erro: "E-mail inválido." });
     }
+    if (modalidadeExigeTitulo(modalidade)) {
+      if (!titulo_trabalho || String(titulo_trabalho).trim() === "") {
+        return res.status(400).json({ erro: "Título do trabalho é obrigatório para a modalidade selecionada." });
+      }
+    }
 
     const di = data_inicio ? String(data_inicio) : null;
-    const df = data_fim && String(data_fim).trim() !== "" ? String(data_fim) : di;
+    const df = (data_fim && String(data_fim).trim() !== "") ? String(data_fim) : di;
 
     const { rows } = await db.query(
       `INSERT INTO certificados_avulsos
-       (nome, cpf, email, curso, carga_horaria, data_inicio, data_fim, enviado)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, false)
+        (nome, cpf, email, curso, carga_horaria, data_inicio, data_fim, enviado, modalidade, titulo_trabalho)
+       VALUES ($1,   $2,  $3,   $4,    $5,            $6,         $7,       false,    $8,         $9)
        RETURNING *`,
-      [nome, cpf, email, curso, carga, di, df]
+      [nome, cpf, email, curso, carga, di, df, modalidade, titulo_trabalho || null]
     );
 
     return res.status(201).json(rows[0]);
@@ -333,7 +471,6 @@ async function listarCertificadosAvulsos(req, res) {
 /**
  * GET /api/assinatura/lista
  * Lista pessoas com assinatura cadastrada para 2ª assinatura no certificado.
- * (alinhado ao front)
  */
 async function listarAssinaturas(req, res) {
   try {
@@ -361,13 +498,14 @@ async function listarAssinaturas(req, res) {
 
 /**
  * GET /api/certificados-avulsos/:id/pdf
- * Suporta:
- *   ?palestrante=1|true       → usa texto de instrutor
+ * Usa a modalidade salva no registro.
+ * (Mantida compatibilidade se ?modalidade=... for enviado, mas o padrão é o do banco)
+ * Suporta também:
  *   ?assinatura2_id=<usuario> → imprime 2ª assinatura (imagem + nome/cargo) desta pessoa
  */
 async function gerarPdfCertificado(req, res) {
   const { id } = req.params;
-  const { palestrante, assinatura2_id } = req.query;
+  const { assinatura2_id } = req.query;
   let caminhoTemp;
 
   try {
@@ -378,12 +516,20 @@ async function gerarPdfCertificado(req, res) {
     if (rows.length === 0) {
       return res.status(404).json({ erro: "Certificado não encontrado." });
     }
-    const certificado = rows[0];
 
-    // Monta opções
-    const opts = { palestrante: boolish(palestrante) };
+    const certificado = { ...rows[0] };
 
-    // (opcional) carrega a 2ª assinatura
+    // Override opcional de modalidade via query (para testes)
+    if (req.query.modalidade) {
+      certificado.modalidade = normalizarModalidade(req.query.modalidade);
+      // se modalidade sem carga, garante nulidade na renderização
+      if (modalidadeNaoTemCarga(certificado.modalidade)) {
+        certificado.carga_horaria = null;
+      }
+    }
+
+    // Monta opções (carrega 2ª assinatura, se houver)
+    const opts = {};
     if (assinatura2_id) {
       try {
         const a = await db.query(
@@ -413,7 +559,7 @@ async function gerarPdfCertificado(req, res) {
 
     caminhoTemp = await gerarPdfTemporario(certificado, "certificado", opts);
 
-    // headers gentis de download
+    // headers de download
     const outName = safeFilename(`certificado_${id}.pdf`);
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="${outName}"`);
@@ -438,14 +584,13 @@ async function gerarPdfCertificado(req, res) {
 
 /**
  * POST /api/certificados-avulsos/:id/enviar
- * Suporta:
- *   ?palestrante=1|true
+ * Usa a mesma lógica de texto/modalidade do PDF.
+ * Query opcional:
  *   ?assinatura2_id=<usuario>
- * Usa a mesma lógica de fundo e texto do gerarPdfCertificado.
  */
 async function enviarPorEmail(req, res) {
   const { id } = req.params;
-  const { palestrante, assinatura2_id } = req.query;
+  const { assinatura2_id } = req.query;
   let caminhoTemp;
 
   try {
@@ -456,12 +601,19 @@ async function enviarPorEmail(req, res) {
     if (rows.length === 0) {
       return res.status(404).json({ erro: "Certificado não encontrado." });
     }
-    const certificado = rows[0];
 
-    // Monta opções iguais ao /pdf
-    const opts = { palestrante: boolish(palestrante) };
+    const certificado = { ...rows[0] };
 
-    // (opcional) carrega a 2ª assinatura
+    // Override opcional (debug)
+    if (req.query.modalidade) {
+      certificado.modalidade = normalizarModalidade(req.query.modalidade);
+      if (modalidadeNaoTemCarga(certificado.modalidade)) {
+        certificado.carga_horaria = null;
+      }
+    }
+
+    // 2ª assinatura
+    const opts = {};
     if (assinatura2_id) {
       try {
         const a = await db.query(
@@ -489,16 +641,17 @@ async function enviarPorEmail(req, res) {
       }
     }
 
-    // Gera PDF com as mesmas regras de fundo/texto
+    // Gera PDF
     caminhoTemp = await gerarPdfTemporario(certificado, "certificado", opts);
 
-    // Monta o mesmo texto para o corpo do e-mail
-    const textoPrincipal = montarTextoPrincipal({
-      palestrante: opts.palestrante,
+    // Texto do corpo
+    const textoPrincipal = montarTextoModalidade({
+      modalidade: certificado.modalidade || "participante",
       tituloEvento: certificado.curso || "",
       dataInicio: certificado.data_inicio,
       dataFim: certificado.data_fim,
-      carga: certificado.carga_horaria
+      carga: certificado.carga_horaria,
+      tituloTrabalho: certificado.titulo_trabalho,
     });
 
     let transporter;
@@ -541,11 +694,7 @@ Atenciosamente,
 Equipe da Escola da Saúde
 `,
       attachments: [
-        {
-          filename: `certificado.pdf`,
-          path: caminhoTemp,
-          contentType: "application/pdf",
-        },
+        { filename: `certificado.pdf`, path: caminhoTemp, contentType: "application/pdf" },
       ],
     });
 

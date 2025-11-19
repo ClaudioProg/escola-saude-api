@@ -1,5 +1,4 @@
-// ✅ src/pages/CertificadosAvulsos.jsx (mobile/a11y + rota de assinaturas corrigida + UX/segurança)
-// ✅ Ajuste: permitir espaços ao digitar em "nome" e "curso"
+// ✅ src/pages/CertificadosAvulsos.jsx (mobile/a11y + modalidades novas + título de trabalho + carga opcional)
 import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { toast } from "react-toastify";
 import { RefreshCcw, Plus, Search, X } from "lucide-react";
@@ -71,11 +70,60 @@ function ymdToBR(ymd) {
 function validYMD(s) {
   return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
 }
-const validarEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || "").trim());
+const validarEmail = (v) =>
+  /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || "").trim());
 const onlyDigits = (v = "") => String(v).replace(/\D+/g, "");
 
 /** 🔧 Agora NÃO remove espaços: só limita o tamanho. */
 const clampLen = (s, n = 200) => String(s ?? "").slice(0, n);
+
+/* ===================== Modalidades (front) ===================== */
+
+const MODALIDADES = [
+  "participante",
+  "instrutor",
+  "banca_avaliadora",
+  "oficineiro",
+  "mediador",
+  "banca_tcr_medica",
+  "banca_tcr_multi",
+  "residente_medica",
+  "residente_multi",
+  "mostra_banner",
+  "mostra_oral",
+  "comissao_organizadora",
+];
+
+const rotuloModalidade = {
+  participante: "Participante",
+  instrutor: "Instrutor(a) / Palestrante",
+  banca_avaliadora: "Banca Avaliadora",
+  oficineiro: "Oficineiro(a)",
+  mediador: "Mediador(a)",
+  banca_tcr_medica: "Banca TCR Médica (MFC)",
+  banca_tcr_multi: "Banca TCR Multi",
+  residente_medica: "Residente Médica (MFC)",
+  residente_multi: "Residente Multiprofissional",
+  mostra_banner: "Mostra Banner",
+  mostra_oral: "Mostra Oral",
+  comissao_organizadora: "Comissão Organizadora",
+};
+
+function modalidadeExigeTitulo(modalidade) {
+  return (
+    modalidade === "residente_medica" ||
+    modalidade === "residente_multi" ||
+    modalidade === "mostra_banner" ||
+    modalidade === "mostra_oral" ||
+    modalidade === "oficineiro" // ✅ agora oficineiro também exige título
+  );
+}
+
+function modalidadeSemCarga(modalidade) {
+  return (
+    modalidade === "banca_avaliadora" || modalidade === "comissao_organizadora"
+  );
+}
 
 /* ===================== Página ===================== */
 export default function CertificadosAvulsos() {
@@ -89,10 +137,11 @@ export default function CertificadosAvulsos() {
     carga_horaria: "",
     data_inicio: "",
     data_fim: "",
+    modalidade: "participante",
+    titulo_trabalho: "",
   });
 
-  // opções avançadas de geração
-  const [palestrante, setPalestrante] = useState(false);
+  // opções avançadas de geração (2ª assinatura)
   const [usarAssinatura2, setUsarAssinatura2] = useState(false);
   const [assinatura2Id, setAssinatura2Id] = useState("");
   const [assinaturas, setAssinaturas] = useState([]); // [{id, nome}]
@@ -102,11 +151,18 @@ export default function CertificadosAvulsos() {
   const [carregando, setCarregando] = useState(true);
   const [salvando, setSalvando] = useState(false);
 
-  const [filtro, setFiltro] = useState(() => localStorage.getItem("cert:filtro") || "todos");
-  const [busca, setBusca] = useState(() => localStorage.getItem("cert:busca") || "");
+  const [filtro, setFiltro] = useState(
+    () => localStorage.getItem("cert:filtro") || "todos"
+  );
+  const [busca, setBusca] = useState(
+    () => localStorage.getItem("cert:busca") || ""
+  );
   const [buscaDebounced, setBuscaDebounced] = useState(busca);
 
-  const [acaoLoading, setAcaoLoading] = useState({ id: null, tipo: null }); // {id, 'pdf' | 'email'}
+  const [acaoLoading, setAcaoLoading] = useState({
+    id: null,
+    tipo: null,
+  }); // {id, 'pdf' | 'email'}
 
   const liveRef = useRef(null); // aria-live
   const erroRef = useRef(null);
@@ -121,42 +177,50 @@ export default function CertificadosAvulsos() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const carregarCertificados = useCallback(async () => {
-    try {
-      setCarregando(true);
-      setLive("Carregando certificados…");
-      // 🔧 services/api já prefixa /api
-      const data = await apiGet("certificados-avulsos", { on403: "silent" });
-      setLista(Array.isArray(data) ? data : []);
-      setLive(
-        Array.isArray(data) && data.length
-          ? `Foram carregados ${data.length} certificado(s).`
-          : "Nenhum certificado encontrado."
-      );
-    } catch (erro) {
-      toast.error("❌ Erro ao carregar certificados.");
-      setLista([]);
-      setLive("Falha ao carregar certificados.");
-      setTimeout(() => erroRef.current?.focus(), 0);
-    } finally {
-      setCarregando(false);
-    }
-  }, [setLive]);
+  const carregarCertificados = useCallback(
+    async () => {
+      try {
+        setCarregando(true);
+        setLive("Carregando certificados…");
+        // 🔧 services/api já prefixa /api
+        const data = await apiGet("certificados-avulsos", { on403: "silent" });
+        setLista(Array.isArray(data) ? data : []);
+        setLive(
+          Array.isArray(data) && data.length
+            ? `Foram carregados ${data.length} certificado(s).`
+            : "Nenhum certificado encontrado."
+        );
+      } catch (erro) {
+        toast.error("❌ Erro ao carregar certificados.");
+        setLista([]);
+        setLive("Falha ao carregar certificados.");
+        setTimeout(() => erroRef.current?.focus(), 0);
+      } finally {
+        setCarregando(false);
+      }
+    },
+    [setLive]
+  );
 
   // Carrega lista de pessoas com assinatura disponível
   const carregarAssinaturas = useCallback(async () => {
     try {
       setAssinaturasCarregando(true);
-      // ✅ backend ajustado: GET /api/assinatura/lista
+      // ✅ backend: GET /api/assinatura/lista
       const data = await apiGet("assinatura/lista", { on403: "silent" });
-      const arr = Array.isArray(data) ? data : (Array.isArray(data?.lista) ? data.lista : []);
+      const arr = Array.isArray(data) ? data : Array.isArray(data?.lista) ? data.lista : [];
       const filtradas = arr
         .filter(
           (a) =>
-            (a?.tem_assinatura ?? a?.possui_assinatura ?? !!a?.assinatura ?? !!a?.arquivo_assinatura) ===
-            true
+            (a?.tem_assinatura ??
+              a?.possui_assinatura ??
+              !!a?.assinatura ??
+              !!a?.arquivo_assinatura) === true
         )
-        .map((a) => ({ id: a.id ?? a.usuario_id ?? a.pessoa_id, nome: a.nome || a.titulo || "—" }))
+        .map((a) => ({
+          id: a.id ?? a.usuario_id ?? a.pessoa_id,
+          nome: a.nome || a.titulo || "—",
+        }))
         .filter((a) => a.id && a.nome);
       setAssinaturas(filtradas);
     } catch {
@@ -172,7 +236,10 @@ export default function CertificadosAvulsos() {
   }, [filtro]);
   useEffect(() => {
     localStorage.setItem("cert:busca", busca);
-    const t = setTimeout(() => setBuscaDebounced(busca.trim().toLowerCase()), 250);
+    const t = setTimeout(
+      () => setBuscaDebounced(busca.trim().toLowerCase()),
+      250
+    );
     return () => clearTimeout(t);
   }, [busca]);
 
@@ -186,8 +253,10 @@ export default function CertificadosAvulsos() {
     }
 
     if (name === "email") {
-      // Mantém comportamento (limita tamanho e lowercase). A limpeza final ocorre no submit.
-      setForm((prev) => ({ ...prev, email: clampLen(value, 120).toLowerCase() }));
+      setForm((prev) => ({
+        ...prev,
+        email: clampLen(value, 120).toLowerCase(),
+      }));
       return;
     }
 
@@ -197,17 +266,31 @@ export default function CertificadosAvulsos() {
       return;
     }
 
+    if (name === "modalidade") {
+      setForm((prev) => ({
+        ...prev,
+        modalidade: value,
+        // se trocar para modalidade que não exige título, limpamos
+        titulo_trabalho: modalidadeExigeTitulo(value)
+          ? prev.titulo_trabalho
+          : "",
+      }));
+      return;
+    }
+
     // 🔧 Importante: NÃO tirar espaços aqui.
     const maxMap = {
       nome: 150,
       curso: 160,
+      titulo_trabalho: 255,
     };
     const v = maxMap[name] ? clampLen(value, maxMap[name]) : value;
     setForm((prev) => ({ ...prev, [name]: v }));
   }
 
   function handlePasteCPF(e) {
-    const text = (e.clipboardData || window.clipboardData)?.getData("text") || "";
+    const text =
+      (e.clipboardData || window.clipboardData)?.getData("text") || "";
     const dig = onlyDigits(text).slice(0, 14);
     e.preventDefault();
     setForm((prev) => ({ ...prev, cpf: dig }));
@@ -218,20 +301,30 @@ export default function CertificadosAvulsos() {
       e.preventDefault();
       if (salvando) return; // evita duplo submit
 
+      const modalidade = form.modalidade || "participante";
+      const exigeTitulo = modalidadeExigeTitulo(modalidade);
+
       const payload = {
-        // 🔧 Limpeza somente no submit (permite digitar espaços livremente no input)
+        // limpeza só no submit
         nome: clampLen(form.nome.replace(/\s+/g, " ").trim(), 150),
         cpf: onlyDigits(form.cpf),
         email: clampLen(form.email.trim(), 120).toLowerCase(),
         curso: clampLen(form.curso.replace(/\s+/g, " ").trim(), 160),
-        carga_horaria: Number(form.carga_horaria),
+        carga_horaria: form.carga_horaria, // string numérica (backend trata)
         data_inicio: form.data_inicio || "",
         data_fim: form.data_fim || form.data_inicio || "",
+        modalidade,
+        titulo_trabalho: exigeTitulo
+          ? clampLen(
+              (form.titulo_trabalho || "").replace(/\s+/g, " ").trim(),
+              255
+            )
+          : "",
       };
 
-      // validações
-      if (!payload.nome || !payload.email || !payload.curso || !payload.carga_horaria) {
-        toast.warning("Preencha todos os campos obrigatórios.");
+      // validações básicas
+      if (!payload.nome || !payload.email || !payload.curso) {
+        toast.warning("Preencha nome, e-mail e curso.");
         setLive("Preencha os campos obrigatórios.");
         return;
       }
@@ -240,11 +333,29 @@ export default function CertificadosAvulsos() {
         setLive("E-mail inválido.");
         return;
       }
-      if (Number.isNaN(payload.carga_horaria) || payload.carga_horaria <= 0) {
-        toast.warning("Informe uma carga horária válida (> 0).");
-        setLive("Carga horária inválida.");
+
+      // carga horária: opcional; se preenchida, precisa ser > 0
+      const cargaStr = String(form.carga_horaria || "").trim();
+      if (cargaStr) {
+        const n = Number(cargaStr);
+        if (!Number.isFinite(n) || n <= 0) {
+          toast.warning(
+            "Informe uma carga horária válida (> 0) ou deixe em branco."
+          );
+          setLive("Carga horária inválida.");
+          return;
+        }
+      }
+
+      // título obrigatório em algumas modalidades
+      if (exigeTitulo && !payload.titulo_trabalho) {
+        toast.warning(
+          "Informe o título do trabalho/oficina para a modalidade selecionada."
+        );
+        setLive("Título do trabalho é obrigatório.");
         return;
       }
+
       if (payload.data_inicio && !validYMD(payload.data_inicio)) {
         toast.warning("Data de início inválida.");
         setLive("Data de início inválida.");
@@ -255,9 +366,17 @@ export default function CertificadosAvulsos() {
         setLive("Data de término inválida.");
         return;
       }
-      if (payload.data_inicio && payload.data_fim && payload.data_fim < payload.data_inicio) {
-        toast.warning("A data de término não pode ser anterior à data de início.");
-        setLive("A data de término não pode ser anterior à data de início.");
+      if (
+        payload.data_inicio &&
+        payload.data_fim &&
+        payload.data_fim < payload.data_inicio
+      ) {
+        toast.warning(
+          "A data de término não pode ser anterior à data de início."
+        );
+        setLive(
+          "A data de término não pode ser anterior à data de início."
+        );
         return;
       }
 
@@ -274,6 +393,8 @@ export default function CertificadosAvulsos() {
           carga_horaria: "",
           data_inicio: "",
           data_fim: "",
+          modalidade: "participante",
+          titulo_trabalho: "",
         });
         toast.success("✅ Certificado cadastrado.");
         setLive("Certificado cadastrado com sucesso.");
@@ -287,54 +408,50 @@ export default function CertificadosAvulsos() {
     [form, salvando, setLive]
   );
 
-  const enviarPorEmail = useCallback(async (id) => {
-    if (acaoLoading.id) return; // evita cliques concorrentes
-  
-    // se quiser tratar igual ao PDF: se a pessoa marcou "2ª assinatura"
-    // mas não selecionou ninguém, bloqueia e avisa
-    if (usarAssinatura2 && !assinatura2Id) {
-      toast.info("Selecione a 2ª assinatura antes de enviar o e-mail.");
-      return;
-    }
-  
-    setAcaoLoading({ id, tipo: "email" });
-  
-    try {
-      toast.info("📤 Enviando…");
-  
-      // monta os mesmos query params que usamos no PDF
-      const params = new URLSearchParams();
-      if (palestrante) {
-        params.set("palestrante", "1");
+  const enviarPorEmail = useCallback(
+    async (id) => {
+      if (acaoLoading.id) return; // evita cliques concorrentes
+
+      if (usarAssinatura2 && !assinatura2Id) {
+        toast.info("Selecione a 2ª assinatura antes de enviar o e-mail.");
+        return;
       }
-      if (usarAssinatura2 && assinatura2Id) {
-        params.set("assinatura2_id", String(assinatura2Id));
+
+      setAcaoLoading({ id, tipo: "email" });
+
+      try {
+        toast.info("📤 Enviando…");
+
+        const params = new URLSearchParams();
+        if (usarAssinatura2 && assinatura2Id) {
+          params.set("assinatura2_id", String(assinatura2Id));
+        }
+
+        const url = params.toString()
+          ? `certificados-avulsos/${id}/enviar?${params.toString()}`
+          : `certificados-avulsos/${id}/enviar`;
+
+        await apiPost(url);
+
+        toast.success("✅ E-mail enviado!");
+        setLista((prev) =>
+          prev.map((item) =>
+            item.id === id ? { ...item, enviado: true } : item
+          )
+        );
+      } catch (err) {
+        console.error("erro ao enviar email:", err);
+        toast.error("❌ Erro ao enviar e-mail.");
+      } finally {
+        setAcaoLoading({ id: null, tipo: null });
       }
-  
-      const url = params.toString()
-        ? `certificados-avulsos/${id}/enviar?${params.toString()}`
-        : `certificados-avulsos/${id}/enviar`;
-  
-      await apiPost(url);
-  
-      toast.success("✅ E-mail enviado!");
-      setLista((prev) =>
-        prev.map((item) =>
-          item.id === id ? { ...item, enviado: true } : item
-        )
-      );
-    } catch (err) {
-      console.error("erro ao enviar email:", err);
-      toast.error("❌ Erro ao enviar e-mail.");
-    } finally {
-      setAcaoLoading({ id: null, tipo: null });
-    }
-  }, [acaoLoading.id, palestrante, usarAssinatura2, assinatura2Id]);
+    },
+    [acaoLoading.id, usarAssinatura2, assinatura2Id]
+  );
 
   const gerarPDF = useCallback(
     async (id) => {
       if (acaoLoading.id) return; // evita cliques concorrentes
-      // se marcou 2ª assinatura, mas não escolheu um id, bloqueia
       if (usarAssinatura2 && !assinatura2Id) {
         toast.info("Selecione a 2ª assinatura antes de gerar o PDF.");
         return;
@@ -342,16 +459,17 @@ export default function CertificadosAvulsos() {
 
       setAcaoLoading({ id, tipo: "pdf" });
       let href = "";
+
       try {
         const params = new URLSearchParams();
-        if (palestrante) params.set("palestrante", "1");
-        if (usarAssinatura2 && assinatura2Id) params.set("assinatura2_id", String(assinatura2Id));
+        if (usarAssinatura2 && assinatura2Id) {
+          params.set("assinatura2_id", String(assinatura2Id));
+        }
 
         const url = params.toString()
           ? `certificados-avulsos/${id}/pdf?${params.toString()}`
           : `certificados-avulsos/${id}/pdf`;
 
-        // 🔧 apiGetFile deve lidar com headers e nome do arquivo
         const { blob, filename } = await apiGetFile(url);
         href = window.URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -367,7 +485,7 @@ export default function CertificadosAvulsos() {
         setAcaoLoading({ id: null, tipo: null });
       }
     },
-    [palestrante, usarAssinatura2, assinatura2Id, acaoLoading.id]
+    [usarAssinatura2, assinatura2Id, acaoLoading.id]
   );
 
   const enviados = useMemo(
@@ -375,7 +493,10 @@ export default function CertificadosAvulsos() {
     [lista]
   );
   const naoEnviados = useMemo(
-    () => (lista || []).filter((i) => i.enviado === false || i.enviado == null).length,
+    () =>
+      (lista || []).filter(
+        (i) => i.enviado === false || i.enviado == null
+      ).length,
     [lista]
   );
 
@@ -415,7 +536,9 @@ export default function CertificadosAvulsos() {
           aria-busy="true"
         >
           <div
-            className={`h-full bg-rose-600 w-1/3 ${reduceMotion ? "" : "animate-pulse"}`}
+            className={`h-full bg-rose-600 w-1/3 ${
+              reduceMotion ? "" : "animate-pulse"
+            }`}
           />
         </div>
       )}
@@ -425,7 +548,12 @@ export default function CertificadosAvulsos() {
         className="flex-1 max-w-6xl mx-auto px-3 sm:px-4 py-6"
       >
         {/* feedback de acessibilidade */}
-        <p ref={liveRef} className="sr-only" aria-live="polite" role="status" />
+        <p
+          ref={liveRef}
+          className="sr-only"
+          aria-live="polite"
+          role="status"
+        />
         <div ref={erroRef} tabIndex={-1} className="sr-only" />
 
         {/* KPIs rápidos */}
@@ -527,8 +655,12 @@ export default function CertificadosAvulsos() {
             )}
           </div>
 
-          <p className="mt-2 text-xs text-gray-600 dark:text-gray-300" aria-live="polite">
-            {listaFiltrada.length} registro{listaFiltrada.length !== 1 ? "s" : ""} encontrado
+          <p
+            className="mt-2 text-xs text-gray-600 dark:text-gray-300"
+            aria-live="polite"
+          >
+            {listaFiltrada.length} registro
+            {listaFiltrada.length !== 1 ? "s" : ""} encontrado
             {listaFiltrada.length !== 1 ? "s" : ""}.
           </p>
         </section>
@@ -632,7 +764,16 @@ export default function CertificadosAvulsos() {
               htmlFor="carga_horaria"
               className="block text-sm font-medium text-slate-700 dark:text-slate-200"
             >
-              Carga horária (h) <span className="text-rose-600">*</span>
+              Carga horária (h)
+              {modalidadeSemCarga(form.modalidade) ? (
+                <span className="text-[11px] text-zinc-500 ml-1">
+                  (não se aplica)
+                </span>
+              ) : (
+                <span className="text-[11px] text-zinc-500 ml-1">
+                  (opcional; omitida se em branco)
+                </span>
+              )}
             </label>
             <input
               id="carga_horaria"
@@ -642,9 +783,8 @@ export default function CertificadosAvulsos() {
               step="1"
               value={form.carga_horaria}
               onChange={handleChange}
-              required
-              disabled={salvando}
-              className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
+              disabled={salvando || modalidadeSemCarga(form.modalidade)}
+              className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500 disabled:opacity-60 disabled:cursor-not-allowed"
             />
           </div>
 
@@ -684,39 +824,60 @@ export default function CertificadosAvulsos() {
             />
           </div>
 
-          {/* ===== Opções de geração ===== */}
+          {/* ===== Modalidade + 2ª assinatura ===== */}
           <fieldset className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-3 mt-1">
-            <legend className="sr-only">Opções de geração do certificado</legend>
+            <legend className="sr-only">
+              Modalidade de participação e opções de geração do certificado
+            </legend>
 
-            {/* 1) Palestrante */}
-            <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border bg-white dark:bg-zinc-700 dark:border-zinc-600 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                className="h-4 w-4"
-                checked={palestrante}
-                onChange={(e) => setPalestrante(e.target.checked)}
-              />
-              <span className="text-sm">
-                Palestrante (gerar certificado de palestrante)
-              </span>
-            </label>
+            {/* 1) Modalidade / participação */}
+            <div className="md:col-span-1">
+              <label
+                htmlFor="modalidade"
+                className="block text-sm font-medium text-slate-700 dark:text-slate-200"
+              >
+                Modalidade / Participação
+              </label>
+              <select
+                id="modalidade"
+                name="modalidade"
+                value={form.modalidade}
+                onChange={handleChange}
+                disabled={salvando}
+                className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500 text-sm"
+              >
+                {MODALIDADES.map((m) => (
+                  <option key={m} value={m}>
+                    {rotuloModalidade[m] || m}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-[11px] text-zinc-500">
+                Escolha se a pessoa é participante, instrutor(a), banca, residente, mostra,
+                comissão organizadora etc.
+              </p>
+            </div>
 
             {/* 2) Segunda assinatura (toggle + select) */}
-            <div className="col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="md:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border bg-white dark:bg-zinc-700 dark:border-zinc-600 cursor-pointer select-none">
                 <input
-                    type="checkbox"
-                    className="h-4 w-4"
-                    checked={usarAssinatura2}
-                    onChange={(e) => {
-                      setUsarAssinatura2(e.target.checked);
-                      if (!e.target.checked) setAssinatura2Id("");
-                    }}
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={usarAssinatura2}
+                  onChange={(e) => {
+                    setUsarAssinatura2(e.target.checked);
+                    if (!e.target.checked) setAssinatura2Id("");
+                  }}
                 />
                 <span className="text-sm">Adicionar 2ª assinatura</span>
               </label>
 
-              <div className={`${usarAssinatura2 ? "" : "opacity-50 pointer-events-none"}`}>
+              <div
+                className={`${
+                  usarAssinatura2 ? "" : "opacity-50 pointer-events-none"
+                }`}
+              >
                 <label
                   htmlFor="assinatura2"
                   className="block text-sm font-medium text-slate-700 dark:text-slate-200"
@@ -727,12 +888,20 @@ export default function CertificadosAvulsos() {
                   id="assinatura2"
                   value={assinatura2Id}
                   onChange={(e) => setAssinatura2Id(e.target.value)}
-                  disabled={!usarAssinatura2 || assinaturasCarregando || assinaturas.length === 0}
-                  aria-disabled={!usarAssinatura2 || assinaturas.length === 0}
+                  disabled={
+                    !usarAssinatura2 ||
+                    assinaturasCarregando ||
+                    assinaturas.length === 0
+                  }
+                  aria-disabled={
+                    !usarAssinatura2 || assinaturas.length === 0
+                  }
                   className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
                 >
                   <option value="">
-                    {assinaturasCarregando ? "Carregando…" : "— Selecione —"}
+                    {assinaturasCarregando
+                      ? "Carregando…"
+                      : "— Selecione —"}
                   </option>
                   {assinaturas.map((a) => (
                     <option key={a.id} value={a.id}>
@@ -750,6 +919,29 @@ export default function CertificadosAvulsos() {
               </div>
             </div>
           </fieldset>
+
+          {/* Título do trabalho (condicional) */}
+          {modalidadeExigeTitulo(form.modalidade) && (
+            <div className="md:col-span-2">
+              <label
+                htmlFor="titulo_trabalho"
+                className="block text-sm font-medium text-slate-700 dark:text-slate-200"
+              >
+                Título do trabalho / oficina{" "}
+                <span className="text-rose-600">*</span>
+              </label>
+              <input
+                id="titulo_trabalho"
+                name="titulo_trabalho"
+                type="text"
+                value={form.titulo_trabalho}
+                onChange={handleChange}
+                disabled={salvando}
+                className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
+                placeholder="Título do TCR, trabalho ou oficina apresentada"
+              />
+            </div>
+          )}
 
           <div className="md:col-span-2 flex justify-end">
             <BotaoPrimario type="submit" disabled={salvando} aria-busy={salvando}>
@@ -785,9 +977,17 @@ export default function CertificadosAvulsos() {
                     : "—";
 
                   const isEmailLoading =
-                    acaoLoading.id === item.id && acaoLoading.tipo === "email";
+                    acaoLoading.id === item.id &&
+                    acaoLoading.tipo === "email";
                   const isPdfLoading =
                     acaoLoading.id === item.id && acaoLoading.tipo === "pdf";
+
+                  const cargaTxt =
+                    item.carga_horaria && Number(item.carga_horaria) > 0
+                      ? `${item.carga_horaria}h`
+                      : "—";
+
+                  const mod = item.modalidade || "participante";
 
                   return (
                     <article
@@ -797,9 +997,14 @@ export default function CertificadosAvulsos() {
                       aria-label={`Certificado de ${item.nome}`}
                     >
                       <header className="mb-2">
-                        <h3 className="font-semibold text-sm">{item.nome}</h3>
+                        <h3 className="font-semibold text-sm">
+                          {item.nome}
+                        </h3>
                         <p className="text-xs text-zinc-600 dark:text-zinc-300">
                           {item.curso}
+                        </p>
+                        <p className="text-[11px] text-zinc-500 mt-0.5">
+                          {rotuloModalidade[mod] || mod}
                         </p>
                       </header>
                       <dl className="grid grid-cols-2 gap-2 text-xs">
@@ -809,8 +1014,16 @@ export default function CertificadosAvulsos() {
                         </div>
                         <div>
                           <dt className="text-zinc-500">Carga</dt>
-                          <dd>{item.carga_horaria}h</dd>
+                          <dd>{cargaTxt}</dd>
                         </div>
+                        {item.titulo_trabalho && (
+                          <div className="col-span-2">
+                            <dt className="text-zinc-500">
+                              Título do trabalho / oficina
+                            </dt>
+                            <dd>{item.titulo_trabalho}</dd>
+                          </div>
+                        )}
                         <div className="col-span-2">
                           <dt className="text-zinc-500">Período</dt>
                           <dd>{periodo}</dd>
@@ -829,8 +1042,6 @@ export default function CertificadosAvulsos() {
                           }`}
                           aria-label={`Baixar PDF do certificado de ${item.nome}`}
                           title={`Baixar PDF${
-                            palestrante ? " (palestrante)" : ""
-                          }${
                             usarAssinatura2 && assinatura2Id
                               ? " com 2 assinaturas"
                               : ""
@@ -848,7 +1059,9 @@ export default function CertificadosAvulsos() {
                               : "text-green-700 dark:text-green-300"
                           }`}
                           aria-label={`Enviar certificado de ${item.nome} por e-mail`}
-                          title={item.enviado ? "Reenviar e-mail" : "Enviar e-mail"}
+                          title={
+                            item.enviado ? "Reenviar e-mail" : "Enviar e-mail"
+                          }
                         >
                           {isEmailLoading
                             ? "Enviando…"
@@ -871,7 +1084,8 @@ export default function CertificadosAvulsos() {
               >
                 <table className="w-full text-sm">
                   <caption className="sr-only">
-                    Tabela de certificados com ações de PDF e envio por e-mail
+                    Tabela de certificados com ações de PDF e envio por
+                    e-mail
                   </caption>
                   <thead>
                     <tr className="bg-gray-100 dark:bg-zinc-700 text-left">
@@ -880,6 +1094,9 @@ export default function CertificadosAvulsos() {
                       </th>
                       <th scope="col" className="p-2 border-b">
                         Curso
+                      </th>
+                      <th scope="col" className="p-2 border-b">
+                        Modalidade
                       </th>
                       <th scope="col" className="p-2 border-b">
                         E-mail
@@ -906,16 +1123,37 @@ export default function CertificadosAvulsos() {
                         : "—";
 
                       const isEmailLoading =
-                        acaoLoading.id === item.id && acaoLoading.tipo === "email";
+                        acaoLoading.id === item.id &&
+                        acaoLoading.tipo === "email";
                       const isPdfLoading =
-                        acaoLoading.id === item.id && acaoLoading.tipo === "pdf";
+                        acaoLoading.id === item.id &&
+                        acaoLoading.tipo === "pdf";
+
+                      const cargaTxt =
+                        item.carga_horaria &&
+                        Number(item.carga_horaria) > 0
+                          ? `${item.carga_horaria}h`
+                          : "—";
+
+                      const mod = item.modalidade || "participante";
 
                       return (
-                        <tr key={item.id} className="border-t dark:border-zinc-700">
+                        <tr
+                          key={item.id}
+                          className="border-t dark:border-zinc-700"
+                        >
                           <td className="p-2">{item.nome}</td>
                           <td className="p-2">{item.curso}</td>
+                          <td className="p-2">
+                            {rotuloModalidade[mod] || mod}
+                            {item.titulo_trabalho ? (
+                              <div className="text-[11px] text-zinc-500 mt-0.5">
+                                {item.titulo_trabalho}
+                              </div>
+                            ) : null}
+                          </td>
                           <td className="p-2 break-all">{item.email}</td>
-                          <td className="p-2 text-center">{item.carga_horaria}h</td>
+                          <td className="p-2 text-center">{cargaTxt}</td>
                           <td className="p-2 text-center">{periodo}</td>
                           <td className="p-2">
                             <div className="flex gap-3 justify-center">
@@ -930,8 +1168,6 @@ export default function CertificadosAvulsos() {
                                 }`}
                                 aria-label={`Baixar PDF do certificado de ${item.nome}`}
                                 title={`Baixar PDF${
-                                  palestrante ? " (palestrante)" : ""
-                                }${
                                   usarAssinatura2 && assinatura2Id
                                     ? " com 2 assinaturas"
                                     : ""
@@ -949,7 +1185,11 @@ export default function CertificadosAvulsos() {
                                     : "text-green-700 dark:text-green-300"
                                 }`}
                                 aria-label={`Enviar certificado de ${item.nome} por e-mail`}
-                                title={item.enviado ? "Reenviar e-mail" : "Enviar e-mail"}
+                                title={
+                                  item.enviado
+                                    ? "Reenviar e-mail"
+                                    : "Enviar e-mail"
+                                }
                               >
                                 {isEmailLoading
                                   ? "Enviando…"
