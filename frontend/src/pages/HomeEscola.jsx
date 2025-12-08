@@ -77,8 +77,92 @@ export default function HomeEscola() {
         <section className="mt-8" aria-label="Destaques">
           <h2 className="text-xl font-semibold mb-3">Destaques</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+            {/* 0) Mensagem de Natal e Feliz 2026 */}
+<DestaqueLongo
+  imgSrc="/banners/natal-2025.png"
+  imgAlt="Mensagem de Natal e Feliz 2026"
+  titulo="🎄 Feliz Natal e um 2026 iluminado!"
+  subtitulo="Gratidão, união e novos caminhos"
+  badge="Mensagem Especial"
+>
+  <p>
+    Chegamos ao fim de mais um ano de muito trabalho, dedicação e aprendizado. Em nome da 
+    <strong> Escola da Saúde </strong> e da
+    <strong> Secretaria Municipal de Saúde</strong>, registramos nosso sincero agradecimento
+    a todas as pessoas que constroem diariamente uma saúde pública mais humana, acolhedora e eficiente.
+  </p>
+
+  <p>
+    A cada profissional, instrutor, colaborador, estudante, participante de nossos cursos e
+    a cada usuário desta plataforma: <strong>obrigado</strong> por fazer parte dessa jornada e
+    por contribuir para o fortalecimento da educação em saúde no município.
+  </p>
+
+  <p>
+    <strong>Que o Natal renove nossas energias</strong>, trazendo paz, esperança e afeto aos lares,
+    e que 2026 nos presenteie com novas oportunidades de crescimento, aprendizado e realizações.
+  </p>
+
+  <p><strong>✨ Que o novo ano seja leve, próspero e cheio de conquistas.</strong></p>
+
+  <p>
+    Seguimos juntos, promovendo conhecimento, ampliando horizontes e transformando vidas.
+    <strong> Feliz Natal e um extraordinário 2026 a todos! 🎄💫</strong>
+  </p>
+</DestaqueLongo>
+
+{/* 1) 01/12 – Dia Mundial de Luta Contra a Aids */}
+
+<DestaqueLongo
+  imgSrc="/banners/dia-mundial-aids.png"
+  imgAlt="Arte da campanha Dia Mundial de Luta Contra a Aids"
+  titulo="❤️ 1º de Dezembro — Dia Mundial de Luta Contra a Aids"
+  subtitulo="Prevenção, cuidado e acolhimento"
+  badge="Campanha"
+>
+  <p>
+    O <strong>Dia Mundial de Luta Contra a Aids</strong> é celebrado em 1º de dezembro e representa
+    um chamado global à conscientização, à prevenção e ao enfrentamento do HIV, reforçando o compromisso
+    com a vida, o cuidado e o acesso à informação.
+  </p>
+
+  <p>
+    Desde o surgimento da epidemia, grandes avanços tornaram o HIV uma condição tratável. Hoje,
+    pessoas vivendo com HIV podem ter qualidade de vida e expectativa semelhante à da população geral,
+    desde que em acompanhamento e tratamento adequados.
+  </p>
+
+  <p><strong>💡 Prevenção e informação salvam vidas</strong></p>
+
+  <p>
+    <strong>Prevenção Combinada:</strong> inclui o uso de preservativos, PEP (profilaxia pós-exposição),
+    PrEP (profilaxia pré-exposição) e testagem regular — todos disponíveis pelo SUS.
+  </p>
+
+  <p>
+    <strong>Testagem gratuita:</strong> conhecer o diagnóstico é o primeiro passo para o cuidado. Os testes
+    rápidos estão disponíveis nas Unidades de Saúde e Centros de Testagem e Aconselhamento (CTA).
+  </p>
+
+  <p>
+    <strong>Tratamento para todos:</strong> o início precoce da terapia antirretroviral (TARV) garante
+    melhor saúde e reduz drasticamente o risco de transmissão.
+  </p>
+
+  <p><strong>🌍 Um movimento por respeito e acolhimento</strong></p>
+
+  <p>
+    Combater o estigma e a discriminação é tão importante quanto promover prevenção e acesso ao tratamento.
+    A luta contra a Aids é coletiva — envolve empatia, responsabilidade social e defesa da vida.
+  </p>
+
+  <p>
+    <strong>Testar, tratar, acolher e respeitar. Esse é o caminho para um futuro sem estigma. ❤️</strong>
+  </p>
+</DestaqueLongo>
             
-            {/* 1. Instalação do App PWA */}
+            {/* 2. Instalação do App PWA */}
 <DestaqueLongo
   imgSrc="/banners/app-escola-saude.png"
   imgAlt="Instale o App Escola da Saúde"
@@ -152,166 +236,8 @@ export default function HomeEscola() {
   </p>
 </DestaqueLongo>
 
-            {/* 2) Novembro Azul */}
-<DestaqueLongo
-  imgSrc="/banners/novembro-azul.png"
-  imgAlt="Arte da campanha Novembro Azul"
-  titulo="💙 Novembro Azul: um mês pela vida"
-  subtitulo="Prevenção do câncer de próstata"
-  badge="Campanha"
->
-  <p>
-    Novembro é o mês dedicado à conscientização sobre a saúde do homem, com ênfase na prevenção
-    e no diagnóstico precoce do câncer de próstata — o segundo tipo mais comum entre os homens
-    brasileiros, atrás apenas do câncer de pele.
-  </p>
-
-  <p>
-    A cor azul que ilumina monumentos, prédios e espaços públicos neste período simboliza um
-    lembrete importante: cuidar da saúde também é um gesto de responsabilidade e amor-próprio.
-    O Novembro Azul convida todos os homens a romperem preconceitos e a procurarem acompanhamento
-    médico regular.
-  </p>
-
-  <p><strong>💡 Prevenção e autocuidado</strong></p>
-
-  <p>
-    <strong>Consultas e exames de rotina:</strong> o acompanhamento com o urologista é fundamental,
-    especialmente a partir dos 45 anos (ou 40, para quem tem histórico familiar de câncer de próstata).
-    O exame de toque retal e o exame de sangue PSA são aliados no diagnóstico precoce.
-  </p>
-
-  <p>
-    <strong>Estilo de vida saudável:</strong> manter uma alimentação balanceada, praticar atividades
-    físicas, evitar o tabagismo e o consumo excessivo de álcool contribuem para reduzir o risco de
-    doenças crônicas e câncer.
-  </p>
-
-  <p>
-    <strong>Escuta e cuidado integral:</strong> cuidar da saúde mental, buscar apoio quando necessário
-    e manter vínculos afetivos também fazem parte do bem-estar masculino.
-  </p>
-
-  <p><strong>🌍 Um compromisso com a vida</strong></p>
-
-  <p>
-    O Novembro Azul é mais do que uma campanha: é um movimento pela valorização da saúde,
-    da informação e da vida. Falar sobre prevenção é um ato de coragem e amor — por si e
-    por quem está ao seu lado.
-  </p>
-
-  <p>
-    <strong>Cuide-se. Faça seus exames. Valorize a vida. 💙</strong>
-  </p>
-</DestaqueLongo>
 
 
-            {/* 3) Novembro Roxo */}
-<DestaqueLongo
-  imgSrc="/banners/novembro-roxo.png"
-  imgAlt="Arte da campanha Novembro Roxo"
-  titulo="💜 Novembro Roxo: juntos pela prematuridade"
-  subtitulo="Conscientização sobre o nascimento prematuro"
-  badge="Campanha"
->
-  <p>
-    O Novembro Roxo é o mês mundial de sensibilização sobre a prematuridade, uma condição que
-    afeta milhões de bebês todos os anos. A campanha tem como objetivo conscientizar sobre as
-    causas, consequências e, principalmente, sobre a importância da prevenção e do cuidado
-    adequado com os bebês que nascem antes das 37 semanas de gestação.
-  </p>
-
-  <p>
-    O roxo, cor símbolo da campanha, representa sensibilidade, compaixão e transformação.
-    Ele nos lembra que cada vida prematura é uma história de força, amor e esperança — e que
-    o apoio das famílias, profissionais de saúde e da sociedade faz toda a diferença na jornada
-    desses pequenos guerreiros.
-  </p>
-
-  <p><strong>💡 Cuidados e prevenção</strong></p>
-
-  <p>
-    <strong>Pré-natal regular:</strong> realizar o acompanhamento médico adequado é essencial
-    para identificar e tratar precocemente condições que podem levar ao parto prematuro, como
-    infecções, hipertensão e diabetes gestacional.
-  </p>
-
-  <p>
-    <strong>Estilo de vida saudável:</strong> manter uma alimentação equilibrada, evitar o
-    consumo de álcool e cigarro e praticar atividades físicas leves, conforme orientação médica,
-    ajudam na saúde da gestante e do bebê.
-  </p>
-
-  <p>
-    <strong>Apoio e acolhimento:</strong> famílias de bebês prematuros precisam de suporte
-    emocional e informações adequadas para lidar com os desafios da UTI neonatal e com os
-    cuidados após a alta hospitalar.
-  </p>
-
-  <p><strong>🌍 Um compromisso com o começo da vida</strong></p>
-
-  <p>
-    O Novembro Roxo é um chamado à empatia e à responsabilidade coletiva. Cuidar da gestante,
-    promover o parto seguro e apoiar as famílias de prematuros é garantir um início de vida
-    mais saudável e humano para todos.
-  </p>
-
-  <p>
-    <strong>Prematuro não é pequeno. É forte. É vida que floresce com cuidado e amor. 💜</strong>
-  </p>
-</DestaqueLongo>
-
-{/* 4) Dia Nacional de Combate à Tuberculose */}
-<DestaqueLongo
-  imgSrc="/banners/combate-tuberculose.png"
-  imgAlt="Arte da campanha Dia Nacional de Combate à Tuberculose"
-  titulo="❤️ 17 de Novembro: Dia Nacional de Combate à Tuberculose"
-  subtitulo="Conscientização, prevenção e tratamento"
-  badge="Data de saúde"
->
-  <p>
-    No dia 17 de novembro é celebrado o <strong>Dia Nacional de Combate à Tuberculose</strong>,
-    uma data dedicada à conscientização sobre a importância da prevenção, do diagnóstico precoce
-    e do tratamento adequado dessa doença infecciosa que ainda representa um desafio para a saúde pública.
-  </p>
-
-  <p>
-    Causada pela bactéria <em>Mycobacterium tuberculosis</em>, a tuberculose afeta principalmente
-    os pulmões, mas pode atingir outros órgãos do corpo. É uma doença curável, desde que o tratamento
-    seja iniciado e mantido corretamente até o fim, conforme orientação médica.
-  </p>
-
-  <p><strong>💡 Prevenção e cuidados</strong></p>
-
-  <p>
-    <strong>Diagnóstico precoce:</strong> a tosse persistente por mais de três semanas é o principal
-    sintoma e deve ser investigada. O exame de escarro é gratuito e disponível nas Unidades de Saúde.
-  </p>
-
-  <p>
-    <strong>Tratamento gratuito:</strong> o tratamento da tuberculose é oferecido gratuitamente
-    pelo Sistema Único de Saúde (SUS) e dura, em média, seis meses. É essencial não interromper
-    o uso dos medicamentos antes do término, mesmo que os sintomas desapareçam.
-  </p>
-
-  <p>
-    <strong>Prevenção e proteção:</strong> manter os ambientes ventilados e iluminados, cobrir a boca
-    ao tossir ou espirrar, e realizar a vacinação com a BCG (indicada para crianças) são medidas
-    importantes para evitar o contágio.
-  </p>
-
-  <p><strong>🌍 Um compromisso coletivo</strong></p>
-
-  <p>
-    O combate à tuberculose exige informação, solidariedade e vigilância. Cada gesto conta —
-    desde buscar o diagnóstico até apoiar quem está em tratamento. Com cuidado, empatia e adesão
-    ao tratamento, é possível vencer a doença.
-  </p>
-
-  <p>
-    <strong>Tosse persistente? Procure a Unidade de Saúde mais próxima. Cuidar da saúde é o melhor caminho. ❤️</strong>
-  </p>
-</DestaqueLongo>
 
            </div>
         </section>
