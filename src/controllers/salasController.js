@@ -126,11 +126,15 @@ async function listarAgendaAdmin(req, res) {
 async function listarAgendaUsuario(req, res) {
   try {
     const { ano, mes } = getAnoMesFromQuery(req.query);
-    const sala = req.query.sala || null; // 'auditorio' | 'sala_reuniao' | null
+    const salaRaw = req.query.sala;
+    const sala = salaRaw && String(salaRaw).trim()
+      ? String(salaRaw).trim()
+      : null; // 'auditorio' | 'sala_reuniao' | null
     const usuarioId = req.user.id;
 
-    console.log("[listarAgendaUsuario] query:", req.query, "user:", usuarioId);
+    console.log("[listarAgendaUsuario] query:", { ano, mes, sala }, "user:", usuarioId);
 
+    // 🔹 Reservas do próprio usuário no mês
     const params = [ano, mes, usuarioId];
     let whereSala = "";
     if (sala) {
@@ -138,7 +142,7 @@ async function listarAgendaUsuario(req, res) {
       params.push(sala);
     }
 
-    const sql = `
+    const sqlReservas = `
       SELECT
         rs.id,
         rs.sala,
@@ -156,20 +160,39 @@ async function listarAgendaUsuario(req, res) {
         ${whereSala}
       ORDER BY rs.data, rs.sala, rs.periodo;
     `;
-    const { rows } = await query(sql, params);
+    const { rows: reservas } = await query(sqlReservas, params);
 
-    const sqlFeriados = `
-      SELECT data, descricao, tipo
-      FROM feriados
+    // 🔹 Bloqueios do calendário (feriados, ponto facultativo, bloqueio interno)
+    const sqlBloqueios = `
+      SELECT
+        id,
+        data,
+        tipo,
+        descricao
+      FROM calendario_bloqueios
       WHERE EXTRACT(YEAR FROM data) = $1
         AND EXTRACT(MONTH FROM data) = $2
+      ORDER BY data ASC;
     `;
-    const feriados = (await query(sqlFeriados, [ano, mes])).rows;
+    const { rows: bloqueios } = await query(sqlBloqueios, [ano, mes]);
 
-    res.json({ reservas: rows, feriados });
+    const feriados = bloqueios.filter((b) =>
+      ["feriado_nacional", "feriado_municipal", "ponto_facultativo"].includes(b.tipo)
+    );
+    const datas_bloqueadas = bloqueios.filter((b) => b.tipo === "bloqueio_interno");
+
+    return res.json({
+      ano,
+      mes,
+      reservas,
+      feriados,
+      datas_bloqueadas,
+    });
   } catch (err) {
     console.error("[listarAgendaUsuario] Erro:", err);
-    res.status(500).json({ erro: "Erro ao carregar disponibilidade das salas." });
+    return res
+      .status(500)
+      .json({ erro: "Erro ao carregar disponibilidade das salas." });
   }
 }
 
@@ -214,11 +237,23 @@ async function solicitarReserva(req, res) {
         .json({ erro: "Não é possível agendar em sábados ou domingos." });
     }
 
-    const feriadoSql = `SELECT 1 FROM feriados WHERE data = $1`;
-    const feriado = await query(feriadoSql, [data]);
-    if (feriado.rowCount > 0) {
+    const bloqueio = await query(
+      `
+        SELECT 1
+          FROM calendario_bloqueios
+         WHERE data = $1
+           AND tipo = ANY(ARRAY[
+             'feriado_nacional'::varchar,
+             'feriado_municipal'::varchar,
+             'ponto_facultativo'::varchar,
+             'bloqueio_interno'::varchar
+           ]);
+      `,
+      [data]
+    );
+    if (bloqueio.rowCount > 0) {
       return res.status(400).json({
-        erro: "Não é possível agendar em feriados/pontos facultativos.",
+        erro: "Não é possível agendar em feriados, pontos facultativos ou datas bloqueadas.",
       });
     }
 
@@ -302,10 +337,26 @@ async function atualizarReservaUsuario(req, res) {
       return res.status(400).json({ erro: "Não é possível agendar em sábados ou domingos." });
     }
 
-    const feriado = await query(`SELECT 1 FROM feriados WHERE data = $1`, [data]);
-    if (feriado.rowCount > 0) {
-      return res.status(400).json({ erro: "Não é possível agendar em feriados/pontos facultativos." });
+    const bloqueio = await query(
+      `
+        SELECT 1
+          FROM calendario_bloqueios
+         WHERE data = $1
+           AND tipo = ANY(ARRAY[
+             'feriado_nacional'::varchar,
+             'feriado_municipal'::varchar,
+             'ponto_facultativo'::varchar,
+             'bloqueio_interno'::varchar
+           ]);
+      `,
+      [data]
+    );
+    if (bloqueio.rowCount > 0) {
+      return res.status(400).json({
+        erro: "Não é possível agendar em feriados, pontos facultativos ou datas bloqueadas.",
+      });
     }
+    
 
     const conflito = await query(
       `SELECT 1
