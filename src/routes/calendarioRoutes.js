@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const calendarioController = require("../controllers/calendarioController");
-const auth = require("../middlewares/auth");
+const auth = require("../auth/authMiddleware");
 
 // Admin lista
 router.get("/", auth, calendarioController.listar);

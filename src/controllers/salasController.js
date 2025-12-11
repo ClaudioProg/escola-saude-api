@@ -1,12 +1,12 @@
 // 📁 src/controllers/salasController.js
-const db = require("../db");
+const { query, getClient } = require("../db");
+const IS_DEV = process.env.NODE_ENV !== "production";
 
 /* ======================================================================= */
 /* Helpers de data (sem surpresas de fuso)                                 */
 /* ======================================================================= */
 
 function parseISODate(dateStr) {
-  // Cria Date fixada ao "meio-dia" local, evitando problemas de fuso
   return new Date(`${dateStr}T12:00:00`);
 }
 
@@ -24,7 +24,6 @@ function isWeekend(dateStr) {
 }
 
 function hojeISO() {
-  // hoje no horário local, formatado como YYYY-MM-DD
   return toISODateString(new Date());
 }
 
@@ -32,10 +31,10 @@ function hojeISO() {
 /* Helper para ano/mês com fallback seguro                                 */
 /* ======================================================================= */
 
-function getAnoMesFromQuery(query) {
+function getAnoMesFromQuery(queryObj) {
   const now = new Date();
-  let ano = Number(query.ano);
-  let mes = Number(query.mes); // 1-12
+  let ano = Number(queryObj.ano);
+  let mes = Number(queryObj.mes); // 1-12
 
   if (!Number.isFinite(ano) || ano < 2000 || ano > 2100) {
     ano = now.getFullYear();
@@ -51,65 +50,72 @@ function getAnoMesFromQuery(query) {
 /* GET /api/salas/agenda-admin                                             */
 /* Query params: ano, mes (1-12), sala (opcional)                          */
 /* ======================================================================= */
+
 async function listarAgendaAdmin(req, res) {
   try {
-    const { ano, mes } = getAnoMesFromQuery(req.query);
-    const sala = req.query.sala || null; // 'auditorio' | 'sala_reuniao' | null
+    const ano = parseInt(req.query.ano, 10) || new Date().getFullYear();
+    const mes = parseInt(req.query.mes, 10) || (new Date().getMonth() + 1);
+    const sala = req.query.sala && req.query.sala.trim() ? req.query.sala.trim() : null;
 
-    console.log("[listarAgendaAdmin] query recebida:", req.query, "-> usando", {
-      ano,
-      mes,
-      sala,
-    });
+    console.log("[listarAgendaAdmin] query recebida:", { ano, mes, sala });
 
-    const params = [ano, mes];
-    let whereSala = "";
-    if (sala) {
-      whereSala = "AND rs.sala = $3";
-      params.push(sala);
-    }
-
-    const sql = `
+    // 🔹 Reservas das salas
+    const paramsBase = [ano, mes];
+    let sqlReservas = `
       SELECT
-        rs.id,
-        rs.sala,
-        rs.data,
-        rs.periodo,
-        rs.qtd_pessoas,
-        rs.coffee_break,
-        rs.status,
-        rs.solicitante_id,
-        u.nome AS nome_solicitante,
-        un.nome AS nome_unidade_solicitante,
-        rs.observacao_admin,
-        rs.finalidade
-      FROM reservas_salas rs
-      JOIN usuarios u ON u.id = rs.solicitante_id
-      LEFT JOIN unidades un ON un.id = u.unidade_id
-      WHERE EXTRACT(YEAR FROM rs.data) = $1
-        AND EXTRACT(MONTH FROM rs.data) = $2
-        ${whereSala}
-      ORDER BY rs.data, rs.sala, rs.periodo;
-    `;
-
-    const { rows } = await db.query(sql, params);
-
-    // feriados do mês
-    const sqlFeriados = `
-      SELECT data, descricao, tipo
-      FROM feriados
+        id,
+        sala,
+        data,
+        periodo,
+        qtd_pessoas,
+        coffee_break,
+        status,
+        observacao_admin AS observacao,
+        finalidade,
+        solicitante_id
+      FROM reservas_salas
       WHERE EXTRACT(YEAR FROM data) = $1
         AND EXTRACT(MONTH FROM data) = $2
     `;
-    const feriados = (await db.query(sqlFeriados, [ano, mes])).rows;
 
-    res.json({
-      reservas: rows,
-      feriados, // [{data, descricao, tipo}]
+    if (sala) {
+      sqlReservas += ` AND sala = $3`;
+      paramsBase.push(sala);
+    }
+
+    sqlReservas += ` ORDER BY data ASC, sala ASC, periodo ASC`;
+
+    const { rows: reservas } = await query(sqlReservas, paramsBase);
+
+    // 🔹 Bloqueios do calendário
+    const sqlBloqueios = `
+      SELECT
+        id,
+        data,
+        tipo,
+        descricao
+      FROM calendario_bloqueios
+      WHERE EXTRACT(YEAR FROM data) = $1
+        AND EXTRACT(MONTH FROM data) = $2
+      ORDER BY data ASC;
+    `;
+    const { rows: bloqueios } = await query(sqlBloqueios, [ano, mes]);
+
+    const feriados = bloqueios.filter((b) =>
+      ["feriado_nacional", "feriado_municipal", "ponto_facultativo"].includes(b.tipo)
+    );
+    const datas_bloqueadas = bloqueios.filter((b) => b.tipo === "bloqueio_interno");
+
+    return res.json({
+      ano,
+      mes,
+      reservas,
+      feriados,
+      datas_bloqueadas,
     });
   } catch (err) {
-    console.error("[listarAgendaAdmin] Erro:", err);
-    res.status(500).json({ erro: "Erro ao carregar agenda." });
+    console.error("[listarAgendaAdmin] ERRO:", err);
+    return res.status(500).json({ erro: "Erro ao listar agenda das salas." });
   }
 }
 
@@ -150,7 +156,7 @@ async function listarAgendaUsuario(req, res) {
         ${whereSala}
       ORDER BY rs.data, rs.sala, rs.periodo;
     `;
-    const { rows } = await db.query(sql, params);
+    const { rows } = await query(sql, params);
 
     const sqlFeriados = `
       SELECT data, descricao, tipo
@@ -158,7 +164,7 @@ async function listarAgendaUsuario(req, res) {
       WHERE EXTRACT(YEAR FROM data) = $1
         AND EXTRACT(MONTH FROM data) = $2
     `;
-    const feriados = (await db.query(sqlFeriados, [ano, mes])).rows;
+    const feriados = (await query(sqlFeriados, [ano, mes])).rows;
 
     res.json({ reservas: rows, feriados });
   } catch (err) {
@@ -209,7 +215,7 @@ async function solicitarReserva(req, res) {
     }
 
     const feriadoSql = `SELECT 1 FROM feriados WHERE data = $1`;
-    const feriado = await db.query(feriadoSql, [data]);
+    const feriado = await query(feriadoSql, [data]);
     if (feriado.rowCount > 0) {
       return res.status(400).json({
         erro: "Não é possível agendar em feriados/pontos facultativos.",
@@ -222,7 +228,7 @@ async function solicitarReserva(req, res) {
       VALUES ($1, $2, $3, $4, $5, $6, 'pendente', $7)
       RETURNING *;
     `;
-    const { rows } = await db.query(insertSql, [
+    const { rows } = await query(insertSql, [
       sala,
       data,
       periodo,
@@ -255,8 +261,7 @@ async function atualizarReservaUsuario(req, res) {
 
     const userId = req.user.id;
 
-    // 1) carrega a reserva e checa titularidade + status
-    const sel = await db.query(
+    const sel = await query(
       `SELECT * FROM reservas_salas WHERE id = $1`,
       [id]
     );
@@ -267,7 +272,6 @@ async function atualizarReservaUsuario(req, res) {
     if (atual.status !== "pendente")
       return res.status(403).json({ erro: "Edição permitida apenas enquanto pendente." });
 
-    // 2) compõe os novos valores (fallback para os atuais)
     const sala         = req.body.sala        ?? atual.sala;
     const data         = req.body.data        ?? toISODateString(new Date(atual.data));
     const periodo      = req.body.periodo     ?? atual.periodo;
@@ -279,7 +283,6 @@ async function atualizarReservaUsuario(req, res) {
       ? String(req.body.finalidade).trim()
       : (atual.finalidade ?? null);
 
-    // 3) validações
     if (!sala || !data || !periodo || !qtd_pessoas) {
       return res.status(400).json({ erro: "Sala, data, período e quantidade são obrigatórios." });
     }
@@ -299,13 +302,12 @@ async function atualizarReservaUsuario(req, res) {
       return res.status(400).json({ erro: "Não é possível agendar em sábados ou domingos." });
     }
 
-    const feriado = await db.query(`SELECT 1 FROM feriados WHERE data = $1`, [data]);
+    const feriado = await query(`SELECT 1 FROM feriados WHERE data = $1`, [data]);
     if (feriado.rowCount > 0) {
       return res.status(400).json({ erro: "Não é possível agendar em feriados/pontos facultativos." });
     }
 
-    // 4) checagem de conflito (ignora a própria reserva)
-    const conflito = await db.query(
+    const conflito = await query(
       `SELECT 1
          FROM reservas_salas
         WHERE sala = $1 AND data = $2 AND periodo = $3 AND id <> $4`,
@@ -317,8 +319,7 @@ async function atualizarReservaUsuario(req, res) {
       });
     }
 
-    // 5) aplica a atualização
-    const upd = await db.query(
+    const upd = await query(
       `UPDATE reservas_salas
           SET sala = $2,
               data = $3,
@@ -352,8 +353,7 @@ async function excluirReservaUsuario(req, res) {
 
     const userId = req.user.id;
 
-    // Só pode excluir a própria e se estiver pendente
-    const sel = await db.query(
+    const sel = await query(
       `SELECT status, solicitante_id FROM reservas_salas WHERE id = $1`,
       [id]
     );
@@ -366,7 +366,7 @@ async function excluirReservaUsuario(req, res) {
     if (r.status !== "pendente")
       return res.status(403).json({ erro: "Exclusão permitida apenas enquanto pendente." });
 
-    const del = await db.query(`DELETE FROM reservas_salas WHERE id = $1`, [id]);
+    const del = await query(`DELETE FROM reservas_salas WHERE id = $1`, [id]);
     if (!del.rowCount) {
       return res.status(404).json({ erro: "Reserva não encontrada." });
     }
@@ -382,11 +382,33 @@ async function excluirReservaUsuario(req, res) {
 /* Helpers de recorrência para admin                                       */
 /* ======================================================================= */
 
-// 📌 Gera datas futuras a partir de uma data base, conforme recorrência.
-// Retorna array de strings 'YYYY-MM-DD' (somente FUTURAS, sem incluir a base).
+// Gera datas futuras a partir de uma data base, conforme recorrência.
+// Retorna array de 'YYYY-MM-DD' (somente FUTURAS, sem incluir a base).
 function gerarDatasRecorrencia(dataBaseISO, recorrencia) {
   if (!recorrencia || !recorrencia.tipo) return [];
   const tipo = recorrencia.tipo;
+
+  // 🔹 Caso ESPECIAL: "sempre" (repete mensalmente até limiteMeses)
+  if (tipo === "sempre") {
+    const limiteMeses = Math.min(Number(recorrencia.limiteMeses) || 24, 120);
+    const base = parseISODate(dataBaseISO);
+    const datas = [];
+    for (let i = 1; i <= limiteMeses; i++) {
+      const d = new Date(base);
+      d.setMonth(d.getMonth() + i);
+      // se o mês não tiver o mesmo dia (ex.: 31), cai no último dia do mês
+      if (d.getMonth() === (base.getMonth() + i) % 12) {
+        // ok
+      } else {
+        const last = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+        d.setDate(last.getDate());
+      }
+      datas.push(toISODateString(d));
+    }
+    return datas;
+  }
+
+  // Demais tipos precisam de 'repeticoes'
   const repeticoes = Number(recorrencia.repeticoes) || 0;
   if (repeticoes <= 0) return [];
 
@@ -406,16 +428,14 @@ function gerarDatasRecorrencia(dataBaseISO, recorrencia) {
     for (let i = 1; i <= limiteDias && results.length < repeticoes; i++) {
       const d = new Date(baseTime + i * oneDayMs);
       const diffDays = Math.floor((d - baseDate) / oneDayMs);
-      const weekIndex = Math.floor(diffDays / 7); // 0,1,2...
+      const weekIndex = Math.floor(diffDays / 7);
       if (weekIndex % intSem !== 0) continue;
 
       const dow = d.getDay(); // 0-6
       if (!diasSet.has(dow)) continue;
 
       const iso = toISODateString(d);
-      if (iso !== dataBaseISO) {
-        results.push(iso);
-      }
+      if (iso !== dataBaseISO) results.push(iso);
     }
     return results;
   }
@@ -438,14 +458,13 @@ function gerarDatasRecorrencia(dataBaseISO, recorrencia) {
       const month = targetMonthIndex % 12;
 
       let d;
-
       if (modo === "ordem_semana" && diaSemanaBaseIndex != null) {
         d = getDateByOrdemSemana(
           year,
           month,
-          diaSemanaBaseIndex,
-          ordemSemanaBase,
-          ehUltimaSemana
+          Number(diaSemanaBaseIndex),
+          Number(ordemSemanaBase),
+          !!ehUltimaSemana
         );
       } else {
         const lastDayOfMonth = new Date(year, month + 1, 0).getDate();
@@ -457,11 +476,8 @@ function gerarDatasRecorrencia(dataBaseISO, recorrencia) {
       }
 
       const iso = toISODateString(d);
-      if (iso !== dataBaseISO) {
-        results.push(iso);
-      }
+      if (iso !== dataBaseISO) results.push(iso);
     }
-
     return results;
   }
 
@@ -469,7 +485,6 @@ function gerarDatasRecorrencia(dataBaseISO, recorrencia) {
     const {
       modo = "dia_mes",
       diaMesBase,
-      mesBaseIndex,
       diaSemanaBaseIndex,
       ordemSemanaBase,
       ehUltimaSemana,
@@ -483,7 +498,6 @@ function gerarDatasRecorrencia(dataBaseISO, recorrencia) {
     const maxLoops = repeticoes * 3;
 
     let yearOffset = 0;
-
     while (results.length < repeticoes && yearOffset <= maxLoops) {
       const year = baseYear + yearOffset;
 
@@ -492,18 +506,18 @@ function gerarDatasRecorrencia(dataBaseISO, recorrencia) {
         if (modo === "ordem_semana" && diaSemanaBaseIndex != null) {
           d = getDateByOrdemSemana(
             year,
-            m,
-            diaSemanaBaseIndex,
-            ordemSemanaBase,
-            ehUltimaSemana
+            Number(m),
+            Number(diaSemanaBaseIndex),
+            Number(ordemSemanaBase),
+            !!ehUltimaSemana
           );
         } else {
-          const lastDayOfMonth = new Date(year, m + 1, 0).getDate();
+          const lastDayOfMonth = new Date(year, Number(m) + 1, 0).getDate();
           const day = Math.min(
             Number(diaMesBase) || baseDate.getDate(),
             lastDayOfMonth
           );
-          d = new Date(year, m, day, 12, 0, 0);
+          d = new Date(year, Number(m), day, 12, 0, 0);
         }
 
         const iso = toISODateString(d);
@@ -515,7 +529,6 @@ function gerarDatasRecorrencia(dataBaseISO, recorrencia) {
 
       yearOffset += 1;
     }
-
     return results;
   }
 
@@ -559,8 +572,15 @@ function getDateByOrdemSemana(
 /* POST /api/salas/admin/reservas (admin cria reserva + recorrência)       */
 /* ======================================================================= */
 async function criarReservaAdmin(req, res) {
-  const client = await db.connect();
+  let client;
+
+  // 🔍 LOGA o que está chegando do modal
+  console.log("\n[criarReservaAdmin] body recebido:");
+  console.dir(req.body, { depth: null });
+
   try {
+    client = await getClient();
+
     const adminId = req.user.id;
     const {
       sala,
@@ -571,48 +591,92 @@ async function criarReservaAdmin(req, res) {
       status = "aprovado",
       observacao,
       recorrencia = null,
-      finalidade, // opcional (mas útil)
+      finalidade, // opcional
     } = req.body;
 
+    console.log("[criarReservaAdmin] parametros basicos:", {
+      sala,
+      data,
+      periodo,
+      qtd_pessoas,
+      coffee_break,
+      status,
+      finalidade,
+      temRecorrencia: !!recorrencia,
+    });
+
     if (!sala || !data || !periodo || !qtd_pessoas) {
-      client.release();
       return res.status(400).json({
         erro: "Sala, data, período e quantidade são obrigatórios.",
       });
     }
 
     const capacidadeMax = sala === "auditorio" ? 60 : 30;
-    if (qtd_pessoas > capacidadeMax) {
-      client.release();
+    if (Number(qtd_pessoas) > capacidadeMax) {
       return res.status(400).json({
         erro: `Capacidade máxima para esta sala é de ${capacidadeMax} pessoas.`,
       });
     }
 
-    const datasRecorrentes = gerarDatasRecorrencia(data, recorrencia);
+    // 🔁 gera datas de recorrência (se houver)
+    let datasRecorrentes = [];
+    try {
+      datasRecorrentes = gerarDatasRecorrencia(data, recorrencia);
+      console.log(
+        "[criarReservaAdmin] datas recorrentes geradas:",
+        datasRecorrentes
+      );
+    } catch (eRec) {
+      console.error("[criarReservaAdmin] ERRO em gerarDatasRecorrencia:", eRec);
+      // se der erro aqui, não derruba tudo, só ignora recorrência
+      datasRecorrentes = [];
+    }
+
     const todasDatas = [data, ...datasRecorrentes];
-
     const datasUnicas = Array.from(new Set(todasDatas));
-    const feriadoRes = await db.query(
-      "SELECT data FROM feriados WHERE data = ANY($1::date[])",
-      [datasUnicas]
-    );
-    const feriadosSet = new Set(
-      feriadoRes.rows.map((r) => r.data.toISOString().slice(0, 10))
-    );
 
-    const datasValidas = datasUnicas.filter(
-      (dt) => !isWeekend(dt) && !feriadosSet.has(dt)
-    );
+    console.log("[criarReservaAdmin] todasDatas:", todasDatas);
+    console.log("[criarReservaAdmin] datasUnicas:", datasUnicas);
+
+    // 🔎 feriados nessas datas
+    // 🔎 bloqueios nessas datas (feriados, ponto facultativo, bloqueio interno)
+const bloqueiosRes = await query(
+  `
+  SELECT data, tipo
+  FROM calendario_bloqueios
+  WHERE data = ANY($1::date[])
+    AND tipo = ANY(ARRAY[
+      'feriado_nacional'::varchar,
+      'feriado_municipal'::varchar,
+      'ponto_facultativo'::varchar,
+      'bloqueio_interno'::varchar
+    ])
+  `,
+  [datasUnicas]
+);
+
+const bloqueiosSet = new Set(
+  bloqueiosRes.rows.map((r) => r.data.toISOString().slice(0, 10))
+);
+
+console.log("[criarReservaAdmin] bloqueios encontrados:", bloqueiosSet);
+
+// remove fins de semana e qualquer data bloqueada
+const datasValidas = datasUnicas.filter(
+  (dt) => !isWeekend(dt) && !bloqueiosSet.has(dt)
+);
+
+console.log("[criarReservaAdmin] datasValidas:", datasValidas);
+
 
     if (datasValidas.length === 0) {
-      client.release();
       return res.status(400).json({
         erro:
           "Nenhuma data válida para agendamento (todas caem em finais de semana ou feriados/pontos facultativos).",
       });
     }
 
+    // SQL base de insert (usaremos com SAVEPOINT a cada loop)
     const insertSql = `
       INSERT INTO reservas_salas
         (sala, data, periodo, qtd_pessoas, coffee_break, solicitante_id, status, observacao_admin, finalidade)
@@ -626,31 +690,51 @@ async function criarReservaAdmin(req, res) {
     const conflitos = [];
 
     for (const dt of datasValidas) {
+      console.log("[criarReservaAdmin] tentando inserir data:", dt);
+
+      // 🔹 cria SAVEPOINT para isolar erro desta data
+      await client.query("SAVEPOINT sp_reserva");
+
       try {
         const { rows } = await client.query(insertSql, [
           sala,
           dt,
           periodo,
-          qtd_pessoas,
-          coffee_break,
+          Number(qtd_pessoas),
+          !!coffee_break,
           adminId,
           status,
           observacao || null,
           finalidade ? String(finalidade).trim() : null,
         ]);
+
         inseridas.push(rows[0]);
-      } catch (err) {
-        if (err.code === "23505") {
+      } catch (errInsert) {
+        console.error(
+          "[criarReservaAdmin] erro ao inserir data",
+          dt,
+          "- code:",
+          errInsert.code,
+          "- msg:",
+          errInsert.message
+        );
+
+        if (errInsert.code === "23505") {
+          // conflito de unicidade → desfaz só essa tentativa e segue
+          await client.query("ROLLBACK TO SAVEPOINT sp_reserva");
           conflitos.push(dt);
         } else {
-          throw err;
+          // erro real → propaga para o catch externo
+          throw errInsert;
         }
       }
     }
 
+    console.log("[criarReservaAdmin] inseridas:", inseridas.length);
+    console.log("[criarReservaAdmin] conflitos:", conflitos);
+
     if (conflitos.length > 0 && inseridas.length === 0) {
       await client.query("ROLLBACK");
-      client.release();
       return res.status(409).json({
         erro:
           "Já existem reservas para esta sala em algumas das datas/períodos selecionados.",
@@ -659,16 +743,22 @@ async function criarReservaAdmin(req, res) {
     }
 
     await client.query("COMMIT");
-    client.release();
-
     return res.status(201).json({ inseridas, conflitos });
   } catch (err) {
     try {
-      await client.query("ROLLBACK");
-    } catch (_) {}
-    client.release();
-    console.error("[criarReservaAdmin] Erro:", err);
-    return res.status(500).json({ erro: "Erro ao criar reserva de sala." });
+      if (client) await client.query("ROLLBACK");
+    } catch (rollbackErr) {
+      console.error("[criarReservaAdmin] erro no ROLLBACK:", rollbackErr);
+    }
+
+    console.error("[criarReservaAdmin] ERRO GERAL:", err);
+
+    return res.status(500).json({
+      erro: "Erro ao criar reserva de sala.",
+      detalhe: IS_DEV ? err.message : undefined, // aparece no Network → Response
+    });
+  } finally {
+    if (client) client.release();
   }
 }
 
@@ -703,7 +793,7 @@ async function atualizarReservaAdmin(req, res) {
       RETURNING *;
     `;
 
-    const { rows } = await db.query(sql, [
+    const { rows } = await query(sql, [
       id,
       status || null,
       qtd_pessoas || null,
@@ -733,7 +823,7 @@ async function excluirReservaAdmin(req, res) {
       return res.status(400).json({ erro: "ID inválido." });
     }
 
-    const { rowCount } = await db.query(
+    const { rowCount } = await query(
       `DELETE FROM reservas_salas WHERE id = $1`,
       [id]
     );

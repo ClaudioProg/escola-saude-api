@@ -65,6 +65,7 @@ const AdminAvaliacoes        = lazy(() => import("./pages/AdminAvaliacoes"));
 const VotacoesUsuario        = lazy(() => import("./pages/VotacoesUsuario"));
 const AgendaSalasAdmin       = lazy(() => import("./pages/AgendaSalasAdmin"));
 const AdminChamadaForm       = lazy(() => import("./pages/AdminChamadaForm"));
+const CalendarioBloqueiosAdmin = lazy(() => import("./pages/CalendarioBloqueiosAdmin"));
 
 // ✅ Confirmação via QR
 const ConfirmarPresenca      = lazy(() => import("./pages/ConfirmarPresenca"));
@@ -416,6 +417,14 @@ export default function App() {
             <Route path="/admin/solicitacoes-curso" element={<PrivateRoute permitido={["administrador"]}><SolicitacaoCursoAdmin /></PrivateRoute>} />
             <Route path="/admin/agenda-salas" element={<PrivateRoute permitido={["administrador"]}><AgendaSalasAdmin /></PrivateRoute>} />
             <Route path="/agenda-salas" element={<PrivateRoute permitido={["usuario", "instrutor", "administrador"]}><AgendaSalasUsuario /></PrivateRoute>} />
+            <Route
+  path="/admin/calendario-bloqueios"
+  element={
+    <PrivateRoute permitido={["administrador"]}>
+      <CalendarioBloqueiosAdmin />
+    </PrivateRoute>
+  }
+/>
 
             {/* Votações */}
             <Route path="/admin/votacoes" element={<PrivateRoute permitido={["administrador"]}><AdminVotacoes /></PrivateRoute>} />
