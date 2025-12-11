@@ -18,10 +18,15 @@ function toISODateString(dateObj) {
 }
 
 function isWeekend(dateStr) {
-    const d = parseISODate(dateStr);
-    const dow = d.getDay(); // 0 = domingo, 6 = sábado (local)
-    return dow === 0 || dow === 6;
-  }
+  const d = parseISODate(dateStr);
+  const dow = d.getDay(); // 0 = domingo, 6 = sábado (local)
+  return dow === 0 || dow === 6;
+}
+
+function hojeISO() {
+  // hoje no horário local, formatado como YYYY-MM-DD
+  return toISODateString(new Date());
+}
 
 /* ======================================================================= */
 /* Helper para ano/mês com fallback seguro                                 */
@@ -65,27 +70,27 @@ async function listarAgendaAdmin(req, res) {
     }
 
     const sql = `
-  SELECT
-    rs.id,
-    rs.sala,
-    rs.data,
-    rs.periodo,
-    rs.qtd_pessoas,
-    rs.coffee_break,
-    rs.status,
-    rs.solicitante_id,
-    u.nome AS nome_solicitante,
-    un.nome AS nome_unidade_solicitante,
-    rs.observacao_admin,
-    rs.finalidade
-  FROM reservas_salas rs
-  JOIN usuarios u ON u.id = rs.solicitante_id
-  LEFT JOIN unidades un ON un.id = u.unidade_id
-  WHERE EXTRACT(YEAR FROM rs.data) = $1
-    AND EXTRACT(MONTH FROM rs.data) = $2
-    ${whereSala}
-  ORDER BY rs.data, rs.sala, rs.periodo;
-`;
+      SELECT
+        rs.id,
+        rs.sala,
+        rs.data,
+        rs.periodo,
+        rs.qtd_pessoas,
+        rs.coffee_break,
+        rs.status,
+        rs.solicitante_id,
+        u.nome AS nome_solicitante,
+        un.nome AS nome_unidade_solicitante,
+        rs.observacao_admin,
+        rs.finalidade
+      FROM reservas_salas rs
+      JOIN usuarios u ON u.id = rs.solicitante_id
+      LEFT JOIN unidades un ON un.id = u.unidade_id
+      WHERE EXTRACT(YEAR FROM rs.data) = $1
+        AND EXTRACT(MONTH FROM rs.data) = $2
+        ${whereSala}
+      ORDER BY rs.data, rs.sala, rs.periodo;
+    `;
 
     const { rows } = await db.query(sql, params);
 
@@ -112,7 +117,6 @@ async function listarAgendaAdmin(req, res) {
 /* GET /api/salas/agenda-usuario                                           */
 /* Query params: ano, mes (1-12), sala (opcional)                          */
 /* ======================================================================= */
-// 📁 src/controllers/salasController.js
 async function listarAgendaUsuario(req, res) {
   try {
     const { ano, mes } = getAnoMesFromQuery(req.query);
@@ -123,7 +127,10 @@ async function listarAgendaUsuario(req, res) {
 
     const params = [ano, mes, usuarioId];
     let whereSala = "";
-    if (sala) { whereSala = "AND rs.sala = $4"; params.push(sala); }
+    if (sala) {
+      whereSala = "AND rs.sala = $4";
+      params.push(sala);
+    }
 
     const sql = `
       SELECT
@@ -162,7 +169,7 @@ async function listarAgendaUsuario(req, res) {
 
 /* ======================================================================= */
 /* POST /api/salas/solicitar (usuário)                                     */
-/* body: { sala, data, periodo, qtd_pessoas, coffee_break }                */
+/* body: { sala, data, periodo, qtd_pessoas, coffee_break, finalidade }    */
 /* ======================================================================= */
 async function solicitarReserva(req, res) {
   try {
@@ -173,7 +180,7 @@ async function solicitarReserva(req, res) {
       periodo,
       qtd_pessoas,
       coffee_break = false,
-      finalidade,          // 👈 novo
+      finalidade, // obrigatório
     } = req.body;
 
     if (!sala || !data || !periodo || !qtd_pessoas) {
@@ -222,7 +229,7 @@ async function solicitarReserva(req, res) {
       qtd_pessoas,
       coffee_break,
       usuarioId,
-      finalidade.trim(),
+      String(finalidade).trim(),
     ]);
 
     res.status(201).json(rows[0]);
@@ -237,14 +244,9 @@ async function solicitarReserva(req, res) {
   }
 }
 
-function hojeISO() {
-  // hoje no horário local, formatado como YYYY-MM-DD
-  return toISODateString(new Date());
-}
-
 /* ======================================================================= */
-/* PUT /api/salas/minhas/:id (usuário edita a própria solicitação pendente)*/
-/* body: { sala?, data?, periodo?, qtd_pessoas?, coffee_break?, finalidade? } */
+/* PUT /api/salas/minhas/:id (usuário edita a própria solicitação)         */
+/* body: { sala?, data?, periodo?, qtd_pessoas?, coffee_break?, finalidade?}*/
 /* ======================================================================= */
 async function atualizarReservaUsuario(req, res) {
   try {
@@ -266,14 +268,14 @@ async function atualizarReservaUsuario(req, res) {
       return res.status(403).json({ erro: "Edição permitida apenas enquanto pendente." });
 
     // 2) compõe os novos valores (fallback para os atuais)
-    const sala        = req.body.sala        ?? atual.sala;
-    const data        = req.body.data        ?? toISODateString(new Date(atual.data));
-    const periodo     = req.body.periodo     ?? atual.periodo;
-    const qtd_pessoas = req.body.qtd_pessoas ?? atual.qtd_pessoas;
+    const sala         = req.body.sala        ?? atual.sala;
+    const data         = req.body.data        ?? toISODateString(new Date(atual.data));
+    const periodo      = req.body.periodo     ?? atual.periodo;
+    const qtd_pessoas  = req.body.qtd_pessoas ?? atual.qtd_pessoas;
     const coffee_break = (typeof req.body.coffee_break === "boolean")
       ? req.body.coffee_break
       : atual.coffee_break;
-    const finalidade  = (req.body.finalidade != null)
+    const finalidade   = (req.body.finalidade != null)
       ? String(req.body.finalidade).trim()
       : (atual.finalidade ?? null);
 
@@ -289,7 +291,6 @@ async function atualizarReservaUsuario(req, res) {
       });
     }
 
-    // Opcional: não permitir editar para datas passadas
     if (data < hojeISO()) {
       return res.status(400).json({ erro: "Não é possível agendar para data passada." });
     }
@@ -570,7 +571,7 @@ async function criarReservaAdmin(req, res) {
       status = "aprovado",
       observacao,
       recorrencia = null,
-      finalidade, // 👈 novo (opcional, mas muito útil)
+      finalidade, // opcional (mas útil)
     } = req.body;
 
     if (!sala || !data || !periodo || !qtd_pessoas) {
@@ -686,18 +687,18 @@ async function atualizarReservaAdmin(req, res) {
       qtd_pessoas,
       coffee_break,
       observacao,
-      finalidade, // 👈 novo
+      finalidade, // opcional
     } = req.body;
 
     const sql = `
       UPDATE reservas_salas
       SET
-        status          = COALESCE($2, status),
-        qtd_pessoas     = COALESCE($3, qtd_pessoas),
-        coffee_break    = COALESCE($4, coffee_break),
-        observacao_admin= COALESCE($5, observacao_admin),
-        finalidade      = COALESCE($6, finalidade),
-        updated_at      = now()
+        status           = COALESCE($2, status),
+        qtd_pessoas      = COALESCE($3, qtd_pessoas),
+        coffee_break     = COALESCE($4, coffee_break),
+        observacao_admin = COALESCE($5, observacao_admin),
+        finalidade       = COALESCE($6, finalidade),
+        updated_at       = now()
       WHERE id = $1
       RETURNING *;
     `;

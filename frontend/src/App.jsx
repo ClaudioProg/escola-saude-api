@@ -1,4 +1,4 @@
-// 📁 src/App.jsx
+// 📁 src/App.jsx 
 import {
   BrowserRouter,
   Routes,
@@ -12,11 +12,11 @@ import {
 import PrivateRoute from "./components/PrivateRoute";
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import Navbar from "./components/Navbar";
-import CertificadosAvulsos from "./pages/CertificadosAvulsos";
+import CertificadosAvulsos from "./pages/CertificadosAvulsos"; // (confira o nome do arquivo se necessário)
 import QRCodesEventosAdmin from "./pages/QRCodesEventosAdmin";
 import QrDoSite from "./pages/QrDoSite";
 
-// 🔄 Lazy loading das páginas (sem deps extras)
+// 🔄 Lazy loading das páginas
 const Login                  = lazy(() => import("./pages/Login"));
 const Cadastro               = lazy(() => import("./pages/Cadastro"));
 const ValidarCertificado     = lazy(() => import("./pages/ValidarCertificado"));
@@ -35,6 +35,8 @@ const AgendaSalasUsuario     = lazy(() => import("./pages/AgendaSalasUsuario"));
 const SolicitacaoCurso       = lazy(() => import("./pages/SolicitacaoCurso"));
 const AgendaUsuario          = lazy(() => import("./pages/AgendaUsuario"));
 const RepositorioTrabalhos   = lazy(() => import("./pages/RepositorioTrabalhos"));
+const UsuarioSubmissoes      = lazy(() => import("./pages/UsuarioSubmissoes"));
+const AvaliadorSubmissoes    = lazy(() => import("./pages/AvaliadorSubmissoes"));
 
 const DashboardInstrutor     = lazy(() => import("./pages/DashboardInstrutor"));
 const AgendaInstrutor        = lazy(() => import("./pages/AgendaInstrutor"));
@@ -62,35 +64,24 @@ const CancelarInscricoesAdmin= lazy(() => import("./pages/CancelarInscricoesAdmi
 const AdminAvaliacoes        = lazy(() => import("./pages/AdminAvaliacoes"));
 const VotacoesUsuario        = lazy(() => import("./pages/VotacoesUsuario"));
 const AgendaSalasAdmin       = lazy(() => import("./pages/AgendaSalasAdmin"));
+const AdminChamadaForm       = lazy(() => import("./pages/AdminChamadaForm"));
 
-// ✅ Página de confirmação via QR (com/sem token)
+// ✅ Confirmação via QR
 const ConfirmarPresenca      = lazy(() => import("./pages/ConfirmarPresenca"));
 
 // 🆕 Manual do Usuário
 const ManualUsuario          = lazy(() => import("./pages/usuario/Manual"));
 
-// 🆕 Páginas públicas novas
+// 🆕 Páginas públicas
 const Privacidade            = lazy(() => import("./pages/Privacidade"));
 
-// 🆕 Home pós-login (portal da Escola)
+// 🆕 Home pós-login
 const HomeEscola             = lazy(() => import("./pages/HomeEscola"));
 
 // 🆕 Admin – Votações
-const AdminVotacoes         = lazy(() => import("./pages/AdminVotacoes"));
+const AdminVotacoes          = lazy(() => import("./pages/AdminVotacoes"));
 
-/* 🆕 PÁGINAS DE SUBMISSÕES DE TRABALHOS */
-// Admin – criar/editar chamada
-const AdminChamadaForm       = lazy(() => import("./pages/AdminChamadaForm"));
-// Usuário – submeter e acompanhar
-const UsuarioSubmissoes      = lazy(() => import("./pages/UsuarioSubmissoes"));
-// Admin – listar/avaliar/responder
-const AdminSubmissoes        = lazy(() => import("./pages/AdminSubmissoes"));
-// Avaliador – trabalhos atribuídos (duplo-cego)
-const AvaliadorSubmissoes    = lazy(() => import("./pages/AvaliadorSubmissoes"));
-
-/* ──────────────────────────────────────────────────────────────
-   A11y: Announcer de mudanças de rota
-   ────────────────────────────────────────────────────────────── */
+/* A11y: Announcer de mudanças de rota */
 function RouteChangeAnnouncer() {
   const location = useLocation();
   const [message, setMessage] = useState("Carregado");
@@ -105,9 +96,7 @@ function RouteChangeAnnouncer() {
   );
 }
 
-/* ──────────────────────────────────────────────────────────────
-   ✅ Hotfix global: destrava scroll preso ao trocar de rota
-   ────────────────────────────────────────────────────────────── */
+/* Hotfix global: destrava scroll preso ao trocar de rota */
 function ScrollUnlockOnRouteChange() {
   const location = useLocation();
   useEffect(() => {
@@ -138,9 +127,7 @@ function ScrollUnlockOnRouteChange() {
   return null;
 }
 
-/* ──────────────────────────────────────────────────────────────
-   UX: Scroll para o topo em cada navegação
-   ────────────────────────────────────────────────────────────── */
+/* UX: Scroll para o topo em cada navegação */
 function ScrollToTop() {
   const { pathname } = useLocation();
   useEffect(() => {
@@ -150,25 +137,23 @@ function ScrollToTop() {
   return null;
 }
 
-/* ──────────────────────────────────────────────────────────────
-   Layout com Navbar + Skip Link
-   ────────────────────────────────────────────────────────────── */
-   function LayoutComNavbar({ children }) {
-    const location = useLocation();
-  
-    const isPublicPath = useMemo(() => {
-      const p = location.pathname;
-  
-      // checa token local (sem ping)
-      let hasToken = false;
-      try {
-        const raw = localStorage.getItem("token");
-        hasToken = !!(raw && (raw.startsWith("Bearer ") ? raw.slice(7).trim() : raw.trim()));
-      } catch {}
-  
-      return (
-        (!hasToken && p === "/") || // raiz é "pública" só para evitar flash de navbar quando vai redirecionar ao login
-        p === "/login" ||
+/* Layout com Navbar + Skip Link */
+function LayoutComNavbar({ children }) {
+  const location = useLocation();
+
+  const isPublicPath = useMemo(() => {
+    const p = location.pathname;
+
+    // token local
+    let hasToken = false;
+    try {
+      const raw = localStorage.getItem("token");
+      hasToken = !!(raw && (raw.startsWith("Bearer ") ? raw.slice(7).trim() : raw.trim()));
+    } catch {}
+
+    return (
+      (!hasToken && p === "/") ||
+      p === "/login" ||
       p === "/cadastro" ||
       p === "/recuperar-senha" ||
       p === "/validar" ||
@@ -184,7 +169,6 @@ function ScrollToTop() {
 
   return (
     <div className="min-h-screen bg-white text-gray-900 dark:bg-gray-900 dark:text-white">
-      {/* Skip link para acessibilidade */}
       <a
         href="#content"
         className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:bg-green-900 focus:text-white focus:px-4 focus:py-2 focus:rounded-xl"
@@ -194,7 +178,6 @@ function ScrollToTop() {
 
       {!isPublicPath && <Navbar />}
 
-      {/* Announcer + Scroll Unlock + ScrollToTop */}
       <RouteChangeAnnouncer />
       <ScrollUnlockOnRouteChange />
       <ScrollToTop />
@@ -206,12 +189,12 @@ function ScrollToTop() {
   );
 }
 
-// Mantém a rota /validar apontando para a página atual
+// Mantém /validar
 function ValidarWrapper() {
   return <ValidarCertificado />;
 }
 
-/** Alias para URLs antigas com extensão .html */
+/** Alias para URLs antigas .html */
 function HtmlAliasRedirect() {
   const nav = useNavigate();
   const loc = useLocation();
@@ -226,7 +209,7 @@ function HtmlAliasRedirect() {
   );
 }
 
-/** Wrapper LEGADO para QR antigo com ?codigo= */
+/** Wrapper legado para QR antigo com ?codigo= */
 function ValidarPresencaRouter() {
   const [sp] = useSearchParams();
   const navigate = useNavigate();
@@ -240,56 +223,40 @@ function ValidarPresencaRouter() {
 
     try {
       const u = new URL(raw);
-
-      // 1) querystring
       turmaId =
         u.searchParams.get("turma") ||
         u.searchParams.get("turma_id") ||
         u.searchParams.get("id");
       token = u.searchParams.get("t") || u.searchParams.get("token");
 
-      // 2) extrair do pathname sem regex
       if (!turmaId) {
         const parts = (u.pathname || "").split("/").filter(Boolean);
         const idx = parts.indexOf("presenca");
         if (idx >= 0 && parts[idx + 1]) turmaId = parts[idx + 1];
       }
-
-      // 3) fallback regex
       if (!turmaId) {
         const m = (u.pathname || "").match(/\/presenca\/(\d+)/);
         if (m && m[1]) turmaId = m[1];
       }
-
-      // 4) pathname decodificado
       if (!turmaId) {
         const decPath = decodeURIComponent(u.pathname || "");
         const m2 = decPath.match(/\/presenca\/(\d+)/);
         if (m2 && m2[1]) turmaId = m2[1];
       }
     } catch {
-      // String simples
       const dec = (() => { try { return decodeURIComponent(raw); } catch { return raw; } })();
-
-      // querystring direta
       const qs = dec.includes("?") ? dec.split("?")[1] : "";
       const qsp = new URLSearchParams(qs);
       token = qsp.get("t") || qsp.get("token") || token;
       turmaId =
-        qsp.get("turma") ||
-        qsp.get("turma_id") ||
-        qsp.get("id") ||
-        turmaId;
+        qsp.get("turma") || qsp.get("turma_id") || qsp.get("id") || turmaId;
 
-      // path “…/presenca/123”
       if (!turmaId) {
         const pathOnly = dec.split("?")[0] || "";
         const parts = pathOnly.split("/").filter(Boolean);
         const idx = parts.indexOf("presenca");
         if (idx >= 0 && parts[idx + 1]) turmaId = parts[idx + 1];
       }
-
-      // fallback final com regex
       if (!turmaId) {
         const m = dec.match(/\/presenca\/(\d+)/);
         if (m && m[1]) turmaId = m[1];
@@ -315,19 +282,18 @@ function NotFound() {
   return <Navigate to="/login" replace />;
 }
 
-/* ─────────── Wrappers para rotas com :id (submissões) ─────────── */
+/* Wrappers para rotas com :id (submissões) */
 function AdminChamadaFormWrapper() {
   const { id } = useParams();
   return <AdminChamadaForm chamadaId={id} />;
 }
 function AdminSubmissoesRouteWrapper() {
-  const { chamadaId } = useParams(); // opcional
+  const { chamadaId } = useParams();
   return <AdminSubmissoes chamadaId={chamadaId ? Number(chamadaId) : undefined} />;
 }
 
-// 🧭 Gate da rota raiz: se não logado → /login; se logado → HomeEscola
+// Gate da raiz
 function AuthLanding() {
-  // checa apenas a presença de token (sem ping no backend para evitar forçar login à toa)
   const token = (() => {
     try {
       const raw = localStorage.getItem("token");
@@ -343,9 +309,7 @@ function AuthLanding() {
     : <Navigate to="/login" replace />;
 }
 
-/* ──────────────────────────────────────────────────────────────
-   App
-   ────────────────────────────────────────────────────────────── */
+/* App */
 export default function App() {
   return (
     <BrowserRouter>
@@ -353,11 +317,7 @@ export default function App() {
         <Suspense
           fallback={
             <div className="p-6 flex items-center justify-center">
-              <span
-                role="status"
-                aria-live="polite"
-                className="inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300"
-              >
+              <span role="status" aria-live="polite" className="inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
                 <span className="inline-block h-3 w-3 animate-pulse rounded-full bg-green-900" />
                 Carregando…
               </span>
@@ -369,12 +329,12 @@ export default function App() {
             <Route path="/login" element={<Login />} />
             <Route path="/cadastro" element={<Cadastro />} />
 
-            {/* 🆕 públicas novas */}
+            {/* Páginas públicas novas */}
             <Route path="/ajuda/cadastro.html" element={<HtmlAliasRedirect />} />
             <Route path="/privacidade" element={<Privacidade />} />
             <Route path="/privacidade.html" element={<HtmlAliasRedirect />} />
 
-            {/* Certificado (nova) */}
+            {/* Certificados */}
             <Route path="/validar-certificado" element={<ValidarCertificado />} />
             <Route path="/validar-certificado.html" element={<HtmlAliasRedirect />} />
 
@@ -386,19 +346,17 @@ export default function App() {
             <Route path="/presenca" element={<ConfirmarPresenca />} />
             <Route path="/presenca/:turmaId" element={<ConfirmarPresenca />} />
 
+            {/* Outras públicas */}
             <Route path="/historico" element={<HistoricoEventos />} />
             <Route path="/recuperar-senha" element={<RecuperarSenha />} />
             <Route path="/redefinir-senha/:token" element={<RedefinirSenha />} />
             <Route path="/scanner" element={<Scanner />} />
 
             {/* 🔐 protegidas */}
-            {/* Início pós-login → HomeEscola */}
             <Route path="/" element={<AuthLanding />} />
 
-            {/* Painel do Usuário (novo caminho) */}
+            {/* Painel do Usuário */}
             <Route path="/usuario/dashboard" element={<PrivateRoute><DashboardUsuario /></PrivateRoute>} />
-
-            {/* Legado: /dashboard → redireciona */}
             <Route path="/dashboard" element={<PrivateRoute><Navigate to="/usuario/dashboard" replace /></PrivateRoute>} />
 
             <Route path="/eventos" element={<PrivateRoute><Eventos /></PrivateRoute>} />
@@ -413,21 +371,15 @@ export default function App() {
             <Route path="/teste" element={<PrivateRoute><Teste /></PrivateRoute>} />
             <Route path="/solicitar-curso" element={<PrivateRoute><SolicitacaoCurso /></PrivateRoute>} />
             <Route path="/agenda" element={<PrivateRoute><AgendaUsuario /></PrivateRoute>} />
-            {/* 🆕 Repositório de trabalhos */}
-<Route
-  path="/repositorio-trabalhos"
-  element={
-    <PrivateRoute>
-      <RepositorioTrabalhos />
-    </PrivateRoute>
-  }
-/>
 
-            {/* 🆕 Manual do Usuário */}
+            {/* Repositório de trabalhos */}
+            <Route path="/repositorio-trabalhos" element={<PrivateRoute><RepositorioTrabalhos /></PrivateRoute>} />
+
+            {/* Manual do Usuário */}
             <Route path="/usuario/manual" element={<PrivateRoute><ManualUsuario /></PrivateRoute>} />
             <Route path="/manual" element={<PrivateRoute><ManualUsuario /></PrivateRoute>} />
 
-            {/* 🧑‍🏫 / 🛠️ */}
+            {/* 🧑‍🏫 / 🛠️ Instrutor */}
             <Route path="/instrutor" element={<PrivateRoute permitido={["instrutor", "administrador"]}><DashboardInstrutor /></PrivateRoute>} />
             <Route path="/agenda-instrutor" element={<PrivateRoute permitido={["instrutor", "administrador"]}><AgendaInstrutor /></PrivateRoute>} />
             <Route path="/qr-site" element={<PrivateRoute permitido={["instrutor", "administrador"]}><QrDoSite /></PrivateRoute>} />
@@ -436,27 +388,15 @@ export default function App() {
             <Route path="/instrutor/certificados" element={<PrivateRoute permitido={["instrutor", "administrador"]}><CertificadosInstrutor /></PrivateRoute>} />
             <Route path="/instrutor/avaliacao" element={<PrivateRoute permitido={["instrutor", "administrador"]}><AvaliacaoInstrutor /></PrivateRoute>} />
 
-            {/* 🆕 ROTAS DE SUBMISSÕES DE TRABALHOS */}
-            {/* Usuário: submeter e acompanhar */}
+            {/* Submissões de Trabalhos */}
             <Route path="/submissoes" element={<PrivateRoute><UsuarioSubmissoes /></PrivateRoute>} />
-
-            {/* Avaliador: ver/avaliar trabalhos atribuídos (duplo-cego) */}
-            <Route
-              path="/avaliador/submissoes"
-              element={
-                <PrivateRoute permitido={["instrutor", "administrador"]}>
-                  <AvaliadorSubmissoes />
-                </PrivateRoute>
-              }
-            />
-
-            {/* Admin: criar/editar chamada */}
+            <Route path="/avaliador/submissoes" element={<PrivateRoute permitido={["instrutor", "administrador"]}><AvaliadorSubmissoes /></PrivateRoute>} />
             <Route path="/admin/chamadas/new" element={<PrivateRoute permitido={["administrador"]}><AdminChamadaForm /></PrivateRoute>} />
             <Route path="/admin/chamadas/:id" element={<PrivateRoute permitido={["administrador"]}><AdminChamadaFormWrapper /></PrivateRoute>} />
-            {/* Admin: ver/avaliar/responder submissões (todas ou por chamada) */}
             <Route path="/admin/submissoes" element={<PrivateRoute permitido={["administrador"]}><AdminSubmissoesRouteWrapper /></PrivateRoute>} />
             <Route path="/admin/chamadas/:chamadaId/submissoes" element={<PrivateRoute permitido={["administrador"]}><AdminSubmissoesRouteWrapper /></PrivateRoute>} />
 
+            {/* Admin */}
             <Route path="/administrador" element={<PrivateRoute permitido={["administrador"]}><DashboardAdministrador /></PrivateRoute>} />
             <Route path="/dashboard-analitico" element={<PrivateRoute permitido={["administrador"]}><DashboardAnalitico /></PrivateRoute>} />
             <Route path="/gerenciar-eventos" element={<PrivateRoute permitido={["administrador"]}><GerenciarEventos /></PrivateRoute>} />
@@ -470,59 +410,16 @@ export default function App() {
             <Route path="/gestao-presenca" element={<PrivateRoute permitido={["administrador"]}><GestaoPresencas /></PrivateRoute>} />
             <Route path="/admin/qr-codes" element={<PrivateRoute permitido={["administrador"]}><QRCodesEventosAdmin /></PrivateRoute>} />
             <Route path="/admin/cancelar-inscricoes" element={<PrivateRoute permitido={["administrador"]}><CancelarInscricoesAdmin /></PrivateRoute>} />
-            {/* 🗳️ Votações */}
-            <Route
-              path="/admin/votacoes"
-              element={
-                <PrivateRoute permitido={["administrador"]}>
-                  <AdminVotacoes />
-                </PrivateRoute>
-              }
-            />
-            {/* Página do eleitor (QR cai aqui) */}
-            <Route
-              path="/votacoes/:votacaoId"
-              element={
-                <PrivateRoute>
-                  <VotacoesUsuario />
-                </PrivateRoute>
-              }
-            />
-            <Route
-  path="/admin/solicitacoes-curso"
-  element={
-    <PrivateRoute permitido={["administrador"]}>
-      <SolicitacaoCursoAdmin />
-    </PrivateRoute>
-  }
-/>
+            <Route path="/admin/avaliacoes" element={<PrivateRoute permitido={["administrador"]}><AdminAvaliacoes /></PrivateRoute>} />
 
-<Route
-    path="/admin/agenda-salas"
-    element={
-      <PrivateRoute roles={["administrador"]}>
-        <AgendaSalasAdmin />
-      </PrivateRoute>
-    }
-  />
+            {/* Salas (⚠️ padroniza prop 'permitido' em vez de 'roles') */}
+            <Route path="/admin/solicitacoes-curso" element={<PrivateRoute permitido={["administrador"]}><SolicitacaoCursoAdmin /></PrivateRoute>} />
+            <Route path="/admin/agenda-salas" element={<PrivateRoute permitido={["administrador"]}><AgendaSalasAdmin /></PrivateRoute>} />
+            <Route path="/agenda-salas" element={<PrivateRoute permitido={["usuario", "instrutor", "administrador"]}><AgendaSalasUsuario /></PrivateRoute>} />
 
-  <Route
-    path="/agenda-salas"
-    element={
-      <PrivateRoute roles={["usuario", "instrutor", "administrador"]}>
-        <AgendaSalasUsuario />
-      </PrivateRoute>
-    }
-  />
-            {/* 404 */}
-            <Route 
-  path="/admin/avaliacoes"
-  element={
-    <PrivateRoute permitido={["administrador"]}>
-      <AdminAvaliacoes />
-    </PrivateRoute>
-  }
-/>
+            {/* Votações */}
+            <Route path="/admin/votacoes" element={<PrivateRoute permitido={["administrador"]}><AdminVotacoes /></PrivateRoute>} />
+            <Route path="/votacoes/:votacaoId" element={<PrivateRoute><VotacoesUsuario /></PrivateRoute>} />
 
             {/* 404 */}
             <Route path="*" element={<NotFound />} />
