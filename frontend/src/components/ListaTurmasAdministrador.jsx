@@ -273,10 +273,10 @@ export default function ListaTurmasAdministrador({
                 const bloco = presencasPorTurma[turma.id];
                 const datasGrade = montarDatasGrade(turma, bloco, datasFallback);
 
-                // janela admin: 60 min após início do dia até 15 dias após fim da turma
+                // janela admin: 60 min após início do dia até 60 dias após fim da turma
                 const fimDT = df ? toLocalDateFromYMDTime(df, hf) : null;
                 const fimValido = fimDT && !Number.isNaN(fimDT.getTime());
-                const fimMais15 = fimValido ? new Date(fimDT.getTime() + 15 * 24 * 60 * 60 * 1000) : null;
+                const fimMais60 = fimValido ? new Date(fimDT.getTime() + 60 * 24 * 60 * 60 * 1000) : null;
                 const agora = new Date();
 
                 return (
@@ -403,7 +403,7 @@ export default function ListaTurmasAdministrador({
                                         const now = new Date();
                                         const antesDaJanela = abreJanela ? now < abreJanela : true;
                                         const dentroDaJanela =
-                                          !antesDaJanela && (fimMais15 ? now <= fimMais15 : false);
+                                          !antesDaJanela && (fimMais60 ? now <= fimMais60 : false);
 
                                         const statusTexto = presente
                                           ? "Presente"

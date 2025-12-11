@@ -34,6 +34,7 @@ import {
   PlusCircle,
   FolderOpenDot,
   History,
+  School,
 } from "lucide-react";
 import { apiGet } from "../services/api";
 
@@ -265,7 +266,7 @@ export default function Navbar() {
       { label: "Teste do Curso", path: "/teste", icon: ClipboardList },
       { label: "Avaliações Pendentes", path: "/avaliacao", icon: PencilLine },
       { label: "Meus Certificados", path: "/certificados", icon: FileText },
-      { label: "Agendamento de Sala", path: "/agendamento-sala", icon: CalendarDays },
+      { label: "Agendamento de Sala", path: "/agenda-salas", icon: CalendarDays },
       { label: "Solicitar Curso", path: "/solicitar-curso", icon: Presentation },
       { label: "Submissão de Trabalhos", path: "/submissoes", icon: Presentation },
       { label: "Repositório de Trabalhos", path: "/repositorio-trabalhos", icon: FolderOpenDot },
@@ -293,23 +294,28 @@ export default function Navbar() {
       // “soltos”
       { label: "Dashboard Administrador",  path: "/dashboard-analitico",    icon: BarChart3 },
       { label: "Painel do Administrador",  path: "/administrador",          icon: LayoutDashboard },
-      { label: "Agenda",                path: "/agenda-administrador",   icon: ListChecks },
-      { label: "Certificados Avulsos",  path: "/certificados-avulsos",   icon: FileText },
-      { label: "QR Code Presença",      path: "/admin/qr-codes",         icon: QrCode },
-      { label: "Gestão de Votações",    path: "/admin/votacoes",         icon: ListChecks },
+      { label: "Agenda",                   path: "/agenda-administrador",   icon: ListChecks },
+
+      // 🔹 NOVO: Agenda de Salas (Admin)
+      { label: "Agenda de Salas",          path: "/admin/agenda-salas",     icon: CalendarDays },
+
+      { label: "Solicitações de Curso",    path: "/admin/solicitacoes-curso", icon: School },
+      { label: "Certificados Avulsos",     path: "/certificados-avulsos",   icon: FileText },
+      { label: "QR Code Presença",         path: "/admin/qr-codes",         icon: QrCode },
+      { label: "Gestão de Votações",       path: "/admin/votacoes",         icon: ListChecks },
       // trabalhos
-      { label: "Criar Submissão de Trabalho", path: "/admin/chamadas/new", icon: PlusCircle },
-      { label: "Gerenciar Submissão de Trabalho", path: "__open_submissions__", icon: FolderOpenDot },
+      { label: "Criar Submissão de Trabalho",     path: "/admin/chamadas/new",     icon: PlusCircle },
+      { label: "Gerenciar Submissão de Trabalho", path: "__open_submissions__",    icon: FolderOpenDot },
       // gestão
-      { label: "Gestão de Usuários",    path: "/gestao-usuarios",        icon: Users },
-      { label: "Gestão de Instrutor",   path: "/gestao-instrutor",       icon: Presentation },
-      { label: "Gestão de Eventos",     path: "/gerenciar-eventos",      icon: CalendarDays },
-      { label: "Gestão de Inscrições",  path: "/admin/cancelar-inscricoes", icon: XCircle },
-      { label: "Gestão de Presença",    path: "/gestao-presenca",        icon: QrCode },
-      { label: "Gestão de Avaliações",  path: "/admin/avaliacoes",       icon: ClipboardList },
-      { label: "Gestão de Certificados", path: "/gestao-certificados",   icon: History },
+      { label: "Gestão de Usuários",       path: "/gestao-usuarios",        icon: Users },
+      { label: "Gestão de Instrutor",      path: "/gestao-instrutor",       icon: Presentation },
+      { label: "Gestão de Eventos",        path: "/gerenciar-eventos",      icon: CalendarDays },
+      { label: "Gestão de Inscrições",     path: "/admin/cancelar-inscricoes", icon: XCircle },
+      { label: "Gestão de Presença",       path: "/gestao-presenca",        icon: QrCode },
+      { label: "Gestão de Avaliações",     path: "/admin/avaliacoes",       icon: ClipboardList },
+      { label: "Gestão de Certificados",   path: "/gestao-certificados",    icon: History },
       // relatórios
-      { label: "Relatórios Customizados", path: "/relatorios-customizados", icon: ClipboardList },
+      { label: "Relatórios Customizados",  path: "/relatorios-customizados", icon: ClipboardList },
     ],
     []
   );
@@ -461,7 +467,7 @@ export default function Navbar() {
   const go = (path) => handleAdminSelect(path); // reusa o mesmo close/unlock
 
   const dropBtnBase =
-  "flex h-10 items-center gap-2 px-3 text-sm rounded-xl hover:bg-white hover:text-lousa focus-visible:ring-2 focus-visible:ring-white/60 outline-none";
+    "flex h-10 items-center gap-2 px-3 text-sm rounded-xl hover:bg-white hover:text-lousa focus-visible:ring-2 focus-visible:ring-white/60 outline-none";
 
   const goHome = () => { go("/"); };
 

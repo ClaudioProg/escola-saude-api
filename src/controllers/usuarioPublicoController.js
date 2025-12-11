@@ -610,6 +610,49 @@ async function obterAssinatura(req, res) {
   }
 }
 
+/* ──────────────────────────────────────────────────────────────
+   🔎 Busca de usuários para autocomplete (palestrantes, etc.)
+   ────────────────────────────────────────────────────────────── */
+   async function buscarUsuarios(req, res) {
+    const search = String(req.query.search || "").trim();
+  
+    if (!search || search.length < 3) {
+      return res.status(400).json({
+        message: "Envie ao menos 3 caracteres para busca.",
+        fieldErrors: { search: "Mínimo de 3 caracteres." },
+      });
+    }
+  
+    try {
+      const like = `%${search}%`;
+  
+      const sql = `
+        SELECT id, nome, email, perfil, unidade_id
+          FROM usuarios
+         WHERE nome ILIKE $1
+            OR email ILIKE $1
+         ORDER BY nome
+         LIMIT 20
+      `;
+  
+      const { rows } = await db.query(sql, [like]);
+  
+      // Você pode filtrar só quem é instrutor/admin, se quiser:
+      const resultado = rows.map((u) => ({
+        id: u.id,
+        nome: u.nome,
+        email: u.email,
+        perfil: perfilToArray(u.perfil),
+        unidade_id: u.unidade_id,
+      }));
+  
+      return res.status(200).json(resultado);
+    } catch (err) {
+      console.error("❌ Erro ao buscar usuários:", err);
+      return res.status(500).json({ message: "Erro ao buscar usuários." });
+    }
+  }
+
 module.exports = {
   cadastrarUsuario,
   recuperarSenha,
@@ -619,4 +662,5 @@ module.exports = {
   atualizarPerfilCompleto,  // cadastro complementar
   loginUsuario,
   obterAssinatura,
+  buscarUsuarios,
 };

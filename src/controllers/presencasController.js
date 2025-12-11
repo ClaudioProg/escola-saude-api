@@ -891,11 +891,11 @@ async function confirmarPresencaSimples(req, res) {
       .json({ erro: "Formato de data inválido. Use aaaa-mm-dd ou dd/mm/aaaa." });
   }
 
-  // retroatividade (admin): até 15 dias
+  // retroatividade (admin): até 60 dias
   const hoje = localDateFromYMD(hojeYMD());
   const d = localDateFromYMD(dataISO);
   const diffDias = Math.floor((hoje - d) / (1000 * 60 * 60 * 24));
-  const limite = 15;
+  const limite = 60;
   if (perfil === "administrador" && diffDias > limite) {
     return res.status(403).json({
       erro: `Administradores só podem confirmar presenças retroativas em até ${limite} dias.`,

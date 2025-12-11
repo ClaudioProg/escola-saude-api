@@ -66,12 +66,12 @@ export default function PresencasTurmaExpandida({
     return unicas.sort((a, b) => (a.dataISO < b.dataISO ? -1 : a.dataISO > b.dataISO ? 1 : 0));
   }, [datasTurma, turma?.datas, turma?.encontros, horarioInicioTurma, horarioFimTurma]);
 
-  /* ───── limite global (até 15 dias após término) ───── */
+  /* ───── limite global (até 60 dias após término) ───── */
   const limiteGlobal = useMemo(() => {
     const df = isoDia(turma?.data_fim) || datasGrade.at(-1)?.dataISO || formatarParaISO(new Date());
     const hf = horarioFimTurma || datasGrade.at(-1)?.hf || "17:00";
     const fimTurmaDT = new Date(`${df}T${hf}`);
-    return new Date(fimTurmaDT.getTime() + 15 * 24 * 60 * 60 * 1000);
+    return new Date(fimTurmaDT.getTime() + 60 * 24 * 60 * 60 * 1000);
   }, [turma?.data_fim, datasGrade, horarioFimTurma]);
 
   /* ───── mapa de presenças ───── */

@@ -31,7 +31,7 @@ const MeusCertificados       = lazy(() => import("./pages/MeusCertificados"));
 const MinhasInscricoes       = lazy(() => import("./pages/MinhasInscricoes"));
 const DashboardUsuario       = lazy(() => import("./pages/DashboardUsuario"));
 const Teste                  = lazy(() => import("./pages/Teste"));
-const AgendamentoSala        = lazy(() => import("./pages/AgendamentoSala"));
+const AgendaSalasUsuario     = lazy(() => import("./pages/AgendaSalasUsuario"));
 const SolicitacaoCurso       = lazy(() => import("./pages/SolicitacaoCurso"));
 const AgendaUsuario          = lazy(() => import("./pages/AgendaUsuario"));
 const RepositorioTrabalhos   = lazy(() => import("./pages/RepositorioTrabalhos"));
@@ -46,6 +46,7 @@ const DashboardAdministrador = lazy(() => import("./pages/DashboardAdministrador
 const DashboardAnalitico     = lazy(() => import("./pages/DashboardAnalitico"));
 const GestaoInstrutor        = lazy(() => import("./pages/GestaoInstrutor"));
 const RelatoriosCustomizados = lazy(() => import("./pages/RelatoriosCustomizados"));
+const SolicitacaoCursoAdmin  = lazy(() => import("./pages/SolicitacaoCursoAdmin"));
 const ListaPresencasTurma    = lazy(() => import("./pages/ListaPresencasTurma"));
 const GestaoCertificados     = lazy(() => import("./pages/GestaoCertificados"));
 const GestaoUsuarios         = lazy(() => import("./pages/GestaoUsuarios"));
@@ -60,6 +61,7 @@ const GestaoPresencas        = lazy(() => import("./pages/GestaoPresenca"));
 const CancelarInscricoesAdmin= lazy(() => import("./pages/CancelarInscricoesAdmin"));
 const AdminAvaliacoes        = lazy(() => import("./pages/AdminAvaliacoes"));
 const VotacoesUsuario        = lazy(() => import("./pages/VotacoesUsuario"));
+const AgendaSalasAdmin       = lazy(() => import("./pages/AgendaSalasAdmin"));
 
 // ✅ Página de confirmação via QR (com/sem token)
 const ConfirmarPresenca      = lazy(() => import("./pages/ConfirmarPresenca"));
@@ -409,7 +411,6 @@ export default function App() {
             <Route path="/avaliacao" element={<PrivateRoute><Avaliacao /></PrivateRoute>} />
             <Route path="/avaliar/:turmaId" element={<PrivateRoute><Avaliacao /></PrivateRoute>} />
             <Route path="/teste" element={<PrivateRoute><Teste /></PrivateRoute>} />
-            <Route path="/agendamento-sala" element={<PrivateRoute><AgendamentoSala /></PrivateRoute>} />
             <Route path="/solicitar-curso" element={<PrivateRoute><SolicitacaoCurso /></PrivateRoute>} />
             <Route path="/agenda" element={<PrivateRoute><AgendaUsuario /></PrivateRoute>} />
             {/* 🆕 Repositório de trabalhos */}
@@ -487,10 +488,34 @@ export default function App() {
                 </PrivateRoute>
               }
             />
-
-            {/* 404 */}
-            <Route path="*" element={<NotFound />} />
             <Route
+  path="/admin/solicitacoes-curso"
+  element={
+    <PrivateRoute permitido={["administrador"]}>
+      <SolicitacaoCursoAdmin />
+    </PrivateRoute>
+  }
+/>
+
+<Route
+    path="/admin/agenda-salas"
+    element={
+      <PrivateRoute roles={["administrador"]}>
+        <AgendaSalasAdmin />
+      </PrivateRoute>
+    }
+  />
+
+  <Route
+    path="/agenda-salas"
+    element={
+      <PrivateRoute roles={["usuario", "instrutor", "administrador"]}>
+        <AgendaSalasUsuario />
+      </PrivateRoute>
+    }
+  />
+            {/* 404 */}
+            <Route 
   path="/admin/avaliacoes"
   element={
     <PrivateRoute permitido={["administrador"]}>

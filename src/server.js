@@ -60,8 +60,8 @@ const trabalhosRoutes = require("./routes/trabalhosRoutes");
 const chamadasModeloRoutes = require("./routes/chamadasModeloRoutes");
 const usuariosEstatisticasRoute = require("./routes/usuariosEstatisticasRoute");
 const submissoesAdminRoutes = require("./routes/submissoesAdminRoutes");
-const unidadesRoute = require("./routes/unidadesRoute");
 const votacoesRoutes = require("./routes/votacoesRoute");
+const salasRoutes = require("./routes/salasRoutes");
 
 const IS_DEV = process.env.NODE_ENV !== "production";
 const app = express();
@@ -249,7 +249,6 @@ app.get("/__ping", (req, res) => {
 });
 
 /* ───────── Rotas ───────── */
-app.use("/api", publicLookupsRoutes);
 app.use("/api/login", loginLimiter, loginRoute);
 app.use("/api/administrador/turmas", turmasRouteAdministrador);
 app.use("/api/agenda", agendaRoute);
@@ -275,14 +274,15 @@ app.use("/api/unidades", unidadesRoutes);
 app.use("/api/assinatura", assinaturaRoutes);
 app.use("/api/datas", datasEventoRoute);
 app.use("/api/perfil", perfilRoutes);
-app.use("/api/solicitacoes", solicitacoesCursoRoute);
+app.use("/api/solicitacoes-curso", solicitacoesCursoRoute);
 app.use("/api", chamadasModeloRoutes);
 app.use("/api", submissoesAdminRoutes);
 app.use("/api/admin/avaliacoes", adminAvaliacoesRoutes);
 app.use("/api", chamadasRoutes);
 app.use("/api/trabalhos", trabalhosRoutes);
-app.use("/api/unidades", unidadesRoute);
 app.use("/api/votacoes", votacoesRoutes);
+app.use("/api", publicLookupsRoutes);
+app.use("/api/salas", salasRoutes);
 
 /* ───────── Recuperação de senha ───────── */
 app.post("/api/usuarios/recuperar-senha", recuperarSenhaLimiter, usuarioPublicoController.recuperarSenha);

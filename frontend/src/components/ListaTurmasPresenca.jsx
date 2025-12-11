@@ -538,11 +538,11 @@ export default function ListaTurmasPresenca({
 
                                               const hfSeguro = hhmm(turma.horario_fim, "23:59");
                                               const fimDTLocal = df ? new Date(`${df}T${hfSeguro}:00`) : null;
-                                              const fimMais15 =
-                                                fimDTLocal ? new Date(fimDTLocal.getTime() + 15 * 24 * 60 * 60 * 1000) : null;
+                                              const fimMais60 =
+                                                fimDTLocal ? new Date(fimDTLocal.getTime() + 60 * 24 * 60 * 60 * 1000) : null;
 
                                               const antesDaJanela = now < abreJanela;
-                                              const dentroDaJanela = fimMais15 ? now >= abreJanela && now <= fimMais15 : false;
+                                              const dentroDaJanela = fimMais60 ? now >= abreJanela && now <= fimMais60 : false;
 
                                               const statusTexto = estaPresente
                                                 ? "Presente"
@@ -765,13 +765,13 @@ export default function ListaTurmasPresenca({
                                                     }
                                                   }
 
-                                                  // habilita confirmar dentro da janela: [início-30min, fim+15dias]
+                                                  // habilita confirmar dentro da janela: [início-30min, fim+60dias]
                                                   const inicioDiaDT = new Date(`${dataAtiva}T${hiDia}:00`);
                                                   const abreJanela = new Date(inicioDiaDT.getTime() - MINUTOS_ANTECIPACAO * 60 * 1000); // ⬅️ 30min antes
                                                   const fimDiaDT = new Date(`${df || dataAtiva}T${hfDia}:00`);
-                                                  const fimMais15 = new Date((df ? fimDiaDT : inicioDiaDT).getTime() + 15 * 24 * 60 * 60 * 1000);
+                                                  const fimMais60 = new Date((df ? fimDiaDT : inicioDiaDT).getTime() + 60 * 24 * 60 * 60 * 1000);
                                                   const agoraLocal2 = new Date();
-                                                  const podeConfirmar = !presente && agoraLocal2 >= abreJanela && agoraLocal2 <= fimMais15;
+                                                  const podeConfirmar = !presente && agoraLocal2 >= abreJanela && agoraLocal2 <= fimMais60;
 
                                                   return (
                                                     <tr key={`${u.id}-${dataAtiva}`} className="border-t border-zinc-200 dark:border-zinc-800">

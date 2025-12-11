@@ -1,4 +1,4 @@
-// ✅ src/pages/SolicitacaoCurso.jsx
+// ✅ src/pages/SolicitacaoCursoAdmin.jsx
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { toast } from "react-toastify";
@@ -10,7 +10,6 @@ import {
   Clock,
   School,
   Filter,
-  Plus,
   Edit2,
   Trash2,
   Globe2,
@@ -84,13 +83,14 @@ function badgeStatus(status) {
 }
 
 /* -----------------------------------------------------------
- * COMPONENTE PRINCIPAL
+ * COMPONENTE PRINCIPAL (ADMIN)
  * ----------------------------------------------------------- */
-export default function SolicitacaoCurso() {
+export default function SolicitacaoCursoAdmin() {
   const [cursos, setCursos] = useState([]);
   const [carregando, setCarregando] = useState(true);
   const [filtroUnidade, setFiltroUnidade] = useState("");
   const [filtroTipo, setFiltroTipo] = useState("");
+  const [filtroStatus, setFiltroStatus] = useState("");
   const [unidades, setUnidades] = useState([]);
   const [tipos, setTipos] = useState([]);
 
@@ -108,7 +108,7 @@ export default function SolicitacaoCurso() {
   }, []);
 
   /* -----------------------------------------------------------
-   * 🔄 Carregar dados
+   * 🔄 Carregar dados (usando mesmas rotas da página usuário)
    * ----------------------------------------------------------- */
   async function carregarDados() {
     try {
@@ -120,9 +120,9 @@ export default function SolicitacaoCurso() {
         api.get("/api/solicitacoes-curso/tipos"),
       ]);
 
-      console.log("[SolicitacaoCurso] cursosRes =", cursosRes);
-      console.log("[SolicitacaoCurso] unidadesRes =", unidadesRes);
-      console.log("[SolicitacaoCurso] tiposRes =", tiposRes);
+      console.log("[SolicitacaoCursoAdmin] cursosRes =", cursosRes);
+      console.log("[SolicitacaoCursoAdmin] unidadesRes =", unidadesRes);
+      console.log("[SolicitacaoCursoAdmin] tiposRes =", tiposRes);
 
       setCursos(Array.isArray(cursosRes) ? cursosRes : cursosRes?.data || []);
       setUnidades(
@@ -137,30 +137,37 @@ export default function SolicitacaoCurso() {
     }
   }
 
-  useEffect(() => {
-    console.log("[SolicitacaoCurso] estado unidades =", unidades);
-  }, [unidades]);
-
   /* ----------------------------------------------------------- */
   const cursosFiltrados = useMemo(() => {
     const { year, month } = currentMonthYear;
     const mesStr = String(month + 1).padStart(2, "0");
 
     return cursos.filter((curso) => {
+      let ok = true;
+
       const temNoMes = (curso.datas || []).some((d) => {
         if (!d.data) return false;
         const [ano, mes] = d.data.split("-");
         return ano === String(year) && mes === mesStr;
       });
 
-      if (!temNoMes) return false;
-      if (filtroUnidade && String(curso.unidade_id) !== filtroUnidade)
-        return false;
-      if (filtroTipo && curso.tipo !== filtroTipo) return false;
+      if (!temNoMes) ok = false;
 
-      return true;
+      if (filtroUnidade && String(curso.unidade_id) !== String(filtroUnidade)) {
+        ok = false;
+      }
+
+      if (filtroTipo && curso.tipo !== filtroTipo) {
+        ok = false;
+      }
+
+      if (filtroStatus && curso.status !== filtroStatus) {
+        ok = false;
+      }
+
+      return ok;
     });
-  }, [cursos, currentMonthYear, filtroUnidade, filtroTipo]);
+  }, [cursos, currentMonthYear, filtroUnidade, filtroTipo, filtroStatus]);
 
   const cursosPorDia = useMemo(() => {
     const map = {};
@@ -175,100 +182,86 @@ export default function SolicitacaoCurso() {
         map[dia].push(curso);
       }
     }
+
     return map;
   }, [cursosFiltrados, currentMonthYear]);
 
-  const kpis = useMemo(
-    () => ({
-      total: cursos.length,
-      meus: cursos.filter((c) => c.pode_editar).length,
-      confirmados: cursos.filter((c) => c.status === "confirmado").length,
-      restritos: cursos.filter((c) => c.restrito).length,
-    }),
-    [cursos]
-  );
+  const kpis = useMemo(() => {
+    const total = cursos.length;
+    const planejados = cursos.filter((c) => c.status === "planejado").length;
+    const emAnalise = cursos.filter((c) => c.status === "em_analise").length;
+    const confirmados = cursos.filter((c) => c.status === "confirmado").length;
+    const cancelados = cursos.filter((c) => c.status === "cancelado").length;
 
-  /* ----------------------------------------------------------- */
-  const handleCriar = () => {
-    setSolicitacaoEmEdicao(null);
-    setModalAberto(true);
-  };
+    return { total, planejados, emAnalise, confirmados, cancelados };
+  }, [cursos]);
 
-  const handleEditar = (curso) => {
+  function handleEditar(curso) {
     setSolicitacaoEmEdicao(curso);
     setModalAberto(true);
-  };
+  }
 
   async function handleExcluir(curso) {
-    if (!window.confirm(`Excluir o curso "${curso.titulo}"?`)) return;
+    const confirmar = window.confirm(
+      `Tem certeza que deseja excluir a solicitação do curso "${curso.titulo}"?`
+    );
+    if (!confirmar) return;
 
     try {
       await api.delete(`/api/solicitacoes-curso/${curso.id}`);
-      toast.success("Solicitação excluída.");
+      toast.success("Solicitação excluída com sucesso.");
       setCursos((prev) => prev.filter((c) => c.id !== curso.id));
     } catch (err) {
       console.error(err);
-      toast.error("Erro ao excluir.");
+      toast.error("Erro ao excluir solicitação. Tente novamente.");
     }
   }
 
   /* ----------------------------------------------------------- */
   return (
     <div className="min-h-screen flex flex-col bg-slate-50">
-      {/* HEADER HERO  */}
-      <header className="bg-gradient-to-br from-emerald-700 via-emerald-600 to-emerald-800 text-white shadow-lg">
+      {/* HeaderHero administrador */}
+      <header className="bg-gradient-to-br from-sky-800 via-sky-700 to-indigo-800 text-white shadow-lg">
         <div className="mx-auto w-full max-w-6xl px-4 py-8 sm:py-10">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-medium">
                 <CalendarDays className="h-4 w-4" />
-                Solicitação de Cursos
+                <span>Painel do Administrador</span>
               </div>
               <h1 className="mt-3 text-2xl font-semibold sm:text-3xl">
-                Propostas de cursos para a rede de saúde
+                Gestão do calendário de cursos
               </h1>
-              <p className="mt-2 max-w-2xl text-sm text-emerald-100">
-                Registre suas propostas e acompanhe as iniciativas de educação em
-                saúde da rede.
-              </p>
-            </div>
-
-            <div className="flex flex-col items-end gap-2">
-              <button
-                onClick={handleCriar}
-                className="inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-medium text-emerald-800 shadow-md hover:bg-emerald-50"
-              >
-                <Plus className="h-4 w-4" />
-                Nova solicitação
-              </button>
-              <p className="text-xs text-emerald-100">
-                Você só pode editar/excluir suas próprias solicitações.
+              <p className="mt-2 max-w-2xl text-sm text-sky-100">
+                Visualize, acompanhe e atualize o status das solicitações de
+                cursos cadastradas por toda a rede de saúde.
               </p>
             </div>
           </div>
 
-          {/* Ministats */}
+          {/* Ministats admin */}
           <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <MiniStat
-              label="Solicitações cadastradas"
+              label="Total de solicitações"
               value={kpis.total}
               icon={CalendarDays}
+              variant="default"
             />
             <MiniStat
-              label="Minhas solicitações"
-              value={kpis.meus}
-              icon={Users}
+              label="Planejados"
+              value={kpis.planejados}
+              icon={Clock}
               variant="accent"
             />
             <MiniStat
-              label="Cursos confirmados"
-              value={kpis.confirmados}
+              label="Em análise / Confirmados"
+              value={`${kpis.emAnalise} / ${kpis.confirmados}`}
               icon={School}
               variant="success"
             />
             <MiniStat
-              label="Acesso restrito"
-              value={kpis.restritos}
+              label="Cancelados"
+              value={kpis.cancelados}
               icon={Lock}
               variant="warning"
             />
@@ -276,20 +269,19 @@ export default function SolicitacaoCurso() {
         </div>
       </header>
 
-      {/* CONTEÚDO PRINCIPAL */}
+      {/* Conteúdo */}
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:py-8">
-        {/* 🌙 Agenda Mensal */}
+        {/* Agenda + filtros admin */}
         <section className="mb-6 rounded-xl bg-white p-4 shadow-sm">
-          {/* Cabeçalho da agenda */}
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
               <Filter className="h-4 w-4" />
-              Agenda mensal de solicitações
+              <span>Agenda mensal de solicitações (admin)</span>
             </div>
 
-            {/* Navegação mês a mês */}
             <div className="flex items-center gap-2 text-sm">
               <button
+                type="button"
                 onClick={() =>
                   setCurrentMonthYear((prev) =>
                     prev.month === 0
@@ -297,16 +289,15 @@ export default function SolicitacaoCurso() {
                       : { year: prev.year, month: prev.month - 1 }
                   )
                 }
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full border bg-white hover:bg-slate-50"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white hover:bg-slate-50"
               >
                 <ChevronLeft className="h-4 w-4" />
               </button>
-
               <span className="min-w-[140px] text-center text-sm font-semibold text-slate-700">
                 {MESES[currentMonthYear.month].label} de {currentMonthYear.year}
               </span>
-
               <button
+                type="button"
                 onClick={() =>
                   setCurrentMonthYear((prev) =>
                     prev.month === 11
@@ -314,21 +305,20 @@ export default function SolicitacaoCurso() {
                       : { year: prev.year, month: prev.month + 1 }
                   )
                 }
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full border bg-white hover:bg-slate-50"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white hover:bg-slate-50"
               >
                 <ChevronRight className="h-4 w-4" />
               </button>
             </div>
           </div>
 
-          {/* Filtros */}
-          <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="mb-4 grid gap-3 sm:grid-cols-3">
             <div className="flex flex-col gap-1 text-xs">
               <label className="font-medium text-slate-600">Unidade</label>
               <select
                 value={filtroUnidade}
                 onChange={(e) => setFiltroUnidade(e.target.value)}
-                className="rounded-lg border px-3 py-2 text-sm shadow-sm"
+                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
               >
                 <option value="">Todas</option>
                 {unidades.map((u) => (
@@ -344,7 +334,7 @@ export default function SolicitacaoCurso() {
               <select
                 value={filtroTipo}
                 onChange={(e) => setFiltroTipo(e.target.value)}
-                className="rounded-lg border px-3 py-2 text-sm shadow-sm"
+                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
               >
                 <option value="">Todos</option>
                 {tipos.map((t) => (
@@ -354,21 +344,35 @@ export default function SolicitacaoCurso() {
                 ))}
               </select>
             </div>
+
+            <div className="flex flex-col gap-1 text-xs">
+              <label className="font-medium text-slate-600">Status</label>
+              <select
+                value={filtroStatus}
+                onChange={(e) => setFiltroStatus(e.target.value)}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+              >
+                <option value="">Todos</option>
+                <option value="planejado">Planejado</option>
+                <option value="em_analise">Em análise</option>
+                <option value="confirmado">Confirmado</option>
+                <option value="cancelado">Cancelado</option>
+              </select>
+            </div>
           </div>
 
-          {/* 🗓️ Componente do calendário */}
-          <CalendarioMensal
+          <CalendarioMensalAdmin
             currentMonthYear={currentMonthYear}
             cursosPorDia={cursosPorDia}
-            // 👇 ao clicar em um curso no calendário abre o mesmo modal de edição/detalhe
+            // 👇 clique no curso abre edição/detalhe
             onCursoClick={handleEditar}
           />
         </section>
 
-        {/* LISTAGEM DETALHADA */}
-        <section className="space-y-3">
+        {/* Lista detalhada */}
+        <section aria-label="Solicitações de curso (admin)" className="space-y-3">
           {carregando ? (
-            Array.from({ length: 3 }).map((_, i) => (
+            Array.from({ length: 4 }).map((_, i) => (
               <div key={i} className="rounded-xl bg-white p-4 shadow-sm">
                 <Skeleton height={18} width="60%" />
                 <div className="mt-2 space-y-2">
@@ -378,10 +382,10 @@ export default function SolicitacaoCurso() {
                 </div>
               </div>
             ))
-          ) : cursosFiltrados?.length === 0 ? (
+          ) : cursosFiltrados.length === 0 ? (
             <NadaEncontrado
-              titulo="Nenhuma solicitação encontrada."
-              descricao="Altere o mês, ajuste os filtros ou cadastre uma nova solicitação."
+              titulo="Nenhuma solicitação encontrada nos filtros selecionados."
+              descricao="Altere o mês, ajuste os filtros ou aguarde novas solicitações da rede."
             />
           ) : (
             cursosFiltrados.map((curso) => {
@@ -396,9 +400,8 @@ export default function SolicitacaoCurso() {
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.18 }}
-                  className="group rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-100 hover:ring-emerald-100"
+                  className="group rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-100 hover:shadow-md hover:ring-sky-100"
                 >
-                  {/* Cabeçalho */}
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
@@ -406,45 +409,42 @@ export default function SolicitacaoCurso() {
                           {curso.titulo}
                         </h2>
                         <span
-                          className={`${statusInfo.className} px-2.5 py-0.5 text-[11px] rounded-full`}
+                          className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-medium ${statusInfo.className}`}
                         >
                           {statusInfo.label}
                         </span>
-
-                        {curso.pode_editar && (
-                          <span className="bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full text-[10px] font-semibold">
-                            Minha solicitação
-                          </span>
-                        )}
+                        <span className="inline-flex items-center rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-700">
+                          Criado por: {curso.criador_nome || "Não informado"}
+                        </span>
                       </div>
                       <p className="text-xs text-slate-600 line-clamp-2">
                         {curso.descricao || "Sem descrição detalhada informada."}
                       </p>
                     </div>
 
-                    {/* Botões */}
-                    {curso.pode_editar && (
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handleEditar(curso)}
-                          className="inline-flex items-center gap-1 bg-white border px-2.5 py-1 rounded-lg text-xs"
-                        >
-                          <Edit2 className="h-3.5 w-3.5" /> Editar
-                        </button>
-                        <button
-                          onClick={() => handleExcluir(curso)}
-                          className="inline-flex items-center gap-1 bg-rose-50 border-rose-200 border px-2.5 py-1 rounded-lg text-xs text-rose-700"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" /> Excluir
-                        </button>
-                      </div>
-                    )}
+                    <div className="flex items-center gap-2 sm:mt-1">
+                      <button
+                        type="button"
+                        onClick={() => handleEditar(curso)}
+                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                      >
+                        <Edit2 className="h-3.5 w-3.5" />
+                        Editar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleExcluir(curso)}
+                        className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-medium text-rose-700 hover:bg-rose-100"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Excluir
+                      </button>
+                    </div>
                   </div>
 
-                  {/* Linha de detalhes */}
                   <div className="mt-3 grid gap-2 text-xs text-slate-600 sm:grid-cols-2 lg:grid-cols-4">
                     <div className="flex items-start gap-2">
-                      <CalendarDays className="h-4 w-4 text-emerald-600" />
+                      <CalendarDays className="mt-0.5 h-4 w-4 text-sky-600" />
                       <div>
                         <p className="font-medium">Datas</p>
                         <p>{resumirDatas(curso.datas)}</p>
@@ -452,7 +452,7 @@ export default function SolicitacaoCurso() {
                     </div>
 
                     <div className="flex items-start gap-2">
-                      <Clock className="h-4 w-4 text-emerald-600" />
+                      <Clock className="mt-0.5 h-4 w-4 text-sky-600" />
                       <div>
                         <p className="font-medium">Horários</p>
                         <p>{resumirHorarios(curso.datas)}</p>
@@ -460,10 +460,10 @@ export default function SolicitacaoCurso() {
                     </div>
 
                     <div className="flex items-start gap-2">
-                      <MapPin className="h-4 w-4 text-emerald-600" />
+                      <MapPin className="mt-0.5 h-4 w-4 text-sky-600" />
                       <div>
                         <p className="font-medium">Local / Unidade</p>
-                        <p>
+                        <p className="line-clamp-2">
                           {curso.local || "Local a definir"}
                           {curso.unidade_nome ? ` — ${curso.unidade_nome}` : ""}
                         </p>
@@ -471,39 +471,40 @@ export default function SolicitacaoCurso() {
                     </div>
 
                     <div className="flex items-start gap-2">
-                      <Users className="h-4 w-4 text-emerald-600" />
+                      <Users className="mt-0.5 h-4 w-4 text-sky-600" />
                       <div>
                         <p className="font-medium">Público-alvo</p>
-                        <p>{curso.publico_alvo || "Público a definir"}</p>
+                        <p className="line-clamp-2">
+                          {curso.publico_alvo || "Público a definir"}
+                        </p>
                       </div>
                     </div>
                   </div>
 
-                  {/* Linha secundária */}
                   <div className="mt-3 grid gap-2 text-xs text-slate-600 sm:grid-cols-2 lg:grid-cols-[2fr,1fr]">
                     <div className="flex items-start gap-2">
-                      <School className="h-4 w-4 text-emerald-600" />
+                      <School className="mt-0.5 h-4 w-4 text-sky-600" />
                       <div>
                         <p className="font-medium">Palestrantes</p>
-                        <p>{palestrantesStr}</p>
+                        <p className="line-clamp-2">{palestrantesStr}</p>
                       </div>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">
                       {curso.restrito ? (
-                        <span className="bg-amber-50 text-amber-800 px-2.5 py-0.5 rounded-full text-[11px]">
-                          <Lock className="inline h-3.5 w-3.5 mr-1" />
-                          Restrito: {curso.restricao_descricao}
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-0.5 text-[11px] font-medium text-amber-800">
+                          <Lock className="h-3.5 w-3.5" />
+                          Restrito: {curso.restricao_descricao || "Acesso limitado"}
                         </span>
                       ) : (
-                        <span className="bg-emerald-50 text-emerald-800 px-2.5 py-0.5 rounded-full text-[11px]">
-                          <Globe2 className="inline h-3.5 w-3.5 mr-1" />
-                          Acesso livre
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-medium text-emerald-800">
+                          <Globe2 className="h-3.5 w-3.5" />
+                          Acesso livre na rede
                         </span>
                       )}
 
                       {curso.modalidade && (
-                        <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full text-[11px]">
+                        <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
                           {curso.modalidade === "presencial"
                             ? "Presencial"
                             : curso.modalidade === "online"
@@ -513,7 +514,7 @@ export default function SolicitacaoCurso() {
                       )}
 
                       {typeof curso.carga_horaria_total === "number" && (
-                        <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full text-[11px]">
+                        <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
                           {curso.carga_horaria_total}h
                         </span>
                       )}
@@ -528,7 +529,7 @@ export default function SolicitacaoCurso() {
 
       <Footer />
 
-      {/* MODAL */}
+      {/* Modal admin com edição de status liberada */}
       <ModalSolicitacaoCurso
         aberto={modalAberto}
         onClose={() => {
@@ -542,16 +543,15 @@ export default function SolicitacaoCurso() {
         }}
         solicitacao={solicitacaoEmEdicao}
         unidades={unidades}
-        podeEditarStatus={false}
+        podeEditarStatus={true}
       />
     </div>
   );
 }
 
-/* -----------------------------------------------------------
- * 🗓️ Calendário Mensal — agora com clique no curso
- * ----------------------------------------------------------- */
-function CalendarioMensal({ currentMonthYear, cursosPorDia, onCursoClick }) {
+/* ─────────── Calendário mensal admin ─────────── */
+
+function CalendarioMensalAdmin({ currentMonthYear, cursosPorDia, onCursoClick }) {
   const { year, month } = currentMonthYear;
 
   const diasSemana = ["D", "S", "T", "Q", "Q", "S", "S"];
@@ -559,42 +559,34 @@ function CalendarioMensal({ currentMonthYear, cursosPorDia, onCursoClick }) {
   const diasNoMes = new Date(year, month + 1, 0).getDate();
 
   const celulas = [];
-
   for (let i = 0; i < primeiroDiaSemana; i++) {
     celulas.push({ tipo: "vazio", key: `blank-${i}` });
   }
-
   for (let dia = 1; dia <= diasNoMes; dia++) {
     const diaStr = String(dia).padStart(2, "0");
+    const cursosDoDia = cursosPorDia[diaStr] || [];
     celulas.push({
       tipo: "dia",
       key: `dia-${dia}`,
       dia,
-      cursos: cursosPorDia[diaStr] || [],
+      cursos: cursosDoDia,
     });
   }
 
   return (
-    <div className="overflow-hidden rounded-xl border">
-      {/* Cabeçalho com keys únicas */}
-      <div className="grid grid-cols-7 bg-slate-50 text-center text-[11px] uppercase tracking-wide">
+    <div className="overflow-hidden rounded-xl border border-slate-100">
+      <div className="grid grid-cols-7 bg-slate-50 text-center text-[11px] font-medium uppercase tracking-wide text-slate-500">
         {diasSemana.map((d, idx) => (
-          <div
-            key={`${d}-${idx}`}
-            className="px-1 py-2 text-slate-500 font-medium"
-          >
+          <div key={`${d}-${idx}`} className="px-1 py-2">
             {d}
           </div>
         ))}
       </div>
 
-      {/* Dias */}
       <div className="grid grid-cols-7 bg-white text-xs">
         {celulas.map((cell) => {
           if (cell.tipo === "vazio") {
-            return (
-              <div key={cell.key} className="h-20 border border-slate-50" />
-            );
+            return <div key={cell.key} className="h-20 border border-slate-50" />;
           }
 
           const { dia, cursos } = cell;
@@ -602,12 +594,12 @@ function CalendarioMensal({ currentMonthYear, cursosPorDia, onCursoClick }) {
           return (
             <div
               key={cell.key}
-              className="flex h-24 flex-col border border-slate-50 p-1.5"
+              className="flex h-24 flex-col border border-slate-50 p-1.5 align-top"
             >
               <div className="mb-1 flex items-center justify-between text-[11px]">
                 <span className="font-semibold text-slate-700">{dia}</span>
                 {cursos.length > 0 && (
-                  <span className="bg-emerald-50 text-emerald-700 text-[10px] px-1.5 py-0.5 rounded-full">
+                  <span className="rounded-full bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700">
                     {cursos.length}
                   </span>
                 )}
@@ -619,15 +611,14 @@ function CalendarioMensal({ currentMonthYear, cursosPorDia, onCursoClick }) {
                     key={curso.id}
                     type="button"
                     onClick={() => onCursoClick && onCursoClick(curso)}
-                    className="truncate rounded-md bg-emerald-50 px-1.5 py-0.5 text-emerald-800 text-[10px] text-left hover:bg-emerald-100 focus:outline-none focus:ring-1 focus:ring-emerald-400"
+                    className="truncate rounded-md bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-800 text-left hover:bg-sky-100 focus:outline-none focus:ring-1 focus:ring-sky-400"
                     title={curso.titulo}
                   >
                     {curso.titulo}
                   </button>
                 ))}
-
                 {cursos.length > 3 && (
-                  <div className="text-[10px] text-slate-500 font-medium">
+                  <div className="text-[10px] font-medium text-slate-500">
                     + {cursos.length - 3} curso(s)
                   </div>
                 )}
@@ -640,26 +631,24 @@ function CalendarioMensal({ currentMonthYear, cursosPorDia, onCursoClick }) {
   );
 }
 
-/* -----------------------------------------------------------
- * 🧮 MiniStat
- * ----------------------------------------------------------- */
+/* ─────────── MiniStat admin ─────────── */
+
 function MiniStat({ label, value, icon: Icon, variant = "default" }) {
+  const base =
+    "flex items-center justify-between rounded-xl border px-3 py-2 text-xs shadow-sm";
   const variants = {
-    default: "border-white/20 bg-white/10 text-emerald-50",
+    default: "border-white/20 bg-white/10 text-sky-50",
     accent: "border-amber-200/70 bg-amber-50/20 text-amber-50",
     success: "border-emerald-200/70 bg-emerald-50/20 text-emerald-50",
     warning: "border-rose-200/70 bg-rose-50/20 text-rose-50",
   };
 
   return (
-    <div
-      className={`flex items-center justify-between rounded-xl border px-3 py-2 text-xs shadow-sm ${variants[variant]}`}
-    >
+    <div className={`${base} ${variants[variant] || variants.default}`}>
       <div>
         <p className="text-[11px] opacity-80">{label}</p>
         <p className="text-lg font-semibold leading-tight">{value}</p>
       </div>
-
       <div className="rounded-full bg-black/10 p-1.5">
         <Icon className="h-4 w-4 opacity-90" />
       </div>
