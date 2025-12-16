@@ -13,11 +13,11 @@ const {
   avaliacoesPorEvento,         // ✅ admin: agregado por evento
 } = require("../controllers/avaliacoesController");
 
-/* ───────────────── Middlewares auxiliares ───────────────── */
+/* ────────────── Middlewares auxiliares ────────────── */
 
-// Permite admin para qualquer usuário; demais perfis só se o :usuario_id == id do token
+// Admin pode ver qualquer usuário; demais perfis só se :usuario_id === id do token
 function ensureSelfOrAdmin(req, res, next) {
-  const user = req.user ?? req.user ?? {};
+  const user = req.user || {};
   const tokenId = Number(user.id);
   const paramId = Number(req.params.usuario_id);
 
@@ -39,7 +39,7 @@ function ensureSelfOrAdmin(req, res, next) {
 
 /* ───────────────── Rotas ───────────────── */
 
-// 📝 1) Enviar avaliação (usuário; instrutor/admin só para o próprio token)
+// 📝 1) Enviar avaliação
 router.post(
   "/",
   authMiddleware,
@@ -47,8 +47,7 @@ router.post(
   enviarAvaliacao
 );
 
-// 📊 2b) (Admin) Listar TODAS as avaliações da turma (sem filtro de instrutor)
-//     Dica: deixar esta rota mais específica antes da rota genérica ajuda a leitura.
+// 📊 2b) (Admin) Todas as respostas da turma
 router.get(
   "/turma/:turma_id/all",
   authMiddleware,
@@ -56,8 +55,7 @@ router.get(
   avaliacoesPorTurma
 );
 
-// 📊 2) (Instrutor) Listar avaliações da turma APENAS para o instrutor logado
-//     Obs.: Admin também pode acessar (o controller libera admin sem exigir vínculo).
+// 📊 2) (Instrutor/Admin) Respostas da turma (restrito ao instrutor vinculado)
 router.get(
   "/turma/:turma_id",
   authMiddleware,
@@ -65,7 +63,7 @@ router.get(
   listarPorTurmaParaInstrutor
 );
 
-// 🧾 3) (Admin) Agregado de avaliações por evento
+// 🧾 3) (Admin) Agregado por evento
 router.get(
   "/evento/:evento_id",
   authMiddleware,
@@ -73,14 +71,25 @@ router.get(
   avaliacoesPorEvento
 );
 
-// 📋 4) (Usuário) Listar avaliações pendentes para o próprio usuário
-//     Protegido contra IDOR: admin pode ver de qualquer usuário; demais perfis só o próprio.
+// 📋 4a) (Usuário/Admin) Pendentes por usuário (protegido contra IDOR)
 router.get(
   "/disponiveis/:usuario_id",
   authMiddleware,
   authorizeRoles("administrador", "instrutor", "usuario"),
   ensureSelfOrAdmin,
   listarAvaliacoesDisponiveis
+);
+
+// 📋 4b) (Usuário/Admin) Alias sem :usuario_id → usa ID do token
+router.get(
+  "/disponiveis",
+  authMiddleware,
+  authorizeRoles("administrador", "instrutor", "usuario"),
+  (req, res, next) => {
+    if (!req.user?.id) return res.status(401).json({ erro: "Não autenticado." });
+    req.params.usuario_id = String(req.user.id);
+    return listarAvaliacoesDisponiveis(req, res, next);
+  }
 );
 
 module.exports = router;

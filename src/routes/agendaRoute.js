@@ -6,7 +6,7 @@ const agendaController = require('../controllers/agendaController');
 const authMiddleware = require('../auth/authMiddleware');
 const authorizeRoles = require('../auth/authorizeRoles');
 
-// 🗓️ Agenda do usuário autenticado (eventos em que está inscrito)
+// 🗓️ Agenda do usuário autenticado (inscrito como aluno)
 router.get(
   '/minha',
   authMiddleware,
@@ -14,12 +14,20 @@ router.get(
   agendaController.buscarAgendaMinha
 );
 
-// 📆 Agenda do instrutor autenticado (ou admin)
+// 👩‍🏫 Agenda do instrutor autenticado (novo endpoint usado pelo front)
+router.get(
+  '/minha-instrutor',
+  authMiddleware,
+  authorizeRoles('administrador', 'instrutor'),
+  agendaController.buscarAgendaMinhaInstrutor
+);
+
+// (alias opcional p/ compatibilidade: /api/agenda/instrutor)
 router.get(
   '/instrutor',
   authMiddleware,
   authorizeRoles('administrador', 'instrutor'),
-  agendaController.buscarAgendaInstrutor
+  agendaController.buscarAgendaMinhaInstrutor
 );
 
 // 📅 Agenda geral (somente administrador)

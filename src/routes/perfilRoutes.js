@@ -2,64 +2,44 @@
 const express = require("express");
 const router = express.Router();
 
-// 🔐 Auth (aceita export default/nomeado)
+// 🔐 Auth
 let auth = require("../auth/authMiddleware");
-auth = typeof auth === "function" ? auth : (auth.protect || auth.auth || auth.default);
+auth = typeof auth === "function"
+  ? auth
+  : (auth.protect || auth.auth || auth.default);
 
-// (opcional) middleware que força atualização do cadastro
-const forcarAtualizacaoCadastro = require("../auth/forcarAtualizacaoCadastro");
+// Controllers corretos
+const {
+  listarOpcoesPerfil,
+  meuPerfil,
+  atualizarMeuPerfil,
+} = require("../controllers/perfilController");
 
-// Controllers
-const usuarioPublico = require("../controllers/usuarioPublicoController");
-
-// ⚙️ helper para encadear async/await com catch centralizado
+// ⚙️ helper async
 const wrap = (fn) => async (req, res, next) => {
-  try { await fn(req, res, next); } catch (err) { next(err); }
+  try {
+    await fn(req, res, next);
+  } catch (err) {
+    next(err);
+  }
 };
-
-// 🔐 todas as rotas exigem token
-router.use(auth);
 
 /**
- * IMPORTANTE:
- * - /opcoes: não passa pelo forcarAtualizacaoCadastro (não pode bloquear a carga das listas)
- * - /me (GET/PUT/PATCH): amarrado diretamente ao usuarioPublicoController
- *   - GET -> obterUsuarioPorId (usa req.user.id)
- *   - PUT/PATCH -> atualizarPerfilCompleto (usa req.user.id)
+ * 🔓 ROTAS PÚBLICAS
  */
 
-// ▶️ Opções para os selects (livre do "forçar atualização")
-try {
-  const { listarOpcoesPerfil } = require("../controllers/perfilController");
-  if (typeof listarOpcoesPerfil === "function") {
-    router.get("/opcoes", wrap(listarOpcoesPerfil));
-  } else {
-    // Se não houver perfilController, ainda podemos servir opcoes por outras rotas públicas já existentes
-    // (deixamos sem /opcoes neste router)
-  }
-} catch (_) {
-  // perfilController é opcional — ignore se não existir
-}
+// Opções para selects (cadastro)
+router.get("/opcoes", wrap(listarOpcoesPerfil));
 
-// ✅ A PARTIR DAQUI poderíamos aplicar o "forçar atualização" para demais rotas.
-// Como só temos /me, que justamente é a rota de atualização, NÃO aplicamos aqui.
-// router.use(forcarAtualizacaoCadastro);
+/**
+ * 🔐 ROTAS PROTEGIDAS
+ */
+router.use(auth);
 
-// 👤 Meu perfil (lê pelo ID do token)
-router.get(
-  "/me",
-  wrap(async (req, res) => {
-    req.params.id = req.user.id;
-    return usuarioPublico.obterUsuarioPorId(req, res);
-  })
-);
+// Meu perfil
+router.get("/me", wrap(meuPerfil));
 
-// ✏️ Atualizar meu perfil (cadastro complementar) — aceita PUT e PATCH
-const atualizarMeuPerfil = async (req, res) => {
-  req.params.id = req.user.id;
-  return usuarioPublico.atualizarPerfilCompleto(req, res);
-};
-
+// Atualizar meu perfil
 router.put("/me", wrap(atualizarMeuPerfil));
 router.patch("/me", wrap(atualizarMeuPerfil));
 

@@ -129,7 +129,7 @@ async function enviarAvaliacao(req, res) {
     comentarios_finais,
   } = req.body;
 
-  const usuario_id = req.user?.id ?? req.user?.id;
+  const usuario_id = req.user?.id;
 
   if (!usuario_id) {
     return res.status(401).json({ erro: "Não autenticado." });
@@ -283,19 +283,18 @@ async function listarAvaliacoesDisponiveis(req, res) {
              ON a.usuario_id = i.usuario_id
             AND a.turma_id   = t.id
       WHERE i.usuario_id = $1
-        -- participou (qualquer dia de presença)
-        AND EXISTS (
-          SELECT 1 FROM presencas p
-           WHERE p.usuario_id = i.usuario_id
-             AND p.turma_id   = i.turma_id
-           LIMIT 1
-        )
         -- ainda não avaliou
         AND a.id IS NULL
         -- turma finalizada (fim + horario_fim já passou)
+        AND ( CURRENT_TIMESTAMP > (t.data_fim + t.horario_fim) )
+        -- frequência geral >= 75% no intervalo data_inicio..data_fim
         AND (
-             t.data_fim < CURRENT_DATE
-          OR (t.data_fim = CURRENT_DATE AND t.horario_fim < CURRENT_TIME)
+          (
+            SELECT COUNT(DISTINCT p.data_presenca)::int
+            FROM presencas p
+            WHERE p.usuario_id = i.usuario_id
+              AND p.turma_id   = t.id
+          ) >= CEIL(0.75 * ( (t.data_fim - t.data_inicio) + 1 ))
         )
       ORDER BY t.data_fim DESC
       `,
@@ -336,16 +335,23 @@ async function listarPorTurmaParaInstrutor(req, res) {
     // Só exige vínculo se NÃO for admin
     if (!isAdmin) {
       const chk = await db.query(
-        `SELECT 1
-           FROM turmas t
-          WHERE t.id = $2
-            AND EXISTS (
-                  SELECT 1
-                    FROM evento_instrutor ei
-                   WHERE ei.evento_id = t.evento_id
-                     AND ei.instrutor_id = $1
-                 )
-          LIMIT 1`,
+        `
+        SELECT 1
+          FROM turmas t
+         WHERE t.id = $2
+           AND (
+             EXISTS ( SELECT 1
+                        FROM turma_instrutor ti
+                       WHERE ti.turma_id = t.id
+                         AND ti.instrutor_id = $1 )
+             OR
+             EXISTS ( SELECT 1
+                        FROM evento_instrutor ei
+                       WHERE ei.evento_id = t.evento_id
+                         AND ei.instrutor_id = $1 )
+           )
+        LIMIT 1
+        `,
         [usuarioId, Number(turma_id)]
       );
       if (chk.rowCount === 0) {
