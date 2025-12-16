@@ -1,35 +1,75 @@
-// ✅ src/pages/RedefinirSenha.jsx
+// ✅ src/pages/RedefinirSenha.jsx — premium (kit base Escola)
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
+import {
+  Lock,
+  Eye,
+  EyeOff,
+  AlertTriangle,
+  LogIn,
+  Sparkles,
+} from "lucide-react";
 
 import BotaoPrimario from "../components/BotaoPrimario";
+import BotaoSecundario from "../components/BotaoSecundario";
 import Footer from "../components/Footer";
 import { apiPost } from "../services/api";
-import { Lock, Eye, EyeOff, AlertTriangle, LogIn } from "lucide-react";
 
-/* ───────── HeaderHero padronizado (âmbar exclusivo desta página) ───────── */
-function HeaderHero() {
-  // Mantém tipografia/tamanhos alinhados ao resto do app
-  const grad = "from-amber-700 via-amber-800 to-orange-700";
+import useEscolaTheme from "../hooks/useEscolaTheme";
+import ThemeTogglePills from "../components/ThemeTogglePills";
+
+/* ───────── HeaderHero premium (âmbar exclusivo) ───────── */
+function HeaderHero({ theme, setTheme, isDark }) {
   return (
-    <header className={`w-full bg-gradient-to-br ${grad} text-white`} role="banner">
+    <header className="relative overflow-hidden" role="banner">
+      <div className="absolute inset-0 bg-gradient-to-br from-amber-700 via-amber-800 to-orange-700" />
+      {isDark && <div className="absolute inset-0 bg-black/35" />}
+
+      {/* blobs */}
+      <div className="absolute -top-24 -left-24 h-72 w-72 rounded-full bg-white/20 blur-3xl" />
+      <div className="absolute -bottom-28 -right-28 h-80 w-80 rounded-full bg-white/15 blur-3xl" />
+
+      {/* skip link */}
       <a
         href="#conteudo"
-        className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50
+                   rounded-xl bg-white/20 px-4 py-2 text-sm font-semibold text-white shadow"
       >
         Pular para o conteúdo
       </a>
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
-        <div className="flex flex-col items-center text-center gap-3">
-          <div className="inline-flex items-center gap-2">
-            <Lock className="w-5 h-5" aria-hidden="true" />
-            <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">
-              Redefinir Senha
-            </h1>
+
+      <div className="relative max-w-7xl mx-auto px-4 sm:px-6 py-10 md:py-12">
+        {/* toggle */}
+        <div className="lg:absolute lg:right-4 lg:top-6 flex justify-end">
+          <ThemeTogglePills theme={theme} setTheme={setTheme} variant="glass" />
+        </div>
+
+        {/* logo lateral */}
+        <div className="absolute left-4 sm:left-6 top-1/2 -translate-y-1/2 hidden sm:flex">
+          <div className="rounded-3xl bg-white/25 backdrop-blur p-5 ring-1 ring-white/30 shadow-lg">
+            <img
+              src="/logo_escola.png"
+              alt="Logotipo da Escola Municipal de Saúde Pública de Santos"
+              className="h-20 w-20 md:h-24 md:w-24 object-contain"
+              loading="lazy"
+            />
           </div>
+        </div>
+
+        {/* conteúdo central */}
+        <div className="flex flex-col items-center text-center gap-3">
+          <div className="inline-flex items-center gap-2 text-white/90 text-xs font-semibold">
+            <Sparkles className="h-4 w-4" />
+            <span>Portal oficial • segurança da conta</span>
+          </div>
+
+          <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight">
+            Redefinir senha
+          </h1>
+
           <p className="text-sm text-white/90 max-w-2xl">
-            Defina uma nova senha forte para sua conta.
+            Defina uma nova senha forte para proteger sua conta.
           </p>
         </div>
       </div>
@@ -47,7 +87,7 @@ const avaliarForca = (s) => {
   if (/[a-z]/.test(v)) score++;
   if (/\d/.test(v)) score++;
   if (/[\W_]/.test(v)) score++;
-  return Math.min(score, 5); // 0..5
+  return Math.min(score, 5);
 };
 const textoForca = (n) =>
   ["Muito fraca", "Fraca", "Ok", "Boa", "Forte", "Excelente"][n] || "—";
@@ -56,6 +96,8 @@ const textoForca = (n) =>
 export default function RedefinirSenha() {
   const { token } = useParams();
   const navigate = useNavigate();
+
+  const { theme, setTheme, isDark } = useEscolaTheme();
 
   const [novaSenha, setNovaSenha] = useState("");
   const [confirmarSenha, setConfirmarSenha] = useState("");
@@ -77,15 +119,17 @@ export default function RedefinirSenha() {
   }, []);
 
   useEffect(() => {
-    document.title = "Redefinir Senha | Escola da Saúde";
+    document.title = "Redefinir senha — Escola da Saúde";
   }, []);
 
-  // feedback inicial se token ausente
-  const tokenValido = useMemo(() => typeof token === "string" && token.trim().length > 0, [token]);
+  const tokenValido = useMemo(
+    () => typeof token === "string" && token.trim().length > 0,
+    [token]
+  );
 
   useEffect(() => {
     if (!tokenValido) {
-      const msg = "Link inválido ou ausente. Solicite uma nova recuperação.";
+      const msg = "Link inválido ou expirado. Solicite uma nova recuperação.";
       setErro(msg);
       setLive(msg);
     }
@@ -93,7 +137,8 @@ export default function RedefinirSenha() {
 
   const forca = avaliarForca(novaSenha);
   const atendeRegra = SENHA_FORTE_RE.test(novaSenha);
-  const senhasIguais = novaSenha.trim() && novaSenha.trim() === confirmarSenha.trim();
+  const senhasIguais =
+    novaSenha.trim() && novaSenha.trim() === confirmarSenha.trim();
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -103,7 +148,7 @@ export default function RedefinirSenha() {
     setMensagem("");
 
     if (!tokenValido) {
-      const m = "Link inválido ou expirado. Gere um novo link de redefinição.";
+      const m = "Link inválido ou expirado. Gere um novo link.";
       setErro(m);
       setLive(m);
       toast.error("❌ " + m);
@@ -121,15 +166,17 @@ export default function RedefinirSenha() {
       (!s1 ? s1Ref : s2Ref).current?.focus();
       return;
     }
+
     if (!SENHA_FORTE_RE.test(s1)) {
       const m =
-        "A senha deve ter 8+ caracteres e incluir: maiúscula, minúscula, número e símbolo.";
+        "A senha deve ter 8+ caracteres, com maiúscula, minúscula, número e símbolo.";
       setErro(m);
       setLive(m);
       toast.warning("⚠️ " + m);
       s1Ref.current?.focus();
       return;
     }
+
     if (s1 !== s2) {
       const m = "As senhas não coincidem.";
       setErro(m);
@@ -141,14 +188,19 @@ export default function RedefinirSenha() {
 
     setLoading(true);
     setLive("Redefinindo senha…");
-    toast.info("⏳ Redefinindo senha...");
 
     try {
-      await apiPost("/api/usuarios/redefinir-senha", { token, novaSenha: s1 });
+      // ✅ sem "/api" (api.js injeta)
+      await apiPost(
+        "/usuarios/redefinir-senha",
+        { token, novaSenha: s1 },
+        { auth: false, on401: "silent" }
+      );
+
       const ok = "Senha redefinida com sucesso! Redirecionando para o login…";
       setMensagem(ok);
       setLive("Senha redefinida.");
-      toast.success("✅ Senha redefinida com sucesso!");
+      toast.success("✅ Senha redefinida!");
       setNovaSenha("");
       setConfirmarSenha("");
       setTimeout(() => navigate("/login"), 1500);
@@ -166,194 +218,195 @@ export default function RedefinirSenha() {
     }
   }
 
-  const voltarLogin = () => navigate("/login");
+  const inputCls = (invalid) =>
+    [
+      "w-full rounded-2xl border px-4 py-3 text-sm outline-none transition",
+      "focus:ring-2 focus:ring-amber-500/70",
+      isDark
+        ? "border-white/10 bg-zinc-950/30 text-zinc-100 placeholder:text-zinc-500"
+        : "border-slate-300 bg-white text-slate-900 placeholder:text-slate-400",
+      invalid ? "ring-2 ring-red-500/60 border-red-500/60" : "",
+    ].join(" ");
 
   return (
-    <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
-      <HeaderHero />
+    <main
+      className={[
+        "min-h-screen flex flex-col transition-colors",
+        isDark
+          ? "bg-gradient-to-b from-zinc-950 to-zinc-900 text-zinc-100"
+          : "bg-slate-50 text-slate-900",
+      ].join(" ")}
+    >
+      <HeaderHero theme={theme} setTheme={setTheme} isDark={isDark} />
 
-      {/* Live region acessível */}
       <p ref={liveRef} className="sr-only" aria-live="polite" />
 
-      <main
-        id="conteudo"
-        role="main"
-        className="flex-1 flex items-start justify-center px-4 py-8"
-      >
-        <form
-          onSubmit={handleSubmit}
-          className="bg-lousa text-white rounded-2xl shadow-xl p-7 sm:p-8 w-full max-w-md space-y-6"
-          aria-label="Formulário de redefinição de senha"
-        >
-          <h2 className="text-center text-lg font-bold inline-flex items-center justify-center gap-2">
-            <Lock className="w-4 h-4" aria-hidden="true" />
-            Redefinir Senha
-          </h2>
-
-          {(mensagem || erro) && (
-            <div aria-live="polite">
-              {mensagem && (
-                <p className="text-green-300 text-sm text-center" role="status">
-                  {mensagem}
-                </p>
+      <section id="conteudo" role="main" className="flex-1">
+        <div className="mx-auto max-w-xl px-4 sm:px-6 py-8 md:py-12">
+          <div
+            className={[
+              "rounded-3xl border p-6 md:p-8",
+              isDark
+                ? "border-white/10 bg-zinc-900/50"
+                : "border-slate-200 bg-white shadow-xl",
+            ].join(" ")}
+          >
+            <form onSubmit={handleSubmit} className="space-y-5">
+              {(mensagem || erro) && (
+                <div aria-live="polite">
+                  {mensagem && (
+                    <p
+                      className={[
+                        "text-sm text-center",
+                        isDark
+                          ? "text-emerald-300"
+                          : "text-emerald-700",
+                      ].join(" ")}
+                    >
+                      {mensagem}
+                    </p>
+                  )}
+                  {erro && (
+                    <p
+                      className={[
+                        "text-sm text-center",
+                        isDark ? "text-red-300" : "text-red-600",
+                      ].join(" ")}
+                    >
+                      {erro}
+                    </p>
+                  )}
+                </div>
               )}
-              {erro && (
-                <p className="text-red-300 text-sm text-center" role="alert">
-                  {erro}
-                </p>
-              )}
-            </div>
-          )}
 
-          {/* Nova senha */}
-          <div>
-            <label htmlFor="novaSenha" className="block text-sm mb-1">
-              Nova senha
-            </label>
-            <div className="relative">
-              <input
-                id="novaSenha"
-                ref={s1Ref}
-                type={verSenha1 ? "text" : "password"}
-                placeholder="Nova senha"
-                value={novaSenha}
-                onChange={(e) => {
-                  // impede espaços invisíveis acidentais
-                  setNovaSenha(e.target.value.replace(/\s/g, ""));
-                  if (erro) setErro("");
-                }}
-                onKeyUp={(e) => setCaps1(e.getModifierState?.("CapsLock"))}
-                className="w-full px-4 py-2.5 pr-10 rounded bg-white text-gray-900 placeholder-gray-500 focus:ring-2 focus:ring-emerald-700"
-                autoComplete="new-password"
-                minLength={8}
-                pattern="^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{8,}$"
-                aria-invalid={!atendeRegra}
-                aria-describedby="ajuda-senha ajuda-forca"
-                required
-              />
-              <button
-                type="button"
-                onClick={() => setVerSenha1((v) => !v)}
-                className="absolute inset-y-0 right-2 flex items-center justify-center p-1 text-gray-200 hover:text-white"
-                aria-label={verSenha1 ? "Ocultar senha" : "Mostrar senha"}
-                title={verSenha1 ? "Ocultar senha" : "Mostrar senha"}
-              >
-                {verSenha1 ? <EyeOff size={18} /> : <Eye size={18} />}
-              </button>
-            </div>
+              {/* Nova senha */}
+              <div>
+                <label htmlFor="novaSenha" className="block text-sm font-semibold">
+                  Nova senha
+                </label>
+                <div className="relative mt-1">
+                  <input
+                    id="novaSenha"
+                    ref={s1Ref}
+                    type={verSenha1 ? "text" : "password"}
+                    value={novaSenha}
+                    onChange={(e) =>
+                      setNovaSenha(e.target.value.replace(/\s/g, ""))
+                    }
+                    onKeyUp={(e) =>
+                      setCaps1(e.getModifierState?.("CapsLock"))
+                    }
+                    className={inputCls(!atendeRegra && !!novaSenha)}
+                    autoComplete="new-password"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setVerSenha1((v) => !v)}
+                    className="absolute inset-y-0 right-3 flex items-center text-zinc-400 hover:text-zinc-200"
+                  >
+                    {verSenha1 ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
 
-            {/* Aviso CapsLock */}
-            {caps1 && (
-              <p className="text-amber-200 text-[11px] mt-1 flex items-center gap-1" role="status">
-                <AlertTriangle size={12} /> Atenção: Caps Lock está ativado.
-              </p>
-            )}
+                {caps1 && (
+                  <p className="text-amber-300 text-[11px] mt-1 flex items-center gap-1">
+                    <AlertTriangle size={12} /> Caps Lock ativado
+                  </p>
+                )}
 
-            {/* Requisitos + Força */}
-            <p id="ajuda-senha" className="text-[11px] text-white/80 mt-2">
-              Mínimo 8 caracteres, com maiúscula, minúscula, número e símbolo.
-            </p>
-            <div
-              id="ajuda-forca"
-              className="mt-2"
-              role="meter"
-              aria-valuemin={0}
-              aria-valuemax={5}
-              aria-valuenow={forca}
-              aria-valuetext={`Força: ${textoForca(forca)}`}
-            >
-              <div className="w-full h-2 rounded bg-white/20 overflow-hidden">
-                <div
-                  className={`h-full transition-all ${
-                    forca >= 4
-                      ? "bg-emerald-400"
-                      : forca >= 2
-                      ? "bg-amber-300"
-                      : "bg-rose-300"
-                  }`}
-                  style={{ width: `${(forca / 5) * 100}%` }}
-                />
+                <div className="mt-2">
+                  <div className="h-2 w-full rounded bg-black/10 overflow-hidden">
+                    <div
+                      className={`h-full transition-all ${
+                        forca >= 4
+                          ? "bg-emerald-400"
+                          : forca >= 2
+                          ? "bg-amber-300"
+                          : "bg-rose-300"
+                      }`}
+                      style={{ width: `${(forca / 5) * 100}%` }}
+                    />
+                  </div>
+                  <p className="text-[11px] mt-1 opacity-80">
+                    Força: {textoForca(forca)}
+                  </p>
+                </div>
               </div>
-              <p className="text-[11px] mt-1 text-white/80">Força: {textoForca(forca)}</p>
-            </div>
-          </div>
 
-          {/* Confirmar nova senha */}
-          <div>
-            <label htmlFor="confirmarSenha" className="block text-sm mb-1">
-              Confirmar nova senha
-            </label>
-            <div className="relative">
-              <input
-                id="confirmarSenha"
-                ref={s2Ref}
-                type={verSenha2 ? "text" : "password"}
-                placeholder="Confirme a nova senha"
-                value={confirmarSenha}
-                onChange={(e) => {
-                  setConfirmarSenha(e.target.value.replace(/\s/g, ""));
-                  if (erro) setErro("");
-                }}
-                onKeyUp={(e) => setCaps2(e.getModifierState?.("CapsLock"))}
-                className="w-full px-4 py-2.5 pr-10 rounded bg-white text-gray-900 placeholder-gray-500 focus:ring-2 focus:ring-emerald-700"
-                autoComplete="new-password"
-                minLength={8}
-                pattern="^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{8,}$"
-                aria-invalid={!!confirmarSenha && !senhasIguais}
-                aria-describedby={!!confirmarSenha && !senhasIguais ? "erro-confirm" : undefined}
-                required
-              />
-              <button
-                type="button"
-                onClick={() => setVerSenha2((v) => !v)}
-                className="absolute inset-y-0 right-2 flex items-center justify-center p-1 text-gray-200 hover:text-white"
-                aria-label={verSenha2 ? "Ocultar confirmação de senha" : "Mostrar confirmação de senha"}
-                title={verSenha2 ? "Ocultar confirmação" : "Mostrar confirmação"}
+              {/* Confirmar senha */}
+              <div>
+                <label
+                  htmlFor="confirmarSenha"
+                  className="block text-sm font-semibold"
+                >
+                  Confirmar nova senha
+                </label>
+                <div className="relative mt-1">
+                  <input
+                    id="confirmarSenha"
+                    ref={s2Ref}
+                    type={verSenha2 ? "text" : "password"}
+                    value={confirmarSenha}
+                    onChange={(e) =>
+                      setConfirmarSenha(e.target.value.replace(/\s/g, ""))
+                    }
+                    onKeyUp={(e) =>
+                      setCaps2(e.getModifierState?.("CapsLock"))
+                    }
+                    className={inputCls(
+                      !!confirmarSenha && !senhasIguais
+                    )}
+                    autoComplete="new-password"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setVerSenha2((v) => !v)}
+                    className="absolute inset-y-0 right-3 flex items-center text-zinc-400 hover:text-zinc-200"
+                  >
+                    {verSenha2 ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
+
+                {caps2 && (
+                  <p className="text-amber-300 text-[11px] mt-1 flex items-center gap-1">
+                    <AlertTriangle size={12} /> Caps Lock ativado
+                  </p>
+                )}
+
+                {!!confirmarSenha && !senhasIguais && (
+                  <p className="text-red-400 text-xs mt-1">
+                    As senhas não coincidem.
+                  </p>
+                )}
+              </div>
+
+              <BotaoPrimario
+                type="submit"
+                className="w-full"
+                loading={loading}
+                disabled={loading}
+                cor="amareloOuro"
+                leftIcon={<Lock size={16} />}
               >
-                {verSenha2 ? <EyeOff size={18} /> : <Eye size={18} />}
-              </button>
-            </div>
-            {caps2 && (
-              <p className="text-amber-200 text-[11px] mt-1 flex items-center gap-1" role="status">
-                <AlertTriangle size={12} /> Atenção: Caps Lock está ativado.
-              </p>
-            )}
-            {!!confirmarSenha && !senhasIguais && (
-              <p id="erro-confirm" className="text-red-300 text-xs mt-1">
-                As senhas não coincidem.
-              </p>
-            )}
+                {loading ? "Salvando..." : "Redefinir senha"}
+              </BotaoPrimario>
+
+              <BotaoSecundario
+                type="button"
+                onClick={() => navigate("/login")}
+                className="w-full rounded-2xl py-3 flex items-center justify-center gap-2"
+              >
+                <LogIn size={16} />
+                Voltar ao login
+              </BotaoSecundario>
+            </form>
           </div>
-
-          <BotaoPrimario
-            type="submit"
-            disabled={loading}
-            className="w-full"
-            aria-label="Redefinir senha"
-            loading={loading}
-            cor="amareloOuro"
-          >
-            {loading ? "Salvando..." : "Redefinir Senha"}
-          </BotaoPrimario>
-
-          <button
-            type="button"
-            onClick={verLogin => voltarLogin()}
-            className="w-full inline-flex items-center justify-center gap-2 rounded border border-white/30 px-4 py-2 text-sm hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-white/60"
-            aria-label="Voltar ao login"
-            title="Voltar ao login"
-          >
-            <LogIn className="w-4 h-4" />
-            Voltar ao login
-          </button>
-
-          <p className="text-[11px] text-white/80 text-center">
-            Dica: use uma frase-senha com letras maiúsculas/minúsculas, números e símbolos.
-          </p>
-        </form>
-      </main>
+        </div>
+      </section>
 
       <Footer />
-    </div>
+    </main>
   );
 }

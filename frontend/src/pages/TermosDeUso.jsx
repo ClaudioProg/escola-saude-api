@@ -1,11 +1,11 @@
-// ✅ src/pages/Privacidade.jsx — premium (kit base Escola)
+// ✅ src/pages/TermosDeUso.jsx — premium (kit base Escola)
 import { motion } from "framer-motion";
 import {
+  FileSignature,
   ShieldCheck,
-  LockKeyhole,
-  Ban,
-  Database,
-  FileText,
+  AlertTriangle,
+  UserCheck,
+  Gavel,
   ArrowLeft,
   Sparkles,
 } from "lucide-react";
@@ -18,7 +18,7 @@ import ThemeTogglePills from "../components/ThemeTogglePills";
 function HeaderHero({ theme, setTheme, isDark }) {
   return (
     <header className="relative overflow-hidden" role="banner">
-      <div className="absolute inset-0 bg-gradient-to-br from-emerald-900 via-teal-800 to-cyan-700" />
+      <div className="absolute inset-0 bg-gradient-to-br from-blue-900 via-indigo-800 to-violet-800" />
       {isDark && <div className="absolute inset-0 bg-black/35" />}
 
       {/* blobs */}
@@ -44,20 +44,20 @@ function HeaderHero({ theme, setTheme, isDark }) {
         <div className="flex flex-col items-center text-center gap-3">
           <div className="inline-flex items-center gap-2 text-white/90 text-xs font-semibold">
             <Sparkles className="h-4 w-4" />
-            <span>Portal oficial • transparência e proteção de dados</span>
+            <span>Portal oficial • regras de uso da plataforma</span>
           </div>
 
           <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold tracking-tight text-white">
-            Política de Privacidade
+            Termos de Uso
           </h1>
 
           <p className="text-sm sm:text-base text-white/90 max-w-2xl">
-            Como cuidamos dos seus dados e garantimos sua segurança e transparência.
+            Condições para utilização da plataforma da Escola Municipal de Saúde de Santos.
           </p>
 
           <div className="mt-1 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/15 text-xs">
-            <FileText className="w-4 h-4" aria-hidden="true" />
-            <span>Atualizado em 10/2025</span>
+            <FileSignature className="w-4 h-4" aria-hidden="true" />
+            <span>Vigente a partir de 10/2025</span>
           </div>
         </div>
       </div>
@@ -83,8 +83,8 @@ function MiniStat({ icon: Icon, title, desc, isDark }) {
           className={[
             "shrink-0 rounded-xl p-2",
             isDark
-              ? "bg-emerald-900/30 text-emerald-300"
-              : "bg-emerald-50 text-emerald-700",
+              ? "bg-indigo-900/30 text-indigo-300"
+              : "bg-indigo-50 text-indigo-700",
           ].join(" ")}
         >
           <Icon className="w-5 h-5" aria-hidden="true" />
@@ -101,7 +101,7 @@ function MiniStat({ icon: Icon, title, desc, isDark }) {
 }
 
 /* ───────── Página ───────── */
-export default function Privacidade() {
+export default function TermosDeUso() {
   const { theme, setTheme, isDark } = useEscolaTheme();
 
   return (
@@ -122,34 +122,34 @@ export default function Privacidade() {
       >
         {/* Mini-stats */}
         <section
-          aria-labelledby="confianca"
+          aria-labelledby="regras"
           className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 mb-6"
         >
-          <h2 id="confianca" className="sr-only">
-            Compromissos de privacidade
+          <h2 id="regras" className="sr-only">
+            Princípios de uso
           </h2>
 
           <MiniStat
-            icon={Database}
-            title="Coleta mínima"
-            desc="Somente dados necessários para inscrições, presença e certificação."
+            icon={UserCheck}
+            title="Uso responsável"
+            desc="A plataforma deve ser utilizada apenas para fins institucionais."
             isDark={isDark}
           />
           <MiniStat
-            icon={LockKeyhole}
-            title="Acesso restrito"
-            desc="Controles técnicos e administrativos para proteger seus dados."
+            icon={ShieldCheck}
+            title="Segurança"
+            desc="O usuário é responsável pela confidencialidade de suas credenciais."
             isDark={isDark}
           />
           <MiniStat
-            icon={Ban}
-            title="Sem venda de dados"
-            desc="Nunca comercializamos suas informações pessoais."
+            icon={Gavel}
+            title="Base legal"
+            desc="Uso regido pela legislação vigente e normas administrativas."
             isDark={isDark}
           />
         </section>
 
-        {/* Conteúdo principal */}
+        {/* Conteúdo */}
         <motion.article
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
@@ -160,76 +160,78 @@ export default function Privacidade() {
               ? "bg-zinc-900/55 border-white/10"
               : "bg-white border-zinc-200 shadow-sm",
           ].join(" ")}
-          aria-labelledby="titulo-privacidade"
+          aria-labelledby="titulo-termos"
         >
           <h2
-            id="titulo-privacidade"
-            className="text-xl sm:text-2xl md:text-3xl font-extrabold text-emerald-800 dark:text-emerald-200"
+            id="titulo-termos"
+            className="text-xl sm:text-2xl md:text-3xl font-extrabold text-indigo-800 dark:text-indigo-200"
           >
-            Política de Privacidade
+            Termos e Condições de Uso
           </h2>
 
           <p className="mt-3 text-sm sm:text-base text-zinc-700 dark:text-zinc-300">
-            A Escola Municipal de Saúde de Santos respeita sua privacidade e está
-            comprometida em proteger seus dados pessoais.
+            Ao acessar e utilizar a plataforma da Escola Municipal de Saúde de Santos,
+            o usuário declara estar de acordo com os termos e condições descritos a seguir.
           </p>
 
           <section className="mt-6 space-y-6 text-zinc-800 dark:text-zinc-200">
             <div>
-              <h3 className="text-lg font-semibold">Coleta e uso de dados</h3>
-              <ul className="list-disc pl-5 mt-2 space-y-1">
-                <li>
-                  Coletamos apenas o necessário para o funcionamento da
-                  plataforma (ex.: nome, CPF, e-mail, unidade, presenças,
-                  certificados).
-                </li>
-                <li>
-                  Usamos seus dados para gerenciar inscrições, presenças, emitir
-                  certificados e enviar comunicações institucionais.
-                </li>
-              </ul>
-            </div>
-
-            <div>
-              <h3 className="text-lg font-semibold">Armazenamento e segurança</h3>
-              <ul className="list-disc pl-5 mt-2 space-y-1">
-                <li>
-                  Dados armazenados em ambiente seguro, com acesso controlado.
-                </li>
-                <li>
-                  Medidas técnicas e administrativas para prevenir acesso não
-                  autorizado, perda ou alteração de dados.
-                </li>
-              </ul>
-            </div>
-
-            <div>
-              <h3 className="text-lg font-semibold">Compartilhamento</h3>
-              <ul className="list-disc pl-5 mt-2 space-y-1">
-                <li>Não vendemos dados nem compartilhamos para fins comerciais.</li>
-                <li>
-                  Podemos fornecer dados quando exigido por lei ou obrigação
-                  legal.
-                </li>
-              </ul>
-            </div>
-
-            <div>
-              <h3 className="text-lg font-semibold">Direitos do usuário</h3>
-              <ul className="list-disc pl-5 mt-2 space-y-1">
-                <li>Acessar, corrigir ou atualizar seus dados pessoais.</li>
-                <li>
-                  Solicitar exclusão da conta (observadas obrigações legais de
-                  guarda).
-                </li>
-              </ul>
-            </div>
-
-            <div>
-              <h3 className="text-lg font-semibold">Contato</h3>
+              <h3 className="text-lg font-semibold">1. Finalidade da plataforma</h3>
               <p className="mt-2">
-                Em caso de dúvidas, entre em contato pelo e-mail{" "}
-                <strong>escoladasaude@santos.sp.gov.br</strong>.
+                A plataforma tem como finalidade o gerenciamento de cursos, eventos,
+                inscrições, presenças, avaliações e emissão de certificados no âmbito
+                das ações educacionais promovidas pela Escola Municipal de Saúde de Santos.
+              </p>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold">2. Cadastro e responsabilidades</h3>
+              <ul className="list-disc pl-5 mt-2 space-y-1">
+                <li>O usuário é responsável pela veracidade das informações fornecidas.</li>
+                <li>É vedado o compartilhamento de login e senha.</li>
+                <li>
+                  O uso indevido da plataforma poderá resultar em bloqueio ou exclusão do acesso.
+                </li>
+              </ul>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold">3. Uso adequado</h3>
+              <ul className="list-disc pl-5 mt-2 space-y-1">
+                <li>É proibido utilizar a plataforma para fins ilícitos ou não autorizados.</li>
+                <li>
+                  Não é permitido inserir conteúdos falsos, ofensivos ou incompatíveis
+                  com a finalidade institucional.
+                </li>
+              </ul>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold">4. Disponibilidade do serviço</h3>
+              <p className="mt-2">
+                A Escola Municipal de Saúde poderá realizar manutenções técnicas,
+                suspensões temporárias ou atualizações sem aviso prévio, visando a
+                melhoria contínua do serviço.
+              </p>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-500" />
+                5. Penalidades
+              </h3>
+              <p className="mt-2">
+                O descumprimento destes Termos poderá acarretar medidas administrativas,
+                incluindo suspensão ou cancelamento do acesso, sem prejuízo das medidas
+                legais cabíveis.
+              </p>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold">6. Alterações dos termos</h3>
+              <p className="mt-2">
+                Estes Termos de Uso poderão ser atualizados a qualquer tempo. Recomenda-se
+                a leitura periódica desta página para ciência das eventuais alterações.
               </p>
             </div>
           </section>
@@ -240,8 +242,8 @@ export default function Privacidade() {
               className={[
                 "inline-flex items-center gap-2 rounded-2xl px-4 py-2 border font-semibold",
                 isDark
-                  ? "border-emerald-400/40 text-emerald-300 hover:bg-emerald-400/10"
-                  : "border-emerald-700 text-emerald-800 hover:bg-emerald-50",
+                  ? "border-indigo-400/40 text-indigo-300 hover:bg-indigo-400/10"
+                  : "border-indigo-700 text-indigo-800 hover:bg-indigo-50",
               ].join(" ")}
               aria-label="Voltar para a página inicial"
             >
