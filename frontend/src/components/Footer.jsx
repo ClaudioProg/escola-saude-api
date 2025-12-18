@@ -1,5 +1,5 @@
-// 📁 src/components/Footer.jsx
-import { Mail, Phone, MapPin } from "lucide-react";
+// ✅ src/components/Footer.jsx
+import { Mail, Phone, MapPin, Sparkles } from "lucide-react";
 
 /** Zero à esquerda p/ 2 dígitos */
 function dd(n) {
@@ -10,49 +10,55 @@ function dd(n) {
 function getCampaignForMonth(month /* 1-12 */) {
   const campaigns = {
     7: {
-      // Julho – Amarelo (Hepatites virais)
       title: "JULHO AMARELO • Prevenção às Hepatites Virais",
-      footerBg: "bg-yellow-600",
-      barBg: "bg-yellow-700",
+      footerBg: "bg-gradient-to-br from-yellow-700 via-amber-700 to-orange-700",
+      barBg: "bg-yellow-900/70",
       textColor: "text-white",
+      accent: "from-yellow-200/60 via-white/40 to-transparent",
+      ring: "ring-yellow-200/40",
     },
     8: {
-      // Agosto – Dourado (Aleitamento materno)
       title: "AGOSTO DOURADO • Promoção do Aleitamento Materno",
-      footerBg: "bg-amber-600",
-      barBg: "bg-amber-700",
+      footerBg: "bg-gradient-to-br from-amber-700 via-yellow-700 to-orange-700",
+      barBg: "bg-amber-900/70",
       textColor: "text-white",
+      accent: "from-amber-200/60 via-white/35 to-transparent",
+      ring: "ring-amber-200/40",
     },
     9: {
-      // Setembro – Amarelo e Verde (Suicídio, PcD, Doação de órgãos)
       title:
         "SETEMBRO • Prevenção ao Suicídio • Inclusão das Pessoas com Deficiência • Doação de Órgãos e Tecidos",
-      footerBg: "bg-gradient-to-r from-yellow-600 to-emerald-800",
-      barBg: "bg-emerald-800",
+      footerBg: "bg-gradient-to-br from-yellow-700 via-emerald-800 to-teal-900",
+      barBg: "bg-emerald-950/70",
       textColor: "text-white",
+      accent: "from-emerald-200/55 via-white/30 to-transparent",
+      ring: "ring-emerald-200/40",
     },
     10: {
-      // Outubro – Rosa (Câncer de mama)
       title: "OUTUBRO ROSA • Prevenção ao Câncer de Mama",
-      footerBg: "bg-pink-700",
-      barBg: "bg-pink-800",
+      footerBg: "bg-gradient-to-br from-pink-800 via-rose-700 to-fuchsia-800",
+      barBg: "bg-pink-950/70",
       textColor: "text-white",
+      accent: "from-pink-200/55 via-white/30 to-transparent",
+      ring: "ring-pink-200/40",
     },
     11: {
-      // Novembro – Azul; Roxo (Próstata; Prematuridade)
       title:
         "NOVEMBRO • Prevenção do Câncer de Próstata • Conscientização sobre a Prematuridade",
-      footerBg: "bg-gradient-to-r from-blue-700 to-purple-700",
-      barBg: "bg-purple-800",
+      footerBg: "bg-gradient-to-br from-blue-800 via-indigo-800 to-purple-800",
+      barBg: "bg-purple-950/70",
       textColor: "text-white",
+      accent: "from-sky-200/50 via-white/28 to-transparent",
+      ring: "ring-sky-200/40",
     },
     12: {
-      // Dezembro – Vermelho (HIV/AIDS e outras ISTs)
       title:
         "DEZEMBRO VERMELHO • Conscientização e Prevenção ao HIV/AIDS e outras ISTs",
-      footerBg: "bg-red-700",
-      barBg: "bg-red-800",
+      footerBg: "bg-gradient-to-br from-red-800 via-rose-800 to-orange-800",
+      barBg: "bg-red-950/70",
       textColor: "text-white",
+      accent: "from-red-200/55 via-white/30 to-transparent",
+      ring: "ring-red-200/40",
     },
   };
   return campaigns[month] || null;
@@ -64,29 +70,54 @@ function periodTextOfMonth(date) {
   const month = date.getMonth() + 1; // 1-12
   const first = new Date(year, month - 1, 1);
   const last = new Date(year, month, 0);
-  return `de ${dd(first.getDate())}/${dd(month)}/${year} a ${dd(
-    last.getDate()
-  )}/${dd(month)}/${year}`;
+  return `de ${dd(first.getDate())}/${dd(month)}/${year} a ${dd(last.getDate())}/${dd(
+    month
+  )}/${year}`;
+}
+
+function IconChip({ children, ringClass = "ring-white/25", compact = false }) {
+  return (
+    <span
+      className={[
+        "inline-flex items-center justify-center rounded-2xl",
+        "bg-white/10 backdrop-blur-md ring-1",
+        ringClass,
+        compact ? "h-8 w-8" : "h-9 w-9",
+      ].join(" ")}
+      aria-hidden="true"
+    >
+      {children}
+    </span>
+  );
 }
 
 export default function Footer() {
-  // Usa fuso local do navegador
   const now = new Date();
   const month = now.getMonth() + 1; // 1-12
   const year = now.getFullYear();
 
   const campaign = getCampaignForMonth(month);
 
-  // Cores padrão (verde) fora de julho–dezembro
-  const footerBg = campaign ? campaign.footerBg : "bg-emerald-900";
-  const barBg = campaign ? campaign.barBg : "bg-emerald-800";
+  const footerBg = campaign
+    ? campaign.footerBg
+    : "bg-gradient-to-br from-emerald-950 via-emerald-900 to-slate-950";
+  const barBg = campaign ? campaign.barBg : "bg-emerald-950/70";
   const textColor = campaign ? campaign.textColor : "text-white";
+  const accent = campaign
+    ? campaign.accent
+    : "from-emerald-200/45 via-white/25 to-transparent";
+  const ring = campaign ? campaign.ring : "ring-emerald-200/30";
 
   const periodo = campaign ? periodTextOfMonth(now) : null;
 
   return (
     <footer
-      className={`${footerBg} ${textColor} mt-10 print:text-black print:bg-white`}
+      className={[
+        footerBg,
+        textColor,
+        "mt-10 print:text-black print:bg-white",
+        "relative overflow-hidden",
+      ].join(" ")}
       role="contentinfo"
       aria-label={
         campaign
@@ -94,88 +125,173 @@ export default function Footer() {
           : "Rodapé institucional"
       }
     >
-      {/* Faixa com TÍTULO da campanha e PERÍODO (exibida só de jul–dez) */}
+      {/* “Selo” superior (linha + glow) */}
+      <div className="absolute inset-x-0 top-0">
+        <div className="h-[3px] w-full bg-gradient-to-r from-white/0 via-white/60 to-white/0" />
+        <div
+          className={`pointer-events-none absolute inset-x-0 -top-2 h-10 bg-gradient-to-r ${accent} blur-2xl`}
+          aria-hidden="true"
+        />
+      </div>
+
+      {/* Textura + blobs (um pouco mais suave) */}
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 opacity-[0.14]"
+        style={{
+          backgroundImage:
+            "linear-gradient(to right, rgba(255,255,255,.10) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,.10) 1px, transparent 1px)",
+          backgroundSize: "52px 52px",
+        }}
+      />
+      <div
+        aria-hidden="true"
+        className="absolute -top-24 -left-24 h-72 w-72 rounded-full bg-white/10 blur-3xl"
+      />
+      <div
+        aria-hidden="true"
+        className="absolute -bottom-28 -right-28 h-80 w-80 rounded-full bg-white/10 blur-3xl"
+      />
+
+      {/* Campanha do mês (jul–dez) — mais compacta */}
       {campaign && (
-        <div className="px-6 py-4 text-center">
-          <h2
-            id="footer-campaign-title"
-            className="text-base sm:text-lg font-bold"
-          >
-            {campaign.title}
-          </h2>
-          {periodo && (
-            <p className="text-xs sm:text-sm opacity-90 mt-1">{periodo}</p>
-          )}
+        <div className="relative px-6 pt-6 pb-3 text-center">
+          <div className="mx-auto max-w-4xl">
+            <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[11px] font-extrabold backdrop-blur-md">
+              <Sparkles className="h-4 w-4 opacity-90" aria-hidden="true" />
+              Campanha do mês
+            </div>
+
+            <h2
+              id="footer-campaign-title"
+              className="mt-2 text-sm sm:text-base md:text-lg font-extrabold tracking-tight"
+            >
+              {campaign.title}
+            </h2>
+
+            {periodo && (
+              <p className="text-[11px] sm:text-xs opacity-90 mt-1.5">
+                {periodo}
+              </p>
+            )}
+          </div>
         </div>
       )}
 
-      {/* Bloco principal com microdados básicos de organização */}
+      {/* Bloco principal — reduzido verticalmente */}
       <div
-        className="max-w-7xl mx-auto px-6 py-8 grid gap-8 sm:grid-cols-2"
+        className="relative max-w-7xl mx-auto px-6 py-5 grid gap-4 lg:grid-cols-2"
         itemScope
         itemType="https://schema.org/Organization"
       >
-        {/* Logo e Instituição */}
-        <div>
-          <h3 className="text-lg font-bold" itemProp="name">
-            Escola Municipal de Saúde Pública
-          </h3>
-          <address
-            className="not-italic text-sm mt-2 leading-relaxed"
-            aria-label="Endereço da instituição"
-            itemProp="address"
-            itemScope
-            itemType="https://schema.org/PostalAddress"
-          >
-            <span itemProp="streetAddress">
-              Rua Amador Bueno, 333 – 4º andar – Sala 401
-            </span>
-            <br />
-            <span>
-              <span itemProp="addressLocality">Santos</span>,{" "}
-              <span itemProp="addressRegion">SP</span>,{" "}
-              <span itemProp="postalCode">11013-151</span>
-            </span>
-          </address>
+        {/* Card Instituição */}
+        <div
+          className={[
+            "rounded-3xl border border-white/15 bg-white/8 backdrop-blur-md",
+            "p-4 sm:p-5 shadow-[0_16px_44px_rgba(0,0,0,.18)]",
+          ].join(" ")}
+        >
+          <div className="flex items-start gap-3">
+            <IconChip ringClass={ring} compact>
+              <span className="h-2.5 w-2.5 rounded-full bg-white/85" />
+            </IconChip>
+
+            <div className="min-w-0">
+              <h3 className="text-base sm:text-lg font-extrabold leading-tight" itemProp="name">
+                Escola Municipal de Saúde Pública
+              </h3>
+
+              <address
+                className="not-italic text-[13px] mt-1.5 leading-relaxed opacity-95"
+                aria-label="Endereço da instituição"
+                itemProp="address"
+                itemScope
+                itemType="https://schema.org/PostalAddress"
+              >
+                <span itemProp="streetAddress">
+                  Rua Amador Bueno, 333 – 4º andar – Sala 401
+                </span>
+                <br />
+                <span>
+                  <span itemProp="addressLocality">Santos</span>,{" "}
+                  <span itemProp="addressRegion">SP</span>,{" "}
+                  <span itemProp="postalCode">11013-151</span>
+                </span>
+              </address>
+
+              <p className="mt-2 text-[11px] text-white/80">
+                Secretaria Municipal de Saúde — Prefeitura de Santos
+              </p>
+            </div>
+          </div>
         </div>
 
-        {/* Contatos */}
-        <div className="space-y-3 text-sm" aria-labelledby="footer-contatos">
-          <h4 id="footer-contatos" className="sr-only">
-            Informações de contato
+        {/* Card Contatos */}
+        <div
+          className={[
+            "rounded-3xl border border-white/15 bg-white/8 backdrop-blur-md",
+            "p-4 sm:p-5 shadow-[0_16px_44px_rgba(0,0,0,.18)]",
+          ].join(" ")}
+          aria-labelledby="footer-contatos"
+        >
+          <h4 id="footer-contatos" className="text-sm font-extrabold">
+            Contatos
           </h4>
 
-          <p className="flex items-center gap-2">
-            <Phone size={18} aria-hidden="true" />
-            <a
-              href="tel:+551332015000"
-              className="hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 dark:focus-visible:ring-white/70 rounded-sm"
-              itemProp="telephone"
-            >
-              (13) 3201-5000 R. 5331
-            </a>
-          </p>
+          <div className="mt-3 space-y-2.5 text-[13px]">
+            <p className="flex items-center gap-3">
+              <IconChip ringClass={ring} compact>
+                <Phone size={17} className="opacity-95" />
+              </IconChip>
 
-          <p className="flex items-center gap-2">
-            <Mail size={18} aria-hidden="true" />
-            <a
-              href="mailto:escoladasaude@santos.sp.gov.br"
-              className="hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 dark:focus-visible:ring-white/70 rounded-sm break-all"
-              itemProp="email"
-            >
-              escoladasaude@santos.sp.gov.br
-            </a>
-          </p>
+              <a
+                href="tel:+551332015000"
+                className="hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 rounded-md"
+                itemProp="telephone"
+              >
+                (13) 3201-5000 R. 5331
+              </a>
+            </p>
 
-          <p className="flex items-center gap-2">
-            <MapPin size={18} aria-hidden="true" />
-            <span>Santos/SP</span>
-          </p>
+            <p className="flex items-center gap-3">
+              <IconChip ringClass={ring} compact>
+                <Mail size={17} className="opacity-95" />
+              </IconChip>
+
+              <a
+                href="mailto:escoladasaude@santos.sp.gov.br"
+                className="hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 rounded-md break-all"
+                itemProp="email"
+              >
+                escoladasaude@santos.sp.gov.br
+              </a>
+            </p>
+
+            <p className="flex items-center gap-3">
+              <IconChip ringClass={ring} compact>
+                <MapPin size={17} className="opacity-95" />
+              </IconChip>
+              <span>Santos/SP</span>
+            </p>
+          </div>
+
+          {/* Nota menor */}
+          <div className="mt-4 rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-[11px] text-white/85">
+            Dica: informe seu nome completo e o curso/evento relacionado.
+          </div>
         </div>
       </div>
 
-      <div className={`${barBg} text-center text-xs py-3 px-2`}>
-        © {year} Escola da Saúde – Secretaria Municipal de Saúde – Prefeitura de Santos
+      {/* Barra final — mais baixa */}
+      <div className={`${barBg} relative`}>
+        <div className="max-w-7xl mx-auto px-6 py-2.5">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between text-[11px]">
+            <span className="opacity-95">
+              © {year} Escola da Saúde — Secretaria Municipal de Saúde — Prefeitura de Santos
+            </span>
+            <span className="opacity-80">Versão institucional • Ambiente autenticado</span>
+          </div>
+        </div>
       </div>
     </footer>
   );

@@ -15,7 +15,7 @@ export default function useEscolaTheme() {
     localStorage.setItem(ESCOLA_THEME_KEY, theme);
 
     if (theme !== "system") return;
-    return watchSystemTheme(() => applyThemeToHtml("system"));
+    return watchSystemTheme(() => syncSystemTheme());
   }, [theme]);
 
   const effective = useMemo(() => getEffectiveTheme(theme), [theme]);
