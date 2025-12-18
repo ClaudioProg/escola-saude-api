@@ -253,7 +253,7 @@ export default function HomeEscola() {
         <HeaderHero
           title="Painel da Escola da Saúde"
           subtitle="Informações importantes, campanhas e destaques da Escola Municipal de Saúde Pública de Santos."
-          badge="Plataforma oficial • acesso autenticado"
+          badge="Plataforma oficial • autenticado"
           icon={Sparkles}
           gradient="from-emerald-700 via-teal-600 to-sky-700"
           isDark={isDark}

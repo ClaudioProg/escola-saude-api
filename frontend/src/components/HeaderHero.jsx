@@ -4,7 +4,7 @@ import { Sparkles } from "lucide-react";
 export default function HeaderHero({
   title,
   subtitle,
-  badge = "Plataforma oficial • acesso autenticado",
+  badge = "Plataforma oficial • autenticado",
   icon: Icon = Sparkles,
   gradient = "from-emerald-600 via-teal-600 to-sky-700",
   isDark,        // (compat) opcional

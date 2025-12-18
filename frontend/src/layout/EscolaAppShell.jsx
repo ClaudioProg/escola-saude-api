@@ -57,9 +57,6 @@ export default function EscolaAppShell({
   const location = useLocation();
   const navigate = useNavigate();
 
-  // ✅ Tema: NÃO pintamos fundo via JS.
-  // O tema é controlado por <html class="dark"> e Tailwind (dark:...).
-  // Aqui só usamos classes Tailwind com dark:...
   const [open, setOpen] = useState(false);
   const openBtnRef = useRef(null);
   const drawerId = "escola-drawer";
@@ -101,7 +98,7 @@ export default function EscolaAppShell({
     }
   }, [storageUserKey, location.pathname]);
 
-  // sincroniza colapso entre abas (e também se SidebarNav atualizar)
+  // sincroniza colapso entre abas
   useEffect(() => {
     const onStorage = (e) => {
       if (e.key === SIDEBAR_COLLAPSED_KEY) {
@@ -120,10 +117,8 @@ export default function EscolaAppShell({
 
   // ✅ grid responsivo com colapso (desktop)
   const layoutCols = useMemo(() => {
-    // Sidebar expandida: md 4 / lg 3
-    // Sidebar recolhida: md 2 / lg 1 (mais espaço pro conteúdo)
     const aside = sidebarCollapsed ? "md:col-span-2 lg:col-span-1" : "md:col-span-4 lg:col-span-3";
-    const main  = sidebarCollapsed ? "md:col-span-10 lg:col-span-11" : "md:col-span-8 lg:col-span-9";
+    const main = sidebarCollapsed ? "md:col-span-10 lg:col-span-11" : "md:col-span-8 lg:col-span-9";
     return { aside, main };
   }, [sidebarCollapsed]);
 
@@ -141,7 +136,7 @@ export default function EscolaAppShell({
         Pular para o conteúdo
       </a>
 
-      {/* Ambient background (dark/light via classes) */}
+      {/* Ambient background */}
       <div
         aria-hidden="true"
         className={[
@@ -202,6 +197,7 @@ export default function EscolaAppShell({
                 "fixed left-0 top-0 bottom-0 z-50 w-[88%] max-w-sm border-r p-4",
                 "pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]",
                 "border-slate-200 bg-white dark:border-white/10 dark:bg-zinc-950",
+                "flex flex-col overflow-hidden", // ✅ essencial
               ].join(" ")}
               initial={{ x: "-100%" }}
               animate={{ x: 0 }}
@@ -212,7 +208,7 @@ export default function EscolaAppShell({
               aria-modal="true"
             >
               {/* Mini card do usuário */}
-              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-3 mb-4 dark:border-white/10 dark:bg-zinc-900/25">
+              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-3 mb-3 dark:border-white/10 dark:bg-zinc-900/25">
                 <div className="text-[11px] font-extrabold uppercase tracking-wide opacity-80">
                   Sessão
                 </div>
@@ -237,8 +233,10 @@ export default function EscolaAppShell({
                 </button>
               </div>
 
-              {/* Sidebar no mobile */}
-              <SidebarNav variant="mobile" onClose={() => setOpen(false)} />
+              {/* ✅ Sidebar no mobile (precisa crescer e poder rolar internamente) */}
+              <div className="min-h-0 flex-1">
+                <SidebarNav variant="mobile" onClose={() => setOpen(false)} />
+              </div>
             </motion.aside>
           </>
         )}

@@ -73,13 +73,13 @@ function getPerfisRobusto() {
 }
 
 /* =========================
-   UI pequenos
+   UI pequenos (compact)
 ========================= */
 function IconTile({ active, isDark, Icon }) {
   return (
     <span
       className={[
-        "inline-flex h-10 w-10 items-center justify-center rounded-2xl border transition",
+        "inline-flex h-9 w-9 items-center justify-center rounded-xl border transition", // ✅ menor
         active
           ? "border-white/15 bg-white/10"
           : isDark
@@ -91,7 +91,7 @@ function IconTile({ active, isDark, Icon }) {
       {Icon ? (
         <Icon
           className={[
-            "w-5 h-5 transition",
+            "h-[18px] w-[18px] transition", // ✅ menor
             active ? "text-white" : isDark ? "text-zinc-200" : "text-slate-700 group-hover:text-emerald-700",
           ].join(" ")}
         />
@@ -106,7 +106,8 @@ function MenuItem({ active, isDark, collapsed, icon: Icon, label, onClick }) {
       type="button"
       onClick={onClick}
       className={[
-        "w-full text-left group relative flex items-center gap-3 rounded-2xl px-3 py-2 text-sm font-extrabold transition",
+        "w-full text-left group relative flex items-center rounded-xl px-3 py-1.5", // ✅ compacto
+        "gap-2 text-[13px] font-extrabold transition", // ✅ compacto
         "focus:outline-none focus:ring-2 focus:ring-emerald-500/70",
         active
           ? "text-white bg-emerald-600 shadow-sm shadow-emerald-900/15"
@@ -121,14 +122,13 @@ function MenuItem({ active, isDark, collapsed, icon: Icon, label, onClick }) {
       <span
         aria-hidden="true"
         className={[
-          "absolute left-1 top-2 bottom-2 w-1 rounded-full transition",
+          "absolute left-1 top-1.5 bottom-1.5 w-1 rounded-full transition", // ✅ compacto
           active ? "bg-white/85 shadow-[0_0_18px_rgba(255,255,255,.35)]" : "bg-transparent",
         ].join(" ")}
       />
 
       <IconTile active={active} isDark={isDark} Icon={Icon} />
       {!collapsed && <span className="truncate">{label}</span>}
-
       {active && !collapsed && <span className="ml-auto h-2 w-2 rounded-full bg-white/85" aria-hidden="true" />}
     </button>
   );
@@ -142,7 +142,7 @@ function ThemeStackButton({ active, onClick, icon: Icon, label, isDark, collapse
       aria-pressed={active}
       title={label}
       className={[
-        "w-full inline-flex items-center gap-3 rounded-xl px-3 py-2 text-xs font-extrabold transition",
+        "w-full inline-flex items-center gap-2 rounded-xl px-3 py-1.5 text-xs font-extrabold transition", // ✅ compacto
         "focus:outline-none focus:ring-2 focus:ring-emerald-500/70",
         active
           ? "bg-emerald-600 text-white"
@@ -212,10 +212,7 @@ export default function SidebarNav({
 
       if (e.key === ESCOLA_THEME_KEY) {
         const saved = e.newValue;
-        if (saved === "light" || saved === "dark" || saved === "system") {
-          // ✅ fonte única: muda o state do hook; o hook aplica no <html>
-          setTheme(saved);
-        }
+        if (saved === "light" || saved === "dark" || saved === "system") setTheme(saved);
       }
     };
     window.addEventListener("storage", onStorage);
@@ -227,7 +224,7 @@ export default function SidebarNav({
   const isInstrutor = perfis.includes("instrutor") || perfis.includes("administrador");
   const isAdmin = perfis.includes("administrador");
 
-  // ✅ Menus COMPLETOS (como antes)
+  // ✅ Menus COMPLETOS
   const menusUsuario = useMemo(
     () => [
       { label: "Painel do Usuário", path: "/usuario/dashboard", icon: LayoutDashboard },
@@ -325,6 +322,7 @@ export default function SidebarNav({
         shellCls,
         isMobile ? "h-full" : "sticky top-24",
         themeCollapsed ? "w-[92px]" : "",
+        isMobile ? "flex flex-col" : "", // ✅ ajuda scroll interno
       ].join(" ")}
       aria-label="Menu principal"
     >
@@ -333,7 +331,7 @@ export default function SidebarNav({
         <div
           aria-hidden="true"
           className={[
-            "h-1.5 w-full rounded-full mb-3 bg-gradient-to-r",
+            "h-1.5 w-full rounded-full mb-2.5 bg-gradient-to-r", // ✅ compacto
             isDark
               ? "from-emerald-400/30 via-sky-400/20 to-violet-400/10"
               : "from-emerald-500/40 via-sky-500/25 to-violet-500/15",
@@ -343,7 +341,6 @@ export default function SidebarNav({
         <div className="flex items-center justify-between gap-2">
           <div className="text-sm font-extrabold">{themeCollapsed ? "Menu" : "Navegação"}</div>
 
-          {/* Desktop: recolher/expandir */}
           {!isMobile ? (
             <button
               type="button"
@@ -372,14 +369,14 @@ export default function SidebarNav({
           )}
         </div>
 
-        {/* ✅ Tema VERTICAL (um abaixo do outro) */}
+        {/* ✅ Tema VERTICAL */}
         <div
           className={[
-            "mt-3 rounded-2xl border p-2",
+            "mt-2.5 rounded-2xl border p-2", // ✅ compacto
             isDark ? "border-white/10 bg-zinc-950/30" : "border-slate-200 bg-slate-50",
           ].join(" ")}
         >
-          <div className={["flex flex-col gap-1", themeCollapsed ? "items-stretch" : ""].join(" ")}>
+          <div className="flex flex-col gap-1">
             <ThemeStackButton
               active={theme === "light"}
               onClick={() => setTheme("light")}
@@ -409,7 +406,7 @@ export default function SidebarNav({
 
         {/* Busca (esconde no colapsado desktop) */}
         {!themeCollapsed && (
-          <div className="mt-3">
+          <div className="mt-2.5">
             <label className="sr-only" htmlFor={`sidebar-search-${variant}`}>
               Buscar no menu
             </label>
@@ -435,8 +432,16 @@ export default function SidebarNav({
         )}
       </div>
 
-      {/* sections */}
-      <div className="px-3 pb-4 space-y-4">
+      {/* ✅ LISTA rolável no MOBILE */}
+      <div
+        className={[
+          "px-3 pb-3",
+          "space-y-3", // ✅ compacto
+          isMobile ? "min-h-0 flex-1 overflow-y-auto overscroll-contain pr-2" : "", // ✅ scroll interno
+          isMobile ? "max-h-[calc(100dvh-220px)]" : "", // ✅ fallback seguro
+        ].join(" ")}
+        style={isMobile ? { WebkitOverflowScrolling: "touch" } : undefined}
+      >
         {sections.length === 0 ? (
           <div className={["px-2 pb-2 text-sm", isDark ? "text-zinc-300" : "text-slate-700"].join(" ")}>
             Nenhum menu disponível para este perfil.
@@ -446,7 +451,7 @@ export default function SidebarNav({
             <div key={sec.title}>
               <div
                 className={[
-                  "px-2 pb-2 text-[11px] font-extrabold uppercase tracking-wide",
+                  "px-2 pb-1.5 text-[11px] font-extrabold uppercase tracking-wide", // ✅ compacto
                   isDark ? "text-zinc-400" : "text-slate-500",
                   themeCollapsed ? "text-center" : "",
                 ].join(" ")}
@@ -454,7 +459,7 @@ export default function SidebarNav({
                 {themeCollapsed ? sec.title.slice(0, 3) : sec.title}
               </div>
 
-              <div className="space-y-1">
+              <div className="space-y-0.5">
                 {sec.items.map((item) => {
                   const active =
                     location.pathname === item.path ||
