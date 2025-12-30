@@ -3,7 +3,6 @@ import { useEffect, useMemo, useCallback, useState } from "react";
 import { motion } from "framer-motion";
 import {
   CalendarDays,
-  Megaphone,
   ShieldCheck,
   Download,
   Sparkles,
@@ -16,13 +15,19 @@ import {
   Copy,
   Instagram,
   Share2,
+  ClipboardCheck,
+  CheckCircle2,
+  XCircle,
+  Star,
+  RefreshCw,
 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
 
 import Footer from "../components/Footer";
 import HeaderHero from "../components/HeaderHero";
 import QrSiteEscola from "../components/QrSiteEscola";
+import { apiGet } from "../services/api";
 
 const SITE_URL = "https://escoladasaude.vercel.app";
 const INSTAGRAM_URL =
@@ -56,9 +61,7 @@ function DestaqueLongo({ imgSrc, imgAlt, titulo, subtitulo, badge, children }) {
           {titulo}
         </h3>
         {subtitulo && (
-          <p className="text-emerald-700 dark:text-emerald-300 text-sm font-bold">
-            {subtitulo}
-          </p>
+          <p className="text-emerald-700 dark:text-emerald-300 text-sm font-bold">{subtitulo}</p>
         )}
         <div className="text-sm text-slate-700 dark:text-zinc-300 leading-relaxed space-y-3 text-justify">
           {children}
@@ -69,19 +72,34 @@ function DestaqueLongo({ imgSrc, imgAlt, titulo, subtitulo, badge, children }) {
 }
 
 /* ────────────────────────────────────────────────────────────── */
-/* MiniStat                                                        */
+/* MiniStat (premium + acessível)                                  */
 /* ────────────────────────────────────────────────────────────── */
-function MiniStat({ icon: Icon, label, value, hint, tone = "emerald" }) {
+function MiniStat({ icon: Icon, label, value, hint, tone = "emerald", onClick }) {
   const toneMap = {
     emerald: "bg-emerald-600/10 text-emerald-700 dark:text-emerald-200 dark:bg-emerald-400/10",
     sky: "bg-sky-600/10 text-sky-700 dark:text-sky-200 dark:bg-sky-400/10",
     violet: "bg-violet-600/10 text-violet-700 dark:text-violet-200 dark:bg-violet-400/10",
     amber: "bg-amber-600/10 text-amber-800 dark:text-amber-200 dark:bg-amber-400/10",
     rose: "bg-rose-600/10 text-rose-800 dark:text-rose-200 dark:bg-rose-400/10",
+    slate: "bg-slate-600/10 text-slate-800 dark:text-slate-200 dark:bg-white/10",
   };
 
+  const clickable = typeof onClick === "function";
+
   return (
-    <div className="rounded-3xl bg-white dark:bg-zinc-900/55 border border-slate-200 dark:border-white/10 p-4 sm:p-5 shadow-sm">
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={!clickable}
+      className={[
+        "rounded-3xl bg-white dark:bg-zinc-900/55 border border-slate-200 dark:border-white/10 p-4 sm:p-5 shadow-sm text-left",
+        clickable
+          ? "hover:shadow-md transition focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60 cursor-pointer"
+          : "cursor-default",
+      ].join(" ")}
+      aria-label={`${label}: ${value ?? "—"}`}
+      title={clickable ? "Abrir" : undefined}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="text-[11px] font-extrabold uppercase tracking-wide text-slate-500 dark:text-zinc-400">
@@ -91,14 +109,74 @@ function MiniStat({ icon: Icon, label, value, hint, tone = "emerald" }) {
             {value}
           </div>
           {hint ? (
-            <div className="mt-1 text-[12px] text-slate-600 dark:text-zinc-400">
-              {hint}
-            </div>
+            <div className="mt-1 text-[12px] text-slate-600 dark:text-zinc-400">{hint}</div>
           ) : null}
         </div>
 
         <div className={`shrink-0 rounded-2xl p-3 ${toneMap[tone] || toneMap.emerald}`}>
           <Icon className="w-5 h-5" />
+        </div>
+      </div>
+    </button>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────── */
+/* Card especial: Nota do usuário (sem /10 e sem fórmula)           */
+/* ────────────────────────────────────────────────────────────── */
+function NotaUsuarioCard({ nota, loading }) {
+  const n = Number(nota);
+  const clamp = Number.isFinite(n) ? Math.max(0, Math.min(10, n)) : 0;
+  const percent = (clamp / 10) * 100;
+
+  // cor por faixa (verde → amarelo → laranja → vermelho)
+  const corBarra =
+    clamp >= 9
+      ? "bg-emerald-500"
+      : clamp >= 7
+      ? "bg-lime-500"
+      : clamp >= 5
+      ? "bg-amber-500"
+      : clamp >= 3
+      ? "bg-orange-500"
+      : "bg-rose-600";
+
+  const labelStatus =
+    clamp >= 9 ? "Excelente" : clamp >= 7 ? "Bom" : clamp >= 5 ? "Regular" : clamp >= 3 ? "Atenção" : "Crítico";
+
+  return (
+    <div className="rounded-3xl bg-white dark:bg-zinc-900/55 border border-slate-200 dark:border-white/10 p-4 sm:p-5 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[11px] font-extrabold uppercase tracking-wide text-slate-500 dark:text-zinc-400">
+            Nota do usuário
+          </div>
+
+          <div className="mt-1 text-xl sm:text-2xl font-extrabold tracking-tight text-slate-900 dark:text-zinc-100">
+            {loading ? "…" : Number.isFinite(n) ? clamp.toFixed(1) : "—"}
+          </div>
+        </div>
+
+        <div className="shrink-0 rounded-2xl p-3 bg-slate-100 text-slate-800 dark:bg-zinc-800 dark:text-zinc-100">
+          <Star className="w-5 h-5" aria-hidden="true" />
+        </div>
+      </div>
+
+      {/* Barra de status */}
+      <div className="mt-4">
+        <div className="h-3 w-full rounded-full bg-slate-200 dark:bg-zinc-800 overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-all duration-700 ${corBarra}`}
+            style={{ width: loading ? "35%" : `${percent}%` }}
+            aria-hidden="true"
+          />
+        </div>
+
+        <div className="mt-2 flex items-center justify-between text-[12px]">
+          <span className="text-slate-600 dark:text-zinc-400">Status</span>
+          <span className="font-extrabold text-slate-900 dark:text-zinc-100">
+            {loading ? "Carregando…" : labelStatus}
+          </span>
         </div>
       </div>
     </div>
@@ -121,7 +199,10 @@ function QuickCard({ to, icon: Icon, title, subtitle, tone = "emerald" }) {
       to={to}
       className="group rounded-3xl bg-white dark:bg-zinc-900/55 border border-slate-200 dark:border-white/10 p-4 sm:p-5 shadow-sm hover:shadow-md transition focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60"
     >
-      <div className={`h-1.5 w-full rounded-full bg-gradient-to-r ${toneBar[tone] || toneBar.emerald}`} aria-hidden="true" />
+      <div
+        className={`h-1.5 w-full rounded-full bg-gradient-to-r ${toneBar[tone] || toneBar.emerald}`}
+        aria-hidden="true"
+      />
 
       <div className="mt-4 flex items-start gap-3">
         <div className="rounded-2xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-zinc-950/30 p-3 group-hover:bg-slate-100 dark:group-hover:bg-white/5 transition">
@@ -129,12 +210,8 @@ function QuickCard({ to, icon: Icon, title, subtitle, tone = "emerald" }) {
         </div>
 
         <div className="min-w-0">
-          <div className="text-sm font-extrabold text-slate-900 dark:text-zinc-100">
-            {title}
-          </div>
-          <div className="mt-1 text-[12px] text-slate-600 dark:text-zinc-400">
-            {subtitle}
-          </div>
+          <div className="text-sm font-extrabold text-slate-900 dark:text-zinc-100">{title}</div>
+          <div className="mt-1 text-[12px] text-slate-600 dark:text-zinc-400">{subtitle}</div>
         </div>
 
         <ArrowRight className="ml-auto w-5 h-5 text-slate-400 group-hover:text-slate-700 dark:text-zinc-500 dark:group-hover:text-zinc-200 transition" />
@@ -162,7 +239,10 @@ function QrCard({ title, subtitle, icon: Icon, accent = "teal", url, qrSize }) {
 
   return (
     <div className="rounded-3xl bg-white dark:bg-zinc-900/55 border border-slate-200 dark:border-white/10 p-5 sm:p-6 shadow-sm">
-      <div className={`h-1.5 w-full rounded-full bg-gradient-to-r ${badgeBar[accent] || badgeBar.teal}`} aria-hidden="true" />
+      <div
+        className={`h-1.5 w-full rounded-full bg-gradient-to-r ${badgeBar[accent] || badgeBar.teal}`}
+        aria-hidden="true"
+      />
 
       <div className="mt-4 flex items-start gap-3">
         <div className="rounded-2xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-zinc-950/30 p-3">
@@ -170,12 +250,8 @@ function QrCard({ title, subtitle, icon: Icon, accent = "teal", url, qrSize }) {
         </div>
 
         <div className="min-w-0">
-          <div className="text-sm font-extrabold text-slate-900 dark:text-zinc-100">
-            {title}
-          </div>
-          <div className="mt-1 text-[12px] text-slate-600 dark:text-zinc-400">
-            {subtitle}
-          </div>
+          <div className="text-sm font-extrabold text-slate-900 dark:text-zinc-100">{title}</div>
+          <div className="mt-1 text-[12px] text-slate-600 dark:text-zinc-400">{subtitle}</div>
         </div>
       </div>
 
@@ -200,6 +276,8 @@ function ActionBtn({ onClick, icon: Icon, children }) {
 }
 
 export default function HomeEscola() {
+  const navigate = useNavigate();
+
   useEffect(() => {
     document.title = "Escola da Saúde — Painel";
   }, []);
@@ -213,6 +291,40 @@ export default function HomeEscola() {
     }
     return 260;
   }, []);
+
+  // ✅ Resumo do usuário (stats do painel)
+  const [resumo, setResumo] = useState(null);
+  const [loadingResumo, setLoadingResumo] = useState(true);
+
+  const carregarResumo = useCallback(async () => {
+    try {
+      setLoadingResumo(true);
+      const data = await apiGet("/dashboard-usuario");
+      setResumo(data || {});
+    } catch (err) {
+      console.error("❌ Erro ao carregar resumo:", err);
+      setResumo(null);
+      toast.error("Não foi possível carregar seu resumo agora.");
+    } finally {
+      setLoadingResumo(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    carregarResumo();
+  }, [carregarResumo]);
+
+  const stats = useMemo(() => {
+    const inscricoes = Number(resumo?.inscricoesFuturas ?? resumo?.proximosEventos ?? 0) || 0;
+    const avalPend = Number(resumo?.avaliacoesPendentes ?? 0) || 0;
+    const certEmit = Number(resumo?.certificadosEmitidos ?? resumo?.certificados ?? 0) || 0;
+
+    const presencas = Number(resumo?.presencasTotal ?? 0) || 0;
+    const faltas = Number(resumo?.faltasTotal ?? 0) || 0;
+    const nota = resumo?.notaUsuario ?? resumo?.nota ?? null;
+
+    return { inscricoes, avalPend, certEmit, presencas, faltas, nota };
+  }, [resumo]);
 
   // Ações QR
   const abrirSite = useCallback(() => {
@@ -249,36 +361,89 @@ export default function HomeEscola() {
   return (
     <>
       <div className="max-w-7xl mx-auto p-4 md:p-6">
-        {/* HeaderHero premium (sem os pills da direita) */}
+        {/* HeaderHero premium */}
         <HeaderHero
-          title="Painel da Escola da Saúde"
-          subtitle="Informações importantes, campanhas e destaques da Escola Municipal de Saúde Pública de Santos."
-          badge="Plataforma oficial • autenticado"
+          title="Painel do Usuário"
+          subtitle="Seu resumo de inscrições, presenças, avaliações e certificados — em um só lugar."
+          badge="Escola da Saúde • Oficial"
           icon={Sparkles}
           gradient="from-emerald-700 via-teal-600 to-sky-700"
           isDark={isDark}
           rightSlot={null}
         />
 
-        {/* Ministats (reduzidos: remove Notificações e Campanhas) */}
-        <section className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <MiniStat
-            icon={Download}
-            label="Aplicativo"
-            value="PWA disponível"
-            hint="Instale no celular ou PC em 1 minuto"
-            tone="amber"
-          />
-          <MiniStat
-            icon={ShieldCheck}
-            label="Acesso"
-            value="Autenticado"
-            hint="Ambiente oficial e seguro"
-            tone="emerald"
-          />
+        {/* ✅ Resumo do usuário (sem gráficos e sem notificações) */}
+        <section className="mt-6" aria-label="Resumo do usuário">
+          <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-extrabold text-slate-900 dark:text-zinc-100">
+                Seu resumo
+              </h2>
+              <p className="mt-1 text-sm text-slate-600 dark:text-zinc-400">
+                Indicadores consolidados de participação e pendências.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={carregarResumo}
+              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-extrabold text-slate-700 hover:bg-slate-100 dark:border-white/10 dark:bg-zinc-900/35 dark:text-zinc-200 dark:hover:bg-white/5 transition"
+              aria-label="Atualizar resumo do usuário"
+              title="Atualizar"
+            >
+              <RefreshCw className={`w-4 h-4 ${loadingResumo ? "animate-spin" : ""}`} />
+              {loadingResumo ? "Atualizando…" : "Atualizar"}
+            </button>
+          </div>
+
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <MiniStat
+              icon={ClipboardList}
+              label="Inscrições"
+              value={loadingResumo ? "…" : stats.inscricoes}
+              hint="Cursos que você ainda vai fazer"
+              tone="emerald"
+              onClick={() => navigate("/minhas-inscricoes")}
+            />
+            <MiniStat
+              icon={ClipboardCheck}
+              label="Avaliações pendentes"
+              value={loadingResumo ? "…" : stats.avalPend}
+              hint="Complete para liberar certificado"
+              tone="sky"
+              onClick={() => navigate("/avaliacoes")}
+            />
+            <MiniStat
+              icon={FileText}
+              label="Certificados emitidos"
+              value={loadingResumo ? "…" : stats.certEmit}
+              hint="Prontos para download"
+              tone="violet"
+              onClick={() => navigate("/certificados")}
+            />
+            <MiniStat
+              icon={CheckCircle2}
+              label="Presenças"
+              value={loadingResumo ? "…" : stats.presencas}
+              hint="Registros em cursos concluídos"
+              tone="amber"
+              onClick={() => navigate("/minhas-presencas")}
+            />
+            <MiniStat
+              icon={XCircle}
+              label="Faltas"
+              value={loadingResumo ? "…" : stats.faltas}
+              hint="Registros em cursos concluídos"
+              tone="rose"
+              onClick={() => navigate("/minhas-presencas")}
+            />
+
+            {/* ⭐ Nota do usuário: sem "/10" e sem fórmula — com barra */}
+            <NotaUsuarioCard nota={stats.nota} loading={loadingResumo} />
+          </div>
         </section>
 
-        {/* Acesso rápido */}
+        {/* ✅ Acesso rápido */}
         <section className="mt-6" aria-label="Acesso rápido">
           <div className="flex items-end justify-between gap-3">
             <h2 className="text-xl font-extrabold text-slate-900 dark:text-zinc-100">
@@ -321,6 +486,24 @@ export default function HomeEscola() {
           </div>
         </section>
 
+        {/* ✅ Status da plataforma */}
+        <section className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-4" aria-label="Status da plataforma">
+          <MiniStat
+            icon={Download}
+            label="Aplicativo"
+            value="PWA disponível"
+            hint="Instale no celular ou PC em 1 minuto"
+            tone="amber"
+          />
+          <MiniStat
+            icon={ShieldCheck}
+            label="Acesso"
+            value="Autenticado"
+            hint="Ambiente oficial e seguro"
+            tone="emerald"
+          />
+        </section>
+
         {/* Links oficiais (QR do site + Instagram) */}
         <section className="mt-8" aria-label="Links oficiais">
           <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
@@ -334,10 +517,18 @@ export default function HomeEscola() {
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <ActionBtn onClick={abrirSite} icon={ExternalLink}>Abrir site</ActionBtn>
-              <ActionBtn onClick={copiarSite} icon={Copy}>Copiar link</ActionBtn>
-              <ActionBtn onClick={abrirInstagram} icon={Instagram}>Instagram</ActionBtn>
-              <ActionBtn onClick={compartilhar} icon={Share2}>Compartilhar</ActionBtn>
+              <ActionBtn onClick={abrirSite} icon={ExternalLink}>
+                Abrir site
+              </ActionBtn>
+              <ActionBtn onClick={copiarSite} icon={Copy}>
+                Copiar link
+              </ActionBtn>
+              <ActionBtn onClick={abrirInstagram} icon={Instagram}>
+                Instagram
+              </ActionBtn>
+              <ActionBtn onClick={compartilhar} icon={Share2}>
+                Compartilhar
+              </ActionBtn>
             </div>
           </div>
 
@@ -364,101 +555,52 @@ export default function HomeEscola() {
         {/* Destaques */}
         <section className="mt-8" aria-label="Destaques">
           <div className="flex items-end justify-between gap-3">
-            <h2 className="text-xl font-extrabold text-slate-900 dark:text-zinc-100">
-              Destaques
-            </h2>
+            <h2 className="text-xl font-extrabold text-slate-900 dark:text-zinc-100">Destaques</h2>
             <p className="hidden sm:block text-sm text-slate-600 dark:text-zinc-400">
               Comunicados e campanhas oficiais
             </p>
           </div>
 
           <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* 0) Mensagem de Natal e Feliz 2026 */}
-            <DestaqueLongo
-              imgSrc="/banners/natal-2025.png"
-              imgAlt="Mensagem de Natal e Feliz 2026"
-              titulo="🎄 Feliz Natal e um 2026 iluminado!"
-              subtitulo="Gratidão, união e novos caminhos"
-              badge="Mensagem Especial"
-            >
-              <p>
-                Chegamos ao fim de mais um ano de muito trabalho, dedicação e aprendizado. Em nome da
-                <strong> Escola da Saúde </strong> e da
-                <strong> Secretaria Municipal de Saúde</strong>, registramos nosso sincero agradecimento
-                a todas as pessoas que constroem diariamente uma saúde pública mais humana, acolhedora e eficiente.
-              </p>
+           
+           {/* 1) ✅ Mensagem institucional — Boas-vindas a 2026 */}
+<DestaqueLongo
+  imgSrc="/banners/mensagem-2026.jpg"
+  imgAlt="Mensagem institucional da Escola da Saúde para 2026"
+  titulo="✨ Bem-vindo, 2026 — um ano de realizações e cuidado"
+  subtitulo="Educação, união e excelência no SUS"
+  badge="Mensagem da Escola da Saúde"
+>
+  <p>
+    A <strong>Escola da Saúde</strong>, em nome da <strong>Secretaria Municipal de Saúde</strong>,
+    deseja a todos os profissionais de saúde um <strong>2026 de muitas realizações</strong>,
+    conquistas e crescimento — pessoal e coletivo.
+  </p>
 
-              <p>
-                A cada profissional, instrutor, colaborador, estudante, participante de nossos cursos e
-                a cada usuário desta plataforma: <strong>obrigado</strong> por fazer parte dessa jornada e
-                por contribuir para o fortalecimento da educação em saúde no município.
-              </p>
+  <p>
+    Que este novo ano fortaleça ainda mais nosso compromisso com a{" "}
+    <strong>educação permanente</strong>, com a atualização constante e com o
+    desenvolvimento de competências que se transformam em{" "}
+    <strong>melhor assistência aos usuários do SUS</strong>.
+  </p>
 
-              <p>
-                <strong>Que o Natal renove nossas energias</strong>, trazendo paz, esperança e afeto aos lares,
-                e que 2026 nos presenteie com novas oportunidades de crescimento, aprendizado e realizações.
-              </p>
+  <p>
+    Seguiremos juntos, construindo diariamente uma rede mais{" "}
+    <strong>humana</strong>, <strong>acolhedora</strong> e <strong>eficiente</strong>,
+    onde o conhecimento não é apenas conteúdo — é prática, cuidado e transformação.
+  </p>
 
-              <p><strong>✨ Que o novo ano seja leve, próspero e cheio de conquistas.</strong></p>
-
-              <p>
-                Seguimos juntos, promovendo conhecimento, ampliando horizontes e transformando vidas.
-                <strong> Feliz Natal e um extraordinário 2026 a todos! 🎄💫</strong>
-              </p>
-            </DestaqueLongo>
-
-            {/* 1) 01/12 – Dia Mundial de Luta Contra a Aids */}
-            <DestaqueLongo
-              imgSrc="/banners/dia-mundial-aids.png"
-              imgAlt="Arte da campanha Dia Mundial de Luta Contra a Aids"
-              titulo="❤️ 1º de Dezembro — Dia Mundial de Luta Contra a Aids"
-              subtitulo="Prevenção, cuidado e acolhimento"
-              badge="Campanha"
-            >
-              <p>
-                O <strong>Dia Mundial de Luta Contra a Aids</strong> é celebrado em 1º de dezembro e representa
-                um chamado global à conscientização, à prevenção e ao enfrentamento do HIV, reforçando o compromisso
-                com a vida, o cuidado e o acesso à informação.
-              </p>
-
-              <p>
-                Desde o surgimento da epidemia, grandes avanços tornaram o HIV uma condição tratável. Hoje,
-                pessoas vivendo com HIV podem ter qualidade de vida e expectativa semelhante à da população geral,
-                desde que em acompanhamento e tratamento adequados.
-              </p>
-
-              <p><strong>💡 Prevenção e informação salvam vidas</strong></p>
-
-              <p>
-                <strong>Prevenção Combinada:</strong> inclui o uso de preservativos, PEP (profilaxia pós-exposição),
-                PrEP (profilaxia pré-exposição) e testagem regular — todos disponíveis pelo SUS.
-              </p>
-
-              <p>
-                <strong>Testagem gratuita:</strong> conhecer o diagnóstico é o primeiro passo para o cuidado. Os testes
-                rápidos estão disponíveis nas Unidades de Saúde e Centros de Testagem e Aconselhamento (CTA).
-              </p>
-
-              <p>
-                <strong>Tratamento para todos:</strong> o início precoce da terapia antirretroviral (TARV) garante
-                melhor saúde e reduz drasticamente o risco de transmissão.
-              </p>
-
-              <p><strong>🌍 Um movimento por respeito e acolhimento</strong></p>
-
-              <p>
-                Combater o estigma e a discriminação é tão importante quanto promover prevenção e acesso ao tratamento.
-                A luta contra a Aids é coletiva — envolve empatia, responsabilidade social e defesa da vida.
-              </p>
-
-              <p>
-                <strong>Testar, tratar, acolher e respeitar. Esse é o caminho para um futuro sem estigma. ❤️</strong>
-              </p>
-            </DestaqueLongo>
+  <p>
+    <strong>
+      Que 2026 seja um ano de união, aprendizado e resultados concretos para a saúde pública.
+      Conte com a Escola da Saúde! 💚
+    </strong>
+  </p>
+</DestaqueLongo>
 
             {/* 2) Instalação do App PWA */}
             <DestaqueLongo
-              imgSrc="/banners/app-escola-saude.png"
+              imgSrc="/banners/app-escola-saude.jpg"
               imgAlt="Instale o App Escola da Saúde"
               titulo="📲 Instale o App Escola da Saúde!"
               subtitulo="Disponível como aplicativo PWA"
@@ -466,29 +608,56 @@ export default function HomeEscola() {
             >
               <h3 className="font-extrabold mt-4">🍎 iPhone / iPad (iOS)</h3>
               <ul className="list-disc ml-6">
-                <li><strong>Navegador obrigatório:</strong> Safari</li>
-                <li>Acesse: <strong>https://escola.santos.sp.gov.br</strong></li>
-                <li>Toque no botão <strong>Compartilhar</strong> (ícone de quadrado com seta)</li>
-                <li>Selecione <strong>Adicionar à Tela de Início</strong></li>
-                <li>Confirme em <strong>Adicionar</strong></li>
+                <li>
+                  <strong>Navegador obrigatório:</strong> Safari
+                </li>
+                <li>
+                  Acesse: <strong>https://escola.santos.sp.gov.br</strong>
+                </li>
+                <li>
+                  Toque no botão <strong>Compartilhar</strong> (ícone de quadrado com seta)
+                </li>
+                <li>
+                  Selecione <strong>Adicionar à Tela de Início</strong>
+                </li>
+                <li>
+                  Confirme em <strong>Adicionar</strong>
+                </li>
                 <li>📌 O app aparecerá na tela como um aplicativo normal</li>
               </ul>
 
               <h3 className="font-extrabold mt-4">📱 Android – Chrome</h3>
               <ul className="list-disc ml-6">
-                <li>Acesse: <strong>https://escola.santos.sp.gov.br</strong></li>
-                <li>Toque no menu <strong>⋮</strong></li>
-                <li>Selecione <strong>Instalar aplicativo</strong> ou <strong>Adicionar à tela inicial</strong></li>
-                <li>Confirme em <strong>Instalar</strong></li>
+                <li>
+                  Acesse: <strong>https://escola.santos.sp.gov.br</strong>
+                </li>
+                <li>
+                  Toque no menu <strong>⋮</strong>
+                </li>
+                <li>
+                  Selecione <strong>Instalar aplicativo</strong> ou{" "}
+                  <strong>Adicionar à tela inicial</strong>
+                </li>
+                <li>
+                  Confirme em <strong>Instalar</strong>
+                </li>
                 <li>📌 O ícone aparecerá automaticamente na tela</li>
               </ul>
 
               <h3 className="font-extrabold mt-4">🌐 Computador (Windows / Chromebook / Linux)</h3>
               <ul className="list-disc ml-6">
-                <li>Abra o <strong>Chrome</strong> ou <strong>Edge</strong></li>
-                <li>Acesse: <strong>https://escola.santos.sp.gov.br</strong></li>
-                <li>Clique no ícone <strong>Instalar</strong> na barra de endereço</li>
-                <li>Confirme em <strong>Instalar</strong></li>
+                <li>
+                  Abra o <strong>Chrome</strong> ou <strong>Edge</strong>
+                </li>
+                <li>
+                  Acesse: <strong>https://escola.santos.sp.gov.br</strong>
+                </li>
+                <li>
+                  Clique no ícone <strong>Instalar</strong> na barra de endereço
+                </li>
+                <li>
+                  Confirme em <strong>Instalar</strong>
+                </li>
                 <li>📌 O app abrirá em uma janela própria, como um programa</li>
               </ul>
 

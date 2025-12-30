@@ -285,6 +285,7 @@ app.use("/api/votacoes", votacoesRoutes);
 app.use("/api", publicLookupsRoutes);
 app.use("/api/salas", salasRoutes);
 app.use("/api/calendario", calendarioRoutes); 
+app.use("/api/questionarios", require("./routes/questionariosRoute"));
 
 /* ───────── Recuperação de senha ───────── */
 app.post("/api/usuarios/recuperar-senha", recuperarSenhaLimiter, usuarioPublicoController.recuperarSenha);

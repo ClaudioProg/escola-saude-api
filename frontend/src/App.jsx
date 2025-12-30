@@ -31,7 +31,7 @@ const Eventos = lazy(() => import("./pages/Eventos"));
 const MinhasPresencas = lazy(() => import("./pages/MinhasPresencas"));
 const MeusCertificados = lazy(() => import("./pages/MeusCertificados"));
 const MinhasInscricoes = lazy(() => import("./pages/MinhasInscricoes"));
-const DashboardUsuario = lazy(() => import("./pages/DashboardUsuario"));
+
 const Teste = lazy(() => import("./pages/Teste"));
 const AgendaSalasUsuario = lazy(() => import("./pages/AgendaSalasUsuario"));
 const SolicitacaoCurso = lazy(() => import("./pages/SolicitacaoCurso"));
@@ -78,13 +78,13 @@ const ManualUsuario = lazy(() => import("./pages/usuario/Manual"));
 // 🆕 Páginas públicas
 const Privacidade = lazy(() => import("./pages/Privacidade"));
 
-// 🆕 Home pós-login
+// ✅ Painel oficial pós-login (substitui “DashboardUsuario”)
 const HomeEscola = lazy(() => import("./pages/HomeEscola"));
 
 // 🆕 Admin – Votações
 const AdminVotacoes = lazy(() => import("./pages/AdminVotacoes"));
 
-// ⚠️ se você tem a página AdminSubmissoes, importe (evita erro no wrapper)
+// ⚠️ AdminSubmissoes (wrapper usa :chamadaId)
 const AdminSubmissoes = lazy(() => import("./pages/AdminSubmissoes"));
 
 /* A11y: Announcer de mudanças de rota */
@@ -177,7 +177,9 @@ function ValidarPresencaRouter() {
   useEffect(() => {
     const codigoRaw = sp.get("codigo") || sp.get("c") || "";
     let raw = codigoRaw;
-    try { raw = decodeURIComponent(codigoRaw); } catch {}
+    try {
+      raw = decodeURIComponent(codigoRaw);
+    } catch {}
 
     let turmaId = null;
     let token = null;
@@ -205,7 +207,13 @@ function ValidarPresencaRouter() {
         if (m2 && m2[1]) turmaId = m2[1];
       }
     } catch {
-      const dec = (() => { try { return decodeURIComponent(raw); } catch { return raw; } })();
+      const dec = (() => {
+        try {
+          return decodeURIComponent(raw);
+        } catch {
+          return raw;
+        }
+      })();
       const qs = dec.includes("?") ? dec.split("?")[1] : "";
       const qsp = new URLSearchParams(qs);
       token = qsp.get("t") || qsp.get("token") || token;
@@ -274,15 +282,24 @@ export default function App() {
 
         <Suspense
           fallback={
-            <div className="p-6 flex items-center justify-center">
-              <span
-                role="status"
-                aria-live="polite"
-                className="inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300"
-              >
-                <span className="inline-block h-3 w-3 animate-pulse rounded-full bg-emerald-600" />
-                Carregando…
-              </span>
+            <div className="min-h-[60vh] p-6 flex items-center justify-center">
+              <div className="w-full max-w-sm rounded-3xl border border-slate-200 dark:border-white/10 bg-white/70 dark:bg-zinc-900/55 shadow-sm p-5">
+                <div className="flex items-center gap-3">
+                  <span className="inline-block h-3 w-3 animate-pulse rounded-full bg-emerald-600" />
+                  <span
+                    role="status"
+                    aria-live="polite"
+                    className="text-sm font-semibold text-slate-700 dark:text-zinc-200"
+                  >
+                    Carregando…
+                  </span>
+                </div>
+                <div className="mt-4 space-y-2">
+                  <div className="h-3 w-3/5 rounded bg-slate-200/70 dark:bg-white/10 animate-pulse" />
+                  <div className="h-3 w-4/5 rounded bg-slate-200/70 dark:bg-white/10 animate-pulse" />
+                  <div className="h-3 w-2/3 rounded bg-slate-200/70 dark:bg-white/10 animate-pulse" />
+                </div>
+              </div>
             </div>
           }
         >
@@ -315,13 +332,20 @@ export default function App() {
 
             {/* 🔐 protegidas (tudo aqui dentro ganha Topbar+Sidebar) */}
             <Route element={<PrivateShell />}>
-              {/* Home pós-login */}
+              {/* ✅ Home pós-login (painel oficial) */}
               <Route index element={<HomeEscola />} />
 
-              {/* Usuário */}
-              <Route path="usuario/dashboard" element={<DashboardUsuario />} />
-              <Route path="dashboard" element={<Navigate to="/usuario/dashboard" replace />} />
+              {/* ✅ Painel do Usuário — rota oficial + aliases */}
+              <Route path="usuario/dashboard" element={<HomeEscola />} />
+              <Route path="dashboard-usuario" element={<HomeEscola />} />
+              <Route path="home-escola" element={<HomeEscola />} />
+              <Route path="painel" element={<HomeEscola />} />
 
+              {/* mantém compatibilidade antiga */}
+              <Route path="dashboard" element={<Navigate to="/usuario/dashboard" replace />} />
+              <Route path="usuario" element={<Navigate to="/usuario/dashboard" replace />} />
+
+              {/* Usuário */}
               <Route path="eventos" element={<Eventos />} />
               <Route path="minhas-presencas" element={<MinhasPresencas />} />
               <Route path="certificados" element={<MeusCertificados />} />
@@ -343,7 +367,7 @@ export default function App() {
               {/* Submissões */}
               <Route path="submissoes" element={<UsuarioSubmissoes />} />
 
-              {/* 🧑‍🏫 Instrutor / Avaliador (mantém gate por perfil) */}
+              {/* 🧑‍🏫 Instrutor / Avaliador */}
               <Route
                 path="instrutor"
                 element={
@@ -360,7 +384,6 @@ export default function App() {
                   </PrivateRoute>
                 }
               />
-              
               <Route
                 path="turmas/presencas/:turmaId"
                 element={
@@ -402,7 +425,7 @@ export default function App() {
                 }
               />
 
-              {/* Admin (mantém gate por perfil) */}
+              {/* Admin */}
               <Route
                 path="administrador"
                 element={

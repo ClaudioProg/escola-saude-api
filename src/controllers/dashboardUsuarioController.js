@@ -88,39 +88,198 @@ async function getResumoDashboard(req, res) {
       return res.status(401).json({ erro: "Usuário não autenticado." });
     }
 
-    const cursos = await db.query(`
+    /* ===========================
+       ✅ CONCLUÍDOS (mantém)
+       =========================== */
+    const cursos = await db.query(
+      `
       SELECT COUNT(DISTINCT e.id) AS eventos_concluidos
       FROM inscricoes i
       JOIN turmas t ON t.id = i.turma_id
       JOIN eventos e ON e.id = t.evento_id
-      WHERE i.usuario_id = $1 AND t.data_fim < CURRENT_DATE
-    `, [usuarioId]);
+      WHERE i.usuario_id = $1
+        AND (t.data_fim::date + COALESCE(t.horario_fim,'23:59')::time) < NOW()
+      `,
+      [usuarioId]
+    );
 
-    const eventosinstrutor = await db.query(`
-      SELECT COUNT(*) FROM evento_instrutor WHERE instrutor_id = $1
-    `, [usuarioId]);
+    const eventosinstrutor = await db.query(
+      `SELECT COUNT(*) FROM evento_instrutor WHERE instrutor_id = $1`,
+      [usuarioId]
+    );
 
-    const inscricoesAtuais = await db.query(`
-      SELECT COUNT(*) 
+    /* ===========================
+       ✅ NOVOS STATS (Painel Home)
+       =========================== */
+
+    // 1) Inscrições futuras (cursos que ainda vai fazer)
+    const inscricoesFuturas = await db.query(
+      `
+      SELECT COUNT(*)::int AS total
       FROM inscricoes i
       JOIN turmas t ON i.turma_id = t.id
       WHERE i.usuario_id = $1
-        AND CURRENT_DATE BETWEEN t.data_inicio AND t.data_fim
-    `, [usuarioId]);
+        AND (t.data_inicio::date + COALESCE(t.horario_inicio,'00:00')::time) > NOW()
+      `,
+      [usuarioId]
+    );
 
-    const proximos = await db.query(`
-      SELECT COUNT(*) 
+    // inscrições atuais (compatibilidade)
+    const inscricoesAtuais = await db.query(
+      `
+      SELECT COUNT(*)::int AS total
       FROM inscricoes i
       JOIN turmas t ON i.turma_id = t.id
       WHERE i.usuario_id = $1
-        AND t.data_inicio > CURRENT_DATE
-    `, [usuarioId]);
+        AND NOW() BETWEEN (t.data_inicio::date + COALESCE(t.horario_inicio,'00:00')::time)
+                      AND (t.data_fim::date    + COALESCE(t.horario_fim,'23:59')::time)
+      `,
+      [usuarioId]
+    );
 
-    const certificados = await db.query(`
-      SELECT COUNT(*) FROM certificados WHERE usuario_id = $1
-    `, [usuarioId]);
+    // próximos eventos (compatibilidade; mesma lógica das futuras)
+    const proximos = await db.query(
+      `
+      SELECT COUNT(*)::int AS total
+      FROM inscricoes i
+      JOIN turmas t ON i.turma_id = t.id
+      WHERE i.usuario_id = $1
+        AND (t.data_inicio::date + COALESCE(t.horario_inicio,'00:00')::time) > NOW()
+      `,
+      [usuarioId]
+    );
 
-    const mediaAvaliacao = await db.query(`
+    // 2) Avaliações pendentes
+    const avalPendentes = await db.query(
+      `
+      SELECT COUNT(*)::int AS total
+      FROM inscricoes i
+      JOIN turmas t ON t.id = i.turma_id
+      WHERE i.usuario_id = $1
+        AND (t.data_fim::date + COALESCE(t.horario_fim,'23:59')::time) <= NOW()
+        AND NOT EXISTS (
+          SELECT 1 FROM avaliacoes a
+          WHERE a.usuario_id = i.usuario_id
+            AND a.turma_id = i.turma_id
+        )
+      `,
+      [usuarioId]
+    );
+
+    // 3) Certificados emitidos (fonte da verdade: gerado_em)
+    const certificadosEmitidosQ = await db.query(
+      `
+      SELECT COUNT(*)::int AS total
+      FROM certificados c
+      WHERE c.usuario_id = $1
+        AND c.gerado_em IS NOT NULL
+      `,
+      [usuarioId]
+    );
+
+    // total de certificados (compatibilidade antiga)
+    const certificados = await db.query(
+      `
+      SELECT COUNT(*)::int AS total
+      FROM certificados
+      WHERE usuario_id = $1
+      `,
+      [usuarioId]
+    );
+
+    /* ===========================
+       ✅ Presenças / Faltas / Nota (VERDADEIRO CORRIGIDO)
+       - MESMA base do /presencas/minhas
+       - usa datas_turma quando existe
+       - fallback: generate_series(data_inicio..data_fim)
+       - faltas = dias passados sem presença TRUE
+       - soma somente turmas encerradas (CURRENT_DATE > df)
+       =========================== */
+
+    const pfDash = await db.query(
+      `
+      WITH minhas_turmas AS (
+        SELECT
+          t.id AS turma_id,
+          t.data_inicio::date AS di_raw,
+          t.data_fim::date     AS df_raw
+        FROM inscricoes i
+        JOIN turmas t ON t.id = i.turma_id
+        WHERE i.usuario_id = $1
+      ),
+      datas_base AS (
+        -- 1) Preferir datas_turma
+        SELECT
+          mt.turma_id,
+          dt.data::date AS d
+        FROM minhas_turmas mt
+        JOIN datas_turma dt ON dt.turma_id = mt.turma_id
+
+        UNION ALL
+
+        -- 2) Fallback: janela di..df quando NÃO existem datas_turma
+        SELECT
+          mt.turma_id,
+          gs::date AS d
+        FROM minhas_turmas mt
+        LEFT JOIN datas_turma dt ON dt.turma_id = mt.turma_id
+        CROSS JOIN LATERAL generate_series(mt.di_raw, mt.df_raw, interval '1 day') AS gs
+        WHERE dt.turma_id IS NULL
+      ),
+      pres AS (
+        SELECT
+          p.turma_id,
+          p.data_presenca::date AS d,
+          BOOL_OR(p.presente) AS presente
+        FROM presencas p
+        WHERE p.usuario_id = $1
+        GROUP BY p.turma_id, p.data_presenca::date
+      ),
+      agregada AS (
+        SELECT
+          db.turma_id,
+          MIN(db.d) AS di,
+          MAX(db.d) AS df,
+
+          COUNT(*) FILTER (WHERE db.d <= CURRENT_DATE) AS realizados,
+
+          COUNT(*) FILTER (
+            WHERE db.d <= CURRENT_DATE AND p.presente IS TRUE
+          ) AS presentes_passados,
+
+          COUNT(*) FILTER (
+            WHERE db.d <= CURRENT_DATE AND COALESCE(p.presente, FALSE) IS NOT TRUE
+          ) AS ausencias_passadas
+
+        FROM datas_base db
+        LEFT JOIN pres p ON p.turma_id = db.turma_id AND p.d = db.d
+        GROUP BY db.turma_id
+      )
+      SELECT
+        COALESCE(SUM(presentes_passados), 0)::int AS presencas_total,
+        COALESCE(SUM(ausencias_passadas), 0)::int AS faltas_total
+      FROM agregada
+      WHERE CURRENT_DATE > df
+      `,
+      [usuarioId]
+    );
+
+    const presencas_total = Number(pfDash.rows?.[0]?.presencas_total ?? 0) || 0;
+    const faltas_total = Number(pfDash.rows?.[0]?.faltas_total ?? 0) || 0;
+
+    // nota = 10 - (faltas/(presencas+faltas) * 10)
+    const totalPF = presencas_total + faltas_total;
+    let nota_usuario = null;
+    if (totalPF > 0) {
+      const raw = 10 - (faltas_total / totalPF) * 10;
+      nota_usuario = Math.max(0, Math.min(10, Math.round(raw * 10) / 10));
+    }
+
+    /* ===========================
+       ✅ mantém (instrutor) média
+       =========================== */
+    const mediaAvaliacao = await db.query(
+      `
       SELECT ROUND(AVG(
         CASE a.desempenho_instrutor
           WHEN 'Ótimo' THEN 5
@@ -133,88 +292,38 @@ async function getResumoDashboard(req, res) {
       )::numeric, 2) AS media
       FROM avaliacoes a
       WHERE a.instrutor_id = $1
-    `, [usuarioId]);
+      `,
+      [usuarioId]
+    );
 
-    const eventosData = await db.query(`
-      SELECT
-        (SELECT COUNT(*) FROM inscricoes i
-         JOIN turmas t ON i.turma_id = t.id
-         WHERE i.usuario_id = $1 AND t.data_fim < CURRENT_DATE) AS realizados,
+    /* ===========================
+       ✅ RESPOSTA (sem gráficos e sem notificações)
+       =========================== */
+    return res.json({
+      // HomeEscola (painel)
+      inscricoesFuturas: Number(inscricoesFuturas.rows?.[0]?.total ?? 0) || 0,
+      avaliacoesPendentes: Number(avalPendentes.rows?.[0]?.total ?? 0) || 0,
+      certificadosEmitidos: Number(certificadosEmitidosQ.rows?.[0]?.total ?? 0) || 0,
+      presencasTotal: presencas_total,
+      faltasTotal: faltas_total,
+      notaUsuario: nota_usuario,
 
-        (SELECT COUNT(*) FROM inscricoes i
-         JOIN turmas t ON i.turma_id = t.id
-         WHERE i.usuario_id = $1 AND t.data_inicio >= CURRENT_DATE) AS programados,
+      // compatibilidade / legado
+      cursosRealizados: Number(cursos.rows?.[0]?.eventos_concluidos ?? 0) || 0,
+      eventosinstrutor: Number(eventosinstrutor.rows?.[0]?.count ?? 0) || 0,
+      inscricoesAtuais: Number(inscricoesAtuais.rows?.[0]?.total ?? 0) || 0,
+      proximosEventos: Number(proximos.rows?.[0]?.total ?? 0) || 0,
+      certificadosTotal: Number(certificados.rows?.[0]?.total ?? 0) || 0,
 
-        (SELECT COUNT(*) FROM evento_instrutor WHERE instrutor_id = $1) AS instrutor
-    `, [usuarioId]);
-
-    const avaliacoes = await db.query(`
-      SELECT
-  COUNT(*) FILTER (WHERE a.desempenho_instrutor = 'Ótimo') AS otimo,
-  COUNT(*) FILTER (WHERE a.desempenho_instrutor = 'Bom') AS bom,
-  COUNT(*) FILTER (WHERE a.desempenho_instrutor = 'Regular') AS regular,
-  COUNT(*) FILTER (WHERE a.desempenho_instrutor = 'Ruim') AS ruim,
-  COUNT(*) FILTER (WHERE a.desempenho_instrutor = 'Péssimo') AS pessimo
-FROM avaliacoes a
-JOIN turmas t ON t.id = a.turma_id
-JOIN eventos e ON e.id = t.evento_id
-JOIN evento_instrutor ei ON ei.evento_id = e.id
-WHERE ei.instrutor_id = $1
-    `, [usuarioId]);
-
-    const notificacoesQuery = `
-      SELECT mensagem, TO_CHAR(data, 'DD/MM/YYYY') AS data
-      FROM (
-        SELECT 
-          '📅 Você tem uma aula do evento "' || e.titulo || '" em breve.' AS mensagem,
-          t.data_inicio AS data
-        FROM turmas t
-        JOIN eventos e ON e.id = t.evento_id
-        JOIN inscricoes i ON i.turma_id = t.id
-        WHERE i.usuario_id = $1 AND t.data_inicio >= CURRENT_DATE
-
-        UNION ALL
-
-        SELECT 
-          '📜 Seu certificado do evento "' || e.titulo || '" está disponível.',
-          c.gerado_em
-        FROM certificados c
-        JOIN eventos e ON e.id = c.evento_id
-        WHERE c.usuario_id = $1
-
-        UNION ALL
-
-        SELECT 
-          '⭐ Você recebeu uma nova avaliação como instrutor em "' || e.titulo || '".',
-          MAX(a.data_avaliacao)
-        FROM avaliacoes a
-        JOIN turmas t ON t.id = a.turma_id
-        JOIN eventos e ON e.id = t.evento_id
-        WHERE a.instrutor_id = $1
-        GROUP BY e.titulo
-      ) AS notificacoes
-      ORDER BY data DESC
-      LIMIT 5
-    `;
-    const { rows: ultimasNotificacoes } = await db.query(notificacoesQuery, [usuarioId]);
-
-    res.json({
-      cursosRealizados: Number(cursos.rows[0].eventos_concluidos),
-      eventosinstrutor: Number(eventosinstrutor.rows[0].count),
-      inscricoesAtuais: Number(inscricoesAtuais.rows[0].count),
-      proximosEventos: Number(proximos.rows[0].count),
-      certificadosEmitidos: Number(certificados.rows[0].count),
-      mediaAvaliacao: mediaAvaliacao.rows[0].media !== null
-        ? (parseFloat(mediaAvaliacao.rows[0].media) * 2).toFixed(1)
-        : "0.0",
-      graficoEventos: eventosData.rows[0],
-      graficoAvaliacoes: avaliacoes.rows[0],
-      ultimasNotificacoes,
+      // mantém sua média como instrutor
+      mediaAvaliacao:
+        mediaAvaliacao.rows?.[0]?.media !== null && mediaAvaliacao.rows?.[0]?.media !== undefined
+          ? (parseFloat(mediaAvaliacao.rows[0].media) * 2).toFixed(1)
+          : "0.0",
     });
-
   } catch (error) {
-    console.error("❌ Erro no dashboard:", error.message);
-    res.status(500).json({ erro: "Erro ao carregar dados do dashboard." });
+    console.error("❌ Erro no dashboard:", error);
+    return res.status(500).json({ erro: "Erro ao carregar dados do dashboard." });
   }
 }
 
