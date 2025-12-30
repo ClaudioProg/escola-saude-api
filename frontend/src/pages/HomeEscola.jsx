@@ -365,7 +365,7 @@ export default function HomeEscola() {
         <HeaderHero
           title="Painel do Usuário"
           subtitle="Seu resumo de inscrições, presenças, avaliações e certificados — em um só lugar."
-          badge="Escola da Saúde • Oficial"
+          badge="Escola da Saúde • Oficial • Ambiente Seguro"
           icon={Sparkles}
           gradient="from-emerald-700 via-teal-600 to-sky-700"
           isDark={isDark}
@@ -403,7 +403,7 @@ export default function HomeEscola() {
               value={loadingResumo ? "…" : stats.inscricoes}
               hint="Cursos que você ainda vai fazer"
               tone="emerald"
-              onClick={() => navigate("/minhas-inscricoes")}
+              onClick={() => navigate("/eventos")}
             />
             <MiniStat
               icon={ClipboardCheck}
@@ -411,7 +411,7 @@ export default function HomeEscola() {
               value={loadingResumo ? "…" : stats.avalPend}
               hint="Complete para liberar certificado"
               tone="sky"
-              onClick={() => navigate("/avaliacoes")}
+              onClick={() => navigate("/avaliacao")}
             />
             <MiniStat
               icon={FileText}
@@ -441,67 +441,6 @@ export default function HomeEscola() {
             {/* ⭐ Nota do usuário: sem "/10" e sem fórmula — com barra */}
             <NotaUsuarioCard nota={stats.nota} loading={loadingResumo} />
           </div>
-        </section>
-
-        {/* ✅ Acesso rápido */}
-        <section className="mt-6" aria-label="Acesso rápido">
-          <div className="flex items-end justify-between gap-3">
-            <h2 className="text-xl font-extrabold text-slate-900 dark:text-zinc-100">
-              Acesso rápido
-            </h2>
-            <p className="hidden sm:block text-sm text-slate-600 dark:text-zinc-400">
-              Atalhos para as áreas mais usadas
-            </p>
-          </div>
-
-          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-            <QuickCard
-              to="/eventos"
-              icon={CalendarDays}
-              title="Eventos"
-              subtitle="Veja a programação e detalhes"
-              tone="sky"
-            />
-            <QuickCard
-              to="/minhas-inscricoes"
-              icon={ClipboardList}
-              title="Inscrições"
-              subtitle="Acompanhe seus cursos e turmas"
-              tone="emerald"
-            />
-            <QuickCard
-              to="/minhas-presencas"
-              icon={ListChecks}
-              title="Presenças"
-              subtitle="Confirme e consulte presença"
-              tone="violet"
-            />
-            <QuickCard
-              to="/certificados"
-              icon={FileText}
-              title="Certificados"
-              subtitle="Gere e baixe seus certificados"
-              tone="amber"
-            />
-          </div>
-        </section>
-
-        {/* ✅ Status da plataforma */}
-        <section className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-4" aria-label="Status da plataforma">
-          <MiniStat
-            icon={Download}
-            label="Aplicativo"
-            value="PWA disponível"
-            hint="Instale no celular ou PC em 1 minuto"
-            tone="amber"
-          />
-          <MiniStat
-            icon={ShieldCheck}
-            label="Acesso"
-            value="Autenticado"
-            hint="Ambiente oficial e seguro"
-            tone="emerald"
-          />
         </section>
 
         {/* Links oficiais (QR do site + Instagram) */}
