@@ -18,11 +18,27 @@ import {
   Paperclip,
   Image as ImageIcon,
   File as FileIcon,
+  ShieldCheck,
+  Info,
 } from "lucide-react";
 import ModalBase from "./ModalBase";
 import ModalTurma from "./ModalTurma";
 import { formatarDataBrasileira } from "../utils/data";
 import { apiGet, apiDelete } from "../services/api";
+
+/* ========================= Backend base ========================= */
+const API_BASE =
+  (typeof import.meta !== "undefined" && import.meta?.env?.VITE_API_URL) || "";
+function withBackendBase(u) {
+  if (!u) return null;
+  const s = String(u);
+  if (/^https?:\/\//i.test(s)) return s;
+  if (s.startsWith("/")) {
+    const base = String(API_BASE || "").replace(/\/+$/g, "");
+    return base ? `${base}${s}` : s;
+  }
+  return null;
+}
 
 /* ========================= Logger (DEV only) ========================= */
 const IS_DEV =
@@ -53,6 +69,9 @@ const TIPOS_EVENTO = [
   "Simpósio",
   "Outros",
 ];
+
+const MAX_IMG_MB = 5;   // UX: protege uploads exagerados
+const MAX_PDF_MB = 10;
 
 const hh = (s) => (typeof s === "string" ? s.slice(0, 5) : "");
 const minDate = (arr) => arr.map((d) => d.data).sort()[0];
@@ -94,7 +113,6 @@ const parseRegsBulk = (txt) => {
 function encontrosParaDatas(turma) {
   const baseHi = hh(turma.horario_inicio || turma.hora_inicio || "08:00");
   const baseHf = hh(turma.horario_fim || turma.hora_fim || "17:00");
-
   if (Array.isArray(turma?.datas) && turma.datas.length) return turma.datas;
 
   const enc = Array.isArray(turma?.encontros) ? turma.encontros : [];
@@ -145,20 +163,9 @@ function normalizarDatasTurma(t, hiBase = "08:00", hfBase = "17:00") {
   };
 }
 
-const getInstrutoresIds = (ev) => {
-  const arr = Array.isArray(ev?.instrutores)
-    ? ev.instrutores
-    : Array.isArray(ev?.instrutor)
-    ? ev.instrutor
-    : [];
-  return arr.map((i) => Number(i?.id ?? i)).filter((x) => Number.isFinite(x));
-};
-
 const extractIds = (arr) =>
   Array.isArray(arr)
-    ? arr
-        .map((v) => Number(v?.id ?? v))
-        .filter((n) => Number.isFinite(n))
+    ? arr.map((v) => Number(v?.id ?? v)).filter((n) => Number.isFinite(n))
     : [];
 
 function normalizarCargo(v) {
@@ -209,7 +216,7 @@ const countEncontros = (t) => {
   return 0;
 };
 
-/* ========================= Cache simples em memória ========================= */
+/* ========================= Cache simples ========================= */
 let cacheUnidades = null;
 let cacheUsuarios = null;
 
@@ -222,7 +229,6 @@ export default function ModalEvento({
   onTurmaRemovida,
   salvando = false,
 }) {
-  // Identificador de debug da instância do modal (ajuda a rastrear reaberturas)
   const dbgId = useRef(Math.random().toString(36).slice(2, 7)).current;
   L.info("MOUNT", { dbgId, eventoId: evento?.id ?? null });
 
@@ -234,7 +240,7 @@ export default function ModalEvento({
   const [unidadeId, setUnidadeId] = useState("");
   const [publicoAlvo, setPublicoAlvo] = useState("");
 
-  // Dados auxiliares
+  // Auxiliares
   const [unidades, setUnidades] = useState([]);
   const [usuarios, setUsuarios] = useState([]);
 
@@ -250,7 +256,7 @@ export default function ModalEvento({
   const [registroInput, setRegistroInput] = useState("");
   const [registros, setRegistros] = useState([]);
 
-  // Novos filtros de visibilidade
+  // Filtros
   const [cargosPermitidos, setCargosPermitidos] = useState([]);
   const [cargoAdd, setCargoAdd] = useState("");
   const [fallbackCargos, setFallbackCargos] = useState([]);
@@ -259,16 +265,16 @@ export default function ModalEvento({
   const [unidadeAddId, setUnidadeAddId] = useState("");
 
   // Uploads
-  const [folderFile, setFolderFile] = useState(null); // novo upload (img)
-  const [programacaoFile, setProgramacaoFile] = useState(null); // novo upload (pdf)
+  const [folderFile, setFolderFile] = useState(null);
+  const [programacaoFile, setProgramacaoFile] = useState(null);
   const [folderPreview, setFolderPreview] = useState(null);
 
-  // URLs/nomes já existentes vindos do backend
+  // URLs existentes
   const [folderUrlExistente, setFolderUrlExistente] = useState(null);
   const [programacaoUrlExistente, setProgramacaoUrlExistente] = useState(null);
   const [programacaoNomeExistente, setProgramacaoNomeExistente] = useState(null);
 
-  // Controle de rehidratação e transição
+  // Controle
   const prevEventoKeyRef = useRef(null);
   const [isPending, startTransition] = useTransition();
 
@@ -330,7 +336,7 @@ export default function ModalEvento({
     };
   }, [dbgId]);
 
-  /* ========= Reidratar ao abrir ou trocar id ========= */
+  /* ========= Reidratar ao abrir/trocar id ========= */
   useEffect(() => {
     if (!isOpen) return;
 
@@ -378,7 +384,7 @@ export default function ModalEvento({
         setProgramacaoUrlExistente(evento.programacao_url || evento.programacao_pdf || null);
         setProgramacaoNomeExistente(evento.programacao_nome || null);
 
-        /* ========= TURMAS — sempre buscar via rota leve ========= */
+        /* ========= TURMAS (rota leve) ========= */
         L.time("fetch(turmas-simples)");
         (async () => {
           try {
@@ -404,10 +410,6 @@ export default function ModalEvento({
             });
 
             setTurmas(turmasNormalizadas);
-            L.log("turmas normalized", {
-              count: turmasNormalizadas.length,
-              sample: turmasNormalizadas[0] || null,
-            });
           } catch (err) {
             L.error("Falha ao carregar turmas-simples", err);
             setTurmas(evento.turmas || []);
@@ -449,7 +451,7 @@ export default function ModalEvento({
     L.groupEnd();
   }, [isOpen, evento, dbgId]);
 
-  /* ========= GET fresh da restrição, apenas quando necessário ========= */
+  /* ========= GET fresh detalhe (sob demanda) ========= */
   useEffect(() => {
     if (!isOpen || !evento?.id) return;
     if (registros.length > 0 && cargosPermitidos.length > 0 && unidadesPermitidas.length > 0)
@@ -477,18 +479,15 @@ export default function ModalEvento({
         const parsed = (lista || []).map(normReg).filter((r) => /^\d{6}$/.test(r));
         if (parsed.length && registros.length === 0) {
           setRegistros([...new Set(parsed)]);
-          L.log("registros (fresh)", { count: parsed.length });
         }
 
         if (Array.isArray(det.cargos_permitidos) && cargosPermitidos.length === 0) {
           const cp = [...new Set(det.cargos_permitidos.map((s) => String(s || "").trim()).filter(Boolean))];
           setCargosPermitidos(cp);
-          L.log("cargos_permitidos (fresh)", { count: cp.length });
         }
         if (Array.isArray(det.unidades_permitidas) && unidadesPermitidas.length === 0) {
           const ups = extractIds(det.unidades_permitidas);
           setUnidadesPermitidas(ups);
-          L.log("unidades_permitidas (fresh)", { count: ups.length });
         }
       } catch (e) {
         L.warn("fetch detalhe erro (silencioso)", e);
@@ -505,30 +504,29 @@ export default function ModalEvento({
     unidadesPermitidas.length,
   ]);
 
-  /* ========= Sugestões de cargos (sob demanda) ========= */
+  /* ========= Sugestões de cargos (on demand) ========= */
   useEffect(() => {
-       (async () => {
-          // Só busca quando o modo é "cargos" e ainda não temos fallback preenchido
-          if (restritoModo !== "cargos") return;
-          if ((fallbackCargos || []).length > 0) return;
-    
-          L.time("fetch(cargos/sugerir)");
-          try {
-            const lista = await apiGet("/api/eventos/cargos/sugerir?limit=50");
-            const jaUsados = new Set(cargosPermitidos.map((c) => c.toLowerCase()));
-            const norm = (Array.isArray(lista) ? lista : [])
-              .map(normalizarCargo)
-              .filter((s) => s && !jaUsados.has(s.toLowerCase()));
-    
-         setFallbackCargos(norm);
-            L.log("cargos sugeridos", { count: norm.length });
-         } catch (e) {
-           L.warn("cargos/sugerir erro (silencioso)", e);
-          } finally {
-            L.timeEnd("fetch(cargos/sugerir)");
-          }
-        })();
-      }, [restritoModo, fallbackCargos, cargosPermitidos]);
+    (async () => {
+      // Só busca quando o modo é "cargos" e ainda não temos fallback preenchido
+      if (restritoModo !== "cargos") return;
+      if ((fallbackCargos || []).length > 0) return;
+
+      L.time("fetch(cargos/sugerir)");
+      try {
+        const lista = await apiGet("/api/eventos/cargos/sugerir?limit=50");
+        const jaUsados = new Set(cargosPermitidos.map((c) => c.toLowerCase()));
+        const norm = (Array.isArray(lista) ? lista : [])
+          .map(normalizarCargo)
+          .filter((s) => s && !jaUsados.has(s.toLowerCase()));
+
+        setFallbackCargos(norm);
+      } catch (e) {
+        L.warn("cargos/sugerir erro (silencioso)", e);
+      } finally {
+        L.timeEnd("fetch(cargos/sugerir)");
+      }
+    })();
+  }, [restritoModo, fallbackCargos, cargosPermitidos]);
 
   /* ========= Opções (memo) ========= */
   const cargosSugestoes = useMemo(() => {
@@ -554,7 +552,7 @@ export default function ModalEvento({
     return u?.nome || String(id);
   };
 
-  /* ================= Handlers de registros (restrição) ================= */
+  /* ================= Handlers de registros ================= */
   const addRegistro = () => {
     const novos = parseRegsBulk(registroInput);
     if (!novos.length) {
@@ -563,26 +561,20 @@ export default function ModalEvento({
     }
     const novoSet = Array.from(new Set([...(registros || []), ...novos]));
     setRegistros(novoSet);
-    L.info("ADD_REGISTROS", { added: novos.length, total: novoSet.length });
     setRegistroInput("");
   };
   const addRegistrosBulk = (txt) => {
     const novos = parseRegsBulk(txt);
     if (!novos.length) {
-      L.warn("VALID_REG_BULK_NOK: nenhum bloco de 6 dígitos encontrado");
+      L.warn("VALID_REG_BULK_NOK");
       return toast.info("Nenhuma sequência de 6 dígitos encontrada.");
     }
     const novoSet = Array.from(new Set([...(registros || []), ...novos]));
     setRegistros(novoSet);
-    L.info("ADD_REGISTROS_BULK", { added: novos.length, total: novoSet.length });
     setRegistroInput("");
   };
   const removeRegistro = (r) => {
-    setRegistros((prev) => {
-      const out = prev.filter((x) => x !== r);
-      L.info("REMOVE_REGISTRO", { removed: r, total: out.length });
-      return out;
-    });
+    setRegistros((prev) => prev.filter((x) => x !== r));
   };
 
   /* ================= Filtros: Cargos e Unidades ================= */
@@ -591,74 +583,65 @@ export default function ModalEvento({
     if (!v) return;
     setCargosPermitidos((prev) => {
       const exists = prev.some((x) => x.toLowerCase() === v.toLowerCase());
-      const out = exists ? prev : [...prev, v];
-      L.info("ADD_CARGO", { value: v, total: out.length, ignored: exists });
-      return out;
+      return exists ? prev : [...prev, v];
     });
     setCargoAdd("");
   };
   const removeCargo = (v) =>
-    setCargosPermitidos((prev) => {
-      const out = prev.filter((x) => x !== v);
-      L.info("REMOVE_CARGO", { value: v, total: out.length });
-      return out;
-    });
+    setCargosPermitidos((prev) => prev.filter((x) => x !== v));
 
   const addUnidade = () => {
     const id = Number(unidadeAddId);
     if (!Number.isFinite(id) || id <= 0) return;
-    setUnidadesPermitidas((prev) => {
-      const exists = prev.includes(id);
-      const out = exists ? prev : [...prev, id];
-      L.info("ADD_UNIDADE", { id, total: out.length, ignored: exists });
-      return out;
-    });
+    setUnidadesPermitidas((prev) => (prev.includes(id) ? prev : [...prev, id]));
     setUnidadeAddId("");
   };
   const removeUnidade = (id) =>
-    setUnidadesPermitidas((prev) => {
-      const out = prev.filter((x) => x !== id);
-      L.info("REMOVE_UNIDADE", { id, total: out.length });
-      return out;
-    });
+    setUnidadesPermitidas((prev) => prev.filter((x) => x !== id));
 
   /* ================= Uploads ================= */
+  const validaTamanho = (file, maxMb) => {
+    const mb = file.size / (1024 * 1024);
+    return mb <= maxMb;
+  };
+
   const onChangeFolder = (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
     if (!/^image\/(png|jpeg)$/.test(f.type)) {
-      L.warn("UPLOAD_FOLDER_TIPO_INVALIDO", { type: f.type, name: f.name, size: f.size });
       toast.error("Envie uma imagem PNG ou JPG.");
       return;
     }
-    L.info("UPLOAD_FOLDER_OK", { name: f.name, size: f.size, type: f.type });
+    if (!validaTamanho(f, MAX_IMG_MB)) {
+      toast.error(`Imagem muito grande. Máx. ${MAX_IMG_MB} MB.`);
+      return;
+    }
     setFolderFile(f);
     const reader = new FileReader();
     reader.onload = () => setFolderPreview(reader.result);
     reader.readAsDataURL(f);
   };
+
   const onChangeProgramacao = (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
     if (f.type !== "application/pdf") {
-      L.warn("UPLOAD_PDF_TIPO_INVALIDO", { type: f.type, name: f.name, size: f.size });
       toast.error("Envie um PDF válido.");
       return;
     }
-    L.info("UPLOAD_PDF_OK", { name: f.name, size: f.size, type: f.type });
+    if (!validaTamanho(f, MAX_PDF_MB)) {
+      toast.error(`PDF muito grande. Máx. ${MAX_PDF_MB} MB.`);
+      return;
+    }
     setProgramacaoFile(f);
   };
+
   const limparFolder = () => {
-    L.info("UPLOAD_FOLDER_REMOVIDO", { tinhaArquivoNovo: !!folderFile, tinhaExistente: !!folderUrlExistente });
     setFolderFile(null);
     setFolderPreview(null);
     setFolderUrlExistente(null); // sinaliza remoção do existente
   };
   const limparProgramacao = () => {
-    L.info("UPLOAD_PDF_REMOVIDO", {
-      tinhaArquivoNovo: !!programacaoFile,
-      tinhaExistente: !!programacaoUrlExistente,
-    });
     setProgramacaoFile(null);
     setProgramacaoUrlExistente(null);
     setProgramacaoNomeExistente(null);
@@ -666,12 +649,10 @@ export default function ModalEvento({
 
   /* ================= Turma: criar / editar / remover ================= */
   function abrirCriarTurma() {
-    L.info("TURMA_ABRIR_CRIAR");
     setEditandoTurmaIndex(null);
     setModalTurmaAberto(true);
   }
   function abrirEditarTurma(idx) {
-    L.info("TURMA_ABRIR_EDITAR", { idx, turmaId: turmas?.[idx]?.id ?? null, nome: turmas?.[idx]?.nome ?? null });
     setEditandoTurmaIndex(idx);
     setModalTurmaAberto(true);
   }
@@ -680,15 +661,11 @@ export default function ModalEvento({
     const ok = window.confirm(
       `Remover a turma "${nome}"?\n\nEsta ação não pode ser desfeita.\nSe houver presenças ou certificados, a exclusão será bloqueada.`
     );
-    if (!ok) {
-      L.info("TURMA_REMOVER_CANCELADO", { idx, turmaId: turma?.id ?? null });
-      return;
-    }
+    if (!ok) return;
 
     if (!turma?.id) {
       setTurmas((prev) => prev.filter((_, i) => i !== idx));
       toast.info("Turma removida (rascunho).");
-      L.info("TURMA_REMOVIDA_RASCUNHO", { idx, nome });
       return;
     }
 
@@ -698,7 +675,6 @@ export default function ModalEvento({
       await apiDelete(`/api/turmas/${turma.id}`);
       setTurmas((prev) => prev.filter((t) => t.id !== turma.id));
       toast.success("Turma removida com sucesso.");
-      L.info("TURMA_REMOVIDA_OK", { id: turma.id, nome });
       onTurmaRemovida?.(turma.id);
     } catch (err) {
       const code = err?.data?.erro;
@@ -707,13 +683,10 @@ export default function ModalEvento({
         toast.error(
           `Não é possível excluir: ${c.presencas || 0} presenças / ${c.certificados || 0} certificados.`
         );
-        L.warn("TURMA_REMOVER_BLOQUEADA", { turmaId: turma.id, contagens: c });
       } else if (err?.status === 404) {
         toast.warn("Turma não encontrada. Atualize a página.");
-        L.warn("TURMA_REMOVER_404", { turmaId: turma.id });
       } else {
         toast.error("Erro ao remover turma.");
-        L.error("TURMA_REMOVER_ERRO", err);
       }
     } finally {
       L.timeEnd("DELETE(/api/turmas/:id)");
@@ -741,19 +714,16 @@ export default function ModalEvento({
 
     // Validações de topo
     if (!titulo || !tipo || !unidadeId) {
-      L.warn("VALID_TOP_NOK", { tituloOk: !!titulo, tipoOk: !!tipo, unidadeOk: !!unidadeId });
       toast.warning("⚠️ Preencha todos os campos obrigatórios.");
       L.groupEnd();
       return;
     }
     if (!TIPOS_EVENTO.includes(tipo)) {
-      L.warn("VALID_TIPO_INVALIDO", { tipo });
       toast.error("❌ Tipo de evento inválido.");
       L.groupEnd();
       return;
     }
     if (!turmas.length) {
-      L.warn("VALID_TURMAS_VAZIO");
       toast.warning("⚠️ Adicione pelo menos uma turma.");
       L.groupEnd();
       return;
@@ -762,25 +732,17 @@ export default function ModalEvento({
     // Validações por turma
     for (const t of turmas) {
       if (!t.nome || !Number(t.vagas_total) || !Number.isFinite(Number(t.carga_horaria))) {
-        L.warn("VALID_TURMA_CAMPOS_NOK", {
-          nomeOk: !!t.nome,
-          vagas: t.vagas_total,
-          carga: t.carga_horaria,
-          turma: t,
-        });
         toast.error("❌ Preencha nome, vagas e carga horária de cada turma.");
         L.groupEnd();
         return;
       }
       if (!Array.isArray(t.datas) || t.datas.length === 0) {
-        L.warn("VALID_TURMA_DATAS_VAZIO", { turma: t });
         toast.error("❌ Cada turma precisa ter ao menos uma data.");
         L.groupEnd();
         return;
       }
       for (const d of t.datas) {
         if (!d?.data || !d?.horario_inicio || !d?.horario_fim) {
-          L.warn("VALID_TURMA_DATA_INCOMPLETA", { d });
           toast.error("❌ Preencha data, início e fim em todos os encontros.");
           L.groupEnd();
           return;
@@ -789,11 +751,11 @@ export default function ModalEvento({
       const assinanteId = Number(
         t.instrutor_assinante_id ?? t.assinante_id /* fallback legado */
       );
-      
       if (Number.isFinite(assinanteId)) {
         const instrs = extractIds(t.instrutores || []);
         if (!instrs.includes(assinanteId)) {
           toast.error(`O assinante da turma "${t.nome}" precisa estar entre os instrutores dessa turma.`);
+          L.groupEnd();
           return;
         }
       }
@@ -803,25 +765,21 @@ export default function ModalEvento({
     if (restrito) {
       const modosValidos = ["todos_servidores", "lista_registros", "cargos", "unidades"];
       if (!modosValidos.includes(restritoModo)) {
-        L.warn("VALID_RESTRICAO_MODO_NOK", { restritoModo });
         toast.error("Defina o modo de restrição do evento.");
         L.groupEnd();
         return;
       }
       if (restritoModo === "lista_registros" && registros.length === 0) {
-        L.warn("VALID_RESTRICAO_LISTA_VAZIA");
         toast.error("Inclua pelo menos um registro (6 dígitos) para este evento.");
         L.groupEnd();
         return;
       }
       if (restritoModo === "cargos" && cargosPermitidos.length === 0) {
-        L.warn("VALID_RESTRICAO_CARGOS_VAZIO");
         toast.error("Inclua ao menos um cargo permitido.");
         L.groupEnd();
         return;
       }
       if (restritoModo === "unidades" && unidadesPermitidas.length === 0) {
-        L.warn("VALID_RESTRICAO_UNIDADES_VAZIO");
         toast.error("Inclua ao menos uma unidade permitida.");
         L.groupEnd();
         return;
@@ -843,17 +801,17 @@ export default function ModalEvento({
         })),
         ...(Array.isArray(t.instrutores) ? { instrutores: extractIds(t.instrutores) } : {}),
         ...(Number.isFinite(Number(t.instrutor_assinante_id))
-  ? { instrutor_assinante_id: Number(t.instrutor_assinante_id) }
-  : Number.isFinite(Number(t.assinante_id)) // fallback legado
-  ? { instrutor_assinante_id: Number(t.assinante_id) }
-  : {}),
+          ? { instrutor_assinante_id: Number(t.instrutor_assinante_id) }
+          : Number.isFinite(Number(t.assinante_id))
+          ? { instrutor_assinante_id: Number(t.assinante_id) }
+          : {}),
       };
       return out;
     });
 
     const regs6 = Array.from(new Set(registros.filter((r) => /^\d{6}$/.test(r))));
 
-    // JSON "limpo" para o backend (sem arquivos)
+    // JSON "limpo" para o backend (sem blobs)
     const payloadJson = {
       id: evento?.id,
       titulo,
@@ -878,35 +836,22 @@ export default function ModalEvento({
       ...(programacaoUrlExistente === null ? { remover_programacao: true } : {}),
     };
 
-    // Logs do payload (sem blobs)
-    L.group("payload");
-    L.log("JSON", {
+    // Payload final (objeto — sem FormData aqui)
+    const payload = {
       ...payloadJson,
-      turmas_count: payloadJson.turmas?.length ?? 0,
-      regs_count: regs6.length,
-      cargos_count: cargosPermitidos.length,
-      unidades_count: unidadesPermitidas.length,
+      folderFile: folderFile instanceof File ? folderFile : undefined,
+      programacaoFile: programacaoFile instanceof File ? programacaoFile : undefined,
+    };
+
+    L.log("SUBMIT_READY", {
+      hasFolderNovo: !!payload.folderFile,
+      hasPdfNovo: !!payload.programacaoFile,
+      remover_folder: payloadJson?.remover_folder === true,
+      remover_programacao: payloadJson?.remover_programacao === true,
     });
+
+    onSalvar(payload);
     L.groupEnd();
-
-    // ... dentro de handleSubmit, no final:
-const payload = {
-  ...payloadJson,
-  // passe os arquivos em campos separados — o pai decide como enviar
-  folderFile: folderFile instanceof File ? folderFile : undefined,
-  programacaoFile: programacaoFile instanceof File ? programacaoFile : undefined,
-};
-
-L.info("SUBMIT_READY", {
-  hasFolderNovo: !!payload.folderFile,
-  hasPdfNovo: !!payload.programacaoFile,
-  remover_folder: payloadJson?.remover_folder === true,
-  remover_programacao: payloadJson?.remover_programacao === true,
-});
-
-// Envie um OBJETO — nada de FormData aqui
-onSalvar(payload);
-L.groupEnd();
   };
 
   const regCount =
@@ -926,23 +871,26 @@ L.groupEnd();
       const hf = first ? hh(first.horario_fim) : hh(t.horario_fim);
 
       const instrs = extractIds(t.instrutores || []);
-const assinante = Number(
-  t.instrutor_assinante_id ?? t.assinante_id /* fallback legado */
-);
+      const assinante = Number(t.instrutor_assinante_id ?? t.assinante_id /* fallback legado */);
 
       return (
         <div
           key={t.id ?? `temp-${i}`}
-          className="rounded-xl border border-black/10 dark:border-white/10 bg-zinc-50/70 dark:bg-zinc-800/60 p-3 text-sm shadow-sm"
+          className="rounded-xl border border-black/10 dark:border-white/10 bg-gradient-to-b from-zinc-50/90 to-white dark:from-zinc-800/70 dark:to-zinc-900/50 p-3 text-sm shadow-sm hover:shadow transition-shadow"
         >
+          {/* top bar signature */}
+          <div className="h-1 rounded-t-md bg-gradient-to-r from-emerald-600 via-teal-500 to-cyan-500 mb-2" />
+
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
-            <p className="font-bold text-slate-900 dark:text-white break-words">{t.nome}</p>
+            <p className="font-bold text-slate-900 dark:text-white break-words leading-tight">
+              {t.nome}
+            </p>
 
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={() => abrirEditarTurma(i)}
-                className="inline-flex items-center gap-1 rounded-lg bg-amber-100 text-amber-800 border border-amber-300 text-xs font-medium px-3 py-1.5 hover:bg-amber-200 dark:bg-amber-900/30 dark:border-amber-800 dark:text-amber-200"
+                className="inline-flex items-center gap-1 rounded-lg bg-amber-100 text-amber-900 border border-amber-300 text-xs font-medium px-3 py-1.5 hover:bg-amber-200 dark:bg-amber-900/30 dark:border-amber-800 dark:text-amber-200"
               >
                 <Pencil className="w-4 h-4" aria-hidden="true" />
                 Editar
@@ -1043,11 +991,18 @@ const assinante = Number(
         labelledBy="modal-evento-titulo"
         describedBy="modal-evento-desc"
       >
-        <div className="grid grid-rows-[auto,1fr,auto] max-h-[90vh] rounded-2xl overflow-hidden bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/10 shadow-xl">
+        <div className="grid grid-rows-[auto,1fr,auto] max-h-[90vh] rounded-2xl overflow-hidden bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/10 shadow-2xl">
+          {/* signature top bar */}
+          <div className="h-1 bg-gradient-to-r from-emerald-600 via-teal-500 to-cyan-500" />
+
           {/* HEADER */}
           <div className="p-5 border-b border-black/5 dark:border-white/10 bg-white/80 dark:bg-zinc-900/80 backdrop-blur">
             <div className="flex items-center justify-between">
-              <h2 id="modal-evento-titulo" className="text-lg sm:text-xl font-bold tracking-tight">
+              <h2
+                id="modal-evento-titulo"
+                className="text-lg sm:text-xl font-extrabold tracking-tight flex items-center gap-2"
+              >
+                <ShieldCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
                 {evento?.id ? "Editar Evento" : "Novo Evento"}
               </h2>
               <button
@@ -1055,7 +1010,7 @@ const assinante = Number(
                   L.info("HEADER_X_CLICK");
                   onClose();
                 }}
-                className="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-black/5 dark:hover:bg-white/10"
+                className="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-black/5 dark:hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 aria-label="Fechar"
               >
                 <X className="w-5 h-5" aria-hidden="true" />
@@ -1081,7 +1036,7 @@ const assinante = Number(
                 {/* TÍTULO */}
                 <div className="grid gap-1">
                   <label htmlFor="evento-titulo" className="text-sm font-medium">
-                    Título *
+                    Título <span className="text-rose-600">*</span>
                   </label>
                   <div className="relative">
                     <FileText className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
@@ -1090,7 +1045,7 @@ const assinante = Number(
                       value={titulo}
                       onChange={(e) => setTitulo(e.target.value)}
                       placeholder="Ex.: Curso de Atualização em Urgência"
-                      className="w-full pl-10 pr-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm"
+                      className="w-full pl-10 pr-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
                       required
                     />
                   </div>
@@ -1108,7 +1063,7 @@ const assinante = Number(
                       value={descricao}
                       onChange={(e) => setDescricao(e.target.value)}
                       placeholder="Contexto, objetivos e observações do evento."
-                      className="w-full pl-10 pr-3 py-2 h-24 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm"
+                      className="w-full pl-10 pr-3 py-2 h-24 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
                     />
                   </div>
                 </div>
@@ -1119,13 +1074,13 @@ const assinante = Number(
                     Público-alvo
                   </label>
                   <div className="relative">
-                    <FileText className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
+                    <Info className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
                     <input
                       id="evento-publico"
                       value={publicoAlvo}
                       onChange={(e) => setPublicoAlvo(e.target.value)}
                       placeholder="Ex.: Profissionais da APS, enfermeiros, médicos"
-                      className="w-full pl-10 pr-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm"
+                      className="w-full pl-10 pr-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
                     />
                   </div>
                 </div>
@@ -1133,7 +1088,7 @@ const assinante = Number(
                 {/* LOCAL */}
                 <div className="grid gap-1">
                   <label htmlFor="evento-local" className="text-sm font-medium">
-                    Local *
+                    Local <span className="text-rose-600">*</span>
                   </label>
                   <div className="relative">
                     <MapPin className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
@@ -1142,7 +1097,7 @@ const assinante = Number(
                       value={local}
                       onChange={(e) => setLocal(e.target.value)}
                       placeholder="Ex.: Auditório da Escola da Saúde"
-                      className="w-full pl-10 pr-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm"
+                      className="w-full pl-10 pr-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
                       required
                     />
                   </div>
@@ -1151,7 +1106,7 @@ const assinante = Number(
                 {/* TIPO */}
                 <div className="grid gap-1">
                   <label htmlFor="evento-tipo" className="text-sm font-medium">
-                    Tipo *
+                    Tipo <span className="text-rose-600">*</span>
                   </label>
                   <div className="relative">
                     <Layers3 className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
@@ -1159,7 +1114,7 @@ const assinante = Number(
                       id="evento-tipo"
                       value={String(tipo ?? "")}
                       onChange={(e) => setTipo(String(e.target.value))}
-                      className="w-full pl-10 pr-10 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm"
+                      className="w-full pl-10 pr-10 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
                       required
                     >
                       <option value="">Selecione o tipo</option>
@@ -1175,7 +1130,7 @@ const assinante = Number(
                 {/* UNIDADE */}
                 <div className="grid gap-1">
                   <label htmlFor="evento-unidade" className="text-sm font-medium">
-                    Unidade *
+                    Unidade <span className="text-rose-600">*</span>
                   </label>
                   <div className="relative">
                     <Layers3 className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
@@ -1183,7 +1138,7 @@ const assinante = Number(
                       id="evento-unidade"
                       value={String(unidadeId ?? "")}
                       onChange={(e) => setUnidadeId(String(e.target.value))}
-                      className="w-full pl-10 pr-10 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm"
+                      className="w-full pl-10 pr-10 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
                       required
                     >
                       <option value="">Selecione a unidade</option>
@@ -1197,7 +1152,7 @@ const assinante = Number(
                 </div>
 
                 {/* 🔒 RESTRIÇÃO */}
-                <fieldset className="border rounded-xl p-4 mt-2 border-black/10 dark:border-white/10">
+                <fieldset className="border rounded-xl p-4 mt-2 border-black/10 dark:border-white/10 bg-white/50 dark:bg-zinc-900/40">
                   <legend className="px-1 font-semibold flex items-center gap-2">
                     {restrito ? <Lock size={16} /> : <Unlock size={16} />} Visibilidade do evento
                     {restrito && restritoModo === "lista_registros" && regCount > 0 && (
@@ -1214,7 +1169,6 @@ const assinante = Number(
                       onChange={(e) => {
                         const checked = e.target.checked;
                         setRestrito(checked);
-                        L.info("RESTRITO_TOGGLE", { checked });
                         if (!checked) setRestritoModo("");
                         else if (!restritoModo) setRestritoModo("todos_servidores");
                       }}
@@ -1230,10 +1184,7 @@ const assinante = Number(
                           name="restrito_modo"
                           value="todos_servidores"
                           checked={restritoModo === "todos_servidores"}
-                          onChange={() => {
-                            L.info("RESTRITO_MODO", { modo: "todos_servidores" });
-                            setRestritoModo("todos_servidores");
-                          }}
+                          onChange={() => setRestritoModo("todos_servidores")}
                         />
                         <span>
                           Todos os servidores (somente quem possui <strong>registro</strong> cadastrado)
@@ -1246,10 +1197,7 @@ const assinante = Number(
                           name="restrito_modo"
                           value="lista_registros"
                           checked={restritoModo === "lista_registros"}
-                          onChange={() => {
-                            L.info("RESTRITO_MODO", { modo: "lista_registros" });
-                            setRestritoModo("lista_registros");
-                          }}
+                          onChange={() => setRestritoModo("lista_registros")}
                         />
                         <span className="inline-flex items-center">
                           Apenas a lista específica de registros
@@ -1267,10 +1215,7 @@ const assinante = Number(
                           name="restrito_modo"
                           value="cargos"
                           checked={restritoModo === "cargos"}
-                          onChange={() => {
-                            L.info("RESTRITO_MODO", { modo: "cargos" });
-                            setRestritoModo("cargos");
-                          }}
+                          onChange={() => setRestritoModo("cargos")}
                         />
                         <span>Restringir por cargos</span>
                       </label>
@@ -1281,10 +1226,7 @@ const assinante = Number(
                           name="restrito_modo"
                           value="unidades"
                           checked={restritoModo === "unidades"}
-                          onChange={() => {
-                            L.info("RESTRITO_MODO", { modo: "unidades" });
-                            setRestritoModo("unidades");
-                          }}
+                          onChange={() => setRestritoModo("unidades")}
                         />
                         <span>Restringir por unidades</span>
                       </label>
@@ -1308,14 +1250,14 @@ const assinante = Number(
                                 e.preventDefault();
                                 addRegistrosBulk(txt);
                               }}
-                              placeholder="Digite/cole registros (qualquer texto — extrairemos todos os blocos de 6 dígitos) e Enter"
-                              className="w-full px-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900"
+                              placeholder="Digite/cole registros (qualquer texto — extraímos todos os blocos de 6 dígitos) e Enter"
+                              className="w-full px-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                               aria-describedby="ajuda-registros"
                             />
                             <button
                               type="button"
                               onClick={addRegistro}
-                              className="px-3 py-2 rounded-xl bg-teal-700 hover:bg-teal-600 text-white font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500"
+                              className="px-3 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500"
                             >
                               Adicionar
                             </button>
@@ -1333,17 +1275,14 @@ const assinante = Number(
                                   </div>
                                   <button
                                     type="button"
-                                    onClick={() => {
-                                      L.info("REGISTROS_CLEAR_ALL");
-                                      setRegistros([]);
-                                    }}
+                                    onClick={() => setRegistros([])}
                                     className="text-xs underline text-red-700 dark:text-red-300"
                                     title="Limpar todos os registros"
                                   >
                                     Limpar todos
                                   </button>
                                 </div>
-                                <div className="flex flex-wrap gap-2">
+                                <div className="flex flex-wrap gap-2 mt-2">
                                   {registros.map((r) => (
                                     <span
                                       key={r}
@@ -1378,7 +1317,7 @@ const assinante = Number(
                             <select
                               value={String(cargoAdd || "")}
                               onChange={(e) => setCargoAdd(e.target.value)}
-                              className="w-full px-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900"
+                              className="w-full px-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                             >
                               <option value="">Selecione o cargo</option>
                               {(cargosSugestoes || []).map((c) => (
@@ -1390,7 +1329,7 @@ const assinante = Number(
                             <button
                               type="button"
                               onClick={addCargo}
-                              className="px-3 py-2 rounded-xl bg-teal-700 hover:bg-teal-600 text-white font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500"
+                              className="px-3 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500"
                             >
                               Adicionar
                             </button>
@@ -1428,7 +1367,7 @@ const assinante = Number(
                             <select
                               value={String(unidadeAddId || "")}
                               onChange={(e) => setUnidadeAddId(e.target.value)}
-                              className="w-full px-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900"
+                              className="w-full px-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                             >
                               <option value="">Selecione a unidade</option>
                               {unidades
@@ -1442,7 +1381,7 @@ const assinante = Number(
                             <button
                               type="button"
                               onClick={addUnidade}
-                              className="px-3 py-2 rounded-xl bg-teal-700 hover:bg-teal-600 text-white font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500"
+                              className="px-3 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500"
                             >
                               Adicionar
                             </button>
@@ -1486,13 +1425,17 @@ const assinante = Number(
 
                     {!folderFile && folderUrlExistente && (
                       <div className="rounded-lg border border-black/10 dark:border-white/10 p-2">
-                        <img src={folderUrlExistente} alt="Folder atual do evento" className="max-h-40 rounded-md" />
+                        <img
+                          src={withBackendBase(folderUrlExistente)}
+                          alt="Folder atual do evento"
+                          className="max-h-40 rounded-md"
+                        />
                         <div className="mt-2 flex items-center gap-3">
                           <a
-                            href={folderUrlExistente}
+                            href={withBackendBase(folderUrlExistente)}
                             target="_blank"
                             rel="noreferrer"
-                            className="text-xs underline text-teal-700 dark:text-teal-300"
+                            className="text-xs underline text-emerald-700 dark:text-emerald-300"
                           >
                             Abrir imagem em nova aba
                           </a>
@@ -1508,10 +1451,18 @@ const assinante = Number(
                       </div>
                     )}
 
-                    <label className="flex items-center gap-2 px-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 cursor-pointer">
+                    <label className="flex items-center gap-2 px-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 cursor-pointer hover:border-emerald-400/60 transition-colors">
                       <Paperclip size={16} />
-                      <span className="text-sm">{folderFile ? folderFile.name : "Selecionar imagem…"}</span>
-                      <input type="file" accept="image/png,image/jpeg" className="hidden" onChange={onChangeFolder} />
+                      <span className="text-sm">
+                        {folderFile ? folderFile.name : `Selecionar imagem… (máx. ${MAX_IMG_MB}MB)`}
+                      </span>
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg"
+                        className="hidden"
+                        onChange={onChangeFolder}
+                        aria-label="Selecionar folder do evento"
+                      />
                     </label>
 
                     {folderPreview && (
@@ -1543,10 +1494,10 @@ const assinante = Number(
                     {!programacaoFile && programacaoUrlExistente && (
                       <div className="rounded-lg border border-black/10 dark:border-white/10 p-2 flex items-center justify-between">
                         <a
-                          href={programacaoUrlExistente}
+                          href={withBackendBase(programacaoUrlExistente)}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-sm underline text-teal-700 dark:text-teal-300"
+                          className="text-sm underline text-emerald-700 dark:text-emerald-300"
                         >
                           {programacaoNomeExistente || "Baixar programação (PDF)"}
                         </a>
@@ -1561,10 +1512,18 @@ const assinante = Number(
                       </div>
                     )}
 
-                    <label className="flex items-center gap-2 px-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 cursor-pointer">
+                    <label className="flex items-center gap-2 px-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 cursor-pointer hover:border-emerald-400/60 transition-colors">
                       <Paperclip size={16} />
-                      <span className="text-sm">{programacaoFile ? programacaoFile.name : "Selecionar PDF…"}</span>
-                      <input type="file" accept="application/pdf" className="hidden" onChange={onChangeProgramacao} />
+                      <span className="text-sm">
+                        {programacaoFile ? programacaoFile.name : `Selecionar PDF… (máx. ${MAX_PDF_MB}MB)`}
+                      </span>
+                      <input
+                        type="file"
+                        accept="application/pdf"
+                        className="hidden"
+                        onChange={onChangeProgramacao}
+                        aria-label="Selecionar PDF de programação"
+                      />
                     </label>
 
                     {programacaoFile && (
@@ -1588,7 +1547,9 @@ const assinante = Number(
                   </h3>
 
                   {turmas.length === 0 ? (
-                    <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">Nenhuma turma cadastrada.</p>
+                    <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">
+                      Nenhuma turma cadastrada.
+                    </p>
                   ) : (
                     <div className="mt-2 space-y-3">{turmasRender}</div>
                   )}
@@ -1597,7 +1558,7 @@ const assinante = Number(
                     <button
                       type="button"
                       onClick={abrirCriarTurma}
-                      className="inline-flex items-center gap-2 rounded-xl px-4 py-2 bg-teal-700 hover:bg-teal-600 text-white font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500"
+                      className="inline-flex items-center gap-2 rounded-xl px-4 py-2 bg-emerald-700 hover:bg-emerald-600 text-white font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500"
                       aria-label="Adicionar nova turma"
                     >
                       <PlusCircle className="w-4 h-4" />
@@ -1618,7 +1579,7 @@ const assinante = Number(
                   L.info("FOOTER_CANCELAR_CLICK");
                   onClose();
                 }}
-                className="rounded-xl px-4 py-2 bg-slate-200 hover:bg-slate-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-900 dark:text-slate-100"
+                className="rounded-xl px-4 py-2 bg-slate-200 hover:bg-slate-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               >
                 Cancelar
               </button>
@@ -1670,10 +1631,8 @@ const assinante = Number(
             if (editandoTurmaIndex != null) {
               const copia = [...prev];
               copia[editandoTurmaIndex] = turmaFinal;
-              L.log("edit ok", { index: editandoTurmaIndex, nome: turmaFinal?.nome });
               return copia;
             }
-            L.log("add ok", { nome: turmaFinal?.nome });
             return [...prev, turmaFinal];
           });
 

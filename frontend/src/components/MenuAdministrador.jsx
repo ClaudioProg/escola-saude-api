@@ -100,7 +100,6 @@ export default function MenuAdministrador() {
   const usuarioItems = useMemo(
     () => [
       { label: "Eventos", onClick: () => goTo("/eventos") },
-      { label: "Meus Cursos", onClick: () => goTo("/minhas-inscricoes") },
       { label: "Meus Certificados", onClick: () => goTo("/certificados") },
     ],
     [] // navigate embutido em goTo

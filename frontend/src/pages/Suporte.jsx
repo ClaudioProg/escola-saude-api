@@ -405,7 +405,7 @@ export default function Suporte() {
                 </li>
                 <li className="flex items-center gap-2">
                   <Phone className="w-4 h-4" aria-hidden="true" />
-                  <span><strong>Telefone:</strong> (13) 3213-5000 – R. 5331</span>
+                  <span><strong>Telefone:</strong> (13) 3213-5100 – R. 5331</span>
                 </li>
                 <li className="flex items-center gap-2">
                   <Globe className="w-4 h-4" aria-hidden="true" />

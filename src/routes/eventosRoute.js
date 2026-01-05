@@ -22,8 +22,8 @@ router.get('/para-mim/lista', authMiddleware, eventosController.listarEventosPar
 /* ───────────────────────────────────────────────────────────────
    📆 Agenda & visão do instrutor
    ─────────────────────────────────────────────────────────────── */
-router.get('/agenda',     authMiddleware, eventosController.getAgendaEventos);
-router.get('/instrutor',  authMiddleware, eventosController.listarEventosDoinstrutor);
+router.get('/agenda',    authMiddleware, eventosController.getAgendaEventos);
+router.get('/instrutor', authMiddleware, eventosController.listarEventosDoinstrutor);
 
 /* ───────────────────────────────────────────────────────────────
    📌 Datas reais da turma (usa :id = turma_id)
@@ -56,14 +56,21 @@ router.get('/:id/turmas',         authMiddleware, eventosController.listarTurmas
 router.get('/:id/turmas-simples', authMiddleware, eventosController.listarTurmasSimples);
 
 /* ───────────────────────────────────────────────────────────────
-   📎 Upload direto de arquivos do evento (admin)
+   📎 Upload de arquivos do evento (folder/programação) — admin
    ─────────────────────────────────────────────────────────────── */
+// Endpoint unificado (recomendado pelo front)
+router.post('/:id/arquivos',
+  authMiddleware, authorizeRoles('administrador'),
+  eventosController.uploadEventos,            // aceita fields: folder, programacao (ou file)
+  eventosController.atualizarArquivosDoEvento // atualiza folder_url / programacao_pdf_url
+);
+
+// Atalhos compatíveis (opcionais) — usam o mesmo handler
 router.post('/:id/folder',
   authMiddleware, authorizeRoles('administrador'),
   eventosController.uploadEventos,
   eventosController.atualizarArquivosDoEvento
 );
-
 router.post('/:id/programacao',
   authMiddleware, authorizeRoles('administrador'),
   eventosController.uploadEventos,

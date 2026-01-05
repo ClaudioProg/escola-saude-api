@@ -193,7 +193,7 @@ export default function Footer() {
         >
           <div className="flex items-start gap-3">
             <IconChip ringClass={ring} compact>
-              <span className="h-2.5 w-2.5 rounded-full bg-white/85" />
+            <MapPin size={17} className="opacity-95" />
             </IconChip>
 
             <div className="min-w-0">
@@ -213,15 +213,13 @@ export default function Footer() {
                 </span>
                 <br />
                 <span>
-                  <span itemProp="addressLocality">Santos</span>,{" "}
-                  <span itemProp="addressRegion">SP</span>,{" "}
+                  <span itemProp="addressLocality">Centro</span>,{" "}
+                  <span itemProp="addressRegion">Santos / SP</span>,{" "}
                   <span itemProp="postalCode">11013-151</span>
                 </span>
               </address>
 
-              <p className="mt-2 text-[11px] text-white/80">
-                Secretaria Municipal de Saúde — Prefeitura de Santos
-              </p>
+
             </div>
           </div>
         </div>
@@ -245,11 +243,11 @@ export default function Footer() {
               </IconChip>
 
               <a
-                href="tel:+551332015000"
+                href="tel:+551332135100"
                 className="hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 rounded-md"
                 itemProp="telephone"
               >
-                (13) 3201-5000 R. 5331
+                (13) 3213-5100 R. 5331
               </a>
             </p>
 
@@ -265,20 +263,9 @@ export default function Footer() {
               >
                 escoladasaude@santos.sp.gov.br
               </a>
-            </p>
-
-            <p className="flex items-center gap-3">
-              <IconChip ringClass={ring} compact>
-                <MapPin size={17} className="opacity-95" />
-              </IconChip>
-              <span>Santos/SP</span>
-            </p>
+            </p>    
           </div>
-
-          {/* Nota menor */}
-          <div className="mt-4 rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-[11px] text-white/85">
-            Dica: informe seu nome completo e o curso/evento relacionado.
-          </div>
+     
         </div>
       </div>
 

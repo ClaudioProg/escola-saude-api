@@ -1,4 +1,4 @@
-// ✅ frontend/src/components/ListaTurmasEvento.jsx (revamp visual)
+// ✅ frontend/src/components/ListaTurmasEvento.jsx (premium revamp)
 /* eslint-disable no-console */
 import React, { useMemo } from "react";
 import PropTypes from "prop-types";
@@ -8,6 +8,8 @@ import {
   Users,
   AlertTriangle,
   CheckCircle2,
+  Sparkles,
+  ArrowRight,
 } from "lucide-react";
 
 /* ========================== Helpers ========================== */
@@ -43,7 +45,7 @@ const parseHora = (val) => {
   return hh === "00" && mm === "00" ? null : `${hh}:${mm}`;
 };
 
-// YYYY-MM-DD (LOCAL) a partir de Date
+// YYYY-MM-DD (LOCAL) a partir de Date (evita timezone shift)
 const ymdLocal = (d) => {
   if (!(d instanceof Date)) return "";
   const y = d.getFullYear();
@@ -76,14 +78,8 @@ const extrairHorasDeEncontros = (encontrosInline) => {
   const hfs = new Set();
 
   (encontrosInline || []).forEach((e) => {
-    const hi = parseHora(
-      (typeof e === "object" && (e.inicio || e.horario_inicio)) ||
-        (typeof e === "string" ? null : undefined)
-    );
-    const hf = parseHora(
-      (typeof e === "object" && (e.fim || e.horario_fim)) ||
-        (typeof e === "string" ? null : undefined)
-    );
+    const hi = parseHora((typeof e === "object" && (e.inicio || e.horario_inicio)) || null);
+    const hf = parseHora((typeof e === "object" && (e.fim || e.horario_fim)) || null);
     if (hi) his.add(hi);
     if (hf) hfs.add(hf);
   });
@@ -98,7 +94,15 @@ const toDateLocal = (dateOnly, hhmm = "00:00") => {
   if (!dateOnly) return null;
   const [h, m] = (hhmm || "00:00").split(":").map((x) => parseInt(x || "0", 10));
   const [Y, M, D] = dateOnly.split("-").map((x) => parseInt(x, 10));
-  return new Date(Y, (M || 1) - 1, D || 1, Number.isFinite(h) ? h : 0, Number.isFinite(m) ? m : 0, 0, 0);
+  return new Date(
+    Y,
+    (M || 1) - 1,
+    D || 1,
+    Number.isFinite(h) ? h : 0,
+    Number.isFinite(m) ? m : 0,
+    0,
+    0
+  );
 };
 
 const getStatusPorJanela = ({ di, df, hi, hf, agora = new Date() }) => {
@@ -133,12 +137,55 @@ const getPreenchidas = (t) =>
 
 /* UI helpers */
 const barraClassPorPerc = (p) => {
-  if (p >= 90) return "bg-rose-600";
-  if (p >= 70) return "bg-amber-500";
-  return "bg-emerald-600";
+  if (p >= 90) return "bg-gradient-to-r from-rose-600 to-red-600";
+  if (p >= 70) return "bg-gradient-to-r from-amber-500 to-orange-500";
+  return "bg-gradient-to-r from-emerald-600 to-teal-600";
 };
+
 const chipBase =
-  "text-[11px] px-2 py-1 rounded-full border inline-flex items-center gap-1 font-medium whitespace-nowrap";
+  "text-[11px] px-2.5 py-1 rounded-full border inline-flex items-center gap-1.5 font-semibold whitespace-nowrap shadow-sm";
+
+const chipStyles = {
+  lotada:
+    "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/25 dark:text-rose-200 dark:border-rose-800",
+  andamento:
+    "bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-900/25 dark:text-amber-200 dark:border-amber-800",
+  encerrado:
+    "bg-zinc-100 text-zinc-700 border-zinc-200 dark:bg-zinc-800/60 dark:text-zinc-200 dark:border-zinc-700",
+  programado:
+    "bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-900/25 dark:text-emerald-200 dark:border-emerald-800",
+  inscrito:
+    "bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-900/25 dark:text-indigo-200 dark:border-indigo-700",
+  conflito:
+    "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/25 dark:text-amber-200 dark:border-amber-800",
+};
+
+function statusChipClass(status) {
+  if (status === "Em andamento") return chipStyles.andamento;
+  if (status === "Encerrado") return chipStyles.encerrado;
+  return chipStyles.programado;
+}
+
+/* ======================== Mini components ======================== */
+function MiniStat({ icon: Icon, label, value }) {
+  return (
+    <div className="rounded-2xl border border-zinc-200/70 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/40 backdrop-blur px-3 py-2 shadow-sm">
+      <div className="flex items-center gap-2">
+        <span className="grid place-items-center w-8 h-8 rounded-xl bg-zinc-100 dark:bg-zinc-800">
+          <Icon className="w-4 h-4 text-zinc-700 dark:text-zinc-200" />
+        </span>
+        <div className="min-w-0">
+          <div className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
+            {label}
+          </div>
+          <div className="text-sm font-extrabold text-zinc-900 dark:text-white truncate">
+            {value}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /* ======================== Componente ======================== */
 export default function ListaTurmasEvento({
@@ -164,7 +211,7 @@ export default function ListaTurmasEvento({
   const conflitosSet = useMemo(() => new Set((turmasEmConflito || []).map(Number)), [turmasEmConflito]);
 
   return (
-    <div id={`turmas-${eventoId}`} className="mt-4 space-y-5">
+    <div id={`turmas-${eventoId}`} className="mt-5 space-y-5">
       {(turmas || []).map((t) => {
         const jaInscrito = jaInscritoTurma(t.id);
 
@@ -214,106 +261,104 @@ export default function ListaTurmasEvento({
           (bloquearOutras && "Você já está inscrito em uma turma deste evento") ||
           (emConflito && "Conflito de horário com outra turma já inscrita") ||
           (lotada && "Turma lotada") ||
-          (!temLimiteVagas && "") ||
           "";
+
+        const idKey = t.id || `${t.nome || "Turma"}-${di}-${hi || "??"}`;
+
+        const datasLabel =
+          di && df
+            ? `${di.split("-").reverse().map(pad).join("/")} a ${df.split("-").reverse().map(pad).join("/")}`
+            : di
+            ? `A partir de ${di.split("-").reverse().map(pad).join("/")}`
+            : df
+            ? `Até ${df.split("-").reverse().map(pad).join("/")}`
+            : "Data a definir";
+
+        const horarioLabel = hi && hf ? `${hi} às ${hf}` : "a definir";
 
         return (
           <article
-            key={t.id || `${t.nome || "Turma"}-${di}-${hi || "??"}`}
-            className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-neutral-900 shadow-sm hover:shadow-xl transition-shadow overflow-hidden"
+            key={idKey}
+            className={[
+              "relative rounded-3xl overflow-hidden",
+              "border border-zinc-200/80 dark:border-zinc-800",
+              "bg-white dark:bg-neutral-900",
+              "shadow-[0_10px_30px_-20px_rgba(0,0,0,0.35)] hover:shadow-[0_18px_50px_-28px_rgba(0,0,0,0.55)]",
+              "transition-all",
+            ].join(" ")}
           >
-            {/* Faixa de destaque */}
-            <div className="h-1.5 w-full bg-gradient-to-r from-rose-500 via-fuchsia-500 to-indigo-500" />
+            {/* Barra premium superior */}
+            <div className="h-1.5 w-full bg-gradient-to-r from-fuchsia-500 via-indigo-500 to-emerald-500" />
 
-            <div className="p-4 sm:p-5">
-              {/* Header: nome + chips de status */}
-              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-                <h4 className="text-lg sm:text-xl font-extrabold text-zinc-900 dark:text-white">
-                  {t.nome || "Turma"}
-                </h4>
+            {/* glow sutil */}
+            <div className="pointer-events-none absolute -top-28 -right-28 w-72 h-72 rounded-full bg-fuchsia-500/10 blur-3xl" />
+            <div className="pointer-events-none absolute -bottom-28 -left-28 w-72 h-72 rounded-full bg-emerald-500/10 blur-3xl" />
 
-                <div className="flex flex-wrap gap-2">
-                  {/* Status principal */}
+            <div className="relative p-4 sm:p-6">
+              {/* TOP: título + chips */}
+              <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+                <div className="min-w-0">
+                  <h4 className="text-lg sm:text-xl font-extrabold tracking-tight text-zinc-900 dark:text-white break-words">
+                    {t.nome || "Turma"}
+                  </h4>
+
+                  {/* ministats */}
+                  <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <MiniStat icon={CalendarDays} label="Período" value={datasLabel} />
+                    <MiniStat icon={Clock3} label="Horário" value={horarioLabel} />
+                    <MiniStat
+                      icon={Users}
+                      label="Vagas"
+                      value={
+                        temLimiteVagas
+                          ? `${inscritos}/${vagas} (${perc}%)`
+                          : `${inscritos} (sem limite)`
+                      }
+                    />
+                  </div>
+
+                  {Number.isFinite(Number(t.carga_horaria)) && (
+                    <div className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+                      Carga horária: <span className="font-semibold">{Number(t.carga_horaria)}h</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Chips à direita */}
+                <div className="flex flex-wrap gap-2 lg:justify-end">
                   {(lotada || mostrarStatusTurma) && (
-                    <span
-                      className={`${chipBase} ${
-                        lotada
-                          ? "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-200 dark:border-rose-800"
-                          : statusTurma === "Em andamento"
-                          ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-800"
-                          : statusTurma === "Encerrado"
-                          ? "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-200 dark:border-rose-800"
-                          : "bg-gray-50 text-gray-700 border-gray-200 dark:bg-gray-800/50 dark:text-gray-200 dark:border-gray-700"
-                      }`}
-                    >
+                    <span className={`${chipBase} ${lotada ? chipStyles.lotada : statusChipClass(statusTurma)}`}>
+                      <Sparkles className="w-3.5 h-3.5" />
                       {lotada ? "Lotada" : statusTurma}
                     </span>
                   )}
 
-                  {/* Chip “Inscrito” */}
                   {jaInscrito && (
-                    <span
-                      className={`${chipBase} bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-200 dark:border-indigo-700`}
-                      title="Você está inscrito nesta turma"
-                    >
+                    <span className={`${chipBase} ${chipStyles.inscrito}`} title="Você está inscrito nesta turma">
                       <CheckCircle2 className="w-3.5 h-3.5" /> Inscrito
                     </span>
                   )}
 
-                  {/* Chip de conflito */}
                   {emConflito && (
-                    <span
-                      className={`${chipBase} bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-200 dark:border-amber-800`}
-                      title="Conflito de horário com outra turma já inscrita"
-                    >
+                    <span className={`${chipBase} ${chipStyles.conflito}`} title="Conflito de horário">
                       <AlertTriangle className="w-3.5 h-3.5" /> Conflito
                     </span>
                   )}
                 </div>
               </div>
 
-              {/* Metas: datas, horários, carga horária */}
-              <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <div className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-                  <CalendarDays className="w-4 h-4" />
-                  <span>
-                    {di && df ? (
-                      <>
-                        {di.split("-").reverse().map(pad).join("/")} a{" "}
-                        {df.split("-").reverse().map(pad).join("/")}
-                      </>
-                    ) : di ? (
-                      <>A partir de {di.split("-").reverse().map(pad).join("/")}</>
-                    ) : df ? (
-                      <>Até {df.split("-").reverse().map(pad).join("/")}</>
-                    ) : (
-                      "Data a definir"
-                    )}
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-                  <Clock3 className="w-4 h-4" />
-                  <span>{hi && hf ? <>Horário: {hi} às {hf}</> : <>Horário: a definir</>}</span>
-                </div>
-              </div>
-
-              {Number.isFinite(Number(t.carga_horaria)) && (
-                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  Carga horária: {Number(t.carga_horaria)}h
-                </p>
-              )}
-
               {/* Encontros */}
-              <div className="mt-3">
+              <div className="mt-4 rounded-2xl border border-zinc-200/70 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-900/40 p-3 sm:p-4">
                 {qtdEncontros > 0 ? (
                   <>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2 text-xs font-medium text-gray-600 dark:text-gray-300">
+                    <div className="flex items-center justify-between gap-3 mb-2">
+                      <div className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">
                         {qtdEncontros} encontro{qtdEncontros > 1 ? "s" : ""}
                         {exibirRealizadosTotal && (
                           <span
-                            className="ml-1 text-[11px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-800"
+                            className="ml-2 inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full
+                                       bg-emerald-50 text-emerald-700 border border-emerald-200
+                                       dark:bg-emerald-900/25 dark:text-emerald-200 dark:border-emerald-800"
                             title="Encontros realizados até hoje"
                             aria-label={`Realizados: ${realizados} de ${qtdEncontros}`}
                           >
@@ -321,54 +366,63 @@ export default function ListaTurmasEvento({
                           </span>
                         )}
                       </div>
+
+                      {temLimiteVagas && (
+                        <div className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
+                          Ocupação: <span className="text-zinc-900 dark:text-white">{perc}%</span>
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex flex-wrap gap-2">
-                      {encontrosOrdenados.map((d, idx) => (
-                        <span
-                          key={idx}
-                          className={[
-                            "px-2 py-1 text-xs rounded-full border",
-                            d <= HOJE_ISO
-                              ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-800"
-                              : "bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-200 dark:border-indigo-700",
-                          ].join(" ")}
-                          title={d <= HOJE_ISO ? "Já ocorreu" : "Ainda por ocorrer"}
-                        >
-                          {br(d)}
-                        </span>
-                      ))}
+                      {encontrosOrdenados.map((d, idx) => {
+                        const jaOcorreu = d <= HOJE_ISO;
+                        return (
+                          <span
+                            key={`${idKey}-d-${idx}`}
+                            className={[
+                              "px-2.5 py-1 text-xs rounded-full border font-semibold",
+                              "shadow-sm",
+                              jaOcorreu
+                                ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/25 dark:text-emerald-200 dark:border-emerald-800"
+                                : "bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-900/25 dark:text-indigo-200 dark:border-indigo-700",
+                            ].join(" ")}
+                            title={jaOcorreu ? "Já ocorreu" : "Ainda por ocorrer"}
+                          >
+                            {br(d)}
+                          </span>
+                        );
+                      })}
                     </div>
                   </>
                 ) : (
-                  <span className="opacity-70 text-xs">
+                  <div className="text-xs text-zinc-500 dark:text-zinc-400">
                     Cronograma por encontros ainda não definido
-                  </span>
+                  </div>
                 )}
               </div>
 
-              {/* Vagas */}
-              <div className="mt-4">
-                <div className="flex justify-between items-center text-xs text-gray-600 dark:text-gray-400 mb-1">
-                  <div className="inline-flex items-center gap-1">
-                    <Users className="w-3.5 h-3.5" />
-                    <span>
-                      {temLimiteVagas
-                        ? `${inscritos} de ${vagas} vagas preenchidas`
-                        : `${inscritos} inscrito${inscritos === 1 ? "" : "s"} (sem limite de vagas)`}
-                    </span>
+              {/* Barra de vagas */}
+              {temLimiteVagas && (
+                <div className="mt-4">
+                  <div className="flex justify-between items-center text-xs text-zinc-600 dark:text-zinc-400 mb-1">
+                    <div className="inline-flex items-center gap-1">
+                      <Users className="w-3.5 h-3.5" />
+                      <span>
+                        {inscritos} de {vagas} vagas preenchidas
+                      </span>
+                    </div>
+                    <span className="font-semibold">{perc}%</span>
                   </div>
-                  {temLimiteVagas && <span>{perc}%</span>}
-                </div>
-                {temLimiteVagas && (
-                  <div className="h-2 rounded bg-gray-200 dark:bg-gray-700 overflow-hidden" aria-hidden="true">
+
+                  <div className="h-2.5 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden">
                     <div
-                      className={`h-2 ${barraClassPorPerc(perc)} transition-all`}
+                      className={`h-2.5 ${barraClassPorPerc(perc)} transition-all`}
                       style={{ width: `${perc}%` }}
                     />
                   </div>
-                )}
-              </div>
+                </div>
+              )}
 
               {/* CTA */}
               <div className="mt-5 flex justify-center">
@@ -383,11 +437,12 @@ export default function ListaTurmasEvento({
                   aria-disabled={disabled}
                   title={motivo}
                   className={[
-                    "w-full sm:w-auto px-5 py-2 rounded-xl font-semibold transition min-w-[190px]",
+                    "w-full sm:w-auto min-w-[210px] px-5 py-2.5 rounded-2xl font-extrabold",
+                    "transition-all",
                     "focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-500",
                     disabled
-                      ? "bg-gray-300 text-gray-600 cursor-not-allowed dark:bg-gray-700 dark:text-gray-400"
-                      : "bg-emerald-600 text-white hover:bg-emerald-700",
+                      ? "bg-zinc-200 text-zinc-500 cursor-not-allowed dark:bg-zinc-800 dark:text-zinc-500"
+                      : "bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 text-white shadow-md hover:shadow-xl hover:brightness-[1.03]",
                   ].join(" ")}
                   aria-label={
                     jaInstrutorDoEvento
@@ -403,21 +458,31 @@ export default function ListaTurmasEvento({
                       : "Inscrever-se na turma"
                   }
                 >
-                  {Number(inscrevendo) === Number(t.id)
-                    ? "Processando..."
-                    : jaInstrutorDoEvento
-                    ? "Instrutor do evento"
-                    : jaInscrito
-                    ? "Inscrito"
-                    : emConflito
-                    ? "Conflito de horário"
-                    : bloquearOutras
-                    ? "Indisponível"
-                    : lotada
-                    ? "Sem vagas"
-                    : "Inscrever-se"}
+                  <span className="inline-flex items-center gap-2">
+                    {Number(inscrevendo) === Number(t.id)
+                      ? "Processando..."
+                      : jaInstrutorDoEvento
+                      ? "Instrutor do evento"
+                      : jaInscrito
+                      ? "Inscrito"
+                      : emConflito
+                      ? "Conflito de horário"
+                      : bloquearOutras
+                      ? "Indisponível"
+                      : lotada
+                      ? "Sem vagas"
+                      : "Inscrever-se"}
+                    {!disabled && <ArrowRight className="w-4 h-4" />}
+                  </span>
                 </button>
               </div>
+
+              {/* Motivo (microfeedback) */}
+              {disabled && motivo && (
+                <div className="mt-2 text-center text-[12px] text-zinc-500 dark:text-zinc-400">
+                  {motivo}
+                </div>
+              )}
             </div>
           </article>
         );

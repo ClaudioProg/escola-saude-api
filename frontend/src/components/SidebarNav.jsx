@@ -229,8 +229,6 @@ export default function SidebarNav({
     () => [
       { label: "Painel do Usuário", path: "/usuario/dashboard", icon: LayoutDashboard },
       { label: "Eventos", path: "/eventos", icon: CalendarDays },
-      { label: "Meus Cursos", path: "/minhas-inscricoes", icon: BookOpen },
-      { label: "Agenda", path: "/agenda", icon: CalendarDays },
       { label: "Minhas Presenças", path: "/minhas-presencas", icon: ListChecks },
       { label: "Avaliações Pendentes", path: "/avaliacao", icon: PencilLine },
       { label: "Meus Certificados", path: "/certificados", icon: FileText },
@@ -273,7 +271,6 @@ export default function SidebarNav({
       { label: "Relatórios Customizados", path: "/relatorios-customizados", icon: ClipboardList },
       { label: "Criar Submissão de Trabalho", path: "/admin/chamadas/new", icon: PlusCircle },
       { label: "Gerenciar Submissões", path: "__open_submissions__", icon: FolderOpenDot },
-      { label: "Admin", path: "/admin", icon: Shield },
     ],
     []
   );
