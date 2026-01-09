@@ -1,18 +1,28 @@
 // src/utils/formatarPerfil.js
 
 /**
- * Formata o perfil para string minúscula e separada por vírgula
- * Aceita array ou string simples
- * @param {string | string[]} perfil
- * @returns {string[]} perfil em formato array
+ * Normaliza perfis/roles para array de strings em lowercase.
+ *
+ * Aceita:
+ *  - string: "Administrador, Usuario"
+ *  - array: ["Administrador", "Usuario"]
+ *  - null / undefined
+ *
+ * @param {string | string[] | null | undefined} perfil
+ * @returns {string[]} Array normalizado (ex: ["administrador", "usuario"])
  */
 function formatarPerfil(perfil) {
-    if (Array.isArray(perfil)) return perfil;
-    if (typeof perfil === 'string') {
-      return perfil.split(',').map(p => p.trim());
-    }
-    return [];
-  }
-  
-  module.exports = formatarPerfil;
-  
+  if (!perfil) return [];
+
+  const arr = Array.isArray(perfil)
+    ? perfil
+    : typeof perfil === "string"
+      ? perfil.split(",")
+      : [];
+
+  return arr
+    .map((p) => String(p || "").toLowerCase().trim())
+    .filter(Boolean);
+}
+
+module.exports = formatarPerfil;

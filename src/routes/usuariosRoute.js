@@ -1,5 +1,7 @@
-// 📁 src/routes/usuariosRoutes.js
+// ✅ src/routes/usuariosRoutes.js
+/* eslint-disable no-console */
 const express = require("express");
+const rateLimit = require("express-rate-limit");
 const router = express.Router();
 
 const usuarioAdministradorController = require("../controllers/usuarioAdministradorController");
@@ -7,58 +9,87 @@ const usuarioPublicoController = require("../controllers/usuarioPublicoControlle
 const authMiddleware = require("../auth/authMiddleware");
 const authorizeRoles = require("../auth/authorizeRoles");
 
-// ─────────────────────────────────────────────────────────────
-// Utils
-// ─────────────────────────────────────────────────────────────
+/* ─────────────────────────────────────────────────────────────
+   Helpers “premium”
+────────────────────────────────────────────────────────────── */
+const requireAdmin = [authMiddleware, authorizeRoles("administrador")];
+
+const authLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const adminLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 80,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+/** Wrap para lidar com handlers async sem estourar unhandled rejections */
+const asyncHandler = (fn) =>
+  (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
+/** ID numérico positivo (defensivo contra overflow e NaN) */
 function validarId(req, res, next) {
   const { id } = req.params;
-  if (Number.isNaN(Number(id))) {
+  if (!/^\d+$/.test(String(id))) {
     return res.status(400).json({ erro: "ID inválido." });
   }
-  next();
+  const n = Number(id);
+  if (!Number.isSafeInteger(n) || n <= 0) {
+    return res.status(400).json({ erro: "ID inválido." });
+  }
+  return next();
 }
 
+/** Registro condicional de rotas (com log amigável quando faltar handler) */
 function registerIf(fn, registrar, rotaDescrita) {
   if (typeof fn === "function") {
     registrar();
   } else {
-    const nomeFn = registrar?.name || rotaDescrita || "rota-desconhecida";
+    const nomeFn = rotaDescrita || registrar?.name || "rota-desconhecida";
     console.warn(`⚠️  Rota '${nomeFn}' não registrada: handler ausente no controller.`);
   }
 }
 
-// ─────────────────────────────────────────────────────────────
-// 🔓 Rotas públicas (sem autenticação)
-// ─────────────────────────────────────────────────────────────
-if (typeof usuarioPublicoController?.cadastrarUsuario === "function") {
-  router.post("/cadastro", usuarioPublicoController.cadastrarUsuario);
-}
-if (typeof usuarioPublicoController?.loginUsuario === "function") {
-  router.post("/login", usuarioPublicoController.loginUsuario);
-}
-if (typeof usuarioPublicoController?.recuperarSenha === "function") {
-  router.post("/recuperar-senha", usuarioPublicoController.recuperarSenha);
-}
-if (typeof usuarioPublicoController?.redefinirSenha === "function") {
-  router.post("/redefinir-senha", usuarioPublicoController.redefinirSenha);
-}
+/* ─────────────────────────────────────────────────────────────
+   🔓 Rotas públicas (sem autenticação)
+────────────────────────────────────────────────────────────── */
+registerIf(usuarioPublicoController?.cadastrarUsuario, function cadastroPublicoRoute() {
+  router.post("/cadastro", authLimiter, asyncHandler(usuarioPublicoController.cadastrarUsuario));
+}, "POST /usuarios/cadastro");
 
-// ─────────────────────────────────────────────────────────────
-// 🔒 Rotas protegidas (exigem token válido)
-// OBS: endpoints de perfil /perfil/me ficam em perfilRoutes
-// ─────────────────────────────────────────────────────────────
+registerIf(usuarioPublicoController?.loginUsuario, function loginPublicoRoute() {
+  router.post("/login", authLimiter, asyncHandler(usuarioPublicoController.loginUsuario));
+}, "POST /usuarios/login");
 
-// 👥 Listar todos (admin)
+registerIf(usuarioPublicoController?.recuperarSenha, function recuperarSenhaRoute() {
+  router.post("/recuperar-senha", authLimiter, asyncHandler(usuarioPublicoController.recuperarSenha));
+}, "POST /usuarios/recuperar-senha");
+
+registerIf(usuarioPublicoController?.redefinirSenha, function redefinirSenhaRoute() {
+  router.post("/redefinir-senha", authLimiter, asyncHandler(usuarioPublicoController.redefinirSenha));
+}, "POST /usuarios/redefinir-senha");
+
+/* ─────────────────────────────────────────────────────────────
+   🔒 Rotas protegidas (exigem token válido)
+   OBS: endpoints de perfil /perfil/me ficam em perfilRoutes
+────────────────────────────────────────────────────────────── */
+
+/** 👥 Listar todos (admin) */
 registerIf(usuarioAdministradorController?.listarUsuarios, function listarUsuariosRoute() {
   router.get(
     "/",
-    authMiddleware,
-    authorizeRoles("administrador"),
-    usuarioAdministradorController.listarUsuarios
+    ...requireAdmin,
+    adminLimiter,
+    asyncHandler(usuarioAdministradorController.listarUsuarios)
   );
-});
+}, "GET /usuarios");
 
-// 👨‍🏫 Listar instrutores (admin)
+/** 👨‍🏫 Listar instrutores (admin) */
 const listarInstrutoresHandler =
   usuarioAdministradorController?.listarInstrutores ||
   usuarioAdministradorController?.listarinstrutor;
@@ -66,35 +97,35 @@ const listarInstrutoresHandler =
 registerIf(listarInstrutoresHandler, function listarInstrutoresRoute() {
   router.get(
     "/instrutores",
-    authMiddleware,
-    authorizeRoles("administrador"),
-    listarInstrutoresHandler
+    ...requireAdmin,
+    adminLimiter,
+    asyncHandler(listarInstrutoresHandler)
   );
-});
+}, "GET /usuarios/instrutores");
 
-// 👨‍⚖️ Listar avaliadores elegíveis (instrutor/administrador) — admin
+/** 👨‍⚖️ Listar avaliadores elegíveis (admin) */
 registerIf(usuarioAdministradorController?.listarAvaliadoresElegiveis, function listarAvaliadoresElegiveisRoute() {
   // Ex.: GET /usuarios/avaliadores?roles=instrutor,administrador
   router.get(
     "/avaliadores",
-    authMiddleware,
-    authorizeRoles("administrador"),
-    usuarioAdministradorController.listarAvaliadoresElegiveis
+    ...requireAdmin,
+    adminLimiter,
+    asyncHandler(usuarioAdministradorController.listarAvaliadoresElegiveis)
   );
-});
+}, "GET /usuarios/avaliadores");
 
-// 📊 Resumo do usuário (cursos ≥75% e certificados) — admin
+/** 📊 Resumo do usuário (admin) */
 registerIf(usuarioAdministradorController?.getResumoUsuario, function getResumoUsuarioRoute() {
   router.get(
     "/:id(\\d+)/resumo",
-    authMiddleware,
-    authorizeRoles("administrador"),
+    ...requireAdmin,
+    adminLimiter,
     validarId,
-    usuarioAdministradorController.getResumoUsuario
+    asyncHandler(usuarioAdministradorController.getResumoUsuario)
   );
-});
+}, "GET /usuarios/:id/resumo");
 
-// 📝 Atualizar perfil (admin) por :id (NUMÉRICO)
+/** 📝 Atualizar perfil (admin) por :id */
 const atualizarPerfilHandler =
   usuarioAdministradorController?.atualizarPerfil ||
   usuarioAdministradorController?.atualizarPerfilUsuario ||
@@ -103,58 +134,61 @@ const atualizarPerfilHandler =
 registerIf(atualizarPerfilHandler, function atualizarPerfilRoute() {
   router.patch(
     "/:id(\\d+)/perfil",
-    authMiddleware,
-    authorizeRoles("administrador"),
+    ...requireAdmin,
+    adminLimiter,
     validarId,
-    atualizarPerfilHandler
+    asyncHandler(atualizarPerfilHandler)
   );
   router.put(
     "/:id(\\d+)/perfil",
-    authMiddleware,
-    authorizeRoles("administrador"),
+    ...requireAdmin,
+    adminLimiter,
     validarId,
-    atualizarPerfilHandler
+    asyncHandler(atualizarPerfilHandler)
   );
-});
+}, "PATCH/PUT /usuarios/:id/perfil");
 
-// 👤 Obter usuário por ID (NUMÉRICO)
+/** 👤 Obter usuário por ID (protegido) */
 registerIf(usuarioPublicoController?.obterUsuarioPorId, function obterUsuarioPorIdRoute() {
   router.get(
     "/:id(\\d+)",
     authMiddleware,
+    authLimiter,
     validarId,
-    usuarioPublicoController.obterUsuarioPorId
+    asyncHandler(usuarioPublicoController.obterUsuarioPorId)
   );
-});
+}, "GET /usuarios/:id");
 
-// 🔄 Atualizar dados básicos do usuário por ID (NUMÉRICO)
+/** 🔄 Atualizar dados básicos do usuário por ID (protegido) */
 registerIf(usuarioPublicoController?.atualizarUsuario, function atualizarUsuarioRoute() {
   router.patch(
     "/:id(\\d+)",
     authMiddleware,
+    authLimiter,
     validarId,
-    usuarioPublicoController.atualizarUsuario
+    asyncHandler(usuarioPublicoController.atualizarUsuario)
   );
-});
+}, "PATCH /usuarios/:id");
 
-// ✍️ Assinatura do usuário autenticado
+/** ✍️ Assinatura do usuário autenticado (protegido) */
 registerIf(usuarioPublicoController?.obterAssinatura, function obterAssinaturaRoute() {
   router.get(
     "/assinatura",
     authMiddleware,
-    usuarioPublicoController.obterAssinatura
+    authLimiter,
+    asyncHandler(usuarioPublicoController.obterAssinatura)
   );
-});
+}, "GET /usuarios/assinatura");
 
-// ❌ Excluir usuário (admin) por ID (NUMÉRICO)
+/** ❌ Excluir usuário (admin) */
 registerIf(usuarioAdministradorController?.excluirUsuario, function excluirUsuarioRoute() {
   router.delete(
     "/:id(\\d+)",
-    authMiddleware,
-    authorizeRoles("administrador"),
+    ...requireAdmin,
+    adminLimiter,
     validarId,
-    usuarioAdministradorController.excluirUsuario
+    asyncHandler(usuarioAdministradorController.excluirUsuario)
   );
-});
+}, "DELETE /usuarios/:id");
 
 module.exports = router;

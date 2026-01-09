@@ -1,29 +1,88 @@
 // 📁 src/utils/email.js
+/* eslint-disable no-console */
 const nodemailer = require("nodemailer");
 
-// 🔐 Verificações básicas de env
-if (!process.env.EMAIL_REMETENTE || !process.env.EMAIL_SENHA) {
-  console.error("❌ As variáveis EMAIL_REMETENTE e EMAIL_SENHA são obrigatórias no .env");
-  process.exit(1);
+/* =========================
+   Helpers
+========================= */
+function stripHtml(s) {
+  return String(s || "")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-// 💡 App Password do Gmail costuma vir com espaços; removemos por segurança
-const CLEAN_PASS = String(process.env.EMAIL_SENHA).replace(/\s+/g, "");
+function asRecipients(to) {
+  if (!to) return "";
+  if (Array.isArray(to)) {
+    return to.map((x) => String(x || "").trim()).filter(Boolean).join(", ");
+  }
+  return String(to || "").trim();
+}
 
-// ✉️ Configuração do transporte SMTP
-const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_SMTP_HOST || "smtp.gmail.com",
-  port: Number(process.env.EMAIL_SMTP_PORT || 465),
-  secure: String(process.env.EMAIL_SMTP_SECURE || "true").toLowerCase() === "true", // 465=true
-  auth: {
-    user: process.env.EMAIL_REMETENTE,
-    pass: CLEAN_PASS,
-  },
-});
+function isConfigured() {
+  return !!(process.env.EMAIL_REMETENTE && process.env.EMAIL_SENHA);
+}
 
-// Util simples para gerar texto a partir do HTML
-function stripHtml(s) {
-  return String(s || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+function getFrom() {
+  const name = process.env.EMAIL_FROM_NAME || "Escola da Saúde";
+  const addr = process.env.EMAIL_REMETENTE || "";
+  return addr ? `"${name}" <${addr}>` : `"${name}"`;
+}
+
+/* =========================
+   Transport (lazy)
+========================= */
+let transporter = null;
+let verifiedAt = 0;
+
+function getTransporter() {
+  if (transporter) return transporter;
+
+  const remetente = process.env.EMAIL_REMETENTE;
+  const senha = process.env.EMAIL_SENHA;
+
+  if (!remetente || !senha) {
+    // ⚠️ Não derruba o app; apenas sinaliza quando tentar enviar
+    console.warn("⚠️ [email] EMAIL_REMETENTE/EMAIL_SENHA não configurados.");
+  }
+
+  // App Password do Gmail costuma vir com espaços; removemos por segurança
+  const CLEAN_PASS = String(senha || "").replace(/\s+/g, "");
+
+  transporter = nodemailer.createTransport({
+    host: process.env.EMAIL_SMTP_HOST || "smtp.gmail.com",
+    port: Number(process.env.EMAIL_SMTP_PORT || 465),
+    secure: String(process.env.EMAIL_SMTP_SECURE || "true").toLowerCase() === "true", // 465=true
+    auth: remetente
+      ? {
+          user: remetente,
+          pass: CLEAN_PASS,
+        }
+      : undefined,
+  });
+
+  return transporter;
+}
+
+/**
+ * (Opcional) Verifica o transporter (cache 60s) – útil em ambiente instável
+ */
+async function verifyTransporter() {
+  const t = getTransporter();
+  const now = Date.now();
+  if (now - verifiedAt < 60_000) return true;
+
+  try {
+    await t.verify();
+    verifiedAt = now;
+    return true;
+  } catch (e) {
+    console.warn("⚠️ [email] verify falhou:", e?.message || e);
+    return false;
+  }
 }
 
 /**
@@ -36,17 +95,22 @@ function stripHtml(s) {
  *   send(to, subject, html, text)
  */
 async function send(a, b, c, d) {
+  // ✅ valida config no momento do envio (não no import)
+  if (!isConfigured()) {
+    const err = new Error("Serviço de e-mail não configurado.");
+    err.code = "EMAIL_NOT_CONFIGURED";
+    throw err;
+  }
+
   let to, subject, html, text, attachments;
 
   if (typeof a === "object" && a !== null) {
-    // Novo formato (objeto)
     to = a.to;
     subject = a.subject;
-    html = a.html || a.text; // permite passar só text
+    html = a.html || a.text;
     text = a.text || stripHtml(a.html);
     attachments = Array.isArray(a.attachments) ? a.attachments : [];
   } else {
-    // Formato legado (posicional)
     to = a;
     subject = b;
     html = c;
@@ -54,29 +118,38 @@ async function send(a, b, c, d) {
     attachments = [];
   }
 
-  const destinatario = String(to || "").trim();
+  const destinatario = asRecipients(to);
   if (!destinatario) {
     const err = new Error("Destinatário (to) vazio");
     err.code = "EENVELOPE";
     throw err;
   }
 
+  const safeSubject = String(subject || "").trim();
+
   const mailOptions = {
-    from: `"Escola da Saúde" <${process.env.EMAIL_REMETENTE}>`,
+    from: getFrom(),
     to: destinatario,
-    subject: subject || "",
+    subject: safeSubject,
     text: text || stripHtml(html),
     html: html || undefined,
     attachments,
   };
 
-  const info = await transporter.sendMail(mailOptions);
+  const t = getTransporter();
+
+  // opcional: verifica conexão (pode desligar se quiser performance máxima)
+  if (process.env.EMAIL_VERIFY === "true") {
+    await verifyTransporter();
+  }
+
+  const info = await t.sendMail(mailOptions);
 
   if (process.env.LOG_EMAIL === "true") {
-    console.log(`📧 E-mail enviado para: ${destinatario} (${info?.messageId || "-"})`);
+    console.log(`📧 E-mail enviado -> ${destinatario} (${info?.messageId || "-"})`);
   }
 
   return info;
 }
 
-module.exports = { send };
+module.exports = { send, verifyTransporter };

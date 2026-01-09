@@ -1,6 +1,6 @@
 // 📁 src/componentes/CardTurma.jsx
 import PropTypes from "prop-types";
-import { useState, useMemo } from "react";
+import { useMemo } from "react";
 import { motion } from "framer-motion";
 import { Users, CalendarDays, Clock3, Megaphone } from "lucide-react";
 import { formatarDataBrasileira } from "../utils/data";
@@ -34,10 +34,11 @@ function endOfDayLocal(d) {
 }
 function minutesBetween(hhmmIni, hhmmFim) {
   if (!hhmmIni || !hhmmFim) return 0;
-  const [h1, m1] = hhmmIni.split(":").map(Number);
-  const [h2, m2] = hhmmFim.split(":").map(Number);
+  const [h1, m1] = String(hhmmIni).slice(0, 5).split(":").map(Number);
+  const [h2, m2] = String(hhmmFim).slice(0, 5).split(":").map(Number);
   if (![h1, m1, h2, m2].every((n) => Number.isFinite(n))) return 0;
-  return h2 * 60 + m2 - (h1 * 60 + m1);
+  const v = h2 * 60 + m2 - (h1 * 60 + m1);
+  return Math.max(0, v);
 }
 
 /* ===== Status key (usa datas reais da turma + agora = 'hoje') ===== */
@@ -47,19 +48,20 @@ function getStatusKeyByDates(minData, maxData, horarioFimUltimoDia = "23:59", ag
   const dataFim = endOfDayLocal(maxData);
 
   if (horarioFimUltimoDia) {
-    const [h, m] = horarioFimUltimoDia.split(":").map(Number);
+    const [h, m] = String(horarioFimUltimoDia).slice(0, 5).split(":").map(Number);
     dataFim.setHours(Number.isFinite(h) ? h : 23, Number.isFinite(m) ? m : 59, 59, 999);
   }
 
   if (agora < dataInicio) return "programado";
   if (agora > dataFim) return "encerrado";
-  return "andamento";
+  // 🔁 alinhar com <BadgeStatus />: usamos "em_andamento"
+  return "em_andamento";
 }
 
 /* ===== Mapeamentos visuais por status ===== */
 const BAR_GRADIENT = {
   programado: "bg-gradient-to-r from-emerald-700 via-teal-600 to-lime-600",
-  andamento: "bg-gradient-to-r from-amber-600 via-yellow-600 to-orange-600",
+  em_andamento: "bg-gradient-to-r from-amber-600 via-yellow-600 to-orange-600",
   encerrado: "bg-gradient-to-r from-rose-700 via-red-700 to-rose-600",
   desconhecido: "bg-gradient-to-r from-gray-500 via-gray-600 to-gray-700",
 };
@@ -85,9 +87,6 @@ export default function CardTurma({
   inscricoesConfirmadas,
   bloquearInscricao = false,
 }) {
-  const [exibeInscritos] = useState(false);
-  const [exibeAvaliacoes] = useState(false);
-
   const total = Number(turma.vagas_total || 0);
   const ocupadas = Array.isArray(turma.inscritos)
     ? turma.inscritos.length
@@ -134,7 +133,7 @@ export default function CardTurma({
   }, [turma]);
 
   // ======= Status (BadgeStatus) — usa 'hoje' quando informado =======
-  const agoraRef = (hoje instanceof Date ? hoje : new Date());
+  const agoraRef = hoje instanceof Date ? hoje : new Date();
   const statusKey = getStatusKeyByDates(minData, maxData, horarioFimUltimoDia, agoraRef);
 
   // ======= Texto do período =======
@@ -146,11 +145,12 @@ export default function CardTurma({
       : "Datas a definir";
 
   // ======= Carga horária =======
-  const cargaTotal = Number.isFinite(Number(turma.carga_horaria_real))
+  const cargaTotalRaw = Number.isFinite(Number(turma.carga_horaria_real))
     ? Number(turma.carga_horaria_real)
     : Number.isFinite(horasTotal)
     ? horasTotal
     : 0;
+  const cargaTotal = Math.max(0, Number(cargaTotalRaw));
 
   // ======= Bloqueio de inscrição por data real =======
   function bloquearInscricaoPorData() {
@@ -181,6 +181,9 @@ export default function CardTurma({
     ? Number(turma.instrutor_assinante_id)
     : null;
 
+  const headingId = `turma-${eventoId}-${turma.id}-titulo`;
+  const progressId = `turma-${eventoId}-${turma.id}-progress`;
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -188,8 +191,8 @@ export default function CardTurma({
       exit={{ opacity: 0, y: -10 }}
       layout
       className="relative rounded-2xl bg-white dark:bg-neutral-900 shadow border border-gray-200 dark:border-gray-700 overflow-hidden"
-      aria-label={`Cartão da turma ${turma.nome}`}
-      tabIndex={0}
+      aria-labelledby={headingId}
+      aria-describedby={progressId}
     >
       {/* Barrinha superior com gradiente por status */}
       <div className={`h-1.5 w-full ${barClass}`} aria-hidden="true" />
@@ -200,7 +203,8 @@ export default function CardTurma({
             {/* Título + badge de status */}
             <div className="flex items-center gap-2 mb-1">
               <h4
-                className="text-base font-bold text-lousa dark:text-green-200 truncate"
+                id={headingId}
+                className="text-base font-bold text-green-900 dark:text-green-200 truncate"
                 title={turma.nome}
                 aria-live="polite"
               >
@@ -265,7 +269,7 @@ export default function CardTurma({
 
             {/* Prévia de datas (ministats) */}
             {previewDatas && (
-              <span className="text-xs text-gray-500 dark:text-gray-400 block mt-0.5">
+              <span className="text-xs text-gray-500 dark:text-gray-400 block mt-0.5" title={previewDatas}>
                 📅 Próximas datas: {previewDatas}
                 {datasOrdenadas.length > 3 ? ` +${datasOrdenadas.length - 3}` : ""}
               </span>
@@ -283,6 +287,7 @@ export default function CardTurma({
                 </span>
               </div>
               <div
+                id={progressId}
                 className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden"
                 role="progressbar"
                 aria-valuemin={0}
@@ -318,8 +323,9 @@ export default function CardTurma({
               </span>
             ) : (
               <button
+                type="button"
                 className="px-4 py-2 rounded-full font-semibold text-white transition
-                           bg-lousa hover:opacity-90
+                           bg-green-900 hover:bg-green-900/90
                            focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-500/60
                            dark:focus-visible:ring-offset-neutral-900"
                 onClick={() => inscrever(Number(turma.id))}

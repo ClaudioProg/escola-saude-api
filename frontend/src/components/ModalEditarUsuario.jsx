@@ -1,5 +1,6 @@
-// 📁 src/components/ModalEditarUsuario.jsx
-import { useEffect, useMemo, useState } from "react";
+// ✅ src/components/ModalEditarUsuario.jsx (Premium + A11y + foco + ids únicos)
+/* eslint-disable no-console */
+import { useEffect, useMemo, useRef, useState, useId, useCallback } from "react";
 import PropTypes from "prop-types";
 import Modal from "./Modal";
 import { toast } from "react-toastify";
@@ -8,7 +9,7 @@ import { apiPut } from "../services/api";
 import { formatarCPF as formatarCPFUtils } from "../utils/data";
 
 /* ================= Helpers ================= */
-const somenteDigitos = (s = "") => s.replace(/\D/g, "");
+const somenteDigitos = (s = "") => String(s || "").replace(/\D/g, "");
 const isEmail = (s = "") => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s).trim());
 
 /** Validação oficial dos dígitos do CPF (sem máscara) */
@@ -34,20 +35,38 @@ function validarCPF(cpf) {
 
 /* ================= Componente ================= */
 export default function ModalEditarUsuario({ isOpen, onClose, usuario, onAtualizar }) {
+  const uid = useId();
+  const titleId = `titulo-editar-usuario-${uid}`;
+  const descId = `desc-editar-usuario-${uid}`;
+  const liveId = `live-editar-usuario-${uid}`;
+
   const [nome, setNome] = useState(usuario?.nome || "");
   const [email, setEmail] = useState(usuario?.email || "");
-  const [cpf, setCpf] = useState(somenteDigitos(usuario?.cpf || ""));
+  const [cpf, setCpf] = useState(somenteDigitos(usuario?.cpf || "")); // sempre dígitos no state
+
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState({});
+  const [msgA11y, setMsgA11y] = useState("");
+
+  const refNome = useRef(null);
 
   // 🔄 sincroniza quando abre ou quando o 'usuario' muda
   useEffect(() => {
+    if (!isOpen) return;
     setNome(usuario?.nome || "");
     setEmail(usuario?.email || "");
     setCpf(somenteDigitos(usuario?.cpf || ""));
     setErro({});
     setSalvando(false);
+    setMsgA11y("");
   }, [usuario, isOpen]);
+
+  // 🎯 foco no primeiro campo ao abrir
+  useEffect(() => {
+    if (!isOpen) return;
+    const t = setTimeout(() => refNome.current?.focus?.(), 40);
+    return () => clearTimeout(t);
+  }, [isOpen]);
 
   const cpfFormatado = useMemo(() => formatarCPFUtils?.(cpf) || cpf, [cpf]);
 
@@ -56,6 +75,7 @@ export default function ModalEditarUsuario({ isOpen, onClose, usuario, onAtualiz
     const e = {};
     if (!nome.trim()) e.nome = "Informe o nome completo.";
     if (!email.trim() || !isEmail(email)) e.email = "Informe um e-mail válido.";
+
     const dig = somenteDigitos(cpf);
     if (dig.length !== 11) e.cpf = "CPF deve ter 11 dígitos.";
     else if (!validarCPF(dig)) e.cpf = "CPF inválido.";
@@ -64,80 +84,100 @@ export default function ModalEditarUsuario({ isOpen, onClose, usuario, onAtualiz
 
   const possuiErros = Object.keys(erros).length > 0;
 
-  const handleSalvar = async () => {
+  const handleSalvar = useCallback(async () => {
     setErro({});
+
     if (possuiErros) {
       setErro(erros);
-      toast.warning("⚠️ Corrija os campos destacados.");
+      const msg = "⚠️ Corrija os campos destacados.";
+      setMsgA11y(msg);
+      toast.warning(msg);
       return;
     }
 
     try {
       setSalvando(true);
+      setMsgA11y("Salvando alterações do usuário...");
+
       await apiPut(`/api/usuarios/${usuario.id}`, {
         nome: nome.trim(),
         email: email.trim(),
         cpf: somenteDigitos(cpf),
       });
-      toast.success("✅ Usuário atualizado com sucesso!");
+
+      const ok = "✅ Usuário atualizado com sucesso!";
+      toast.success(ok);
+      setMsgA11y("Usuário atualizado com sucesso.");
+
       onAtualizar?.();
       onClose?.();
     } catch (e) {
       const msg =
         e?.data?.mensagem || e?.data?.message || e?.message || "Erro ao atualizar o usuário.";
       toast.error(`❌ ${msg}`);
+      setMsgA11y(`Erro ao atualizar usuário: ${msg}`);
     } finally {
       setSalvando(false);
     }
-  };
+  }, [cpf, email, erros, nome, onAtualizar, onClose, possuiErros, usuario.id]);
 
   if (!isOpen) return null;
 
   return (
     <Modal
       open={isOpen}
-      onClose={salvando ? undefined : onClose} // bloqueia fechar enquanto salva
-      labelledBy="titulo-editar-usuario"
-      describedBy="desc-editar-usuario"
+      onClose={salvando ? undefined : onClose}
+      closeOnBackdrop={!salvando}
+      closeOnEscape={!salvando}
+      labelledBy={titleId}
+      describedBy={descId}
       className="w-[96%] max-w-lg p-0 overflow-hidden"
     >
-      {/* Header hero (altura/tipografia padronizadas; degradê 3 cores exclusivo) */}
+      {/* Header hero */}
       <header
         className="px-4 sm:px-6 py-4 text-white bg-gradient-to-br from-slate-900 via-slate-800 to-teal-700"
         role="group"
         aria-label="Edição de usuário"
       >
-        <h2 id="titulo-editar-usuario" className="text-xl sm:text-2xl font-extrabold tracking-tight">
+        <h2 id={titleId} className="text-xl sm:text-2xl font-extrabold tracking-tight">
           ✏️ Editar Usuário
         </h2>
-        <p id="desc-editar-usuario" className="text-white/90 text-sm mt-1">
+        <p id={descId} className="text-white/90 text-sm mt-1">
           Atualize nome, e-mail e CPF de <strong>{usuario?.nome ?? "usuário"}</strong>.
         </p>
       </header>
+
+      {/* Live region */}
+      <div id={liveId} aria-live="polite" className="sr-only">
+        {msgA11y}
+      </div>
 
       {/* Formulário */}
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          handleSalvar();
+          if (!salvando) handleSalvar();
         }}
+        noValidate
         className="px-4 sm:px-6 pt-4 pb-24 space-y-4"
       >
         {/* Nome */}
         <div>
-          <label className="block text-sm font-medium mb-1 text-slate-800 dark:text-slate-200" htmlFor="edt-nome">
+          <label className="block text-sm font-medium mb-1 text-slate-800 dark:text-slate-200" htmlFor={`edt-nome-${uid}`}>
             Nome completo
           </label>
           <div className="relative">
             <User className="absolute left-3 top-3 text-slate-500" size={18} aria-hidden />
             <input
-              id="edt-nome"
+              ref={refNome}
+              id={`edt-nome-${uid}`}
               type="text"
               placeholder="Nome completo"
               value={nome}
               onChange={(e) => setNome(e.target.value)}
               disabled={salvando}
               aria-invalid={!!erro.nome}
+              aria-describedby={erro.nome ? `erro-nome-${uid}` : undefined}
               autoComplete="name"
               className={[
                 "w-full pl-10 py-2 border rounded-xl bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100",
@@ -147,24 +187,29 @@ export default function ModalEditarUsuario({ isOpen, onClose, usuario, onAtualiz
               ].join(" ")}
             />
           </div>
-          {erro.nome && <p className="text-xs text-rose-600 mt-1">{erro.nome}</p>}
+          {erro.nome && (
+            <p id={`erro-nome-${uid}`} className="text-xs text-rose-600 mt-1">
+              {erro.nome}
+            </p>
+          )}
         </div>
 
         {/* E-mail */}
         <div>
-          <label className="block text-sm font-medium mb-1 text-slate-800 dark:text-slate-200" htmlFor="edt-email">
+          <label className="block text-sm font-medium mb-1 text-slate-800 dark:text-slate-200" htmlFor={`edt-email-${uid}`}>
             E-mail
           </label>
-        <div className="relative">
+          <div className="relative">
             <Mail className="absolute left-3 top-3 text-slate-500" size={18} aria-hidden />
             <input
-              id="edt-email"
+              id={`edt-email-${uid}`}
               type="email"
               placeholder="E-mail"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               disabled={salvando}
               aria-invalid={!!erro.email}
+              aria-describedby={erro.email ? `erro-email-${uid}` : undefined}
               autoComplete="email"
               className={[
                 "w-full pl-10 py-2 border rounded-xl bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100",
@@ -174,26 +219,31 @@ export default function ModalEditarUsuario({ isOpen, onClose, usuario, onAtualiz
               ].join(" ")}
             />
           </div>
-          {erro.email && <p className="text-xs text-rose-600 mt-1">{erro.email}</p>}
+          {erro.email && (
+            <p id={`erro-email-${uid}`} className="text-xs text-rose-600 mt-1">
+              {erro.email}
+            </p>
+          )}
         </div>
 
         {/* CPF */}
         <div>
-          <label className="block text-sm font-medium mb-1 text-slate-800 dark:text-slate-200" htmlFor="edt-cpf">
+          <label className="block text-sm font-medium mb-1 text-slate-800 dark:text-slate-200" htmlFor={`edt-cpf-${uid}`}>
             CPF
           </label>
           <div className="relative">
             <BadgeAsterisk className="absolute left-3 top-3 text-slate-500" size={18} aria-hidden />
             <input
-              id="edt-cpf"
+              id={`edt-cpf-${uid}`}
               inputMode="numeric"
               placeholder="000.000.000-00"
               value={cpfFormatado}
               onChange={(e) => setCpf(somenteDigitos(e.target.value))}
               disabled={salvando}
               aria-invalid={!!erro.cpf}
+              aria-describedby={erro.cpf ? `erro-cpf-${uid}` : undefined}
               autoComplete="off"
-              maxLength={14} // 000.000.000-00
+              maxLength={14}
               className={[
                 "w-full pl-10 py-2 border rounded-xl bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100",
                 erro.cpf
@@ -202,11 +252,20 @@ export default function ModalEditarUsuario({ isOpen, onClose, usuario, onAtualiz
               ].join(" ")}
             />
           </div>
-          {erro.cpf && <p className="text-xs text-rose-600 mt-1">{erro.cpf}</p>}
+          {erro.cpf && (
+            <p id={`erro-cpf-${uid}`} className="text-xs text-rose-600 mt-1">
+              {erro.cpf}
+            </p>
+          )}
         </div>
+
+        {/* Dica de segurança / integridade */}
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          Dica: CPF é salvo sem máscara (apenas números) para garantir consistência no banco.
+        </p>
       </form>
 
-      {/* Rodapé sticky (mobile-first) */}
+      {/* Rodapé sticky */}
       <div className="sticky bottom-0 left-0 right-0 bg-white/85 dark:bg-zinc-950/85 backdrop-blur border-t border-slate-200 dark:border-slate-800 px-4 sm:px-6 py-3 flex items-center justify-end gap-2">
         <button
           type="button"
@@ -216,11 +275,12 @@ export default function ModalEditarUsuario({ isOpen, onClose, usuario, onAtualiz
         >
           Cancelar
         </button>
+
         <button
-          type="button"
+          type="submit"
           onClick={handleSalvar}
           disabled={salvando || possuiErros}
-          className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 transition disabled:opacity-60 disabled:cursor-not-allowed"
+          className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-extrabold hover:bg-emerald-700 transition disabled:opacity-60 disabled:cursor-not-allowed"
           aria-busy={salvando ? "true" : "false"}
         >
           {salvando ? "Salvando..." : "Salvar"}

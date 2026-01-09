@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
-// 📁 src/components/ModalEvento.jsx
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+// ✅ src/components/ModalEvento.jsx (Premium + A11y + Upload flags seguras + Logger sem spam)
+import { useEffect, useMemo, useRef, useState, useTransition, useId, useCallback } from "react";
 import { toast } from "react-toastify";
 import {
   MapPin,
@@ -29,6 +29,7 @@ import { apiGet, apiDelete } from "../services/api";
 /* ========================= Backend base ========================= */
 const API_BASE =
   (typeof import.meta !== "undefined" && import.meta?.env?.VITE_API_URL) || "";
+
 function withBackendBase(u) {
   if (!u) return null;
   const s = String(u);
@@ -43,7 +44,7 @@ function withBackendBase(u) {
 /* ========================= Logger (DEV only) ========================= */
 const IS_DEV =
   (typeof import.meta !== "undefined" && import.meta?.env?.MODE !== "production") ||
-  process.env?.NODE_ENV !== "production";
+  (typeof process !== "undefined" && process?.env?.NODE_ENV !== "production");
 
 function makeLogger(scope = "ModalEvento") {
   const tag = `[${scope}]`;
@@ -60,17 +61,9 @@ function makeLogger(scope = "ModalEvento") {
 const L = makeLogger("ModalEvento");
 
 /* ========================= Constantes / Utils ========================= */
-const TIPOS_EVENTO = [
-  "Congresso",
-  "Curso",
-  "Oficina",
-  "Palestra",
-  "Seminário",
-  "Simpósio",
-  "Outros",
-];
+const TIPOS_EVENTO = ["Congresso", "Curso", "Oficina", "Palestra", "Seminário", "Simpósio", "Outros"];
 
-const MAX_IMG_MB = 5;   // UX: protege uploads exagerados
+const MAX_IMG_MB = 5;
 const MAX_PDF_MB = 10;
 
 const hh = (s) => (typeof s === "string" ? s.slice(0, 5) : "");
@@ -138,18 +131,14 @@ function normalizarDatasTurma(t, hiBase = "08:00", hfBase = "17:00") {
   const hf = hh(t.horario_fim || t.hora_fim || hfBase);
 
   const datasRaw =
-    (Array.isArray(t.datas) && t.datas.length && t.datas) ||
-    encontrosParaDatas(t) ||
-    [];
+    (Array.isArray(t.datas) && t.datas.length && t.datas) || encontrosParaDatas(t) || [];
 
   const datas = (datasRaw || [])
     .map((d) => {
       const data = (d?.data || d || "").slice(0, 10);
       const horario_inicio = hh(d?.horario_inicio || d?.inicio || hi);
       const horario_fim = hh(d?.horario_fim || d?.fim || hf);
-      return data && horario_inicio && horario_fim
-        ? { data, horario_inicio, horario_fim }
-        : null;
+      return data && horario_inicio && horario_fim ? { data, horario_inicio, horario_fim } : null;
     })
     .filter(Boolean)
     .sort((a, b) => a.data.localeCompare(b.data));
@@ -164,9 +153,7 @@ function normalizarDatasTurma(t, hiBase = "08:00", hfBase = "17:00") {
 }
 
 const extractIds = (arr) =>
-  Array.isArray(arr)
-    ? arr.map((v) => Number(v?.id ?? v)).filter((n) => Number.isFinite(n))
-    : [];
+  Array.isArray(arr) ? arr.map((v) => Number(v?.id ?? v)).filter((n) => Number.isFinite(n)) : [];
 
 function normalizarCargo(v) {
   const s = String(v || "").trim();
@@ -195,9 +182,7 @@ function extrairCargoUsuario(u) {
   const candidatos = candidatosBrutos.flatMap((c) => {
     if (!c) return [];
     if (Array.isArray(c)) return c.map((x) => String(x || ""));
-    if (typeof c === "object") {
-      return [String(c.nome || c.descricao || c.titulo || "")];
-    }
+    if (typeof c === "object") return [String(c.nome || c.descricao || c.titulo || "")];
     return [String(c)];
   });
 
@@ -207,14 +192,6 @@ function extrairCargoUsuario(u) {
   }
   return "";
 }
-
-/* Helpers locais */
-const plural = (n, s, p) => `${n} ${n === 1 ? s : p}`;
-const countEncontros = (t) => {
-  if (Array.isArray(t?.datas)) return t.datas.filter((d) => d?.data).length;
-  if (Array.isArray(t?.encontros)) return t.encontros.filter((e) => e?.data).length;
-  return 0;
-};
 
 /* ========================= Cache simples ========================= */
 let cacheUnidades = null;
@@ -229,8 +206,19 @@ export default function ModalEvento({
   onTurmaRemovida,
   salvando = false,
 }) {
+  const uid = useId();
+  const titleId = `modal-evento-titulo-${uid}`;
+  const descId = `modal-evento-desc-${uid}`;
+
   const dbgId = useRef(Math.random().toString(36).slice(2, 7)).current;
-  L.info("MOUNT", { dbgId, eventoId: evento?.id ?? null });
+  const closeBlocked = salvando; // bloqueia fechar durante salvamento
+
+  // ✅ logger de mount real
+  useEffect(() => {
+    L.info("MOUNT", { dbgId, eventoId: evento?.id ?? null });
+    return () => L.info("UNMOUNT", { dbgId });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Campos do evento
   const [titulo, setTitulo] = useState("");
@@ -269,10 +257,17 @@ export default function ModalEvento({
   const [programacaoFile, setProgramacaoFile] = useState(null);
   const [folderPreview, setFolderPreview] = useState(null);
 
-  // URLs existentes
-  const [folderUrlExistente, setFolderUrlExistente] = useState(null);
-  const [programacaoUrlExistente, setProgramacaoUrlExistente] = useState(null);
-  const [programacaoNomeExistente, setProgramacaoNomeExistente] = useState(null);
+  // ✅ URLs existentes + flags de remoção (sem ambiguidade com "novo evento")
+  const [folderUrlExistente, setFolderUrlExistente] = useState(undefined); // string | undefined
+  const [programacaoUrlExistente, setProgramacaoUrlExistente] = useState(undefined);
+  const [programacaoNomeExistente, setProgramacaoNomeExistente] = useState(undefined);
+
+  const [removerFolderExistente, setRemoverFolderExistente] = useState(false);
+  const [removerProgramacaoExistente, setRemoverProgramacaoExistente] = useState(false);
+
+  // refs pra limpar input file
+  const folderInputRef = useRef(null);
+  const pdfInputRef = useRef(null);
 
   // Controle
   const prevEventoKeyRef = useRef(null);
@@ -281,28 +276,14 @@ export default function ModalEvento({
   /* ========= Carregamento paralelo + cache ========= */
   useEffect(() => {
     let mounted = true;
-    L.group(`bootstrap[d${dbgId}]`);
-    L.log("Bootstrap start. From cache?", {
-      cacheUnidades: !!cacheUnidades,
-      cacheUsuarios: !!cacheUsuarios,
-    });
 
     if (cacheUnidades) setUnidades(cacheUnidades);
     if (cacheUsuarios) setUsuarios(cacheUsuarios);
+    if (cacheUnidades && cacheUsuarios) return () => {};
 
-    if (cacheUnidades && cacheUsuarios) {
-      L.info("Bootstrap: using caches and skipping fetch.");
-      L.groupEnd();
-      return () => {};
-    }
-
-    L.time("fetch(aux)");
     (async () => {
       try {
-        const [uRes, usrRes] = await Promise.allSettled([
-          apiGet("/api/unidades"),
-          apiGet("/api/usuarios"),
-        ]);
+        const [uRes, usrRes] = await Promise.allSettled([apiGet("/api/unidades"), apiGet("/api/usuarios")]);
         if (!mounted) return;
 
         if (uRes.status === "fulfilled") {
@@ -311,30 +292,22 @@ export default function ModalEvento({
           );
           setUnidades(arr);
           cacheUnidades = arr;
-          L.log("Loaded unidades", { count: arr.length });
-        } else {
-          L.warn("Fetch unidades rejected", { reason: uRes.reason });
         }
 
         if (usrRes.status === "fulfilled") {
           const arr = Array.isArray(usrRes.value) ? usrRes.value : [];
           setUsuarios(arr);
           cacheUsuarios = arr;
-          L.log("Loaded usuarios", { count: arr.length });
-        } else {
-          L.warn("Fetch usuarios rejected", { reason: usrRes.reason });
         }
-      } finally {
-        L.timeEnd("fetch(aux)");
-        L.groupEnd();
+      } catch (e) {
+        L.warn("bootstrap error", e);
       }
     })();
 
     return () => {
       mounted = false;
-      L.info("UNMOUNT bootstrap effect");
     };
-  }, [dbgId]);
+  }, []);
 
   /* ========= Reidratar ao abrir/trocar id ========= */
   useEffect(() => {
@@ -343,11 +316,22 @@ export default function ModalEvento({
     const curKey = evento?.id != null ? Number(evento.id) : "NEW";
     if (prevEventoKeyRef.current === curKey) return;
 
-    L.group(`rehydrate[d${dbgId}]`);
-    L.log("Rehydrate begin", { isOpen, eventoId: evento?.id ?? null });
     startTransition(() => {
+      // reset “sempre”
+      setRegistroInput("");
+      setCargoAdd("");
+      setUnidadeAddId("");
+
+      // uploads
+      setFolderFile(null);
+      setProgramacaoFile(null);
+      setFolderPreview(null);
+      setRemoverFolderExistente(false);
+      setRemoverProgramacaoExistente(false);
+      if (folderInputRef.current) folderInputRef.current.value = "";
+      if (pdfInputRef.current) pdfInputRef.current.value = "";
+
       if (!evento) {
-        L.info("Rehydrate: novo evento (reset estados)");
         setTitulo("");
         setDescricao("");
         setLocal("");
@@ -355,19 +339,18 @@ export default function ModalEvento({
         setUnidadeId("");
         setPublicoAlvo("");
         setTurmas([]);
+
         setRestrito(false);
         setRestritoModo("");
         setRegistros([]);
         setCargosPermitidos([]);
         setUnidadesPermitidas([]);
-        setFolderFile(null);
-        setProgramacaoFile(null);
-        setFolderPreview(null);
-        setFolderUrlExistente(null);
-        setProgramacaoUrlExistente(null);
-        setProgramacaoNomeExistente(null);
+
+        // ✅ novo evento: sem “existentes”
+        setFolderUrlExistente(undefined);
+        setProgramacaoUrlExistente(undefined);
+        setProgramacaoNomeExistente(undefined);
       } else {
-        L.info("Rehydrate: evento existente", { id: evento.id, titulo: evento.titulo });
         setTitulo(evento.titulo || "");
         setDescricao(evento.descricao || "");
         setLocal(evento.local || "");
@@ -375,28 +358,22 @@ export default function ModalEvento({
         setUnidadeId(evento.unidade_id ? String(evento.unidade_id) : "");
         setPublicoAlvo(evento.publico_alvo || "");
 
-        // Uploads existentes vindos do backend
-        setFolderFile(null);
-        setProgramacaoFile(null);
-        setFolderPreview(null);
+        // existentes vindos do backend
+        setFolderUrlExistente(evento.folder_url || evento.folder || undefined);
+        setProgramacaoUrlExistente(evento.programacao_url || evento.programacao_pdf || undefined);
+        setProgramacaoNomeExistente(evento.programacao_nome || undefined);
 
-        setFolderUrlExistente(evento.folder_url || evento.folder || null);
-        setProgramacaoUrlExistente(evento.programacao_url || evento.programacao_pdf || null);
-        setProgramacaoNomeExistente(evento.programacao_nome || null);
-
-        /* ========= TURMAS (rota leve) ========= */
-        L.time("fetch(turmas-simples)");
+        // turmas (rota leve)
         (async () => {
           try {
             const resp = await apiGet(`/api/eventos/${evento.id}/turmas-simples`);
             const turmasBack = Array.isArray(resp) ? resp : [];
-            L.log("turmas-simples fetched", { count: turmasBack.length });
-
             const turmasNormalizadas = turmasBack.map((t) => {
               const n = normalizarDatasTurma(t);
               const cargaCalc = Number.isFinite(Number(t.carga_horaria))
                 ? Number(t.carga_horaria)
                 : calcularCargaHorariaDatas(n.datas);
+
               return {
                 ...t,
                 datas: n.datas,
@@ -408,29 +385,23 @@ export default function ModalEvento({
                 vagas_total: Number.isFinite(Number(t.vagas_total)) ? Number(t.vagas_total) : 0,
               };
             });
-
             setTurmas(turmasNormalizadas);
           } catch (err) {
-            L.error("Falha ao carregar turmas-simples", err);
+            L.warn("Falha ao carregar turmas-simples", err);
             setTurmas(evento.turmas || []);
-          } finally {
-            L.timeEnd("fetch(turmas-simples)");
           }
         })();
 
         // restrição
         const restr = !!evento.restrito;
         setRestrito(restr);
+
         let modo = evento.restrito_modo;
-        if (!modo && restr) {
-          modo = evento.vis_reg_tipo === "lista" ? "lista_registros" : "todos_servidores";
-        }
+        if (!modo && restr) modo = evento.vis_reg_tipo === "lista" ? "lista_registros" : "todos_servidores";
         setRestritoModo(restr ? (modo || "todos_servidores") : "");
 
         const lista =
-          (Array.isArray(evento.registros_permitidos)
-            ? evento.registros_permitidos
-            : null) ??
+          (Array.isArray(evento.registros_permitidos) ? evento.registros_permitidos : null) ??
           (Array.isArray(evento.registros) ? evento.registros : []);
         const regs = [...new Set((lista || []).map(normReg).filter((r) => /^\d{6}$/.test(r)))];
         setRegistros(regs);
@@ -441,89 +412,63 @@ export default function ModalEvento({
             : []
         );
 
-        setUnidadesPermitidas(
-          Array.isArray(evento.unidades_permitidas) ? extractIds(evento.unidades_permitidas) : []
-        );
+        setUnidadesPermitidas(Array.isArray(evento.unidades_permitidas) ? extractIds(evento.unidades_permitidas) : []);
       }
     });
 
     prevEventoKeyRef.current = curKey;
-    L.groupEnd();
-  }, [isOpen, evento, dbgId]);
+  }, [isOpen, evento]);
 
   /* ========= GET fresh detalhe (sob demanda) ========= */
   useEffect(() => {
     if (!isOpen || !evento?.id) return;
-    if (registros.length > 0 && cargosPermitidos.length > 0 && unidadesPermitidas.length > 0)
-      return;
+    if (registros.length > 0 && cargosPermitidos.length > 0 && unidadesPermitidas.length > 0) return;
 
-    L.time("fetch(evento/detalhe)");
     (async () => {
       try {
         const det = await apiGet(`/api/eventos/${evento.id}`);
-        L.group("refetch:detalhe");
         if (typeof det.restrito === "boolean") setRestrito(!!det.restrito);
 
         let modo = det.restrito_modo;
-        if (!modo && det.restrito) {
-          modo = det.vis_reg_tipo === "lista" ? "lista_registros" : "todos_servidores";
-        }
+        if (!modo && det.restrito) modo = det.vis_reg_tipo === "lista" ? "lista_registros" : "todos_servidores";
         setRestritoModo(det.restrito ? (modo || "todos_servidores") : "");
-        L.log("restricao", { restrito: det.restrito, modo });
 
         const lista = Array.isArray(det.registros_permitidos)
           ? det.registros_permitidos
           : Array.isArray(det.registros)
           ? det.registros
           : [];
+
         const parsed = (lista || []).map(normReg).filter((r) => /^\d{6}$/.test(r));
-        if (parsed.length && registros.length === 0) {
-          setRegistros([...new Set(parsed)]);
-        }
+        if (parsed.length && registros.length === 0) setRegistros([...new Set(parsed)]);
 
         if (Array.isArray(det.cargos_permitidos) && cargosPermitidos.length === 0) {
-          const cp = [...new Set(det.cargos_permitidos.map((s) => String(s || "").trim()).filter(Boolean))];
-          setCargosPermitidos(cp);
+          setCargosPermitidos([...new Set(det.cargos_permitidos.map((s) => String(s || "").trim()).filter(Boolean))]);
         }
         if (Array.isArray(det.unidades_permitidas) && unidadesPermitidas.length === 0) {
-          const ups = extractIds(det.unidades_permitidas);
-          setUnidadesPermitidas(ups);
+          setUnidadesPermitidas(extractIds(det.unidades_permitidas));
         }
       } catch (e) {
-        L.warn("fetch detalhe erro (silencioso)", e);
-      } finally {
-        L.timeEnd("fetch(evento/detalhe)");
-        L.groupEnd();
+        // silencioso
       }
     })();
-  }, [
-    isOpen,
-    evento?.id,
-    registros.length,
-    cargosPermitidos.length,
-    unidadesPermitidas.length,
-  ]);
+  }, [isOpen, evento?.id, registros.length, cargosPermitidos.length, unidadesPermitidas.length]);
 
   /* ========= Sugestões de cargos (on demand) ========= */
   useEffect(() => {
     (async () => {
-      // Só busca quando o modo é "cargos" e ainda não temos fallback preenchido
       if (restritoModo !== "cargos") return;
       if ((fallbackCargos || []).length > 0) return;
 
-      L.time("fetch(cargos/sugerir)");
       try {
         const lista = await apiGet("/api/eventos/cargos/sugerir?limit=50");
         const jaUsados = new Set(cargosPermitidos.map((c) => c.toLowerCase()));
         const norm = (Array.isArray(lista) ? lista : [])
           .map(normalizarCargo)
           .filter((s) => s && !jaUsados.has(s.toLowerCase()));
-
         setFallbackCargos(norm);
-      } catch (e) {
-        L.warn("cargos/sugerir erro (silencioso)", e);
-      } finally {
-        L.timeEnd("fetch(cargos/sugerir)");
+      } catch {
+        // silencioso
       }
     })();
   }, [restritoModo, fallbackCargos, cargosPermitidos]);
@@ -534,8 +479,7 @@ export default function ModalEvento({
     const todos = [...dosUsuarios, ...fallbackCargos].map(normalizarCargo).filter(Boolean);
     const setUnicos = new Set(todos);
     const jaUsados = new Set(cargosPermitidos.map((c) => c.toLowerCase()));
-    const out = [...setUnicos].filter((c) => !jaUsados.has(c.toLowerCase())).sort((a, b) => a.localeCompare(b));
-    return out;
+    return [...setUnicos].filter((c) => !jaUsados.has(c.toLowerCase())).sort((a, b) => a.localeCompare(b));
   }, [usuarios, fallbackCargos, cargosPermitidos]);
 
   const opcoesInstrutor = useMemo(() => {
@@ -547,48 +491,39 @@ export default function ModalEvento({
       .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
   }, [usuarios]);
 
-  const nomePorId = (id) => {
-    const u = (usuarios || []).find((x) => Number(x.id) === Number(id));
-    return u?.nome || String(id);
-  };
+  const nomePorId = useCallback(
+    (id) => {
+      const u = (usuarios || []).find((x) => Number(x.id) === Number(id));
+      return u?.nome || String(id);
+    },
+    [usuarios]
+  );
 
   /* ================= Handlers de registros ================= */
   const addRegistro = () => {
     const novos = parseRegsBulk(registroInput);
-    if (!novos.length) {
-      L.warn("VALID_REG_NOK: nenhum bloco de 6 dígitos encontrado", { entrada: registroInput });
-      return toast.info("Informe/cole ao menos uma sequência de 6 dígitos.");
-    }
-    const novoSet = Array.from(new Set([...(registros || []), ...novos]));
-    setRegistros(novoSet);
+    if (!novos.length) return toast.info("Informe/cole ao menos uma sequência de 6 dígitos.");
+    setRegistros((prev) => Array.from(new Set([...(prev || []), ...novos])));
     setRegistroInput("");
   };
+
   const addRegistrosBulk = (txt) => {
     const novos = parseRegsBulk(txt);
-    if (!novos.length) {
-      L.warn("VALID_REG_BULK_NOK");
-      return toast.info("Nenhuma sequência de 6 dígitos encontrada.");
-    }
-    const novoSet = Array.from(new Set([...(registros || []), ...novos]));
-    setRegistros(novoSet);
+    if (!novos.length) return toast.info("Nenhuma sequência de 6 dígitos encontrada.");
+    setRegistros((prev) => Array.from(new Set([...(prev || []), ...novos])));
     setRegistroInput("");
   };
-  const removeRegistro = (r) => {
-    setRegistros((prev) => prev.filter((x) => x !== r));
-  };
+
+  const removeRegistro = (r) => setRegistros((prev) => prev.filter((x) => x !== r));
 
   /* ================= Filtros: Cargos e Unidades ================= */
   const addCargo = () => {
     const v = String(cargoAdd || "").trim();
     if (!v) return;
-    setCargosPermitidos((prev) => {
-      const exists = prev.some((x) => x.toLowerCase() === v.toLowerCase());
-      return exists ? prev : [...prev, v];
-    });
+    setCargosPermitidos((prev) => (prev.some((x) => x.toLowerCase() === v.toLowerCase()) ? prev : [...prev, v]));
     setCargoAdd("");
   };
-  const removeCargo = (v) =>
-    setCargosPermitidos((prev) => prev.filter((x) => x !== v));
+  const removeCargo = (v) => setCargosPermitidos((prev) => prev.filter((x) => x !== v));
 
   const addUnidade = () => {
     const id = Number(unidadeAddId);
@@ -596,27 +531,19 @@ export default function ModalEvento({
     setUnidadesPermitidas((prev) => (prev.includes(id) ? prev : [...prev, id]));
     setUnidadeAddId("");
   };
-  const removeUnidade = (id) =>
-    setUnidadesPermitidas((prev) => prev.filter((x) => x !== id));
+  const removeUnidade = (id) => setUnidadesPermitidas((prev) => prev.filter((x) => x !== id));
 
   /* ================= Uploads ================= */
-  const validaTamanho = (file, maxMb) => {
-    const mb = file.size / (1024 * 1024);
-    return mb <= maxMb;
-  };
+  const validaTamanho = (file, maxMb) => file.size / (1024 * 1024) <= maxMb;
 
   const onChangeFolder = (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    if (!/^image\/(png|jpeg)$/.test(f.type)) {
-      toast.error("Envie uma imagem PNG ou JPG.");
-      return;
-    }
-    if (!validaTamanho(f, MAX_IMG_MB)) {
-      toast.error(`Imagem muito grande. Máx. ${MAX_IMG_MB} MB.`);
-      return;
-    }
+    if (!/^image\/(png|jpeg)$/.test(f.type)) return toast.error("Envie uma imagem PNG ou JPG.");
+    if (!validaTamanho(f, MAX_IMG_MB)) return toast.error(`Imagem muito grande. Máx. ${MAX_IMG_MB} MB.`);
+
     setFolderFile(f);
+    setRemoverFolderExistente(false); // ✅ se selecionou novo, não remove “existente” sozinho
     const reader = new FileReader();
     reader.onload = () => setFolderPreview(reader.result);
     reader.readAsDataURL(f);
@@ -625,26 +552,25 @@ export default function ModalEvento({
   const onChangeProgramacao = (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    if (f.type !== "application/pdf") {
-      toast.error("Envie um PDF válido.");
-      return;
-    }
-    if (!validaTamanho(f, MAX_PDF_MB)) {
-      toast.error(`PDF muito grande. Máx. ${MAX_PDF_MB} MB.`);
-      return;
-    }
+    if (f.type !== "application/pdf") return toast.error("Envie um PDF válido.");
+    if (!validaTamanho(f, MAX_PDF_MB)) return toast.error(`PDF muito grande. Máx. ${MAX_PDF_MB} MB.`);
+
     setProgramacaoFile(f);
+    setRemoverProgramacaoExistente(false);
   };
 
   const limparFolder = () => {
     setFolderFile(null);
     setFolderPreview(null);
-    setFolderUrlExistente(null); // sinaliza remoção do existente
+    if (folderInputRef.current) folderInputRef.current.value = "";
+    // ✅ só marca remoção se houver existente
+    if (folderUrlExistente) setRemoverFolderExistente(true);
   };
+
   const limparProgramacao = () => {
     setProgramacaoFile(null);
-    setProgramacaoUrlExistente(null);
-    setProgramacaoNomeExistente(null);
+    if (pdfInputRef.current) pdfInputRef.current.value = "";
+    if (programacaoUrlExistente) setRemoverProgramacaoExistente(true);
   };
 
   /* ================= Turma: criar / editar / remover ================= */
@@ -656,6 +582,7 @@ export default function ModalEvento({
     setEditandoTurmaIndex(idx);
     setModalTurmaAberto(true);
   }
+
   async function removerTurma(turma, idx) {
     const nome = turma?.nome || `Turma ${idx + 1}`;
     const ok = window.confirm(
@@ -671,7 +598,6 @@ export default function ModalEvento({
 
     try {
       setRemovendoId(turma.id);
-      L.time("DELETE(/api/turmas/:id)");
       await apiDelete(`/api/turmas/${turma.id}`);
       setTurmas((prev) => prev.filter((t) => t.id !== turma.id));
       toast.success("Turma removida com sucesso.");
@@ -680,16 +606,13 @@ export default function ModalEvento({
       const code = err?.data?.erro;
       if (err?.status === 409 || code === "TURMA_COM_REGISTROS") {
         const c = err?.data?.contagens || {};
-        toast.error(
-          `Não é possível excluir: ${c.presencas || 0} presenças / ${c.certificados || 0} certificados.`
-        );
+        toast.error(`Não é possível excluir: ${c.presencas || 0} presenças / ${c.certificados || 0} certificados.`);
       } else if (err?.status === 404) {
         toast.warn("Turma não encontrada. Atualize a página.");
       } else {
         toast.error("Erro ao remover turma.");
       }
     } finally {
-      L.timeEnd("DELETE(/api/turmas/:id)");
       setRemovendoId(null);
     }
   }
@@ -697,35 +620,19 @@ export default function ModalEvento({
   /* ================= Submit do formulário ================= */
   const handleSubmit = (e) => {
     e.preventDefault();
-    L.group("submit");
-    L.log("SUBMIT_BEGIN", {
-      eventoId: evento?.id ?? null,
-      turmas: turmas.length,
-      restrito,
-      restritoModo,
-      regs: registros.length,
-      cargos: cargosPermitidos.length,
-      unidadesPermitidas: unidadesPermitidas.length,
-      hasFolderNovo: !!folderFile,
-      hasPdfNovo: !!programacaoFile,
-      hadFolderExistente: !!folderUrlExistente,
-      hadPdfExistente: !!programacaoUrlExistente,
-    });
+    if (salvando) return;
 
     // Validações de topo
-    if (!titulo || !tipo || !unidadeId) {
+    if (!titulo || !tipo || !unidadeId || !local) {
       toast.warning("⚠️ Preencha todos os campos obrigatórios.");
-      L.groupEnd();
       return;
     }
     if (!TIPOS_EVENTO.includes(tipo)) {
       toast.error("❌ Tipo de evento inválido.");
-      L.groupEnd();
       return;
     }
     if (!turmas.length) {
       toast.warning("⚠️ Adicione pelo menos uma turma.");
-      L.groupEnd();
       return;
     }
 
@@ -733,29 +640,23 @@ export default function ModalEvento({
     for (const t of turmas) {
       if (!t.nome || !Number(t.vagas_total) || !Number.isFinite(Number(t.carga_horaria))) {
         toast.error("❌ Preencha nome, vagas e carga horária de cada turma.");
-        L.groupEnd();
         return;
       }
       if (!Array.isArray(t.datas) || t.datas.length === 0) {
         toast.error("❌ Cada turma precisa ter ao menos uma data.");
-        L.groupEnd();
         return;
       }
       for (const d of t.datas) {
         if (!d?.data || !d?.horario_inicio || !d?.horario_fim) {
           toast.error("❌ Preencha data, início e fim em todos os encontros.");
-          L.groupEnd();
           return;
         }
       }
-      const assinanteId = Number(
-        t.instrutor_assinante_id ?? t.assinante_id /* fallback legado */
-      );
+      const assinanteId = Number(t.instrutor_assinante_id ?? t.assinante_id);
       if (Number.isFinite(assinanteId)) {
         const instrs = extractIds(t.instrutores || []);
         if (!instrs.includes(assinanteId)) {
           toast.error(`O assinante da turma "${t.nome}" precisa estar entre os instrutores dessa turma.`);
-          L.groupEnd();
           return;
         }
       }
@@ -764,32 +665,19 @@ export default function ModalEvento({
     // Validações de restrição
     if (restrito) {
       const modosValidos = ["todos_servidores", "lista_registros", "cargos", "unidades"];
-      if (!modosValidos.includes(restritoModo)) {
-        toast.error("Defina o modo de restrição do evento.");
-        L.groupEnd();
-        return;
-      }
-      if (restritoModo === "lista_registros" && registros.length === 0) {
-        toast.error("Inclua pelo menos um registro (6 dígitos) para este evento.");
-        L.groupEnd();
-        return;
-      }
-      if (restritoModo === "cargos" && cargosPermitidos.length === 0) {
-        toast.error("Inclua ao menos um cargo permitido.");
-        L.groupEnd();
-        return;
-      }
-      if (restritoModo === "unidades" && unidadesPermitidas.length === 0) {
-        toast.error("Inclua ao menos uma unidade permitida.");
-        L.groupEnd();
-        return;
-      }
+      if (!modosValidos.includes(restritoModo)) return toast.error("Defina o modo de restrição do evento.");
+      if (restritoModo === "lista_registros" && registros.length === 0)
+        return toast.error("Inclua pelo menos um registro (6 dígitos) para este evento.");
+      if (restritoModo === "cargos" && cargosPermitidos.length === 0)
+        return toast.error("Inclua ao menos um cargo permitido.");
+      if (restritoModo === "unidades" && unidadesPermitidas.length === 0)
+        return toast.error("Inclua ao menos uma unidade permitida.");
     }
 
-    // Montagem das turmas para payload
+    // Montagem turmas
     const turmasCompletas = turmas.map((t) => {
       const n = normalizarDatasTurma(t);
-      const out = {
+      return {
         ...(Number.isFinite(Number(t.id)) ? { id: Number(t.id) } : {}),
         nome: t.nome,
         vagas_total: Number(t.vagas_total) || 0,
@@ -806,12 +694,10 @@ export default function ModalEvento({
           ? { instrutor_assinante_id: Number(t.assinante_id) }
           : {}),
       };
-      return out;
     });
 
     const regs6 = Array.from(new Set(registros.filter((r) => /^\d{6}$/.test(r))));
 
-    // JSON "limpo" para o backend (sem blobs)
     const payloadJson = {
       id: evento?.id,
       titulo,
@@ -823,41 +709,23 @@ export default function ModalEvento({
       turmas: turmasCompletas,
       restrito: !!restrito,
       restrito_modo: restrito ? restritoModo || "todos_servidores" : null,
-      ...(restrito && restritoModo === "lista_registros" && regs6.length > 0
-        ? { registros_permitidos: regs6 }
-        : {}),
-      ...(restrito && restritoModo === "cargos" && cargosPermitidos.length > 0
-        ? { cargos_permitidos: cargosPermitidos }
-        : {}),
-      ...(restrito && restritoModo === "unidades" && unidadesPermitidas.length > 0
-        ? { unidades_permitidas: unidadesPermitidas }
-        : {}),
-      ...(folderUrlExistente === null ? { remover_folder: true } : {}),
-      ...(programacaoUrlExistente === null ? { remover_programacao: true } : {}),
+      ...(restrito && restritoModo === "lista_registros" && regs6.length > 0 ? { registros_permitidos: regs6 } : {}),
+      ...(restrito && restritoModo === "cargos" && cargosPermitidos.length > 0 ? { cargos_permitidos: cargosPermitidos } : {}),
+      ...(restrito && restritoModo === "unidades" && unidadesPermitidas.length > 0 ? { unidades_permitidas: unidadesPermitidas } : {}),
+      ...(removerFolderExistente ? { remover_folder: true } : {}),
+      ...(removerProgramacaoExistente ? { remover_programacao: true } : {}),
     };
 
-    // Payload final (objeto — sem FormData aqui)
     const payload = {
       ...payloadJson,
       folderFile: folderFile instanceof File ? folderFile : undefined,
       programacaoFile: programacaoFile instanceof File ? programacaoFile : undefined,
     };
 
-    L.log("SUBMIT_READY", {
-      hasFolderNovo: !!payload.folderFile,
-      hasPdfNovo: !!payload.programacaoFile,
-      remover_folder: payloadJson?.remover_folder === true,
-      remover_programacao: payloadJson?.remover_programacao === true,
-    });
-
     onSalvar(payload);
-    L.groupEnd();
   };
 
-  const regCount =
-    Array.isArray(registros) && registros.length > 0
-      ? registros.length
-      : Number(evento?.count_registros_permitidos ?? 0);
+  const regCount = registros.length;
 
   /* ========================= Render Turmas (memo) ========================= */
   const turmasRender = useMemo(() => {
@@ -871,20 +739,17 @@ export default function ModalEvento({
       const hf = first ? hh(first.horario_fim) : hh(t.horario_fim);
 
       const instrs = extractIds(t.instrutores || []);
-      const assinante = Number(t.instrutor_assinante_id ?? t.assinante_id /* fallback legado */);
+      const assinante = Number(t.instrutor_assinante_id ?? t.assinante_id);
 
       return (
         <div
           key={t.id ?? `temp-${i}`}
           className="rounded-xl border border-black/10 dark:border-white/10 bg-gradient-to-b from-zinc-50/90 to-white dark:from-zinc-800/70 dark:to-zinc-900/50 p-3 text-sm shadow-sm hover:shadow transition-shadow"
         >
-          {/* top bar signature */}
           <div className="h-1 rounded-t-md bg-gradient-to-r from-emerald-600 via-teal-500 to-cyan-500 mb-2" />
 
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
-            <p className="font-bold text-slate-900 dark:text-white break-words leading-tight">
-              {t.nome}
-            </p>
+            <p className="font-bold text-slate-900 dark:text-white break-words leading-tight">{t.nome}</p>
 
             <div className="flex flex-wrap gap-2">
               <button
@@ -949,7 +814,6 @@ export default function ModalEvento({
               </span>
             </div>
 
-            {/* Resumo instrutores/assinante */}
             <div className="flex flex-wrap gap-2 items-center pt-1">
               {instrs.length > 0 && (
                 <div className="text-xs">
@@ -975,64 +839,54 @@ export default function ModalEvento({
         </div>
       );
     });
-  }, [turmas, removendoId, usuarios]);
+  }, [turmas, removendoId, nomePorId]);
 
   /* ========================= Render ========================= */
   return (
     <>
       <ModalBase
         isOpen={isOpen}
-        onClose={() => {
-          L.info("CLOSE_CLICK");
-          onClose();
-        }}
+        onClose={closeBlocked ? undefined : onClose}
         level={0}
         maxWidth="max-w-3xl"
-        labelledBy="modal-evento-titulo"
-        describedBy="modal-evento-desc"
+        labelledBy={titleId}
+        describedBy={descId}
+        closeOnBackdrop={!closeBlocked}
+        closeOnEsc={!closeBlocked}
       >
         <div className="grid grid-rows-[auto,1fr,auto] max-h-[90vh] rounded-2xl overflow-hidden bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/10 shadow-2xl">
-          {/* signature top bar */}
           <div className="h-1 bg-gradient-to-r from-emerald-600 via-teal-500 to-cyan-500" />
 
           {/* HEADER */}
           <div className="p-5 border-b border-black/5 dark:border-white/10 bg-white/80 dark:bg-zinc-900/80 backdrop-blur">
             <div className="flex items-center justify-between">
-              <h2
-                id="modal-evento-titulo"
-                className="text-lg sm:text-xl font-extrabold tracking-tight flex items-center gap-2"
-              >
+              <h2 id={titleId} className="text-lg sm:text-xl font-extrabold tracking-tight flex items-center gap-2">
                 <ShieldCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
                 {evento?.id ? "Editar Evento" : "Novo Evento"}
               </h2>
               <button
-                onClick={() => {
-                  L.info("HEADER_X_CLICK");
-                  onClose();
-                }}
-                className="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-black/5 dark:hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                type="button"
+                onClick={closeBlocked ? undefined : onClose}
+                disabled={closeBlocked}
+                className="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-black/5 dark:hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-60"
                 aria-label="Fechar"
               >
                 <X className="w-5 h-5" aria-hidden="true" />
               </button>
             </div>
-            <p id="modal-evento-desc" className="sr-only">
-              Formulário para criação ou edição de evento, incluindo turmas e restrições de acesso.
+            <p id={descId} className="sr-only">
+              Formulário para criação ou edição de evento, incluindo turmas, anexos e restrições de acesso.
             </p>
           </div>
 
           {/* BODY */}
           <div className="p-5 overflow-y-auto">
             {isPending ? (
-              <p className="text-center text-sm text-slate-500">Carregando…</p>
+              <p className="text-center text-sm text-slate-500" role="status" aria-live="polite">
+                Carregando…
+              </p>
             ) : (
-              <form
-                id="form-evento"
-                onSubmit={handleSubmit}
-                className="space-y-4"
-                aria-labelledby="modal-evento-titulo"
-                role="form"
-              >
+              <form id="form-evento" onSubmit={handleSubmit} className="space-y-4" aria-labelledby={titleId} noValidate>
                 {/* TÍTULO */}
                 <div className="grid gap-1">
                   <label htmlFor="evento-titulo" className="text-sm font-medium">
@@ -1053,9 +907,7 @@ export default function ModalEvento({
 
                 {/* DESCRIÇÃO */}
                 <div className="grid gap-1">
-                  <label htmlFor="evento-descricao" className="text-sm font-medium">
-                    Descrição
-                  </label>
+                  <label htmlFor="evento-descricao" className="text-sm font-medium">Descrição</label>
                   <div className="relative">
                     <FileText className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
                     <textarea
@@ -1070,9 +922,7 @@ export default function ModalEvento({
 
                 {/* PÚBLICO-ALVO */}
                 <div className="grid gap-1">
-                  <label htmlFor="evento-publico" className="text-sm font-medium">
-                    Público-alvo
-                  </label>
+                  <label htmlFor="evento-publico" className="text-sm font-medium">Público-alvo</label>
                   <div className="relative">
                     <Info className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
                     <input
@@ -1119,9 +969,7 @@ export default function ModalEvento({
                     >
                       <option value="">Selecione o tipo</option>
                       {TIPOS_EVENTO.map((t) => (
-                        <option key={t} value={t}>
-                          {t}
-                        </option>
+                        <option key={t} value={t}>{t}</option>
                       ))}
                     </select>
                   </div>
@@ -1143,9 +991,7 @@ export default function ModalEvento({
                     >
                       <option value="">Selecione a unidade</option>
                       {unidades.map((u) => (
-                        <option key={u.id} value={String(u.id)}>
-                          {u.nome}
-                        </option>
+                        <option key={u.id} value={String(u.id)}>{u.nome}</option>
                       ))}
                     </select>
                   </div>
@@ -1181,20 +1027,18 @@ export default function ModalEvento({
                       <label className="flex items-center gap-2">
                         <input
                           type="radio"
-                          name="restrito_modo"
+                          name={`restrito_modo_${uid}`}
                           value="todos_servidores"
                           checked={restritoModo === "todos_servidores"}
                           onChange={() => setRestritoModo("todos_servidores")}
                         />
-                        <span>
-                          Todos os servidores (somente quem possui <strong>registro</strong> cadastrado)
-                        </span>
+                        <span>Todos os servidores (somente quem possui <strong>registro</strong> cadastrado)</span>
                       </label>
 
                       <label className="flex items-center gap-2">
                         <input
                           type="radio"
-                          name="restrito_modo"
+                          name={`restrito_modo_${uid}`}
                           value="lista_registros"
                           checked={restritoModo === "lista_registros"}
                           onChange={() => setRestritoModo("lista_registros")}
@@ -1212,7 +1056,7 @@ export default function ModalEvento({
                       <label className="flex items-center gap-2">
                         <input
                           type="radio"
-                          name="restrito_modo"
+                          name={`restrito_modo_${uid}`}
                           value="cargos"
                           checked={restritoModo === "cargos"}
                           onChange={() => setRestritoModo("cargos")}
@@ -1223,7 +1067,7 @@ export default function ModalEvento({
                       <label className="flex items-center gap-2">
                         <input
                           type="radio"
-                          name="restrito_modo"
+                          name={`restrito_modo_${uid}`}
                           value="unidades"
                           checked={restritoModo === "unidades"}
                           onChange={() => setRestritoModo("unidades")}
@@ -1250,9 +1094,8 @@ export default function ModalEvento({
                                 e.preventDefault();
                                 addRegistrosBulk(txt);
                               }}
-                              placeholder="Digite/cole registros (qualquer texto — extraímos todos os blocos de 6 dígitos) e Enter"
+                              placeholder="Cole registros (extraímos blocos de 6 dígitos) e Enter"
                               className="w-full px-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                              aria-describedby="ajuda-registros"
                             />
                             <button
                               type="button"
@@ -1263,51 +1106,43 @@ export default function ModalEvento({
                             </button>
                           </div>
 
-                          <div className="mt-1">
-                            {regCount > 0 ? (
-                              <div>
-                                <div className="flex items-center justify-between">
-                                  <div
-                                    id="ajuda-registros"
-                                    className="text-xs text-slate-600 dark:text-slate-300"
-                                  >
-                                    {regCount} registro(s) na lista
-                                  </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => setRegistros([])}
-                                    className="text-xs underline text-red-700 dark:text-red-300"
-                                    title="Limpar todos os registros"
-                                  >
-                                    Limpar todos
-                                  </button>
-                                </div>
-                                <div className="flex flex-wrap gap-2 mt-2">
-                                  {registros.map((r) => (
-                                    <span
-                                      key={r}
-                                      className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-slate-200 text-slate-800 dark:bg-zinc-800 dark:text-zinc-200 text-xs"
-                                    >
-                                      {r}
-                                      <button
-                                        type="button"
-                                        className="ml-1 text-red-600 dark:text-red-400"
-                                        title="Remover"
-                                        onClick={() => removeRegistro(r)}
-                                        aria-label={`Remover registro ${r}`}
-                                      >
-                                        ×
-                                      </button>
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
-                            ) : (
-                              <p id="ajuda-registros" className="text-xs text-slate-600 dark:text-slate-300">
-                                Pode colar CSV/planilha/texto — extraímos todas as sequências de 6 dígitos.
-                              </p>
+                          <div className="mt-1 flex items-center justify-between">
+                            <div className="text-xs text-slate-600 dark:text-slate-300">
+                              {regCount} registro(s) na lista
+                            </div>
+                            {regCount > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setRegistros([])}
+                                className="text-xs underline text-red-700 dark:text-red-300"
+                                title="Limpar todos os registros"
+                              >
+                                Limpar todos
+                              </button>
                             )}
                           </div>
+
+                          {regCount > 0 && (
+                            <div className="flex flex-wrap gap-2 mt-2">
+                              {registros.map((r) => (
+                                <span
+                                  key={r}
+                                  className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-slate-200 text-slate-800 dark:bg-zinc-800 dark:text-zinc-200 text-xs"
+                                >
+                                  {r}
+                                  <button
+                                    type="button"
+                                    className="ml-1 text-red-600 dark:text-red-400"
+                                    title="Remover"
+                                    onClick={() => removeRegistro(r)}
+                                    aria-label={`Remover registro ${r}`}
+                                  >
+                                    ×
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
 
@@ -1320,10 +1155,8 @@ export default function ModalEvento({
                               className="w-full px-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                             >
                               <option value="">Selecione o cargo</option>
-                              {(cargosSugestoes || []).map((c) => (
-                                <option key={c} value={c}>
-                                  {c}
-                                </option>
+                              {cargosSugestoes.map((c) => (
+                                <option key={c} value={c}>{c}</option>
                               ))}
                             </select>
                             <button
@@ -1373,9 +1206,7 @@ export default function ModalEvento({
                               {unidades
                                 .filter((u) => !unidadesPermitidas.includes(Number(u.id)))
                                 .map((u) => (
-                                  <option key={u.id} value={String(u.id)}>
-                                    {u.nome}
-                                  </option>
+                                  <option key={u.id} value={String(u.id)}>{u.nome}</option>
                                 ))}
                             </select>
                             <button
@@ -1417,13 +1248,13 @@ export default function ModalEvento({
 
                 {/* UPLOADS */}
                 <div className="grid gap-3 sm:grid-cols-2">
-                  {/* Folder (PNG/JPG) */}
+                  {/* Folder */}
                   <div className="grid gap-1">
                     <label className="text-sm font-medium flex items-center gap-2">
                       <ImageIcon size={16} /> Folder do evento (PNG/JPG)
                     </label>
 
-                    {!folderFile && folderUrlExistente && (
+                    {!folderFile && !!folderUrlExistente && !removerFolderExistente && (
                       <div className="rounded-lg border border-black/10 dark:border-white/10 p-2">
                         <img
                           src={withBackendBase(folderUrlExistente)}
@@ -1457,6 +1288,7 @@ export default function ModalEvento({
                         {folderFile ? folderFile.name : `Selecionar imagem… (máx. ${MAX_IMG_MB}MB)`}
                       </span>
                       <input
+                        ref={folderInputRef}
                         type="file"
                         accept="image/png,image/jpeg"
                         className="hidden"
@@ -1483,15 +1315,21 @@ export default function ModalEvento({
                         </div>
                       </div>
                     )}
+
+                    {removerFolderExistente && (
+                      <p className="text-xs text-rose-700 dark:text-rose-300">
+                        ✅ A imagem existente será removida ao salvar.
+                      </p>
+                    )}
                   </div>
 
-                  {/* Programação (PDF) */}
+                  {/* Programação */}
                   <div className="grid gap-1">
                     <label className="text-sm font-medium flex items-center gap-2">
                       <FileIcon size={16} /> Programação (PDF)
                     </label>
 
-                    {!programacaoFile && programacaoUrlExistente && (
+                    {!programacaoFile && !!programacaoUrlExistente && !removerProgramacaoExistente && (
                       <div className="rounded-lg border border-black/10 dark:border-white/10 p-2 flex items-center justify-between">
                         <a
                           href={withBackendBase(programacaoUrlExistente)}
@@ -1518,6 +1356,7 @@ export default function ModalEvento({
                         {programacaoFile ? programacaoFile.name : `Selecionar PDF… (máx. ${MAX_PDF_MB}MB)`}
                       </span>
                       <input
+                        ref={pdfInputRef}
                         type="file"
                         accept="application/pdf"
                         className="hidden"
@@ -1537,6 +1376,12 @@ export default function ModalEvento({
                         </button>
                       </div>
                     )}
+
+                    {removerProgramacaoExistente && (
+                      <p className="text-xs text-rose-700 dark:text-rose-300">
+                        ✅ O PDF existente será removido ao salvar.
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -1547,9 +1392,7 @@ export default function ModalEvento({
                   </h3>
 
                   {turmas.length === 0 ? (
-                    <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">
-                      Nenhuma turma cadastrada.
-                    </p>
+                    <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">Nenhuma turma cadastrada.</p>
                   ) : (
                     <div className="mt-2 space-y-3">{turmasRender}</div>
                   )}
@@ -1575,11 +1418,9 @@ export default function ModalEvento({
             <div className="flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => {
-                  L.info("FOOTER_CANCELAR_CLICK");
-                  onClose();
-                }}
-                className="rounded-xl px-4 py-2 bg-slate-200 hover:bg-slate-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                onClick={closeBlocked ? undefined : onClose}
+                disabled={closeBlocked}
+                className="rounded-xl px-4 py-2 bg-slate-200 hover:bg-slate-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-60"
               >
                 Cancelar
               </button>
@@ -1593,7 +1434,6 @@ export default function ModalEvento({
                     ? "bg-emerald-900 cursor-not-allowed"
                     : "bg-emerald-700 hover:bg-emerald-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500"
                 }`}
-                onClick={() => L.info("FOOTER_SALVAR_CLICK", { salvando })}
               >
                 {salvando ? "Salvando..." : "Salvar"}
               </button>
@@ -1605,16 +1445,10 @@ export default function ModalEvento({
       {/* MODAL TURMA */}
       <ModalTurma
         isOpen={modalTurmaAberto}
-        onClose={() => {
-          L.info("MODAL_TURMA_CLOSE");
-          setModalTurmaAberto(false);
-        }}
+        onClose={() => setModalTurmaAberto(false)}
         initialTurma={editandoTurmaIndex != null ? turmas[editandoTurmaIndex] : null}
         usuarios={opcoesInstrutor}
         onSalvar={(turmaPayload) => {
-          L.group("TURMA_SALVAR");
-          L.log("payload", turmaPayload);
-
           const normalizada = normalizarDatasTurma(turmaPayload);
           const turmaFinal = {
             ...turmaPayload,
@@ -1638,7 +1472,6 @@ export default function ModalEvento({
 
           setModalTurmaAberto(false);
           setEditandoTurmaIndex(null);
-          L.groupEnd();
         }}
       />
     </>

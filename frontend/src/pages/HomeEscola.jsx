@@ -1,15 +1,18 @@
-// ✅ src/pages/HomeEscola.jsx
+// ✅ src/pages/HomeEscola.jsx (premium + mobile-first + a11y + robustez)
+// - Corrige isDark (antes ficava “travado” no 1º render)
+// - QR size responsivo com listener de resize (sem recalcular errado)
+// - Ações (abrir/copiar/compartilhar) mais robustas + feedbacks
+// - MiniStats clicáveis (quando houver rota) + estados de loading melhores
+// - Destaques com fallback de imagem (onError)
+// - Mantém sua “Mensagem 2026” + card de instalação PWA
+
 import { useEffect, useMemo, useCallback, useState } from "react";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import {
-  CalendarDays,
-  ShieldCheck,
-  Download,
   Sparkles,
   ArrowRight,
   FileText,
   ClipboardList,
-  ListChecks,
   QrCode,
   ExternalLink,
   Copy,
@@ -34,18 +37,98 @@ const INSTAGRAM_URL =
   "https://www.instagram.com/escoladasaudesms?igsh=Zzd5M3MyazZ0aXRm&utm_source=qr";
 
 /* ────────────────────────────────────────────────────────────── */
+/* Utils                                                          */
+/* ────────────────────────────────────────────────────────────── */
+function safeOpen(url) {
+  if (!url) return;
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+function clamp(n, min, max) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return min;
+  return Math.max(min, Math.min(max, v));
+}
+
+function useIsDarkClass() {
+  const [isDark, setIsDark] = useState(() =>
+    typeof document !== "undefined"
+      ? document.documentElement.classList.contains("dark")
+      : false
+  );
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+
+    const el = document.documentElement;
+    const update = () => setIsDark(el.classList.contains("dark"));
+
+    update();
+
+    // Observa mudanças no className do <html> (quando o usuário alternar tema)
+    const obs = new MutationObserver(update);
+    obs.observe(el, { attributes: true, attributeFilter: ["class"] });
+    return () => obs.disconnect();
+  }, []);
+
+  return isDark;
+}
+
+function useQrSize() {
+  const [size, setSize] = useState(() => {
+    if (typeof window === "undefined") return 260;
+    const w = window.innerWidth;
+    if (w < 360) return 220;
+    if (w < 768) return 240;
+    return 260;
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onResize = () => {
+      const w = window.innerWidth;
+      const next = w < 360 ? 220 : w < 768 ? 240 : 260;
+      setSize(next);
+    };
+    window.addEventListener("resize", onResize, { passive: true });
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  return size;
+}
+
+/* ────────────────────────────────────────────────────────────── */
 /* Card de destaque (premium)                                      */
 /* ────────────────────────────────────────────────────────────── */
 function DestaqueLongo({ imgSrc, imgAlt, titulo, subtitulo, badge, children }) {
+  const reduceMotion = useReducedMotion();
+  const [ok, setOk] = useState(true);
+
   return (
     <motion.article
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
+      initial={reduceMotion ? false : { opacity: 0, y: 10 }}
+      animate={reduceMotion ? {} : { opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
       className="overflow-hidden rounded-3xl bg-white dark:bg-zinc-900/55 shadow-sm ring-1 ring-black/5 dark:ring-white/10 flex flex-col"
     >
       <div className="relative">
-        <img src={imgSrc} alt={imgAlt} className="w-full h-56 object-cover" loading="lazy" />
+        {ok ? (
+          <img
+            src={imgSrc}
+            alt={imgAlt}
+            className="w-full h-56 object-cover"
+            loading="lazy"
+            decoding="async"
+            onError={() => setOk(false)}
+          />
+        ) : (
+          <div className="w-full h-56 bg-gradient-to-br from-zinc-200 via-zinc-100 to-zinc-200 dark:from-zinc-900 dark:via-zinc-950 dark:to-zinc-900 grid place-items-center">
+            <div className="text-sm text-zinc-600 dark:text-zinc-300 font-semibold">
+              Imagem indisponível
+            </div>
+          </div>
+        )}
+
         <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-black/15 to-transparent" />
 
         {badge && (
@@ -61,7 +144,9 @@ function DestaqueLongo({ imgSrc, imgAlt, titulo, subtitulo, badge, children }) {
           {titulo}
         </h3>
         {subtitulo && (
-          <p className="text-emerald-700 dark:text-emerald-300 text-sm font-bold">{subtitulo}</p>
+          <p className="text-emerald-700 dark:text-emerald-300 text-sm font-bold">
+            {subtitulo}
+          </p>
         )}
         <div className="text-sm text-slate-700 dark:text-zinc-300 leading-relaxed space-y-3 text-justify">
           {children}
@@ -95,7 +180,7 @@ function MiniStat({ icon: Icon, label, value, hint, tone = "emerald", onClick })
         "rounded-3xl bg-white dark:bg-zinc-900/55 border border-slate-200 dark:border-white/10 p-4 sm:p-5 shadow-sm text-left",
         clickable
           ? "hover:shadow-md transition focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60 cursor-pointer"
-          : "cursor-default",
+          : "cursor-default opacity-95",
       ].join(" ")}
       aria-label={`${label}: ${value ?? "—"}`}
       title={clickable ? "Abrir" : undefined}
@@ -109,12 +194,14 @@ function MiniStat({ icon: Icon, label, value, hint, tone = "emerald", onClick })
             {value}
           </div>
           {hint ? (
-            <div className="mt-1 text-[12px] text-slate-600 dark:text-zinc-400">{hint}</div>
+            <div className="mt-1 text-[12px] text-slate-600 dark:text-zinc-400">
+              {hint}
+            </div>
           ) : null}
         </div>
 
         <div className={`shrink-0 rounded-2xl p-3 ${toneMap[tone] || toneMap.emerald}`}>
-          <Icon className="w-5 h-5" />
+          <Icon className="w-5 h-5" aria-hidden="true" />
         </div>
       </div>
     </button>
@@ -126,23 +213,34 @@ function MiniStat({ icon: Icon, label, value, hint, tone = "emerald", onClick })
 /* ────────────────────────────────────────────────────────────── */
 function NotaUsuarioCard({ nota, loading }) {
   const n = Number(nota);
-  const clamp = Number.isFinite(n) ? Math.max(0, Math.min(10, n)) : 0;
-  const percent = (clamp / 10) * 100;
+  const clamp10 = Number.isFinite(n) ? clamp(n, 0, 10) : null;
+  const percent = clamp10 === null ? 0 : (clamp10 / 10) * 100;
 
-  // cor por faixa (verde → amarelo → laranja → vermelho)
   const corBarra =
-    clamp >= 9
+    clamp10 === null
+      ? "bg-slate-400"
+      : clamp10 >= 9
       ? "bg-emerald-500"
-      : clamp >= 7
+      : clamp10 >= 7
       ? "bg-lime-500"
-      : clamp >= 5
+      : clamp10 >= 5
       ? "bg-amber-500"
-      : clamp >= 3
+      : clamp10 >= 3
       ? "bg-orange-500"
       : "bg-rose-600";
 
   const labelStatus =
-    clamp >= 9 ? "Excelente" : clamp >= 7 ? "Bom" : clamp >= 5 ? "Regular" : clamp >= 3 ? "Atenção" : "Crítico";
+    clamp10 === null
+      ? "—"
+      : clamp10 >= 9
+      ? "Excelente"
+      : clamp10 >= 7
+      ? "Bom"
+      : clamp10 >= 5
+      ? "Regular"
+      : clamp10 >= 3
+      ? "Atenção"
+      : "Crítico";
 
   return (
     <div className="rounded-3xl bg-white dark:bg-zinc-900/55 border border-slate-200 dark:border-white/10 p-4 sm:p-5 shadow-sm">
@@ -153,7 +251,7 @@ function NotaUsuarioCard({ nota, loading }) {
           </div>
 
           <div className="mt-1 text-xl sm:text-2xl font-extrabold tracking-tight text-slate-900 dark:text-zinc-100">
-            {loading ? "…" : Number.isFinite(n) ? clamp.toFixed(1) : "—"}
+            {loading ? "…" : clamp10 === null ? "—" : clamp10.toFixed(1)}
           </div>
         </div>
 
@@ -162,7 +260,6 @@ function NotaUsuarioCard({ nota, loading }) {
         </div>
       </div>
 
-      {/* Barra de status */}
       <div className="mt-4">
         <div className="h-3 w-full rounded-full bg-slate-200 dark:bg-zinc-800 overflow-hidden">
           <div
@@ -199,22 +296,16 @@ function QuickCard({ to, icon: Icon, title, subtitle, tone = "emerald" }) {
       to={to}
       className="group rounded-3xl bg-white dark:bg-zinc-900/55 border border-slate-200 dark:border-white/10 p-4 sm:p-5 shadow-sm hover:shadow-md transition focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60"
     >
-      <div
-        className={`h-1.5 w-full rounded-full bg-gradient-to-r ${toneBar[tone] || toneBar.emerald}`}
-        aria-hidden="true"
-      />
-
+      <div className={`h-1.5 w-full rounded-full bg-gradient-to-r ${toneBar[tone] || toneBar.emerald}`} aria-hidden="true" />
       <div className="mt-4 flex items-start gap-3">
         <div className="rounded-2xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-zinc-950/30 p-3 group-hover:bg-slate-100 dark:group-hover:bg-white/5 transition">
-          <Icon className="w-5 h-5 text-slate-800 dark:text-zinc-100" />
+          <Icon className="w-5 h-5 text-slate-800 dark:text-zinc-100" aria-hidden="true" />
         </div>
-
         <div className="min-w-0">
           <div className="text-sm font-extrabold text-slate-900 dark:text-zinc-100">{title}</div>
           <div className="mt-1 text-[12px] text-slate-600 dark:text-zinc-400">{subtitle}</div>
         </div>
-
-        <ArrowRight className="ml-auto w-5 h-5 text-slate-400 group-hover:text-slate-700 dark:text-zinc-500 dark:group-hover:text-zinc-200 transition" />
+        <ArrowRight className="ml-auto w-5 h-5 text-slate-400 group-hover:text-slate-700 dark:text-zinc-500 dark:group-hover:text-zinc-200 transition" aria-hidden="true" />
       </div>
     </Link>
   );
@@ -239,19 +330,16 @@ function QrCard({ title, subtitle, icon: Icon, accent = "teal", url, qrSize }) {
 
   return (
     <div className="rounded-3xl bg-white dark:bg-zinc-900/55 border border-slate-200 dark:border-white/10 p-5 sm:p-6 shadow-sm">
-      <div
-        className={`h-1.5 w-full rounded-full bg-gradient-to-r ${badgeBar[accent] || badgeBar.teal}`}
-        aria-hidden="true"
-      />
+      <div className={`h-1.5 w-full rounded-full bg-gradient-to-r ${badgeBar[accent] || badgeBar.teal}`} aria-hidden="true" />
 
       <div className="mt-4 flex items-start gap-3">
         <div className="rounded-2xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-zinc-950/30 p-3">
-          <Icon className={`w-5 h-5 ${accentMap[accent] || accentMap.teal}`} />
+          <Icon className={`w-5 h-5 ${accentMap[accent] || accentMap.teal}`} aria-hidden="true" />
         </div>
 
         <div className="min-w-0">
           <div className="text-sm font-extrabold text-slate-900 dark:text-zinc-100">{title}</div>
-          <div className="mt-1 text-[12px] text-slate-600 dark:text-zinc-400">{subtitle}</div>
+          <div className="mt-1 text-[12px] text-slate-600 dark:text-zinc-400 break-words">{subtitle}</div>
         </div>
       </div>
 
@@ -269,27 +357,22 @@ function ActionBtn({ onClick, icon: Icon, children }) {
       onClick={onClick}
       className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-extrabold text-slate-700 hover:bg-slate-100 dark:border-white/10 dark:bg-zinc-900/35 dark:text-zinc-200 dark:hover:bg-white/5 transition"
     >
-      <Icon className="w-4 h-4" />
+      <Icon className="w-4 h-4" aria-hidden="true" />
       {children}
     </button>
   );
 }
 
+/* ────────────────────────────────────────────────────────────── */
+/* Página                                                          */
+/* ────────────────────────────────────────────────────────────── */
 export default function HomeEscola() {
   const navigate = useNavigate();
+  const isDark = useIsDarkClass();
+  const qrSize = useQrSize();
 
   useEffect(() => {
     document.title = "Escola da Saúde — Painel";
-  }, []);
-
-  const isDark = useMemo(() => document.documentElement.classList.contains("dark"), []);
-
-  const qrSize = useMemo(() => {
-    if (typeof window !== "undefined") {
-      if (window.innerWidth < 360) return 220;
-      if (window.innerWidth < 768) return 240;
-    }
-    return 260;
   }, []);
 
   // ✅ Resumo do usuário (stats do painel)
@@ -327,9 +410,7 @@ export default function HomeEscola() {
   }, [resumo]);
 
   // Ações QR
-  const abrirSite = useCallback(() => {
-    window.open(SITE_URL, "_blank", "noopener,noreferrer");
-  }, []);
+  const abrirSite = useCallback(() => safeOpen(SITE_URL), []);
   const copiarSite = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(SITE_URL);
@@ -338,9 +419,7 @@ export default function HomeEscola() {
       toast.error("Não foi possível copiar o link.");
     }
   }, []);
-  const abrirInstagram = useCallback(() => {
-    window.open(INSTAGRAM_URL, "_blank", "noopener,noreferrer");
-  }, []);
+  const abrirInstagram = useCallback(() => safeOpen(INSTAGRAM_URL), []);
   const compartilhar = useCallback(async () => {
     try {
       if (navigator.share) {
@@ -354,9 +433,22 @@ export default function HomeEscola() {
         toast.success("📎 Link copiado (compartilhamento indisponível).");
       }
     } catch {
-      /* cancelado pelo usuário */
+      // usuário cancelou / share não disponível
     }
   }, []);
+
+  // helpers de navegação (evita quebrar caso rota não exista ainda)
+  const go = useCallback(
+    (path) => {
+      if (!path) return;
+      try {
+        navigate(path);
+      } catch {
+        toast.info("Em breve 🙂");
+      }
+    },
+    [navigate]
+  );
 
   return (
     <>
@@ -372,13 +464,11 @@ export default function HomeEscola() {
           rightSlot={null}
         />
 
-        {/* ✅ Resumo do usuário (sem gráficos e sem notificações) */}
+        {/* ✅ Resumo do usuário */}
         <section className="mt-6" aria-label="Resumo do usuário">
           <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
             <div>
-              <h2 className="text-xl font-extrabold text-slate-900 dark:text-zinc-100">
-                Seu resumo
-              </h2>
+              <h2 className="text-xl font-extrabold text-slate-900 dark:text-zinc-100">Seu resumo</h2>
               <p className="mt-1 text-sm text-slate-600 dark:text-zinc-400">
                 Indicadores consolidados de participação e pendências.
               </p>
@@ -391,7 +481,7 @@ export default function HomeEscola() {
               aria-label="Atualizar resumo do usuário"
               title="Atualizar"
             >
-              <RefreshCw className={`w-4 h-4 ${loadingResumo ? "animate-spin" : ""}`} />
+              <RefreshCw className={`w-4 h-4 ${loadingResumo ? "animate-spin" : ""}`} aria-hidden="true" />
               {loadingResumo ? "Atualizando…" : "Atualizar"}
             </button>
           </div>
@@ -403,7 +493,7 @@ export default function HomeEscola() {
               value={loadingResumo ? "…" : stats.inscricoes}
               hint="Cursos que você ainda vai fazer"
               tone="emerald"
-              onClick={() => navigate("/eventos")}
+              onClick={() => go("/eventos")}
             />
             <MiniStat
               icon={ClipboardCheck}
@@ -411,7 +501,7 @@ export default function HomeEscola() {
               value={loadingResumo ? "…" : stats.avalPend}
               hint="Complete para liberar certificado"
               tone="sky"
-              onClick={() => navigate("/avaliacao")}
+              onClick={() => go("/avaliacao")}
             />
             <MiniStat
               icon={FileText}
@@ -419,7 +509,7 @@ export default function HomeEscola() {
               value={loadingResumo ? "…" : stats.certEmit}
               hint="Prontos para download"
               tone="violet"
-              onClick={() => navigate("/certificados")}
+              onClick={() => go("/certificados")}
             />
             <MiniStat
               icon={CheckCircle2}
@@ -427,7 +517,7 @@ export default function HomeEscola() {
               value={loadingResumo ? "…" : stats.presencas}
               hint="Registros em cursos concluídos"
               tone="amber"
-              onClick={() => navigate("/minhas-presencas")}
+              onClick={() => go("/minhas-presencas")}
             />
             <MiniStat
               icon={XCircle}
@@ -435,11 +525,34 @@ export default function HomeEscola() {
               value={loadingResumo ? "…" : stats.faltas}
               hint="Registros em cursos concluídos"
               tone="rose"
-              onClick={() => navigate("/minhas-presencas")}
+              onClick={() => go("/minhas-presencas")}
             />
-
-            {/* ⭐ Nota do usuário: sem "/10" e sem fórmula — com barra */}
             <NotaUsuarioCard nota={stats.nota} loading={loadingResumo} />
+          </div>
+
+          {/* Atalhos rápidos (bem “premium”, opcional mas útil) */}
+          <div className="mt-5 grid grid-cols-1 md:grid-cols-3 gap-4" aria-label="Atalhos rápidos">
+            <QuickCard
+              to="/eventos"
+              icon={ClipboardList}
+              title="Ver eventos e turmas"
+              subtitle="Inscreva-se e acompanhe suas inscrições"
+              tone="emerald"
+            />
+            <QuickCard
+              to="/avaliacao"
+              icon={ClipboardCheck}
+              title="Avaliações pendentes"
+              subtitle="Finalize para liberar certificados"
+              tone="sky"
+            />
+            <QuickCard
+              to="/certificados"
+              icon={FileText}
+              title="Meus certificados"
+              subtitle="Baixe PDFs emitidos e elegíveis"
+              tone="violet"
+            />
           </div>
         </section>
 
@@ -447,27 +560,17 @@ export default function HomeEscola() {
         <section className="mt-8" aria-label="Links oficiais">
           <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
             <div>
-              <h2 className="text-xl font-extrabold text-slate-900 dark:text-zinc-100">
-                Links oficiais
-              </h2>
+              <h2 className="text-xl font-extrabold text-slate-900 dark:text-zinc-100">Links oficiais</h2>
               <p className="mt-1 text-sm text-slate-600 dark:text-zinc-400">
                 QR Codes do site institucional e do Instagram oficial.
               </p>
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <ActionBtn onClick={abrirSite} icon={ExternalLink}>
-                Abrir site
-              </ActionBtn>
-              <ActionBtn onClick={copiarSite} icon={Copy}>
-                Copiar link
-              </ActionBtn>
-              <ActionBtn onClick={abrirInstagram} icon={Instagram}>
-                Instagram
-              </ActionBtn>
-              <ActionBtn onClick={compartilhar} icon={Share2}>
-                Compartilhar
-              </ActionBtn>
+              <ActionBtn onClick={abrirSite} icon={ExternalLink}>Abrir site</ActionBtn>
+              <ActionBtn onClick={copiarSite} icon={Copy}>Copiar link</ActionBtn>
+              <ActionBtn onClick={abrirInstagram} icon={Instagram}>Instagram</ActionBtn>
+              <ActionBtn onClick={compartilhar} icon={Share2}>Compartilhar</ActionBtn>
             </div>
           </div>
 
@@ -501,41 +604,40 @@ export default function HomeEscola() {
           </div>
 
           <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-6">
-           
-           {/* 1) ✅ Mensagem institucional — Boas-vindas a 2026 */}
-<DestaqueLongo
-  imgSrc="/banners/mensagem-2026.jpg"
-  imgAlt="Mensagem institucional da Escola da Saúde para 2026"
-  titulo="✨ Bem-vindo, 2026 — um ano de realizações e cuidado"
-  subtitulo="Educação, união e excelência no SUS"
-  badge="Mensagem da Escola da Saúde"
->
-  <p>
-    A <strong>Escola da Saúde</strong>, em nome da <strong>Secretaria Municipal de Saúde</strong>,
-    deseja a todos os profissionais de saúde um <strong>2026 de muitas realizações</strong>,
-    conquistas e crescimento — pessoal e coletivo.
-  </p>
+            {/* 1) ✅ Mensagem institucional — Boas-vindas a 2026 */}
+            <DestaqueLongo
+              imgSrc="/banners/mensagem-2026.jpg"
+              imgAlt="Mensagem institucional da Escola da Saúde para 2026"
+              titulo="✨ Bem-vindo, 2026 — um ano de realizações e cuidado"
+              subtitulo="Educação, união e excelência no SUS"
+              badge="Mensagem da Escola da Saúde"
+            >
+              <p>
+                A <strong>Escola da Saúde</strong>, em nome da <strong>Secretaria Municipal de Saúde</strong>,
+                deseja a todos os profissionais de saúde um <strong>2026 de muitas realizações</strong>,
+                conquistas e crescimento — pessoal e coletivo.
+              </p>
 
-  <p>
-    Que este novo ano fortaleça ainda mais nosso compromisso com a{" "}
-    <strong>educação permanente</strong>, com a atualização constante e com o
-    desenvolvimento de competências que se transformam em{" "}
-    <strong>melhor assistência aos usuários do SUS</strong>.
-  </p>
+              <p>
+                Que este novo ano fortaleça ainda mais nosso compromisso com a{" "}
+                <strong>educação permanente</strong>, com a atualização constante e com o
+                desenvolvimento de competências que se transformam em{" "}
+                <strong>melhor assistência aos usuários do SUS</strong>.
+              </p>
 
-  <p>
-    Seguiremos juntos, construindo diariamente uma rede mais{" "}
-    <strong>humana</strong>, <strong>acolhedora</strong> e <strong>eficiente</strong>,
-    onde o conhecimento não é apenas conteúdo — é prática, cuidado e transformação.
-  </p>
+              <p>
+                Seguiremos juntos, construindo diariamente uma rede mais{" "}
+                <strong>humana</strong>, <strong>acolhedora</strong> e <strong>eficiente</strong>,
+                onde o conhecimento não é apenas conteúdo — é prática, cuidado e transformação.
+              </p>
 
-  <p>
-    <strong>
-      Que 2026 seja um ano de união, aprendizado e resultados concretos para a saúde pública.
-      Conte com a Escola da Saúde! 💚
-    </strong>
-  </p>
-</DestaqueLongo>
+              <p>
+                <strong>
+                  Que 2026 seja um ano de união, aprendizado e resultados concretos para a saúde pública.
+                  Conte com a Escola da Saúde! 💚
+                </strong>
+              </p>
+            </DestaqueLongo>
 
             {/* 2) Instalação do App PWA */}
             <DestaqueLongo
@@ -547,57 +649,30 @@ export default function HomeEscola() {
             >
               <h3 className="font-extrabold mt-4">🍎 iPhone / iPad (iOS)</h3>
               <ul className="list-disc ml-6">
-                <li>
-                  <strong>Navegador obrigatório:</strong> Safari
-                </li>
-                <li>
-                  Acesse: <strong>https://escola.santos.sp.gov.br</strong>
-                </li>
-                <li>
-                  Toque no botão <strong>Compartilhar</strong> (ícone de quadrado com seta)
-                </li>
-                <li>
-                  Selecione <strong>Adicionar à Tela de Início</strong>
-                </li>
-                <li>
-                  Confirme em <strong>Adicionar</strong>
-                </li>
+                <li><strong>Navegador obrigatório:</strong> Safari</li>
+                <li>Acesse: <strong>https://escola.santos.sp.gov.br</strong></li>
+                <li>Toque em <strong>Compartilhar</strong> (quadrado com seta)</li>
+                <li>Selecione <strong>Adicionar à Tela de Início</strong></li>
+                <li>Confirme em <strong>Adicionar</strong></li>
                 <li>📌 O app aparecerá na tela como um aplicativo normal</li>
               </ul>
 
               <h3 className="font-extrabold mt-4">📱 Android – Chrome</h3>
               <ul className="list-disc ml-6">
-                <li>
-                  Acesse: <strong>https://escola.santos.sp.gov.br</strong>
-                </li>
-                <li>
-                  Toque no menu <strong>⋮</strong>
-                </li>
-                <li>
-                  Selecione <strong>Instalar aplicativo</strong> ou{" "}
-                  <strong>Adicionar à tela inicial</strong>
-                </li>
-                <li>
-                  Confirme em <strong>Instalar</strong>
-                </li>
+                <li>Acesse: <strong>https://escola.santos.sp.gov.br</strong></li>
+                <li>Toque no menu <strong>⋮</strong></li>
+                <li>Selecione <strong>Instalar aplicativo</strong> ou <strong>Adicionar à tela inicial</strong></li>
+                <li>Confirme em <strong>Instalar</strong></li>
                 <li>📌 O ícone aparecerá automaticamente na tela</li>
               </ul>
 
               <h3 className="font-extrabold mt-4">🌐 Computador (Windows / Chromebook / Linux)</h3>
               <ul className="list-disc ml-6">
-                <li>
-                  Abra o <strong>Chrome</strong> ou <strong>Edge</strong>
-                </li>
-                <li>
-                  Acesse: <strong>https://escola.santos.sp.gov.br</strong>
-                </li>
-                <li>
-                  Clique no ícone <strong>Instalar</strong> na barra de endereço
-                </li>
-                <li>
-                  Confirme em <strong>Instalar</strong>
-                </li>
-                <li>📌 O app abrirá em uma janela própria, como um programa</li>
+                <li>Abra o <strong>Chrome</strong> ou <strong>Edge</strong></li>
+                <li>Acesse: <strong>https://escola.santos.sp.gov.br</strong></li>
+                <li>Clique no ícone <strong>Instalar</strong> na barra de endereço</li>
+                <li>Confirme em <strong>Instalar</strong></li>
+                <li>📌 O app abrirá em janela própria, como um programa</li>
               </ul>
 
               <h3 className="font-extrabold mt-4">❓ Como saber que foi instalado corretamente?</h3>
@@ -616,8 +691,8 @@ export default function HomeEscola() {
               </p>
 
               <p className="mt-6 font-extrabold text-slate-900 dark:text-zinc-100">
-                📍 Em breve, após finalização do programa, o app também estará disponível na
-                <strong className="text-emerald-700 dark:text-emerald-300"> Google Play Store</strong>.
+                📍 Em breve, após finalização do programa, o app também estará disponível na{" "}
+                <strong className="text-emerald-700 dark:text-emerald-300">Google Play Store</strong>.
               </p>
             </DestaqueLongo>
           </div>

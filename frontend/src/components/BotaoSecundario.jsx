@@ -3,11 +3,11 @@ import PropTypes from "prop-types";
 import { forwardRef } from "react";
 
 /**
- * Botão secundário (neutral/outline/ghost).
- * - Focus ring acompanha a cor escolhida.
+ * Botão secundário (neutral/outline/ghost) — premium + a11y.
+ * - Focus ring acompanha a cor.
  * - Suporta <button> (padrão) ou <a>.
- * - A11y: aria-busy (loading) e aria-disabled (links).
- * - UX: evita clique enquanto loading/disabled.
+ * - A11y: aria-busy (loading), aria-disabled (links) e aria-live.
+ * - UX: evita clique enquanto loading/disabled; spinner respeita prefers-reduced-motion.
  * - Cores: verde (padrão), amareloOuro, laranjaQueimado, vermelhoCoral, azulPetroleo.
  */
 const BotaoSecundario = forwardRef(function BotaoSecundario(
@@ -19,6 +19,7 @@ const BotaoSecundario = forwardRef(function BotaoSecundario(
     href,
     target,
     rel,
+    download, // opcional quando as='a'
     className = "",
     disabled = false,
     loading = false,
@@ -41,10 +42,10 @@ const BotaoSecundario = forwardRef(function BotaoSecundario(
 
   const sizeClasses =
     size === "sm"
-      ? "px-3 py-1.5 text-sm"
+      ? "px-3 py-1.5 text-sm min-h-[36px]"
       : size === "lg"
-      ? "px-5 py-3 text-base"
-      : "px-4 py-2 text-base";
+      ? "px-5 py-3 text-base min-h-[46px]"
+      : "px-4 py-2 text-base min-h-[40px]";
 
   // Paletas por cor para outline/ghost/neutral
   const tones = {
@@ -119,7 +120,7 @@ const BotaoSecundario = forwardRef(function BotaoSecundario(
 
   const spinner = (
     <span
-      className="inline-block h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin"
+      className="inline-block h-4 w-4 border-2 border-current border-t-transparent rounded-full motion-safe:animate-spin motion-reduce:animate-none"
       aria-hidden="true"
     />
   );
@@ -132,14 +133,19 @@ const BotaoSecundario = forwardRef(function BotaoSecundario(
         href={isDisabled ? undefined : href}
         target={target}
         rel={rel ?? (target === "_blank" ? "noopener noreferrer" : undefined)}
+        download={download}
         aria-label={ariaLabel}
         aria-disabled={isDisabled || undefined}
         aria-busy={loading || undefined}
+        aria-live={loading ? "polite" : undefined}
         tabIndex={tabIndex}
         style={style}
         className={classes}
         role="button"
         title={title}
+        data-variant="BotaoSecundario"
+        data-color={cor}
+        data-tone={variant}
         onClick={(e) => {
           if (isDisabled) e.preventDefault();
           else onClick?.(e);
@@ -162,11 +168,15 @@ const BotaoSecundario = forwardRef(function BotaoSecundario(
       disabled={isDisabled}
       aria-disabled={isDisabled}
       aria-busy={loading || undefined}
+      aria-live={loading ? "polite" : undefined}
       aria-label={ariaLabel}
       tabIndex={tabIndex}
       style={style}
       className={classes}
       title={title}
+      data-variant="BotaoSecundario"
+      data-color={cor}
+      data-tone={variant}
       {...props}
     >
       {loading ? spinner : leftIcon ? <span className="shrink-0" aria-hidden="true">{leftIcon}</span> : null}
@@ -184,6 +194,7 @@ BotaoSecundario.propTypes = {
   href: PropTypes.string,
   target: PropTypes.string,
   rel: PropTypes.string,
+  download: PropTypes.oneOfType([PropTypes.bool, PropTypes.string]),
   className: PropTypes.string,
   disabled: PropTypes.bool,
   loading: PropTypes.bool,

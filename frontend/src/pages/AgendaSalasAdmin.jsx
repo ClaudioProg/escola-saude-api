@@ -1,5 +1,5 @@
-// ✅ src/pages/AgendaSalasAdmin.jsx
-import { useEffect, useMemo, useState } from "react";
+// ✅ src/pages/AgendaSalasAdmin.jsx — versão premium, mobile-first, a11y, dark-mode
+import { useEffect, useMemo, useState, useCallback } from "react";
 import {
   CalendarDays,
   ChevronLeft,
@@ -8,8 +8,11 @@ import {
   ShieldCheck,
   Info,
   FileText,
+  MapPin,
+  Sparkles,
 } from "lucide-react";
 import Skeleton from "react-loading-skeleton";
+import "react-loading-skeleton/dist/skeleton.css";
 import { toast } from "react-toastify";
 import { useNavigate } from "react-router-dom";
 import api from "../services/api";
@@ -80,6 +83,30 @@ function normalizeReserva(r) {
   };
 }
 
+/* ─────────────────────── Chips de Status (legenda/slots) ─────────────────────── */
+function classesStatus(status) {
+  switch (status) {
+    case "pendente":      return "bg-amber-100 text-amber-900 border border-amber-300";
+    case "aprovado":      return "bg-emerald-100 text-emerald-900 border border-emerald-300";
+    case "rejeitado":
+    case "cancelado":     return "bg-rose-100 text-rose-900 border border-rose-300";
+    case "bloqueado":     return "bg-sky-100 text-sky-900 border border-sky-300";
+    case "bloqueado_dia": return "bg-slate-200 text-slate-600 border border-slate-300 cursor-not-allowed";
+    default:              return "bg-slate-50 text-slate-700 border border-slate-200 hover:bg-slate-100 dark:bg-zinc-800 dark:text-zinc-100 dark:border-zinc-700";
+  }
+}
+function labelStatus(status) {
+  switch (status) {
+    case "pendente":       return "Pendente";
+    case "aprovado":       return "Aprovado";
+    case "rejeitado":      return "Rejeitado";
+    case "cancelado":      return "Cancelado";
+    case "bloqueado":      return "Bloqueado (uso interno)";
+    case "bloqueado_dia":  return "Indisponível";
+    default:               return "Livre";
+  }
+}
+
 /* ───────────────────────────── Página ───────────────────────────── */
 function AgendaSalasAdmin() {
   const hoje = new Date();
@@ -101,6 +128,17 @@ function AgendaSalasAdmin() {
 
   const semanas = useMemo(() => criarMatrixMes(ano, mesIndex), [ano, mesIndex]);
 
+  // atalhos ← →
+  const handleKeyNav = useCallback((e) => {
+    if (e.key === "ArrowLeft") { mudarMes(-1); }
+    if (e.key === "ArrowRight") { mudarMes(1); }
+  }, [mesIndex, ano]);
+
+  useEffect(() => {
+    window.addEventListener("keydown", handleKeyNav);
+    return () => window.removeEventListener("keydown", handleKeyNav);
+  }, [handleKeyNav]);
+
   useEffect(() => {
     carregarAgenda();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -113,12 +151,6 @@ function AgendaSalasAdmin() {
       const anoParam = ano;
       const mesParam = mesIndex + 1;
 
-      console.log("[AgendaSalasAdmin] carregando agenda:", {
-        ano: anoParam,
-        mes: mesParam,
-      });
-
-      // Monta a querystring manualmente para evitar qualquer problema com axios/params
       const qsAuditorio = new URLSearchParams({
         ano: String(anoParam),
         mes: String(mesParam),
@@ -200,6 +232,12 @@ function AgendaSalasAdmin() {
     setAno(novoAno);
   }
 
+  function hojeClick() {
+    const d = new Date();
+    setAno(d.getFullYear());
+    setMesIndex(d.getMonth());
+  }
+
   function abrirModalSlot(dia, periodo, salaKey) {
     if (!dia) return;
     const dataISO = formatISO(ano, mesIndex, dia);
@@ -225,52 +263,52 @@ function AgendaSalasAdmin() {
     const r = reservasMap[salaKey]?.[keySlot(dataISO, periodo)];
     return r ? (r.status || "pendente") : "livre";
   }
-  function labelStatus(status) {
-    switch (status) {
-      case "pendente":       return "Pendente";
-      case "aprovado":       return "Aprovado";
-      case "rejeitado":      return "Rejeitado";
-      case "cancelado":      return "Cancelado";
-      case "bloqueado":      return "Bloqueado (uso interno)";
-      case "bloqueado_dia":  return "Indisponível";
-      default:               return "Livre";
-    }
-  }
-  function classesStatus(status) {
-    switch (status) {
-      case "pendente":      return "bg-amber-100 text-amber-800 border border-amber-300";
-      case "aprovado":      return "bg-emerald-100 text-emerald-800 border border-emerald-300";
-      case "rejeitado":
-      case "cancelado":     return "bg-red-100 text-red-700 border border-red-300";
-      case "bloqueado":     return "bg-sky-100 text-sky-800 border border-sky-300";
-      case "bloqueado_dia": return "bg-slate-200 text-slate-600 border border-slate-300 cursor-not-allowed";
-      default:              return "bg-slate-50 text-slate-700 border border-slate-200 hover:bg-slate-100";
-    }
-  }
 
   function abrirRelatorioMensal() {
     const url = `${baseURL}/salas/admin/relatorio-mensal?ano=${ano}&mes=${mesIndex + 1}`;
     window.open(url, "_blank", "noopener,noreferrer");
   }
 
+  /* ───────── Ministats (no topo) ───────── */
+  const totalMes = useMemo(() => {
+    // conta quantos slots têm reserva (aprovado ou pendente) no mês
+    let count = 0;
+    Object.values(reservasMap.auditorio).forEach(() => count++);
+    Object.values(reservasMap.sala_reuniao).forEach(() => count++);
+    return count;
+  }, [reservasMap]);
+
+  const totalAprovados = useMemo(() => {
+    const ok = (obj) => Object.values(obj).filter((r) => r?.status === "aprovado").length;
+    return ok(reservasMap.auditorio) + ok(reservasMap.sala_reuniao);
+  }, [reservasMap]);
+
+  const totalPendentes = useMemo(() => {
+    const ok = (obj) => Object.values(obj).filter((r) => r?.status === "pendente").length;
+    return ok(reservasMap.auditorio) + ok(reservasMap.sala_reuniao);
+  }, [reservasMap]);
+
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50">
-      {/* HeaderHero */}
-      <header className="bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-500 text-white shadow-lg">
+    <div className="min-h-screen flex flex-col bg-gradient-to-b from-emerald-50 to-white dark:from-gray-900 dark:to-gray-950 text-gray-900 dark:text-gray-100">
+      {/* HeaderHero premium */}
+      <header className="bg-gradient-to-br from-emerald-700 via-emerald-600 to-teal-600 text-white shadow-lg">
+        <a href="#conteudo" className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2">
+          Ir para o conteúdo
+        </a>
+
         <div className="max-w-6xl mx-auto px-4 py-6 sm:py-8">
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div className="flex items-center gap-3">
               <div className="p-2 sm:p-3 bg-white/10 rounded-2xl">
-                <CalendarDays className="w-7 h-7 sm:w-8 sm:h-8" />
+                <CalendarDays className="w-7 h-7 sm:w-8 sm:h-8" aria-hidden="true" />
               </div>
               <div>
-                <h1 className="text-xl sm:text-2xl font-semibold">
-                  Agenda de Salas – Administração
+                <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">
+                  Agenda de Salas — Administração
                 </h1>
-                <p className="text-sm sm:text-base text-emerald-50">
-                  Visualize simultaneamente o <strong>Auditório</strong> e a{" "}
-                  <strong>Sala de Reunião</strong> (manhã/tarde), com bloqueio automático
-                  de fins de semana, feriados e pontos facultativos.
+                <p className="text-sm sm:text-base text-emerald-50/90 flex items-center gap-1">
+                  <MapPin className="w-4 h-4" />
+                  Auditório & Sala de Reunião • períodos separados (“Manhã” e “Tarde”)
                 </p>
               </div>
             </div>
@@ -307,62 +345,100 @@ function AgendaSalasAdmin() {
               </button>
             </div>
           </div>
+
+          {/* Ministats do mês atual */}
+          <div className="mt-4 grid grid-cols-3 gap-2 sm:gap-3 max-w-6xl">
+            <div className="rounded-2xl bg-white/10 px-3 py-2">
+              <p className="text-[11px] uppercase tracking-wide text-emerald-100">Reservas no mês</p>
+              <p className="text-xl font-extrabold flex items-center gap-1">
+                {loading ? <Skeleton width={40} /> : totalMes}
+                <Sparkles className="w-4 h-4" />
+              </p>
+            </div>
+            <div className="rounded-2xl bg-white/10 px-3 py-2">
+              <p className="text-[11px] uppercase tracking-wide text-emerald-100">Aprovadas</p>
+              <p className="text-xl font-extrabold">{loading ? <Skeleton width={40} /> : totalAprovados}</p>
+            </div>
+            <div className="rounded-2xl bg-white/10 px-3 py-2">
+              <p className="text-[11px] uppercase tracking-wide text-emerald-100">Pendentes</p>
+              <p className="text-xl font-extrabold">{loading ? <Skeleton width={40} /> : totalPendentes}</p>
+            </div>
+          </div>
         </div>
       </header>
 
       {/* Conteúdo */}
       <main id="conteudo" className="flex-1 max-w-6xl mx-auto w-full px-4 py-6 sm:py-8">
-        {/* Barra de controles */}
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <button className="p-2 rounded-full bg-white shadow hover:bg-slate-50" onClick={() => mudarMes(-1)}>
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <div className="text-center">
-              <p className="text-sm text-slate-500">Mês</p>
-              <p className="text-base sm:text-lg font-semibold text-slate-800">
-                {NOMES_MESES[mesIndex]} {ano}
-              </p>
-            </div>
-            <button className="p-2 rounded-full bg-white shadow hover:bg-slate-50" onClick={() => mudarMes(1)}>
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-
-          <div className="flex flex-col sm:flex-row gap-2 sm:items-center text-xs sm:text-sm text-slate-600">
-            <span className="px-3 py-1 rounded-full bg-emerald-50 border border-emerald-100">
-              Visualizando: Auditório + Sala de Reunião
-            </span>
-            {loading && (
-              <div className="flex items-center gap-2 text-xs text-slate-500">
-                <Skeleton width={80} height={20} />
+        {/* Barra de controles (sticky) */}
+        <div className="sticky top-0 z-10 -mx-4 px-4 py-3 bg-gradient-to-b from-white/85 to-white/60 dark:from-gray-950/80 dark:to-gray-950/40 backdrop-blur border-b border-white/50 dark:border-gray-800 mb-4">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-2">
+              <button
+                className="p-2 rounded-full bg-white shadow hover:bg-slate-50 dark:bg-zinc-800 dark:hover:bg-zinc-700"
+                onClick={() => mudarMes(-1)}
+                aria-label="Mês anterior"
+                title="Mês anterior (atalho ←)"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <div className="text-center">
+                <p className="text-xs text-slate-500 dark:text-slate-300">Mês</p>
+                <p className="text-base sm:text-lg font-semibold text-slate-800 dark:text-white">
+                  {NOMES_MESES[mesIndex]} {ano}
+                </p>
               </div>
-            )}
+              <button
+                className="p-2 rounded-full bg-white shadow hover:bg-slate-50 dark:bg-zinc-800 dark:hover:bg-zinc-700"
+                onClick={() => mudarMes(1)}
+                aria-label="Próximo mês"
+                title="Próximo mês (atalho →)"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+              <button
+                className="ml-2 px-3 py-1.5 rounded-xl text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
+                onClick={hojeClick}
+                aria-label="Ir para o mês atual"
+              >
+                Hoje
+              </button>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2 sm:items-center text-xs sm:text-sm text-slate-700 dark:text-slate-300">
+              <span className="px-3 py-1 rounded-full bg-emerald-50 border border-emerald-100 text-emerald-900 dark:bg-emerald-900/30 dark:border-emerald-800 dark:text-emerald-200">
+                Visualizando: Auditório + Sala de Reunião
+              </span>
+              {loading && (
+                <div className="flex items-center gap-2 text-xs text-slate-500">
+                  <Skeleton width={80} height={20} />
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
         {/* Atalho feriados/bloqueios */}
-        <div className="mb-3 rounded-xl bg-emerald-50 border border-emerald-100 px-3 py-2 text-[11px] sm:text-xs text-emerald-900 flex items-center justify-between gap-2">
+        <div className="mb-3 rounded-xl bg-emerald-50 border border-emerald-100 px-3 py-2 text-[11px] sm:text-xs text-emerald-900 dark:bg-emerald-900/20 dark:border-emerald-900 dark:text-emerald-200 flex items-center justify-between gap-2">
           <div className="flex items-start gap-2">
-            <Info className="w-4 h-4 mt-0.5 text-emerald-700" />
+            <Info className="w-4 h-4 mt-0.5 text-emerald-700 dark:text-emerald-300" />
             <p>
-              Os <strong>feriados</strong>, <strong>pontos facultativos</strong> e{" "}
+              <strong>Feriados</strong>, <strong>pontos facultativos</strong> e{" "}
               <strong>datas bloqueadas</strong> deixam o dia indisponível para agendamento.
             </p>
           </div>
           <button
-  type="button"
-  onClick={() => navigate("/admin/calendario-bloqueios")}
-  className="inline-flex px-3 py-1 rounded-full text-[11px] border border-emerald-300 text-emerald-800 hover:bg-emerald-100"
->
-  Gerenciar feriados
-</button>
+            type="button"
+            onClick={() => navigate("/admin/calendario-bloqueios")}
+            className="inline-flex px-3 py-1 rounded-full text-[11px] border border-emerald-300 text-emerald-800 hover:bg-emerald-100 dark:border-emerald-700 dark:text-emerald-200 dark:hover:bg-emerald-900/30"
+          >
+            Gerenciar feriados
+          </button>
         </div>
 
         {/* Legenda */}
         <div className="mb-4 flex flex-wrap gap-2 text-xs sm:text-sm">
           <span className="inline-flex items-center gap-1">
-            <span className="w-3 h-3 rounded-full bg-slate-50 border border-slate-200" /> Livre
+            <span className="w-3 h-3 rounded-full bg-slate-50 border border-slate-200 dark:bg-zinc-800 dark:border-zinc-700" /> Livre
           </span>
           <span className="inline-flex items-center gap-1">
             <span className="w-3 h-3 rounded-full bg-amber-100 border border-amber-300" /> Pendente
@@ -371,7 +447,7 @@ function AgendaSalasAdmin() {
             <span className="w-3 h-3 rounded-full bg-emerald-100 border border-emerald-300" /> Aprovado
           </span>
           <span className="inline-flex items-center gap-1">
-            <span className="w-3 h-3 rounded-full bg-red-100 border border-red-300" /> Cancelado/Rejeitado
+            <span className="w-3 h-3 rounded-full bg-rose-100 border border-rose-300" /> Cancelado/Rejeitado
           </span>
           <span className="inline-flex items-center gap-1">
             <span className="w-3 h-3 rounded-full bg-sky-100 border border-sky-300" /> Bloqueado (uso interno)
@@ -379,20 +455,20 @@ function AgendaSalasAdmin() {
         </div>
 
         {/* Calendário */}
-        <section className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-          <div className="grid grid-cols-7 bg-slate-50 border-b border-slate-100 text-xs sm:text-sm">
+        <section className="bg-white dark:bg-zinc-900 rounded-2xl shadow-sm border border-slate-100 dark:border-zinc-800 overflow-hidden">
+          <div className="grid grid-cols-7 bg-slate-50 dark:bg-zinc-800 border-b border-slate-100 dark:border-zinc-800 text-xs sm:text-sm">
             {DIAS_SEMANA.map((d) => (
-              <div key={d} className="py-2 text-center font-medium text-slate-600 uppercase">{d}</div>
+              <div key={d} className="py-2 text-center font-medium text-slate-600 dark:text-slate-200 uppercase">{d}</div>
             ))}
           </div>
 
-          <div className="divide-y divide-slate-100">
+          <div className="divide-y divide-slate-100 dark:divide-zinc-800">
             {semanas.map((semana, idxSemana) => (
               <div key={idxSemana} className="grid grid-cols-7">
                 {semana.map((dia, idxDia) => {
                   if (!dia) {
                     return (
-                      <div key={idxDia} className="min-h-[110px] sm:min-h-[140px] border-r border-slate-100 bg-slate-50/40" />
+                      <div key={idxDia} className="min-h-[120px] sm:min-h-[160px] border-r border-slate-100 dark:border-zinc-800 bg-slate-50/40 dark:bg-zinc-900/40" />
                     );
                   }
 
@@ -410,14 +486,12 @@ function AgendaSalasAdmin() {
                     return (
                       <div
                         key={idxDia}
-                        className="min-h-[130px] sm:min-h-[170px] border-r border-slate-100 p-1.5 sm:p-2 flex flex-col bg-slate-50/40"
+                        className="min-h-[120px] sm:min-h-[160px] border-r border-slate-100 dark:border-zinc-800 p-1.5 sm:p-2 flex flex-col bg-slate-50/40 dark:bg-zinc-900/30"
+                        title={ehFeriado ? "Feriado/Ponto facultativo" : "Indisponível"}
+                        aria-label="Dia indisponível para agendamento"
                       >
                         <div className="flex items-center justify-between mb-1">
-                          <span
-                            className={`text-xs sm:text-sm font-medium ${
-                              eHoje ? "text-emerald-600" : "text-slate-500"
-                            }`}
-                          >
+                          <span className={`text-xs sm:text-sm font-semibold ${eHoje ? "text-emerald-600 dark:text-emerald-400" : "text-slate-500 dark:text-slate-400"}`}>
                             {dia}
                           </span>
                         </div>
@@ -428,32 +502,32 @@ function AgendaSalasAdmin() {
                   return (
                     <div
                       key={idxDia}
-                      className="min-h-[130px] sm:min-h-[170px] border-r border-slate-100 p-1.5 sm:p-2 flex flex-col"
+                      className="min-h-[120px] sm:min-h-[160px] border-r border-slate-100 dark:border-zinc-800 p-1.5 sm:p-2 flex flex-col"
                     >
                       <div className="flex items-center justify-between mb-1">
-                        <span
-                          className={`text-xs sm:text-sm font-medium ${
-                            eHoje ? "text-emerald-600" : "text-slate-700"
-                          }`}
-                        >
+                        <span className={`text-xs sm:text-sm font-semibold ${eHoje ? "text-emerald-600 dark:text-emerald-400" : "text-slate-700 dark:text-slate-200"}`}>
                           {dia}
                         </span>
                       </div>
 
-                      <div className="flex flex-col gap-1.5 mt-auto">
+                      <div className="flex flex-col gap-2 mt-auto">
                         {["sala_reuniao","auditorio"].map((salaKey) => {
                           const cap = CAPACIDADES_SALA[salaKey];
 
                           return (
-                            <div key={salaKey} className="rounded-lg border border-slate-100 bg-slate-50/70">
+                            <div
+                              key={salaKey}
+                              className="rounded-xl border border-slate-100 dark:border-zinc-800 bg-slate-50/70 dark:bg-zinc-800/60 shadow-sm"
+                            >
                               {/* Título da sala centralizado */}
                               <div className="flex items-center justify-center px-2 pt-1">
-                                <span className="text-[11px] font-semibold text-slate-600">
+                                <span className="text-[11px] font-bold tracking-wide text-slate-700 dark:text-zinc-200">
                                   {cap.labelCurta}
                                 </span>
                               </div>
 
-                              <div className="px-1 pb-1 pt-1 flex flex-col gap-1">
+                              {/* Caixinhas separadas para Manhã e Tarde */}
+                              <div className="px-1 pb-1 pt-1 grid grid-cols-1 gap-1.5">
                                 {PERIODOS.map((p) => {
                                   const status = getStatusSlot(dataISO, p.value, salaKey);
                                   const disabled = status === "bloqueado_dia";
@@ -472,13 +546,17 @@ function AgendaSalasAdmin() {
                                       key={p.value}
                                       type="button"
                                       onClick={() => !disabled && abrirModalSlot(dia, p.value, salaKey)}
-                                      className={`w-full text-left text-[11px] sm:text-xs px-2 py-1.5 rounded-xl flex items-start justify-between gap-2 transition ${classesStatus(status)} ${disabled ? "cursor-not-allowed" : ""}`}
+                                      className={`w-full text-left text-[11px] sm:text-xs px-2 py-2 rounded-xl flex items-start justify-between gap-2 transition ${classesStatus(status)} ${disabled ? "cursor-not-allowed" : "focus:outline-none focus:ring-2 focus:ring-emerald-500/60"}`}
+                                      aria-label={`${cap.labelCurta}, ${p.label}, ${textoDireita}`}
+                                      title={`${cap.labelCurta} • ${p.label} • ${textoDireita}`}
                                     >
-                                      <span className="font-medium shrink-0">{p.label}</span>
-                                      <span
-                                        className="text-[10px] leading-snug break-words whitespace-normal text-right flex-1"
-                                        title={textoDireita}
-                                      >
+                                      {/* Rótulo do período em chip independente */}
+                                      <span className="font-semibold shrink-0 px-1.5 py-0.5 rounded-md bg-white/60 text-slate-800 border border-white/70 dark:bg-zinc-900/40 dark:text-zinc-100 dark:border-zinc-700">
+                                        {p.label}
+                                      </span>
+
+                                      {/* Texto/descrição do status/uso */}
+                                      <span className="text-[10px] leading-snug break-words whitespace-normal text-right flex-1">
                                         {textoDireita}
                                       </span>
                                     </button>
@@ -495,6 +573,15 @@ function AgendaSalasAdmin() {
               </div>
             ))}
           </div>
+
+          {/* Estado vazio elegante */}
+          {!loading &&
+            !Object.keys(reservasMap.auditorio).length &&
+            !Object.keys(reservasMap.sala_reuniao).length && (
+              <div className="p-6 text-center text-sm text-slate-500 dark:text-slate-300">
+                Nenhuma reserva localizada para {NOMES_MESES[mesIndex]} / {ano}. Clique em um período para criar.
+              </div>
+            )}
         </section>
       </main>
 

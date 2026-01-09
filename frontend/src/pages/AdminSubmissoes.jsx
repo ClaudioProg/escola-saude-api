@@ -1,5 +1,5 @@
 // 📁 src/pages/AdminSubmissoes.jsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Loader2,
@@ -11,20 +11,26 @@ import {
   Paperclip,
   Download,
   Mic,
+  X,
+  ChevronLeft,
+  ChevronRight,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  RotateCcw,
 } from "lucide-react";
+import { useLocation, useNavigate } from "react-router-dom";
 import api from "../services/api";
 import Footer from "../components/Footer";
 import { useOnceEffect } from "../hooks/useOnceEffect";
 import RankingModal from "../components/RankingModal";
 import RankingOralModal from "../components/RankingOralModal";
 import ModalAvaliadores from "../components/ModalAvaliadores";
-
-// ⬇️ novos modais externos
 import ModalDetalhesSubmissao from "../components/ModalDetalhesSubmissao";
 import ModalAtribuirAvaliadores from "../components/ModalAtribuirAvaliadores";
 
 /* ————————————————— Utils ————————————————— */
-const fmt = (v, alt = "—") => (v === 0 || !!v ? String(v) : alt);
+const fmt = (v, alt = "—") => (v === 0 || v ? String(v) : alt);
 const fmtNum = (v, d = 2) => Number(v ?? 0).toFixed(d);
 const fmtNota = (v) => (v === 0 || v ? fmtNum(v, 2) : "—");
 
@@ -44,13 +50,6 @@ function fmtDateTimeBR(v) {
   }
 }
 
-const fmtMonthBR = (yyyyMm) => {
-  const m = String(yyyyMm || "").trim();
-  if (!/^\d{4}-\d{2}$/.test(m)) return fmt(yyyyMm);
-  const [y, mo] = m.split("-");
-  return `${mo}/${y}`;
-};
-
 const linhaKeyFromSub = (s) =>
   String(
     s?.linha_tematica_id ??
@@ -60,7 +59,7 @@ const linhaKeyFromSub = (s) =>
       ""
   );
 
-/* ——— Aprovações parciais (alinhado com RankingModal e com o banco novo) ——— */
+// Aprovações parciais
 const hasAprovExposicao = (s) => {
   const escritaLower = String(s?.status_escrita || "").toLowerCase();
   const stLower = String(s?.status || "").toLowerCase();
@@ -71,7 +70,6 @@ const hasAprovExposicao = (s) => {
     Boolean(s?._exposicao_aprovada)
   );
 };
-
 const hasAprovOral = (s) => {
   const oralLower = String(s?.status_oral || "").toLowerCase();
   const stLower = String(s?.status || "").toLowerCase();
@@ -82,7 +80,7 @@ const hasAprovOral = (s) => {
   );
 };
 
-// ————————————————— Anexos helpers —————————————————
+// Anexos
 const truthy = (v) => {
   if (v == null) return false;
   if (typeof v === "string") {
@@ -93,7 +91,6 @@ const truthy = (v) => {
   if (Array.isArray(v)) return v.length > 0;
   return !!v;
 };
-
 const hasAnexoRaw = (s) => {
   const c = [
     s?.poster_nome, s?.posterNome, s?.poster_arquivo_nome, s?.nome_poster, s?.poster,
@@ -104,10 +101,9 @@ const hasAnexoRaw = (s) => {
   ];
   return c.some(truthy);
 };
-
 const hasAnexo = (s) => truthy(s?._hasAnexo) || hasAnexoRaw(s);
 
-/* ————————————————— Status + chips de aprovação ————————————————— */
+// Status
 function normalizarStatusPrincipal(raw) {
   const st = String(raw || "").toLowerCase();
   if (st === "rascunho") return "rascunho";
@@ -180,7 +176,7 @@ const handleExportCSV = (items = []) => {
     const dt =
       String(s.status || "").toLowerCase() === "rascunho"
         ? "—"
-        : fmtDateTimeBR(s.submetido_em || s.criado_em); // ⬅️ fallback robusto
+        : fmtDateTimeBR(s.submetido_em || s.criado_em);
 
     const st = String(s.status || "").toLowerCase();
     const statusPrincipal =
@@ -229,15 +225,53 @@ const handleExportCSV = (items = []) => {
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 };
 
+/* ————————————————— Helpers URL state ————————————————— */
+const useUrlState = () => {
+  const loc = useLocation();
+  const nav = useNavigate();
+
+  const get = useCallback(() => {
+    const sp = new URLSearchParams(loc.search);
+    return {
+      chamada: sp.get("chamada") || "",
+      status: sp.get("status") || "",
+      linha: sp.get("linha") || "",
+      q: sp.get("q") || "",
+      sort: sp.get("sort") || "",  // ex.: "titulo:asc"
+      page: Number(sp.get("page") || 1),
+      per: Number(sp.get("per") || 20),
+    };
+  }, [loc.search]);
+
+  const set = useCallback((patch) => {
+    const cur = get();
+    const next = { ...cur, ...patch };
+    const sp = new URLSearchParams();
+    if (next.chamada) sp.set("chamada", next.chamada);
+    if (next.status) sp.set("status", next.status);
+    if (next.linha) sp.set("linha", next.linha);
+    if (next.q) sp.set("q", next.q);
+    if (next.sort) sp.set("sort", next.sort);
+    if (next.page && next.page > 1) sp.set("page", String(next.page));
+    if (next.per && next.per !== 20) sp.set("per", String(next.per));
+    nav({ search: `?${sp.toString()}` }, { replace: true });
+  }, [get, nav]);
+
+  return { get, set };
+};
+
 /* ————————————————— Página principal ————————————————— */
 export default function AdminSubmissoes() {
+  const { get, set } = useUrlState();
+  const url = get();
+
   const [submissoes, setSubmissoes] = useState([]);
   const [oralOpen, setOralOpen] = useState(false);
-  const [filtroChamada, setFiltroChamada] = useState("");
-  const [filtroStatus, setFiltroStatus] = useState("");
-  const [filtroLinha, setFiltroLinha] = useState("");
-  const [busca, setBusca] = useState("");
-  const [debouncedBusca, setDebouncedBusca] = useState("");
+  const [filtroChamada, setFiltroChamada] = useState(url.chamada);
+  const [filtroStatus, setFiltroStatus] = useState(url.status);
+  const [filtroLinha, setFiltroLinha] = useState(url.linha);
+  const [busca, setBusca] = useState(url.q);
+  const [debouncedBusca, setDebouncedBusca] = useState(url.q);
   const [loading, setLoading] = useState(true);
   const [chamadas, setChamadas] = useState([]);
   const [detalheOpen, setDetalheOpen] = useState(false);
@@ -245,9 +279,15 @@ export default function AdminSubmissoes() {
   const [rankingOpen, setRankingOpen] = useState(false);
   const [avaliadoresOpen, setAvaliadoresOpen] = useState(false);
 
-  // ⬇️ novo estado para o modal de inclusão de avaliadores
+  // atribuição
   const [atribOpen, setAtribOpen] = useState(false);
   const [subIdAtrib, setSubIdAtrib] = useState(null);
+
+  // sort + paginação
+  const [sortKey, setSortKey] = useState(url.sort.split(":")[0] || "");
+  const [sortDir, setSortDir] = useState(url.sort.split(":")[1] || "asc");
+  const [page, setPage] = useState(url.page || 1);
+  const [perPage, setPerPage] = useState(url.per || 20);
 
   const unwrap = (r) => (Array.isArray(r) ? r : r?.data ?? []);
 
@@ -260,7 +300,6 @@ export default function AdminSubmissoes() {
           api.get("/admin/submissoes", { signal: ac.signal }),
           api.get("/chamadas/ativas", { signal: ac.signal }),
         ]);
-
         const base = unwrap(subs).map((it) => ({ ...it, _hasAnexo: hasAnexoRaw(it) }));
         setSubmissoes(base);
         setChamadas(unwrap(ch));
@@ -302,10 +341,18 @@ export default function AdminSubmissoes() {
     return () => ac.abort();
   }, []);
 
+  // debounce busca
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedBusca(busca), 200);
+    const t = setTimeout(() => setDebouncedBusca(busca), 250);
     return () => clearTimeout(t);
   }, [busca]);
+
+  // persistir no URL quando filtros/orden/paginação mudarem
+  useEffect(() => {
+    const sortVal = sortKey ? `${sortKey}:${sortDir}` : "";
+    set({ chamada: filtroChamada, status: filtroStatus, linha: filtroLinha, q: debouncedBusca, sort: sortVal, page, per: perPage });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtroChamada, filtroStatus, filtroLinha, debouncedBusca, sortKey, sortDir, page, perPage]);
 
   const linhasTematicas = useMemo(() => {
     const map = new Map();
@@ -321,8 +368,9 @@ export default function AdminSubmissoes() {
     );
   }, [submissoes]);
 
+  // filtro
   const filtradas = useMemo(() => {
-    const termo = debouncedBusca.trim().toLowerCase();
+    const termo = (debouncedBusca || "").trim().toLowerCase();
     return submissoes.filter((s) => {
       const matchChamada = !filtroChamada || Number(s.chamada_id) === Number(filtroChamada);
       const matchStatus = !filtroStatus
@@ -331,28 +379,101 @@ export default function AdminSubmissoes() {
           (filtroStatus === "aprovado_oral" && hasAprovOral(s)) ||
           ((filtroStatus !== "aprovado_escrita" && filtroStatus !== "aprovado_oral") && s.status === filtroStatus);
       const matchLinha = !filtroLinha || linhaKeyFromSub(s) === String(filtroLinha);
-      const matchBusca =
-        !termo ||
-        [s.titulo, s.autor_nome, s.autor_email, s.chamada_titulo, s.area_tematica, s.eixo, s.linha_tematica_nome, s.linha_tematica_codigo]
-          .map((v) => (v ? String(v).toLowerCase() : ""))
-          .some((t) => t.includes(termo));
+      const pool = [
+        s.titulo, s.autor_nome, s.autor_email, s.chamada_titulo,
+        s.area_tematica, s.eixo, s.linha_tematica_nome, s.linha_tematica_codigo
+      ].map((v) => (v ? String(v).toLowerCase() : ""));
+      const matchBusca = !termo || pool.some((t) => t.includes(termo));
       return matchChamada && matchStatus && matchLinha && matchBusca;
     });
   }, [submissoes, filtroChamada, filtroStatus, filtroLinha, debouncedBusca]);
 
+  // ordenação
+  const sorted = useMemo(() => {
+    if (!sortKey) return filtradas;
+    const dir = sortDir === "desc" ? -1 : 1;
+    const getVal = (s) => {
+      switch (sortKey) {
+        case "titulo": return (s.titulo || "").toLowerCase();
+        case "autor": return (s.autor_nome || "").toLowerCase();
+        case "chamada": return (s.chamada_titulo || "").toLowerCase();
+        case "linha": return ((s.linha_tematica_nome || s.linhaTematicaNome || "")).toLowerCase();
+        case "submetido":
+          return new Date(s.submetido_em || s.criado_em || 0).getTime() || 0;
+        case "nota_escrita": return Number(s.nota_escrita ?? -Infinity);
+        case "nota_oral": return Number(s.nota_oral ?? -Infinity);
+        case "nota_final": return Number(s.nota_final ?? -Infinity);
+        default: return "";
+      }
+    };
+    return [...filtradas].sort((a, b) => {
+      const va = getVal(a);
+      const vb = getVal(b);
+      if (va < vb) return -1 * dir;
+      if (va > vb) return 1 * dir;
+      return 0;
+    });
+  }, [filtradas, sortKey, sortDir]);
+
+  // paginação
+  const total = sorted.length;
+  const totalPages = Math.max(1, Math.ceil(total / perPage));
+  const pageClamped = Math.min(Math.max(1, page), totalPages);
+  const pageItems = useMemo(() => {
+    const start = (pageClamped - 1) * perPage;
+    return sorted.slice(start, start + perPage);
+  }, [sorted, pageClamped, perPage]);
+
+  // stats (sempre do conjunto total carregado)
   const stats = useMemo(() => {
-    const total = submissoes.length;
-    const aprovadas = submissoes.filter((s) =>
+    const sAll = submissoes;
+    const totalAll = sAll.length;
+    const aprovadas = sAll.filter((s) =>
       ["aprovado_oral", "aprovado_exposicao", "aprovado_escrita"].includes(String(s.status || "").toLowerCase())
     ).length;
-    const reprovadas = submissoes.filter((s) => String(s.status || "").toLowerCase() === "reprovado").length;
-    const emAvaliacao = submissoes.filter((s) => String(s.status || "").toLowerCase() === "em_avaliacao").length;
-    return { total, aprovadas, reprovadas, emAvaliacao };
+    const reprovadas = sAll.filter((s) => String(s.status || "").toLowerCase() === "reprovado").length;
+    const emAvaliacao = sAll.filter((s) => String(s.status || "").toLowerCase() === "em_avaliacao").length;
+    return { total: totalAll, aprovadas, reprovadas, emAvaliacao };
   }, [submissoes]);
+
+  const setSort = (key) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+    setPage(1);
+  };
+
+  const SortBtn = ({ label, active, dir, onClick }) => (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-1 font-semibold"
+      title={`Ordenar por ${label}`}
+    >
+      <span>{label}</span>
+      {!active && <ArrowUpDown className="w-4 h-4 opacity-70" />}
+      {active && (dir === "asc" ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />)}
+    </button>
+  );
+
+  const clearFilters = () => {
+    setFiltroChamada("");
+    setFiltroStatus("");
+    setFiltroLinha("");
+    setBusca("");
+    setDebouncedBusca("");
+    setSortKey("");
+    setSortDir("asc");
+    setPage(1);
+    setPerPage(20);
+  };
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-screen bg-gradient-to-br from-amber-50 to-yellow-100">
+      <div className="flex items-center justify-center h-screen bg-gradient-to-br from-amber-50 to-yellow-100 dark:from-zinc-950 dark:to-zinc-900">
         <Loader2 className="w-8 h-8 text-amber-600 animate-spin" />
       </div>
     );
@@ -362,141 +483,216 @@ export default function AdminSubmissoes() {
     <div className="min-h-screen flex flex-col bg-gelo dark:bg-zinc-950">
       <HeaderHero stats={stats} />
 
-      <main className="flex-1 px-4 sm:px-6 lg:px-8 2xl:px-10 py-10 mx-auto w-full space-y-10
-                       xl:max-w-[1680px] 2xl:max-w-[1920px]">
-        {/* Toolbar de ações (separada dos filtros) */}
-<section
-  className="bg-white dark:bg-zinc-900 rounded-2xl shadow p-5 border dark:border-zinc-800 space-y-4"
-  aria-label="Ações e filtros"
->
-  {/* Ações / botões */}
-  <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-    <div className="flex items-center gap-2">
-      <Filter className="w-5 h-5 text-amber-600" aria-hidden="true" />
-      <h2 className="font-semibold text-zinc-800 dark:text-zinc-100">Painel</h2>
-    </div>
+      <main className="flex-1 px-4 sm:px-6 lg:px-8 2xl:px-10 py-10 mx-auto w-full space-y-8 xl:max-w-[1680px] 2xl:max-w-[1920px]">
 
-    <div className="flex flex-1 flex-wrap gap-2 sm:justify-end">
-      <button
-        type="button"
-        onClick={() => setRankingOpen(true)}
-        className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-amber-700 text-white hover:bg-amber-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-700"
-        title="Abrir ranking"
-      >
-        <Award className="w-4 h-4" />
-        Ranking Escrita
-      </button>
+        {/* Toolbar de ações + filtros */}
+        <section className="bg-white dark:bg-zinc-900 rounded-2xl shadow p-5 border dark:border-zinc-800 space-y-4" aria-label="Ações e filtros">
+          {/* Ações */}
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <div className="flex items-center gap-2">
+              <Filter className="w-5 h-5 text-amber-600" aria-hidden="true" />
+              <h2 className="font-semibold text-zinc-800 dark:text-zinc-100">Painel</h2>
+            </div>
 
-      <button
-  onClick={() => setOralOpen(true)}
-  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700"
->
-  <Mic className="w-4 h-4" />
-  Ranking Oral
-</button>
+            <div className="flex flex-1 flex-wrap gap-2 sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setRankingOpen(true)}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-amber-700 text-white hover:bg-amber-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-700"
+                title="Abrir ranking (escrita)"
+              >
+                <Award className="w-4 h-4" />
+                Ranking Escrita
+              </button>
 
-      <button
-        type="button"
-        onClick={() => setAvaliadoresOpen(true)}
-        className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-600"
-        title="Ver avaliadores com encaminhamentos"
-      >
-        <Users className="w-4 h-4" />
-        Avaliadores
-      </button>
+              <button
+                onClick={() => setOralOpen(true)}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-indigo-600"
+                title="Abrir ranking (oral)"
+              >
+                <Mic className="w-4 h-4" />
+                Ranking Oral
+              </button>
 
-      <button
-        type="button"
-        onClick={() => handleExportCSV(filtradas)}
-        className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-slate-700 text-white hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-slate-700"
-        title="Exportar resumo (CSV)"
-      >
-        <Download className="w-4 h-4" />
-        Exportar CSV
-      </button>
-    </div>
-  </div>
+              <button
+                type="button"
+                onClick={() => setAvaliadoresOpen(true)}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-600"
+                title="Ver avaliadores com encaminhamentos"
+              >
+                <Users className="w-4 h-4" />
+                Avaliadores
+              </button>
 
-  {/* Filtros amplos */}
-  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-    <select
-      value={filtroChamada}
-      onChange={(e) => setFiltroChamada(e.target.value)}
-      className="border rounded-md px-3 py-2 text-sm w-full dark:border-zinc-700 dark:bg-zinc-800"
-      aria-label="Filtrar por chamada"
-    >
-      <option value="">Todas as chamadas</option>
-      {chamadas.map((c) => (
-        <option key={c.id} value={c.id}>{c.titulo}</option>
-      ))}
-    </select>
+              <button
+                type="button"
+                onClick={() => handleExportCSV(sorted)}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-slate-700 text-white hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-slate-700"
+                title="Exportar (CSV) filtrado/ordenado"
+              >
+                <Download className="w-4 h-4" />
+                Exportar CSV
+              </button>
 
-    <select
-      value={filtroStatus}
-      onChange={(e) => setFiltroStatus(e.target.value)}
-      className="border rounded-md px-3 py-2 text-sm w-full dark:border-zinc-700 dark:bg-zinc-800"
-      aria-label="Filtrar por status"
-    >
-      <option value="">Todos os status</option>
-      <option value="submetido">Submetido</option>
-      <option value="em_avaliacao">Em avaliação</option>
-      <option value="aprovado_exposicao">Aprovado (Exposição)</option>
-      <option value="aprovado_oral">Aprovado (Oral)</option>
-      <option value="aprovado_escrita">Aprovado (Escrita)</option>
-      <option value="reprovado">Reprovado</option>
-    </select>
+              <button
+                type="button"
+                onClick={clearFilters}
+                className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-zinc-100 text-zinc-800 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
+                title="Limpar filtros e ordenação"
+              >
+                <RotateCcw className="w-4 h-4" />
+                Limpar
+              </button>
+            </div>
+          </div>
 
-    <select
-      value={filtroLinha}
-      onChange={(e) => setFiltroLinha(e.target.value)}
-      className="border rounded-md px-3 py-2 text-sm w-full dark:border-zinc-700 dark:bg-zinc-800"
-      aria-label="Filtrar por linha temática"
-    >
-      <option value="">Todas as linhas</option>
-      {linhasTematicas.map((l) => (
-        <option key={l.id} value={l.id}>{l.nome}</option>
-      ))}
-    </select>
+          {/* Filtros */}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+            <select
+              value={filtroChamada}
+              onChange={(e) => { setFiltroChamada(e.target.value); setPage(1); }}
+              className="border rounded-md px-3 py-2 text-sm w-full dark:border-zinc-700 dark:bg-zinc-800"
+              aria-label="Filtrar por chamada"
+            >
+              <option value="">Todas as chamadas</option>
+              {chamadas.map((c) => (
+                <option key={c.id} value={c.id}>{c.titulo}</option>
+              ))}
+            </select>
 
-    <div className="relative">
-      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" aria-hidden="true" />
-      <input
-        value={busca}
-        onChange={(e) => setBusca(e.target.value)}
-        className="border rounded-md pl-9 pr-3 py-2 text-sm w-full dark:border-zinc-700 dark:bg-zinc-800"
-        placeholder="Buscar por título, autor, linha, eixo…"
-        aria-label="Buscar"
-      />
-    </div>
-  </div>
-</section>
+            <select
+              value={filtroStatus}
+              onChange={(e) => { setFiltroStatus(e.target.value); setPage(1); }}
+              className="border rounded-md px-3 py-2 text-sm w-full dark:border-zinc-700 dark:bg-zinc-800"
+              aria-label="Filtrar por status"
+            >
+              <option value="">Todos os status</option>
+              <option value="submetido">Submetido</option>
+              <option value="em_avaliacao">Em avaliação</option>
+              <option value="aprovado_exposicao">Aprovado (Exposição)</option>
+              <option value="aprovado_oral">Aprovado (Oral)</option>
+              <option value="aprovado_escrita">Aprovado (Escrita)</option>
+              <option value="reprovado">Reprovado</option>
+            </select>
+
+            <select
+              value={filtroLinha}
+              onChange={(e) => { setFiltroLinha(e.target.value); setPage(1); }}
+              className="border rounded-md px-3 py-2 text-sm w-full dark:border-zinc-700 dark:bg-zinc-800"
+              aria-label="Filtrar por linha temática"
+            >
+              <option value="">Todas as linhas</option>
+              {linhasTematicas.map((l) => (
+                <option key={l.id} value={l.id}>{l.nome}</option>
+              ))}
+            </select>
+
+            <div className="relative sm:col-span-2 lg:col-span-1">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" aria-hidden="true" />
+              <input
+                value={busca}
+                onChange={(e) => { setBusca(e.target.value); setPage(1); }}
+                className="border rounded-md pl-9 pr-9 py-2 text-sm w-full dark:border-zinc-700 dark:bg-zinc-800"
+                placeholder="Buscar título, autor, linha…"
+                aria-label="Buscar"
+              />
+              {busca && (
+                <button
+                  type="button"
+                  onClick={() => { setBusca(""); setDebouncedBusca(""); setPage(1); }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-700"
+                  aria-label="Limpar busca"
+                >
+                  <X className="w-4 h-4 text-zinc-500" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Estado do filtro/ordem e paginação compacta */}
+          <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-zinc-600 dark:text-zinc-300">
+            <span>
+              Exibindo <strong>{pageItems.length}</strong> de <strong>{total}</strong> resultados
+              { (filtroChamada || filtroStatus || filtroLinha || debouncedBusca) && " (após filtros)" }.
+            </span>
+            <div className="flex items-center gap-2">
+              <label className="flex items-center gap-1">
+                Itens por página
+                <select
+                  value={perPage}
+                  onChange={(e) => { setPerPage(Number(e.target.value)); setPage(1); }}
+                  className="ml-1 border rounded px-1 py-0.5 text-xs dark:border-zinc-700 dark:bg-zinc-800"
+                >
+                  {[10, 20, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </label>
+              <div className="inline-flex items-center gap-1">
+                <button
+                  className="p-1 rounded border dark:border-zinc-700 disabled:opacity-50"
+                  disabled={pageClamped <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  aria-label="Página anterior"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <span className="px-1">
+                  Página <strong>{pageClamped}</strong> / {totalPages}
+                </span>
+                <button
+                  className="p-1 rounded border dark:border-zinc-700 disabled:opacity-50"
+                  disabled={pageClamped >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  aria-label="Próxima página"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
 
         {/* Tabela (desktop) */}
         <section className="hidden md:block overflow-x-auto 2xl:overflow-x-visible bg-white dark:bg-zinc-900 rounded-2xl shadow border dark:border-zinc-800" aria-label="Tabela de submissões">
-         <table className="w-full table-auto text-sm">
+          <table className="w-full table-auto text-sm">
             <caption className="sr-only">Lista de submissões filtradas</caption>
-            <thead className="bg-amber-600 text-white">
+            <thead className="bg-amber-600 text-white sticky top-0 z-10">
               <tr>
-              <th scope="col" className="p-3 text-left w-[28%] min-w-[360px]">Título</th>
-                <th scope="col" className="p-3 text-left w-[16%] min-w-[220px]">Autor</th>
-                <th scope="col" className="p-3 text-left w-[16%] min-w-[220px]">Chamada</th>
-                <th scope="col" className="p-3 text-left w-[16%] min-w-[220px]">Linha temática</th>
-                <th scope="col" className="p-3 text-center w-[10%] min-w-[140px]">Submetido em</th>
+                <th scope="col" className="p-3 text-left w-[28%] min-w-[360px]">
+                  <SortBtn label="Título" active={sortKey==="titulo"} dir={sortDir} onClick={() => setSort("titulo")} />
+                </th>
+                <th scope="col" className="p-3 text-left w-[16%] min-w-[220px]">
+                  <SortBtn label="Autor" active={sortKey==="autor"} dir={sortDir} onClick={() => setSort("autor")} />
+                </th>
+                <th scope="col" className="p-3 text-left w-[16%] min-w-[220px]">
+                  <SortBtn label="Chamada" active={sortKey==="chamada"} dir={sortDir} onClick={() => setSort("chamada")} />
+                </th>
+                <th scope="col" className="p-3 text-left w-[16%] min-w-[220px]">
+                  <SortBtn label="Linha temática" active={sortKey==="linha"} dir={sortDir} onClick={() => setSort("linha")} />
+                </th>
+                <th scope="col" className="p-3 text-center w-[10%] min-w-[140px]">
+                  <SortBtn label="Submetido em" active={sortKey==="submetido"} dir={sortDir} onClick={() => setSort("submetido")} />
+                </th>
                 <th scope="col" className="p-3 text-center w-[10%] min-w-[140px]">Status</th>
-                <th scope="col" className="p-3 text-center w-[6%]  min-w-[90px]">Nota (escrita)</th>
-                <th scope="col" className="p-3 text-center w-[6%]  min-w-[90px]">Nota (oral)</th>
-                <th scope="col" className="p-3 text-center w-[6%]  min-w-[90px]">Nota (final)</th>
+                <th scope="col" className="p-3 text-center w-[6%]  min-w-[90px]">
+                  <SortBtn label="Nota (escrita)" active={sortKey==="nota_escrita"} dir={sortDir} onClick={() => setSort("nota_escrita")} />
+                </th>
+                <th scope="col" className="p-3 text-center w-[6%]  min-w-[90px]">
+                  <SortBtn label="Nota (oral)" active={sortKey==="nota_oral"} dir={sortDir} onClick={() => setSort("nota_oral")} />
+                </th>
+                <th scope="col" className="p-3 text-center w-[6%]  min-w-[90px]">
+                  <SortBtn label="Nota (final)" active={sortKey==="nota_final"} dir={sortDir} onClick={() => setSort("nota_final")} />
+                </th>
                 <th scope="col" className="p-3 text-center w-[12%] min-w-[180px]">Ações</th>
               </tr>
             </thead>
             <tbody>
-              {filtradas.length === 0 && (
+              {pageItems.length === 0 && (
                 <tr>
                   <td colSpan={10} className="text-center py-6 text-zinc-600">Nenhuma submissão encontrada.</td>
                 </tr>
               )}
 
-              {filtradas.map((s) => (
+              {pageItems.map((s) => (
                 <tr
                   key={s.id}
                   className={
@@ -579,13 +775,13 @@ export default function AdminSubmissoes() {
 
         {/* Cards (mobile) */}
         <section className="md:hidden grid grid-cols-1 gap-3" aria-label="Cards de submissões">
-          {filtradas.length === 0 && (
+          {pageItems.length === 0 && (
             <div className="text-center py-6 text-zinc-600 bg-white dark:bg-zinc-900 rounded-2xl shadow border dark:border-zinc-800">
               Nenhuma submissão encontrada.
             </div>
           )}
 
-          {filtradas.map((s) => (
+          {pageItems.map((s) => (
             <div key={s.id} className="bg-white dark:bg-zinc-900 rounded-2xl shadow border dark:border-zinc-800 p-4 space-y-2">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
@@ -653,11 +849,33 @@ export default function AdminSubmissoes() {
               </div>
             </div>
           ))}
+
+          {/* paginação mobile */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center gap-3 pt-2">
+              <button
+                className="px-3 py-1.5 rounded border dark:border-zinc-700 disabled:opacity-50"
+                disabled={pageClamped <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="text-sm">Página {pageClamped} / {totalPages}</span>
+              <button
+                className="px-3 py-1.5 rounded border dark:border-zinc-700 disabled:opacity-50"
+                disabled={pageClamped >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          )}
         </section>
       </main>
 
       <Footer />
 
+      {/* Modais */}
       <AnimatePresence>
         {detalheOpen && (
           <ModalDetalhesSubmissao
@@ -685,7 +903,7 @@ export default function AdminSubmissoes() {
             key="ranking-modal"
             open={rankingOpen}
             onClose={() => setRankingOpen(false)}
-            itens={filtradas}
+            itens={sorted}
             onStatusChange={(id, patch) => {
               setSubmissoes((prev) =>
                 prev.map((it) => {
@@ -731,11 +949,7 @@ export default function AdminSubmissoes() {
           />
         )}
 
-<RankingOralModal
-  open={oralOpen}
-  onClose={() => setOralOpen(false)}
-  itens={filtradas}
-/>
+        <RankingOralModal open={oralOpen} onClose={() => setOralOpen(false)} itens={sorted} />
 
         {avaliadoresOpen && (
           <ModalAvaliadores
@@ -773,8 +987,7 @@ function HeaderHero({ stats }) {
   return (
     <motion.header initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }} className="w-full text-white">
       <div className="bg-gradient-to-br from-amber-700 via-orange-600 to-yellow-600">
-      <div className="mx-auto px-4 sm:px-6 lg:px-8 2xl:px-10
-                 xl:max-w-[1680px] 2xl:max-w-[1920px] py-10 sm:py-12 text-center">
+        <div className="mx-auto px-4 sm:px-6 lg:px-8 2xl:px-10 xl:max-w-[1680px] 2xl:max-w-[1920px] py-10 sm:py-12 text-center">
           <div className="flex items-center justify-center gap-3">
             <ClipboardList className="h-9 w-9" aria-hidden="true" />
             <h1 className="text-2xl sm:text-3xl font-extrabold leading-tight text-center">Submissão de Trabalhos — Administração</h1>

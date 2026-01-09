@@ -9,21 +9,33 @@ import BadgeStatus from "./BadgeStatus";
 import { formatarDataBrasileira } from "../utils/data";
 
 /* ================================ Helpers ================================ */
+function sanitizeHHmm(v, fallback = "00:00") {
+  if (!v) return fallback;
+  const s = String(v).slice(0, 5);
+  return /^\d{2}:\d{2}$/.test(s) ? s : fallback;
+}
+
 function toDate(dateISO, timeHHmm = "00:00") {
   if (!dateISO) return null;
-  const t = /^\d{2}:\d{2}$/.test(String(timeHHmm)) ? timeHHmm : "00:00";
-  // string "YYYY-MM-DDTHH:mm:SS" sem timezone -> interpretada no fuso local
+  const t = sanitizeHHmm(timeHHmm, "00:00");
+  // "YYYY-MM-DDTHH:mm:SS" (sem timezone) → interpretada no fuso local
   return new Date(`${dateISO}T${t}:00`);
+}
+
+function isInvalidDate(d) {
+  return !(d instanceof Date) || Number.isNaN(d.getTime());
 }
 
 function getStatusByDateTime({ inicioISO, fimISO, hIni, hFim, agora }) {
   const start = toDate(inicioISO, hIni || "00:00");
-  const end = toDate(fimISO, hFim || "23:59");
-  if (!start || !end || Number.isNaN(start) || Number.isNaN(end)) return "desconhecido";
+  const end   = toDate(fimISO,   hFim || "23:59");
+
+  if (isInvalidDate(start) || isInvalidDate(end)) return "desconhecido";
   const now = agora ?? new Date();
+
   if (now < start) return "programado";
   if (now > end) return "encerrado";
-  return "andamento"; // 👈 chave esperada pelo BadgeStatus
+  return "em_andamento"; // ✅ compatível com <BadgeStatus />
 }
 
 function clamp(n, mi, ma) {
@@ -35,12 +47,10 @@ function clamp(n, mi, ma) {
 function resolveAssinanteNome(turma) {
   if (!turma) return null;
 
-  // 0) Se o backend já retornou o objeto completo
-  if (turma?.instrutor_assinante?.nome) {
-    return turma.instrutor_assinante.nome;
-  }
+  // 0) Backend já trouxe o objeto
+  if (turma?.instrutor_assinante?.nome) return turma.instrutor_assinante.nome;
 
-  // 1) Compatibilidade com o antigo (caso ainda exista em algum retorno)
+  // 1) Compat legado
   if (turma?.assinante_nome) return turma.assinante_nome;
 
   // 2) Novo campo oficial
@@ -56,7 +66,6 @@ function resolveAssinanteNome(turma) {
     const nome = typeof it === "object" ? it?.nome : null;
     if (id === assinanteId) return nome || null;
   }
-
   return null;
 }
 
@@ -77,12 +86,12 @@ export default function CardTurmaadministrador({
 }) {
   if (!turma) return null;
 
-  // Datas em ISO — pegamos só AAAA-MM-DD
+  // Datas em ISO — usamos só AAAA-MM-DD
   const inicioISO = turma?.data_inicio?.split("T")[0] || turma?.data_inicio || null;
   const fimISO    = turma?.data_fim?.split("T")[0]    || turma?.data_fim    || null;
 
-  const hIni = turma?.horario_inicio || null;
-  const hFim = turma?.horario_fim || null;
+  const hIni = sanitizeHHmm(turma?.horario_inicio || null, null);
+  const hFim = sanitizeHHmm(turma?.horario_fim || null, null);
 
   // "agora" baseado em hojeISO para previsibilidade (tests/SSR)
   const agora = hojeISO
@@ -90,8 +99,8 @@ export default function CardTurmaadministrador({
     : new Date();
 
   const statusKey = getStatusByDateTime({ inicioISO, fimISO, hIni, hFim, agora });
-  const eventoJaIniciado = statusKey === "andamento" || statusKey === "encerrado";
-  const dentroDoPeriodo  = statusKey === "andamento";
+  const eventoJaIniciado = statusKey === "em_andamento" || statusKey === "encerrado";
+  const dentroDoPeriodo  = statusKey === "em_andamento";
 
   // Ocupação
   const vagasTotais  = clamp(turma?.vagas_totais ?? turma?.vagas_total ?? turma?.vagas ?? turma?.capacidade ?? 0, 0, 10**9);
@@ -168,7 +177,7 @@ export default function CardTurmaadministrador({
             </div>
           )}
 
-          {/* 🆕 Tag do Assinante da Turma */}
+          {/* Tag do Assinante da Turma */}
           <div className="mt-1 text-[13px]">
             <span className="font-semibold text-zinc-700 dark:text-zinc-200 mr-1.5">Assinante:</span>
             <span

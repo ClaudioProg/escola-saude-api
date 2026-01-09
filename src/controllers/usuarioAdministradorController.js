@@ -1,20 +1,47 @@
 // 📁 src/controllers/usuarioAdministradorController.js
+/* eslint-disable no-console */
 const db = require("../db");
 
-/* ---------------- utils ---------------- */
+/* ─────────────────────────────────────────────────────────────
+   Helpers / Normalizações
+   ───────────────────────────────────────────────────────────── */
 function toPerfilArray(perfil) {
   if (Array.isArray(perfil)) {
     return perfil.map((p) => String(p || "").toLowerCase().trim()).filter(Boolean);
   }
   if (typeof perfil === "string") {
-    return perfil.split(",").map((p) => p.toLowerCase().trim()).filter(Boolean);
+    return perfil
+      .split(",")
+      .map((p) => p.toLowerCase().trim())
+      .filter(Boolean);
   }
   return [];
 }
+function uniq(arr) {
+  return Array.from(new Set(arr));
+}
+function toPerfilCsv(perfil) {
+  return uniq(toPerfilArray(perfil)).join(",");
+}
+function isEmail(v) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || "").trim());
+}
+function isAdmin(perfil) {
+  return toPerfilArray(perfil).includes("administrador");
+}
+function normStr(v) {
+  return String(v || "").trim();
+}
+function numOrNull(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+function clamp(n, min, max) {
+  return Math.min(Math.max(n, min), max);
+}
 
-// opcional: se você já tem esse helper noutro arquivo, pode remover daqui
+// Map simples de erros PG
 function traduzPgError(err) {
-  // mapeia alguns erros comuns do Postgres para mensagens amigáveis
   if (!err) return { erro: "Erro desconhecido." };
   if (err.code === "23505") return { erro: "Registro duplicado." };
   if (err.code === "23503") return { erro: "Violação de integridade referencial." };
@@ -22,10 +49,60 @@ function traduzPgError(err) {
   return { erro: err.message || "Erro de banco de dados." };
 }
 
-/* =============== LISTAR TODOS OS USUÁRIOS (ADMIN) =============== */
+/* ─────────────────────────────────────────────────────────────
+   LISTAR TODOS (ADMIN) — com filtros/paginação opcionais
+   GET /api/usuarios?q=&perfil=&unidade_id=&page=&pageSize=
+   - q: busca em nome/email/cpf
+   - perfil: csv (ex.: instrutor,administrador) → LIKE no CSV do banco
+   - unidade_id: number
+   - Retorna: { meta, data[] }  (mantém CSV em perfil por compat)
+   ───────────────────────────────────────────────────────────── */
 async function listarUsuarios(req, res) {
   try {
-    const { rows } = await db.query(`
+    const page = clamp(numOrNull(req.query.page) ?? 1, 1, 1000000);
+    const pageSize = clamp(numOrNull(req.query.pageSize) ?? 50, 1, 200);
+    const q = normStr(req.query.q);
+    const unidadeId = numOrNull(req.query.unidade_id);
+    const perfisFiltro = toPerfilArray(req.query.perfil); // csv → array minúsculo
+
+    const where = [];
+    const params = [];
+    let i = 1;
+
+    if (q) {
+      where.push(`(u.nome ILIKE $${i} OR u.email ILIKE $${i} OR u.cpf ILIKE $${i})`);
+      params.push(`%${q}%`);
+      i++;
+    }
+
+    if (unidadeId != null) {
+      where.push(`u.unidade_id = $${i++}`);
+      params.push(unidadeId);
+    }
+
+    if (perfisFiltro.length) {
+      // monta (LOWER(u.perfil) LIKE '%role1%' OR ... )
+      const ors = perfisFiltro.map((r) => {
+        params.push(`%${r}%`);
+        return `LOWER(u.perfil) LIKE $${i++}`;
+      });
+      where.push(`(${ors.join(" OR ")})`);
+    }
+
+    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+    // total
+    const totalQ = await db.query(
+      `SELECT COUNT(*)::int AS n FROM usuarios u ${whereSql}`,
+      params
+    );
+    const total = totalQ.rows[0]?.n || 0;
+
+    // paginação
+    const offset = (page - 1) * pageSize;
+
+    const rowsQ = await db.query(
+      `
       SELECT
         u.id,
         u.nome,
@@ -33,12 +110,11 @@ async function listarUsuarios(req, res) {
         u.email,
         u.registro,
         u.data_nascimento,
-        u.perfil,
+        u.perfil,           -- mantém CSV por compat
         u.unidade_id,
         u.escolaridade_id,
         u.cargo_id,
         u.deficiencia_id,
-        -- nomes quando existirem nas tabelas de apoio
         un.sigla AS unidade_sigla,
         un.nome  AS unidade_nome,
         es.nome  AS escolaridade_nome,
@@ -49,28 +125,36 @@ async function listarUsuarios(req, res) {
       LEFT JOIN escolaridades  es ON es.id = u.escolaridade_id
       LEFT JOIN cargos         ca ON ca.id = u.cargo_id
       LEFT JOIN deficiencias   de ON de.id = u.deficiencia_id
+      ${whereSql}
       ORDER BY u.nome ASC
-    `);
+      LIMIT $${i++} OFFSET $${i++}
+      `,
+      [...params, pageSize, offset]
+    );
 
-    // ⚠️ Se o front ainda espera string em u.perfil, NÃO converta aqui.
-    // Se você já adaptou o front para aceitar array, pode aplicar a conversão:
-    // const data = rows.map(u => ({ ...u, perfil: toPerfilArray(u.perfil) }));
-    const data = rows; // mantém como vem do banco (CSV)
+    const data = rowsQ.rows; // mantém perfil como CSV (retrocompat)
+    const pages = Math.max(1, Math.ceil(total / pageSize));
 
-    res.json(data);
+    return res.json({
+      meta: { total, page, pageSize, pages },
+      data,
+    });
   } catch (err) {
     console.error("❌ Erro ao listar usuários:", err);
-    res.status(500).json({ erro: "Erro ao listar usuários." });
+    return res.status(500).json({ erro: "Erro ao listar usuários." });
   }
 }
 
-/* ======= BUSCAR USUÁRIO POR ID (ADMIN OU O PRÓPRIO) ======= */
+/* ─────────────────────────────────────────────────────────────
+   BUSCAR POR ID (ADMIN ou o próprio)
+   GET /api/usuarios/:id
+   Retorna perfil como array (UX melhor)
+   ───────────────────────────────────────────────────────────── */
 async function buscarUsuarioPorId(req, res) {
   const { id } = req.params;
   const solicitante = req.user;
-  const isAdministrador = toPerfilArray(solicitante?.perfil).includes("administrador");
 
-  if (!isAdministrador && Number(id) !== Number(solicitante?.id)) {
+  if (!isAdmin(solicitante?.perfil) && Number(id) !== Number(solicitante?.id)) {
     return res.status(403).json({ erro: "Acesso negado." });
   }
 
@@ -104,64 +188,82 @@ async function buscarUsuarioPorId(req, res) {
       [id]
     );
 
-    if (rows.length === 0) return res.status(404).json({ erro: "Usuário não encontrado." });
+    if (!rows.length) return res.status(404).json({ erro: "Usuário não encontrado." });
     const u = rows[0];
-    res.json({ ...u, perfil: toPerfilArray(u.perfil) });
+    return res.json({ ...u, perfil: toPerfilArray(u.perfil) });
   } catch (err) {
     console.error("❌ Erro ao buscar usuário:", err);
-    res.status(500).json({ erro: "Erro ao buscar usuário." });
+    return res.status(500).json({ erro: "Erro ao buscar usuário." });
   }
 }
 
-/* ======= ATUALIZAR USUÁRIO (ADMIN OU O PRÓPRIO) ======= */
+/* ─────────────────────────────────────────────────────────────
+   ATUALIZAR (ADMIN ou o próprio)
+   PATCH/PUT /api/usuarios/:id
+   - Admin pode alterar perfil
+   - E-mail validado
+   - Retorna perfil como array
+   ───────────────────────────────────────────────────────────── */
 async function atualizarUsuario(req, res) {
   const { id } = req.params;
   const { nome, email, perfil } = req.body;
 
   const solicitante = req.user;
-  const isAdministrador = toPerfilArray(solicitante?.perfil).includes("administrador");
+  const ehAdmin = isAdmin(solicitante?.perfil);
 
-  if (!isAdministrador && Number(id) !== Number(solicitante?.id)) {
+  if (!ehAdmin && Number(id) !== Number(solicitante?.id)) {
     return res.status(403).json({ erro: "Acesso negado." });
   }
 
-  if (!nome || !email) {
-    return res.status(400).json({ erro: "Nome e e-mail são obrigatórios." });
+  const updates = [];
+  const vals = [];
+  let i = 1;
+
+  if (nome !== undefined) {
+    const n = normStr(nome);
+    if (!n) return res.status(400).json({ erro: "Nome é obrigatório." });
+    updates.push(`nome = $${i++}`); vals.push(n);
   }
 
-  // Só admin pode alterar perfil
-  let perfilFinalCsv;
-  if (perfil !== undefined && isAdministrador) {
-    const perfilValido = ["usuario", "instrutor", "administrador"];
-    const arr = toPerfilArray(perfil).filter((p) => perfilValido.includes(p));
-    perfilFinalCsv = arr.join(",");
+  if (email !== undefined) {
+    const e = normStr(email);
+    if (!e || !isEmail(e)) return res.status(400).json({ erro: "E-mail inválido." });
+    updates.push(`email = $${i++}`); vals.push(e);
   }
+
+  if (perfil !== undefined) {
+    if (!ehAdmin) {
+      return res.status(403).json({ erro: "Apenas administradores podem alterar perfil." });
+    }
+    const perfisValidos = ["usuario", "instrutor", "administrador"];
+    const csv = toPerfilCsv(
+      toPerfilArray(perfil).filter((p) => perfisValidos.includes(p))
+    );
+    if (!csv) return res.status(400).json({ erro: "Perfil inválido ou vazio." });
+    updates.push(`perfil = $${i++}`); vals.push(csv);
+  }
+
+  if (!updates.length) {
+    return res.status(400).json({ erro: "Nenhum campo válido para atualizar." });
+  }
+
+  vals.push(id);
 
   try {
-    const sets = ["nome = $1", "email = $2"];
-    const values = [nome, email];
-    let idx = 3;
-
-    if (perfilFinalCsv !== undefined) {
-      sets.push(`perfil = $${idx++}`);
-      values.push(perfilFinalCsv);
-    }
-
-    values.push(id);
-
     const { rows } = await db.query(
-      `UPDATE usuarios
-         SET ${sets.join(", ")}
-       WHERE id = $${idx}
+      `
+      UPDATE usuarios
+         SET ${updates.join(", ")}, atualizado_em = NOW()
+       WHERE id = $${i}
        RETURNING id, nome, cpf, email, registro, data_nascimento, perfil,
-                 unidade_id, escolaridade_id, cargo_id, deficiencia_id`,
-      values
+                 unidade_id, escolaridade_id, cargo_id, deficiencia_id
+      `,
+      vals
     );
 
-    if (rows.length === 0) return res.status(404).json({ erro: "Usuário não encontrado." });
-
+    if (!rows.length) return res.status(404).json({ erro: "Usuário não encontrado." });
     const u = rows[0];
-    res.json({ ...u, perfil: toPerfilArray(u.perfil) });
+    return res.json({ ...u, perfil: toPerfilArray(u.perfil) });
   } catch (err) {
     console.error("❌ Erro ao atualizar usuário:", err);
     const payload = traduzPgError(err);
@@ -170,32 +272,38 @@ async function atualizarUsuario(req, res) {
   }
 }
 
-/* =============== EXCLUIR USUÁRIO (ADMIN) =============== */
+/* ─────────────────────────────────────────────────────────────
+   EXCLUIR (ADMIN)
+   DELETE /api/usuarios/:id
+   ───────────────────────────────────────────────────────────── */
 async function excluirUsuario(req, res) {
   const { id } = req.params;
-  const isAdministrador = toPerfilArray(req.user?.perfil).includes("administrador");
-
-  if (!isAdministrador) return res.status(403).json({ erro: "Acesso negado." });
+  if (!isAdmin(req.user?.perfil)) {
+    return res.status(403).json({ erro: "Acesso negado." });
+  }
 
   try {
     const { rows } = await db.query(
       "DELETE FROM usuarios WHERE id = $1 RETURNING id, nome, cpf, email, perfil",
       [id]
     );
-    if (rows.length === 0) return res.status(404).json({ erro: "Usuário não encontrado." });
+    if (!rows.length) return res.status(404).json({ erro: "Usuário não encontrado." });
 
     const u = rows[0];
-    res.json({
+    return res.json({
       mensagem: "Usuário excluído com sucesso.",
       usuario: { ...u, perfil: toPerfilArray(u.perfil) },
     });
   } catch (err) {
     console.error("❌ Erro ao excluir usuário:", err);
-    res.status(500).json({ erro: "Erro ao excluir usuário." });
+    return res.status(500).json({ erro: "Erro ao excluir usuário." });
   }
 }
 
-/* =============== LISTAR INSTRUTORES (com métricas) =============== */
+/* ─────────────────────────────────────────────────────────────
+   LISTAR INSTRUTORES (com métricas)
+   Mantido seu CTE com média por desempenho do instrutor.
+   ───────────────────────────────────────────────────────────── */
 async function listarInstrutoresCore(_req, res) {
   try {
     const { rows } = await db.query(`
@@ -247,10 +355,10 @@ async function listarInstrutoresCore(_req, res) {
       possuiAssinatura: !!r.possui_assinatura,
     }));
 
-    res.json(instrutores);
+    return res.json(instrutores);
   } catch (err) {
     console.error("❌ Erro ao listar instrutores:", err);
-    res.status(500).json({ erro: "Erro ao listar instrutores." });
+    return res.status(500).json({ erro: "Erro ao listar instrutores." });
   }
 }
 
@@ -258,36 +366,42 @@ const listarInstrutores = listarInstrutoresCore;
 const listarInstrutor   = listarInstrutoresCore;
 const listarinstrutor   = listarInstrutoresCore;
 
-/* =============== ATUALIZAR PERFIL (ADMIN) =============== */
+/* ─────────────────────────────────────────────────────────────
+   ATUALIZAR PERFIL (apenas ADMIN)
+   PATCH /api/usuarios/:id/perfil
+   ───────────────────────────────────────────────────────────── */
 async function atualizarPerfil(req, res) {
   const { id } = req.params;
   const { perfil } = req.body;
 
-  if (!toPerfilArray(req.user?.perfil).includes("administrador")) {
+  if (!isAdmin(req.user?.perfil)) {
     return res.status(403).json({ erro: "Acesso negado." });
   }
 
-  const perfilValido = ["usuario", "instrutor", "administrador"];
-  const arr = toPerfilArray(perfil).filter((p) => perfilValido.includes(p));
-  const perfilCsv = arr.join(",");
-
+  const perfisValidos = ["usuario", "instrutor", "administrador"];
+  const perfilCsv = toPerfilCsv(
+    toPerfilArray(perfil).filter((p) => perfisValidos.includes(p))
+  );
   if (!perfilCsv) return res.status(400).json({ erro: "Perfil inválido ou vazio." });
 
   try {
     const { rows } = await db.query(
-      "UPDATE usuarios SET perfil = $1 WHERE id = $2 RETURNING id, nome, email, perfil",
+      "UPDATE usuarios SET perfil = $1, atualizado_em=NOW() WHERE id = $2 RETURNING id, nome, email, perfil",
       [perfilCsv, id]
     );
-    if (rows.length === 0) return res.status(404).json({ erro: "Usuário não encontrado." });
+    if (!rows.length) return res.status(404).json({ erro: "Usuário não encontrado." });
     const u = rows[0];
-    res.json({ ...u, perfil: toPerfilArray(u.perfil) });
+    return res.json({ ...u, perfil: toPerfilArray(u.perfil) });
   } catch (err) {
     console.error("❌ Erro ao atualizar perfil:", err);
-    res.status(500).json({ erro: "Erro ao atualizar perfil." });
+    return res.status(500).json({ erro: "Erro ao atualizar perfil." });
   }
 }
 
-/* =============== RESUMO POR USUÁRIO (cursos ≥75% e certificados) =============== */
+/* ─────────────────────────────────────────────────────────────
+   RESUMO POR USUÁRIO (cursos ≥75% e certificados)
+   Mantido seu cálculo (datas_turma + fallback; presença ≥ 75%)
+   ───────────────────────────────────────────────────────────── */
 async function getResumoUsuario(req, res) {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) {
@@ -361,7 +475,7 @@ async function getResumoUsuario(req, res) {
     ]);
 
     const cursos75 = Number(cursosQ?.rows?.[0]?.n || 0);
-    const certificados = Number(certsQ?.rows?.[0]?.n || 0);
+    const certificados = Number(cts = certsQ?.rows?.[0]?.n || 0);
     const cursos_concluidos_75 = Math.max(cursos75, certificados);
 
     return res.json({
@@ -374,12 +488,10 @@ async function getResumoUsuario(req, res) {
   }
 }
 
-/* =============== NOVO: LISTAR AVALIADORES ELEGÍVEIS =============== */
-/**
- * GET /api/usuarios/avaliadores?roles=instrutor,administrador
- * Usa o campo CSV `usuarios.perfil` para filtrar.
- * - Se `roles` não for informado, assume "instrutor,administrador".
- */
+/* ─────────────────────────────────────────────────────────────
+   LISTAR AVALIADORES ELEGÍVEIS
+   GET /api/usuarios/avaliadores?roles=instrutor,administrador
+   ───────────────────────────────────────────────────────────── */
 async function listarAvaliadoresElegiveis(req, res) {
   try {
     const rolesQuery = String(req.query.roles || "instrutor,administrador")
@@ -387,16 +499,16 @@ async function listarAvaliadoresElegiveis(req, res) {
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean);
 
-    // Monta condições dinâmicas com ILIKE no CSV de perfis
-    // Ex.: LOWER(u.perfil) LIKE '%instrutor%' OR LOWER(u.perfil) LIKE '%administrador%'
-    let whereSql = "";
+    // WHERE dinâmico
     const params = [];
-    if (rolesQuery.length > 0) {
-      const conds = rolesQuery.map((role, i) => {
+    let i = 1;
+    let whereSql = "";
+    if (rolesQuery.length) {
+      const ors = rolesQuery.map((role) => {
         params.push(`%${role}%`);
-        return `LOWER(u.perfil) LIKE $${params.length}`;
+        return `LOWER(u.perfil) LIKE $${i++}`;
       });
-      whereSql = `WHERE ${conds.join(" OR ")}`;
+      whereSql = `WHERE ${ors.join(" OR ")}`;
     }
 
     const { rows } = await db.query(
@@ -416,10 +528,10 @@ async function listarAvaliadoresElegiveis(req, res) {
       perfil: toPerfilArray(u.perfil),
     }));
 
-    res.json(data);
+    return res.json(data);
   } catch (err) {
     console.error("❌ Erro ao listar avaliadores elegíveis:", err);
-    res.status(500).json({ erro: "Erro ao listar avaliadores." });
+    return res.status(500).json({ erro: "Erro ao listar avaliadores." });
   }
 }
 
@@ -433,5 +545,5 @@ module.exports = {
   listarinstrutor,
   atualizarPerfil,
   getResumoUsuario,
-  listarAvaliadoresElegiveis, // 👈 novo export
+  listarAvaliadoresElegiveis,
 };

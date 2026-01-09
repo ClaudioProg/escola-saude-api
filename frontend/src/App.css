@@ -1,8 +1,8 @@
 /* ============================================================
    🎨 Escola da Saúde — Base premium (tokens + a11y + defaults)
    - Fonte de verdade do tema: <html class="dark"> (Tailwind)
-   - Este CSS NÃO deve “pintar” layout (AppShell faz isso)
-   - O "boot visual" (body bg/text) fica no index.css
+   - NÃO “pinta” layout; AppShell/Componentes fazem o visual
+   - Boot de bg/text: index.css
 ============================================================ */
 
 /* -----------------------------
@@ -20,6 +20,16 @@
   --brand-700: #15803d;
   --brand-800: #166534;
   --brand-900: #14532d;
+
+  /* Status (preferências do Cláudio) */
+  --status-ok:       #16a34a; /* programado → verde */
+  --status-warning:  #f59e0b; /* em andamento → amarelo */
+  --status-error:    #ef4444; /* encerrado → vermelho */
+
+  /* Gradientes de status (para HeaderHero/barras) */
+  --grad-ok:       linear-gradient(135deg, #16a34a 0%, #22c55e 55%, #86efac 100%);
+  --grad-warning:  linear-gradient(135deg, #d97706 0%, #f59e0b 55%, #fde68a 100%);
+  --grad-error:    linear-gradient(135deg, #b91c1c 0%, #ef4444 50%, #fecaca 100%);
 
   /* Base surfaces (light) */
   --bg: #ffffff;
@@ -49,7 +59,14 @@
   --dur-1: 120ms;
   --dur-2: 220ms;
 
+  /* Misc */
+  --focus-outline: 2px;
+  --focus-offset: 3px;
+  --kbd-bg: #111827;    /* zinc-900 */
+  --kbd-fg: #f9fafb;    /* zinc-50 */
+
   color-scheme: light;
+  accent-color: var(--brand-600);
 }
 
 /* Dark tokens quando <html class="dark"> */
@@ -69,6 +86,9 @@
   --shadow-md: 0 14px 40px rgba(0, 0, 0, 0.35);
   --shadow-lg: 0 30px 90px rgba(0, 0, 0, 0.55);
 
+  --kbd-bg: #e5e7eb;    /* zinc-200 */
+  --kbd-fg: #111827;    /* zinc-900 */
+
   color-scheme: dark;
 }
 
@@ -80,12 +100,18 @@
   }
 }
 
+/* Preferência por alto contraste */
+@media (prefers-contrast: more) {
+  :root, .dark {
+    --border: currentColor;
+    --ring: currentColor;
+  }
+}
+
 /* ---------------------------------
    Base: neutro (não pinta layout!)
 ---------------------------------- */
-html, body {
-  height: 100%;
-}
+html, body { height: 100%; }
 
 body {
   margin: 0;
@@ -93,6 +119,8 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   -webkit-overflow-scrolling: touch;
+  background: transparent;
+  color: inherit;
 }
 
 /* Root NÃO define layout visual */
@@ -110,9 +138,9 @@ body {
 /* A11y: foco por teclado */
 :focus { outline: none; }
 :focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 3px;
-  border-radius: 0.75rem;
+  outline: var(--focus-outline) solid var(--ring);
+  outline-offset: var(--focus-offset);
+  border-radius: var(--radius-sm);
 }
 
 /* Melhor tap highlight */
@@ -130,6 +158,31 @@ a {
 }
 a:hover { text-decoration: underline; }
 
+/* Teclas (kbd) acessíveis */
+kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: .85em;
+  padding: .2em .45em;
+  border-radius: .5rem;
+  background: var(--kbd-bg);
+  color: var(--kbd-fg);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm) inset;
+}
+
+/* Scrollbars (WebKit/Chromium) */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--fg) 20%, transparent);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--fg) 35%, transparent);
+}
+
 /* Motion */
 @media (prefers-reduced-motion: reduce) {
   * {
@@ -139,7 +192,9 @@ a:hover { text-decoration: underline; }
   }
 }
 
-/* Componentes genéricos (fallback) */
+/* ---------------------------------
+   Componentes genéricos (fallback)
+---------------------------------- */
 .card {
   padding: 1.5rem;
   background: var(--card);
@@ -155,15 +210,12 @@ a:hover { text-decoration: underline; }
   align-items: center;
   justify-content: center;
   gap: .5rem;
-
   padding: .75rem 1rem;
   border-radius: 1rem;
-
   font-weight: 700;
   background: var(--brand-900);
   color: #fff;
   border: 1px solid color-mix(in oklab, var(--brand-900) 70%, #000 0%);
-
   box-shadow: var(--shadow-sm);
   transition:
     transform var(--dur-1) var(--ease-out),
@@ -172,7 +224,7 @@ a:hover { text-decoration: underline; }
 }
 .btn:hover { background: var(--brand-800); filter: saturate(1.05); }
 .btn:active { transform: translateY(1px) scale(0.99); }
-.btn:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+.btn:focus-visible { outline: var(--focus-outline) solid var(--ring); outline-offset: var(--focus-offset); }
 
 /* Logo (se existir) */
 .logo {
@@ -183,7 +235,20 @@ a:hover { text-decoration: underline; }
 }
 .logo:hover { filter: drop-shadow(0 0 22px rgba(20, 83, 45, 0.45)); }
 
-/* react-calendar (premium, tokens) */
+/* ---------------------------------
+   Badges / barras de status prontos
+---------------------------------- */
+.badge--ok       { background: var(--grad-ok); color: #fff; }
+.badge--warning  { background: var(--grad-warning); color: #111; }
+.badge--error    { background: var(--grad-error); color: #111; }
+
+.bar--ok       { background: var(--grad-ok); }
+.bar--warning  { background: var(--grad-warning); }
+.bar--error    { background: var(--grad-error); }
+
+/* ---------------------------------
+   react-calendar (premium, tokens)
+---------------------------------- */
 .react-calendar {
   width: 100%;
   max-width: 100%;
@@ -202,7 +267,6 @@ a:hover { text-decoration: underline; }
   margin-bottom: .75rem;
   gap: .5rem;
 }
-
 .react-calendar__navigation button {
   background: transparent;
   border: 1px solid transparent;
@@ -235,18 +299,15 @@ a:hover { text-decoration: underline; }
   background-color: color-mix(in oklab, var(--brand-900) 10%, transparent);
   border-color: color-mix(in oklab, var(--brand-900) 18%, transparent);
 }
-
 .react-calendar__tile--active {
   background-color: var(--brand-900) !important;
   color: #fff !important;
   border-color: transparent !important;
   box-shadow: 0 8px 22px rgba(20, 83, 45, 0.25);
 }
-
 .react-calendar__tile--now {
   box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--brand-900) 45%, transparent);
 }
-
 .react-calendar__tile--range {
   background-color: color-mix(in oklab, var(--brand-900) 18%, transparent);
   color: #fff;
@@ -256,17 +317,45 @@ a:hover { text-decoration: underline; }
   background-color: var(--brand-900);
   color: #fff;
 }
-
 .react-calendar__tile:disabled {
   color: var(--muted);
   opacity: .55;
   cursor: not-allowed;
 }
-
 .dark .react-calendar__tile:enabled:hover,
 .dark .react-calendar__tile:enabled:focus-visible {
   background-color: color-mix(in oklab, var(--brand-900) 20%, transparent);
 }
+
+/* ---------------------------------
+   Utilitários A11y / helpers visuais
+---------------------------------- */
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0,0,0,0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.divider {
+  height: 1px;
+  background: var(--border);
+  border: 0;
+  margin: 1rem 0;
+}
+
+.kpi {
+  display: inline-flex;
+  align-items: baseline;
+  gap: .5rem;
+  font-weight: 700;
+}
+.kpi small { color: var(--muted); font-weight: 500; }
 
 /* Mobile refinements */
 @media (max-width: 480px) {

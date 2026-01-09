@@ -1,71 +1,170 @@
 // 📁 src/controllers/salasController.js
+/* eslint-disable no-console */
 const { query, getClient } = require("../db");
-const IS_DEV = process.env.NODE_ENV !== "production";
+
+const IS_PROD = process.env.NODE_ENV === "production";
+const IS_DEV = !IS_PROD;
 
 /* ======================================================================= */
-/* Helpers de data (sem surpresas de fuso)                                 */
+/* Logs premium (com requestId)                                             */
+/* ======================================================================= */
+function rid() {
+  return `rid=${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
+function log(r, ...a) {
+  if (IS_DEV) console.log("[salas]", r, ...a);
+}
+function warn(r, ...a) {
+  console.warn("[salas][WARN]", r, ...a);
+}
+function errlog(r, ...a) {
+  console.error("[salas][ERR]", r, ...a);
+}
+
+/* ======================================================================= */
+/* Helpers de data (sem surpresas de fuso)                                  */
+/* - Trabalhamos com "datas-only" como string YYYY-MM-DD                    */
+/* - Quando precisamos de Date, fixamos 12:00 local para não “pular dia”     */
 /* ======================================================================= */
 
-function parseISODate(dateStr) {
-  return new Date(`${dateStr}T12:00:00`);
+function isISODateOnly(s) {
+  return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+}
+
+function parseISODateOnly(dateStr) {
+  // "YYYY-MM-DD" -> Date local com 12:00 (evita offset)
+  if (!isISODateOnly(dateStr)) return null;
+  const d = new Date(`${dateStr}T12:00:00`);
+  return Number.isNaN(d.getTime()) ? null : d;
 }
 
 function toISODateString(dateObj) {
+  if (!(dateObj instanceof Date) || Number.isNaN(dateObj.getTime())) return null;
   const y = dateObj.getFullYear();
   const m = String(dateObj.getMonth() + 1).padStart(2, "0");
   const d = String(dateObj.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
 }
 
-function isWeekend(dateStr) {
-  const d = parseISODate(dateStr);
-  const dow = d.getDay(); // 0 = domingo, 6 = sábado (local)
-  return dow === 0 || dow === 6;
-}
-
 function hojeISO() {
   return toISODateString(new Date());
 }
 
+function isWeekend(dateStr) {
+  const d = parseISODateOnly(dateStr);
+  if (!d) return false;
+  const dow = d.getDay(); // 0 domingo, 6 sábado
+  return dow === 0 || dow === 6;
+}
+
 /* ======================================================================= */
-/* Helper para ano/mês com fallback seguro                                 */
+/* Helpers de validação                                                     */
 /* ======================================================================= */
 
+function asInt(v) {
+  const n = Number.parseInt(String(v ?? ""), 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+function normStr(v, { max = 500 } = {}) {
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  return s.length > max ? s.slice(0, max) : s;
+}
+
+function normSala(v) {
+  const s = normStr(v, { max: 50 });
+  if (!s) return null;
+  // se você tem valores fixos, valide aqui:
+  // const allowed = new Set(["auditorio", "sala_reuniao"]);
+  // if (!allowed.has(s)) return null;
+  return s;
+}
+
+function normPeriodo(v) {
+  const p = normStr(v, { max: 20 });
+  return p || null;
+}
+
+function capacidadeMaxSala(sala) {
+  return sala === "auditorio" ? 60 : 30;
+}
+
+/* ======================================================================= */
+/* Helper para ano/mês com fallback seguro                                  */
+/* ======================================================================= */
 function getAnoMesFromQuery(queryObj) {
   const now = new Date();
-  let ano = Number(queryObj.ano);
-  let mes = Number(queryObj.mes); // 1-12
+  let ano = asInt(queryObj.ano);
+  let mes = asInt(queryObj.mes); // 1-12
 
-  if (!Number.isFinite(ano) || ano < 2000 || ano > 2100) {
-    ano = now.getFullYear();
-  }
-  if (!Number.isFinite(mes) || mes < 1 || mes > 12) {
-    mes = now.getMonth() + 1; // 1-12
-  }
+  if (!ano || ano < 2000 || ano > 2100) ano = now.getFullYear();
+  if (!mes || mes < 1 || mes > 12) mes = now.getMonth() + 1;
 
   return { ano, mes };
 }
 
 /* ======================================================================= */
-/* GET /api/salas/agenda-admin                                             */
-/* Query params: ano, mes (1-12), sala (opcional)                          */
+/* Bloqueios (feriado/ponto/bloqueio interno)                               */
 /* ======================================================================= */
+async function datasBloqueadasISO(datasISO) {
+  if (!Array.isArray(datasISO) || datasISO.length === 0) return new Set();
 
+  const { rows } = await query(
+    `
+    SELECT data::date AS d, tipo
+      FROM calendario_bloqueios
+     WHERE data = ANY($1::date[])
+       AND tipo = ANY(ARRAY[
+         'feriado_nacional'::varchar,
+         'feriado_municipal'::varchar,
+         'ponto_facultativo'::varchar,
+         'bloqueio_interno'::varchar
+       ])
+    `,
+    [datasISO]
+  );
+
+  // d pode vir como Date (pg) ou string dependendo do driver/config
+  const set = new Set(
+    rows
+      .map((r) => {
+        if (!r?.d) return null;
+        if (typeof r.d === "string") return r.d.slice(0, 10);
+        if (r.d instanceof Date) return toISODateString(r.d);
+        return null;
+      })
+      .filter(Boolean)
+  );
+
+  return set;
+}
+
+async function isDataBloqueada(dataISO) {
+  const set = await datasBloqueadasISO([dataISO]);
+  return set.has(dataISO);
+}
+
+/* ======================================================================= */
+/* GET /api/salas/agenda-admin                                              */
+/* Query params: ano, mes (1-12), sala (opcional)                           */
+/* ======================================================================= */
 async function listarAgendaAdmin(req, res) {
+  const r = rid();
   try {
-    const ano = parseInt(req.query.ano, 10) || new Date().getFullYear();
-    const mes = parseInt(req.query.mes, 10) || (new Date().getMonth() + 1);
-    const sala = req.query.sala && req.query.sala.trim() ? req.query.sala.trim() : null;
+    const { ano, mes } = getAnoMesFromQuery(req.query);
+    const sala = normSala(req.query.sala);
 
-    console.log("[listarAgendaAdmin] query recebida:", { ano, mes, sala });
+    log(r, "[listarAgendaAdmin] query:", { ano, mes, sala });
 
-    // 🔹 Reservas das salas
-    const paramsBase = [ano, mes];
+    // Reservas
+    const params = [ano, mes];
     let sqlReservas = `
       SELECT
         id,
         sala,
-        data,
+        data::date AS data,
         periodo,
         qtd_pessoas,
         coffee_break,
@@ -77,76 +176,66 @@ async function listarAgendaAdmin(req, res) {
       WHERE EXTRACT(YEAR FROM data) = $1
         AND EXTRACT(MONTH FROM data) = $2
     `;
-
     if (sala) {
-      sqlReservas += ` AND sala = $3`;
-      paramsBase.push(sala);
+      params.push(sala);
+      sqlReservas += ` AND sala = $${params.length}`;
     }
-
     sqlReservas += ` ORDER BY data ASC, sala ASC, periodo ASC`;
 
-    const { rows: reservas } = await query(sqlReservas, paramsBase);
+    const { rows: reservas } = await query(sqlReservas, params);
 
-    // 🔹 Bloqueios do calendário
-    const sqlBloqueios = `
-      SELECT
-        id,
-        data,
-        tipo,
-        descricao
+    // Bloqueios
+    const { rows: bloqueios } = await query(
+      `
+      SELECT id, data::date AS data, tipo, descricao
       FROM calendario_bloqueios
       WHERE EXTRACT(YEAR FROM data) = $1
         AND EXTRACT(MONTH FROM data) = $2
-      ORDER BY data ASC;
-    `;
-    const { rows: bloqueios } = await query(sqlBloqueios, [ano, mes]);
+      ORDER BY data ASC
+      `,
+      [ano, mes]
+    );
 
     const feriados = bloqueios.filter((b) =>
       ["feriado_nacional", "feriado_municipal", "ponto_facultativo"].includes(b.tipo)
     );
     const datas_bloqueadas = bloqueios.filter((b) => b.tipo === "bloqueio_interno");
 
-    return res.json({
-      ano,
-      mes,
-      reservas,
-      feriados,
-      datas_bloqueadas,
-    });
-  } catch (err) {
-    console.error("[listarAgendaAdmin] ERRO:", err);
-    return res.status(500).json({ erro: "Erro ao listar agenda das salas." });
+    return res.json({ ano, mes, reservas, feriados, datas_bloqueadas });
+  } catch (e) {
+    errlog(r, "[listarAgendaAdmin] erro:", e?.message);
+    return res.status(500).json({ ok: false, erro: "Erro ao listar agenda das salas.", requestId: r });
   }
 }
 
 /* ======================================================================= */
-/* GET /api/salas/agenda-usuario                                           */
-/* Query params: ano, mes (1-12), sala (opcional)                          */
+/* GET /api/salas/agenda-usuario                                            */
+/* Query params: ano, mes (1-12), sala (opcional)                           */
 /* ======================================================================= */
 async function listarAgendaUsuario(req, res) {
+  const r = rid();
   try {
     const { ano, mes } = getAnoMesFromQuery(req.query);
-    const salaRaw = req.query.sala;
-    const sala = salaRaw && String(salaRaw).trim()
-      ? String(salaRaw).trim()
-      : null; // 'auditorio' | 'sala_reuniao' | null
-    const usuarioId = req.user.id;
+    const sala = normSala(req.query.sala);
+    const usuarioId = Number(req.user?.id);
 
-    console.log("[listarAgendaUsuario] query:", { ano, mes, sala }, "user:", usuarioId);
+    if (!usuarioId) return res.status(401).json({ ok: false, erro: "Não autenticado.", requestId: r });
 
-    // 🔹 Reservas do próprio usuário no mês
+    log(r, "[listarAgendaUsuario] query:", { ano, mes, sala, usuarioId });
+
     const params = [ano, mes, usuarioId];
     let whereSala = "";
     if (sala) {
-      whereSala = "AND rs.sala = $4";
       params.push(sala);
+      whereSala = ` AND rs.sala = $${params.length}`;
     }
 
-    const sqlReservas = `
+    const { rows: reservas } = await query(
+      `
       SELECT
         rs.id,
         rs.sala,
-        rs.data,
+        rs.data::date AS data,
         rs.periodo,
         rs.status,
         rs.qtd_pessoas,
@@ -158,442 +247,248 @@ async function listarAgendaUsuario(req, res) {
         AND EXTRACT(MONTH FROM rs.data) = $2
         AND rs.solicitante_id = $3
         ${whereSala}
-      ORDER BY rs.data, rs.sala, rs.periodo;
-    `;
-    const { rows: reservas } = await query(sqlReservas, params);
+      ORDER BY rs.data, rs.sala, rs.periodo
+      `,
+      params
+    );
 
-    // 🔹 Bloqueios do calendário (feriados, ponto facultativo, bloqueio interno)
-    const sqlBloqueios = `
-      SELECT
-        id,
-        data,
-        tipo,
-        descricao
+    const { rows: bloqueios } = await query(
+      `
+      SELECT id, data::date AS data, tipo, descricao
       FROM calendario_bloqueios
       WHERE EXTRACT(YEAR FROM data) = $1
         AND EXTRACT(MONTH FROM data) = $2
-      ORDER BY data ASC;
-    `;
-    const { rows: bloqueios } = await query(sqlBloqueios, [ano, mes]);
+      ORDER BY data ASC
+      `,
+      [ano, mes]
+    );
 
     const feriados = bloqueios.filter((b) =>
       ["feriado_nacional", "feriado_municipal", "ponto_facultativo"].includes(b.tipo)
     );
     const datas_bloqueadas = bloqueios.filter((b) => b.tipo === "bloqueio_interno");
 
-    return res.json({
-      ano,
-      mes,
-      reservas,
-      feriados,
-      datas_bloqueadas,
-    });
-  } catch (err) {
-    console.error("[listarAgendaUsuario] Erro:", err);
-    return res
-      .status(500)
-      .json({ erro: "Erro ao carregar disponibilidade das salas." });
+    return res.json({ ano, mes, reservas, feriados, datas_bloqueadas });
+  } catch (e) {
+    errlog(r, "[listarAgendaUsuario] erro:", e?.message);
+    return res.status(500).json({ ok: false, erro: "Erro ao carregar disponibilidade das salas.", requestId: r });
   }
 }
 
 /* ======================================================================= */
-/* POST /api/salas/solicitar (usuário)                                     */
-/* body: { sala, data, periodo, qtd_pessoas, coffee_break, finalidade }    */
+/* POST /api/salas/solicitar (usuário)                                      */
+/* body: { sala, data, periodo, qtd_pessoas, coffee_break, finalidade }     */
 /* ======================================================================= */
 async function solicitarReserva(req, res) {
+  const r = rid();
   try {
-    const usuarioId = req.user.id;
-    const {
-      sala,
-      data,
-      periodo,
-      qtd_pessoas,
-      coffee_break = false,
-      finalidade, // obrigatório
-    } = req.body;
+    const usuarioId = Number(req.user?.id);
+    if (!usuarioId) return res.status(401).json({ ok: false, erro: "Não autenticado.", requestId: r });
 
-    if (!sala || !data || !periodo || !qtd_pessoas) {
-      return res
-        .status(400)
-        .json({ erro: "Sala, data, período e quantidade são obrigatórios." });
-    }
+    const sala = normSala(req.body?.sala);
+    const data = normStr(req.body?.data, { max: 10 });
+    const periodo = normPeriodo(req.body?.periodo);
+    const qtd_pessoas = asInt(req.body?.qtd_pessoas);
+    const coffee_break = typeof req.body?.coffee_break === "boolean" ? req.body.coffee_break : false;
+    const finalidade = normStr(req.body?.finalidade, { max: 500 });
 
-    if (!finalidade || !String(finalidade).trim()) {
-      return res
-        .status(400)
-        .json({ erro: "Informe a finalidade do uso da sala / evento." });
-    }
-
-    const capacidadeMax = sala === "auditorio" ? 60 : 30;
-    if (qtd_pessoas > capacidadeMax) {
+    if (!sala || !isISODateOnly(data) || !periodo || !qtd_pessoas) {
       return res.status(400).json({
-        erro: `Capacidade máxima para esta sala é de ${capacidadeMax} pessoas.`,
+        ok: false,
+        erro: "Sala, data (YYYY-MM-DD), período e quantidade são obrigatórios.",
+        requestId: r,
       });
     }
+    if (!finalidade) {
+      return res.status(400).json({ ok: false, erro: "Informe a finalidade do uso da sala / evento.", requestId: r });
+    }
 
+    const cap = capacidadeMaxSala(sala);
+    if (qtd_pessoas > cap) {
+      return res.status(400).json({ ok: false, erro: `Capacidade máxima para esta sala é de ${cap} pessoas.`, requestId: r });
+    }
     if (isWeekend(data)) {
-      return res
-        .status(400)
-        .json({ erro: "Não é possível agendar em sábados ou domingos." });
+      return res.status(400).json({ ok: false, erro: "Não é possível agendar em sábados ou domingos.", requestId: r });
     }
 
-    const bloqueio = await query(
-      `
-        SELECT 1
-          FROM calendario_bloqueios
-         WHERE data = $1
-           AND tipo = ANY(ARRAY[
-             'feriado_nacional'::varchar,
-             'feriado_municipal'::varchar,
-             'ponto_facultativo'::varchar,
-             'bloqueio_interno'::varchar
-           ]);
-      `,
-      [data]
-    );
-    if (bloqueio.rowCount > 0) {
+    const bloqueada = await isDataBloqueada(data);
+    if (bloqueada) {
       return res.status(400).json({
+        ok: false,
         erro: "Não é possível agendar em feriados, pontos facultativos ou datas bloqueadas.",
+        requestId: r,
       });
     }
 
-    const insertSql = `
-      INSERT INTO reservas_salas
-        (sala, data, periodo, qtd_pessoas, coffee_break, solicitante_id, status, finalidade)
-      VALUES ($1, $2, $3, $4, $5, $6, 'pendente', $7)
-      RETURNING *;
-    `;
-    const { rows } = await query(insertSql, [
-      sala,
-      data,
-      periodo,
-      qtd_pessoas,
-      coffee_break,
-      usuarioId,
-      String(finalidade).trim(),
-    ]);
-
-    res.status(201).json(rows[0]);
-  } catch (err) {
-    console.error("[solicitarReserva] Erro:", err);
-    if (err.code === "23505") {
-      return res
-        .status(409)
-        .json({ erro: "Este horário já está reservado para esta sala." });
+    try {
+      const { rows } = await query(
+        `
+        INSERT INTO reservas_salas
+          (sala, data, periodo, qtd_pessoas, coffee_break, solicitante_id, status, finalidade)
+        VALUES ($1, $2, $3, $4, $5, $6, 'pendente', $7)
+        RETURNING *;
+        `,
+        [sala, data, periodo, qtd_pessoas, coffee_break, usuarioId, finalidade]
+      );
+      return res.status(201).json(rows[0]);
+    } catch (e) {
+      if (e?.code === "23505") {
+        return res.status(409).json({ ok: false, erro: "Este horário já está reservado para esta sala.", requestId: r });
+      }
+      throw e;
     }
-    res.status(500).json({ erro: "Erro ao solicitar reserva." });
+  } catch (e) {
+    errlog(r, "[solicitarReserva] erro:", e?.message);
+    return res.status(500).json({ ok: false, erro: "Erro ao solicitar reserva.", requestId: r });
   }
 }
 
 /* ======================================================================= */
-/* PUT /api/salas/minhas/:id (usuário edita a própria solicitação)         */
-/* body: { sala?, data?, periodo?, qtd_pessoas?, coffee_break?, finalidade?}*/
+/* PUT /api/salas/minhas/:id (usuário edita a própria solicitação)          */
+/* body: { sala?, data?, periodo?, qtd_pessoas?, coffee_break?, finalidade?} */
 /* ======================================================================= */
 async function atualizarReservaUsuario(req, res) {
+  const r = rid();
   try {
-    const id = Number(req.params.id);
-    if (!id) return res.status(400).json({ erro: "ID inválido." });
+    const id = asInt(req.params?.id);
+    if (!id) return res.status(400).json({ ok: false, erro: "ID inválido.", requestId: r });
 
-    const userId = req.user.id;
+    const userId = Number(req.user?.id);
+    if (!userId) return res.status(401).json({ ok: false, erro: "Não autenticado.", requestId: r });
 
-    const sel = await query(
-      `SELECT * FROM reservas_salas WHERE id = $1`,
-      [id]
-    );
-    const atual = sel.rows[0];
-    if (!atual) return res.status(404).json({ erro: "Reserva não encontrada." });
-    if (Number(atual.solicitante_id) !== Number(userId))
-      return res.status(403).json({ erro: "Você não pode alterar esta reserva." });
-    if (atual.status !== "pendente")
-      return res.status(403).json({ erro: "Edição permitida apenas enquanto pendente." });
+    const sel = await query(`SELECT * FROM reservas_salas WHERE id = $1`, [id]);
+    const atual = sel.rows?.[0];
+    if (!atual) return res.status(404).json({ ok: false, erro: "Reserva não encontrada.", requestId: r });
 
-    const sala         = req.body.sala        ?? atual.sala;
-    const data         = req.body.data        ?? toISODateString(new Date(atual.data));
-    const periodo      = req.body.periodo     ?? atual.periodo;
-    const qtd_pessoas  = req.body.qtd_pessoas ?? atual.qtd_pessoas;
-    const coffee_break = (typeof req.body.coffee_break === "boolean")
-      ? req.body.coffee_break
-      : atual.coffee_break;
-    const finalidade   = (req.body.finalidade != null)
-      ? String(req.body.finalidade).trim()
-      : (atual.finalidade ?? null);
-
-    if (!sala || !data || !periodo || !qtd_pessoas) {
-      return res.status(400).json({ erro: "Sala, data, período e quantidade são obrigatórios." });
+    if (Number(atual.solicitante_id) !== Number(userId)) {
+      return res.status(403).json({ ok: false, erro: "Você não pode alterar esta reserva.", requestId: r });
+    }
+    if (String(atual.status) !== "pendente") {
+      return res.status(403).json({ ok: false, erro: "Edição permitida apenas enquanto pendente.", requestId: r });
     }
 
-    const capacidadeMax = sala === "auditorio" ? 60 : 30;
-    if (qtd_pessoas > capacidadeMax) {
+    const sala = normSala(req.body?.sala) ?? String(atual.sala);
+    const dataAtualISO =
+      typeof atual.data === "string"
+        ? atual.data.slice(0, 10)
+        : toISODateString(atual.data instanceof Date ? atual.data : new Date(atual.data));
+    const data = normStr(req.body?.data, { max: 10 }) ?? dataAtualISO;
+
+    const periodo = normPeriodo(req.body?.periodo) ?? String(atual.periodo);
+    const qtd_pessoas = asInt(req.body?.qtd_pessoas) ?? Number(atual.qtd_pessoas);
+    const coffee_break =
+      typeof req.body?.coffee_break === "boolean" ? req.body.coffee_break : !!atual.coffee_break;
+    const finalidade = (req.body?.finalidade != null)
+      ? normStr(req.body.finalidade, { max: 500 })
+      : normStr(atual.finalidade, { max: 500 });
+
+    if (!sala || !isISODateOnly(data) || !periodo || !qtd_pessoas) {
       return res.status(400).json({
-        erro: `Capacidade máxima para esta sala é de ${capacidadeMax} pessoas.`
+        ok: false,
+        erro: "Sala, data (YYYY-MM-DD), período e quantidade são obrigatórios.",
+        requestId: r,
       });
     }
-
-    if (data < hojeISO()) {
-      return res.status(400).json({ erro: "Não é possível agendar para data passada." });
+    if (!finalidade) {
+      return res.status(400).json({ ok: false, erro: "Informe a finalidade do uso da sala / evento.", requestId: r });
     }
 
+    const cap = capacidadeMaxSala(sala);
+    if (qtd_pessoas > cap) {
+      return res.status(400).json({ ok: false, erro: `Capacidade máxima para esta sala é de ${cap} pessoas.`, requestId: r });
+    }
+
+    const hoje = hojeISO();
+    if (data < hoje) {
+      return res.status(400).json({ ok: false, erro: "Não é possível agendar para data passada.", requestId: r });
+    }
     if (isWeekend(data)) {
-      return res.status(400).json({ erro: "Não é possível agendar em sábados ou domingos." });
+      return res.status(400).json({ ok: false, erro: "Não é possível agendar em sábados ou domingos.", requestId: r });
     }
 
-    const bloqueio = await query(
-      `
-        SELECT 1
-          FROM calendario_bloqueios
-         WHERE data = $1
-           AND tipo = ANY(ARRAY[
-             'feriado_nacional'::varchar,
-             'feriado_municipal'::varchar,
-             'ponto_facultativo'::varchar,
-             'bloqueio_interno'::varchar
-           ]);
-      `,
-      [data]
-    );
-    if (bloqueio.rowCount > 0) {
+    const bloqueada = await isDataBloqueada(data);
+    if (bloqueada) {
       return res.status(400).json({
+        ok: false,
         erro: "Não é possível agendar em feriados, pontos facultativos ou datas bloqueadas.",
+        requestId: r,
       });
     }
-    
 
+    // Conflito (exclui a própria reserva)
     const conflito = await query(
-      `SELECT 1
-         FROM reservas_salas
-        WHERE sala = $1 AND data = $2 AND periodo = $3 AND id <> $4`,
+      `SELECT 1 FROM reservas_salas WHERE sala = $1 AND data = $2 AND periodo = $3 AND id <> $4 LIMIT 1`,
       [sala, data, periodo, id]
     );
     if (conflito.rowCount > 0) {
-      return res.status(409).json({
-        erro: "Já existe uma reserva para esta sala, data e período."
-      });
+      return res.status(409).json({ ok: false, erro: "Já existe uma reserva para esta sala, data e período.", requestId: r });
     }
 
-    const upd = await query(
-      `UPDATE reservas_salas
-          SET sala = $2,
-              data = $3,
-              periodo = $4,
-              qtd_pessoas = $5,
-              coffee_break = $6,
-              finalidade = $7,
-              updated_at = now()
-        WHERE id = $1
-        RETURNING *;`,
-      [id, sala, data, periodo, qtd_pessoas, coffee_break, finalidade || null]
+    const { rows } = await query(
+      `
+      UPDATE reservas_salas
+         SET sala = $2,
+             data = $3,
+             periodo = $4,
+             qtd_pessoas = $5,
+             coffee_break = $6,
+             finalidade = $7,
+             updated_at = NOW()
+       WHERE id = $1
+       RETURNING *;
+      `,
+      [id, sala, data, periodo, qtd_pessoas, coffee_break, finalidade]
     );
 
-    return res.json(upd.rows[0]);
-  } catch (err) {
-    console.error("[atualizarReservaUsuario] Erro:", err);
-    if (err.code === "23505") {
-      return res.status(409).json({ erro: "Conflito de horário para esta sala." });
+    return res.json(rows[0]);
+  } catch (e) {
+    errlog(r, "[atualizarReservaUsuario] erro:", e?.message);
+    if (e?.code === "23505") {
+      return res.status(409).json({ ok: false, erro: "Conflito de horário para esta sala.", requestId: r });
     }
-    return res.status(500).json({ erro: "Erro ao atualizar a solicitação." });
+    return res.status(500).json({ ok: false, erro: "Erro ao atualizar a solicitação.", requestId: r });
   }
 }
 
 /* ======================================================================= */
-/* DELETE /api/salas/minhas/:id (usuário exclui a própria solicitação)     */
+/* DELETE /api/salas/minhas/:id (usuário exclui a própria solicitação)      */
 /* ======================================================================= */
 async function excluirReservaUsuario(req, res) {
+  const r = rid();
   try {
-    const id = Number(req.params.id);
-    if (!id) return res.status(400).json({ erro: "ID inválido." });
+    const id = asInt(req.params?.id);
+    if (!id) return res.status(400).json({ ok: false, erro: "ID inválido.", requestId: r });
 
-    const userId = req.user.id;
+    const userId = Number(req.user?.id);
+    if (!userId) return res.status(401).json({ ok: false, erro: "Não autenticado.", requestId: r });
 
-    const sel = await query(
-      `SELECT status, solicitante_id FROM reservas_salas WHERE id = $1`,
-      [id]
-    );
-    const r = sel.rows[0];
-    if (!r) return res.status(404).json({ erro: "Reserva não encontrada." });
+    const sel = await query(`SELECT status, solicitante_id FROM reservas_salas WHERE id = $1`, [id]);
+    const row = sel.rows?.[0];
+    if (!row) return res.status(404).json({ ok: false, erro: "Reserva não encontrada.", requestId: r });
 
-    if (Number(r.solicitante_id) !== Number(userId))
-      return res.status(403).json({ erro: "Você não pode excluir esta reserva." });
-
-    if (r.status !== "pendente")
-      return res.status(403).json({ erro: "Exclusão permitida apenas enquanto pendente." });
+    if (Number(row.solicitante_id) !== Number(userId)) {
+      return res.status(403).json({ ok: false, erro: "Você não pode excluir esta reserva.", requestId: r });
+    }
+    if (String(row.status) !== "pendente") {
+      return res.status(403).json({ ok: false, erro: "Exclusão permitida apenas enquanto pendente.", requestId: r });
+    }
 
     const del = await query(`DELETE FROM reservas_salas WHERE id = $1`, [id]);
-    if (!del.rowCount) {
-      return res.status(404).json({ erro: "Reserva não encontrada." });
-    }
+    if (!del.rowCount) return res.status(404).json({ ok: false, erro: "Reserva não encontrada.", requestId: r });
 
-    return res.status(204).send();
-  } catch (err) {
-    console.error("[excluirReservaUsuario] Erro:", err);
-    return res.status(500).json({ erro: "Erro ao excluir a solicitação." });
+    return res.status(204).end();
+  } catch (e) {
+    errlog(r, "[excluirReservaUsuario] erro:", e?.message);
+    return res.status(500).json({ ok: false, erro: "Erro ao excluir a solicitação.", requestId: r });
   }
 }
 
 /* ======================================================================= */
-/* Helpers de recorrência para admin                                       */
+/* Helpers de recorrência para admin                                        */
+/* - Retorna array de 'YYYY-MM-DD' (FUTURAS, sem incluir a base)            */
 /* ======================================================================= */
 
-// Gera datas futuras a partir de uma data base, conforme recorrência.
-// Retorna array de 'YYYY-MM-DD' (somente FUTURAS, sem incluir a base).
-function gerarDatasRecorrencia(dataBaseISO, recorrencia) {
-  if (!recorrencia || !recorrencia.tipo) return [];
-  const tipo = recorrencia.tipo;
-
-  // 🔹 Caso ESPECIAL: "sempre" (repete mensalmente até limiteMeses)
-  if (tipo === "sempre") {
-    const limiteMeses = Math.min(Number(recorrencia.limiteMeses) || 24, 120);
-    const base = parseISODate(dataBaseISO);
-    const datas = [];
-    for (let i = 1; i <= limiteMeses; i++) {
-      const d = new Date(base);
-      d.setMonth(d.getMonth() + i);
-      // se o mês não tiver o mesmo dia (ex.: 31), cai no último dia do mês
-      if (d.getMonth() === (base.getMonth() + i) % 12) {
-        // ok
-      } else {
-        const last = new Date(d.getFullYear(), d.getMonth() + 1, 0);
-        d.setDate(last.getDate());
-      }
-      datas.push(toISODateString(d));
-    }
-    return datas;
-  }
-
-  // Demais tipos precisam de 'repeticoes'
-  const repeticoes = Number(recorrencia.repeticoes) || 0;
-  if (repeticoes <= 0) return [];
-
-  const baseDate = parseISODate(dataBaseISO);
-  const baseTime = baseDate.getTime();
-  const results = [];
-
-  const oneDayMs = 24 * 60 * 60 * 1000;
-
-  if (tipo === "semanal" && recorrencia.semanal) {
-    const { intervaloSemanas = 1, diasSemana = [] } = recorrencia.semanal;
-    const intSem = Number(intervaloSemanas) || 1;
-    const diasSet = new Set(diasSemana);
-    if (diasSet.size === 0) return [];
-
-    const limiteDias = repeticoes * 7 * intSem + 14;
-    for (let i = 1; i <= limiteDias && results.length < repeticoes; i++) {
-      const d = new Date(baseTime + i * oneDayMs);
-      const diffDays = Math.floor((d - baseDate) / oneDayMs);
-      const weekIndex = Math.floor(diffDays / 7);
-      if (weekIndex % intSem !== 0) continue;
-
-      const dow = d.getDay(); // 0-6
-      if (!diasSet.has(dow)) continue;
-
-      const iso = toISODateString(d);
-      if (iso !== dataBaseISO) results.push(iso);
-    }
-    return results;
-  }
-
-  if (tipo === "mensal" && recorrencia.mensal) {
-    const {
-      modo = "dia_mes", // 'dia_mes' | 'ordem_semana'
-      diaMesBase,
-      diaSemanaBaseIndex,
-      ordemSemanaBase,
-      ehUltimaSemana,
-    } = recorrencia.mensal;
-
-    const baseYear = baseDate.getFullYear();
-    const baseMonth = baseDate.getMonth(); // 0-11
-
-    for (let i = 1; i <= repeticoes; i++) {
-      const targetMonthIndex = baseMonth + i;
-      const year = baseYear + Math.floor(targetMonthIndex / 12);
-      const month = targetMonthIndex % 12;
-
-      let d;
-      if (modo === "ordem_semana" && diaSemanaBaseIndex != null) {
-        d = getDateByOrdemSemana(
-          year,
-          month,
-          Number(diaSemanaBaseIndex),
-          Number(ordemSemanaBase),
-          !!ehUltimaSemana
-        );
-      } else {
-        const lastDayOfMonth = new Date(year, month + 1, 0).getDate();
-        const day = Math.min(
-          Number(diaMesBase) || baseDate.getDate(),
-          lastDayOfMonth
-        );
-        d = new Date(year, month, day, 12, 0, 0);
-      }
-
-      const iso = toISODateString(d);
-      if (iso !== dataBaseISO) results.push(iso);
-    }
-    return results;
-  }
-
-  if (tipo === "anual" && recorrencia.anual) {
-    const {
-      modo = "dia_mes",
-      diaMesBase,
-      diaSemanaBaseIndex,
-      ordemSemanaBase,
-      ehUltimaSemana,
-      meses = [],
-    } = recorrencia.anual;
-
-    const mesesSorted = Array.from(new Set(meses)).sort((a, b) => a - b);
-    if (mesesSorted.length === 0) return [];
-
-    const baseYear = baseDate.getFullYear();
-    const maxLoops = repeticoes * 3;
-
-    let yearOffset = 0;
-    while (results.length < repeticoes && yearOffset <= maxLoops) {
-      const year = baseYear + yearOffset;
-
-      for (const m of mesesSorted) {
-        let d;
-        if (modo === "ordem_semana" && diaSemanaBaseIndex != null) {
-          d = getDateByOrdemSemana(
-            year,
-            Number(m),
-            Number(diaSemanaBaseIndex),
-            Number(ordemSemanaBase),
-            !!ehUltimaSemana
-          );
-        } else {
-          const lastDayOfMonth = new Date(year, Number(m) + 1, 0).getDate();
-          const day = Math.min(
-            Number(diaMesBase) || baseDate.getDate(),
-            lastDayOfMonth
-          );
-          d = new Date(year, Number(m), day, 12, 0, 0);
-        }
-
-        const iso = toISODateString(d);
-        if (iso > dataBaseISO) {
-          results.push(iso);
-          if (results.length >= repeticoes) break;
-        }
-      }
-
-      yearOffset += 1;
-    }
-    return results;
-  }
-
-  return [];
-}
-
-// Retorna a data correspondente à "ordem" de um dia da semana no mês (1ª, 2ª... última)
-function getDateByOrdemSemana(
-  year,
-  monthIndex,
-  weekday,
-  ordemSemana,
-  ehUltimaSemana
-) {
+function getDateByOrdemSemana(year, monthIndex, weekday, ordemSemana, ehUltimaSemana) {
   if (ehUltimaSemana) {
     const lastDay = new Date(year, monthIndex + 1, 0);
     const lastDow = lastDay.getDay();
@@ -619,115 +514,223 @@ function getDateByOrdemSemana(
   return new Date(year, monthIndex, day, 12, 0, 0);
 }
 
+function gerarDatasRecorrencia(dataBaseISO, recorrencia) {
+  if (!isISODateOnly(dataBaseISO)) return [];
+  if (!recorrencia || typeof recorrencia !== "object" || !recorrencia.tipo) return [];
+
+  const tipo = String(recorrencia.tipo);
+
+  // caso especial: "sempre" (mensal até limiteMeses)
+  if (tipo === "sempre") {
+    const limiteMeses = Math.min(Number(recorrencia.limiteMeses) || 24, 120);
+    const base = parseISODateOnly(dataBaseISO);
+    if (!base) return [];
+
+    const datas = [];
+    for (let i = 1; i <= limiteMeses; i++) {
+      const d = new Date(base);
+      const origDay = d.getDate();
+      d.setMonth(d.getMonth() + i);
+
+      // Se o mês “pular” (ex.: 31), ajusta pro último dia do mês
+      if (d.getDate() !== origDay) {
+        const last = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+        d.setDate(last.getDate());
+      }
+
+      const iso = toISODateString(d);
+      if (iso && iso !== dataBaseISO) datas.push(iso);
+    }
+    return datas;
+  }
+
+  const repeticoes = Math.max(0, Number(recorrencia.repeticoes) || 0);
+  if (repeticoes <= 0) return [];
+
+  const baseDate = parseISODateOnly(dataBaseISO);
+  if (!baseDate) return [];
+
+  const results = [];
+
+  // semanal
+  if (tipo === "semanal" && recorrencia.semanal) {
+    const intSem = Math.max(1, Number(recorrencia.semanal.intervaloSemanas) || 1);
+    const diasSemana = Array.isArray(recorrencia.semanal.diasSemana) ? recorrencia.semanal.diasSemana : [];
+    const diasSet = new Set(diasSemana.map((x) => Number(x)).filter((x) => x >= 0 && x <= 6));
+    if (!diasSet.size) return [];
+
+    const oneDayMs = 24 * 60 * 60 * 1000;
+    const limiteDias = repeticoes * 7 * intSem + 21;
+
+    for (let i = 1; i <= limiteDias && results.length < repeticoes; i++) {
+      const d = new Date(baseDate.getTime() + i * oneDayMs);
+      const diffDays = Math.floor((d - baseDate) / oneDayMs);
+      const weekIndex = Math.floor(diffDays / 7);
+      if (weekIndex % intSem !== 0) continue;
+      if (!diasSet.has(d.getDay())) continue;
+
+      const iso = toISODateString(d);
+      if (iso && iso !== dataBaseISO) results.push(iso);
+    }
+
+    return results;
+  }
+
+  // mensal
+  if (tipo === "mensal" && recorrencia.mensal) {
+    const modo = String(recorrencia.mensal.modo || "dia_mes"); // 'dia_mes' | 'ordem_semana'
+    const baseYear = baseDate.getFullYear();
+    const baseMonth = baseDate.getMonth();
+
+    for (let i = 1; i <= repeticoes; i++) {
+      const targetMonthIndex = baseMonth + i;
+      const year = baseYear + Math.floor(targetMonthIndex / 12);
+      const month = targetMonthIndex % 12;
+
+      let d;
+      if (modo === "ordem_semana" && recorrencia.mensal.diaSemanaBaseIndex != null) {
+        d = getDateByOrdemSemana(
+          year,
+          month,
+          Number(recorrencia.mensal.diaSemanaBaseIndex),
+          Number(recorrencia.mensal.ordemSemanaBase),
+          !!recorrencia.mensal.ehUltimaSemana
+        );
+      } else {
+        const lastDay = new Date(year, month + 1, 0).getDate();
+        const day = Math.min(Number(recorrencia.mensal.diaMesBase) || baseDate.getDate(), lastDay);
+        d = new Date(year, month, day, 12, 0, 0);
+      }
+
+      const iso = toISODateString(d);
+      if (iso && iso !== dataBaseISO) results.push(iso);
+    }
+
+    return results;
+  }
+
+  // anual
+  if (tipo === "anual" && recorrencia.anual) {
+    const modo = String(recorrencia.anual.modo || "dia_mes");
+    const meses = Array.isArray(recorrencia.anual.meses) ? recorrencia.anual.meses : [];
+    const mesesSorted = Array.from(new Set(meses.map((m) => Number(m)).filter((m) => m >= 0 && m <= 11))).sort(
+      (a, b) => a - b
+    );
+    if (!mesesSorted.length) return [];
+
+    const baseYear = baseDate.getFullYear();
+
+    // percorre anos até preencher repeticoes
+    let yearOffset = 0;
+    const maxYears = Math.min(50, repeticoes * 3 + 3);
+
+    while (results.length < repeticoes && yearOffset <= maxYears) {
+      const year = baseYear + yearOffset;
+
+      for (const m of mesesSorted) {
+        let d;
+        if (modo === "ordem_semana" && recorrencia.anual.diaSemanaBaseIndex != null) {
+          d = getDateByOrdemSemana(
+            year,
+            m,
+            Number(recorrencia.anual.diaSemanaBaseIndex),
+            Number(recorrencia.anual.ordemSemanaBase),
+            !!recorrencia.anual.ehUltimaSemana
+          );
+        } else {
+          const lastDay = new Date(year, m + 1, 0).getDate();
+          const day = Math.min(Number(recorrencia.anual.diaMesBase) || baseDate.getDate(), lastDay);
+          d = new Date(year, m, day, 12, 0, 0);
+        }
+
+        const iso = toISODateString(d);
+        if (iso && iso > dataBaseISO) {
+          results.push(iso);
+          if (results.length >= repeticoes) break;
+        }
+      }
+
+      yearOffset += 1;
+    }
+
+    return results;
+  }
+
+  return [];
+}
+
 /* ======================================================================= */
-/* POST /api/salas/admin/reservas (admin cria reserva + recorrência)       */
+/* POST /api/salas/admin/reservas (admin cria reserva + recorrência)        */
 /* ======================================================================= */
 async function criarReservaAdmin(req, res) {
+  const r = rid();
   let client;
 
-  // 🔍 LOGA o que está chegando do modal
-  console.log("\n[criarReservaAdmin] body recebido:");
-  console.dir(req.body, { depth: null });
-
   try {
-    client = await getClient();
+    const adminId = Number(req.user?.id);
+    if (!adminId) return res.status(401).json({ ok: false, erro: "Não autenticado.", requestId: r });
 
-    const adminId = req.user.id;
-    const {
-      sala,
-      data,
-      periodo,
-      qtd_pessoas,
-      coffee_break = false,
-      status = "aprovado",
-      observacao,
-      recorrencia = null,
-      finalidade, // opcional
-    } = req.body;
+    const sala = normSala(req.body?.sala);
+    const data = normStr(req.body?.data, { max: 10 });
+    const periodo = normPeriodo(req.body?.periodo);
+    const qtd_pessoas = asInt(req.body?.qtd_pessoas);
+    const coffee_break = typeof req.body?.coffee_break === "boolean" ? req.body.coffee_break : false;
+    const status = normStr(req.body?.status, { max: 20 }) || "aprovado";
+    const observacao = normStr(req.body?.observacao, { max: 1000 });
+    const finalidade = normStr(req.body?.finalidade, { max: 500 });
+    const recorrencia = req.body?.recorrencia && typeof req.body.recorrencia === "object" ? req.body.recorrencia : null;
 
-    console.log("[criarReservaAdmin] parametros basicos:", {
+    log(r, "[criarReservaAdmin] payload:", {
       sala,
       data,
       periodo,
       qtd_pessoas,
       coffee_break,
       status,
-      finalidade,
+      finalidade: !!finalidade,
       temRecorrencia: !!recorrencia,
     });
 
-    if (!sala || !data || !periodo || !qtd_pessoas) {
+    if (!sala || !isISODateOnly(data) || !periodo || !qtd_pessoas) {
       return res.status(400).json({
-        erro: "Sala, data, período e quantidade são obrigatórios.",
+        ok: false,
+        erro: "Sala, data (YYYY-MM-DD), período e quantidade são obrigatórios.",
+        requestId: r,
       });
     }
 
-    const capacidadeMax = sala === "auditorio" ? 60 : 30;
-    if (Number(qtd_pessoas) > capacidadeMax) {
-      return res.status(400).json({
-        erro: `Capacidade máxima para esta sala é de ${capacidadeMax} pessoas.`,
-      });
+    const cap = capacidadeMaxSala(sala);
+    if (qtd_pessoas > cap) {
+      return res.status(400).json({ ok: false, erro: `Capacidade máxima para esta sala é de ${cap} pessoas.`, requestId: r });
     }
 
-    // 🔁 gera datas de recorrência (se houver)
+    // gera datas recorrentes
     let datasRecorrentes = [];
     try {
       datasRecorrentes = gerarDatasRecorrencia(data, recorrencia);
-      console.log(
-        "[criarReservaAdmin] datas recorrentes geradas:",
-        datasRecorrentes
-      );
     } catch (eRec) {
-      console.error("[criarReservaAdmin] ERRO em gerarDatasRecorrencia:", eRec);
-      // se der erro aqui, não derruba tudo, só ignora recorrência
+      warn(r, "[criarReservaAdmin] recorrencia inválida, ignorando:", eRec?.message);
       datasRecorrentes = [];
     }
 
-    const todasDatas = [data, ...datasRecorrentes];
-    const datasUnicas = Array.from(new Set(todasDatas));
+    const todasDatas = [data, ...datasRecorrentes].filter(isISODateOnly);
+    const datasUnicas = Array.from(new Set(todasDatas)).sort(); // ordena
 
-    console.log("[criarReservaAdmin] todasDatas:", todasDatas);
-    console.log("[criarReservaAdmin] datasUnicas:", datasUnicas);
-
-    // 🔎 feriados nessas datas
-    // 🔎 bloqueios nessas datas (feriados, ponto facultativo, bloqueio interno)
-const bloqueiosRes = await query(
-  `
-  SELECT data, tipo
-  FROM calendario_bloqueios
-  WHERE data = ANY($1::date[])
-    AND tipo = ANY(ARRAY[
-      'feriado_nacional'::varchar,
-      'feriado_municipal'::varchar,
-      'ponto_facultativo'::varchar,
-      'bloqueio_interno'::varchar
-    ])
-  `,
-  [datasUnicas]
-);
-
-const bloqueiosSet = new Set(
-  bloqueiosRes.rows.map((r) => r.data.toISOString().slice(0, 10))
-);
-
-console.log("[criarReservaAdmin] bloqueios encontrados:", bloqueiosSet);
-
-// remove fins de semana e qualquer data bloqueada
-const datasValidas = datasUnicas.filter(
-  (dt) => !isWeekend(dt) && !bloqueiosSet.has(dt)
-);
-
-console.log("[criarReservaAdmin] datasValidas:", datasValidas);
-
+    // remove finais de semana + bloqueios
+    const bloqueiosSet = await datasBloqueadasISO(datasUnicas);
+    const datasValidas = datasUnicas.filter((dt) => !isWeekend(dt) && !bloqueiosSet.has(dt));
 
     if (datasValidas.length === 0) {
       return res.status(400).json({
-        erro:
-          "Nenhuma data válida para agendamento (todas caem em finais de semana ou feriados/pontos facultativos).",
+        ok: false,
+        erro: "Nenhuma data válida para agendamento (todas caem em finais de semana ou feriados/bloqueios).",
+        requestId: r,
       });
     }
 
-    // SQL base de insert (usaremos com SAVEPOINT a cada loop)
+    client = await getClient();
+    await client.query("BEGIN");
+
     const insertSql = `
       INSERT INTO reservas_salas
         (sala, data, periodo, qtd_pessoas, coffee_break, solicitante_id, status, observacao_admin, finalidade)
@@ -735,78 +738,59 @@ console.log("[criarReservaAdmin] datasValidas:", datasValidas);
       RETURNING *;
     `;
 
-    await client.query("BEGIN");
-
     const inseridas = [];
     const conflitos = [];
 
     for (const dt of datasValidas) {
-      console.log("[criarReservaAdmin] tentando inserir data:", dt);
-
-      // 🔹 cria SAVEPOINT para isolar erro desta data
       await client.query("SAVEPOINT sp_reserva");
-
       try {
         const { rows } = await client.query(insertSql, [
           sala,
           dt,
           periodo,
-          Number(qtd_pessoas),
+          qtd_pessoas,
           !!coffee_break,
           adminId,
           status,
           observacao || null,
-          finalidade ? String(finalidade).trim() : null,
+          finalidade || null,
         ]);
-
         inseridas.push(rows[0]);
-      } catch (errInsert) {
-        console.error(
-          "[criarReservaAdmin] erro ao inserir data",
-          dt,
-          "- code:",
-          errInsert.code,
-          "- msg:",
-          errInsert.message
-        );
-
-        if (errInsert.code === "23505") {
-          // conflito de unicidade → desfaz só essa tentativa e segue
+      } catch (eIns) {
+        if (eIns?.code === "23505") {
           await client.query("ROLLBACK TO SAVEPOINT sp_reserva");
           conflitos.push(dt);
-        } else {
-          // erro real → propaga para o catch externo
-          throw errInsert;
+          continue;
         }
+        throw eIns;
       }
     }
-
-    console.log("[criarReservaAdmin] inseridas:", inseridas.length);
-    console.log("[criarReservaAdmin] conflitos:", conflitos);
 
     if (conflitos.length > 0 && inseridas.length === 0) {
       await client.query("ROLLBACK");
       return res.status(409).json({
-        erro:
-          "Já existem reservas para esta sala em algumas das datas/períodos selecionados.",
+        ok: false,
+        erro: "Já existem reservas para esta sala em algumas das datas/períodos selecionados.",
         conflitos,
+        requestId: r,
       });
     }
 
     await client.query("COMMIT");
-    return res.status(201).json({ inseridas, conflitos });
-  } catch (err) {
+    return res.status(201).json({ ok: true, inseridas, conflitos });
+  } catch (e) {
     try {
       if (client) await client.query("ROLLBACK");
-    } catch (rollbackErr) {
-      console.error("[criarReservaAdmin] erro no ROLLBACK:", rollbackErr);
+    } catch (rb) {
+      errlog(r, "[criarReservaAdmin] rollback erro:", rb?.message);
     }
 
-    console.error("[criarReservaAdmin] ERRO GERAL:", err);
-
+    errlog(r, "[criarReservaAdmin] erro:", e?.message, e?.code ? `(code ${e.code})` : "");
     return res.status(500).json({
+      ok: false,
       erro: "Erro ao criar reserva de sala.",
-      detalhe: IS_DEV ? err.message : undefined, // aparece no Network → Response
+      requestId: r,
+      ...(IS_DEV ? { detalhe: e?.message } : {}),
     });
   } finally {
     if (client) client.release();
@@ -814,81 +798,61 @@ console.log("[criarReservaAdmin] datasValidas:", datasValidas);
 }
 
 /* ======================================================================= */
-/* PUT /api/salas/admin/reservas/:id (admin atualiza uma reserva)          */
+/* PUT /api/salas/admin/reservas/:id (admin atualiza uma reserva)           */
 /* ======================================================================= */
 async function atualizarReservaAdmin(req, res) {
+  const r = rid();
   try {
-    const id = Number(req.params.id);
-    if (!id) {
-      return res.status(400).json({ erro: "ID inválido." });
-    }
+    const id = asInt(req.params?.id);
+    if (!id) return res.status(400).json({ ok: false, erro: "ID inválido.", requestId: r });
 
-    const {
-      status,
-      qtd_pessoas,
-      coffee_break,
-      observacao,
-      finalidade, // opcional
-    } = req.body;
+    const status = normStr(req.body?.status, { max: 20 });
+    const qtd_pessoas = req.body?.qtd_pessoas != null ? asInt(req.body.qtd_pessoas) : null;
+    const coffee_break = typeof req.body?.coffee_break === "boolean" ? req.body.coffee_break : null;
+    const observacao = req.body?.observacao != null ? normStr(req.body.observacao, { max: 1000 }) : null;
+    const finalidade = req.body?.finalidade != null ? normStr(req.body.finalidade, { max: 500 }) : null;
 
-    const sql = `
+    const { rows } = await query(
+      `
       UPDATE reservas_salas
-      SET
-        status           = COALESCE($2, status),
-        qtd_pessoas      = COALESCE($3, qtd_pessoas),
-        coffee_break     = COALESCE($4, coffee_break),
-        observacao_admin = COALESCE($5, observacao_admin),
-        finalidade       = COALESCE($6, finalidade),
-        updated_at       = now()
-      WHERE id = $1
-      RETURNING *;
-    `;
+         SET status           = COALESCE($2, status),
+             qtd_pessoas      = COALESCE($3, qtd_pessoas),
+             coffee_break     = COALESCE($4, coffee_break),
+             observacao_admin = COALESCE($5, observacao_admin),
+             finalidade       = COALESCE($6, finalidade),
+             updated_at       = NOW()
+       WHERE id = $1
+       RETURNING *;
+      `,
+      [id, status || null, qtd_pessoas, coffee_break, observacao, finalidade]
+    );
 
-    const { rows } = await query(sql, [
-      id,
-      status || null,
-      qtd_pessoas || null,
-      typeof coffee_break === "boolean" ? coffee_break : null,
-      observacao || null,
-      finalidade ? String(finalidade).trim() : null,
-    ]);
-
-    if (!rows[0]) {
-      return res.status(404).json({ erro: "Reserva não encontrada." });
-    }
-
-    res.json(rows[0]);
-  } catch (err) {
-    console.error("[atualizarReservaAdmin] Erro:", err);
-    res.status(500).json({ erro: "Erro ao atualizar reserva." });
+    if (!rows?.[0]) return res.status(404).json({ ok: false, erro: "Reserva não encontrada.", requestId: r });
+    return res.json(rows[0]);
+  } catch (e) {
+    errlog(r, "[atualizarReservaAdmin] erro:", e?.message);
+    return res.status(500).json({ ok: false, erro: "Erro ao atualizar reserva.", requestId: r });
   }
 }
 
 /* ======================================================================= */
-/* DELETE /api/salas/admin/reservas/:id                                    */
+/* DELETE /api/salas/admin/reservas/:id                                     */
 /* ======================================================================= */
 async function excluirReservaAdmin(req, res) {
+  const r = rid();
   try {
-    const id = Number(req.params.id);
-    if (!id) {
-      return res.status(400).json({ erro: "ID inválido." });
-    }
+    const id = asInt(req.params?.id);
+    if (!id) return res.status(400).json({ ok: false, erro: "ID inválido.", requestId: r });
 
-    const { rowCount } = await query(
-      `DELETE FROM reservas_salas WHERE id = $1`,
-      [id]
-    );
-    if (!rowCount) {
-      return res.status(404).json({ erro: "Reserva não encontrada." });
-    }
-    res.status(204).send();
-  } catch (err) {
-    console.error("[excluirReservaAdmin] Erro:", err);
-    res.status(500).json({ erro: "Erro ao excluir reserva." });
+    const del = await query(`DELETE FROM reservas_salas WHERE id = $1`, [id]);
+    if (!del.rowCount) return res.status(404).json({ ok: false, erro: "Reserva não encontrada.", requestId: r });
+
+    return res.status(204).end();
+  } catch (e) {
+    errlog(r, "[excluirReservaAdmin] erro:", e?.message);
+    return res.status(500).json({ ok: false, erro: "Erro ao excluir reserva.", requestId: r });
   }
 }
-
-/* ======================================================================= */
 
 module.exports = {
   listarAgendaAdmin,

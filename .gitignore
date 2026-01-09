@@ -1,18 +1,54 @@
-node_modules
+# Dependências
+node_modules/
+
+# Environment files
 .env
+.env.*
+!.env.example
 
 # Logs
 *.log
 npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
 # Sistema operacional
 .DS_Store
 Thumbs.db
 
-# Editor de código
+# Editor/IDE
 .vscode/
 .idea/
 
-# Arquivos de build temporários
+# Build
 dist/
 build/
+out/
+
+# Vite / bundlers cache
+.vite/
+node_modules/.vite/
+
+# Tailwind / PostCSS cache
+.tailwindcache
+
+# Testes / cobertura
+coverage/
+.nyc_output/
+
+# Arquivos temporários
+tmp/
+temp/
+*.tmp
+
+# Uploads / arquivos gerados (não versionar)
+data/
+.data/
+uploads/
+certificados/
+var/
+tmp/
+
+# Se você usa pasta public gerada (opcional)
+public/build/

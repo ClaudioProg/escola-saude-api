@@ -11,7 +11,7 @@ import {
   startOfMonth,
   endOfMonth,
 } from "date-fns";
-import { CalendarDays } from "lucide-react";
+import { CalendarDays, Download, MapPin, Clock } from "lucide-react";
 import { ptBR } from "date-fns/locale";
 import { toast } from "react-toastify";
 import Skeleton from "react-loading-skeleton";
@@ -125,11 +125,11 @@ function deriveStatus(ev) {
   return ev.status || "programado";
 }
 
-/* ========= Cores ========= */
+/* ========= Cores (preferências do Cláudio) ========= */
 const colorByStatus = {
-  programado: { bg: "bg-lime-100", text: "text-lime-900", ring: "ring-lime-300" },
-  andamento:  { bg: "bg-amber-100", text: "text-amber-900", ring: "ring-amber-300" },
-  encerrado:  { bg: "bg-slate-100", text: "text-slate-900", ring: "ring-slate-300" },
+  programado: { bg: "bg-emerald-100", text: "text-emerald-900", ring: "ring-emerald-300" }, // ✅ verde
+  andamento:  { bg: "bg-amber-100",   text: "text-amber-900",   ring: "ring-amber-300" },   // ✅ amarelo
+  encerrado:  { bg: "bg-rose-100",    text: "text-rose-900",    ring: "ring-rose-300" },    // ✅ vermelho
 };
 const colorByTipo = {
   curso:     { bg: "bg-violet-100", text: "text-violet-900", ring: "ring-violet-300" },
@@ -171,8 +171,7 @@ function DiaBadge({ evento, onClick }) {
       title={`${titulo}${label ? ` — ${label}` : ""}`}
       aria-label={`${titulo}${label ? ` — ${label}` : ""}`}
     >
-      {/* conteúdo compacto para não quebrar o tile */}
-      — 
+      •
     </span>
   );
 }
@@ -189,6 +188,17 @@ function TotalBadge({ label, value, variant = "programado" }) {
       <span className="uppercase tracking-wide">{label}</span>
       <span className="tabular-nums">{value}</span>
     </div>
+  );
+}
+
+/* ========= Chip de tipo ========= */
+function TipoChip({ tipo }) {
+  const t = String(tipo || "").toLowerCase();
+  const c = colorByTipo[t] || { bg: "bg-slate-100", text: "text-slate-900", ring: "ring-slate-300" };
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium ring-1 ${c.ring} ${c.bg} ${c.text}`}>
+      {t ? t.charAt(0).toUpperCase() + t.slice(1) : "Evento"}
+    </span>
   );
 }
 
@@ -411,6 +421,72 @@ export default function AgendaAdministrador() {
     [eventosPorData]
   );
 
+  // ====== Exportação do mês visível (CSV) ======
+  function exportarMesCSV() {
+    const ini = startOfMonth(viewDate);
+    const fim = endOfMonth(viewDate);
+    const SEP = ";";
+    const BOM = "\uFEFF";
+    const safe = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+
+    const header = [
+      "Evento ID",
+      "Título",
+      "Tipo",
+      "Status (derivado)",
+      "Data Início",
+      "Hora Início",
+      "Data Fim",
+      "Hora Fim",
+      "Local",
+    ].join(SEP);
+
+    const rows = [];
+    for (const [dia, lista] of Object.entries(eventosPorData)) {
+      const d = toLocalDate(`${dia}T12:00:00`);
+      if (!d || d < ini || d > fim) continue;
+
+      for (const ev of lista) {
+        const st = deriveStatus(ev);
+        const di = ymd(ev.data_inicio ?? ev.dataInicio ?? ev.data);
+        const df = ymd(ev.data_fim ?? ev.data_termino ?? ev.dataTermino ?? ev.data);
+        const hi = (ev.horario_inicio ?? "00:00").slice(0, 5);
+        const hf = (ev.horario_fim ?? "00:00").slice(0, 5);
+        const local = ev.local ?? ev.endereco ?? ev.unidade ?? "";
+
+        rows.push([
+          safe(ev.id ?? ""),
+          safe(ev.titulo ?? ev.nome ?? ""),
+          safe(ev.tipo ?? ""),
+          safe(st),
+          safe(di ? format(new Date(di), "dd/MM/yyyy") : ""),
+          safe(hi),
+          safe(df ? format(new Date(df), "dd/MM/yyyy") : ""),
+          safe(hf),
+          safe(local),
+        ].join(SEP));
+      }
+    }
+
+    if (!rows.length) {
+      toast.info("Não há eventos no mês visível para exportar.");
+      return;
+    }
+
+    const csv = [header, ...rows].join("\n");
+    const blob = new Blob([BOM + csv], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    const nomeMes = format(viewDate, "yyyy-MM");
+    a.download = `agenda_${nomeMes}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1200);
+  }
+
+  // ====== Lista do dia selecionado ======
+  const diaSelecionadoYMD = useMemo(() => format(viewDate, "yyyy-MM-dd"), [viewDate]);
+  const eventosDoDia = eventosPorData[diaSelecionadoYMD] || [];
+
   return (
     <div className="flex flex-col min-h-screen bg-gelo dark:bg-gray-900 text-black dark:text-white overflow-x-hidden">
       <HeaderHero nome={nome} carregando={carregando} onRefresh={carregar} onHoje={irParaHoje} />
@@ -534,7 +610,7 @@ export default function AgendaAdministrador() {
                 </p>
               </div>
 
-              {/* Mês + contagem + badges */}
+              {/* Mês + contagem + badges + export */}
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-3">
                 <div className="text-sm text-gray-600 dark:text-gray-300">
                   Mês visível:{" "}
@@ -544,10 +620,19 @@ export default function AgendaAdministrador() {
                   • <span aria-live="polite">{contagemMes} evento(s)</span>
                 </div>
 
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-2 items-center">
                   <TotalBadge label="Programados" value={totais.programado} variant="programado" />
                   <TotalBadge label="Em andamento" value={totais.andamento} variant="andamento" />
                   <TotalBadge label="Encerrados" value={totais.encerrado} variant="encerrado" />
+                  <button
+                    type="button"
+                    onClick={exportarMesCSV}
+                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-slate-800 text-white text-xs hover:bg-slate-900"
+                    title="Exportar os eventos do mês visível em CSV"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Exportar mês (CSV)
+                  </button>
                 </div>
               </div>
 
@@ -580,6 +665,78 @@ export default function AgendaAdministrador() {
                     }
                     tileContent={renderTileContent}
                   />
+                )}
+              </div>
+
+              {/* Lista do dia selecionado */}
+              <div className="mt-5">
+                <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100 mb-2">
+                  {`Eventos em ${format(viewDate, "dd/MM/yyyy")}`}
+                </h2>
+
+                {!eventosDoDia.length ? (
+                  <div className="text-sm text-slate-600 dark:text-slate-300">
+                    Nenhum evento neste dia.
+                  </div>
+                ) : (
+                  <ul className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                    {eventosDoDia.map((ev) => {
+                      const st = deriveStatus(ev);
+                      const c = colorByStatus[st] || colorByStatus.programado;
+                      const di = ymd(ev.data_inicio ?? ev.dataInicio ?? ev.data);
+                      const df = ymd(ev.data_fim ?? ev.data_termino ?? ev.dataTermino ?? ev.data);
+                      const hi = (ev.horario_inicio ?? "00:00").slice(0, 5);
+                      const hf = (ev.horario_fim ?? "00:00").slice(0, 5);
+
+                      return (
+                        <li
+                          key={ev.id ?? `${ev.titulo}-${di}-${hi}`}
+                          className={`rounded-xl ring-1 ${c.ring} ${c.bg} ${c.text} p-3`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="font-semibold break-words">{ev.titulo ?? ev.nome ?? "Evento"}</p>
+                              <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                                <TipoChip tipo={ev.tipo} />
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium ring-1 ring-black/10 bg-white/60 text-black">
+                                  {st.charAt(0).toUpperCase() + st.slice(1)}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="mt-2 text-sm flex flex-col gap-1">
+                            <div className="inline-flex items-center gap-2">
+                              <Clock className="w-4 h-4" />
+                              <span>
+                                {di ? format(new Date(di), "dd/MM/yyyy") : "—"} {hi && `• ${hi}`}
+                                {(df && df !== di) && ` — ${format(new Date(df), "dd/MM/yyyy")}${hf ? ` • ${hf}` : ""}`}
+                              </span>
+                            </div>
+                            {(ev.local || ev.endereco || ev.unidade) && (
+                              <div className="inline-flex items-center gap-2">
+                                <MapPin className="w-4 h-4" />
+                                <span className="break-words">
+                                  {ev.local || ev.endereco || ev.unidade}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="mt-3 flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => setSelecionado(ev)}
+                              className="px-3 py-1.5 rounded-md bg-black/80 text-white text-xs hover:bg-black"
+                              aria-label={`Ver detalhes do evento ${ev.titulo ?? ev.nome ?? ""}`}
+                            >
+                              Ver detalhes
+                            </button>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
                 )}
               </div>
             </>

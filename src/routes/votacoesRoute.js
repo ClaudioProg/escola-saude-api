@@ -1,41 +1,126 @@
-// src/routes/votacoesRoute.js
+// ✅ src/routes/votacoesRoute.js
 const express = require("express");
+const rateLimit = require("express-rate-limit");
+const crypto = require("crypto");
 const router = express.Router();
 
+// 🔐 Auth e Roles
 const requireAuth = require("../auth/authMiddleware");
 const authorizeRoles = require("../auth/authorizeRoles");
 const ctrl = require("../controllers/votacoesController");
 
-// middlewares prontos
+// Middlewares prontos
 const auth = (req, res, next) => requireAuth(req, res, next);
 const isAdmin = authorizeRoles("administrador", "admin");
 
-// =======================
-// Rotas do USUÁRIO
-// =======================
+// ⚙️ Helpers premium
+const limiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 80,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
-// Lista votações ativas e ainda não votadas pelo usuário
-router.get("/abertas/mine", auth, ctrl.listarVotacoesElegiveis);
+function buildEtag(payload) {
+  return `"vote-${crypto.createHash("sha1").update(JSON.stringify(payload)).digest("base64")}"`;
+}
 
-// Registrar voto (body: { opcoes: number[], cliLat?, cliLng? })
-router.post("/:id/votar", auth, ctrl.votar);
+/* ────────────────────────────────────────────────
+   🗳️ Rotas do USUÁRIO
+──────────────────────────────────────────────── */
+router.get("/abertas/mine", auth, limiter, async (req, res, next) => {
+  try {
+    const data = await ctrl.listarVotacoesElegiveis(req, res, { internal: true });
+    if (res.headersSent) return;
 
-// =======================
-// Rotas de ADMIN
-// =======================
-router.get("/", auth, isAdmin, ctrl.listarVotacoesAdmin);        // lista geral (admin)
-router.post("/", auth, isAdmin, ctrl.criarVotacao);               // criar
-router.put("/:id", auth, isAdmin, ctrl.atualizarVotacao);         // atualizar dados da votação
+    const etag = buildEtag(data);
+    res.setHeader("ETag", etag);
+    res.setHeader("Cache-Control", "private, max-age=60, stale-while-revalidate=180");
 
-// opções
-router.post("/:id/opcoes", auth, isAdmin, ctrl.criarOpcao);
-router.put("/:id/opcoes/:opcaoId", auth, isAdmin, ctrl.atualizarOpcao);
+    if (req.headers["if-none-match"] === etag) return res.status(304).end();
+    return res.status(200).json({ ok: true, data });
+  } catch (err) {
+    console.error("❌ Erro em /votacoes/abertas/mine:", err);
+    next(err);
+  }
+});
 
-// status
-router.patch("/:id/status", auth, isAdmin, ctrl.atualizarStatus);
+// Registrar voto
+router.post("/:id/votar", auth, limiter, async (req, res, next) => {
+  try {
+    await ctrl.votar(req, res);
+  } catch (err) {
+    console.error("❌ Erro ao registrar voto:", err);
+    next(err);
+  }
+});
 
-// relatórios / leitura pontual
-router.get("/:id/ranking", auth, isAdmin, ctrl.ranking);
-router.get("/:id", auth, isAdmin, ctrl.obterVotacaoAdmin);
+/* ────────────────────────────────────────────────
+   🛠️ Rotas de ADMIN
+──────────────────────────────────────────────── */
+
+// Lista geral (admin)
+router.get("/", auth, isAdmin, limiter, async (req, res, next) => {
+  try {
+    const data = await ctrl.listarVotacoesAdmin(req, res, { internal: true });
+    if (res.headersSent) return;
+
+    const etag = buildEtag(data);
+    res.setHeader("ETag", etag);
+    res.setHeader("Cache-Control", "private, max-age=120, stale-while-revalidate=600");
+    if (req.headers["if-none-match"] === etag) return res.status(304).end();
+
+    console.log(`[VOTAÇÕES] Listagem admin gerada em ${new Date().toISOString()}`);
+    return res.status(200).json({ ok: true, data });
+  } catch (err) {
+    console.error("❌ Erro ao listar votações admin:", err);
+    next(err);
+  }
+});
+
+// Criar, atualizar e status
+router.post("/", auth, isAdmin, limiter, ctrl.criarVotacao);
+router.put("/:id", auth, isAdmin, limiter, ctrl.atualizarVotacao);
+router.patch("/:id/status", auth, isAdmin, limiter, ctrl.atualizarStatus);
+
+// Opções
+router.post("/:id/opcoes", auth, isAdmin, limiter, ctrl.criarOpcao);
+router.put("/:id/opcoes/:opcaoId", auth, isAdmin, limiter, ctrl.atualizarOpcao);
+
+// Relatórios / leitura pontual
+router.get("/:id/ranking", auth, isAdmin, limiter, async (req, res, next) => {
+  try {
+    const data = await ctrl.ranking(req, res, { internal: true });
+    if (res.headersSent) return;
+
+    const etag = buildEtag(data);
+    res.setHeader("ETag", etag);
+    res.setHeader("Cache-Control", "private, max-age=120, stale-while-revalidate=600");
+    if (req.headers["if-none-match"] === etag) return res.status(304).end();
+
+    return res.status(200).json({ ok: true, data });
+  } catch (err) {
+    console.error("❌ Erro ao gerar ranking:", err);
+    next(err);
+  }
+});
+
+// Detalhe de votação
+router.get("/:id", auth, isAdmin, limiter, async (req, res, next) => {
+  try {
+    const data = await ctrl.obterVotacaoAdmin(req, res, { internal: true });
+    if (res.headersSent) return;
+
+    const etag = buildEtag(data);
+    res.setHeader("ETag", etag);
+    res.setHeader("Cache-Control", "private, max-age=120, stale-while-revalidate=600");
+    if (req.headers["if-none-match"] === etag) return res.status(304).end();
+
+    return res.status(200).json({ ok: true, data });
+  } catch (err) {
+    console.error("❌ Erro ao obter votação:", err);
+    next(err);
+  }
+});
 
 module.exports = router;

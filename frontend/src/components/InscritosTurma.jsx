@@ -1,5 +1,5 @@
 // 📁 src/components/InscritosTurma.jsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
 import { motion } from "framer-motion";
@@ -8,7 +8,21 @@ import BotaoPrimario from "../components/BotaoPrimario";
 import BotaoSecundario from "../components/BotaoSecundario";
 import CabecalhoPainel from "../components/CabecalhoPainel";
 import { apiGet } from "../services/api"; // ✅ serviço centralizado
-import { Search, FileText, FileDown, Copy, Eye, EyeOff, ArrowLeft } from "lucide-react";
+import { Search, FileText, FileDown, Copy, Eye, EyeOff, ArrowLeft, Table as TableIcon } from "lucide-react";
+
+/* ======================= Utils ======================= */
+const somenteDigitos = (v = "") => String(v).replace(/\D/g, "");
+
+function formatarCPF(cpf, opts = {}) {
+  const { exibirCompleto = true } = opts;
+  const s = somenteDigitos(cpf);
+  if (s.length !== 11) return cpf || "—";
+  const fmt = `${s.slice(0, 3)}.${s.slice(3, 6)}.${s.slice(6, 9)}-${s.slice(9)}`;
+  if (exibirCompleto) return fmt;
+  return `${s.slice(0, 3)}.${s.slice(3, 6)}.***-**`;
+}
+
+/* ===================================================== */
 
 export default function InscritosTurma() {
   const { id } = useParams(); // ID da turma
@@ -21,21 +35,11 @@ export default function InscritosTurma() {
   const [busca, setBusca] = useState("");
   const [ordenarAZ, setOrdenarAZ] = useState(true);
   const [mostrarCpf, setMostrarCpf] = useState(true);
+  const [somenteComEmail, setSomenteComEmail] = useState(false);
 
-  // ------- Utils -------
-  const somenteDigitos = (v = "") => String(v).replace(/\D/g, "");
+  const liveRef = useRef(null);
 
-  /** Formata CPF; por padrão exibe conforme `mostrarCpf` */
-  const formatarCPF = (cpf, opts = {}) => {
-    const { exibirCompleto = mostrarCpf } = opts;
-    const s = somenteDigitos(cpf);
-    if (s.length !== 11) return cpf || "—";
-    const fmt = `${s.slice(0, 3)}.${s.slice(3, 6)}.${s.slice(6, 9)}-${s.slice(9)}`;
-    if (exibirCompleto) return fmt;
-    return `${s.slice(0, 3)}.${s.slice(3, 6)}.***-**`;
-  };
-
-  // ------- Carregamento -------
+  /* --------------- Carregamento --------------- */
   useEffect(() => {
     if (!id || isNaN(Number(id))) {
       setErro("ID da turma inválido.");
@@ -53,17 +57,22 @@ export default function InscritosTurma() {
           apiGet(`/api/turmas/${id}`, { signal: ctrl.signal }),
           apiGet(`/api/inscricoes/turma/${id}`, { signal: ctrl.signal }),
         ]);
-        setTurma(turmaData);
+        setTurma(turmaData ?? null);
 
         const lista = Array.isArray(inscritosData) ? inscritosData : [];
         // remove duplicados por usuario_id/cpf/email
         const seen = new Set();
         const dedup = lista.filter((i, idx) => {
-          const key = i.usuario_id ?? somenteDigitos(i.cpf) ?? i.email ?? idx;
+          const key =
+            (i.usuario_id != null ? `u:${i.usuario_id}` : null) ||
+            (somenteDigitos(i.cpf) ? `c:${somenteDigitos(i.cpf)}` : null) ||
+            (i.email ? `e:${String(i.email).toLowerCase()}` : null) ||
+            `idx:${idx}`;
           if (seen.has(key)) return false;
           seen.add(key);
           return true;
         });
+
         setInscritos(dedup);
       } catch (err) {
         if (err?.name !== "AbortError") {
@@ -79,33 +88,39 @@ export default function InscritosTurma() {
     return () => ctrl.abort();
   }, [id]);
 
-  // ------- Derivados (filtro + ordenação) -------
+  /* --------------- Derivados (filtro + ordenação) --------------- */
   const listaFiltrada = useMemo(() => {
     const q = busca.trim().toLowerCase();
     const base = inscritos.filter((i) => {
+      if (somenteComEmail && !i?.email) return false;
+
       if (!q) return true;
       const nome = (i.nome || "").toLowerCase();
       const cpfDigits = somenteDigitos(i.cpf);
-      const cpfFormatFull = formatarCPF(i.cpf, { exibirCompleto: true }).toLowerCase(); // sempre completo p/ busca
+      const cpfFormatFull = formatarCPF(i.cpf, { exibirCompleto: true }).toLowerCase(); // busca sem anonimização
       const email = (i.email || "").toLowerCase();
       return nome.includes(q) || email.includes(q) || cpfDigits.includes(q) || cpfFormatFull.includes(q);
     });
 
-    if (ordenarAZ) {
-      base.sort((a, b) =>
-        String(a.nome || "").localeCompare(String(b.nome || ""), "pt-BR", {
-          sensitivity: "base",
-          ignorePunctuation: true,
-        })
-      );
-    }
-    return base;
-  }, [inscritos, busca, ordenarAZ]); // busca não depende de mostrarCpf mais
+    const sorted = [...base].sort((a, b) =>
+      String(a.nome || "").localeCompare(String(b.nome || ""), "pt-BR", {
+        sensitivity: "base",
+        ignorePunctuation: true,
+      })
+    );
+    return ordenarAZ ? sorted : sorted.reverse();
+  }, [inscritos, busca, ordenarAZ, somenteComEmail]);
 
   const total = inscritos.length;
   const totalFiltrado = listaFiltrada.length;
 
-  // ------- Exportações -------
+  useEffect(() => {
+    if (liveRef.current) {
+      liveRef.current.textContent = `${totalFiltrado} de ${total} inscrito${total === 1 ? "" : "s"}.`;
+    }
+  }, [total, totalFiltrado]);
+
+  /* --------------- Exportações --------------- */
   const exportarPDF = async () => {
     if (!turma) return;
     try {
@@ -164,6 +179,43 @@ export default function InscritosTurma() {
     }
   };
 
+  const exportarXLSX = async () => {
+    try {
+      const ExcelJS = (await import("exceljs")).default;
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet(`Inscritos - ${turma?.nome || id}`);
+
+      ws.columns = [
+        { header: "Nome", key: "nome", width: 40 },
+        { header: "CPF", key: "cpf", width: 18 },
+        { header: "E-mail", key: "email", width: 40 },
+      ];
+
+      listaFiltrada.forEach((i) =>
+        ws.addRow({
+          nome: i.nome || "",
+          cpf: somenteDigitos(i.cpf),
+          email: i.email || "",
+        })
+      );
+
+      const buf = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `inscritos_turma_${turma?.id || id}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success("✅ XLSX exportado!");
+    } catch (e) {
+      console.error(e);
+      toast.error("❌ Falha ao exportar XLSX.");
+    }
+  };
+
   const copiarEmails = async () => {
     try {
       const emails = listaFiltrada.map((i) => i.email).filter(Boolean);
@@ -178,7 +230,21 @@ export default function InscritosTurma() {
     }
   };
 
-  // ------- UI -------
+  const copiarCSVClipboard = async () => {
+    try {
+      const rows = [
+        ["Nome", "CPF", "E-mail"],
+        ...listaFiltrada.map((i) => [i.nome || "", somenteDigitos(i.cpf), i.email || ""]),
+      ];
+      const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(";")).join("\n");
+      await navigator.clipboard.writeText(csv);
+      toast.success("📋 CSV copiado para a área de transferência!");
+    } catch {
+      toast.error("❌ Não foi possível copiar o CSV.");
+    }
+  };
+
+  /* --------------- UI --------------- */
   if (carregando) {
     return (
       <div className="max-w-3xl mx-auto mt-12 p-6" aria-busy="true" aria-live="polite">
@@ -205,7 +271,6 @@ export default function InscritosTurma() {
 
       <CabecalhoPainel
         tituloOverride={`Inscritos – ${turma?.nome || "Turma"}`}
-        // saudação padrão do componente permanece habilitada
         actions={
           <div className="flex flex-wrap gap-2">
             <BotaoSecundario onClick={() => navigate(-1)} leftIcon={<ArrowLeft size={16} />} cor="gray" aria-label="Voltar">
@@ -217,12 +282,21 @@ export default function InscritosTurma() {
             <BotaoSecundario onClick={exportarCSV} leftIcon={<FileDown size={16} />} aria-label="Exportar CSV">
               CSV
             </BotaoSecundario>
+            <BotaoSecundario onClick={copiarCSVClipboard} leftIcon={<Copy size={16} />} aria-label="Copiar CSV para a área de transferência">
+              Copiar CSV
+            </BotaoSecundario>
+            <BotaoSecundario onClick={exportarXLSX} leftIcon={<TableIcon size={16} />} aria-label="Exportar XLSX">
+              XLSX
+            </BotaoSecundario>
             <BotaoPrimario onClick={exportarPDF} leftIcon={<FileText size={16} />} aria-label="Exportar lista em PDF">
               PDF
             </BotaoPrimario>
           </div>
         }
       />
+
+      {/* região viva para leitores de tela com contagem */}
+      <p ref={liveRef} className="sr-only" aria-live="polite" />
 
       <motion.div
         initial={{ opacity: 0, y: 16 }}
@@ -250,10 +324,10 @@ export default function InscritosTurma() {
             onClick={() => setOrdenarAZ((v) => !v)}
             className="px-3 py-2 rounded-lg text-sm border bg-white dark:bg-zinc-800 border-gray-300 dark:border-gray-600 text-gray-800 dark:text-zinc-200 hover:bg-gray-50 dark:hover:bg-zinc-700 focus-visible:ring-2 focus-visible:ring-emerald-600"
             aria-pressed={ordenarAZ}
-            aria-label="Alternar ordenação alfabética"
-            title="Ordenar A→Z"
+            aria-label={`Alternar ordenação ${ordenarAZ ? "Z→A" : "A→Z"}`}
+            title={ordenarAZ ? "Mudar para Z→A" : "Mudar para A→Z"}
           >
-            {ordenarAZ ? "A→Z" : "—"}
+            {ordenarAZ ? "A→Z" : "Z→A"}
           </button>
 
           <button
@@ -266,6 +340,17 @@ export default function InscritosTurma() {
           >
             {mostrarCpf ? <Eye className="w-4 h-4 inline" /> : <EyeOff className="w-4 h-4 inline" />} CPF
           </button>
+
+          <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm border bg-white dark:bg-zinc-800 border-gray-300 dark:border-gray-600 text-gray-800 dark:text-zinc-200">
+            <input
+              type="checkbox"
+              className="accent-emerald-700"
+              checked={somenteComEmail}
+              onChange={(e) => setSomenteComEmail(e.target.checked)}
+              aria-label="Filtrar somente inscritos com e-mail"
+            />
+            Somente com e-mail
+          </label>
         </div>
 
         {/* Título / contagem */}
@@ -288,9 +373,10 @@ export default function InscritosTurma() {
           <ul className="divide-y divide-gray-200 dark:divide-gray-700">
             {listaFiltrada.map((inscrito, idx) => {
               const key =
-                inscrito.usuario_id ??
-                somenteDigitos(inscrito.cpf) ??
-                `${inscrito.email || "sem-email"}-${idx}`;
+                (inscrito.usuario_id != null ? `u:${inscrito.usuario_id}` : null) ||
+                (somenteDigitos(inscrito.cpf) ? `c:${somenteDigitos(inscrito.cpf)}` : null) ||
+                (inscrito.email ? `e:${String(inscrito.email).toLowerCase()}` : null) ||
+                `i:${idx}`;
 
               return (
                 <li
@@ -303,7 +389,7 @@ export default function InscritosTurma() {
                     {inscrito.nome || "—"}
                   </span>
                   <span className="text-gray-500 dark:text-gray-300">
-                    {formatarCPF(inscrito.cpf)}
+                    {formatarCPF(inscrito.cpf, { exibirCompleto: mostrarCpf })}
                   </span>
                   <span className="text-gray-400 dark:text-gray-300 break-all">
                     {inscrito.email || "—"}

@@ -4,17 +4,39 @@
   "private": true,
   "type": "module",
   "description": "Frontend da plataforma de certificados da Escola da Saúde de Santos",
+  "license": "MIT",
   "scripts": {
     "dev": "vite",
+    "dev:https": "vite --https",
     "build": "vite build",
     "preview": "vite preview",
-    "lint": "eslint . --ext .js,.jsx"
+    "lint": "eslint . --ext .js,.jsx",
+    "lint:fix": "eslint . --ext .js,.jsx --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "npm run lint && npm run format:check"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
+  "browserslist": {
+    "production": [
+      ">0.5%",
+      "last 2 versions",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
   },
   "dependencies": {
     "@babel/runtime": "^7.27.6",
     "@headlessui/react": "^2.2.4",
     "@react-oauth/google": "^0.12.2",
-    "canvas": "^3.2.0",
     "chart.js": "^4.5.0",
     "date-fns": "^4.1.0",
     "file-saver": "^2.0.5",
@@ -39,6 +61,9 @@
     "react-toastify": "^11.0.5",
     "trim-canvas": "^0.1.2"
   },
+  "optionalDependencies": {
+    "canvas": "^3.2.0"
+  },
   "devDependencies": {
     "@eslint/js": "^9.25.0",
     "@tailwindcss/aspect-ratio": "^0.4.2",
@@ -53,6 +78,8 @@
     "eslint-plugin-react-refresh": "^0.4.20",
     "globals": "^16.0.0",
     "postcss": "^8.5.5",
+    "postcss-nesting": "^13.0.2",
+    "prettier": "^3.3.3",
     "tailwindcss": "^3.4.17",
     "vite": "^6.3.5",
     "vite-plugin-pwa": "^1.0.3",

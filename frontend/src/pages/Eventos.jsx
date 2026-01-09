@@ -1,21 +1,27 @@
-// ✅ src/pages/Eventos.jsx — Página ÚNICA (Eventos + Minhas inscrições)
+// ✅ src/pages/Eventos.jsx — Página ÚNICA (Eventos + Minhas inscrições) — PREMIUM
 // - Lista Programados/Em andamento (ASC por início)
 // - Card full width com banner (folder_url) + botão de programação (programacao_pdf_url)
 // - Após inscrição: Cancelar e Google Agenda
 // - Regras & Dicas em modal
 //
-// ✅ Fixes aplicados:
+// ✅ Fixes aplicados (mantidos):
 // 1) Banner /uploads -> resolve para VITE_API_URL (backend)
 // 2) PDF abre via window.open (não navega no SPA, não “reinicia”)
 // 3) Remove botão “pasta do evento”
 // 4) “Baixar programação (PDF)” + “Ver turmas” na mesma linha (responsivo)
 // 5) Premium UI: header + ministats + cards mais elegantes + estados de erro melhores
+//
+// ✅ Premium extra (sem mudar regras):
+// - AbortController + mountedRef (evita race conditions ao atualizar rápido)
+// - Reduced-motion (respeita acessibilidade)
+// - Progressbar sticky durante carregamentos
+// - Stats de “andamento” usando status real/fallback
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { toast } from "react-toastify";
 import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import {
   CalendarDays,
   RefreshCw,
@@ -72,7 +78,6 @@ function safeHref(u) {
 
 function openExternal(href) {
   if (!href) return;
-  // evita navegação SPA e “reiniciar” o app
   window.open(href, "_blank", "noopener,noreferrer");
 }
 
@@ -109,23 +114,8 @@ function badgeClasses(status) {
 /* ------------------------------------------------------------------ */
 /*  Helpers de data/formatadores                                      */
 /* ------------------------------------------------------------------ */
-const MESES_ABREV_PT = [
-  "jan.",
-  "fev.",
-  "mar.",
-  "abr.",
-  "mai.",
-  "jun.",
-  "jul.",
-  "ago.",
-  "set.",
-  "out.",
-  "nov.",
-  "dez.",
-];
+const MESES_ABREV_PT = ["jan.", "fev.", "mar.", "abr.", "mai.", "jun.", "jul.", "ago.", "set.", "out.", "nov.", "dez."];
 const ymd = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
-const HHMM = (s, fb = null) =>
-  typeof s === "string" && /^\d{2}:\d{2}/.test(s) ? s.slice(0, 5) : fb;
 
 function formatarDataCurtaSeguro(iso) {
   if (!iso) return "";
@@ -136,22 +126,25 @@ function formatarDataCurtaSeguro(iso) {
   const idx = Math.max(0, Math.min(11, Number(mes) - 1));
   return `${String(dia).padStart(2, "0")} de ${MESES_ABREV_PT[idx]} de ${ano}`;
 }
+
 const HOJE_ISO = (() => {
   const d = new Date();
   const p = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 })();
+
 const inRange = (di, df, dia) => !!di && !!df && di <= dia && dia <= df;
 
 function rangeDaTurma(t) {
-  let di = null,
-    df = null;
+  let di = null;
+  let df = null;
   const push = (x) => {
     const d = ymd(typeof x === "string" ? x : x?.data);
     if (!d) return;
     if (!di || d < di) di = d;
     if (!df || d > df) df = d;
   };
+
   if (Array.isArray(t?.encontros) && t.encontros.length) t.encontros.forEach(push);
   else if (Array.isArray(t?.datas) && t.datas.length) t.datas.forEach(push);
   else if (Array.isArray(t?._datas) && t._datas.length) t._datas.forEach(push);
@@ -170,6 +163,7 @@ function EventosHero({ onRefresh, stats }) {
     <header className="text-white relative overflow-hidden" role="banner">
       <div className="absolute inset-0 bg-gradient-to-br from-rose-900 via-fuchsia-800 to-indigo-800" />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_10%,rgba(255,255,255,0.10),transparent_42%),radial-gradient(circle_at_85%_35%,rgba(255,255,255,0.08),transparent_45%)]" />
+
       <a
         href="#conteudo"
         className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2"
@@ -182,10 +176,9 @@ function EventosHero({ onRefresh, stats }) {
           <span className="text-3xl" aria-hidden="true">
             🎓
           </span>
-          <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight drop-shadow">
-            Eventos disponíveis
-          </h1>
+          <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight drop-shadow">Eventos disponíveis</h1>
         </div>
+
         <p className="mt-2 text-sm sm:text-base text-white/90">
           Inscreva-se em turmas abertas ou acompanhe suas inscrições ativas.
         </p>
@@ -229,9 +222,7 @@ function MiniStat({ icon, label, value }) {
   return (
     <div className="rounded-2xl bg-white/10 border border-white/15 backdrop-blur px-4 py-3 text-left shadow-sm">
       <div className="flex items-center gap-2 text-white/90">
-        <span className="inline-flex w-8 h-8 rounded-xl bg-white/10 items-center justify-center">
-          {icon}
-        </span>
+        <span className="inline-flex w-8 h-8 rounded-xl bg-white/10 items-center justify-center">{icon}</span>
         <div className="min-w-0">
           <div className="text-xs text-white/80">{label}</div>
           <div className="text-xl font-extrabold tracking-tight">{Number(value) || 0}</div>
@@ -243,7 +234,9 @@ function MiniStat({ icon, label, value }) {
 
 /* ───────────────── Regras & Dicas (modal) ───────────────── */
 function RegrasDicasButton() {
+  const reduceMotion = useReducedMotion();
   const [open, setOpen] = useState(false);
+
   return (
     <>
       <BotaoSecundario
@@ -267,12 +260,13 @@ function RegrasDicasButton() {
           >
             <div className="absolute inset-0 bg-black/50" onClick={() => setOpen(false)} />
             <motion.div
-              initial={{ y: 30, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              exit={{ y: 20, opacity: 0 }}
+              initial={reduceMotion ? false : { y: 30, opacity: 0 }}
+              animate={reduceMotion ? {} : { y: 0, opacity: 1 }}
+              exit={reduceMotion ? {} : { y: 20, opacity: 0 }}
               className="relative w-full max-w-2xl rounded-2xl overflow-hidden bg-white dark:bg-neutral-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl"
             >
               <div className="h-1.5 w-full bg-gradient-to-r from-rose-500 via-fuchsia-500 to-indigo-500" />
+
               <div className="p-5 sm:p-6">
                 <div className="flex items-start justify-between gap-3">
                   <h2 className="text-lg sm:text-xl font-extrabold flex items-center gap-2">
@@ -323,9 +317,7 @@ function Tip({ num, titulo, children }) {
         </div>
         <div className="min-w-0">
           <h4 className="font-semibold text-rose-900 dark:text-rose-200">{titulo}</h4>
-          <div className="mt-1.5 text-sm text-rose-950/90 dark:text-rose-100/90 leading-relaxed">
-            {children}
-          </div>
+          <div className="mt-1.5 text-sm text-rose-950/90 dark:text-rose-100/90 leading-relaxed">{children}</div>
         </div>
       </div>
     </div>
@@ -386,6 +378,8 @@ function BotaoProgramacao({ programacaoPdfUrl }) {
 /*  Página                                                             */
 /* ------------------------------------------------------------------ */
 export default function Eventos() {
+  const reduceMotion = useReducedMotion();
+
   const [eventos, setEventos] = useState([]);
   const [turmasPorEvento, setTurmasPorEvento] = useState({});
   const [turmasVisiveis, setTurmasVisiveis] = useState({});
@@ -397,86 +391,39 @@ export default function Eventos() {
   const [carregandoTurmas, setCarregandoTurmas] = useState(null);
   const [carregandoEventos, setCarregandoEventos] = useState(true);
 
+  const liveRef = useRef(null);
+  const setLive = (msg) => {
+    if (liveRef.current) liveRef.current.textContent = msg;
+  };
+
+  const abortEventosRef = useRef(null);
+  const abortInscricoesRef = useRef(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      abortEventosRef.current?.abort?.("unmount");
+      abortInscricoesRef.current?.abort?.("unmount");
+    };
+  }, []);
+
   let usuario = {};
   try {
     usuario = JSON.parse(localStorage.getItem("usuario") || "{}");
   } catch {}
   const usuarioId = Number(usuario?.id) || null;
 
-  /* -------------------- carregamentos -------------------- */
-  useEffect(() => {
-    carregarEventos();
-  }, []);
-  useEffect(() => {
-    carregarInscricoes();
-  }, []);
-
-  const stats = useMemo(() => {
-    const eventosDisponiveis = Array.isArray(eventos) ? eventos.length : 0;
-    const inscricoesAtivas = Array.isArray(inscricoesTurmaIds) ? inscricoesTurmaIds.length : 0;
-    const eventosAndamento = (eventos || []).filter((e) => {
-      const st = String(e?.status || "");
-      return st === "andamento";
-    }).length;
-    return { eventosDisponiveis, inscricoesAtivas, eventosAndamento };
-  }, [eventos, inscricoesTurmaIds]);
-
-  async function carregarEventos() {
-    setCarregandoEventos(true);
-    try {
-      const res1 = await apiGet("/api/eventos/para-mim/lista").catch(() => []);
-      const lista1 = extrairListaEventos(res1);
-      let lista =
-        Array.isArray(lista1) && lista1.length
-          ? lista1
-          : await filtrarVisiveis(extrairListaEventos(await apiGet("/api/eventos")));
-
-      const elegiveis = lista.filter((e) => {
-        const st = statusBackendOuFallback(e, turmasPorEvento[e.id]);
-        return st === "programado" || st === "andamento";
-      });
-
-      elegiveis.sort((a, b) => keyInicio(a, turmasPorEvento) - keyInicio(b, turmasPorEvento));
-      setEventos(elegiveis);
-      setErro("");
-    } catch {
-      setErro("Erro ao carregar eventos");
-      toast.error("❌ Erro ao carregar eventos");
-    } finally {
-      setCarregandoEventos(false);
-    }
-  }
-
-  async function carregarInscricoes() {
-    try {
-      const data = await apiGet("/api/inscricoes/minhas");
-      const arr = Array.isArray(data) ? data : [];
-      const ativas = arr.filter((it) => {
-        const { status } = statusText(it.data_inicio, it.data_fim, it.horario_inicio, it.horario_fim);
-        const fimISO = (it.data_fim || it.data_inicio || "").slice(0, 10);
-        const hojeISO = new Date().toISOString().slice(0, 10);
-        const encerrado = fimISO && fimISO < hojeISO;
-        return (status === "Programado" || status === "Em andamento") && !encerrado;
-      });
-
-      setInscricoes(ativas);
-      setInscricoesTurmaIds(
-        ativas.map((i) => Number(i?.turma_id)).filter((n) => Number.isFinite(n))
-      );
-    } catch {
-      toast.error("Erro ao carregar suas inscrições ativas.");
-    }
-  }
-
   /* -------------------- util de eventos -------------------- */
-  function extrairListaEventos(res) {
+  const extrairListaEventos = useCallback((res) => {
     if (Array.isArray(res)) return res;
     if (Array.isArray(res?.eventos)) return res.eventos;
     if (Array.isArray(res?.data?.eventos)) return res.data.eventos;
     return [];
-  }
+  }, []);
 
-  async function filtrarVisiveis(lista) {
+  const filtrarVisiveis = useCallback(async (lista) => {
     const checks = (lista || []).map(async (e) => {
       try {
         const r = await apiGet(`/api/eventos/${e.id}/visivel`);
@@ -487,82 +434,188 @@ export default function Eventos() {
     });
     const arr = await Promise.all(checks);
     return arr.filter(Boolean);
-  }
+  }, []);
 
-  function turmasDoEvento(evento) {
-    const carregadas = turmasPorEvento[evento.id];
-    if (Array.isArray(carregadas) && carregadas.length) return carregadas;
-    if (Array.isArray(evento?.turmas) && evento.turmas.length) return evento.turmas;
-    return [];
-  }
+  const turmasDoEvento = useCallback(
+    (evento) => {
+      const carregadas = turmasPorEvento[evento.id];
+      if (Array.isArray(carregadas) && carregadas.length) return carregadas;
+      if (Array.isArray(evento?.turmas) && evento.turmas.length) return evento.turmas;
+      return [];
+    },
+    [turmasPorEvento]
+  );
 
-  function statusBackendOuFallback(evento, turmasCarregadas) {
-    if (typeof evento?.status === "string" && evento.status) return evento.status;
-    return statusDoEvento(evento, turmasCarregadas);
-  }
+  const statusDoEvento = useCallback(
+    (evento, turmasCarregadas) => {
+      const ts =
+        Array.isArray(turmasCarregadas) && turmasCarregadas.length ? turmasCarregadas : turmasDoEvento(evento);
 
-  function statusDoEvento(evento, turmasCarregadas) {
-    const ts =
-      Array.isArray(turmasCarregadas) && turmasCarregadas.length
-        ? turmasCarregadas
-        : turmasDoEvento(evento);
+      if (ts.length) {
+        let andamento = false;
+        let futuro = false;
+        let todosPassados = true;
 
-    if (ts.length) {
-      let andamento = false,
-        futuro = false,
-        todosPassados = true;
-      for (const t of ts) {
-        const { di, df } = rangeDaTurma(t);
-        if (inRange(di, df, HOJE_ISO)) andamento = true;
-        if (di && di > HOJE_ISO) futuro = true;
-        if (!(df && df < HOJE_ISO)) todosPassados = false;
+        for (const t of ts) {
+          const { di, df } = rangeDaTurma(t);
+          if (inRange(di, df, HOJE_ISO)) andamento = true;
+          if (di && di > HOJE_ISO) futuro = true;
+          if (!(df && df < HOJE_ISO)) todosPassados = false;
+        }
+
+        if (andamento) return "andamento";
+        if (futuro && !todosPassados) return "programado";
+        if (todosPassados) return "encerrado";
+        return "programado";
       }
-      if (andamento) return "andamento";
-      if (futuro && !todosPassados) return "programado";
-      if (todosPassados) return "encerrado";
+
+      const diG = ymd(evento?.data_inicio_geral);
+      const dfG = ymd(evento?.data_fim_geral);
+      if (inRange(diG, dfG, HOJE_ISO)) return "andamento";
+      if (diG && diG > HOJE_ISO) return "programado";
+      if (dfG && dfG < HOJE_ISO) return "encerrado";
       return "programado";
-    }
+    },
+    [turmasDoEvento]
+  );
 
-    const diG = ymd(evento?.data_inicio_geral);
-    const dfG = ymd(evento?.data_fim_geral);
-    if (inRange(diG, dfG, HOJE_ISO)) return "andamento";
-    if (diG && diG > HOJE_ISO) return "programado";
-    if (dfG && dfG < HOJE_ISO) return "encerrado";
-    return "programado";
-  }
+  const statusBackendOuFallback = useCallback(
+    (evento, turmasCarregadas) => {
+      if (typeof evento?.status === "string" && evento.status) return evento.status;
+      return statusDoEvento(evento, turmasCarregadas);
+    },
+    [statusDoEvento]
+  );
 
-  function keyInicio(evento, mapaTurmas) {
+  const keyInicio = useCallback((evento, mapaTurmas) => {
     const ts = mapaTurmas[evento.id] || evento?.turmas || [];
     let di = null;
+
     if (Array.isArray(ts) && ts.length) {
       for (const t of ts) {
         const r = rangeDaTurma(t);
         if (r.di && (!di || r.di < di)) di = r.di;
       }
     }
+
     if (!di) di = ymd(evento?.data_inicio_geral) || "9999-12-31";
+
     const h =
-      (typeof evento?.horario_inicio_geral === "string" &&
-        evento.horario_inicio_geral.slice(0, 5)) ||
-      "00:00";
+      (typeof evento?.horario_inicio_geral === "string" && evento.horario_inicio_geral.slice(0, 5)) || "00:00";
+
     return new Date(`${di}T${h}:00`).getTime();
-  }
+  }, []);
+
+  /* -------------------- carregamentos -------------------- */
+  const carregarInscricoes = useCallback(async () => {
+    try {
+      abortInscricoesRef.current?.abort?.("new-request");
+      const ctrl = new AbortController();
+      abortInscricoesRef.current = ctrl;
+
+      const data = await apiGet("/api/inscricoes/minhas", { signal: ctrl.signal }).catch(() => []);
+      const arr = Array.isArray(data) ? data : [];
+
+      const ativas = arr.filter((it) => {
+        const { status } = statusText(it.data_inicio, it.data_fim, it.horario_inicio, it.horario_fim);
+        const fimISO = (it.data_fim || it.data_inicio || "").slice(0, 10);
+        const hojeISO = new Date().toISOString().slice(0, 10);
+        const encerrado = fimISO && fimISO < hojeISO;
+        return (status === "Programado" || status === "Em andamento") && !encerrado;
+      });
+
+      if (!mountedRef.current) return;
+      setInscricoes(ativas);
+      setInscricoesTurmaIds(ativas.map((i) => Number(i?.turma_id)).filter((n) => Number.isFinite(n)));
+    } catch {
+      toast.error("Erro ao carregar suas inscrições ativas.");
+    }
+  }, []);
+
+  const carregarEventos = useCallback(async () => {
+    setCarregandoEventos(true);
+    setLive("Carregando eventos…");
+    setErro("");
+
+    try {
+      abortEventosRef.current?.abort?.("new-request");
+      const ctrl = new AbortController();
+      abortEventosRef.current = ctrl;
+
+      const res1 = await apiGet("/api/eventos/para-mim/lista", { signal: ctrl.signal }).catch(() => []);
+      const lista1 = extrairListaEventos(res1);
+
+      let lista =
+        Array.isArray(lista1) && lista1.length
+          ? lista1
+          : await filtrarVisiveis(extrairListaEventos(await apiGet("/api/eventos", { signal: ctrl.signal })));
+
+      const elegiveis = lista.filter((e) => {
+        const st = statusBackendOuFallback(e, turmasPorEvento[e.id]);
+        return st === "programado" || st === "andamento";
+      });
+
+      elegiveis.sort((a, b) => keyInicio(a, turmasPorEvento) - keyInicio(b, turmasPorEvento));
+
+      if (!mountedRef.current) return;
+      setEventos(elegiveis);
+      setErro("");
+      setLive("Eventos atualizados.");
+    } catch (e) {
+      if (e?.name === "AbortError") return;
+      setErro("Erro ao carregar eventos");
+      toast.error("❌ Erro ao carregar eventos");
+      setLive("Falha ao carregar eventos.");
+    } finally {
+      if (mountedRef.current) setCarregandoEventos(false);
+    }
+  }, [extrairListaEventos, filtrarVisiveis, statusBackendOuFallback, turmasPorEvento, keyInicio]);
+
+  useEffect(() => {
+    carregarEventos();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    carregarInscricoes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const stats = useMemo(() => {
+    const eventosDisponiveis = Array.isArray(eventos) ? eventos.length : 0;
+    const inscricoesAtivas = Array.isArray(inscricoesTurmaIds) ? inscricoesTurmaIds.length : 0;
+
+    // premium: “andamento” usando o mesmo status real/fallback
+    const eventosAndamento = (eventos || []).filter((e) => {
+      const st = statusBackendOuFallback(e, turmasPorEvento[e.id]);
+      return st === "andamento";
+    }).length;
+
+    return { eventosDisponiveis, inscricoesAtivas, eventosAndamento };
+  }, [eventos, inscricoesTurmaIds, statusBackendOuFallback, turmasPorEvento]);
 
   /* -------------------- carregar turmas de um evento -------------------- */
-  async function carregarTurmas(eventoId) {
-    if (turmasVisiveis[eventoId]) {
-      setTurmasVisiveis((prev) => ({ ...prev, [eventoId]: false }));
-      return;
-    }
-    setTurmasVisiveis((prev) => ({ ...prev, [eventoId]: true }));
+  const carregarTurmas = useCallback(
+    async (eventoId) => {
+      // toggle rápido (sem refetch)
+      if (turmasVisiveis[eventoId]) {
+        setTurmasVisiveis((prev) => ({ ...prev, [eventoId]: false }));
+        return;
+      }
+      setTurmasVisiveis((prev) => ({ ...prev, [eventoId]: true }));
 
-    if (!turmasPorEvento[eventoId] && !carregandoTurmas) {
+      // se já tem turmas, não refaz chamada
+      if (turmasPorEvento[eventoId] || carregandoTurmas) return;
+
       setCarregandoTurmas(eventoId);
       try {
-        let turmas = await apiGet(`/api/eventos/${eventoId}/turmas-simples`);
-        if (!Array.isArray(turmas)) {
+        let turmas = await apiGet(`/api/eventos/${eventoId}/turmas-simples`).catch(() => []);
+        if (!Array.isArray(turmas)) turmas = [];
+
+        // fallback para endpoint full (mantém sua lógica)
+        if (!turmas.length) {
           try {
-            const full = await apiGet(`/api/eventos/${eventoId}/turmas`);
+            const full = await apiGet(`/api/eventos/${eventoId}/turmas`).catch(() => []);
             turmas = Array.isArray(full)
               ? full.map((t) => ({
                   id: t.id,
@@ -588,11 +641,11 @@ export default function Eventos() {
           }
         }
 
-        setTurmasPorEvento((prev) => ({
-          ...prev,
-          [eventoId]: Array.isArray(turmas) ? turmas : [],
-        }));
+        if (!mountedRef.current) return;
 
+        setTurmasPorEvento((prev) => ({ ...prev, [eventoId]: turmas }));
+
+        // reordena lista após carregar turmas (para ajustar “início” real)
         setEventos((prev) =>
           [...prev].sort(
             (a, b) =>
@@ -603,10 +656,11 @@ export default function Eventos() {
       } catch {
         toast.error("Erro ao carregar turmas");
       } finally {
-        setCarregandoTurmas(null);
+        if (mountedRef.current) setCarregandoTurmas(null);
       }
-    }
-  }
+    },
+    [turmasVisiveis, turmasPorEvento, carregandoTurmas, keyInicio]
+  );
 
   /* -------------------- Google Agenda (robusto) -------------------- */
   const buildAgendaHref = useCallback(
@@ -628,92 +682,103 @@ export default function Eventos() {
   );
 
   /* -------------------- inscrever / cancelar -------------------- */
-  async function inscrever(turmaId, eventoId) {
-    if (inscrevendo) return;
+  const inscrever = useCallback(
+    async (turmaId, eventoId) => {
+      if (inscrevendo) return;
 
-    const eventoRef = eventos.find((e) => Number(e.id) === Number(eventoId));
-    const ehInstrutor =
-      Boolean(eventoRef?.ja_instrutor) ||
-      (Array.isArray(eventoRef?.instrutor) &&
-        usuarioId &&
-        eventoRef.instrutor.some((i) => Number(i.id) === Number(usuarioId)));
+      const eventoRef = eventos.find((e) => Number(e.id) === Number(eventoId));
+      const ehInstrutor =
+        Boolean(eventoRef?.ja_instrutor) ||
+        (Array.isArray(eventoRef?.instrutor) &&
+          usuarioId &&
+          eventoRef.instrutor.some((i) => Number(i.id) === Number(usuarioId)));
 
-    if (ehInstrutor) {
-      toast.warn("Você é instrutor deste evento e não pode se inscrever como participante.");
-      return;
-    }
-
-    setInscrevendo(turmaId);
-    try {
-      await apiPost("/api/inscricoes", { turma_id: turmaId });
-      toast.success("✅ Inscrição realizada com sucesso!");
-      await carregarInscricoes();
-
-      try {
-        const turmasAtualizadas = await apiGet(`/api/eventos/${eventoId}/turmas-simples`);
-        setTurmasPorEvento((prev) => ({
-          ...prev,
-          [eventoId]: Array.isArray(turmasAtualizadas) ? turmasAtualizadas : [],
-        }));
-      } catch {}
-    } catch (err) {
-      const status = err?.status ?? err?.response?.status ?? err?.data?.status ?? err?.response?.data?.status;
-      const serverMsg =
-        err?.data?.erro ??
-        err?.response?.erro ??
-        err?.response?.data?.erro ??
-        err?.data?.message ??
-        err?.response?.data?.message;
-
-      const msg = serverMsg || err?.message || "Erro ao se inscrever.";
-      if (status === 409) toast.warn(msg);
-      else if (status === 400) toast.error(msg);
-      else if (status === 403 && err?.response?.data?.motivo) {
-        const motivo = err.response.data.motivo;
-        if (motivo === "SEM_REGISTRO") toast.error("Inscrição bloqueada: informe seu Registro no perfil.");
-        else if (motivo === "REGISTRO_NAO_AUTORIZADO")
-          toast.error("Inscrição bloqueada: seu Registro não está autorizado para este curso.");
-        else toast.error("Acesso negado para este curso.");
-      } else {
-        console.error("❌ Erro inesperado:", err);
-        toast.error("❌ Erro ao se inscrever.");
+      if (ehInstrutor) {
+        toast.warn("Você é instrutor deste evento e não pode se inscrever como participante.");
+        return;
       }
-    } finally {
-      setInscrevendo(null);
-    }
-  }
 
-  function getInscricaoPorTurmaId(turmaId) {
-    return inscricoes.find((i) => Number(i?.turma_id) === Number(turmaId)) || null;
-  }
+      setInscrevendo(turmaId);
+      try {
+        await apiPost("/api/inscricoes", { turma_id: turmaId });
+        toast.success("✅ Inscrição realizada com sucesso!");
+        await carregarInscricoes();
 
-  async function cancelarInscricaoByTurmaId(turmaId) {
-    const reg = getInscricaoPorTurmaId(turmaId);
-    const inscricaoId = reg?.inscricao_id || reg?.id;
-    if (!inscricaoId) {
-      toast.info("Não foi possível localizar a inscrição para cancelar.");
-      return;
-    }
-    if (!window.confirm("Tem certeza que deseja cancelar sua inscrição?")) return;
+        // atualiza turmas do evento (para refletir vagas/inscrito)
+        try {
+          const turmasAtualizadas = await apiGet(`/api/eventos/${eventoId}/turmas-simples`).catch(() => []);
+          setTurmasPorEvento((prev) => ({
+            ...prev,
+            [eventoId]: Array.isArray(turmasAtualizadas) ? turmasAtualizadas : [],
+          }));
+        } catch {}
+      } catch (err) {
+        const status = err?.status ?? err?.response?.status ?? err?.data?.status ?? err?.response?.data?.status;
+        const serverMsg =
+          err?.data?.erro ??
+          err?.response?.erro ??
+          err?.response?.data?.erro ??
+          err?.data?.message ??
+          err?.response?.data?.message;
 
-    setCancelandoId(inscricaoId);
-    try {
-      await apiDelete(`/api/inscricoes/${inscricaoId}`);
-      toast.success("✅ Inscrição cancelada com sucesso.");
-      await carregarInscricoes();
-    } catch (err) {
-      const status = err?.status || err?.response?.status || 0;
-      const data = err?.data || err?.response?.data || {};
-      const msg = data?.mensagem || data?.message || err?.message || "Sem conexão";
-      toast.error(`❌ Erro ao cancelar inscrição${status ? ` (${status})` : ""}. ${msg}`);
-    } finally {
-      setCancelandoId(null);
-    }
-  }
+        const msg = serverMsg || err?.message || "Erro ao se inscrever.";
+        if (status === 409) toast.warn(msg);
+        else if (status === 400) toast.error(msg);
+        else if (status === 403 && err?.response?.data?.motivo) {
+          const motivo = err.response.data.motivo;
+          if (motivo === "SEM_REGISTRO") toast.error("Inscrição bloqueada: informe seu Registro no perfil.");
+          else if (motivo === "REGISTRO_NAO_AUTORIZADO")
+            toast.error("Inscrição bloqueada: seu Registro não está autorizado para este curso.");
+          else toast.error("Acesso negado para este curso.");
+        } else {
+          console.error("❌ Erro inesperado:", err);
+          toast.error("❌ Erro ao se inscrever.");
+        }
+      } finally {
+        setInscrevendo(null);
+      }
+    },
+    [inscrevendo, eventos, usuarioId, carregarInscricoes]
+  );
+
+  const getInscricaoPorTurmaId = useCallback(
+    (turmaId) => inscricoes.find((i) => Number(i?.turma_id) === Number(turmaId)) || null,
+    [inscricoes]
+  );
+
+  const cancelarInscricaoByTurmaId = useCallback(
+    async (turmaId) => {
+      const reg = getInscricaoPorTurmaId(turmaId);
+      const inscricaoId = reg?.inscricao_id || reg?.id;
+
+      if (!inscricaoId) {
+        toast.info("Não foi possível localizar a inscrição para cancelar.");
+        return;
+      }
+      if (!window.confirm("Tem certeza que deseja cancelar sua inscrição?")) return;
+
+      setCancelandoId(inscricaoId);
+      try {
+        await apiDelete(`/api/inscricoes/${inscricaoId}`);
+        toast.success("✅ Inscrição cancelada com sucesso.");
+        await carregarInscricoes();
+      } catch (err) {
+        const status = err?.status || err?.response?.status || 0;
+        const data = err?.data || err?.response?.data || {};
+        const msg = data?.mensagem || data?.message || err?.message || "Sem conexão";
+        toast.error(`❌ Erro ao cancelar inscrição${status ? ` (${status})` : ""}. ${msg}`);
+      } finally {
+        setCancelandoId(null);
+      }
+    },
+    [getInscricaoPorTurmaId, carregarInscricoes]
+  );
 
   /* -------------------- UI -------------------- */
   return (
-    <main id="conteudo" className="min-h-screen bg-gelo dark:bg-zinc-900">
+    <div className="min-h-screen bg-gelo dark:bg-zinc-900">
+      <p ref={liveRef} className="sr-only" aria-live="polite" aria-atomic="true" />
+
       <EventosHero
         stats={stats}
         onRefresh={async () => {
@@ -722,7 +787,20 @@ export default function Eventos() {
         }}
       />
 
-      <div className="px-2 sm:px-4 py-6 max-w-6xl mx-auto">
+      {/* progress bar sticky (premium) */}
+      {carregandoEventos && (
+        <div
+          className="sticky top-0 left-0 w-full h-1 bg-fuchsia-100 dark:bg-fuchsia-950/30 z-40"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="Carregando eventos"
+        >
+          <div className={`h-full bg-fuchsia-600 ${reduceMotion ? "" : "animate-pulse"} w-1/3`} />
+        </div>
+      )}
+
+      <main id="conteudo" className="px-2 sm:px-4 py-6 max-w-6xl mx-auto">
         {carregandoEventos ? (
           <div className="grid grid-cols-1 gap-4" aria-busy="true" aria-live="polite">
             {[...Array(5)].map((_, i) => (
@@ -730,8 +808,8 @@ export default function Eventos() {
             ))}
           </div>
         ) : erro ? (
-          <div className="rounded-2xl border border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/30 p-4 text-center">
-            <div className="inline-flex items-center gap-2 text-rose-800 dark:text-rose-200 font-semibold">
+          <div className="rounded-2xl border border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/30 p-4 text-center ring-1 ring-rose-200/50 dark:ring-rose-900/30">
+            <div className="inline-flex items-center gap-2 text-rose-800 dark:text-rose-200 font-extrabold">
               <AlertTriangle className="w-4 h-4" /> {erro}
             </div>
             <div className="mt-3 flex justify-center">
@@ -754,9 +832,7 @@ export default function Eventos() {
         ) : (
           <div className="grid grid-cols-1 gap-6">
             {eventos.map((evento, idx) => {
-              const localEvento =
-                evento.local || evento.localizacao || evento.endereco || evento.localidade || null;
-
+              const localEvento = evento.local || evento.localizacao || evento.endereco || evento.localidade || null;
               const statusEvt = statusBackendOuFallback(evento, turmasPorEvento[evento.id]);
               const ehInstrutor = Boolean(evento.ja_instrutor);
 
@@ -768,8 +844,8 @@ export default function Eventos() {
               return (
                 <motion.article
                   key={evento.id ?? idx}
-                  initial={{ opacity: 0, y: 14 }}
-                  animate={{ opacity: 1, y: 0 }}
+                  initial={reduceMotion ? false : { opacity: 0, y: 14 }}
+                  animate={reduceMotion ? {} : { opacity: 1, y: 0 }}
                   transition={{ duration: 0.28 }}
                   className="group rounded-2xl overflow-hidden border border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-neutral-900 shadow-md hover:shadow-xl transition-shadow"
                   aria-labelledby={`evt-${evento.id}-titulo`}
@@ -803,9 +879,7 @@ export default function Eventos() {
                     </div>
 
                     {evento.descricao && (
-                      <p className="mt-1.5 text-[15px] text-zinc-700 dark:text-zinc-300">
-                        {evento.descricao}
-                      </p>
+                      <p className="mt-1.5 text-[15px] text-zinc-700 dark:text-zinc-300">{evento.descricao}</p>
                     )}
 
                     {/* Local */}
@@ -827,7 +901,7 @@ export default function Eventos() {
                     </div>
 
                     {ehInstrutor && (
-                      <div className="mt-2 text-xs font-semibold inline-flex items-center gap-2 px-2 py-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 border border-amber-200 dark:border-amber-800">
+                      <div className="mt-2 text-xs font-extrabold inline-flex items-center gap-2 px-2 py-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 border border-amber-200 dark:border-amber-800">
                         Você é instrutor deste evento
                       </div>
                     )}
@@ -896,10 +970,10 @@ export default function Eventos() {
             })}
           </div>
         )}
-      </div>
+      </main>
 
       <Footer />
-    </main>
+    </div>
   );
 }
 

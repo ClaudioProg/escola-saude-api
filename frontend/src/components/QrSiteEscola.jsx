@@ -1,19 +1,22 @@
 // 📁 src/components/QrSiteEscola.jsx
-import { useMemo, useRef, useState } from "react";
+import { useId, useMemo, useRef, useState, useCallback } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { toast } from "react-toastify";
+import { Download, Copy, QrCode } from "lucide-react";
 
 /**
- * Upgrades:
- * - ✅ aceita `url` (alias de `value`) para compatibilidade com HomeEscola
- * - ✅ botão "Copiar link" com dark-mode correto (premium)
- * - ✅ feedback toast ao copiar
+ * QrSiteEscola (Premium)
+ * - ✅ aceita `url` (alias de `value`) para compatibilidade
+ * - ✅ botão "Copiar link" + fallback (clipboard / execCommand)
+ * - ✅ export SVG/PNG hi-dpi com cleanup robusto
+ * - ✅ contraste mínimo (opcional) + aviso elegante
+ * - ✅ A11y: aria-describedby + live region
  */
 export default function QrSiteEscola({
   size = 512,
 
-  // ✅ compat: HomeEscola passou `url`, então aceitamos ambos
-  url, // <- NOVO
+  // compat: aceita `url` ou `value`
+  url,
   value = "https://escoladasaude.vercel.app/",
 
   level = "H", // L, M, Q, H
@@ -35,34 +38,38 @@ export default function QrSiteEscola({
   enforceContrast = true,
   onDownload,
 }) {
-  const svgWrapRef = useRef(null);
+  const wrapRef = useRef(null);
   const [exporting, setExporting] = useState(false);
+  const [a11yMsg, setA11yMsg] = useState("");
 
-  // ✅ fonte da verdade: se vier `url`, usa ele; senão usa `value`
-  const finalValue = useMemo(() => String(url || value || ""), [url, value]);
+  const descId = useId();
+  const liveId = useId();
 
-  /* ---------- Helpers ---------- */
+  // fonte da verdade: se vier `url`, usa ele; senão `value`
+  const finalValue = useMemo(() => String(url || value || "").trim(), [url, value]);
 
-  const sanitizeName = (s) =>
-    String(s || "")
-      .toLowerCase()
-      .replace(/(^\w+:|^)\/\//, "")
-      .replace(/[^\w.-]+/g, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-|-$/g, "") || "qr-code";
+  /* ───────────── helpers ───────────── */
 
-  const defaultBaseName = useMemo(() => {
+  const baseName = useMemo(() => {
+    const sanitizeName = (s) =>
+      String(s || "")
+        .toLowerCase()
+        .replace(/(^\w+:|^)\/\//, "")
+        .replace(/[^\w.-]+/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-|-$/g, "") || "qr-code";
+
+    if (fileName) return sanitizeName(fileName);
+
     try {
       const u = new URL(finalValue);
-      return sanitizeName(u.host + (u.pathname !== "/" ? u.pathname : ""));
+      const path = u.pathname && u.pathname !== "/" ? u.pathname : "";
+      return sanitizeName(u.host + path);
     } catch {
       return "qr-code";
     }
-  }, [finalValue]);
+  }, [finalValue, fileName]);
 
-  const baseName = fileName ? sanitizeName(fileName) : defaultBaseName;
-
-  // contraste simples para evitar fg==bg
   const colorsOk = useMemo(() => {
     if (!enforceContrast) return true;
     const a = hexToRgb(fgColor);
@@ -80,10 +87,14 @@ export default function QrSiteEscola({
     return { src: logoUrl, height: side, width: side, excavate: true };
   }, [showLogo, logoUrl, size, logoPct]);
 
-  /* ---------- Export: SVG ---------- */
-  const baixarSVG = () => {
-    const svg = svgWrapRef.current?.querySelector("svg");
+  const getSvgEl = () => wrapRef.current?.querySelector("svg") || null;
+
+  /* ───────────── export: SVG ───────────── */
+
+  const baixarSVG = useCallback(() => {
+    const svg = getSvgEl();
     if (!svg) return;
+
     try {
       const xml = new XMLSerializer().serializeToString(svg);
       const blob = new Blob([xml], { type: "image/svg+xml;charset=utf-8" });
@@ -91,17 +102,23 @@ export default function QrSiteEscola({
       triggerDownload(urlObj, `${baseName}.svg`);
       URL.revokeObjectURL(urlObj);
       onDownload?.("svg");
+      toast.success("⬇️ SVG baixado!");
+      setA11yMsg("SVG baixado com sucesso.");
     } catch {
       const data = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg.outerHTML)}`;
       triggerDownload(data, `${baseName}.svg`);
       onDownload?.("svg");
+      toast.success("⬇️ SVG baixado!");
+      setA11yMsg("SVG baixado com sucesso.");
     }
-  };
+  }, [baseName, onDownload]);
 
-  /* ---------- Export: PNG hi-dpi ---------- */
-  const baixarPNG = async () => {
-    const svg = svgWrapRef.current?.querySelector("svg");
+  /* ───────────── export: PNG hi-dpi ───────────── */
+
+  const baixarPNG = useCallback(async () => {
+    const svg = getSvgEl();
     if (!svg) return;
+
     setExporting(true);
     try {
       const xml = new XMLSerializer().serializeToString(svg);
@@ -110,6 +127,7 @@ export default function QrSiteEscola({
 
       const img = new Image();
       img.crossOrigin = "anonymous";
+
       await new Promise((resolve, reject) => {
         img.onload = resolve;
         img.onerror = reject;
@@ -118,14 +136,17 @@ export default function QrSiteEscola({
 
       const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
       const scale = Math.max(1, Math.floor(pngScale)) * dpr;
-      const out = size * scale;
+
+      const out = Math.round(size * scale);
+      const pad = Math.max(0, Math.floor(quietZone * scale));
 
       const canvas = document.createElement("canvas");
-      const pad = Math.max(0, Math.floor(quietZone * scale));
       canvas.width = out + pad * 2;
       canvas.height = out + pad * 2;
 
       const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("Canvas indisponível");
+
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = "high";
 
@@ -133,58 +154,113 @@ export default function QrSiteEscola({
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, pad, pad, out, out);
 
+      // cleanup após desenhar
       URL.revokeObjectURL(svgUrl);
 
-      await new Promise((resolve) =>
-        canvas.toBlob(
-          (blob) => {
-            if (!blob) return resolve();
-            const urlObj = URL.createObjectURL(blob);
-            triggerDownload(urlObj, `${baseName}.png`);
-            URL.revokeObjectURL(urlObj);
-            onDownload?.("png");
-            resolve();
-          },
-          "image/png",
-          0.92
-        )
-      );
-    } catch {
-      try {
-        const dataUrl = await rasterizeFallback(svgWrapRef.current, size, bgColor);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png", 0.92));
+      if (blob) {
+        const urlObj = URL.createObjectURL(blob);
+        triggerDownload(urlObj, `${baseName}.png`);
+        URL.revokeObjectURL(urlObj);
+        onDownload?.("png");
+        toast.success("⬇️ PNG baixado!");
+        setA11yMsg("PNG baixado com sucesso.");
+      } else {
+        // fallback dataURL
+        const dataUrl = canvas.toDataURL("image/png");
         triggerDownload(dataUrl, `${baseName}.png`);
         onDownload?.("png");
+        toast.success("⬇️ PNG baixado!");
+        setA11yMsg("PNG baixado com sucesso.");
+      }
+    } catch {
+      try {
+        const dataUrl = await rasterizeFallback(wrapRef.current, size, bgColor);
+        triggerDownload(dataUrl, `${baseName}.png`);
+        onDownload?.("png");
+        toast.success("⬇️ PNG baixado!");
+        setA11yMsg("PNG baixado com sucesso.");
       } catch {
-        // silencioso
+        toast.error("Não foi possível gerar o PNG.");
+        setA11yMsg("Falha ao gerar o PNG.");
       }
     } finally {
       setExporting(false);
     }
-  };
+  }, [baseName, bgColor, pngScale, quietZone, size, onDownload]);
 
-  const copiarLink = async () => {
+  /* ───────────── copiar link ───────────── */
+
+  const copiarLink = useCallback(async () => {
+    const txt = finalValue;
+    if (!txt) {
+      toast.error("Link vazio.");
+      setA11yMsg("Link vazio.");
+      return;
+    }
+
+    // Clipboard API
     try {
-      await navigator.clipboard.writeText(finalValue);
-      toast.success("🔗 Link copiado!");
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(txt);
+        toast.success("🔗 Link copiado!");
+        setA11yMsg("Link copiado para a área de transferência.");
+        return;
+      }
+    } catch {
+      // segue pro fallback
+    }
+
+    // Fallback: textarea + execCommand
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = txt;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      ta.style.top = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      ta.remove();
+
+      if (ok) {
+        toast.success("🔗 Link copiado!");
+        setA11yMsg("Link copiado para a área de transferência.");
+      } else {
+        throw new Error("copy_failed");
+      }
     } catch {
       toast.error("Não foi possível copiar o link.");
+      setA11yMsg("Falha ao copiar o link.");
     }
-  };
+  }, [finalValue]);
 
-  const descId = useMemo(() => `qr-desc-${Math.random().toString(36).slice(2, 8)}`, []);
+  /* ───────────── render ───────────── */
 
   return (
     <div className="inline-flex flex-col items-center gap-3">
+      {/* live region discreta */}
+      <span id={liveId} className="sr-only" aria-live="polite" aria-atomic="true">
+        {a11yMsg}
+      </span>
+
       <div
-        ref={svgWrapRef}
-        className="relative inline-block rounded-2xl shadow-sm ring-1 ring-black/5 dark:ring-white/10"
+        ref={wrapRef}
+        className={classNames(
+          "relative inline-block",
+          "rounded-3xl",
+          "shadow-[0_18px_55px_-40px_rgba(0,0,0,0.55)]",
+          "ring-1 ring-black/5 dark:ring-white/10",
+          exporting ? "opacity-90" : ""
+        )}
         style={{ padding: quietZone, background: bgColor }}
         aria-label={title}
         aria-describedby={description ? descId : undefined}
         role="img"
       >
         <QRCodeSVG
-          value={finalValue}                 // ✅ usa o link correto (site/instagram)
+          value={finalValue}
           size={size}
           level={level}
           includeMargin={includeMargin}
@@ -194,6 +270,7 @@ export default function QrSiteEscola({
           title={title}
         />
 
+        {/* Logo rounded: aplica no último image (quando existir) */}
         {showLogo && logoRounded && (
           <style
             dangerouslySetInnerHTML={{
@@ -207,6 +284,14 @@ export default function QrSiteEscola({
             }}
           />
         )}
+
+        {/* etiqueta “QR” discreta (premium) */}
+        <div className="absolute -top-2 -left-2">
+          <span className="inline-flex items-center gap-1 rounded-2xl bg-black/60 text-white text-[11px] font-extrabold px-2 py-1 ring-1 ring-white/15">
+            <QrCode className="w-3.5 h-3.5" aria-hidden="true" />
+            QR
+          </span>
+        </div>
       </div>
 
       {description && (
@@ -220,41 +305,59 @@ export default function QrSiteEscola({
           <button
             type="button"
             onClick={baixarSVG}
-            className="px-3 py-1.5 rounded-xl bg-emerald-700 text-white text-xs font-extrabold hover:bg-emerald-800 transition disabled:opacity-50"
             disabled={!colorsOk || exporting}
+            className={classNames(
+              "inline-flex items-center gap-2",
+              "px-3 py-2 rounded-2xl text-xs font-extrabold",
+              "bg-emerald-600 hover:bg-emerald-700 text-white",
+              "ring-1 ring-emerald-800/30",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70",
+              "disabled:opacity-50 disabled:cursor-not-allowed"
+            )}
             title={!colorsOk ? "Ajuste as cores para melhor contraste" : "Baixar em SVG"}
           >
+            <Download className="w-4 h-4" aria-hidden="true" />
             Baixar SVG
           </button>
 
           <button
             type="button"
             onClick={baixarPNG}
-            className="px-3 py-1.5 rounded-xl bg-emerald-700 text-white text-xs font-extrabold hover:bg-emerald-800 transition disabled:opacity-50"
             disabled={!colorsOk || exporting}
+            className={classNames(
+              "inline-flex items-center gap-2",
+              "px-3 py-2 rounded-2xl text-xs font-extrabold",
+              "bg-emerald-600 hover:bg-emerald-700 text-white",
+              "ring-1 ring-emerald-800/30",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70",
+              "disabled:opacity-50 disabled:cursor-not-allowed"
+            )}
             title={!colorsOk ? "Ajuste as cores para melhor contraste" : `Baixar PNG ${pngScale}x`}
           >
-            {exporting ? "Gerando..." : "Baixar PNG"}
+            <Download className={classNames("w-4 h-4", exporting ? "animate-bounce" : "")} aria-hidden="true" />
+            {exporting ? "Gerando…" : "Baixar PNG"}
           </button>
 
-          {/* ✅ Copiar link (premium + dark ok) */}
           <button
             type="button"
             onClick={copiarLink}
-            className={[
-              "px-3 py-1.5 rounded-xl text-xs font-extrabold transition",
+            className={classNames(
+              "inline-flex items-center gap-2",
+              "px-3 py-2 rounded-2xl text-xs font-extrabold transition",
               "border border-slate-200 bg-white text-slate-800 hover:bg-slate-100",
               "dark:border-white/10 dark:bg-zinc-900/50 dark:text-zinc-100 dark:hover:bg-white/10",
-            ].join(" ")}
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/40"
+            )}
             title="Copiar link"
           >
+            <Copy className="w-4 h-4" aria-hidden="true" />
             Copiar link
           </button>
         </div>
       )}
 
       {!colorsOk && (
-        <p className="text-xs text-amber-700 dark:text-amber-300">
+        <p className="text-xs text-amber-700 dark:text-amber-300 max-w-[42ch] text-center">
           Aviso: contraste fraco entre fg/bg pode prejudicar a leitura do QR.
         </p>
       )}
@@ -262,7 +365,11 @@ export default function QrSiteEscola({
   );
 }
 
-/* ---------- Utils locais ---------- */
+/* ───────────────── Utils locais ───────────────── */
+
+function classNames(...arr) {
+  return arr.filter(Boolean).join(" ");
+}
 
 function triggerDownload(href, name) {
   const a = document.createElement("a");
@@ -296,12 +403,17 @@ function luminance({ r, g, b }) {
 function rasterizeFallback(container, size, bgColor) {
   const svg = container?.querySelector("svg");
   if (!svg) throw new Error("SVG não encontrado");
+
   const xml = new XMLSerializer().serializeToString(svg);
   const data = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(xml)}`;
+
   const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
+
   const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas indisponível");
+
   const img = new Image();
   return new Promise((resolve, reject) => {
     img.onload = () => {

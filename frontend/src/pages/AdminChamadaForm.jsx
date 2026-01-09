@@ -1,4 +1,4 @@
-// 📁 src/pages/AdminChamadaForm.jsx
+// 📁 src/pages/AdminChamadaForm.jsx — versão premium com melhorias de UX/A11y e download do modelo ORAL
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import {
@@ -214,7 +214,7 @@ function HeaderHero({ counts = { total: "—", abertas: "—", encerradas: "—"
               Gerencie chamadas: criar/editar, publicar/despublicar e excluir. Edição em modal com visual limpo e acessível.
             </p>
 
-            {/* Mini-stats: aparecem SOMENTE no header */}
+            {/* Mini-stats no header */}
             <div className="grid w-full max-w-3xl grid-cols-2 gap-3 sm:grid-cols-4 mt-2">
               <StatCard label="Chamadas"   value={counts.total}      icon={<FileText className="w-4 h-4" />} tone="info" />
               <StatCard label="Abertas"    value={counts.abertas}    icon={<Eye className="w-4 h-4" />} tone="success" />
@@ -547,20 +547,20 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
   const [infoOk, setInfoOk] = useState("");
   const abortRef = useRef(null);
 
-// modelo de banner (POR CHAMADA)
-const [modeloMeta, setModeloMeta] = useState(null);
-const [modeloBusy, setModeloBusy] = useState(false);
-const [modeloErr, setModeloErr] = useState("");
-const [modeloOk, setModeloOk] = useState("");
-const [modeloDownloading, setModeloDownloading] = useState(false);
-const hadUploadCorsRef = useRef(false); // marca se houve CORS/401/403 no upload
+  // modelo de banner (POR CHAMADA)
+  const [modeloMeta, setModeloMeta] = useState(null);
+  const [modeloBusy, setModeloBusy] = useState(false);
+  const [modeloErr, setModeloErr] = useState("");
+  const [modeloOk, setModeloOk] = useState("");
+  const [modeloDownloading, setModeloDownloading] = useState(false);
+  const hadUploadCorsRef = useRef(false);
 
-// 🔶 modelo de slides (apresentação oral) — (novo)
-const [oralMeta, setOralMeta] = useState(null);
-const [oralBusy, setOralBusy] = useState(false);
-const [oralErr, setOralErr] = useState("");
-const [oralOk, setOralOk] = useState("");
-const hadUploadCorsOralRef = useRef(false);
+  // 🔶 modelo de slides (apresentação oral)
+  const [oralMeta, setOralMeta] = useState(null);
+  const [oralBusy, setOralBusy] = useState(false);
+  const [oralErr, setOralErr] = useState("");
+  const [oralOk, setOralOk] = useState("");
+  const hadUploadCorsOralRef = useRef(false);
 
   const inputBase =
     "w-full rounded-xl border px-3 py-2 ring-offset-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-zinc-700 dark:bg-zinc-800";
@@ -579,73 +579,94 @@ const hadUploadCorsOralRef = useRef(false);
     return "";
   };
 
-// 📤 importar modelo de slides (apresentação oral) — (novo)
-const onImportModeloOral = async (file) => {
-  if (!file) return;
-  setOralErr(""); setOralOk(""); setInfoOk(""); setOralBusy(true);
-  try {
-    if (!isEdit) throw new Error("Salve a chamada para habilitar o upload do modelo.");
-    if (!/\.(pptx?|PPTX?)$/.test(file.name)) throw new Error("Envie arquivo .ppt ou .pptx");
-    if (file.size > 50 * 1024 * 1024) throw new Error("Arquivo muito grande (máx 50MB).");
+  /* ===== util ===== */
+  function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
-    const tryOnce = async () => {
-      await apiUploadSvc(`chamadas/${chamadaId}/modelo-oral`, file, { fieldName: "file" });
-      const meta = await apiGet(`admin/chamadas/${chamadaId}/modelo-oral`);
-      setOralMeta(meta || null);
-    };
+  // 📤 importar modelo de slides (oral)
+  const onImportModeloOral = async (file) => {
+    if (!file) return;
+    setOralErr(""); setOralOk(""); setInfoOk(""); setOralBusy(true);
+    try {
+      if (!isEdit) throw new Error("Salve a chamada para habilitar o upload do modelo.");
+      if (!/\.(pptx?|PPTX?)$/.test(file.name)) throw new Error("Envie arquivo .ppt ou .pptx");
+      if (file.size > 50 * 1024 * 1024) throw new Error("Arquivo muito grande (máx 50MB).");
 
-    const attempts = [0, 400, 1000];
-    let lastErr = null;
-    hadUploadCorsOralRef.current = false;
+      const tryOnce = async () => {
+        await apiUploadSvc(`chamadas/${chamadaId}/modelo-oral`, file, { fieldName: "file" });
+        const meta = await apiGet(`admin/chamadas/${chamadaId}/modelo-oral`);
+        setOralMeta(meta || null);
+      };
 
-    for (let i = 0; i < attempts.length; i++) {
-      try {
-        if (i > 0) setInfoOk(`Conexão instável, tentando novamente (${i + 1}/${attempts.length})…`);
-        await tryOnce();
-        lastErr = null;
-        break;
-      } catch (e) {
-        lastErr = e;
-        const msg = String(e?.message || "");
-        const status = e?.status || e?.response?.status;
-        if (status === 401 || status === 403 || /Failed to fetch|CORS/i.test(msg)) {
-          hadUploadCorsOralRef.current = true;
-          try { await apiGet("perfil/me"); } catch {}
-          await sleep(attempts[i]);
-          continue;
+      const attempts = [0, 400, 1000];
+      let lastErr = null;
+      hadUploadCorsOralRef.current = false;
+
+      for (let i = 0; i < attempts.length; i++) {
+        try {
+          if (i > 0) setInfoOk(`Conexão instável, tentando novamente (${i + 1}/${attempts.length})…`);
+          await tryOnce();
+          lastErr = null;
+          break;
+        } catch (e) {
+          lastErr = e;
+          const msg = String(e?.message || "");
+          const status = e?.status || e?.response?.status;
+          if (status === 401 || status === 403 || /Failed to fetch|CORS/i.test(msg)) {
+            hadUploadCorsOralRef.current = true;
+            try { await apiGet("perfil/me"); } catch {}
+            await sleep(attempts[i]);
+            continue;
+          }
+          break;
         }
-        break;
       }
+      if (lastErr) throw lastErr;
+
+      setOralOk("Modelo de slides (oral) importado com sucesso.");
+      setInfoOk("");
+    } catch (e) {
+      setOralErr(e?.message || "Falha ao importar o modelo de slides (oral).");
+    } finally {
+      setOralBusy(false);
     }
-    if (lastErr) throw lastErr;
+  };
 
-    setOralOk("Modelo de slides (oral) importado com sucesso.");
-    setInfoOk("");
-  } catch (e) {
-    setOralErr(e?.message || "Falha ao importar o modelo de slides (oral).");
-  } finally {
-    setOralBusy(false);
-  }
-};
+  // 📥 baixar modelo de slides (oral)
+  const handleDownloadOral = useCallback(async () => {
+    try {
+      const { blob, filename } = await apiGetFile(`admin/chamadas/${chamadaId}/modelo-oral/download`);
+      downloadBlob(filename || `modelo-oral-chamada-${chamadaId}.pptx`, blob);
+      setOralOk("Download iniciado.");
+    } catch (e) {
+      console.error("Erro ao baixar modelo oral:", e);
+      setOralErr(e?.message || "Falha ao baixar o modelo de slides (oral).");
+    }
+  }, [chamadaId]);
 
-// 📥 baixar modelo de slides (oral)
-const handleDownloadOral = useCallback(async () => {
-  try {
-    const { blob, filename } = await apiGetFile(`admin/chamadas/${chamadaId}/modelo-oral/download`);
-    downloadBlob(filename || `modelo-oral-chamada-${chamadaId}.pptx`, blob);
-    setOralOk("Download iniciado.");
-  } catch (e) {
-    console.error("Erro ao baixar modelo oral:", e);
-    setOralErr(e?.message || "Falha ao baixar o modelo de slides (oral).");
-  }
-}, [chamadaId]);
+  // 📥 baixar modelo (.ppt/.pptx) — banner
+  const onDownloadModelo = async () => {
+    if (!isEdit) return;
+    if (!modeloMeta?.exists) return;
+    setModeloErr(""); setModeloOk(""); setModeloDownloading(true);
+    try {
+      const { blob, filename } = await apiGetFile(`admin/chamadas/${chamadaId}/modelo-banner/download`);
+      const name =
+        filename ||
+        modeloMeta?.filename ||
+        `modelo-banner-chamada-${chamadaId}${/\.pptx?$/i.test(modeloMeta?.filename || "") ? "" : ".pptx"}`;
+      downloadBlob(name, blob);
+      setModeloOk("Download iniciado.");
+    } catch (e) {
+      setModeloErr(e?.message || "Falha ao baixar o modelo.");
+    } finally { setModeloDownloading(false); }
+  };
 
- // carrega para edição + meta do modelo da CHAMADA
+  // carrega para edição + meta do modelo da CHAMADA
   useEffect(() => {
     if (!open) return;
     setErr(""); setInfoOk(""); setModeloErr(""); setModeloOk("");
-    if (!isEdit) { /* limpa form ... */ setModeloMeta(null); setOralMeta(null); } // (ajuste)
-  
+    if (!isEdit) { setModeloMeta(null); setOralMeta(null); }
+
     (async () => {
       try {
         if (isEdit) {
@@ -691,8 +712,7 @@ const handleDownloadOral = useCallback(async () => {
           } catch {
             setModeloMeta(null);
           }
-  
-          // 🔶 modelo-oral — (novo)
+
           try {
             const metaOral = await apiGet(`admin/chamadas/${chamadaId}/modelo-oral`);
             setOralMeta(metaOral || null);
@@ -706,91 +726,12 @@ const handleDownloadOral = useCallback(async () => {
     })();
   }, [open, isEdit, chamadaId]);
 
-  /* ===== util ===== */
-function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
-
-  // 📥 baixar modelo (.ppt/.pptx)
-  const onDownloadModelo = async () => {
-    if (!isEdit) return;
-    if (!modeloMeta?.exists) return;
-    setModeloErr(""); setModeloOk(""); setModeloDownloading(true);
-    try {
-      const { blob, filename } = await apiGetFile(`admin/chamadas/${chamadaId}/modelo-banner/download`);
-      const name =
-        filename ||
-        modeloMeta?.filename ||
-        `modelo-banner-chamada-${chamadaId}${/\.pptx?$/i.test(modeloMeta?.filename || "") ? "" : ".pptx"}`;
-      downloadBlob(name, blob);
-      setModeloOk("Download iniciado.");
-    } catch (e) {
-      setModeloErr(e?.message || "Falha ao baixar o modelo.");
-    } finally { setModeloDownloading(false); }
-  };
-
-  // 📤 importar modelo de banner (.pptx) com retry anti-CORS/401
-  const onImportModelo = async (file) => {
-    if (!file) return;
-    setModeloErr(""); setModeloOk(""); setInfoOk(""); setModeloBusy(true);
-    try {
-      if (!isEdit) throw new Error("Salve a chamada para habilitar o upload do modelo.");
-      if (!/\.(pptx?|PPTX?)$/.test(file.name)) throw new Error("Envie arquivo .ppt ou .pptx");
-      if (file.size > 50 * 1024 * 1024) throw new Error("Arquivo muito grande (máx 50MB).");
-
-      const tryOnce = async () => {
-        await apiUploadSvc(`chamadas/${chamadaId}/modelo-banner`, file, { fieldName: "file" });
-        const meta = await apiGet(`admin/chamadas/${chamadaId}/modelo-banner`);
-        setModeloMeta(meta || null);
-      };
-
-      const attempts = [0, 400, 1000];
-      let lastErr = null;
-      hadUploadCorsRef.current = false;
-
-      for (let i = 0; i < attempts.length; i++) {
-        try {
-          if (i > 0) setInfoOk(`Conexão instável, tentando novamente (${i + 1}/${attempts.length})…`);
-          await tryOnce();
-          lastErr = null;
-          break;
-        } catch (e) {
-          lastErr = e;
-          const msg = String(e?.message || "");
-          const status = e?.status || e?.response?.status;
-          if (status === 401 || status === 403 || /Failed to fetch|CORS/i.test(msg)) {
-            hadUploadCorsRef.current = true;
-            try { await apiGet("perfil/me"); } catch {}
-            await sleep(attempts[i]);
-            continue;
-          }
-          break;
-        }
-      }
-      if (lastErr) throw lastErr;
-
-      setModeloOk("Modelo importado com sucesso.");
-      setInfoOk("");
-    } catch (e) {
-      setModeloErr(e?.message || "Falha ao importar o modelo.");
-    } finally {
-      setModeloBusy(false);
-    }
-  };
-
   const onSave = async () => {
     setErr(""); setInfoOk("");
-  
-    if (hadUploadCorsRef.current) { /* ... */ }
-  
-    if (modeloBusy) {
-      setErr("Aguarde terminar o envio do modelo de banner antes de salvar.");
-      return;
-    }
-    // 🔶 checagem do oral — (novo)
-    if (oralBusy) {
-      setErr("Aguarde terminar o envio do modelo de slides (oral) antes de salvar.");
-      return;
-    }
-  
+
+    if (modeloBusy) { setErr("Aguarde terminar o envio do modelo de banner antes de salvar."); return; }
+    if (oralBusy) { setErr("Aguarde terminar o envio do modelo de slides (oral) antes de salvar."); return; }
+
     const ver = validar();
     if (ver) { setErr(ver); return; }
     setSaving(true);
@@ -844,7 +785,7 @@ function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
       } else {
         const r = await apiPost("admin/chamadas", payload);
         if (r?.id) savedId = r.id;
-        setInfoOk("Chamada criada. Agora você já pode importar o modelo (.pptx) desta chamada.");
+        setInfoOk("Chamada criada. Agora você já pode importar os modelos (.pptx) desta chamada.");
         onSaved?.(savedId);
         try { await apiGet(`admin/chamadas/${savedId}/modelo-banner`); } catch {}
         try { await apiGet("perfil/me"); } catch {}
@@ -867,11 +808,12 @@ function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
       describedById="dlg-desc"
       footer={
         <>
-           {(err || infoOk) && (
+          {(err || infoOk) && (
             <span className={`mr-auto text-sm ${err ? "text-red-600" : "text-emerald-600"}`}>
               {err || infoOk}
             </span>
           )}
+
           {/* Botões auxiliares de modelo (se já existir) */}
           {isEdit && modeloMeta?.exists && (
             <button
@@ -882,16 +824,32 @@ function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
               title="Baixar modelo de banner (.pptx)"
             >
               {modeloDownloading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Download className="h-4 w-4" aria-hidden="true" />}
-              {modeloDownloading ? "Baixando…" : "Baixar modelo"}
+              {modeloDownloading ? "Baixando…" : "Baixar modelo do banner"}
             </button>
           )}
-          <button type="button" onClick={onClose} className="rounded-xl px-4 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800">Cancelar</button>
+
+          {/* 🔶 Novo: download modelo ORAL, se existir */}
+          {isEdit && oralMeta?.exists && (
+            <button
+              type="button"
+              onClick={handleDownloadOral}
+              className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800 dark:border-zinc-700 focus:outline-none focus:ring-2 focus:ring-amber-500"
+              title="Baixar modelo de slides (apresentação oral)"
+            >
+              <Download className="h-4 w-4" aria-hidden="true" />
+              Baixar modelo (oral)
+            </button>
+          )}
+
+          <button type="button" onClick={onClose} className="rounded-xl px-4 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800">
+            Cancelar
+          </button>
           <button
-  type="button"
-  onClick={onSave}
-  disabled={saving || modeloBusy || oralBusy}
-  className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-white ..."
->
+            type="button"
+            onClick={onSave}
+            disabled={saving || modeloBusy || oralBusy}
+            className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
+          >
             {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />} {saving ? "Salvando..." : "Salvar"}
           </button>
         </>
@@ -905,12 +863,13 @@ function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-8">
-          {/* Descrição acessível do conteúdo do modal (para aria-describedby) */}
+          {/* Descrição acessível do conteúdo do modal */}
           <div id="dlg-desc" className="sr-only">
             Formulário para criar ou editar chamada. Preencha informações gerais, prazos, normas,
             limites de caracteres e critérios de avaliação. Ao final, salve para habilitar upload
-            do modelo de banner (.pptx) específico desta chamada.
+            dos modelos (.pptx) específicos desta chamada.
           </div>
+
           {/* 1) Gerais */}
           <section id="s1" className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <h2 className="sm:col-span-3 mb-2 text-base font-semibold">Informações gerais</h2>
@@ -1152,7 +1111,7 @@ function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
               </label>
             </Field>
 
-            {/* Importar modelo POR CHAMADA */}
+            {/* Importar modelo POR CHAMADA (banner) */}
             <Field label="Modelo de banner">
               {!isEdit && (
                 <div className="mb-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-amber-900 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
@@ -1204,57 +1163,56 @@ function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
               </div>
             </Field>
 
-             {/* 🔶 INSERIR AQUI: Modelo de slides (apresentação oral) — (novo) */}
-  {/* 🔻 COLE O BLOCO A PARTIR DA LINHA ABAIXO */}
-  <Field label="Modelo de slides (apresentação oral)">
-  {!isEdit && (
-    <div className="mb-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-amber-900 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
-      <div className="flex items-start gap-2 text-sm">
-        <AlertCircle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
-        <div><strong>Salve a chamada</strong> para habilitar o envio do modelo de slides (.pptx).</div>
-      </div>
-    </div>
-  )}
+            {/* 🔶 Modelo de slides (apresentação oral) */}
+            <Field label="Modelo de slides (apresentação oral)">
+              {!isEdit && (
+                <div className="mb-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-amber-900 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
+                  <div className="flex items-start gap-2 text-sm">
+                    <AlertCircle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
+                    <div><strong>Salve a chamada</strong> para habilitar o envio do modelo de slides (.pptx).</div>
+                  </div>
+                </div>
+              )}
 
-  <div className="flex flex-col items-center justify-center gap-3">
-    <div className="flex flex-wrap items-center justify-center gap-2">
-      {/* Upload do modelo (oral) */}
-      <label
-        className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm text-white ${
-          isEdit && !oralBusy ? "bg-amber-600 hover:bg-amber-700 cursor-pointer" : "bg-zinc-400 cursor-not-allowed"
-        }`}
-        title={isEdit ? "Importar modelo de slides (.pptx)" : "Salve a chamada para habilitar o upload"}
-      >
-        <input
-          type="file"
-          accept=".ppt,.pptx,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
-          className="hidden"
-          disabled={!isEdit || oralBusy}
-          onChange={(e) => onImportModeloOral(e.target.files?.[0] || null)}
-        />
-        {oralBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Upload className="h-4 w-4" aria-hidden="true" />}
-        {oralBusy ? "Enviando…" : "Importar modelo (oral .pptx)"}
-      </label>
-      </div>
+              <div className="flex flex-col items-center justify-center gap-3">
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  {/* Upload do modelo (oral) */}
+                  <label
+                    className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm text-white ${
+                      isEdit && !oralBusy ? "bg-amber-600 hover:bg-amber-700 cursor-pointer" : "bg-zinc-400 cursor-not-allowed"
+                    }`}
+                    title={isEdit ? "Importar modelo de slides (.pptx)" : "Salve a chamada para habilitar o upload"}
+                  >
+                    <input
+                      type="file"
+                      accept=".ppt,.pptx,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                      className="hidden"
+                      disabled={!isEdit || oralBusy}
+                      onChange={(e) => onImportModeloOral(e.target.files?.[0] || null)}
+                    />
+                    {oralBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Upload className="h-4 w-4" aria-hidden="true" />}
+                    {oralBusy ? "Enviando…" : "Importar modelo (oral .pptx)"}
+                  </label>
+                </div>
 
-    <div className="mt-1 text-center text-xs text-zinc-500">
-      Esse arquivo será usado para as <strong>apresentações orais</strong> desta chamada.
-      {oralMeta?.exists === true && (
-        <>
-          {" "}<strong>Modelo disponível</strong>
-          {oralMeta.filename ? ` — ${oralMeta.filename}` : ""}
-          {Number.isFinite(oralMeta?.size) ? ` (${formatBytes(oralMeta.size)})` : ""}
-          {oralMeta.mtime ? ` — atualizado em ${new Date(oralMeta.mtime).toLocaleString()}` : ""}
-        </>
-      )}
-      {oralMeta?.exists === false && (<span className="text-rose-600"> Nenhum modelo importado ainda para apresentação oral.</span>)}
-    </div>
+                <div className="mt-1 text-center text-xs text-zinc-500">
+                  Esse arquivo será usado para as <strong>apresentações orais</strong> desta chamada.
+                  {oralMeta?.exists === true && (
+                    <>
+                      {" "}<strong>Modelo disponível</strong>
+                      {oralMeta.filename ? ` — ${oralMeta.filename}` : ""}
+                      {Number.isFinite(oralMeta?.size) ? ` (${formatBytes(oralMeta.size)})` : ""}
+                      {oralMeta.mtime ? ` — atualizado em ${new Date(oralMeta.mtime).toLocaleString()}` : ""}
+                    </>
+                  )}
+                  {oralMeta?.exists === false && (<span className="text-rose-600"> Nenhum modelo importado ainda para apresentação oral.</span>)}
+                </div>
 
-    {oralOk &&  <div className="text-center text-xs text-emerald-600">{oralOk}</div>}
-    {oralErr && <div className="text-center text-xs text-rose-600">{oralErr}</div>}
-  </div>
-</Field>
-         </section>
+                {oralOk &&  <div className="text-center text-xs text-emerald-600">{oralOk}</div>}
+                {oralErr && <div className="text-center text-xs text-rose-600">{oralErr}</div>}
+              </div>
+            </Field>
+          </section>
 
           {/* 9) Disposições finais */}
           <section id="s9" className="grid grid-cols-1 gap-4">
@@ -1291,7 +1249,7 @@ export default function AdminChamadaForm() {
   const openEditar = (id) => { setEditingId(id); setModalOpen(true); };
   const onSaved = (savedId) => {
     setRefreshSignal((x) => x + 1);
-    if (savedId) setEditingId(savedId); // ativa modo edição p/ importar modelo
+    if (savedId) setEditingId(savedId); // ativa modo edição p/ importar modelos
   };
 
   return (

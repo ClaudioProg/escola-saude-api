@@ -1,4 +1,14 @@
-// ✅ src/App.jsx
+// ✅ src/App.jsx (premium, a11y, robusto e com aliases/guardas)
+// - basename dinâmico (suporte a subpasta)
+// - announcer de rota (a11y)
+// - destrava scroll ao trocar de rota (fix modal)
+// - scroll-to-top por navegação
+// - redirecionos legados (.html e QR antigo)
+// - wrappers para rotas com :id
+// - PrivateShell aplica AppShell + PrivateRoute
+// - Suspense fallback acessível
+// - aliases coerentes para HomeEscola (painel oficial)
+
 import {
   BrowserRouter,
   Routes,
@@ -30,12 +40,10 @@ const Scanner = lazy(() => import("./pages/Scanner"));
 const Eventos = lazy(() => import("./pages/Eventos"));
 const MinhasPresencas = lazy(() => import("./pages/MinhasPresencas"));
 const MeusCertificados = lazy(() => import("./pages/MeusCertificados"));
-const MinhasInscricoes = lazy(() => import("./pages/MinhasInscricoes"));
 
 const Teste = lazy(() => import("./pages/Teste"));
 const AgendaSalasUsuario = lazy(() => import("./pages/AgendaSalasUsuario"));
 const SolicitacaoCurso = lazy(() => import("./pages/SolicitacaoCurso"));
-const AgendaUsuario = lazy(() => import("./pages/AgendaUsuario"));
 const RepositorioTrabalhos = lazy(() => import("./pages/RepositorioTrabalhos"));
 const UsuarioSubmissoes = lazy(() => import("./pages/UsuarioSubmissoes"));
 const AvaliadorSubmissoes = lazy(() => import("./pages/AvaliadorSubmissoes"));
@@ -273,8 +281,12 @@ function PrivateShell() {
 
 /* App */
 export default function App() {
+  // basename opcional para deploy em subpath (ex.: /escola)
+  const BASENAME =
+    (import.meta.env.VITE_APP_BASENAME || import.meta.env.BASE_URL || "/").replace(/\/+$/, "") || "/";
+
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={BASENAME}>
       <div className="min-h-screen">
         <RouteChangeAnnouncer />
         <ScrollUnlockOnRouteChange />
@@ -349,7 +361,6 @@ export default function App() {
               <Route path="eventos" element={<Eventos />} />
               <Route path="minhas-presencas" element={<MinhasPresencas />} />
               <Route path="certificados" element={<MeusCertificados />} />
-              <Route path="minhas-inscricoes" element={<MinhasInscricoes />} />
               <Route path="perfil" element={<Perfil />} />
               <Route path="ajuda" element={<Ajuda />} />
               <Route path="notificacoes" element={<Notificacoes />} />
@@ -357,7 +368,6 @@ export default function App() {
               <Route path="avaliar/:turmaId" element={<Avaliacao />} />
               <Route path="teste" element={<Teste />} />
               <Route path="solicitar-curso" element={<SolicitacaoCurso />} />
-              <Route path="agenda" element={<AgendaUsuario />} />
               <Route path="repositorio-trabalhos" element={<RepositorioTrabalhos />} />
 
               {/* Manual do Usuário */}

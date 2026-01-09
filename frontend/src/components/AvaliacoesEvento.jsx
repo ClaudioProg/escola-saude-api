@@ -1,7 +1,7 @@
 // 📁 src/components/AvaliacoesEvento.jsx
 import { motion } from "framer-motion";
 import PropTypes from "prop-types";
-import { useMemo, useState, useId } from "react";
+import { useEffect, useMemo, useState, useId } from "react";
 
 /** ✅ Campos válidos para compor a MÉDIA DO EVENTO (11 campos) */
 const CAMPOS_NOTA_EVENTO = [
@@ -18,8 +18,19 @@ const CAMPOS_NOTA_EVENTO = [
   "inscricao_online",
 ];
 
-/** Converte enums (Ótimo…Péssimo) → escala 1..5 */
+/* ───────────── Helpers ───────────── */
+function clamp(n, min, max) {
+  const x = Number(n);
+  return Number.isFinite(x) ? Math.max(min, Math.min(max, x)) : null;
+}
+
+/** Converte enums (“Ótimo”…“Péssimo”) ou números → escala 1..5 */
 function notaEnumParaNumero(valor) {
+  // números já válidos (1..5)
+  if (Number.isFinite(Number(valor))) {
+    const n = clamp(valor, 1, 5);
+    if (n != null) return n;
+  }
   const normalizado = String(valor || "")
     .toLowerCase()
     .normalize("NFD")
@@ -43,24 +54,19 @@ function notaEnumParaNumero(valor) {
 }
 
 /** Mapeia número 1..5 → rótulo */
-const ROTULO_NOTA = {
-  5: "Ótimo",
-  4: "Bom",
-  3: "Regular",
-  2: "Ruim",
-  1: "Péssimo",
-};
+const ROTULO_NOTA = { 5: "Ótimo", 4: "Bom", 3: "Regular", 2: "Ruim", 1: "Péssimo" };
 
 /** Formata para "x.x / 5" ou "— / 5" */
 function fmtMedia05(n) {
-  if (n === null || n === undefined || Number.isNaN(n)) return "— / 5";
-  return `${n.toFixed(1)} / 5`;
+  const x = Number(n);
+  if (!Number.isFinite(x)) return "— / 5";
+  return `${x.toFixed(1)} / 5`;
 }
 
 /** Calcula médias (evento + instrutor) e extrai comentários */
 function calcularMediasAvaliacoes(avaliacoes) {
   if (!Array.isArray(avaliacoes) || avaliacoes.length === 0) {
-    return { mediaEvento: null, mediaInstrutor: null, detalhes: [], distInstrutor: null };
+    return { mediaEvento: null, mediaInstrutor: null, detalhes: [], distInstrutor: null, totalRespostas: 0 };
   }
 
   // Média do instrutor + distribuição (escala 1..5)
@@ -95,7 +101,7 @@ function calcularMediasAvaliacoes(avaliacoes) {
       }
       return qtd ? soma / qtd : null;
     })
-    .filter((n) => n != null);
+    .filter((n) => Number.isFinite(n));
 
   const mediaEvento =
     mediasIndividuaisEvento.length > 0
@@ -110,12 +116,8 @@ function calcularMediasAvaliacoes(avaliacoes) {
       sugestao: a?.sugestoes_melhoria,
       comentario: a?.comentarios_finais,
     }))
-    .filter(
-      (d) =>
-        d?.desempenho?.toString().trim() ||
-        d?.gostou?.toString().trim() ||
-        d?.sugestao?.toString().trim() ||
-        d?.comentario?.toString().trim()
+    .filter((d) =>
+      [d?.desempenho, d?.gostou, d?.sugestao, d?.comentario].some((x) => !!String(x ?? "").trim())
     );
 
   return { mediaEvento, mediaInstrutor, detalhes, distInstrutor, totalRespostas: avaliacoes.length };
@@ -189,20 +191,86 @@ function DistBar({ dist = [], total = 0, accent = "lousa" }) {
   );
 }
 
+/* ---------- Export CSV (agregados + comentários) ---------- */
+function exportCSV(filename, { mediaEvento, mediaInstrutor, distInstrutor, detalhes, totalRespostas }) {
+  try {
+    const header1 = ["Métrica", "Valor"];
+    const rows1 = [
+      ["Total de respostas", totalRespostas ?? 0],
+      ["Média do evento (0-5)", Number.isFinite(mediaEvento) ? mediaEvento.toFixed(2) : "—"],
+      ["Média do instrutor (0-5)", Number.isFinite(mediaInstrutor) ? mediaInstrutor.toFixed(2) : "—"],
+    ];
+
+    const header2 = ["Nota", "Rótulo", "Quantidade"];
+    const rows2 = (distInstrutor ?? []).map((d) => [d.nota, d.rotulo, d.qtd]);
+
+    const header3 = ["Desempenho instrutor", "O que mais gostou", "Sugestões", "Comentários finais"];
+    const rows3 = (detalhes ?? []).map((d) => [
+      (d.desempenho ?? "").toString().replace(/\s+/g, " ").trim(),
+      (d.gostou ?? "").toString().replace(/\s+/g, " ").trim(),
+      (d.sugestao ?? "").toString().replace(/\s+/g, " ").trim(),
+      (d.comentario ?? "").toString().replace(/\s+/g, " ").trim(),
+    ]);
+
+    function csvBlock(head, rows) {
+      return [head, ...rows]
+        .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(";"))
+        .join("\n");
+    }
+
+    const parts = [
+      csvBlock(header1, rows1),
+      "",
+      "Distribuição do Instrutor:",
+      csvBlock(header2, rows2),
+      "",
+      "Comentários:",
+      csvBlock(header3, rows3),
+    ];
+    const csv = parts.join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${filename}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch {
+    /* no-op */
+  }
+}
+
 /** Componente principal */
 export default function AvaliacoesEvento({
   avaliacoes,
   accent = "lousa",          // tema/gradiente
   showStars = true,          // exibir estrelas junto da média
   maxComentarios = 3,        // quantos comentários mostrar inicialmente
+
+  // novos opcionais (backward-compatible)
+  titulo = "Avaliações do Evento",
+  mostrarDistribuicao = true,
+  exportavel = false,        // exibe botão de exportar CSV
+  onExport,                  // callback pós-export
+  compact = false,
+  emptyMessage = "Nenhuma avaliação registrada.",
 }) {
   const regionId = useId();
   const [mostrarTodos, setMostrarTodos] = useState(false);
+  const [reduced, setReduced] = useState(false);
 
-  const resultado = useMemo(
-    () => calcularMediasAvaliacoes(avaliacoes),
-    [avaliacoes]
-  );
+  useEffect(() => {
+    const mq = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+    const onChange = () => setReduced(Boolean(mq?.matches));
+    onChange();
+    mq?.addEventListener?.("change", onChange);
+    return () => mq?.removeEventListener?.("change", onChange);
+  }, []);
+
+  const resultado = useMemo(() => calcularMediasAvaliacoes(avaliacoes), [avaliacoes]);
 
   if (!Array.isArray(avaliacoes)) {
     return (
@@ -234,42 +302,69 @@ export default function AvaliacoesEvento({
   const comentarios = detalhes || [];
   const visiveis = mostrarTodos ? comentarios : comentarios.slice(0, maxComentarios);
 
+  const pad = compact ? "p-3" : "p-4";
+  const boxPad = compact ? "p-2.5" : "p-3";
+
+  const handleExport = () => {
+    exportCSV("avaliacoes_evento", resultado);
+    onExport?.(resultado);
+  };
+
   return (
     <motion.section
-      initial={{ opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0 }}
+      initial={reduced ? false : { opacity: 0, y: 16 }}
+      animate={reduced ? {} : { opacity: 1, y: 0 }}
+      exit={reduced ? {} : { opacity: 0 }}
       transition={{ duration: 0.35 }}
-      className="mt-4 text-sm bg-white dark:bg-zinc-800 p-4 rounded-2xl shadow-md border border-gray-200 dark:border-gray-700"
+      className={`mt-4 text-sm bg-white dark:bg-zinc-800 ${pad} rounded-2xl shadow-md border border-gray-200 dark:border-gray-700`}
       role="region"
       aria-labelledby={`${regionId}-title`}
       aria-describedby={`${regionId}-desc`}
+      aria-live="polite"
     >
-      {/* Título com gradiente */}
-      <div className="flex items-center gap-2 mb-3">
-        <span className="text-xl" aria-hidden>📝</span>
-        <h3
-          id={`${regionId}-title`}
-          className={`font-bold text-base bg-clip-text text-transparent bg-gradient-to-br ${grad}`}
-        >
-          Avaliações do Evento
-        </h3>
+      {/* Título com gradiente + ações */}
+      <div className="flex items-center justify-between gap-2 mb-3">
+        <div className="flex items-center gap-2">
+          <span className="text-xl" aria-hidden>📝</span>
+          <h3
+            id={`${regionId}-title`}
+            className={`font-bold text-base bg-clip-text text-transparent bg-gradient-to-br ${grad}`}
+          >
+            {titulo}
+          </h3>
+        </div>
+
+        {exportavel && (
+          <button
+            type="button"
+            onClick={handleExport}
+            className="inline-flex items-center gap-2 rounded-2xl px-3 py-1.5 text-xs font-semibold border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-zinc-700 text-gray-900 dark:text-gray-100 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-600/60"
+            aria-label="Exportar avaliações (CSV)"
+            title="Exportar CSV"
+          >
+            Exportar CSV
+          </button>
+        )}
       </div>
+
       <p id={`${regionId}-desc`} className="sr-only">
-        Médias de satisfação do evento e do instrutor, além de comentários enviados pelos participantes.
+        Médias de satisfação do evento e do instrutor, distribuição de notas do instrutor e comentários enviados pelos participantes.
       </p>
 
       {/* Nenhuma avaliação */}
       {nenhumaAvaliacao ? (
-        <p className="text-gray-600 dark:text-gray-300">
-          Nenhuma avaliação registrada.
-        </p>
+        <p className="text-gray-600 dark:text-gray-300">{emptyMessage}</p>
       ) : (
         <div className="space-y-4">
+          {/* Contagem total (A11y) */}
+          <p className="text-xs text-gray-600 dark:text-gray-400">
+            Total de respostas: <strong>{totalRespostas ?? 0}</strong>
+          </p>
+
           {/* Médias */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {mediaEvento != null && (
-              <div className="rounded-xl bg-gray-50 dark:bg-zinc-700/60 p-3">
+              <div className={`rounded-xl bg-gray-50 dark:bg-zinc-700/60 ${boxPad}`}>
                 <div className="flex items-center justify-between">
                   <p className="font-medium text-gray-800 dark:text-gray-100">
                     Nota média do evento
@@ -282,7 +377,7 @@ export default function AvaliacoesEvento({
                   <div className="mt-1 flex items-center gap-2">
                     <Stars value={mediaEvento} />
                     <span className="text-xs text-gray-600 dark:text-gray-300">
-                      {mediaEvento?.toFixed(1)}
+                      {Number(mediaEvento).toFixed(1)}
                     </span>
                   </div>
                 )}
@@ -290,7 +385,7 @@ export default function AvaliacoesEvento({
             )}
 
             {mediaInstrutor != null && (
-              <div className="rounded-xl bg-gray-50 dark:bg-zinc-700/60 p-3">
+              <div className={`rounded-xl bg-gray-50 dark:bg-zinc-700/60 ${boxPad}`}>
                 <div className="flex items-center justify-between">
                   <p className="font-medium text-gray-800 dark:text-gray-100">
                     Nota média do instrutor
@@ -303,7 +398,7 @@ export default function AvaliacoesEvento({
                   <div className="mt-1 flex items-center gap-2">
                     <Stars value={mediaInstrutor} />
                     <span className="text-xs text-gray-600 dark:text-gray-300">
-                      {mediaInstrutor?.toFixed(1)}
+                      {Number(mediaInstrutor).toFixed(1)}
                     </span>
                   </div>
                 )}
@@ -312,8 +407,8 @@ export default function AvaliacoesEvento({
           </div>
 
           {/* Distribuição do instrutor */}
-          {distInstrutor && (
-            <div className="rounded-xl bg-gray-50 dark:bg-zinc-700/60 p-3">
+          {mostrarDistribuicao && distInstrutor && (
+            <div className={`rounded-xl bg-gray-50 dark:bg-zinc-700/60 ${boxPad}`}>
               <DistBar dist={distInstrutor} total={totalRespostas} accent={accent} />
             </div>
           )}
@@ -400,4 +495,12 @@ AvaliacoesEvento.propTypes = {
   showStars: PropTypes.bool,
   /** Quantidade inicial de comentários visíveis */
   maxComentarios: PropTypes.number,
+
+  // extras opcionais (backward-compatible)
+  titulo: PropTypes.string,
+  mostrarDistribuicao: PropTypes.bool,
+  exportavel: PropTypes.bool,
+  onExport: PropTypes.func,
+  compact: PropTypes.bool,
+  emptyMessage: PropTypes.string,
 };

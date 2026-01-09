@@ -1,103 +1,274 @@
 // ✅ src/routes/eventosRoute.js
-const express = require('express');
+/* eslint-disable no-console */
+const express = require("express");
 const router = express.Router();
 
-const eventosController = require('../controllers/eventosController');
-const turmasController  = require('../controllers/turmasController');
-const authMiddleware    = require('../auth/authMiddleware');
-const authorizeRoles    = require('../auth/authorizeRoles');
+const eventosController = require("../controllers/eventosController");
+const turmasController = require("../controllers/turmasController");
 
 /* ───────────────────────────────────────────────────────────────
-   🔐 Rota de teste (remover em produção)
+   🔐 Auth/roles resilientes (suporta export default, named e fn direta)
    ─────────────────────────────────────────────────────────────── */
-router.get('/protegido', authMiddleware, (req, res) => {
-  res.json({ mensagem: `Acesso autorizado para o usuário ${req.user.cpf}` });
-});
+function resolveFn(mod, candidates = []) {
+  if (typeof mod === "function") return mod;
+  for (const k of candidates) {
+    if (typeof mod?.[k] === "function") return mod[k];
+  }
+  return mod?.default && typeof mod.default === "function" ? mod.default : null;
+}
+
+const _auth = require("../auth/authMiddleware");
+const requireAuth = resolveFn(_auth, ["authMiddleware", "requireAuth"]);
+
+if (typeof requireAuth !== "function") {
+  console.error("[eventosRoute] authMiddleware inválido:", _auth);
+  throw new Error(
+    "authMiddleware não é função (verifique exports em src/auth/authMiddleware.js)"
+  );
+}
+
+const _roles = require("../auth/authorizeRoles");
+const authorizeRoles = resolveFn(_roles, ["authorizeRoles"]);
+
+if (typeof authorizeRoles !== "function") {
+  console.error("[eventosRoute] authorizeRoles inválido:", _roles);
+  throw new Error(
+    "authorizeRoles não é função (verifique exports em src/auth/authorizeRoles.js)"
+  );
+}
+
+const IS_DEV = process.env.NODE_ENV !== "production";
+
+/* ───────────────────────────────────────────────────────────────
+   🧰 Helpers “premium”
+   ─────────────────────────────────────────────────────────────── */
+const routeTag = (tag) => (req, res, next) => {
+  res.set("X-Route-Handler", tag);
+  // Evita cache em rotas autenticadas (boa prática para dados sensíveis)
+  res.set("Cache-Control", "no-store");
+  return next();
+};
+
+const ensureNumericParam = (paramName) => (req, res, next) => {
+  const raw = req.params?.[paramName];
+  const n = Number(raw);
+
+  // aceita apenas inteiro positivo
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) {
+    return res.status(400).json({ erro: `${paramName} inválido.` });
+  }
+
+  // mantém como string (controllers geralmente esperam string), mas já validado
+  req.params[paramName] = String(n);
+  return next();
+};
+
+// Wrapper seguro para controllers (sincronos/async), evitando repetição de try/catch
+const handle =
+  (fn) =>
+  (req, res, next) => {
+    try {
+      const out = fn(req, res, next);
+      if (out && typeof out.then === "function") out.catch(next);
+    } catch (err) {
+      next(err);
+    }
+  };
+
+/* ───────────────────────────────────────────────────────────────
+   🔐 Rota de teste (só DEV)
+   ─────────────────────────────────────────────────────────────── */
+if (IS_DEV) {
+  router.get(
+    "/protegido",
+    requireAuth,
+    routeTag("eventosRoute:/protegido@dev"),
+    (req, res) => {
+      res.json({
+        mensagem: `Acesso autorizado para o usuário ${
+          req.user?.cpf || req.user?.id || "?"
+        }`,
+      });
+    }
+  );
+}
 
 /* ───────────────────────────────────────────────────────────────
    🎯 Eventos “para mim”
    ─────────────────────────────────────────────────────────────── */
-router.get('/para-mim/lista', authMiddleware, eventosController.listarEventosParaMim);
+router.get(
+  "/para-mim/lista",
+  requireAuth,
+  routeTag("eventosRoute:/para-mim/lista"),
+  handle(eventosController.listarEventosParaMim)
+);
 
 /* ───────────────────────────────────────────────────────────────
    📆 Agenda & visão do instrutor
    ─────────────────────────────────────────────────────────────── */
-router.get('/agenda',    authMiddleware, eventosController.getAgendaEventos);
-router.get('/instrutor', authMiddleware, eventosController.listarEventosDoinstrutor);
+router.get(
+  "/agenda",
+  requireAuth,
+  routeTag("eventosRoute:/agenda"),
+  handle(eventosController.getAgendaEventos)
+);
 
-/* ───────────────────────────────────────────────────────────────
-   📌 Datas reais da turma (usa :id = turma_id)
-   ─────────────────────────────────────────────────────────────── */
-router.get('/turmas/:id/datas', authMiddleware, turmasController.listarDatasDaTurma);
+router.get(
+  "/instrutor",
+  requireAuth,
+  routeTag("eventosRoute:/instrutor"),
+  handle(eventosController.listarEventosDoinstrutor)
+);
 
 /* ───────────────────────────────────────────────────────────────
    🔎 Auto-complete de cargos (ANTES de '/:id')
    ─────────────────────────────────────────────────────────────── */
-router.get('/cargos/sugerir', authMiddleware, eventosController.sugerirCargos);
+router.get(
+  "/cargos/sugerir",
+  requireAuth,
+  routeTag("eventosRoute:/cargos/sugerir"),
+  handle(eventosController.sugerirCargos)
+);
 
 /* ───────────────────────────────────────────────────────────────
    📅 CRUD principal de eventos
    ─────────────────────────────────────────────────────────────── */
-// Listar todos
-router.get('/', authMiddleware, eventosController.listarEventos);
 
-// Publicar / Despublicar (admin)
-router.post('/:id/publicar',
-  authMiddleware, authorizeRoles('administrador'),
-  eventosController.publicarEvento
-);
-router.post('/:id/despublicar',
-  authMiddleware, authorizeRoles('administrador'),
-  eventosController.despublicarEvento
+// Listar todos
+router.get(
+  "/",
+  requireAuth,
+  routeTag("eventosRoute:/"),
+  handle(eventosController.listarEventos)
 );
 
 // Turmas por evento (ANTES de '/:id')
-router.get('/:id/turmas',         authMiddleware, eventosController.listarTurmasDoEvento);
-router.get('/:id/turmas-simples', authMiddleware, eventosController.listarTurmasSimples);
+router.get(
+  "/:id/turmas",
+  requireAuth,
+  ensureNumericParam("id"),
+  routeTag("eventosRoute:/:id/turmas"),
+  handle(eventosController.listarTurmasDoEvento)
+);
+
+router.get(
+  "/:id/turmas-simples",
+  requireAuth,
+  ensureNumericParam("id"),
+  routeTag("eventosRoute:/:id/turmas-simples"),
+  handle(eventosController.listarTurmasSimples)
+);
 
 /* ───────────────────────────────────────────────────────────────
-   📎 Upload de arquivos do evento (folder/programação) — admin
+   📌 Datas reais da turma (usa :id = turma_id)
    ─────────────────────────────────────────────────────────────── */
+router.get(
+  "/turmas/:id/datas",
+  requireAuth,
+  ensureNumericParam("id"),
+  routeTag("eventosRoute:/turmas/:id/datas"),
+  handle(turmasController.listarDatasDaTurma)
+);
+
+/* ───────────────────────────────────────────────────────────────
+   📣 Publicar / Despublicar (admin)
+   ─────────────────────────────────────────────────────────────── */
+router.post(
+  "/:id/publicar",
+  requireAuth,
+  authorizeRoles("administrador"),
+  ensureNumericParam("id"),
+  routeTag("eventosRoute:/:id/publicar"),
+  handle(eventosController.publicarEvento)
+);
+
+router.post(
+  "/:id/despublicar",
+  requireAuth,
+  authorizeRoles("administrador"),
+  ensureNumericParam("id"),
+  routeTag("eventosRoute:/:id/despublicar"),
+  handle(eventosController.despublicarEvento)
+);
+
+/* ───────────────────────────────────────────────────────────────
+   📎 Upload de arquivos do evento — admin
+   ─────────────────────────────────────────────────────────────── */
+
 // Endpoint unificado (recomendado pelo front)
-router.post('/:id/arquivos',
-  authMiddleware, authorizeRoles('administrador'),
-  eventosController.uploadEventos,            // aceita fields: folder, programacao (ou file)
-  eventosController.atualizarArquivosDoEvento // atualiza folder_url / programacao_pdf_url
+router.post(
+  "/:id/arquivos",
+  requireAuth,
+  authorizeRoles("administrador"),
+  ensureNumericParam("id"),
+  eventosController.uploadEventos, // aceita fields: folder, programacao (ou file)
+  routeTag("eventosRoute:/:id/arquivos"),
+  handle(eventosController.atualizarArquivosDoEvento)
 );
 
-// Atalhos compatíveis (opcionais) — usam o mesmo handler
-router.post('/:id/folder',
-  authMiddleware, authorizeRoles('administrador'),
+// Atalhos compatíveis
+router.post(
+  "/:id/folder",
+  requireAuth,
+  authorizeRoles("administrador"),
+  ensureNumericParam("id"),
   eventosController.uploadEventos,
-  eventosController.atualizarArquivosDoEvento
-);
-router.post('/:id/programacao',
-  authMiddleware, authorizeRoles('administrador'),
-  eventosController.uploadEventos,
-  eventosController.atualizarArquivosDoEvento
+  routeTag("eventosRoute:/:id/folder"),
+  handle(eventosController.atualizarArquivosDoEvento)
 );
 
-// Buscar por ID (com checagens e flags)
-router.get('/:id', authMiddleware, eventosController.buscarEventoPorId);
+router.post(
+  "/:id/programacao",
+  requireAuth,
+  authorizeRoles("administrador"),
+  ensureNumericParam("id"),
+  eventosController.uploadEventos,
+  routeTag("eventosRoute:/:id/programacao"),
+  handle(eventosController.atualizarArquivosDoEvento)
+);
+
+/* ───────────────────────────────────────────────────────────────
+   🔎 Buscar / Criar / Atualizar / Excluir (admin)
+   ─────────────────────────────────────────────────────────────── */
+
+// Buscar por ID
+router.get(
+  "/:id",
+  requireAuth,
+  ensureNumericParam("id"),
+  routeTag("eventosRoute:/:id"),
+  handle(eventosController.buscarEventoPorId)
+);
 
 // Criar (admin) — com upload (folder/programacao)
-router.post('/',
-  authMiddleware, authorizeRoles('administrador'),
+router.post(
+  "/",
+  requireAuth,
+  authorizeRoles("administrador"),
   eventosController.uploadEventos,
-  eventosController.criarEvento
+  routeTag("eventosRoute:POST /"),
+  handle(eventosController.criarEvento)
 );
 
-// Atualizar (admin) — metadados/restrição/turmas, com upload opcional
-router.put('/:id',
-  authMiddleware, authorizeRoles('administrador'),
+// Atualizar (admin)
+router.put(
+  "/:id",
+  requireAuth,
+  authorizeRoles("administrador"),
+  ensureNumericParam("id"),
   eventosController.uploadEventos,
-  eventosController.atualizarEvento
+  routeTag("eventosRoute:PUT /:id"),
+  handle(eventosController.atualizarEvento)
 );
 
 // Excluir (admin)
-router.delete('/:id',
-  authMiddleware, authorizeRoles('administrador'),
-  eventosController.excluirEvento
+router.delete(
+  "/:id",
+  requireAuth,
+  authorizeRoles("administrador"),
+  ensureNumericParam("id"),
+  routeTag("eventosRoute:DELETE /:id"),
+  handle(eventosController.excluirEvento)
 );
 
 module.exports = router;

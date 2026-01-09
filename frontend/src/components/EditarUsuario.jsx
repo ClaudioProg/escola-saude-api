@@ -9,44 +9,59 @@ import BotaoPrimario from "../components/BotaoPrimario";
 import BotaoSecundario from "../components/BotaoSecundario";
 import { apiGet, apiPut } from "../services/api"; // ✅ serviço centralizado
 
+/* ============================ Helpers ============================ */
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function normalizePerfil(p) {
+  if (Array.isArray(p)) return p.map((x) => String(x).trim().toLowerCase()).filter(Boolean);
+  if (typeof p === "string")
+    return p.split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
+  return [];
+}
+const isChanged = (a, b) => JSON.stringify(a) !== JSON.stringify(b);
+
 export default function EditarUsuario() {
   const { id } = useParams();
   const navigate = useNavigate();
   const liveId = useId();
 
   const [usuario, setUsuario] = useState(null);
+  const [original, setOriginal] = useState(null);
+
   const [carregando, setCarregando] = useState(true);
   const [salvando, setSalvando] = useState(false);
   const [erroGeral, setErroGeral] = useState("");
   const [errors, setErrors] = useState({});
+  const [liveMsg, setLiveMsg] = useState("");
 
   const nomeUsuario = useMemo(() => localStorage.getItem("nome") || "", []);
 
-  // Normaliza "perfil" para array de strings em minúsculas
-  function normalizePerfil(p) {
-    if (Array.isArray(p)) return p.map((x) => String(x).trim().toLowerCase()).filter(Boolean);
-    if (typeof p === "string")
-      return p
-        .split(",")
-        .map((x) => x.trim().toLowerCase())
-        .filter(Boolean);
-    return [];
-  }
+  const announce = (msg) => {
+    setLiveMsg(msg);
+    requestAnimationFrame(() => {
+      setLiveMsg("");
+      requestAnimationFrame(() => setLiveMsg(msg));
+    });
+  };
 
+  /* ============================ Load ============================ */
   const carregar = useCallback(async () => {
     setCarregando(true);
     setErroGeral("");
     try {
       const data = await apiGet(`/api/usuarios/${id}`);
       const perfil = normalizePerfil(data?.perfil);
-      setUsuario({
+      const cleaned = {
         ...data,
         perfil,
         email: (data?.email || "").trim(),
-      });
+      };
+      setUsuario(cleaned);
+      setOriginal(cleaned);
     } catch {
       setErroGeral("Erro ao carregar dados do usuário.");
       setUsuario(null);
+      setOriginal(null);
     } finally {
       setCarregando(false);
     }
@@ -56,18 +71,24 @@ export default function EditarUsuario() {
     carregar();
   }, [carregar]);
 
+  /* ============================ Form ============================ */
   const handleChange = useCallback((e) => {
     const { name, value, type, checked } = e.target;
     setUsuario((prev) => ({
       ...prev,
-      [name]: type === "checkbox" ? checked : name === "email" ? value.trim() : value,
+      [name]:
+        type === "checkbox"
+          ? checked
+          : name === "email"
+          ? value.trim()
+          : value,
     }));
     setErrors((prev) => ({ ...prev, [name]: "" }));
   }, []);
 
   const handlePerfilChange = useCallback((e) => {
     const value = Array.from(e.target.selectedOptions, (o) => o.value);
-    setUsuario((prev) => ({ ...prev, perfil: value }));
+    setUsuario((prev) => ({ ...prev, perfil: normalizePerfil(value) }));
     setErrors((prev) => ({ ...prev, perfil: "" }));
   }, []);
 
@@ -75,7 +96,7 @@ export default function EditarUsuario() {
     const msgs = {};
     if (!form?.nome?.trim()) msgs.nome = "Informe o nome.";
     if (!form?.email?.trim()) msgs.email = "Informe o e-mail.";
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) msgs.email = "E-mail inválido.";
+    else if (!EMAIL_RE.test(form.email)) msgs.email = "E-mail inválido.";
     if (!Array.isArray(form?.perfil) || form.perfil.length === 0)
       msgs.perfil = "Selecione pelo menos um perfil.";
     return msgs;
@@ -93,14 +114,34 @@ export default function EditarUsuario() {
         return;
       }
 
+      // snapshot para comparar mudanças
+      const snapshotAtual = {
+        nome: usuario.nome?.trim() || "",
+        email: (usuario.email || "").trim().toLowerCase(),
+        perfil: normalizePerfil(usuario.perfil),
+        ativo: !!usuario.ativo,
+      };
+      const snapshotOriginal = {
+        nome: original?.nome?.trim() || "",
+        email: (original?.email || "").trim().toLowerCase(),
+        perfil: normalizePerfil(original?.perfil),
+        ativo: !!original?.ativo,
+      };
+
+      if (!isChanged(snapshotAtual, snapshotOriginal)) {
+        toast.info("Nenhuma alteração para salvar.");
+        return;
+      }
+
       setSalvando(true);
       setErroGeral("");
       try {
         await apiPut(`/api/usuarios/${id}`, {
           ...usuario,
-          email: usuario.email.toLowerCase(),
-          // Se o backend preferir string: perfil: usuario.perfil.join(',')
-          perfil: usuario.perfil,
+          nome: snapshotAtual.nome,
+          email: snapshotAtual.email,
+          perfil: snapshotAtual.perfil, // mantém array; se necessário, usar .join(',')
+          ativo: snapshotAtual.ativo,
         });
         toast.success("✅ Usuário atualizado com sucesso!");
         navigate("/administrador", { replace: true });
@@ -111,9 +152,18 @@ export default function EditarUsuario() {
         setSalvando(false);
       }
     },
-    [usuario, salvando, id, navigate]
+    [usuario, salvando, id, navigate, original]
   );
 
+  const descartarAlteracoes = useCallback(() => {
+    if (!original) return;
+    setUsuario(original);
+    setErrors({});
+    announce("Alterações descartadas.");
+    toast.info("Alterações descartadas.");
+  }, [original]);
+
+  /* ============================ UI states ============================ */
   if (carregando && !erroGeral) {
     return (
       <main className="min-h-screen bg-gelo dark:bg-gray-900 px-2 py-6">
@@ -138,6 +188,24 @@ export default function EditarUsuario() {
       </main>
     );
   }
+
+  const houveMudancas =
+    original &&
+    usuario &&
+    isChanged(
+      {
+        nome: usuario?.nome?.trim() || "",
+        email: (usuario?.email || "").trim().toLowerCase(),
+        perfil: normalizePerfil(usuario?.perfil),
+        ativo: !!usuario?.ativo,
+      },
+      {
+        nome: original?.nome?.trim() || "",
+        email: (original?.email || "").trim().toLowerCase(),
+        perfil: normalizePerfil(original?.perfil),
+        ativo: !!original?.ativo,
+      }
+    );
 
   return (
     <main className="min-h-screen bg-gelo dark:bg-gray-900 px-2 py-6">
@@ -164,6 +232,9 @@ export default function EditarUsuario() {
         >
           ✏️ Editar Usuário
         </h1>
+
+        {/* aria-live discreto para mensagens de acessibilidade (descartar, etc.) */}
+        <p id={`${liveId}-live`} role="status" aria-live="polite" className="sr-only">{liveMsg}</p>
 
         {erroGeral && (
           <p id={`${liveId}-status`} className="mb-3 text-sm text-red-600 dark:text-red-400" role="alert" aria-live="assertive">
@@ -291,9 +362,16 @@ export default function EditarUsuario() {
               <BotaoPrimario type="submit" disabled={salvando}>
                 {salvando ? "Salvando..." : "💾 Salvar Alterações"}
               </BotaoPrimario>
+
               <BotaoSecundario onClick={() => navigate(-1)} variant="outline">
                 Cancelar
               </BotaoSecundario>
+
+              {houveMudancas && (
+                <BotaoSecundario onClick={descartarAlteracoes} variant="outline">
+                  Descartar
+                </BotaoSecundario>
+              )}
             </div>
           </fieldset>
         </form>

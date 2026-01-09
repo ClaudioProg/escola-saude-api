@@ -1,6 +1,14 @@
-// ✅ src/pages/SolicitacaoCursoAdmin.jsx
-import { useEffect, useMemo, useState } from "react";
-import { motion } from "framer-motion";
+// ✅ src/pages/SolicitacaoCursoAdmin.jsx — premium (admin)
+// Upgrades (sem perder nada do que você já tem):
+// - HeaderHero premium (paleta exclusiva admin) + chips + refresh + live region a11y
+// - Ministats premium + contagens por status (inclui “visíveis no mês”)
+// - Filtros: unidade/tipo/status + busca por texto (debounce) + limpar + persistência (localStorage)
+// - Cards premium com barrinha por status + botões acessíveis
+// - Calendário premium (clique abre modal) + melhores focus/hover
+// - Mantém rotas e o ModalSolicitacaoCurso (com podeEditarStatus=true)
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { motion, useReducedMotion } from "framer-motion";
 import { toast } from "react-toastify";
 import {
   CalendarDays,
@@ -15,6 +23,10 @@ import {
   Globe2,
   ChevronLeft,
   ChevronRight,
+  Search,
+  X,
+  Sparkles,
+  RefreshCcw,
 } from "lucide-react";
 import Skeleton from "react-loading-skeleton";
 
@@ -38,25 +50,35 @@ const MESES = [
   { value: "12", label: "Dezembro" },
 ];
 
-/* -----------------------------------------------------------
- * Helpers
- * ----------------------------------------------------------- */
+/* ---------------- Helpers ---------------- */
+const cx = (...c) => c.filter(Boolean).join(" ");
+
+const norm = (s) =>
+  String(s || "")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .trim();
+
+const brDate = (ymd) => {
+  if (!ymd || !/^\d{4}-\d{2}-\d{2}$/.test(String(ymd))) return String(ymd || "—");
+  const [y, m, d] = String(ymd).split("-");
+  return `${d}/${m}/${y}`;
+};
+
 function resumirDatas(datas = []) {
   if (!datas.length) return "Datas a definir";
-  const ordenadas = [...datas].sort((a, b) => a.data.localeCompare(b.data));
+  const ordenadas = [...datas].filter((d) => d?.data).sort((a, b) => a.data.localeCompare(b.data));
+  if (!ordenadas.length) return "Datas a definir";
   const primeira = ordenadas[0].data;
   const ultima = ordenadas[ordenadas.length - 1].data;
-  if (primeira === ultima)
-    return `Dia ${primeira.split("-").reverse().join("/")}`;
-  return `De ${primeira.split("-").reverse().join("/")} a ${ultima
-    .split("-")
-    .reverse()
-    .join("/")}`;
+  if (primeira === ultima) return `Dia ${brDate(primeira)}`;
+  return `De ${brDate(primeira)} a ${brDate(ultima)}`;
 }
 
 function resumirHorarios(datas = []) {
   const horarios = datas
-    .map((d) => d.horario_inicio)
+    .map((d) => d?.horario_inicio)
     .filter(Boolean)
     .slice(0, 2);
   if (!horarios.length) return "Horários a definir";
@@ -67,30 +89,71 @@ function resumirHorarios(datas = []) {
 function badgeStatus(status) {
   switch (status) {
     case "planejado":
-      return { label: "Planejado", className: "bg-amber-100 text-amber-800" };
+      return {
+        label: "Planejado",
+        className:
+          "bg-amber-100 text-amber-900 dark:bg-amber-900/30 dark:text-amber-200",
+      };
     case "em_analise":
-      return { label: "Em análise", className: "bg-sky-100 text-sky-800" };
+      return {
+        label: "Em análise",
+        className: "bg-sky-100 text-sky-900 dark:bg-sky-900/30 dark:text-sky-200",
+      };
     case "confirmado":
-      return { label: "Confirmado", className: "bg-emerald-100 text-emerald-800" };
+      return {
+        label: "Confirmado",
+        className:
+          "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/30 dark:text-emerald-200",
+      };
     case "cancelado":
       return {
         label: "Cancelado",
-        className: "bg-rose-100 text-rose-800 line-through",
+        className:
+          "bg-rose-100 text-rose-900 dark:bg-rose-900/30 dark:text-rose-200 line-through",
       };
     default:
-      return { label: "Sem status", className: "bg-slate-100 text-slate-700" };
+      return {
+        label: "Sem status",
+        className: "bg-slate-100 text-slate-800 dark:bg-zinc-800 dark:text-zinc-200",
+      };
   }
 }
 
-/* -----------------------------------------------------------
- * COMPONENTE PRINCIPAL (ADMIN)
- * ----------------------------------------------------------- */
+const STRIPES_BY_STATUS = {
+  planejado: "from-amber-600 to-yellow-500",
+  em_analise: "from-sky-600 to-cyan-500",
+  confirmado: "from-emerald-600 to-teal-500",
+  cancelado: "from-rose-600 to-red-500",
+  default: "from-indigo-600 to-sky-600",
+};
+const stripeForStatus = (s) => STRIPES_BY_STATUS[s] || STRIPES_BY_STATUS.default;
+
+const STORAGE_KEY = "solicitacaoCursoAdmin:filtros:v1";
+
+/* ---------------- Página ---------------- */
 export default function SolicitacaoCursoAdmin() {
+  const reduceMotion = useReducedMotion();
+
   const [cursos, setCursos] = useState([]);
   const [carregando, setCarregando] = useState(true);
-  const [filtroUnidade, setFiltroUnidade] = useState("");
-  const [filtroTipo, setFiltroTipo] = useState("");
-  const [filtroStatus, setFiltroStatus] = useState("");
+
+  // filtros
+  const loadPersisted = () => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  };
+  const persisted = loadPersisted();
+
+  const [filtroUnidade, setFiltroUnidade] = useState(persisted?.filtroUnidade || "");
+  const [filtroTipo, setFiltroTipo] = useState(persisted?.filtroTipo || "");
+  const [filtroStatus, setFiltroStatus] = useState(persisted?.filtroStatus || "");
+  const [busca, setBusca] = useState(persisted?.busca || "");
+  const [buscaDeb, setBuscaDeb] = useState(persisted?.busca || "");
+
   const [unidades, setUnidades] = useState([]);
   const [tipos, setTipos] = useState([]);
 
@@ -103,16 +166,38 @@ export default function SolicitacaoCursoAdmin() {
   const [modalAberto, setModalAberto] = useState(false);
   const [solicitacaoEmEdicao, setSolicitacaoEmEdicao] = useState(null);
 
+  // a11y live
+  const liveRef = useRef(null);
+  const setLive = (msg) => {
+    if (liveRef.current) liveRef.current.textContent = msg;
+  };
+
+  // persist filtros
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ filtroUnidade, filtroTipo, filtroStatus, busca })
+      );
+    } catch {}
+  }, [filtroUnidade, filtroTipo, filtroStatus, busca]);
+
+  // debounce busca
+  useEffect(() => {
+    const t = setTimeout(() => setBuscaDeb(busca), 250);
+    return () => clearTimeout(t);
+  }, [busca]);
+
   useEffect(() => {
     carregarDados();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* -----------------------------------------------------------
-   * 🔄 Carregar dados (usando mesmas rotas da página usuário)
-   * ----------------------------------------------------------- */
-  async function carregarDados() {
+  /* -------- carregar dados -------- */
+  const carregarDados = useCallback(async () => {
     try {
       setCarregando(true);
+      setLive("Carregando solicitações…");
 
       const [cursosRes, unidadesRes, tiposRes] = await Promise.all([
         api.get("/api/solicitacoes-curso"),
@@ -120,54 +205,70 @@ export default function SolicitacaoCursoAdmin() {
         api.get("/api/solicitacoes-curso/tipos"),
       ]);
 
-      console.log("[SolicitacaoCursoAdmin] cursosRes =", cursosRes);
-      console.log("[SolicitacaoCursoAdmin] unidadesRes =", unidadesRes);
-      console.log("[SolicitacaoCursoAdmin] tiposRes =", tiposRes);
-
       setCursos(Array.isArray(cursosRes) ? cursosRes : cursosRes?.data || []);
-      setUnidades(
-        Array.isArray(unidadesRes) ? unidadesRes : unidadesRes?.data || []
-      );
+      setUnidades(Array.isArray(unidadesRes) ? unidadesRes : unidadesRes?.data || []);
       setTipos(Array.isArray(tiposRes) ? tiposRes : tiposRes?.data || []);
+
+      setLive("Solicitações carregadas.");
     } catch (err) {
       console.error(err);
       toast.error("Não foi possível carregar as solicitações de curso.");
+      setLive("Falha ao carregar solicitações.");
     } finally {
       setCarregando(false);
     }
-  }
+  }, []);
 
-  /* ----------------------------------------------------------- */
+  /* -------- filtros do mês + filtros admin + busca -------- */
   const cursosFiltrados = useMemo(() => {
     const { year, month } = currentMonthYear;
     const mesStr = String(month + 1).padStart(2, "0");
+    const q = norm(buscaDeb);
 
     return cursos.filter((curso) => {
-      let ok = true;
+      const datas = Array.isArray(curso?.datas) ? curso.datas : [];
 
-      const temNoMes = (curso.datas || []).some((d) => {
-        if (!d.data) return false;
-        const [ano, mes] = d.data.split("-");
+      const temNoMes = datas.some((d) => {
+        if (!d?.data) return false;
+        const [ano, mes] = String(d.data).split("-");
         return ano === String(year) && mes === mesStr;
       });
+      if (!temNoMes) return false;
 
-      if (!temNoMes) ok = false;
+      if (filtroUnidade && String(curso.unidade_id) !== String(filtroUnidade)) return false;
+      if (filtroTipo && String(curso.tipo) !== String(filtroTipo)) return false;
+      if (filtroStatus && String(curso.status) !== String(filtroStatus)) return false;
 
-      if (filtroUnidade && String(curso.unidade_id) !== String(filtroUnidade)) {
-        ok = false;
+      if (q) {
+        const palestrantesStr = (curso.palestrantes || [])
+          .map((p) => p?.nome)
+          .filter(Boolean)
+          .join(" ");
+
+        const hay = norm(
+          [
+            curso.titulo,
+            curso.descricao,
+            curso.unidade_nome,
+            curso.local,
+            curso.publico_alvo,
+            curso.modalidade,
+            curso.tipo,
+            curso.status,
+            curso.restricao_descricao,
+            curso.criador_nome,
+            palestrantesStr,
+          ]
+            .filter(Boolean)
+            .join(" | ")
+        );
+
+        if (!hay.includes(q)) return false;
       }
 
-      if (filtroTipo && curso.tipo !== filtroTipo) {
-        ok = false;
-      }
-
-      if (filtroStatus && curso.status !== filtroStatus) {
-        ok = false;
-      }
-
-      return ok;
+      return true;
     });
-  }, [cursos, currentMonthYear, filtroUnidade, filtroTipo, filtroStatus]);
+  }, [cursos, currentMonthYear, filtroUnidade, filtroTipo, filtroStatus, buscaDeb]);
 
   const cursosPorDia = useMemo(() => {
     const map = {};
@@ -176,16 +277,16 @@ export default function SolicitacaoCursoAdmin() {
 
     for (const curso of cursosFiltrados) {
       for (const d of curso.datas || []) {
-        if (!d.data?.startsWith(prefix)) continue;
+        if (!d?.data?.startsWith(prefix)) continue;
         const dia = d.data.slice(-2);
         if (!map[dia]) map[dia] = [];
         map[dia].push(curso);
       }
     }
-
     return map;
   }, [cursosFiltrados, currentMonthYear]);
 
+  /* -------- KPIs admin -------- */
   const kpis = useMemo(() => {
     const total = cursos.length;
     const planejados = cursos.filter((c) => c.status === "planejado").length;
@@ -196,6 +297,10 @@ export default function SolicitacaoCursoAdmin() {
     return { total, planejados, emAnalise, confirmados, cancelados };
   }, [cursos]);
 
+  const totalVisiveisMes = cursosFiltrados.length;
+  const monthLabel = `${MESES[currentMonthYear.month].label} de ${currentMonthYear.year}`;
+
+  /* -------- ações -------- */
   function handleEditar(curso) {
     setSolicitacaoEmEdicao(curso);
     setModalAberto(true);
@@ -211,71 +316,99 @@ export default function SolicitacaoCursoAdmin() {
       await api.delete(`/api/solicitacoes-curso/${curso.id}`);
       toast.success("Solicitação excluída com sucesso.");
       setCursos((prev) => prev.filter((c) => c.id !== curso.id));
+      setLive("Solicitação excluída.");
     } catch (err) {
       console.error(err);
       toast.error("Erro ao excluir solicitação. Tente novamente.");
+      setLive("Falha ao excluir solicitação.");
     }
   }
 
-  /* ----------------------------------------------------------- */
+  const limparFiltros = () => {
+    setFiltroUnidade("");
+    setFiltroTipo("");
+    setFiltroStatus("");
+    setBusca("");
+    setBuscaDeb("");
+    setLive("Filtros limpos.");
+  };
+
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50">
-      {/* HeaderHero administrador */}
-      <header className="bg-gradient-to-br from-sky-800 via-sky-700 to-indigo-800 text-white shadow-lg">
-        <div className="mx-auto w-full max-w-6xl px-4 py-8 sm:py-10">
+    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-zinc-950 text-slate-900 dark:text-white">
+      <p ref={liveRef} className="sr-only" aria-live="polite" />
+
+      {/* HeaderHero administrador premium */}
+      <header className="relative overflow-hidden bg-gradient-to-br from-sky-900 via-indigo-800 to-fuchsia-700 text-white shadow-lg">
+        <div
+          className="pointer-events-none absolute inset-0 opacity-60"
+          style={{
+            background:
+              "radial-gradient(52% 60% at 50% 0%, rgba(255,255,255,0.16) 0%, rgba(255,255,255,0.06) 32%, rgba(255,255,255,0) 60%)",
+          }}
+          aria-hidden="true"
+        />
+        <div className="mx-auto w-full max-w-6xl px-4 py-8 sm:py-10 relative">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-medium">
-                <CalendarDays className="h-4 w-4" />
+              <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-semibold">
+                <CalendarDays className="h-4 w-4" aria-hidden="true" />
                 <span>Painel do Administrador</span>
               </div>
-              <h1 className="mt-3 text-2xl font-semibold sm:text-3xl">
+
+              <h1 className="mt-3 text-2xl font-extrabold sm:text-3xl tracking-tight">
                 Gestão do calendário de cursos
               </h1>
-              <p className="mt-2 max-w-2xl text-sm text-sky-100">
-                Visualize, acompanhe e atualize o status das solicitações de
-                cursos cadastradas por toda a rede de saúde.
+
+              <p className="mt-2 max-w-2xl text-sm text-white/90">
+                Visualize, acompanhe e atualize o status das solicitações de cursos cadastradas
+                por toda a rede de saúde.
+              </p>
+
+              <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs">
+                <Sparkles className="h-4 w-4" aria-hidden="true" />
+                <span>
+                  Mês: <strong>{monthLabel}</strong> • {totalVisiveisMes} visíveis
+                </span>
+              </div>
+            </div>
+
+            <div className="flex flex-col items-end gap-2">
+              <button
+                type="button"
+                onClick={carregarDados}
+                disabled={carregando}
+                className="inline-flex items-center gap-2 rounded-2xl bg-white/15 hover:bg-white/20 px-4 py-2 text-sm font-extrabold focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:opacity-70"
+                aria-label="Atualizar dados"
+              >
+                <RefreshCcw className={cx("h-4 w-4", carregando ? "animate-spin" : "")} aria-hidden="true" />
+                {carregando ? "Atualizando…" : "Atualizar"}
+              </button>
+              <p className="text-[11px] text-white/80">
+                Dica: use filtros + busca para encontrar rápido.
               </p>
             </div>
           </div>
 
           {/* Ministats admin */}
-          <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <MiniStat
-              label="Total de solicitações"
-              value={kpis.total}
-              icon={CalendarDays}
-              variant="default"
-            />
-            <MiniStat
-              label="Planejados"
-              value={kpis.planejados}
-              icon={Clock}
-              variant="accent"
-            />
-            <MiniStat
-              label="Em análise / Confirmados"
-              value={`${kpis.emAnalise} / ${kpis.confirmados}`}
-              icon={School}
-              variant="success"
-            />
-            <MiniStat
-              label="Cancelados"
-              value={kpis.cancelados}
-              icon={Lock}
-              variant="warning"
-            />
+          <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            <MiniStat label="Total" value={kpis.total} icon={CalendarDays} variant="default" />
+            <MiniStat label="Planejados" value={kpis.planejados} icon={Clock} variant="amber" />
+            <MiniStat label="Em análise" value={kpis.emAnalise} icon={School} variant="sky" />
+            <MiniStat label="Confirmados" value={kpis.confirmados} icon={School} variant="emerald" />
+            <MiniStat label="Cancelados" value={kpis.cancelados} icon={Lock} variant="rose" />
           </div>
         </div>
+
+        <div className="absolute bottom-0 left-0 right-0 h-px bg-white/25" aria-hidden="true" />
       </header>
 
       {/* Conteúdo */}
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:py-8">
-        {/* Agenda + filtros admin */}
-        <section className="mb-6 rounded-xl bg-white p-4 shadow-sm">
+        {/* Agenda + filtros admin premium */}
+        <section className="mb-6 rounded-2xl bg-white dark:bg-zinc-900 p-4 shadow-sm ring-1 ring-slate-100 dark:ring-white/10">
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
-              <Filter className="h-4 w-4" />
+            <div className="flex items-center gap-2 text-sm font-extrabold text-slate-700 dark:text-zinc-100">
+              <Filter className="h-4 w-4" aria-hidden="true" />
               <span>Agenda mensal de solicitações (admin)</span>
             </div>
 
@@ -289,13 +422,16 @@ export default function SolicitacaoCursoAdmin() {
                       : { year: prev.year, month: prev.month - 1 }
                   )
                 }
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white hover:bg-slate-50"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-950/30 hover:bg-slate-50 dark:hover:bg-zinc-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
+                aria-label="Mês anterior"
               >
-                <ChevronLeft className="h-4 w-4" />
+                <ChevronLeft className="h-4 w-4" aria-hidden="true" />
               </button>
-              <span className="min-w-[140px] text-center text-sm font-semibold text-slate-700">
-                {MESES[currentMonthYear.month].label} de {currentMonthYear.year}
+
+              <span className="min-w-[170px] text-center text-sm font-extrabold text-slate-800 dark:text-zinc-100">
+                {monthLabel}
               </span>
+
               <button
                 type="button"
                 onClick={() =>
@@ -305,66 +441,85 @@ export default function SolicitacaoCursoAdmin() {
                       : { year: prev.year, month: prev.month + 1 }
                   )
                 }
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white hover:bg-slate-50"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-950/30 hover:bg-slate-50 dark:hover:bg-zinc-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
+                aria-label="Próximo mês"
               >
-                <ChevronRight className="h-4 w-4" />
+                <ChevronRight className="h-4 w-4" aria-hidden="true" />
               </button>
             </div>
           </div>
 
-          <div className="mb-4 grid gap-3 sm:grid-cols-3">
-            <div className="flex flex-col gap-1 text-xs">
-              <label className="font-medium text-slate-600">Unidade</label>
-              <select
-                value={filtroUnidade}
-                onChange={(e) => setFiltroUnidade(e.target.value)}
-                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-              >
-                <option value="">Todas</option>
-                {unidades.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.nome}
-                  </option>
-                ))}
-              </select>
-            </div>
+          <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <FilterSelect
+              label="Unidade"
+              value={filtroUnidade}
+              onChange={setFiltroUnidade}
+              placeholder="Todas"
+              options={unidades.map((u) => ({ value: String(u.id), label: u.nome }))}
+            />
+
+            <FilterSelect
+              label="Tipo"
+              value={filtroTipo}
+              onChange={setFiltroTipo}
+              placeholder="Todos"
+              options={tipos.map((t) => ({ value: String(t), label: String(t) }))}
+            />
+
+            <FilterSelect
+              label="Status"
+              value={filtroStatus}
+              onChange={setFiltroStatus}
+              placeholder="Todos"
+              options={[
+                { value: "planejado", label: "Planejado" },
+                { value: "em_analise", label: "Em análise" },
+                { value: "confirmado", label: "Confirmado" },
+                { value: "cancelado", label: "Cancelado" },
+              ]}
+            />
 
             <div className="flex flex-col gap-1 text-xs">
-              <label className="font-medium text-slate-600">Tipo</label>
-              <select
-                value={filtroTipo}
-                onChange={(e) => setFiltroTipo(e.target.value)}
-                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-              >
-                <option value="">Todos</option>
-                {tipos.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-            </div>
+              <label className="font-semibold text-slate-600 dark:text-zinc-300">Busca</label>
+              <div className="relative">
+                <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden="true" />
+                <input
+                  value={busca}
+                  onChange={(e) => setBusca(e.target.value)}
+                  placeholder="Buscar por título, criador, unidade, local…"
+                  className="w-full rounded-xl border border-slate-200 dark:border-zinc-700 pl-10 pr-10 py-2 text-sm bg-white dark:bg-zinc-950/30 shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  aria-label="Buscar solicitações"
+                />
+                {!!busca && (
+                  <button
+                    type="button"
+                    onClick={() => setBusca("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-zinc-800"
+                    aria-label="Limpar busca"
+                  >
+                    <X className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                )}
+              </div>
 
-            <div className="flex flex-col gap-1 text-xs">
-              <label className="font-medium text-slate-600">Status</label>
-              <select
-                value={filtroStatus}
-                onChange={(e) => setFiltroStatus(e.target.value)}
-                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-              >
-                <option value="">Todos</option>
-                <option value="planejado">Planejado</option>
-                <option value="em_analise">Em análise</option>
-                <option value="confirmado">Confirmado</option>
-                <option value="cancelado">Cancelado</option>
-              </select>
+              <div className="mt-2 flex items-center gap-2">
+                <span className="text-[11px] text-slate-500 dark:text-zinc-400">
+                  Visíveis no mês: <strong className="tabular-nums">{totalVisiveisMes}</strong>
+                </span>
+                <button
+                  type="button"
+                  onClick={limparFiltros}
+                  className="ml-auto inline-flex items-center gap-2 rounded-full border border-slate-200 dark:border-zinc-700 px-3 py-1.5 text-xs font-semibold hover:bg-slate-50 dark:hover:bg-zinc-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
+                >
+                  Limpar filtros
+                </button>
+              </div>
             </div>
           </div>
 
           <CalendarioMensalAdmin
             currentMonthYear={currentMonthYear}
             cursosPorDia={cursosPorDia}
-            // 👇 clique no curso abre edição/detalhe
             onCursoClick={handleEditar}
           />
         </section>
@@ -373,7 +528,10 @@ export default function SolicitacaoCursoAdmin() {
         <section aria-label="Solicitações de curso (admin)" className="space-y-3">
           {carregando ? (
             Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="rounded-xl bg-white p-4 shadow-sm">
+              <div
+                key={i}
+                className="rounded-2xl bg-white dark:bg-zinc-900 p-4 shadow-sm ring-1 ring-slate-100 dark:ring-white/10"
+              >
                 <Skeleton height={18} width="60%" />
                 <div className="mt-2 space-y-2">
                   <Skeleton height={12} />
@@ -390,121 +548,106 @@ export default function SolicitacaoCursoAdmin() {
           ) : (
             cursosFiltrados.map((curso) => {
               const statusInfo = badgeStatus(curso.status);
+              const stripe = stripeForStatus(curso.status);
+
               const palestrantesStr =
-                (curso.palestrantes || []).map((p) => p.nome).join(", ") ||
+                (curso.palestrantes || []).map((p) => p?.nome).filter(Boolean).join(", ") ||
                 "A definir";
 
               return (
                 <motion.article
                   key={curso.id}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
+                  initial={reduceMotion ? false : { opacity: 0, y: 10 }}
+                  animate={reduceMotion ? {} : { opacity: 1, y: 0 }}
                   transition={{ duration: 0.18 }}
-                  className="group rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-100 hover:shadow-md hover:ring-sky-100"
+                  className="relative group rounded-2xl bg-white dark:bg-zinc-900 p-4 shadow-sm ring-1 ring-slate-100 dark:ring-white/10 hover:shadow-md hover:ring-sky-200/60"
                 >
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="space-y-1">
+                  {/* barrinha superior por status */}
+                  <div
+                    className={cx(
+                      "pointer-events-none absolute inset-x-0 -top-px h-2 rounded-t-2xl bg-gradient-to-r",
+                      stripe
+                    )}
+                    aria-hidden="true"
+                  />
+
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between pt-1">
+                    <div className="space-y-1 min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <h2 className="text-base font-semibold text-slate-800">
+                        <h2 className="text-base font-extrabold text-slate-800 dark:text-white break-words">
                           {curso.titulo}
                         </h2>
+
                         <span
-                          className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-medium ${statusInfo.className}`}
+                          className={cx(
+                            "inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold",
+                            statusInfo.className
+                          )}
                         >
                           {statusInfo.label}
                         </span>
-                        <span className="inline-flex items-center rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-700">
+
+                        <span className="inline-flex items-center rounded-full bg-sky-50 dark:bg-sky-900/20 px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-sky-800 dark:text-sky-200">
                           Criado por: {curso.criador_nome || "Não informado"}
                         </span>
                       </div>
-                      <p className="text-xs text-slate-600 line-clamp-2">
+
+                      <p className="text-xs text-slate-600 dark:text-zinc-300 line-clamp-2">
                         {curso.descricao || "Sem descrição detalhada informada."}
                       </p>
                     </div>
 
-                    <div className="flex items-center gap-2 sm:mt-1">
+                    <div className="flex items-center gap-2 sm:mt-1 shrink-0">
                       <button
                         type="button"
                         onClick={() => handleEditar(curso)}
-                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-950/30 px-3 py-2 text-xs font-semibold text-slate-800 dark:text-zinc-100 hover:bg-slate-50 dark:hover:bg-zinc-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
+                        aria-label={`Editar ${curso.titulo}`}
                       >
-                        <Edit2 className="h-3.5 w-3.5" />
+                        <Edit2 className="h-3.5 w-3.5" aria-hidden="true" />
                         Editar
                       </button>
                       <button
                         type="button"
                         onClick={() => handleExcluir(curso)}
-                        className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-medium text-rose-700 hover:bg-rose-100"
+                        className="inline-flex items-center gap-2 rounded-xl border border-rose-200 dark:border-rose-900/40 bg-rose-50 dark:bg-rose-950/30 px-3 py-2 text-xs font-semibold text-rose-700 dark:text-rose-200 hover:bg-rose-100/70 dark:hover:bg-rose-950/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
+                        aria-label={`Excluir ${curso.titulo}`}
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                         Excluir
                       </button>
                     </div>
                   </div>
 
-                  <div className="mt-3 grid gap-2 text-xs text-slate-600 sm:grid-cols-2 lg:grid-cols-4">
-                    <div className="flex items-start gap-2">
-                      <CalendarDays className="mt-0.5 h-4 w-4 text-sky-600" />
-                      <div>
-                        <p className="font-medium">Datas</p>
-                        <p>{resumirDatas(curso.datas)}</p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-start gap-2">
-                      <Clock className="mt-0.5 h-4 w-4 text-sky-600" />
-                      <div>
-                        <p className="font-medium">Horários</p>
-                        <p>{resumirHorarios(curso.datas)}</p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-start gap-2">
-                      <MapPin className="mt-0.5 h-4 w-4 text-sky-600" />
-                      <div>
-                        <p className="font-medium">Local / Unidade</p>
-                        <p className="line-clamp-2">
-                          {curso.local || "Local a definir"}
-                          {curso.unidade_nome ? ` — ${curso.unidade_nome}` : ""}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-start gap-2">
-                      <Users className="mt-0.5 h-4 w-4 text-sky-600" />
-                      <div>
-                        <p className="font-medium">Público-alvo</p>
-                        <p className="line-clamp-2">
-                          {curso.publico_alvo || "Público a definir"}
-                        </p>
-                      </div>
-                    </div>
+                  <div className="mt-4 grid gap-2 text-xs text-slate-600 dark:text-zinc-300 sm:grid-cols-2 lg:grid-cols-4">
+                    <InfoBox icon={CalendarDays} title="Datas" value={resumirDatas(curso.datas)} />
+                    <InfoBox icon={Clock} title="Horários" value={resumirHorarios(curso.datas)} />
+                    <InfoBox
+                      icon={MapPin}
+                      title="Local / Unidade"
+                      value={`${curso.local || "Local a definir"}${curso.unidade_nome ? ` — ${curso.unidade_nome}` : ""}`}
+                    />
+                    <InfoBox icon={Users} title="Público-alvo" value={curso.publico_alvo || "Público a definir"} />
                   </div>
 
-                  <div className="mt-3 grid gap-2 text-xs text-slate-600 sm:grid-cols-2 lg:grid-cols-[2fr,1fr]">
-                    <div className="flex items-start gap-2">
-                      <School className="mt-0.5 h-4 w-4 text-sky-600" />
-                      <div>
-                        <p className="font-medium">Palestrantes</p>
-                        <p className="line-clamp-2">{palestrantesStr}</p>
-                      </div>
-                    </div>
+                  <div className="mt-3 grid gap-2 text-xs text-slate-600 dark:text-zinc-300 sm:grid-cols-2 lg:grid-cols-[2fr,1fr]">
+                    <InfoBox icon={School} title="Palestrantes" value={palestrantesStr} />
 
                     <div className="flex flex-wrap items-center gap-2">
                       {curso.restrito ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-0.5 text-[11px] font-medium text-amber-800">
-                          <Lock className="h-3.5 w-3.5" />
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 dark:bg-amber-900/25 px-2.5 py-0.5 text-[11px] font-semibold text-amber-900 dark:text-amber-200">
+                          <Lock className="h-3.5 w-3.5" aria-hidden="true" />
                           Restrito: {curso.restricao_descricao || "Acesso limitado"}
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-medium text-emerald-800">
-                          <Globe2 className="h-3.5 w-3.5" />
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 dark:bg-emerald-900/25 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-900 dark:text-emerald-200">
+                          <Globe2 className="h-3.5 w-3.5" aria-hidden="true" />
                           Acesso livre na rede
                         </span>
                       )}
 
                       {curso.modalidade && (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
+                        <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 dark:bg-zinc-800 px-2 py-0.5 text-[11px] font-semibold text-slate-700 dark:text-zinc-200">
                           {curso.modalidade === "presencial"
                             ? "Presencial"
                             : curso.modalidade === "online"
@@ -514,7 +657,7 @@ export default function SolicitacaoCursoAdmin() {
                       )}
 
                       {typeof curso.carga_horaria_total === "number" && (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
+                        <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 dark:bg-zinc-800 px-2 py-0.5 text-[11px] font-semibold text-slate-700 dark:text-zinc-200">
                           {curso.carga_horaria_total}h
                         </span>
                       )}
@@ -549,8 +692,46 @@ export default function SolicitacaoCursoAdmin() {
   );
 }
 
-/* ─────────── Calendário mensal admin ─────────── */
+/* ---------------- UI: InfoBox ---------------- */
+function InfoBox({ icon: Icon, title, value }) {
+  return (
+    <div className="flex items-start gap-2">
+      <div className="mt-0.5 rounded-lg bg-sky-50 dark:bg-sky-900/20 p-1.5">
+        <Icon className="h-4 w-4 text-sky-700 dark:text-sky-200" aria-hidden="true" />
+      </div>
+      <div className="min-w-0">
+        <p className="font-semibold text-slate-700 dark:text-zinc-200">{title}</p>
+        <p className="truncate" title={value}>
+          {value}
+        </p>
+      </div>
+    </div>
+  );
+}
 
+/* ---------------- UI: FilterSelect ---------------- */
+function FilterSelect({ label, value, onChange, options, placeholder }) {
+  return (
+    <div className="flex flex-col gap-1 text-xs">
+      <label className="font-semibold text-slate-600 dark:text-zinc-300">{label}</label>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-950/30 px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+        aria-label={`Filtrar por ${label}`}
+      >
+        <option value="">{placeholder}</option>
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+/* ---------------- Calendário mensal admin premium ---------------- */
 function CalendarioMensalAdmin({ currentMonthYear, cursosPorDia, onCursoClick }) {
   const { year, month } = currentMonthYear;
 
@@ -559,23 +740,21 @@ function CalendarioMensalAdmin({ currentMonthYear, cursosPorDia, onCursoClick })
   const diasNoMes = new Date(year, month + 1, 0).getDate();
 
   const celulas = [];
-  for (let i = 0; i < primeiroDiaSemana; i++) {
-    celulas.push({ tipo: "vazio", key: `blank-${i}` });
-  }
+  for (let i = 0; i < primeiroDiaSemana; i++) celulas.push({ tipo: "vazio", key: `blank-${i}` });
+
   for (let dia = 1; dia <= diasNoMes; dia++) {
     const diaStr = String(dia).padStart(2, "0");
-    const cursosDoDia = cursosPorDia[diaStr] || [];
     celulas.push({
       tipo: "dia",
       key: `dia-${dia}`,
       dia,
-      cursos: cursosDoDia,
+      cursos: cursosPorDia[diaStr] || [],
     });
   }
 
   return (
-    <div className="overflow-hidden rounded-xl border border-slate-100">
-      <div className="grid grid-cols-7 bg-slate-50 text-center text-[11px] font-medium uppercase tracking-wide text-slate-500">
+    <div className="overflow-hidden rounded-2xl border border-slate-200 dark:border-zinc-700">
+      <div className="grid grid-cols-7 bg-slate-50 dark:bg-zinc-950/30 text-center text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-zinc-400">
         {diasSemana.map((d, idx) => (
           <div key={`${d}-${idx}`} className="px-1 py-2">
             {d}
@@ -583,42 +762,41 @@ function CalendarioMensalAdmin({ currentMonthYear, cursosPorDia, onCursoClick })
         ))}
       </div>
 
-      <div className="grid grid-cols-7 bg-white text-xs">
+      <div className="grid grid-cols-7 bg-white dark:bg-zinc-900 text-xs">
         {celulas.map((cell) => {
           if (cell.tipo === "vazio") {
-            return <div key={cell.key} className="h-20 border border-slate-50" />;
+            return <div key={cell.key} className="h-28 border border-slate-50 dark:border-zinc-800" />;
           }
 
           const { dia, cursos } = cell;
 
           return (
-            <div
-              key={cell.key}
-              className="flex h-24 flex-col border border-slate-50 p-1.5 align-top"
-            >
+            <div key={cell.key} className="flex h-32 flex-col border border-slate-50 dark:border-zinc-800 p-1.5">
               <div className="mb-1 flex items-center justify-between text-[11px]">
-                <span className="font-semibold text-slate-700">{dia}</span>
+                <span className="font-extrabold text-slate-700 dark:text-zinc-200">{dia}</span>
                 {cursos.length > 0 && (
-                  <span className="rounded-full bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700">
+                  <span className="rounded-full bg-sky-50 dark:bg-sky-900/20 px-2 py-0.5 text-[10px] font-semibold text-sky-800 dark:text-sky-200 tabular-nums">
                     {cursos.length}
                   </span>
                 )}
               </div>
 
-              <div className="flex flex-1 flex-col gap-0.5 overflow-hidden">
+              <div className="flex flex-1 flex-col gap-1 overflow-hidden">
                 {cursos.slice(0, 3).map((curso) => (
                   <button
                     key={curso.id}
                     type="button"
                     onClick={() => onCursoClick && onCursoClick(curso)}
-                    className="truncate rounded-md bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-800 text-left hover:bg-sky-100 focus:outline-none focus:ring-1 focus:ring-sky-400"
+                    className="truncate rounded-lg bg-sky-50 dark:bg-sky-900/20 px-2 py-1 text-[10px] font-semibold text-sky-900 dark:text-sky-100 text-left hover:bg-sky-100/70 dark:hover:bg-sky-900/35 focus:outline-none focus:ring-2 focus:ring-sky-400"
                     title={curso.titulo}
+                    aria-label={`Abrir solicitação: ${curso.titulo}`}
                   >
                     {curso.titulo}
                   </button>
                 ))}
+
                 {cursos.length > 3 && (
-                  <div className="text-[10px] font-medium text-slate-500">
+                  <div className="text-[10px] font-semibold text-slate-500 dark:text-zinc-400">
                     + {cursos.length - 3} curso(s)
                   </div>
                 )}
@@ -631,26 +809,25 @@ function CalendarioMensalAdmin({ currentMonthYear, cursosPorDia, onCursoClick })
   );
 }
 
-/* ─────────── MiniStat admin ─────────── */
-
+/* ---------------- MiniStat admin premium ---------------- */
 function MiniStat({ label, value, icon: Icon, variant = "default" }) {
-  const base =
-    "flex items-center justify-between rounded-xl border px-3 py-2 text-xs shadow-sm";
   const variants = {
-    default: "border-white/20 bg-white/10 text-sky-50",
-    accent: "border-amber-200/70 bg-amber-50/20 text-amber-50",
-    success: "border-emerald-200/70 bg-emerald-50/20 text-emerald-50",
-    warning: "border-rose-200/70 bg-rose-50/20 text-rose-50",
+    default: "border-white/15 bg-white/10 text-white",
+    sky: "border-sky-200/35 bg-sky-500/10 text-white",
+    emerald: "border-emerald-200/35 bg-emerald-500/10 text-white",
+    amber: "border-amber-200/35 bg-amber-500/10 text-white",
+    rose: "border-rose-200/35 bg-rose-500/10 text-white",
   };
 
   return (
-    <div className={`${base} ${variants[variant] || variants.default}`}>
-      <div>
-        <p className="text-[11px] opacity-80">{label}</p>
-        <p className="text-lg font-semibold leading-tight">{value}</p>
+    <div className={cx("flex items-center justify-between rounded-2xl border px-4 py-3 text-xs shadow-sm", variants[variant] || variants.default)}>
+      <div className="min-w-0">
+        <p className="text-[11px] opacity-85">{label}</p>
+        <p className="text-xl font-extrabold leading-tight tabular-nums">{value}</p>
       </div>
-      <div className="rounded-full bg-black/10 p-1.5">
-        <Icon className="h-4 w-4 opacity-90" />
+
+      <div className="rounded-2xl bg-black/10 p-2">
+        <Icon className="h-5 w-5 opacity-95" aria-hidden="true" />
       </div>
     </div>
   );

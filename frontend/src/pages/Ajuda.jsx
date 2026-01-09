@@ -1,6 +1,6 @@
-// ✅ src/pages/Ajuda.jsx — premium (kit base Escola)
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+// ✅ src/pages/Ajuda.jsx — premium++ (busca filtrável, chips, URL ?q=, atalhos)
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   HelpCircle,
@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   Timer,
   ArrowRight,
+  Keyboard,
 } from "lucide-react";
 
 import AccordionAjuda from "../components/AccordionAjuda";
@@ -55,7 +56,7 @@ function MiniStat({ icon: Icon, title, desc, isDark }) {
 
 /* ───────── HeaderHero premium (paleta fixa da página) ───────── */
 function HeaderHero({ onManual, onFaq, theme, setTheme, isDark }) {
-  // ✅ paleta fixa (âmbar → amarelo)
+  // paleta fixa (âmbar → amarelo)
   const gradient = "from-amber-900 via-amber-700 to-yellow-600";
 
   return (
@@ -128,14 +129,67 @@ function HeaderHero({ onManual, onFaq, theme, setTheme, isDark }) {
   );
 }
 
+/* ───────── Chips de busca comuns ───────── */
+const CHIPS = ["certificado", "presença", "avaliação", "login", "inscrição", "turmas", "instrutor"];
+
 export default function Ajuda() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { theme, setTheme, isDark } = useEscolaTheme();
 
-  const [q, setQ] = useState("");
+  // lê ?q= da URL para preencher a busca
+  const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const initialQ = searchParams.get("q") || "";
+
+  const [q, setQ] = useState(initialQ);
+  const inputRef = useRef(null);
+  const liveRef = useRef(null);
+  const [matchCount, setMatchCount] = useState(null); // retorno do Accordion
 
   useEffect(() => {
     document.title = "Central de Ajuda — Escola da Saúde";
+  }, []);
+
+  // sincronia: atualiza ?q= na URL sem recarregar
+  useEffect(() => {
+    const sp = new URLSearchParams(location.search);
+    if (q) sp.set("q", q);
+    else sp.delete("q");
+    const newUrl = `${location.pathname}?${sp.toString()}`;
+    // evita empilhar histórico se igual
+    if (newUrl !== `${location.pathname}${location.search ? `?${location.search}` : ""}`) {
+      navigate(newUrl, { replace: true });
+    }
+  }, [q, navigate, location.pathname]); // não depende de location.search para evitar loop
+
+  // atalhos: "/" foca busca, "Enter" vai para FAQ
+  useEffect(() => {
+    const handler = (e) => {
+      // ignora quando um input já está focado
+      const tag = document.activeElement?.tagName?.toLowerCase();
+      const isTyping = ["input", "textarea"].includes(tag);
+      if (e.key === "/" && !isTyping) {
+        e.preventDefault();
+        inputRef.current?.focus();
+      }
+      if (e.key === "Enter" && document.activeElement === inputRef.current) {
+        const el = document.getElementById("faq");
+        el?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
+  // rolar para seção com hash (#faq / #manual) se vier linkado
+  useEffect(() => {
+    if (location.hash) {
+      const target = document.querySelector(location.hash);
+      if (target) {
+        setTimeout(() => target.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const irParaManual = useCallback(() => navigate("/usuario/manual"), [navigate]);
@@ -144,13 +198,14 @@ export default function Ajuda() {
     if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
-  // 🔎 “busca” (UX): só guia o usuário + destaca que o FAQ está abaixo
-  // (sem mexer no AccordionAjuda; se você quiser, eu adapto o Accordion para filtrar de verdade)
+  // dica da busca + contagem
   const dicaBusca = useMemo(() => {
     const s = String(q || "").trim();
     if (!s) return "Dica: digite palavras como “certificado”, “presença”, “avaliação”, “login”…";
+    if (matchCount === 0) return `Nenhum tópico encontrado para “${s}”. Tente outra palavra-chave.`;
+    if (typeof matchCount === "number") return `Encontrados ${matchCount} tópico(s) para “${s}”. Role até o FAQ.`;
     return `Buscando por: “${s}”. Role até o FAQ e procure os tópicos relacionados.`;
-  }, [q]);
+  }, [q, matchCount]);
 
   const inputCls = (hasErr) =>
     [
@@ -176,6 +231,19 @@ export default function Ajuda() {
         setTheme={setTheme}
         isDark={isDark}
       />
+
+      {/* Subnav sticky — dica de atalho */}
+      <div className="sticky top-0 z-20 -mt-px bg-white/70 dark:bg-zinc-950/70 backdrop-blur border-b border-white/30 dark:border-zinc-800">
+        <div className="max-w-7xl mx-auto px-4 py-2 text-[11px] sm:text-xs text-slate-600 dark:text-zinc-300 flex items-center justify-between gap-3">
+          <div className="hidden sm:flex items-center gap-2">
+            <Keyboard className="w-4 h-4" />
+            <span>
+              Atalhos: <kbd className="px-1 rounded border">/</kbd> foca a busca • <kbd className="px-1 rounded border">Enter</kbd> vai ao FAQ
+            </span>
+          </div>
+          <div aria-live="polite" ref={liveRef} className="truncate">{/* mensagens dinâmicas se necessário */}</div>
+        </div>
+      </div>
 
       <section id="conteudo" role="main" className="flex-1">
         <div className="mx-auto max-w-6xl px-4 sm:px-6 py-8 md:py-12">
@@ -237,18 +305,53 @@ export default function Ajuda() {
                   <label className="block text-sm font-semibold" htmlFor="busca-ajuda">
                     O que você precisa?
                   </label>
-                  <input
-                    id="busca-ajuda"
-                    value={q}
-                    onChange={(e) => setQ(e.target.value)}
-                    className={inputCls(false)}
-                    placeholder="Ex.: certificado, presença, avaliação, login…"
-                    autoComplete="off"
-                    inputMode="search"
-                  />
-                  <p className={["text-[11px] mt-2", isDark ? "text-zinc-400" : "text-slate-500"].join(" ")}>
+                  <div className="relative">
+                    <input
+                      id="busca-ajuda"
+                      ref={inputRef}
+                      value={q}
+                      onChange={(e) => setQ(e.target.value)}
+                      className={inputCls(false)}
+                      placeholder="Ex.: certificado, presença, avaliação, login…"
+                      autoComplete="off"
+                      inputMode="search"
+                      aria-describedby="ajuda-dica"
+                    />
+                    {q && (
+                      <button
+                        type="button"
+                        onClick={() => setQ("")}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-xs px-2 py-1 rounded-md bg-black/5 dark:bg-white/10"
+                        aria-label="Limpar busca"
+                      >
+                        Limpar
+                      </button>
+                    )}
+                  </div>
+                  <p id="ajuda-dica" className={["text-[11px] mt-2", isDark ? "text-zinc-400" : "text-slate-500"].join(" ")}>
                     {dicaBusca}
                   </p>
+
+                  {/* chips de buscas comuns */}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {CHIPS.map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => setQ(c)}
+                        className={[
+                          "px-3 py-1 rounded-full text-xs border transition",
+                          isDark
+                            ? "border-white/10 bg-white/5 hover:bg-white/10"
+                            : "border-slate-200 bg-white hover:bg-slate-50",
+                        ].join(" ")}
+                        aria-label={`Buscar por ${c}`}
+                        title={`Buscar por ${c}`}
+                      >
+                        {c}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 <div className="mt-4 flex flex-col sm:flex-row gap-2">
@@ -270,6 +373,14 @@ export default function Ajuda() {
                   >
                     Manual
                   </BotaoPrimario>
+                </div>
+
+                {/* atalhos visuais */}
+                <div className="mt-4 rounded-2xl border text-[11px] px-3 py-2
+                                border-amber-200/60 bg-amber-50/60 text-amber-900
+                                dark:border-amber-300/20 dark:bg-amber-500/10 dark:text-amber-200">
+                  Dica: pressione <kbd className="px-1 rounded border">/</kbd> para focar a busca e
+                  <kbd className="ml-1 px-1 rounded border">Enter</kbd> para ir ao FAQ.
                 </div>
               </div>
             </aside>
@@ -304,7 +415,26 @@ export default function Ajuda() {
                   </div>
                 </div>
 
-                <AccordionAjuda />
+                {/* 
+                  Passamos filterQuery e onMatchCount para o Accordion:
+                  - Se o componente suportar, ele filtra e devolve a contagem.
+                  - Se ignorar, seguimos com o comportamento atual (retrocompatível).
+                */}
+                <AccordionAjuda
+                  filterQuery={(q || "").trim()}
+                  onMatchCount={(n) => setMatchCount(typeof n === "number" ? n : null)}
+                />
+
+                {/* estado vazio quando o Accordion reportar 0 matches */}
+                {q && matchCount === 0 && (
+                  <div className="mt-4 rounded-xl border border-slate-200 dark:border-zinc-800 p-4 text-sm">
+                    <p className="font-semibold">Nada encontrado para “{q}”.</p>
+                    <p className="text-slate-600 dark:text-zinc-300 mt-1">
+                      Tente termos como <em>“certificado”</em>, <em>“login”</em>, <em>“presença”</em>,{" "}
+                      <em>“avaliação”</em>…
+                    </p>
+                  </div>
+                )}
               </motion.section>
             </div>
           </div>

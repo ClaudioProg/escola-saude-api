@@ -1,5 +1,6 @@
-// ✅ src/pages/ConfirmarPresenca.jsx
-import { useEffect, useMemo, useRef, useState } from "react";
+/* eslint-disable no-console */
+// ✅ src/pages/ConfirmarPresenca.jsx — premium + robusto (anti-fuso, idempotência, anticorrida, UX melhor)
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { apiPost } from "../services/api";
 import Footer from "../components/Footer";
@@ -12,6 +13,8 @@ import {
   UserCheck,
   LogIn,
   UserPlus,
+  RefreshCw,
+  ShieldCheck,
 } from "lucide-react";
 
 /* ---------------- Helpers locais ---------------- */
@@ -44,8 +47,12 @@ function getValidToken() {
   }
 }
 
+function isNumericId(v) {
+  return /^\d+$/.test(String(v || ""));
+}
+
 /* ---------------- HeaderHero (padronizado) ---------------- */
-function HeaderHero({ status }) {
+function HeaderHero({ status, subtitle }) {
   const isOk = status === "ok";
   const isErr = status === "err";
 
@@ -69,8 +76,10 @@ function HeaderHero({ status }) {
             Confirmação de Presença
           </h1>
         </div>
+
         <p className="text-sm sm:text-base text-white/90 max-w-2xl">
-          Escaneie o QR e deixe o resto com a gente. A confirmação é autenticada e idempotente.
+          {subtitle ||
+            "Escaneie o QR e deixe o resto com a gente. A confirmação é autenticada e idempotente."}
         </p>
 
         {/* chip de estado */}
@@ -93,6 +102,7 @@ function HeaderHero({ status }) {
           )}
         </div>
       </div>
+
       <div
         aria-hidden="true"
         className="pointer-events-none absolute -top-24 left-1/2 h-[300px] w-[800px] -translate-x-1/2 rounded-full blur-3xl opacity-25 bg-cyan-300"
@@ -119,16 +129,21 @@ export default function ConfirmarPresenca() {
   const [status, setStatus] = useState("loading"); // "loading" | "ok" | "err"
   const [msg, setMsg] = useState("Confirmando presença…");
   const [detail, setDetail] = useState("");
-  const [attempts, setAttempts] = useState(0);
   const [requiresLogin, setRequiresLogin] = useState(false);
+  const [attempts, setAttempts] = useState(0);
+  const [subtitle, setSubtitle] = useState("");
 
   // a11y
   const liveRef = useRef(null);
   const titleRef = useRef(null);
+
+  // anticorrida + abort
+  const abortRef = useRef(null);
+  const inFlightRef = useRef(0);
+
+  // “agora” (uma vez) — só para exibir, não decide regra
   const [nowStr] = useState(() =>
-    new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium", timeStyle: "short" }).format(
-      new Date()
-    )
+    new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium", timeStyle: "short" }).format(new Date())
   );
 
   const setLive = (text) => {
@@ -136,110 +151,164 @@ export default function ConfirmarPresenca() {
   };
 
   // redirecionamento consistente com Login.jsx (usa ?redirect=…)
-  const buildRedirect = () => {
+  const buildRedirect = useCallback(() => {
     const base = location.pathname;
     const q = new URLSearchParams();
     q.set("turma", String(turmaId || ""));
     return `${base}?${q.toString()}`;
-  };
+  }, [location.pathname, turmaId]);
 
-  const goToLogin = () => {
+  const goToLogin = useCallback(() => {
     const redirect = buildRedirect();
     navigate(`/login?redirect=${encodeURIComponent(redirect)}`, { replace: true });
-  };
+  }, [navigate, buildRedirect]);
 
-  const goToRegister = () => {
+  const goToRegister = useCallback(() => {
     const redirect = buildRedirect();
-    // rota padronizada com o app
     navigate(`/cadastro?redirect=${encodeURIComponent(redirect)}`, { replace: true });
+  }, [navigate, buildRedirect]);
+
+  const safeFocusTitle = () => {
+    // evita jump visual; dá foco para SR/teclado
+    requestAnimationFrame(() => titleRef.current?.focus?.());
   };
 
   // ação principal
-  async function confirmar(controller) {
-    if (!turmaId || !/^\d+$/.test(String(turmaId))) {
-      setStatus("err");
-      setMsg("Parâmetro 'turma' ausente ou inválido.");
-      setDetail("Use o QR correto desta sala/turma.");
-      setRequiresLogin(false);
-      setLive("Parâmetro inválido.");
-      return;
-    }
+  const confirmar = useCallback(
+    async ({ silent = false } = {}) => {
+      const turmaOk = isNumericId(turmaId);
 
-    // Pré-checagem de sessão
-    const tokenOk = getValidToken();
-    if (!tokenOk) {
-      setStatus("err");
-      setMsg("Você precisa estar logado para registrar presença.");
-      setDetail(
-        "Entre na sua conta para confirmar a presença nesta turma. Voltaremos automaticamente para esta tela após o login."
-      );
-      setRequiresLogin(true);
-      setLive("Login necessário para confirmar presença.");
-      titleRef.current?.focus();
-      return;
-    }
-
-    try {
-      setStatus("loading");
-      setMsg("Confirmando presença…");
-      setDetail("");
-      setRequiresLogin(false);
-      setLive("Iniciando confirmação.");
-
-      // helper de API já prefixa /api quando necessário
-      await apiPost(`/presencas/confirmar-qr/${encodeURIComponent(turmaId)}`, {}, { signal: controller?.signal });
-
-      setStatus("ok");
-      setMsg("✅ Presença confirmada com sucesso!");
-      setDetail("");
-      setLive("Presença confirmada.");
-      titleRef.current?.focus();
-    } catch (e) {
-      const code = e?.status || e?.response?.status;
-
-      if (code === 401) {
-        goToLogin();
+      if (!turmaOk) {
+        setStatus("err");
+        setMsg("Parâmetro 'turma' ausente ou inválido.");
+        setDetail("Use o QR correto desta sala/turma.");
+        setRequiresLogin(false);
+        setSubtitle("Não foi possível identificar a turma.");
+        setLive("Parâmetro inválido.");
+        safeFocusTitle();
         return;
       }
 
-      setStatus("err");
-      if (code === 403) {
-        setMsg("Acesso negado: você não está inscrito nesta turma.");
+      // Pré-checagem de sessão
+      const tokenOk = getValidToken();
+      if (!tokenOk) {
+        setStatus("err");
+        setMsg("Você precisa estar logado para registrar presença.");
         setDetail(
-          "Verifique se seu cadastro está correto para este evento/turma. Se você não estiver logado com a conta correta, entre e tente novamente."
+          "Entre na sua conta para confirmar a presença nesta turma. Após o login, voltaremos automaticamente para esta tela."
         );
-        setRequiresLogin(false);
-      } else if (code === 409) {
-        setMsg("Hoje não está dentro do período/datas desta turma.");
-        setDetail("Confirme com a equipe a data correta ou o cronograma da turma.");
-        setRequiresLogin(false);
-      } else {
-        setMsg("Não foi possível confirmar a presença no momento.");
-        setDetail("Tente novamente. Se persistir, procure a equipe de suporte.");
-        setRequiresLogin(false);
+        setRequiresLogin(true);
+        setSubtitle("A confirmação é autenticada.");
+        setLive("Login necessário para confirmar presença.");
+        safeFocusTitle();
+        return;
       }
-      setLive("Falha na confirmação de presença.");
-      titleRef.current?.focus();
-    }
-  }
+
+      // abort request anterior
+      try {
+        abortRef.current?.abort?.();
+      } catch {}
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      inFlightRef.current += 1;
+      const myFlight = inFlightRef.current;
+
+      if (!silent) {
+        setStatus("loading");
+        setMsg("Confirmando presença…");
+        setDetail("");
+        setRequiresLogin(false);
+        setSubtitle("Aguarde alguns segundos.");
+        setLive("Iniciando confirmação.");
+      }
+
+      try {
+        // helper de API já prefixa /api quando necessário
+        await apiPost(
+          `/presencas/confirmar-qr/${encodeURIComponent(String(turmaId))}`,
+          {},
+          { signal: controller.signal }
+        );
+
+        // se outra chamada começou depois, ignora (anticorrida)
+        if (myFlight !== inFlightRef.current) return;
+
+        setStatus("ok");
+        setMsg("✅ Presença confirmada com sucesso!");
+        setDetail("Você já pode fechar esta tela ou conferir em “Minhas presenças”.");
+        setRequiresLogin(false);
+        setSubtitle("Registro concluído.");
+        setLive("Presença confirmada.");
+        safeFocusTitle();
+      } catch (e) {
+        if (e?.name === "AbortError") return;
+
+        const code = e?.status || e?.response?.status;
+
+        // se backend respondeu 401, manda pro login
+        if (code === 401) {
+          goToLogin();
+          return;
+        }
+
+        setStatus("err");
+        setRequiresLogin(false);
+
+        if (code === 403) {
+          setMsg("Acesso negado: você não está inscrito nesta turma.");
+          setDetail(
+            "Verifique se você está logado com a conta correta e se está inscrito nesta turma."
+          );
+          setSubtitle("Conta ou inscrição inválida.");
+        } else if (code === 409) {
+          // Conflito: regra de período/datas/hora
+          setMsg("Ainda não é possível confirmar presença para esta turma.");
+          setDetail(
+            "A confirmação só funciona no período permitido. Confirme com a organização o horário correto."
+          );
+          setSubtitle("Fora do período permitido.");
+        } else if (code === 404) {
+          setMsg("Turma não encontrada.");
+          setDetail("O QR pode estar desatualizado. Solicite o QR correto à organização.");
+          setSubtitle("QR inválido ou desatualizado.");
+        } else {
+          setMsg("Não foi possível confirmar a presença no momento.");
+          setDetail("Tente novamente. Se persistir, procure a equipe de suporte.");
+          setSubtitle("Falha temporária.");
+        }
+
+        setLive("Falha na confirmação de presença.");
+        safeFocusTitle();
+      }
+    },
+    [turmaId, goToLogin]
+  );
 
   // auto-executa ao montar (com cancelamento seguro)
   useEffect(() => {
-    const controller = new AbortController();
-    confirmar(controller);
-    return () => controller.abort("route-change");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turmaId]);
+    confirmar({ silent: false });
+    return () => {
+      try {
+        abortRef.current?.abort?.();
+      } catch {}
+    };
+  }, [confirmar]);
 
   const onRetry = () => {
     setAttempts((n) => n + 1);
-    const controller = new AbortController();
-    confirmar(controller);
+    confirmar({ silent: false });
+  };
+
+  // “voltar para home” inteligente: se tiver token, vai para /; senão, login
+  const goHomeSmart = () => {
+    const tokenOk = getValidToken();
+    navigate(tokenOk ? "/" : "/login", { replace: false });
   };
 
   return (
     <div className="flex flex-col min-h-screen bg-white text-gray-900 dark:bg-zinc-900 dark:text-white">
-      <HeaderHero status={status} />
+      <HeaderHero status={status} subtitle={subtitle} />
 
       {/* barra de progresso fina no topo */}
       {status === "loading" && (
@@ -268,7 +337,7 @@ export default function ConfirmarPresenca() {
                 status === "ok"
                   ? "text-emerald-700 dark:text-emerald-400"
                   : status === "err"
-                  ? "text-red-700 dark:text-red-400"
+                  ? "text-rose-700 dark:text-rose-400"
                   : "text-zinc-900 dark:text-zinc-100"
               }`}
             >
@@ -282,12 +351,18 @@ export default function ConfirmarPresenca() {
             <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
               <div className="rounded-lg border dark:border-zinc-700 p-3">
                 <p className="text-zinc-500 dark:text-zinc-400">Turma</p>
-                <p className="font-medium">{/^\d+$/.test(String(turmaId)) ? turmaId : "—"}</p>
+                <p className="font-medium">{isNumericId(turmaId) ? turmaId : "—"}</p>
               </div>
               <div className="rounded-lg border dark:border-zinc-700 p-3">
                 <p className="text-zinc-500 dark:text-zinc-400">Horário local</p>
                 <p className="font-medium">{nowStr}</p>
               </div>
+            </div>
+
+            {/* selo segurança */}
+            <div className="mt-3 inline-flex items-center gap-2 text-xs text-emerald-800 dark:text-emerald-200 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200/70 dark:border-emerald-900/40 px-3 py-2 rounded-xl">
+              <ShieldCheck className="w-4 h-4" aria-hidden="true" />
+              Confirmação autenticada • operação idempotente
             </div>
 
             {/* ações */}
@@ -311,6 +386,17 @@ export default function ConfirmarPresenca() {
                     <UserCheck className="w-4 h-4" />
                     Ver minhas presenças
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={() => navigate("/notificacoes")}
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border dark:border-zinc-700 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
+                    title="Ver notificações"
+                  >
+                    <QrCode className="w-4 h-4" />
+                    Ver notificações
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => navigate("/")}
@@ -340,6 +426,14 @@ export default function ConfirmarPresenca() {
                         <UserPlus className="w-4 h-4" />
                         Criar conta
                       </button>
+                      <button
+                        type="button"
+                        onClick={goHomeSmart}
+                        className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border dark:border-zinc-700 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
+                      >
+                        <Home className="w-4 h-4" />
+                        Voltar
+                      </button>
                     </>
                   ) : (
                     <>
@@ -348,9 +442,10 @@ export default function ConfirmarPresenca() {
                         onClick={onRetry}
                         className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-sm transition"
                       >
-                        <Loader2 className="w-4 h-4" />
+                        <RefreshCw className="w-4 h-4" />
                         Tentar novamente
                       </button>
+
                       <button
                         type="button"
                         onClick={() => navigate("/")}
@@ -372,12 +467,15 @@ export default function ConfirmarPresenca() {
                 <ul className="list-disc pl-4 space-y-1">
                   <li>Garanta que você está logado com a conta correta.</li>
                   <li>Se o QR foi impresso para outra turma, peça um novo à organização.</li>
+                  <li>Se aparecer “fora do período”, confirme o horário/dia do encontro.</li>
                 </ul>
               </div>
             )}
 
-            {/* contador de tentativas (debug leve) */}
-            <p className="mt-3 text-[11px] text-zinc-400 dark:text-zinc-500">Tentativas: {attempts}</p>
+            {/* contador de tentativas */}
+            <p className="mt-3 text-[11px] text-zinc-400 dark:text-zinc-500">
+              Tentativas: {attempts}
+            </p>
           </div>
         </section>
       </main>

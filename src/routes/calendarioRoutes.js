@@ -1,18 +1,39 @@
 const express = require("express");
 const router = express.Router();
+
 const calendarioController = require("../controllers/calendarioController");
-const auth = require("../auth/authMiddleware");
+const authMiddleware = require("../auth/authMiddleware");
+const authorizeRoles = require("../auth/authorizeRoles");
 
-// Admin lista
-router.get("/", auth, calendarioController.listar);
+// 🔐 Todas as rotas exigem autenticação
+router.use(authMiddleware);
 
-// Admin cria
-router.post("/", auth, calendarioController.criar);
+// 📅 Listar calendário (admin)
+router.get(
+  "/",
+  authorizeRoles("administrador"),
+  calendarioController.listar
+);
 
-// Admin edita
-router.put("/:id", auth, calendarioController.atualizar);
+// ➕ Criar evento no calendário (admin)
+router.post(
+  "/",
+  authorizeRoles("administrador"),
+  calendarioController.criar
+);
 
-// Admin exclui
-router.delete("/:id", auth, calendarioController.excluir);
+// ✏️ Atualizar evento do calendário (admin)
+router.put(
+  "/:id",
+  authorizeRoles("administrador"),
+  calendarioController.atualizar
+);
+
+// 🗑️ Excluir evento do calendário (admin)
+router.delete(
+  "/:id",
+  authorizeRoles("administrador"),
+  calendarioController.excluir
+);
 
 module.exports = router;

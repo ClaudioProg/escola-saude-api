@@ -1,4 +1,4 @@
-// 📁 src/components/GraficoAvaliacoes.jsx
+// ✅ src/components/GraficoAvaliacoes.jsx
 import { useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import { Pie } from "react-chartjs-2";
@@ -29,14 +29,12 @@ function normKey(s) {
 function mapLabelToKey(label) {
   const k = normKey(label);
 
-  // aceita letras, palavras e números (string/number)
   if (["otimo", "excelente", "muito bom", "5", "a"].includes(k)) return "otimo";
   if (["bom", "4", "b"].includes(k)) return "bom";
   if (["regular", "mediano", "3", "c"].includes(k)) return "regular";
   if (["ruim", "2", "d"].includes(k)) return "ruim";
-  if (["pessimo", "1", "e"].includes(k)) return "pessimo";
+  if (["pessimo", "péssimo", "1", "e"].includes(k)) return "pessimo";
 
-  // tenta mapear números puros (ex.: 5, 4, 3…)
   const asNum = Number(k);
   if (asNum === 5) return "otimo";
   if (asNum === 4) return "bom";
@@ -99,25 +97,81 @@ export function normalizeAvaliacoes(input) {
   return out;
 }
 
+/* ---------------------- Plugin: rótulo central ---------------------- */
+const CenterLabelPlugin = {
+  id: "centerLabel",
+  afterDraw(chart, _args, pluginOpts) {
+    const { show = false, label, sublabel, fontSize = 18, subSize = 11 } = pluginOpts || {};
+    if (!show) return;
+
+    const { ctx, chartArea, getDatasetMeta } = chart;
+    const meta = getDatasetMeta(0);
+    if (!meta || !meta.data || !meta.data.length) return;
+
+    const x = (chartArea.left + chartArea.right) / 2;
+    const y = (chartArea.top + chartArea.bottom) / 2;
+
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    // cor do texto conforme tema
+    const isDark =
+      typeof document !== "undefined" &&
+      document.documentElement.classList.contains("dark");
+    ctx.fillStyle = isDark ? "rgba(250,250,250,.92)" : "rgba(15,23,42,.9)";
+
+    // título
+    if (label) {
+      ctx.font = `600 ${fontSize}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu`;
+      ctx.fillText(label, x, y - (sublabel ? 6 : 0));
+    }
+    // subtítulo
+    if (sublabel) {
+      ctx.font = `500 ${subSize}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu`;
+      ctx.fillStyle = isDark ? "rgba(250,250,250,.7)" : "rgba(15,23,42,.65)";
+      ctx.fillText(sublabel, x, y + (label ? 16 : 0));
+    }
+    ctx.restore();
+  },
+};
+
 /* ------------------------- Componente principal ------------------------- */
 export default function GraficoAvaliacoes({
   dados = {},
-  height = 260,               // altura mínima do canvas (px)
+  height = 260,
   className = "",
-  palette,                    // opcional: sobrescrever cores
+  palette,                 // opcional: sobrescrever cores
   showLegend = true,
+  // novidades:
+  donut = true,            // usa "cutout" para pizza em formato donut
+  showCenter = true,       // mostra total central por padrão
+  centerLabel,             // sobrescreve label central (texto)
+  centerSub,               // sobrescreve sublabel central (texto)
 }) {
   const norm = useMemo(() => normalizeAvaliacoes(dados), [dados]);
   const total = norm.otimo + norm.bom + norm.regular + norm.ruim + norm.pessimo;
 
   const [reduceMotion, setReduceMotion] = useState(false);
+  const [isDark, setIsDark] = useState(false);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
     setReduceMotion(!!mq.matches);
     const onChange = (e) => setReduceMotion(!!e.matches);
     mq.addEventListener?.("change", onChange);
-    return () => mq.removeEventListener?.("change", onChange);
+
+    const html = document.documentElement;
+    const updateDark = () => setIsDark(html.classList.contains("dark"));
+    updateDark();
+    const obs = new MutationObserver(updateDark);
+    obs.observe(html, { attributes: true, attributeFilter: ["class"] });
+
+    return () => {
+      mq.removeEventListener?.("change", onChange);
+      obs.disconnect();
+    };
   }, []);
 
   if (!total) {
@@ -128,19 +182,20 @@ export default function GraficoAvaliacoes({
     );
   }
 
-  // Paleta padrão (boa em light/dark e com contraste):
+  // Paleta padrão (contraste em light/dark):
   const colors = useMemo(
     () =>
       palette ?? [
-        "#065f46", // emerald-800 (Ótimo)
-        "#b45309", // amber-700   (Bom)
-        "#1e3a8a", // blue-900    (Regular)
-        "#b91c1c", // red-700     (Ruim)
-        "#6d28d9", // violet-700  (Péssimo)
+        "#059669", // emerald-600  (Ótimo)
+        "#d97706", // amber-600    (Bom)
+        "#1d4ed8", // blue-600     (Regular)
+        "#dc2626", // red-600      (Ruim)
+        "#7c3aed", // violet-600   (Péssimo)
       ],
     [palette]
   );
 
+  const borderColor = isDark ? "rgba(17,24,39,0.8)" : "#ffffff"; // borda ajuda a separar fatias
   const data = useMemo(
     () => ({
       labels: ["Ótimo", "Bom", "Regular", "Ruim", "Péssimo"],
@@ -149,19 +204,20 @@ export default function GraficoAvaliacoes({
           label: "Distribuição de Avaliações",
           data: [norm.otimo, norm.bom, norm.regular, norm.ruim, norm.pessimo],
           backgroundColor: colors,
-          borderColor: "#ffffff", // borda branca p/ contraste
+          borderColor,
           borderWidth: 2,
           hoverOffset: reduceMotion ? 0 : 8,
         },
       ],
     }),
-    [norm, colors, reduceMotion]
+    [norm, colors, reduceMotion, borderColor]
   );
 
   const options = useMemo(
     () => ({
       responsive: true,
       maintainAspectRatio: false,
+      cutout: donut ? "58%" : 0,
       animation: reduceMotion ? false : { duration: 600 },
       plugins: {
         legend: { display: showLegend, position: "bottom" },
@@ -176,9 +232,15 @@ export default function GraficoAvaliacoes({
           },
         },
         title: { display: false },
+        // rótulo central
+        centerLabel: {
+          show: showCenter && donut,
+          label: centerLabel ?? `${total}`,
+          sublabel: centerSub ?? "avaliações",
+        },
       },
     }),
-    [reduceMotion, showLegend]
+    [donut, reduceMotion, showLegend, showCenter, centerLabel, centerSub, total]
   );
 
   return (
@@ -186,9 +248,9 @@ export default function GraficoAvaliacoes({
       className={`relative w-full ${className}`}
       style={{ minHeight: height }}
       role="img"
-      aria-label={`Gráfico de pizza com a distribuição de ${total} avaliações: ótimo, bom, regular, ruim e péssimo.`}
+      aria-label={`Gráfico de ${donut ? "rosca" : "pizza"} com a distribuição de ${total} avaliações: ótimo, bom, regular, ruim e péssimo.`}
     >
-      <Pie data={data} options={options} />
+      <Pie data={data} options={options} plugins={[CenterLabelPlugin]} />
     </div>
   );
 }
@@ -199,4 +261,8 @@ GraficoAvaliacoes.propTypes = {
   className: PropTypes.string,
   palette: PropTypes.arrayOf(PropTypes.string),
   showLegend: PropTypes.bool,
+  donut: PropTypes.bool,
+  showCenter: PropTypes.bool,
+  centerLabel: PropTypes.string,
+  centerSub: PropTypes.string,
 };

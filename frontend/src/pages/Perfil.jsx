@@ -1,7 +1,8 @@
-// ✅ src/pages/Perfil.jsx — premium (kit base Escola)
+/* eslint-disable no-console */
+// ✅ src/pages/Perfil.jsx — PREMIUM (kit base Escola) — v2 (mais robusto + a11y + anti-fuso + “salvar só se mudou”)
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { toast } from "react-toastify";
-import { User, Save, Edit, Sparkles, ShieldCheck } from "lucide-react";
+import { User, Save, Edit, Sparkles, ShieldCheck, RefreshCw } from "lucide-react";
 
 import ModalAssinatura from "../components/ModalAssinatura";
 import Footer from "../components/Footer";
@@ -17,10 +18,13 @@ function HeaderHero({
   setTheme,
   isDark,
   onSave,
+  onRefresh,
   onAssinatura,
   podeGerenciarAssinatura = false,
   salvando = false,
+  atualizando = false,
   stats = { completo: false, pendentes: 0, percent: 0 },
+  dirty = false,
 }) {
   return (
     <header className="relative overflow-hidden" role="banner">
@@ -43,7 +47,21 @@ function HeaderHero({
 
       <div className="relative max-w-7xl mx-auto px-4 sm:px-6 py-10 md:py-12">
         {/* toggle no canto */}
-        <div className="lg:absolute lg:right-4 lg:top-6 flex justify-end">
+        <div className="lg:absolute lg:right-4 lg:top-6 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={atualizando}
+            className={`hidden sm:inline-flex items-center gap-2 rounded-2xl border px-3 py-2 text-xs font-extrabold
+              ${atualizando ? "opacity-60 cursor-not-allowed" : "hover:bg-white/10"}
+              border-white/20 bg-white/10 text-white`}
+            aria-label="Atualizar dados do perfil"
+            title="Atualizar perfil"
+          >
+            <RefreshCw className={`h-4 w-4 ${atualizando ? "animate-spin" : ""}`} />
+            {atualizando ? "Atualizando…" : "Atualizar"}
+          </button>
+
           <ThemeTogglePills theme={theme} setTheme={setTheme} variant="glass" />
         </div>
 
@@ -77,23 +95,17 @@ function HeaderHero({
           {/* ministats */}
           <div className="mt-2 w-full max-w-2xl grid grid-cols-3 gap-2">
             <div className="rounded-2xl bg-white/10 px-3 py-2 text-center">
-              <div className="text-[11px] uppercase tracking-wide text-white/80">
-                Status
-              </div>
+              <div className="text-[11px] uppercase tracking-wide text-white/80">Status</div>
               <div className="text-sm font-extrabold">
                 {stats.completo ? "Completo" : "Incompleto"}
               </div>
             </div>
             <div className="rounded-2xl bg-white/10 px-3 py-2 text-center">
-              <div className="text-[11px] uppercase tracking-wide text-white/80">
-                Completude
-              </div>
+              <div className="text-[11px] uppercase tracking-wide text-white/80">Completude</div>
               <div className="text-sm font-extrabold">{Math.round(stats.percent)}%</div>
             </div>
             <div className="rounded-2xl bg-white/10 px-3 py-2 text-center">
-              <div className="text-[11px] uppercase tracking-wide text-white/80">
-                Pendentes
-              </div>
+              <div className="text-[11px] uppercase tracking-wide text-white/80">Pendentes</div>
               <div className="text-sm font-extrabold">{stats.pendentes}</div>
             </div>
           </div>
@@ -112,11 +124,12 @@ function HeaderHero({
           <div className="mt-3 flex flex-wrap gap-2 justify-center">
             <BotaoPrimario
               onClick={onSave}
-              disabled={salvando}
+              disabled={salvando || !dirty}
               aria-label="Salvar alterações no perfil"
               icone={<Save className="w-4 h-4" />}
+              title={!dirty ? "Sem alterações para salvar" : "Salvar alterações"}
             >
-              {salvando ? "Salvando..." : "Salvar alterações"}
+              {salvando ? "Salvando..." : dirty ? "Salvar alterações" : "Sem alterações"}
             </BotaoPrimario>
 
             {podeGerenciarAssinatura && (
@@ -148,7 +161,7 @@ export default function Perfil() {
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
   const [registro, setRegistro] = useState("");
-  const [dataNascimento, setDataNascimento] = useState(""); // YYYY-MM-DD
+  const [dataNascimento, setDataNascimento] = useState(""); // YYYY-MM-DD (date-only)
 
   // selects (sempre strings)
   const [unidadeId, setUnidadeId] = useState("");
@@ -170,6 +183,7 @@ export default function Perfil() {
 
   // flags
   const [salvando, setSalvando] = useState(false);
+  const [atualizando, setAtualizando] = useState(false);
   const [modalAberto, setModalAberto] = useState(false);
   const [carregandoListas, setCarregandoListas] = useState(true);
 
@@ -178,6 +192,12 @@ export default function Perfil() {
 
   // theme
   const { theme, setTheme, isDark } = useEscolaTheme();
+
+  // live region
+  const liveRef = useRef(null);
+  const setLive = (msg) => {
+    if (liveRef.current) liveRef.current.textContent = msg;
+  };
 
   // erros por campo
   const [eNome, setENome] = useState("");
@@ -220,26 +240,16 @@ export default function Perfil() {
       .replace(/(\d{3})(\d)/, "$1.$2")
       .replace(/(\d{3})(\d{1,2})$/, "$1-$2");
 
-  const maskRegistro = (raw) => {
-    const d = String(raw || "").replace(/\D/g, "").slice(0, 6);
-    let out = d;
-    if (d.length > 2) out = d.slice(0, 2) + "." + d.slice(2);
-    if (d.length > 5) out = out.slice(0, 6) + "-" + d.slice(5);
-    return out;
-  };
+  // registro: só normaliza dígitos (não inventa máscara rígida)
+  const normalizeRegistro = (raw) => String(raw || "").replace(/[^\d. -]/g, "").trim();
 
+  // date-only: prioriza substring YYYY-MM-DD sem Date()
   const toYMD = (val) => {
     if (!val) return "";
-    const s = String(val);
+    const s = String(val).trim();
     const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
     if (m) return m[1];
-    // fallback seguro (meio-dia UTC evita shift)
-    const d = new Date(`${s}T12:00:00Z`);
-    if (isNaN(d.getTime())) return "";
-    const y = d.getUTCFullYear();
-    const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-    const dd = String(d.getUTCDate()).padStart(2, "0");
-    return `${y}-${mm}-${dd}`;
+    return "";
   };
 
   const clearErrors = () => {
@@ -301,21 +311,63 @@ export default function Perfil() {
     document.title = "Meu Perfil — Escola da Saúde";
   }, []);
 
+  /* snapshot (para detectar dirty sem gambiarra) */
+  const snapshot = useMemo(() => {
+    const norm = (v) => String(v ?? "").trim();
+    return {
+      nome: norm(nome),
+      email: norm(email).toLowerCase(),
+      registro: norm(registro),
+      data_nascimento: norm(dataNascimento),
+      unidade_id: norm(unidadeId),
+      cargo_id: norm(cargoId),
+      genero_id: norm(generoId),
+      orientacao_sexual_id: norm(orientacaoSexualId),
+      cor_raca_id: norm(corRacaId),
+      escolaridade_id: norm(escolaridadeId),
+      deficiencia_id: norm(deficienciaId),
+      // senha não entra no snapshot; é "opcional por digitação"
+      senha_set: !!senha,
+    };
+  }, [
+    nome,
+    email,
+    registro,
+    dataNascimento,
+    unidadeId,
+    cargoId,
+    generoId,
+    orientacaoSexualId,
+    corRacaId,
+    escolaridadeId,
+    deficienciaId,
+    senha,
+  ]);
+
+  const [baseline, setBaseline] = useState(null);
+
+  const dirty = useMemo(() => {
+    if (!baseline) return false;
+    // senha: se digitou, já considera dirty
+    if (snapshot.senha_set) return true;
+
+    const keys = Object.keys(snapshot).filter((k) => k !== "senha_set");
+    return keys.some((k) => String(snapshot[k] ?? "") !== String(baseline[k] ?? ""));
+  }, [baseline, snapshot]);
+
   /* 1) hidrata do localStorage (rápido para UI) */
   useEffect(() => {
     try {
       const dadosString = localStorage.getItem("usuario");
       if (!dadosString) return;
 
-      const dados = JSON.parse(dadosString);
-      const perfilString = Array.isArray(dados.perfil) ? dados.perfil[0] : dados.perfil;
-      const u = { ...dados, perfil: perfilString };
+      const u = JSON.parse(dadosString);
 
       setUsuario(u);
       setNome(u.nome || "");
       setCpf(aplicarMascaraCPF(u.cpf || ""));
       setEmail(u.email || "");
-      setRegistro(maskRegistro(u.registro || ""));
+      setRegistro(normalizeRegistro(u.registro || ""));
       setDataNascimento(toYMD(u.data_nascimento) || "");
 
       setUnidadeId(asStr(u.unidade_id));
@@ -329,50 +381,72 @@ export default function Perfil() {
       console.error("Erro ao carregar localStorage:", erro);
       toast.error("Erro ao carregar dados do perfil.");
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* 2) backend é a fonte da verdade */
+  /* fetch perfil (fonte da verdade) */
+  const refreshPerfil = useCallback(async () => {
+    setAtualizando(true);
+    setLive("Atualizando perfil…");
+    try {
+      const me = await apiPerfilMe({ on401: "silent", on403: "silent" });
+      if (!me) return;
+
+      let antigo = {};
+      try { antigo = JSON.parse(localStorage.getItem("usuario") || "{}"); } catch {}
+
+      const cpfFinal = me.cpf ?? antigo.cpf ?? "";
+      setNome(me.nome || "");
+      setCpf(aplicarMascaraCPF(cpfFinal));
+      setEmail(me.email || "");
+      setRegistro(normalizeRegistro(me.registro || ""));
+      setDataNascimento(toYMD(me.data_nascimento) || "");
+
+      setUnidadeId(asStr(me.unidade_id));
+      setCargoId(asStr(me.cargo_id));
+      setGeneroId(asStr(me.genero_id));
+      setOrientacaoSexualId(asStr(me.orientacao_sexual_id));
+      setCorRacaId(asStr(me.cor_raca_id));
+      setEscolaridadeId(asStr(me.escolaridade_id));
+      setDeficienciaId(asStr(me.deficiencia_id));
+
+      const novo = { ...antigo, ...me, cpf: me.cpf ?? antigo.cpf };
+      localStorage.setItem("usuario", JSON.stringify(novo));
+      localStorage.setItem("nome", novo.nome || "");
+      setUsuario(novo);
+
+      // baseline (para dirty)
+      setBaseline({
+        nome: String(me.nome || "").trim(),
+        email: String(me.email || "").trim().toLowerCase(),
+        registro: String(me.registro || "").trim(),
+        data_nascimento: String(toYMD(me.data_nascimento) || "").trim(),
+        unidade_id: String(me.unidade_id ?? "").trim(),
+        cargo_id: String(me.cargo_id ?? "").trim(),
+        genero_id: String(me.genero_id ?? "").trim(),
+        orientacao_sexual_id: String(me.orientacao_sexual_id ?? "").trim(),
+        cor_raca_id: String(me.cor_raca_id ?? "").trim(),
+        escolaridade_id: String(me.escolaridade_id ?? "").trim(),
+        deficiencia_id: String(me.deficiencia_id ?? "").trim(),
+      });
+
+      setLive("Perfil atualizado.");
+    } catch (e) {
+      console.warn("Falha ao atualizar perfil:", e?.message || e);
+      toast.error("Não foi possível atualizar o perfil agora.");
+      setLive("Falha ao atualizar perfil.");
+    } finally {
+      setAtualizando(false);
+    }
+  }, []);
+
   useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const me = await apiPerfilMe({ on401: "silent", on403: "silent" });
-        if (!alive || !me) return;
-
-        let antigo = {};
-        try { antigo = JSON.parse(localStorage.getItem("usuario") || "{}"); } catch {}
-
-        const cpfFinal = me.cpf ?? antigo.cpf ?? "";
-
-        setNome(me.nome || "");
-        setCpf(aplicarMascaraCPF(cpfFinal));
-        setEmail(me.email || "");
-        setRegistro(maskRegistro(me.registro || ""));
-        setDataNascimento(toYMD(me.data_nascimento) || "");
-
-        setUnidadeId(asStr(me.unidade_id));
-        setCargoId(asStr(me.cargo_id));
-        setGeneroId(asStr(me.genero_id));
-        setOrientacaoSexualId(asStr(me.orientacao_sexual_id));
-        setCorRacaId(asStr(me.cor_raca_id));
-        setEscolaridadeId(asStr(me.escolaridade_id));
-        setDeficienciaId(asStr(me.deficiencia_id));
-
-        try {
-          const novo = { ...antigo, ...me, cpf: me.cpf ?? antigo.cpf };
-          localStorage.setItem("usuario", JSON.stringify(novo));
-          localStorage.setItem("nome", novo.nome || "");
-          setUsuario(novo);
-        } catch {}
-      } catch (e) {
-        console.warn("Falha ao buscar perfil:", e?.message || e);
-      }
-    })();
-
-    return () => { alive = false; };
+    // carrega baseline via backend assim que possível
+    refreshPerfil();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* 2.1) checar assinatura (aviso) — sem "/api" */
+  /* checar assinatura (aviso) — sem "/api" */
   useEffect(() => {
     (async () => {
       try {
@@ -416,13 +490,13 @@ export default function Perfil() {
         setCarregandoListas(false);
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const podeGerenciarAssinatura = useMemo(() => {
     const perfis = Array.isArray(usuario?.perfil)
       ? usuario.perfil.map((p) => String(p).toLowerCase())
       : [String(usuario?.perfil || "").toLowerCase()];
-
     return perfis.some((p) => p === "instrutor" || p === "administrador");
   }, [usuario?.perfil]);
 
@@ -447,13 +521,14 @@ export default function Perfil() {
   const completo = pendentes === 0;
   const percent = Math.round(((requiredFields.length - pendentes) / requiredFields.length) * 100);
 
-  const stats = useMemo(
-    () => ({ completo, pendentes, percent }),
-    [completo, pendentes, percent]
-  );
+  const stats = useMemo(() => ({ completo, pendentes, percent }), [completo, pendentes, percent]);
 
   const salvarAlteracoes = useCallback(async () => {
     if (!usuario?.id) return;
+    if (!dirty) {
+      toast.info("Nenhuma alteração para salvar.");
+      return;
+    }
 
     clearErrors();
 
@@ -461,7 +536,7 @@ export default function Perfil() {
     if (!validarEmail(email)) { setEEmail("E-mail inválido."); rEmail.current?.focus(); return; }
     if (senha && senha.length < 8) { setESenha("A nova senha deve ter pelo menos 8 caracteres."); rSenha.current?.focus(); return; }
     if (dataNascimento && !/^\d{4}-\d{2}-\d{2}$/.test(dataNascimento)) {
-      setEData("Data inválida (use YYYY-MM-DD).");
+      setEData("Data inválida (use o seletor de data).");
       rData.current?.focus();
       return;
     }
@@ -470,7 +545,7 @@ export default function Perfil() {
       nome: nome.trim(),
       email: email.trim().toLowerCase(),
       ...(senha ? { senha } : {}),
-      registro: registro?.trim() || null,
+      registro: normalizeRegistro(registro) || null,
       data_nascimento: dataNascimento || null,
       unidade_id: unidadeId ? Number(unidadeId) : null,
       cargo_id: cargoId ? Number(cargoId) : null,
@@ -483,12 +558,12 @@ export default function Perfil() {
 
     try {
       setSalvando(true);
+      setLive("Salvando alterações…");
 
-      // ✅ sem "/api" aqui
+      // ✅ sem "/api"
       await apiPatch("/perfil/me", payload, { auth: true });
 
       const atualizado = await apiPerfilMe({ on401: "silent", on403: "silent" });
-
       setPerfilIncompletoFlag(!!atualizado?.perfil_incompleto);
 
       const antigo = JSON.parse(localStorage.getItem("usuario") || "{}");
@@ -498,9 +573,10 @@ export default function Perfil() {
       localStorage.setItem("nome", novo.nome || "");
       setUsuario(novo);
 
+      // limpa senha e “re-hidrata” campos (fonte da verdade)
       setSenha("");
       setCpf(aplicarMascaraCPF(novo.cpf ?? cpf ?? ""));
-      setRegistro(maskRegistro(novo.registro || ""));
+      setRegistro(normalizeRegistro(novo.registro || ""));
       setDataNascimento(toYMD(novo.data_nascimento) || "");
 
       setUnidadeId(asStr(novo.unidade_id));
@@ -511,7 +587,23 @@ export default function Perfil() {
       setEscolaridadeId(asStr(novo.escolaridade_id));
       setDeficienciaId(asStr(novo.deficiencia_id));
 
+      // atualiza baseline (zera dirty)
+      setBaseline({
+        nome: String(novo.nome || "").trim(),
+        email: String(novo.email || "").trim().toLowerCase(),
+        registro: String(novo.registro || "").trim(),
+        data_nascimento: String(toYMD(novo.data_nascimento) || "").trim(),
+        unidade_id: String(novo.unidade_id ?? "").trim(),
+        cargo_id: String(novo.cargo_id ?? "").trim(),
+        genero_id: String(novo.genero_id ?? "").trim(),
+        orientacao_sexual_id: String(novo.orientacao_sexual_id ?? "").trim(),
+        cor_raca_id: String(novo.cor_raca_id ?? "").trim(),
+        escolaridade_id: String(novo.escolaridade_id ?? "").trim(),
+        deficiencia_id: String(novo.deficiencia_id ?? "").trim(),
+      });
+
       toast.success("✅ Dados atualizados com sucesso!");
+      setLive("Alterações salvas.");
     } catch (err) {
       console.error(err);
       const data = err?.data || {};
@@ -519,11 +611,13 @@ export default function Perfil() {
       const msg = data?.erro || data?.message || "Não foi possível salvar as alterações.";
       aplicarErrosServidor(fields);
       toast.error(`❌ ${msg}`);
+      setLive("Falha ao salvar alterações.");
     } finally {
       setSalvando(false);
     }
   }, [
     usuario?.id,
+    dirty,
     nome,
     email,
     senha,
@@ -539,6 +633,18 @@ export default function Perfil() {
     cpf,
   ]);
 
+  // atalho Ctrl/Cmd+S
+  useEffect(() => {
+    const onKey = (e) => {
+      const isSave = (e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === "s";
+      if (!isSave) return;
+      e.preventDefault();
+      salvarAlteracoes();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [salvarAlteracoes]);
+
   if (!usuario) {
     return (
       <main className={["min-h-screen flex flex-col", isDark ? "bg-zinc-950 text-zinc-100" : "bg-slate-50 text-slate-900"].join(" ")}>
@@ -547,10 +653,13 @@ export default function Perfil() {
           setTheme={setTheme}
           isDark={isDark}
           onSave={salvarAlteracoes}
+          onRefresh={refreshPerfil}
           onAssinatura={() => setModalAberto(true)}
           podeGerenciarAssinatura={false}
           salvando={true}
+          atualizando={true}
           stats={{ completo: false, pendentes: 0, percent: 0 }}
+          dirty={false}
         />
         <section className="flex-1 max-w-3xl mx-auto w-full px-4 py-10">
           <div className={cardCls("text-center")}>
@@ -564,28 +673,49 @@ export default function Perfil() {
 
   return (
     <main className={["min-h-screen flex flex-col transition-colors", isDark ? "bg-zinc-950 text-zinc-100" : "bg-slate-50 text-slate-900"].join(" ")}>
+      <p ref={liveRef} className="sr-only" aria-live="polite" />
       <HeaderHero
         theme={theme}
         setTheme={setTheme}
         isDark={isDark}
         onSave={salvarAlteracoes}
+        onRefresh={refreshPerfil}
         onAssinatura={() => setModalAberto(true)}
         podeGerenciarAssinatura={podeGerenciarAssinatura}
         salvando={salvando}
+        atualizando={atualizando}
         stats={stats}
+        dirty={dirty}
       />
 
       {/* CTA sticky no mobile */}
       <div className="lg:hidden sticky top-0 z-30 backdrop-blur border-b border-white/10">
         <div className={["px-4 py-3", isDark ? "bg-zinc-950/75" : "bg-white/80"].join(" ")}>
-          <BotaoPrimario
-            onClick={salvarAlteracoes}
-            disabled={salvando}
-            className="w-full flex items-center justify-center gap-2"
-            icone={<Save className="w-4 h-4" />}
-          >
-            {salvando ? "Salvando..." : "Salvar alterações"}
-          </BotaoPrimario>
+          <div className="flex gap-2">
+            <BotaoPrimario
+              onClick={refreshPerfil}
+              disabled={atualizando}
+              variante="secundario"
+              className="flex-1 flex items-center justify-center gap-2"
+              icone={<RefreshCw className={`w-4 h-4 ${atualizando ? "animate-spin" : ""}`} />}
+              aria-label="Atualizar perfil"
+            >
+              {atualizando ? "Atualizando..." : "Atualizar"}
+            </BotaoPrimario>
+
+            <BotaoPrimario
+              onClick={salvarAlteracoes}
+              disabled={salvando || !dirty}
+              className="flex-1 flex items-center justify-center gap-2"
+              icone={<Save className="w-4 h-4" />}
+              aria-label="Salvar alterações"
+            >
+              {salvando ? "Salvando..." : dirty ? "Salvar" : "Sem alterações"}
+            </BotaoPrimario>
+          </div>
+          <p className={["mt-2 text-[11px]", isDark ? "text-zinc-400" : "text-slate-500"].join(" ")}>
+            Dica: use <strong>Ctrl/Cmd + S</strong> para salvar.
+          </p>
         </div>
       </div>
 
@@ -736,10 +866,9 @@ export default function Perfil() {
                   ref={rRegistro}
                   type="text"
                   value={registro}
-                  onChange={(e) => { setRegistro(maskRegistro(e.target.value)); setERegistro(""); }}
+                  onChange={(e) => { setRegistro(normalizeRegistro(e.target.value)); setERegistro(""); }}
                   className={inputCls(!!eRegistro)}
-                  placeholder="Ex.: 10.010-1"
-                  inputMode="numeric"
+                  placeholder="Se aplicável"
                   disabled={salvando}
                   aria-invalid={!!eRegistro}
                   aria-describedby={eRegistro ? "erro-registro" : "dica-registro"}
@@ -946,7 +1075,22 @@ export default function Perfil() {
           </div>
 
           {/* Modal assinatura */}
-          <ModalAssinatura isOpen={modalAberto} onClose={() => setModalAberto(false)} />
+          <ModalAssinatura
+            isOpen={modalAberto}
+            onClose={() => {
+              setModalAberto(false);
+              // ao fechar, re-checa assinatura
+              (async () => {
+                try {
+                  const r = await apiGet("/assinatura", { on401: "silent", on403: "silent" });
+                  const assinatura = r?.assinatura || r?.data?.assinatura || null;
+                  setTemAssinatura(!!assinatura);
+                } catch {
+                  setTemAssinatura(false);
+                }
+              })();
+            }}
+          />
         </div>
       </section>
 

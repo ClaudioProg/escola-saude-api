@@ -74,14 +74,10 @@ function calcularMediaEventoViaLista(avaliacoes) {
   if (!Array.isArray(avaliacoes) || avaliacoes.length === 0) return "—";
   const medias = avaliacoes
     .map((av) => {
-      let soma = 0,
-        qtd = 0;
+      let soma = 0, qtd = 0;
       for (const campo of CAMPOS_NOTA_EVENTO) {
         const v = notaEnumParaNumero(av?.[campo]);
-        if (v != null) {
-          soma += v;
-          qtd += 1;
-        }
+        if (v != null) { soma += v; qtd += 1; }
       }
       return qtd ? soma / qtd : null;
     })
@@ -139,8 +135,6 @@ function absUrl(u) {
   if (!u) return null;
   if (/^https?:\/\//i.test(u)) return u;
   const base = import.meta.env?.VITE_API_BASE_URL || "";
-  // se houver base (ex.: https://escola-saude-api.onrender.com), concatena;
-  // caso contrário, mantém relativo (mesmo host do frontend reverse-proxy/spa)
   return base ? `${base}${u}` : u;
 }
 
@@ -241,9 +235,10 @@ export default function CardEvento({
             {folderUrl ? (
               <img
                 src={folderUrl}
-                alt={`Folder do evento: ${evento?.titulo ?? ""}`}
+                alt={`Imagem de divulgação do evento “${evento?.titulo ?? ""}”`}
                 loading="lazy"
                 className="w-full h-full object-cover"
+                draggable={false}
               />
             ) : (
               <div className="flex flex-col items-center justify-center text-gray-400">
@@ -284,7 +279,8 @@ export default function CardEvento({
             aria-label={expandido ? "Recolher detalhes do evento" : "Ver detalhes do evento"}
             aria-expanded={expandido}
             aria-controls={turmasId}
-            className="text-sm px-4 py-1 rounded-full transition focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-500/60 bg-gradient-to-br from-[#0f2c1f] via-[#114b2d] to-[#166534] text-white hover:brightness-[1.05]]"
+            className="text-sm px-4 py-1 rounded-full transition focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-500/60 bg-gradient-to-br from-[#0f2c1f] via-[#114b2d] to-[#166534] text-white hover:brightness-[1.05]"
+            title={expandido ? "Recolher" : "Ver Turmas"}
           >
             {expandido ? "Recolher" : "Ver Turmas"}
           </button>
@@ -364,7 +360,6 @@ CardEvento.propTypes = {
   evento: PropTypes.shape({
     id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
     titulo: PropTypes.string.isRequired,
-    // 👇 instrutor removido do nível do evento
     folder_url: PropTypes.string, // caminho/URL do folder (opcional)
     data_inicio_geral: PropTypes.oneOfType([PropTypes.string, PropTypes.instanceOf(Date)]),
     data_fim_geral: PropTypes.oneOfType([PropTypes.string, PropTypes.instanceOf(Date)]),
@@ -376,7 +371,6 @@ CardEvento.propTypes = {
       id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
       data_inicio: PropTypes.oneOfType([PropTypes.string, PropTypes.instanceOf(Date)]),
       data_fim: PropTypes.oneOfType([PropTypes.string, PropTypes.instanceOf(Date)]),
-      // Cada turma deve trazer seus próprios instrutores (CardTurma usa isso)
     })
   ),
   carregarInscritos: PropTypes.func.isRequired,

@@ -1,5 +1,6 @@
-// 📁 src/controllers/usuariosEstatisticasController.js
-const fallbackDb = require("../db"); // pode ser pool, client, ou objeto com .db
+// ✅ src/controllers/usuariosEstatisticasController.js
+/* eslint-disable no-console */
+const fallbackDb = require("../db"); // pool, client, ou objeto com .db
 
 /* ----------------------- DB adapter compat ----------------------- */
 function getDb(req) {
@@ -9,13 +10,13 @@ function getDb(req) {
   return base;
 }
 
+// Compat com pg-promise (one/none/manyOrNone) e node-postgres (query)
 async function dbOne(db, sql, params) {
   if (typeof db.one === "function") return db.one(sql, params);
   const res = await db.query(sql, params);
   if (!res?.rows?.length) throw new Error("Registro não encontrado");
   return res.rows[0];
 }
-
 async function dbManyOrNone(db, sql, params) {
   if (typeof db.manyOrNone === "function") return db.manyOrNone(sql, params);
   const res = await db.query(sql, params);
@@ -23,14 +24,8 @@ async function dbManyOrNone(db, sql, params) {
 }
 
 /* ----------------------- Helpers ----------------------- */
-function nz(s, fallback = "Não informado") {
-  if (s === null || s === undefined) return fallback;
-  const str = String(s).trim();
-  return str || fallback;
-}
-
 /**
- * Agregador genérico com fallback para coluna de texto da própria tabela `usuarios`.
+ * Agregador genérico com fallback para coluna de texto na própria `usuarios`.
  *
  * labelMode:
  *  - "extra-only"  → usa apenas `extra` (ex.: SIGLA); se vazio, cai para `base`; senão "Não informado"
@@ -98,17 +93,23 @@ async function aggWithJoin(db, {
 }
 
 /* ----------------- Controller principal ----------------- */
-async function getEstatisticasUsuarios(req, res) {
+/**
+ * Modo de uso:
+ *  - Chamado pela rota "normal": responde com res.json(...)
+ *  - Chamado pelo router premium com { internal: true } ou { preview: true }:
+ *      retorna apenas o objeto de dados (não finaliza a resposta)
+ */
+async function getEstatisticasUsuarios(req, res, opts = {}) {
+  const internal = !!opts.internal || !!opts.preview;
   try {
     const db = getDb(req);
     console.log("📊 Iniciando cálculo de estatísticas de usuários...");
 
-    /* 1) Total de usuários */
+    // (1) Total de usuários
     const totalRow = await dbOne(db, `SELECT COUNT(*)::int AS total FROM usuarios`);
     const total = totalRow?.total ?? 0;
-    console.log("✅ Total de usuários:", total);
 
-    /* 2) Faixas etárias */
+    // (2) Faixas etárias (usa current_date para evitar timezone shift)
     const rowsIdade = await dbManyOrNone(db, `
       SELECT faixa, COUNT(*)::int AS qtde
       FROM (
@@ -126,7 +127,7 @@ async function getEstatisticasUsuarios(req, res) {
       GROUP BY 1
       ORDER BY
         CASE faixa
-          WHEN '<20' THEN 1
+          WHEN '<20'  THEN 1
           WHEN '20-29' THEN 2
           WHEN '30-39' THEN 3
           WHEN '40-49' THEN 4
@@ -138,16 +139,16 @@ async function getEstatisticasUsuarios(req, res) {
 
     const faixaMap = new Map(rowsIdade.map((r) => [r.faixa, r.qtde]));
     const faixaArr = [
-      { label: "<20",       value: faixaMap.get("<20")       || 0 },
-      { label: "20-29",     value: faixaMap.get("20-29")     || 0 },
-      { label: "30-39",     value: faixaMap.get("30-39")     || 0 },
-      { label: "40-49",     value: faixaMap.get("40-49")     || 0 },
-      { label: "50-59",     value: faixaMap.get("50-59")     || 0 },
-      { label: "60+",       value: faixaMap.get("60+")       || 0 },
-      { label: "Sem data",  value: faixaMap.get("Sem data")  || 0 },
+      { label: "<20",      value: faixaMap.get("<20")      || 0 },
+      { label: "20-29",    value: faixaMap.get("20-29")    || 0 },
+      { label: "30-39",    value: faixaMap.get("30-39")    || 0 },
+      { label: "40-49",    value: faixaMap.get("40-49")    || 0 },
+      { label: "50-59",    value: faixaMap.get("50-59")    || 0 },
+      { label: "60+",      value: faixaMap.get("60+")      || 0 },
+      { label: "Sem data", value: faixaMap.get("Sem data") || 0 },
     ];
 
-    /* 3) Agregações por domínio (com fallback textual) */
+    // (3) Agregações por domínio (com fallback textual quando *_id = NULL)
     const [
       porUnidade,
       porEscolaridade,
@@ -157,7 +158,7 @@ async function getEstatisticasUsuarios(req, res) {
       porDeficiencia,
       porCorRaca,
     ] = await Promise.all([
-      // ⚑ Unidades: exibe apenas SIGLA
+      // Unidades: exibe apenas SIGLA (se houver), caindo para nome
       aggWithJoin(db, {
         table: "unidades",
         joinCol: "unidade_id",
@@ -209,8 +210,7 @@ async function getEstatisticasUsuarios(req, res) {
       }),
     ]);
 
-    /* 4) Resposta */
-    res.json({
+    const payload = {
       total_usuarios: total,
       faixa_etaria: faixaArr,
       por_unidade: porUnidade,
@@ -220,13 +220,36 @@ async function getEstatisticasUsuarios(req, res) {
       por_genero: porGenero,
       por_deficiencia: porDeficiencia,
       por_cor_raca: porCorRaca,
-    });
+    };
 
-    console.log("✅ Estatísticas enviadas com sucesso.");
+    console.log("✅ Estatísticas calculadas com sucesso.");
+
+    // Se a chamada é "interna/preview", retornamos os dados para o router montar ETag/Cache
+    if (internal) return payload;
+
+    // Caso contrário, respondemos aqui mesmo
+    return res.status(200).json(payload);
   } catch (err) {
     console.error("❌ /usuarios/estatisticas erro:", err);
-    res.status(500).json({ error: "Falha ao calcular estatísticas" });
+    if (opts.preview) return null; // para HEAD/preview
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Falha ao calcular estatísticas" });
+    }
+    return null;
   }
 }
 
-module.exports = { getEstatisticasUsuarios };
+/* (Opcional futuro) Estatísticas detalhadas com breakdown extra.
+   Se for usar a rota /usuarios/estatisticas/detalhes do router premium,
+   implemente aqui usando a mesma abordagem (retornar objeto em vez de res.json). */
+async function getEstatisticasUsuariosDetalhadas(req, res) {
+  // Exemplo de esqueleto (preparado para expansão futura):
+  const data = await getEstatisticasUsuarios(req, res, { internal: true });
+  // Aqui você pode acrescentar cruzamentos (ex.: por unidade x gênero, etc.)
+  return data;
+}
+
+module.exports = {
+  getEstatisticasUsuarios,
+  getEstatisticasUsuariosDetalhadas,
+};

@@ -1,4 +1,6 @@
 // ✅ 📁 src/routes/turmasRoute.js
+"use strict";
+
 const express = require("express");
 const router = express.Router();
 
@@ -7,115 +9,95 @@ const inscricoesController = require("../controllers/inscricoesController");
 const authMiddleware = require("../auth/authMiddleware");
 const authorizeRoles = require("../auth/authorizeRoles");
 
-/* ───────── helpers ───────── */
+/* ──────────────────────────────────────────────────────────────
+   Helpers premium
+────────────────────────────────────────────────────────────── */
 const hasFn = (obj, name) => !!obj && typeof obj[name] === "function";
-const ensureTurmas = (name) =>
-  hasFn(turmasController, name)
-    ? turmasController[name]
-    : (req, res) => res.status(500).json({ erro: `Handler ausente: turmasController.${name}` });
 
-/* ────────────────────────────────
-   ➕ Criar nova turma (somente administrador)
-   ──────────────────────────────── */
-router.post(
-  "/",
-  authMiddleware,
-  authorizeRoles("administrador"),
-  ensureTurmas("criarTurma")
-);
+function asyncHandler(fn) {
+  return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+}
 
-/* ────────────────────────────────
-   ✏️ Editar turma (somente administrador)
-   ──────────────────────────────── */
-router.put(
-  "/:id",
-  authMiddleware,
-  authorizeRoles("administrador"),
-  ensureTurmas("atualizarTurma")
-);
+// Se o handler não existir, responde 501 (não implementado) — mais correto que 500
+function safeHandler(ctrl, fnName) {
+  if (hasFn(ctrl, fnName)) return asyncHandler(ctrl[fnName]);
+  return (_req, res) =>
+    res.status(501).json({
+      erro: `Handler não implementado: turmasController.${fnName}`,
+    });
+}
 
-/* ────────────────────────────────
-   👨‍🏫 Vincular instrutor(es) à TURMA (somente administrador)
-   ──────────────────────────────── */
-router.post(
-  "/:id/instrutores",
-  authMiddleware,
-  authorizeRoles("administrador"),
-  ensureTurmas("adicionarInstrutor")
-);
+// Middlewares reutilizáveis
+const requireAuth = authMiddleware;
+const requireAdmin = [requireAuth, authorizeRoles("administrador")];
 
-/* ────────────────────────────────
-   ❌ Excluir turma (somente administrador)
-   ──────────────────────────────── */
-router.delete(
-  "/:id",
-  authMiddleware,
-  authorizeRoles("administrador"),
-  ensureTurmas("excluirTurma")
-);
+/* ──────────────────────────────────────────────────────────────
+   Todas as rotas aqui exigem autenticação
+────────────────────────────────────────────────────────────── */
+router.use(requireAuth);
 
-/* ────────────────────────────────
-   📋 Listar turmas de um evento (com datas reais, inscritos etc.)
-   ──────────────────────────────── */
-router.get(
-  "/evento/:evento_id",
-  authMiddleware,
-  ensureTurmas("listarTurmasPorEvento")
-);
+/* ──────────────────────────────────────────────────────────────
+   Admin-only (CRUD e operações sensíveis)
+────────────────────────────────────────────────────────────── */
 
-/* ────────────────────────────────
-   ⚡️ Endpoint leve (sem inscritos) — usado pelo ModalEvento
-   ──────────────────────────────── */
-router.get(
-  "/eventos/:evento_id/turmas-simples",
-  authMiddleware,
-  ensureTurmas("obterTurmasPorEvento")
-);
+// ➕ Criar nova turma
+router.post("/", requireAdmin, safeHandler(turmasController, "criarTurma"));
 
-/* ────────────────────────────────
-   👨‍🏫 Listar instrutor(es) da turma
-   ──────────────────────────────── */
-router.get(
-  "/:id/instrutores",
-  authMiddleware,
-  ensureTurmas("listarInstrutorDaTurma")
-);
+// ✏️ Editar turma
+router.put("/:id(\\d+)", requireAdmin, safeHandler(turmasController, "atualizarTurma"));
 
-/* ────────────────────────────────
-   📅 Datas reais da turma (datas_turma)
-   ──────────────────────────────── */
-router.get(
-  "/:id/datas",
-  authMiddleware,
-  ensureTurmas("listarDatasDaTurma")
-);
+// 👨‍🏫 Vincular instrutor(es) à turma
+router.post("/:id(\\d+)/instrutores", requireAdmin, safeHandler(turmasController, "adicionarInstrutor"));
 
-/* ────────────────────────────────
-   🔍 Obter detalhes de uma turma (título do evento + instrutores)
-   ──────────────────────────────── */
-router.get(
-  "/:id/detalhes",
-  authMiddleware,
-  ensureTurmas("obterDetalhesTurma")
-);
+// ❌ Excluir turma
+router.delete("/:id(\\d+)", requireAdmin, safeHandler(turmasController, "excluirTurma"));
 
-/* ────────────────────────────────
-   📋 Listar inscritos de uma turma
-   ──────────────────────────────── */
-router.get(
-  "/:turma_id/inscritos",
-  authMiddleware,
-  inscricoesController.listarInscritosPorTurma
-);
-
-/* ────────────────────────────────
-   🧾 Listar turmas com usuários (admin)
-   ──────────────────────────────── */
+// 🧾 Listar turmas com usuários (admin)
 router.get(
   "/turmas-com-usuarios",
-  authMiddleware,
-  authorizeRoles("administrador"),
-  ensureTurmas("listarTurmasComUsuarios")
+  requireAdmin,
+  safeHandler(turmasController, "listarTurmasComUsuarios")
+);
+
+/* ──────────────────────────────────────────────────────────────
+   Leitura (usuários logados)
+────────────────────────────────────────────────────────────── */
+
+// ⚡️ Endpoint leve (sem inscritos) — usado pelo ModalEvento
+// Obs: mantenho a tua URL para não quebrar o front
+router.get(
+  "/eventos/:evento_id(\\d+)/turmas-simples",
+  safeHandler(turmasController, "obterTurmasPorEvento")
+);
+
+// 📋 Listar turmas de um evento (com datas reais, inscritos etc.)
+router.get(
+  "/evento/:evento_id(\\d+)",
+  safeHandler(turmasController, "listarTurmasPorEvento")
+);
+
+// 👨‍🏫 Listar instrutor(es) da turma
+router.get(
+  "/:id(\\d+)/instrutores",
+  safeHandler(turmasController, "listarInstrutorDaTurma")
+);
+
+// 📅 Datas reais da turma (datas_turma)
+router.get(
+  "/:id(\\d+)/datas",
+  safeHandler(turmasController, "listarDatasDaTurma")
+);
+
+// 🔍 Detalhes de uma turma (título do evento + instrutores)
+router.get(
+  "/:id(\\d+)/detalhes",
+  safeHandler(turmasController, "obterDetalhesTurma")
+);
+
+// 📋 Listar inscritos de uma turma
+router.get(
+  "/:turma_id(\\d+)/inscritos",
+  asyncHandler(inscricoesController.listarInscritosPorTurma)
 );
 
 module.exports = router;

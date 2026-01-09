@@ -1,18 +1,24 @@
-// ✅ src/pages/AdminAvaliacoes.jsx
-/* Página de Avaliações (Admin) — layout e UX espelhados no AvaliacaoInstrutor.jsx,
-   com paleta exclusiva desta tela, seletor de evento, KPIs, grelha de barras e
-   comentários qualitativos. */
-   import { useEffect, useMemo, useRef, useState } from "react";
+// ✅ src/pages/AdminAvaliacoes.jsx — Premium, responsivo, com filtros/ordenação e exportação CSV
+/* Página de Avaliações (Admin) — layout e UX premium,
+   com paleta exclusiva desta tela, seletor de evento, KPIs,
+   grelha de barras, comentários qualitativos e utilidades. */
+   import { useEffect, useMemo, useRef, useState, useCallback } from "react";
    import Skeleton from "react-loading-skeleton";
    import { motion } from "framer-motion";
    import { toast } from "react-toastify";
    import {
      BarChart3,
      ClipboardList,
+     Download,
+     Filter,
      MessageSquare,
      School,
      RefreshCw,
      Users,
+     Search,
+     ArrowUp01,
+     ArrowDown01,
+     Info,
    } from "lucide-react";
    
    import Footer from "../components/Footer";
@@ -21,8 +27,9 @@
    import { formatarDataBrasileira } from "../utils/data";
    import BotaoPrimario from "../components/BotaoPrimario";
    
-   /* ----------------------- Config dos campos ----------------------- */
-   const CAMPOS_OBJETIVOS = [
+   /* ----------------------- Campos e Regras ----------------------- */
+   // ⚠️ Conforme diretriz de 2025-07-31: apenas estes entram na MÉDIA OFICIAL do evento
+   const CAMPOS_OFICIAIS_MEDIA = [
      "divulgacao_evento",
      "recepcao",
      "credenciamento",
@@ -30,19 +37,25 @@
      "pontualidade",
      "sinalizacao_local",
      "conteudo_temas",
-     "desempenho_instrutor",
      "estrutura_local",
      "acessibilidade",
      "limpeza",
      "inscricao_online",
+   ];
+   
+   // Campos objetivos visíveis (inclui opcionais, que podem ser ocultados via filtro)
+   const CAMPOS_OBJETIVOS = [
+     ...CAMPOS_OFICIAIS_MEDIA,
+     "desempenho_instrutor", // exibimos, mas não compõe a média do EVENTO
      "exposicao_trabalhos",
      "apresentacao_oral_mostra",
      "apresentacao_tcrs",
      "oficinas",
    ];
+   
    const CAMPOS_TEXTOS = ["gostou_mais", "sugestoes_melhoria", "comentarios_finais"];
    
-   /* ── Helpers iguais aos do Instrutor ─────────────────────────── */
+   /* ── Helpers de nota ─────────────────────────── */
    function toScore(v) {
      if (v == null) return null;
      const s = String(v).trim().toLowerCase();
@@ -64,6 +77,30 @@
      const m = v.reduce((a, b) => a + b, 0) / v.length;
      return Number(m.toFixed(2));
    }
+   function labelDoCampo(c) {
+     return (
+       {
+         divulgacao_evento: "Divulgação do evento",
+         recepcao: "Recepção",
+         credenciamento: "Credenciamento",
+         material_apoio: "Material de apoio",
+         pontualidade: "Pontualidade",
+         sinalizacao_local: "Sinalização do local",
+         conteudo_temas: "Conteúdo/temas",
+         desempenho_instrutor: "Desempenho do instrutor",
+         estrutura_local: "Estrutura do local",
+         acessibilidade: "Acessibilidade",
+         limpeza: "Limpeza",
+         inscricao_online: "Inscrição on-line",
+         exposicao_trabalhos: "Exposição de trabalhos",
+         apresentacao_oral_mostra: "Apresentação oral/mostra",
+         apresentacao_tcrs: "Apresentação TCRs",
+         oficinas: "Oficinas",
+       }[c] || c.replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase())
+     );
+   }
+   
+   /* ── Agregação local (fallback ou enrich) ─────────────────────────── */
    function agregarRespostas(respostas) {
      const dist = {};
      const medias = {};
@@ -95,7 +132,7 @@
    
      const textos = {};
      for (const c of CAMPOS_TEXTOS) {
-       textos[c] = respostas
+       textos[c] = (respostas || [])
          .map((r) => (r[c] ?? r[c]?.texto ?? r[c]?.comentario))
          .filter((s) => typeof s === "string" && s.trim().length > 0)
          .map((s) => s.trim());
@@ -104,10 +141,9 @@
    }
    
    /* ------------------------- Header/Hero ------------------------- */
-   /* Regra visual: 3 cores fixas (exclusivas desta tela) + ícone/título na mesma linha */
+   /* Paleta exclusiva desta página (degradê petróleo → violeta → magenta) */
    function HeaderHero({ onRefresh, carregando }) {
-     const gradient = "from-emerald-900 via-teal-800 to-sky-700"; // paleta desta página
-   
+     const gradient = "from-slate-900 via-violet-800 to-fuchsia-700";
      return (
        <header className={`bg-gradient-to-br ${gradient} text-white`} role="banner">
          <a
@@ -116,13 +152,15 @@
          >
            Ir para o conteúdo
          </a>
-         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 flex flex-col items-center text-center gap-3">
+         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 flex flex-col items-center text-center gap-4">
            <div className="inline-flex items-center gap-2">
-             <BarChart3 className="w-5 h-5" aria-hidden="true" />
-             <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">Avaliações — Administração</h1>
+             <BarChart3 className="w-6 h-6" aria-hidden="true" />
+             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
+               Avaliações — Administração
+             </h1>
            </div>
-           <p className="text-sm text-white/90">
-             Selecione um evento para ver médias por critério, distribuição de notas, comentários e turmas.
+           <p className="text-sm sm:text-base text-white/90">
+             Selecione um evento e explore médias por critério, distribuição de notas, comentários e turmas.
            </p>
            <BotaoPrimario
              onClick={onRefresh}
@@ -145,11 +183,15 @@
      const [eventos, setEventos] = useState([]); // [{id,titulo,di,df,total_respostas}]
      const [eventoId, setEventoId] = useState("");
      const [payload, setPayload] = useState(null); // {respostas, agregados, turmas}
+     const [somenteOficiais, setSomenteOficiais] = useState(true);
+     const [ordenar, setOrdenar] = useState("desc"); // "desc" (maiores primeiro) | "asc"
+     const [buscaComentario, setBuscaComentario] = useState("");
      const liveRef = useRef(null);
    
      useEffect(() => {
        document.title = "Avaliações (Admin) | Escola da Saúde";
        carregarEventos();
+       // eslint-disable-next-line react-hooks/exhaustive-deps
      }, []);
    
      async function carregarEventos() {
@@ -184,16 +226,15 @@
          setErro("");
          if (liveRef.current) liveRef.current.textContent = "Carregando avaliações do evento…";
    
-         // 1) tenta o endpoint do ADMIN (fonte preferencial)
+         // 1) Preferencial: endpoint admin já agregador
          const resp = await apiGet(`/api/admin/avaliacoes/evento/${evento_id}`, { on401: "silent", on403: "silent" });
    
-         // Se já vier com total > 0, usa direto
          if (resp?.agregados?.total > 0) {
            setPayload(resp);
            return;
          }
    
-         // 2) Fallback: se veio sem respostas, mas há turmas, agrega via /api/avaliacoes/turma/:id
+         // 2) Fallback — agrega cliente pelas turmas
          const turmas = Array.isArray(resp?.turmas) ? resp.turmas : [];
          if (turmas.length > 0) {
            const respostas = [];
@@ -210,7 +251,7 @@
                    respostas.push(...lista.map((it) => ({ ...it, __turmaId: t.id, __turmaNome: t.nome })));
                  }
                } catch {
-                 /* ignora erro individual de turma */
+                 /* ignora erro individual */
                }
              })
            );
@@ -220,13 +261,11 @@
              respostas,
              agregados: {
                ...agregados,
-               // mantém a média oficial vinda do backend se ele já calcular isso
                mediaOficial: resp?.agregados?.mediaOficial ?? null,
              },
              turmas: turmas.map((t) => ({
                ...t,
-               total_respostas:
-                 respostas.filter((r) => String(r.__turmaId) === String(t.id)).length,
+               total_respostas: respostas.filter((r) => String(r.__turmaId) === String(t.id)).length,
              })),
            };
            setPayload(payloadComFallback);
@@ -234,7 +273,7 @@
            return;
          }
    
-         // 3) Sem turmas ou sem dados mesmo
+         // 3) Sem dados
          setPayload(resp || { respostas: [], agregados: { total: 0, dist: {}, medias: {}, textos: {} }, turmas: [] });
          if (liveRef.current) liveRef.current.textContent = "Nenhuma resposta.";
        } catch (e) {
@@ -252,8 +291,78 @@
        // eslint-disable-next-line react-hooks/exhaustive-deps
      }, [eventoId]);
    
-     const eventoAtual = useMemo(() => eventos.find((e) => String(e.id) === String(eventoId)), [eventos, eventoId]);
+     const eventoAtual = useMemo(
+       () => eventos.find((e) => String(e.id) === String(eventoId)),
+       [eventos, eventoId]
+     );
    
+     /* ---------------------------- Dados derivados ---------------------------- */
+     const camposVisiveis = useMemo(
+       () => (somenteOficiais ? CAMPOS_OFICIAIS_MEDIA : CAMPOS_OBJETIVOS),
+       [somenteOficiais]
+     );
+   
+     const mediasOrdenadas = useMemo(() => {
+       const m = payload?.agregados?.medias || {};
+       const list = camposVisiveis
+         .map((c) => ({ campo: c, nome: labelDoCampo(c), media: m[c], dist: payload?.agregados?.dist?.[c] }))
+         .filter((x) => x.media != null);
+       return list.sort((a, b) => (ordenar === "desc" ? b.media - a.media : a.media - b.media));
+     }, [payload, camposVisiveis, ordenar]);
+   
+     const textosFiltrados = useMemo(() => {
+       const filtro = buscaComentario.trim().toLowerCase();
+       const pegue = (nome) => {
+         const arr = payload?.agregados?.textos?.[nome] || [];
+         if (!filtro) return arr;
+         return arr.filter((t) => t.toLowerCase().includes(filtro));
+       };
+       return {
+         gostou_mais: pegue("gostou_mais"),
+         sugestoes_melhoria: pegue("sugestoes_melhoria"),
+         comentarios_finais: pegue("comentarios_finais"),
+       };
+     }, [payload, buscaComentario]);
+   
+     /* ---------------------------- Exportação CSV ---------------------------- */
+     const exportarCSV = useCallback(() => {
+       if (!payload) return;
+       try {
+         const linhas = [];
+         // cabeçalho
+         linhas.push(["Campo", "Média", "Qtd★1", "Qtd★2", "Qtd★3", "Qtd★4", "Qtd★5"].join(";"));
+         // métricas
+         (camposVisiveis || []).forEach((c) => {
+           const d = payload?.agregados?.dist?.[c] || {};
+           const m = payload?.agregados?.medias?.[c];
+           linhas.push([labelDoCampo(c), m ?? "", d[1] ?? 0, d[2] ?? 0, d[3] ?? 0, d[4] ?? 0, d[5] ?? 0].join(";"));
+         });
+         // separador
+         linhas.push("");
+         linhas.push("Textos - O que mais gostaram;");
+         (payload?.agregados?.textos?.gostou_mais || []).forEach((t) => linhas.push(`"${t.replace(/"/g, '""')}"`));
+         linhas.push("");
+         linhas.push("Textos - Sugestões de melhoria;");
+         (payload?.agregados?.textos?.sugestoes_melhoria || []).forEach((t) => linhas.push(`"${t.replace(/"/g, '""')}"`));
+         linhas.push("");
+         linhas.push("Textos - Comentários finais;");
+         (payload?.agregados?.textos?.comentarios_finais || []).forEach((t) => linhas.push(`"${t.replace(/"/g, '""')}"`));
+   
+         const csv = "\uFEFF" + linhas.join("\n");
+         const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+         const url = URL.createObjectURL(blob);
+         const a = document.createElement("a");
+         const titulo = (eventoAtual?.titulo || "evento").replace(/[^\p{L}\p{N}\-_ ]/gu, "").replace(/\s+/g, "_");
+         a.href = url;
+         a.download = `avaliacoes_${titulo}.csv`;
+         a.click();
+         URL.revokeObjectURL(url);
+       } catch {
+         toast.error("❌ Falha ao exportar CSV.");
+       }
+     }, [payload, camposVisiveis, eventoAtual]);
+   
+     /* ---------------------------- Render ---------------------------- */
      return (
        <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
          <HeaderHero
@@ -267,35 +376,69 @@
          <main id="conteudo" className="flex-1 max-w-6xl mx-auto px-3 sm:px-4 py-6">
            <p ref={liveRef} className="sr-only" aria-live="polite" />
    
-           {/* Seletor de evento */}
-           <section className="mb-4">
-             <label htmlFor="sel-evento" className="block text-sm mb-1 text-slate-700 dark:text-slate-200">
-               Selecione o evento
-             </label>
-             <div className="flex flex-wrap items-center gap-2">
-               <select
-                 id="sel-evento"
-                 value={eventoId}
-                 onChange={(e) => setEventoId(e.target.value)}
-                 className="p-2 rounded border dark:bg-zinc-800 dark:text-white min-w-[260px]"
-                 aria-label="Selecionar evento"
-               >
-                 {eventos.map((e) => (
-                   <option key={e.id} value={e.id}>
-                     {e.titulo} {e.di ? `• ${formatarDataBrasileira(e.di)}` : ""}{e.df ? ` a ${formatarDataBrasileira(e.df)}` : ""}
-                     {typeof e.total_respostas === "number" ? ` • ${e.total_respostas} resp.` : ""}
-                   </option>
-                 ))}
-                 {!eventos.length && <option value="">Nenhum evento encontrado</option>}
-               </select>
+           {/* Seletor + Ações */}
+           <section className="mb-5">
+             <div className="grid gap-3 md:grid-cols-[1fr,auto,auto,auto] items-end">
+               <div>
+                 <label htmlFor="sel-evento" className="block text-sm mb-1 text-slate-700 dark:text-slate-200">
+                   Selecione o evento
+                 </label>
+                 <select
+                   id="sel-evento"
+                   value={eventoId}
+                   onChange={(e) => setEventoId(e.target.value)}
+                   className="p-2 rounded border dark:bg-zinc-800 dark:text-white w-full"
+                   aria-label="Selecionar evento"
+                 >
+                   {eventos.map((e) => (
+                     <option key={e.id} value={e.id}>
+                       {e.titulo} {e.di ? `• ${formatarDataBrasileira(e.di)}` : ""}{e.df ? ` a ${formatarDataBrasileira(e.df)}` : ""}
+                       {typeof e.total_respostas === "number" ? ` • ${e.total_respostas} resp.` : ""}
+                     </option>
+                   ))}
+                   {!eventos.length && <option value="">Nenhum evento encontrado</option>}
+                 </select>
+               </div>
    
-               {eventoAtual && (
-                 <span className="text-xs text-gray-600 dark:text-gray-300">
-                   <Users className="inline w-4 h-4 mr-1" aria-hidden="true" />
-                   {typeof eventoAtual.total_respostas === "number" ? `${eventoAtual.total_respostas} resposta(s) somadas` : "—"}
-                 </span>
-               )}
+               <div className="flex gap-2">
+                 <button
+                   type="button"
+                   onClick={() => setSomenteOficiais((v) => !v)}
+                   className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm dark:bg-zinc-800"
+                   title="Alternar: mostrar apenas critérios oficiais (média do evento)"
+                 >
+                   <Filter className="w-4 h-4" />
+                   {somenteOficiais ? "Só oficiais" : "Todos os critérios"}
+                 </button>
+   
+                 <button
+                   type="button"
+                   onClick={() => setOrdenar((v) => (v === "desc" ? "asc" : "desc"))}
+                   className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm dark:bg-zinc-800"
+                   title="Ordenar por média"
+                 >
+                   {ordenar === "desc" ? <ArrowDown01 className="w-4 h-4" /> : <ArrowUp01 className="w-4 h-4" />}
+                   {ordenar === "desc" ? "Maiores primeiro" : "Menores primeiro"}
+                 </button>
+   
+                 <button
+                   type="button"
+                   onClick={exportarCSV}
+                   className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm dark:bg-zinc-800"
+                   title="Exportar CSV (médias + distribuição + comentários)"
+                 >
+                   <Download className="w-4 h-4" />
+                   Exportar CSV
+                 </button>
+               </div>
              </div>
+   
+             {eventoAtual && (
+               <p className="mt-1 text-xs text-gray-600 dark:text-gray-300">
+                 <Users className="inline w-4 h-4 mr-1" aria-hidden="true" />
+                 {typeof eventoAtual.total_respostas === "number" ? `${eventoAtual.total_respostas} resposta(s) somadas` : "—"}
+               </p>
+             )}
            </section>
    
            {/* Conteúdo */}
@@ -319,10 +462,11 @@
                    titulo="Média Oficial (1–5)"
                    valor={
                      payload.agregados?.mediaOficial != null
-                       ? `${payload.agregados.mediaOficial.toFixed(2)} / 5`
+                       ? `${Number(payload.agregados.mediaOficial).toFixed(2)} / 5`
                        : "—"
                    }
                    icon={BarChart3}
+                   hint="Calculada apenas com os critérios oficiais definidos institucionalmente."
                  />
                  <KPI
                    titulo="Período do Evento"
@@ -340,54 +484,83 @@
                  />
                </section>
    
-               {/* Chips de turmas com contagem */}
-               {/* Lista de turmas com número de respostas */}
-<section aria-label="Turmas do evento" className="mt-4">
-  {payload.turmas?.length ? (
-    <ul className="space-y-2">
-      {payload.turmas.map((t) => (
-        <li
-          key={t.id}
-          className="flex items-center gap-3 bg-white dark:bg-gray-800 rounded-full px-3 py-1.5 shadow text-sm"
-        >
-          {/* Número primeiro */}
-          <span className="inline-flex items-center justify-center w-7 h-7 text-xs font-bold rounded-full bg-orange-600 text-white">
-            {t.total_respostas ?? 0}
-          </span>
-
-          {/* Nome da turma depois, ocupando o restante da linha */}
-          <span className="flex-1 text-left">
-            {t.nome}
-          </span>
-        </li>
-      ))}
-    </ul>
-  ) : (
-    <span className="text-sm text-gray-500">Sem turmas.</span>
-  )}
-</section>
-
+               {/* Chips de turmas */}
+               <section aria-label="Turmas do evento" className="mt-2">
+                 {payload.turmas?.length ? (
+                   <ul className="flex flex-wrap gap-2">
+                     {payload.turmas.map((t) => (
+                       <li
+                         key={t.id}
+                         className="flex items-center gap-2 bg-white dark:bg-gray-800 rounded-full px-3 py-1.5 shadow text-sm"
+                         title={`${t.nome} — ${t.total_respostas ?? 0} respostas`}
+                       >
+                         <span className="inline-flex items-center justify-center w-7 h-7 text-xs font-bold rounded-full bg-fuchsia-600 text-white">
+                           {t.total_respostas ?? 0}
+                         </span>
+                         <span className="flex-1 text-left">{t.nome}</span>
+                       </li>
+                     ))}
+                   </ul>
+                 ) : (
+                   <span className="text-sm text-gray-500">Sem turmas.</span>
+                 )}
+               </section>
    
                {/* Objetivos: grelha com barras simples */}
                <section>
-                 <h2 className="text-base font-semibold mb-3">Médias por critério (1–5)</h2>
+                 <div className="flex items-center justify-between mb-3">
+                   <h2 className="text-base font-semibold">Médias por critério (1–5)</h2>
+                   <span className="inline-flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+                     <Info className="w-4 h-4" /> Critérios <strong>oficiais</strong> compõem a média do evento.
+                   </span>
+                 </div>
                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                   {CAMPOS_OBJETIVOS.map((c) => (
+                   {/* primeiro os que têm média (ordenados), depois os sem dados */}
+                   {mediasOrdenadas.map(({ campo, nome, media, dist }) => (
                      <CampoBarra
-                       key={c}
-                       nome={labelDoCampo(c)}
-                       media={payload.agregados?.medias?.[c]}
-                       dist={payload.agregados?.dist?.[c]}
+                       key={campo}
+                       nome={nome}
+                       media={media}
+                       dist={dist}
+                       oficial={CAMPOS_OFICIAIS_MEDIA.includes(campo)}
                      />
                    ))}
+                   {/* sem média conhecida */}
+                   {camposVisiveis
+                     .filter((c) => payload?.agregados?.medias?.[c] == null)
+                     .map((c) => (
+                       <CampoBarra
+                         key={c}
+                         nome={labelDoCampo(c)}
+                         media={null}
+                         dist={payload?.agregados?.dist?.[c]}
+                         oficial={CAMPOS_OFICIAIS_MEDIA.includes(c)}
+                       />
+                     ))}
                  </div>
                </section>
    
-               {/* Textos qualitativos */}
-               <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                 <QuadroComentarios titulo="O que mais gostaram" itens={payload.agregados?.textos?.gostou_mais} />
-                 <QuadroComentarios titulo="Sugestões de melhoria" itens={payload.agregados?.textos?.sugestoes_melhoria} />
-                 <QuadroComentarios titulo="Comentários finais" itens={payload.agregados?.textos?.comentarios_finais} />
+               {/* Textos qualitativos + busca */}
+               <section className="space-y-3">
+                 <div className="flex items-center gap-2">
+                   <div className="relative flex-1">
+                     <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+                     <input
+                       type="search"
+                       className="w-full rounded-lg border bg-white dark:bg-gray-800 pl-9 pr-3 py-2 text-sm"
+                       placeholder="Buscar nos comentários (ex.: organização, coffee, som)..."
+                       value={buscaComentario}
+                       onChange={(e) => setBuscaComentario(e.target.value)}
+                       aria-label="Buscar nos comentários"
+                     />
+                   </div>
+                 </div>
+   
+                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                   <QuadroComentarios titulo="O que mais gostaram" itens={textosFiltrados.gostou_mais} />
+                   <QuadroComentarios titulo="Sugestões de melhoria" itens={textosFiltrados.sugestoes_melhoria} />
+                   <QuadroComentarios titulo="Comentários finais" itens={textosFiltrados.comentarios_finais} />
+                 </div>
                </section>
              </motion.div>
            )}
@@ -399,25 +572,37 @@
    }
    
    /* --------------------------- UI helpers --------------------------- */
-   function KPI({ titulo, valor, icon: Icon }) {
+   function KPI({ titulo, valor, icon: Icon, hint }) {
      return (
-       <div className="bg-white dark:bg-gray-800 rounded-xl shadow p-4 text-center">
-         <p className="text-sm text-gray-600 dark:text-gray-300 mb-1">{titulo}</p>
-         <p className="text-2xl font-bold text-lousa dark:text-white inline-flex items-center gap-2">
+       <div className="bg-white dark:bg-gray-800 rounded-xl shadow p-4">
+         <div className="flex items-start justify-between">
+           <p className="text-sm text-gray-600 dark:text-gray-300">{titulo}</p>
+           {hint ? (
+             <span className="text-[10px] text-gray-500 dark:text-gray-400">{hint}</span>
+           ) : null}
+         </div>
+         <p className="mt-1 text-2xl font-bold text-lousa dark:text-white inline-flex items-center gap-2">
            {Icon && <Icon className="w-5 h-5" aria-hidden="true" />} {valor}
          </p>
        </div>
      );
    }
    
-   function CampoBarra({ nome, media, dist }) {
+   function CampoBarra({ nome, media, dist, oficial = false }) {
      const pct = media != null ? (media / 5) * 100 : 0;
      const linha = dist || { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
    
      return (
        <div className="bg-white dark:bg-gray-800 rounded-xl shadow p-3">
          <div className="flex items-center justify-between mb-2">
-           <p className="text-sm font-medium">{nome}</p>
+           <p className="text-sm font-medium">
+             {nome}{" "}
+             {oficial && (
+               <span className="ml-2 align-middle text-[10px] rounded-full px-2 py-[2px] bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-900/40 dark:text-fuchsia-200">
+                 Oficial
+               </span>
+             )}
+           </p>
            <p className="text-sm font-semibold">{media != null ? media.toFixed(2) : "—"} / 5</p>
          </div>
          <div
@@ -425,7 +610,11 @@
            role="img"
            aria-label={`Média ${nome}: ${media != null ? media.toFixed(2) : "não disponível"} de 5`}
          >
-           <div className="h-2 bg-emerald-600 dark:bg-emerald-500" style={{ width: `${pct}%` }} aria-hidden="true" />
+           <div
+             className="h-2 bg-fuchsia-600 dark:bg-fuchsia-500"
+             style={{ width: `${pct}%` }}
+             aria-hidden="true"
+           />
          </div>
          <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-2">
            5★ {linha[5] ?? 0} • 4★ {linha[4] ?? 0} • 3★ {linha[3] ?? 0} • 2★ {linha[2] ?? 0} • 1★ {linha[1] ?? 0}
@@ -453,29 +642,6 @@
            <p className="text-sm text-gray-500 dark:text-gray-400">Sem comentários.</p>
          )}
        </div>
-     );
-   }
-   
-   function labelDoCampo(c) {
-     return (
-       {
-         divulgacao_evento: "Divulgação do evento",
-         recepcao: "Recepção",
-         credenciamento: "Credenciamento",
-         material_apoio: "Material de apoio",
-         pontualidade: "Pontualidade",
-         sinalizacao_local: "Sinalização do local",
-         conteudo_temas: "Conteúdo/temas",
-         desempenho_instrutor: "Desempenho do instrutor",
-         estrutura_local: "Estrutura do local",
-         acessibilidade: "Acessibilidade",
-         limpeza: "Limpeza",
-         inscricao_online: "Inscrição on-line",
-         exposicao_trabalhos: "Exposição de trabalhos",
-         apresentacao_oral_mostra: "Apresentação oral/mostra",
-         apresentacao_tcrs: "Apresentação TCRs",
-         oficinas: "Oficinas",
-       }[c] || c.replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase())
      );
    }
    

@@ -1,6 +1,6 @@
 // 📁 src/components/PrivateRoute.jsx
 import { Navigate, useLocation } from "react-router-dom";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { apiPerfilMe, getPerfilIncompletoFlag, subscribePerfilFlag } from "../services/api";
 import { useOnceEffect } from "../hooks/useOnceEffect";
 
@@ -10,6 +10,17 @@ const DEBUG =
     : false;
 
 /* ───────────────── Helpers ───────────────── */
+
+function log(...args) {
+  if (!DEBUG) return;
+  // eslint-disable-next-line no-console
+  console.log("[PR]", ...args);
+}
+function warn(...args) {
+  if (!DEBUG) return;
+  // eslint-disable-next-line no-console
+  console.warn("[PR]", ...args);
+}
 
 function safeAtob(b64) {
   try {
@@ -43,11 +54,11 @@ function getValidToken() {
   const now = Date.now() / 1000;
 
   if (payload?.nbf && now < payload.nbf) {
-    DEBUG && console.warn("[PR] Token ainda não é válido (nbf).");
+    warn("Token ainda não é válido (nbf).");
     return null;
   }
   if (payload?.exp && now >= payload.exp) {
-    DEBUG && console.warn("[PR] Token expirado — limpando sessão");
+    warn("Token expirado — limpando sessão");
     // Limpa apenas chaves de autenticação (evita apagar preferências)
     localStorage.removeItem("token");
     localStorage.removeItem("usuario");
@@ -55,7 +66,7 @@ function getValidToken() {
     sessionStorage.removeItem("perfil_incompleto");
     return null;
   }
-  return token; // retorna apenas o JWT
+  return token;
 }
 
 function normalizarLista(input) {
@@ -94,29 +105,34 @@ function getPerfisRobusto() {
 
 function temAcesso({ perfisUsuario, exigidosAny, exigidosAll, predicate }) {
   if (predicate && typeof predicate === "function") {
-    // Predicado tem prioridade (pode aplicar regras dinâmicas)
     return !!predicate(perfisUsuario);
   }
   const setUser = new Set(perfisUsuario.map((p) => String(p).toLowerCase()));
   if (setUser.has("administrador")) return true;
+
   if (exigidosAll?.length) {
     const allOk = exigidosAll.every((p) => setUser.has(String(p).toLowerCase()));
     if (!allOk) return false;
   }
+
   if (!exigidosAny?.length) return true;
   return exigidosAny.some((p) => setUser.has(String(p).toLowerCase()));
+}
+
+function pathMatches(pathname, arr) {
+  return (arr || []).some((r) => pathname === r || pathname.startsWith(r + "/"));
 }
 
 /* ───────────────── Componente ───────────────── */
 
 /**
  * Props suportadas:
- * - permitido: string[] | string | ((perfisUsuario:string[]) => boolean)  // any-of OU predicado
- * - permitidoAll: string[]                                                 // all-of
- * - perfilPermitido: string                                               // compat legada (any-of)
- * - publicPaths: string[]                                                 // rotas públicas
- * - perfilIsentos: string[]                                               // rotas isentas de redirect por perfil incompleto
- * - exigirCompleto: boolean                                               // força checagem de perfil (default: true)
+ * - permitido: string[] | string | ((perfisUsuario:string[]) => boolean)
+ * - permitidoAll: string[]
+ * - perfilPermitido: string (compat)
+ * - publicPaths: string[]
+ * - perfilIsentos: string[]
+ * - exigirCompleto: boolean (default: true)
  * - children: ReactNode
  */
 export default function PrivateRoute({
@@ -133,212 +149,219 @@ export default function PrivateRoute({
   const search = location?.search || "";
   const nextParam = encodeURIComponent(path + search);
 
-  const isMatch = (arr) => arr.some((r) => path === r || path.startsWith(r + "/"));
-  const isRotaPublica = isMatch(publicPaths);
-  const isRotaExentaPerfil = isMatch(perfilIsentos);
+  const isRotaPublica = useMemo(() => pathMatches(path, publicPaths), [path, publicPaths]);
+  const isRotaExentaPerfil = useMemo(() => pathMatches(path, perfilIsentos), [path, perfilIsentos]);
 
   // Normaliza regras de permissão
   const { exigidosAny, exigidosAll, predicate } = useMemo(() => {
     if (typeof permitido === "function") {
-      return { exigidosAny: [], exigidosAll: normalizarLista(permitidoAll), predicate: permitido };
+      return {
+        exigidosAny: [],
+        exigidosAll: normalizarLista(permitidoAll),
+        predicate: permitido,
+      };
     }
     const any = normalizarLista(permitido).concat(normalizarLista(perfilPermitido));
     const all = normalizarLista(permitidoAll);
     return { exigidosAny: any, exigidosAll: all, predicate: null };
   }, [permitido, permitidoAll, perfilPermitido]);
 
-  const [token, setToken] = useState(getValidToken());
+  // sessão local (token + perfis) — atualiza em storage/auth events
+  const [token, setToken] = useState(() => getValidToken());
   const [perfisUsuario, setPerfisUsuario] = useState(() => getPerfisRobusto());
 
-  // Suporte a sessão com cookie httpOnly (quando não há token no storage)
+  // fallback: sessão via cookie httpOnly (quando token não existe)
   const [sessaoValida, setSessaoValida] = useState(false);
 
-  const [checandoPerfil, setChecandoPerfil] = useState(true);
+  // flag perfil incompleto (null = desconhecido)
   const [perfilIncompleto, setPerfilIncompleto] = useState(() => {
     const f = getPerfilIncompletoFlag();
     return f === null ? null : !!f;
   });
+
+  // loading apenas quando realmente precisamos descobrir a flag
+  const [checandoPerfil, setChecandoPerfil] = useState(false);
 
   const autorizado = useMemo(
     () => temAcesso({ perfisUsuario, exigidosAny, exigidosAll, predicate }),
     [perfisUsuario, exigidosAny, exigidosAll, predicate]
   );
 
-  // ── Guards contra duplo-mount e corrida de efeitos ──
-  const ranInitialRef = useRef(false);
-  const prevPathRef = useRef(path);
-  const isFetchingRef = useRef(false);
-
-  /* Atualiza sessão/perfis ao mudar de rota */
-  useEffect(() => {
-    setToken(getValidToken());
-    setPerfisUsuario(getPerfisRobusto());
-  }, [location.pathname]);
-
-  /* Ouvinte de storage + evento manual "auth:changed" (roda uma única vez) */
+  // ───────────────── listeners (uma vez) ─────────────────
   useOnceEffect(() => {
-    const onStorage = (e) => {
-      if (!e.key || ["perfil", "usuario", "token"].includes(e.key)) {
-        DEBUG && console.log("[PR] storage → atualizar sessão/perfis");
-        setToken(getValidToken());
-        setPerfisUsuario(getPerfisRobusto());
-      }
-    };
-    const onAuthChanged = () => {
-      DEBUG && console.log("[PR] auth:changed → atualizar sessão/perfis");
+    const syncFromStorage = () => {
+      log("sync storage/auth → atualizar token/perfis");
       setToken(getValidToken());
       setPerfisUsuario(getPerfisRobusto());
     };
+
+    const onStorage = (e) => {
+      if (!e.key || ["perfil", "usuario", "token"].includes(e.key)) syncFromStorage();
+    };
+    const onAuthChanged = () => syncFromStorage();
+
     window.addEventListener("storage", onStorage);
     window.addEventListener("auth:changed", onAuthChanged);
+
     return () => {
       window.removeEventListener("storage", onStorage);
       window.removeEventListener("auth:changed", onAuthChanged);
     };
   }, []);
 
-  /* flag de perfil (broadcast) — assinatura única */
+  // flag de perfil via broadcast
   useOnceEffect(() => {
     const unsubscribe = subscribePerfilFlag((next) => {
-      DEBUG && console.log("[PR] evento perfil:flag →", next);
+      log("evento perfil:flag →", next);
       setPerfilIncompleto(next);
     });
     return unsubscribe;
   }, []);
 
-  /* Checagem de /perfil/me */
+  // sempre que rota muda, sincroniza token/perfis (rápido e barato)
   useEffect(() => {
-    const pathMudou = prevPathRef.current !== path;
+    setToken(getValidToken());
+    setPerfisUsuario(getPerfisRobusto());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path]);
 
-    if (ranInitialRef.current && !pathMudou) return;
-    prevPathRef.current = path;
-    if (!ranInitialRef.current) ranInitialRef.current = true;
+  // ───────────────── checagem do /perfil/me (com cancelamento) ─────────────────
+  const fetchIdRef = useRef(0);
 
-    if (isFetchingRef.current) return;
-    isFetchingRef.current = true;
+  const checarPerfilMe = useCallback(
+    async (mode) => {
+      // mode: "cookie" | "token"
+      const fetchId = ++fetchIdRef.current;
+      const ac = new AbortController();
 
-    const ac = new AbortController();
-    const finish = () => {
-      isFetchingRef.current = false;
-    };
-
-    (async () => {
-      const tk = getValidToken();
-
-      // Sem token:
-      if (!tk) {
-        if (isRotaPublica) {
-          DEBUG && console.log("[PR] Rota pública sem token — sem checagem de perfil.");
-          setChecandoPerfil(false);
-          finish();
-          return;
-        }
-        // tentar sessão via cookie httpOnly
-        try {
-          DEBUG && console.log("[PR] Tentando sessão via cookie em /perfil/me (silent)...");
-          const me = await apiPerfilMe({ on401: "silent", on403: "silent", signal: ac.signal });
-          if (me && typeof me === "object") {
-            setSessaoValida(true);
-            setPerfilIncompleto(!!me?.perfil_incompleto);
-
-            // injeta perfis detectados para o ciclo atual
-            const possiveisPerfis = []
-              .concat(normalizarLista(me?.perfil))
-              .concat(normalizarLista(me?.perfis))
-              .concat(normalizarLista(me?.roles))
-              .map((p) => p.toLowerCase());
-            if (possiveisPerfis.length) {
-              setPerfisUsuario((prev) => Array.from(new Set([...prev, ...possiveisPerfis])));
-            }
-
-            DEBUG && console.log("[PR] Sessão via cookie detectada. perfil_incompleto=", !!me?.perfil_incompleto);
-          } else {
-            DEBUG && console.log("[PR] Sessão via cookie não encontrada.");
-          }
-        } catch (e) {
-          if (e?.name !== "AbortError") {
-            DEBUG && console.warn("[PR] Falha em /perfil/me (cookie) — ignorando:", e?.message || e);
-          }
-        } finally {
-          setChecandoPerfil(false);
-          finish();
-        }
-        return;
-      }
-
-      // Com token válido:
-      if (!exigirCompleto) {
-        // Se não precisamos travar por perfil, não checamos /perfil/me aqui.
-        setChecandoPerfil(false);
-        finish();
-        return;
-      }
-
-      if (perfilIncompleto !== null) {
-        // Já sabemos a flag (storage/broadcast)
-        setChecandoPerfil(false);
-        finish();
-        return;
-      }
+      setChecandoPerfil(true);
 
       try {
-        DEBUG && console.log("[PR] Consultando /perfil/me (silent) com token...");
+        log(`checando /perfil/me (silent) mode=${mode}…`);
         const me = await apiPerfilMe({ on401: "silent", on403: "silent", signal: ac.signal });
-        setPerfilIncompleto(!!me?.perfil_incompleto);
-        DEBUG && console.log("[PR] Perfil incompleto? →", !!me?.perfil_incompleto);
+
+        // ignora se já houve outro fetch depois
+        if (fetchId !== fetchIdRef.current) return;
+
+        if (me && typeof me === "object") {
+          setSessaoValida(true);
+          setPerfilIncompleto(!!me?.perfil_incompleto);
+
+          // injeta perfis detectados (se vierem)
+          const possiveisPerfis = []
+            .concat(normalizarLista(me?.perfil))
+            .concat(normalizarLista(me?.perfis))
+            .concat(normalizarLista(me?.roles))
+            .map((p) => p.toLowerCase());
+
+          if (possiveisPerfis.length) {
+            setPerfisUsuario((prev) => Array.from(new Set([...prev, ...possiveisPerfis])));
+          }
+
+          log("perfil_incompleto=", !!me?.perfil_incompleto, "perfis=", possiveisPerfis);
+        } else {
+          log("sem objeto me (provável não autenticado por cookie)");
+        }
       } catch (e) {
         if (e?.name !== "AbortError") {
-          DEBUG && console.warn("[PR] Falha ao consultar perfil (silent):", e?.message || e);
+          warn("falha /perfil/me (silent):", e?.message || e);
         }
       } finally {
-        setChecandoPerfil(false);
-        finish();
+        if (fetchId === fetchIdRef.current) setChecandoPerfil(false);
       }
-    })();
 
-    return () => {
-      ac.abort();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, path, exigirCompleto, isRotaPublica]);
+      return () => ac.abort();
+    },
+    []
+  );
+
+  // Dispara checagem apenas quando necessário:
+  useEffect(() => {
+    const tk = token;
+
+    // 1) Se rota é pública, não precisamos checar nada
+    if (isRotaPublica) {
+      setChecandoPerfil(false);
+      return;
+    }
+
+    // 2) Sem token: tenta cookie httpOnly para liberar privadas quando existir
+    if (!tk) {
+      // se já detectamos sessão cookie antes, não precisa re-checar
+      if (sessaoValida) return;
+
+      // tenta cookie somente quando acessando rota privada
+      void checarPerfilMe("cookie");
+      return;
+    }
+
+    // 3) Com token:
+    if (!exigirCompleto) {
+      setChecandoPerfil(false);
+      return;
+    }
+
+    // 4) Se já temos a flag (storage/broadcast), não precisa checar
+    if (perfilIncompleto !== null) {
+      setChecandoPerfil(false);
+      return;
+    }
+
+    // 5) Precisamos descobrir a flag via /perfil/me
+    void checarPerfilMe("token");
+  }, [token, isRotaPublica, exigirCompleto, perfilIncompleto, sessaoValida, checarPerfilMe]);
 
   /* ───────────────── Decisões ───────────────── */
 
   // 1) Sem token e sem sessão via cookie: públicas liberadas; privadas → /login
   if (!token && !sessaoValida) {
     if (isRotaPublica) {
-      DEBUG && console.log(`[PR] Rota pública sem token — liberando: "${path}"`);
+      log(`Rota pública sem token — liberando: "${path}"`);
       return children;
     }
-    DEBUG && console.warn(`[PR] Redirect → /login (sem token) ao acessar "${path}"`);
+    warn(`Redirect → /login (sem token) ao acessar "${path}"`);
     return <Navigate to={`/login?next=${nextParam}`} replace state={{ from: location }} />;
   }
 
   // 2) Autorização por perfil/role
   if (!autorizado) {
-    DEBUG && console.warn("[PR] Redirect → /dashboard (sem perfil exigido)", {
-      exigidosAny,
-      exigidosAll,
-      perfisUsuario,
-    });
+    warn("Redirect → /dashboard (sem perfil exigido)", { exigidosAny, exigidosAll, perfisUsuario });
     return <Navigate to="/dashboard" replace />;
   }
 
-  // 3) Carregando 1ª checagem de perfil (quando exigida)
+  // 3) Carregando checagem de perfil apenas quando precisamos dela
   if (exigirCompleto && checandoPerfil && perfilIncompleto === null) {
-    DEBUG && console.log("[PR] Aguardando checagem de perfil...");
     return (
-      <div className="min-h-[40vh] flex items-center justify-center text-gray-500">
-        Carregando…
+      <div className="min-h-[45vh] grid place-items-center px-4">
+        <div
+          className={[
+            "w-full max-w-sm rounded-3xl",
+            "bg-white/80 dark:bg-zinc-900/70",
+            "ring-1 ring-black/5 dark:ring-white/10",
+            "shadow-[0_18px_55px_-40px_rgba(0,0,0,0.55)]",
+            "p-5 text-center",
+          ].join(" ")}
+          role="status"
+          aria-live="polite"
+        >
+          <div className="mx-auto h-10 w-10 rounded-2xl bg-zinc-900/5 dark:bg-white/10 grid place-items-center">
+            <div className="h-5 w-5 rounded-full border-2 border-zinc-300 dark:border-zinc-600 border-t-transparent animate-spin" />
+          </div>
+          <div className="mt-3 font-extrabold tracking-tight text-zinc-900 dark:text-white">
+            Verificando sua sessão…
+          </div>
+          <div className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
+            Só um instante.
+          </div>
+        </div>
       </div>
     );
   }
 
   // 4) Perfil incompleto: redireciona, exceto nas rotas isentas
   if (exigirCompleto && !isRotaExentaPerfil && perfilIncompleto === true) {
-    DEBUG && console.warn("[PR] Redirect → /perfil (perfil incompleto) a partir de", path);
-    const from = location;
-    return <Navigate to="/perfil" replace state={{ from, forced: true }} />;
+    warn("Redirect → /perfil (perfil incompleto) a partir de", path);
+    return <Navigate to="/perfil" replace state={{ from: location, forced: true }} />;
   }
 
   // 5) Voltando da tela de perfil forçado (evita loop após completar)
@@ -349,10 +372,10 @@ export default function PrivateRoute({
     location.state?.forced
   ) {
     const prev = location.state?.from?.pathname || "/dashboard";
-    DEBUG && console.log("[PR] Perfil completo — voltar para origem forçada:", prev);
+    log("Perfil completo — voltar para origem forçada:", prev);
     return <Navigate to={prev} replace />;
   }
 
-  DEBUG && console.log("[PR] OK: render children para", path);
+  log("OK: render children para", path);
   return children;
 }

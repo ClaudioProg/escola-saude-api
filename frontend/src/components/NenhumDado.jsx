@@ -2,6 +2,7 @@
 import { AlertCircle } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
 import PropTypes from "prop-types";
+import { useId, useMemo } from "react";
 
 const sizeMap = {
   sm: { wrap: "w-12 h-12", icon: "w-6 h-6", title: "text-base", hint: "text-xs" },
@@ -12,10 +13,10 @@ const sizeMap = {
 // degradê 3 cores (harmoniza com o restante do app)
 const VARIANT_RING = {
   emerald: "from-emerald-500 via-teal-500 to-lime-500",
-  indigo:  "from-indigo-500 via-violet-500 to-fuchsia-500",
-  cyan:    "from-cyan-500 via-sky-500 to-blue-500",
-  rose:    "from-rose-500 via-red-500 to-orange-500",
-  slate:   "from-slate-500 via-zinc-500 to-stone-500",
+  indigo: "from-indigo-500 via-violet-500 to-fuchsia-500",
+  cyan: "from-cyan-500 via-sky-500 to-blue-500",
+  rose: "from-rose-500 via-red-500 to-orange-500",
+  slate: "from-slate-500 via-zinc-500 to-stone-500",
 };
 
 export default function NenhumDado({
@@ -24,12 +25,12 @@ export default function NenhumDado({
   Icone = AlertCircle,
   ctaLabel,
   onCta,
-  actions,                      // [{label,onClick,icon?,variant?('primary'|'secondary')}]
+  actions, // [{label,onClick,icon?,variant?('primary'|'secondary')}]
   size = "md",
   bordered = false,
   iconBackground = true,
   variant = "indigo",
-  ariaLive = "polite",          // 'polite' | 'assertive' | null (desliga role/aria-live)
+  ariaLive = "polite", // 'polite' | 'assertive' | null (desliga role/aria-live)
   className = "",
   "data-testid": testId = "nenhum-dado",
 }) {
@@ -37,15 +38,17 @@ export default function NenhumDado({
   const reduceMotion = useReducedMotion();
   const ring = VARIANT_RING[variant] || VARIANT_RING.indigo;
 
-  // compat com props antigas (ctaLabel/onCta)
-  const mergedActions =
-    Array.isArray(actions) && actions.length
-      ? actions
-      : ctaLabel && typeof onCta === "function"
-      ? [{ label: ctaLabel, onClick: onCta, variant: "primary" }]
-      : [];
+  const uid = useId();
+  const descId = sugestao ? `${testId}-${uid}-desc` : undefined;
 
-  const descId = sugestao ? `${testId}-desc` : undefined;
+  // compat com props antigas (ctaLabel/onCta)
+  const mergedActions = useMemo(() => {
+    if (Array.isArray(actions) && actions.length) return actions;
+    if (ctaLabel && typeof onCta === "function") return [{ label: ctaLabel, onClick: onCta, variant: "primary" }];
+    return [];
+  }, [actions, ctaLabel, onCta]);
+
+  const hasLive = ariaLive === "polite" || ariaLive === "assertive";
 
   return (
     <motion.div
@@ -54,31 +57,45 @@ export default function NenhumDado({
         bordered ? "rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900" : "",
         className,
       ].join(" ")}
-      role={ariaLive ? "status" : undefined}
-      aria-live={ariaLive || undefined}
-      aria-atomic={ariaLive ? "true" : undefined}
+      role={hasLive ? "status" : undefined}
+      aria-live={hasLive ? ariaLive : undefined}
+      aria-atomic={hasLive ? "true" : undefined}
       aria-describedby={descId}
-      initial={reduceMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: reduceMotion ? 0 : 0.35 }}
+      initial={reduceMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: 16 }}
+      animate={reduceMotion ? { opacity: 1, y: 0 } : { opacity: 1, y: 0 }}
+      transition={{ duration: reduceMotion ? 0 : 0.35, ease: "easeOut" }}
       data-testid={testId}
     >
       <div
         className={[
           "inline-flex items-center justify-center mb-4 relative overflow-hidden",
-          iconBackground ? "rounded-full bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow" : "",
+          iconBackground
+            ? "rounded-full bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow"
+            : "",
           s.wrap,
         ].join(" ")}
         aria-hidden="true"
       >
         {iconBackground && <div className={`absolute inset-0 opacity-20 bg-gradient-to-br ${ring}`} />}
-        <Icone className={`${s.icon} text-lousa dark:text-white relative`} />
+        <Icone
+          className={[
+            s.icon,
+            // mantém seu token com fallback elegante:
+            "text-lousa dark:text-white text-slate-800 dark:text-white",
+            "relative",
+          ].join(" ")}
+        />
       </div>
 
-      <p className={`${s.title} font-semibold text-center`}>{mensagem}</p>
+      <p className={`${s.title} font-semibold text-center text-slate-800 dark:text-slate-100`}>
+        {mensagem}
+      </p>
 
       {sugestao && (
-        <p id={descId} className={`${s.hint} text-gray-500 dark:text-gray-400 mt-1 text-center`}>
+        <p
+          id={descId}
+          className={`${s.hint} text-gray-500 dark:text-gray-400 mt-1 text-center`}
+        >
           {sugestao}
         </p>
       )}
@@ -95,8 +112,9 @@ export default function NenhumDado({
                 className={[
                   "inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition",
                   "focus-visible:ring-2 focus-visible:ring-offset-2",
+                  "active:scale-[.99]",
                   isPrimary
-                    ? "bg-lousa text-white hover:opacity-90 focus-visible:ring-lousa"
+                    ? "bg-lousa bg-slate-900 text-white hover:opacity-90 focus-visible:ring-lousa focus-visible:ring-slate-900"
                     : "bg-gray-200 text-gray-900 hover:bg-gray-300 dark:bg-gray-700 dark:text-white dark:hover:bg-gray-600 focus-visible:ring-gray-400",
                 ].join(" ")}
               >

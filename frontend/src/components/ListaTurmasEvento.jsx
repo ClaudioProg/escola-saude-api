@@ -1,6 +1,6 @@
-// ✅ frontend/src/components/ListaTurmasEvento.jsx (premium revamp)
+// ✅ frontend/src/components/ListaTurmasEvento.jsx (premium polish + perf + date-safe)
 /* eslint-disable no-console */
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import {
   CalendarDays,
@@ -10,16 +10,20 @@ import {
   CheckCircle2,
   Sparkles,
   ArrowRight,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 
 /* ========================== Helpers ========================== */
 const clamp = (n, a = 0, b = 100) => Math.max(a, Math.min(b, n));
+
 const toPct = (num, den) => {
   const n = Number(num) || 0;
   const d = Number(den) || 0;
   return d <= 0 ? 0 : clamp(Math.round((n / d) * 100));
 };
-const pad = (s) => (typeof s === "string" ? s.padStart(2, "0") : s);
+
+const pad2 = (s) => String(s ?? "").padStart(2, "0");
 
 // "0800" → "08:00"; "8:0" → "08:00"; "08:00:00" → "08:00"
 const parseHora = (val) => {
@@ -45,25 +49,45 @@ const parseHora = (val) => {
   return hh === "00" && mm === "00" ? null : `${hh}:${mm}`;
 };
 
+const isDateOnly = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+
 // YYYY-MM-DD (LOCAL) a partir de Date (evita timezone shift)
 const ymdLocal = (d) => {
-  if (!(d instanceof Date)) return "";
+  if (!(d instanceof Date) || Number.isNaN(+d)) return "";
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 };
 
+// Converte qualquer entrada em "YYYY-MM-DD" sem parse UTC perigoso
 const isoDiaLocal = (v) => {
   if (!v) return "";
-  if (typeof v === "object" && v.data) {
+
+  // objetos {data: ...}
+  if (typeof v === "object" && v?.data) {
     if (v.data instanceof Date) return ymdLocal(v.data);
     if (typeof v.data === "string") return v.data.slice(0, 10);
+    return "";
   }
+
+  // Date
   if (v instanceof Date) return ymdLocal(v);
-  if (typeof v === "string") return v.slice(0, 10);
-  const dt = new Date(v);
-  return Number.isNaN(+dt) ? "" : ymdLocal(dt);
+
+  // string
+  if (typeof v === "string") {
+    // se já for YYYY-MM-DD, usa direto
+    if (isDateOnly(v)) return v;
+    // se for ISO completo, pega o dia sem depender do Date()
+    // ex: "2026-01-09T12:00:00Z" -> "2026-01-09"
+    if (/^\d{4}-\d{2}-\d{2}T/.test(v)) return v.slice(0, 10);
+    // fallback conservador (se vier "2026/01/09", etc.)
+    const m = v.match(/^(\d{4})[-/](\d{2})[-/](\d{2})/);
+    return m ? `${m[1]}-${m[2]}-${m[3]}` : "";
+  }
+
+  // número/qualquer outra coisa: NÃO faz new Date(v) (pode virar UTC shift)
+  return "";
 };
 
 const br = (iso) => {
@@ -91,7 +115,7 @@ const extrairHorasDeEncontros = (encontrosInline) => {
 };
 
 const toDateLocal = (dateOnly, hhmm = "00:00") => {
-  if (!dateOnly) return null;
+  if (!dateOnly || !isDateOnly(dateOnly)) return null;
   const [h, m] = (hhmm || "00:00").split(":").map((x) => parseInt(x || "0", 10));
   const [Y, M, D] = dateOnly.split("-").map((x) => parseInt(x, 10));
   return new Date(
@@ -199,21 +223,34 @@ export default function ListaTurmasEvento({
   jaInscritoNoEvento = false,
   jaInstrutorDoEvento = false,
   mostrarStatusTurma = true,
-  /** mostra “realizados/total” em encontros */
   exibirRealizadosTotal = false,
-  /** IDs de turmas em conflito — internos + globais */
   turmasEmConflito = [],
 }) {
   const isCongresso = String(eventoTipo || "").toLowerCase() === "congresso";
-  const jaInscritoTurma = (tid) => inscricoesConfirmadas.map(Number).includes(Number(tid));
+
+  // ✅ perf: sets memoizados
+  const inscritosSet = useMemo(
+    () => new Set((inscricoesConfirmadas || []).map((x) => Number(x))),
+    [inscricoesConfirmadas]
+  );
+  const conflitosSet = useMemo(
+    () => new Set((turmasEmConflito || []).map((x) => Number(x))),
+    [turmasEmConflito]
+  );
 
   const HOJE_ISO = useMemo(() => ymdLocal(hoje), [hoje]);
-  const conflitosSet = useMemo(() => new Set((turmasEmConflito || []).map(Number)), [turmasEmConflito]);
+
+  // ✅ UX: controlar “mostrar mais” por turma
+  const [openMeetings, setOpenMeetings] = useState(() => ({})); // { [turmaId]: boolean }
+
+  const toggleMeetings = (tid) =>
+    setOpenMeetings((prev) => ({ ...prev, [tid]: !prev[tid] }));
 
   return (
     <div id={`turmas-${eventoId}`} className="mt-5 space-y-5">
       {(turmas || []).map((t) => {
-        const jaInscrito = jaInscritoTurma(t.id);
+        const tid = Number(t?.id);
+        const jaInscrito = inscritosSet.has(tid);
 
         // bloquear outras turmas se não for congresso
         const bloquearOutras = !isCongresso && jaInscritoNoEvento && !jaInscrito;
@@ -226,14 +263,14 @@ export default function ListaTurmasEvento({
         const temLimiteVagas = vagas > 0;
         const perc = temLimiteVagas ? toPct(inscritos, vagas) : 0;
 
-        const di = String(t.data_inicio || "").slice(0, 10);
-        const df = String(t.data_fim || "").slice(0, 10);
+        const di = String(t?.data_inicio || "").slice(0, 10);
+        const df = String(t?.data_fim || "").slice(0, 10);
 
         // encontros
         const encontrosInline =
-          (Array.isArray(t.encontros) && t.encontros.length ? t.encontros : null) ||
-          (Array.isArray(t.datas) && t.datas.length ? t.datas : null) ||
-          (Array.isArray(t._datas) && t._datas.length ? t._datas : null);
+          (Array.isArray(t?.encontros) && t.encontros.length ? t.encontros : null) ||
+          (Array.isArray(t?.datas) && t.datas.length ? t.datas : null) ||
+          (Array.isArray(t?._datas) && t._datas.length ? t._datas : null);
 
         const encontros = (encontrosInline || []).map((d) => isoDiaLocal(d)).filter(Boolean);
         const encontrosOrdenados = Array.from(new Set(encontros)).sort();
@@ -242,16 +279,16 @@ export default function ListaTurmasEvento({
 
         // horários
         const { hi: hiEncontros, hf: hfEncontros } = extrairHorasDeEncontros(encontrosInline);
-        const hi = parseHora(t.horario_inicio) || hiEncontros || null;
-        const hf = parseHora(t.horario_fim) || hfEncontros || null;
+        const hi = parseHora(t?.horario_inicio) || hiEncontros || null;
+        const hf = parseHora(t?.horario_fim) || hfEncontros || null;
 
         const lotada = temLimiteVagas && inscritos >= vagas;
-        const carregando = Number(inscrevendo) === Number(t.id);
+        const carregando = Number(inscrevendo) === tid;
 
         const statusTurma = getStatusPorJanela({ di, df, hi, hf, agora: hoje });
 
         const bloqueadoPorInstrutor = Boolean(jaInstrutorDoEvento);
-        const emConflito = conflitosSet.has(Number(t.id));
+        const emConflito = conflitosSet.has(tid);
         const disabled =
           bloqueadoPorInstrutor || carregando || jaInscrito || lotada || bloquearOutras || emConflito;
 
@@ -263,18 +300,23 @@ export default function ListaTurmasEvento({
           (lotada && "Turma lotada") ||
           "";
 
-        const idKey = t.id || `${t.nome || "Turma"}-${di}-${hi || "??"}`;
+        const idKey = t?.id || `${t?.nome || "Turma"}-${di}-${hi || "??"}`;
 
         const datasLabel =
           di && df
-            ? `${di.split("-").reverse().map(pad).join("/")} a ${df.split("-").reverse().map(pad).join("/")}`
+            ? `${br(di)} a ${br(df)}`
             : di
-            ? `A partir de ${di.split("-").reverse().map(pad).join("/")}`
-            : df
-            ? `Até ${df.split("-").reverse().map(pad).join("/")}`
-            : "Data a definir";
+              ? `A partir de ${br(di)}`
+              : df
+                ? `Até ${br(df)}`
+                : "Data a definir";
 
         const horarioLabel = hi && hf ? `${hi} às ${hf}` : "a definir";
+
+        // ✅ encontros: colapsar se muitos
+        const manyMeetings = qtdEncontros > 12;
+        const isOpen = !!openMeetings[tid];
+        const visibleMeetings = manyMeetings && !isOpen ? encontrosOrdenados.slice(0, 8) : encontrosOrdenados;
 
         return (
           <article
@@ -299,7 +341,7 @@ export default function ListaTurmasEvento({
               <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
                 <div className="min-w-0">
                   <h4 className="text-lg sm:text-xl font-extrabold tracking-tight text-zinc-900 dark:text-white break-words">
-                    {t.nome || "Turma"}
+                    {t?.nome || "Turma"}
                   </h4>
 
                   {/* ministats */}
@@ -317,9 +359,10 @@ export default function ListaTurmasEvento({
                     />
                   </div>
 
-                  {Number.isFinite(Number(t.carga_horaria)) && (
+                  {Number.isFinite(Number(t?.carga_horaria)) && (
                     <div className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-                      Carga horária: <span className="font-semibold">{Number(t.carga_horaria)}h</span>
+                      Carga horária:{" "}
+                      <span className="font-semibold">{Number(t.carga_horaria)}h</span>
                     </div>
                   )}
                 </div>
@@ -327,7 +370,10 @@ export default function ListaTurmasEvento({
                 {/* Chips à direita */}
                 <div className="flex flex-wrap gap-2 lg:justify-end">
                   {(lotada || mostrarStatusTurma) && (
-                    <span className={`${chipBase} ${lotada ? chipStyles.lotada : statusChipClass(statusTurma)}`}>
+                    <span
+                      className={`${chipBase} ${lotada ? chipStyles.lotada : statusChipClass(statusTurma)}`}
+                      aria-label={lotada ? "Turma lotada" : `Status: ${statusTurma}`}
+                    >
                       <Sparkles className="w-3.5 h-3.5" />
                       {lotada ? "Lotada" : statusTurma}
                     </span>
@@ -354,6 +400,7 @@ export default function ListaTurmasEvento({
                     <div className="flex items-center justify-between gap-3 mb-2">
                       <div className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">
                         {qtdEncontros} encontro{qtdEncontros > 1 ? "s" : ""}
+
                         {exibirRealizadosTotal && (
                           <span
                             className="ml-2 inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full
@@ -375,7 +422,7 @@ export default function ListaTurmasEvento({
                     </div>
 
                     <div className="flex flex-wrap gap-2">
-                      {encontrosOrdenados.map((d, idx) => {
+                      {visibleMeetings.map((d, idx) => {
                         const jaOcorreu = d <= HOJE_ISO;
                         return (
                           <span
@@ -393,6 +440,23 @@ export default function ListaTurmasEvento({
                           </span>
                         );
                       })}
+
+                      {manyMeetings && (
+                        <button
+                          type="button"
+                          onClick={() => toggleMeetings(tid)}
+                          className="px-2.5 py-1 text-xs rounded-full border font-semibold shadow-sm
+                                     bg-white text-zinc-700 border-zinc-200 hover:bg-zinc-50
+                                     dark:bg-zinc-900/40 dark:text-zinc-200 dark:border-zinc-700 dark:hover:bg-zinc-900/60"
+                          aria-expanded={isOpen}
+                          aria-label={isOpen ? "Mostrar menos encontros" : "Mostrar mais encontros"}
+                        >
+                          <span className="inline-flex items-center gap-1.5">
+                            {isOpen ? "Mostrar menos" : `+${Math.max(0, qtdEncontros - 8)} mais`}
+                            {isOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                          </span>
+                        </button>
+                      )}
                     </div>
                   </>
                 ) : (
@@ -448,30 +512,30 @@ export default function ListaTurmasEvento({
                     jaInstrutorDoEvento
                       ? "Você é instrutor do evento"
                       : jaInscrito
-                      ? "Inscrito nesta turma"
-                      : emConflito
-                      ? "Conflito de horário com outra turma já inscrita"
-                      : lotada
-                      ? "Turma sem vagas"
-                      : bloquearOutras
-                      ? "Inscrição indisponível (já inscrito em outra turma do evento)"
-                      : "Inscrever-se na turma"
+                        ? "Inscrito nesta turma"
+                        : emConflito
+                          ? "Conflito de horário com outra turma já inscrita"
+                          : lotada
+                            ? "Turma sem vagas"
+                            : bloquearOutras
+                              ? "Inscrição indisponível (já inscrito em outra turma do evento)"
+                              : "Inscrever-se na turma"
                   }
                 >
                   <span className="inline-flex items-center gap-2">
                     {Number(inscrevendo) === Number(t.id)
                       ? "Processando..."
                       : jaInstrutorDoEvento
-                      ? "Instrutor do evento"
-                      : jaInscrito
-                      ? "Inscrito"
-                      : emConflito
-                      ? "Conflito de horário"
-                      : bloquearOutras
-                      ? "Indisponível"
-                      : lotada
-                      ? "Sem vagas"
-                      : "Inscrever-se"}
+                        ? "Instrutor do evento"
+                        : jaInscrito
+                          ? "Inscrito"
+                          : emConflito
+                            ? "Conflito de horário"
+                            : bloquearOutras
+                              ? "Indisponível"
+                              : lotada
+                                ? "Sem vagas"
+                                : "Inscrever-se"}
                     {!disabled && <ArrowRight className="w-4 h-4" />}
                   </span>
                 </button>
@@ -528,9 +592,7 @@ ListaTurmasEvento.propTypes = {
   jaInscritoNoEvento: PropTypes.bool,
   jaInstrutorDoEvento: PropTypes.bool,
   mostrarStatusTurma: PropTypes.bool,
-  /** quando true, mostra o badge “realizados/total” */
   exibirRealizadosTotal: PropTypes.bool,
-  /** lista de IDs de turmas em conflito para desabilitar CTA e sinalizar */
   turmasEmConflito: PropTypes.arrayOf(
     PropTypes.oneOfType([PropTypes.number, PropTypes.string])
   ),

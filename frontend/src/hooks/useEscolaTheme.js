@@ -1,25 +1,49 @@
-// ✅ src/hooks/useEscolaTheme.js
-import { useEffect, useMemo, useState } from "react";
+// 📁 src/hooks/useEscolaTheme.js
+import { useEffect, useMemo, useState, useRef } from "react";
 import {
   ESCOLA_THEME_KEY,
   applyThemeToHtml,
   getEffectiveTheme,
   watchSystemTheme,
+  getStoredTheme,
+  setStoredTheme,
 } from "../theme/escolaTheme";
 
-export default function useEscolaTheme() {
-  const [theme, setTheme] = useState(() => localStorage.getItem(ESCOLA_THEME_KEY) || "system");
+// Nota: o boot-theme.js já aplica o tema antes da hidratação.
+// Este hook mantém tudo sincronizado com o React (UI/botões/menus).
 
+export default function useEscolaTheme() {
+  // SSR-safe: inicializa lendo do localStorage quando possível
+  const initial = (() => getStoredTheme() || "system")();
+  const [theme, setTheme] = useState(initial); // "light" | "dark" | "system"
+  const unsubscribeRef = useRef(null);
+
+  // Aplica e persiste sempre que mudar
   useEffect(() => {
     applyThemeToHtml(theme);
-    localStorage.setItem(ESCOLA_THEME_KEY, theme);
+    setStoredTheme(theme);
 
-    if (theme !== "system") return;
-    return watchSystemTheme(() => syncSystemTheme());
+    // Se "system", escuta alterações do SO
+    if (theme === "system") {
+      unsubscribeRef.current?.();
+      unsubscribeRef.current = watchSystemTheme(() => {
+        // Só reaplica quando for realmente "system"
+        applyThemeToHtml("system");
+      });
+      return () => {
+        unsubscribeRef.current?.();
+        unsubscribeRef.current = null;
+      };
+    } else {
+      // Se fixo (light/dark), garante que não fica ouvindo o SO
+      unsubscribeRef.current?.();
+      unsubscribeRef.current = null;
+    }
   }, [theme]);
 
-  const effective = useMemo(() => getEffectiveTheme(theme), [theme]);
-  const isDark = effective === "dark";
+  // Tema efetivo (para UI)
+  const effectiveTheme = useMemo(() => getEffectiveTheme(theme), [theme]);
+  const isDark = effectiveTheme === "dark";
 
-  return { theme, setTheme, effectiveTheme: effective, isDark };
+  return { theme, setTheme, effectiveTheme, isDark, STORAGE_KEY: ESCOLA_THEME_KEY };
 }

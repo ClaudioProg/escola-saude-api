@@ -1,95 +1,107 @@
 // ✅ src/utils/downloadBannerTrabalho.js
-/* Util para baixar o banner de um trabalho já autenticado.
- * - Usa fetch com Authorization: Bearer <token> (igual ao axios)
- * - Faz GET /api/trabalhos/submissoes/:id/banner
- * - Cria um link temporário e dispara o download
- */
+// -----------------------------------------------------------------------------
+// Baixa o banner (arquivo) de uma submissão autenticada usando a nossa API
+// central (com headers de fuso, CORS-safe, https upgrade, etc.).
+//
+// Compatibilidade mantida:
+//   baixarBannerTrabalho(submissaoId, nomeSugestao?: string)
+//
+// Extras:
+// - Usa apiGetResponse (para ler Content-Disposition) + downloadBlob
+// - Parser robusto de filename (suporta filename* e filename="...")
+// - Fallback de extensão por Content-Type
+// -----------------------------------------------------------------------------
 
-/** Recupera o token salvo no frontend */
-function getAuthToken() {
-  if (typeof window === "undefined") return null;
-  try {
-    return (
-      localStorage.getItem("token") ||          // 👈 ajuste aqui se usar outro nome
-      localStorage.getItem("jwt") ||
-      localStorage.getItem("authToken") ||
-      null
-    );
-  } catch {
-    return null;
+import { apiGetResponse, downloadBlob } from "../services/api";
+
+/** Parser robusto para extrair nome de arquivo do Content-Disposition. */
+function parseFilenameFromContentDisposition(cd = "") {
+  if (typeof cd !== "string" || !cd) return undefined;
+
+  // Preferência: filename* (RFC 5987)
+  // Ex.: filename*=UTF-8''Relat%C3%B3rio%20Final.pdf
+  const mStar = cd.match(/filename\*\s*=\s*([^']*)''([^;]+)/i);
+  if (mStar && mStar[2]) {
+    try {
+      return decodeURIComponent(mStar[2].trim().replace(/^["']|["']$/g, ""));
+    } catch {
+      // segue para tentar o filename "simples"
+    }
   }
+
+  // Secundário: filename="arquivo.ext" OU filename=arquivo.ext
+  const m = cd.match(/filename\s*=\s*("?)([^";]+)\1/i);
+  if (m && m[2]) {
+    return m[2].trim();
+  }
+
+  return undefined;
 }
 
+/** Mapeia uma extensão a partir do Content-Type (fallback). */
+function inferExtFromContentType(ct = "") {
+  const s = String(ct || "").toLowerCase();
+  if (!s) return "";
+  if (s.includes("pdf")) return ".pdf";
+  if (s.includes("presentation") || s.includes("powerpoint")) return ".pptx";
+  if (s.includes("zip")) return ".zip";
+  if (s.includes("msword")) return ".doc";
+  if (s.includes("wordprocessingml")) return ".docx";
+  if (s.includes("excel")) return ".xlsx";
+  if (s.includes("image/png")) return ".png";
+  if (s.includes("image/jpeg")) return ".jpg";
+  return "";
+}
+
+/**
+ * Baixa o banner de um trabalho.
+ * @param {number|string} submissaoId
+ * @param {string} [nomeSugestao] - nome sugerido (fallback)
+ */
 export async function baixarBannerTrabalho(submissaoId, nomeSugestao) {
   try {
-    if (!submissaoId) {
+    if (!submissaoId && submissaoId !== 0) {
       console.error("[baixarBannerTrabalho] submissaoId inválido:", submissaoId);
-      return;
+      return false;
     }
 
-    const token = getAuthToken();
-
-    const resp = await fetch(`/api/trabalhos/submissoes/${submissaoId}/banner`, {
-      method: "GET",
-      credentials: "include", // se algum dia você usar cookie, continua valendo
-      headers: token
-        ? {
-            Authorization: `Bearer ${token}`,   // 🔑 AQUI É O SEGREDO
-          }
-        : {},
+    // Usamos a rota pública autenticada da API central.
+    // apiGetResponse mantém os headers intactos para lermos Content-Disposition
+    const res = await apiGetResponse(`/trabalhos/submissoes/${submissaoId}/banner`, {
+      auth: true,
+      on401: "silent",
+      on403: "silent",
     });
 
-    if (!resp.ok) {
-      const texto = await resp.text().catch(() => "");
-      console.error(
-        "[baixarBannerTrabalho] resposta não OK:",
-        resp.status,
-        texto
-      );
-      alert(
-        `Não foi possível baixar o banner (código ${resp.status}). ` +
-          "Tente novamente mais tarde."
-      );
-      return;
-    }
+    const contentType = res.headers.get("Content-Type") || "application/octet-stream";
+    const cd = res.headers.get("Content-Disposition") || "";
 
-    const contentType =
-      resp.headers.get("Content-Type") || "application/octet-stream";
-    const dispo = resp.headers.get("Content-Disposition") || "";
-
-    // Tenta extrair o nome do arquivo do header, se existir
-    let nomeArquivo =
-      (dispo.match(/filename="?([^"]+)"?/i) || [])[1] ||
+    // 1) tenta extrair do header
+    let filename =
+      parseFilenameFromContentDisposition(cd) ||
       nomeSugestao ||
-      "banner";
+      `banner-${submissaoId}`;
 
-    // Se não tiver extensão e for PPT/PPTX ou PDF, força uma
-    if (!/\.[a-z0-9]{2,5}$/i.test(nomeArquivo)) {
-      if (/presentation|powerpoint/i.test(contentType)) {
-        nomeArquivo += ".pptx";
-      } else if (/pdf/i.test(contentType)) {
-        nomeArquivo += ".pdf";
-      }
+    // 2) assegura extensão se não tiver
+    if (!/\.[a-z0-9]{2,5}$/i.test(filename)) {
+      const inferred = inferExtFromContentType(contentType);
+      if (inferred) filename += inferred;
     }
 
-    const blob = await resp.blob();
-    const url = window.URL.createObjectURL(blob);
-
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = nomeArquivo;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    window.URL.revokeObjectURL(url);
+    // 3) baixa o Blob e dispara download
+    const blob = await res.blob();
+    downloadBlob(filename, blob);
 
     console.log("[baixarBannerTrabalho] download iniciado:", {
       submissaoId,
-      nomeArquivo,
+      filename,
       contentType,
     });
+    return true;
   } catch (err) {
-    console.error("[baixarBannerTrabalho] erro inesperado:", err);
-    alert("Não foi possível baixar o banner. Tente novamente em instantes.");
+    // apiGetResponse já trata 401/403 com as flags passadas; aqui registramos o erro.
+    console.error("[baixarBannerTrabalho] erro:", err);
+    // Evita alert bloqueante; deixe o chamador decidir exibir toast se quiser.
+    return false;
   }
 }

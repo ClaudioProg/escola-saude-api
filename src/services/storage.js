@@ -1,4 +1,6 @@
 // 📁 server/services/storage.js
+/* eslint-disable no-console */
+
 const path = require("path");
 const fs = require("fs/promises");
 const fsRaw = require("fs");
@@ -7,16 +9,40 @@ const crypto = require("crypto");
 // Reusa seus paths (BASE/local de modelos já garantido no server.js)
 const { MODELOS_CHAMADAS_DIR, ensureDir } = require("../paths");
 
+// extensões permitidas
+const ALLOWED_EXT = new Set([".ppt", ".pptx"]);
+const MAX_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
+
+function assertSafeStorageKey(storageKey) {
+  // impede ../ e paths absolutos
+  if (
+    storageKey.includes("..") ||
+    path.isAbsolute(storageKey) ||
+    storageKey.startsWith("/") ||
+    storageKey.startsWith("\\")
+  ) {
+    throw new Error("storageKey inválida");
+  }
+}
+
 /**
  * Salva o arquivo de modelo da chamada no disco.
- * @param {number} chamadaId
- * @param {{originalname:string, mimetype:string, size:number, buffer:Buffer}} file (multer memory)
+ * @param {number|string} chamadaId
+ * @param {{originalname:string, mimetype?:string, size?:number, buffer:Buffer}} file (multer memory)
  * @returns {{ storageKey: string, sha256: string }}
  */
 async function saveChamadaModelo(chamadaId, file) {
+  const id = String(chamadaId);
+  if (!id || !file || !Buffer.isBuffer(file.buffer)) {
+    throw new Error("Arquivo inválido para salvar modelo.");
+  }
+  if (file.size && file.size > MAX_SIZE_BYTES) {
+    throw new Error("Arquivo excede o tamanho máximo permitido.");
+  }
+
   // força extensão conhecida
   let ext = path.extname(file.originalname || "").toLowerCase();
-  if (!ext || ![".ppt", ".pptx"].includes(ext)) {
+  if (!ALLOWED_EXT.has(ext)) {
     // se vier sem extensão (depende do SO/navegador), assume .pptx
     ext = ".pptx";
   }
@@ -25,22 +51,24 @@ async function saveChamadaModelo(chamadaId, file) {
   const safeName = `modelo_banner${ext}`;
 
   // pasta: <MODELOS_CHAMADAS_DIR>/<chamadaId>/
-  const dir = path.join(MODELOS_CHAMADAS_DIR, String(chamadaId));
+  const dir = path.join(MODELOS_CHAMADAS_DIR, id);
   await ensureDir(dir);
 
-  // guardamos uma storageKey relativa à base MODELOS_CHAMADAS_DIR
-  // (use sempre / para normalizar)
-  const storageKey = path.posix.join(String(chamadaId), safeName);
+  // storageKey relativa à base MODELOS_CHAMADAS_DIR (sempre posix)
+  const storageKey = path.posix.join(id, safeName);
+  assertSafeStorageKey(storageKey);
 
   // caminho absoluto
   const fullPath = path.join(MODELOS_CHAMADAS_DIR, storageKey);
 
   // hash para auditoria/cache-busting
-  const buf = file.buffer; // usando multer memoryStorage()
+  const buf = file.buffer;
   const sha256 = crypto.createHash("sha256").update(buf).digest("hex");
 
-  // grava (substitui se já existe)
-  await fs.writeFile(fullPath, buf);
+  // escrita atômica: escreve num tmp e renomeia
+  const tmpPath = `${fullPath}.tmp-${Date.now()}`;
+  await fs.writeFile(tmpPath, buf);
+  await fs.rename(tmpPath, fullPath);
 
   return { storageKey, sha256 };
 }
@@ -51,8 +79,21 @@ async function saveChamadaModelo(chamadaId, file) {
  * @returns {import("fs").ReadStream}
  */
 function stream(storageKey) {
+  assertSafeStorageKey(storageKey);
   const fullPath = path.join(MODELOS_CHAMADAS_DIR, storageKey);
   return fsRaw.createReadStream(fullPath);
 }
 
-module.exports = { saveChamadaModelo, stream };
+/**
+ * (Opcional) Headers prontos para download/inline
+ */
+function getDownloadHeaders(filename) {
+  return {
+    "Content-Type":
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "Content-Disposition": `attachment; filename="${filename}"`,
+    "X-Content-Type-Options": "nosniff",
+  };
+}
+
+module.exports = { saveChamadaModelo, stream, getDownloadHeaders };

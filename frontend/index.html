@@ -1,69 +1,88 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="pt-BR" dir="ltr">
   <head>
     <meta charset="utf-8" />
 
-    <!-- CSP é enviada via header pelo Helmet no servidor (com nonce dinâmico).
-         Evite duplicar CSP via <meta> para não conflitar com o header. -->
+    <!-- CSP vem por header via Helmet (com nonce dinâmico). Não duplicar via <meta>. -->
 
     <!-- Mobile / viewport -->
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 
     <title>Plataforma - Escola da Saúde</title>
-    <meta name="description" content="Plataforma oficial da Escola da Saúde de Santos para inscrições, presença e certificados de eventos.">
-    <meta name="author" content="Escola da Saúde de Santos">
+    <meta name="description" content="Plataforma oficial da Escola da Saúde de Santos para inscrições, presença e certificados de eventos." />
+    <meta name="author" content="Escola da Saúde de Santos" />
 
-    <!-- Aparência clara/escura -->
-    <meta name="color-scheme" content="light dark">
-    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#14532d">
-    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b1f14">
+    <!-- Aparência clara/escura (coerente com tokens) -->
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#14532d" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b1220" />
 
-    <!-- PWA / instalação -->
-    <meta name="application-name" content="Escola da Saúde">
-    <meta name="mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-title" content="Escola da Saúde">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <link rel="manifest" href="/manifest.webmanifest">
+    <!-- PWA -->
+    <meta name="application-name" content="Escola da Saúde" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Escola da Saúde" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="manifest" href="/manifest.webmanifest" />
 
     <!-- Segurança / UX -->
-    <meta name="referrer" content="strict-origin-when-cross-origin">
-    <meta name="format-detection" content="telephone=no">
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <meta name="format-detection" content="telephone=no" />
 
-    <!-- Pré-conexões (fonts, Google login) -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="preconnect" href="https://accounts.google.com">
-    <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+    <!-- Social (OG/Twitter) -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Plataforma - Escola da Saúde" />
+    <meta property="og:description" content="Inscrições, presença e certificados de eventos da Escola da Saúde de Santos." />
+    <meta property="og:image" content="/icons/og-image.png" />
+    <meta property="og:locale" content="pt_BR" />
+    <meta name="twitter:card" content="summary_large_image" />
 
-    <!-- Fontes -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <!-- Performance: pré-conexões para fontes e Google Sign-In -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="preconnect" href="https://accounts.google.com" />
+    <link rel="preconnect" href="https://www.gstatic.com" crossorigin />
 
-    <!-- Ícones (fav + PWA) -->
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="icon" type="image/png" sizes="32x32" href="/icons/icon-32.png">
-    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
-    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+    <!-- Fontes (swap para evitar FOIT) -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
 
-    <!-- Boot do tema (antes do render) -->
+    <!-- Ícones (fav + PWA maskable) -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/icon-32.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="icon" sizes="512x512" href="/icons/maskable-512.png" />
+    <link rel="mask-icon" href="/icons/maskable-512.svg" color="#14532d" />
+
+    <!-- Boot do tema (antes do render) — respeita ESCOLA_THEME_KEY e 'system' -->
     <script nonce="{{CSP_NONCE}}">
-      try {
-        var saved = localStorage.getItem('theme'); // 'light' | 'dark' | null
-        var systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        var theme = (saved === 'light' || saved === 'dark') ? saved : (systemPrefersDark ? 'dark' : 'light');
-        var root = document.documentElement;
-        if (theme === 'dark') root.classList.add('dark');
-        else root.classList.remove('dark');
-      } catch (e) { /* silencioso */ }
+      (function () {
+        try {
+          var KEY = 'escola_theme';
+          var saved = localStorage.getItem(KEY) || localStorage.getItem('theme'); // migração
+          var valid = (saved === 'light' || saved === 'dark' || saved === 'system') ? saved : 'system';
+          var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var useDark = (valid === 'dark') || (valid === 'system' && prefersDark);
+          var root = document.documentElement;
+          if (useDark) root.classList.add('dark'); else root.classList.remove('dark');
+        } catch (e) {}
+      })();
     </script>
+
+    <!-- Hint de fonte base para evitar flash de fallback muito diferente -->
+    <style nonce="{{CSP_NONCE}}">
+      :root { --font-sans: "Inter", system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", sans-serif; }
+      html { font-family: var(--font-sans); }
+    </style>
   </head>
 
-  <body class="bg-white text-gray-900 dark:bg-gray-900 dark:text-white font-sans min-h-screen">
+  <body class="bg-white text-gray-900 dark:bg-zinc-950 dark:text-white font-sans min-h-screen">
     <noscript>É necessário habilitar JavaScript para usar esta aplicação.</noscript>
 
     <div id="root"></div>
     <div id="modal-root"></div>
 
+    <!-- Vite entry -->
     <script type="module" nonce="{{CSP_NONCE}}" src="/src/main.jsx"></script>
   </body>
 </html>

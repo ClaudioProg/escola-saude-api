@@ -1,55 +1,91 @@
 // src/utils/timezone.js
+/* eslint-disable no-console */
 const { DateTime } = require("luxon");
 
 // Zona padrão do projeto
-const ZONA = "America/Sao_Paulo";
+const ZONA = process.env.TZ_PADRAO || "America/Sao_Paulo";
+
+function isValidDateOnly(s) {
+  return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+}
+
+function parseHora(hora) {
+  let hh = 0, mm = 0, ss = 0;
+  if (typeof hora === "string" && hora.trim()) {
+    const parts = hora.trim().split(":").map((x) => Number(x));
+    hh = Number.isFinite(parts[0]) ? parts[0] : 0;
+    mm = Number.isFinite(parts[1]) ? parts[1] : 0;
+    ss = Number.isFinite(parts[2]) ? parts[2] : 0;
+  }
+  return { hh, mm, ss };
+}
 
 /**
  * Converte pares (data-only "YYYY-MM-DD", hora "HH:mm" ou "HH:mm:ss") para DateTime zonado.
- * Aceita também um ISO BR "DD/MM/YYYY HH:mm".
+ * Aceita também um ISO BR "DD/MM/YYYY HH:mm" (ou "DD/MM/YYYY HH:mm:ss") via brIso.
+ *
+ * @param {{ data?:string, hora?:string, brIso?:string, zone?:string }} args
+ * @returns {DateTime} DateTime (pode ser inválido se entrada ruim; checar dt.isValid)
  */
-function dateHourToZoned({ data, hora, brIso }) {
+function dateHourToZoned({ data, hora, brIso, zone = ZONA }) {
+  // ✅ caminho BR: "21/10/2025 19:00" ou "21/10/2025 19:00:00"
   if (brIso) {
-    // "21/10/2025 19:00"
-    const [d, m, y_h] = brIso.split("/");
-    const [y, rest] = [y_h.slice(0,4), y_h.slice(5)];
-    // rest: "2025 19:00" (se o formato vier com espaço)
-    const [hh, mm] = rest.trim().split(" ")[1].split(":");
-    const yyyy = y, DD = d, MM = m;
-    return DateTime.fromObject(
-      { year: +yyyy, month: +MM, day: +DD, hour: +hh, minute: +mm },
-      { zone: ZONA }
-    );
+    const s = String(brIso).trim();
+
+    // tenta com segundos e sem segundos
+    let dt = DateTime.fromFormat(s, "dd/MM/yyyy HH:mm:ss", { zone });
+    if (!dt.isValid) {
+      dt = DateTime.fromFormat(s, "dd/MM/yyyy HH:mm", { zone });
+    }
+
+    return dt;
   }
 
-  // data "YYYY-MM-DD"
-  const [Y, M, D] = data.split("-").map(Number);
-
-  let hh = 0, mm = 0, ss = 0;
-  if (typeof hora === "string" && hora.trim()) {
-    const parts = hora.split(":").map(Number);
-    hh = parts[0] ?? 0; mm = parts[1] ?? 0; ss = parts[2] ?? 0;
+  // ✅ caminho data/hora
+  if (!isValidDateOnly(data)) {
+    return DateTime.invalid("Data inválida (esperado YYYY-MM-DD)");
   }
 
-  return DateTime.fromObject({ year: Y, month: M, day: D, hour: hh, minute: mm, second: ss }, { zone: ZONA });
+  const [Y, M, D] = data.split("-").map((x) => Number(x));
+  const { hh, mm, ss } = parseHora(hora);
+
+  const dt = DateTime.fromObject(
+    { year: Y, month: M, day: D, hour: hh, minute: mm, second: ss },
+    { zone }
+  );
+
+  return dt;
 }
 
 /** Agora (sempre na zona do projeto) */
-function nowZoned() {
-  return DateTime.now().setZone(ZONA);
+function nowZoned(zone = ZONA) {
+  return DateTime.now().setZone(zone);
 }
 
-/** Compara se ainda pode (<= prazo) */
+/** Compara se ainda pode submeter até o prazo (inclusive) */
 function canSubmitUntil(deadlineZoned, now = nowZoned()) {
-  return now <= deadlineZoned;
+  if (!deadlineZoned || typeof deadlineZoned.toMillis !== "function") return false;
+  if (!deadlineZoned.isValid) return false;
+  if (!now || !now.isValid) return false;
+
+  return now.toMillis() <= deadlineZoned.toMillis();
 }
 
-/** Utilidades de log */
-function fmt(dt) {
+/** Utilidades de log/debug */
+function fmt(dt, zone = ZONA) {
+  if (!dt || typeof dt.toISO !== "function") {
+    return { valid: false, reason: "not_a_datetime" };
+  }
+  if (!dt.isValid) {
+    return { valid: false, reason: dt.invalidReason, explanation: dt.invalidExplanation };
+  }
+  const z = dt.setZone(zone);
   return {
-    zoned: dt.setZone(ZONA).toISO({ suppressMilliseconds: true }),
-    utc: dt.toUTC().toISO({ suppressMilliseconds: true }),
-    epoch: dt.toMillis()
+    valid: true,
+    zoned: z.toISO({ suppressMilliseconds: true }),
+    utc: z.toUTC().toISO({ suppressMilliseconds: true }),
+    epoch: z.toMillis(),
+    zone,
   };
 }
 

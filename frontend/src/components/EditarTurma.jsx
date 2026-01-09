@@ -9,27 +9,49 @@ import BotaoPrimario from "../components/BotaoPrimario";
 import BotaoSecundario from "../components/BotaoSecundario";
 import { apiGet, apiPut } from "../services/api"; // ✅ serviço centralizado
 
+/* ============================ Helpers ============================ */
+const toYMD = (v) => (v ? String(v).slice(0, 10) : "");
+const clampInt = (n, mi = 0, ma = 10 ** 9) => {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return mi;
+  return Math.max(mi, Math.min(ma, Math.trunc(v)));
+};
+const isChanged = (a, b) => JSON.stringify(a) !== JSON.stringify(b);
+const hhmmOk = (s) => /^\d{2}:\d{2}$/.test(String(s || ""));
+
+/* comparação HH:mm (assume strings válidas) */
+const hhmmToMin = (s) => {
+  const [h, m] = String(s).split(":").map(Number);
+  return h * 60 + m;
+};
+
 export default function EditarTurma() {
   const { id } = useParams();
   const navigate = useNavigate();
   const liveId = useId();
 
   const [turma, setTurma] = useState(null);
+  const [original, setOriginal] = useState(null);
+
   const [carregando, setCarregando] = useState(true);
   const [salvando, setSalvando] = useState(false);
   const [erroGeral, setErroGeral] = useState("");
   const [errors, setErrors] = useState({});
+  const [liveMsg, setLiveMsg] = useState("");
 
   const nomeUsuario = useMemo(() => localStorage.getItem("nome") || "", []);
 
+  /* ============================ Load ============================ */
   const carregar = useCallback(async () => {
     setCarregando(true);
     setErroGeral("");
     try {
       const data = await apiGet(`/api/turmas/${id}`);
       setTurma(data || {});
+      setOriginal(data || {});
     } catch {
       setTurma(null);
+      setOriginal(null);
       setErroGeral("Erro ao carregar dados da turma.");
     } finally {
       setCarregando(false);
@@ -40,6 +62,15 @@ export default function EditarTurma() {
     carregar();
   }, [carregar]);
 
+  /* ============================ Form ============================ */
+  const announce = (msg) => {
+    setLiveMsg(msg);
+    requestAnimationFrame(() => {
+      setLiveMsg("");
+      requestAnimationFrame(() => setLiveMsg(msg));
+    });
+  };
+
   const handleChange = useCallback((e) => {
     const { name, value } = e.target;
     setTurma((prev) => ({ ...prev, [name]: value }));
@@ -49,9 +80,10 @@ export default function EditarTurma() {
   // Normaliza e valida
   function validar(form) {
     const msgs = {};
+
     const nome = form?.nome?.trim();
-    const di = form?.data_inicio?.slice(0, 10);
-    const df = form?.data_fim?.slice(0, 10);
+    const di = toYMD(form?.data_inicio);
+    const df = toYMD(form?.data_fim);
 
     let vagas =
       form?.vagas_total ?? form?.vagas_totais ?? form?.vagas ?? form?.capacidade;
@@ -65,6 +97,17 @@ export default function EditarTurma() {
     if (vagas === "") msgs.vagas_total = "Informe o total de vagas.";
     else if (!Number.isFinite(vagas) || vagas < 0)
       msgs.vagas_total = "Total de vagas deve ser um número ≥ 0.";
+
+    // Se backend expõe horários, validamos coerência
+    if ("horario_inicio" in (form || {}) || "horario_fim" in (form || {})) {
+      const hi = form?.horario_inicio || "";
+      const hf = form?.horario_fim || "";
+      if (hi && !hhmmOk(hi)) msgs.horario_inicio = "Formato inválido (use HH:MM).";
+      if (hf && !hhmmOk(hf)) msgs.horario_fim = "Formato inválido (use HH:MM).";
+      if (hhmmOk(hi) && hhmmOk(hf) && hhmmToMin(hf) <= hhmmToMin(hi)) {
+        msgs.horario_fim = "Horário final deve ser maior que o inicial.";
+      }
+    }
 
     return msgs;
   }
@@ -81,21 +124,67 @@ export default function EditarTurma() {
         return;
       }
 
-      // payload normalizado
+      // payload normalizado (preserva compat dos campos)
+      const nome = turma.nome?.trim();
+      const data_inicio = toYMD(turma.data_inicio);
+      const data_fim = toYMD(turma.data_fim);
+
+      const vagas_total =
+        clampInt(
+          turma?.vagas_total ??
+            turma?.vagas_totais ??
+            turma?.vagas ??
+            turma?.capacidade ??
+            0,
+          0
+        );
+
       const payload = {
         ...turma,
-        nome: turma.nome?.trim(),
-        data_inicio: turma.data_inicio?.slice(0, 10),
-        data_fim: turma.data_fim?.slice(0, 10),
-        vagas_total:
-          Number(
-            turma?.vagas_total ??
-              turma?.vagas_totais ??
-              turma?.vagas ??
-              turma?.capacidade ??
-              0
-          ) || 0,
+        nome,
+        data_inicio,
+        data_fim,
+        vagas_total,
       };
+
+      // Se o backend já usa horários, mantemos; se não, não incluímos nada
+      if ("horario_inicio" in turma) {
+        payload.horario_inicio = turma.horario_inicio || "";
+      }
+      if ("horario_fim" in turma) {
+        payload.horario_fim = turma.horario_fim || "";
+      }
+
+      // Evita PUT inútil quando nada mudou (comparação seletiva)
+      const snapshotAtual = {
+        nome,
+        data_inicio,
+        data_fim,
+        vagas_total,
+        ...("horario_inicio" in payload ? { horario_inicio: payload.horario_inicio } : {}),
+        ...("horario_fim" in payload ? { horario_fim: payload.horario_fim } : {}),
+      };
+
+      const snapshotOriginal = {
+        nome: original?.nome?.trim() || "",
+        data_inicio: toYMD(original?.data_inicio),
+        data_fim: toYMD(original?.data_fim),
+        vagas_total: clampInt(
+          original?.vagas_total ??
+            original?.vagas_totais ??
+            original?.vagas ??
+            original?.capacidade ??
+            0,
+          0
+        ),
+        ...("horario_inicio" in (original || {}) ? { horario_inicio: original.horario_inicio || "" } : {}),
+        ...("horario_fim" in (original || {}) ? { horario_fim: original.horario_fim || "" } : {}),
+      };
+
+      if (!isChanged(snapshotAtual, snapshotOriginal)) {
+        toast.info("Nenhuma alteração para salvar.");
+        return;
+      }
 
       setSalvando(true);
       setErroGeral("");
@@ -110,9 +199,18 @@ export default function EditarTurma() {
         setSalvando(false);
       }
     },
-    [turma, salvando, id, navigate]
+    [turma, salvando, id, navigate, original]
   );
 
+  const descartarAlteracoes = useCallback(() => {
+    if (!original) return;
+    setTurma(original);
+    setErrors({});
+    announce("Alterações descartadas.");
+    toast.info("Alterações descartadas.");
+  }, [original]);
+
+  /* ============================ UI states ============================ */
   if (carregando && !erroGeral) {
     return (
       <main className="min-h-screen bg-gelo dark:bg-gray-900 px-2 py-6">
@@ -138,6 +236,33 @@ export default function EditarTurma() {
     );
   }
 
+  // Flags condicionais (não quebram API)
+  const temHorarioInicio = "horario_inicio" in (turma || {});
+  const temHorarioFim = "horario_fim" in (turma || {});
+
+  const houveMudancas = original && turma && isChanged(
+    {
+      nome: turma?.nome?.trim() || "",
+      data_inicio: toYMD(turma?.data_inicio),
+      data_fim: toYMD(turma?.data_fim),
+      vagas_total: clampInt(
+        turma?.vagas_total ?? turma?.vagas_totais ?? turma?.vagas ?? turma?.capacidade ?? 0
+      ),
+      ...(temHorarioInicio ? { horario_inicio: turma.horario_inicio || "" } : {}),
+      ...(temHorarioFim ? { horario_fim: turma.horario_fim || "" } : {}),
+    },
+    {
+      nome: original?.nome?.trim() || "",
+      data_inicio: toYMD(original?.data_inicio),
+      data_fim: toYMD(original?.data_fim),
+      vagas_total: clampInt(
+        original?.vagas_total ?? original?.vagas_totais ?? original?.vagas ?? original?.capacidade ?? 0
+      ),
+      ...(temHorarioInicio ? { horario_inicio: original?.horario_inicio || "" } : {}),
+      ...(temHorarioFim ? { horario_fim: original?.horario_fim || "" } : {}),
+    }
+  );
+
   return (
     <main className="min-h-screen bg-gelo dark:bg-gray-900 px-2 py-6">
       <CabecalhoPainel
@@ -160,6 +285,9 @@ export default function EditarTurma() {
         <h2 id="editar-turma-titulo" className="text-2xl font-bold mb-4 text-green-900 dark:text-green-200 text-center">
           ✏️ Editar Turma
         </h2>
+
+        {/* aria-live discreto para mensagens de acessibilidade */}
+        <p id={`${liveId}-live`} role="status" aria-live="polite" className="sr-only">{liveMsg}</p>
 
         {erroGeral && (
           <p id={`${liveId}-status`} className="mb-3 text-sm text-red-600 dark:text-red-400" role="alert" aria-live="assertive">
@@ -199,7 +327,7 @@ export default function EditarTurma() {
                 id="data_inicio"
                 type="date"
                 name="data_inicio"
-                value={turma?.data_inicio?.slice(0, 10) ?? ""}
+                value={toYMD(turma?.data_inicio)}
                 onChange={handleChange}
                 required
                 aria-required="true"
@@ -220,9 +348,9 @@ export default function EditarTurma() {
                 id="data_fim"
                 type="date"
                 name="data_fim"
-                value={turma?.data_fim?.slice(0, 10) ?? ""}
+                value={toYMD(turma?.data_fim)}
                 onChange={handleChange}
-                min={turma?.data_inicio?.slice(0, 10) || undefined}
+                min={toYMD(turma?.data_inicio) || undefined}
                 required
                 aria-required="true"
                 aria-invalid={!!errors.data_fim}
@@ -233,6 +361,53 @@ export default function EditarTurma() {
                 ].join(" ")}
               />
               {errors.data_fim && <p id="erro-df" className="mt-1 text-xs text-red-600 dark:text-red-400">{errors.data_fim}</p>}
+            </div>
+
+            {/* Horários (opcionais: exibidos apenas se existirem no objeto) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {temHorarioInicio && (
+                <div>
+                  <label htmlFor="horario_inicio" className="block font-semibold mb-1">Horário de Início</label>
+                  <input
+                    id="horario_inicio"
+                    type="time"
+                    name="horario_inicio"
+                    value={turma?.horario_inicio || ""}
+                    onChange={handleChange}
+                    aria-invalid={!!errors.horario_inicio}
+                    aria-describedby={errors.horario_inicio ? "erro-hi" : undefined}
+                    className={[
+                      "w-full border rounded px-3 py-2 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-green-600",
+                      errors.horario_inicio ? "border-red-400 dark:border-red-500" : "border-gray-300 dark:border-zinc-600",
+                    ].join(" ")}
+                  />
+                  {errors.horario_inicio && (
+                    <p id="erro-hi" className="mt-1 text-xs text-red-600 dark:text-red-400">{errors.horario_inicio}</p>
+                  )}
+                </div>
+              )}
+
+              {temHorarioFim && (
+                <div>
+                  <label htmlFor="horario_fim" className="block font-semibold mb-1">Horário de Fim</label>
+                  <input
+                    id="horario_fim"
+                    type="time"
+                    name="horario_fim"
+                    value={turma?.horario_fim || ""}
+                    onChange={handleChange}
+                    aria-invalid={!!errors.horario_fim}
+                    aria-describedby={errors.horario_fim ? "erro-hf" : undefined}
+                    className={[
+                      "w-full border rounded px-3 py-2 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-green-600",
+                      errors.horario_fim ? "border-red-400 dark:border-red-500" : "border-gray-300 dark:border-zinc-600",
+                    ].join(" ")}
+                  />
+                  {errors.horario_fim && (
+                    <p id="erro-hf" className="mt-1 text-xs text-red-600 dark:text-red-400">{errors.horario_fim}</p>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Vagas */}
@@ -271,9 +446,16 @@ export default function EditarTurma() {
               <BotaoPrimario type="submit" disabled={salvando}>
                 {salvando ? "Salvando..." : "💾 Salvar Alterações"}
               </BotaoPrimario>
+
               <BotaoSecundario onClick={() => navigate(-1)} variant="outline">
                 Cancelar
               </BotaoSecundario>
+
+              {houveMudancas && (
+                <BotaoSecundario onClick={descartarAlteracoes} variant="outline">
+                  Descartar
+                </BotaoSecundario>
+              )}
             </div>
           </fieldset>
         </form>

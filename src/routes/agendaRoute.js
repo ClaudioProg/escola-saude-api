@@ -1,41 +1,75 @@
 // 📁 src/routes/agendaRoutes.js
-const express = require('express');
+const express = require("express");
+const rateLimit = require("express-rate-limit");
+
+const agendaController = require("../controllers/agendaController");
+const authMiddleware = require("../auth/authMiddleware");
+const authorizeRoles = require("../auth/authorizeRoles");
+
 const router = express.Router();
 
-const agendaController = require('../controllers/agendaController');
-const authMiddleware = require('../auth/authMiddleware');
-const authorizeRoles = require('../auth/authorizeRoles');
+/* =========================
+   Helpers (premium)
+========================= */
+const asyncHandler =
+  (fn) =>
+  (req, res, next) =>
+    Promise.resolve(fn(req, res, next)).catch(next);
 
+/* =========================
+   Middlewares do grupo
+========================= */
+router.use(authMiddleware);
+
+// 🛡️ Premium: agenda é dado pessoal → não cachear
+router.use((_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Pragma", "no-cache");
+  next();
+});
+
+// 🚦 Premium: rate limit leve (ajuste se necessário)
+const agendaLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 180, // 3 req/s em média (folgado pro front com navegação)
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { erro: "Muitas requisições. Aguarde alguns instantes." },
+});
+
+/* =========================
+   Rotas
+========================= */
 // 🗓️ Agenda do usuário autenticado (inscrito como aluno)
 router.get(
-  '/minha',
-  authMiddleware,
-  authorizeRoles('usuario', 'instrutor', 'administrador'),
-  agendaController.buscarAgendaMinha
+  "/minha",
+  agendaLimiter,
+  authorizeRoles("usuario", "instrutor", "administrador"),
+  asyncHandler(agendaController.buscarAgendaMinha)
 );
 
 // 👩‍🏫 Agenda do instrutor autenticado (novo endpoint usado pelo front)
 router.get(
-  '/minha-instrutor',
-  authMiddleware,
-  authorizeRoles('administrador', 'instrutor'),
-  agendaController.buscarAgendaMinhaInstrutor
+  "/minha-instrutor",
+  agendaLimiter,
+  authorizeRoles("administrador", "instrutor"),
+  asyncHandler(agendaController.buscarAgendaMinhaInstrutor)
 );
 
-// (alias opcional p/ compatibilidade: /api/agenda/instrutor)
+// (alias p/ compatibilidade: /api/agenda/instrutor)
 router.get(
-  '/instrutor',
-  authMiddleware,
-  authorizeRoles('administrador', 'instrutor'),
-  agendaController.buscarAgendaMinhaInstrutor
+  "/instrutor",
+  agendaLimiter,
+  authorizeRoles("administrador", "instrutor"),
+  asyncHandler(agendaController.buscarAgendaMinhaInstrutor)
 );
 
 // 📅 Agenda geral (somente administrador)
 router.get(
-  '/',
-  authMiddleware,
-  authorizeRoles('administrador'),
-  agendaController.buscarAgenda
+  "/",
+  agendaLimiter,
+  authorizeRoles("administrador"),
+  asyncHandler(agendaController.buscarAgenda)
 );
 
 module.exports = router;

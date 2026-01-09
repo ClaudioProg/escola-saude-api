@@ -1,13 +1,22 @@
-// 📁 src/components/ModalInscreverTrabalho.jsx
-import { useEffect, useMemo, useState, useId } from "react";
+// ✅ src/components/ModalInscreverTrabalho.jsx (Premium + A11y + UX + sem TZ shift)
+import { useEffect, useMemo, useRef, useState, useId } from "react";
 import { motion } from "framer-motion";
 import {
-  X, FilePlus2, Loader2, CheckCircle2, Upload, Plus, Trash2, ExternalLink,
+  X,
+  FilePlus2,
+  Loader2,
+  CheckCircle2,
+  Upload,
+  Plus,
+  Trash2,
+  ExternalLink,
 } from "lucide-react";
+import { toast } from "react-toastify";
 import api, { apiHead, apiUpload, apiGetFile, downloadBlob } from "../services/api";
 
 /* Utils */
 const unwrap = (r) => (r?.data ?? r);
+
 const toMonthValue = (val) => {
   if (!val) return "";
   const s = String(val);
@@ -16,6 +25,7 @@ const toMonthValue = (val) => {
   if (m) return `${m[1]}-${m[2]}`;
   return "";
 };
+
 const sanitizeCPF = (s) => String(s || "").replace(/\D/g, "").slice(0, 11);
 const trimStr = (s) => String(s || "").trim();
 
@@ -65,7 +75,7 @@ function toBrPrettyFromIsoLike(isoLike) {
     const [, yy, mm, dd] = onlyDate;
     return `${dd}/${mm}/${yy}`;
   }
-  return s; // fallback
+  return s;
 }
 
 /** valida campos essenciais antes de enviar */
@@ -74,13 +84,18 @@ function validarForm(form, limites = {}, dentroPrazo = true) {
   if (!trimStr(form.titulo)) errs.push("Informe o título do trabalho.");
   if (!toMonthValue(form.inicio_experiencia)) errs.push("Selecione o mês/ano de início da experiência.");
   if (!form.linha_tematica_id) errs.push("Selecione a linha temática.");
+
   const longos = ["introducao", "objetivos", "metodo", "resultados", "consideracoes", "bibliografia"];
   longos.forEach((k) => {
     const max = Number(limites[k]) || 2000;
     if ((form[k] || "").length > max) errs.push(`Campo "${k}" ultrapassa o limite de ${max} caracteres.`);
   });
+
   const maxCo = Number(form._maxCoautores || 10);
   if ((form.coautores?.length || 0) > maxCo) errs.push(`Máximo de ${maxCo} coautores.`);
+
+  if (!dentroPrazo) errs.push("Prazo encerrado: não é possível salvar/enviar esta submissão.");
+
   return { ok: errs.length === 0, erros: errs };
 }
 
@@ -90,6 +105,13 @@ export default function ModalInscreverTrabalho({
   onClose,
   onSucesso,
 }) {
+  const modalUid = useId();
+  const dialogTitleId = `modal-submissao-title-${modalUid}`;
+  const dialogDescId = `modal-submissao-desc-${modalUid}`;
+  const inputTituloId = `submissao-titulo-${modalUid}`;
+  const inputInicioId = `submissao-inicio-${modalUid}`;
+  const inputLinhaId = `submissao-linha-${modalUid}`;
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState(false);
@@ -110,9 +132,10 @@ export default function ModalInscreverTrabalho({
   const [posterProgress, setPosterProgress] = useState(0);
   const [posterExistente, setPosterExistente] = useState("");
 
-  const tituloId = useId();
-  const inicioId = useId();
-  const linhaId = useId();
+  const posterInputRef = useRef(null);
+  const dialogRef = useRef(null);
+  const firstFieldRef = useRef(null);
+  const [msgA11y, setMsgA11y] = useState("");
 
   const [form, setForm] = useState({
     titulo: "",
@@ -126,17 +149,12 @@ export default function ModalInscreverTrabalho({
     bibliografia: "",
     coautores: [],
     poster: null,
-    _maxCoautores: 10, // só pra validação local
+    _maxCoautores: 10, // só validação local
   });
 
   // ✅ prazo legível e SEM timezone
   const prazoFmt = useMemo(() => {
-    const v =
-      chamada?.prazo_final_br ??
-      chamada?.prazo_final ??
-      chamada?.prazoFinal ??
-      null;
-
+    const v = chamada?.prazo_final_br ?? chamada?.prazo_final ?? chamada?.prazoFinal ?? null;
     if (!v) return "—";
 
     // Preferir campos separados, se existirem
@@ -145,13 +163,14 @@ export default function ModalInscreverTrabalho({
     }
 
     const s = String(v);
-    // ISO-like com Z/offset/segundos/milissegundos
-    if (/^\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}/.test(s)) {
-      return toBrPrettyFromIsoLike(s);
-    }
-    // Data-only BR já pronta
+    if (/^\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}/.test(s)) return toBrPrettyFromIsoLike(s);
     return s;
   }, [chamada]);
+
+  // ✅ aceita snake_case ou camelCase vindo do backend
+  const dentroPrazo = !!(chamada?.dentro_prazo ?? chamada?.dentroPrazo);
+
+  const bloqueado = saving || sending; // trava fechar enquanto processa
 
   async function checarModelo(chId) {
     if (!chId) {
@@ -170,7 +189,6 @@ export default function ModalInscreverTrabalho({
     }
   }
 
-  // 🔽 download autenticado do modelo
   async function baixarModeloBanner(chId) {
     if (!chId) return;
     try {
@@ -178,27 +196,51 @@ export default function ModalInscreverTrabalho({
       const { blob, filename } = await apiGetFile(`/chamadas/${chId}/modelo-banner`);
       downloadBlob(filename || "modelo-poster.pptx", blob);
     } catch (e) {
-      alert(e?.message || "Falha ao baixar o modelo de pôster.");
+      toast.error(e?.message || "Falha ao baixar o modelo de pôster.");
     } finally {
       setBaixandoModelo(false);
     }
   }
+
+  // Escape para fechar + focus no primeiro campo
+  useEffect(() => {
+    if (loading) return;
+
+    const onKey = (e) => {
+      if (e.key === "Escape") {
+        if (bloqueado) return;
+        onClose?.();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+
+    // foca no primeiro campo após abrir
+    const t = setTimeout(() => firstFieldRef.current?.focus(), 80);
+
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      clearTimeout(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, bloqueado]);
 
   // Carrega:
   // - edição: submissão + chamada da submissão
   // - nova: chamada pelo propChamadaId
   useEffect(() => {
     let alive = true;
+
     (async () => {
       try {
         setLoading(true);
+        setMsgA11y("Carregando dados da submissão...");
 
         if (propSubId) {
-          // Submissão (edição)
           const s = unwrap(await api.get(`/submissoes/${propSubId}`));
           if (!alive) return;
 
           setSubmissaoId(s.id);
+
           setForm((f) => ({
             ...f,
             titulo: s.titulo || "",
@@ -230,35 +272,46 @@ export default function ModalInscreverTrabalho({
             setPosterState("idle");
           }
 
-          // Chamada da submissão
           const chResp = unwrap(await api.get(`/chamadas/${s.chamada_id || s.chamadaId}`));
           const ch = chResp?.chamada || chResp;
+
           setChamada(ch || null);
           setLinhas(chResp?.linhas || []);
           setLimites(chResp?.limites || ch?.limites || {});
+
           const max = Number(ch?.max_coautores ?? 10);
           setMaxCoautores(max);
           setForm((f) => ({ ...f, _maxCoautores: max }));
+
           await checarModelo(ch?.id || s.chamada_id || s.chamadaId);
         } else {
-          // Nova submissão
           const r = unwrap(await api.get(`/chamadas/${propChamadaId}`));
           const ch = r?.chamada || r;
+
           setChamada(ch || null);
           setLinhas(r?.linhas || []);
           setLimites(r?.limites || ch?.limites || {});
+
           const max = Number(ch?.max_coautores ?? 10);
           setMaxCoautores(max);
           setForm((f) => ({ ...f, _maxCoautores: max }));
+
           await checarModelo(ch?.id || propChamadaId);
         }
+
+        setMsgA11y("Dados carregados.");
       } catch (err) {
         console.error("Erro ao carregar modal:", err);
+        toast.error("Falha ao carregar dados da submissão.");
+        setMsgA11y("Falha ao carregar dados.");
       } finally {
         if (alive) setLoading(false);
       }
     })();
-    return () => { alive = false; };
+
+    return () => {
+      alive = false;
+    };
   }, [propChamadaId, propSubId]);
 
   // Handlers
@@ -267,40 +320,52 @@ export default function ModalInscreverTrabalho({
     setForm((f) => ({ ...f, [name]: value }));
   };
 
+  const limparPosterSelecionado = () => {
+    setForm((f) => ({ ...f, poster: null }));
+    setPosterState(posterExistente ? "done" : "idle");
+    setPosterProgress(0);
+    if (posterInputRef.current) posterInputRef.current.value = "";
+  };
+
   const onPosterChange = (e) => {
     const file = e.target.files?.[0] || null;
     setPosterState("idle");
     setPosterProgress(0);
+
     if (file) {
-      // valida tipo/tamanho antes
       const type = String(file.type || "");
       const name = String(file.name || "").toLowerCase();
+
       const sizeOk = file.size <= 50 * 1024 * 1024;
       const typeOk =
         name.endsWith(".ppt") ||
         name.endsWith(".pptx") ||
         type === "application/vnd.ms-powerpoint" ||
         type === "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+
       if (!sizeOk) {
-        alert("Arquivo muito grande (máximo 50MB).");
+        toast.error("Arquivo muito grande (máximo 50MB).");
+        limparPosterSelecionado();
         return;
       }
       if (!typeOk) {
-        alert("Formato inválido. Use .ppt ou .pptx.");
+        toast.error("Formato inválido. Use .ppt ou .pptx.");
+        limparPosterSelecionado();
         return;
       }
     }
+
     setForm((f) => ({ ...f, poster: file }));
   };
 
   const addCoautor = () => {
     setForm((f) => {
       const lim = Number(f._maxCoautores || maxCoautores || 10);
-      if ((f.coautores?.length || 0) >= lim) return f;
-      return {
-        ...f,
-        coautores: [...(f.coautores || []), { nome: "", cpf: "", email: "", vinculo: "" }],
-      };
+      if ((f.coautores?.length || 0) >= lim) {
+        toast.info(`Limite atingido: máximo de ${lim} coautor(es).`);
+        return f;
+      }
+      return { ...f, coautores: [...(f.coautores || []), { nome: "", cpf: "", email: "", vinculo: "" }] };
     });
   };
 
@@ -311,10 +376,8 @@ export default function ModalInscreverTrabalho({
   const setCoautor = (idx, key, val) => {
     setForm((f) => {
       const arr = [...(f.coautores || [])];
-      arr[(idx = Number(idx))] = {
-        ...arr[idx],
-        [key]: key === "cpf" ? sanitizeCPF(val) : val,
-      };
+      const i = Number(idx);
+      arr[i] = { ...arr[i], [key]: key === "cpf" ? sanitizeCPF(val) : val };
       return { ...f, coautores: arr };
     });
   };
@@ -331,7 +394,7 @@ export default function ModalInscreverTrabalho({
         email: trimStr(c.email),
         vinculo: trimStr(c.vinculo),
       })),
-      poster: undefined, // upload é separado
+      poster: undefined, // upload separado
     };
 
     if (!submissaoId) {
@@ -353,26 +416,15 @@ export default function ModalInscreverTrabalho({
     const rawName = trimStr(f.name);
     const rawType = trimStr(f.type);
 
-    const isPptxMime =
-      rawType === "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+    const isPptxMime = rawType === "application/vnd.openxmlformats-officedocument.presentationml.presentation";
     const isPptMime = rawType === "application/vnd.ms-powerpoint";
 
-    let ext =
-      rawName.toLowerCase().endsWith(".pptx")
-        ? ".pptx"
-        : rawName.toLowerCase().endsWith(".ppt")
-        ? ".ppt"
-        : "";
-
-    if (!ext && (isPptxMime || isPptMime)) {
-      ext = isPptxMime ? ".pptx" : ".ppt";
-    }
+    let ext = rawName.toLowerCase().endsWith(".pptx") ? ".pptx" : rawName.toLowerCase().endsWith(".ppt") ? ".ppt" : "";
+    if (!ext && (isPptxMime || isPptMime)) ext = isPptxMime ? ".pptx" : ".ppt";
     if (!ext) ext = ".pptx";
 
     const fixedType =
-      ext === ".ppt"
-        ? "application/vnd.ms-powerpoint"
-        : "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+      ext === ".ppt" ? "application/vnd.ms-powerpoint" : "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 
     const fixedName = rawName.toLowerCase().endsWith(ext) ? rawName : `${rawName}${ext}`;
     const fileToSend = new File([f], fixedName, { type: fixedType });
@@ -382,6 +434,7 @@ export default function ModalInscreverTrabalho({
 
     setPosterState("uploading");
     setPosterProgress(0);
+    setMsgA11y("Enviando pôster...");
 
     const attempt = async () =>
       apiUpload(`/submissoes/${id}/poster`, fd, {
@@ -408,6 +461,7 @@ export default function ModalInscreverTrabalho({
       setPosterProgress(100);
       setPosterState("done");
       setPosterExistente(fileToSend.name);
+      setMsgA11y("Pôster enviado.");
       return { ok: true };
     } catch (e) {
       const msgBackend = e?.data?.erro || e?.response?.data?.erro;
@@ -419,75 +473,94 @@ export default function ModalInscreverTrabalho({
 
       console.error("Falha no upload do pôster:", e);
       setPosterState("error");
+      setMsgA11y("Falha ao enviar pôster.");
       return { ok: false, error: msg };
     }
   }
 
   const onSalvar = async () => {
-    const dentro = !!(chamada?.dentro_prazo ?? chamada?.dentroPrazo);
-    const v = validarForm(form, limites, dentro);
+    const v = validarForm(form, limites, dentroPrazo);
     if (!v.ok) {
-      alert(v.erros.join("\n"));
+      toast.warning("Corrija os campos antes de salvar.");
+      v.erros.slice(0, 4).forEach((m) => toast.info(m));
       return;
     }
 
     setSaving(true);
+    setMsgA11y("Salvando rascunho...");
     try {
       const id = await criarOuAtualizar("rascunho");
       const up = await uploadPosterIfAny(id);
-      if (!up.ok) alert(`Rascunho salvo, mas o pôster não foi anexado.\nMotivo: ${up.error}`);
+      if (!up.ok) toast.warning(`Rascunho salvo, mas o pôster não foi anexado: ${up.error}`);
+      toast.success("✅ Rascunho salvo.");
       onSucesso?.();
       await checarModelo(chamada?.id || propChamadaId);
+      setMsgA11y("Rascunho salvo.");
     } catch (e) {
-      alert(e?.message || "Falha ao salvar rascunho.");
+      toast.error(e?.message || "Falha ao salvar rascunho.");
+      setMsgA11y("Falha ao salvar.");
     } finally {
       setSaving(false);
     }
   };
 
   const onEnviar = async () => {
-    const dentro = !!(chamada?.dentro_prazo ?? chamada?.dentroPrazo);
-    const v = validarForm(form, limites, dentro);
+    const v = validarForm(form, limites, dentroPrazo);
     if (!v.ok) {
-      alert(v.erros.join("\n"));
+      toast.warning("Corrija os campos antes de enviar.");
+      v.erros.slice(0, 4).forEach((m) => toast.info(m));
       return;
     }
 
     setSending(true);
+    setMsgA11y("Enviando submissão...");
     try {
       const id = await criarOuAtualizar("submetido");
       const up = await uploadPosterIfAny(id);
+
       if (!up.ok) {
-        alert(
-          "Submissão enviado (sem pôster). Você pode anexar o pôster depois em “Minhas submissões”."
-        );
+        toast.info("Submissão enviada (sem pôster). Você pode anexar depois em “Minhas submissões”.");
+      } else {
+        toast.success("✅ Submissão enviada!");
       }
+
       setSucesso(true);
       setTimeout(() => {
         onSucesso?.();
         onClose?.();
       }, 1200);
+      setMsgA11y("Submissão enviada.");
     } catch (e) {
-      alert(e?.message || "Falha ao enviar a submissão.");
+      toast.error(e?.message || "Falha ao enviar a submissão.");
+      setMsgA11y("Falha ao enviar.");
     } finally {
       setSending(false);
     }
   };
 
+  const atingiuMaxCoautores =
+    (form.coautores?.length || 0) >= (Number(form._maxCoautores) || maxCoautores || 10);
+
+  // Overlay de loading
   if (loading) {
     return (
-      <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center">
+      <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center" role="status" aria-live="polite">
         <Loader2 className="w-8 h-8 text-white animate-spin" />
       </div>
     );
   }
+
+  // Erro: chamada não encontrada
   if (!chamada) {
     return (
-      <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center">
-        <div className="rounded-xl bg-white px-6 py-4 shadow">
-          <p className="text-zinc-700">Chamada não encontrada.</p>
-          <div className="mt-3 text-right">
-            <button onClick={onClose} className="rounded-md bg-zinc-800 px-3 py-1.5 text-white">
+      <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-3">
+        <div className="rounded-2xl bg-white dark:bg-zinc-900 px-6 py-5 shadow-2xl border border-black/10 dark:border-white/10 max-w-md w-full">
+          <p className="text-zinc-700 dark:text-zinc-200 font-semibold">Chamada não encontrada.</p>
+          <div className="mt-4 text-right">
+            <button
+              onClick={onClose}
+              className="rounded-xl bg-zinc-900 dark:bg-zinc-200 px-4 py-2 text-white dark:text-zinc-900 font-semibold"
+            >
               Fechar
             </button>
           </div>
@@ -496,53 +569,79 @@ export default function ModalInscreverTrabalho({
     );
   }
 
-  // ✅ aceita snake_case ou camelCase vindo do backend
-  const dentroPrazo = !!(chamada?.dentro_prazo ?? chamada?.dentroPrazo);
-  const atingiuMaxCoautores = (form.coautores?.length || 0) >= (Number(form._maxCoautores) || maxCoautores || 10);
-
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+    <div
+      className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto"
+      role="presentation"
+      onMouseDown={(e) => {
+        if (bloqueado) return;
+        // fecha ao clicar fora do card
+        if (e.target === e.currentTarget) onClose?.();
+      }}
+    >
+      <div aria-live="polite" className="sr-only">
+        {msgA11y}
+      </div>
+
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        ref={dialogRef}
+        initial={{ opacity: 0, y: 18 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0 }}
-        className="relative bg-white w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden"
+        className="relative bg-white dark:bg-zinc-900 w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden border border-black/10 dark:border-white/10"
         role="dialog"
         aria-modal="true"
-        aria-labelledby={tituloId}
+        aria-labelledby={dialogTitleId}
+        aria-describedby={dialogDescId}
       >
         {/* Header */}
         <div className="relative bg-gradient-to-r from-violet-700 via-indigo-600 to-blue-500 px-5 py-4 text-white">
-          <div className="flex items-center justify-between">
-            <h2 id={tituloId} className="flex items-center gap-2 text-lg sm:text-xl font-semibold">
+          <div className="flex items-center justify-between gap-3">
+            <h2 id={dialogTitleId} className="flex items-center gap-2 text-lg sm:text-xl font-extrabold tracking-tight">
               <FilePlus2 className="w-5 h-5" />
               {submissaoId ? "Editar submissão" : "Submeter trabalho"}
             </h2>
-            <button onClick={onClose} className="rounded-lg p-1.5 hover:bg-white/10" aria-label="Fechar">
+
+            <button
+              onClick={bloqueado ? undefined : onClose}
+              disabled={bloqueado}
+              className="rounded-lg p-1.5 hover:bg-white/10 disabled:opacity-60"
+              aria-label="Fechar"
+              title={bloqueado ? "Aguarde concluir a operação." : "Fechar"}
+            >
               <X className="w-6 h-6" />
             </button>
           </div>
 
-          <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-sm">
-            <p className="opacity-90">{chamada?.titulo}</p>
-            <p className={dentroPrazo ? "text-emerald-200" : "text-rose-200"}>
+          <p id={dialogDescId} className="mt-1 flex flex-wrap items-center justify-between gap-2 text-sm">
+            <span className="opacity-90">{chamada?.titulo}</span>
+            <span className={dentroPrazo ? "text-emerald-200" : "text-rose-200"}>
               Prazo: <strong className="tracking-tight">{prazoFmt}</strong>{" "}
               <span className="text-white/70">(horário local)</span>
-            </p>
-          </div>
+            </span>
+          </p>
+
+          {!dentroPrazo && (
+            <div className="mt-2 text-xs bg-rose-500/20 border border-rose-200/30 rounded-xl px-3 py-2">
+              ⛔ Prazo encerrado. Visualização apenas (não é possível salvar/enviar).
+            </div>
+          )}
         </div>
 
         {/* Body */}
         <div className="max-h-[76vh] overflow-y-auto p-5">
           {/* Título */}
           <div className="mb-4">
-            <label htmlFor={tituloId + "-t"} className="block text-sm font-medium text-zinc-700">Título do trabalho</label>
+            <label htmlFor={inputTituloId} className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
+              Título do trabalho
+            </label>
             <input
-              id={tituloId + "-t"}
+              ref={firstFieldRef}
+              id={inputTituloId}
               name="titulo"
               value={form.titulo}
               onChange={onChange}
-              className="mt-1 w-full rounded-xl border px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950/40 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
               maxLength={Number(limites.titulo) || 200}
               required
               disabled={!dentroPrazo}
@@ -555,26 +654,30 @@ export default function ModalInscreverTrabalho({
           {/* Início + Linha */}
           <div className="grid gap-4 sm:grid-cols-2 mb-4">
             <div>
-              <label htmlFor={inicioId} className="block text-sm font-medium text-zinc-700">Início da experiência</label>
+              <label htmlFor={inputInicioId} className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
+                Início da experiência
+              </label>
               <input
-                id={inicioId}
+                id={inputInicioId}
                 type="month"
                 name="inicio_experiencia"
                 value={toMonthValue(form.inicio_experiencia)}
                 onChange={onChange}
-                className="mt-1 w-full rounded-xl border px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950/40 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 required
                 disabled={!dentroPrazo}
               />
             </div>
             <div>
-              <label htmlFor={linhaId} className="block text-sm font-medium text-zinc-700">Linha temática</label>
+              <label htmlFor={inputLinhaId} className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
+                Linha temática
+              </label>
               <select
-                id={linhaId}
+                id={inputLinhaId}
                 name="linha_tematica_id"
                 value={form.linha_tematica_id}
                 onChange={onChange}
-                className="mt-1 w-full rounded-xl border px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950/40 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 required
                 disabled={!dentroPrazo}
               >
@@ -589,60 +692,62 @@ export default function ModalInscreverTrabalho({
           </div>
 
           {/* Campos longos */}
-          {["introducao", "objetivos", "metodo", "resultados", "consideracoes", "bibliografia"].map(
-            (field) => (
+          {["introducao", "objetivos", "metodo", "resultados", "consideracoes", "bibliografia"].map((field) => {
+            const max = Number(limites[field]) || 2000;
+            const label = field.charAt(0).toUpperCase() + field.slice(1).replace("_", " ");
+            return (
               <div key={field} className="mb-4">
-                <label className="block text-sm font-medium text-zinc-700">
-                  {field.charAt(0).toUpperCase() + field.slice(1).replace("_", " ")}
-                </label>
+                <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">{label}</label>
                 <textarea
                   name={field}
                   value={form[field]}
                   onChange={onChange}
                   rows={4}
-                  className="mt-1 w-full rounded-xl border px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  maxLength={Number(limites[field]) || 2000}
+                  className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950/40 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  maxLength={max}
                   disabled={!dentroPrazo}
                 />
                 <div className="mt-1 text-right text-xs text-zinc-500">
-                  {(form[field] || "").length}/{Number(limites[field]) || 2000}
+                  {(form[field] || "").length}/{max}
                 </div>
               </div>
-            )
-          )}
+            );
+          })}
 
           {/* Coautores */}
-          <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-zinc-800">
-              Coautores (máx. {maxCoautores})
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <h3 className="text-sm font-extrabold text-zinc-800 dark:text-white">
+              Coautores <span className="text-zinc-500 font-semibold">(máx. {maxCoautores})</span>
             </h3>
             <button
               type="button"
               onClick={addCoautor}
               disabled={!dentroPrazo || atingiuMaxCoautores}
-              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-1.5 text-white text-sm hover:bg-emerald-700 disabled:opacity-50"
+              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-1.5 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50"
             >
-              <Plus className="w-4 h-4" /> Adicionar coautor
+              <Plus className="w-4 h-4" /> Adicionar
             </button>
           </div>
+
           {(form.coautores || []).map((c, i) => (
             <div key={i} className="mb-3 grid gap-2 sm:grid-cols-4">
               <input
-                className="rounded-xl border px-3 py-2"
+                className="rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950/40 px-3 py-2"
                 placeholder="Nome completo"
                 value={c.nome}
                 onChange={(e) => setCoautor(i, "nome", e.target.value)}
                 disabled={!dentroPrazo}
               />
               <input
-                className="rounded-xl border px-3 py-2"
+                className="rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950/40 px-3 py-2"
                 placeholder="CPF (apenas números)"
                 value={c.cpf}
                 onChange={(e) => setCoautor(i, "cpf", e.target.value)}
                 disabled={!dentroPrazo}
+                inputMode="numeric"
               />
               <input
-                className="rounded-xl border px-3 py-2"
+                className="rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950/40 px-3 py-2"
                 placeholder="E-mail"
                 type="email"
                 value={c.email}
@@ -651,8 +756,8 @@ export default function ModalInscreverTrabalho({
               />
               <div className="flex gap-2">
                 <input
-                  className="flex-1 rounded-xl border px-3 py-2"
-                  placeholder="Vínculo empregatício"
+                  className="flex-1 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950/40 px-3 py-2"
+                  placeholder="Vínculo"
                   value={c.vinculo}
                   onChange={(e) => setCoautor(i, "vinculo", e.target.value)}
                   disabled={!dentroPrazo}
@@ -661,10 +766,11 @@ export default function ModalInscreverTrabalho({
                   type="button"
                   onClick={() => remCoautor(i)}
                   disabled={!dentroPrazo}
-                  className="inline-flex items-center justify-center rounded-xl bg-zinc-100 px-3 hover:bg-zinc-200 disabled:opacity-50"
+                  className="inline-flex items-center justify-center rounded-xl bg-zinc-100 dark:bg-zinc-800 px-3 hover:bg-zinc-200 dark:hover:bg-zinc-700 disabled:opacity-50"
                   title="Remover"
+                  aria-label="Remover coautor"
                 >
-                  <Trash2 className="w-4 h-4 text-zinc-600" />
+                  <Trash2 className="w-4 h-4 text-zinc-600 dark:text-zinc-200" />
                 </button>
               </div>
             </div>
@@ -672,25 +778,24 @@ export default function ModalInscreverTrabalho({
 
           {/* Pôster + modelo */}
           <div className="mt-6">
-            <h3 className="mb-1 text-center text-sm font-semibold text-zinc-800">Pôster</h3>
+            <h3 className="mb-1 text-center text-sm font-extrabold text-zinc-800 dark:text-white">Pôster</h3>
 
             <div className="flex flex-wrap items-center justify-center gap-3 text-sm">
               <label
-                className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 font-medium text-white cursor-pointer ${
-                  posterState === "uploading" ? "bg-emerald-500" : "bg-emerald-600 hover:bg-emerald-700"
-                } ${!dentroPrazo ? "opacity-50 cursor-not-allowed" : ""}`}
+                className={[
+                  "inline-flex items-center gap-2 rounded-xl px-3 py-2 font-semibold text-white cursor-pointer",
+                  posterState === "uploading" ? "bg-emerald-500" : "bg-emerald-600 hover:bg-emerald-700",
+                  !dentroPrazo ? "opacity-50 cursor-not-allowed" : "",
+                ].join(" ")}
               >
-                {posterState === "uploading" ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Upload className="w-4 h-4" />
-                )}
+                {posterState === "uploading" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
                 {posterState === "uploading"
                   ? `Enviando… ${posterProgress}%`
                   : posterState === "done"
                   ? "Enviado ✓"
                   : "Anexar pôster"}
                 <input
+                  ref={posterInputRef}
                   type="file"
                   accept=".ppt,.pptx,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
                   className="hidden"
@@ -699,30 +804,38 @@ export default function ModalInscreverTrabalho({
                 />
               </label>
 
-              <span className="text-zinc-500">Formatos: .ppt / .pptx (até 50MB).</span>
+              {form.poster && (
+                <button
+                  type="button"
+                  onClick={limparPosterSelecionado}
+                  className="inline-flex items-center gap-2 rounded-xl bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-zinc-800 dark:text-zinc-100 hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                  title="Remover arquivo selecionado"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Remover
+                </button>
+              )}
+
+              <span className="text-zinc-500 dark:text-zinc-300">Formatos: .ppt / .pptx (até 50MB).</span>
 
               {modeloDisponivel ? (
                 <button
                   type="button"
                   onClick={() => baixarModeloBanner(chamada?.id || propChamadaId)}
-                  className="inline-flex items-center gap-1 text-indigo-700 hover:underline disabled:opacity-60"
+                  className="inline-flex items-center gap-1 text-indigo-700 dark:text-indigo-300 hover:underline disabled:opacity-60"
                   disabled={baixandoModelo}
                   title="Baixar modelo de pôster"
                 >
-                  {baixandoModelo ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  )}
+                  {baixandoModelo ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5" />}
                   Baixar modelo
                 </button>
               ) : (
-                <span className="text-zinc-400">(modelo indisponível no momento)</span>
+                <span className="text-zinc-400 dark:text-zinc-500">(modelo indisponível)</span>
               )}
             </div>
 
             {(form.poster || posterExistente) && (
-              <p className="mt-2 text-center text-xs text-zinc-600">
+              <p className="mt-2 text-center text-xs text-zinc-600 dark:text-zinc-300">
                 {form.poster ? (
                   <>
                     Selecionado: <strong>{form.poster.name}</strong>
@@ -738,21 +851,24 @@ export default function ModalInscreverTrabalho({
         </div>
 
         {/* Footer ações */}
-        <div className="flex items-center justify-end gap-3 border-t bg-zinc-50 px-4 py-3">
+        <div className="flex items-center justify-end gap-3 border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950/40 px-4 py-3">
           <button
             type="button"
             onClick={onSalvar}
             disabled={saving || sending || !dentroPrazo}
-            className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-sm font-medium text-zinc-800 ring-1 ring-zinc-300 hover:bg-zinc-100 disabled:opacity-60"
+            className="inline-flex items-center gap-2 rounded-xl bg-white dark:bg-zinc-900 px-4 py-2 text-sm font-extrabold text-zinc-800 dark:text-zinc-100 ring-1 ring-zinc-300 dark:ring-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-60"
+            aria-busy={saving ? "true" : "false"}
           >
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-            Salvar
+            Salvar rascunho
           </button>
+
           <button
             type="button"
             onClick={onEnviar}
             disabled={saving || sending || !dentroPrazo}
-            className="inline-flex items-center gap-2 rounded-xl bg-orange-600 px-4 py-2 text-sm font-medium text-white hover:bg-orange-700 disabled:opacity-60"
+            className="inline-flex items-center gap-2 rounded-xl bg-orange-600 px-4 py-2 text-sm font-extrabold text-white hover:bg-orange-700 disabled:opacity-60"
+            aria-busy={sending ? "true" : "false"}
           >
             {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
             {submissaoId ? "Salvar e enviar" : "Enviar"}
@@ -761,9 +877,9 @@ export default function ModalInscreverTrabalho({
 
         {/* Sucesso overlay */}
         {sucesso && (
-          <div className="absolute inset-0 bg-white/90 flex flex-col items-center justify-center">
+          <div className="absolute inset-0 bg-white/90 dark:bg-zinc-900/90 flex flex-col items-center justify-center">
             <CheckCircle2 className="w-14 h-14 text-emerald-600 mb-2" />
-            <p className="text-emerald-700 font-semibold">Submissão enviada com sucesso!</p>
+            <p className="text-emerald-700 dark:text-emerald-300 font-extrabold">Submissão enviada com sucesso!</p>
           </div>
         )}
       </motion.div>

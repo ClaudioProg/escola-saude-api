@@ -6,12 +6,24 @@ import BotaoPrimario from "./BotaoPrimario";
 import BotaoSecundario from "./BotaoSecundario";
 import { formatarDataBrasileira } from "../utils/data";
 
+/* =========================
+   Helpers
+========================= */
+function toLocalYMD(d = new Date()) {
+  const dt = d instanceof Date ? d : new Date(d);
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, "0");
+  const day = String(dt.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 /** Converte datas ISO (YYYY-MM-DD) para chave de status do BadgeStatus */
 function getStatusKey(inicioISO, fimISO, hojeISO) {
   if (!inicioISO || !fimISO || !hojeISO) return "desconhecido";
+  if (fimISO < inicioISO) return "desconhecido"; // datas incoerentes
   if (hojeISO < inicioISO) return "programado";
   if (hojeISO > fimISO) return "encerrado";
-  return "andamento";
+  return "em_andamento"; // 🔁 compat com <BadgeStatus />
 }
 
 /** Texto de período robusto */
@@ -39,9 +51,12 @@ export default function CardTurmaadministrador({
   const inicioISO = turma?.data_inicio?.split("T")[0] || turma?.data_inicio || null;
   const fimISO = turma?.data_fim?.split("T")[0] || turma?.data_fim || null;
 
-  const dentroDoPeriodo = !!(inicioISO && fimISO && hojeISO >= inicioISO && hojeISO <= fimISO);
-  const eventoJaIniciado = !!(inicioISO && hojeISO >= inicioISO);
-  const statusKey = getStatusKey(inicioISO, fimISO, hojeISO);
+  const hojeYMD = hojeISO || toLocalYMD();
+
+  const statusKey = getStatusKey(inicioISO, fimISO, hojeYMD);
+  const dentroDoPeriodo =
+    !!(inicioISO && fimISO && fimISO >= inicioISO && hojeYMD >= inicioISO && hojeYMD <= fimISO);
+  const eventoJaIniciado = !!(inicioISO && hojeYMD >= inicioISO);
 
   const handleIr = (path) => {
     if (!path || typeof navigate !== "function") return;
@@ -111,7 +126,6 @@ export default function CardTurmaadministrador({
               leftIcon={<span aria-hidden>📷</span>}
               cor="verde"
               title="Registro de presença por QR Code"
-              className="bg-gradient-to-br from-[#0f2c1f] via-[#114b2d] to-[#166534] hover:brightness-[1.05]"
             >
               QR Code
             </BotaoPrimario>
@@ -167,7 +181,7 @@ export default function CardTurmaadministrador({
             aria-label={estaExpandida ? "Recolher detalhes da turma" : "Ver detalhes da turma"}
             rightIcon={<span aria-hidden>{estaExpandida ? "▴" : "▾"}</span>}
             cor="azulPetroleo"
-            className="bg-gradient-to-br from-slate-900 via-teal-900 to-slate-800 hover:brightness-[1.05]"
+            title={estaExpandida ? "Recolher detalhes" : "Ver detalhes"}
           >
             {estaExpandida ? "Recolher Detalhes" : "Ver Detalhes"}
           </BotaoPrimario>
@@ -184,7 +198,7 @@ CardTurmaadministrador.propTypes = {
     data_inicio: PropTypes.string, // ISO
     data_fim: PropTypes.string, // ISO
   }).isRequired,
-  hojeISO: PropTypes.string.isRequired, // "YYYY-MM-DD"
+  hojeISO: PropTypes.string, // "YYYY-MM-DD" (opcional; cai para hoje local)
   estaExpandida: PropTypes.bool,
   modoadministradorPresencas: PropTypes.bool,
   carregarInscritos: PropTypes.func,

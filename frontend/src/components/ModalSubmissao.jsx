@@ -12,9 +12,9 @@ import Modal from "./Modal";
  *    2) deadlineIsoLocal="YYYY-MM-DDTHH:mm"   // sem 'Z', interpretado como local SEM shift
  *    3) subtitle: string/ReactNode             // se string, normalizamos datas com regex; se node, respeitamos
  *
- * Diretrizes aplicadas:
- * - Acessível (aria-*; focus trap pelo ModalBase)
- * - Mobile-first; layout limpo; gradiente 3 cores por variante
+ * Diretrizes:
+ * - Acessível (aria-*; foco pelo Modal)
+ * - Mobile-first; layout limpo; gradiente 3 cores
  * - Sem conversões de timezone; apenas manipulação de strings
  */
 
@@ -38,34 +38,49 @@ function toBrTimeOnly(timeStr) {
   return `${hh}:${mi}`;
 }
 
-// "2025-10-25T01:15"  (SEM 'Z', SEM timezone) -> "25/10/2025 01:15"
-// ⚠️ Se vier com 'Z' (UTC), NÃO convertemos — apenas retiramos os segundos.
-function toBrDateTimeFromIsoLocal(isoLocal) {
-  if (typeof isoLocal !== "string") return "";
-  // Recusamos strings com 'Z' para evitar shift silencioso
-  // (Se aparecer 'Z', tratamos igual string comum, sem converter fuso).
-  const clean = isoLocal.replace("Z", "");
-  const m = clean.match(/^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})(?::\d{2})?$/);
-  if (!m) return isoLocal;
-  const [, yy, mm, dd, hh, mi] = m;
-  return `${dd}/${mm}/${yy} ${hh}:${mi}`;
+/**
+ * Aceita: "YYYY-MM-DDTHH:mm", "YYYY-MM-DDTHH:mm:ss", "YYYY-MM-DD HH:mm:ss",
+ * com milissegundos e/ou sufixo "Z" ou offset "+HH:MM"/"-HH:MM"
+ * ⚠️ Ignora qualquer sufixo de timezone (não faz shift).
+ */
+function toBrDateTimeFromIsoLike(isoLike) {
+  if (typeof isoLike !== "string") return "";
+  const s = isoLike.trim();
+
+  // captura date + hora, ignorando segundos/ms e ignorando Z/offset no final
+  const m = s.match(
+    /^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})(?::\d{2}(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}:\d{2})?$/
+  );
+  if (m) {
+    const [, yy, mm, dd, hh, mi] = m;
+    return `${dd}/${mm}/${yy} ${hh}:${mi}`;
+  }
+
+  // data-only
+  const onlyDate = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (onlyDate) {
+    const [, yy, mm, dd] = onlyDate;
+    return `${dd}/${mm}/${yy}`;
+  }
+
+  return isoLike;
 }
 
 // Converte datas embutidas em textos (sem mexer em timezone):
-//  "2025-10-20T23:59:00" => "20/10/2025 23:59"
-//  "2025-10-20 08:00"    => "20/10/2025 08:00"
-//  "2025-10-20"          => "20/10/2025"
+//  "2025-10-20T23:59:00.000Z" => "20/10/2025 23:59"
+//  "2025-10-20 08:00"         => "20/10/2025 08:00"
+//  "2025-10-20"               => "20/10/2025"
 function normalizeDatesInsideText(text) {
   if (!text || typeof text !== "string") return text;
   let s = text;
 
-  // data e hora
+  // date-time (com segundos/ms e com Z/offset opcional)
   s = s.replace(
-    /(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})(?::\d{2})?/g,
+    /(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})(?::\d{2}(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}:\d{2})?/g,
     (_, yy, mm, dd, hh, mi) => `${dd}/${mm}/${yy} ${hh}:${mi}`
   );
 
-  // apenas data
+  // data-only (garante que não seja parte de um datetime já convertido)
   s = s.replace(
     /(\d{4})-(\d{2})-(\d{2})(?![\d:])/g,
     (_, yy, mm, dd) => `${dd}/${mm}/${yy}`
@@ -91,30 +106,30 @@ export default function ModalSubmissao({
   headerGradient,
 
   // 🔽 Novos props opcionais para prazo:
-  deadlineParts,     // { date: "YYYY-MM-DD", time: "HH:mm" | "HH:mm:ss" }
-  deadlineIsoLocal,  // "YYYY-MM-DDTHH:mm" (sem 'Z')
+  deadlineParts, // { date: "YYYY-MM-DD", time: "HH:mm" | "HH:mm:ss" }
+  deadlineIsoLocal, // "YYYY-MM-DDTHH:mm" (sem 'Z' — mas se vier, ignoramos o tz)
   deadlinePrefix = "Prazo final:",
 }) {
   const titleId = useId();
   const descId = useId();
 
-  // 🎯 Monta a linha segura de "Prazo final" sem timezone, se informada
+  // 🎯 Monta a linha segura de "Prazo final" sem timezone
   const safeDeadlineText = useMemo(() => {
     if (deadlineParts?.date && deadlineParts?.time) {
       const d = toBrDateOnly(deadlineParts.date);
       const t = toBrTimeOnly(deadlineParts.time);
       return `${deadlinePrefix} ${d} ${t}`;
     }
-    if (typeof deadlineIsoLocal === "string") {
-      return `${deadlinePrefix} ${toBrDateTimeFromIsoLocal(deadlineIsoLocal)}`;
+    if (typeof deadlineIsoLocal === "string" && deadlineIsoLocal.trim()) {
+      // aceita ISO-like, ignorando qualquer tz suffix
+      return `${deadlinePrefix} ${toBrDateTimeFromIsoLike(deadlineIsoLocal)}`;
     }
     return null;
   }, [deadlineParts, deadlineIsoLocal, deadlinePrefix]);
 
-  // Se não houver props de prazo específicos, usamos o subtitle original.
+  // Se não houver props de prazo, usa o subtitle original.
   const subtitleText = useMemo(() => {
     if (safeDeadlineText) return safeDeadlineText;
-    // se vier ReactNode, respeita; se vier string, normaliza datas encontradas
     return typeof subtitle === "string" ? normalizeDatesInsideText(subtitle) : subtitle;
   }, [safeDeadlineText, subtitle]);
 
@@ -128,12 +143,18 @@ export default function ModalSubmissao({
   };
   const headerBg = headerGradient || gradientByVariant[variant] || gradientByVariant.indigo;
 
-  // ⌨️ Respeita o escClose
+  // ⌨️ Respeita escClose: se escClose=false, bloqueia ESC (sem fechar modal)
   useEffect(() => {
-    if (!open || escClose) return;
+    if (!open) return;
+    if (escClose) return;
+
     const blockEsc = (e) => {
-      if (e.key === "Escape") e.stopPropagation();
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+      }
     };
+
     document.addEventListener("keydown", blockEsc, true);
     return () => document.removeEventListener("keydown", blockEsc, true);
   }, [open, escClose]);
@@ -218,11 +239,10 @@ ModalSubmissao.propTypes = {
   variant: PropTypes.oneOf(["emerald", "indigo", "cyan", "rose", "slate"]),
   headerGradient: PropTypes.string,
 
-  // 👇 novos
   deadlineParts: PropTypes.shape({
     date: PropTypes.string, // "YYYY-MM-DD"
     time: PropTypes.string, // "HH:mm" | "HH:mm:ss"
   }),
-  deadlineIsoLocal: PropTypes.string, // "YYYY-MM-DDTHH:mm" (sem 'Z')
+  deadlineIsoLocal: PropTypes.string, // "YYYY-MM-DDTHH:mm" (sem 'Z' ideal, mas aceitamos)
   deadlinePrefix: PropTypes.string,
 };

@@ -1,11 +1,19 @@
 /* eslint-disable no-console */
-// ✅ src/pages/GerenciarEventos.jsx (admin)
+// ✅ src/pages/GerenciarEventos.jsx (admin) — PREMIUM (robusto, a11y, mobile-first, sem mudar regras)
 // Agora: sem bloqueios de edição, instrutores por TURMA, assinante por turma,
 // restrição por cargos/unidades e upload de folder (png/jpg) + programação (pdf).
+//
+// ✅ Premium extra aplicado:
+// - AbortController + mountedRef (evita race conditions ao recarregar/abrir modal rápido)
+// - “Refetch seguro” ao editar (cancela requests antigos)
+// - Barra de progresso respeita reduced-motion
+// - Estado de erro com CTA
+// - Toggle publicar/despublicar com rollback já mantido e foco/a11y refinados
+// - Normalização de turmas: instrutores + assinante sempre alinhados e “clean()” consistente
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { toast } from "react-toastify";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import {
   Pencil,
   Trash2,
@@ -14,6 +22,7 @@ import {
   RefreshCcw,
   Eye,
   EyeOff,
+  AlertTriangle,
 } from "lucide-react";
 
 import { apiGet, apiPost, apiPut, apiDelete } from "../services/api";
@@ -24,7 +33,7 @@ import Footer from "../components/Footer";
 
 /* =============================
    Helpers básicos
-   ============================= */
+============================= */
 const clean = (obj) =>
   Object.fromEntries(
     Object.entries(obj || {}).filter(
@@ -101,11 +110,7 @@ function normalizeTurmas(turmas = []) {
       datas = t.encontros
         .map((e) =>
           typeof e === "string"
-            ? {
-                data: iso(e),
-                horario_inicio: hiBase,
-                horario_fim: hfBase,
-              }
+            ? { data: iso(e), horario_inicio: hiBase, horario_fim: hfBase }
             : {
                 data: iso(e.data),
                 horario_inicio: hhmm(e.inicio || e.horario_inicio || hiBase),
@@ -128,43 +133,37 @@ function normalizeTurmas(turmas = []) {
       inicio: d.horario_inicio,
       fim: d.horario_fim,
     }));
-    let ch = Number(t.carga_horaria);
-    if (!Number.isFinite(ch) || ch <= 0)
-      ch = cargaHorariaFromEncontros(encontrosCalc) || 1;
 
-    const vagas = Number.isFinite(Number(t.vagas_total))
-      ? Number(t.vagas_total)
-      : Number(t.vagas);
+    let ch = Number(t.carga_horaria);
+    if (!Number.isFinite(ch) || ch <= 0) ch = cargaHorariaFromEncontros(encontrosCalc) || 1;
+
+    const vagas = Number.isFinite(Number(t.vagas_total)) ? Number(t.vagas_total) : Number(t.vagas);
     const vagasOk = Number.isFinite(vagas) && vagas > 0 ? vagas : 1;
 
     // ✅ instrutores e assinante por TURMA
+    const instrutores = extractIds(t.instrutores || t.instrutor || t.professores || []);
 
-const instrutores = extractIds(
-  t.instrutores || t.instrutor || t.professores || []
-);
+    // cobre todas as variantes possíveis vindas do servidor/modais
+    const _assinanteRaw =
+      t.assinante_id ??
+      t.instrutor_assinante_id ?? // preferencial
+      t.instrutor_assinante ?? // legado
+      t.assinante;
 
-// cobre todas as variantes possíveis vindas do servidor/modais
-const _assinanteRaw =
-  t.assinante_id ??
-  t.instrutor_assinante_id ??   // <- nome preferencial
-  t.instrutor_assinante ??      // <- legado/variante
-  t.assinante;
+    const assinanteNum = Number(_assinanteRaw);
+    const hasAssinante = Number.isFinite(assinanteNum);
 
-const assinanteNum = Number(_assinanteRaw);
-const hasAssinante = Number.isFinite(assinanteNum);
-
-return clean({
-  ...(Number.isFinite(Number(t.id)) ? { id: Number(t.id) } : {}),
-  nome,
-  vagas_total: vagasOk,
-  carga_horaria: ch,
-  datas,
-  instrutores,
-  // Sempre enviar os dois campos, alinhados
-  ...(hasAssinante ? { assinante_id: assinanteNum } : {}),
-  ...(hasAssinante ? { instrutor_assinante_id: assinanteNum } : {}),
-});
-
+    return clean({
+      ...(Number.isFinite(Number(t.id)) ? { id: Number(t.id) } : {}),
+      nome,
+      vagas_total: vagasOk,
+      carga_horaria: ch,
+      datas,
+      instrutores,
+      // Sempre enviar os dois campos (espelho), se houver assinante
+      ...(hasAssinante ? { assinante_id: assinanteNum } : {}),
+      ...(hasAssinante ? { instrutor_assinante_id: assinanteNum } : {}),
+    });
   });
 }
 
@@ -177,7 +176,7 @@ const normRegistros = (arr) =>
 
 /* =============================
    Fetch auxiliares
-   ============================= */
+============================= */
 async function fetchTurmasDoEvento(eventoId) {
   const urls = [
     `/api/eventos/${eventoId}`,
@@ -212,8 +211,8 @@ async function fetchEventoCompleto(eventoId) {
 
 /* =============================
    Upload helpers (folder/programação)
-   — Agora com Authorization + cookies
-   ============================= */
+   — Authorization + cookies
+============================= */
 function getAuthToken() {
   try {
     return localStorage.getItem("token") || localStorage.getItem("authToken") || "";
@@ -228,22 +227,14 @@ async function authFetch(url, opts = {}) {
   if (token && !headers.has("Authorization")) {
     headers.set("Authorization", `Bearer ${token}`);
   }
-  // NÃO setar Content-Type com FormData
-  return fetch(url, {
-    ...opts,
-    headers,
-    credentials: "include",
-  });
+  return fetch(url, { ...opts, headers, credentials: "include" });
 }
 
 async function uploadFolder(eventoId, file) {
   if (!file) return;
   const fd = new FormData();
   fd.append("folder", file);
-  const resp = await authFetch(`/api/eventos/${eventoId}/folder`, {
-    method: "POST",
-    body: fd,
-  });
+  const resp = await authFetch(`/api/eventos/${eventoId}/folder`, { method: "POST", body: fd });
   if (!resp.ok) {
     let msg = "Falha ao enviar folder (imagem).";
     try {
@@ -258,10 +249,7 @@ async function uploadProgramacao(eventoId, file) {
   if (!file) return;
   const fd = new FormData();
   fd.append("programacao", file);
-  const resp = await authFetch(`/api/eventos/${eventoId}/programacao`, {
-    method: "POST",
-    body: fd,
-  });
+  const resp = await authFetch(`/api/eventos/${eventoId}/programacao`, { method: "POST", body: fd });
   if (!resp.ok) {
     let msg = "Falha ao enviar programação (PDF).";
     try {
@@ -274,11 +262,10 @@ async function uploadProgramacao(eventoId, file) {
 
 /* =============================
    Modo “espelho” para PUT (merge com servidor)
-   ============================= */
+============================= */
 function buildUpdateBody(baseServidor, dadosDoModal) {
   const body = {};
 
-  // Campos simples
   body.titulo = (dadosDoModal?.titulo ?? baseServidor?.titulo ?? "").trim();
   body.descricao = (dadosDoModal?.descricao ?? baseServidor?.descricao ?? "").trim();
   body.local = (dadosDoModal?.local ?? baseServidor?.local ?? "").trim();
@@ -296,9 +283,7 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
   );
   body.restrito = restrito;
 
-  body.restrito_modo = restrito
-    ? dadosDoModal?.restrito_modo ?? baseServidor?.restrito_modo ?? null
-    : null;
+  body.restrito_modo = restrito ? dadosDoModal?.restrito_modo ?? baseServidor?.restrito_modo ?? null : null;
 
   // lista de registros (opcional, legado)
   if (restrito && body.restrito_modo === "lista_registros") {
@@ -306,14 +291,12 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
       (Array.isArray(dadosDoModal?.registros_permitidos) && dadosDoModal.registros_permitidos) ||
       (Array.isArray(dadosDoModal?.registros) && dadosDoModal.registros) ||
       [];
-    const fonteServer = Array.isArray(baseServidor?.registros_permitidos)
-      ? baseServidor.registros_permitidos
-      : [];
+    const fonteServer = Array.isArray(baseServidor?.registros_permitidos) ? baseServidor.registros_permitidos : [];
     const regs = normRegistros(fonteModal.length ? fonteModal : fonteServer);
     if (regs.length) body.registros_permitidos = regs;
   }
 
-  // ✅ Novos filtros de visibilidade
+  // ✅ filtros por cargos/unidades
   const cargosModal = extractStrs(dadosDoModal?.cargos_permitidos);
   const cargosServer = extractStrs(baseServidor?.cargos_permitidos);
   if (restrito && cargosModal.length) body.cargos_permitidos = cargosModal;
@@ -326,11 +309,9 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
 
   // Turmas (agora carregam instrutores e assinante)
   let turmasFonte = [];
-  if (Array.isArray(dadosDoModal?.turmas) && dadosDoModal.turmas.length > 0) {
-    turmasFonte = dadosDoModal.turmas;
-  } else if (Array.isArray(baseServidor?.turmas) && baseServidor.turmas.length > 0) {
-    turmasFonte = baseServidor.turmas;
-  }
+  if (Array.isArray(dadosDoModal?.turmas) && dadosDoModal.turmas.length > 0) turmasFonte = dadosDoModal.turmas;
+  else if (Array.isArray(baseServidor?.turmas) && baseServidor.turmas.length > 0) turmasFonte = baseServidor.turmas;
+
   const turmasPayload = normalizeTurmas(turmasFonte);
   if (turmasPayload.length > 0) body.turmas = turmasPayload;
 
@@ -351,7 +332,6 @@ function HeaderHero({ onCriar, onAtualizar, atualizando }) {
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-7 sm:py-8 md:py-9 min-h-[140px] sm:min-h-[170px]">
         <div className="flex flex-col items-center text-center gap-2.5 sm:gap-3">
           <div className="inline-flex items-center justify-center gap-2">
-            <svg width="0" height="0" aria-hidden="true" />
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Gerenciar Eventos</h1>
           </div>
 
@@ -362,7 +342,7 @@ function HeaderHero({ onCriar, onAtualizar, atualizando }) {
               type="button"
               onClick={onAtualizar}
               disabled={atualizando}
-              className={`inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition
+              className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-extrabold transition
                 ${atualizando ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-white/15 hover:bg-white/25"} text-white`}
               aria-label="Atualizar lista de eventos"
               aria-busy={atualizando ? "true" : "false"}
@@ -374,7 +354,7 @@ function HeaderHero({ onCriar, onAtualizar, atualizando }) {
             <button
               type="button"
               onClick={onCriar}
-              className="inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-semibold bg-amber-400 text-slate-900 hover:bg-amber-300 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-400"
+              className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-extrabold bg-amber-400 text-slate-900 hover:bg-amber-300 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-400"
               aria-label="Criar novo evento"
             >
               <PlusCircle className="w-5 h-5" aria-hidden="true" />
@@ -397,40 +377,56 @@ function deduzStatus(ev) {
   if (raw === "encerrado") return "encerrado";
   return "programado";
 }
-
 function statusBarClasses(status) {
-  if (status === "programado")
-    return "bg-gradient-to-r from-emerald-700 via-emerald-600 to-emerald-500";
-  if (status === "em_andamento")
-    return "bg-gradient-to-r from-amber-700 via-amber-600 to-amber-400";
-  if (status === "encerrado")
-    return "bg-gradient-to-r from-rose-800 via-rose-700 to-rose-500";
+  if (status === "programado") return "bg-gradient-to-r from-emerald-700 via-emerald-600 to-emerald-500";
+  if (status === "em_andamento") return "bg-gradient-to-r from-amber-700 via-amber-600 to-amber-400";
+  if (status === "encerrado") return "bg-gradient-to-r from-rose-800 via-rose-700 to-rose-500";
   return "bg-gradient-to-r from-slate-400 to-slate-300";
 }
 
 /* =============================
    Página
-   ============================= */
+============================= */
 export default function GerenciarEventos() {
+  const reduceMotion = useReducedMotion();
+
   const [eventos, setEventos] = useState([]);
   const [eventoSelecionado, setEventoSelecionado] = useState(null);
   const [erro, setErro] = useState("");
   const [loading, setLoading] = useState(true);
   const [modalAberto, setModalAberto] = useState(false);
   const [publishingId, setPublishingId] = useState(null);
-  const [salvando, setSalvando] = useState(false); // passa para o ModalEvento
+  const [salvando, setSalvando] = useState(false);
+
   const liveRef = useRef(null);
+  const abortListRef = useRef(null);
+  const abortEditRef = useRef(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      abortListRef.current?.abort?.("unmount");
+      abortEditRef.current?.abort?.("unmount");
+    };
+  }, []);
 
   const setLive = (msg) => {
     if (liveRef.current) liveRef.current.textContent = msg;
   };
 
-  async function recarregarEventos() {
+  const recarregarEventos = useCallback(async () => {
     try {
       setErro("");
       setLoading(true);
       setLive("Carregando eventos…");
-      const data = await apiGet("/api/eventos", { on403: "silent" });
+
+      abortListRef.current?.abort?.("new-request");
+      const ctrl = new AbortController();
+      abortListRef.current = ctrl;
+
+      const data = await apiGet("/api/eventos", { on403: "silent", signal: ctrl.signal });
 
       const lista = Array.isArray(data)
         ? data
@@ -440,46 +436,55 @@ export default function GerenciarEventos() {
         ? data.lista
         : [];
 
+      if (!mountedRef.current) return;
       setEventos(lista);
       setLive(`Eventos carregados: ${lista.length}.`);
     } catch (err) {
+      if (err?.name === "AbortError") return;
       const msg = err?.message || "Erro ao carregar eventos";
       console.error("/api/eventos erro:", err);
+      if (!mountedRef.current) return;
       setErro(msg);
       setEventos([]);
       toast.error(`❌ ${msg}`);
       setLive("Falha ao carregar eventos.");
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
-    (async () => {
-      await recarregarEventos();
-    })();
-  }, []);
+    recarregarEventos();
+  }, [recarregarEventos]);
 
   const abrirModalCriar = () => {
     setEventoSelecionado(null);
     setModalAberto(true);
   };
 
-  const abrirModalEditar = async (evento) => {
+  const abrirModalEditar = useCallback(async (evento) => {
     setEventoSelecionado(evento);
     setModalAberto(true);
 
-    // refina com dados completos
-    (async () => {
+    // refina com dados completos (cancelável)
+    abortEditRef.current?.abort?.("new-edit");
+    const ctrl = new AbortController();
+    abortEditRef.current = ctrl;
+
+    try {
       let turmas = Array.isArray(evento.turmas) ? evento.turmas : [];
       if ((!turmas || turmas.length === 0) && evento?.id) {
         turmas = await fetchTurmasDoEvento(evento.id);
       }
       const base = (await fetchEventoCompleto(evento.id)) || evento;
       const combinado = { ...evento, ...base, turmas };
+      if (!mountedRef.current || ctrl.signal.aborted) return;
       setEventoSelecionado(combinado);
-    })();
-  };
+    } catch (e) {
+      if (e?.name === "AbortError") return;
+      console.warn("[abrirModalEditar] falha ao refinar:", e);
+    }
+  }, []);
 
   const excluirEvento = async (eventoId) => {
     if (!window.confirm("Tem certeza que deseja excluir este evento?")) return;
@@ -497,28 +502,26 @@ export default function GerenciarEventos() {
   function validarTurmasComInstrutores(turmasNorm) {
     for (const t of turmasNorm) {
       const instrs = Array.isArray(t.instrutores) ? t.instrutores : [];
-      const assinante =
-        Number.isFinite(Number(t.assinante_id))
-          ? Number(t.assinante_id)
-          : Number(t.instrutor_assinante_id);
-  
+      const assinante = Number.isFinite(Number(t.assinante_id))
+        ? Number(t.assinante_id)
+        : Number(t.instrutor_assinante_id);
+
       if (Number.isFinite(assinante) && !instrs.includes(assinante)) {
         return `O assinante selecionado na turma "${t.nome}" precisa estar entre os instrutores da turma.`;
       }
     }
     return null;
   }
-  
 
   const salvarEvento = async (dadosDoModal) => {
     try {
       setSalvando(true);
-
       const isEdicao = Boolean(eventoSelecionado?.id);
 
       // ====== EDIÇÃO ======
       if (isEdicao) {
         let baseServidor = await fetchEventoCompleto(eventoSelecionado.id);
+
         if (!baseServidor) {
           const turmasDoEvento =
             Array.isArray(eventoSelecionado?.turmas) && eventoSelecionado.turmas.length
@@ -536,42 +539,32 @@ export default function GerenciarEventos() {
             publico_alvo: eventoSelecionado?.publico_alvo || "",
             restrito: Boolean(eventoSelecionado?.restrito),
             restrito_modo: eventoSelecionado?.restrito_modo || null,
-            // novos arrays podem já vir do servidor:
             cargos_permitidos: eventoSelecionado?.cargos_permitidos || [],
             unidades_permitidas: eventoSelecionado?.unidades_permitidas || [],
           };
         }
 
-        // ... dentro de salvarEvento, no bloco de edição (isEdicao === true)
-const body = buildUpdateBody(baseServidor, dadosDoModal);
+        const body = buildUpdateBody(baseServidor, dadosDoModal);
 
-// ✅ incluir sinalizações de remoção vindas do Modal
-if (dadosDoModal?.remover_folder === true) {
-  body.remover_folder = true;
-}
-if (dadosDoModal?.remover_programacao === true) {
-  body.remover_programacao = true;
-}
+        // ✅ incluir sinalizações de remoção vindas do Modal
+        if (dadosDoModal?.remover_folder === true) body.remover_folder = true;
+        if (dadosDoModal?.remover_programacao === true) body.remover_programacao = true;
 
-// validação soft...
-if (Array.isArray(body.turmas) && body.turmas.length > 0) {
-  const msg = validarTurmasComInstrutores(body.turmas);
-  if (msg) {
-    toast.error(msg);
-    return;
-  }
-}
+        // validação soft
+        if (Array.isArray(body.turmas) && body.turmas.length > 0) {
+          const msg = validarTurmasComInstrutores(body.turmas);
+          if (msg) {
+            toast.error(msg);
+            return;
+          }
+        }
 
-// Sem fallback/travas: atualiza sempre
-await apiPut(`/api/eventos/${eventoSelecionado.id}`, body);
+        await apiPut(`/api/eventos/${eventoSelecionado.id}`, body);
 
-// Uploads (folder/programação) se enviados
-if (dadosDoModal?.folderFile instanceof File) {
-  await uploadFolder(eventoSelecionado.id, dadosDoModal.folderFile);
-}
-if (dadosDoModal?.programacaoFile instanceof File) {
-  await uploadProgramacao(eventoSelecionado.id, dadosDoModal.programacaoFile);
-}
+        // Uploads (folder/programação) se enviados
+        if (dadosDoModal?.folderFile instanceof File) await uploadFolder(eventoSelecionado.id, dadosDoModal.folderFile);
+        if (dadosDoModal?.programacaoFile instanceof File)
+          await uploadProgramacao(eventoSelecionado.id, dadosDoModal.programacaoFile);
 
         await recarregarEventos();
         toast.success("✅ Evento salvo com sucesso.");
@@ -595,21 +588,22 @@ if (dadosDoModal?.programacaoFile instanceof File) {
 
       // turmas (com instrutores e assinante)
       const turmas =
-  Array.isArray(dadosDoModal?.turmas) && dadosDoModal.turmas.length
-    ? normalizeTurmas(dadosDoModal.turmas)
-    : normalizeTurmas([{
-        nome: base.titulo || "Turma Única",
-        data_inicio: ymd(dadosDoModal?.data_inicio),
-        data_fim: ymd(dadosDoModal?.data_fim),
-        horario_inicio: hhmm(dadosDoModal?.horario_inicio || "08:00"),
-        horario_fim: hhmm(dadosDoModal?.horario_fim || "17:00"),
-        vagas_total: 1,
-        carga_horaria: 1,
-        instrutores: extractIds(dadosDoModal?.instrutores) || [],
-        // unifica a origem e replica
-        assinante_id: Number(dadosDoModal?.instrutor_assinante_id ?? dadosDoModal?.assinante_id),
-        instrutor_assinante_id: Number(dadosDoModal?.instrutor_assinante_id ?? dadosDoModal?.assinante_id),
-      }]);
+        Array.isArray(dadosDoModal?.turmas) && dadosDoModal.turmas.length
+          ? normalizeTurmas(dadosDoModal.turmas)
+          : normalizeTurmas([
+              {
+                nome: base.titulo || "Turma Única",
+                data_inicio: ymd(dadosDoModal?.data_inicio),
+                data_fim: ymd(dadosDoModal?.data_fim),
+                horario_inicio: hhmm(dadosDoModal?.horario_inicio || "08:00"),
+                horario_fim: hhmm(dadosDoModal?.horario_fim || "17:00"),
+                vagas_total: 1,
+                carga_horaria: 1,
+                instrutores: extractIds(dadosDoModal?.instrutores) || [],
+                assinante_id: Number(dadosDoModal?.instrutor_assinante_id ?? dadosDoModal?.assinante_id),
+                instrutor_assinante_id: Number(dadosDoModal?.instrutor_assinante_id ?? dadosDoModal?.assinante_id),
+              },
+            ]);
 
       const msgTurma = validarTurmasComInstrutores(turmas);
       if (msgTurma) {
@@ -625,8 +619,7 @@ if (dadosDoModal?.programacaoFile instanceof File) {
         (Array.isArray(dadosDoModal?.registros) && dadosDoModal.registros) ||
         [];
 
-      const registros =
-        restrito && restrito_modo === "lista_registros" ? normRegistros(regsFonte) : undefined;
+      const registros = restrito && restrito_modo === "lista_registros" ? normRegistros(regsFonte) : undefined;
 
       const cargos_permitidos =
         restrito && Array.isArray(dadosDoModal?.cargos_permitidos)
@@ -650,19 +643,13 @@ if (dadosDoModal?.programacaoFile instanceof File) {
 
       const criado = await apiPost("/api/eventos", bodyCreate);
 
-      // id do evento recém criado (tenta cobrir formatos de retorno)
-      const novoId =
-        Number(criado?.id) ||
-        Number(criado?.evento?.id) ||
-        Number(criado?.dados?.id);
+      // id do evento recém criado
+      const novoId = Number(criado?.id) || Number(criado?.evento?.id) || Number(criado?.dados?.id);
 
       // Uploads após criar
-      if (novoId && dadosDoModal?.folderFile instanceof File) {
-        await uploadFolder(novoId, dadosDoModal.folderFile);
-      }
-      if (novoId && dadosDoModal?.programacaoFile instanceof File) {
+      if (novoId && dadosDoModal?.folderFile instanceof File) await uploadFolder(novoId, dadosDoModal.folderFile);
+      if (novoId && dadosDoModal?.programacaoFile instanceof File)
         await uploadProgramacao(novoId, dadosDoModal.programacaoFile);
-      }
 
       await recarregarEventos();
       toast.success("✅ Evento salvo com sucesso.");
@@ -693,30 +680,31 @@ if (dadosDoModal?.programacaoFile instanceof File) {
     setPublishingId(id);
 
     // otimista
-    setEventos((prev) =>
-      prev.map((e) => (Number(e.id) === id ? { ...e, publicado: !publicado } : e))
-    );
+    setEventos((prev) => prev.map((e) => (Number(e.id) === id ? { ...e, publicado: !publicado } : e)));
 
     try {
       await apiPost(`/api/eventos/${id}/${acao}`, {});
       toast.success(publicado ? "Evento despublicado." : "Evento publicado.");
     } catch (e) {
       // rollback
-      setEventos((prev) =>
-        prev.map((ev) => (Number(ev.id) === id ? { ...ev, publicado } : ev))
-      );
+      setEventos((prev) => prev.map((ev) => (Number(ev.id) === id ? { ...ev, publicado } : ev)));
       toast.error(`❌ ${e?.message || "Falha ao alterar publicação."}`);
     } finally {
       setPublishingId(null);
     }
   };
 
-  const anyLoading = loading; // <- evita o typo “theconst”
+  const anyLoading = loading;
+
+  const headerHint = useMemo(() => {
+    if (anyLoading) return "Carregando…";
+    return `${eventos.length} evento(s)`;
+  }, [anyLoading, eventos.length]);
 
   return (
     <main className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white overflow-x-hidden">
       {/* live region acessível */}
-      <p ref={liveRef} className="sr-only" aria-live="polite" />
+      <p ref={liveRef} className="sr-only" aria-live="polite" aria-atomic="true" />
 
       {/* Header hero */}
       <HeaderHero onCriar={abrirModalCriar} onAtualizar={recarregarEventos} atualizando={anyLoading} />
@@ -724,19 +712,40 @@ if (dadosDoModal?.programacaoFile instanceof File) {
       {/* barra de carregamento fina no topo */}
       {anyLoading && (
         <div
-          className="sticky top-0 left-0 w-full h-1 bg-indigo-100 z-40"
+          className="sticky top-0 left-0 w-full h-1 bg-indigo-100 dark:bg-indigo-950/30 z-40"
           role="progressbar"
           aria-label="Carregando dados"
         >
-          <div className="h-full bg-indigo-700 animate-pulse w-1/3" />
+          <div className={`h-full bg-indigo-700 ${reduceMotion ? "" : "animate-pulse"} w-1/3`} />
         </div>
       )}
 
       <div id="conteudo" className="px-2 sm:px-4 py-6 max-w-6xl mx-auto w-full min-w-0">
+        {/* mini hint */}
+        <div className="mb-3 text-xs text-zinc-500 dark:text-zinc-300 text-center">{headerHint}</div>
+
         {!!erro && !loading && (
-          <p className="text-red-500 text-center mb-4" role="alert">
-            {erro}
-          </p>
+          <div
+            className="rounded-2xl border border-rose-200 dark:border-rose-900/40 bg-rose-50 dark:bg-rose-950/25 p-4 mb-4"
+            role="alert"
+          >
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 mt-0.5 text-rose-600 dark:text-rose-300" aria-hidden="true" />
+              <div className="min-w-0 flex-1">
+                <p className="font-extrabold text-rose-800 dark:text-rose-200">Falha ao carregar eventos</p>
+                <p className="text-sm text-rose-800/90 dark:text-rose-200/90 mt-1 break-words">{erro}</p>
+
+                <button
+                  type="button"
+                  onClick={recarregarEventos}
+                  className="mt-3 inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-extrabold bg-rose-100 hover:bg-rose-200 dark:bg-rose-900/40 dark:hover:bg-rose-900/60"
+                >
+                  <RefreshCcw className="w-4 h-4" aria-hidden="true" />
+                  Tentar novamente
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         {loading ? (
@@ -753,9 +762,9 @@ if (dadosDoModal?.programacaoFile instanceof File) {
               return (
                 <motion.li
                   key={ev.id || ev.titulo}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="relative bg-white dark:bg-zinc-800 p-4 sm:p-5 rounded-2xl shadow border border-gray-200 dark:border-zinc-700 overflow-hidden min-w-0"
+                  initial={reduceMotion ? false : { opacity: 0, y: 10 }}
+                  animate={reduceMotion ? {} : { opacity: 1, y: 0 }}
+                  className="relative bg-white dark:bg-zinc-950 p-4 sm:p-5 rounded-2xl shadow-sm border border-gray-200 dark:border-zinc-800 overflow-hidden min-w-0"
                 >
                   {/* Barra colorida superior (gradiente por status) */}
                   <div className={`absolute top-0 left-0 right-0 h-1.5 ${bar}`} aria-hidden="true" />
@@ -763,7 +772,7 @@ if (dadosDoModal?.programacaoFile instanceof File) {
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between min-w-0">
                     {/* Título + badges */}
                     <div className="flex items-center gap-3 flex-wrap min-w-0">
-                      <span className="font-semibold text-lg text-lousa dark:text-white break-words">
+                      <span className="font-extrabold text-lg text-lousa dark:text-white break-words">
                         {ev.titulo}
                       </span>
 
@@ -785,11 +794,7 @@ if (dadosDoModal?.programacaoFile instanceof File) {
                         className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-800 dark:bg-zinc-900/40 dark:text-zinc-200 border border-gray-200 dark:border-zinc-700"
                         title="Status calculado por data/horário"
                       >
-                        {status === "programado"
-                          ? "Programado"
-                          : status === "em_andamento"
-                          ? "Em andamento"
-                          : "Encerrado"}
+                        {status === "programado" ? "Programado" : status === "em_andamento" ? "Em andamento" : "Encerrado"}
                       </span>
 
                       {/* Badge de restrição */}
@@ -824,7 +829,7 @@ if (dadosDoModal?.programacaoFile instanceof File) {
                         type="button"
                         onClick={() => togglePublicacao(ev)}
                         disabled={publishingId === Number(ev.id)}
-                        className={`px-3 py-1.5 rounded flex items-center gap-1 border text-sm font-medium
+                        className={`px-3 py-1.5 rounded-xl flex items-center gap-1 border text-sm font-extrabold
                           ${
                             publicado
                               ? "border-indigo-300 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-200 dark:hover:bg-indigo-900/30"
@@ -849,7 +854,7 @@ if (dadosDoModal?.programacaoFile instanceof File) {
                       <button
                         type="button"
                         onClick={() => abrirModalEditar(ev)}
-                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded flex items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
+                        className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 font-extrabold text-sm"
                         aria-label={`Editar evento ${ev.titulo}`}
                       >
                         <Pencil size={16} aria-hidden="true" /> Editar
@@ -858,7 +863,7 @@ if (dadosDoModal?.programacaoFile instanceof File) {
                       <button
                         type="button"
                         onClick={() => excluirEvento(ev.id)}
-                        className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded flex items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-300"
+                        className="px-3 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white flex items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-300 font-extrabold text-sm"
                         aria-label={`Excluir evento ${ev.titulo}`}
                       >
                         <Trash2 size={16} aria-hidden="true" /> Excluir

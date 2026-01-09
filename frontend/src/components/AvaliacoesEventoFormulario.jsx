@@ -1,8 +1,8 @@
-// 📁 src/pages/AvaliacaoEvento.jsx
+// 📁 src/pages/AvaliacaoEventoFormulario.jsx
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
-import { motion } from "framer-motion";
+import { useReducedMotion, motion } from "framer-motion";
 import { apiGet, apiPost } from "../services/api";
 import Botao from "../components/ui/Botao";
 import Loader from "../components/ui/Loader";
@@ -57,6 +57,7 @@ const draftKey = (turmaId) => `avaliacao-evento:${turmaId}`;
 export default function AvaliacaoEvento() {
   const { turma_id } = useParams();
   const navigate = useNavigate();
+  const prefersReduced = useReducedMotion();
 
   const [form, setForm] = useState({});
   const [textos, setTextos] = useState({
@@ -75,6 +76,7 @@ export default function AvaliacaoEvento() {
 
   const refsCampo = useRef({});
   const sujo = useRef(false); // rastreia alterações para aviso de saída
+  const autosaveTimer = useRef(null);
 
   const setCampoRef = useCallback((nome) => (el) => {
     if (el) refsCampo.current[nome] = el;
@@ -134,11 +136,17 @@ export default function AvaliacaoEvento() {
     return base;
   }, [meta.tipo_evento]);
 
-  // Autosave simplificado
+  // Autosave com debounce leve
   useEffect(() => {
     if (carregandoMeta) return;
-    const payload = JSON.stringify({ form, textos });
-    localStorage.setItem(draftKey(turma_id), payload);
+    clearTimeout(autosaveTimer.current);
+    autosaveTimer.current = setTimeout(() => {
+      try {
+        const payload = JSON.stringify({ form, textos });
+        localStorage.setItem(draftKey(turma_id), payload);
+      } catch {}
+    }, 350);
+    return () => clearTimeout(autosaveTimer.current);
   }, [form, textos, turma_id, carregandoMeta]);
 
   // Aviso ao sair se houver alterações
@@ -212,36 +220,70 @@ export default function AvaliacaoEvento() {
     [enviando, validarObrigatorios, turma_id, meta.evento_id, form, textos, navigate]
   );
 
+  // Progresso de preenchimento (apenas obrigatórios)
+  const progresso = useMemo(() => {
+    const filled = CAMPOS_OBRIGATORIOS.filter((c) => !!form[c]).length;
+    const total = CAMPOS_OBRIGATORIOS.length;
+    const pct = Math.round((filled / total) * 100);
+    return { filled, total, pct };
+  }, [form]);
+
   return (
     <main className="min-h-dvh bg-gray-50 dark:bg-zinc-900">
-      {/* Header unificado (mesmas dimensões/tipografia entre páginas) */}
+      {/* Header unificado */}
       <HeaderHero
         title="Avaliação do Evento"
         subtitle="Sua opinião é essencial para melhorarmos continuamente"
-        variant="amber" // cor exclusiva desta página
+        variant="amber"
       />
 
       <motion.div
-        initial={{ opacity: 0, y: 24 }}
-        animate={{ opacity: 1, y: 0 }}
+        initial={prefersReduced ? false : { opacity: 0, y: 24 }}
+        animate={prefersReduced ? {} : { opacity: 1, y: 0 }}
         transition={{ duration: 0.35 }}
         className="max-w-3xl mx-auto px-4 sm:px-6 py-6"
       >
-        {/* Meta do evento/turma */}
+        {/* Meta do evento/turma + progresso */}
         <section className="bg-white dark:bg-gray-900 rounded-2xl shadow-md p-5 mb-6 border border-gray-200 dark:border-gray-800">
-          <header className="mb-2">
+          <header className="mb-2 flex items-center justify-between gap-3">
             <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
               Dados do evento
             </h2>
+            <div className="min-w-[140px]" aria-label="Progresso de preenchimento" role="group">
+              <div className="text-xs text-gray-600 dark:text-gray-300 mb-1 text-right">
+                {progresso.filled}/{progresso.total} obrigatórios ({progresso.pct}%)
+              </div>
+              <div className="h-1.5 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
+                <div
+                  className="h-full bg-emerald-600 transition-[width] duration-300"
+                  style={{ width: `${progresso.pct}%` }}
+                  aria-hidden="true"
+                />
+              </div>
+            </div>
           </header>
 
           {carregandoMeta ? (
-            <div className="mt-2"><Loader inline size="sm" minimal ariaLabel="Carregando informações…" /></div>
+            <div className="mt-2">
+              <Loader inline size="sm" minimal ariaLabel="Carregando informações…" />
+            </div>
           ) : (
             <p className="text-sm text-gray-700 dark:text-gray-300">
-              {meta.titulo_evento && <><strong>Evento:</strong> {meta.titulo_evento} · </>}
-              {meta.nome_turma && <><strong>Turma:</strong> {meta.nome_turma} · </>}
-              {meta.tipo_evento && <><strong>Tipo:</strong> {meta.tipo_evento}</>}
+              {meta.titulo_evento && (
+                <>
+                  <strong>Evento:</strong> {meta.titulo_evento} ·{" "}
+                </>
+              )}
+              {meta.nome_turma && (
+                <>
+                  <strong>Turma:</strong> {meta.nome_turma} ·{" "}
+                </>
+              )}
+              {meta.tipo_evento && (
+                <>
+                  <strong>Tipo:</strong> {meta.tipo_evento}
+                </>
+              )}
             </p>
           )}
         </section>
@@ -252,22 +294,30 @@ export default function AvaliacaoEvento() {
           <fieldset className="bg-white dark:bg-gray-900 rounded-2xl shadow-md p-5 border border-gray-200 dark:border-gray-800">
             <legend className="sr-only">Campos de avaliação</legend>
 
+            <p className="text-xs text-gray-600 dark:text-gray-400 mb-3">
+              Os campos marcados com <span className="text-red-600">*</span> são obrigatórios.
+            </p>
+
             <div className="grid grid-cols-1 gap-4">
               {camposVisiveis.map((campo) => {
                 const obrigatorio = CAMPOS_OBRIGATORIOS.includes(campo);
                 const erro = obrigatorio && !form[campo];
-                const groupId = `rg-${campo}`;
+                const rgId = `rg-${campo}`;
 
                 return (
                   <div key={campo} className="flex flex-col">
-                    <label className="font-medium text-sm mb-2 dark:text-gray-100" htmlFor={groupId}>
+                    <label className="font-medium text-sm mb-2 dark:text-gray-100" htmlFor={rgId}>
                       {LABELS[campo]}
-                      {obrigatorio && <span className="text-red-600 ml-1" aria-hidden="true">*</span>}
+                      {obrigatorio && (
+                        <span className="text-red-600 ml-1" aria-hidden="true">
+                          *
+                        </span>
+                      )}
                     </label>
 
                     {/* Radio Group horizontal (scrollável no mobile) */}
                     <div
-                      id={groupId}
+                      id={rgId}
                       ref={setCampoRef(campo)}
                       role="radiogroup"
                       aria-required={obrigatorio || undefined}
@@ -276,25 +326,27 @@ export default function AvaliacaoEvento() {
                     >
                       {OPCOES_NOTA.map((opcao) => {
                         const checked = form[campo] === opcao;
+                        const optId = `${rgId}-${opcao}`;
                         return (
                           <label
                             key={opcao}
+                            htmlFor={optId}
                             className={[
                               "inline-flex items-center gap-2 px-3 py-2 rounded-2xl border text-sm select-none",
                               checked
                                 ? "bg-emerald-50 border-emerald-300 text-emerald-900 dark:bg-emerald-900/20 dark:text-emerald-100 dark:border-emerald-800"
                                 : "bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-800 dark:text-gray-100",
-                              "cursor-pointer focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-emerald-600/60"
+                              "cursor-pointer focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-emerald-600/60",
                             ].join(" ")}
                           >
                             <input
+                              id={optId}
                               type="radio"
                               name={campo}
                               value={opcao}
                               className="sr-only"
                               checked={checked}
                               onChange={() => handleSelect(campo, opcao)}
-                              onBlur={() => { /* evita erro visual ao sair */ }}
                             />
                             <span>{opcao}</span>
                           </label>
@@ -361,8 +413,8 @@ export default function AvaliacaoEvento() {
             </div>
           </section>
 
-          {/* Ações */}
-          <div className="flex flex-wrap items-center gap-3 pt-1">
+          {/* Ações (desktop) */}
+          <div className="hidden sm:flex flex-wrap items-center gap-3 pt-1">
             <Botao
               type="submit"
               variant="primary"
@@ -381,6 +433,32 @@ export default function AvaliacaoEvento() {
             >
               Limpar rascunho
             </Botao>
+          </div>
+
+          {/* Sticky actions (mobile) */}
+          <div className="sm:hidden h-16" aria-hidden="true" />
+          <div className="sm:hidden fixed inset-x-0 bottom-0 z-40 bg-white/95 dark:bg-zinc-900/95 border-t border-gray-200 dark:border-gray-800 backdrop-blur supports-[backdrop-filter]:backdrop-blur">
+            <div className="max-w-3xl mx-auto px-4 py-2 flex items-center gap-2">
+              <Botao
+                type="button"
+                variant="outline"
+                className="flex-1"
+                onClick={limparRascunho}
+                title="Apagar rascunho salvo localmente"
+              >
+                Limpar
+              </Botao>
+              <Botao
+                type="submit"
+                variant="primary"
+                className="flex-[2]"
+                loading={enviando}
+                disabled={enviando || carregandoMeta}
+                leftIcon={!enviando ? "✅" : null}
+              >
+                {enviando ? "Enviando..." : "Enviar"}
+              </Botao>
+            </div>
           </div>
         </form>
       </motion.div>

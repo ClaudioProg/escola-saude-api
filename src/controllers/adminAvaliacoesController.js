@@ -1,6 +1,6 @@
 // ✅ src/controllers/adminAvaliacoesController.js
 /* eslint-disable no-console */
-const { query } = require("../db");
+const dbFallback = require("../db");
 
 // Campos padronizados
 const CAMPOS_OBJETIVOS = [
@@ -21,7 +21,10 @@ const CAMPOS_OBJETIVOS = [
   "apresentacao_tcrs",
   "oficinas",
 ];
+
 const CAMPOS_TEXTOS = ["gostou_mais", "sugestoes_melhoria", "comentarios_finais"];
+
+// ✅ Media oficial (conforme sua regra): NÃO inclui desempenho_instrutor, e ignora campos extras
 const CAMPOS_MEDIA_OFICIAL = [
   "divulgacao_evento",
   "recepcao",
@@ -36,35 +39,80 @@ const CAMPOS_MEDIA_OFICIAL = [
   "inscricao_online",
 ];
 
-// Converte respostas textuais em nota 1..5 (para agregação no Node)
-function toScore(v) {
-  if (v == null) return null;
-  const s = String(v).trim().toLowerCase();
-  const num = Number(s.replace(",", "."));
-  if (Number.isFinite(num) && num >= 1 && num <= 5) return num;
-  const map = {
-    "ótimo": 5, otimo: 5, excelente: 5, "muito bom": 5,
-    bom: 4,
-    regular: 3, médio: 3, medio: 3,
-    ruim: 2,
-    "péssimo": 1, pessimo: 1, "muito ruim": 1,
-  };
-  if (map[s] != null) return map[s];
-  return null;
-}
-function media(arr) {
-  const v = arr.filter((x) => Number.isFinite(x));
-  if (!v.length) return null;
-  const m = v.reduce((a, b) => a + b, 0) / v.length;
-  return Number(m.toFixed(2));
+function getDb(req) {
+  return req?.db ?? dbFallback;
 }
 
-/**
- * GET /api/admin/avaliacoes/eventos
- * Lista eventos que possuem turmas e ao menos 1 avaliação registrada (somatório nas turmas).
- */
-exports.listarEventosComAvaliacoes = async (_req, res) => {
+/* =========================
+   Helpers (premium)
+========================= */
+// Converte respostas textuais/numéricas em nota 1..5
+function toScore(v) {
+  if (v == null) return null;
+  const s0 = String(v).trim();
+  if (!s0) return null;
+
+  const s = s0.toLowerCase();
+  const num = Number(s.replace(",", "."));
+  if (Number.isFinite(num) && num >= 1 && num <= 5) return num;
+
+  const map = {
+    "ótimo": 5,
+    otimo: 5,
+    excelente: 5,
+    "muito bom": 5,
+    bom: 4,
+    regular: 3,
+    "médio": 3,
+    medio: 3,
+    ruim: 2,
+    "péssimo": 1,
+    pessimo: 1,
+    "muito ruim": 1,
+  };
+  return map[s] ?? null;
+}
+
+// média ponderada a partir de distribuição (evita arrays gigantes)
+function mediaFromDist(distLinha) {
+  const n1 = distLinha["1"] || 0;
+  const n2 = distLinha["2"] || 0;
+  const n3 = distLinha["3"] || 0;
+  const n4 = distLinha["4"] || 0;
+  const n5 = distLinha["5"] || 0;
+  const total = n1 + n2 + n3 + n4 + n5;
+  if (!total) return null;
+  const soma = 1 * n1 + 2 * n2 + 3 * n3 + 4 * n4 + 5 * n5;
+  return Number((soma / total).toFixed(2));
+}
+
+function pickText(v) {
+  if (v == null) return null;
+  if (typeof v === "string") {
+    const t = v.trim();
+    return t ? t : null;
+  }
+  // se algum dia virar JSON/texto estruturado:
+  if (typeof v === "object") {
+    const t = v.texto ?? v.comentario ?? v.value ?? null;
+    if (typeof t === "string" && t.trim()) return t.trim();
+  }
+  return null;
+}
+
+function safeIntParam(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/* =========================
+   GET /api/admin/avaliacoes/eventos
+   Lista eventos que possuem turmas e ao menos 1 avaliação registrada (somatório nas turmas).
+========================= */
+exports.listarEventosComAvaliacoes = async (req, res) => {
   try {
+    const db = getDb(req);
+
     const sql = `
       WITH turmas_com_count AS (
         SELECT t.id, t.evento_id, t.nome,
@@ -89,26 +137,29 @@ exports.listarEventosComAvaliacoes = async (_req, res) => {
        WHERE total_respostas > 0
        ORDER BY di DESC NULLS LAST, id DESC;
     `;
-    const { rows } = await query(sql, []);
-    res.json(rows || []);
+
+    const { rows } = await db.query(sql, []);
+    return res.json(rows || []);
   } catch (err) {
-    console.error("listarEventosComAvaliacoes:", err);
-    res.status(500).json({ error: "Erro ao listar eventos com avaliações." });
+    console.error("[adminAvaliacoes] listarEventosComAvaliacoes:", err?.message || err);
+    return res.status(500).json({ error: "Erro ao listar eventos com avaliações." });
   }
 };
 
-/**
- * GET /api/admin/avaliacoes/evento/:evento_id
- * Retorna:
- *  - respostas: lista flatten com (__turmaId, __turmaNome, usuario_id, usuario_nome, campos objetivos/textos, criado_em)
- *  - agregados: { total, medias por campo, dist por campo, textos, mediaOficial }
- *  - turmas: [{id, nome, total_respostas}]
- */
+/* =========================
+   GET /api/admin/avaliacoes/evento/:evento_id
+   Retorna:
+    - respostas: flatten com (__turmaId, __turmaNome, usuario_id, usuario_nome, campos objetivos/textos, criado_em)
+    - agregados: { total, dist, medias, textos, mediaOficial }
+    - turmas: [{id, nome, total_respostas}]
+========================= */
 exports.obterAvaliacoesDoEvento = async (req, res) => {
-  const eventoId = Number(req.params.evento_id);
-  if (!Number.isFinite(eventoId)) return res.status(400).json({ error: "evento_id inválido" });
+  const eventoId = safeIntParam(req.params.evento_id);
+  if (!eventoId) return res.status(400).json({ error: "evento_id inválido" });
 
   try {
+    const db = getDb(req);
+
     // 1) Turmas do evento + contagem
     const turmasSql = `
       SELECT t.id, t.nome,
@@ -119,30 +170,26 @@ exports.obterAvaliacoesDoEvento = async (req, res) => {
        GROUP BY t.id, t.nome
        ORDER BY t.id;
     `;
-    const { rows: turmas } = await query(turmasSql, [eventoId]);
+    const { rows: turmas } = await db.query(turmasSql, [eventoId]);
 
     // 2) Respostas (todas as turmas do evento)
     const respostasSql = `
-    SELECT 
-      a.id,
-      a.turma_id,
-      t.nome AS turma_nome,
-      a.usuario_id,
-      u.nome AS usuario_nome,
-      a.data_avaliacao AS criado_em,
-
-      -- Campos objetivos...
-        ${CAMPOS_OBJETIVOS.map((c) => `COALESCE(a.${c}, NULL) AS ${c}`).join(", ")},
-
-        -- Textos
-        ${CAMPOS_TEXTOS.map((c) => `COALESCE(a.${c}, NULL) AS ${c}`).join(", ")}
+      SELECT 
+        a.id,
+        a.turma_id,
+        t.nome AS turma_nome,
+        a.usuario_id,
+        u.nome AS usuario_nome,
+        a.data_avaliacao AS criado_em,
+        ${CAMPOS_OBJETIVOS.map((c) => `a.${c} AS ${c}`).join(", ")},
+        ${CAMPOS_TEXTOS.map((c) => `a.${c} AS ${c}`).join(", ")}
       FROM avaliacoes a
       JOIN turmas t ON t.id = a.turma_id
       LEFT JOIN usuarios u ON u.id = a.usuario_id
       WHERE t.evento_id = $1
       ORDER BY a.data_avaliacao DESC, a.id DESC;
     `;
-    const { rows: respostasRaw } = await query(respostasSql, [eventoId]);
+    const { rows: respostasRaw } = await db.query(respostasSql, [eventoId]);
 
     const respostas = (respostasRaw || []).map((r) => ({
       ...r,
@@ -150,10 +197,11 @@ exports.obterAvaliacoesDoEvento = async (req, res) => {
       __turmaNome: r.turma_nome,
     }));
 
-    // 3) Agregação no Node (robusto a campos textuais/numéricos)
+    // 3) Agregação premium (sem explode de memória)
     const dist = {};
     const medias = {};
-    CAMPOS_OBJETIVOS.forEach((c) => (dist[c] = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }));
+
+    for (const c of CAMPOS_OBJETIVOS) dist[c] = { "1": 0, "2": 0, "3": 0, "4": 0, "5": 0 };
 
     for (const r of respostas) {
       for (const campo of CAMPOS_OBJETIVOS) {
@@ -164,30 +212,24 @@ exports.obterAvaliacoesDoEvento = async (req, res) => {
         }
       }
     }
+
     for (const campo of CAMPOS_OBJETIVOS) {
-      const linha = dist[campo];
-      const expanded = [
-        ...Array(linha[1]).fill(1),
-        ...Array(linha[2]).fill(2),
-        ...Array(linha[3]).fill(3),
-        ...Array(linha[4]).fill(4),
-        ...Array(linha[5]).fill(5),
-      ];
-      medias[campo] = media(expanded);
+      medias[campo] = mediaFromDist(dist[campo]);
     }
 
     const textos = {};
     for (const c of CAMPOS_TEXTOS) {
-      textos[c] = respostas
-        .map((r) => (r[c] ?? r[c]?.texto ?? r[c]?.comentario))
-        .filter((s) => typeof s === "string" && s.trim().length > 0)
-        .map((s) => s.trim());
+      textos[c] = respostas.map((r) => pickText(r[c])).filter(Boolean);
     }
 
-    const arrOficial = CAMPOS_MEDIA_OFICIAL.map((c) => medias[c]).filter((x) => Number.isFinite(x));
-    const mediaOficial = media(arrOficial);
+    // médiaOficial = média simples das médias oficiais (mantém seu comportamento)
+    const mediasOficiais = CAMPOS_MEDIA_OFICIAL.map((c) => medias[c]).filter((x) => Number.isFinite(x));
+    const mediaOficial =
+      mediasOficiais.length > 0
+        ? Number((mediasOficiais.reduce((a, b) => a + b, 0) / mediasOficiais.length).toFixed(2))
+        : null;
 
-    res.json({
+    return res.json({
       respostas,
       agregados: {
         total: respostas.length,
@@ -196,43 +238,47 @@ exports.obterAvaliacoesDoEvento = async (req, res) => {
         textos,
         mediaOficial,
       },
-      turmas,
+      turmas: turmas || [],
     });
   } catch (err) {
-    console.error("obterAvaliacoesDoEvento:", err);
-    res.status(500).json({ error: "Erro ao obter avaliações do evento." });
+    console.error("[adminAvaliacoes] obterAvaliacoesDoEvento:", err?.message || err);
+    return res.status(500).json({ error: "Erro ao obter avaliações do evento." });
   }
 };
 
-/**
- * GET /api/admin/avaliacoes/turma/:turma_id
- * Lista respostas de uma turma específica (útil para deep-link ou auditoria).
- */
+/* =========================
+   GET /api/admin/avaliacoes/turma/:turma_id
+   Lista respostas de uma turma específica (útil para deep-link ou auditoria).
+   (Mantém compat: retorna array puro)
+========================= */
 exports.obterAvaliacoesDaTurma = async (req, res) => {
-  const turmaId = Number(req.params.turma_id);
-  if (!Number.isFinite(turmaId)) return res.status(400).json({ error: "turma_id inválido" });
+  const turmaId = safeIntParam(req.params.turma_id);
+  if (!turmaId) return res.status(400).json({ error: "turma_id inválido" });
 
   try {
+    const db = getDb(req);
+
     const sql = `
-    SELECT 
-      a.id,
-      a.turma_id,
-      t.nome AS turma_nome,
-      a.usuario_id,
-      u.nome AS usuario_nome,
-      a.data_avaliacao AS criado_em,
-      ${CAMPOS_OBJETIVOS.map((c) => `COALESCE(a.${c}, NULL) AS ${c}`).join(", ")},
-      ${CAMPOS_TEXTOS.map((c) => `COALESCE(a.${c}, NULL) AS ${c}`).join(", ")}
-    FROM avaliacoes a
-    JOIN turmas t ON t.id = a.turma_id
-    LEFT JOIN usuarios u ON u.id = a.usuario_id
-    WHERE a.turma_id = $1
-    ORDER BY a.data_avaliacao DESC, a.id DESC;
-  `;
-    const { rows } = await query(sql, [turmaId]);
-    res.json(rows || []);
+      SELECT 
+        a.id,
+        a.turma_id,
+        t.nome AS turma_nome,
+        a.usuario_id,
+        u.nome AS usuario_nome,
+        a.data_avaliacao AS criado_em,
+        ${CAMPOS_OBJETIVOS.map((c) => `a.${c} AS ${c}`).join(", ")},
+        ${CAMPOS_TEXTOS.map((c) => `a.${c} AS ${c}`).join(", ")}
+      FROM avaliacoes a
+      JOIN turmas t ON t.id = a.turma_id
+      LEFT JOIN usuarios u ON u.id = a.usuario_id
+      WHERE a.turma_id = $1
+      ORDER BY a.data_avaliacao DESC, a.id DESC;
+    `;
+
+    const { rows } = await db.query(sql, [turmaId]);
+    return res.json(rows || []);
   } catch (err) {
-    console.error("obterAvaliacoesDaTurma:", err);
-    res.status(500).json({ error: "Erro ao obter avaliações da turma." });
+    console.error("[adminAvaliacoes] obterAvaliacoesDaTurma:", err?.message || err);
+    return res.status(500).json({ error: "Erro ao obter avaliações da turma." });
   }
 };

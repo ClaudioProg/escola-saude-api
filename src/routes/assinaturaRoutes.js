@@ -1,8 +1,13 @@
+//src/routes/assinaturaRoutes.js
 /* eslint-disable no-console */
 const express = require("express");
+const { body, validationResult } = require("express-validator");
+
 const router = express.Router();
 
-// 🔐 import resiliente
+/* =========================
+   Imports resilientes
+========================= */
 const _auth = require("../auth/authMiddleware");
 const requireAuth =
   typeof _auth === "function"
@@ -16,7 +21,9 @@ if (typeof requireAuth !== "function") {
 
 const _roles = require("../auth/authorizeRoles");
 const authorizeRoles =
-  typeof _roles === "function" ? _roles : _roles?.default || _roles?.authorizeRoles;
+  typeof _roles === "function"
+    ? _roles
+    : _roles?.default || _roles?.authorizeRoles;
 
 if (typeof authorizeRoles !== "function") {
   console.error("[assinaturaRoutes] authorizeRoles inválido:", _roles);
@@ -25,9 +32,55 @@ if (typeof authorizeRoles !== "function") {
 
 const ctrl = require("../controllers/assinaturaController");
 
+/* =========================
+   Helpers (premium)
+========================= */
+const asyncHandler =
+  (fn) =>
+  (req, res, next) =>
+    Promise.resolve(fn(req, res, next)).catch(next);
+
+function validate(req, res, next) {
+  const errors = validationResult(req);
+  if (errors.isEmpty()) return next();
+
+  return res.status(400).json({
+    ok: false,
+    erro: "Dados inválidos.",
+    detalhes: errors.array().map((e) => ({ campo: e.path || e.param, msg: e.msg })),
+    requestId: res.getHeader?.("X-Request-Id"),
+  });
+}
+
+// valida “data URL” de imagem (PNG/JPEG) e tamanho aproximado (base64)
+function isDataImageUrl(v) {
+  if (typeof v !== "string") return false;
+  // png/jpg/jpeg
+  return /^data:image\/(png|jpe?g);base64,[a-z0-9+/=\s]+$/i.test(v);
+}
+function approxBase64Bytes(dataUrl) {
+  // remove prefixo "data:image/...;base64,"
+  const b64 = dataUrl.split(",")[1] || "";
+  // 4 chars base64 ~ 3 bytes
+  return Math.floor((b64.replace(/\s/g, "").length * 3) / 4);
+}
+
+/* =========================
+   Middlewares do grupo
+========================= */
 // 🔐 todas as rotas exigem autenticação
 router.use(requireAuth);
 
+// 🛡️ Premium: assinatura é dado sensível → não cachear (todas as rotas)
+router.use((_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Pragma", "no-cache");
+  next();
+});
+
+/* =========================
+   Rotas
+========================= */
 /**
  * 🖋️ Obter assinatura do usuário autenticado
  * GET /api/assinatura
@@ -35,18 +88,33 @@ router.use(requireAuth);
  *   o controller auto-gera uma assinatura (PNG em dataURL) e persiste.
  * - Retorna { assinatura: string|null }
  */
-router.get("/", (req, res, next) => {
-  // evita cache agressivo do navegador
-  res.setHeader("Cache-Control", "no-store, max-age=0");
-  return ctrl.getAssinatura(req, res, next);
-});
+router.get("/", asyncHandler(ctrl.getAssinatura));
 
 /**
  * ✍️ Salvar/atualizar assinatura do usuário autenticado (dataURL)
  * POST /api/assinatura
  * body: { assinatura: "data:image/png;base64,..." }
  */
-router.post("/", ctrl.salvarAssinatura);
+router.post(
+  "/",
+  [
+    body("assinatura")
+      .exists({ checkFalsy: true })
+      .withMessage('"assinatura" é obrigatória.')
+      .bail()
+      .custom((v) => isDataImageUrl(v))
+      .withMessage('Assinatura deve ser uma dataURL de imagem (PNG/JPG).')
+      .bail()
+      .custom((v) => {
+        const bytes = approxBase64Bytes(v);
+        // 1.5MB é mais que suficiente p/ assinatura; ajusta se quiser
+        if (bytes > 1_500_000) throw new Error("Assinatura muito grande. Reduza a resolução.");
+        return true;
+      }),
+  ],
+  validate,
+  asyncHandler(ctrl.salvarAssinatura)
+);
 
 /**
  * ⚡ Forçar autogeração idempotente (atalho)
@@ -54,7 +122,7 @@ router.post("/", ctrl.salvarAssinatura);
  * - Útil para o front acionar explicitamente a criação automática quando quiser.
  * - Apenas delega ao getAssinatura (que já é idempotente).
  */
-router.post("/auto", (req, res, next) => ctrl.getAssinatura(req, res, next));
+router.post("/auto", asyncHandler(ctrl.getAssinatura));
 
 /**
  * 📜 Listar assinaturas cadastradas (metadados para dropdown)
@@ -65,7 +133,7 @@ router.post("/auto", (req, res, next) => ctrl.getAssinatura(req, res, next));
 router.get(
   ["/lista", "/todas"],
   authorizeRoles("administrador", "instrutor"),
-  ctrl.listarAssinaturas
+  asyncHandler(ctrl.listarAssinaturas)
 );
 
 module.exports = router;

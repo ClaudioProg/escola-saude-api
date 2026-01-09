@@ -1,5 +1,5 @@
-// ✅ src/pages/Cadastro.jsx — premium (kit base Escola)
-import { useState, useMemo, useEffect, useRef } from "react";
+// ✅ src/pages/Cadastro.jsx — premium (kit base Escola) — UX+segurança
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Eye,
@@ -9,6 +9,7 @@ import {
   Sparkles,
   UserPlus,
   BadgeCheck,
+  AlertTriangle,
 } from "lucide-react";
 import { toast } from "react-toastify";
 
@@ -27,12 +28,7 @@ import ThemeTogglePills from "../components/ThemeTogglePills";
 function NumberBullet({ n }) {
   return (
     <span
-      className="
-        inline-flex items-center justify-center
-        w-7 h-7 rounded-full
-        bg-emerald-600 text-white text-[12px] font-bold
-        shadow-sm select-none shrink-0
-      "
+      className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-emerald-600 text-white text-[12px] font-bold shadow-sm select-none shrink-0"
       aria-label={`Item ${n}`}
     >
       {n}
@@ -108,46 +104,15 @@ function RegrasDicasCadastro({ isDark, IconeCabecalho = ShieldCheck }) {
     },
   ];
 
-  const metade = Math.ceil(regras.length / 2);
-  const col1 = regras.slice(0, metade);
-  const col2 = regras.slice(metade);
-
   const Card = ({ children }) => (
     <div
       className={[
         "rounded-3xl border p-6 transition-all",
-        isDark
-          ? "bg-zinc-900/55 border-white/10 hover:bg-white/5"
-          : "bg-white border-slate-200 shadow-sm hover:shadow-md",
+        isDark ? "bg-zinc-900/55 border-white/10 hover:bg-white/5" : "bg-white border-slate-200 shadow-sm hover:shadow-md",
       ].join(" ")}
     >
       {children}
     </div>
-  );
-
-  const Lista = ({ itens, start }) => (
-    <ol
-      start={start}
-      className="
-        list-none pl-0 space-y-4 [text-align:justify]
-        [&>li]:list-none [&>li]:marker:hidden [&>li]:before:hidden
-      "
-    >
-      {itens.map((regra, i) => {
-        const n = start + i;
-        return (
-          <li key={n} className="flex gap-3 list-none">
-            <NumberBullet n={n} />
-            <div className={["text-sm leading-6", isDark ? "text-zinc-300" : "text-slate-700"].join(" ")}>
-              <p className={["font-semibold mb-1", isDark ? "text-zinc-100" : "text-slate-900"].join(" ")}>
-                {regra.titulo}
-              </p>
-              {regra.conteudo}
-            </div>
-          </li>
-        );
-      })}
-    </ol>
   );
 
   return (
@@ -158,15 +123,50 @@ function RegrasDicasCadastro({ isDark, IconeCabecalho = ShieldCheck }) {
           Regras &amp; Dicas para criar sua conta
         </h2>
       </div>
-
       <div className="grid grid-cols-1 gap-6">
-  <Card>
-    <Lista itens={regras} start={1} />
-  </Card>
-</div>
+        <Card>
+          <ol className="list-none pl-0 space-y-4 [text-align:justify] [&>li]:list-none [&>li]:marker:hidden [&>li]:before:hidden">
+            {regras.map((regra, i) => (
+              <li key={i} className="flex gap-3 list-none">
+                <NumberBullet n={i + 1} />
+                <div className={["text-sm leading-6", isDark ? "text-zinc-300" : "text-slate-700"].join(" ")}>
+                  <p className={["font-semibold mb-1", isDark ? "text-zinc-100" : "text-slate-900"].join(" ")}>
+                    {regra.titulo}
+                  </p>
+                  {regra.conteudo}
+                </div>
+              </li>
+            ))}
+          </ol>
+        </Card>
+      </div>
     </section>
   );
 }
+
+/* =========================
+   Helpers (formatadores/validadores)
+========================= */
+const palavrasMinusculasPt = new Set(["da","de","do","das","dos","e","a","o","das","dos","di","du"]);
+function titleCasePtBr(nome) {
+  const s = String(nome || "").trim().toLowerCase().replace(/\s+/g, " ");
+  if (!s) return "";
+  return s
+    .split(" ")
+    .map((p, i) => (i > 0 && palavrasMinusculasPt.has(p) ? p : p.charAt(0).toUpperCase() + p.slice(1)))
+    .join(" ");
+}
+
+const aplicarMascaraCPF = (v) =>
+  String(v || "")
+    .replace(/\D/g, "")
+    .slice(0, 11)
+    .replace(/(\d{3})(\d)/, "$1.$2")
+    .replace(/(\d{3})(\d)/, "$1.$2")
+    .replace(/(\d{3})(\d{1,2})$/, "$1-$2");
+
+const validarCPF = (c) => /^\d{3}\.\d{3}\.\d{3}-\d{2}$/.test(c || "");
+const validarEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || "").trim());
 
 /* =========================
    Page
@@ -216,6 +216,7 @@ export default function Cadastro() {
   const [senha, setSenha] = useState("");
   const [confirmarSenha, setConfirmarSenha] = useState("");
   const [mostrarSenha, setMostrarSenha] = useState(false);
+  const [capsOn, setCapsOn] = useState(false);
 
   // erros
   const [erro, setErro] = useState("");
@@ -241,18 +242,13 @@ export default function Cadastro() {
   // foco inicial
   useEffect(() => {
     document.title = "Cadastro — Escola da Saúde";
-    // não força focus no skip link (fica chato no mobile); foca direto no nome
     refNome.current?.focus();
   }, []);
 
-  // helper: ordenar unidades por SIGLA (fallback para nome)
+  // ordenar unidades por SIGLA (fallback para nome)
   const orderBySigla = (arr = []) =>
     [...arr].sort((a, b) =>
-      String(a?.sigla ?? a?.nome ?? "").localeCompare(
-        String(b?.sigla ?? b?.nome ?? ""),
-        "pt-BR",
-        { sensitivity: "base" }
-      )
+      String(a?.sigla ?? a?.nome ?? "").localeCompare(String(b?.sigla ?? b?.nome ?? ""), "pt-BR", { sensitivity: "base" })
     );
 
   // máscara registro 00.000-0
@@ -267,15 +263,12 @@ export default function Cadastro() {
   // lookups públicos
   useEffect(() => {
     let alive = true;
-  
     (async () => {
       try {
         setLoadingLookups(true);
-  
-        const data = await apiGetPublic("/perfil/opcoes"); // 👈 UM endpoint só
-  
+        const data = await apiGetPublic("/perfil/opcoes");
         if (!alive) return;
-  
+
         const uni = Array.isArray(data?.unidades) ? data.unidades : [];
         const car = Array.isArray(data?.cargos) ? data.cargos : [];
         const gen = Array.isArray(data?.generos) ? data.generos : [];
@@ -283,15 +276,19 @@ export default function Cadastro() {
         const cr  = Array.isArray(data?.coresRacas) ? data.coresRacas : [];
         const esc = Array.isArray(data?.escolaridades) ? data.escolaridades : [];
         const def = Array.isArray(data?.deficiencias) ? data.deficiencias : [];
-  
-        setUnidades(orderBySigla(uni));
+
+        // garante "Outros" na Unidade (se parceiro externo)
+        const temOutros = uni.some(u => (u.sigla || u.nome || "").toLowerCase() === "outros");
+        const unidadesFinal = temOutros ? uni : [...uni, { id: 999999, sigla: "Outros", nome: "Outros" }];
+
+        setUnidades(orderBySigla(unidadesFinal));
         setCargos([...car].sort((a, b) => (a?.nome || "").localeCompare(b?.nome || "", "pt-BR", { sensitivity: "base" })));
         setGeneros(gen);
         setOrientacoes(ori);
         setCoresRacas(cr);
         setEscolaridades(esc);
         setDeficiencias(def);
-  
+
         if (![uni, car, gen, ori, cr, esc, def].every((l) => l.length)) {
           toast.warn("Algumas listas não estão disponíveis no servidor.");
         }
@@ -302,25 +299,10 @@ export default function Cadastro() {
         alive && setLoadingLookups(false);
       }
     })();
-  
-    return () => {
-      alive = false;
-    };
+    return () => { alive = false; };
   }, []);
-  
 
-  // máscaras/validações
-  const aplicarMascaraCPF = (v) =>
-    String(v || "")
-      .replace(/\D/g, "")
-      .slice(0, 11)
-      .replace(/(\d{3})(\d)/, "$1.$2")
-      .replace(/(\d{3})(\d)/, "$1.$2")
-      .replace(/(\d{3})(\d{1,2})$/, "$1-$2");
-
-  const validarCPF = (c) => /^\d{3}\.\d{3}\.\d{3}-\d{2}$/.test(c || "");
-  const validarEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || "").trim());
-
+  // validações
   const senhaForteRe = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{8,}$/;
   const forcaSenha = useMemo(() => {
     const s = senha || "";
@@ -333,7 +315,7 @@ export default function Cadastro() {
     return Math.min(score, 4);
   }, [senha]);
 
-  // helper: input class (dark/light)
+  // input classes
   const inputCls = (hasErr) =>
     [
       "w-full rounded-2xl border px-4 py-3 text-sm outline-none transition",
@@ -343,60 +325,24 @@ export default function Cadastro() {
         : "border-slate-300 bg-white text-slate-900 placeholder:text-slate-400",
       hasErr ? "ring-2 ring-red-500/60 border-red-500/60" : "",
     ].join(" ");
-
-  // selects
-  const selectCls = (hasErr) =>
-    [
-      inputCls(hasErr),
-      "appearance-none",
-    ].join(" ");
+  const selectCls = (hasErr) => [inputCls(hasErr), "appearance-none"].join(" ");
 
   function aplicarErrosServidor(fields = {}) {
-    setErroNome("");
-    setErroCpf("");
-    setErroEmail("");
-    setErroData("");
-    setErroPerfil("");
-    setErroSenha("");
-    setErroConfirmarSenha("");
+    setErroNome(""); setErroCpf(""); setErroEmail(""); setErroData("");
+    setErroPerfil(""); setErroSenha(""); setErroConfirmarSenha("");
 
     let focou = false;
-    const focar = (ref) => {
-      if (!focou) {
-        ref?.current?.focus();
-        focou = true;
-      }
-    };
+    const focar = (ref) => { if (!focou) { ref?.current?.focus(); focou = true; } };
 
-    if (fields.nome) {
-      setErroNome(fields.nome || "Digite o nome completo (mínimo 12 caracteres).");
-      focar(refNome);
-    }
-    if (fields.cpf) {
-      setErroCpf(fields.cpf);
-      focar(refCpf);
-    }
-    if (fields.email) {
-      setErroEmail(fields.email);
-      focar(refEmail);
-    }
-    if (fields.data_nascimento) {
-      setErroData(fields.data_nascimento);
-      focar(refData);
-    }
-    if (fields.senha || fields.novaSenha) {
-      setErroSenha(fields.senha || fields.novaSenha);
-      focar(refSenha);
-    }
+    if (fields.nome) { setErroNome(fields.nome || "Digite o nome completo (mínimo 12 caracteres)."); focar(refNome); }
+    if (fields.cpf) { setErroCpf(fields.cpf); focar(refCpf); }
+    if (fields.email) { setErroEmail(fields.email); focar(refEmail); }
+    if (fields.data_nascimento) { setErroData(fields.data_nascimento); focar(refData); }
+    if (fields.senha || fields.novaSenha) { setErroSenha(fields.senha || fields.novaSenha); focar(refSenha); }
 
     const algumPerfilErro =
-      fields.unidade_id ||
-      fields.genero_id ||
-      fields.orientacao_sexual_id ||
-      fields.cor_raca_id ||
-      fields.escolaridade_id ||
-      fields.deficiencia_id ||
-      fields.cargo_id;
+      fields.unidade_id || fields.genero_id || fields.orientacao_sexual_id || fields.cor_raca_id ||
+      fields.escolaridade_id || fields.deficiencia_id || fields.cargo_id;
 
     if (algumPerfilErro) {
       setErroPerfil("Revise os campos de perfil destacados.");
@@ -410,6 +356,30 @@ export default function Cadastro() {
     }
   }
 
+  // handlers auxiliares
+  const onBlurNome = useCallback(() => {
+    if (!nome) return;
+    const t = titleCasePtBr(nome);
+    if (t && t !== nome) setNome(t);
+  }, [nome]);
+
+  function limparErrosVisuais() {
+    setErro(""); setErroNome(""); setErroCpf(""); setErroEmail("");
+    setErroData(""); setErroPerfil(""); setErroSenha(""); setErroConfirmarSenha("");
+  }
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape") limparErrosVisuais();
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "enter") {
+        const btn = document.querySelector("#btn-cadastrar");
+        btn?.click();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   async function handleSubmit(e) {
     e.preventDefault();
     if (loading) return;
@@ -419,73 +389,25 @@ export default function Cadastro() {
       return;
     }
 
-    setErro("");
-    setErroNome("");
-    setErroCpf("");
-    setErroEmail("");
-    setErroData("");
-    setErroPerfil("");
-    setErroSenha("");
-    setErroConfirmarSenha("");
+    limparErrosVisuais();
 
     const nomeTrim = nome.trim();
     const emailTrim = email.trim().toLowerCase();
     const cpfNum = cpf.replace(/\D/g, "");
 
-    if (!nomeTrim) {
-      setErroNome("Nome é obrigatório.");
-      refNome.current?.focus();
-      return;
-    }
-    if (nomeTrim.length < 12) {
-      setErroNome("Digite o nome completo (mínimo 12 caracteres).");
-      refNome.current?.focus();
-      return;
-    }
-    if (!validarCPF(cpf)) {
-      setErroCpf("CPF inválido. Use 000.000.000-00.");
-      refCpf.current?.focus();
-      return;
-    }
-    if (!validarEmail(emailTrim)) {
-      setErroEmail("E-mail inválido.");
-      refEmail.current?.focus();
-      return;
-    }
-    if (!dataNascimento) {
-      setErroData("Data de nascimento é obrigatória.");
-      refData.current?.focus();
-      return;
-    }
-    if (
-      !unidadeId ||
-      !cargoId ||
-      !generoId ||
-      !orientacaoSexualId ||
-      !corRacaId ||
-      !escolaridadeId ||
-      !deficienciaId
-    ) {
+    if (!nomeTrim) { setErroNome("Nome é obrigatório."); refNome.current?.focus(); return; }
+    if (nomeTrim.length < 12) { setErroNome("Digite o nome completo (mínimo 12 caracteres)."); refNome.current?.focus(); return; }
+    if (!validarCPF(cpf)) { setErroCpf("CPF inválido. Use 000.000.000-00."); refCpf.current?.focus(); return; }
+    if (!validarEmail(emailTrim)) { setErroEmail("E-mail inválido."); refEmail.current?.focus(); return; }
+    if (!dataNascimento) { setErroData("Data de nascimento é obrigatória."); refData.current?.focus(); return; }
+    if (!unidadeId || !cargoId || !generoId || !orientacaoSexualId || !corRacaId || !escolaridadeId || !deficienciaId) {
       setErroPerfil("Preencha todos os campos de perfil.");
-      (refUnidade.current ||
-        refGenero.current ||
-        refOrientacao.current ||
-        refCorRaca.current ||
-        refEscolaridade.current ||
-        refDeficiencia.current ||
-        refCargo.current)?.focus();
+      (refUnidade.current || refGenero.current || refOrientacao.current || refCorRaca.current ||
+        refEscolaridade.current || refDeficiencia.current || refCargo.current)?.focus();
       return;
     }
-    if (!senhaForteRe.test(senha)) {
-      setErroSenha("A senha precisa ter 8+ caracteres, com maiúscula, minúscula, número e símbolo.");
-      refSenha.current?.focus();
-      return;
-    }
-    if (senha !== confirmarSenha) {
-      setErroConfirmarSenha("As senhas não coincidem.");
-      refConfirmar.current?.focus();
-      return;
-    }
+    if (!senhaForteRe.test(senha)) { setErroSenha("A senha precisa ter 8+ caracteres, com maiúscula, minúscula, número e símbolo."); refSenha.current?.focus(); return; }
+    if (senha !== confirmarSenha) { setErroConfirmarSenha("As senhas não coincidem."); refConfirmar.current?.focus(); return; }
 
     const payload = {
       nome: nomeTrim,
@@ -527,7 +449,6 @@ export default function Cadastro() {
     }
   }
 
-  // labels da força da senha (só UI)
   const labelForca = useMemo(() => {
     if (!senha) return null;
     if (forcaSenha <= 1) return { t: "Fraca", cls: isDark ? "text-red-300" : "text-red-600" };
@@ -536,13 +457,15 @@ export default function Cadastro() {
     return { t: "Forte", cls: isDark ? "text-emerald-300" : "text-emerald-700" };
   }, [senha, forcaSenha, isDark]);
 
+  // caps lock detector
+  const onSenhaKey = (e) => setCapsOn(e.getModifierState && e.getModifierState("CapsLock"));
+
   return (
     <>
       {/* Skip link (a11y) */}
       <a
         href="#form-cadastro"
-        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50
-                   rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow"
       >
         Pular para o formulário
       </a>
@@ -554,50 +477,41 @@ export default function Cadastro() {
         ].join(" ")}
       >
         {/* HeaderHero */}
-<header className="relative overflow-hidden">
-  {/* 🎨 mantém as cores desta página */}
-  <div className="absolute inset-0 bg-gradient-to-br from-violet-900 via-indigo-800 to-fuchsia-700" />
-  {isDark && <div className="absolute inset-0 bg-black/35" />}
+        <header className="relative overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-to-br from-violet-900 via-indigo-800 to-fuchsia-700" />
+          {isDark && <div className="absolute inset-0 bg-black/35" />}
 
-  {/* blobs decorativos */}
-  <div className="absolute -top-24 -left-24 h-72 w-72 rounded-full bg-white/20 blur-3xl" />
-  <div className="absolute -bottom-28 -right-28 h-80 w-80 rounded-full bg-white/15 blur-3xl" />
+          <div className="absolute -top-24 -left-24 h-72 w-72 rounded-full bg-white/20 blur-3xl" />
+          <div className="absolute -bottom-28 -right-28 h-80 w-80 rounded-full bg-white/15 blur-3xl" />
 
-  <div className="relative max-w-7xl mx-auto px-4 sm:px-6 py-10 md:py-12">
-    {/* Toggle de tema no canto */}
-    <div className="lg:absolute lg:right-4 lg:top-6 flex justify-end">
-      <ThemeTogglePills theme={theme} setTheme={setTheme} variant="glass" />
-    </div>
+          <div className="relative max-w-7xl mx-auto px-4 sm:px-6 py-10 md:py-12">
+            <div className="lg:absolute lg:right-4 lg:top-6 flex justify-end">
+              <ThemeTogglePills theme={theme} setTheme={setTheme} variant="glass" />
+            </div>
 
-    {/* Logo institucional à esquerda */}
-    <div className="absolute left-4 sm:left-6 top-1/2 -translate-y-1/2 hidden sm:flex">
-      <div className="rounded-3xl bg-white/25 backdrop-blur p-5 ring-1 ring-white/30 shadow-lg">
-        <img
-          src="/logo_escola.png"
-          alt="Logotipo da Escola Municipal de Saúde Pública de Santos"
-          className="h-20 w-20 md:h-24 md:w-24 object-contain"
-          loading="lazy"
-        />
-      </div>
-    </div>
+            <div className="absolute left-4 sm:left-6 top-1/2 -translate-y-1/2 hidden sm:flex">
+              <div className="rounded-3xl bg-white/25 backdrop-blur p-5 ring-1 ring-white/30 shadow-lg">
+                <img
+                  src="/logo_escola.png"
+                  alt="Logotipo da Escola Municipal de Saúde Pública de Santos"
+                  className="h-20 w-20 md:h-24 md:w-24 object-contain"
+                  loading="lazy"
+                />
+              </div>
+            </div>
 
-    {/* Conteúdo central */}
-    <div className="flex flex-col items-center text-center gap-3">
-      <div className="inline-flex items-center gap-2 text-white/90 text-xs font-semibold">
-        <Sparkles className="h-4 w-4" />
-        <span>Portal oficial • criação de conta</span>
-      </div>
-
-      <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight">
-        Cadastro
-      </h1>
-
-      <p className="text-sm text-white/90 max-w-2xl">
-        Crie sua conta para acessar cursos, presenças, avaliações e certificados.
-      </p>
-    </div>
-  </div>
-</header>
+            <div className="flex flex-col items-center text-center gap-3">
+              <div className="inline-flex items-center gap-2 text-white/90 text-xs font-semibold">
+                <Sparkles className="h-4 w-4" />
+                <span>Portal oficial • criação de conta</span>
+              </div>
+              <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight">Cadastro</h1>
+              <p className="text-sm text-white/90 max-w-2xl">
+                Crie sua conta para acessar cursos, presenças, avaliações e certificados.
+              </p>
+            </div>
+          </div>
+        </header>
 
         {/* Conteúdo */}
         <section className="mx-auto max-w-6xl px-4 sm:px-6 py-8 md:py-12">
@@ -616,7 +530,7 @@ export default function Cadastro() {
                 ].join(" ")}
               >
                 <div className="flex flex-col items-center text-center gap-3">
-                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3">
                     <div
                       className={[
                         "h-12 w-12 rounded-2xl flex items-center justify-center border",
@@ -665,21 +579,18 @@ export default function Cadastro() {
                     </legend>
 
                     <div>
-                      <label htmlFor="nome" className="block text-sm font-semibold">
-                        Nome completo
-                      </label>
+                      <label htmlFor="nome" className="block text-sm font-semibold">Nome completo</label>
                       <input
                         id="nome"
                         ref={refNome}
                         type="text"
                         placeholder="Nome completo"
                         value={nome}
-                        onChange={(e) => {
-                          setNome(e.target.value);
-                          setErroNome("");
-                        }}
+                        onChange={(e) => { setNome(e.target.value); setErroNome(""); }}
+                        onBlur={onBlurNome}
                         className={inputCls(!!erroNome)}
                         autoComplete="name"
+                        autoCapitalize="words"
                         required
                         aria-describedby={erroNome ? "erro-nome" : undefined}
                         aria-invalid={!!erroNome}
@@ -693,19 +604,14 @@ export default function Cadastro() {
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       <div>
-                        <label htmlFor="cpf" className="block text-sm font-semibold">
-                          CPF
-                        </label>
+                        <label htmlFor="cpf" className="block text-sm font-semibold">CPF</label>
                         <input
                           id="cpf"
                           ref={refCpf}
                           type="text"
                           placeholder="000.000.000-00"
                           value={cpf}
-                          onChange={(e) => {
-                            setCpf(aplicarMascaraCPF(e.target.value));
-                            setErroCpf("");
-                          }}
+                          onChange={(e) => { setCpf(aplicarMascaraCPF(e.target.value)); setErroCpf(""); }}
                           maxLength={14}
                           className={inputCls(!!erroCpf)}
                           autoComplete="username"
@@ -722,19 +628,14 @@ export default function Cadastro() {
                       </div>
 
                       <div>
-                        <label htmlFor="email" className="block text-sm font-semibold">
-                          E-mail
-                        </label>
+                        <label htmlFor="email" className="block text-sm font-semibold">E-mail</label>
                         <input
                           id="email"
                           ref={refEmail}
                           type="email"
                           placeholder="seu@email.com"
                           value={email}
-                          onChange={(e) => {
-                            setEmail(e.target.value);
-                            setErroEmail("");
-                          }}
+                          onChange={(e) => { setEmail(e.target.value); setErroEmail(""); }}
                           className={inputCls(!!erroEmail)}
                           autoComplete="email"
                           required
@@ -751,9 +652,7 @@ export default function Cadastro() {
 
                     <div className={["grid grid-cols-1 md:grid-cols-2 gap-3 pt-3 border-t", isDark ? "border-white/10" : "border-slate-200"].join(" ")}>
                       <div>
-                        <label htmlFor="registro" className="block text-sm font-semibold">
-                          Registro (Servidores da Prefeitura)
-                        </label>
+                        <label htmlFor="registro" className="block text-sm font-semibold">Registro (Servidores da Prefeitura)</label>
                         <input
                           id="registro"
                           type="text"
@@ -762,6 +661,7 @@ export default function Cadastro() {
                           onChange={(e) => setRegistro(maskRegistro(e.target.value))}
                           className={inputCls(false)}
                           autoComplete="off"
+                          inputMode="numeric"
                         />
                         <p className={["mt-1 text-[11px]", isDark ? "text-zinc-400" : "text-slate-500"].join(" ")}>
                           Se não for servidor, deixe em branco.
@@ -769,18 +669,13 @@ export default function Cadastro() {
                       </div>
 
                       <div>
-                        <label htmlFor="dataNascimento" className="block text-sm font-semibold">
-                          Data de nascimento
-                        </label>
+                        <label htmlFor="dataNascimento" className="block text-sm font-semibold">Data de nascimento</label>
                         <input
                           id="dataNascimento"
                           ref={refData}
                           type="date"
                           value={dataNascimento}
-                          onChange={(e) => {
-                            setDataNascimento(e.target.value);
-                            setErroData("");
-                          }}
+                          onChange={(e) => { setDataNascimento(e.target.value); setErroData(""); }}
                           className={inputCls(!!erroData)}
                           required
                           aria-describedby={erroData ? "erro-data" : undefined}
@@ -807,10 +702,7 @@ export default function Cadastro() {
                         <select
                           ref={refUnidade}
                           value={unidadeId}
-                          onChange={(e) => {
-                            setUnidadeId(e.target.value);
-                            setErroPerfil("");
-                          }}
+                          onChange={(e) => { setUnidadeId(e.target.value); setErroPerfil(""); }}
                           className={selectCls(!!erroPerfil)}
                           disabled={loading || loadingLookups}
                           required
@@ -829,19 +721,14 @@ export default function Cadastro() {
                         <select
                           ref={refGenero}
                           value={generoId}
-                          onChange={(e) => {
-                            setGeneroId(e.target.value);
-                            setErroPerfil("");
-                          }}
+                          onChange={(e) => { setGeneroId(e.target.value); setErroPerfil(""); }}
                           className={selectCls(!!erroPerfil)}
                           disabled={loading || loadingLookups}
                           required
                         >
                           <option value="">{loadingLookups ? "Carregando..." : "Selecione…"}</option>
                           {generos.map((g) => (
-                            <option key={g.id} value={String(g.id)}>
-                              {g.nome}
-                            </option>
+                            <option key={g.id} value={String(g.id)}>{g.nome}</option>
                           ))}
                         </select>
                       </div>
@@ -853,19 +740,14 @@ export default function Cadastro() {
                         <select
                           ref={refOrientacao}
                           value={orientacaoSexualId}
-                          onChange={(e) => {
-                            setOrientacaoSexualId(e.target.value);
-                            setErroPerfil("");
-                          }}
+                          onChange={(e) => { setOrientacaoSexualId(e.target.value); setErroPerfil(""); }}
                           className={selectCls(!!erroPerfil)}
                           disabled={loading || loadingLookups}
                           required
                         >
                           <option value="">{loadingLookups ? "Carregando..." : "Selecione…"}</option>
                           {orientacoes.map((o) => (
-                            <option key={o.id} value={String(o.id)}>
-                              {o.nome}
-                            </option>
+                            <option key={o.id} value={String(o.id)}>{o.nome}</option>
                           ))}
                         </select>
                       </div>
@@ -875,19 +757,14 @@ export default function Cadastro() {
                         <select
                           ref={refCorRaca}
                           value={corRacaId}
-                          onChange={(e) => {
-                            setCorRacaId(e.target.value);
-                            setErroPerfil("");
-                          }}
+                          onChange={(e) => { setCorRacaId(e.target.value); setErroPerfil(""); }}
                           className={selectCls(!!erroPerfil)}
                           disabled={loading || loadingLookups}
                           required
                         >
                           <option value="">{loadingLookups ? "Carregando..." : "Selecione…"}</option>
                           {coresRacas.map((c) => (
-                            <option key={c.id} value={String(c.id)}>
-                              {c.nome}
-                            </option>
+                            <option key={c.id} value={String(c.id)}>{c.nome}</option>
                           ))}
                         </select>
                       </div>
@@ -899,19 +776,14 @@ export default function Cadastro() {
                         <select
                           ref={refEscolaridade}
                           value={escolaridadeId}
-                          onChange={(e) => {
-                            setEscolaridadeId(e.target.value);
-                            setErroPerfil("");
-                          }}
+                          onChange={(e) => { setEscolaridadeId(e.target.value); setErroPerfil(""); }}
                           className={selectCls(!!erroPerfil)}
                           disabled={loading || loadingLookups}
                           required
                         >
                           <option value="">{loadingLookups ? "Carregando..." : "Selecione…"}</option>
                           {escolaridades.map((esc) => (
-                            <option key={esc.id} value={String(esc.id)}>
-                              {esc.nome}
-                            </option>
+                            <option key={esc.id} value={String(esc.id)}>{esc.nome}</option>
                           ))}
                         </select>
                       </div>
@@ -921,19 +793,14 @@ export default function Cadastro() {
                         <select
                           ref={refDeficiencia}
                           value={deficienciaId}
-                          onChange={(e) => {
-                            setDeficienciaId(e.target.value);
-                            setErroPerfil("");
-                          }}
+                          onChange={(e) => { setDeficienciaId(e.target.value); setErroPerfil(""); }}
                           className={selectCls(!!erroPerfil)}
                           disabled={loading || loadingLookups}
                           required
                         >
                           <option value="">{loadingLookups ? "Carregando..." : "Selecione…"}</option>
                           {deficiencias.map((d) => (
-                            <option key={d.id} value={String(d.id)}>
-                              {d.nome}
-                            </option>
+                            <option key={d.id} value={String(d.id)}>{d.nome}</option>
                           ))}
                         </select>
                         <p className={["text-[11px] mt-1", isDark ? "text-zinc-400" : "text-slate-500"].join(" ")}>
@@ -947,19 +814,14 @@ export default function Cadastro() {
                       <select
                         ref={refCargo}
                         value={cargoId}
-                        onChange={(e) => {
-                          setCargoId(e.target.value);
-                          setErroPerfil("");
-                        }}
+                        onChange={(e) => { setCargoId(e.target.value); setErroPerfil(""); }}
                         className={selectCls(!!erroPerfil)}
                         disabled={loading || loadingLookups}
                         required
                       >
                         <option value="">{loadingLookups ? "Carregando..." : "Selecione…"}</option>
                         {cargos.map((c) => (
-                          <option key={c.id} value={String(c.id)}>
-                            {c.nome}
-                          </option>
+                          <option key={c.id} value={String(c.id)}>{c.nome}</option>
                         ))}
                       </select>
                     </div>
@@ -980,24 +842,23 @@ export default function Cadastro() {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       <div className="relative">
                         <label htmlFor="senha" className="block text-sm font-semibold">Senha</label>
-
                         <input
                           id="senha"
                           ref={refSenha}
                           type={mostrarSenha ? "text" : "password"}
                           placeholder="Senha forte"
                           value={senha}
-                          onChange={(e) => {
-                            setSenha(e.target.value);
-                            setErroSenha("");
-                          }}
+                          onChange={(e) => { setSenha(e.target.value); setErroSenha(""); }}
+                          onKeyUp={onSenhaKey}
+                          onKeyDown={onSenhaKey}
                           className={[inputCls(!!erroSenha), "pr-12"].join(" ")}
                           autoComplete="new-password"
                           required
                           aria-describedby={erroSenha ? "erro-senha" : "dica-senha"}
                           aria-invalid={!!erroSenha}
+                          inputMode="text"
+                          pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{8,}"
                         />
-
                         <button
                           type="button"
                           onClick={() => setMostrarSenha((v) => !v)}
@@ -1014,6 +875,11 @@ export default function Cadastro() {
                         <p id="dica-senha" className={["text-[11px] mt-1", isDark ? "text-zinc-400" : "text-slate-500"].join(" ")}>
                           Use maiúscula/minúscula, números e símbolo.
                         </p>
+                        {capsOn && (
+                          <p className="mt-1 text-[11px] inline-flex items-center gap-1 text-amber-600 dark:text-amber-300">
+                            <AlertTriangle size={12} /> Caps Lock ativo
+                          </p>
+                        )}
 
                         {erroSenha ? (
                           <p id="erro-senha" className={["text-xs mt-1", isDark ? "text-red-300" : "text-red-600"].join(" ")} role="alert">
@@ -1025,25 +891,16 @@ export default function Cadastro() {
                         {senha ? (
                           <div className="mt-2">
                             <div className="flex items-center justify-between">
-                              <span className={["text-[11px] font-bold", isDark ? "text-zinc-400" : "text-slate-500"].join(" ")}>
-                                Força
-                              </span>
-                              <span className={["text-[11px] font-extrabold", labelForca?.cls || ""].join(" ")}>
-                                {labelForca?.t}
-                              </span>
+                              <span className={["text-[11px] font-bold", isDark ? "text-zinc-400" : "text-slate-500"].join(" ")}>Força</span>
+                              <span className={["text-[11px] font-extrabold", labelForca?.cls || ""].join(" ")}>{labelForca?.t}</span>
                             </div>
-
                             <div className={["mt-1 h-2 rounded-full overflow-hidden", isDark ? "bg-white/10" : "bg-slate-200"].join(" ")}>
                               <div
                                 className={[
                                   "h-full rounded-full transition-all duration-300",
-                                  forcaSenha <= 1
-                                    ? "w-1/4 bg-red-500"
-                                    : forcaSenha === 2
-                                    ? "w-2/4 bg-amber-500"
-                                    : forcaSenha === 3
-                                    ? "w-3/4 bg-sky-500"
-                                    : "w-full bg-emerald-500",
+                                  forcaSenha <= 1 ? "w-1/4 bg-red-500" :
+                                  forcaSenha === 2 ? "w-2/4 bg-amber-500" :
+                                  forcaSenha === 3 ? "w-3/4 bg-sky-500" : "w-full bg-emerald-500",
                                 ].join(" ")}
                               />
                             </div>
@@ -1052,27 +909,20 @@ export default function Cadastro() {
                       </div>
 
                       <div>
-                        <label htmlFor="confirmarSenha" className="block text-sm font-semibold">
-                          Confirmar senha
-                        </label>
-
+                        <label htmlFor="confirmarSenha" className="block text-sm font-semibold">Confirmar senha</label>
                         <input
                           id="confirmarSenha"
                           ref={refConfirmar}
                           type="password"
                           placeholder="Confirmar senha"
                           value={confirmarSenha}
-                          onChange={(e) => {
-                            setConfirmarSenha(e.target.value);
-                            setErroConfirmarSenha("");
-                          }}
+                          onChange={(e) => { setConfirmarSenha(e.target.value); setErroConfirmarSenha(""); }}
                           className={inputCls(!!erroConfirmarSenha)}
                           autoComplete="new-password"
                           required
                           aria-describedby={erroConfirmarSenha ? "erro-confirma" : undefined}
                           aria-invalid={!!erroConfirmarSenha}
                         />
-
                         {erroConfirmarSenha ? (
                           <p id="erro-confirma" className={["text-xs mt-1", isDark ? "text-red-300" : "text-red-600"].join(" ")} role="alert">
                             {erroConfirmarSenha}
@@ -1091,6 +941,7 @@ export default function Cadastro() {
                   {/* Ações */}
                   <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 pt-2">
                     <BotaoPrimario
+                      id="btn-cadastrar"
                       type="submit"
                       className={[
                         "w-full flex justify-center items-center gap-2",
@@ -1109,9 +960,7 @@ export default function Cadastro() {
                       onClick={() => navigate("/login")}
                       className={[
                         "w-full rounded-2xl border text-sm font-extrabold py-3",
-                        isDark
-                          ? "border-white/10 bg-zinc-900/40 text-zinc-200 hover:bg-white/5"
-                          : "border-slate-200 bg-slate-50 text-slate-800 hover:bg-slate-100",
+                        isDark ? "border-white/10 bg-zinc-900/40 text-zinc-200 hover:bg-white/5" : "border-slate-200 bg-slate-50 text-slate-800 hover:bg-slate-100",
                         "focus-visible:ring-2 focus-visible:ring-emerald-500/60 transition",
                       ].join(" ")}
                       disabled={loading}
@@ -1127,12 +976,7 @@ export default function Cadastro() {
                   {/* Links públicos */}
                   <p className={["text-[11px] text-center mt-2 flex flex-wrap items-center justify-center gap-2", isDark ? "text-zinc-400" : "text-slate-600"].join(" ")}>
                     <HelpCircle size={14} aria-hidden="true" />
-                    <a
-                      href="/privacidade"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="underline underline-offset-2 hover:opacity-90"
-                    >
+                    <a href="/privacidade" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:opacity-90">
                       Privacidade
                     </a>
                   </p>

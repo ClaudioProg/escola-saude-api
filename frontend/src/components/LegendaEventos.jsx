@@ -9,7 +9,7 @@ export const DEFAULT_EVENT_LEGEND = [
 ];
 
 /** Mapa de cores → classes (bg + border) com bom contraste em light/dark */
-function colorClasses(color) {
+export function colorClasses(color) {
   // aliases para compatibilidade
   const c = color === "green" ? "emerald" : color === "red" ? "rose" : color;
 
@@ -30,9 +30,27 @@ function colorClasses(color) {
 
 function sizeClasses(size) {
   switch (size) {
-    case "sm": return { dot: "w-3 h-3", text: "text-xs" };
-    case "lg": return { dot: "w-5 h-5", text: "text-base" };
-    default:   return { dot: "w-4 h-4", text: "text-sm" }; // md
+    case "sm":
+      return {
+        dot: "w-3 h-3",
+        text: "text-xs",
+        pill: "px-2 py-0.5 text-[11px]",
+        badge: "text-[10px] px-1.5",
+      };
+    case "lg":
+      return {
+        dot: "w-5 h-5",
+        text: "text-base",
+        pill: "px-3 py-1 text-sm",
+        badge: "text-xs px-2",
+      };
+    default: // md
+      return {
+        dot: "w-4 h-4",
+        text: "text-sm",
+        pill: "px-2.5 py-0.5 text-[13px]",
+        badge: "text-[11px] px-1.5",
+      };
   }
 }
 
@@ -40,7 +58,10 @@ function sizeClasses(size) {
  * Legenda de eventos
  * - items: [{ key, text, color }]
  * - size: 'sm' | 'md' | 'lg'
- * - variant: 'dot' | 'pill'
+ * - variant: 'dot' | 'pill' | 'dot-badge'
+ * - counts: { [key]: number } → badge com quantidade
+ * - activeKeys: string[] → realça itens ativos (os demais sofrem opacidade)
+ * - onItemClick: (key) => void → torna itens clicáveis/tecláveis
  * - ariaLabel / ariaLabelledBy
  */
 export function LegendaEventos({
@@ -50,47 +71,127 @@ export function LegendaEventos({
   className = "",
   ariaLabel = "Legenda dos eventos",
   ariaLabelledBy,
+  counts,              // ex.: { programado: 12, andamento: 3, encerrado: 9 }
+  activeKeys,          // ex.: ["programado","andamento"]
+  inactiveOpacity = 0.55,
+  onItemClick,         // torna os itens interativos
 }) {
   const sz = sizeClasses(size);
+  const isInteractive = typeof onItemClick === "function";
+  const activeSet = new Set(Array.isArray(activeKeys) ? activeKeys : items.map(i => i.key));
 
   return (
     <ul
       className={`flex items-center gap-4 mt-6 flex-wrap ${className}`}
-      role="list"
+      role={isInteractive ? "listbox" : "list"}
       aria-label={ariaLabelledBy ? undefined : ariaLabel}
       aria-labelledby={ariaLabelledBy}
     >
-      {items.map(({ key, text, color }) => (
-        <li key={key || text} className="flex items-center gap-2" role="listitem">
-          {variant === "pill" ? (
+      {items.map(({ key, text, color }) => {
+        const k = key || text;
+        const active = activeSet.has(k);
+        const opacityCls = active ? "" : `opacity-[${inactiveOpacity}]`;
+        const common = [
+          "flex items-center gap-2",
+          isInteractive ? "cursor-pointer select-none" : "",
+          active ? "" : "transition-opacity",
+          opacityCls,
+        ].join(" ");
+
+        const dot = (
+          <span
+            className={[
+              "shrink-0 rounded-full border",
+              colorClasses(color),
+              sz.dot,
+              "ring-1 ring-black/5 dark:ring-white/10",
+            ].join(" ")}
+            aria-hidden="true"
+          />
+        );
+
+        const label = (
+          <span className={`text-gray-700 dark:text-gray-300 leading-tight ${sz.text}`}>
+            {text}
+          </span>
+        );
+
+        const qty = counts && Number.isFinite(Number(counts[k])) ? Number(counts[k]) : null;
+        const badge = qty != null ? (
+          <span
+            className={[
+              "inline-flex items-center rounded-full border border-current/25",
+              "bg-black/5 dark:bg-white/10 text-gray-700 dark:text-gray-200",
+              "leading-none",
+              sz.badge,
+              "py-0.5",
+            ].join(" ")}
+            aria-label={`${text}: ${qty}`}
+          >
+            {qty}
+          </span>
+        ) : null;
+
+        const content =
+          variant === "pill" ? (
             <span
               className={[
-                "inline-flex items-center rounded-full px-2 py-0.5 text-[0.75rem] font-semibold",
-                "border shadow-sm text-white",
+                "inline-flex items-center rounded-full font-semibold text-white border shadow-sm",
                 colorClasses(color),
+                sz.pill,
               ].join(" ")}
               aria-hidden="true"
+              title={text}
             >
               {text}
+              {badge ? <span className="ml-1.5 bg-white/20 rounded-full px-1">{qty}</span> : null}
             </span>
+          ) : variant === "dot-badge" ? (
+            <>
+              {dot}
+              {label}
+              {badge}
+            </>
           ) : (
             <>
-              <span
-                className={[
-                  "shrink-0 rounded-full border",
-                  colorClasses(color),
-                  sz.dot,
-                  "ring-1 ring-black/5 dark:ring-white/10",
-                ].join(" ")}
-                aria-hidden="true"
-              />
-              <span className={`text-gray-700 dark:text-gray-300 leading-tight ${sz.text}`}>
-                {text}
-              </span>
+              {dot}
+              {label}
             </>
-          )}
-        </li>
-      ))}
+          );
+
+        if (!isInteractive) {
+          return (
+            <li key={k} className={common} role="listitem">
+              {content}
+            </li>
+          );
+        }
+
+        // Interativo: vira "opção" clicável/teclável
+        return (
+          <li key={k} className="m-0 p-0" role="none">
+            <button
+              type="button"
+              className={[
+                common,
+                "rounded-full px-1.5 py-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500",
+              ].join(" ")}
+              role="option"
+              aria-selected={active}
+              onClick={() => onItemClick(k)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onItemClick(k);
+                }
+              }}
+              title={text}
+            >
+              {content}
+            </button>
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -118,10 +219,14 @@ LegendaEventos.propTypes = {
     })
   ),
   size: PropTypes.oneOf(["sm", "md", "lg"]),
-  variant: PropTypes.oneOf(["dot", "pill"]),
+  variant: PropTypes.oneOf(["dot", "pill", "dot-badge"]),
   className: PropTypes.string,
   ariaLabel: PropTypes.string,
   ariaLabelledBy: PropTypes.string,
+  counts: PropTypes.object,          // { [key]: number }
+  activeKeys: PropTypes.arrayOf(PropTypes.string),
+  inactiveOpacity: PropTypes.number,
+  onItemClick: PropTypes.func,
 };
 
 export default LegendaEventos;

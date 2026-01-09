@@ -1,5 +1,5 @@
-// ✅ src/pages/DashboardAnalitico.jsx
-import { useEffect, useMemo, useRef, useState } from "react";
+// ✅ src/pages/DashboardAnalitico.jsx (premium: mobile-first, charts robustos, a11y, UX top, sem mudar regra de negócio)
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { Bar, Pie } from "react-chartjs-2";
 import Skeleton from "react-loading-skeleton";
 import { toast } from "react-toastify";
@@ -22,6 +22,8 @@ import {
   Percent,
   RefreshCcw,
   Info,
+  SlidersHorizontal,
+  X,
 } from "lucide-react";
 
 ChartJS.register(BarElement, CategoryScale, LinearScale, ArcElement, Tooltip, Legend);
@@ -30,10 +32,23 @@ ChartJS.register(BarElement, CategoryScale, LinearScale, ArcElement, Tooltip, Le
    Helpers de módulo
 ========================================================= */
 const COLORS = [
-  "#14532d", "#0ea5e9", "#9333ea", "#f59e0b", "#ef4444",
-  "#14b8a6", "#3b82f6", "#f43f5e", "#84cc16", "#eab308",
-  "#8b5cf6", "#06b6d4", "#f97316", "#22c55e", "#0f766e",
+  "#14532d",
+  "#0ea5e9",
+  "#9333ea",
+  "#f59e0b",
+  "#ef4444",
+  "#14b8a6",
+  "#3b82f6",
+  "#f43f5e",
+  "#84cc16",
+  "#eab308",
+  "#8b5cf6",
+  "#06b6d4",
+  "#f97316",
+  "#22c55e",
+  "#0f766e",
 ];
+
 const colorAt = (i) => (i < COLORS.length ? COLORS[i] : `hsl(${(i * 47) % 360} 65% 45%)`);
 
 const sanitizeArr = (arr) =>
@@ -81,7 +96,7 @@ const pieOptions = (total, reduceMotion) => ({
           return (chart.data.labels || []).map((raw, i) => {
             const label = String(raw ?? "—");
             return {
-              text: label.length > 22 ? label.slice(0, 21) + "…" : label,
+              text: label.length > 22 ? `${label.slice(0, 21)}…` : label,
               fillStyle: bg[i],
               strokeStyle: bg[i],
               hidden: false,
@@ -111,33 +126,30 @@ const pieOptions = (total, reduceMotion) => ({
 ========================================================= */
 function HeaderHero({ onRefresh, carregando }) {
   return (
-    <header
-      className="bg-gradient-to-br from-indigo-900 via-fuchsia-800 to-rose-700 text-white"
-      role="banner"
-    >
+    <header className="bg-gradient-to-br from-indigo-900 via-fuchsia-800 to-rose-700 text-white" role="banner">
       <a
         href="#conteudo"
         className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2"
       >
         Ir para o conteúdo
       </a>
+
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-10 flex flex-col items-center text-center gap-3">
-        <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-          Painel de Indicadores
-        </h1>
+        <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Painel de Indicadores</h1>
         <p className="text-sm sm:text-base text-white/90 max-w-2xl">
           Visão analítica dos eventos, inscrições e presenças. Use os filtros abaixo para refinar a análise.
         </p>
+
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={onRefresh}
             disabled={carregando}
-            className={`inline-flex items-center gap-2 px-3 py-2 text-sm rounded-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70
+            className={`inline-flex items-center gap-2 px-3 py-2 text-sm rounded-xl transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70
               ${carregando ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-white/15 hover:bg-white/25"} text-white`}
             aria-label="Atualizar indicadores"
           >
-            <RefreshCcw className="h-4 w-4" aria-hidden="true" />
+            <RefreshCcw className={`h-4 w-4 ${carregando ? "animate-spin" : ""}`} aria-hidden="true" />
             {carregando ? "Atualizando…" : "Atualizar"}
           </button>
         </div>
@@ -182,6 +194,8 @@ export default function DashboardAnalitico() {
 
   const reduceMotion = useReducedMotion();
   const liveRef = useRef(null);
+  const abortRef = useRef(null);
+  const mountedRef = useRef(true);
 
   // -------- Helpers --------
   const setLive = (msg) => {
@@ -206,58 +220,63 @@ export default function DashboardAnalitico() {
     return src;
   };
 
-  // 📈 cálculo da % de presença média geral
-  function porcentagemPresencaGeral() {
-    try {
-      const totalInscritos = Number(dados?.totalInscritos || 0);
-      const totalElegiveis = Number(dados?.totalElegiveis || 0);
-      if (!totalInscritos) return 0;
-      const pct = (totalElegiveis / totalInscritos) * 100;
-      return Math.min(100, Math.max(0, pct));
-    } catch (e) {
-      console.error("Erro ao calcular % presença média:", e);
-      return 0;
-    }
-  }
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      abortRef.current?.abort?.("unmount");
+    };
+  }, []);
 
   // ---------- Fetchs ----------
-  async function carregarDados() {
+  const carregarDados = useCallback(async () => {
     try {
+      abortRef.current?.abort?.("new-request");
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
+
       setCarregando(true);
       setErro("");
       setLive("Carregando dados…");
+
       const qs = new URLSearchParams();
       if (ano) qs.append("ano", ano);
       if (mes) qs.append("mes", mes);
       if (tipo) qs.append("tipo", tipo);
 
-      const data = await apiGet(`/api/dashboard-analitico?${qs.toString()}`);
+      // OBS: mantive sua rota exatamente como estava (com /api)
+      const data = await apiGet(`/api/dashboard-analitico?${qs.toString()}`, { signal: ctrl.signal });
+
+      if (!mountedRef.current) return;
+
       setDados(data || {});
       setLive("Dados atualizados.");
     } catch (e) {
+      if (e?.name === "AbortError") return;
       console.error(e);
+      if (!mountedRef.current) return;
+
       setErro("Erro ao carregar dados do painel analítico.");
       toast.error("Erro ao carregar dados do painel analítico");
       setLive("Falha ao carregar os dados.");
     } finally {
-      setCarregando(false);
+      if (mountedRef.current) setCarregando(false);
     }
-  }
+  }, [ano, mes, tipo]);
 
-  async function carregarStats() {
+  const carregarStats = useCallback(async () => {
     try {
       const res = await apiGet(`/api/usuarios/estatisticas`, { on403: "silent" });
-      if (res && typeof res === "object") setStats(res);
+      if (mountedRef.current && res && typeof res === "object") setStats(res);
     } catch (e) {
       console.error("Erro ao carregar /usuarios/estatisticas:", e);
     }
-  }
+  }, []);
 
   useEffect(() => {
     carregarDados();
     carregarStats();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ano, mes, tipo]);
+  }, [carregarDados, carregarStats]);
 
   const limparFiltros = () => {
     setAno("");
@@ -272,50 +291,47 @@ export default function DashboardAnalitico() {
   const presencaPorEventoData = useMemo(() => {
     const base = ensureChart(dados?.presencaPorEvento);
     if (!base.datasets.length) return base;
-  
+
     const labels = Array.isArray(base.labels) ? base.labels : [];
     const datasets = Array.isArray(base.datasets) ? base.datasets : [];
-    const meta = Array.isArray(base.meta) ? base.meta : (Array.isArray(dados?.presencaPorEventoMeta) ? dados.presencaPorEventoMeta : null);
-  
+    const meta = Array.isArray(base.meta)
+      ? base.meta
+      : Array.isArray(dados?.presencaPorEventoMeta)
+      ? dados.presencaPorEventoMeta
+      : null;
+
     let indices = labels.map((_, i) => i);
-  
+
     // Tenta filtrar/sortear por eventos encerrados usando metadados (quando existirem)
     if (Array.isArray(meta) && meta.length === labels.length) {
       const normalizados = meta.map((m, i) => ({
         i,
         status: String(m?.status ?? "").toLowerCase(),
-        encerradoEm:
-          m?.encerradoEm || m?.data_fim || m?.dataFim || m?.fim || null,
+        encerradoEm: m?.encerradoEm || m?.data_fim || m?.dataFim || m?.fim || null,
       }));
-  
-      // Considera "encerrado" se status = encerrado ou se houver data de encerramento
-      let encerrados = normalizados.filter(
-        (m) => m.status === "encerrado" || !!m.encerradoEm
-      );
-  
+
+      let encerrados = normalizados.filter((m) => m.status === "encerrado" || !!m.encerradoEm);
+
       if (encerrados.length) {
-        // Ordena por data de encerramento quando disponível; sem data vai para o início
         encerrados.sort((a, b) => {
           const da = a.encerradoEm ? new Date(a.encerradoEm).getTime() : 0;
           const db = b.encerradoEm ? new Date(b.encerradoEm).getTime() : 0;
           return da - db;
         });
-        indices = encerrados.map((m) => m.i).slice(-5); // 5 mais recentes
+        indices = encerrados.map((m) => m.i).slice(-5);
       } else {
-        indices = indices.slice(-5); // fallback
+        indices = indices.slice(-5);
       }
     } else {
-      indices = indices.slice(-5); // fallback quando não há meta
+      indices = indices.slice(-5);
     }
-  
+
     const fLabels = indices.map((i) => labels[i]);
     const fDatasets = datasets.map((ds) => ({
       ...ds,
-      data: indices.map((i) =>
-        Number(clampPct((ds.data || [])[i]).toFixed(1))
-      ),
+      data: indices.map((i) => Number(clampPct((ds.data || [])[i]).toFixed(1))),
     }));
-  
+
     return { labels: fLabels, datasets: fDatasets };
   }, [dados]);
 
@@ -334,6 +350,7 @@ export default function DashboardAnalitico() {
     [reduceMotion]
   );
 
+  // charts de rosca
   const pieFaixa = useMemo(() => toPieDataset(stats.faixa_etaria || []), [stats]);
   const pieUnidade = useMemo(() => {
     const arr = (stats.por_unidade || []).map((x) => ({
@@ -349,18 +366,45 @@ export default function DashboardAnalitico() {
   const pieDefic = useMemo(() => toPieDataset(stats.por_deficiencia || []), [stats]);
   const pieCor = useMemo(() => toPieDataset(stats.por_cor_raca || []), [stats]);
 
-  // -------- UI --------
   return (
     <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
       <HeaderHero onRefresh={carregarDados} carregando={carregando} />
+
+      {carregando && (
+        <div
+          className="sticky top-0 left-0 w-full h-1 bg-fuchsia-100 dark:bg-fuchsia-950/30 z-40"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="Carregando painel analítico"
+        >
+          <div className={`h-full bg-fuchsia-600 ${reduceMotion ? "" : "animate-pulse"} w-1/3`} />
+        </div>
+      )}
+
       <main id="conteudo" className="flex-1 max-w-6xl mx-auto px-3 sm:px-4 py-6">
         <p ref={liveRef} className="sr-only" aria-live="polite" />
 
-        {/* Filtros */}
-        <section
-          aria-label="Filtros do painel"
-          className="bg-white dark:bg-gray-800 rounded-2xl shadow p-3 sm:p-4 mb-6"
-        >
+        {/* Filtros (premium) */}
+        <section aria-label="Filtros do painel" className="bg-white dark:bg-zinc-950 rounded-2xl shadow-sm ring-1 ring-black/5 dark:ring-white/10 p-3 sm:p-4 mb-6">
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <div className="inline-flex items-center gap-2 text-sm font-extrabold text-zinc-800 dark:text-zinc-100">
+              <SlidersHorizontal className="w-4 h-4" aria-hidden="true" />
+              Filtros
+            </div>
+
+            {(ano || mes || tipo) && (
+              <button
+                type="button"
+                onClick={limparFiltros}
+                className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-bold rounded-xl bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-200 hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+                Limpar
+              </button>
+            )}
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 items-end">
             <FieldSelect
               id="filtro-ano"
@@ -373,6 +417,7 @@ export default function DashboardAnalitico() {
                 { value: "2025", label: "2025" },
               ]}
             />
+
             <FieldSelect
               id="filtro-mes"
               label="Mês"
@@ -388,6 +433,7 @@ export default function DashboardAnalitico() {
                 })),
               ]}
             />
+
             <FieldSelect
               id="filtro-tipo"
               label="Tipo"
@@ -395,7 +441,13 @@ export default function DashboardAnalitico() {
               onChange={(e) => setTipo(e.target.value)}
               options={[
                 { value: "", label: "Todos os Tipos" },
-                "Congresso", "Curso", "Oficina", "Palestra", "Seminário", "Simpósio", "Outros",
+                "Congresso",
+                "Curso",
+                "Oficina",
+                "Palestra",
+                "Seminário",
+                "Simpósio",
+                "Outros",
               ].map((t) => (typeof t === "string" ? { value: t, label: t } : t))}
             />
 
@@ -404,22 +456,15 @@ export default function DashboardAnalitico() {
                 type="button"
                 onClick={carregarDados}
                 disabled={carregando}
-                className={`px-3 py-2 text-sm rounded-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500
-                  ${carregando
-                    ? "opacity-60 cursor-not-allowed bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300"
-                    : "bg-rose-600 text-white hover:bg-rose-700"}`}
+                className={`px-3 py-2 text-sm font-bold rounded-xl transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500
+                  ${
+                    carregando
+                      ? "opacity-60 cursor-not-allowed bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300"
+                      : "bg-rose-600 text-white hover:bg-rose-700"
+                  }`}
               >
                 {carregando ? "Atualizando…" : "Aplicar"}
               </button>
-              {(ano || mes || tipo) && (
-                <button
-                  type="button"
-                  onClick={limparFiltros}
-                  className="px-3 py-2 text-sm rounded-lg bg-red-100 text-red-700 dark:bg-red-900 dark:text-white hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
-                >
-                  Limpar
-                </button>
-              )}
             </div>
           </div>
         </section>
@@ -427,14 +472,15 @@ export default function DashboardAnalitico() {
         {/* Conteúdo principal */}
         {carregando ? (
           <div className="space-y-4" aria-busy="true">
-            <Skeleton height={90} />
-            <Skeleton height={220} count={2} />
-            <Skeleton height={360} />
+            <Skeleton height={90} className="rounded-2xl" />
+            <Skeleton height={220} count={2} className="rounded-2xl" />
+            <Skeleton height={360} className="rounded-2xl" />
           </div>
         ) : erro ? (
           <AlertCard message={erro} />
         ) : (
           <>
+            {/* Ministats */}
             <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
               <MiniStat
                 icon={CalendarDays}
@@ -458,28 +504,29 @@ export default function DashboardAnalitico() {
                 accent="from-amber-600 to-orange-600"
               />
               <MiniStat
-  icon={Percent}
-  titulo="% Presença Média"
-  valor={`${safeNumber(dados?.percentualPresenca, 0).toFixed(1)}%`}
-  descricao="Entre inscritos (freq ≥75%)"
-  accent="from-emerald-600 to-teal-600"
-/>
+                icon={Percent}
+                titulo="% Presença Média"
+                valor={`${safeNumber(dados?.percentualPresenca, 0).toFixed(1)}%`}
+                descricao="Entre inscritos (freq ≥75%)"
+                accent="from-emerald-600 to-teal-600"
+              />
             </section>
 
             <section className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
-              <ChartCard title="Eventos por Mês">
+              <ChartCard title="Eventos por Mês" reduceMotion={reduceMotion}>
                 <div style={{ height: 320 }}>
                   {evPorMesData.labels.length ? <Bar data={evPorMesData} /> : <NoData />}
                 </div>
               </ChartCard>
-              <ChartCard title="Eventos por Tipo">
+
+              <ChartCard title="Eventos por Tipo" reduceMotion={reduceMotion}>
                 <div style={{ height: 320 }}>
                   {evPorTipoData.labels.length ? <Pie data={evPorTipoData} /> : <NoData />}
                 </div>
               </ChartCard>
             </section>
 
-            <ChartCard title="Presença por Evento (%)">
+            <ChartCard title="Presença por Evento (%)" reduceMotion={reduceMotion}>
               <div style={{ height: 360 }}>
                 {presencaPorEventoData.labels.length ? (
                   <Bar data={presencaPorEventoData} options={barPctOptions} />
@@ -491,9 +538,10 @@ export default function DashboardAnalitico() {
 
             {/* 🧑‍🤝‍🧑 Demografia — GRÁFICOS DE ROSCA */}
             <section className="mt-10">
-              <div className="flex items-center gap-2 mb-3 sm:mb-4">
-                <h2 className="text-base sm:text-lg font-semibold">População Cadastrada</h2>
-                <span className="inline-flex items-center text-xs sm:text-sm text-gray-600 dark:text-gray-300">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3 sm:mb-4">
+                <h2 className="text-base sm:text-lg font-extrabold">População Cadastrada</h2>
+
+                <span className="inline-flex items-center text-xs sm:text-sm text-zinc-600 dark:text-zinc-300">
                   <Info className="h-4 w-4 mr-1" aria-hidden="true" />
                   Total de usuários: <strong className="ml-1">{stats?.total_usuarios ?? 0}</strong>
                 </span>
@@ -524,7 +572,7 @@ export default function DashboardAnalitico() {
 ========================================================= */
 function FieldSelect({ id, label, value, onChange, options }) {
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col min-w-0">
       <label className="text-xs mb-1 text-slate-700 dark:text-slate-200" htmlFor={id}>
         {label}
       </label>
@@ -532,7 +580,8 @@ function FieldSelect({ id, label, value, onChange, options }) {
         id={id}
         value={value}
         onChange={onChange}
-        className="p-2 rounded-lg border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
+        className="p-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-950 dark:text-white
+                   focus:outline-none focus:ring-2 focus:ring-rose-500"
       >
         {options.map((opt) => (
           <option key={opt.value ?? opt} value={opt.value ?? opt}>
@@ -546,26 +595,23 @@ function FieldSelect({ id, label, value, onChange, options }) {
 
 function AlertCard({ message }) {
   return (
-    <div
-      className="bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-200 rounded-2xl p-4"
-      role="alert"
-    >
+    <div className="bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-200 rounded-2xl p-4 ring-1 ring-red-200/60 dark:ring-red-900/40" role="alert">
       {message}
     </div>
   );
 }
 
-function ChartCard({ title, children, ariaLabel }) {
+function ChartCard({ title, children, ariaLabel, reduceMotion }) {
   return (
     <motion.figure
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35 }}
-      className="bg-white dark:bg-gray-800 rounded-2xl shadow p-4"
+      initial={reduceMotion ? false : { opacity: 0, y: 10 }}
+      animate={reduceMotion ? {} : { opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+      className="bg-white dark:bg-zinc-950 rounded-2xl shadow-sm ring-1 ring-black/5 dark:ring-white/10 p-4"
       role="group"
       aria-label={ariaLabel || title}
     >
-      <figcaption className="text-center font-semibold mb-4">{title}</figcaption>
+      <figcaption className="text-center font-extrabold mb-4">{title}</figcaption>
       {children}
     </motion.figure>
   );
@@ -573,26 +619,22 @@ function ChartCard({ title, children, ariaLabel }) {
 
 function MiniStat({ icon: Icon, titulo, valor, descricao, accent = "from-slate-600 to-slate-700" }) {
   return (
-    <div
-      className="bg-white dark:bg-gray-800 rounded-2xl shadow p-4"
-      role="group"
-      aria-label={descricao || titulo}
-    >
+    <div className="bg-white dark:bg-zinc-950 rounded-2xl shadow-sm ring-1 ring-black/5 dark:ring-white/10 p-4" role="group" aria-label={descricao || titulo}>
       <div className="flex items-center justify-between mb-2">
-        <div className={`rounded-xl px-2 py-1 text-white text-xs font-medium bg-gradient-to-r ${accent}`}>
+        <div className={`rounded-xl px-2 py-1 text-white text-xs font-bold bg-gradient-to-r ${accent}`}>
           {titulo}
         </div>
         <Icon className="h-5 w-5 text-black/60 dark:text-white/70" aria-hidden="true" />
       </div>
       <p className="text-3xl font-extrabold text-lousa dark:text-white leading-tight">{valor}</p>
-      <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">{descricao}</p>
+      <p className="text-xs text-zinc-600 dark:text-zinc-300 mt-1">{descricao}</p>
     </div>
   );
 }
 
 function NoData() {
   return (
-    <div className="h-40 flex items-center justify-center text-gray-600 dark:text-gray-300 text-sm italic">
+    <div className="h-40 flex items-center justify-center text-zinc-600 dark:text-zinc-300 text-sm italic">
       Sem dados para exibir.
     </div>
   );
@@ -605,14 +647,15 @@ function PieCard({ title, data }) {
 
   return (
     <motion.figure
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35 }}
-      className="bg-white dark:bg-gray-800 rounded-2xl shadow p-4"
+      initial={reduceMotion ? false : { opacity: 0, y: 10 }}
+      animate={reduceMotion ? {} : { opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+      className="bg-white dark:bg-zinc-950 rounded-2xl shadow-sm ring-1 ring-black/5 dark:ring-white/10 p-4"
       role="group"
       aria-label={`Gráfico de rosca: ${title}`}
     >
-      <figcaption className="text-center font-semibold mb-3">{title}</figcaption>
+      <figcaption className="text-center font-extrabold mb-3">{title}</figcaption>
+
       {hasData ? (
         <div style={{ height: 280 }}>
           <Pie data={data} options={options} />
@@ -620,7 +663,8 @@ function PieCard({ title, data }) {
       ) : (
         <NoData />
       )}
-      <p className="mt-3 text-xs sm:text-sm text-gray-600 dark:text-gray-300 text-center">
+
+      <p className="mt-3 text-xs sm:text-sm text-zinc-600 dark:text-zinc-300 text-center">
         <strong>Total:</strong> {data?._total || 0}
       </p>
     </motion.figure>

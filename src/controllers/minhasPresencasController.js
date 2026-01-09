@@ -1,132 +1,234 @@
-// 📁 src/controllers/minhasPresencasController.js
-const db = require("../db");
+// ✅ src/controllers/minhasPresencasController.js — PREMIUM (date-only safe, SQL robusto, sem “pulos”, logs com RID)
+const dbMod = require("../db");
 
-/**
- * Regras aplicadas (conforme decisões do projeto):
- * - Datas "só data" ficam como strings "YYYY-MM-DD" (sem new Date no frontend).
- * - Total de encontros por turma = COUNT(DISTINCT data_presenca) na tabela presencas (não usamos datas_turma).
- * - Frequência do usuário = presentes_usuario / total_encontros.
- * - Elegibilidade para avaliação = turma ENCERRADA E frequência >= 75%.
- * - Status de turma considera data+hora (data_inicio+horario_inicio; data_fim+horario_fim).
- * - Timezone para comparação: America/Sao_Paulo.
- */
+// compat: db.query direto OU { db } (pg-promise)
+const db = dbMod?.db ?? dbMod;
+const query =
+  typeof db?.query === "function"
+    ? db.query.bind(db)
+    : typeof dbMod?.query === "function"
+      ? dbMod.query.bind(dbMod)
+      : null;
 
-function percent1(decimal) {
-  if (!decimal || !isFinite(decimal)) return 0;
-  return Math.round(decimal * 1000) / 10; // 1 casa decimal
+if (typeof query !== "function") {
+  // não derruba silenciosamente: esse arquivo é core
+  throw new Error("DB inválido em minhasPresencasController.js (query ausente)");
 }
 
+const IS_DEV = process.env.NODE_ENV !== "production";
+const TZ = "America/Sao_Paulo";
+
+function mkRid(prefix = "MP") {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+function log(rid, ...args) {
+  if (!IS_DEV) return;
+  console.log(`[${rid}]`, ...args);
+}
+function logErr(rid, ...args) {
+  console.error(`[${rid}]`, ...args);
+}
+
+/**
+ * % com 1 casa decimal a partir do decimal (0..1)
+ * ex.: 0.825 -> 82.5
+ */
+function percent1(decimal) {
+  if (decimal == null || !Number.isFinite(decimal)) return 0;
+  return Math.round(decimal * 1000) / 10;
+}
+
+/**
+ * Normaliza HH:MM
+ */
+function hhmm(v, fallback = null) {
+  if (!v) return fallback;
+  const s = String(v).trim();
+  const m = /^(\d{1,2}):(\d{2})/.exec(s);
+  if (!m) return fallback;
+  const hh = String(Math.min(Math.max(Number(m[1]), 0), 23)).padStart(2, "0");
+  const mm = String(Math.min(Math.max(Number(m[2]), 0), 59)).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+/**
+ * Regras do projeto (mantidas):
+ * - Datas "só data" como strings "YYYY-MM-DD"
+ * - Total de encontros = COUNT(DISTINCT data_presenca) em presencas (sem datas_turma)
+ * - Frequência = presentes_usuario / total_encontros
+ * - Elegível p/ avaliação = ENCERRADA e >= 75%
+ * - Status por data+hora (data_inicio+horario_inicio; data_fim+horario_fim)
+ * - Comparação em America/Sao_Paulo (do lado do SQL)
+ */
 exports.listarMinhasPresencas = async (req, res) => {
+  const rid = mkRid();
   try {
-    const usuarioId = req?.usuario?.id || req?.user?.id;
-    if (!usuarioId) {
+    const usuarioIdRaw = req?.usuario?.id ?? req?.user?.id;
+    const usuarioId = Number(usuarioIdRaw);
+
+    if (!Number.isFinite(usuarioId) || usuarioId <= 0) {
       return res.status(401).json({ erro: "Não autenticado." });
     }
 
-    // 🔎 Traz todas as turmas nas quais o usuário TEM INSCRIÇÃO,
-    // mesmo que ainda não haja presenças registradas.
+    /**
+     * ✅ SQL “premium”
+     * - baseia-se em INSCRIÇÕES (sempre retorna turmas inscritas, mesmo sem presenças)
+     * - total_encontros por turma = COUNT(DISTINCT data_presenca) em presencas (escopo turma)
+     * - agregados do usuário por turma (presentes/ausências e arrays)
+     * - status com timestamps “locais” via AT TIME ZONE (SP)
+     * - datas retornam como 'YYYY-MM-DD' (to_char)
+     */
     const sql = `
       WITH base AS (
         SELECT
-          t.id                                      AS turma_id,
-          e.id                                      AS evento_id,
-          e.titulo                                  AS evento_titulo,
-          t.nome                                    AS turma_nome,
-          t.data_inicio,
-          t.data_fim,
-          t.horario_inicio,
-          t.horario_fim,
-          -- timestamps para status, sem timezone (usaremos agora_sp também sem tz)
-          (t.data_inicio || ' ' || COALESCE(t.horario_inicio, '00:00'))::timestamp AS inicio_ts,
-          (t.data_fim   || ' ' || COALESCE(t.horario_fim,   '23:59'))::timestamp AS fim_ts,
-          -- total de encontros da turma (datas distintas dessa turma na tabela presencas)
+          t.id AS turma_id,
+          e.id AS evento_id,
+          COALESCE(e.titulo, 'Evento') AS evento_titulo,
+          COALESCE(t.nome, 'Turma')    AS turma_nome,
+
+          -- date-only safe (strings)
+          to_char(t.data_inicio::date, 'YYYY-MM-DD') AS data_inicio,
+          to_char(t.data_fim::date,    'YYYY-MM-DD') AS data_fim,
+
+          -- horários normalizados HH:MI (string); se null, fica null
+          to_char(t.horario_inicio::time, 'HH24:MI') AS horario_inicio,
+          to_char(t.horario_fim::time,    'HH24:MI') AS horario_fim,
+
+          -- timestamps de comparação em “hora local SP”
+          (
+            (
+              (t.data_inicio::date)::text || ' ' ||
+              COALESCE(to_char(t.horario_inicio::time,'HH24:MI'), '00:00')
+            )::timestamp
+          ) AS inicio_ts,
+
+          (
+            (
+              (t.data_fim::date)::text || ' ' ||
+              COALESCE(to_char(t.horario_fim::time,'HH24:MI'), '23:59')
+            )::timestamp
+          ) AS fim_ts,
+
+          -- total encontros (datas distintas lançadas NA TURMA)
           COALESCE((
-            SELECT COUNT(DISTINCT px.data_presenca)
-            FROM presencas px
-            WHERE px.turma_id = t.id
+            SELECT COUNT(DISTINCT px.data_presenca::date)
+              FROM presencas px
+             WHERE px.turma_id = t.id
           ), 0) AS total_encontros,
-          -- agregados do USUÁRIO
-          COALESCE(SUM(CASE WHEN p.presente = TRUE  THEN 1 ELSE 0 END), 0) AS presentes_usuario,
-          COALESCE(SUM(CASE WHEN p.presente = FALSE THEN 1 ELSE 0 END), 0) AS ausencias_usuario,
-          ARRAY_REMOVE(ARRAY_AGG(DISTINCT CASE WHEN p.data_presenca IS NOT NULL
-            THEN TO_CHAR(p.data_presenca, 'YYYY-MM-DD') END), NULL)                       AS datas_registradas,
-          ARRAY_REMOVE(ARRAY_AGG(DISTINCT CASE WHEN p.presente = TRUE
-            THEN TO_CHAR(p.data_presenca, 'YYYY-MM-DD') END), NULL)                       AS datas_presentes,
-          ARRAY_REMOVE(ARRAY_AGG(DISTINCT CASE WHEN p.presente = FALSE
-            THEN TO_CHAR(p.data_presenca, 'YYYY-MM-DD') END), NULL)                       AS datas_ausencias
+
+          -- agregados do usuário (por turma)
+          COALESCE(SUM(CASE WHEN p.presente IS TRUE  THEN 1 ELSE 0 END), 0) AS presentes_usuario,
+          COALESCE(SUM(CASE WHEN p.presente IS FALSE THEN 1 ELSE 0 END), 0) AS ausencias_usuario,
+
+          -- arrays date-only
+          COALESCE(
+            ARRAY_REMOVE(
+              ARRAY_AGG(DISTINCT CASE WHEN p.data_presenca IS NOT NULL
+                THEN to_char(p.data_presenca::date, 'YYYY-MM-DD')
+              END),
+              NULL
+            ),
+            '{}'
+          ) AS datas_registradas,
+
+          COALESCE(
+            ARRAY_REMOVE(
+              ARRAY_AGG(DISTINCT CASE WHEN p.presente IS TRUE
+                THEN to_char(p.data_presenca::date, 'YYYY-MM-DD')
+              END),
+              NULL
+            ),
+            '{}'
+          ) AS datas_presentes,
+
+          COALESCE(
+            ARRAY_REMOVE(
+              ARRAY_AGG(DISTINCT CASE WHEN p.presente IS FALSE
+                THEN to_char(p.data_presenca::date, 'YYYY-MM-DD')
+              END),
+              NULL
+            ),
+            '{}'
+          ) AS datas_ausencias
+
         FROM inscricoes i
-        JOIN turmas t   ON t.id = i.turma_id
-        JOIN eventos e  ON e.id = t.evento_id
+        JOIN turmas  t ON t.id = i.turma_id
+        JOIN eventos e ON e.id = t.evento_id
         LEFT JOIN presencas p
                ON p.usuario_id = i.usuario_id
               AND p.turma_id   = t.id
         WHERE i.usuario_id = $1
         GROUP BY
-          t.id, e.id, e.titulo, t.nome, t.data_inicio, t.data_fim, t.horario_inicio, t.horario_fim
+          t.id, e.id, e.titulo, t.nome,
+          t.data_inicio, t.data_fim, t.horario_inicio, t.horario_fim
       )
       SELECT
         b.*,
-        -- "agora" no fuso São Paulo para comparação coerente
-        (NOW() AT TIME ZONE 'America/Sao_Paulo')::timestamp AS agora_sp
+        (NOW() AT TIME ZONE '${TZ}')::timestamp AS agora_sp
       FROM base b
       ORDER BY b.data_inicio DESC, b.turma_id DESC;
     `;
 
-    const { rows } = await db.query(sql, [usuarioId]);
+    const { rows } = await query(sql, [usuarioId]);
 
-    const resposta = rows.map((r) => {
+    const turmas = (rows || []).map((r) => {
       const totalEncontros = Number(r.total_encontros || 0);
       const presentesUsuario = Number(r.presentes_usuario || 0);
       const ausenciasUsuario = Number(r.ausencias_usuario || 0);
 
-      // status por comparação de timestamps (ambos sem tz, comparados com agora_sp também sem tz)
       const inicioTs = r.inicio_ts;
       const fimTs = r.fim_ts;
       const agora = r.agora_sp;
 
+      // ✅ status: programado | andamento | encerrado
       let status = "programado";
       if (agora >= inicioTs && agora <= fimTs) status = "andamento";
       if (agora > fimTs) status = "encerrado";
 
-      // frequência: presentes / total_encontros
+      // ✅ frequência: presentes / total_encontros
       const freqDecimal = totalEncontros > 0 ? presentesUsuario / totalEncontros : 0;
-      const frequencia = percent1(freqDecimal); // em %
+      const frequencia = percent1(freqDecimal);
       const elegivelAvaliacao = status === "encerrado" && freqDecimal >= 0.75;
 
-      // estrutura final
       return {
-        evento_id: r.evento_id,
+        evento_id: Number(r.evento_id),
         evento_titulo: r.evento_titulo,
-        turma_id: r.turma_id,
+        turma_id: Number(r.turma_id),
         turma_nome: r.turma_nome,
         periodo: {
-          data_inicio: r.data_inicio,      // "YYYY-MM-DD"
-          horario_inicio: r.horario_inicio || null, // "HH:MM"
-          data_fim: r.data_fim,            // "YYYY-MM-DD"
-          horario_fim: r.horario_fim || null,
+          data_inicio: r.data_inicio, // "YYYY-MM-DD"
+          horario_inicio: hhmm(r.horario_inicio, null), // "HH:MM" | null
+          data_fim: r.data_fim,
+          horario_fim: hhmm(r.horario_fim, null),
         },
-        status, // "programado" | "andamento" | "encerrado"
+        status,
         total_encontros: totalEncontros,
         presentes: presentesUsuario,
         ausencias: ausenciasUsuario,
-        frequencia, // número em %, 1 casa (ex.: 82.5)
+        frequencia, // número (ex.: 82.5)
         elegivel_avaliacao: elegivelAvaliacao,
-        // datas do usuário (sempre strings "YYYY-MM-DD")
         datas: {
-          registradas: r.datas_registradas || [],
-          presentes: r.datas_presentes || [],
-          ausencias: r.datas_ausencias || [],
+          registradas: Array.isArray(r.datas_registradas) ? r.datas_registradas : [],
+          presentes: Array.isArray(r.datas_presentes) ? r.datas_presentes : [],
+          ausencias: Array.isArray(r.datas_ausencias) ? r.datas_ausencias : [],
         },
       };
     });
 
+    log(rid, "OK", { usuarioId, total: turmas.length });
+
     return res.json({
       usuario_id: usuarioId,
-      total_turmas: resposta.length,
-      turmas: resposta,
+      total_turmas: turmas.length,
+      turmas,
     });
   } catch (err) {
-    console.error("❌ listarMinhasPresencas erro:", err);
+    logErr(rid, "❌ listarMinhasPresencas erro:", {
+      message: err?.message,
+      detail: err?.detail,
+      code: err?.code,
+      stack: IS_DEV ? err?.stack : undefined,
+    });
     return res.status(500).json({ erro: "Falha ao listar presenças do usuário." });
   }
 };

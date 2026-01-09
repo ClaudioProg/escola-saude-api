@@ -1,8 +1,8 @@
-// ✅ src/pages/Avaliacao.jsx (padronizado: paleta fixa, ícone+título na mesma linha, a11y)
-import { useEffect, useRef, useState, useMemo } from "react";
+// ✅ src/pages/Avaliacao.jsx — premium++ (ministats, a11y, atalhos, dark mode)
+import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { motion } from "framer-motion";
 import { toast } from "react-toastify";
-import { ClipboardList, RefreshCw } from "lucide-react";
+import { ClipboardList, RefreshCw, Award, Clock3 } from "lucide-react";
 
 import Footer from "../components/Footer";
 import ModalAvaliacaoFormulario from "../components/ModalAvaliacaoFormulario";
@@ -15,7 +15,6 @@ import BotaoPrimario from "../components/BotaoPrimario";
    • Ícone e título na MESMA linha
    • Paleta fixa (3 cores) só desta página
    • Skip-link para acessibilidade
-   • Sem repetir o título no conteúdo
 ------------------------------------------------------------------------------- */
 function HeaderHero({ onRefresh, nome = "" }) {
   const gradient = "from-violet-900 via-violet-800 to-indigo-700"; // 3 cores fixas desta página
@@ -55,25 +54,63 @@ function HeaderHero({ onRefresh, nome = "" }) {
   );
 }
 
+/* ───────────────── MiniStat ───────────────── */
+function MiniStat({ icon: Icon, label, value, desc, bg = "bg-white", border = "border-slate-200" }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25 }}
+      className={`rounded-2xl ${bg} dark:bg-zinc-900 border ${border} dark:border-zinc-800 p-4 shadow-sm`}
+      role="group"
+      aria-label={`${label}: ${value}`}
+    >
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold text-slate-500 dark:text-zinc-400">{label}</span>
+        {Icon ? <Icon className="w-4 h-4 text-slate-600 dark:text-zinc-300" /> : null}
+      </div>
+      <p className="mt-1 text-2xl font-extrabold text-lousa dark:text-white leading-tight">{value}</p>
+      {desc ? <p className="text-[11px] mt-1 text-slate-600 dark:text-zinc-300">{desc}</p> : null}
+    </motion.div>
+  );
+}
+
+/* ───────────────── Util ───────────────── */
+function seguroUsuario() {
+  try { return JSON.parse(localStorage.getItem("usuario") || "{}"); } catch { return {}; }
+}
+function fmtSeguroData(valor) {
+  const iso = formatarParaISO(valor);
+  return iso ? formatarDataBrasileira(iso) : "Data não informada";
+}
+
 /* ───────────────── Página ───────────────── */
 export default function Avaliacao() {
   const [avaliacoesPendentes, setAvaliacoesPendentes] = useState([]);
   const [carregando, setCarregando] = useState(true);
   const [modalAberto, setModalAberto] = useState(false);
   const [avaliacaoSelecionada, setAvaliacaoSelecionada] = useState(null);
+  const [erro, setErro] = useState("");
 
   const liveRef = useRef(null);
 
-  // nome do usuário para o hero
-  let usuario = {};
-  try {
-    usuario = JSON.parse(localStorage.getItem("usuario") || "{}");
-  } catch {}
+  const usuario = seguroUsuario();
   const nome = usuario?.nome || "";
 
   useEffect(() => {
     document.title = "Avaliações | Escola da Saúde";
     carregarAvaliacoes();
+    // atalho de teclado: R para atualizar (fora de inputs)
+    const keyHandler = (e) => {
+      const tag = document.activeElement?.tagName?.toLowerCase();
+      const isTyping = ["input", "textarea", "select"].includes(tag);
+      if (!isTyping && (e.key === "r" || e.key === "R")) {
+        e.preventDefault();
+        carregarAvaliacoes();
+      }
+    };
+    window.addEventListener("keydown", keyHandler);
+    return () => window.removeEventListener("keydown", keyHandler);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -82,16 +119,45 @@ export default function Avaliacao() {
     [avaliacoesPendentes]
   );
 
-  async function carregarAvaliacoes() {
-    try {
-      setCarregando(true);
-      if (liveRef.current) liveRef.current.textContent = "Carregando avaliações…";
+  // ordena por data_fim desc (mais recente primeiro)
+  const listaOrdenada = useMemo(() => {
+    const arr = Array.isArray(avaliacoesPendentes) ? [...avaliacoesPendentes] : [];
+    return arr.sort((a, b) => {
+      const da = formatarParaISO(a.data_fim ?? a.df ?? a.fim) || "";
+      const db = formatarParaISO(b.data_fim ?? b.df ?? b.fim) || "";
+      return (db > da) ? 1 : (db < da) ? -1 : 0;
+    });
+  }, [avaliacoesPendentes]);
 
-      const u = JSON.parse(localStorage.getItem("usuario") || "{}");
+  const ultimoEncerrado = useMemo(() => {
+    const first = listaOrdenada[0];
+    if (!first) return null;
+    return {
+      titulo: first.nome_evento || first.titulo || first.nome || "Curso",
+      data: first.data_fim ?? first.df ?? first.fim,
+    };
+  }, [listaOrdenada]);
+
+  const qtdElegiveis = useMemo(() => {
+    // se backend já envia uma flag `elegivel_certificado`, aproveitamos
+    const arr = Array.isArray(avaliacoesPendentes) ? avaliacoesPendentes : [];
+    const n = arr.filter((x) => x.elegivel_certificado === true).length;
+    return n > 0 ? n : null; // oculta o card se null
+  }, [avaliacoesPendentes]);
+
+  const setLive = (msg) => { if (liveRef.current) liveRef.current.textContent = msg; };
+
+  const carregarAvaliacoes = useCallback(async () => {
+    try {
+      setErro("");
+      setCarregando(true);
+      setLive("Carregando avaliações…");
+
+      const u = seguroUsuario();
       if (!u?.id) {
         toast.error("Usuário não identificado.");
         setAvaliacoesPendentes([]);
-        if (liveRef.current) liveRef.current.textContent = "Usuário não identificado.";
+        setLive("Usuário não identificado.");
         return;
       }
 
@@ -99,35 +165,27 @@ export default function Avaliacao() {
       const arr = Array.isArray(data) ? data : [];
       setAvaliacoesPendentes(arr);
 
-      if (liveRef.current) {
-        liveRef.current.textContent = arr.length
-          ? `Encontradas ${arr.length} avaliação(ões) pendente(s).`
-          : "Nenhuma avaliação pendente.";
-      }
+      setLive(arr.length
+        ? `Encontradas ${arr.length} avaliação(ões) pendente(s).`
+        : "Nenhuma avaliação pendente.");
     } catch (err) {
       console.error(err);
+      setErro("Não foi possível carregar as avaliações.");
       toast.error("❌ Erro ao carregar avaliações pendentes.");
-      if (liveRef.current) liveRef.current.textContent = "Falha ao carregar avaliações.";
       setAvaliacoesPendentes([]);
+      setLive("Falha ao carregar avaliações.");
     } finally {
       setCarregando(false);
     }
-  }
+  }, []);
 
   function abrirModal(avaliacao) {
     setAvaliacaoSelecionada(avaliacao);
     setModalAberto(true);
   }
-
   function fecharModal() {
     setModalAberto(false);
     setAvaliacaoSelecionada(null);
-  }
-
-  // 🔒 date-only → pt-BR
-  function fmtSeguro(valor) {
-    const iso = formatarParaISO(valor);
-    return iso ? formatarDataBrasileira(iso) : "Data não informada";
   }
 
   return (
@@ -138,26 +196,87 @@ export default function Avaliacao() {
         {/* feedback acessível */}
         <p ref={liveRef} className="sr-only" aria-live="polite" />
 
+        {/* ministats */}
+        <section className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+          <MiniStat
+            icon={ClipboardList}
+            label="Pendentes"
+            value={carregando ? "…" : totalPendentes}
+            desc="Avaliações aguardando resposta"
+            bg="bg-white"
+            border="border-slate-200"
+          />
+          <MiniStat
+            icon={Clock3}
+            label="Último curso encerrado"
+            value={
+              carregando
+                ? "—"
+                : (ultimoEncerrado ? fmtSeguroData(ultimoEncerrado.data) : "—")
+            }
+            desc={ultimoEncerrado ? (ultimoEncerrado.titulo || "Curso") : "Sem registros"}
+            bg="bg-white"
+            border="border-slate-200"
+          />
+          {qtdElegiveis !== null && (
+            <MiniStat
+              icon={Award}
+              label="Elegíveis a certificado*"
+              value={carregando ? "—" : qtdElegiveis}
+              desc="*após envio da avaliação"
+              bg="bg-white"
+              border="border-slate-200"
+            />
+          )}
+        </section>
+
+        {/* conteúdo */}
         {carregando ? (
           <div className="grid gap-4 sm:gap-5 md:grid-cols-2">
             {[...Array(4)].map((_, i) => (
-              <div key={i} className="h-24 rounded-xl bg-gray-200 dark:bg-gray-700 animate-pulse" />
+              <div
+                key={i}
+                className="h-28 rounded-xl bg-gray-200/70 dark:bg-gray-700/60 animate-pulse"
+              />
             ))}
+          </div>
+        ) : erro ? (
+          <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950 p-5">
+            <p className="text-red-800 dark:text-red-200 text-sm">{erro}</p>
+            <div className="mt-3">
+              <BotaoPrimario
+                onClick={carregarAvaliacoes}
+                icone={<RefreshCw className="w-4 h-4" />}
+                aria-label="Tentar novamente"
+              >
+                Tentar novamente
+              </BotaoPrimario>
+            </div>
           </div>
         ) : totalPendentes === 0 ? (
           <div className="rounded-xl border border-gray-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 p-6 text-center">
             <p className="text-gray-700 dark:text-gray-300">Nenhuma avaliação pendente no momento.</p>
+            <div className="mt-4 flex items-center justify-center">
+              <BotaoPrimario
+                onClick={carregarAvaliacoes}
+                variante="secundario"
+                icone={<RefreshCw className="w-4 h-4" />}
+              >
+                Verificar novamente
+              </BotaoPrimario>
+            </div>
           </div>
         ) : (
           <ul className="grid gap-4 sm:gap-5 md:grid-cols-2">
-            {avaliacoesPendentes.map((a, idx) => {
+            {listaOrdenada.map((a, idx) => {
               const di = a.data_inicio ?? a.di ?? a.inicio;
               const df = a.data_fim ?? a.df ?? a.fim;
               const titulo = a.nome_evento || a.titulo || a.nome || "Curso";
+              const turmaId = a.turma_id ?? a.turma ?? "—";
 
               return (
                 <motion.li
-                  key={a.turma_id ?? idx}
+                  key={`${turmaId}-${idx}`}
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.25, delay: idx * 0.03 }}
@@ -171,15 +290,15 @@ export default function Avaliacao() {
                     <p className="text-sm text-gray-600 dark:text-gray-400">
                       <span className="inline-flex items-center gap-1">
                         <span className="font-medium">Turma</span>
-                        <span>#{a.turma_id}</span>
+                        <span>#{turmaId}</span>
                       </span>
                       <span className="mx-2">•</span>
                       <span>
-                        Início: <span className="font-medium">{fmtSeguro(di)}</span>
+                        Início: <span className="font-medium">{fmtSeguroData(di)}</span>
                       </span>
                       <span className="mx-2">—</span>
                       <span>
-                        Fim: <span className="font-medium">{fmtSeguro(df)}</span>
+                        Fim: <span className="font-medium">{fmtSeguroData(df)}</span>
                       </span>
                     </p>
 
@@ -187,7 +306,7 @@ export default function Avaliacao() {
                       <button
                         className="w-full sm:w-auto bg-lousa dark:bg-green-600 text-white font-semibold px-4 py-2 rounded-lg hover:bg-green-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-green-500/70 transition"
                         onClick={() => abrirModal(a)}
-                        aria-label={`Avaliar ${titulo}, turma ${a.turma_id}`}
+                        aria-label={`Avaliar ${titulo}, turma ${turmaId}`}
                       >
                         Avaliar agora
                       </button>

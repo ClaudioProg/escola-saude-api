@@ -1,14 +1,14 @@
 // 📁 src/components/BotaoPrimario.jsx
 import PropTypes from "prop-types";
-import { forwardRef } from "react";
+import { forwardRef, useMemo } from "react";
 
 /**
- * Botão primário padrão da plataforma.
+ * Botão primário padrão da plataforma (premium + a11y).
  * - Paleta: verde (padrão) + amarelo-ouro, laranja-queimado, vermelho-coral, azul-petróleo, cinza.
  * - Tones: solid (gradiente 3 cores), outline, ghost.
- * - A11y: aria-busy, foco visível com ring por cor (light/dark).
- * - UX: loading bloqueia clique e mostra spinner.
- * - Opções: size, fullWidth, leftIcon/rightIcon, cor, minWidth, shape, href/target.
+ * - UX: spinner com prefers-reduced-motion; previne navegação/clique quando loading/disabled.
+ * - A11y: focus ring por cor, aria-busy e aria-live.
+ * - Opções: size, fullWidth, leftIcon/rightIcon, cor, minWidth, shape, href/target, as, download.
  */
 const BotaoPrimario = forwardRef(function BotaoPrimario(
   {
@@ -24,23 +24,29 @@ const BotaoPrimario = forwardRef(function BotaoPrimario(
     fullWidth = false,
     minWidth = 120,
     cor = "verde",           // verde | amareloOuro | laranjaQueimado | vermelhoCoral | azulPetroleo | cinza
-    shape = "rounded-2xl",   // rounded-md | rounded-lg | rounded-2xl | rounded-full (padrão harmoniza com o DS)
+    shape = "rounded-2xl",   // rounded-md | rounded-lg | rounded-2xl | rounded-full
     tone = "solid",          // solid | outline | ghost
-    href,                    // se definido, age como link <a>
+    href,                    // vira <a>
     target,
     rel,
+    as,                      // força a tag (ex.: "span")
+    download,                // forward p/ <a>
     "aria-label": ariaLabel,
     ...props
   },
   ref
 ) {
   const isDisabled = disabled || loading;
+  const Tag = as || (href ? "a" : "button");
 
-  const sizes = {
-    sm: "px-4 py-1.5 text-sm",
-    md: "px-6 py-2 text-base",
-    lg: "px-7 py-3 text-lg",
-  };
+  const sizes = useMemo(
+    () => ({
+      sm: "px-4 py-1.5 text-sm min-h-[36px]",
+      md: "px-6 py-2 text-base min-h-[40px]",
+      lg: "px-7 py-3 text-lg min-h-[46px]",
+    }),
+    []
+  );
   const sizeClasses = sizes[size] || sizes.md;
 
   // Paleta por cor (ring + sólidos/outline)
@@ -98,7 +104,7 @@ const BotaoPrimario = forwardRef(function BotaoPrimario(
       ? theme.ghost + " border border-transparent"
       : theme.solid + " border hover:brightness-[1.05]";
 
-  const Tag = href ? "a" : "button";
+  // Props comuns por tag
   const commonProps = href
     ? {
         href,
@@ -107,6 +113,7 @@ const BotaoPrimario = forwardRef(function BotaoPrimario(
         role: "button",
         "aria-disabled": isDisabled || undefined,
         onClick: isDisabled ? (e) => e.preventDefault() : onClick,
+        download,
       }
     : {
         type,
@@ -119,8 +126,9 @@ const BotaoPrimario = forwardRef(function BotaoPrimario(
       ref={ref}
       {...commonProps}
       aria-busy={loading || undefined}
+      aria-live={loading ? "polite" : undefined}
       aria-label={ariaLabel}
-      style={{ minWidth }}
+      style={{ ...(fullWidth ? {} : { minWidth }) }}
       className={[
         base,
         theme.ring,
@@ -130,11 +138,14 @@ const BotaoPrimario = forwardRef(function BotaoPrimario(
         fullWidth ? "w-full" : "w-auto",
         className,
       ].join(" ")}
+      data-variant="BotaoPrimario"
+      data-color={cor}
+      data-tone={tone}
       {...props}
     >
       {loading && (
         <span
-          className="inline-block h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin"
+          className="inline-block h-4 w-4 border-2 border-current border-t-transparent rounded-full motion-safe:animate-spin motion-reduce:animate-none"
           aria-hidden="true"
         />
       )}
@@ -177,6 +188,8 @@ BotaoPrimario.propTypes = {
   href: PropTypes.string,
   target: PropTypes.string,
   rel: PropTypes.string,
+  as: PropTypes.string,
+  download: PropTypes.oneOfType([PropTypes.bool, PropTypes.string]),
   "aria-label": PropTypes.string,
 };
 

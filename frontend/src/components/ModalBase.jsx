@@ -1,13 +1,13 @@
 // 📁 src/components/ModalBase.jsx
 /* eslint-disable react/prop-types */
-import React, { useEffect, useId, useRef, useState } from "react";
+import React, { useEffect, useId, useMemo, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 
 /**
  * Props:
  * - isOpen: boolean
  * - onClose: () => void
- * - level?: number (empilhamento; 0 evento, 1 turma, 2...)
+ * - level?: number (empilhamento; 0 evento, 1 turma, 2...).
  * - children: ReactNode
  * - maxWidth?: string Tailwind — default "max-w-2xl"
  * - labelledBy?: string
@@ -28,13 +28,17 @@ const FOCUSABLE_SEL = [
   "iframe",
   "object",
   "embed",
-  "[contenteditable]",
+  "[contenteditable='true']",
   "[tabindex]:not([tabindex='-1'])",
 ].join(",");
 
-// Lê todos os modais abertos no DOM e retorna o maior "data-level"
+/* ====================== Modal stack helpers ====================== */
+function getAllModalContents() {
+  return Array.from(document.querySelectorAll("[data-modal-content]"));
+}
+
 function getTopmostLevel() {
-  const nodes = Array.from(document.querySelectorAll("[data-modal-content]"));
+  const nodes = getAllModalContents();
   if (!nodes.length) return -Infinity;
   return nodes.reduce((acc, el) => {
     const lvl = Number(el.getAttribute("data-level") || 0);
@@ -42,6 +46,46 @@ function getTopmostLevel() {
   }, -Infinity);
 }
 
+function isElementActuallyFocusable(el) {
+  if (!el) return false;
+  if (el.hasAttribute("disabled")) return false;
+  if (el.getAttribute("aria-hidden") === "true") return false;
+  if (el.tabIndex === -1) return false;
+
+  // evita elementos invisíveis / colapsados
+  const rect = el.getBoundingClientRect?.();
+  if (!rect || (rect.width === 0 && rect.height === 0)) return false;
+
+  // se estiver display:none, offsetParent costuma ser null (mas cuidado: position:fixed)
+  const style = window.getComputedStyle?.(el);
+  if (style && (style.display === "none" || style.visibility === "hidden")) return false;
+
+  return true;
+}
+
+function getFocusable(container) {
+  if (!container) return [];
+  const nodes = Array.from(container.querySelectorAll(FOCUSABLE_SEL));
+  return nodes.filter(isElementActuallyFocusable);
+}
+
+/* ====================== Body scroll lock helpers ====================== */
+function getScrollbarWidth() {
+  try {
+    return window.innerWidth - document.documentElement.clientWidth;
+  } catch {
+    return 0;
+  }
+}
+
+/* ====================== ARIA app hiding (a11y) ====================== */
+function getAppRootsToHide(modalRootId = "modal-root") {
+  const bodyChildren = Array.from(document.body.children || []);
+  // Esconde tudo exceto o modal-root (e qualquer coisa que já esteja aria-hidden)
+  return bodyChildren.filter((el) => el.id !== modalRootId);
+}
+
+/* ====================== Component ====================== */
 export default function ModalBase({
   isOpen,
   onClose,
@@ -56,8 +100,11 @@ export default function ModalBase({
   initialFocusRef,
 }) {
   const [portalEl, setPortalEl] = useState(null);
+
+  // Portal root (cria 1x)
   useEffect(() => {
     if (!isOpen) return;
+
     let root = document.getElementById("modal-root");
     if (!root) {
       root = document.createElement("div");
@@ -77,91 +124,134 @@ export default function ModalBase({
   const contentRef = useRef(null);
   const lastActiveRef = useRef(null);
 
-  // 🔧 chaves do problema original
-  const openedOnceRef = useRef(false); // indica se já inicializamos foco nesta abertura
-  const prevIsOpenRef = useRef(false); // detecta transição fechado→aberto
+  const openedOnceRef = useRef(false);
+  const prevIsOpenRef = useRef(false);
 
   const BASE_Z = 1000 + level * 20;
 
-  // trava scroll ao abrir
+  const isTopmost = useCallback(() => {
+    const top = getTopmostLevel();
+    return level >= top;
+  }, [level]);
+
+  /* ====================== Lock scroll (with gap) ====================== */
   useEffect(() => {
     if (!isOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [isOpen]);
 
-  // 🔒 Foco inicial — SOMENTE na transição de fechado → aberto e apenas se for topmost
+    const prevOverflow = document.body.style.overflow;
+    const prevPaddingRight = document.body.style.paddingRight;
+
+    // Só aplica se for o topmost (melhor com múltiplos empilhados)
+    if (isTopmost()) {
+      const sw = getScrollbarWidth();
+      document.body.style.overflow = "hidden";
+      if (sw > 0) document.body.style.paddingRight = `${sw}px`;
+    }
+
+    return () => {
+      // restaura apenas quando FECHA este modal e ele era topmost
+      // (se outro modal acima ainda está aberto, não desfaz)
+      const top = getTopmostLevel();
+      const stillHasTop = top > -Infinity;
+      if (!stillHasTop) {
+        document.body.style.overflow = prevOverflow || "";
+        document.body.style.paddingRight = prevPaddingRight || "";
+      }
+    };
+  }, [isOpen, isTopmost]);
+
+  /* ====================== Hide app roots for a11y (topmost) ====================== */
   useEffect(() => {
-    // transição
+    if (!isOpen) return;
+
+    // só o topmost deve "mandar" no aria-hidden do app
+    if (!isTopmost()) return;
+
+    const roots = getAppRootsToHide("modal-root");
+    const prev = new Map();
+
+    for (const el of roots) {
+      prev.set(el, el.getAttribute("aria-hidden"));
+      el.setAttribute("aria-hidden", "true");
+    }
+
+    return () => {
+      // só restaura se não houver outro modal aberto
+      const top = getTopmostLevel();
+      const stillHasAny = top > -Infinity;
+      if (stillHasAny) return;
+
+      for (const [el, old] of prev.entries()) {
+        if (old == null) el.removeAttribute("aria-hidden");
+        else el.setAttribute("aria-hidden", old);
+      }
+    };
+  }, [isOpen, isTopmost]);
+
+  /* ====================== Focus: only on closed→open + topmost ====================== */
+  useEffect(() => {
     const justOpened = isOpen && !prevIsOpenRef.current;
     const justClosed = !isOpen && prevIsOpenRef.current;
 
     if (justOpened) {
-      lastActiveRef.current = document.activeElement; // para restaurar depois
-      openedOnceRef.current = false; // vamos focar uma vez
+      lastActiveRef.current = document.activeElement;
+      openedOnceRef.current = false;
 
-      // roda no próximo tick para garantir DOM montado
       const id = setTimeout(() => {
         if (!isOpen) return;
         const root = contentRef.current;
         if (!root) return;
 
-        // não roubar se já há foco dentro
         const active = document.activeElement;
         if (active && root.contains(active)) {
           openedOnceRef.current = true;
           return;
         }
 
-        const top = getTopmostLevel();
-        const isTopmost = level >= top;
-        if (!isTopmost || openedOnceRef.current) return;
+        if (!isTopmost() || openedOnceRef.current) return;
 
         const el =
           initialFocusRef?.current ||
           root.querySelector("[data-initial-focus]") ||
-          root.querySelector(FOCUSABLE_SEL) ||
+          getFocusable(root)[0] ||
           root;
 
         el?.focus?.();
-        openedOnceRef.current = true; // ✅ não vai mais focar nessa abertura
+        openedOnceRef.current = true;
       }, 0);
 
       return () => clearTimeout(id);
     }
 
     if (justClosed) {
-      // Restaurar foco anterior ao fechar
       const prev = lastActiveRef.current;
       if (prev && typeof prev.focus === "function") {
         try {
           prev.focus();
-        } catch {}
+        } catch {
+          /* noop */
+        }
       }
-      openedOnceRef.current = false; // reseta para a próxima abertura
+      openedOnceRef.current = false;
     }
 
-    // marca estado atual
     prevIsOpenRef.current = isOpen;
-  }, [isOpen, level, initialFocusRef]);
+  }, [isOpen, isTopmost, initialFocusRef]);
 
-  // Teclado: ESC só fecha se topmost + foco dentro; Tab trap apenas dentro do modal
+  /* ====================== Keyboard: ESC + focus trap ====================== */
   useEffect(() => {
     if (!isOpen) return;
 
     const onKeyDown = (e) => {
       const root = contentRef.current;
       if (!root) return;
+
       const active = document.activeElement;
       const focusInside = active && root.contains(active);
-      const top = getTopmostLevel();
-      const isTopmost = level >= top;
 
+      // ESC: só topmost + foco dentro
       if (e.key === "Escape" && closeOnEsc) {
-        if (isTopmost && focusInside) {
+        if (isTopmost() && focusInside) {
           e.stopPropagation();
           e.preventDefault();
           onClose?.();
@@ -169,14 +259,16 @@ export default function ModalBase({
         return;
       }
 
+      // TAB trap só se foco dentro
       if (e.key === "Tab" && focusInside) {
-        const nodes = Array.from(root.querySelectorAll(FOCUSABLE_SEL));
+        const nodes = getFocusable(root);
         if (!nodes.length) {
           e.preventDefault();
           return;
         }
         const first = nodes[0];
         const last = nodes[nodes.length - 1];
+
         if (e.shiftKey && active === first) {
           e.preventDefault();
           last.focus();
@@ -188,23 +280,25 @@ export default function ModalBase({
     };
 
     document.addEventListener("keydown", onKeyDown, true);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown, true);
-    };
-  }, [isOpen, onClose, closeOnEsc, level]);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, [isOpen, onClose, closeOnEsc, isTopmost]);
 
-  // clique fora: fecha só se topmost
-  const mouseDownTarget = useRef(null);
-  const onMouseDown = (e) => {
-    mouseDownTarget.current = e.target;
+  /* ====================== Backdrop click (topmost) ====================== */
+  const pointerDownTarget = useRef(null);
+
+  const onPointerDown = (e) => {
+    pointerDownTarget.current = e.target;
   };
-  const onMouseUp = (e) => {
-    if (!closeOnBackdrop) return;
-    const top = getTopmostLevel();
-    const isTopmost = level >= top;
-    if (!isTopmost) return;
 
-    if (mouseDownTarget.current === overlayRef.current && e.target === overlayRef.current) {
+  const onPointerUp = (e) => {
+    if (!closeOnBackdrop) return;
+    if (!isTopmost()) return;
+
+    // fecha apenas se down e up foram no backdrop (evita arrasto)
+    const down = pointerDownTarget.current;
+    const up = e.target;
+
+    if (down === overlayRef.current && up === overlayRef.current) {
       onClose?.();
     }
   };
@@ -224,17 +318,13 @@ export default function ModalBase({
         className="fixed inset-0 bg-black/50 backdrop-blur-[2px] transition-opacity duration-200"
         style={{ zIndex: BASE_Z }}
         aria-hidden="true"
-        onMouseDown={onMouseDown}
-        onMouseUp={onMouseUp}
+        onPointerDown={onPointerDown}
+        onPointerUp={onPointerUp}
         data-modal-backdrop=""
       />
 
       {/* Wrapper centralizador */}
-      <div
-        className="relative w-full sm:w-auto"
-        style={{ zIndex: BASE_Z + 1 }}
-        data-modal-wrapper=""
-      >
+      <div className="relative w-full sm:w-auto" style={{ zIndex: BASE_Z + 1 }} data-modal-wrapper="">
         {/* Dialog */}
         <div
           ref={contentRef}

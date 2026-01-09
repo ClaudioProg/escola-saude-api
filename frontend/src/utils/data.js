@@ -25,6 +25,20 @@ export function isYearMonth(str) {
   return typeof str === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(str);
 }
 
+// src/utils/datetime-br.js
+// ============================================================================
+// Utilidades de data/hora sem “timezone shift” (seguras para date-only).
+// Padrão de exibição: pt-BR | Zona default: America/Sao_Paulo
+// ============================================================================
+
+/** Zona padrão (Brasil). Pode sobrescrever por argumento quando precisar. */
+export const ZONA_PADRAO = "America/Sao_Paulo";
+
+/** "YYYY-MM-DD" (date-only) */
+export function isDateOnly(str) {
+  return typeof str === "string" && /^\d{4}-\d{2}-\d{2}$/.test(str);
+}
+
 // ISO com meia-noite UTC (ex.: 2025-09-16T00:00:00.000Z)
 export function isUtcMidnight(iso) {
   return (
@@ -111,6 +125,23 @@ function toLocalYMD(input) {
    FORMATAÇÃO pt-BR (exibição)
    ────────────────────────────────────────────────────────────── */
 
+function safeFmt(date, opts) {
+  try {
+    return new Intl.DateTimeFormat("pt-BR", opts).format(date);
+  } catch {
+    // Fallback mínimo se Intl falhar
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const d = String(date.getDate()).padStart(2, "0");
+    if (opts.hour !== undefined) {
+      const hh = String(date.getHours()).padStart(2, "0");
+      const mm = String(date.getMinutes()).padStart(2, "0");
+      return `${d}/${m}/${y} ${hh}:${mm}`;
+    }
+    return `${d}/${m}/${y}`;
+  }
+}
+
 export function fmtData(dateLike, zone = ZONA_PADRAO) {
   if (typeof dateLike === "string") {
     if (isDateOnly(dateLike)) return fmtDateOnlyString(dateLike);
@@ -119,12 +150,12 @@ export function fmtData(dateLike, zone = ZONA_PADRAO) {
   }
   const d = toLocalDate(dateLike);
   if (!d) return "";
-  return new Intl.DateTimeFormat("pt-BR", {
+  return safeFmt(d, {
     timeZone: zone,
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
-  }).format(d); // dd/mm/aaaa
+  }); // dd/mm/aaaa
 }
 
 export function fmtDataHora(dateLike, zone = ZONA_PADRAO) {
@@ -136,7 +167,7 @@ export function fmtDataHora(dateLike, zone = ZONA_PADRAO) {
   }
   const d = toLocalDate(dateLike);
   if (!d) return "";
-  return new Intl.DateTimeFormat("pt-BR", {
+  return safeFmt(d, {
     timeZone: zone,
     day: "2-digit",
     month: "2-digit",
@@ -144,7 +175,7 @@ export function fmtDataHora(dateLike, zone = ZONA_PADRAO) {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
-  }).format(d); // dd/mm/aaaa HH:mm
+  }); // dd/mm/aaaa HH:mm
 }
 
 /* ──────────────────────────────────────────────────────────────
@@ -207,7 +238,7 @@ export function wallToDatetimeLocal(wall) {
  * Ex.: isoToDatetimeLocalInZone("2025-10-16T02:00:00.000Z", "America/Sao_Paulo")
  *      -> "2025-10-15T23:00"
  */
-export function isoToDatetimeLocalInZone(iso, zone = "America/Sao_Paulo") {
+export function isoToDatetimeLocalInZone(iso, zone = ZONA_PADRAO) {
   if (!iso || typeof iso !== "string") return "";
   if (!isIsoWithTz(iso)) return ""; // só processa ISO com 'Z' ou offset
   try {

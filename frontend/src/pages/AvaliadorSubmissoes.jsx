@@ -1,5 +1,5 @@
-// ✅ src/pages/AvaliadorSubmissoes.jsx
-import { useEffect, useMemo, useState } from "react";
+// ✅ src/pages/AvaliadorSubmissoes.jsx — premium++ (a11y, CSV, atalhos, bugfix nota)
+import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Loader2,
@@ -9,6 +9,9 @@ import {
   FileText,
   Check,
   Eye,
+  Download,
+  Info,
+  X as XIcon,
 } from "lucide-react";
 import api from "../services/api";
 import Footer from "../components/Footer";
@@ -17,7 +20,7 @@ import { useOnceEffect } from "../hooks/useOnceEffect";
 /* ───────────── utils ───────────── */
 const fmt = (v, alt = "—") => (v === 0 || !!v ? String(v) : alt);
 
-/* ===== NOVA FUNÇÃO DE NOTA (0–10 NORMALIZADA) ===== */
+/* ===== NOTA NORMALIZADA (/10) ===== */
 function clamp01(x) { return Math.max(0, Math.min(1, x)); }
 function nota10Normalizada({ itens = [], criterios = [] }) {
   if (!Array.isArray(itens) || !Array.isArray(criterios) || !criterios.length) return null;
@@ -43,7 +46,7 @@ function nota10Normalizada({ itens = [], criterios = [] }) {
 function StatusBadge({ status }) {
   const base =
     "px-2 py-1 rounded-full text-[11px] font-medium inline-flex items-center gap-1 justify-center whitespace-nowrap";
-  switch (status) {
+  switch ((status || "").toLowerCase()) {
     case "submetido":
       return (
         <span className={`${base} bg-blue-100 text-blue-700`}>
@@ -125,66 +128,74 @@ function CardSubmissao({ item, notaW, notaO, showEscrita, showOral, onAbrir }) {
 
 /* ───────────── Tabela (desktop) ───────────── */
 function TabelaSubmissoes({ itens, notasMap, onAbrir, variant = "pending" }) {
-  const headClass = variant === "pending" ? "bg-green-800 text-white" : "bg-amber-500 text-white";
+  const headClass =
+    variant === "pending" ? "bg-emerald-700 text-white" : "bg-amber-600 text-white";
 
   return (
     <div className="hidden md:block rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm overflow-hidden">
-         <div className="overflow-x-auto">
-           <table className="w-full text-sm table-auto">
-              <thead>
-                <tr className={headClass}>
-                <th className="px-4 py-3 text-left w-[34%] min-w-[360px]">Título</th>
-             <th className="px-4 py-3 text-left w-[16%] whitespace-nowrap">Chamada</th>
-             <th className="px-4 py-3 text-left w-[18%]">Linha</th>
-            <th className="px-4 py-3 text-left w-[10%] whitespace-nowrap">Status</th>
-             <th className="px-4 py-3 text-left w-[8%] whitespace-nowrap">Nota escrita</th>
-             <th className="px-4 py-3 text-left w-[8%] whitespace-nowrap">Nota oral</th>
-             <th className="px-4 py-3 text-left w-[6%] whitespace-nowrap">Ações</th>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm table-auto">
+          <thead>
+            <tr className={headClass}>
+              <th className="px-4 py-3 text-left w-[34%] min-w-[360px]">Título</th>
+              <th className="px-4 py-3 text-left w-[16%] whitespace-nowrap">Chamada</th>
+              <th className="px-4 py-3 text-left w-[18%]">Linha</th>
+              <th className="px-4 py-3 text-left w-[10%] whitespace-nowrap">Status</th>
+              <th className="px-4 py-3 text-left w-[8%] whitespace-nowrap">Nota escrita</th>
+              <th className="px-4 py-3 text-left w-[8%] whitespace-nowrap">Nota oral</th>
+              <th className="px-4 py-3 text-left w-[6%] whitespace-nowrap">Ações</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
-          {itens.map((s) => {
-            const notaW = notasMap[`${s.id}-escrita`];
-            const notaO = notasMap[`${s.id}-oral`];
-            const tipo = String(s.tipo || "escrita").toLowerCase();
-            const showW = tipo !== "oral";
-            const showO = tipo === "oral";
-            return (
-              <tr key={`${s.id}-${tipo}`} className="hover:bg-zinc-50/60 dark:hover:bg-zinc-800/40">
-                <td className="px-4 py-3 font-medium text-zinc-900 dark:text-zinc-100">{s.titulo || "—"}</td>
-                <td className="px-4 py-3">{fmt(s.chamada_titulo)}</td>
-                <td className="px-4 py-3">{fmt(s.linha_tematica_nome)}</td>
-                <td className="px-4 py-3"><StatusBadge status={s.status} /></td>
-                <td className="px-4 py-3">{Number.isFinite(notaW) ? notaW.toFixed(1) : "—"}</td>
-                <td className="px-4 py-3">{Number.isFinite(notaO) ? notaO.toFixed(1) : "—"}</td>
-                <td className="px-4 py-3">
-                  <div className="flex gap-2">
-                    {showW && (
-                      <button
-                        onClick={() => onAbrir(s.id, "escrita")}
-                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md bg-emerald-600 text-white hover:bg-emerald-700"
-                      >
-                        <Eye className="w-4 h-4" />
-                        Escrita
-                      </button>
-                    )}
-                    {showO && (
-                      <button
-                        onClick={() => onAbrir(s.id, "oral")}
-                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md bg-teal-600 text-white hover:bg-teal-700"
-                      >
-                        <Eye className="w-4 h-4" />
-                        Oral
-                      </button>
-                    )}
-                  </div>
+            {itens.map((s) => {
+              const notaW = notasMap[`${s.id}-escrita`];
+              const notaO = notasMap[`${s.id}-oral`];
+              const tipo = String(s.tipo || "escrita").toLowerCase();
+              const showW = tipo !== "oral";
+              const showO = tipo === "oral";
+              return (
+                <tr key={`${s.id}-${tipo}`} className="hover:bg-zinc-50/60 dark:hover:bg-zinc-800/40">
+                  <td className="px-4 py-3 font-medium text-zinc-900 dark:text-zinc-100">{s.titulo || "—"}</td>
+                  <td className="px-4 py-3">{fmt(s.chamada_titulo)}</td>
+                  <td className="px-4 py-3">{fmt(s.linha_tematica_nome)}</td>
+                  <td className="px-4 py-3"><StatusBadge status={s.status} /></td>
+                  <td className="px-4 py-3">{Number.isFinite(notaW) ? notaW.toFixed(1) : "—"}</td>
+                  <td className="px-4 py-3">{Number.isFinite(notaO) ? notaO.toFixed(1) : "—"}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex gap-2">
+                      {showW && (
+                        <button
+                          onClick={() => onAbrir(s.id, "escrita")}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md bg-emerald-600 text-white hover:bg-emerald-700"
+                        >
+                          <Eye className="w-4 h-4" />
+                          Escrita
+                        </button>
+                      )}
+                      {showO && (
+                        <button
+                          onClick={() => onAbrir(s.id, "oral")}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md bg-teal-600 text-white hover:bg-teal-700"
+                        >
+                          <Eye className="w-4 h-4" />
+                          Oral
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+            {itens.length === 0 && (
+              <tr>
+                <td colSpan={7} className="px-4 py-6 text-center text-zinc-500 dark:text-zinc-400">
+                  Nada por aqui.
                 </td>
               </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -195,6 +206,14 @@ function DrawerAvaliacao({ open, onClose, submissaoId, tipo }) {
   const [meta, setMeta] = useState(null);
   const [criterios, setCriterios] = useState([]);
   const [itens, setItens] = useState([]);
+  const closeBtnRef = useRef(null);
+
+  // fechar com ESC
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose?.(); };
+    if (open) window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
 
   useEffect(() => {
     if (!open || !submissaoId) return;
@@ -221,6 +240,8 @@ function DrawerAvaliacao({ open, onClose, submissaoId, tipo }) {
             comentarios: m.get(c.id)?.comentarios ?? "",
           }))
         );
+        // foca o botão fechar para acessibilidade
+        setTimeout(() => closeBtnRef.current?.focus(), 0);
       } catch (e) {
         if (e?.name !== "AbortError") console.error("Falha ao carregar avaliação:", e);
       } finally {
@@ -255,7 +276,7 @@ function DrawerAvaliacao({ open, onClose, submissaoId, tipo }) {
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" role="dialog" aria-modal="true">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" role="dialog" aria-modal="true" aria-label="Avaliação da submissão">
       <div className="absolute inset-0 bg-black/40" onClick={() => onClose?.()} aria-hidden="true" />
       <motion.div
         initial={{ y: 40, opacity: 0 }}
@@ -275,8 +296,16 @@ function DrawerAvaliacao({ open, onClose, submissaoId, tipo }) {
                 {fmt(meta?.chamada_titulo)} · {fmt(meta?.linha_tematica_nome)} · Início {fmt(meta?.inicio_experiencia)}
               </p>
             </div>
-            <div className="shrink-0">
+            <div className="shrink-0 flex items-center gap-2">
               <StatusBadge status={meta?.status} />
+              <button
+                ref={closeBtnRef}
+                onClick={() => onClose?.()}
+                className="ml-2 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+                aria-label="Fechar painel de avaliação"
+              >
+                <XIcon className="w-4 h-4" /> Fechar
+              </button>
             </div>
           </div>
         </div>
@@ -288,7 +317,7 @@ function DrawerAvaliacao({ open, onClose, submissaoId, tipo }) {
           </div>
         ) : (
           <div className="p-5 sm:p-6 space-y-6">
-            <section className="space-y-4">
+            <section className="space-y-4" aria-label="Conteúdo do trabalho">
               <h4 className="text-center font-semibold text-zinc-800 dark:text-zinc-100">Conteúdo do trabalho</h4>
               {[
                 ["Introdução", meta?.introducao],
@@ -305,7 +334,7 @@ function DrawerAvaliacao({ open, onClose, submissaoId, tipo }) {
               ))}
             </section>
 
-            <section>
+            <section aria-label="Critérios de avaliação">
               <h4 className="font-semibold text-zinc-800 dark:text-zinc-100">Critérios de avaliação</h4>
               <div className="mt-3 space-y-4">
                 {criterios.map((c, idx) => (
@@ -395,6 +424,30 @@ export default function AvaliadorSubmissoes() {
   // Ministats
   const [contagens, setContagens] = useState({ total: null, pendentes: null, avaliados: null });
 
+  const searchRef = useRef(null);
+
+  // Skip link
+  useEffect(() => {
+    document.title = "Trabalhos para avaliar | Escola da Saúde";
+  }, []);
+
+  // Atalhos: '/' foca busca, 'r' recarrega
+  useEffect(() => {
+    const onKey = (e) => {
+      const tag = document.activeElement?.tagName?.toLowerCase();
+      const typing = ["input", "textarea", "select"].includes(tag);
+      if (e.key === "/" && !typing) {
+        e.preventDefault();
+        searchRef.current?.focus();
+      } else if ((e.key === "r" || e.key === "R") && !typing) {
+        e.preventDefault();
+        recarregarTudo();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Debounce busca
   useEffect(() => {
     const t = setTimeout(() => setDebounced(busca.trim().toLowerCase()), 200);
@@ -403,68 +456,76 @@ export default function AvaliadorSubmissoes() {
 
   // Carga inicial + contagens + notas por linha (somente da modalidade daquela linha)
   useOnceEffect(() => {
+    carregarInicial();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const carregarInicial = useCallback(async () => {
     const ac = new AbortController();
-    (async () => {
+    try {
+      setLoading(true);
+
+      // 1) lista
+      const r = await api.get("/avaliador/submissoes", { signal: ac.signal });
+      const arr = Array.isArray(r?.data) ? r.data : r;
+      setLista(arr);
+
+      // 2) contagens
       try {
-        setLoading(true);
-
-        // 1) lista
-        const r = await api.get("/avaliador/submissoes", { signal: ac.signal });
-        const arr = Array.isArray(r?.data) ? r.data : r;
-        setLista(arr);
-
-        // 2) contagens
-        try {
-          const c = await api.get("/avaliador/minhas-contagens", { signal: ac.signal });
-          const data = c?.data ?? {};
-          if (typeof data?.total !== "undefined") setContagens(data);
-          else {
-            const pend = arr.filter((s) => !s.ja_avaliado).length;
-            const done = arr.length - pend;
-            setContagens({ total: arr.length, pendentes: pend, avaliados: done });
-          }
-        } catch {
+        const c = await api.get("/avaliador/minhas-contagens", { signal: ac.signal });
+        const data = c?.data ?? {};
+        if (typeof data?.total !== "undefined") setContagens(data);
+        else {
           const pend = arr.filter((s) => !s.ja_avaliado).length;
           const done = arr.length - pend;
           setContagens({ total: arr.length, pendentes: pend, avaliados: done });
         }
-
-        // 3) notas por linha (respeitando a modalidade da linha)
-        const conc = 4;
-        let i = 0;
-        async function pegarNotaParaLinha(s) {
-          try {
-            const tipo = String(s.tipo || "escrita").toLowerCase();
-            const url = tipo === "oral" ? `/avaliador/submissoes/${s.id}?tipo=oral` : `/avaliador/submissoes/${s.id}`;
-            const det = await api.get(url, { signal: ac.signal });
-            const d = det?.data ?? det;
-            const criterios = d?.criterios || [];
-            const itens = Array.isArray(d?.avaliacaoAtual) ? d.avaliacaoAtual : [];
-            const nota = nota10Normalizada({ itens, criterios });
-            if (nota != null) {
-              const k = `${s.id}-${tipo}`;
-              setNotasMap((prev) => (prev[k] != null ? prev : { ...prev, [k]: nota }));
-            }
-          } catch {
-            /* sem avaliação ainda para esta modalidade — ok */
-          }
-        }
-
-        const workers = Array.from({ length: conc }, async () => {
-          while (i < arr.length) {
-            const s = arr[i++];
-            await pegarNotaParaLinha(s);
-          }
-        });
-        await Promise.allSettled(workers);
-      } catch (e) {
-        if (e?.name !== "AbortError") console.error(e);
-      } finally {
-        setLoading(false);
+      } catch {
+        const pend = arr.filter((s) => !s.ja_avaliado).length;
+        const done = arr.length - pend;
+        setContagens({ total: arr.length, pendentes: pend, avaliados: done });
       }
-    })();
+
+      // 3) notas por linha (respeitando a modalidade da linha)
+      const conc = 4;
+      let i = 0;
+      async function pegarNotaParaLinha(s) {
+        try {
+          const tipo = String(s.tipo || "escrita").toLowerCase();
+          const url = tipo === "oral" ? `/avaliador/submissoes/${s.id}?tipo=oral` : `/avaliador/submissoes/${s.id}`;
+          const det = await api.get(url, { signal: ac.signal });
+          const d = det?.data ?? det;
+          const criterios = d?.criterios || [];
+          const itens = Array.isArray(d?.avaliacaoAtual) ? d.avaliacaoAtual : [];
+          const nota = nota10Normalizada({ itens, criterios });
+          if (nota != null) {
+            const k = `${s.id}-${tipo}`;
+            setNotasMap((prev) => (prev[k] != null ? prev : { ...prev, [k]: nota }));
+          }
+        } catch {
+          /* sem avaliação ainda para esta modalidade — ok */
+        }
+      }
+
+      const workers = Array.from({ length: conc }, async () => {
+        while (i < arr.length) {
+          const s = arr[i++];
+          // eslint-disable-next-line no-await-in-loop
+          await pegarNotaParaLinha(s);
+        }
+      });
+      await Promise.allSettled(workers);
+    } catch (e) {
+      if (e?.name !== "AbortError") console.error(e);
+    } finally {
+      setLoading(false);
+    }
     return () => ac.abort();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const recarregarTudo = async () => {
+    setNotasMap({});
+    await carregarInicial();
+  };
 
   const filtradas = useMemo(() => {
     if (!debounced) return lista;
@@ -489,6 +550,41 @@ export default function AvaliadorSubmissoes() {
     return Number((soma / notasValidas.length).toFixed(1));
   }, [notasMap]);
 
+  function exportarCSV(escopo = "geral") {
+    const blocos = {
+      geral: filtradas,
+      pendentes,
+      realizadas,
+    };
+    const dados = blocos[escopo] || [];
+    const linhas = [];
+    linhas.push(["Título","Chamada","Linha temática","Status","Nota escrita (/10)","Nota oral (/10)"].join(";"));
+    for (const s of dados) {
+      const tipo = String(s.tipo || "escrita").toLowerCase();
+      const kW = `${s.id}-escrita`;
+      const kO = `${s.id}-oral`;
+      const w = Number.isFinite(notasMap[kW]) ? notasMap[kW].toFixed(1) : "";
+      const o = Number.isFinite(notasMap[kO]) ? notasMap[kO].toFixed(1) : "";
+      linhas.push([
+        clean(s.titulo),
+        clean(s.chamada_titulo),
+        clean(s.linha_tematica_nome),
+        clean(s.status),
+        w, o
+      ].join(";"));
+    }
+    baixarArquivo(`submissoes_${escopo}.csv`, linhas.join("\r\n"), "text/csv;charset=utf-8");
+  }
+  const clean = (s) => String(s ?? "").replaceAll(/[\r\n]+/g, " ").replaceAll(/;/g, ",");
+  function baixarArquivo(nome, conteudo, mime) {
+    const blob = new Blob([conteudo], { type: mime || "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = nome; a.rel = "noopener";
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen bg-gradient-to-br from-emerald-50 to-amber-50 dark:from-zinc-900 dark:to-zinc-950">
@@ -499,10 +595,15 @@ export default function AvaliadorSubmissoes() {
 
   return (
     <div className="min-h-screen flex flex-col bg-gelo dark:bg-zinc-950">
+      {/* Skip link */}
+      <a href="#conteudo" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 rounded-xl bg-black/80 text-white px-3 py-2 text-sm">
+        Ir para o conteúdo
+      </a>
+
       {/* Header */}
       <motion.header initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} className="w-full">
         <div className="bg-gradient-to-br from-emerald-700 via-teal-600 to-amber-500 text-white">
-        <div className="mx-auto px-4 sm:px-6 lg:px-8 2xl:px-10 py-10 sm:py-12 text-center 2xl:max-w-[1800px] xl:max-w-[1680px]">
+          <div className="mx-auto px-4 sm:px-6 lg:px-8 2xl:px-10 py-10 sm:py-12 text-center 2xl:max-w-[1800px] xl:max-w-[1680px]">
             <div className="flex flex-col items-center gap-3">
               <div className="flex items-center gap-3">
                 <ClipboardList className="h-8 w-8" />
@@ -516,22 +617,60 @@ export default function AvaliadorSubmissoes() {
         </div>
       </motion.header>
 
-      <main className="flex-1 px-4 sm:px-6 lg:px-8 2xl:px-10 py-8 mx-auto w-full space-y-8 xl:max-w-[1680px] 2xl:max-w-[1800px]">
+      {/* Sub-nav fixa: legend + ações rápidas */}
+      <div className="sticky top-0 z-20 backdrop-blur supports-[backdrop-filter]:bg-white/70 dark:supports-[backdrop-filter]:bg-zinc-900/70 bg-white/95 dark:bg-zinc-900/95 border-b border-zinc-200 dark:border-zinc-800">
+        <div className="mx-auto px-4 sm:px-6 lg:px-8 2xl:px-10 py-2 flex flex-wrap items-center gap-3 2xl:max-w-[1800px] xl:max-w-[1680px]">
+          <div className="flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-300">
+            <Info className="w-4 h-4" />
+            <span className="hidden sm:inline">Legenda:</span>
+            <StatusBadge status="submetido" />
+            <StatusBadge status="em_avaliacao" />
+            <StatusBadge status="aprovado_exposicao" />
+            <StatusBadge status="aprovado_oral" />
+            <StatusBadge status="reprovado" />
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              onClick={() => exportarCSV("geral")}
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800 text-sm"
+              aria-label="Exportar CSV (geral)"
+            >
+              <Download className="w-4 h-4" /> CSV geral
+            </button>
+            <button
+              onClick={() => exportarCSV("pendentes")}
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:hover:bg-emerald-900/20 text-sm"
+              aria-label="Exportar CSV (pendentes)"
+            >
+              <Download className="w-4 h-4" /> Pendentes
+            </button>
+            <button
+              onClick={() => exportarCSV("realizadas")}
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-700 dark:hover:bg-amber-900/20 text-sm"
+              aria-label="Exportar CSV (realizadas)"
+            >
+              <Download className="w-4 h-4" /> Realizadas
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <main id="conteudo" className="flex-1 px-4 sm:px-6 lg:px-8 2xl:px-10 py-8 mx-auto w-full space-y-8 xl:max-w-[1680px] 2xl:max-w-[1800px]">
         {/* Ministats */}
         <section className="grid grid-cols-2 md:grid-cols-4 2xl:grid-cols-4 gap-4 2xl:gap-6">
-          <div className="rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-4 shadow-sm">
+          <div className="rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-4 shadow-sm">
             <p className="text-[11px] uppercase text-zinc-500 dark:text-zinc-400 font-medium">Total recebidos</p>
             <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-50">{totalSubmissoes}</p>
           </div>
-          <div className="rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-4 shadow-sm">
+          <div className="rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-4 shadow-sm">
             <p className="text-[11px] uppercase text-zinc-500 dark:text-zinc-400 font-medium">Pendentes p/ você</p>
             <p className="text-2xl font-bold text-amber-600 dark:text-amber-400">{totalPendentes}</p>
           </div>
-          <div className="rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-4 shadow-sm">
+          <div className="rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-4 shadow-sm">
             <p className="text-[11px] uppercase text-zinc-500 dark:text-zinc-400 font-medium">Já avaliados</p>
             <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{totalAvaliadas}</p>
           </div>
-          <div className="rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-4 shadow-sm">
+          <div className="rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-4 shadow-sm">
             <p className="text-[11px] uppercase text-zinc-500 dark:text-zinc-400 font-medium">Sua média (/10)</p>
             <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-50">
               {mediaGeral != null ? mediaGeral.toFixed(1) : "—"}
@@ -548,11 +687,12 @@ export default function AvaliadorSubmissoes() {
           <div className="relative flex-1 min-w-[200px] max-w-xl w-full">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
             <input
+              ref={searchRef}
               value={busca}
               onChange={(e) => setBusca(e.target.value)}
               placeholder="Buscar por título, chamada ou linha temática…"
-              className="border rounded-md pl-9 pr-3 py-2 text-sm w-full dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
-              aria-label="Buscar submissões"
+              className="border rounded-lg pl-9 pr-3 py-2 text-sm w-full dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+              aria-label="Buscar submissões (atalho: /)"
             />
           </div>
         </section>
@@ -660,21 +800,19 @@ export default function AvaliadorSubmissoes() {
 
               if (ev?.saved) {
                 try {
+                  // Recalcula nota normalizada usando a API da própria submissão
                   const t = ev.tipo || focus.tipo || "escrita";
-                  const url =
-                    t === "oral"
-                      ? `/avaliador/submissoes/${focus.id}?tipo=oral`
-                      : `/avaliador/submissoes/${focus.id}`;
+                  const url = t === "oral"
+                    ? `/avaliador/submissoes/${focus.id}?tipo=oral`
+                    : `/avaliador/submissoes/${focus.id}`;
                   const det = await api.get(url);
                   const d = det?.data ?? det;
+                  const criterios = d?.criterios || [];
                   const avAtual = Array.isArray(d?.avaliacaoAtual) ? d.avaliacaoAtual : [];
                   const k = `${focus.id}-${t}`;
-                  if (avAtual.length >= 4) {
-                    const total20 = avAtual.map((x) => Number(x?.nota || 0)).reduce((a, b) => a + b, 0);
-                    setNotasMap((prev) => ({ ...prev, [k]: Number((total20 / 2).toFixed(1)) }));
-                  } else if (d?.minha_avaliacao) {
-                    const n = calcularNota10De(d.minha_avaliacao);
-                    if (n != null) setNotasMap((prev) => ({ ...prev, [k]: n }));
+                  const n = nota10Normalizada({ itens: avAtual, criterios });
+                  if (n != null) {
+                    setNotasMap((prev) => ({ ...prev, [k]: n }));
                   }
                 } catch (err) {
                   console.error("Falha ao atualizar nota pós-salvar:", err);

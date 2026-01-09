@@ -1,19 +1,43 @@
+// 📁 src/routes/dashboardUsuarioRoutes.js
 const express = require("express");
 const router = express.Router();
 
-// 📌 Middleware de autenticação
-const autenticar = require("../auth/authMiddleware");
+// 🔐 Autenticação
+const authMiddleware = require("../auth/authMiddleware");
 
-// 📦 Controller
+// 📦 Controllers
 const {
   getResumoDashboard,
-  getAvaliacoesRecentesInstrutor, // 👈 importar também
+  getAvaliacoesRecentesInstrutor,
 } = require("../controllers/dashboardUsuarioController");
 
-// 📍 Rota protegida: resumo do painel do usuário
-router.get("/", autenticar, getResumoDashboard);
+/* ===================================================================
+   📊 DASHBOARD DO USUÁRIO
+   - Usuário autenticado (participante / instrutor / admin)
+   =================================================================== */
 
-// ✅ NOVA ROTA: últimas avaliações do instrutor
-router.get("/avaliacoes-recentes", autenticar, getAvaliacoesRecentesInstrutor);
+/**
+ * 🔹 Resumo geral do painel do usuário
+ * - Cursos realizados / inscritos
+ * - Avaliações pendentes
+ * - Certificados
+ * - Métricas rápidas
+ */
+router.get(
+  "/",
+  authMiddleware,
+  getResumoDashboard
+);
+
+/**
+ * 🔹 Últimas avaliações recebidas (instrutor)
+ * - Usado no painel do instrutor
+ * - Retorna últimas N avaliações
+ */
+router.get(
+  "/avaliacoes-recentes",
+  authMiddleware,
+  getAvaliacoesRecentesInstrutor
+);
 
 module.exports = router;

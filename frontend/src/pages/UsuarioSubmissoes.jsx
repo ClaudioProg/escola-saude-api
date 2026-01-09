@@ -1,6 +1,7 @@
-// 📁 src/pages/UsuarioSubmissoes.jsx
-import { useState, useEffect, useMemo } from "react";
+// ✅ src/pages/UsuarioSubmissoes.jsx — premium/robusto
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { motion } from "framer-motion";
+import { toast } from "react-toastify";
 import {
   FileText,
   PlusCircle,
@@ -12,7 +13,10 @@ import {
   Trash2,
   Award, // Exposição
   CheckCircle, // Apresentação oral
+  Search,
+  RefreshCcw,
 } from "lucide-react";
+
 import api, { apiGetFile, downloadBlob, apiHead } from "../services/api";
 import ModalVerEdital from "../components/ModalVerEdital";
 import ModalInscreverTrabalho from "../components/ModalInscreverTrabalho";
@@ -22,19 +26,24 @@ import Footer from "../components/Footer";
 function toBrDateTimeSafe(input) {
   if (!input) return "—";
   const s = String(input).trim();
+
+  // já BR
   if (/^\d{2}\/\d{2}\/\d{4}/.test(s)) return s;
-  const mDT = s.match(
-    /^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})(?::(\d{2}))?/
-  );
+
+  // YYYY-MM-DD HH:mm(:ss) ou YYYY-MM-DDTHH:mm(:ss)
+  const mDT = s.match(/^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})(?::(\d{2}))?/);
   if (mDT) {
     const [, yy, mm, dd, hh, mi] = mDT;
     return `${dd}/${mm}/${yy} ${hh}:${mi}`;
   }
+
+  // YYYY-MM-DD
   const mD = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (mD) {
     const [, yy, mm, dd] = mD;
     return `${dd}/${mm}/${yy}`;
   }
+
   return s;
 }
 
@@ -53,13 +62,10 @@ const okEscrita = (s) => {
 const okOral = (s) => {
   const oralLower = String(s?.status_oral || "").toLowerCase();
   const stLower = String(s?.status || "").toLowerCase();
-  return (
-    oralLower === "aprovado" ||
-    stLower === "aprovado_oral" ||
-    Boolean(s?._oral_aprovada)
-  );
+  return oralLower === "aprovado" || stLower === "aprovado_oral" || Boolean(s?._oral_aprovada);
 };
 
+// (mantive, pode ser útil depois)
 const isFinalizado = (s) =>
   Boolean(
     s?._finalizado ||
@@ -70,6 +76,43 @@ const isFinalizado = (s) =>
       s?.encerrado
   );
 
+/* ───────────────── Primitivos ───────────────── */
+function Card({ children, className = "", ...rest }) {
+  return (
+    <div
+      className={
+        "rounded-2xl bg-white/90 dark:bg-zinc-900/80 backdrop-blur border border-black/5 dark:border-white/10 shadow-sm " +
+        className
+      }
+      {...rest}
+    >
+      {children}
+    </div>
+  );
+}
+
+function Chip({ children, tone = "default", title }) {
+  const tones = {
+    default: "bg-slate-100 text-slate-800 dark:bg-zinc-800 dark:text-zinc-200",
+    verde: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
+    amarelo: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300",
+    vermelho: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
+    azul: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
+    roxo: "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300",
+  };
+  return (
+    <span
+      className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
+        tones[tone] ?? tones.default
+      }`}
+      title={title}
+    >
+      {children}
+    </span>
+  );
+}
+
+/* ───────────────── Status/Aprovações ───────────────── */
 function StatusChip({ status }) {
   const st = String(status ?? "").toLowerCase();
   let tone = "default";
@@ -84,12 +127,7 @@ function StatusChip({ status }) {
   } else if (st === "em_avaliacao") {
     tone = "amarelo";
     label = "em avaliação";
-  } else if (
-    st === "aprovado_exposicao" ||
-    st === "aprovado_oral" ||
-    st === "aprovado_escrita" ||
-    st === "aprovado"
-  ) {
+  } else if (st === "aprovado_exposicao" || st === "aprovado_oral" || st === "aprovado_escrita" || st === "aprovado") {
     tone = "verde";
     label = "aprovado";
   } else if (st === "reprovado") {
@@ -106,12 +144,6 @@ function StatusChip({ status }) {
 
 function AprovacoesSection({ subm }) {
   const st = String(subm?.status || "").toLowerCase();
-
-  const isRascunho = st === "rascunho";
-  const isSubmetido = st === "submetido";
-  const isEmAvaliacao = st === "em_avaliacao";
-  const isReprovado = st === "reprovado";
-
   const expoOk = okEscrita(subm);
   const oralOk = okOral(subm);
 
@@ -122,8 +154,6 @@ function AprovacoesSection({ subm }) {
     st === "aprovado" ||
     expoOk ||
     oralOk;
-
-  const statusChip = <StatusChip status={st} />;
 
   const extraChips = [];
   if (isAprovado && expoOk) {
@@ -145,20 +175,17 @@ function AprovacoesSection({ subm }) {
 
   return (
     <div className="flex flex-wrap items-center gap-2 text-sm">
-      {statusChip}
+      <StatusChip status={st} />
       {extraChips}
     </div>
   );
 }
 
 /* ───────────────── HeaderHero ───────────────── */
-function HeaderHero() {
+function HeaderHero({ onRefresh, refreshing }) {
   const gradient = "from-violet-800 via-fuchsia-600 to-indigo-600";
   return (
-    <header
-      className={`bg-gradient-to-br ${gradient} text-white`}
-      role="banner"
-    >
+    <header className={`bg-gradient-to-br ${gradient} text-white`} role="banner">
       <a
         href="#conteudo"
         className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2"
@@ -170,58 +197,29 @@ function HeaderHero() {
         <div className="w-full text-center">
           <div className="inline-flex items-center gap-3">
             <FileText className="w-6 h-6 sm:w-7 sm:h-7" aria-hidden="true" />
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-              Submissão de Trabalhos
-            </h1>
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Submissão de Trabalhos</h1>
           </div>
           <p className="mt-2 text-sm sm:text-base text-white/90 max-w-3xl mx-auto">
-            Acompanhe suas submissões, edite rascunhos e inscreva novos
-            trabalhos.
+            Acompanhe suas submissões, edite rascunhos e inscreva novos trabalhos.
           </p>
+
+          <div className="mt-4 flex justify-center">
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={refreshing}
+              className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold bg-white/15 hover:bg-white/25 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 ${
+                refreshing ? "opacity-70 cursor-not-allowed" : ""
+              }`}
+              aria-label="Atualizar dados"
+            >
+              {refreshing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCcw className="w-4 h-4" />}
+              {refreshing ? "Atualizando..." : "Atualizar"}
+            </button>
+          </div>
         </div>
       </div>
     </header>
-  );
-}
-
-/* ───────────────── Primitivos de UI ───────────────── */
-function Card({ children, className = "", ...rest }) {
-  return (
-    <div
-      className={
-        "rounded-2xl bg-white/90 dark:bg-zinc-900/80 backdrop-blur border border-black/5 dark:border-white/10 shadow-sm " +
-        className
-      }
-      {...rest}
-    >
-      {children}
-    </div>
-  );
-}
-
-function Chip({ children, tone = "default", title }) {
-  const tones = {
-    default:
-      "bg-slate-100 text-slate-800 dark:bg-zinc-800 dark:text-zinc-200",
-    verde:
-      "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
-    amarelo:
-      "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300",
-    vermelho:
-      "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
-    azul: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
-    roxo:
-      "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300",
-  };
-  return (
-    <span
-      className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
-        tones[tone] ?? tones.default
-      }`}
-      title={title}
-    >
-      {children}
-    </span>
   );
 }
 
@@ -235,32 +233,27 @@ function PosterCell({ id, nome }) {
       setDownloading(true);
       const { blob, filename } = await apiGetFile(`/submissoes/${id}/poster`);
       downloadBlob(filename || safeNome, blob);
+      toast.success("Download iniciado.");
     } catch (e) {
-      alert(e?.message || "Falha ao baixar o pôster.");
+      toast.error(e?.message || "Falha ao baixar o pôster.");
     } finally {
       setDownloading(false);
     }
   };
 
-  if (!nome)
-    return (
-      <span className="text-gray-400 dark:text-gray-600 italic text-sm">
-        —
-      </span>
-    );
+  if (!nome) {
+    return <span className="text-gray-400 dark:text-gray-600 italic text-sm">—</span>;
+  }
 
   return (
     <button
+      type="button"
       onClick={baixar}
       className="inline-flex items-center gap-1 text-indigo-600 dark:text-indigo-400 hover:underline disabled:opacity-60 text-sm"
       title="Baixar pôster"
       disabled={downloading}
     >
-      {downloading ? (
-        <Loader2 className="w-4 h-4 animate-spin" />
-      ) : (
-        <Download className="w-4 h-4" />
-      )}
+      {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
       {nome}
     </button>
   );
@@ -274,22 +267,18 @@ function SubmissionCard({
   onEditar,
   onExcluir,
   excluindo,
-  onBaixarModeloOral,        // 🔹 novo: callback para baixar o modelo oral
-  hasModeloOral,             // 🔹 novo: existe modelo oral?
-  baixandoModeloOral = false // 🔹 novo: loading do download oral
+  onBaixarModeloOral,
+  hasModeloOral,
+  baixandoModeloOral = false,
 }) {
   const gradientBar = "from-violet-600 via-fuchsia-500 to-indigo-500";
-
-  const dentroPrazo = !!(subm?.dentro_prazo || subm?.dentroPrazo);
   const oralAprovada = okOral(subm);
 
   return (
     <div className="rounded-2xl border border-black/5 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm flex flex-col overflow-hidden">
-      {/* Barrinha topo */}
       <div className={`h-1.5 w-full bg-gradient-to-r ${gradientBar}`} />
 
       <div className="p-4 flex flex-col gap-4 flex-1">
-        {/* Título + status */}
         <div className="flex flex-col gap-2">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
             <div className="min-w-0">
@@ -303,10 +292,8 @@ function SubmissionCard({
           </div>
         </div>
 
-        {/* Aprovações (chips Exposição / Oral, se houver) */}
         <AprovacoesSection subm={subm} />
 
-        {/* Seção de modelo de slides (oral) — só se aprovado para oral */}
         {oralAprovada && (
           <div className="text-sm">
             <p className="text-[11px] uppercase text-zinc-500 dark:text-zinc-400 font-medium mb-1">
@@ -321,33 +308,24 @@ function SubmissionCard({
                 disabled={baixandoModeloOral}
                 title="Baixar modelo de slides (oral)"
               >
-                {baixandoModeloOral ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Download className="w-4 h-4" />
-                )}
+                {baixandoModeloOral ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
                 Baixar modelo (oral)
               </button>
             ) : (
-              <span className="text-gray-400 dark:text-gray-600 italic">
-                Modelo indisponível para esta chamada.
-              </span>
+              <span className="text-gray-400 dark:text-gray-600 italic">Modelo indisponível para esta chamada.</span>
             )}
           </div>
         )}
 
-        {/* Pôster */}
         <div className="text-sm">
-          <p className="text-[11px] uppercase text-zinc-500 dark:text-zinc-400 font-medium mb-1">
-            Pôster
-          </p>
+          <p className="text-[11px] uppercase text-zinc-500 dark:text-zinc-400 font-medium mb-1">Pôster</p>
           <PosterCell id={subm.id} nome={subm.poster_nome || subm.posterNome} />
         </div>
 
-        {/* Ações */}
         <div className="flex flex-wrap gap-3 text-sm">
           {podeEditar ? (
             <button
+              type="button"
               onClick={onEditar}
               className="inline-flex items-center gap-1 bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 text-sm font-medium"
               title="Editar submissão"
@@ -357,26 +335,19 @@ function SubmissionCard({
               Editar
             </button>
           ) : (
-            dentroPrazo && (
-              <span className="text-gray-500 dark:text-gray-400 text-xs leading-tight">
-                Edição indisponível
-              </span>
-            )
+            <span className="text-gray-500 dark:text-gray-400 text-xs leading-tight">Edição indisponível</span>
           )}
 
           {podeExcluir && (
             <button
+              type="button"
               onClick={onExcluir}
               disabled={excluindo}
               className="inline-flex items-center gap-1 bg-rose-600 text-white px-3 py-1.5 rounded-md hover:bg-rose-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-rose-500 disabled:opacity-70 text-sm font-medium"
               title="Excluir submissão"
               aria-label="Excluir submissão"
             >
-              {excluindo ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Trash2 className="w-4 h-4" />
-              )}
+              {excluindo ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
               Excluir
             </button>
           )}
@@ -386,57 +357,20 @@ function SubmissionCard({
   );
 }
 
-/* ───────────────── Constantes internas ───────────────── */
-const BLOQUEADOS = new Set([
-  "em_avaliacao",
-  "aprovado_exposicao",
-  "aprovado_oral",
-  "aprovado_escrita",
-  "reprovado",
-]);
-
-/* ───────────────── Regras & Dicas (2 colunas / 2 cards) ───────────────── */
-
+/* ───────────────── Regras & Dicas ───────────────── */
 function NumberBullet({ n }) {
   return (
-    <span
-      className="
-        inline-flex items-center justify-center
-        w-7 h-7 rounded-full
-        bg-fuchsia-600 text-white text-xs font-bold
-        shadow-sm select-none shrink-0
-      "
-    >
+    <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-fuchsia-600 text-white text-xs font-bold shadow-sm select-none shrink-0">
       {n}
     </span>
   );
 }
 
-
 function RegrasEDicasCardCol({ itens = [], start = 1 }) {
   return (
-    <div
-  className="
-    rounded-2xl
-    bg-[#fde6ef]/90 dark:bg-zinc-900/80
-    backdrop-blur
-    border border-fuchsia-200/40 dark:border-white/10
-    shadow-sm
-    p-5
-    transition-all duration-300
-    hover:shadow-md hover:border-fuchsia-300
-  "
->
-
+    <div className="rounded-2xl bg-[#fde6ef]/90 dark:bg-zinc-900/80 backdrop-blur border border-fuchsia-200/40 dark:border-white/10 shadow-sm p-5 transition-all duration-300 hover:shadow-md hover:border-fuchsia-300">
       <ol
-        className="
-          space-y-5
-          list-none
-          pl-0
-          [&>li]:list-none
-          [&>li]:marker:hidden
-          [&>li]:before:hidden
-        "
+        className="space-y-5 list-none pl-0 [&>li]:list-none [&>li]:marker:hidden [&>li]:before:hidden"
         start={start}
       >
         {itens.map((it, i) => {
@@ -444,14 +378,9 @@ function RegrasEDicasCardCol({ itens = [], start = 1 }) {
           return (
             <li key={n} className="flex gap-3 list-none marker:hidden before:hidden">
               <NumberBullet n={n} />
-
               <div className="text-sm leading-6">
-                <p className="font-semibold text-zinc-900 dark:text-zinc-50 mb-1">
-                  {it.titulo}
-                </p>
-                <div className="[text-align:justify] text-zinc-700 dark:text-zinc-300">
-                  {it.conteudo}
-                </div>
+                <p className="font-semibold text-zinc-900 dark:text-zinc-50 mb-1">{it.titulo}</p>
+                <div className="[text-align:justify] text-zinc-700 dark:text-zinc-300">{it.conteudo}</div>
               </div>
             </li>
           );
@@ -461,17 +390,14 @@ function RegrasEDicasCardCol({ itens = [], start = 1 }) {
   );
 }
 
-
-/** Seção completa (split 50/50 em 2 cards). */
 function RegrasEDicasSection() {
   const itens = [
     {
       titulo: "Conteúdo do anexo",
       conteudo: (
         <p>
-          Prezados(as) autores(as), no <strong>anexo (Apresentação oral — modelo de slides)</strong> deve ser inserido o
-          <strong> texto da apresentação da experiência</strong>, observando o modelo indicado no edital.
-          Utilize um único arquivo, conforme formatos aceitos pela chamada.
+          Prezados(as) autores(as), no <strong>anexo (Apresentação oral — modelo de slides)</strong> deve ser inserido o{" "}
+          <strong>texto da apresentação da experiência</strong>, observando o modelo indicado no edital.
         </p>
       ),
     },
@@ -480,13 +406,19 @@ function RegrasEDicasSection() {
       conteudo: (
         <>
           <p>
-            A banca avaliadora atribuirá pontuação <strong>de 1 a 5</strong> para cada critério abaixo.
-            A <strong>nota da banca</strong> corresponderá à <strong>média aritmética</strong> das notas dos avaliadores.
+            A banca avaliadora atribuirá pontuação <strong>de 1 a 5</strong> para cada critério abaixo. A{" "}
+            <strong>nota da banca</strong> corresponderá à <strong>média aritmética</strong> das notas dos avaliadores.
           </p>
           <ul className="list-disc pl-5 space-y-1">
-            <li><strong>Clareza e objetividade</strong> na apresentação (oral e visual).</li>
-            <li><strong>Coesão</strong> da apresentação com o trabalho escrito submetido.</li>
-            <li><strong>Aproveitamento e respeito ao tempo</strong> de apresentação, observando o número de slides e o tempo de fala.</li>
+            <li>
+              <strong>Clareza e objetividade</strong> na apresentação (oral e visual).
+            </li>
+            <li>
+              <strong>Coesão</strong> da apresentação com o trabalho escrito submetido.
+            </li>
+            <li>
+              <strong>Aproveitamento e respeito ao tempo</strong> de apresentação.
+            </li>
           </ul>
         </>
       ),
@@ -495,8 +427,8 @@ function RegrasEDicasSection() {
       titulo: "Tempo de apresentação",
       conteudo: (
         <p>
-          O tempo destinado a cada apresentação é de <strong>10 (dez) minutos</strong>, com controle realizado pela equipe da organização.
-          O <strong>descumprimento do tempo</strong> estabelecido configura <strong>critério para perdas de pontos</strong> na Mostra, conforme regulamento.
+          O tempo destinado a cada apresentação é de <strong>10 (dez) minutos</strong>. O{" "}
+          <strong>descumprimento do tempo</strong> configura critério para perdas de pontos.
         </p>
       ),
     },
@@ -519,9 +451,7 @@ function RegrasEDicasSection() {
         >
           <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20 10 10 0 000-20z" />
         </svg>
-        <h3 className="text-base sm:text-lg font-bold text-zinc-900 dark:text-zinc-50">
-          Regras &amp; Dicas
-        </h3>
+        <h3 className="text-base sm:text-lg font-bold text-zinc-900 dark:text-zinc-50">Regras &amp; Dicas</h3>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -532,123 +462,180 @@ function RegrasEDicasSection() {
   );
 }
 
+/* ───────────────── Constantes internas ───────────────── */
+const BLOQUEADOS = new Set([
+  "em_avaliacao",
+  "aprovado_exposicao",
+  "aprovado_oral",
+  "aprovado_escrita",
+  "reprovado",
+]);
+
 /* ───────────────── Página principal ───────────────── */
 export default function UsuarioSubmissoes() {
+  const mountedRef = useRef(true);
+
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
   const [chamadas, setChamadas] = useState([]);
   const [minhas, setMinhas] = useState([]);
-  const [loading, setLoading] = useState(true);
 
   const [modalEdital, setModalEdital] = useState(null);
   const [modalInscricao, setModalInscricao] = useState(null);
 
-  const [modeloMap, setModeloMap] = useState({});
+  // modelos por chamada
+  const [modeloMap, setModeloMap] = useState({}); // banner
   const [baixandoMap, setBaixandoMap] = useState({});
-  const [excluindoId, setExcluindoId] = useState(null);
-
-  // 🔶 novos mapas para o modelo de slides (apresentação oral)
-  const [modeloOralMap, setModeloOralMap] = useState({});
+  const [modeloOralMap, setModeloOralMap] = useState({}); // oral
   const [baixandoOralMap, setBaixandoOralMap] = useState({});
 
-  /* ───── baixar modelo de pôster (chamada) ───── */
+  const [excluindoId, setExcluindoId] = useState(null);
+
+  // filtro local (minhas)
+  const [q, setQ] = useState("");
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const safeSet = useCallback((fn) => {
+    if (mountedRef.current) fn();
+  }, []);
+
+  const unwrap = (resp) => (Array.isArray(resp) ? resp : resp?.data || []);
+
+  /* ───── baixar modelo banner ───── */
   async function baixarModeloBanner(chId) {
     if (!chId) return;
     try {
       setBaixandoMap((m) => ({ ...m, [chId]: true }));
-      const { blob, filename } = await apiGetFile(
-        `/chamadas/${chId}/modelo-banner`
-      );
+      const { blob, filename } = await apiGetFile(`/chamadas/${chId}/modelo-banner`);
       downloadBlob(filename || "modelo-banner.pptx", blob);
+      toast.success("Modelo de pôster baixado.");
     } catch (e) {
-      alert(e?.message || "Falha ao baixar o modelo de pôster.");
+      toast.error(e?.message || "Falha ao baixar o modelo de pôster.");
     } finally {
       setBaixandoMap((m) => ({ ...m, [chId]: false }));
     }
   }
 
-  /* ───── baixar modelo de slides (oral) por chamada ───── */
-async function baixarModeloOral(chId) {
-  if (!chId) return;
-  try {
-    setBaixandoOralMap((m) => ({ ...m, [chId]: true }));
+  /* ───── baixar modelo oral (fallback) ───── */
+  async function baixarModeloOral(chId) {
+    if (!chId) return;
     try {
-      const { blob, filename } = await apiGetFile(`/chamadas/${chId}/modelo-oral`);
-      downloadBlob(filename || `modelo-oral-${chId}.pptx`, blob);
-    } catch (errBase) {
-      const { blob, filename } = await apiGetFile(`/chamadas/${chId}/modelo-oral/download`);
-      downloadBlob(filename || `modelo-oral-${chId}.pptx`, blob);
-    }
-  } catch (e) {
-    alert(e?.message || "Falha ao baixar o modelo de slides (oral).");
-  } finally {
-    setBaixandoOralMap((m) => ({ ...m, [chId]: false }));
-  }
-}
-
-
-  /* ───── carregar dados iniciais ───── */
-  useEffect(() => {
-    async function loadData() {
+      setBaixandoOralMap((m) => ({ ...m, [chId]: true }));
       try {
-        const [c, s] = await Promise.all([
-          api.get("/chamadas/ativas"),
-          api.get("/submissoes/minhas"),
-        ]);
-
-        const chamadasArr = Array.isArray(c) ? c : c.data || [];
-        setChamadas(chamadasArr);
-
-        const minhasArr = Array.isArray(s) ? s : s.data || [];
-        setMinhas(minhasArr);
-
-        // checar se cada chamada tem modelo de banner disponível
-        const checksBanner = await Promise.all(
-          chamadasArr.map(async (ch) => {
-            try {
-              const ok = await apiHead(`/chamadas/${ch.id}/modelo-banner`, {
-                auth: true,
-                on401: "silent",
-                on403: "silent",
-              });
-              return [ch.id, !!ok];
-            } catch {
-              return [ch.id, false];
-            }
-          })
-        );
-        setModeloMap(Object.fromEntries(checksBanner));
-
-        // 🔶 checar se cada chamada tem modelo ORAL disponível
-        const checksOral = await Promise.all(
-          chamadasArr.map(async (ch) => {
-            try {
-              const ok = await apiHead(`/chamadas/${ch.id}/modelo-oral`, {
-                auth: true,
-                on401: "silent",
-                on403: "silent",
-              });
-              return [ch.id, !!ok];
-            } catch {
-              return [ch.id, false];
-            }
-          })
-        );
-        setModeloOralMap(Object.fromEntries(checksOral));
-      } catch (err) {
-        console.error("Erro ao carregar dados:", err);
-      } finally {
-        setLoading(false);
+        const { blob, filename } = await apiGetFile(`/chamadas/${chId}/modelo-oral`);
+        downloadBlob(filename || `modelo-oral-${chId}.pptx`, blob);
+      } catch {
+        const { blob, filename } = await apiGetFile(`/chamadas/${chId}/modelo-oral/download`);
+        downloadBlob(filename || `modelo-oral-${chId}.pptx`, blob);
       }
+      toast.success("Modelo oral baixado.");
+    } catch (e) {
+      toast.error(e?.message || "Falha ao baixar o modelo de slides (oral).");
+    } finally {
+      setBaixandoOralMap((m) => ({ ...m, [chId]: false }));
     }
-    loadData();
+  }
+
+  /* ───── HEAD checks (banner/oral) com fallback ───── */
+  const checkModeloBanner = useCallback(async (chId) => {
+    try {
+      const ok = await apiHead(`/chamadas/${chId}/modelo-banner`, { auth: true, on401: "silent", on403: "silent" });
+      return !!ok;
+    } catch {
+      return false;
+    }
   }, []);
 
-  /* ───── recarregar submissões após salvar/editar ───── */
-  const handleSucesso = async () => {
-    const s = await api.get("/submissoes/minhas");
-    setMinhas(Array.isArray(s) ? s : s.data || []);
-  };
+  const checkModeloOral = useCallback(async (chId) => {
+    try {
+      const ok = await apiHead(`/chamadas/${chId}/modelo-oral`, { auth: true, on401: "silent", on403: "silent" });
+      return !!ok;
+    } catch {
+      try {
+        const ok2 = await apiHead(`/chamadas/${chId}/modelo-oral/download`, { auth: true, on401: "silent", on403: "silent" });
+        return !!ok2;
+      } catch {
+        return false;
+      }
+    }
+  }, []);
 
-  /* ───── helpers de prazo/edição ───── */
+  /* ───── carregar tudo ───── */
+  const loadData = useCallback(
+    async ({ silent = false } = {}) => {
+      if (!silent) setLoading(true);
+      try {
+        const [c, s] = await Promise.all([api.get("/chamadas/ativas"), api.get("/submissoes/minhas")]);
+
+        const chamadasArr = unwrap(c);
+        const minhasArr = unwrap(s);
+
+        safeSet(() => {
+          setChamadas(chamadasArr);
+          // ordena: se tiver atualizado_em/criado_em/data, põe mais recente em cima
+          const sorted = [...minhasArr].sort((a, b) => {
+            const da = new Date(a.atualizado_em || a.updated_at || a.criado_em || a.created_at || 0).getTime();
+            const db = new Date(b.atualizado_em || b.updated_at || b.criado_em || b.created_at || 0).getTime();
+            return (db || 0) - (da || 0);
+          });
+          setMinhas(sorted);
+        });
+
+        // checks (banner/oral) em paralelo (settled)
+        const ids = chamadasArr.map((ch) => ch.id).filter(Boolean);
+        const bannerSettled = await Promise.allSettled(ids.map((id) => checkModeloBanner(id)));
+        const oralSettled = await Promise.allSettled(ids.map((id) => checkModeloOral(id)));
+
+        const bannerMap = {};
+        const oralMap = {};
+        ids.forEach((id, i) => {
+          bannerMap[id] = bannerSettled[i].status === "fulfilled" ? !!bannerSettled[i].value : false;
+          oralMap[id] = oralSettled[i].status === "fulfilled" ? !!oralSettled[i].value : false;
+        });
+
+        safeSet(() => {
+          setModeloMap(bannerMap);
+          setModeloOralMap(oralMap);
+        });
+      } catch (err) {
+        console.error("Erro ao carregar dados:", err);
+        toast.error("Não foi possível carregar as submissões agora.");
+      } finally {
+        if (!silent) safeSet(() => setLoading(false));
+      }
+    },
+    [safeSet, checkModeloBanner, checkModeloOral]
+  );
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadData({ silent: true });
+    setRefreshing(false);
+  }, [loadData]);
+
+  /* ───── recarregar submissões após salvar/editar ───── */
+  const handleSucesso = useCallback(async () => {
+    try {
+      const s = await api.get("/submissoes/minhas");
+      const minhasArr = unwrap(s);
+      safeSet(() => setMinhas(minhasArr));
+    } catch {
+      toast.error("Não foi possível atualizar suas submissões.");
+    }
+  }, [safeSet]);
+
+  /* ───── regras edição/exclusão ───── */
   const isDentroPrazo = (row) => !!(row?.dentro_prazo ?? row?.dentroPrazo);
 
   const canEdit = (row) => {
@@ -663,33 +650,24 @@ async function baixarModeloOral(chId) {
 
   /* ───── contadores por status ───── */
   const countByStatus = useMemo(() => {
-    const c = {
-      submetido: 0,
-      em_avaliacao: 0,
-      aprovado: 0,
-      reprovado: 0,
-    };
+    const c = { submetido: 0, em_avaliacao: 0, aprovado: 0, reprovado: 0 };
     for (const m of minhas) {
       const st = String(m.status || "").toLowerCase();
       const expo = okEscrita(m);
       const oral = okOral(m);
 
-      if (st === "submetido") {
-        c.submetido++;
-      } else if (st === "em_avaliacao") {
-        c.em_avaliacao++;
-      } else if (
+      if (st === "submetido") c.submetido++;
+      else if (st === "em_avaliacao") c.em_avaliacao++;
+      else if (
         st === "aprovado_exposicao" ||
         st === "aprovado_oral" ||
         st === "aprovado_escrita" ||
         st === "aprovado" ||
         expo ||
         oral
-      ) {
+      )
         c.aprovado++;
-      } else if (st === "reprovado") {
-        c.reprovado++;
-      }
+      else if (st === "reprovado") c.reprovado++;
     }
     return c;
   }, [minhas]);
@@ -697,26 +675,45 @@ async function baixarModeloOral(chId) {
   /* ───── excluir submissão ───── */
   const handleExcluir = async (id) => {
     if (!id) return;
-    const ok = window.confirm(
-      "Tem certeza que deseja excluir esta submissão? Essa ação não pode ser desfeita."
-    );
+    const ok = window.confirm("Tem certeza que deseja excluir esta submissão? Essa ação não pode ser desfeita.");
     if (!ok) return;
+
     try {
       setExcluindoId(id);
-      await api.delete?.(`/submissoes/${id}`);
-      if (!api.delete)
-        await api({ method: "DELETE", url: `/submissoes/${id}` });
+      if (typeof api.delete === "function") await api.delete(`/submissoes/${id}`);
+      else await api({ method: "DELETE", url: `/submissoes/${id}` });
+
       await handleSucesso();
-      alert("Submissão excluída com sucesso.");
+      toast.success("Submissão excluída com sucesso.");
     } catch (e) {
       console.error(e);
-      alert("Não foi possível excluir a submissão.");
+      toast.error("Não foi possível excluir a submissão.");
     } finally {
       setExcluindoId(null);
     }
   };
 
-  /* ───── loading inicial ───── */
+  /* ───── filtros ───── */
+  const minhasFiltradas = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    if (!term) return minhas;
+
+    return minhas.filter((m) => {
+      const hay = [
+        m.titulo,
+        m.chamada_titulo,
+        m.status,
+        m.linha_tematica_nome,
+        m.linha_tematica_codigo,
+      ]
+        .filter(Boolean)
+        .join(" • ")
+        .toLowerCase();
+
+      return hay.includes(term);
+    });
+  }, [minhas, q]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen bg-gradient-to-br from-violet-50 via-fuchsia-50 to-indigo-100 dark:from-zinc-900 dark:via-zinc-900 dark:to-zinc-950">
@@ -727,21 +724,17 @@ async function baixarModeloOral(chId) {
 
   return (
     <div className="min-h-screen flex flex-col bg-zinc-50 dark:bg-neutral-900 text-black dark:text-white">
-      <HeaderHero />
+      <HeaderHero onRefresh={refresh} refreshing={refreshing} />
 
       <main id="conteudo" className="flex-1">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 sm:py-10 space-y-10">
-          {/* ────── Mini Stats ────── */}
+          {/* ───── Mini Stats ───── */}
           <section aria-labelledby="metricas">
-            <h2 id="metricas" className="sr-only">
-              Métricas de Submissões
-            </h2>
+            <h2 id="metricas" className="sr-only">Métricas de Submissões</h2>
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
               <Card className="p-4">
-                <p className="text-xs text-slate-600 dark:text-slate-300 text-center">
-                  Submetido
-                </p>
+                <p className="text-xs text-slate-600 dark:text-slate-300 text-center">Submetido</p>
                 <p className="text-2xl font-semibold leading-tight text-center text-zinc-900 dark:text-zinc-50">
                   {countByStatus.submetido}
                 </p>
@@ -751,9 +744,7 @@ async function baixarModeloOral(chId) {
               </Card>
 
               <Card className="p-4">
-                <p className="text-xs text-slate-600 dark:text-slate-300 text-center">
-                  Em avaliação
-                </p>
+                <p className="text-xs text-slate-600 dark:text-slate-300 text-center">Em avaliação</p>
                 <p className="text-2xl font-semibold leading-tight text-center text-zinc-900 dark:text-zinc-50">
                   {countByStatus.em_avaliacao}
                 </p>
@@ -763,9 +754,7 @@ async function baixarModeloOral(chId) {
               </Card>
 
               <Card className="p-4">
-                <p className="text-xs text-slate-600 dark:text-slate-300 text-center">
-                  Aprovado
-                </p>
+                <p className="text-xs text-slate-600 dark:text-slate-300 text-center">Aprovado</p>
                 <p className="text-2xl font-semibold leading-tight text-center text-emerald-600 dark:text-emerald-400">
                   {countByStatus.aprovado}
                 </p>
@@ -775,9 +764,7 @@ async function baixarModeloOral(chId) {
               </Card>
 
               <Card className="p-4">
-                <p className="text-xs text-slate-600 dark:text-slate-300 text-center">
-                  Reprovado
-                </p>
+                <p className="text-xs text-slate-600 dark:text-slate-300 text-center">Reprovado</p>
                 <p className="text-2xl font-semibold leading-tight text-center text-rose-600 dark:text-rose-400">
                   {countByStatus.reprovado}
                 </p>
@@ -788,23 +775,17 @@ async function baixarModeloOral(chId) {
             </div>
           </section>
 
-          {/* ────── Regras & Dicas ────── */}
-<section aria-labelledby="regras-dicas">
-  <h2 id="regras-dicas" className="sr-only">Regras e Dicas</h2>
-  <RegrasEDicasSection />
-</section>
+          {/* ───── Regras & Dicas ───── */}
+          <section aria-labelledby="regras-dicas">
+            <h2 id="regras-dicas" className="sr-only">Regras e Dicas</h2>
+            <RegrasEDicasSection />
+          </section>
 
-          {/* ────── Chamadas Abertas ────── */}
+          {/* ───── Chamadas abertas ───── */}
           <section aria-labelledby="chamadas-abertas">
             <div className="flex items-center justify-center gap-2 mb-2">
-              <BookOpen
-                className="w-5 h-5 text-violet-600 dark:text-violet-400"
-                aria-hidden="true"
-              />
-              <h2
-                id="chamadas-abertas"
-                className="text-base sm:text-lg font-bold text-center text-zinc-900 dark:text-zinc-50"
-              >
+              <BookOpen className="w-5 h-5 text-violet-600 dark:text-violet-400" aria-hidden="true" />
+              <h2 id="chamadas-abertas" className="text-base sm:text-lg font-bold text-center text-zinc-900 dark:text-zinc-50">
                 Chamadas abertas
               </h2>
             </div>
@@ -817,14 +798,11 @@ async function baixarModeloOral(chId) {
               <div className="grid md:grid-cols-2 gap-5">
                 {chamadas.map((ch) => {
                   const temModelo = !!modeloMap[ch.id];
-                  const prazoStr =
-                    ch.prazo_final_br ||
-                    ch.prazo_final ||
-                    ch.prazoFinal ||
-                    ch.prazo ||
-                    null;
+                  const temOral = !!modeloOralMap[ch.id];
+                  const prazoStr = ch.prazo_final_br || ch.prazo_final || ch.prazoFinal || ch.prazo || null;
                   const prazoFmt = toBrDateTimeSafe(prazoStr);
                   const carregando = !!baixandoMap[ch.id];
+                  const carregandoOral = !!baixandoOralMap[ch.id];
                   const dentro = !!(ch?.dentro_prazo ?? ch?.dentroPrazo);
 
                   return (
@@ -848,23 +826,19 @@ async function baixarModeloOral(chId) {
 
                             <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-xs font-medium text-zinc-800 dark:text-zinc-200">
                               {dentro ? (
-                                <Chip tone="verde" title="Dentro do prazo">
-                                  Dentro do prazo
-                                </Chip>
+                                <Chip tone="verde" title="Dentro do prazo">Dentro do prazo</Chip>
                               ) : (
-                                <Chip tone="vermelho" title="Fora do prazo">
-                                  Fora do prazo
-                                </Chip>
+                                <Chip tone="vermelho" title="Fora do prazo">Fora do prazo</Chip>
                               )}
                               <span className="text-slate-600 dark:text-slate-300">
-                                Prazo final (data e horário):{" "}
-                                <strong>{prazoFmt}</strong>
+                                Prazo final (data e horário): <strong>{prazoFmt}</strong>
                               </span>
                             </div>
                           </div>
 
                           <div className="mt-4 flex flex-wrap gap-3 items-center justify-center sm:justify-start">
                             <button
+                              type="button"
                               onClick={() => setModalEdital(ch.id)}
                               className="flex items-center gap-2 text-sm bg-violet-700 text-white px-3 py-2 rounded-md hover:bg-violet-800 transition focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-violet-500"
                               aria-label="Ver edital"
@@ -875,11 +849,8 @@ async function baixarModeloOral(chId) {
 
                             {dentro && (
                               <button
-                                onClick={() =>
-                                  setModalInscricao({
-                                    chamadaId: ch.id,
-                                  })
-                                }
+                                type="button"
+                                onClick={() => setModalInscricao({ chamadaId: ch.id })}
                                 className="flex items-center gap-2 text-sm bg-indigo-600 text-white px-3 py-2 rounded-md hover:bg-indigo-700 transition focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                                 aria-label="Submeter trabalho"
                               >
@@ -888,22 +859,34 @@ async function baixarModeloOral(chId) {
                               </button>
                             )}
 
-                            {temModelo && (
-                              <button
-                                type="button"
-                                onClick={() => baixarModeloBanner(ch.id)}
-                                className="sm:ml-auto inline-flex items-center gap-1 text-sm text-indigo-700 dark:text-indigo-400 hover:underline disabled:opacity-60"
-                                disabled={carregando}
-                                title="Baixar modelo de pôster"
-                              >
-                                {carregando ? (
-                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                ) : (
-                                  <ExternalLink className="w-3.5 h-3.5" />
-                                )}
-                                Modelo de pôster
-                              </button>
-                            )}
+                            {/* modelos (banner/oral) — opcionais */}
+                            <div className="sm:ml-auto flex flex-wrap items-center gap-3">
+                              {temModelo && (
+                                <button
+                                  type="button"
+                                  onClick={() => baixarModeloBanner(ch.id)}
+                                  className="inline-flex items-center gap-1 text-sm text-indigo-700 dark:text-indigo-400 hover:underline disabled:opacity-60"
+                                  disabled={carregando}
+                                  title="Baixar modelo de pôster"
+                                >
+                                  {carregando ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5" />}
+                                  Modelo de pôster
+                                </button>
+                              )}
+
+                              {temOral && (
+                                <button
+                                  type="button"
+                                  onClick={() => baixarModeloOral(ch.id)}
+                                  className="inline-flex items-center gap-1 text-sm text-indigo-700 dark:text-indigo-400 hover:underline disabled:opacity-60"
+                                  disabled={carregandoOral}
+                                  title="Baixar modelo de apresentação oral"
+                                >
+                                  {carregandoOral ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5" />}
+                                  Modelo oral
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </Card>
@@ -914,29 +897,43 @@ async function baixarModeloOral(chId) {
             )}
           </section>
 
-          {/* ────── Minhas Submissões ────── */}
+          {/* ───── Minhas submissões ───── */}
           <section aria-labelledby="minhas-submissoes">
             <div className="flex items-center justify-center gap-2 mb-2">
-              <FileText
-                className="w-5 h-5 text-indigo-600 dark:text-indigo-400"
-                aria-hidden="true"
-              />
-              <h2
-                id="minhas-submissoes"
-                className="text-base sm:text-lg font-bold text-center text-zinc-900 dark:text-zinc-50"
-              >
+              <FileText className="w-5 h-5 text-indigo-600 dark:text-indigo-400" aria-hidden="true" />
+              <h2 id="minhas-submissoes" className="text-base sm:text-lg font-bold text-center text-zinc-900 dark:text-zinc-50">
                 Minhas submissões
               </h2>
+            </div>
+
+            {/* Busca local */}
+            <div className="max-w-2xl mx-auto mb-4">
+              <label htmlFor="busca-minhas" className="sr-only">Buscar nas minhas submissões</label>
+              <div className="relative">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" aria-hidden="true" />
+                <input
+                  id="busca-minhas"
+                  type="search"
+                  inputMode="search"
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="Buscar por título, chamada ou status…"
+                  className="w-full pl-9 pr-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
             </div>
 
             {minhas.length === 0 ? (
               <p className="text-slate-600 dark:text-slate-300 italic text-center">
                 Você ainda não submeteu nenhum trabalho.
               </p>
+            ) : minhasFiltradas.length === 0 ? (
+              <Card className="p-6 text-center text-sm text-slate-600 dark:text-slate-300">
+                Nenhuma submissão encontrada para o termo informado.
+              </Card>
             ) : (
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                {minhas.map((m) => {
-                  const stLower = String(m.status ?? "").toLowerCase();
+                {minhasFiltradas.map((m) => {
                   const podeEditar = canEdit(m);
                   const podeExcluir = canDelete(m);
 
@@ -953,7 +950,6 @@ async function baixarModeloOral(chId) {
                       excluindo={excluindoId === m.id}
                       onEditar={() => setModalInscricao({ submissaoId: m.id })}
                       onExcluir={() => handleExcluir(m.id)}
-                      // 🔶 props para o botão de modelo oral
                       hasModeloOral={hasModeloOral}
                       baixandoModeloOral={baixandoOral}
                       onBaixarModeloOral={() => baixarModeloOral(chId)}
@@ -969,12 +965,7 @@ async function baixarModeloOral(chId) {
       <Footer />
 
       {/* Modais */}
-      {modalEdital && (
-        <ModalVerEdital
-          chamadaId={modalEdital}
-          onClose={() => setModalEdital(null)}
-        />
-      )}
+      {modalEdital && <ModalVerEdital chamadaId={modalEdital} onClose={() => setModalEdital(null)} />}
 
       {modalInscricao && (
         <ModalInscreverTrabalho

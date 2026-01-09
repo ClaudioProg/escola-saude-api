@@ -1,4 +1,4 @@
-// ✅ src/pages/CertificadosAvulsos.jsx (mobile/a11y + modalidades novas + título de trabalho + carga opcional)
+// ✅ src/pages/CertificadosAvulsos.jsx — versão premium (mobile/a11y + 2ª assinatura persistente)
 import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { toast } from "react-toastify";
 import { RefreshCcw, Plus, Search, X } from "lucide-react";
@@ -12,7 +12,21 @@ import NadaEncontrado from "../components/NadaEncontrado";
 import { apiGet, apiPost, apiGetFile } from "../services/api";
 
 /* ---------------- HeaderHero ---------------- */
-function HeaderHero({ onRefresh, onSubmitClick, carregando }) {
+function HeaderHero({ onRefresh, onSubmitClick, carregando, onFocusBusca }) {
+  // Atalho Ctrl/⌘+K para focar a busca
+  useEffect(() => {
+    const onKey = (e) => {
+      const mac = /(Mac|iPhone|iPad)/i.test(navigator.userAgent);
+      const key = e.key.toLowerCase();
+      if ((mac && e.metaKey && key === "k") || (!mac && e.ctrlKey && key === "k")) {
+        e.preventDefault();
+        onFocusBusca?.();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onFocusBusca]);
+
   return (
     <header
       className="bg-gradient-to-br from-amber-900 via-orange-700 to-rose-600 text-white"
@@ -78,7 +92,6 @@ const onlyDigits = (v = "") => String(v).replace(/\D+/g, "");
 const clampLen = (s, n = 200) => String(s ?? "").slice(0, n);
 
 /* ===================== Modalidades (front) ===================== */
-
 const MODALIDADES = [
   "participante",
   "instrutor",
@@ -115,17 +128,18 @@ function modalidadeExigeTitulo(modalidade) {
     modalidade === "residente_multi" ||
     modalidade === "mostra_banner" ||
     modalidade === "mostra_oral" ||
-    modalidade === "oficineiro" // ✅ agora oficineiro também exige título
+    modalidade === "oficineiro"
   );
 }
 
 function modalidadeSemCarga(modalidade) {
-  return (
-    modalidade === "banca_avaliadora" || modalidade === "comissao_organizadora"
-  );
+  return modalidade === "banca_avaliadora" || modalidade === "comissao_organizadora";
 }
 
 /* ===================== Página ===================== */
+const KEY_ASSIN2_ENABLED = "cert:assin2:enabled";
+const KEY_ASSIN2_ID = "cert:assin2:id";
+
 export default function CertificadosAvulsos() {
   const reduceMotion = useReducedMotion();
 
@@ -142,8 +156,12 @@ export default function CertificadosAvulsos() {
   });
 
   // opções avançadas de geração (2ª assinatura)
-  const [usarAssinatura2, setUsarAssinatura2] = useState(false);
-  const [assinatura2Id, setAssinatura2Id] = useState("");
+  const [usarAssinatura2, setUsarAssinatura2] = useState(
+    () => localStorage.getItem(KEY_ASSIN2_ENABLED) === "1"
+  );
+  const [assinatura2Id, setAssinatura2Id] = useState(
+    () => localStorage.getItem(KEY_ASSIN2_ID) || ""
+  );
   const [assinaturas, setAssinaturas] = useState([]); // [{id, nome}]
   const [assinaturasCarregando, setAssinaturasCarregando] = useState(true);
 
@@ -159,54 +177,48 @@ export default function CertificadosAvulsos() {
   );
   const [buscaDebounced, setBuscaDebounced] = useState(busca);
 
-  const [acaoLoading, setAcaoLoading] = useState({
-    id: null,
-    tipo: null,
-  }); // {id, 'pdf' | 'email'}
+  const [acaoLoading, setAcaoLoading] = useState({ id: null, tipo: null }); // {id, 'pdf' | 'email'}
 
   const liveRef = useRef(null); // aria-live
   const erroRef = useRef(null);
+  const buscaRef = useRef(null);
 
   const setLive = useCallback((msg) => {
     if (liveRef.current) liveRef.current.textContent = msg;
   }, []);
 
+  /* Carrega dados iniciais */
   useEffect(() => {
     carregarCertificados();
     carregarAssinaturas();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const carregarCertificados = useCallback(
-    async () => {
-      try {
-        setCarregando(true);
-        setLive("Carregando certificados…");
-        // 🔧 services/api já prefixa /api
-        const data = await apiGet("certificados-avulsos", { on403: "silent" });
-        setLista(Array.isArray(data) ? data : []);
-        setLive(
-          Array.isArray(data) && data.length
-            ? `Foram carregados ${data.length} certificado(s).`
-            : "Nenhum certificado encontrado."
-        );
-      } catch (erro) {
-        toast.error("❌ Erro ao carregar certificados.");
-        setLista([]);
-        setLive("Falha ao carregar certificados.");
-        setTimeout(() => erroRef.current?.focus(), 0);
-      } finally {
-        setCarregando(false);
-      }
-    },
-    [setLive]
-  );
+  const carregarCertificados = useCallback(async () => {
+    try {
+      setCarregando(true);
+      setLive("Carregando certificados…");
+      const data = await apiGet("certificados-avulsos", { on403: "silent" });
+      setLista(Array.isArray(data) ? data : []);
+      setLive(
+        Array.isArray(data) && data.length
+          ? `Foram carregados ${data.length} certificado(s).`
+          : "Nenhum certificado encontrado."
+      );
+    } catch (erro) {
+      toast.error("❌ Erro ao carregar certificados.");
+      setLista([]);
+      setLive("Falha ao carregar certificados.");
+      setTimeout(() => erroRef.current?.focus(), 0);
+    } finally {
+      setCarregando(false);
+    }
+  }, [setLive]);
 
   // Carrega lista de pessoas com assinatura disponível
   const carregarAssinaturas = useCallback(async () => {
     try {
       setAssinaturasCarregando(true);
-      // ✅ backend: GET /api/assinatura/lista
       const data = await apiGet("assinatura/lista", { on403: "silent" });
       const arr = Array.isArray(data) ? data : Array.isArray(data?.lista) ? data.lista : [];
       const filtradas = arr
@@ -236,12 +248,18 @@ export default function CertificadosAvulsos() {
   }, [filtro]);
   useEffect(() => {
     localStorage.setItem("cert:busca", busca);
-    const t = setTimeout(
-      () => setBuscaDebounced(busca.trim().toLowerCase()),
-      250
-    );
+    const t = setTimeout(() => setBuscaDebounced(busca.trim().toLowerCase()), 250);
     return () => clearTimeout(t);
   }, [busca]);
+
+  // persistência da 2ª assinatura
+  useEffect(() => {
+    localStorage.setItem(KEY_ASSIN2_ENABLED, usarAssinatura2 ? "1" : "0");
+  }, [usarAssinatura2]);
+  useEffect(() => {
+    if (assinatura2Id) localStorage.setItem(KEY_ASSIN2_ID, assinatura2Id);
+    else localStorage.removeItem(KEY_ASSIN2_ID);
+  }, [assinatura2Id]);
 
   function handleChange(e) {
     const { name, value } = e.target;
@@ -267,13 +285,13 @@ export default function CertificadosAvulsos() {
     }
 
     if (name === "modalidade") {
+      const exigeTitulo = modalidadeExigeTitulo(value);
+      const semCarga = modalidadeSemCarga(value);
       setForm((prev) => ({
         ...prev,
         modalidade: value,
-        // se trocar para modalidade que não exige título, limpamos
-        titulo_trabalho: modalidadeExigeTitulo(value)
-          ? prev.titulo_trabalho
-          : "",
+        titulo_trabalho: exigeTitulo ? prev.titulo_trabalho : "",
+        carga_horaria: semCarga ? "" : prev.carga_horaria,
       }));
       return;
     }
@@ -289,12 +307,26 @@ export default function CertificadosAvulsos() {
   }
 
   function handlePasteCPF(e) {
-    const text =
-      (e.clipboardData || window.clipboardData)?.getData("text") || "";
+    const text = (e.clipboardData || window.clipboardData)?.getData("text") || "";
     const dig = onlyDigits(text).slice(0, 14);
     e.preventDefault();
     setForm((prev) => ({ ...prev, cpf: dig }));
   }
+
+  // Atalho Ctrl/⌘+Enter para submeter form
+  useEffect(() => {
+    const onKey = (e) => {
+      const mac = /(Mac|iPhone|iPad)/i.test(navigator.userAgent);
+      const isSubmit = (mac && e.metaKey && e.key === "Enter") || (!mac && e.ctrlKey && e.key === "Enter");
+      if (isSubmit) {
+        const f = document.getElementById("form-cert-avulso");
+        if (f?.requestSubmit) f.requestSubmit();
+        else f?.submit();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const cadastrarCertificado = useCallback(
     async (e) => {
@@ -315,10 +347,7 @@ export default function CertificadosAvulsos() {
         data_fim: form.data_fim || form.data_inicio || "",
         modalidade,
         titulo_trabalho: exigeTitulo
-          ? clampLen(
-              (form.titulo_trabalho || "").replace(/\s+/g, " ").trim(),
-              255
-            )
+          ? clampLen((form.titulo_trabalho || "").replace(/\s+/g, " ").trim(), 255)
           : "",
       };
 
@@ -339,9 +368,7 @@ export default function CertificadosAvulsos() {
       if (cargaStr) {
         const n = Number(cargaStr);
         if (!Number.isFinite(n) || n <= 0) {
-          toast.warning(
-            "Informe uma carga horária válida (> 0) ou deixe em branco."
-          );
+          toast.warning("Informe uma carga horária válida (> 0) ou deixe em branco.");
           setLive("Carga horária inválida.");
           return;
         }
@@ -349,9 +376,7 @@ export default function CertificadosAvulsos() {
 
       // título obrigatório em algumas modalidades
       if (exigeTitulo && !payload.titulo_trabalho) {
-        toast.warning(
-          "Informe o título do trabalho/oficina para a modalidade selecionada."
-        );
+        toast.warning("Informe o título do trabalho/oficina para a modalidade selecionada.");
         setLive("Título do trabalho é obrigatório.");
         return;
       }
@@ -366,17 +391,9 @@ export default function CertificadosAvulsos() {
         setLive("Data de término inválida.");
         return;
       }
-      if (
-        payload.data_inicio &&
-        payload.data_fim &&
-        payload.data_fim < payload.data_inicio
-      ) {
-        toast.warning(
-          "A data de término não pode ser anterior à data de início."
-        );
-        setLive(
-          "A data de término não pode ser anterior à data de início."
-        );
+      if (payload.data_inicio && payload.data_fim && payload.data_fim < payload.data_inicio) {
+        toast.warning("A data de término não pode ser anterior à data de início.");
+        setLive("A data de término não pode ser anterior à data de início.");
         return;
       }
 
@@ -401,6 +418,7 @@ export default function CertificadosAvulsos() {
       } catch (erro) {
         toast.error("❌ Erro ao cadastrar certificado.");
         setLive("Erro ao cadastrar certificado.");
+        setTimeout(() => erroRef.current?.focus(), 0);
       } finally {
         setSalvando(false);
       }
@@ -411,7 +429,6 @@ export default function CertificadosAvulsos() {
   const enviarPorEmail = useCallback(
     async (id) => {
       if (acaoLoading.id) return; // evita cliques concorrentes
-
       if (usarAssinatura2 && !assinatura2Id) {
         toast.info("Selecione a 2ª assinatura antes de enviar o e-mail.");
         return;
@@ -434,11 +451,7 @@ export default function CertificadosAvulsos() {
         await apiPost(url);
 
         toast.success("✅ E-mail enviado!");
-        setLista((prev) =>
-          prev.map((item) =>
-            item.id === id ? { ...item, enviado: true } : item
-          )
-        );
+        setLista((prev) => prev.map((item) => (item.id === id ? { ...item, enviado: true } : item)));
       } catch (err) {
         console.error("erro ao enviar email:", err);
         toast.error("❌ Erro ao enviar e-mail.");
@@ -488,15 +501,9 @@ export default function CertificadosAvulsos() {
     [usarAssinatura2, assinatura2Id, acaoLoading.id]
   );
 
-  const enviados = useMemo(
-    () => (lista || []).filter((i) => i.enviado === true).length,
-    [lista]
-  );
+  const enviados = useMemo(() => (lista || []).filter((i) => i.enviado === true).length, [lista]);
   const naoEnviados = useMemo(
-    () =>
-      (lista || []).filter(
-        (i) => i.enviado === false || i.enviado == null
-      ).length,
+    () => (lista || []).filter((i) => i.enviado === false || i.enviado == null).length,
     [lista]
   );
 
@@ -523,6 +530,7 @@ export default function CertificadosAvulsos() {
           else f?.submit();
         }}
         carregando={carregando}
+        onFocusBusca={() => buscaRef.current?.focus()}
       />
 
       {/* barra de carregamento fina no topo */}
@@ -535,69 +543,43 @@ export default function CertificadosAvulsos() {
           aria-label="Carregando dados"
           aria-busy="true"
         >
-          <div
-            className={`h-full bg-rose-600 w-1/3 ${
-              reduceMotion ? "" : "animate-pulse"
-            }`}
-          />
+          <div className={`h-full bg-rose-600 w-1/3 ${reduceMotion ? "" : "animate-pulse"}`} />
         </div>
       )}
 
-      <main
-        id="conteudo"
-        className="flex-1 max-w-6xl mx-auto px-3 sm:px-4 py-6"
-      >
+      <main id="conteudo" className="flex-1 max-w-6xl mx-auto px-3 sm:px-4 py-6">
         {/* feedback de acessibilidade */}
-        <p
-          ref={liveRef}
-          className="sr-only"
-          aria-live="polite"
-          role="status"
-        />
+        <p ref={liveRef} className="sr-only" aria-live="polite" role="status" />
         <div ref={erroRef} tabIndex={-1} className="sr-only" />
 
         {/* KPIs rápidos */}
         <section className="grid grid-cols-3 gap-2 sm:gap-3 mb-6">
           <div className="bg-white dark:bg-zinc-800 rounded-xl shadow p-3 sm:p-4 text-center">
-            <p className="text-[11px] sm:text-xs text-gray-600 dark:text-gray-300">
-              Total
-            </p>
+            <p className="text-[11px] sm:text-xs text-gray-600 dark:text-gray-300">Total</p>
             <p className="text-xl sm:text-2xl font-bold">{lista.length}</p>
           </div>
           <div className="bg-white dark:bg-zinc-800 rounded-xl shadow p-3 sm:p-4 text-center">
-            <p className="text-[11px] sm:text-xs text-gray-600 dark:text-gray-300">
-              Enviados
-            </p>
+            <p className="text-[11px] sm:text-xs text-gray-600 dark:text-gray-300">Enviados</p>
             <p className="text-xl sm:text-2xl font-bold">{enviados}</p>
           </div>
           <div className="bg-white dark:bg-zinc-800 rounded-xl shadow p-3 sm:p-4 text-center">
-            <p className="text-[11px] sm:text-xs text-gray-600 dark:text-gray-300">
-              Não enviados
-            </p>
+            <p className="text-[11px] sm:text-xs text-gray-600 dark:text-gray-300">Não enviados</p>
             <p className="text-xl sm:text-2xl font-bold">{naoEnviados}</p>
           </div>
         </section>
 
         {/* Filtros (mobile-friendly) */}
-        <section
-          className="bg-white dark:bg-zinc-800 rounded-xl shadow p-3 sm:p-4 mb-4"
-          aria-label="Filtros de listagem"
-        >
+        <section className="bg-white dark:bg-zinc-800 rounded-xl shadow p-3 sm:p-4 mb-4" aria-label="Filtros de listagem">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-3">
             <div className="flex-1">
-              <label
-                htmlFor="busca"
-                className="block text-xs font-medium text-slate-700 dark:text-slate-200 mb-1"
-              >
+              <label htmlFor="busca" className="block text-xs font-medium text-slate-700 dark:text-slate-200 mb-1">
                 Buscar
               </label>
               <div className="flex items-center gap-2">
                 <div className="relative flex-1">
-                  <Search
-                    className="w-4 h-4 absolute left-2 top-1/2 -translate-y-1/2 text-zinc-500"
-                    aria-hidden="true"
-                  />
+                  <Search className="w-4 h-4 absolute left-2 top-1/2 -translate-y-1/2 text-zinc-500" aria-hidden="true" />
                   <input
+                    ref={buscaRef}
                     id="busca"
                     type="search"
                     inputMode="search"
@@ -621,10 +603,7 @@ export default function CertificadosAvulsos() {
             </div>
 
             <div className="sm:w-64">
-              <label
-                htmlFor="filtro"
-                className="block text-xs font-medium text-slate-700 dark:text-slate-200 mb-1"
-              >
+              <label htmlFor="filtro" className="block text-xs font-medium text-slate-700 dark:text-slate-200 mb-1">
                 Filtrar por envio
               </label>
               <select
@@ -655,13 +634,8 @@ export default function CertificadosAvulsos() {
             )}
           </div>
 
-          <p
-            className="mt-2 text-xs text-gray-600 dark:text-gray-300"
-            aria-live="polite"
-          >
-            {listaFiltrada.length} registro
-            {listaFiltrada.length !== 1 ? "s" : ""} encontrado
-            {listaFiltrada.length !== 1 ? "s" : ""}.
+          <p className="mt-2 text-xs text-gray-600 dark:text-gray-300" aria-live="polite">
+            {listaFiltrada.length} registro{listaFiltrada.length !== 1 ? "s" : ""} encontrado{listaFiltrada.length !== 1 ? "s" : ""}.
           </p>
         </section>
 
@@ -674,10 +648,7 @@ export default function CertificadosAvulsos() {
           aria-busy={salvando}
         >
           <div className="md:col-span-2">
-            <label
-              htmlFor="nome"
-              className="block text-sm font-medium text-slate-700 dark:text-slate-200"
-            >
+            <label htmlFor="nome" className="block text-sm font-medium text-slate-700 dark:text-slate-200">
               Nome completo <span className="text-rose-600">*</span>
             </label>
             <input
@@ -694,10 +665,7 @@ export default function CertificadosAvulsos() {
           </div>
 
           <div>
-            <label
-              htmlFor="cpf"
-              className="block text-sm font-medium text-slate-700 dark:text-slate-200"
-            >
+            <label htmlFor="cpf" className="block text-sm font-medium text-slate-700 dark:text-slate-200">
               CPF / Registro funcional
             </label>
             <input
@@ -721,10 +689,7 @@ export default function CertificadosAvulsos() {
           </div>
 
           <div>
-            <label
-              htmlFor="email"
-              className="block text-sm font-medium text-slate-700 dark:text-slate-200"
-            >
+            <label htmlFor="email" className="block text-sm font-medium text-slate-700 dark:text-slate-200">
               E-mail <span className="text-rose-600">*</span>
             </label>
             <input
@@ -741,10 +706,7 @@ export default function CertificadosAvulsos() {
           </div>
 
           <div>
-            <label
-              htmlFor="curso"
-              className="block text-sm font-medium text-slate-700 dark:text-slate-200"
-            >
+            <label htmlFor="curso" className="block text-sm font-medium text-slate-700 dark:text-slate-200">
               Curso <span className="text-rose-600">*</span>
             </label>
             <input
@@ -760,19 +722,12 @@ export default function CertificadosAvulsos() {
           </div>
 
           <div>
-            <label
-              htmlFor="carga_horaria"
-              className="block text-sm font-medium text-slate-700 dark:text-slate-200"
-            >
+            <label htmlFor="carga_horaria" className="block text-sm font-medium text-slate-700 dark:text-slate-200">
               Carga horária (h)
               {modalidadeSemCarga(form.modalidade) ? (
-                <span className="text-[11px] text-zinc-500 ml-1">
-                  (não se aplica)
-                </span>
+                <span className="text-[11px] text-zinc-500 ml-1">(não se aplica)</span>
               ) : (
-                <span className="text-[11px] text-zinc-500 ml-1">
-                  (opcional; omitida se em branco)
-                </span>
+                <span className="text-[11px] text-zinc-500 ml-1">(opcional; omitida se em branco)</span>
               )}
             </label>
             <input
@@ -789,10 +744,7 @@ export default function CertificadosAvulsos() {
           </div>
 
           <div>
-            <label
-              htmlFor="data_inicio"
-              className="block text-sm font-medium text-slate-700 dark:text-slate-200"
-            >
+            <label htmlFor="data_inicio" className="block text-sm font-medium text-slate-700 dark:text-slate-200">
               Data de início
             </label>
             <input
@@ -807,10 +759,7 @@ export default function CertificadosAvulsos() {
           </div>
 
           <div>
-            <label
-              htmlFor="data_fim"
-              className="block text-sm font-medium text-slate-700 dark:text-slate-200"
-            >
+            <label htmlFor="data_fim" className="block text-sm font-medium text-slate-700 dark:text-slate-200">
               Data de término
             </label>
             <input
@@ -826,16 +775,11 @@ export default function CertificadosAvulsos() {
 
           {/* ===== Modalidade + 2ª assinatura ===== */}
           <fieldset className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-3 mt-1">
-            <legend className="sr-only">
-              Modalidade de participação e opções de geração do certificado
-            </legend>
+            <legend className="sr-only">Modalidade de participação e opções de geração do certificado</legend>
 
             {/* 1) Modalidade / participação */}
             <div className="md:col-span-1">
-              <label
-                htmlFor="modalidade"
-                className="block text-sm font-medium text-slate-700 dark:text-slate-200"
-              >
+              <label htmlFor="modalidade" className="block text-sm font-medium text-slate-700 dark:text-slate-200">
                 Modalidade / Participação
               </label>
               <select
@@ -873,36 +817,19 @@ export default function CertificadosAvulsos() {
                 <span className="text-sm">Adicionar 2ª assinatura</span>
               </label>
 
-              <div
-                className={`${
-                  usarAssinatura2 ? "" : "opacity-50 pointer-events-none"
-                }`}
-              >
-                <label
-                  htmlFor="assinatura2"
-                  className="block text-sm font-medium text-slate-700 dark:text-slate-200"
-                >
+              <div className={`${usarAssinatura2 ? "" : "opacity-50 pointer-events-none"}`}>
+                <label htmlFor="assinatura2" className="block text-sm font-medium text-slate-700 dark:text-slate-200">
                   Selecionar assinatura
                 </label>
                 <select
                   id="assinatura2"
                   value={assinatura2Id}
                   onChange={(e) => setAssinatura2Id(e.target.value)}
-                  disabled={
-                    !usarAssinatura2 ||
-                    assinaturasCarregando ||
-                    assinaturas.length === 0
-                  }
-                  aria-disabled={
-                    !usarAssinatura2 || assinaturas.length === 0
-                  }
+                  disabled={!usarAssinatura2 || assinaturasCarregando || assinaturas.length === 0}
+                  aria-disabled={!usarAssinatura2 || assinaturas.length === 0}
                   className="mt-1 w-full border p-2 rounded dark:bg-zinc-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
                 >
-                  <option value="">
-                    {assinaturasCarregando
-                      ? "Carregando…"
-                      : "— Selecione —"}
-                  </option>
+                  <option value="">{assinaturasCarregando ? "Carregando…" : "— Selecione —"}</option>
                   {assinaturas.map((a) => (
                     <option key={a.id} value={a.id}>
                       {a.nome}
@@ -923,12 +850,8 @@ export default function CertificadosAvulsos() {
           {/* Título do trabalho (condicional) */}
           {modalidadeExigeTitulo(form.modalidade) && (
             <div className="md:col-span-2">
-              <label
-                htmlFor="titulo_trabalho"
-                className="block text-sm font-medium text-slate-700 dark:text-slate-200"
-              >
-                Título do trabalho / oficina{" "}
-                <span className="text-rose-600">*</span>
+              <label htmlFor="titulo_trabalho" className="block text-sm font-medium text-slate-700 dark:text-slate-200">
+                Título do trabalho / oficina <span className="text-rose-600">*</span>
               </label>
               <input
                 id="titulo_trabalho"
@@ -951,10 +874,7 @@ export default function CertificadosAvulsos() {
         </form>
 
         {/* Lista / Tabela */}
-        <section
-          className="max-w-6xl mx-auto mt-6"
-          aria-label="Lista de certificados avulsos"
-        >
+        <section className="max-w-6xl mx-auto mt-6" aria-label="Lista de certificados avulsos">
           {carregando ? (
             <div className="bg-white dark:bg-zinc-800 rounded-xl shadow p-4">
               <CarregandoSkeleton linhas={4} />
@@ -970,42 +890,22 @@ export default function CertificadosAvulsos() {
                 {listaFiltrada.map((item) => {
                   const di = item.data_inicio?.slice(0, 10) || "";
                   const df = item.data_fim?.slice(0, 10) || "";
-                  const periodo = di
-                    ? df && df !== di
-                      ? `${ymdToBR(di)} a ${ymdToBR(df)}`
-                      : ymdToBR(di)
-                    : "—";
+                  const periodo = di ? (df && df !== di ? `${ymdToBR(di)} a ${ymdToBR(df)}` : ymdToBR(di)) : "—";
 
-                  const isEmailLoading =
-                    acaoLoading.id === item.id &&
-                    acaoLoading.tipo === "email";
-                  const isPdfLoading =
-                    acaoLoading.id === item.id && acaoLoading.tipo === "pdf";
+                  const isEmailLoading = acaoLoading.id === item.id && acaoLoading.tipo === "email";
+                  const isPdfLoading = acaoLoading.id === item.id && acaoLoading.tipo === "pdf";
 
                   const cargaTxt =
-                    item.carga_horaria && Number(item.carga_horaria) > 0
-                      ? `${item.carga_horaria}h`
-                      : "—";
+                    item.carga_horaria && Number(item.carga_horaria) > 0 ? `${item.carga_horaria}h` : "—";
 
                   const mod = item.modalidade || "participante";
 
                   return (
-                    <article
-                      key={item.id}
-                      className="bg-white dark:bg-zinc-800 rounded-xl shadow p-3"
-                      role="group"
-                      aria-label={`Certificado de ${item.nome}`}
-                    >
+                    <article key={item.id} className="bg-white dark:bg-zinc-800 rounded-xl shadow p-3" role="group" aria-label={`Certificado de ${item.nome}`}>
                       <header className="mb-2">
-                        <h3 className="font-semibold text-sm">
-                          {item.nome}
-                        </h3>
-                        <p className="text-xs text-zinc-600 dark:text-zinc-300">
-                          {item.curso}
-                        </p>
-                        <p className="text-[11px] text-zinc-500 mt-0.5">
-                          {rotuloModalidade[mod] || mod}
-                        </p>
+                        <h3 className="font-semibold text-sm">{item.nome}</h3>
+                        <p className="text-xs text-zinc-600 dark:text-zinc-300">{item.curso}</p>
+                        <p className="text-[11px] text-zinc-500 mt-0.5">{rotuloModalidade[mod] || mod}</p>
                       </header>
                       <dl className="grid grid-cols-2 gap-2 text-xs">
                         <div>
@@ -1018,9 +918,7 @@ export default function CertificadosAvulsos() {
                         </div>
                         {item.titulo_trabalho && (
                           <div className="col-span-2">
-                            <dt className="text-zinc-500">
-                              Título do trabalho / oficina
-                            </dt>
+                            <dt className="text-zinc-500">Título do trabalho / oficina</dt>
                             <dd>{item.titulo_trabalho}</dd>
                           </div>
                         )}
@@ -1035,17 +933,9 @@ export default function CertificadosAvulsos() {
                           type="button"
                           onClick={() => gerarPDF(item.id)}
                           disabled={isPdfLoading}
-                          className={`underline ${
-                            isPdfLoading
-                              ? "opacity-60 cursor-not-allowed"
-                              : "text-blue-700 dark:text-blue-300"
-                          }`}
+                          className={`underline ${isPdfLoading ? "opacity-60 cursor-not-allowed" : "text-blue-700 dark:text-blue-300"}`}
                           aria-label={`Baixar PDF do certificado de ${item.nome}`}
-                          title={`Baixar PDF${
-                            usarAssinatura2 && assinatura2Id
-                              ? " com 2 assinaturas"
-                              : ""
-                          }`}
+                          title={`Baixar PDF${usarAssinatura2 && assinatura2Id ? " com 2 assinaturas" : ""}`}
                         >
                           {isPdfLoading ? "Gerando…" : "PDF"}
                         </button>
@@ -1053,21 +943,11 @@ export default function CertificadosAvulsos() {
                           type="button"
                           onClick={() => enviarPorEmail(item.id)}
                           disabled={isEmailLoading}
-                          className={`underline ${
-                            isEmailLoading
-                              ? "opacity-60 cursor-not-allowed"
-                              : "text-green-700 dark:text-green-300"
-                          }`}
+                          className={`underline ${isEmailLoading ? "opacity-60 cursor-not-allowed" : "text-green-700 dark:text-green-300"}`}
                           aria-label={`Enviar certificado de ${item.nome} por e-mail`}
-                          title={
-                            item.enviado ? "Reenviar e-mail" : "Enviar e-mail"
-                          }
+                          title={item.enviado ? "Reenviar e-mail" : "Enviar e-mail"}
                         >
-                          {isEmailLoading
-                            ? "Enviando…"
-                            : item.enviado
-                            ? "Reenviar"
-                            : "Enviar"}
+                          {isEmailLoading ? "Enviando…" : item.enviado ? "Reenviar" : "Enviar"}
                         </button>
                       </div>
                     </article>
@@ -1076,80 +956,42 @@ export default function CertificadosAvulsos() {
               </div>
 
               {/* Versão desktop: tabela */}
-              <div
-                className="hidden sm:block bg-white dark:bg-zinc-800 rounded-xl shadow overflow-x-auto"
-                role="region"
-                aria-live="off"
-                aria-busy={acaoLoading.id != null}
-              >
+              <div className="hidden sm:block bg-white dark:bg-zinc-800 rounded-xl shadow overflow-x-auto" role="region" aria-live="off" aria-busy={acaoLoading.id != null}>
                 <table className="w-full text-sm">
-                  <caption className="sr-only">
-                    Tabela de certificados com ações de PDF e envio por
-                    e-mail
-                  </caption>
+                  <caption className="sr-only">Tabela de certificados com ações de PDF e envio por e-mail</caption>
                   <thead>
                     <tr className="bg-gray-100 dark:bg-zinc-700 text-left">
-                      <th scope="col" className="p-2 border-b">
-                        Nome
-                      </th>
-                      <th scope="col" className="p-2 border-b">
-                        Curso
-                      </th>
-                      <th scope="col" className="p-2 border-b">
-                        Modalidade
-                      </th>
-                      <th scope="col" className="p-2 border-b">
-                        E-mail
-                      </th>
-                      <th scope="col" className="p-2 border-b text-center">
-                        Carga Horária
-                      </th>
-                      <th scope="col" className="p-2 border-b text-center">
-                        Período
-                      </th>
-                      <th scope="col" className="p-2 border-b text-center">
-                        Ações
-                      </th>
+                      <th scope="col" className="p-2 border-b">Nome</th>
+                      <th scope="col" className="p-2 border-b">Curso</th>
+                      <th scope="col" className="p-2 border-b">Modalidade</th>
+                      <th scope="col" className="p-2 border-b">E-mail</th>
+                      <th scope="col" className="p-2 border-b text-center">Carga Horária</th>
+                      <th scope="col" className="p-2 border-b text-center">Período</th>
+                      <th scope="col" className="p-2 border-b text-center">Ações</th>
                     </tr>
                   </thead>
                   <tbody>
                     {listaFiltrada.map((item) => {
                       const di = item.data_inicio?.slice(0, 10) || "";
                       const df = item.data_fim?.slice(0, 10) || "";
-                      const periodo = di
-                        ? df && df !== di
-                          ? `${ymdToBR(di)} a ${ymdToBR(df)}`
-                          : ymdToBR(di)
-                        : "—";
+                      const periodo = di ? (df && df !== di ? `${ymdToBR(di)} a ${ymdToBR(df)}` : ymdToBR(di)) : "—";
 
-                      const isEmailLoading =
-                        acaoLoading.id === item.id &&
-                        acaoLoading.tipo === "email";
-                      const isPdfLoading =
-                        acaoLoading.id === item.id &&
-                        acaoLoading.tipo === "pdf";
+                      const isEmailLoading = acaoLoading.id === item.id && acaoLoading.tipo === "email";
+                      const isPdfLoading = acaoLoading.id === item.id && acaoLoading.tipo === "pdf";
 
                       const cargaTxt =
-                        item.carga_horaria &&
-                        Number(item.carga_horaria) > 0
-                          ? `${item.carga_horaria}h`
-                          : "—";
+                        item.carga_horaria && Number(item.carga_horaria) > 0 ? `${item.carga_horaria}h` : "—";
 
                       const mod = item.modalidade || "participante";
 
                       return (
-                        <tr
-                          key={item.id}
-                          className="border-t dark:border-zinc-700"
-                        >
+                        <tr key={item.id} className="border-t dark:border-zinc-700">
                           <td className="p-2">{item.nome}</td>
                           <td className="p-2">{item.curso}</td>
                           <td className="p-2">
                             {rotuloModalidade[mod] || mod}
                             {item.titulo_trabalho ? (
-                              <div className="text-[11px] text-zinc-500 mt-0.5">
-                                {item.titulo_trabalho}
-                              </div>
+                              <div className="text-[11px] text-zinc-500 mt-0.5">{item.titulo_trabalho}</div>
                             ) : null}
                           </td>
                           <td className="p-2 break-all">{item.email}</td>
@@ -1161,17 +1003,9 @@ export default function CertificadosAvulsos() {
                                 type="button"
                                 onClick={() => gerarPDF(item.id)}
                                 disabled={isPdfLoading}
-                                className={`underline ${
-                                  isPdfLoading
-                                    ? "opacity-60 cursor-not-allowed"
-                                    : "text-blue-700 dark:text-blue-300"
-                                }`}
+                                className={`underline ${isPdfLoading ? "opacity-60 cursor-not-allowed" : "text-blue-700 dark:text-blue-300"}`}
                                 aria-label={`Baixar PDF do certificado de ${item.nome}`}
-                                title={`Baixar PDF${
-                                  usarAssinatura2 && assinatura2Id
-                                    ? " com 2 assinaturas"
-                                    : ""
-                                }`}
+                                title={`Baixar PDF${usarAssinatura2 && assinatura2Id ? " com 2 assinaturas" : ""}`}
                               >
                                 {isPdfLoading ? "Gerando…" : "PDF"}
                               </button>
@@ -1179,23 +1013,11 @@ export default function CertificadosAvulsos() {
                                 type="button"
                                 onClick={() => enviarPorEmail(item.id)}
                                 disabled={isEmailLoading}
-                                className={`underline ${
-                                  isEmailLoading
-                                    ? "opacity-60 cursor-not-allowed"
-                                    : "text-green-700 dark:text-green-300"
-                                }`}
+                                className={`underline ${isEmailLoading ? "opacity-60 cursor-not-allowed" : "text-green-700 dark:text-green-300"}`}
                                 aria-label={`Enviar certificado de ${item.nome} por e-mail`}
-                                title={
-                                  item.enviado
-                                    ? "Reenviar e-mail"
-                                    : "Enviar e-mail"
-                                }
+                                title={item.enviado ? "Reenviar e-mail" : "Enviar e-mail"}
                               >
-                                {isEmailLoading
-                                  ? "Enviando…"
-                                  : item.enviado
-                                  ? "Reenviar"
-                                  : "Enviar"}
+                                {isEmailLoading ? "Enviando…" : item.enviado ? "Reenviar" : "Enviar"}
                               </button>
                             </div>
                           </td>

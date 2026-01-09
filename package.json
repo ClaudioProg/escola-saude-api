@@ -1,14 +1,24 @@
 {
   "name": "escola-saude-api",
-  "version": "1.0.0",
-  "description": "API da Escola da Saúde - Certificados, Eventos e Presenças",
-  "main": "server.js",
+  "version": "1.1.0",
+  "description": "API da Escola da Saúde - Certificados, Eventos, Presenças e Avaliações",
+  "main": "src/server.js",
+  "private": true,
+  "license": "MIT",
+
+  "engines": {
+    "node": ">=20.11.0"
+  },
+
   "scripts": {
     "start": "node src/server.js",
+    "start:prod": "NODE_ENV=production node src/server.js",
     "dev": "nodemon src/server.js",
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "migrate:render": "node scripts/run-migration.js"
+    "dev:clean": "npx kill-port 3000 || true",
+    "migrate:render": "node scripts/run-migration.js",
+    "test": "echo \"No tests configured yet\""
   },
+
   "dependencies": {
     "bcrypt": "^6.0.0",
     "canvas": "^3.2.0",
@@ -31,13 +41,11 @@
     "nodemailer": "^7.0.3",
     "pdfkit": "^0.17.1",
     "pg": "^8.16.3",
-    "pg-hstore": "^2.3.4",
-    "qrcode": "^1.5.4",
-    "sequelize": "^6.37.7"
+    "qrcode": "^1.5.4"
   },
+
   "devDependencies": {
     "nodemon": "^3.1.10",
-    "vite-plugin-pwa": "^1.0.3"
-  },
-  "license": "MIT"
+    "kill-port": "^2.0.1"
+  }
 }

@@ -1,24 +1,17 @@
 // 📁 src/components/Breadcrumbs.jsx
 import PropTypes from "prop-types";
 import { useLocation, useNavigate } from "react-router-dom";
+import { useMemo } from "react";
 
 /**
- * Breadcrumbs com fallback pelo path atual ou trilha manual.
+ * Breadcrumbs acessível com fallback pelo path atual ou trilha manual.
  *
- * Props:
- * - trilha?: Array<{ label: string, href?: string }>
- * - homeLabel?: string               (default: "Início")
- * - homeHref?: string                (default: "/dashboard")
- * - ocultar?: string[]               (segmentos a ignorar, default ["turmas"])
- * - ocultarNumericos?: boolean       (ignora segmentos só com números, default: false)
- * - ocultarUUIDs?: boolean           (ignora segmentos uuid v4-like, default: false)
- * - mapaLabels?: Record<string,string> (substitui rótulos por chave do segmento)
- * - resolver?: (segmento, idx, segmentos) => { label?: string, href?: string, omit?: boolean }
- * - separator?: string | JSX         (default: "/")
- * - collapseAfter?: number           (colapsa quando exceder, default: 4)
- * - decodeURI?: boolean              (aplica decodeURIComponent, default: true)
- * - preserveSearch?: boolean         (mantém querystring nos hrefs gerados, default: false)
- * - preserveHash?: boolean           (mantém hash nos hrefs gerados, default: false)
+ * Extras:
+ * - basePath: remove prefixo do pathname (ex.: "/app")
+ * - maxLabelChars: truncamento elegante com tooltip
+ * - sticky: fixa no topo com backdrop blur
+ * - itemSeparator: custom separator (string/JSX)
+ * - onNavigate: callback ao navegar por item
  */
 export default function Breadcrumbs({
   trilha = null,
@@ -30,10 +23,15 @@ export default function Breadcrumbs({
   mapaLabels = {},
   resolver,
   separator = "/",
+  itemSeparator, // PRIORIDADE sobre "separator"
   collapseAfter = 4,
   decodeURI = true,
   preserveSearch = false,
   preserveHash = false,
+  basePath = "",          // ← NOVO
+  maxLabelChars = 40,     // ← NOVO
+  sticky = false,         // ← NOVO
+  onNavigate,             // ← NOVO
   className = "",
 }) {
   const location = useLocation();
@@ -42,11 +40,14 @@ export default function Breadcrumbs({
   const searchToKeep = preserveSearch ? location.search : "";
   const hashToKeep = preserveHash ? location.hash : "";
 
-  const isUUID =
-    (seg) =>
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(seg);
+  const isUUID = (seg) =>
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(seg);
 
   const isNumericOnly = (seg) => /^\d+$/.test(seg);
+
+  const safeDecode = (s) => {
+    try { return decodeURIComponent(s); } catch { return s; }
+  };
 
   const normalizarRotulo = (texto) => {
     const base = String(texto ?? "").replace(/-/g, " ");
@@ -54,52 +55,63 @@ export default function Breadcrumbs({
     return dec.replace(/\b\w/g, (l) => l.toUpperCase());
   };
 
-  function safeDecode(s) {
-    try {
-      return decodeURIComponent(s);
-    } catch {
-      return s;
-    }
-  }
+  const truncate = (s, max = 40) => {
+    const t = String(s ?? "");
+    return t.length > max ? `${t.slice(0, max - 1)}…` : t;
+  };
 
-  // Segmentar caminho atual
-  const brutos = location.pathname.split("/").filter(Boolean);
+  const rawSegments = useMemo(() => {
+    const path = basePath && location.pathname.startsWith(basePath)
+      ? location.pathname.slice(basePath.length) || "/"
+      : location.pathname;
 
-  const caminhos = brutos
-    .filter((seg) => !ocultar.includes(String(seg).toLowerCase()))
-    .filter((seg) => (ocultarNumericos ? !isNumericOnly(seg) : true))
-    .filter((seg) => (ocultarUUIDs ? !isUUID(seg) : true));
+    return path.split("/").filter(Boolean);
+  }, [location.pathname, basePath]);
 
-  // Fallback: construir itens a partir da URL (respeitando mapaLabels e resolver)
-  const auto = caminhos.map((segmento, index) => {
-    const hrefBase = "/" + caminhos.slice(0, index + 1).join("/");
-    let label = mapaLabels[segmento] ?? normalizarRotulo(segmento);
-    let href = hrefBase + (searchToKeep || "") + (hashToKeep || "");
-    let omit = false;
+  const caminhos = useMemo(() => {
+    return rawSegments
+      .filter((seg) => !ocultar.includes(String(seg).toLowerCase()))
+      .filter((seg) => (ocultarNumericos ? !isNumericOnly(seg) : true))
+      .filter((seg) => (ocultarUUIDs ? !isUUID(seg) : true));
+  }, [rawSegments, ocultar, ocultarNumericos, ocultarUUIDs]);
 
-    if (typeof resolver === "function") {
-      const out = resolver(segmento, index, caminhos) || {};
-      if (out.omit) omit = true;
-      if (typeof out.label === "string") label = out.label;
-      if (typeof out.href === "string") href = out.href;
-    }
+  const auto = useMemo(() => {
+    return caminhos
+      .map((segmento, index) => {
+        const hrefBase = "/" + caminhos.slice(0, index + 1).join("/");
+        let label = mapaLabels[segmento] ?? normalizarRotulo(segmento);
+        let href = hrefBase + (searchToKeep || "") + (hashToKeep || "");
+        let omit = false;
 
-    return omit ? null : { label, href };
-  }).filter(Boolean);
+        if (typeof resolver === "function") {
+          const out = resolver(segmento, index, caminhos) || {};
+          if (out.omit) omit = true;
+          if (typeof out.label === "string") label = out.label;
+          if (typeof out.href === "string") href = out.href;
+        }
 
-  // Decide a fonte
-  const lista = Array.isArray(trilha) && trilha.length ? trilha : auto;
+        return omit ? null : { label, href };
+      })
+      .filter(Boolean);
+  }, [caminhos, mapaLabels, resolver, searchToKeep, hashToKeep]);
 
-  // Colapso opcional (preserva primeiro + últimos N-1)
-  const precisaColapsar = collapseAfter && lista.length > collapseAfter;
-  const compacta = precisaColapsar
-    ? [lista[0], { label: "…", href: null }, ...lista.slice(-(collapseAfter - 1))]
-    : lista;
+  const lista = useMemo(() => {
+    const base = Array.isArray(trilha) && trilha.length ? trilha : auto;
+    if (!collapseAfter || base.length <= collapseAfter) return base;
 
-  const go = (href) => {
+    // mantém primeiro + últimos (collapseAfter - 1)
+    return [base[0], { label: "…", href: null }, ...base.slice(-(collapseAfter - 1))];
+  }, [trilha, auto, collapseAfter]);
+
+  const go = (href, item) => {
     if (!href) return;
+    onNavigate?.(href, item);
     navigate(href);
   };
+
+  const sepNode = itemSeparator ?? (
+    <span className="text-gray-400 select-none" aria-hidden="true">/</span>
+  );
 
   return (
     <nav
@@ -107,29 +119,34 @@ export default function Breadcrumbs({
       className={[
         "text-sm text-gray-600 dark:text-gray-300 mb-4",
         "overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-700",
+        sticky ? "sticky top-0 z-20 bg-white/70 dark:bg-zinc-900/70 backdrop-blur supports-[backdrop-filter]:backdrop-blur-md py-2" : "",
         className,
       ].join(" ")}
     >
-      <ol className="flex items-center gap-2 min-w-min" itemScope itemType="https://schema.org/BreadcrumbList">
+      <ol
+        className="flex items-center gap-2 min-w-min"
+        itemScope
+        itemType="https://schema.org/BreadcrumbList"
+      >
         {/* Início */}
         <li itemProp="itemListElement" itemScope itemType="https://schema.org/ListItem">
           <button
             type="button"
-            onClick={() => go(homeHref)}
+            onClick={() => go(homeHref, { label: homeLabel, href: homeHref })}
             className="cursor-pointer hover:underline text-green-900 dark:text-green-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-green-900/60 rounded-md px-1"
             aria-label={`Ir para ${homeLabel}`}
             itemProp="item"
           >
-            <span itemProp="name">{homeLabel}</span>
+            <span itemProp="name">{truncate(homeLabel, maxLabelChars)}</span>
           </button>
           <meta itemProp="position" content="1" />
         </li>
 
-        {/* Itens da trilha */}
-        {compacta.map((item, index) => {
-          const isLast = index === compacta.length - 1 || !item?.href;
-          // posição no schema considera o "Início" como 1
-          const pos = index + 2;
+        {/* Itens */}
+        {lista.map((item, index) => {
+          const isLast = index === lista.length - 1 || !item?.href;
+          const pos = index + 2; // considerando "Início" como 1
+          const label = truncate(item.label, maxLabelChars);
 
           return (
             <li
@@ -139,8 +156,9 @@ export default function Breadcrumbs({
               itemScope
               itemType="https://schema.org/ListItem"
             >
-              <span className="text-gray-400 select-none" aria-hidden="true">
-                {separator}
+              {/* Separador com a11y */}
+              <span role="presentation" aria-hidden="true">
+                {sepNode}
               </span>
 
               {isLast ? (
@@ -149,7 +167,7 @@ export default function Breadcrumbs({
                   aria-current="page"
                   title={item.label}
                 >
-                  <span itemProp="name">{item.label}</span>
+                  <span itemProp="name">{label}</span>
                 </span>
               ) : item.label === "…" ? (
                 <span className="px-1 text-gray-500 dark:text-gray-400" aria-hidden="true">
@@ -158,13 +176,13 @@ export default function Breadcrumbs({
               ) : (
                 <button
                   type="button"
-                  onClick={() => go(item.href)}
+                  onClick={() => go(item.href, item)}
                   className="cursor-pointer hover:underline text-green-900 dark:text-green-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-green-900/60 rounded-md px-1 truncate max-w-[28ch]"
                   aria-label={`Ir para ${item.label}`}
                   title={item.label}
                   itemProp="item"
                 >
-                  <span itemProp="name">{item.label}</span>
+                  <span itemProp="name">{label}</span>
                 </button>
               )}
 
@@ -192,9 +210,14 @@ Breadcrumbs.propTypes = {
   mapaLabels: PropTypes.object,
   resolver: PropTypes.func,
   separator: PropTypes.oneOfType([PropTypes.string, PropTypes.node]),
+  itemSeparator: PropTypes.oneOfType([PropTypes.string, PropTypes.node]),
   collapseAfter: PropTypes.number,
   decodeURI: PropTypes.bool,
   preserveSearch: PropTypes.bool,
   preserveHash: PropTypes.bool,
+  basePath: PropTypes.string,
+  maxLabelChars: PropTypes.number,
+  sticky: PropTypes.bool,
+  onNavigate: PropTypes.func,
   className: PropTypes.string,
 };

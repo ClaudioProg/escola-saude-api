@@ -2,28 +2,52 @@
 /* eslint-disable no-console */
 const path = require("path");
 const fs = require("fs");
-const db = require("../db");
+const dbFallback = require("../db");
 
 /* ————————————————— Configs/tamanhos ————————————————— */
 const MAX_DATAURL_TOTAL = 6 * 1024 * 1024; // 6MB: limite para a string toda (prefixo + base64)
-const MAX_BASE64_BYTES   = 4 * 1024 * 1024; // 4MB: tamanho só do payload base64 (ajuste se quiser)
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024;   // 4MB: limite do payload real (bytes decodificados)
 
 /* ————————————————— Helpers gerais ————————————————— */
+function getDb(req) {
+  return req?.db ?? dbFallback;
+}
+
+function getRequestId(res) {
+  try {
+    return res?.getHeader?.("X-Request-Id") || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function getUserId(req) {
-  return req.user?.id ?? req.user?.id ?? null;
+  // cobre variações comuns
+  return req.user?.id ?? req.user?.usuario_id ?? req.user?.userId ?? null;
 }
-function extractBase64Payload(dataUrl) {
-  const m = String(dataUrl || "").match(/^data:[^;]+;base64,([\s\S]+)$/);
-  return m ? m[1] : null;
-}
+
 function normPerfis(p) {
   if (Array.isArray(p)) return p.map((x) => String(x).toLowerCase().trim()).filter(Boolean);
   if (typeof p === "string") return p.split(",").map((x) => x.toLowerCase().trim()).filter(Boolean);
   return [];
 }
+
 function isInstrOuAdm(perfis) {
   const arr = normPerfis(perfis);
   return arr.includes("instrutor") || arr.includes("administrador");
+}
+
+function extractBase64Payload(dataUrl) {
+  const m = String(dataUrl || "").match(/^data:[^;]+;base64,([\s\S]+)$/);
+  return m ? m[1] : null;
+}
+
+// base64 -> bytes aproximado (considerando padding "=")
+function base64ToBytesApprox(b64) {
+  const s = String(b64 || "").replace(/\s/g, "");
+  if (!s) return 0;
+  const padding = s.endsWith("==") ? 2 : s.endsWith("=") ? 1 : 0;
+  return Math.floor((s.length * 3) / 4) - padding;
 }
 
 /* ————————————————— Abreviação do nome ————————————————— */
@@ -31,16 +55,17 @@ function buildNameVariants(fullName = "") {
   const clean = String(fullName).replace(/\s+/g, " ").trim();
   if (!clean) return { text: "Assinatura" };
   const parts = clean.split(" ").filter(Boolean);
-  if (parts.length === 1) return { text: parts[0] };
+  if (parts.length === 1) return { text: parts[0], clean: parts[0] };
 
   const first = parts[0];
   const last = parts[parts.length - 1];
   return {
     clean,
-    opt1: `${first} ${last}`,                     // Nome Sobrenome
-    opt2: `${first} ${last[0].toUpperCase()}.`,   // Nome S.
-    opt3: `${first[0].toUpperCase()}. ${last}`,   // N. Sobrenome
+    opt1: `${first} ${last}`, // Nome Sobrenome
+    opt2: `${first} ${last[0].toUpperCase()}.`, // Nome S.
+    opt3: `${first[0].toUpperCase()}. ${last}`, // N. Sobrenome
     opt4: `${first[0].toUpperCase()}. ${last[0].toUpperCase()}.`, // N. S.
+    text: "Assinatura",
   };
 }
 
@@ -61,7 +86,9 @@ function resolveSignatureTtf() {
 let externalRenderSignaturePng = null;
 try {
   externalRenderSignaturePng = require("../utils/signature")?.renderSignaturePng || null;
-} catch {}
+} catch {
+  // ignore
+}
 
 let canvasLib = null;
 function requireCanvas() {
@@ -97,7 +124,7 @@ function ensureFontRegistered() {
       console.warn("[assinatura] TTF não encontrado — usando fonte cursiva do sistema (fallback).");
     }
   } catch (e) {
-    console.warn("[assinatura] Falha ao registrar fonte cursiva:", e.message);
+    console.warn("[assinatura] Falha ao registrar fonte cursiva:", e?.message);
   } finally {
     _fontRegistered = true;
   }
@@ -110,6 +137,7 @@ function renderSignatureFallbackPng(nome) {
   const W = SIGNATURE_CFG.WIDTH;
   const H = SIGNATURE_CFG.HEIGHT;
   const PAD = SIGNATURE_CFG.PAD;
+
   const c = createCanvas(W, H);
   const ctx = c.getContext("2d");
   ctx.clearRect(0, 0, W, H);
@@ -123,11 +151,12 @@ function renderSignatureFallbackPng(nome) {
   }
   function fits(text, size) {
     ctx.font = fontSpec(size);
-    const m = ctx.measureText(text);
-    return m.width <= maxTextWidth;
+    return ctx.measureText(text).width <= maxTextWidth;
   }
   function pickVariant() {
-    for (const t of opts) { if (fits(t, SIGNATURE_CFG.FONT_MIN)) return t; }
+    for (const t of opts) {
+      if (fits(t, SIGNATURE_CFG.FONT_MIN)) return t;
+    }
     return opts[opts.length - 1];
   }
   function pickFontSize(text) {
@@ -136,7 +165,12 @@ function renderSignatureFallbackPng(nome) {
     let best = lo;
     while (lo <= hi) {
       const mid = Math.floor((lo + hi) / 2);
-      if (fits(text, mid)) { best = mid; lo = mid + 2; } else { hi = mid - 2; }
+      if (fits(text, mid)) {
+        best = mid;
+        lo = mid + 2;
+      } else {
+        hi = mid - 2;
+      }
     }
     return best;
   }
@@ -147,10 +181,12 @@ function renderSignatureFallbackPng(nome) {
   ctx.font = fontSpec(fontPx);
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
+
   ctx.shadowColor = SIGNATURE_CFG.SHADOW;
   ctx.shadowBlur = 6;
   ctx.shadowOffsetX = 2;
   ctx.shadowOffsetY = 2;
+
   ctx.lineWidth = Math.max(1, Math.round(fontPx * 0.03));
   ctx.strokeStyle = SIGNATURE_CFG.STROKE;
   ctx.fillStyle = SIGNATURE_CFG.FILL;
@@ -166,19 +202,27 @@ function renderSignatureFallbackPng(nome) {
 
 function renderSignaturePng(name) {
   if (typeof externalRenderSignaturePng === "function") {
-    try { return externalRenderSignaturePng(name); } catch { /* fallback */ }
+    try {
+      return externalRenderSignaturePng(name);
+    } catch {
+      // fallback
+    }
   }
   return renderSignatureFallbackPng(name);
 }
 
-/* ————————————————— Auto-geração e persistência ————————————————— */
-async function ensureAutoSignature(usuarioId) {
-  const exists = await db.query(
-    "SELECT 1 FROM assinaturas WHERE usuario_id = $1 AND imagem_base64 IS NOT NULL AND imagem_base64 <> '' LIMIT 1",
+/* ————————————————— Auto-geração e persistência (idempotente) ————————————————— */
+async function ensureAutoSignature(usuarioId, req = null) {
+  const db = getDb(req);
+
+  // 1) Já existe assinatura?
+  const existing = await db.query(
+    "SELECT imagem_base64 FROM assinaturas WHERE usuario_id = $1 AND imagem_base64 IS NOT NULL AND imagem_base64 <> '' LIMIT 1",
     [usuarioId]
   );
-  if (exists.rows.length > 0) return null;
+  if (existing.rows?.[0]?.imagem_base64) return null; // nada a fazer
 
+  // 2) Confere se é instrutor/admin
   const uRes = await db.query(
     `SELECT id, nome, email, perfil, perfis
        FROM usuarios
@@ -188,13 +232,13 @@ async function ensureAutoSignature(usuarioId) {
   );
   const u = uRes.rows?.[0];
   if (!u) return null;
-
   if (!isInstrOuAdm(u.perfis ?? u.perfil)) return null;
 
   const displayName = String(u.nome || u.email || `Usuario_${u.id}`).trim();
   const { buffer } = renderSignaturePng(displayName);
   const dataUrl = `data:image/png;base64,${buffer.toString("base64")}`;
 
+  // 3) UPSERT idempotente
   await db.query(
     `INSERT INTO assinaturas (usuario_id, imagem_base64)
      VALUES ($1, $2)
@@ -211,101 +255,109 @@ async function ensureAutoSignature(usuarioId) {
 /** 🖋️ GET /api/assinatura — retorna a assinatura (autogera se instrutor/adm sem assinatura) */
 async function getAssinatura(req, res) {
   const usuario_id = getUserId(req);
-  if (!usuario_id) return res.status(401).json({ erro: "Usuário não autenticado." });
+  if (!usuario_id) {
+    return res.status(401).json({ ok: false, erro: "Usuário não autenticado.", requestId: getRequestId(res) });
+  }
+
+  const db = getDb(req);
 
   try {
-    const r = await db.query(
-      "SELECT imagem_base64 FROM assinaturas WHERE usuario_id = $1 LIMIT 1",
-      [usuario_id]
-    );
+    const r = await db.query("SELECT imagem_base64 FROM assinaturas WHERE usuario_id = $1 LIMIT 1", [usuario_id]);
     let assinatura = r.rows?.[0]?.imagem_base64 || null;
 
     if (!assinatura) {
       try {
-        const nova = await ensureAutoSignature(usuario_id);
+        const nova = await ensureAutoSignature(usuario_id, req);
         if (nova) {
           res.setHeader("X-Assinatura-Autogerada", "1");
           assinatura = nova;
         }
       } catch (e) {
-        console.warn("[assinatura][auto] falha ao autogerar:", e?.message);
+        console.warn("[assinatura][auto] falha ao autogerar:", { rid: req.requestId, usuario_id, msg: e?.message });
       }
     }
 
-    return res.status(200).json({ assinatura });
+    return res.status(200).json({ ok: true, assinatura, requestId: getRequestId(res) });
   } catch (e) {
-    console.error("❌ Erro ao buscar assinatura:", e);
-    return res.status(500).json({ erro: "Erro ao buscar assinatura." });
+    console.error("[assinatura] Erro ao buscar assinatura:", { rid: req.requestId, usuario_id, msg: e?.message });
+    return res.status(500).json({ ok: false, erro: "Erro ao buscar assinatura.", requestId: getRequestId(res) });
   }
 }
 
 /** ✍️ POST /api/assinatura — salva/atualiza dataURL enviada pelo usuário */
 async function salvarAssinatura(req, res) {
   const usuario_id = getUserId(req);
-  const { assinatura } = req.body;
+  const { assinatura } = req.body || {};
 
   if (!usuario_id) {
-    return res.status(401).json({ erro: "Usuário não autenticado." });
+    return res.status(401).json({ ok: false, erro: "Usuário não autenticado.", requestId: getRequestId(res) });
   }
   if (!assinatura || typeof assinatura !== "string") {
-    return res.status(400).json({ erro: "Assinatura é obrigatória." });
+    return res.status(400).json({ ok: false, erro: "Assinatura é obrigatória.", requestId: getRequestId(res) });
   }
 
-  const isAllowedDataUrl =
-    /^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=\s]+$/.test(assinatura);
+  const trimmed = assinatura.trim();
+
+  // Aceita png/jpg/jpeg/webp
+  const isAllowedDataUrl = /^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=\s]+$/.test(trimmed);
   if (!isAllowedDataUrl) {
     return res.status(400).json({
+      ok: false,
       erro: "Assinatura inválida. Envie PNG, JPG/JPEG ou WEBP em base64.",
+      requestId: getRequestId(res),
     });
   }
 
-  if (assinatura.length > MAX_DATAURL_TOTAL) {
-    return res.status(413).json({ erro: "Imagem muito grande (limite 6MB)." });
-  }
-  const b64 = extractBase64Payload(assinatura);
-  if (!b64) {
-    return res.status(400).json({ erro: "Data URL inválida." });
-  }
-  if (b64.length > MAX_BASE64_BYTES * 1.37) {
-    return res.status(413).json({ erro: "Imagem muito grande (payload > 4MB)." });
+  if (trimmed.length > MAX_DATAURL_TOTAL) {
+    return res.status(413).json({ ok: false, erro: "Imagem muito grande (limite 6MB).", requestId: getRequestId(res) });
   }
 
-  const payload = assinatura.trim();
+  const b64 = extractBase64Payload(trimmed);
+  if (!b64) {
+    return res.status(400).json({ ok: false, erro: "Data URL inválida.", requestId: getRequestId(res) });
+  }
+
+  const bytes = base64ToBytesApprox(b64);
+  if (bytes > MAX_IMAGE_BYTES) {
+    return res.status(413).json({
+      ok: false,
+      erro: "Imagem muito grande (payload > 4MB).",
+      requestId: getRequestId(res),
+    });
+  }
+
+  const payload = trimmed.replace(/\s+/g, ""); // remove whitespaces do base64 sem alterar o conteúdo
+
+  const db = getDb(req);
 
   try {
-    try {
-      await db.query(
-        `INSERT INTO assinaturas (usuario_id, imagem_base64)
-         VALUES ($1, $2)
-         ON CONFLICT (usuario_id)
-         DO UPDATE SET imagem_base64 = EXCLUDED.imagem_base64`,
-        [usuario_id, payload]
-      );
-    } catch {
-      const upd = await db.query(
-        "UPDATE assinaturas SET imagem_base64 = $1 WHERE usuario_id = $2",
-        [payload, usuario_id]
-      );
-      if (upd.rowCount === 0) {
-        await db.query(
-          "INSERT INTO assinaturas (usuario_id, imagem_base64) VALUES ($1, $2)",
-          [usuario_id, payload]
-        );
-      }
-    }
+    await db.query(
+      `INSERT INTO assinaturas (usuario_id, imagem_base64)
+       VALUES ($1, $2)
+       ON CONFLICT (usuario_id)
+       DO UPDATE SET imagem_base64 = EXCLUDED.imagem_base64`,
+      [usuario_id, payload]
+    );
 
-    return res.status(200).json({ mensagem: "Assinatura salva com sucesso." });
+    return res.status(200).json({ ok: true, mensagem: "Assinatura salva com sucesso.", requestId: getRequestId(res) });
   } catch (e) {
-    console.error("❌ Erro ao salvar assinatura:", {
-      message: e?.message, code: e?.code, detail: e?.detail, table: e?.table,
-      constraint: e?.constraint, stack: e?.stack,
+    console.error("[assinatura] Erro ao salvar assinatura:", {
+      rid: req.requestId,
+      usuario_id,
+      message: e?.message,
+      code: e?.code,
+      detail: e?.detail,
+      table: e?.table,
+      constraint: e?.constraint,
     });
-    return res.status(500).json({ erro: "Erro ao salvar assinatura." });
+    return res.status(500).json({ ok: false, erro: "Erro ao salvar assinatura.", requestId: getRequestId(res) });
   }
 }
 
 /** 📜 GET /api/assinatura/lista — lista metadados (sem imagem) */
 async function listarAssinaturas(req, res) {
+  const db = getDb(req);
+
   try {
     const { rows } = await db.query(
       `SELECT a.usuario_id AS id, u.nome, COALESCE(u.cargo, NULL) AS cargo
@@ -323,10 +375,10 @@ async function listarAssinaturas(req, res) {
       tem_assinatura: true,
     }));
 
-    return res.json(lista);
+    return res.status(200).json({ ok: true, lista, requestId: getRequestId(res) });
   } catch (e) {
-    console.error("❌ Erro ao listar assinaturas:", e);
-    return res.status(500).json({ erro: "Erro ao listar assinaturas." });
+    console.error("[assinatura] Erro ao listar assinaturas:", { rid: req.requestId, msg: e?.message });
+    return res.status(500).json({ ok: false, erro: "Erro ao listar assinaturas.", requestId: getRequestId(res) });
   }
 }
 
@@ -334,6 +386,5 @@ module.exports = {
   getAssinatura,
   salvarAssinatura,
   listarAssinaturas,
-  // útil para o gerador de certificados chamar direto se quiser
   ensureAutoSignature,
 };

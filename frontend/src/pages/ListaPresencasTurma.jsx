@@ -1,15 +1,120 @@
-// ✅ src/pages/ListaPresencasTurma.jsx
-import { useState, useEffect, useMemo } from "react";
+// ✅ src/pages/ListaPresencasTurma.jsx (premium + mobile-first + a11y + cards no mobile + regras admin 15 dias)
+/* eslint-disable no-alert */
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { toast } from "react-toastify";
 import { AnimatePresence, motion } from "framer-motion";
-import { CheckCircle, XCircle, ClipboardList } from "lucide-react";
+import {
+  CheckCircle,
+  XCircle,
+  ClipboardList,
+  ChevronDown,
+  ChevronRight,
+  UsersRound,
+  CalendarDays,
+  Clock,
+  ShieldCheck,
+} from "lucide-react";
 
 import Breadcrumbs from "../components/Breadcrumbs";
 import PageHeader from "../components/PageHeader";
 import Footer from "../components/Footer";
 import NadaEncontrado from "../components/NadaEncontrado";
-import { formatarDataBrasileira } from "../utils/data";
+import { formatarDataBrasileira, formatarCPF } from "../utils/data";
 import { apiPost } from "../services/api";
+
+/* ───────────────────────────────
+   Helpers anti-fuso (datas locais)
+   ─────────────────────────────── */
+const ymdParts = (s) => {
+  const m = String(s || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? { y: +m[1], mo: +m[2], d: +m[3] } : null;
+};
+const hmsParts = (s, fb = "00:00") => {
+  const [hh, mm] = String(s || fb)
+    .split(":")
+    .map((n) => parseInt(n, 10) || 0);
+  return { hh, mm };
+};
+const makeLocalDate = (yyyy_mm_dd, hhmm = "00:00") => {
+  const d = ymdParts(yyyy_mm_dd);
+  const t = hmsParts(hhmm);
+  return d ? new Date(d.y, d.mo - 1, d.d, t.hh, t.mm, 0, 0) : new Date(NaN);
+};
+const isoDia = (d) => {
+  if (!d) return "";
+  if (d instanceof Date && !Number.isNaN(+d)) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }
+  const s = String(d);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  const nd = new Date(s);
+  if (!Number.isNaN(+nd)) {
+    const y = nd.getFullYear();
+    const mo = String(nd.getMonth() + 1).padStart(2, "0");
+    const da = String(nd.getDate()).padStart(2, "0");
+    return `${y}-${mo}-${da}`;
+  }
+  return "";
+};
+
+const addDaysMs = (ms, days) => ms + days * 24 * 60 * 60 * 1000;
+
+/* ───────────────────────────────
+   UI helpers (status/cores)
+   ─────────────────────────────── */
+function statusBarClass(statusRaw) {
+  const s = String(statusRaw || "").toLowerCase();
+  if (s === "programado" || s === "agendada" || s === "agendado") {
+    return "bg-gradient-to-r from-emerald-700 via-emerald-600 to-emerald-400";
+  }
+  if (s === "andamento" || s === "em andamento") {
+    return "bg-gradient-to-r from-amber-700 via-amber-600 to-amber-400";
+  }
+  if (s === "encerrado" || s === "realizado" || s === "finalizado") {
+    return "bg-gradient-to-r from-rose-800 via-rose-700 to-rose-500";
+  }
+  return "bg-gradient-to-r from-slate-600 via-slate-500 to-slate-400";
+}
+
+function Badge({ tone = "zinc", children, className = "" }) {
+  const tones = {
+    zinc: "bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-700",
+    emerald:
+      "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800/50",
+    amber:
+      "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 border border-amber-200 dark:border-amber-800/50",
+    rose:
+      "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200 border border-rose-200 dark:border-rose-800/50",
+    sky:
+      "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200 border border-sky-200 dark:border-sky-800/50",
+  };
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${tones[tone] || tones.zinc} ${className}`}
+    >
+      {children}
+    </span>
+  );
+}
+
+function Collapser({ id, open, onToggle, children, className = "" }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className={`inline-flex items-center gap-1 text-left ${className}`}
+      aria-expanded={open}
+      aria-controls={id}
+    >
+      {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+      {children}
+    </button>
+  );
+}
 
 export default function ListaPresencasTurma({
   turmas = [],
@@ -27,52 +132,15 @@ export default function ListaPresencasTurma({
     setInscritosState(inscritosPorTurma);
   }, [inscritosPorTurma]);
 
-  /* ───────────────────────────────
-     Helpers anti-fuso (datas locais)
-     ─────────────────────────────── */
-  const ymd = (s) => {
-    const m = String(s || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
-    return m ? { y: +m[1], mo: +m[2], d: +m[3] } : null;
-  };
-  const hms = (s, fb = "00:00") => {
-    const [hh, mm] = String(s || fb).split(":").map((n) => parseInt(n, 10) || 0);
-    return { hh, mm };
-  };
-  const makeLocalDate = (yyyy_mm_dd, hhmm = "00:00") => {
-    const d = ymd(yyyy_mm_dd);
-    const t = hms(hhmm);
-    return d ? new Date(d.y, d.mo - 1, d.d, t.hh, t.mm, 0, 0) : new Date(NaN);
-  };
-  const isoDia = (d) => {
-    if (!d) return "";
-    if (d instanceof Date && !isNaN(+d)) {
-      const y = d.getFullYear();
-      const m = String(d.getMonth() + 1).padStart(2, "0");
-      const day = String(d.getDate()).padStart(2, "0");
-      return `${y}-${m}-${day}`;
-    }
-    const s = String(d);
-    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (m) return `${m[1]}-${m[2]}-${m[3]}`;
-    const nd = new Date(s);
-    if (!isNaN(+nd)) {
-      const y = nd.getFullYear();
-      const mo = String(nd.getMonth() + 1).padStart(2, "0");
-      const da = String(nd.getDate()).padStart(2, "0");
-      return `${y}-${mo}-${da}`;
-    }
-    return "";
-  };
-
-  // ordena turmas por data_inicio (mais recentes primeiro) para melhor UX
+  // ordena turmas por data_inicio (mais recentes primeiro)
   const turmasOrdenadas = useMemo(() => {
     const key = (t) => isoDia(t?.data_inicio) || "";
     return [...(Array.isArray(turmas) ? turmas : [])].sort((a, b) =>
-      (key(b) > key(a)) ? 1 : (key(b) < key(a) ? -1 : 0)
+      key(b) > key(a) ? 1 : key(b) < key(a) ? -1 : 0
     );
   }, [turmas]);
 
-  // quando expandir e não houver inscritos, carrega automaticamente
+  // ao expandir: carrega inscritos se não houver
   useEffect(() => {
     if (!turmaExpandidaId || !carregarInscritos) return;
     const lista = inscritosState?.[turmaExpandidaId];
@@ -82,262 +150,467 @@ export default function ListaPresencasTurma({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [turmaExpandidaId]);
 
-  async function confirmarPresenca(turmaId, usuarioId, dataISO) {
-    const confirmar = window.confirm("Deseja realmente confirmar presença deste usuário?");
-    if (!confirmar) return;
+  const confirmarPresenca = useCallback(
+    async (turmaId, usuarioId, dataISO) => {
+      const confirmar = window.confirm("Deseja realmente confirmar presença deste usuário?");
+      if (!confirmar) return;
 
-    setLoading({ turmaId, usuarioId, data: dataISO });
+      setLoading({ turmaId, usuarioId, data: dataISO });
 
-    try {
-      await apiPost("/api/presencas/confirmar-simples", {
-        turma_id: turmaId,
-        usuario_id: usuarioId,
-        data: dataISO,
-      });
-
-      toast.success("✅ Presença confirmada com sucesso.", { ariaLive: "polite" });
-
-      // atualização otimista
-      setInscritosState((prev) => {
-        const next = { ...prev };
-        const lista = Array.isArray(next[turmaId]) ? next[turmaId] : [];
-        next[turmaId] = lista.map((p) => {
-          const idNorm = p.usuario_id ?? p.id;
-          if (String(idNorm) !== String(usuarioId)) return p;
-
-          // suporta dois formatos: array de presenças ou mapa { 'YYYY-MM-DD': true }
-          if (Array.isArray(p.presencas)) {
-            const jaExiste = p.presencas.some((pp) => isoDia(pp.data_presenca) === dataISO);
-            return jaExiste
-              ? p
-              : { ...p, presencas: [...p.presencas, { data_presenca: dataISO, presente: true }] };
-          }
-          return { ...p, presencas: { ...(p.presencas || {}), [dataISO]: true } };
+      try {
+        await apiPost("/api/presencas/confirmar-simples", {
+          turma_id: turmaId,
+          usuario_id: usuarioId,
+          data: dataISO,
         });
-        return next;
-      });
 
-      // sincroniza do servidor (opcional)
-      if (carregarInscritos) await carregarInscritos(turmaId);
-    } catch (err) {
-      toast.error("❌ " + (err?.message || "Erro ao confirmar presença"), { ariaLive: "assertive" });
-    } finally {
-      setLoading(null);
-    }
-  }
+        toast.success("✅ Presença confirmada com sucesso.", { ariaLive: "polite" });
+
+        // atualização otimista
+        setInscritosState((prev) => {
+          const next = { ...prev };
+          const lista = Array.isArray(next[turmaId]) ? next[turmaId] : [];
+          next[turmaId] = lista.map((p) => {
+            const idNorm = p.usuario_id ?? p.id;
+            if (String(idNorm) !== String(usuarioId)) return p;
+
+            // suporta dois formatos: array de presenças ou mapa { 'YYYY-MM-DD': true }
+            if (Array.isArray(p.presencas)) {
+              const jaExiste = p.presencas.some((pp) => isoDia(pp.data_presenca) === dataISO);
+              return jaExiste
+                ? p
+                : { ...p, presencas: [...p.presencas, { data_presenca: dataISO, presente: true }] };
+            }
+            return { ...p, presencas: { ...(p.presencas || {}), [dataISO]: true } };
+          });
+          return next;
+        });
+
+        // sincroniza do servidor
+        if (carregarInscritos) await carregarInscritos(turmaId);
+      } catch (err) {
+        toast.error("❌ " + (err?.message || "Erro ao confirmar presença"), { ariaLive: "assertive" });
+      } finally {
+        setLoading(null);
+      }
+    },
+    [carregarInscritos]
+  );
 
   /* ─────────────── render vazio ─────────────── */
   if (!Array.isArray(turmas) || turmas.length === 0) {
     return (
       <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
-        {/* Cabeçalho verde (dentro do padrão de 3 variantes do sistema) */}
         <PageHeader title="Presenças por Turma" icon={ClipboardList} variant="esmeralda" />
         <main className="flex-1 px-2 sm:px-4 py-6">
           <Breadcrumbs trilha={[{ label: "Painel" }, { label: "Presenças por Turma" }]} />
-          <NadaEncontrado
-            mensagem="Nenhuma turma encontrada."
-            sugestao="Verifique os filtros ou cadastre uma nova turma."
-          />
+          <NadaEncontrado mensagem="Nenhuma turma encontrada." sugestao="Verifique os filtros ou cadastre uma nova turma." />
         </main>
         <Footer />
       </div>
     );
   }
 
-  /* ─────────────── render normal ─────────────── */
+  const hojeISO = isoDia(hoje);
+
   return (
     <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
-      {/* Faixa de título (verde/esmeralda) */}
       <PageHeader title="Presenças por Turma" icon={ClipboardList} variant="esmeralda" />
 
       <main className="flex-1 px-2 sm:px-4 py-6">
         <Breadcrumbs trilha={[{ label: "Painel" }, { label: "Presenças por Turma" }]} />
 
-        <div className="space-y-6">
+        {/* ministats rápidos */}
+        <section aria-label="Resumo" className="max-w-6xl mx-auto mt-4 mb-5 grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-4 shadow-sm">
+            <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wide text-zinc-500">
+              <CalendarDays className="w-4 h-4" /> Turmas
+            </div>
+            <div className="mt-1 text-3xl font-extrabold text-lousa dark:text-white">
+              {turmasOrdenadas.length}
+            </div>
+          </div>
+
+          <div className="rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-4 shadow-sm">
+            <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wide text-zinc-500">
+              <UsersRound className="w-4 h-4" /> Inscritos carregados
+            </div>
+            <div className="mt-1 text-3xl font-extrabold text-emerald-700 dark:text-emerald-300">
+              {Object.values(inscritosState || {}).reduce((acc, arr) => acc + (Array.isArray(arr) ? arr.length : 0), 0)}
+            </div>
+          </div>
+
+          <div className="rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-4 shadow-sm">
+            <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wide text-zinc-500">
+              <ShieldCheck className="w-4 h-4" /> Janela de confirmação
+            </div>
+            <div className="mt-1 text-sm font-bold text-zinc-800 dark:text-zinc-200">
+              {modoadministradorPresencas ? "Admin: 1h após início até 15 dias após o fim" : "Somente leitura"}
+            </div>
+          </div>
+        </section>
+
+        <div className="max-w-6xl mx-auto space-y-5">
           {turmasOrdenadas.map((turma) => {
             const inicioDia = isoDia(turma.data_inicio);
             const fimDia = isoDia(turma.data_fim);
 
+            const aberto = turmaExpandidaId === turma.id;
+            const secId = `detalhes-turma-${turma.id}`;
+
+            const statusLabel = turma.status || "Agendada";
+            const bar = statusBarClass(statusLabel);
+
+            const inscritos = inscritosState?.[turma.id];
+            const inscritosCount = Array.isArray(inscritos) ? inscritos.length : 0;
+
             return (
               <section
                 key={turma.id}
-                className="border rounded-xl bg-white dark:bg-gray-800 shadow p-4"
+                className="relative overflow-hidden rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm"
                 aria-labelledby={`turma-${turma.id}-titulo`}
               >
-                <div className="flex justify-between items-center">
-                  <div>
-                    <h2
-                      id={`turma-${turma.id}-titulo`}
-                      className="font-bold text-lg text-lousa dark:text-green-200"
-                    >
-                      {turma.nome}
-                    </h2>
-                    <p className="text-gray-600 dark:text-gray-300 text-sm">
-                      {formatarDataBrasileira(inicioDia)} até {formatarDataBrasileira(fimDia)}
-                    </p>
-                  </div>
-                  <span
-                    className="text-xs px-2 py-1 bg-gray-200 dark:bg-gray-700 dark:text-white rounded-full"
-                    aria-label={`Status: ${turma.status || "Agendada"}`}
-                  >
-                    {turma.status || "Agendada"}
-                  </span>
-                </div>
+                {/* barra superior (padrão CardEventoAdministrador) */}
+                <div className={`absolute top-0 left-0 right-0 h-1.5 ${bar}`} aria-hidden="true" />
 
-                <div className="mt-4">
-                  <button
-                    className="bg-lousa text-white px-4 py-2 rounded hover:bg-green-900 transition focus:outline-none focus:ring-2 focus:ring-lousa"
-                    onClick={() =>
-                      setTurmaExpandidaId(turmaExpandidaId === turma.id ? null : turma.id)
-                    }
-                    aria-expanded={turmaExpandidaId === turma.id}
-                    aria-controls={`detalhes-turma-${turma.id}`}
-                  >
-                    {turmaExpandidaId === turma.id ? "Recolher Detalhes" : "Ver Detalhes"}
-                  </button>
+                {/* cabeçalho */}
+                <div className="p-4 sm:p-5">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <h2
+                        id={`turma-${turma.id}-titulo`}
+                        className="font-extrabold text-lg sm:text-xl text-lousa dark:text-emerald-200 break-words"
+                      >
+                        {turma.nome}
+                      </h2>
+
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
+                        <span className="inline-flex items-center gap-1">
+                          <CalendarDays className="w-4 h-4" />
+                          {inicioDia ? formatarDataBrasileira(inicioDia) : "—"} até{" "}
+                          {fimDia ? formatarDataBrasileira(fimDia) : "—"}
+                        </span>
+
+                        <span className="inline-flex items-center gap-1">
+                          <Clock className="w-4 h-4" />
+                          {turma.horario_inicio?.slice?.(0, 5) || "—"} às {turma.horario_fim?.slice?.(0, 5) || "—"}
+                        </span>
+                      </div>
+
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <Badge tone="zinc">{statusLabel}</Badge>
+                        <Badge tone="sky">
+                          Inscritos: <strong className="ml-1">{inscritosCount}</strong>
+                        </Badge>
+                        {modoadministradorPresencas && (
+                          <Badge tone="amber">Admin</Badge>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 sm:justify-end">
+                      <Collapser
+                        id={secId}
+                        open={aberto}
+                        onToggle={() => setTurmaExpandidaId(aberto ? null : turma.id)}
+                        className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950/40 px-3 py-2 text-sm font-semibold hover:bg-zinc-100 dark:hover:bg-white/5 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60"
+                      >
+                        {aberto ? "Recolher" : "Ver detalhes"}
+                      </Collapser>
+                    </div>
+                  </div>
                 </div>
 
                 <AnimatePresence>
-                  {turmaExpandidaId === turma.id && (
+                  {aberto && (
                     <motion.div
-                      id={`detalhes-turma-${turma.id}`}
-                      className="mt-6 space-y-4"
+                      id={secId}
+                      className="border-t border-zinc-200 dark:border-zinc-800 p-4 sm:p-5"
                       initial={{ opacity: 0, height: 0 }}
                       animate={{ opacity: 1, height: "auto" }}
                       exit={{ opacity: 0, height: 0 }}
-                      transition={{ duration: 0.3 }}
+                      transition={{ duration: 0.22 }}
                     >
-                      <div>
-                        <h3 className="font-semibold text-gray-700 dark:text-white mb-2">Inscritos:</h3>
+                      <div className="mb-3 flex items-center justify-between gap-2">
+                        <h3 className="text-sm sm:text-base font-extrabold text-zinc-800 dark:text-zinc-100">
+                          Inscritos
+                        </h3>
+                        <span className="text-xs text-zinc-500">
+                          {inscritosCount} pessoa(s)
+                        </span>
+                      </div>
 
-                        {(inscritosState?.[turma.id] || []).map((pessoa) => {
-                          const usuarioIdNorm = pessoa.usuario_id ?? pessoa.id;
-                          const datas = Array.isArray(pessoa.datas) ? pessoa.datas : [];
+                      {!Array.isArray(inscritos) ? (
+                        <div className="text-sm text-zinc-500">
+                          Carregando inscritos…
+                        </div>
+                      ) : inscritos.length === 0 ? (
+                        <div className="text-sm text-zinc-500">
+                          Nenhum inscrito encontrado para esta turma.
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          {inscritos.map((pessoa) => {
+                            const usuarioIdNorm = pessoa.usuario_id ?? pessoa.id;
+                            const datas = Array.isArray(pessoa.datas) ? pessoa.datas : [];
 
-                          return (
-                            <div
-                              key={usuarioIdNorm}
-                              className="flex flex-wrap justify-between items-center p-2 border rounded bg-gray-50 dark:bg-gray-900 dark:border-gray-700"
-                            >
-                              <div className="text-sm text-gray-800 dark:text-gray-200">
-                                <strong>{pessoa.nome}</strong> – {pessoa.email}
-                                <br />
-                                CPF: {pessoa.cpf || "Não informado"}
-                              </div>
+                            return (
+                              <article
+                                key={usuarioIdNorm}
+                                className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-950/25 p-3 sm:p-4"
+                                aria-label={`Inscrito: ${pessoa.nome}`}
+                              >
+                                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <div className="font-extrabold text-zinc-900 dark:text-white break-words">
+                                      {pessoa.nome}
+                                    </div>
+                                    <div className="text-xs text-zinc-600 dark:text-zinc-300 break-words">
+                                      {pessoa.email || "—"}
+                                    </div>
+                                    <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-300">
+                                      CPF: {pessoa.cpf ? formatarCPF(pessoa.cpf) : "Não informado"}
+                                    </div>
+                                  </div>
 
-                              <div className="w-full mt-3">
-                                {datas.length === 0 ? (
-                                  <p className="text-xs text-gray-500 dark:text-gray-400">
-                                    Nenhuma data cadastrada para esta pessoa.
-                                  </p>
-                                ) : (
-                                  <table className="w-full text-sm">
-                                    <thead>
-                                      <tr className="text-gray-600 dark:text-gray-300">
-                                        <th className="text-left">📅 Data</th>
-                                        <th className="text-left">📌 Situação</th>
-                                        <th className="text-left">✔️ Ações</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {datas.map((data) => {
-                                        const dia = isoDia(data);
+                                  {/* microbadge de “tem datas?” */}
+                                  <div className="shrink-0">
+                                    {datas.length ? (
+                                      <Badge tone="sky">Datas: {datas.length}</Badge>
+                                    ) : (
+                                      <Badge tone="zinc">Sem datas</Badge>
+                                    )}
+                                  </div>
+                                </div>
 
-                                        // presença suportando ambos formatos
-                                        let presente = false;
-                                        if (Array.isArray(pessoa.presencas)) {
-                                          presente = pessoa.presencas.some(
-                                            (pp) =>
-                                              isoDia(pp.data_presenca) === dia &&
-                                              pp.presente === true
+                                <div className="mt-3">
+                                  {datas.length === 0 ? (
+                                    <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                                      Nenhuma data cadastrada para esta pessoa.
+                                    </p>
+                                  ) : (
+                                    <>
+                                      {/* TABLE (>= sm) */}
+                                      <div className="hidden sm:block overflow-x-auto">
+                                        <table className="min-w-full text-sm">
+                                          <thead>
+                                            <tr className="text-left text-zinc-600 dark:text-zinc-300">
+                                              <th className="py-2 pr-4">📅 Data</th>
+                                              <th className="py-2 pr-4">📌 Situação</th>
+                                              <th className="py-2 pr-4">✔️ Ações</th>
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {datas.map((data) => {
+                                              const dia = isoDia(data);
+
+                                              // presença suportando ambos formatos
+                                              let presente = false;
+                                              if (Array.isArray(pessoa.presencas)) {
+                                                presente = pessoa.presencas.some(
+                                                  (pp) => isoDia(pp.data_presenca) === dia && pp.presente === true
+                                                );
+                                              } else if (pessoa.presencas && typeof pessoa.presencas === "object") {
+                                                presente = pessoa.presencas[dia] === true;
+                                              }
+
+                                              const inicioLocal = makeLocalDate(dia, turma.horario_inicio || "08:00");
+                                              const fimLocal = makeLocalDate(dia, turma.horario_fim || "17:00");
+
+                                              const passou60 =
+                                                Number.isFinite(+inicioLocal) &&
+                                                Date.now() >= inicioLocal.getTime() + 60 * 60 * 1000;
+
+                                              const deadlineAdmin =
+                                                Number.isFinite(+fimLocal) ? addDaysMs(fimLocal.getTime(), 15) : NaN;
+
+                                              const dentroJanelaAdmin =
+                                                Number.isFinite(deadlineAdmin) && Date.now() <= deadlineAdmin;
+
+                                              const podeConfirmar =
+                                                modoadministradorPresencas && passou60 && dentroJanelaAdmin;
+
+                                              const isLoading =
+                                                loading &&
+                                                loading.turmaId === turma.id &&
+                                                loading.usuarioId === usuarioIdNorm &&
+                                                loading.data === dia;
+
+                                              let status = "Aguardando";
+                                              let tone = "amber";
+                                              let icon = null;
+
+                                              if (presente) {
+                                                status = "Presente";
+                                                tone = "emerald";
+                                                icon = <CheckCircle size={14} aria-hidden="true" />;
+                                              } else if (passou60) {
+                                                status = "Faltou";
+                                                tone = "rose";
+                                                icon = <XCircle size={14} aria-hidden="true" />;
+                                              }
+
+                                              return (
+                                                <tr key={`${usuarioIdNorm}-${dia}`} className="border-t dark:border-zinc-800">
+                                                  <td className="py-2 pr-4">{formatarDataBrasileira(dia)}</td>
+                                                  <td className="py-2 pr-4">
+                                                    <Badge tone={tone}>
+                                                      {icon} {status}
+                                                    </Badge>
+                                                  </td>
+                                                  <td className="py-2 pr-4">
+                                                    {!presente ? (
+                                                      <button
+                                                        disabled={!podeConfirmar || isLoading}
+                                                        onClick={() => confirmarPresenca(turma.id, usuarioIdNorm, dia)}
+                                                        className={[
+                                                          "inline-flex items-center justify-center rounded-xl px-3 py-1.5 text-xs font-extrabold transition",
+                                                          podeConfirmar
+                                                            ? "bg-blue-700 text-white hover:bg-blue-800 focus-visible:ring-2 focus-visible:ring-blue-300"
+                                                            : "bg-zinc-200 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400 cursor-not-allowed",
+                                                          isLoading ? "opacity-60" : "",
+                                                        ].join(" ")}
+                                                        aria-label={`Confirmar presença de ${pessoa.nome} em ${formatarDataBrasileira(dia)}`}
+                                                        title={
+                                                          podeConfirmar
+                                                            ? "Confirmar presença"
+                                                            : modoadministradorPresencas
+                                                            ? !passou60
+                                                              ? "Disponível 1h após o início"
+                                                              : "Fora do prazo (15 dias após o fim)"
+                                                            : "Ação indisponível"
+                                                        }
+                                                      >
+                                                        {isLoading ? "Confirmando…" : "Confirmar"}
+                                                      </button>
+                                                    ) : (
+                                                      <span className="text-zinc-400">—</span>
+                                                    )}
+                                                  </td>
+                                                </tr>
+                                              );
+                                            })}
+                                          </tbody>
+                                        </table>
+                                      </div>
+
+                                      {/* CARDS (mobile < sm) */}
+                                      <ul className="sm:hidden space-y-2">
+                                        {datas.map((data) => {
+                                          const dia = isoDia(data);
+
+                                          let presente = false;
+                                          if (Array.isArray(pessoa.presencas)) {
+                                            presente = pessoa.presencas.some(
+                                              (pp) => isoDia(pp.data_presenca) === dia && pp.presente === true
+                                            );
+                                          } else if (pessoa.presencas && typeof pessoa.presencas === "object") {
+                                            presente = pessoa.presencas[dia] === true;
+                                          }
+
+                                          const inicioLocal = makeLocalDate(dia, turma.horario_inicio || "08:00");
+                                          const fimLocal = makeLocalDate(dia, turma.horario_fim || "17:00");
+
+                                          const passou60 =
+                                            Number.isFinite(+inicioLocal) &&
+                                            Date.now() >= inicioLocal.getTime() + 60 * 60 * 1000;
+
+                                          const deadlineAdmin =
+                                            Number.isFinite(+fimLocal) ? addDaysMs(fimLocal.getTime(), 15) : NaN;
+
+                                          const dentroJanelaAdmin =
+                                            Number.isFinite(deadlineAdmin) && Date.now() <= deadlineAdmin;
+
+                                          const podeConfirmar =
+                                            modoadministradorPresencas && passou60 && dentroJanelaAdmin;
+
+                                          const isLoading =
+                                            loading &&
+                                            loading.turmaId === turma.id &&
+                                            loading.usuarioId === usuarioIdNorm &&
+                                            loading.data === dia;
+
+                                          let status = "Aguardando";
+                                          let tone = "amber";
+                                          if (presente) {
+                                            status = "Presente";
+                                            tone = "emerald";
+                                          } else if (passou60) {
+                                            status = "Faltou";
+                                            tone = "rose";
+                                          }
+
+                                          return (
+                                            <li
+                                              key={`${usuarioIdNorm}-${dia}-m`}
+                                              className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/60 p-3"
+                                            >
+                                              <div className="flex items-start justify-between gap-2">
+                                                <div className="min-w-0">
+                                                  <div className="text-sm font-extrabold text-zinc-900 dark:text-white">
+                                                    {formatarDataBrasileira(dia)}
+                                                  </div>
+                                                  <div className="text-xs text-zinc-600 dark:text-zinc-300 mt-0.5">
+                                                    {turma.horario_inicio?.slice?.(0, 5) || "—"} às{" "}
+                                                    {turma.horario_fim?.slice?.(0, 5) || "—"}
+                                                  </div>
+                                                </div>
+                                                <Badge tone={tone}>{status}</Badge>
+                                              </div>
+
+                                              <div className="mt-2">
+                                                {!presente ? (
+                                                  <button
+                                                    disabled={!podeConfirmar || isLoading}
+                                                    onClick={() => confirmarPresenca(turma.id, usuarioIdNorm, dia)}
+                                                    className={[
+                                                      "w-full inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-extrabold transition",
+                                                      podeConfirmar
+                                                        ? "bg-blue-700 text-white hover:bg-blue-800 focus-visible:ring-2 focus-visible:ring-blue-300"
+                                                        : "bg-zinc-200 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400 cursor-not-allowed",
+                                                      isLoading ? "opacity-60" : "",
+                                                    ].join(" ")}
+                                                    aria-label={`Confirmar presença de ${pessoa.nome} em ${formatarDataBrasileira(dia)}`}
+                                                    title={
+                                                      podeConfirmar
+                                                        ? "Confirmar presença"
+                                                        : modoadministradorPresencas
+                                                        ? !passou60
+                                                          ? "Disponível 1h após o início"
+                                                          : "Fora do prazo (15 dias após o fim)"
+                                                        : "Ação indisponível"
+                                                    }
+                                                  >
+                                                    {isLoading ? "Confirmando…" : "Confirmar presença"}
+                                                  </button>
+                                                ) : (
+                                                  <div className="text-sm text-zinc-400">—</div>
+                                                )}
+                                              </div>
+                                            </li>
                                           );
-                                        } else if (pessoa.presencas && typeof pessoa.presencas === "object") {
-                                          presente = pessoa.presencas[dia] === true;
-                                        }
+                                        })}
+                                      </ul>
 
-                                        // status visual com base em hora local
-                                        const inicioLocal = makeLocalDate(
-                                          dia,
-                                          turma.horario_inicio || "08:00"
-                                        );
-                                        const fimLocal = makeLocalDate(
-                                          dia,
-                                          turma.horario_fim || "17:00"
-                                        );
+                                      {/* dica discreta */}
+                                      {modoadministradorPresencas && (
+                                        <p className="mt-2 text-[12px] text-zinc-500 dark:text-zinc-400">
+                                          Janela admin: confirmação liberada <strong>1h após o início</strong> e até{" "}
+                                          <strong>15 dias</strong> após o fim da aula.
+                                        </p>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
+                              </article>
+                            );
+                          })}
+                        </div>
+                      )}
 
-                                        const passou60 =
-                                          Number.isFinite(+inicioLocal) &&
-                                          Date.now() >= inicioLocal.getTime() + 60 * 60 * 1000;
-
-                                        let status = "Aguardando";
-                                        let style = "bg-yellow-300 text-yellow-900";
-                                        let icon = null;
-                                        if (presente) {
-                                          status = "Presente";
-                                          style = "bg-green-500 text-white";
-                                          icon = <CheckCircle size={14} />;
-                                        } else if (passou60) {
-                                          status = "Faltou";
-                                          style = "bg-red-500 text-white";
-                                          icon = <XCircle size={14} />;
-                                        }
-
-                                        // pode confirmar até 48h após o término (local)
-                                        const podeConfirmar =
-                                          modoadministradorPresencas &&
-                                          Number.isFinite(+fimLocal) &&
-                                          Date.now() <= fimLocal.getTime() + 48 * 60 * 60 * 1000;
-
-                                        const isLoading =
-                                          loading &&
-                                          loading.turmaId === turma.id &&
-                                          loading.usuarioId === usuarioIdNorm &&
-                                          loading.data === dia;
-
-                                        return (
-                                          <tr key={`${usuarioIdNorm}-${dia}`}>
-                                            <td className="py-1">{formatarDataBrasileira(dia)}</td>
-                                            <td>
-                                              <span
-                                                className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full font-medium ${style}`}
-                                                aria-label={`Situação em ${formatarDataBrasileira(
-                                                  dia
-                                                )}: ${status}`}
-                                              >
-                                                {icon}
-                                                {status}
-                                              </span>
-                                            </td>
-                                            <td>
-                                              {!presente && podeConfirmar && (
-                                                <button
-                                                  disabled={isLoading}
-                                                  onClick={() =>
-                                                    confirmarPresenca(turma.id, usuarioIdNorm, dia)
-                                                  }
-                                                  className={`bg-blue-700 text-white text-xs px-3 py-1 rounded focus:outline-none focus:ring-2 focus:ring-blue-400 ${
-                                                    isLoading
-                                                      ? "opacity-50 cursor-not-allowed"
-                                                      : "hover:bg-blue-800"
-                                                  }`}
-                                                  aria-label={`Confirmar presença de ${pessoa.nome} em ${formatarDataBrasileira(
-                                                    dia
-                                                  )}`}
-                                                >
-                                                  {isLoading ? "Confirmando..." : "Confirmar"}
-                                                </button>
-                                              )}
-                                            </td>
-                                          </tr>
-                                        );
-                                      })}
-                                    </tbody>
-                                  </table>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
+                      {/* rodapé do bloco */}
+                      <div className="mt-4 text-[12px] text-zinc-500 dark:text-zinc-400">
+                        Hoje: <strong>{hojeISO ? formatarDataBrasileira(hojeISO) : "—"}</strong>
                       </div>
                     </motion.div>
                   )}

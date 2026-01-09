@@ -1,9 +1,9 @@
-// ✅ src/pages/AvaliacaoInstrutor.jsx (padronizado: 3 cores fixas, ícone+título na mesma linha, a11y, cache leve)
-import { useEffect, useMemo, useRef, useState } from "react";
+// ✅ src/pages/AvaliacaoInstrutor.jsx — premium++ (ministats, export CSV, a11y, cache leve)
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import Skeleton from "react-loading-skeleton";
 import { motion } from "framer-motion";
 import { toast } from "react-toastify";
-import { BarChart3, ClipboardList, MessageSquare, School, RefreshCw } from "lucide-react";
+import { BarChart3, ClipboardList, MessageSquare, School, RefreshCw, CalendarRange, Download } from "lucide-react";
 
 import Footer from "../components/Footer";
 import NadaEncontrado from "../components/NadaEncontrado";
@@ -49,7 +49,6 @@ const CAMPOS_OBJETIVOS = [
   "apresentacao_tcrs",
   "oficinas",
 ];
-
 const CAMPOS_TEXTOS = ["gostou_mais", "sugestoes_melhoria", "comentarios_finais"];
 
 // mapeia respostas textuais → nota 1..5
@@ -76,25 +75,13 @@ function media(arr) {
 }
 
 /* ------------------------- Header/Hero ------------------------- */
-/* Regras:
-   • Ícone e título na MESMA linha
-   • Paleta fixa com 3 cores exclusivas desta página
-   • Skip-link para acessibilidade
-   • Sem duplicar o título no conteúdo principal
-*/
 function HeaderHero({ onRefresh, carregando, nome = "" }) {
   const gradient = "from-indigo-900 via-violet-800 to-fuchsia-700"; // 3 cores fixas desta página
-
   return (
     <header className={`bg-gradient-to-br ${gradient} text-white`} role="banner">
-      {/* Skip-link */}
-      <a
-        href="#conteudo"
-        className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2"
-      >
+      <a href="#conteudo" className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2">
         Ir para o conteúdo
       </a>
-
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 flex flex-col items-center text-center gap-3">
         <div className="inline-flex items-center gap-2">
           <BarChart3 className="w-5 h-5" aria-hidden="true" />
@@ -121,19 +108,39 @@ function HeaderHero({ onRefresh, carregando, nome = "" }) {
 export default function AvaliacaoInstrutor() {
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState("");
-  const [eventos, setEventos] = useState([]); // [{id,titulo,turmas[],di,df}]
+  const [eventos, setEventos] = useState([]);          // [{id,titulo,turmas[],di,df}]
   const [eventoId, setEventoId] = useState("");
-  const [cacheAval, setCacheAval] = useState({}); // eventoId -> {respostas, agregados}
+  const [cacheAval, setCacheAval] = useState({});      // eventoId -> {respostas, agregados}
   const liveRef = useRef(null);
 
   const usuario = useMemo(() => {
-    try {
-      return JSON.parse(localStorage.getItem("usuario") || "{}");
-    } catch {
-      return {};
-    }
+    try { return JSON.parse(localStorage.getItem("usuario") || "{}"); } catch { return {}; }
   }, []);
   const nome = usuario?.nome || "";
+
+  // atalhos de teclado
+  useEffect(() => {
+    const onKey = (e) => {
+      const tag = document.activeElement?.tagName?.toLowerCase();
+      const editing = ["input","textarea","select"].includes(tag);
+      if (!editing && (e.key === "r" || e.key === "R")) {
+        e.preventDefault();
+        if (eventoId) {
+          setCacheAval((p) => {
+            const cp = { ...p };
+            delete cp[String(eventoId)];
+            return cp;
+          });
+          carregarAvaliacoesDoEvento(eventoId);
+        } else {
+          carregarEventos();
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventoId]);
 
   useEffect(() => {
     document.title = "Avaliação do Instrutor | Escola da Saúde";
@@ -141,35 +148,23 @@ export default function AvaliacaoInstrutor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const setLive = (msg) => { if (liveRef.current) liveRef.current.textContent = msg; };
+
   async function carregarEventos() {
     const g = log.group("Carregar eventos/turmas do instrutor");
     const t = log.time("⏱ eventos");
     try {
       setCarregando(true);
       setErro("");
-      if (liveRef.current) liveRef.current.textContent = "Carregando seus eventos…";
+      setLive("Carregando seus eventos…");
 
       const turmas = await apiGet("/api/instrutor/minhas/turmas", { on401: "silent", on403: "silent" });
       const arr = Array.isArray(turmas) ? turmas : [];
 
-      log.info("Turmas recebidas:", arr.length);
-      if (arr.length) {
-        log.table(
-          arr.map((x) => ({
-            turma_id: x.id,
-            turma: x.nome,
-            evento_id: x?.evento?.id ?? x.evento_id,
-            evento: x?.evento?.nome ?? x.evento_nome,
-            di: x.data_inicio,
-            df: x.data_fim,
-          }))
-        );
-      }
-
       // agrupa por evento
       const byEvento = new Map();
-      for (const t of arr) {
-        const e = t?.evento || { id: t?.evento_id, nome: t?.evento_nome || t?.evento_titulo };
+      for (const turma of arr) {
+        const e = turma?.evento || { id: turma?.evento_id, nome: turma?.evento_nome || turma?.evento_titulo };
         if (!e?.id) continue;
         const k = String(e.id);
         if (!byEvento.has(k)) {
@@ -177,27 +172,25 @@ export default function AvaliacaoInstrutor() {
             id: e.id,
             titulo: e.nome || e.titulo || "Evento",
             turmas: [],
-            di: t.data_inicio,
-            df: t.data_fim,
+            di: turma.data_inicio,
+            df: turma.data_fim,
           });
         }
         const slot = byEvento.get(k);
         slot.turmas.push({
-          id: t.id,
-          nome: t.nome,
-          data_inicio: t.data_inicio,
-          data_fim: t.data_fim,
+          id: turma.id,
+          nome: turma.nome,
+          data_inicio: turma.data_inicio,
+          data_fim: turma.data_fim,
         });
-        slot.di = !slot.di || (t.data_inicio && t.data_inicio < slot.di) ? t.data_inicio : slot.di;
-        slot.df = !slot.df || (t.data_fim && t.data_fim > slot.df) ? t.data_fim : slot.df;
+        // strings ISO: comparar sem criar Date (evita fuso)
+        if (!slot.di || (turma.data_inicio && String(turma.data_inicio) < String(slot.di))) slot.di = turma.data_inicio;
+        if (!slot.df || (turma.data_fim    && String(turma.data_fim)    > String(slot.df))) slot.df = turma.data_fim;
       }
 
-      const lista = Array.from(byEvento.values()).sort((a, b) => new Date(b.di || 0) - new Date(a.di || 0));
-
-      log.info("Eventos agregados:", lista.length);
-      if (lista.length) {
-        log.table(lista.map((e) => ({ evento_id: e.id, evento: e.titulo, turmas: e.turmas.length, di: e.di, df: e.df })));
-      }
+      // ordena por início desc sem Date()
+      const lista = Array.from(byEvento.values())
+        .sort((a, b) => String(b.di || "") .localeCompare(String(a.di || "")));
 
       setEventos(lista);
       if (!lista.length) {
@@ -205,20 +198,18 @@ export default function AvaliacaoInstrutor() {
       } else {
         setEventoId(String(lista[0].id));
       }
-      if (liveRef.current) liveRef.current.textContent = "Eventos atualizados.";
+      setLive("Eventos atualizados.");
     } catch (e) {
       log.error("Erro ao carregar eventos:", e);
       setErro("Erro ao carregar seus eventos.");
       toast.error("❌ Erro ao carregar eventos do instrutor.");
     } finally {
-      t.end();
-      g.end();
-      setCarregando(false);
+      t.end(); g.end(); setCarregando(false);
     }
   }
 
   // carrega avaliações de todas as turmas do evento selecionado
-  async function carregarAvaliacoesDoEvento(id) {
+  const carregarAvaliacoesDoEvento = useCallback(async (id) => {
     const ev = eventos.find((x) => String(x.id) === String(id));
     if (!ev) {
       log.warn("Evento não encontrado no estado:", id);
@@ -229,12 +220,9 @@ export default function AvaliacaoInstrutor() {
     const t = log.time("⏱ avaliações");
     try {
       setCarregando(true);
-      if (liveRef.current) liveRef.current.textContent = "Carregando avaliações…";
+      setLive("Carregando avaliações…");
 
       const respostas = [];
-      log.info("Turmas do evento:", ev.turmas?.length || 0);
-      if (ev.turmas?.length) log.table(ev.turmas.map((t) => ({ turma_id: t.id, turma: t.nome })));
-
       await Promise.all(
         (ev.turmas || []).map(async (t) => {
           try {
@@ -251,19 +239,15 @@ export default function AvaliacaoInstrutor() {
         })
       );
 
-      log.info("Total de respostas agregadas do evento:", respostas.length);
-
       const agregados = agregarRespostas(respostas);
       const payload = { respostas, agregados };
       setCacheAval((prev) => ({ ...prev, [String(id)]: payload }));
-      if (liveRef.current) liveRef.current.textContent = "Avaliações carregadas.";
+      setLive("Avaliações carregadas.");
       return payload;
     } finally {
-      t.end();
-      g.end();
-      setCarregando(false);
+      t.end(); g.end(); setCarregando(false);
     }
-  }
+  }, [eventos]);
 
   // agrega campos objetivos e textos
   function agregarRespostas(respostas) {
@@ -271,9 +255,7 @@ export default function AvaliacaoInstrutor() {
     const medias = {}; // campo -> média 1..5
     const total = respostas.length;
 
-    CAMPOS_OBJETIVOS.forEach((c) => {
-      dist[c] = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-    });
+    CAMPOS_OBJETIVOS.forEach((c) => { dist[c] = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }; });
 
     for (const r of respostas) {
       for (const campo of CAMPOS_OBJETIVOS) {
@@ -324,6 +306,71 @@ export default function AvaliacaoInstrutor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventoId]);
 
+  /* --------------------------- Export CSV --------------------------- */
+  function exportarCSV() {
+    if (!eventoAtual || !avalAtual) return;
+    const { agregados, respostas } = avalAtual;
+
+    const linhas = [];
+    // cabeçalho
+    linhas.push(["Evento", "Período", "Total respostas"].join(";"));
+    const periodo = (eventoAtual.di || eventoAtual.df)
+      ? `${formatarDataBrasileira(eventoAtual.di)} — ${formatarDataBrasileira(eventoAtual.df)}`
+      : "—";
+    linhas.push([limparCSV(eventoAtual.titulo), limparCSV(periodo), agregados?.total ?? 0].join(";"));
+    linhas.push("");
+
+    // Médias
+    linhas.push(["Médias por critério"].join(";"));
+    linhas.push(["Critério","Média (1..5)","★1","★2","★3","★4","★5"].join(";"));
+    for (const c of CAMPOS_OBJETIVOS) {
+      const nome = labelDoCampo(c);
+      const m = agregados?.medias?.[c] ?? "";
+      const d = agregados?.dist?.[c] || {1:0,2:0,3:0,4:0,5:0};
+      linhas.push([limparCSV(nome), m, d[1]||0, d[2]||0, d[3]||0, d[4]||0, d[5]||0].join(";"));
+    }
+    linhas.push("");
+
+    // Comentários
+    linhas.push(["Comentários qualitativos"].join(";"));
+    for (const campo of CAMPOS_TEXTOS) {
+      const nome = labelDoCampo(campo);
+      linhas.push([limparCSV(nome)].join(";"));
+      const lista = agregados?.textos?.[campo] || [];
+      if (!lista.length) {
+        linhas.push(["(Sem comentários)"].join(";"));
+      } else {
+        for (const t of lista) {
+          linhas.push([limparCSV(t)].join(";"));
+        }
+      }
+      linhas.push("");
+    }
+
+    // Respostas (cruas) por turma — opcional: mostra turma_id se existir
+    if (Array.isArray(respostas) && respostas.length) {
+      const cols = ["__turmaId","__turmaNome", ...CAMPOS_OBJETIVOS, ...CAMPOS_TEXTOS];
+      linhas.push(["Dados brutos (por resposta)"].join(";"));
+      linhas.push(cols.join(";"));
+      for (const r of respostas) {
+        linhas.push(cols.map((k) => limparCSV(r[k] ?? "")).join(";"));
+      }
+    }
+
+    const csv = linhas.join("\r\n");
+    baixarArquivo(`avaliacoes_evento_${eventoAtual.id}.csv`, csv, "text/csv;charset=utf-8");
+    toast.success("CSV gerado com sucesso.");
+  }
+  const limparCSV = (s) => String(s).replaceAll(/[\r\n]+/g, " ").replaceAll(/;/g, ",");
+  function baixarArquivo(nome, conteudo, mime) {
+    const blob = new Blob([conteudo], { type: mime || "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = nome; a.rel = "noopener";
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   /* ----------------------------- UI ----------------------------- */
   return (
     <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
@@ -336,6 +383,7 @@ export default function AvaliacaoInstrutor() {
             return cp;
           });
           if (eventoId) carregarAvaliacoesDoEvento(eventoId);
+          else carregarEventos();
         }}
         carregando={carregando}
         nome={nome}
@@ -344,35 +392,51 @@ export default function AvaliacaoInstrutor() {
       <main id="conteudo" className="flex-1 max-w-6xl mx-auto px-3 sm:px-4 py-6">
         <p ref={liveRef} className="sr-only" aria-live="polite" />
 
-        {/* Seletor de evento */}
+        {/* Seletor de evento + ações */}
         <section className="mb-4">
-          <label htmlFor="sel-evento" className="block text-sm mb-1 text-slate-700 dark:text-slate-200">
-            Selecione o evento
-          </label>
-          <div className="flex items-center gap-2">
-            <select
-              id="sel-evento"
-              value={eventoId}
-              onChange={(e) => setEventoId(e.target.value)}
-              className="p-2 rounded border dark:bg-zinc-800 dark:text-white min-w-[260px]"
-              aria-label="Selecionar evento"
-            >
-              {eventos.map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.titulo} {e.di ? `• ${formatarDataBrasileira(e.di)}` : ""}{e.df ? ` a ${formatarDataBrasileira(e.df)}` : ""}
-                </option>
-              ))}
-              {!eventos.length && <option value="">Nenhum evento encontrado</option>}
-            </select>
-            {eventoAtual && (
-              <span className="text-xs text-gray-600 dark:text-gray-300">
-                <School className="inline w-4 h-4 mr-1" aria-hidden="true" /> {eventoAtual.turmas?.length || 0} turma(s)
-              </span>
-            )}
+          <div className="flex flex-col lg:flex-row lg:items-end gap-3">
+            <div className="flex-1">
+              <label htmlFor="sel-evento" className="block text-sm mb-1 text-slate-700 dark:text-slate-200">
+                Selecione o evento
+              </label>
+              <div className="flex items-center gap-2">
+                <select
+                  id="sel-evento"
+                  value={eventoId}
+                  onChange={(e) => setEventoId(e.target.value)}
+                  className="p-2 rounded-xl border border-slate-300 bg-white dark:bg-zinc-800 dark:text-white min-w-[260px] focus:outline-none focus:ring-2 focus:ring-violet-500/70"
+                  aria-label="Selecionar evento"
+                >
+                  {eventos.map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.titulo} {e.di ? `• ${formatarDataBrasileira(e.di)}` : ""}{e.df ? ` a ${formatarDataBrasileira(e.df)}` : ""}
+                    </option>
+                  ))}
+                  {!eventos.length && <option value="">Nenhum evento encontrado</option>}
+                </select>
+                {eventoAtual && (
+                  <span className="text-xs text-gray-600 dark:text-gray-300 inline-flex items-center gap-1">
+                    <School className="inline w-4 h-4" aria-hidden="true" /> {eventoAtual.turmas?.length || 0} turma(s)
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <BotaoPrimario
+                onClick={exportarCSV}
+                disabled={!eventoAtual || !avalAtual}
+                variante="secundario"
+                icone={<Download className="w-4 h-4" />}
+                aria-label="Exportar CSV do evento"
+              >
+                Exportar CSV
+              </BotaoPrimario>
+            </div>
           </div>
         </section>
 
-        {/* Conteúdo */}
+        {/* Estado geral */}
         {carregando ? (
           <div className="space-y-4">
             <Skeleton height={90} />
@@ -386,16 +450,12 @@ export default function AvaliacaoInstrutor() {
           <NadaEncontrado mensagem="Sem avaliações para este evento (ainda)." />
         ) : (
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }} className="space-y-8">
-            {/* KPIs */}
+            {/* Ministats */}
             <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <KPI titulo="Total de Respostas" valor={avalAtual.agregados?.total || 0} icon={ClipboardList} />
               <KPI
-                titulo="Desempenho do Instrutor (média)"
-                valor={
-                  avalAtual.agregados?.estrelaMedia != null
-                    ? `${avalAtual.agregados.estrelaMedia.toFixed(2)} / 5 ⭐`
-                    : "—"
-                }
+                titulo="Desempenho do Instrutor"
+                valor={avalAtual.agregados?.estrelaMedia != null ? `${avalAtual.agregados.estrelaMedia.toFixed(2)} / 5 ⭐` : "—"}
                 icon={BarChart3}
               />
               <KPI
@@ -405,6 +465,11 @@ export default function AvaliacaoInstrutor() {
                     ? `${formatarDataBrasileira(eventoAtual.di)} — ${formatarDataBrasileira(eventoAtual.df)}`
                     : "—"
                 }
+                icon={CalendarRange}
+              />
+              <KPI
+                titulo="Turmas avaliadas"
+                valor={eventoAtual.turmas?.length || 0}
                 icon={School}
               />
             </section>
@@ -442,7 +507,7 @@ export default function AvaliacaoInstrutor() {
 /* --------------------------- UI helpers --------------------------- */
 function KPI({ titulo, valor, icon: Icon }) {
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl shadow p-4 text-center">
+    <div className="bg-white dark:bg-gray-800 rounded-2xl shadow p-4 text-center border border-slate-100 dark:border-zinc-700">
       <p className="text-sm text-gray-600 dark:text-gray-300 mb-1">{titulo}</p>
       <p className="text-2xl font-bold text-lousa dark:text-white inline-flex items-center gap-2">
         {Icon && <Icon className="w-5 h-5" aria-hidden="true" />} {valor}
@@ -456,12 +521,16 @@ function CampoBarra({ nome, media, dist }) {
   const linha = dist || { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl shadow p-3">
+    <div className="bg-white dark:bg-gray-800 rounded-2xl shadow p-4 border border-slate-100 dark:border-zinc-700">
       <div className="flex items-center justify-between mb-2">
         <p className="text-sm font-medium">{nome}</p>
         <p className="text-sm font-semibold">{media != null ? media.toFixed(2) : "—"} / 5</p>
       </div>
-      <div className="w-full h-2 rounded bg-gray-200 dark:bg-gray-700 overflow-hidden" role="img" aria-label={`Média ${nome}: ${media != null ? media.toFixed(2) : "não disponível"} de 5`}>
+      <div
+        className="w-full h-2 rounded bg-gray-200 dark:bg-gray-700 overflow-hidden"
+        role="img"
+        aria-label={`Média ${nome}: ${media != null ? media.toFixed(2) : "não disponível"} de 5`}
+      >
         <div className="h-2 bg-emerald-600 dark:bg-emerald-500" style={{ width: `${pct}%` }} aria-hidden="true" />
       </div>
       <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-2">
@@ -474,7 +543,7 @@ function CampoBarra({ nome, media, dist }) {
 function QuadroComentarios({ titulo, itens }) {
   const lista = Array.isArray(itens) ? itens : [];
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl shadow p-4">
+    <div className="bg-white dark:bg-gray-800 rounded-2xl shadow p-4 border border-slate-100 dark:border-zinc-700">
       <h3 className="text-sm font-semibold mb-2 inline-flex items-center gap-2">
         <MessageSquare className="w-4 h-4" aria-hidden="true" /> {titulo}
       </h3>
@@ -512,6 +581,9 @@ function labelDoCampo(c) {
       apresentacao_oral_mostra: "Apresentação oral/mostra",
       apresentacao_tcrs: "Apresentação TCRs",
       oficinas: "Oficinas",
+      gostou_mais: "O que mais gostou",
+      sugestoes_melhoria: "Sugestões de melhoria",
+      comentarios_finais: "Comentários finais",
     }[c] || c.replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase())
   );
 }

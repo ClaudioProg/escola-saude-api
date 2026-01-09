@@ -4,6 +4,7 @@
    - Fullscreen real
    - Base: color-scheme + body default (light/dark)
    - Forms / Modais / QR / Toast / Calendar infra
+   - Scrollbar, selection, autofill & motion a11y
    - NÃO define layout estrutural (AppShell manda)
 ============================================================ */
 
@@ -37,34 +38,64 @@
   }
 
   /* ✅ O navegador precisa saber o esquema de cores */
-  :root {
-    color-scheme: light;
-  }
-  .dark {
-    color-scheme: dark;
-  }
+  :root { color-scheme: light; }
+  .dark { color-scheme: dark; }
 
   /* ✅ Base visual (evita “dark aplicado mas tudo claro”) */
   body {
     @apply bg-white text-gray-900 dark:bg-zinc-950 dark:text-gray-100;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-overflow-scrolling: touch;
   }
-}
 
-/* ------------------------------------------------------------
-   Foco acessível (premium)
------------------------------------------------------------- */
-@layer base {
+  /* Suporte opcional ao prefer-color-scheme se não houver classe .dark */
+  @media (prefers-color-scheme: dark) {
+    :root:not(.dark) body {
+      @apply bg-zinc-950 text-gray-100;
+    }
+  }
+
+  /* Seleção de texto (brand-friendly, seguro p/ dark) */
+  ::selection {
+    background: rgba(22, 163, 74, .28); /* emerald-600 ~ var(--brand-600) */
+  }
+
+  /* Foco acessível (premium) */
   :focus-visible {
     outline: 2px solid transparent;
     box-shadow: 0 0 0 2px rgba(20, 83, 45, 0.6);
     border-radius: 0.75rem;
   }
-
   @media (forced-colors: active) {
-    :focus-visible {
-      outline: 2px solid Highlight;
-      box-shadow: none;
-    }
+    :focus-visible { outline: 2px solid Highlight; box-shadow: none; }
+  }
+
+  /* Scrollbar discreta (WebKit/Chromium) */
+  *::-webkit-scrollbar { width: 10px; height: 10px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb {
+    background: rgba(15, 23, 42, .18);
+    border-radius: 10px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  .dark *::-webkit-scrollbar-thumb { background: rgba(255,255,255,.18); }
+
+  /* Firefox scrollbar */
+  * { scrollbar-width: thin; scrollbar-color: rgba(15,23,42,.28) transparent; }
+  .dark * { scrollbar-color: rgba(255,255,255,.28) transparent; }
+}
+
+/* ------------------------------------------------------------
+   Motion a11y
+------------------------------------------------------------ */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
   }
 }
 
@@ -103,6 +134,21 @@
   .dark input[type="time"]::-webkit-calendar-picker-indicator {
     filter: invert(1) saturate(0) brightness(1.2);
   }
+
+  /* Autofill (WebKit) */
+  input:-webkit-autofill,
+  select:-webkit-autofill,
+  textarea:-webkit-autofill {
+    -webkit-text-fill-color: #0f172a;
+    box-shadow: 0 0 0 1000px #fff inset;
+    transition: background-color 5000s ease-in-out 0s;
+  }
+  .dark input:-webkit-autofill,
+  .dark select:-webkit-autofill,
+  .dark textarea:-webkit-autofill {
+    -webkit-text-fill-color: #f4f4f5;
+    box-shadow: 0 0 0 1000px #0b1220 inset;
+  }
 }
 
 /* ------------------------------------------------------------
@@ -113,39 +159,24 @@
   background: transparent !important;
   border: none !important;
 }
-
 #leitor-qr,
-#leitor-qr * {
-  background-color: transparent !important;
-}
-
+#leitor-qr * { background-color: transparent !important; }
 #leitor-qr canvas {
   outline: 2px dashed #14532d !important;
   outline-offset: -8px;
   border-radius: 1rem;
 }
-
-.dark #leitor-qr canvas {
-  outline-color: #22c55e !important;
-}
-
+.dark #leitor-qr canvas { outline-color: #22c55e !important; }
 @media (prefers-reduced-motion: reduce) {
-  #leitor-qr canvas {
-    transition: none !important;
-  }
+  #leitor-qr canvas { transition: none !important; }
 }
 
 /* ------------------------------------------------------------
    🧩 Campos com ícone (Tailwind Forms strategy: class)
 ------------------------------------------------------------ */
 @layer components {
-  .campo-com-icone {
-    @apply relative w-full;
-  }
-
-  .campo-com-icone .icone-esquerda {
-    @apply absolute left-3 top-2.5 text-gray-400 pointer-events-none;
-  }
+  .campo-com-icone { @apply relative w-full; }
+  .campo-com-icone .icone-esquerda { @apply absolute left-3 top-2.5 text-gray-400 pointer-events-none; }
 
   .campo {
     @apply form-input w-full pl-10 pr-3 py-2 rounded-xl
@@ -157,17 +188,10 @@
            dark:disabled:bg-zinc-900/60 dark:disabled:text-zinc-400
            aria-[invalid=true]:border-red-500 aria-[invalid=true]:ring-red-500;
   }
+  select.campo { @apply form-select; }
+  textarea.campo { @apply form-textarea resize-y min-h-[100px]; }
 
-  select.campo {
-    @apply form-select;
-  }
-  textarea.campo {
-    @apply form-textarea resize-y min-h-[100px];
-  }
-
-  .campo:focus-visible {
-    box-shadow: 0 0 0 2px rgba(20, 83, 45, 0.6);
-  }
+  .campo:focus-visible { box-shadow: 0 0 0 2px rgba(20, 83, 45, 0.6); }
 }
 
 /* ------------------------------------------------------------
@@ -176,7 +200,9 @@
 @layer components {
   .overlay {
     @apply fixed inset-0 bg-black/60 z-[1000] backdrop-blur-[1px];
+    -webkit-backdrop-filter: blur(1px);
   }
+  .overlay[aria-hidden="true"] { pointer-events: none; }
 
   .modal {
     @apply fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2
@@ -188,16 +214,11 @@
            border border-gray-200 dark:border-white/10
            z-[1001];
   }
-
-  .modal :focus-visible {
-    box-shadow: 0 0 0 2px rgba(20, 83, 45, 0.6);
-  }
+  .modal :focus-visible { box-shadow: 0 0 0 2px rgba(20, 83, 45, 0.6); }
 }
 
 @media (max-width: 480px) {
-  .modal {
-    @apply p-5 w-[94%];
-  }
+  .modal { @apply p-5 w-[94%]; }
 }
 
 /* ------------------------------------------------------------
@@ -209,40 +230,25 @@
   background: transparent;
   font-size: clamp(0.95rem, 1.1vw, 1.05rem);
 }
-
 .react-calendar-custom .react-calendar__navigation {
-  display: flex;
-  justify-content: center;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
+  display: flex; justify-content: center; gap: 0.5rem; margin-bottom: 0.75rem;
 }
-
 .react-calendar-custom .react-calendar__navigation button {
-  background: transparent;
-  border-radius: 0.75rem;
-  padding: 0.5rem 0.75rem;
+  background: transparent; border-radius: 0.75rem; padding: 0.5rem 0.75rem;
 }
-
-.react-calendar-custom .react-calendar__tile {
-  border-radius: 0.75rem;
-}
+.react-calendar-custom .react-calendar__tile { border-radius: 0.75rem; }
 
 /* ------------------------------------------------------------
    📱 Mobile / Touch refinements
 ------------------------------------------------------------ */
 @layer utilities {
-  .tap-safe {
-    -webkit-tap-highlight-color: transparent;
-  }
+  .tap-safe { -webkit-tap-highlight-color: transparent; }
 }
 
 /* ------------------------------------------------------------
    🔔 React-Toastify — institucional premium
 ------------------------------------------------------------ */
-.Toastify__toast-container {
-  z-index: 9999 !important;
-}
-
+.Toastify__toast-container { z-index: 9999 !important; }
 .Toastify__toast {
   border-radius: 0.75rem !important;
   min-height: 44px !important;
@@ -251,52 +257,52 @@
     0 4px 6px -4px rgb(0 0 0 / 0.12) !important;
   border: none !important;
 }
-
-.Toastify__toast-theme--colored {
-  color: #fff !important;
-}
-
+.Toastify__toast-theme--colored { color: #fff !important; }
 .Toastify__toast-body {
-  display: flex !important;
-  align-items: center !important;
-  padding: 0.5rem 0.75rem !important;
+  display: flex !important; align-items: center !important; padding: 0.5rem 0.75rem !important;
 }
-
-.Toastify__close-button {
-  color: #fff !important;
-  opacity: 0.9 !important;
-}
+.Toastify__close-button { color: #fff !important; opacity: 0.9 !important; }
 
 /* cores */
-.Toastify__toast--success {
-  background: #16a34a !important;
-}
-.Toastify__toast--warning {
-  background: #d97706 !important;
-}
-.Toastify__toast--error {
-  background: #dc2626 !important;
-}
+.Toastify__toast--success { background: #16a34a !important; }
+.Toastify__toast--warning { background: #d97706 !important; }
+.Toastify__toast--error   { background: #dc2626 !important; }
 .Toastify__toast--info,
-.Toastify__toast--loading {
-  background: #2563eb !important;
-}
+.Toastify__toast--loading { background: #2563eb !important; }
 
-.Toastify__spinner {
-  border-color: rgba(255, 255, 255, 0.35) !important;
-  border-top-color: #fff !important;
-}
+.Toastify__spinner { border-color: rgba(255, 255, 255, 0.35) !important; border-top-color: #fff !important; }
+.Toastify__progress-bar { background: rgba(255, 255, 255, 0.7) !important; }
 
-.Toastify__progress-bar {
-  background: rgba(255, 255, 255, 0.7) !important;
+/* ------------------------------------------------------------
+   🧪 Utilidades premium extras
+------------------------------------------------------------ */
+@layer utilities {
+  /* Skeleton shimmer util */
+  .skeleton {
+    position: relative; overflow: hidden;
+    background: linear-gradient(90deg, rgba(148,163,184,.25) 25%, rgba(148,163,184,.35) 37%, rgba(148,163,184,.25) 63%);
+    background-size: 400% 100%;
+    animation: skeleton-shimmer 1.6s ease-in-out infinite;
+  }
+  .dark .skeleton {
+    background: linear-gradient(90deg, rgba(63,63,70,.25) 25%, rgba(63,63,70,.4) 37%, rgba(63,63,70,.25) 63%);
+  }
+  @keyframes skeleton-shimmer {
+    0% { background-position: 100% 0; }
+    100% { background-position: 0 0; }
+  }
+
+  /* Visually hidden (melhor que sr-only em alguns casos de layout) */
+  .visually-hidden {
+    position: absolute !important; width: 1px !important; height: 1px !important;
+    padding: 0 !important; margin: -1px !important; overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important;
+  }
 }
 
 /* ------------------------------------------------------------
    🖨️ Impressão
 ------------------------------------------------------------ */
 @media print {
-  .overlay,
-  .modal {
-    display: none !important;
-  }
+  .overlay, .modal { display: none !important; }
 }

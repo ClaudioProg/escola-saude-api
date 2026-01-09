@@ -29,10 +29,17 @@ const REQUIRED_PROFILE_FIELDS = [
   "data_nascimento",
 ];
 
+// JWT extras opcionais (não quebra se ausentes)
+const JWT_ISS = process.env.JWT_ISSUER || undefined;
+const JWT_AUD = process.env.JWT_AUDIENCE || undefined;
+
 function normEmail(v) { return String(v || "").trim().toLowerCase(); }
 function onlyDigits(v) { return String(v || "").replace(/\D/g, ""); }
 function normNome(v) { return String(v || "").trim(); }
-function toDateOnly(v) { const s = String(v || "").slice(0, 10); return DATE_ONLY_RE.test(s) ? s : ""; }
+function toDateOnly(v) {
+  const s = String(v || "").slice(0, 10);
+  return DATE_ONLY_RE.test(s) ? s : "";
+}
 
 /** Sempre formata o registro como 00.000-0 (usa somente os 6 primeiros dígitos) */
 function toRegistroMasked(v) {
@@ -73,7 +80,6 @@ function traduzPgError(err) {
   const base = { message: "Erro ao processar solicitação.", fieldErrors: {} };
   const code = err?.code;
 
-  // UNIQUE VIOLATION
   if (code === "23505") {
     const c = String(err.constraint || "").toLowerCase();
     if (c.includes("cpf") || /cpf/i.test(err.detail || "")) {
@@ -85,21 +91,18 @@ function traduzPgError(err) {
     return { ...base, message: "Registro já existente." };
   }
 
-  // NOT NULL
   if (code === "23502") {
     const col = err?.column || "";
     if (col) base.fieldErrors[col] = "Campo obrigatório.";
     return { ...base, message: "Há campos obrigatórios não preenchidos." };
   }
 
-  // INVALID TEXT REPRESENTATION (ex.: data inválida)
   if (code === "22P02") {
     const msg = String(err.message || "").toLowerCase();
     if (msg.includes("date")) base.fieldErrors.data_nascimento = "Data inválida.";
     return { ...base, message: "Valor inválido em um ou mais campos." };
   }
 
-  // CHECK
   if (code === "23514") {
     const check = String(err.constraint || "").toLowerCase();
     for (const k in CHECK_TO_FIELD) {
@@ -115,7 +118,6 @@ function traduzPgError(err) {
     return { ...base, message: "Algum campo não atende às regras de validação." };
   }
 
-  // FK
   if (code === "23503") {
     const d = String(err.detail || "").toLowerCase();
     const fieldErrors = {};
@@ -124,7 +126,6 @@ function traduzPgError(err) {
     return { message: "Alguma referência informada não existe.", fieldErrors };
   }
 
-  // undefined column em ambientes sem 'assinatura'
   if (code === "42703") {
     return { ...base, message: "Erro de configuração no servidor." };
   }
@@ -299,6 +300,7 @@ async function recuperarSenha(req, res) {
   try {
     const result = await db.query("SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)", [email]);
     if (result.rows.length === 0) {
+      // Mensagem neutra (não vaza existência)
       return res.status(200).json({ mensagem: "Se o e-mail estiver cadastrado, enviaremos as instruções." });
     }
 
@@ -308,7 +310,11 @@ async function recuperarSenha(req, res) {
       return res.status(500).json({ message: "Configuração do servidor ausente." });
     }
 
-    const token = jwt.sign({ id: usuarioId, typ: "pwd-reset" }, process.env.JWT_SECRET, { expiresIn: "1h" });
+    const token = jwt.sign(
+      { id: usuarioId, typ: "pwd-reset" },
+      process.env.JWT_SECRET,
+      { expiresIn: "1h", issuer: JWT_ISS, audience: JWT_AUD }
+    );
 
     const reqOrigin = req.headers.origin || "";
     const baseUrl =
@@ -318,7 +324,12 @@ async function recuperarSenha(req, res) {
     const safeBase = String(baseUrl).replace(/\/+$/, "");
     const link = `${safeBase}/redefinir-senha/${encodeURIComponent(token)}`;
 
-    await enviarEmail({ to: email, subject: "Recuperação de Senha - Escola da Saúde", text: `Acesse: ${link} (válido por 1h).` });
+    await enviarEmail({
+      to: email,
+      subject: "Recuperação de Senha - Escola da Saúde",
+      text: `Você solicitou redefinição de senha. Acesse: ${link} (válido por 1h).`,
+    });
+
     return res.status(200).json({ mensagem: "Se o e-mail estiver cadastrado, enviaremos as instruções." });
   } catch (err) {
     console.error("❌ Erro ao solicitar recuperação de senha:", err);
@@ -332,7 +343,15 @@ async function recuperarSenha(req, res) {
 async function redefinirSenha(req, res) {
   const token = String(req.body?.token || "");
   const novaSenha = String(req.body?.novaSenha || "");
-  if (!token || !novaSenha) return res.status(422).json({ message: "Erros de validação.", fieldErrors: { token: !token ? "Token ausente." : undefined, novaSenha: !novaSenha ? "Informe a nova senha." : undefined } });
+  if (!token || !novaSenha) {
+    return res.status(422).json({
+      message: "Erros de validação.",
+      fieldErrors: {
+        token: !token ? "Token ausente." : undefined,
+        novaSenha: !novaSenha ? "Informe a nova senha." : undefined
+      }
+    });
+  }
   if (!SENHA_FORTE_RE.test(novaSenha)) {
     return res.status(422).json({
       message: "Erros de validação.",
@@ -345,11 +364,13 @@ async function redefinirSenha(req, res) {
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, { issuer: JWT_ISS, audience: JWT_AUD });
     if (decoded?.typ !== "pwd-reset" || !decoded?.id) return res.status(400).json({ message: "Token inválido." });
     const usuarioId = decoded.id;
+
     const senhaCriptografada = await bcrypt.hash(novaSenha, 10);
     await db.query("UPDATE usuarios SET senha = $1 WHERE id = $2", [senhaCriptografada, usuarioId]);
+
     return res.status(200).json({ mensagem: "Senha atualizada com sucesso." });
   } catch (err) {
     console.error("❌ Erro ao redefinir senha:", err);
@@ -431,8 +452,8 @@ async function atualizarUsuario(req, res) {
   const senha = req.body?.senha != null ? String(req.body.senha) : undefined;
 
   const fieldErrors = {};
-  if (email != null && !EMAIL_RE.test(email)) fieldErrors.email = "E-mail inválido.";
-  if (senha != null && !SENHA_FORTE_RE.test(senha)) fieldErrors.senha = "Mín. 8 caracteres com maiúscula, minúscula, número e símbolo.";
+  if (email != null && email !== "" && !EMAIL_RE.test(email)) fieldErrors.email = "E-mail inválido.";
+  if (senha != null && senha !== "" && !SENHA_FORTE_RE.test(senha)) fieldErrors.senha = "Mín. 8 caracteres com maiúscula, minúscula, número e símbolo.";
   if (Object.keys(fieldErrors).length) return res.status(422).json({ message: "Erros de validação.", fieldErrors });
 
   const campos = [];
@@ -444,10 +465,10 @@ async function atualizarUsuario(req, res) {
   if (campos.length === 0) return res.status(422).json({ message: "Erros de validação.", fieldErrors: { _global: "Nenhum dado para atualizar." } });
 
   valores.push(id);
-  const query = `UPDATE usuarios SET ${campos.join(", ")} WHERE id = $${index}`;
+  const queryStr = `UPDATE usuarios SET ${campos.join(", ")} WHERE id = $${index}`;
 
   try {
-    await db.query(query, valores);
+    await db.query(queryStr, valores);
     const { rows } = await db.query(
       `SELECT unidade_id, cargo_id, genero_id, orientacao_sexual_id,
               cor_raca_id, escolaridade_id, deficiencia_id, data_nascimento
@@ -535,7 +556,6 @@ async function atualizarPerfilCompleto(req, res) {
   } catch (err) {
     console.error("❌ Erro ao atualizar perfil:", err);
     const payload = traduzPgError(err);
-    // validação do banco → 422; conflito único → 409; demais → 500
     let status = 500;
     if (["23503","23514","23502","22P02"].includes(err?.code)) status = 422;
     if (err?.code === "23505") status = 409;
@@ -574,7 +594,11 @@ async function loginUsuario(req, res) {
     const faltantes = camposFaltantes(usuario);
     res.set("X-Perfil-Incompleto", incompleto ? "1" : "0");
 
-    const token = jwt.sign({ id: usuario.id, perfil: perfilArray }, process.env.JWT_SECRET, { expiresIn: "4h" });
+    const token = jwt.sign(
+      { id: usuario.id, perfil: perfilArray },
+      process.env.JWT_SECRET,
+      { expiresIn: "4h", issuer: JWT_ISS, audience: JWT_AUD }
+    );
 
     return res.status(200).json({
       mensagem: "Login realizado com sucesso.",
@@ -612,46 +636,71 @@ async function obterAssinatura(req, res) {
 
 /* ──────────────────────────────────────────────────────────────
    🔎 Busca de usuários para autocomplete (palestrantes, etc.)
+   GET /usuarios/busca?search=...&roles=instrutor,administrador&unidade_id=#
+   (roles e unidade_id são opcionais; retrocompatível)
    ────────────────────────────────────────────────────────────── */
-   async function buscarUsuarios(req, res) {
-    const search = String(req.query.search || "").trim();
-  
-    if (!search || search.length < 3) {
-      return res.status(400).json({
-        message: "Envie ao menos 3 caracteres para busca.",
-        fieldErrors: { search: "Mínimo de 3 caracteres." },
-      });
-    }
-  
-    try {
-      const like = `%${search}%`;
-  
-      const sql = `
-        SELECT id, nome, email, perfil, unidade_id
-          FROM usuarios
-         WHERE nome ILIKE $1
-            OR email ILIKE $1
-         ORDER BY nome
-         LIMIT 20
-      `;
-  
-      const { rows } = await db.query(sql, [like]);
-  
-      // Você pode filtrar só quem é instrutor/admin, se quiser:
-      const resultado = rows.map((u) => ({
-        id: u.id,
-        nome: u.nome,
-        email: u.email,
-        perfil: perfilToArray(u.perfil),
-        unidade_id: u.unidade_id,
-      }));
-  
-      return res.status(200).json(resultado);
-    } catch (err) {
-      console.error("❌ Erro ao buscar usuários:", err);
-      return res.status(500).json({ message: "Erro ao buscar usuários." });
-    }
+async function buscarUsuarios(req, res) {
+  const search = String(req.query.search || "").trim();
+
+  if (!search || search.length < 3) {
+    return res.status(400).json({
+      message: "Envie ao menos 3 caracteres para busca.",
+      fieldErrors: { search: "Mínimo de 3 caracteres." },
+    });
   }
+
+  try {
+    const like = `%${search}%`;
+
+    // Filtros opcionais
+    const rolesCsv = String(req.query.roles || "").trim();
+    const roles = rolesCsv
+      ? rolesCsv.split(",").map((r) => r.trim().toLowerCase()).filter(Boolean)
+      : null;
+
+    const unidadeId = req.query.unidade_id != null ? Number(req.query.unidade_id) : null;
+    const filtros = ["(nome ILIKE $1 OR email ILIKE $1)"];
+    const params = [like];
+    let idx = 2;
+
+    if (unidadeId && Number.isFinite(unidadeId)) {
+      filtros.push(`unidade_id = $${idx++}`);
+      params.push(unidadeId);
+    }
+
+    // Consulta base
+    const baseSql = `
+      SELECT id, nome, email, perfil, unidade_id
+        FROM usuarios
+       WHERE ${filtros.join(" AND ")}
+       ORDER BY nome
+       LIMIT 20
+    `;
+
+    const { rows } = await db.query(baseSql, params);
+
+    // Filtro por role (se fornecido) — feito em memória para manter compat
+    const filtrado = roles && roles.length
+      ? rows.filter((u) => {
+          const p = perfilToArray(u.perfil);
+          return roles.some((r) => p.includes(r));
+        })
+      : rows;
+
+    const resultado = filtrado.map((u) => ({
+      id: u.id,
+      nome: u.nome,
+      email: u.email,
+      perfil: perfilToArray(u.perfil),
+      unidade_id: u.unidade_id,
+    }));
+
+    return res.status(200).json(resultado);
+  } catch (err) {
+    console.error("❌ Erro ao buscar usuários:", err);
+    return res.status(500).json({ message: "Erro ao buscar usuários." });
+  }
+}
 
 module.exports = {
   cadastrarUsuario,

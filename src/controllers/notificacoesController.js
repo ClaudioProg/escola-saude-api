@@ -1,5 +1,20 @@
-// 📁 src/controllers/notificacoesController.js
-const db = require("../db");
+/* eslint-disable no-console */
+// 📁 src/controllers/notificacoesController.js — PREMIUM (compat DB, date-only safe, idempotência, menos queries)
+const dbMod = require("../db");
+
+// Compat: alguns projetos exportam { pool, query }, outros { db } (pg-promise), outros exportam direto.
+const pgpDb = dbMod?.db ?? null; // pg-promise costuma expor { db }
+const pool = dbMod.pool || dbMod.Pool || dbMod.pool?.pool || dbMod;
+const query =
+  dbMod.query ||
+  (typeof dbMod === "function" ? dbMod : null) ||
+  (pool?.query ? pool.query.bind(pool) : null) ||
+  (pgpDb?.query ? pgpDb.query.bind(pgpDb) : null);
+
+if (typeof query !== "function") {
+  console.error("[notificacoesController] DB inválido:", Object.keys(dbMod || {}));
+  throw new Error("DB inválido em notificacoesController.js (query ausente)");
+}
 
 const IS_DEV = process.env.NODE_ENV !== "production";
 const log = (...a) => IS_DEV && console.log("[notif]", ...a);
@@ -16,13 +31,13 @@ try {
   // Fallbacks simples (mantêm o app funcionando, mas prefira utils/data)
   toBrDate = (v) => {
     if (!v) return "";
-    const d = new Date(v);
-    if (Number.isNaN(d)) return "";
-    return new Intl.DateTimeFormat("pt-BR", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    }).format(d);
+    const d = v instanceof Date ? v : new Date(v);
+    if (Number.isNaN(d.getTime())) return "";
+    // usa UTC pra evitar “pulo”
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const da = String(d.getUTCDate()).padStart(2, "0");
+    return `${da}/${m}/${y}`;
   };
   toBrDateOnlyString = (yyyyMmDd) => {
     if (!yyyyMmDd || typeof yyyyMmDd !== "string") return "";
@@ -34,7 +49,7 @@ try {
 }
 
 /* ------------------------------------------------------------------ */
-/* (Opcional) serviço de avaliações pendentes                         */
+/* (Opcional) serviço de avaliações pendentes                          */
 /* ------------------------------------------------------------------ */
 let buscarAvaliacoesPendentes = null;
 try {
@@ -44,20 +59,22 @@ try {
 }
 
 /* ------------------------------------------------------------------ */
-/* Descoberta de colunas da tabela `notificacoes` (cache)             */
+/* Descoberta de colunas da tabela `notificacoes` (cache)              */
 /* ------------------------------------------------------------------ */
 let _notifColsCache = null;
 
 async function getNotifColumns() {
   if (_notifColsCache) return _notifColsCache;
 
-  const q = await db.query(`
+  const q = await query(`
     SELECT column_name
       FROM information_schema.columns
      WHERE table_schema = 'public'
        AND table_name   = 'notificacoes'
   `);
-  const cols = q.rows.map((r) => r.column_name);
+
+  const rows = q?.rows || q; // compat caso db retorne rows direto (pg-promise)
+  const cols = (rows || []).map((r) => r.column_name);
   const has = (c) => cols.includes(c);
 
   _notifColsCache = {
@@ -73,14 +90,9 @@ async function getNotifColumns() {
     hasLida: has("lida"),
     hasUsuarioId: has("usuario_id"),
   };
+
   log("colunas notificacoes:", _notifColsCache);
   return _notifColsCache;
-}
-
-/* helper: retorna o nome de coluna se existir, senão null */
-async function colIf(name) {
-  const meta = await getNotifColumns();
-  return meta.cols.includes(name) ? name : null;
 }
 
 /* ============================================================ */
@@ -93,10 +105,9 @@ async function listarNotificacoes(req, res) {
 
     const meta = await getNotifColumns();
 
-    const msgCol = meta.hasMensagem ? "mensagem" : (meta.hasCorpo ? "corpo" : null);
-    const tsCol  = meta.hasCriadoEm ? "criado_em" : (meta.hasCriadaEm ? "criada_em" : null);
+    const msgCol = meta.hasMensagem ? "mensagem" : meta.hasCorpo ? "corpo" : null;
+    const tsCol = meta.hasCriadoEm ? "criado_em" : meta.hasCriadaEm ? "criada_em" : null;
 
-    // Montagem dinâmica do SELECT
     const selectParts = [
       "id",
       meta.hasTipo ? "tipo" : "NULL AS tipo",
@@ -106,10 +117,10 @@ async function listarNotificacoes(req, res) {
       tsCol ? `${tsCol} AS tstamp` : "NULL AS tstamp",
     ];
 
-    // WHERE dinâmico
     const whereParts = [];
     const params = [];
     let p = 1;
+
     if (meta.hasUsuarioId) {
       whereParts.push(`usuario_id = $${p++}`);
       params.push(Number(usuario_id));
@@ -120,14 +131,15 @@ async function listarNotificacoes(req, res) {
 
     const sql = `
       SELECT ${selectParts.join(", ")}
-      FROM notificacoes
-      ${whereParts.length ? `WHERE ${whereParts.join(" AND ")}` : ""}
-      ORDER BY ${tsCol ? `${tsCol} DESC NULLS LAST, ` : ""}id DESC
+        FROM notificacoes
+        ${whereParts.length ? `WHERE ${whereParts.join(" AND ")}` : ""}
+       ORDER BY ${tsCol ? `${tsCol} DESC NULLS LAST, ` : ""}id DESC
     `;
 
-    const result = await db.query(sql, params);
+    const result = await query(sql, params);
+    const rows = result?.rows || result;
 
-    const notificacoes = result.rows.map((n) => ({
+    const notificacoes = (rows || []).map((n) => ({
       id: n.id,
       tipo: n.tipo || null,
       titulo: n.titulo || null,
@@ -145,6 +157,7 @@ async function listarNotificacoes(req, res) {
 
 /* ============================================================ */
 /* 📌 Criar notificação (usa apenas colunas existentes)         */
+/* - Agora com timestamp via SQL (now()) quando possível        */
 /* ============================================================ */
 async function criarNotificacao(usuario_id, mensagem, extra) {
   try {
@@ -154,29 +167,43 @@ async function criarNotificacao(usuario_id, mensagem, extra) {
     const data = {};
 
     if (meta.hasUsuarioId) data.usuario_id = Number(usuario_id);
-    if (meta.hasMensagem)  data.mensagem   = String(mensagem);
-    else if (meta.hasCorpo) data.corpo     = String(mensagem);
-    if (meta.hasLida)      data.lida       = false;
-    if (meta.hasCriadoEm)  data.criado_em  = new Date();
-    else if (meta.hasCriadaEm) data.criada_em = new Date();
+
+    if (meta.hasMensagem) data.mensagem = String(mensagem);
+    else if (meta.hasCorpo) data.corpo = String(mensagem);
+
+    if (meta.hasLida) data.lida = false;
+
+    // ✅ Evita Date() no JS: deixa o banco preencher (now()) quando existir coluna
+    // Se não houver coluna de timestamp, simplesmente não seta.
+    const tsCol = meta.hasCriadoEm ? "criado_em" : meta.hasCriadaEm ? "criada_em" : null;
 
     const safeExtra = extra && typeof extra === "object" ? extra : {};
-    if (meta.hasTipo && safeExtra.tipo !== undefined)       data.tipo     = safeExtra.tipo;
-    if (meta.hasTitulo && safeExtra.titulo !== undefined)   data.titulo   = safeExtra.titulo;
-    if (meta.hasTurmaId && safeExtra.turma_id !== undefined) data.turma_id = Number(safeExtra.turma_id);
-    if (meta.hasEventoId && safeExtra.evento_id !== undefined) data.evento_id = Number(safeExtra.evento_id);
+    if (meta.hasTipo && safeExtra.tipo !== undefined) data.tipo = safeExtra.tipo;
+    if (meta.hasTitulo && safeExtra.titulo !== undefined) data.titulo = safeExtra.titulo;
+
+    if (meta.hasTurmaId && safeExtra.turma_id !== undefined && safeExtra.turma_id !== null) {
+      data.turma_id = Number(safeExtra.turma_id);
+    }
+    if (meta.hasEventoId && safeExtra.evento_id !== undefined && safeExtra.evento_id !== null) {
+      data.evento_id = Number(safeExtra.evento_id);
+    }
 
     const cols = Object.keys(data);
-    if (!cols.length) return;
 
-    const placeholders = cols.map((_, i) => `$${i + 1}`);
+    // Adiciona tsCol com now() (sem passar param)
+    const colsFinal = tsCol ? cols.concat([tsCol]) : cols;
+    if (!colsFinal.length) return;
+
     const params = cols.map((c) => data[c]);
+    const placeholders = cols.map((_, i) => `$${i + 1}`).concat(tsCol ? ["now()"] : []);
 
-    const sql = `INSERT INTO notificacoes (${cols.join(", ")}) VALUES (${placeholders.join(", ")})`;
-    await db.query(sql, params);
-    log("notificação criada:", { usuario_id, titulo: data.titulo, tipo: data.tipo });
+    const sql = `INSERT INTO notificacoes (${colsFinal.join(", ")})
+                 VALUES (${placeholders.join(", ")})`;
+
+    await query(sql, params);
+    log("notificação criada:", { usuario_id, tipo: data.tipo, titulo: data.titulo });
   } catch (err) {
-    console.error("❌ Erro ao criar notificação:", err.message);
+    console.error("❌ Erro ao criar notificação:", err?.message || err);
   }
 }
 
@@ -193,13 +220,15 @@ async function contarNaoLidas(req, res) {
       return res.json({ totalNaoLidas: 0, total: 0 });
     }
 
-    const { rows } = await db.query(
-      `SELECT COUNT(*)::int AS total FROM notificacoes WHERE usuario_id = $1 AND lida = false`,
+    const result = await query(
+      `SELECT COUNT(*)::int AS total
+         FROM notificacoes
+        WHERE usuario_id = $1 AND lida = false`,
       [Number(usuario_id)]
     );
+    const rows = result?.rows || result;
 
-    const total = rows[0]?.total || 0;
-    // retrocompat
+    const total = rows?.[0]?.total || 0;
     return res.json({ totalNaoLidas: total, total });
   } catch (err) {
     console.error("❌ Erro ao contar notificações não lidas:", err);
@@ -215,20 +244,25 @@ async function marcarComoLida(req, res) {
     const usuario_id = req.user?.id;
     if (!usuario_id) return res.status(401).json({ erro: "Não autorizado" });
 
-    const { id } = req.params;
-    if (!id) return res.status(400).json({ erro: "ID inválido." });
+    const id = Number(req.params?.id);
+    if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ erro: "ID inválido." });
 
     const meta = await getNotifColumns();
     if (!meta.hasLida || !meta.hasUsuarioId) {
       return res.status(400).json({ erro: "Tabela de notificações não suporta marcação de leitura." });
     }
 
-    const upd = await db.query(
-      `UPDATE notificacoes SET lida = true WHERE id = $1 AND usuario_id = $2`,
-      [Number(id), Number(usuario_id)]
+    const upd = await query(
+      `UPDATE notificacoes
+          SET lida = true
+        WHERE id = $1 AND usuario_id = $2`,
+      [id, Number(usuario_id)]
     );
 
-    if (upd.rowCount === 0) return res.status(404).json({ erro: "Notificação não encontrada." });
+    // pg: upd.rowCount, pg-promise: upd pode ser result ou rows
+    const rowCount = upd?.rowCount ?? 0;
+
+    if (rowCount === 0) return res.status(404).json({ erro: "Notificação não encontrada." });
     return res.status(200).json({ mensagem: "Notificação marcada como lida." });
   } catch (err) {
     console.error("❌ Erro ao marcar notificação como lida:", err);
@@ -238,42 +272,57 @@ async function marcarComoLida(req, res) {
 
 /* ============================================================ */
 /* 📝 Notificações de avaliação pendente (pós-evento)           */
+/* - Idempotência com query única (quando possível)             */
 /* ============================================================ */
 async function gerarNotificacoesDeAvaliacao(usuario_id) {
   try {
+    if (!usuario_id) return;
+
+    const meta = await getNotifColumns();
     const pendentes = await buscarAvaliacoesPendentes(usuario_id);
+
     for (const av of pendentes) {
-      // evita duplicidade por turma
-      const meta = await getNotifColumns();
-      const where = [];
-      const params = [ Number(usuario_id) ];
+      const turmaId = av?.turma_id != null ? Number(av.turma_id) : null;
+      const eventoId = av?.evento_id != null ? Number(av.evento_id) : null;
+      const nomeEvento = av.nome_evento || av.titulo || "evento";
+
+      // Se não tem colunas pra idempotência, ainda cria “best-effort”
+      if (!meta.hasUsuarioId || !meta.hasTipo) {
+        await criarNotificacao(
+          usuario_id,
+          `Já está disponível a avaliação do evento "${nomeEvento}". Acesse o menu Usuário e clique em Certificados Pendentes.`,
+          { tipo: "avaliacao", titulo: `Avaliação disponível para "${nomeEvento}"`, turma_id: turmaId, evento_id: eventoId }
+        );
+        continue;
+      }
+
+      // Checa duplicidade: tipo + turma_id (se existir) + usuario
+      const where = [`usuario_id = $1`, `tipo = 'avaliacao'`];
+      const params = [Number(usuario_id)];
       let p = 2;
 
-      if (meta.hasTipo) where.push(`tipo = 'avaliacao'`);
-      if (meta.hasTurmaId) { where.push(`turma_id = $${p++}`); params.push(Number(av.turma_id)); }
+      if (meta.hasTurmaId && turmaId != null) {
+        where.push(`turma_id = $${p++}`);
+        params.push(turmaId);
+      }
 
-      const dupSql = `
-        SELECT 1 FROM notificacoes
-        WHERE usuario_id = $1
-          ${where.length ? "AND " + where.join(" AND ") : ""}
-      `;
-      const dup = await db.query(dupSql, params);
-      if (dup.rowCount > 0) continue;
+      const dupSql = `SELECT 1 FROM notificacoes WHERE ${where.join(" AND ")} LIMIT 1`;
+      const dup = await query(dupSql, params);
+      if ((dup?.rowCount ?? (dup?.rows?.length || 0)) > 0) continue;
 
-      const nomeEvento = av.nome_evento || av.titulo || "evento";
       await criarNotificacao(
         usuario_id,
         `Já está disponível a avaliação do evento "${nomeEvento}". Acesse o menu Usuário e clique em Certificados Pendentes.`,
         {
           tipo: "avaliacao",
           titulo: `Avaliação disponível para "${nomeEvento}"`,
-          turma_id: av.turma_id,
-          evento_id: av.evento_id || null,
+          turma_id: turmaId,
+          evento_id: eventoId,
         }
       );
     }
   } catch (err) {
-    console.error("❌ Erro ao gerar notificações de avaliação:", err.message);
+    console.error("❌ Erro ao gerar notificações de avaliação:", err?.message || err);
   }
 }
 
@@ -285,9 +334,10 @@ async function gerarNotificacoesDeAvaliacao(usuario_id) {
  * ============================================================ */
 async function gerarNotificacoesDeCertificado(usuario_id, turmaOrOpts = null) {
   try {
+    if (!usuario_id) return;
     const meta = await getNotifColumns();
 
-    // Normaliza argumentos (overload compatível com seu controller atual)
+    // Normaliza argumentos (overload compatível)
     let turma_id = null;
     let evento_id = null;
     let evento_titulo = "evento";
@@ -300,24 +350,32 @@ async function gerarNotificacoesDeCertificado(usuario_id, turmaOrOpts = null) {
       evento_titulo = turmaOrOpts.evento_titulo || "evento";
     }
 
-    // Se veio turma/evento, cria notificação específica idempotente
-    if (turma_id || evento_id) {
+    // 1) Notificação específica idempotente
+    if (turma_id != null || evento_id != null) {
       const where = [];
-      const params = [ Number(usuario_id) ];
-      let p = 2;
+      const params = [];
+      let p = 1;
 
+      if (meta.hasUsuarioId) {
+        where.push(`usuario_id = $${p++}`);
+        params.push(Number(usuario_id));
+      }
       if (meta.hasTipo) where.push(`tipo = 'certificado'`);
-      if (meta.hasTurmaId && turma_id != null) { where.push(`turma_id = $${p++}`); params.push(Number(turma_id)); }
-      if (meta.hasEventoId && evento_id != null) { where.push(`evento_id = $${p++}`); params.push(Number(evento_id)); }
+      if (meta.hasTurmaId && turma_id != null) {
+        where.push(`turma_id = $${p++}`);
+        params.push(Number(turma_id));
+      }
+      if (meta.hasEventoId && evento_id != null) {
+        where.push(`evento_id = $${p++}`);
+        params.push(Number(evento_id));
+      }
       if (meta.hasLida) where.push(`lida = false`);
 
-      const dupSql = `
-        SELECT 1 FROM notificacoes
-        WHERE ${meta.hasUsuarioId ? "usuario_id = $1" : "1=1"}
-          ${where.length ? "AND " + where.join(" AND ") : ""}
-      `;
-      const dup = await db.query(dupSql, meta.hasUsuarioId ? params : params.slice(1));
-      if (dup.rowCount > 0) return;
+      if (where.length) {
+        const dupSql = `SELECT 1 FROM notificacoes WHERE ${where.join(" AND ")} LIMIT 1`;
+        const dup = await query(dupSql, params);
+        if ((dup?.rowCount ?? (dup?.rows?.length || 0)) > 0) return;
+      }
 
       await criarNotificacao(
         Number(usuario_id),
@@ -332,8 +390,8 @@ async function gerarNotificacoesDeCertificado(usuario_id, turmaOrOpts = null) {
       return;
     }
 
-    // Caso contrário, gera notificações para todos os elegíveis sem certificado
-    const { rows } = await db.query(
+    // 2) Varre elegíveis sem certificado (somente participante tipo 'usuario')
+    const result = await query(
       `
       SELECT
         e.id     AS evento_id,
@@ -343,31 +401,44 @@ async function gerarNotificacoesDeCertificado(usuario_id, turmaOrOpts = null) {
       JOIN eventos e    ON e.id = t.evento_id
       JOIN inscricoes i ON i.turma_id = t.id AND i.usuario_id = $1
       LEFT JOIN certificados c
-        ON c.usuario_id = $1 AND c.evento_id = e.id AND c.turma_id = t.id AND c.tipo = 'usuario'
+        ON c.usuario_id = $1
+       AND c.evento_id  = e.id
+       AND c.turma_id   = t.id
+       AND c.tipo       = 'usuario'
       WHERE (t.data_fim::text || ' ' || COALESCE(t.horario_fim,'23:59'))::timestamp < NOW()
         AND c.id IS NULL
       ORDER BY t.data_fim DESC
       `,
-      [ Number(usuario_id) ]
+      [Number(usuario_id)]
     );
 
-    for (const row of rows) {
-      const where = [];
-      const params = [ Number(usuario_id) ];
-      let p = 2;
+    const rows = result?.rows || result;
 
+    for (const row of rows || []) {
+      const where = [];
+      const params = [];
+      let p = 1;
+
+      if (meta.hasUsuarioId) {
+        where.push(`usuario_id = $${p++}`);
+        params.push(Number(usuario_id));
+      }
       if (meta.hasTipo) where.push(`tipo = 'certificado'`);
-      if (meta.hasTurmaId) { where.push(`turma_id = $${p++}`); params.push(Number(row.turma_id)); }
-      if (meta.hasEventoId) { where.push(`evento_id = $${p++}`); params.push(Number(row.evento_id)); }
+      if (meta.hasTurmaId) {
+        where.push(`turma_id = $${p++}`);
+        params.push(Number(row.turma_id));
+      }
+      if (meta.hasEventoId) {
+        where.push(`evento_id = $${p++}`);
+        params.push(Number(row.evento_id));
+      }
       if (meta.hasLida) where.push(`lida = false`);
 
-      const dupSql = `
-        SELECT 1 FROM notificacoes
-        WHERE ${meta.hasUsuarioId ? "usuario_id = $1" : "1=1"}
-          ${where.length ? "AND " + where.join(" AND ") : ""}
-      `;
-      const dup = await db.query(dupSql, meta.hasUsuarioId ? params : params.slice(1));
-      if (dup.rowCount > 0) continue;
+      if (where.length) {
+        const dupSql = `SELECT 1 FROM notificacoes WHERE ${where.join(" AND ")} LIMIT 1`;
+        const dup = await query(dupSql, params);
+        if ((dup?.rowCount ?? (dup?.rows?.length || 0)) > 0) continue;
+      }
 
       await criarNotificacao(
         Number(usuario_id),
@@ -381,28 +452,24 @@ async function gerarNotificacoesDeCertificado(usuario_id, turmaOrOpts = null) {
       );
     }
   } catch (err) {
-    console.error("❌ Erro em gerarNotificacoesDeCertificado:", err.message);
+    console.error("❌ Erro em gerarNotificacoesDeCertificado:", err?.message || err);
   }
 }
 
 /* ============================================================ */
 /* 📣 Notificações — Submissões de Trabalhos                     */
 /* ============================================================ */
-
-/** Autor foi bem-sucedido ao criar uma submissão. */
-async function notificarSubmissaoCriada({ usuario_id, chamada_titulo, trabalho_titulo, submissao_id }) {
+async function notificarSubmissaoCriada({ usuario_id, chamada_titulo, trabalho_titulo }) {
   try {
-    await criarNotificacao(
-      Number(usuario_id),
-      `Sua submissão "${trabalho_titulo}" foi enviada para a chamada "${chamada_titulo}".`,
-      { tipo: "submissao", titulo: `Submissão criada: ${trabalho_titulo}` }
-    );
+    await criarNotificacao(Number(usuario_id), `Sua submissão "${trabalho_titulo}" foi enviada para a chamada "${chamada_titulo}".`, {
+      tipo: "submissao",
+      titulo: `Submissão criada: ${trabalho_titulo}`,
+    });
   } catch (err) {
-    console.error("❌ notificarSubmissaoCriada:", err.message);
+    console.error("❌ notificarSubmissaoCriada:", err?.message || err);
   }
 }
 
-/** Autor atualizou/enviou pôster (PPT/PPTX). */
 async function notificarPosterAtualizado({ usuario_id, chamada_titulo, trabalho_titulo, arquivo_nome }) {
   try {
     await criarNotificacao(
@@ -411,11 +478,10 @@ async function notificarPosterAtualizado({ usuario_id, chamada_titulo, trabalho_
       { tipo: "submissao", titulo: `Pôster anexado: ${trabalho_titulo}` }
     );
   } catch (err) {
-    console.error("❌ notificarPosterAtualizado:", err.message);
+    console.error("❌ notificarPosterAtualizado:", err?.message || err);
   }
 }
 
-/** Mudança de status de uma submissão para o autor. */
 async function notificarStatusSubmissao({ usuario_id, chamada_titulo, trabalho_titulo, status }) {
   try {
     const mapaTit = {
@@ -433,20 +499,19 @@ async function notificarStatusSubmissao({ usuario_id, chamada_titulo, trabalho_t
       reprovado: `O trabalho "${trabalho_titulo}" não foi selecionado na chamada "${chamada_titulo}".`,
     };
 
-    await criarNotificacao(
-      Number(usuario_id),
-      mapaMsg[status] || `Status atualizado: ${status} — "${trabalho_titulo}"`,
-      { tipo: "submissao", titulo: mapaTit[status] || `Status: ${status}` }
-    );
+    await criarNotificacao(Number(usuario_id), mapaMsg[status] || `Status atualizado: ${status} — "${trabalho_titulo}"`, {
+      tipo: "submissao",
+      titulo: mapaTit[status] || `Status: ${status}`,
+    });
   } catch (err) {
-    console.error("❌ notificarStatusSubmissao:", err.message);
+    console.error("❌ notificarStatusSubmissao:", err?.message || err);
   }
 }
 
-/** Pós-classificação: notifica o autor pelo status final da chamada. */
 async function notificarClassificacaoDaChamada(chamada_id) {
   try {
-    const { rows } = await db.query(`
+    const result = await query(
+      `
       SELECT s.id AS submissao_id,
              s.usuario_id,
              s.titulo AS trabalho_titulo,
@@ -455,9 +520,12 @@ async function notificarClassificacaoDaChamada(chamada_id) {
       FROM trabalhos_submissoes s
       JOIN trabalhos_chamadas c ON c.id = s.chamada_id
       WHERE s.chamada_id = $1
-    `, [ Number(chamada_id) ]);
+      `,
+      [Number(chamada_id)]
+    );
+    const rows = result?.rows || result;
 
-    for (const row of rows) {
+    for (const row of rows || []) {
       await notificarStatusSubmissao({
         usuario_id: row.usuario_id,
         chamada_titulo: row.chamada_titulo,
@@ -466,7 +534,7 @@ async function notificarClassificacaoDaChamada(chamada_id) {
       });
     }
   } catch (err) {
-    console.error("❌ notificarClassificacaoDaChamada:", err.message);
+    console.error("❌ notificarClassificacaoDaChamada:", err?.message || err);
   }
 }
 

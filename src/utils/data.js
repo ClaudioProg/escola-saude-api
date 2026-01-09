@@ -1,17 +1,39 @@
 // 📁 src/utils/data.js
+/* eslint-disable no-console */
 
 // Timezone padrão para exibição/formatos locais.
 // OBS: Somente para formatação; o armazenamento/contrato de API continua em UTC.
 const TZ_PADRAO = process.env.TZ_PADRAO || "America/Sao_Paulo";
 
 /* ──────────────────────────────────────────────────────────────────
-   VALIDADORES / PARSERS BÁSICOS
+   HELPERS DE VALIDAÇÃO
    ────────────────────────────────────────────────────────────────── */
 
-/** Retorna true se for string no formato YYYY-MM-DD (data sem hora). */
-function isIsoDateOnly(s) {
-  return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+function _isValidYmdParts(y, m, d) {
+  const yy = Number(y), mm = Number(m), dd = Number(d);
+  if (!Number.isInteger(yy) || yy < 1900 || yy > 2200) return false;
+  if (!Number.isInteger(mm) || mm < 1 || mm > 12) return false;
+  if (!Number.isInteger(dd) || dd < 1 || dd > 31) return false;
+
+  // valida dia real do mês usando UTC (não sofre fuso)
+  const dt = new Date(Date.UTC(yy, mm - 1, dd));
+  return (
+    dt.getUTCFullYear() === yy &&
+    dt.getUTCMonth() === mm - 1 &&
+    dt.getUTCDate() === dd
+  );
 }
+
+/** Retorna true se for string no formato YYYY-MM-DD (data sem hora) e for data real. */
+function isIsoDateOnly(s) {
+  if (typeof s !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const [y, m, d] = s.split("-");
+  return _isValidYmdParts(y, m, d);
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   PARSERS / SERIALIZERS
+   ────────────────────────────────────────────────────────────────── */
 
 /**
  * Tenta parsear uma string ISO (com ou sem Z).
@@ -19,9 +41,15 @@ function isIsoDateOnly(s) {
  * - "YYYY-MM-DD" → interpretado como **UTC**.
  * - "YYYY-MM-DDTHH:mm" (sem Z) → interpretado no fuso **local do servidor**.
  * - Sufixo 'Z' → UTC explícito.
+ *
+ * Premium: se for date-only, retorna null (para evitar uso acidental de Date).
  */
 function parseIsoToDate(s) {
   if (!s || typeof s !== "string") return null;
+
+  // ✅ evita criar Date com date-only por acidente
+  if (isIsoDateOnly(s)) return null;
+
   const d = new Date(s);
   return isNaN(d) ? null : d;
 }
@@ -29,12 +57,14 @@ function parseIsoToDate(s) {
 /** Retorna um Date a partir de ISO com Z em UTC (preferível). */
 function parseUtc(isoUtc) {
   if (!isoUtc) return null;
-  // Exige 'Z' no fim para garantir UTC explícito
+
+  // aceita string ISO com Z
   if (typeof isoUtc === "string" && /z$/i.test(isoUtc)) {
     const d = new Date(isoUtc);
     return isNaN(d) ? null : d;
   }
-  // Se não tiver Z, tenta parse e assume como Date válido (mas recomendamos sempre enviar com Z)
+
+  // fallback: tenta parse mesmo sem Z (menos recomendado)
   const d = new Date(isoUtc);
   return isNaN(d) ? null : d;
 }
@@ -48,12 +78,11 @@ function toIsoUtc(date) {
 /** Converte YYYY-MM-DD para Date "início do dia" em UTC. */
 function dateOnlyToUtcDate(yyyyMmDd) {
   if (!isIsoDateOnly(yyyyMmDd)) return null;
-  // meia-noite UTC
   return new Date(`${yyyyMmDd}T00:00:00Z`);
 }
 
 /* ──────────────────────────────────────────────────────────────────
-   FORMATAÇÃO pt-BR PARA EXIBIÇÃO (casos em que o backend precise)
+   FORMATAÇÃO pt-BR PARA EXIBIÇÃO
    ────────────────────────────────────────────────────────────────── */
 
 /** Formata "YYYY-MM-DD" → "dd/MM/aaaa" sem criar Date (evita shift de fuso). */
@@ -65,12 +94,13 @@ function toBrDateOnlyString(yyyyMmDd) {
 
 /** Formata Date/ISO para dd/MM/aaaa no fuso informado (padrão: America/Sao_Paulo). */
 function toBrDate(input, timeZone = TZ_PADRAO) {
-  // ✅ Se for "YYYY-MM-DD", não crie Date — formate direto:
   if (typeof input === "string" && isIsoDateOnly(input)) {
     return toBrDateOnlyString(input);
   }
+
   const d = input instanceof Date ? input : parseIsoToDate(input);
   if (!d) return "";
+
   return new Intl.DateTimeFormat("pt-BR", {
     timeZone,
     day: "2-digit",
@@ -81,12 +111,13 @@ function toBrDate(input, timeZone = TZ_PADRAO) {
 
 /** Formata Date/ISO para dd/MM/aaaa HH:mm (24h) no fuso informado. */
 function toBrDateTime(input, timeZone = TZ_PADRAO) {
-  // ⚠️ Se vier só data, não tem HH:mm — formata como data simples para não “voltar um dia”
   if (typeof input === "string" && isIsoDateOnly(input)) {
     return toBrDate(input, timeZone);
   }
+
   const d = input instanceof Date ? input : parseIsoToDate(input);
   if (!d) return "";
+
   return new Intl.DateTimeFormat("pt-BR", {
     timeZone,
     day: "2-digit",
@@ -99,23 +130,23 @@ function toBrDateTime(input, timeZone = TZ_PADRAO) {
 }
 
 /* ──────────────────────────────────────────────────────────────────
-   CONVERSÕES BR (strings do tipo dd/MM/aaaa) → ISO
+   CONVERSÕES BR (dd/MM/aaaa) → ISO
    ────────────────────────────────────────────────────────────────── */
 
-/** Converte dd/MM/aaaa para YYYY-MM-DD (somente data). */
+/** Converte dd/MM/aaaa para YYYY-MM-DD (somente data), validando data real. */
 function brDateToIsoDate(dataBr) {
   if (!dataBr || typeof dataBr !== "string") return "";
+
   const [dd, mm, yyyy] = dataBr.split("/").map((x) => String(x || "").trim());
-  if (!dd || !mm || !yyyy) return "";
   if (!/^\d{2}$/.test(dd) || !/^\d{2}$/.test(mm) || !/^\d{4}$/.test(yyyy)) return "";
+
+  if (!_isValidYmdParts(yyyy, mm, dd)) return "";
   return `${yyyy}-${mm}-${dd}`;
 }
 
 /**
  * Converte dd/MM/aaaa + HH:mm (hora local do servidor) → ISO UTC.
- * ⚠️ BACKEND: esta função usa o timezone do SISTEMA onde o Node está rodando.
- * Se você precisa converter especificamente com "America/Sao_Paulo" independente do servidor,
- * prefira fazer a conversão no FRONTEND (onde sabemos a zona do usuário) e enviar ISO UTC pronto.
+ * ⚠️ BACKEND: usa timezone do SISTEMA onde o Node está rodando.
  */
 function brDateTimeToIsoUtc(dataBr, horaBr = "00:00") {
   const isoDate = brDateToIsoDate(dataBr);
@@ -124,14 +155,13 @@ function brDateTimeToIsoUtc(dataBr, horaBr = "00:00") {
   const [hh, min] = (horaBr || "00:00").split(":").map((x) => parseInt(x, 10));
   const [y, m, d] = isoDate.split("-").map((x) => parseInt(x, 10));
 
-  // Cria Date como LOCAL do servidor (não do usuário), depois converte para UTC via toISOString.
-  const local = new Date(y, m - 1, d, isNaN(hh) ? 0 : hh, isNaN(min) ? 0 : min, 0, 0);
+  const local = new Date(y, m - 1, d, Number.isFinite(hh) ? hh : 0, Number.isFinite(min) ? min : 0, 0, 0);
   if (isNaN(local)) return null;
-  return local.toISOString(); // retorna UTC com Z
+  return local.toISOString();
 }
 
 /* ──────────────────────────────────────────────────────────────────
-   OCORRÊNCIAS DE TURMA (somente dias reais do curso)
+   OCORRÊNCIAS DE TURMA
    ────────────────────────────────────────────────────────────────── */
 
 /** Formata Date (UTC) para "YYYY-MM-DD". */
@@ -157,46 +187,36 @@ function _addUtcDays(d, inc = 1) {
  * 2) diasSemana: array de números 0..6 (Dom..Sáb) → gera entre início/fim
  * 3) fallback: intervalo completo [data_inicio..data_fim]
  */
-function gerarOcorrencias({
-  data_inicio,
-  data_fim,
-  datasEspecificas = [],
-  diasSemana = [],
-}) {
-  // 1) Datas específicas (se vierem, usamos só elas)
+function gerarOcorrencias({ data_inicio, data_fim, datasEspecificas = [], diasSemana = [] }) {
+  // 1) Datas específicas
   if (Array.isArray(datasEspecificas) && datasEspecificas.length) {
-    const uniq = new Set(
-      datasEspecificas
-        .map((s) => (isIsoDateOnly(s) ? s : ""))
-        .filter(Boolean)
-    );
+    const uniq = new Set(datasEspecificas.filter((s) => isIsoDateOnly(s)));
     return Array.from(uniq).sort();
   }
 
-  // Preparar início/fim
-  const di = isIsoDateOnly(data_inicio)
-    ? dateOnlyToUtcDate(data_inicio)
-    : parseIsoToDate(data_inicio);
-  const df = isIsoDateOnly(data_fim)
-    ? dateOnlyToUtcDate(data_fim)
-    : parseIsoToDate(data_fim);
+  // Preparar início/fim (date-only -> 00:00Z)
+  const di = isIsoDateOnly(data_inicio) ? dateOnlyToUtcDate(data_inicio) : parseIsoToDate(data_inicio);
+  const df = isIsoDateOnly(data_fim) ? dateOnlyToUtcDate(data_fim) : parseIsoToDate(data_fim);
 
-  if (!(di instanceof Date) || isNaN(di) || !(df instanceof Date) || isNaN(df)) {
-    return [];
-  }
+  if (!(di instanceof Date) || isNaN(di) || !(df instanceof Date) || isNaN(df)) return [];
+  if (di > df) return [];
 
-  // 2) Apenas certos dias da semana
+  // 2) Dias da semana
   if (Array.isArray(diasSemana) && diasSemana.length) {
-    const wanted = new Set(diasSemana.map((x) => Number(x)));
+    const wanted = new Set(
+      diasSemana
+        .map((x) => Number(x))
+        .filter((n) => Number.isFinite(n) && n >= 0 && n <= 6)
+    );
+
     const out = [];
     for (let d = new Date(di); d <= df; d = _addUtcDays(d, 1)) {
-      // getUTCDay(): 0..6 = Dom..Sáb
       if (wanted.has(d.getUTCDay())) out.push(_formatYmd(d));
     }
     return out;
   }
 
-  // 3) Fallback: intervalo completo
+  // 3) Intervalo completo
   const out = [];
   for (let d = new Date(di); d <= df; d = _addUtcDays(d, 1)) {
     out.push(_formatYmd(d));
@@ -208,14 +228,11 @@ function gerarOcorrencias({
    COMPATIBILIDADE (mantém suas funções antigas)
    ────────────────────────────────────────────────────────────────── */
 
-/** (LEGADO) Converte Date ou string ISO para dd/MM/aaaa. */
 function formatarDataBR(dataEntrada) {
   if (!dataEntrada) return "";
-  // Reaproveita toBrDate (usa TZ padrão) — já trata "YYYY-MM-DD" sem criar Date
   return toBrDate(dataEntrada);
 }
 
-/** (LEGADO) Converte dd/MM/aaaa para YYYY-MM-DD. */
 function formatarDataISO(dataBR) {
   return brDateToIsoDate(dataBR);
 }
@@ -225,27 +242,21 @@ function formatarDataISO(dataBR) {
    ────────────────────────────────────────────────────────────────── */
 
 module.exports = {
-  // Contrato API (recomendado)
-  parseUtc,           // ISO (com Z) -> Date
-  toIsoUtc,           // Date -> ISO (com Z)
-  dateOnlyToUtcDate,  // "YYYY-MM-DD" -> Date (00:00Z)
+  parseUtc,
+  toIsoUtc,
+  dateOnlyToUtcDate,
 
-  // Formatação pt-BR (útil em e-mails/logs do backend)
-  toBrDateOnlyString, // "YYYY-MM-DD" -> "dd/MM/aaaa" sem Date (novo)
-  toBrDate,           // Date/ISO -> "dd/MM/aaaa" (com branch p/ date-only)
-  toBrDateTime,       // Date/ISO -> "dd/MM/aaaa HH:mm" (date-only cai p/ data simples)
+  toBrDateOnlyString,
+  toBrDate,
+  toBrDateTime,
 
-  // Converters BR <-> ISO date-only
-  brDateToIsoDate,    // "dd/MM/aaaa" -> "YYYY-MM-DD"
-  brDateTimeToIsoUtc, // "dd/MM/aaaa"+"HH:mm" -> ISO UTC (atenção ao timezone do servidor)
+  brDateToIsoDate,
+  brDateTimeToIsoUtc,
 
-  // Legado (mantidos)
   formatarDataBR,
   formatarDataISO,
 
-  // Utils
   isIsoDateOnly,
 
-  // Novo
   gerarOcorrencias,
 };

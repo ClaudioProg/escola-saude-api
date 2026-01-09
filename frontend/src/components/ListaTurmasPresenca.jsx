@@ -1,8 +1,10 @@
+// ✅ src/components/ListaTurmasPresenca.jsx (Premium + sem window.confirm + bugfix pad2)
 /* eslint-disable no-console */
-import { useMemo, useState } from "react";
+import { useMemo, useState, useCallback } from "react";
 import PropTypes from "prop-types";
 import { motion, AnimatePresence } from "framer-motion";
 import BotaoPrimario from "./BotaoPrimario";
+import ModalConfirmacao from "./ModalConfirmacao";
 import { toast } from "react-toastify";
 import {
   formatarDataBrasileira,
@@ -11,36 +13,72 @@ import {
   formatarParaISO,
 } from "../utils/data";
 import { apiGet, apiPost, apiDelete } from "../services/api";
-import { Trash2, CalendarDays, Clock, FileText } from "lucide-react";
+import {
+  Trash2,
+  CalendarDays,
+  Clock,
+  FileText,
+  Users,
+  ChevronDown,
+  ChevronUp,
+  BadgeCheck,
+} from "lucide-react";
 
-/* ===== NOVO: abre 30min antes do início ===== */
+/* ===== abre 30min antes do início ===== */
 const MINUTOS_ANTECIPACAO = 30;
 
-/* ───────────────── Helpers ───────────────── */
+/* ================= Helpers ================= */
+function cls(...parts) {
+  return parts.filter(Boolean).join(" ");
+}
 const ymd = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
 const hhmm = (s, fb = "00:00") =>
   typeof s === "string" && /^\d{2}:\d{2}/.test(s) ? s.slice(0, 5) : fb;
 const isSameYMD = (a, b) => ymd(a) === ymd(b);
+const isDateOnly = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
 
-const keyFimTurma = (t) => {
-  const df = ymd(t?.data_fim);
-  const hf = hhmm(t?.horario_fim, "23:59");
-  const di = ymd(t?.data_inicio);
-  if (df) return new Date(`${df}T${hf}:00`).getTime();
-  if (di) return new Date(`${di}T23:59:59`).getTime();
-  return -Infinity;
-};
-const ordenarTurmasPorMaisNovo = (a, b) => keyFimTurma(b) - keyFimTurma(a);
-const keyEventoMaisNovo = (ev) => Math.max(...(ev?.turmas || []).map(keyFimTurma), -Infinity);
-const ordenarEventosPorMaisNovo = (a, b) => keyEventoMaisNovo(b) - keyEventoMaisNovo(a);
+function toLocalDateFromYMDTime(dateOnly, timeHHmm = "12:00") {
+  if (!isDateOnly(dateOnly)) return null;
+  const [Y, M, D] = dateOnly.split("-").map(Number);
+  const [h, m] = String(timeHHmm || "12:00")
+    .slice(0, 5)
+    .split(":")
+    .map((x) => Number(x));
+  const HH = Number.isFinite(h) ? h : 12;
+  const MM = Number.isFinite(m) ? m : 0;
+  return new Date(Y, (M || 1) - 1, D || 1, HH, MM, 0, 0);
+}
 
-/* Barrinha colorida */
+function addMinutes(dt, min) {
+  return dt ? new Date(dt.getTime() + min * 60 * 1000) : null;
+}
+function addDays(dt, days) {
+  return dt ? new Date(dt.getTime() + days * 24 * 60 * 60 * 1000) : null;
+}
+
+function getStatusPorJanela({ di, df, hi, hf, agora = new Date() }) {
+  const start = toLocalDateFromYMDTime(di, hi || "00:00");
+  const end = toLocalDateFromYMDTime(df, hf || "23:59");
+  if (!start || !end || Number.isNaN(+start) || Number.isNaN(+end)) return "Programado";
+  if (agora < start) return "Programado";
+  if (agora > end) return "Encerrado";
+  return "Em andamento";
+}
+
+/* Barrinha colorida (padrão global) */
 function barByStatus(status) {
+  if (status === "Em andamento") return "bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-300";
+  if (status === "Encerrado") return "bg-gradient-to-r from-rose-600 via-rose-500 to-red-400";
+  return "bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-400"; // Programado
+}
+
+function statusPill(status) {
+  const base = "inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold border";
   if (status === "Em andamento")
-    return "bg-gradient-to-r from-amber-700 via-amber-600 to-amber-400";
+    return cls(base, "bg-amber-50 text-amber-900 border-amber-200 dark:bg-amber-900/20 dark:text-amber-200 dark:border-amber-800");
   if (status === "Encerrado")
-    return "bg-gradient-to-r from-rose-800 via-rose-700 to-rose-500";
-  return "bg-gradient-to-r from-emerald-700 via-emerald-600 to-emerald-500"; // Programado
+    return cls(base, "bg-rose-50 text-rose-800 border-rose-200 dark:bg-rose-900/20 dark:text-rose-200 dark:border-rose-800");
+  return cls(base, "bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-900/25 dark:text-emerald-200 dark:border-emerald-800");
 }
 
 /* datetime → dd/mm/yyyy HH:mm */
@@ -48,20 +86,16 @@ function formatarDataHoraBR(v) {
   if (!v) return "";
   let d = null;
 
-  if (v instanceof Date && !isNaN(v)) d = v;
+  if (v instanceof Date && !Number.isNaN(+v)) d = v;
   else if (typeof v === "number") d = new Date(v);
   else if (typeof v === "string") {
-    // normaliza "YYYY-MM-DD HH:mm:ss" → "YYYY-MM-DDTHH:mm:ss"
     const s = v.includes("T") ? v : v.replace(" ", "T");
     const try1 = new Date(s);
-    if (!isNaN(try1)) d = try1;
-    else {
-      // caso venha só "HH:mm" junto com uma data; deixamos para quem chama montar
-      return "";
-    }
+    if (!Number.isNaN(+try1)) d = try1;
+    else return "";
   }
-  if (!d || isNaN(d)) return "";
 
+  if (!d || Number.isNaN(+d)) return "";
   const dd = String(d.getDate()).padStart(2, "0");
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const yyyy = d.getFullYear();
@@ -70,7 +104,76 @@ function formatarDataHoraBR(v) {
   return `${dd}/${mm}/${yyyy} ${HH}:${MM}`;
 }
 
-/* ───────────────── Componente ───────────────── */
+/* Ordenadores */
+const keyFimTurma = (t) => {
+  const df = ymd(t?.data_fim);
+  const hf = hhmm(t?.horario_fim, "23:59");
+  const di = ymd(t?.data_inicio);
+  if (df) return toLocalDateFromYMDTime(df, hf)?.getTime?.() ?? -Infinity;
+  if (di) return toLocalDateFromYMDTime(di, "23:59")?.getTime?.() ?? -Infinity;
+  return -Infinity;
+};
+const ordenarTurmasPorMaisNovo = (a, b) => keyFimTurma(b) - keyFimTurma(a);
+const keyEventoMaisNovo = (ev) => Math.max(...(ev?.turmas || []).map(keyFimTurma), -Infinity);
+const ordenarEventosPorMaisNovo = (a, b) => keyEventoMaisNovo(b) - keyEventoMaisNovo(a);
+
+/* Export CSV (data ativa) */
+function exportarCSVDataAtiva(turmaId, dataYMD, mapaUsuarios) {
+  const SEP = ";";
+  const BOM = "\uFEFF";
+  const header = ["Nome", "CPF", "Status", "Confirmado em"].join(SEP);
+  const rows = [];
+
+  for (const u of mapaUsuarios.values()) {
+    const prObj = u.presencas.get(dataYMD);
+    const presente = !!(prObj && prObj.presente);
+    const statusTxt = presente ? "Presente" : "Sem presença";
+
+    let confirmadoStr = "";
+    if (presente && prObj?.confirmadoEm) {
+      confirmadoStr = formatarDataHoraBR(prObj.confirmadoEm) || "";
+      if (!confirmadoStr && typeof prObj.confirmadoEm === "string" && /^\d{2}:\d{2}/.test(prObj.confirmadoEm)) {
+        confirmadoStr = `${formatarDataBrasileira(dataYMD)} ${prObj.confirmadoEm.slice(0, 5)}`;
+      }
+    }
+
+    const nome = String(u.nome ?? "").replace(/"/g, '""');
+    const cpf = String(formatarCPF(u.cpf) || u.cpf || "").replace(/"/g, '""');
+    const conf = String(confirmadoStr).replace(/"/g, '""');
+
+    rows.push([`"${nome}"`, `"${cpf}"`, `"${statusTxt}"`, `"${conf}"`].join(SEP));
+  }
+
+  const csv = [header, ...rows].join("\r\n");
+  const blob = new Blob([BOM + csv], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `presencas_${turmaId}_${dataYMD}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+/* monta objeto {presente, confirmadoEm} a partir de um registro p */
+function toPresencaInfo(p, dataYMD) {
+  const presente = !!p?.presente;
+  let ts =
+    p?.confirmado_em ||
+    p?.data_confirmacao ||
+    p?.data_hora ||
+    p?.momento ||
+    p?.timestamp ||
+    p?.created_at ||
+    p?.updated_at ||
+    null;
+
+  if (!ts && typeof p?.hora === "string") {
+    const h = hhmm(p.hora);
+    if (h) ts = `${dataYMD}T${h}:00`;
+  }
+  return { presente, confirmadoEm: ts || null };
+}
+
+/* ========================== Componente ========================== */
 export default function ListaTurmasPresenca({
   eventos = [],
   hoje,
@@ -86,24 +189,29 @@ export default function ListaTurmasPresenca({
   agrupamento = "pessoa", // "pessoa" | "data"
 }) {
   const [turmaExpandidaId, setTurmaExpandidaId] = useState(null);
-  const [presencasPorTurma, setPresencasPorTurma] = useState({}); // { [id]: { datas:[], usuarios:[] } }
+
+  // { [id]: { datas:[], usuarios:[] } }
+  const [presencasPorTurma, setPresencasPorTurma] = useState({});
   const [carregandoTurmas, setCarregandoTurmas] = useState(() => new Set());
-  const [refreshKey, setRefreshKey] = useState(0);
+
+  // loading por confirmação (turma#usuario#data)
+  const [confirmandoKey, setConfirmandoKey] = useState(null);
 
   // visão "data"
-  const [dataAtivaPorTurma, setDataAtivaPorTurma] = useState({}); // { [turmaId]: "YYYY-MM-DD" }
-  const [somenteSemPresencaPorTurma, setSomenteSemPresencaPorTurma] = useState({}); // { [turmaId]: bool }
+  const [dataAtivaPorTurma, setDataAtivaPorTurma] = useState({});
+  const [somenteSemPresencaPorTurma, setSomenteSemPresencaPorTurma] = useState({});
 
-  // Exclusão
+  // exclusão
   const [removendoId, setRemovendoId] = useState(null);
   const [idsRemovidos, setIdsRemovidos] = useState(() => new Set());
 
-  const eventosOrdenados = useMemo(
-    () => eventos.slice().sort(ordenarEventosPorMaisNovo),
-    [eventos]
-  );
+  // MODAIS premium (sem window.confirm)
+  const [confirmPresenca, setConfirmPresenca] = useState(null); // {dataYMD, turmaId, usuarioId, nome}
+  const [confirmRemover, setConfirmRemover] = useState(null); // {turmaId, turmaNome}
 
-  async function carregarPresencas(turmaId) {
+  const eventosOrdenados = useMemo(() => eventos.slice().sort(ordenarEventosPorMaisNovo), [eventos]);
+
+  const carregarPresencas = useCallback(async (turmaId) => {
     const markLoading = (on) =>
       setCarregandoTurmas((prev) => {
         const next = new Set(prev);
@@ -112,26 +220,20 @@ export default function ListaTurmasPresenca({
         return next;
       });
 
+    // ✅ robusto: extrai "YYYY-MM-DD" de string, objeto {data}, etc.
+    const pickDate = (x) => {
+      if (!x) return null;
+      if (typeof x === "string") return ymd(x);
+      if (typeof x?.data === "string") return ymd(x.data);
+      return null;
+    };
+
     try {
       markLoading(true);
 
       const detalhes = await apiGet(`/api/presencas/turma/${turmaId}/detalhes`, { on403: "silent" });
       const usuarios = Array.isArray(detalhes?.usuarios) ? detalhes.usuarios : [];
       let datas = [];
-
-      const pickDate = (x) => {
-        if (!x) return null;
-        if (x instanceof Date) {
-          const y = x.getFullYear();
-          const m = String(x.getMonth() + 1).padStart(2, "0");
-          const d = String(x.getDate()).padStart(2, "0");
-          return `${y}-${m}-${d}`;
-        }
-        if (typeof x?.data === "string") return x.data.slice(0, 10);
-        if (x?.data instanceof Date) return pickDate(x.data);
-        if (typeof x === "string") return x.slice(0, 10);
-        return null;
-      };
 
       try {
         const viaDatas = await apiGet(`/api/datas/turma/${turmaId}?via=datas`, { on403: "silent" });
@@ -149,12 +251,19 @@ export default function ListaTurmasPresenca({
 
       if (!datas.length) {
         const arr3 = Array.isArray(detalhes?.datas) ? detalhes.datas : [];
-        datas = arr3.map((d) => (typeof d === "string" ? d.slice(0, 10) : null)).filter(Boolean);
+        datas = arr3.map(pickDate).filter(Boolean);
       }
 
       datas = Array.from(new Set(datas)).sort();
 
       setPresencasPorTurma((prev) => ({ ...prev, [turmaId]: { datas, usuarios } }));
+
+      // ✅ inicializa data ativa (visão "data") após carregar — sem depender do render anterior
+      setDataAtivaPorTurma((prev) => {
+        if (prev[turmaId]) return prev;
+        if (!datas.length) return prev;
+        return { ...prev, [turmaId]: datas[0] };
+      });
     } catch (err) {
       console.error("❌ Erro ao carregar presenças:", err);
       toast.error("Erro ao carregar presenças.");
@@ -162,40 +271,9 @@ export default function ListaTurmasPresenca({
     } finally {
       markLoading(false);
     }
-  }
+  }, []);
 
-  async function confirmarPresenca(dataSelecionada, turmaId, usuarioId, nome) {
-    const confirmado = window.confirm(
-      `Confirmar presença de ${nome} em ${formatarDataBrasileira(dataSelecionada)}?`
-    );
-    if (!confirmado) return;
-
-    try {
-      await apiPost(`/api/presencas/confirmar-simples`, {
-        turma_id: turmaId,
-        usuario_id: usuarioId,
-        data: dataSelecionada,
-      });
-
-      toast.success("✅ Presença confirmada com sucesso.");
-      await carregarPresencas(turmaId);
-      setRefreshKey((prev) => prev + 1);
-    } catch (err) {
-      const erroMsg =
-        err?.data?.erro || err?.response?.data?.mensagem || err?.message || "Erro ao confirmar presença.";
-      console.error(`❌ Falha na confirmação de presença:`, err);
-      toast.error(`❌ ${erroMsg}`);
-    }
-  }
-
-  async function removerTurma(turmaId, turmaNome) {
-    const ok = window.confirm(
-      `Remover a turma "${turmaNome || turmaId}"?\n\n` +
-        "Esta ação não pode ser desfeita.\n" +
-        "Se houver presenças ou certificados, a exclusão será bloqueada."
-    );
-    if (!ok) return;
-
+  async function removerTurmaAgora({ turmaId, turmaNome }) {
     try {
       setRemovendoId(turmaId);
       await apiDelete(`/api/turmas/${turmaId}`);
@@ -205,37 +283,71 @@ export default function ListaTurmasPresenca({
         return novo;
       });
       toast.success("Turma removida com sucesso.");
-      if (typeof onTurmaRemovida === "function") {
-        try { onTurmaRemovida(turmaId); } catch {}
-      }
+      onTurmaRemovida?.(turmaId);
+      return true;
     } catch (err) {
       const code = err?.data?.erro;
       if (err?.status === 409 || code === "TURMA_COM_REGISTROS") {
         const c = err?.data?.contagens || {};
-        toast.error(
-          `Não é possível excluir: ${c.presencas || 0} presenças / ${c.certificados || 0} certificados.`
-        );
+        toast.error(`Não é possível excluir: ${c.presencas || 0} presenças / ${c.certificados || 0} certificados.`);
       } else if (err?.status === 404) {
         toast.warn("Turma não encontrada. Atualize a página.");
       } else {
         toast.error("Erro ao remover turma.");
       }
       console.error("[removerTurma] erro:", err);
+      return false;
     } finally {
       setRemovendoId(null);
     }
   }
 
-  function montarDatasGrade(turma, bloco, datasFallback) {
-    const baseHi = hhmm(turma.horario_inicio, "08:00");
-    const baseHf = hhmm(turma.horario_fim, "17:00");
+  async function confirmarPresencaAgora({ dataYMD, turmaId, usuarioId, nome }) {
+    const key = `${turmaId}#${usuarioId}#${dataYMD}`;
+    if (confirmandoKey) return false;
 
+    try {
+      setConfirmandoKey(key);
+      await apiPost(`/api/presencas/confirmar-simples`, {
+        turma_id: turmaId,
+        usuario_id: usuarioId,
+        data: dataYMD,
+      });
+
+      toast.success("✅ Presença confirmada com sucesso.");
+      await carregarPresencas(turmaId);
+      return true;
+    } catch (err) {
+      const st = err?.status ?? err?.response?.status;
+      if (st === 409 || st === 208) {
+        toast.success("✅ Presença já estava confirmada.");
+        await carregarPresencas(turmaId);
+        return true;
+      }
+      const erroMsg =
+        err?.data?.erro ||
+        err?.response?.data?.mensagem ||
+        err?.data?.message ||
+        err?.message ||
+        "Erro ao confirmar presença.";
+      console.error("❌ Falha na confirmação de presença:", err);
+      toast.error(`❌ ${erroMsg}`);
+      return false;
+    } finally {
+      setConfirmandoKey(null);
+    }
+  }
+
+  function montarDatasGrade(turma, bloco, datasFallback) {
+    const baseHi = hhmm(turma?.horario_inicio, "08:00");
+    const baseHf = hhmm(turma?.horario_fim, "17:00");
+
+    // 1) bloco rico
     if (Array.isArray(bloco?.datas) && bloco.datas.length) {
-      return bloco.datas
-        .map((d) => ({ dataISO: ymd(d), hi: baseHi, hf: baseHf }))
-        .filter((x) => x.dataISO);
+      return bloco.datas.map((d) => ({ dataISO: ymd(d), hi: baseHi, hf: baseHf })).filter((x) => x.dataISO);
     }
 
+    // 2) datas_turma
     if (Array.isArray(turma?.datas) && turma.datas.length) {
       return turma.datas
         .map((d) => ({
@@ -246,6 +358,7 @@ export default function ListaTurmasPresenca({
         .filter((x) => x.dataISO);
     }
 
+    // 3) encontros
     if (Array.isArray(turma?.encontros) && turma.encontros.length) {
       return turma.encontros
         .map((e) => {
@@ -261,6 +374,7 @@ export default function ListaTurmasPresenca({
         .filter(Boolean);
     }
 
+    // 4) fallback intervalo
     return (datasFallback || []).map((d) => ({
       dataISO: formatarParaISO(d),
       hi: baseHi,
@@ -268,553 +382,832 @@ export default function ListaTurmasPresenca({
     }));
   }
 
-  /* ===== Render ===== */
   return (
-    <div className="grid grid-cols-1 gap-8">
-      <AnimatePresence>
-        {eventosOrdenados.map((evento) => (
-          <div key={evento.evento_id ?? evento.id}>
-            <h2 className="text-xl font-bold text-lousa dark:text-white mb-4">
-              📘 Evento: {evento.titulo}
-            </h2>
-
-            {(evento.turmas || [])
+    <>
+      <div className="grid grid-cols-1 gap-8" role="region" aria-label="Gestão de presenças por turmas">
+        <AnimatePresence>
+          {eventosOrdenados.map((evento) => {
+            const eventoId = evento.evento_id ?? evento.id;
+            const turmasValidas = (evento.turmas || [])
               .filter((t) => t && t.id && !idsRemovidos.has(String(t.id)))
-              .sort(ordenarTurmasPorMaisNovo)
-              .map((turma) => {
-                const agora = new Date();
+              .sort(ordenarTurmasPorMaisNovo);
 
-                const di = ymd(turma.data_inicio);
-                const df = ymd(turma.data_fim);
-                const hi = hhmm(turma.horario_inicio, "08:00");
-                const hf = hhmm(turma.horario_fim, "17:00");
-
-                const inicioDT = di ? new Date(`${di}T${hi}:00`) : null;
-                const fimDT = df ? new Date(`${df}T${hf}:00`) : null;
-
-                let status = "Desconhecido";
-                if (inicioDT && fimDT) {
-                  status =
-                    agora < inicioDT ? "Programado" : agora > fimDT ? "Encerrado" : "Em andamento";
-                }
-
-                const statusClasse =
-                  status === "Em andamento"
-                    ? "bg-green-100 text-green-700 dark:bg-green-700 dark:text-white"
-                    : status === "Encerrado"
-                    ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-700 dark:text-white"
-                    : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300";
-
-                const estaExpandida = turmaExpandidaId === turma.id;
-
-                const inicioNoon = di ? new Date(`${di}T12:00:00`) : null;
-                const fimNoon = df ? new Date(`${df}T12:00:00`) : null;
-                const datasFallback =
-                  inicioNoon && fimNoon ? gerarIntervaloDeDatas(inicioNoon, fimNoon) : [];
-
-                const bloco = presencasPorTurma[turma.id];
-                const datasGrade = montarDatasGrade(turma, bloco, datasFallback);
-                const isLoadingTurma = carregandoTurmas.has(String(turma.id));
-
-                // visão por data
-                const datasVisaoData = (presencasPorTurma[turma.id]?.datas || []).slice().sort();
-                const usuariosVisaoData = presencasPorTurma[turma.id]?.usuarios || [];
-
-                function exportarCSVDataAtiva(turmaId, dataYMD, mapaUsuarios) {
-                  // Excel PT-BR: separador ; e BOM para acentuação
-                  const SEP = ";";
-                  const BOM = "\uFEFF";
-                
-                  // Cabeçalho com a nova coluna
-                  const header = ["Nome", "CPF", "Status", "Confirmado em"].join(SEP);
-                  const rows = [];
-                
-                  for (const u of mapaUsuarios.values()) {
-                    // info da presença para a data ativa
-                    const prObj = u.presencas.get(dataYMD);
-                    const presente = !!(prObj && prObj.presente);
-                
-                    // Status textual igual ao da tabela
-                    const statusTxt = presente ? "Presente" : "Sem presença";
-                
-                    // Data/Hora de confirmação — formata dd/mm/aaaa HH:mm (TZ Brasil)
-                    let confirmadoStr = "";
-                    if (presente && prObj?.confirmadoEm) {
-                      // usa o helper do topo do arquivo
-                      confirmadoStr = formatarDataHoraBR(prObj.confirmadoEm) || "";
-                      // fallback: se backend mandou só "HH:mm"
-                      if (!confirmadoStr && typeof prObj.confirmadoEm === "string" && /^\d{2}:\d{2}/.test(prObj.confirmadoEm)) {
-                        confirmadoStr = `${formatarDataBrasileira(dataYMD)} ${prObj.confirmadoEm.slice(0,5)}`;
-                      }
-                    }
-                
-                    // Escapa aspas para CSV
-                    const nome = String(u.nome ?? "").replace(/"/g, '""');
-                    const cpf  = String(formatarCPF(u.cpf) || u.cpf || "").replace(/"/g, '""');
-                    const conf = String(confirmadoStr).replace(/"/g, '""');
-                
-                    rows.push([`"${nome}"`, `"${cpf}"`, `"${statusTxt}"`, `"${conf}"`].join(SEP));
-                  }
-                
-                  const csv = [header, ...rows].join("\r\n");
-                  const blob = new Blob([BOM + csv], { type: "text/csv;charset=utf-8" });
-                  const a = document.createElement("a");
-                  a.href = URL.createObjectURL(blob);
-                  a.download = `presencas_${turmaId}_${dataYMD}.csv`;
-                  a.click();
-                  URL.revokeObjectURL(a.href);
-                }
-        
-
-                // monta objeto {presente, confirmadoEm} a partir de um registro p
-                function toPresencaInfo(p, dataYMD) {
-                  const presente = !!p?.presente;
-                  // pega vários campos comuns de timestamp
-                  let ts =
-                    p?.confirmado_em ||
-                    p?.data_confirmacao ||
-                    p?.data_hora ||
-                    p?.momento ||
-                    p?.timestamp ||
-                    p?.created_at ||
-                    p?.updated_at ||
-                    null;
-                  // se vier apenas "hora", monta YYYY-MM-DDTHH:mm:00
-                  if (!ts && typeof p?.hora === "string") {
-                    const h = hhmm(p.hora);
-                    if (h) ts = `${dataYMD}T${h}:00`;
-                  }
-                  return { presente, confirmadoEm: ts || null };
-                }
-
-                return (
-                  <motion.div
-                    key={turma.id}
-                    initial={{ opacity: 0, y: 12 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.2 }}
-                    className="relative border p-4 rounded-2xl bg-white dark:bg-gray-900 shadow-sm flex flex-col mb-6 overflow-hidden"
-                    aria-labelledby={`turma-${turma.id}-titulo`}
-                  >
-                    {/* Barrinha superior */}
-                    <div className={`absolute top-0 left-0 right-0 h-1.5 ${barByStatus(status)}`} aria-hidden="true" />
-
-                    <div className="flex justify-between items-center mb-1 gap-2">
-                      <h4
-                        id={`turma-${turma.id}-titulo`}
-                        className="text-md font-semibold text-[#1b4332] dark:text-green-200"
-                      >
-                        {turma.nome}
-                      </h4>
-
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`text-xs px-2 py-0.5 rounded-full font-bold ${statusClasse}`}
-                          aria-label={`Status da turma: ${status}`}
-                        >
-                          {status}
-                        </span>
-
-                        {mostrarBotaoRemover && (
-                          <button
-                            type="button"
-                            onClick={() => removerTurma(turma.id, turma.nome)}
-                            disabled={removendoId === turma.id}
-                            title="Remover turma"
-                            className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-3 py-1.5 text-xs
-                                       hover:bg-red-50 active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed"
-                            aria-disabled={removendoId === turma.id}
-                            aria-label={removendoId === turma.id ? "Removendo turma…" : `Remover turma ${turma.nome}`}
-                          >
-                            <Trash2 size={14} />
-                            {removendoId === turma.id ? "Removendo..." : "Remover"}
-                          </button>
-                        )}
-                      </div>
+            return (
+              <motion.section
+                key={eventoId}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                className={cls(
+                  "rounded-3xl border border-zinc-200/80 dark:border-zinc-800",
+                  "bg-white/70 dark:bg-zinc-900/40 backdrop-blur shadow-sm overflow-hidden"
+                )}
+              >
+                <div className="h-2 w-full bg-gradient-to-r from-emerald-500 via-amber-400 to-rose-500 opacity-80" />
+                <div className="p-4 sm:p-6">
+                  <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                    <div className="min-w-0">
+                      <h2 className="text-lg sm:text-xl font-extrabold text-zinc-900 dark:text-white break-words">
+                        📘 Evento: {evento.titulo || "—"}
+                      </h2>
+                      <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
+                        Turmas: {turmasValidas.length}
+                      </p>
                     </div>
+                  </div>
 
-                    <p className="text-sm text-gray-500 dark:text-gray-300">
-                      {formatarDataBrasileira(di || turma.data_inicio)} a{" "}
-                      {formatarDataBrasileira(df || turma.data_fim)}
-                    </p>
+                  <div className="mt-5 grid grid-cols-1 gap-4">
+                    {turmasValidas.map((turma) => {
+                      const agora = hoje instanceof Date ? hoje : new Date();
 
-                    {modoadministradorPresencas && (
-                      <div className="flex items-center gap-3 justify-end mt-2">
-                        {typeof gerarRelatorioPDF === "function" && (
-                          <BotaoPrimario
-                            onClick={() => gerarRelatorioPDF?.(turma.id)}
-                            aria-label="Gerar relatório em PDF desta turma"
-                            variant="secondary"
-                          >
-                            Exportar PDF
-                          </BotaoPrimario>
-                        )}
+                      const di = ymd(turma.data_inicio);
+                      const df = ymd(turma.data_fim);
+                      const hi = hhmm(turma.horario_inicio, "08:00");
+                      const hf = hhmm(turma.horario_fim, "17:00");
 
-                        <BotaoPrimario
-                          onClick={() => {
-                            const novaTurma = estaExpandida ? null : turma.id;
-                            if (!estaExpandida) {
-                              carregarInscritos?.(turma.id);
-                              carregarAvaliacoes?.(turma.id);
-                              carregarPresencas(turma.id);
-                              if (datasVisaoData.length) {
-                                setDataAtivaPorTurma((p) => ({ ...p, [turma.id]: datasVisaoData[0] }));
-                              }
-                            }
-                            setTurmaExpandidaId(novaTurma);
-                          }}
-                          aria-expanded={estaExpandida}
-                          aria-controls={`turma-${turma.id}-detalhes`}
+                      const status = getStatusPorJanela({ di, df, hi, hf, agora });
+                      const estaExpandida = turmaExpandidaId === turma.id;
+
+                      // fallback datas (intervalo)
+                      const inicioNoon = di ? toLocalDateFromYMDTime(di, "12:00") : null;
+                      const fimNoon = df ? toLocalDateFromYMDTime(df, "12:00") : null;
+                      const datasFallback = inicioNoon && fimNoon ? gerarIntervaloDeDatas(inicioNoon, fimNoon) : [];
+
+                      const bloco = presencasPorTurma[turma.id];
+                      const datasGrade = montarDatasGrade(turma, bloco, datasFallback);
+
+                      const isLoadingTurma = carregandoTurmas.has(String(turma.id));
+
+                      // visão por data
+                      const datasVisaoData = (presencasPorTurma[turma.id]?.datas || []).slice().sort();
+                      const alunos = inscritosPorTurma[turma.id] || [];
+                      const det = presencasPorTurma[turma.id] || { usuarios: [] };
+
+                      // ✅ fim da janela: fim da TURMA + 60 dias
+                      const fimTurmaDT = df ? toLocalDateFromYMDTime(df, hf) : null;
+                      const janelaFinal = addDays(fimTurmaDT, 60);
+
+                      return (
+                        <motion.div
+                          key={turma.id}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0 }}
+                          className={cls(
+                            "relative rounded-3xl border border-zinc-200/80 dark:border-zinc-800",
+                            "bg-white dark:bg-zinc-950/30 shadow-sm overflow-hidden"
+                          )}
+                          aria-labelledby={`turma-${turma.id}-titulo`}
                         >
-                          {estaExpandida ? "Recolher Detalhes" : "Ver Detalhes"}
-                        </BotaoPrimario>
-                      </div>
-                    )}
+                          <div className={cls("absolute top-0 left-0 right-0 h-1.5", barByStatus(status))} aria-hidden="true" />
 
-                    {modoadministradorPresencas && estaExpandida && (
-                      <div id={`turma-${turma.id}-detalhes`} className="mt-4">
-                        {isLoadingTurma && (
-                          <div className="animate-pulse rounded-lg bg-gray-100 dark:bg-gray-800 h-24 mb-4" aria-live="polite" />
-                        )}
-
-                        {!isLoadingTurma && (
-                          <>
-                            {/* ======= POR PESSOA ======= */}
-                            {agrupamento === "pessoa" && (
-                              <>
-                                <div className="font-semibold text-sm mt-1 text-lousa dark:text-white mb-2">
-                                  Inscritos:
+                          <div className="p-4 sm:p-5">
+                            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <h4
+                                    id={`turma-${turma.id}-titulo`}
+                                    className="text-base font-extrabold text-zinc-900 dark:text-white break-words"
+                                  >
+                                    {turma.nome || `Turma ${turma.id}`}
+                                  </h4>
+                                  <span className={statusPill(status)}>{status}</span>
                                 </div>
 
-                                {(inscritosPorTurma[turma.id] || []).length === 0 ? (
-                                  <p className="text-sm text-gray-600 dark:text-gray-300">
-                                    Nenhum inscrito encontrado para esta turma.
-                                  </p>
-                                ) : (
-                                  (inscritosPorTurma[turma.id] || []).map((i) => {
-                                    const usuarioId = i.usuario_id ?? i.id;
-                                    const usuarioBloco = bloco?.usuarios?.find(
-                                      (u) => String(u.id) === String(usuarioId)
-                                    );
+                                <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
+                                  <span className="inline-flex items-center gap-1">
+                                    <CalendarDays size={14} aria-hidden="true" />
+                                    {formatarDataBrasileira(di || turma.data_inicio)} a {formatarDataBrasileira(df || turma.data_fim)}
+                                  </span>
+                                  <span className="mx-2 opacity-50">•</span>
+                                  <span className="inline-flex items-center gap-1">
+                                    <Clock size={14} aria-hidden="true" />
+                                    {hi}–{hf}
+                                  </span>
+                                </p>
 
-                                    return (
-                                      <div
-                                        key={`${usuarioId}-${refreshKey}`}
-                                        className="border rounded-lg p-3 mb-4 bg-white dark:bg-gray-800"
-                                      >
-                                        <div className="font-medium text-sm mb-1">{i.nome}</div>
-                                        <div className="text-xs text-gray-600 dark:text-gray-300 mb-2">
-                                          CPF: {formatarCPF(i.cpf) || "Não informado"}
-                                        </div>
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                  <span className="inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold border
+                                    bg-zinc-50 text-zinc-700 border-zinc-200
+                                    dark:bg-zinc-900/25 dark:text-zinc-200 dark:border-zinc-800"
+                                  >
+                                    <Users size={14} aria-hidden="true" />
+                                    {(inscritosPorTurma?.[turma.id] || []).length} inscrito(s)
+                                  </span>
 
-                                        <table className="w-full table-fixed text-xs">
-                                          <thead>
-                                            <tr className="text-left text-gray-600 dark:text-gray-300">
-                                              <th className="py-2 px-2 w-1/3 font-medium whitespace-nowrap">📅 Data</th>
-                                              <th className="py-2 px-2 w-1/3 font-medium whitespace-nowrap">🟡 Situação</th>
-                                              <th className="py-2 px-2 w-1/3 font-medium whitespace-nowrap">✔️ Ações</th>
-                                            </tr>
-                                          </thead>
-                                          <tbody>
-                                            {datasGrade.map((item) => {
-                                              const dataISO = item.dataISO;
-                                              const hiDia = item.hi || hi;
+                                  <span className="inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold border
+                                    bg-zinc-50 text-zinc-700 border-zinc-200
+                                    dark:bg-zinc-900/25 dark:text-zinc-200 dark:border-zinc-800"
+                                  >
+                                    <CalendarDays size={14} aria-hidden="true" />
+                                    {datasGrade.length} dia(s)
+                                  </span>
 
-                                              const estaPresente = Array.isArray(usuarioBloco?.presencas)
-                                                ? usuarioBloco.presencas.some(
-                                                    (p) =>
-                                                      String(p?.usuario_id ?? usuarioBloco.id) ===
-                                                        String(usuarioId) &&
-                                                      p?.presente === true &&
-                                                      isSameYMD(p?.data, dataISO)
-                                                  )
-                                                : false;
+                                  <span
+                                    className="inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold border
+                                      bg-zinc-50 text-zinc-700 border-zinc-200
+                                      dark:bg-zinc-900/25 dark:text-zinc-200 dark:border-zinc-800"
+                                    title="Libera 30min antes do início do encontro e vai até 60 dias após o fim da turma"
+                                  >
+                                    <BadgeCheck size={14} aria-hidden="true" />
+                                    Janela: -30min até +60 dias
+                                  </span>
+                                </div>
+                              </div>
 
-                                              const inicioAulaDT = new Date(`${dataISO}T${hiDia}:00`);
-                                              // ⬅️ ALTERADO: 30 min antes do início
-                                              const abreJanela = new Date(inicioAulaDT.getTime() - MINUTOS_ANTECIPACAO * 60 * 1000);
-                                              const now = new Date();
+                              <div className="flex flex-wrap items-center justify-end gap-2">
+                                {mostrarBotaoRemover && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmRemover({ turmaId: turma.id, turmaNome: turma.nome })}
+                                    disabled={removendoId === turma.id}
+                                    className={cls(
+                                      "inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold",
+                                      "border-rose-200 hover:bg-rose-50 active:scale-[0.98]",
+                                      "dark:border-rose-900/40 dark:hover:bg-rose-900/20",
+                                      "disabled:opacity-60 disabled:cursor-not-allowed"
+                                    )}
+                                    aria-label={removendoId === turma.id ? "Removendo turma…" : `Remover turma ${turma.nome}`}
+                                  >
+                                    <Trash2 size={14} />
+                                    {removendoId === turma.id ? "Removendo..." : "Remover"}
+                                  </button>
+                                )}
 
-                                              const hfSeguro = hhmm(turma.horario_fim, "23:59");
-                                              const fimDTLocal = df ? new Date(`${df}T${hfSeguro}:00`) : null;
-                                              const fimMais60 =
-                                                fimDTLocal ? new Date(fimDTLocal.getTime() + 60 * 24 * 60 * 60 * 1000) : null;
+                                {modoadministradorPresencas && typeof gerarRelatorioPDF === "function" && (
+                                  <BotaoPrimario onClick={() => gerarRelatorioPDF?.(turma.id)} variant="secondary">
+                                    Exportar PDF
+                                  </BotaoPrimario>
+                                )}
 
-                                              const antesDaJanela = now < abreJanela;
-                                              const dentroDaJanela = fimMais60 ? now >= abreJanela && now <= fimMais60 : false;
+                                {modoadministradorPresencas && (
+                                  <BotaoPrimario
+                                    onClick={() => {
+                                      const novaTurma = estaExpandida ? null : turma.id;
+                                      if (!estaExpandida) {
+                                        carregarInscritos?.(turma.id);
+                                        carregarAvaliacoes?.(turma.id);
+                                        carregarPresencas(turma.id);
+                                      }
+                                      setTurmaExpandidaId(novaTurma);
+                                    }}
+                                    aria-expanded={estaExpandida}
+                                    aria-controls={`turma-${turma.id}-detalhes`}
+                                    className="rounded-xl"
+                                    iconRight={estaExpandida ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                                  >
+                                    {estaExpandida ? "Recolher" : "Ver detalhes"}
+                                  </BotaoPrimario>
+                                )}
+                              </div>
+                            </div>
 
-                                              const statusTexto = estaPresente
-                                                ? "Presente"
-                                                : antesDaJanela
-                                                ? "Aguardando"
-                                                : "Faltou";
+                            <AnimatePresence>
+                              {modoadministradorPresencas && estaExpandida && (
+                                <motion.div
+                                  id={`turma-${turma.id}-detalhes`}
+                                  initial={{ opacity: 0, height: 0 }}
+                                  animate={{ opacity: 1, height: "auto" }}
+                                  exit={{ opacity: 0, height: 0 }}
+                                  className="overflow-hidden mt-4"
+                                >
+                                  {isLoadingTurma ? (
+                                    <div className="animate-pulse rounded-2xl bg-zinc-100 dark:bg-zinc-800 h-28" aria-live="polite" />
+                                  ) : (
+                                    <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/40 p-4">
+                                      {/* =================== POR PESSOA =================== */}
+                                      {agrupamento === "pessoa" && (
+                                        <>
+                                          <div className="font-extrabold text-sm text-zinc-900 dark:text-white mb-2">
+                                            Inscritos (por pessoa)
+                                          </div>
 
-                                              const statusClasse = estaPresente
-                                                ? "bg-green-400 text-white"
-                                                : antesDaJanela
-                                                ? "bg-yellow-300 text-gray-800"
-                                                : "bg-red-400 text-white";
+                                          {(inscritosPorTurma[turma.id] || []).length === 0 ? (
+                                            <p className="text-sm text-zinc-600 dark:text-zinc-300">
+                                              Nenhum inscrito encontrado para esta turma.
+                                            </p>
+                                          ) : (
+                                            <div className="grid grid-cols-1 gap-3">
+                                              {(inscritosPorTurma[turma.id] || []).map((i) => {
+                                                const usuarioId = i.usuario_id ?? i.id;
+                                                const usuarioBloco = bloco?.usuarios?.find(
+                                                  (u) => String(u.id) === String(usuarioId)
+                                                );
 
-                                              const podeConfirmar = !estaPresente && dentroDaJanela;
+                                                return (
+                                                  <div
+                                                    key={`${turma.id}#${usuarioId}`}
+                                                    className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950/30"
+                                                  >
+                                                    <div className="p-4 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+                                                      <div className="min-w-0">
+                                                        <div className="font-bold text-sm text-zinc-900 dark:text-white break-words">
+                                                          {i.nome || "—"}
+                                                        </div>
+                                                        <div className="text-xs text-zinc-600 dark:text-zinc-300">
+                                                          CPF: {formatarCPF(i.cpf) || "Não informado"}
+                                                        </div>
+                                                      </div>
+                                                    </div>
+
+                                                    {/* Mobile: cards */}
+                                                    <div className="px-4 pb-4 grid gap-2 md:hidden">
+                                                      {datasGrade.map(({ dataISO, hi: hiDia }) => {
+                                                        const estaPresente = Array.isArray(usuarioBloco?.presencas)
+                                                          ? usuarioBloco.presencas.some(
+                                                              (p) =>
+                                                                String(p?.usuario_id ?? usuarioBloco.id) === String(usuarioId) &&
+                                                                p?.presente === true &&
+                                                                isSameYMD(p?.data, dataISO)
+                                                            )
+                                                          : false;
+
+                                                        const inicioAula = toLocalDateFromYMDTime(dataISO, hiDia || hi);
+                                                        const abreJanela = addMinutes(inicioAula, -MINUTOS_ANTECIPACAO);
+                                                        const now = new Date();
+
+                                                        const antesDaJanela = abreJanela ? now < abreJanela : true;
+                                                        const dentroDaJanela = abreJanela && janelaFinal
+                                                          ? now >= abreJanela && now <= janelaFinal
+                                                          : false;
+
+                                                        const podeConfirmar = !estaPresente && dentroDaJanela;
+
+                                                        const statusTxt = estaPresente
+                                                          ? "Presente"
+                                                          : antesDaJanela
+                                                            ? "Aguardando"
+                                                            : dentroDaJanela
+                                                              ? "Faltou"
+                                                              : "Fora do prazo";
+
+                                                        const badgeCls = estaPresente
+                                                          ? "bg-emerald-500 text-white"
+                                                          : antesDaJanela
+                                                            ? "bg-amber-300 text-zinc-900"
+                                                            : dentroDaJanela
+                                                              ? "bg-rose-500 text-white"
+                                                              : "bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-200";
+
+                                                        const actionKey = `${turma.id}#${usuarioId}#${dataISO}`;
+                                                        const loading = confirmandoKey === actionKey;
+
+                                                        return (
+                                                          <div
+                                                            key={actionKey}
+                                                            className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950/20 p-3"
+                                                          >
+                                                            <div className="flex items-start justify-between gap-2">
+                                                              <div>
+                                                                <div className="text-sm font-bold text-zinc-900 dark:text-white">
+                                                                  {formatarDataBrasileira(dataISO)}
+                                                                </div>
+                                                                <div className="text-xs text-zinc-600 dark:text-zinc-300">
+                                                                  Início: {hiDia || hi} • Libera {MINUTOS_ANTECIPACAO}min antes
+                                                                </div>
+                                                              </div>
+                                                              <span className={cls("inline-flex rounded-full px-2.5 py-1 text-xs font-extrabold", badgeCls)}>
+                                                                {statusTxt}
+                                                              </span>
+                                                            </div>
+
+                                                            <div className="mt-2 flex items-center justify-between gap-2">
+                                                              <div className="text-xs text-zinc-500 dark:text-zinc-400">
+                                                                {estaPresente
+                                                                  ? "Presença confirmada."
+                                                                  : antesDaJanela
+                                                                    ? "Aguardando abrir."
+                                                                    : dentroDaJanela
+                                                                      ? "Pode confirmar."
+                                                                      : "Janela encerrada."}
+                                                              </div>
+
+                                                              {podeConfirmar ? (
+                                                                <button
+                                                                  onClick={() =>
+                                                                    setConfirmPresenca({
+                                                                      dataYMD: dataISO,
+                                                                      turmaId: turma.id,
+                                                                      usuarioId,
+                                                                      nome: i.nome,
+                                                                    })
+                                                                  }
+                                                                  disabled={loading}
+                                                                  className="rounded-xl px-3 py-2 text-xs font-extrabold text-white bg-teal-700 hover:bg-teal-800 active:scale-[0.98]
+                                                                           disabled:opacity-60 disabled:cursor-not-allowed"
+                                                                >
+                                                                  {loading ? "Confirmando..." : "Confirmar"}
+                                                                </button>
+                                                              ) : (
+                                                                <span className="text-xs text-zinc-400" aria-hidden="true">—</span>
+                                                              )}
+                                                            </div>
+                                                          </div>
+                                                        );
+                                                      })}
+                                                    </div>
+
+                                                    {/* Desktop: tabela */}
+                                                    <div className="hidden md:block px-4 pb-4">
+                                                      <div className="overflow-x-auto rounded-2xl border border-zinc-200 dark:border-zinc-800">
+                                                        <table className="w-full text-xs">
+                                                          <thead className="bg-zinc-50 dark:bg-zinc-900/40">
+                                                            <tr className="text-left text-zinc-600 dark:text-zinc-300">
+                                                              <th className="py-2 px-3 font-semibold whitespace-nowrap">📅 Data</th>
+                                                              <th className="py-2 px-3 font-semibold whitespace-nowrap">🟡 Situação</th>
+                                                              <th className="py-2 px-3 font-semibold whitespace-nowrap">✔️ Ações</th>
+                                                            </tr>
+                                                          </thead>
+                                                          <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                                                            {datasGrade.map(({ dataISO, hi: hiDia }) => {
+                                                              const estaPresente = Array.isArray(usuarioBloco?.presencas)
+                                                                ? usuarioBloco.presencas.some(
+                                                                    (p) =>
+                                                                      String(p?.usuario_id ?? usuarioBloco.id) === String(usuarioId) &&
+                                                                      p?.presente === true &&
+                                                                      isSameYMD(p?.data, dataISO)
+                                                                  )
+                                                                : false;
+
+                                                              const inicioAula = toLocalDateFromYMDTime(dataISO, hiDia || hi);
+                                                              const abreJanela = addMinutes(inicioAula, -MINUTOS_ANTECIPACAO);
+                                                              const now = new Date();
+
+                                                              const antesDaJanela = abreJanela ? now < abreJanela : true;
+                                                              const dentroDaJanela = abreJanela && janelaFinal
+                                                                ? now >= abreJanela && now <= janelaFinal
+                                                                : false;
+
+                                                              const statusTexto = estaPresente
+                                                                ? "Presente"
+                                                                : antesDaJanela
+                                                                  ? "Aguardando"
+                                                                  : dentroDaJanela
+                                                                    ? "Faltou"
+                                                                    : "Fora do prazo";
+
+                                                              const statusClasse = estaPresente
+                                                                ? "bg-emerald-500 text-white"
+                                                                : antesDaJanela
+                                                                  ? "bg-amber-300 text-zinc-900"
+                                                                  : dentroDaJanela
+                                                                    ? "bg-rose-500 text-white"
+                                                                    : "bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-100";
+
+                                                              const podeConfirmar = !estaPresente && dentroDaJanela;
+
+                                                              const actionKey = `${turma.id}#${usuarioId}#${dataISO}`;
+                                                              const loading = confirmandoKey === actionKey;
+
+                                                              return (
+                                                                <tr key={actionKey} className="bg-white dark:bg-transparent">
+                                                                  <td className="py-2 px-3 whitespace-nowrap">{formatarDataBrasileira(dataISO)}</td>
+                                                                  <td className="py-2 px-3">
+                                                                    <span className={cls("inline-flex rounded-full px-2.5 py-1 text-[11px] font-extrabold", statusClasse)}>
+                                                                      {statusTexto}
+                                                                    </span>
+                                                                  </td>
+                                                                  <td className="py-2 px-3">
+                                                                    {podeConfirmar ? (
+                                                                      <button
+                                                                        onClick={() =>
+                                                                          setConfirmPresenca({
+                                                                            dataYMD: dataISO,
+                                                                            turmaId: turma.id,
+                                                                            usuarioId,
+                                                                            nome: i.nome,
+                                                                          })
+                                                                        }
+                                                                        disabled={loading}
+                                                                        className="rounded-xl px-3 py-2 text-[11px] font-extrabold text-white bg-teal-700 hover:bg-teal-800 active:scale-[0.98]
+                                                                                 disabled:opacity-60 disabled:cursor-not-allowed"
+                                                                      >
+                                                                        {loading ? "Confirmando..." : "Confirmar"}
+                                                                      </button>
+                                                                    ) : (
+                                                                      <span className="text-xs text-zinc-400" aria-hidden="true">—</span>
+                                                                    )}
+                                                                  </td>
+                                                                </tr>
+                                                              );
+                                                            })}
+                                                          </tbody>
+                                                        </table>
+                                                      </div>
+                                                    </div>
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+                                          )}
+                                        </>
+                                      )}
+
+                                      {/* =================== POR DATA =================== */}
+                                      {agrupamento === "data" && (
+                                        <>
+                                          {datasVisaoData.length === 0 ? (
+                                            <p className="text-sm text-zinc-600 dark:text-zinc-300">
+                                              Nenhuma data registrada para esta turma.
+                                            </p>
+                                          ) : (
+                                            (() => {
+                                              const dataAtiva = dataAtivaPorTurma[turma.id] || datasVisaoData[0];
+
+                                              // monta mapa de usuários (inscritos) com presenças
+                                              const mapaUsuarios = new Map();
+                                              for (const a of alunos) {
+                                                const uid = a?.usuario_id ?? a?.id;
+                                                if (!uid) continue;
+                                                mapaUsuarios.set(uid, {
+                                                  id: uid,
+                                                  nome: a?.nome || "—",
+                                                  cpf: a?.cpf || "",
+                                                  presencas: new Map(),
+                                                });
+                                              }
+
+                                              for (const u of det.usuarios || []) {
+                                                const uid = u?.id ?? u?.usuario_id;
+                                                if (!uid || !mapaUsuarios.has(uid)) continue;
+                                                const alvo = mapaUsuarios.get(uid);
+                                                (u.presencas || []).forEach((p) => {
+                                                  const d = ymd(p?.data_presenca || p?.data);
+                                                  if (!d) return;
+                                                  alvo.presencas.set(d, toPresencaInfo(p, d));
+                                                });
+                                              }
+
+                                              const dGrade = datasGrade.find((x) => x.dataISO === dataAtiva);
+                                              const hiDia = dGrade?.hi || hi;
+                                              const hfDia = dGrade?.hf || hf;
+
+                                              const inicioDia = toLocalDateFromYMDTime(dataAtiva, hiDia);
+                                              const abreJanela = addMinutes(inicioDia, -MINUTOS_ANTECIPACAO);
+                                              const agoraLocal = new Date();
+                                              const antesDaJanela = abreJanela ? agoraLocal < abreJanela : true;
+
+                                              // contadores
+                                              const totalInscritos = mapaUsuarios.size;
+                                              let presentes = 0, faltas = 0, aguardando = 0;
+                                              for (const u of mapaUsuarios.values()) {
+                                                const info = u.presencas.get(dataAtiva);
+                                                const pr = !!(info && info.presente);
+                                                if (pr) presentes += 1;
+                                                else if (antesDaJanela) aguardando += 1;
+                                                else faltas += 1;
+                                              }
+
+                                              const soPend = !!somenteSemPresencaPorTurma[turma.id];
+                                              const listaUsuarios = Array.from(mapaUsuarios.values()).filter((u) => {
+                                                if (!soPend) return true;
+                                                const info = u.presencas.get(dataAtiva);
+                                                return !(info && info.presente);
+                                              });
 
                                               return (
-                                                <tr key={`${usuarioId}-${dataISO}`} className="border-top border-gray-100">
-                                                  <td className="py-1 px-2 text-left">{formatarDataBrasileira(dataISO)}</td>
-                                                  <td className="py-1 px-2 text-left">
-                                                    <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${statusClasse}`}>
-                                                      {statusTexto}
-                                                    </span>
-                                                  </td>
-                                                  <td className="py-1 px-2 text-left">
-                                                    {podeConfirmar && !antesDaJanela ? (
-                                                      <button
-                                                        onClick={() =>
-                                                          confirmarPresenca(dataISO, turma.id, usuarioId, i.nome)
-                                                        }
-                                                        className="text-white bg-teal-700 hover:bg-teal-800 text-xs py-1 px-2 rounded"
-                                                        aria-label={`Confirmar presença de ${i.nome} em ${formatarDataBrasileira(dataISO)}`}
-                                                      >
-                                                        Confirmar
-                                                      </button>
-                                                    ) : (
-                                                      <span className="text-gray-400 text-xs" aria-hidden="true">—</span>
-                                                    )}
-                                                  </td>
-                                                </tr>
-                                              );
-                                            })}
-                                          </tbody>
-                                        </table>
-                                      </div>
-                                    );
-                                  })
-                                )}
-                              </>
-                            )}
+                                                <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/40 overflow-hidden">
+                                                  {/* Tabs de datas */}
+                                                  <div className="p-4 flex flex-wrap gap-2">
+                                                    {datasVisaoData.map((d) => {
+                                                      const active = d === dataAtiva;
+                                                      return (
+                                                        <button
+                                                          key={d}
+                                                          type="button"
+                                                          onClick={() => setDataAtivaPorTurma((p) => ({ ...p, [turma.id]: d }))}
+                                                          className={cls(
+                                                            "px-3 py-1.5 rounded-full text-xs font-semibold border transition",
+                                                            active
+                                                              ? "bg-violet-700 text-white border-violet-700"
+                                                              : "bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-100 border-zinc-300 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+                                                          )}
+                                                        >
+                                                          {d.split("-").reverse().join("/")}
+                                                        </button>
+                                                      );
+                                                    })}
+                                                  </div>
 
-                            {/* ======= POR DATA ======= */}
-                            {agrupamento === "data" && (
-                              <>
-                                {datasVisaoData.length === 0 ? (
-                                  <p className="text-sm text-gray-600 dark:text-gray-300">
-                                    Nenhuma data registrada para esta turma.
-                                  </p>
-                                ) : (
-                                  (() => {
-                                    const dataAtiva = dataAtivaPorTurma[turma.id] || datasVisaoData[0];
-
-                                    // mapa de usuários: presencas.set(data, {presente, confirmadoEm})
-                                    const alunos = inscritosPorTurma[turma.id] || [];
-                                    const det = presencasPorTurma[turma.id] || { usuarios: [] };
-
-                                    const mapaUsuarios = new Map();
-                                    for (const a of alunos) {
-                                      const uid = a?.usuario_id ?? a?.id;
-                                      if (!uid) continue;
-                                      mapaUsuarios.set(uid, { id: uid, nome: a?.nome || "—", cpf: a?.cpf || "", presencas: new Map() });
-                                    }
-                                    for (const u of (det.usuarios || [])) {
-                                      const uid = u?.id ?? u?.usuario_id;
-                                      if (!uid || !mapaUsuarios.has(uid)) continue;
-                                      const alvo = mapaUsuarios.get(uid);
-                                      (u.presencas || []).forEach((p) => {
-                                        const d = ymd(p?.data_presenca || p?.data);
-                                        if (!d) return;
-                                        alvo.presencas.set(d, toPresencaInfo(p, d));
-                                      });
-                                    }
-
-                                    const dGrade = datasGrade.find((x) => x.dataISO === dataAtiva);
-                                    const hiDia = dGrade?.hi || hi;
-                                    const hfDia = dGrade?.hf || hf;
-
-                                    const inicioDia = new Date(`${dataAtiva}T${hiDia}:00`);
-                                    // ⬅️ ALTERADO: 30 min antes do início
-                                    const abreJanela = new Date(inicioDia.getTime() - MINUTOS_ANTECIPACAO * 60 * 1000);
-                                    const agoraLocal = new Date();
-                                    const antesDaJanela = agoraLocal < abreJanela;
-
-                                    const totalInscritos = mapaUsuarios.size;
-                                    let presentes = 0, faltas = 0, aguardando = 0;
-                                    for (const u of mapaUsuarios.values()) {
-                                      const info = u.presencas.get(dataAtiva);
-                                      const pr = !!(info && info.presente);
-                                      if (pr) presentes += 1;
-                                      else if (antesDaJanela) aguardando += 1;
-                                      else faltas += 1;
-                                    }
-
-                                    const soPend = !!somenteSemPresencaPorTurma[turma.id];
-                                    const listaUsuarios = Array.from(mapaUsuarios.values()).filter((u) => {
-                                      if (!soPend) return true;
-                                      const info = u.presencas.get(dataAtiva);
-                                      return !(info && info.presente);
-                                    });
-
-                                    return (
-                                      <section className="rounded-xl bg-white dark:bg-zinc-900/40 ring-1 ring-zinc-200 dark:ring-zinc-800">
-                                        {/* abas de datas */}
-                                        <div className="flex flex-wrap gap-2 px-4 mb-3">
-                                          {datasVisaoData.map((d) => {
-                                            const active = d === dataAtiva;
-                                            return (
-                                              <button
-                                                key={d}
-                                                type="button"
-                                                onClick={() => setDataAtivaPorTurma((p) => ({ ...p, [turma.id]: d }))}
-                                                className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition
-                                                  ${active ? "bg-violet-700 text-white border-violet-700"
-                                                    : "bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-100 border-zinc-300 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800"}`}
-                                              >
-                                                {d.split("-").reverse().join("/")}
-                                              </button>
-                                            );
-                                          })}
-                                        </div>
-
-                                        {/* header resumo + ações */}
-                                        <header className="px-4 pb-2 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                                          <div className="flex items-center gap-3">
-                                            <CalendarDays className="w-4 h-4 text-zinc-600 dark:text-zinc-300" />
-                                            <div>
-                                              <h4 className="text-sm font-semibold">
-                                                {dataAtiva.split("-").reverse().join("/")}
-                                              </h4>
-                                              <div className="text-xs text-zinc-600 dark:text-zinc-300">
-                                                <Clock className="inline w-3.5 h-3.5 mr-1" />
-                                                {hiDia}–{hfDia}
-                                              </div>
-                                              {antesDaJanela && (
-                                                <div className="text-[11px] text-amber-600 dark:text-amber-300 mt-1">
-                                                  {/* ⬅️ TEXTO ATUALIZADO */}
-                                                  Confirmação manual libera 30 min antes do início.
-                                                </div>
-                                              )}
-                                            </div>
-                                          </div>
-
-                                          <div className="ml-0 sm:ml-auto flex flex-wrap items-center gap-2">
-                                            {[
-                                              ["inscritos", totalInscritos],
-                                              ["presentes", presentes, "text-emerald-600 dark:text-emerald-400"],
-                                              ["faltas", faltas, "text-rose-600 dark:text-rose-400"],
-                                              ["aguardando", aguardando, "text-amber-600 dark:text-amber-400"],
-                                            ].map(([lbl, n, cls]) => (
-                                              <div key={lbl} className="min-w-[82px]">
-                                                <div className="inline-flex flex-col items-center justify-center px-3 py-2 rounded-xl border border-zinc-200 bg-white shadow-sm dark:bg-zinc-900 dark:border-zinc-700">
-                                                  <div className={`leading-none font-extrabold text-2xl sm:text-3xl ${cls || ""}`}>{n}</div>
-                                                  <div className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">{lbl}</div>
-                                                </div>
-                                              </div>
-                                            ))}
-
-                                            <button
-                                              onClick={() => exportarCSVDataAtiva(turma.id, dataAtiva, mapaUsuarios)}
-                                              className="inline-flex items-center gap-2 bg-slate-200 hover:bg-slate-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-900 dark:text-slate-100 text-xs px-3 py-1.5 rounded-lg"
-                                              title="Exportar CSV da data ativa"
-                                            >
-                                              <FileText className="w-4 h-4" />
-                                              Exportar CSV
-                                            </button>
-                                          </div>
-                                        </header>
-
-                                        {/* filtros e tabela */}
-                                        <div className="px-4 pb-4">
-                                          <div className="mb-2 flex items-center justify-between">
-                                            <label className="inline-flex items-center gap-2 text-xs">
-                                              <input
-                                                type="checkbox"
-                                                checked={!!somenteSemPresencaPorTurma[turma.id]}
-                                                onChange={(e) =>
-                                                  setSomenteSemPresencaPorTurma((p) => ({ ...p, [turma.id]: e.target.checked }))
-                                                }
-                                              />
-                                              Mostrar apenas sem presença
-                                            </label>
-                                            <div className="text-xs text-zinc-500">
-                                              {listaUsuarios.length} de {totalInscritos} exibidos
-                                            </div>
-                                          </div>
-
-                                          <div className="overflow-x-auto">
-                                            <table className="min-w-full text-sm table-fixed">
-                                              <thead>
-                                                <tr className="text-left text-zinc-600 dark:text-zinc-300">
-                                                  <th className="py-2 pr-4 w-[32%]">👤 Nome</th>
-                                                  <th className="py-2 pr-4 w-[18%]">CPF</th>
-                                                  <th className="py-2 pr-4 w-[20%]">Situação</th>
-                                                  <th className="py-2 pr-4 w-[20%]">Confirmado em</th>{/* ⬅️ NOVO */}
-                                                  <th className="py-2 pr-4 w-[10%]">Ações</th>
-                                                </tr>
-                                              </thead>
-                                              <tbody>
-                                                {listaUsuarios.map((u) => {
-                                                  const info = u.presencas.get(dataAtiva);
-                                                  const presente = !!(info && info.presente);
-                                                  const statusTxt = presente ? "Presente" : (antesDaJanela ? "Aguardando" : "Faltou");
-
-                                                  // monta string dd/mm/yyyy HH:mm a partir de info.confirmadoEm
-                                                  let confirmadoStr = "—";
-                                                  if (presente && info?.confirmadoEm) {
-                                                    confirmadoStr = formatarDataHoraBR(info.confirmadoEm) || "—";
-                                                    // fallback: se veio só HH:mm no backend
-                                                    if (confirmadoStr === "—" && typeof info.confirmadoEm === "string" && /^\d{2}:\d{2}/.test(info.confirmadoEm)) {
-                                                      confirmadoStr = `${formatarDataBrasileira(dataAtiva)} ${info.confirmadoEm.slice(0,5)}`;
-                                                    }
-                                                  }
-
-                                                  // habilita confirmar dentro da janela: [início-30min, fim+60dias]
-                                                  const inicioDiaDT = new Date(`${dataAtiva}T${hiDia}:00`);
-                                                  const abreJanela = new Date(inicioDiaDT.getTime() - MINUTOS_ANTECIPACAO * 60 * 1000); // ⬅️ 30min antes
-                                                  const fimDiaDT = new Date(`${df || dataAtiva}T${hfDia}:00`);
-                                                  const fimMais60 = new Date((df ? fimDiaDT : inicioDiaDT).getTime() + 60 * 24 * 60 * 60 * 1000);
-                                                  const agoraLocal2 = new Date();
-                                                  const podeConfirmar = !presente && agoraLocal2 >= abreJanela && agoraLocal2 <= fimMais60;
-
-                                                  return (
-                                                    <tr key={`${u.id}-${dataAtiva}`} className="border-t border-zinc-200 dark:border-zinc-800">
-                                                      <td className="py-2 pr-4 whitespace-nowrap overflow-hidden text-ellipsis">{u.nome}</td>
-                                                      <td className="py-2 pr-4 whitespace-nowrap">{formatarCPF(u.cpf) || u.cpf || "—"}</td>
-                                                      <td className="py-2 pr-4">{statusTxt}</td>
-                                                      <td className="py-2 pr-4">{confirmadoStr}</td>
-                                                      <td className="py-2 pr-4">
-                                                        {podeConfirmar ? (
-                                                          <button
-                                                            onClick={() => confirmarPresenca(dataAtiva, turma.id, u.id, u.nome)}
-                                                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-700/40"
-                                                          >
-                                                            Confirmar
-                                                          </button>
-                                                        ) : (
-                                                          <span className="text-xs text-zinc-400">—</span>
+                                                  {/* Header resumo + ações */}
+                                                  <header className="px-4 pb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                                                    <div className="flex items-start gap-3">
+                                                      <CalendarDays className="w-4 h-4 text-zinc-600 dark:text-zinc-300 mt-0.5" />
+                                                      <div>
+                                                        <h4 className="text-sm font-extrabold text-zinc-900 dark:text-white">
+                                                          {dataAtiva.split("-").reverse().join("/")}
+                                                        </h4>
+                                                        <div className="text-xs text-zinc-600 dark:text-zinc-300">
+                                                          <Clock className="inline w-3.5 h-3.5 mr-1" />
+                                                          {hiDia}–{hfDia}
+                                                        </div>
+                                                        {antesDaJanela && (
+                                                          <div className="text-[11px] text-amber-700 dark:text-amber-300 mt-1">
+                                                            Confirmação manual libera {MINUTOS_ANTECIPACAO} min antes do início.
+                                                          </div>
                                                         )}
-                                                      </td>
-                                                    </tr>
-                                                  );
-                                                })}
-                                              </tbody>
-                                            </table>
-                                          </div>
-                                        </div>
-                                      </section>
-                                    );
-                                  })()
-                                )}
-                              </>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </motion.div>
-                );
-              })}
-          </div>
-        ))}
-      </AnimatePresence>
-    </div>
+                                                        {janelaFinal && (
+                                                          <div className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1">
+                                                            Janela final: {formatarDataHoraBR(janelaFinal) || "—"}
+                                                          </div>
+                                                        )}
+                                                      </div>
+                                                    </div>
+
+                                                    <div className="flex flex-wrap items-center gap-2">
+                                                      {[
+                                                        ["inscritos", totalInscritos],
+                                                        ["presentes", presentes, "text-emerald-600 dark:text-emerald-400"],
+                                                        ["faltas", faltas, "text-rose-600 dark:text-rose-400"],
+                                                        ["aguardando", aguardando, "text-amber-600 dark:text-amber-400"],
+                                                      ].map(([lbl, n, c]) => (
+                                                        <div key={lbl} className="min-w-[86px]">
+                                                          <div className="inline-flex flex-col items-center justify-center px-3 py-2 rounded-2xl border border-zinc-200 bg-white shadow-sm dark:bg-zinc-900 dark:border-zinc-700">
+                                                            <div className={cls("leading-none font-extrabold text-2xl", c || "")}>{n}</div>
+                                                            <div className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                                                              {lbl}
+                                                            </div>
+                                                          </div>
+                                                        </div>
+                                                      ))}
+
+                                                      <button
+                                                        onClick={() => exportarCSVDataAtiva(turma.id, dataAtiva, mapaUsuarios)}
+                                                        className="inline-flex items-center gap-2 bg-slate-200 hover:bg-slate-300 dark:bg-zinc-800 dark:hover:bg-zinc-700
+                                                                 text-slate-900 dark:text-slate-100 text-xs px-3 py-2 rounded-xl"
+                                                        title="Exportar CSV da data ativa"
+                                                      >
+                                                        <FileText className="w-4 h-4" />
+                                                        Exportar CSV
+                                                      </button>
+                                                    </div>
+                                                  </header>
+
+                                                  {/* Filtros */}
+                                                  <div className="px-4 pb-2 flex items-center justify-between">
+                                                    <label className="inline-flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-200">
+                                                      <input
+                                                        type="checkbox"
+                                                        checked={!!somenteSemPresencaPorTurma[turma.id]}
+                                                        onChange={(e) =>
+                                                          setSomenteSemPresencaPorTurma((p) => ({ ...p, [turma.id]: e.target.checked }))
+                                                        }
+                                                      />
+                                                      Mostrar apenas sem presença
+                                                    </label>
+                                                    <div className="text-xs text-zinc-500">
+                                                      {listaUsuarios.length} de {totalInscritos} exibidos
+                                                    </div>
+                                                  </div>
+
+                                                  {/* Mobile: cards */}
+                                                  <div className="px-4 pb-4 grid gap-2 md:hidden">
+                                                    {listaUsuarios.map((u) => {
+                                                      const info = u.presencas.get(dataAtiva);
+                                                      const presente = !!(info && info.presente);
+
+                                                      let confirmadoStr = "—";
+                                                      if (presente && info?.confirmadoEm) {
+                                                        confirmadoStr = formatarDataHoraBR(info.confirmadoEm) || "—";
+                                                        if (
+                                                          confirmadoStr === "—" &&
+                                                          typeof info.confirmadoEm === "string" &&
+                                                          /^\d{2}:\d{2}/.test(info.confirmadoEm)
+                                                        ) {
+                                                          confirmadoStr = `${formatarDataBrasileira(dataAtiva)} ${info.confirmadoEm.slice(0, 5)}`;
+                                                        }
+                                                      }
+
+                                                      const inicioDiaDT = toLocalDateFromYMDTime(dataAtiva, hiDia);
+                                                      const abre = addMinutes(inicioDiaDT, -MINUTOS_ANTECIPACAO);
+                                                      const agora2 = new Date();
+                                                      const podeConfirmar =
+                                                        !presente && abre && janelaFinal ? agora2 >= abre && agora2 <= janelaFinal : false;
+
+                                                      const statusTxt = presente ? "Presente" : (abre && agora2 < abre ? "Aguardando" : "Faltou");
+
+                                                      const badgeCls = presente
+                                                        ? "bg-emerald-500 text-white"
+                                                        : (abre && agora2 < abre)
+                                                          ? "bg-amber-300 text-zinc-900"
+                                                          : "bg-rose-500 text-white";
+
+                                                      const actionKey = `${turma.id}#${u.id}#${dataAtiva}`;
+                                                      const loading = confirmandoKey === actionKey;
+
+                                                      return (
+                                                        <div key={actionKey} className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950/20 p-3">
+                                                          <div className="flex items-start justify-between gap-2">
+                                                            <div className="min-w-0">
+                                                              <div className="font-bold text-sm text-zinc-900 dark:text-white truncate">{u.nome}</div>
+                                                              <div className="text-xs text-zinc-600 dark:text-zinc-300">
+                                                                CPF: {formatarCPF(u.cpf) || u.cpf || "—"}
+                                                              </div>
+                                                            </div>
+                                                            <span className={cls("inline-flex rounded-full px-2.5 py-1 text-xs font-extrabold", badgeCls)}>
+                                                              {statusTxt}
+                                                            </span>
+                                                          </div>
+
+                                                          <div className="mt-2 text-xs text-zinc-600 dark:text-zinc-300">
+                                                            Confirmado em: <span className="font-semibold">{confirmadoStr}</span>
+                                                          </div>
+
+                                                          <div className="mt-2 flex justify-end">
+                                                            {podeConfirmar ? (
+                                                              <button
+                                                                onClick={() =>
+                                                                  setConfirmPresenca({
+                                                                    dataYMD: dataAtiva,
+                                                                    turmaId: turma.id,
+                                                                    usuarioId: u.id,
+                                                                    nome: u.nome,
+                                                                  })
+                                                                }
+                                                                disabled={loading}
+                                                                className="rounded-xl px-3 py-2 text-xs font-extrabold text-white bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98]
+                                                                         disabled:opacity-60 disabled:cursor-not-allowed"
+                                                              >
+                                                                {loading ? "Confirmando..." : "Confirmar"}
+                                                              </button>
+                                                            ) : (
+                                                              <span className="text-xs text-zinc-400" aria-hidden="true">—</span>
+                                                            )}
+                                                          </div>
+                                                        </div>
+                                                      );
+                                                    })}
+                                                  </div>
+
+                                                  {/* Desktop: tabela */}
+                                                  <div className="hidden md:block px-4 pb-4 overflow-x-auto">
+                                                    <table className="min-w-full text-sm table-fixed">
+                                                      <thead>
+                                                        <tr className="text-left text-zinc-600 dark:text-zinc-300">
+                                                          <th className="py-2 pr-4 w-[32%]">👤 Nome</th>
+                                                          <th className="py-2 pr-4 w-[18%]">CPF</th>
+                                                          <th className="py-2 pr-4 w-[18%]">Situação</th>
+                                                          <th className="py-2 pr-4 w-[22%]">Confirmado em</th>
+                                                          <th className="py-2 pr-4 w-[10%]">Ações</th>
+                                                        </tr>
+                                                      </thead>
+                                                      <tbody>
+                                                        {listaUsuarios.map((u) => {
+                                                          const info = u.presencas.get(dataAtiva);
+                                                          const presente = !!(info && info.presente);
+
+                                                          let confirmadoStr = "—";
+                                                          if (presente && info?.confirmadoEm) {
+                                                            confirmadoStr = formatarDataHoraBR(info.confirmadoEm) || "—";
+                                                            if (
+                                                              confirmadoStr === "—" &&
+                                                              typeof info.confirmadoEm === "string" &&
+                                                              /^\d{2}:\d{2}/.test(info.confirmadoEm)
+                                                            ) {
+                                                              confirmadoStr = `${formatarDataBrasileira(dataAtiva)} ${info.confirmadoEm.slice(0, 5)}`;
+                                                            }
+                                                          }
+
+                                                          const inicioDiaDT = toLocalDateFromYMDTime(dataAtiva, hiDia);
+                                                          const abre = addMinutes(inicioDiaDT, -MINUTOS_ANTECIPACAO);
+                                                          const agora2 = new Date();
+                                                          const podeConfirmar =
+                                                            !presente && abre && janelaFinal ? agora2 >= abre && agora2 <= janelaFinal : false;
+
+                                                          const statusTxt = presente ? "Presente" : (abre && agora2 < abre ? "Aguardando" : "Faltou");
+
+                                                          const badgeCls = presente
+                                                            ? "bg-emerald-500 text-white"
+                                                            : (abre && agora2 < abre)
+                                                              ? "bg-amber-300 text-zinc-900"
+                                                              : "bg-rose-500 text-white";
+
+                                                          const actionKey = `${turma.id}#${u.id}#${dataAtiva}`;
+                                                          const loading = confirmandoKey === actionKey;
+
+                                                          return (
+                                                            <tr key={actionKey} className="border-t border-zinc-200 dark:border-zinc-800">
+                                                              <td className="py-2 pr-4 whitespace-nowrap overflow-hidden text-ellipsis">{u.nome}</td>
+                                                              <td className="py-2 pr-4 whitespace-nowrap">{formatarCPF(u.cpf) || u.cpf || "—"}</td>
+                                                              <td className="py-2 pr-4">
+                                                                <span className={cls("inline-flex rounded-full px-2.5 py-1 text-xs font-extrabold", badgeCls)}>
+                                                                  {statusTxt}
+                                                                </span>
+                                                              </td>
+                                                              <td className="py-2 pr-4">{confirmadoStr}</td>
+                                                              <td className="py-2 pr-4">
+                                                                {podeConfirmar ? (
+                                                                  <button
+                                                                    onClick={() =>
+                                                                      setConfirmPresenca({
+                                                                        dataYMD: dataAtiva,
+                                                                        turmaId: turma.id,
+                                                                        usuarioId: u.id,
+                                                                        nome: u.nome,
+                                                                      })
+                                                                    }
+                                                                    disabled={loading}
+                                                                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-extrabold text-white bg-emerald-600 hover:bg-emerald-700
+                                                                             disabled:opacity-60 disabled:cursor-not-allowed"
+                                                                  >
+                                                                    {loading ? "Confirmando..." : "Confirmar"}
+                                                                  </button>
+                                                                ) : (
+                                                                  <span className="text-xs text-zinc-400" aria-hidden="true">—</span>
+                                                                )}
+                                                              </td>
+                                                            </tr>
+                                                          );
+                                                        })}
+                                                      </tbody>
+                                                    </table>
+                                                  </div>
+                                                </section>
+                                              );
+                                            })()
+                                          )}
+                                        </>
+                                      )}
+                                    </div>
+                                  )}
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+                          </div>
+                        </motion.div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </motion.section>
+            );
+          })}
+        </AnimatePresence>
+      </div>
+
+      {/* ======================= MODAIS PREMIUM ======================= */}
+
+      {/* Confirmar presença */}
+      <ModalConfirmacao
+        isOpen={!!confirmPresenca}
+        onClose={() => setConfirmPresenca(null)}
+        onConfirmar={() => (confirmPresenca ? confirmarPresencaAgora(confirmPresenca) : true)}
+        titulo="Confirmar presença"
+        mensagem={
+          confirmPresenca ? (
+            <div className="space-y-2">
+              <p>
+                Confirmar presença de <strong>{confirmPresenca.nome || "participante"}</strong> em{" "}
+                <strong>{formatarDataBrasileira(confirmPresenca.dataYMD)}</strong>?
+              </p>
+              <p className="text-sm text-slate-600 dark:text-slate-300">
+                A presença será registrada como <strong>presente</strong> para esta data.
+              </p>
+            </div>
+          ) : (
+            "Confirmar presença?"
+          )
+        }
+        textoBotaoConfirmar="Confirmar"
+        textoBotaoCancelar="Cancelar"
+        variant="primary"
+        level={6}
+      />
+
+      {/* Remover turma */}
+      <ModalConfirmacao
+        isOpen={!!confirmRemover}
+        onClose={() => setConfirmRemover(null)}
+        onConfirmar={() => (confirmRemover ? removerTurmaAgora(confirmRemover) : true)}
+        titulo="Remover turma"
+        mensagem={
+          confirmRemover ? (
+            <div className="space-y-2">
+              <p>
+                Remover a turma <strong>{confirmRemover.turmaNome || `#${confirmRemover.turmaId}`}</strong>?
+              </p>
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-200">
+                <div className="flex items-start gap-2">
+                  <BadgeCheck className="w-5 h-5 mt-0.5" aria-hidden="true" />
+                  <div>
+                    <p className="font-bold">Atenção</p>
+                    <p>
+                      Se houver <strong>presenças</strong> ou <strong>certificados</strong>, o backend bloqueará a exclusão.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            "Remover turma?"
+          )
+        }
+        textoBotaoConfirmar={removendoId ? "Removendo..." : "Sim, remover"}
+        textoBotaoCancelar="Cancelar"
+        variant="danger"
+        level={6}
+      />
+    </>
   );
 }
 

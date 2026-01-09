@@ -7,8 +7,7 @@ import CardTurmaadministrador from "./CardTurmaadministrador";
 import { idadeDe } from "../utils/data";
 
 /* ========================= Helpers ========================= */
-const isDateOnly = (str) =>
-  typeof str === "string" && /^\d{4}-\d{2}-\d{2}$/.test(str);
+const isDateOnly = (str) => typeof str === "string" && /^\d{4}-\d{2}-\d{2}$/.test(str);
 const ymd = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
 const onlyHHmm = (s) => (typeof s === "string" ? s.slice(0, 5) : "");
 const toLocalDateFromYMD = (ymdStr, hhmm = "12:00") =>
@@ -32,15 +31,13 @@ function formatarDataLocal(d) {
   return dt.toLocaleDateString("pt-BR");
 }
 const formatarCPF = (v) =>
-  (String(v ?? "")
-    .replace(/\D/g, "")
-    .slice(0, 11)
-    .padStart(11, "0") || ""
-  ).replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
+  (String(v ?? "").replace(/\D/g, "").slice(0, 11).padStart(11, "0") || "").replace(
+    /(\d{3})(\d{3})(\d{3})(\d{2})/,
+    "$1.$2.$3-$4"
+  );
 
 // Normaliza lista (aceita array direto ou objeto { lista: [] })
-const normalizaArr = (v) =>
-  Array.isArray(v) ? v : Array.isArray(v?.lista) ? v.lista : [];
+const normalizaArr = (v) => (Array.isArray(v) ? v : Array.isArray(v?.lista) ? v.lista : []);
 
 /* ===== período & status do evento (anti-fuso) ===== */
 function getPeriodoEvento(evento, turmas) {
@@ -70,8 +67,12 @@ function getPeriodoEvento(evento, turmas) {
     if (starts.length && ends.length) {
       const a = new Date(Math.min(...starts));
       const b = new Date(Math.max(...ends));
-      const aY = `${a.getFullYear()}-${String(a.getMonth() + 1).padStart(2, "0")}-${String(a.getDate()).padStart(2, "0")}`;
-      const bY = `${b.getFullYear()}-${String(b.getMonth() + 1).padStart(2, "0")}-${String(b.getDate()).padStart(2, "0")}`;
+      const aY = `${a.getFullYear()}-${String(a.getMonth() + 1).padStart(2, "0")}-${String(
+        a.getDate()
+      ).padStart(2, "0")}`;
+      const bY = `${b.getFullYear()}-${String(b.getMonth() + 1).padStart(2, "0")}-${String(
+        b.getDate()
+      ).padStart(2, "0")}`;
       return fmt(aY, bY);
     }
   }
@@ -91,8 +92,10 @@ function getStatusEvento({ evento, turmas }) {
     const starts = [];
     const ends = [];
     (turmas || []).forEach((t) => {
-      const di = ymd(t.data_inicio), df = ymd(t.data_fim);
-      const hi = onlyHHmm(t.horario_inicio || "00:00"), hf = onlyHHmm(t.horario_fim || "23:59");
+      const di = ymd(t.data_inicio),
+        df = ymd(t.data_fim);
+      const hi = onlyHHmm(t.horario_inicio || "00:00"),
+        hf = onlyHHmm(t.horario_fim || "23:59");
       const s = di ? toLocalDateFromYMD(di, hi) : null;
       const e = df ? toLocalDateFromYMD(df, hf) : null;
       if (s) starts.push(s.getTime());
@@ -131,7 +134,8 @@ function PctPill({ value }) {
 
 /* ===== Regra dinâmica ≥75% sobre encontros ocorridos ===== */
 function isElegivel75(u, resumo) {
-  const total = typeof u?.total_ocorridos === "number" ? u.total_ocorridos : resumo?.encontrosOcorridos ?? 0;
+  const total =
+    typeof u?.total_ocorridos === "number" ? u.total_ocorridos : resumo?.encontrosOcorridos ?? 0;
   if (total <= 0) return false;
 
   if (typeof u?.presentes_ocorridos === "number") {
@@ -179,19 +183,19 @@ function mapPresencasParaLista(presencasPorTurma, turmaId) {
   };
 
   // Caso 1: já seja array simples
-  if (Array.isArray(raw)) {
-    return raw.map(normalizeOne).filter(Boolean);
-  }
+  if (Array.isArray(raw)) return raw.map(normalizeOne).filter(Boolean);
 
   // Caso 2: objeto com lista
   const lista = normalizaArr(raw);
-  if (lista.length) {
-    return lista.map(normalizeOne).filter(Boolean);
-  }
+  if (lista.length) return lista.map(normalizeOne).filter(Boolean);
 
-  // Caso 3: estrutura detalhada (usuarios + presencas)
-  const usuarios = Array.isArray(raw?.usuarios) ? raw.users || raw.usuarios : [];
-  return usuarios.map(normalizeOne).filter(Boolean);
+  // Caso 3: estruturas alternativas (usuarios/users)
+  const arrUsuarios = Array.isArray(raw?.usuarios)
+    ? raw.usuarios
+    : Array.isArray(raw?.users)
+    ? raw.users
+    : [];
+  return arrUsuarios.map(normalizeOne).filter(Boolean);
 }
 
 /* ===== Barrinha/cores por status ===== */
@@ -208,7 +212,9 @@ function MiniStat({ value, label, className = "" }) {
     <div className="min-w-[86px]">
       <div className="inline-flex flex-col items-center justify-center px-3 py-2 rounded-xl border border-zinc-200 bg-white shadow-sm dark:bg-zinc-800 dark:border-zinc-600">
         <div className={`leading-none font-extrabold text-2xl ${className}`}>{value}</div>
-        <div className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">{label}</div>
+        <div className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          {label}
+        </div>
       </div>
     </div>
   );
@@ -223,9 +229,7 @@ function resolveAssinanteNome(turma, evento) {
   if (turma?.assinante_nome) return turma.assinante_nome;
 
   // 2) id novo (oficial)
-  const assinanteId = Number(
-    turma?.instrutor_assinante_id ?? turma?.assinante_id /* compat */
-  );
+  const assinanteId = Number(turma?.instrutor_assinante_id ?? turma?.assinante_id /* compat */);
   if (!Number.isFinite(assinanteId)) return null;
 
   // 3) procurar na própria turma
@@ -251,9 +255,7 @@ function resolveAssinanteNome(turma, evento) {
 function resolverInstrutoresTurma(turma) {
   if (!turma) return [];
   const toObj = (x) =>
-    typeof x === "object" && x
-      ? { id: Number(x.id), nome: x.nome ?? null }
-      : { id: Number(x), nome: null };
+    typeof x === "object" && x ? { id: Number(x.id), nome: x.nome ?? null } : { id: Number(x), nome: null };
 
   const arrRaw = Array.isArray(turma?.instrutores)
     ? turma.instrutores
@@ -288,8 +290,6 @@ export default function CardEventoadministrador({
   carregarPresencas,
   gerarRelatorioPDF,
   gerarPdfInscritosTurma,
-
-  // 🆕 classes injetáveis para controle de quebra de linha
   classNomeEventoMultiLinha,
   classInstrutoresMultiLinha,
 }) {
@@ -339,13 +339,14 @@ export default function CardEventoadministrador({
   const statusEvento = getStatusEvento({ evento, turmas });
   const styles = STATUS_STYLES[statusEvento] || STATUS_STYLES.todos;
 
-  // fallbacks de classe pros textos, caso o pai não forneça
   const nomeEventoClass =
     classNomeEventoMultiLinha ||
     "break-words whitespace-normal text-xl font-bold text-green-900 dark:text-green-200 leading-snug";
   const instrutoresClass =
     classInstrutoresMultiLinha ||
     "break-words whitespace-normal text-sm text-gray-700 dark:text-gray-200 leading-snug";
+
+  const turmasId = `admin-evt-${evento?.id}-turmas`;
 
   return (
     <section
@@ -366,7 +367,9 @@ export default function CardEventoadministrador({
 
           {/* Instrutor - AGORA QUEBRA LINHA */}
           <div className="flex flex-col sm:flex-row sm:flex-wrap gap-y-0.5 gap-x-2 mt-2 mb-1 min-w-0">
-            <span className="text-xs font-semibold text-gray-800 dark:text-gray-100 shrink-0">Instrutor:</span>
+            <span className="text-xs font-semibold text-gray-800 dark:text-gray-100 shrink-0">
+              Instrutor:
+            </span>
             <span className={instrutoresClass + " flex-1 min-w-0"} title={nomeinstrutor}>
               {nomeinstrutor}
             </span>
@@ -383,9 +386,12 @@ export default function CardEventoadministrador({
         <div className="flex flex-col items-end gap-2 shrink-0">
           <BadgeStatus status={statusEvento} size="sm" variant="soft" />
           <button
+            type="button"
             onClick={() => toggleExpandir(evento.id)}
-            aria-expanded={expandido}
-            className="text-sm px-4 py-1 bg-green-900 text-white rounded-full hover:bg-green-900/90 transition whitespace-nowrap"
+            aria-expanded={!!expandido}
+            aria-controls={turmasId}
+            className="text-sm px-4 py-1 bg-green-900 text-white rounded-full hover:bg-green-900/90 transition whitespace-nowrap focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-500/60"
+            title={expandido ? "Recolher detalhes do evento" : "Ver turmas do evento"}
           >
             {expandido ? "Recolher" : "Ver Turmas"}
           </button>
@@ -405,7 +411,7 @@ export default function CardEventoadministrador({
           </div>
 
           {Array.isArray(turmas) && turmas.length ? (
-            <div className="mt-6 space-y-6">
+            <div id={turmasId} className="mt-6 space-y-6">
               {turmas.map((turma) => {
                 const inscritos = normalizaArr(inscritosPorTurma?.[turma.id]);
                 const presencas = mapPresencasParaLista(presencasPorTurma, turma.id);
@@ -433,9 +439,7 @@ export default function CardEventoadministrador({
                     <div className="px-2 -mt-1">
                       {/* Assinante */}
                       <div className="text-[12px]">
-                        <span className="font-semibold text-zinc-700 dark:text-zinc-200 mr-2">
-                          Assinante:
-                        </span>
+                        <span className="font-semibold text-zinc-700 dark:text-zinc-200 mr-2">Assinante:</span>
                         <span
                           className="inline-flex items-center px-2 py-0.5 rounded-full text-[12px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-200 dark:border-emerald-800"
                           title={assinanteNome || "—"}
@@ -455,10 +459,7 @@ export default function CardEventoadministrador({
                                          dark:bg-indigo-900/20 dark:text-indigo-200 dark:border-indigo-800"
                               title={ins.nome}
                             >
-                              <span
-                                className="inline-block w-1.5 h-1.5 rounded-full bg-indigo-500 dark:bg-indigo-300"
-                                aria-hidden
-                              />
+                              <span className="inline-block w-1.5 h-1.5 rounded-full bg-indigo-500 dark:bg-indigo-300" aria-hidden />
                               {ins.nome}
                             </span>
                           ))}
@@ -478,8 +479,10 @@ export default function CardEventoadministrador({
                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                         <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">Inscritos da turma</p>
                         <button
+                          type="button"
                           onClick={() => gerarPdfInscritosTurma?.(turma.id)}
-                          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium bg-green-900 text-white hover:bg-green-900/90"
+                          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium bg-green-900 text-white hover:bg-green-900/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-500/60"
+                          title="Gerar PDF com dados do curso e lista de inscritos"
                         >
                           <FileDown size={16} />
                           <span className="whitespace-nowrap">Gerar PDF (curso + inscritos)</span>
@@ -506,7 +509,9 @@ export default function CardEventoadministrador({
                               .sort((a, b) => String(a?.nome || "").localeCompare(String(b?.nome || "")))
                               .map((i) => {
                                 const cpf = formatarCPF(i?.cpf);
-                                const idade = Number.isFinite(i?.idade) ? i.idade : idadeDe(i?.data_nascimento || i?.nascimento);
+                                const idade = Number.isFinite(i?.idade)
+                                  ? i.idade
+                                  : idadeDe(i?.data_nascimento || i?.nascimento);
                                 const registro = i?.registro || i?.matricula || null;
 
                                 const pcdVisual = !!(i?.pcd_visual || i?.def_visual || i?.deficiencia_visual);
@@ -518,12 +523,8 @@ export default function CardEventoadministrador({
                                 const pcdMultipla = !!(i?.pcd_multipla || i?.def_multipla);
                                 const pcdTEA = !!(i?.pcd_autismo || i?.tea || i?.transtorno_espectro_autista);
 
-                                // frequência do aluno (usando presenças mapeadas)
                                 const presAluno = mapPresencasParaLista(presencasPorTurma, turma.id).find(
-                                  (p) =>
-                                    p.usuario_id === i.id ||
-                                    p.usuario_id === i.usuario_id ||
-                                    p.cpf === i.cpf
+                                  (p) => p.usuario_id === i.id || p.usuario_id === i.usuario_id || p.cpf === i.cpf
                                 );
                                 const freqStr =
                                   presAluno?.frequencia_num != null
@@ -583,7 +584,11 @@ export default function CardEventoadministrador({
 
                                       {/* Frequência */}
                                       <div className="sm:text-right">
-                                        {freqStr ? <PctPill value={freqStr} /> : <span className="text-zinc-400 text-sm">—</span>}
+                                        {freqStr ? (
+                                          <PctPill value={freqStr} />
+                                        ) : (
+                                          <span className="text-zinc-400 text-sm">—</span>
+                                        )}
                                       </div>
                                     </div>
 
@@ -649,8 +654,6 @@ CardEventoadministrador.propTypes = {
   carregarPresencas: PropTypes.func,
   gerarRelatorioPDF: PropTypes.func,
   gerarPdfInscritosTurma: PropTypes.func,
-
-  // 🆕 adicionadas:
   classNomeEventoMultiLinha: PropTypes.string,
   classInstrutoresMultiLinha: PropTypes.string,
 };

@@ -2,6 +2,7 @@
 import PropTypes from "prop-types";
 import { SearchX } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
+import { useId, useMemo } from "react";
 
 const SIZE_MAP = {
   sm: { wrap: "w-14 h-14", icon: "w-8 h-8", title: "text-base", hint: "text-xs" },
@@ -31,15 +32,19 @@ export default function NadaEncontrado({
   testId = "nada-encontrado",
 }) {
   const reduceMotion = useReducedMotion();
+  const uid = useId();
+
   const sz = SIZE_MAP[size] || SIZE_MAP.md;
   const ring = VARIANT_RING[variant] || VARIANT_RING.indigo;
 
   // Ações combinadas (mantém compat c/ prop antiga `acao`)
-  const mergedActions = Array.isArray(actions) && actions?.length
-    ? actions
-    : (acao?.label && typeof acao.onClick === "function" ? [{ ...acao, variant: "primary" }] : []);
+  const mergedActions = useMemo(() => {
+    if (Array.isArray(actions) && actions.length) return actions;
+    if (acao?.label && typeof acao.onClick === "function") return [{ ...acao, variant: "primary" }];
+    return [];
+  }, [actions, acao]);
 
-  const descId = `${testId}-desc`;
+  const descId = `${testId}-${uid}-desc`;
 
   return (
     <motion.div
@@ -49,9 +54,11 @@ export default function NadaEncontrado({
       aria-atomic="true"
       aria-describedby={sugestao ? descId : undefined}
       data-testid={testId}
-      initial={reduceMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: reduceMotion ? 0 : 0.4 }}
+      initial={
+        reduceMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: 16 }
+      }
+      animate={reduceMotion ? { opacity: 1, y: 0 } : { opacity: 1, y: 0 }}
+      transition={{ duration: reduceMotion ? 0 : 0.35, ease: "easeOut" }}
     >
       <div
         className={[
@@ -65,14 +72,25 @@ export default function NadaEncontrado({
         {/* anel em degradê 3 cores (sutil) */}
         <div className={`absolute inset-0 opacity-20 bg-gradient-to-br ${ring}`} />
         <Icone
-          className={`${sz.icon} text-lousa dark:text-white relative ${iconClassName}`}
+          className={[
+            sz.icon,
+            // mantém seu token (se existir), com fallback elegante:
+            "text-lousa dark:text-white text-slate-800 dark:text-white",
+            "relative",
+            iconClassName,
+          ].join(" ")}
         />
       </div>
 
-      <p className={`${sz.title} font-semibold`}>{mensagem}</p>
+      <p className={`${sz.title} font-semibold text-slate-800 dark:text-slate-100`}>
+        {mensagem}
+      </p>
 
       {sugestao && (
-        <p id={descId} className={`${sz.hint} text-gray-500 dark:text-gray-400 mt-1`}>
+        <p
+          id={descId}
+          className={`${sz.hint} text-gray-500 dark:text-gray-400 mt-1`}
+        >
           {sugestao}
         </p>
       )}
@@ -87,9 +105,11 @@ export default function NadaEncontrado({
                 type="button"
                 onClick={a.onClick}
                 className={[
-                  "inline-flex items-center gap-2 px-4 py-2 rounded-lg transition focus-visible:ring-2 focus-visible:ring-offset-2",
+                  "inline-flex items-center gap-2 px-4 py-2 rounded-lg transition",
+                  "focus-visible:ring-2 focus-visible:ring-offset-2",
+                  "active:scale-[.99]",
                   primary
-                    ? "bg-lousa text-white hover:opacity-90 focus-visible:ring-lousa"
+                    ? "bg-lousa bg-slate-900 text-white hover:opacity-90 focus-visible:ring-lousa focus-visible:ring-slate-900"
                     : "bg-gray-200 text-gray-900 hover:bg-gray-300 dark:bg-gray-700 dark:text-white dark:hover:bg-gray-600 focus-visible:ring-gray-400",
                 ].join(" ")}
               >

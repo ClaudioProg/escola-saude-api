@@ -1,19 +1,59 @@
 /* eslint-disable no-console */
-// 📁 src/instrutorController.js
-const db = require("../db");
+// 📁 src/controllers/instrutorController.js — PREMIUM (robusto, date-only safe, SQL defensivo)
+const dbMod = require("../db");
+
+// Compat: alguns lugares exportam { pool, query }, outros exportam direto.
+const pool = dbMod.pool || dbMod.Pool || dbMod.pool?.pool || dbMod;
+const query =
+  dbMod.query ||
+  (typeof dbMod === "function" ? dbMod : null) ||
+  (pool?.query ? pool.query.bind(pool) : null);
+
+if (typeof query !== "function") {
+  console.error("[instrutorController] DB inválido:", Object.keys(dbMod || {}));
+  throw new Error("DB inválido em instrutorController.js (query ausente)");
+}
+
+const IS_DEV = process.env.NODE_ENV !== "production";
+
+/* ────────────────────────────────────────────────────────────────
+   Logger util (RID) — reduz ruído em produção
+   ──────────────────────────────────────────────────────────────── */
+function mkRid() {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+function log(rid, level, msg, extra) {
+  const prefix = `[INS-CTRL][RID=${rid}]`;
+  if (level === "error") return console.error(`${prefix} ✖ ${msg}`, extra?.stack || extra?.message || extra);
+  if (!IS_DEV) return;
+  if (level === "warn") return console.warn(`${prefix} ⚠ ${msg}`, extra || "");
+  return console.log(`${prefix} • ${msg}`, extra || "");
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Helpers
+   ──────────────────────────────────────────────────────────────── */
+const asPositiveInt = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) && Number.isInteger(n) && n > 0 ? n : null;
+};
+
+function getUsuarioId(req) {
+  return req.user?.id ?? null;
+}
 
 /**
- * 🔢 Helper SQL seguro p/ coluna enum -> nota 1..5 (numeric)
- * - SEMPRE castea o enum para text antes de comparar/converter
+ * 🔢 Helper SQL seguro p/ enum/text -> nota 1..5 (numeric)
+ * - SEMPRE castea para text antes de comparar/converter
  * - Aceita "1..5" (com vírgula/ponto), e textos comuns (ótimo, bom, etc.)
+ *
+ * Observação: usa alias "a" (avaliacoes) — mantenha o alias como "a" nas CTEs/joins.
  */
 const SQL_MAP_NOTA = `
   CASE
     WHEN a.desempenho_instrutor IS NULL THEN NULL
-    /* números "1..5" (com opcional ,00 ou .00 e espaços) */
     WHEN trim(a.desempenho_instrutor::text) ~ '^[1-5](?:[\\.,]0+)?$'
       THEN REPLACE(trim(a.desempenho_instrutor::text), ',', '.')::numeric
-    /* textos (lowercase simplificado) */
     WHEN lower(a.desempenho_instrutor::text) IN ('ótimo','otimo','excelente','muito bom') THEN 5
     WHEN lower(a.desempenho_instrutor::text) = 'bom' THEN 4
     WHEN lower(a.desempenho_instrutor::text) IN ('regular','médio','medio') THEN 3
@@ -23,82 +63,100 @@ const SQL_MAP_NOTA = `
   END
 `;
 
-/**
- * 📋 Lista instrutores com médias/contadores
- * - NÃO usa mais a.palestrante_id/instrutor_id nas avaliações.
- * - Liga por evento_instrutor → turmas → avaliacoes (a.turma_id).
- */
+/* ────────────────────────────────────────────────────────────────
+   📋 Lista instrutores com médias/contadores
+   - Liga por evento_instrutor → turmas → avaliacoes (a.turma_id).
+   - Evita multiplicação indevida com LEFT JOIN (CTEs agregadas).
+   ──────────────────────────────────────────────────────────────── */
 async function listarInstrutor(req, res) {
+  const rid = mkRid();
   try {
     const sql = `
-      WITH av_por_instrutor AS (
+      WITH instrutores AS (
+        SELECT u.id, u.nome, u.email
+        FROM usuarios u
+        WHERE string_to_array(COALESCE(u.perfil,''), ',') && ARRAY['instrutor','administrador']
+      ),
+      eventos_por_instrutor AS (
+        SELECT ei.instrutor_id, COUNT(DISTINCT ei.evento_id)::int AS eventos_ministrados
+        FROM evento_instrutor ei
+        GROUP BY ei.instrutor_id
+      ),
+      turmas_por_instrutor AS (
+        SELECT ei.instrutor_id, COUNT(*)::int AS turmas_vinculadas
+        FROM evento_instrutor ei
+        JOIN turmas t ON t.evento_id = ei.evento_id
+        GROUP BY ei.instrutor_id
+      ),
+      notas_por_instrutor AS (
         SELECT
           ei.instrutor_id,
           ${SQL_MAP_NOTA} AS nota
         FROM evento_instrutor ei
         JOIN turmas t          ON t.evento_id = ei.evento_id
         LEFT JOIN avaliacoes a ON a.turma_id = t.id
+      ),
+      agg_notas AS (
+        SELECT
+          instrutor_id,
+          COUNT(nota)::int AS total_respostas,
+          ROUND(AVG(nota)::numeric, 2) AS media_avaliacao
+        FROM notas_por_instrutor
+        GROUP BY instrutor_id
       )
-      SELECT 
-        u.id, 
-        u.nome, 
-        u.email,
-
-        /* Eventos distintos ministrados */
-        (
-          SELECT COUNT(DISTINCT ei.evento_id)
-          FROM evento_instrutor ei
-          WHERE ei.instrutor_id = u.id
-        ) AS "eventosMinistrados",
-
-        /* Turmas ligadas a esses eventos (informativo) */
-        (
-          SELECT COUNT(*)
-          FROM evento_instrutor ei2
-          JOIN turmas t2 ON t2.evento_id = ei2.evento_id
-          WHERE ei2.instrutor_id = u.id
-        ) AS "turmasVinculadas",
-
-        /* Total de respostas com nota válida */
-        (
-          SELECT COUNT(av.nota)
-          FROM av_por_instrutor av
-          WHERE av.instrutor_id = u.id
-            AND av.nota IS NOT NULL
-        ) AS "totalRespostas",
-
-        /* Média geral 1..5 (2 casas) */
-        ROUND((
-          SELECT AVG(av.nota)
-          FROM av_por_instrutor av
-          WHERE av.instrutor_id = u.id
-        )::numeric, 2) AS media_avaliacao,
-
-        /* Possui assinatura? */
+      SELECT
+        i.id,
+        i.nome,
+        i.email,
+        COALESCE(ei.eventos_ministrados, 0) AS "eventosMinistrados",
+        COALESCE(tp.turmas_vinculadas, 0)   AS "turmasVinculadas",
+        COALESCE(an.total_respostas, 0)     AS "totalRespostas",
+        an.media_avaliacao,
         CASE WHEN s.imagem_base64 IS NOT NULL THEN TRUE ELSE FALSE END AS "possuiAssinatura"
-
-      FROM usuarios u
-      LEFT JOIN assinaturas s ON s.usuario_id = u.id
-      WHERE string_to_array(u.perfil, ',') && ARRAY['instrutor','administrador']
-      ORDER BY u.nome;
+      FROM instrutores i
+      LEFT JOIN eventos_por_instrutor ei ON ei.instrutor_id = i.id
+      LEFT JOIN turmas_por_instrutor  tp ON tp.instrutor_id = i.id
+      LEFT JOIN agg_notas             an ON an.instrutor_id = i.id
+      LEFT JOIN assinaturas            s ON s.usuario_id = i.id
+      ORDER BY i.nome;
     `;
-    const { rows } = await db.query(sql);
+
+    const { rows } = await query(sql, []);
+    log(rid, "info", "listarInstrutor OK", { count: rows.length });
     return res.status(200).json(rows);
   } catch (error) {
-    console.error("❌ Erro ao buscar instrutor:", error);
+    log(rid, "error", "Erro ao buscar instrutores", error);
     return res.status(500).json({ erro: "Erro ao buscar instrutor." });
   }
 }
 
-/**
- * 📊 Eventos ministrados por instrutor (período, média e total de respostas)
- * @route GET /api/instrutor/:id/eventos-avaliacoes
- */
+/* ────────────────────────────────────────────────────────────────
+   📊 Eventos ministrados por instrutor (período, média e total)
+   @route GET /api/instrutor/:id/eventos-avaliacoes
+   - Período calculado em DATE (sem Date JS)
+   - Média/contagem calculadas sem multiplicar linhas
+   ──────────────────────────────────────────────────────────────── */
 async function getEventosAvaliacoesPorInstrutor(req, res) {
-  const { id } = req.params;
+  const rid = mkRid();
+  const instrutorId = asPositiveInt(req.params?.id);
+
+  if (!instrutorId) return res.status(400).json({ erro: "ID inválido." });
+
   try {
     const sql = `
-      WITH respostas AS (
+      WITH turmas_evento AS (
+        SELECT
+          e.id AS evento_id,
+          e.titulo AS evento,
+          MIN(t.data_inicio)::date AS data_inicio,
+          MAX(t.data_fim)::date    AS data_fim
+        FROM evento_instrutor ei
+        JOIN eventos e ON e.id = ei.evento_id
+        JOIN turmas  t ON t.evento_id = e.id
+        WHERE ei.instrutor_id = $1
+        GROUP BY e.id, e.titulo
+      ),
+      notas_evento AS (
         SELECT
           e.id AS evento_id,
           ${SQL_MAP_NOTA} AS nota
@@ -107,45 +165,56 @@ async function getEventosAvaliacoesPorInstrutor(req, res) {
         JOIN turmas  t         ON t.evento_id = e.id
         LEFT JOIN avaliacoes a ON a.turma_id = t.id
         WHERE ei.instrutor_id = $1
+      ),
+      agg AS (
+        SELECT
+          evento_id,
+          ROUND(AVG(nota)::numeric, 1) AS nota_media,
+          COUNT(nota)::int AS total_respostas
+        FROM notas_evento
+        GROUP BY evento_id
       )
-      SELECT 
-        e.id AS evento_id,
-        e.titulo AS evento,
-        MIN(t.data_inicio) AS data_inicio,
-        MAX(t.data_fim)    AS data_fim,
-        ROUND(AVG(r.nota)::numeric, 1) AS nota_media,
-        COUNT(r.nota) AS total_respostas
-      FROM evento_instrutor ei
-      JOIN eventos e ON e.id = ei.evento_id
-      JOIN turmas  t ON t.evento_id = e.id
-      LEFT JOIN respostas r ON r.evento_id = e.id
-      WHERE ei.instrutor_id = $1
-      GROUP BY e.id, e.titulo
-      ORDER BY MIN(t.data_inicio) DESC NULLS LAST;
+      SELECT
+        te.evento_id,
+        te.evento,
+        to_char(te.data_inicio, 'YYYY-MM-DD') AS data_inicio,
+        to_char(te.data_fim,    'YYYY-MM-DD') AS data_fim,
+        a.nota_media,
+        COALESCE(a.total_respostas, 0) AS total_respostas
+      FROM turmas_evento te
+      LEFT JOIN agg a ON a.evento_id = te.evento_id
+      ORDER BY te.data_inicio DESC NULLS LAST;
     `;
-    const { rows } = await db.query(sql, [Number(id)]);
+
+    const { rows } = await query(sql, [instrutorId]);
+    log(rid, "info", "getEventosAvaliacoesPorInstrutor OK", { instrutorId, count: rows.length });
     return res.json(rows);
   } catch (error) {
-    console.error("❌ Erro ao buscar eventos do instrutor:", error.message);
+    log(rid, "error", "Erro ao buscar eventos do instrutor", error);
     return res.status(500).json({ erro: "Erro ao buscar eventos ministrados." });
   }
 }
 
-/**
- * 📚 Turmas vinculadas ao instrutor (com dados do evento)
- * @route GET /api/instrutor/:id/turmas
- */
+/* ────────────────────────────────────────────────────────────────
+   📚 Turmas vinculadas ao instrutor (com dados do evento)
+   @route GET /api/instrutor/:id/turmas
+   - Mantém date-only (YYYY-MM-DD) na saída
+   ──────────────────────────────────────────────────────────────── */
 async function getTurmasComEventoPorInstrutor(req, res) {
-  const { id } = req.params;
+  const rid = mkRid();
+  const instrutorId = asPositiveInt(req.params?.id);
+
+  if (!instrutorId) return res.status(400).json({ erro: "ID inválido." });
+
   try {
-    const query = `
+    const sql = `
       SELECT 
         t.id AS id,
         t.nome AS nome,
-        t.data_inicio,
-        t.data_fim,
-        t.horario_inicio,
-        t.horario_fim,
+        to_char(t.data_inicio::date,'YYYY-MM-DD') AS data_inicio,
+        to_char(t.data_fim::date,'YYYY-MM-DD')    AS data_fim,
+        to_char(t.horario_inicio,'HH24:MI')       AS horario_inicio,
+        to_char(t.horario_fim,'HH24:MI')          AS horario_fim,
         e.id     AS evento_id,
         e.titulo AS evento_nome,
         e.local  AS evento_local
@@ -155,9 +224,10 @@ async function getTurmasComEventoPorInstrutor(req, res) {
       WHERE ei.instrutor_id = $1
       ORDER BY t.data_inicio ASC NULLS LAST, t.id ASC
     `;
-    const { rows } = await db.query(query, [Number(id)]);
 
-    const turmasFormatadas = rows.map((t) => ({
+    const { rows } = await query(sql, [instrutorId]);
+
+    const turmasFormatadas = (rows || []).map((t) => ({
       id: t.id,
       nome: t.nome,
       data_inicio: t.data_inicio,
@@ -171,37 +241,49 @@ async function getTurmasComEventoPorInstrutor(req, res) {
       },
     }));
 
+    log(rid, "info", "getTurmasComEventoPorInstrutor OK", { instrutorId, count: turmasFormatadas.length });
     return res.json(turmasFormatadas);
   } catch (error) {
-    console.error("❌ Erro ao buscar turmas do instrutor:", error.message);
+    log(rid, "error", "Erro ao buscar turmas do instrutor", error);
     return res.status(500).json({ erro: "Erro ao buscar turmas do instrutor." });
   }
 }
 
-/**
- * 👤 “Minhas turmas” (instrutor autenticado)
- * @route GET /api/instrutor/minhas/turmas
- */
+/* ────────────────────────────────────────────────────────────────
+   👤 “Minhas turmas” (instrutor autenticado)
+   @route GET /api/instrutor/minhas/turmas
+   - Mantém date-only (YYYY-MM-DD) na saída
+   ──────────────────────────────────────────────────────────────── */
 async function getMinhasTurmasInstrutor(req, res) {
-  try {
-    const usuarioId = req.user?.id ?? req.user?.id;
-    if (!usuarioId) {
-      return res.status(401).json({ erro: "Usuário não autenticado." });
-    }
+  const rid = mkRid();
+  const usuarioId = asPositiveInt(getUsuarioId(req));
 
+  if (!usuarioId) {
+    return res.status(401).json({ erro: "Usuário não autenticado." });
+  }
+
+  try {
     const sql = `
       SELECT 
-        t.id, t.nome, t.data_inicio, t.data_fim, t.horario_inicio, t.horario_fim,
-        e.id AS evento_id, e.titulo AS evento_nome, e.local AS evento_local
+        t.id,
+        t.nome,
+        to_char(t.data_inicio::date,'YYYY-MM-DD') AS data_inicio,
+        to_char(t.data_fim::date,'YYYY-MM-DD')    AS data_fim,
+        to_char(t.horario_inicio,'HH24:MI')       AS horario_inicio,
+        to_char(t.horario_fim,'HH24:MI')          AS horario_fim,
+        e.id AS evento_id,
+        e.titulo AS evento_nome,
+        e.local  AS evento_local
       FROM evento_instrutor ei
       JOIN eventos e ON e.id = ei.evento_id
       JOIN turmas  t ON t.evento_id = e.id
       WHERE ei.instrutor_id = $1
       ORDER BY t.data_inicio DESC NULLS LAST, t.id DESC
     `;
-    const { rows } = await db.query(sql, [Number(usuarioId)]);
 
-    const turmas = rows.map((r) => ({
+    const { rows } = await query(sql, [usuarioId]);
+
+    const turmas = (rows || []).map((r) => ({
       id: r.id,
       nome: r.nome,
       data_inicio: r.data_inicio,
@@ -211,9 +293,10 @@ async function getMinhasTurmasInstrutor(req, res) {
       evento: { id: r.evento_id, nome: r.evento_nome, local: r.evento_local },
     }));
 
+    log(rid, "info", "getMinhasTurmasInstrutor OK", { usuarioId, count: turmas.length });
     return res.json(turmas);
   } catch (err) {
-    console.error("❌ Erro ao buscar turmas do instrutor:", err.message);
+    log(rid, "error", "Erro ao buscar minhas turmas (instrutor)", err);
     return res.status(500).json({ erro: "Erro ao buscar turmas do instrutor." });
   }
 }

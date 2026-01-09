@@ -1,5 +1,9 @@
-// ✅ src/pages/Login.jsx
-import { useState, useEffect, useMemo, useRef } from "react";
+// ✅ src/pages/Login.jsx (premium + mobile-first + dark/light/system + a11y + UX refinada)
+// - mantém: CPF + senha + GoogleLogin (quando houver), redirect seguro, validações, RBAC via storage
+// - melhora: layout/hero, logo mobile, acessibilidade (aria), feedbacks, “Enter” fluido, foco inteligente
+// - corrige: gradiente com “via” duplicado, imports não usados
+
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { GoogleLogin } from "@react-oauth/google";
 import { toast } from "react-toastify";
@@ -12,8 +16,6 @@ import {
   AlertTriangle,
   ShieldCheck,
   Sparkles,
-  ArrowRight,
-  Mail,
   IdCard,
 } from "lucide-react";
 
@@ -26,7 +28,7 @@ import ThemeTogglePills from "../components/ThemeTogglePills";
 
 /* ---------------------- utils CPF ---------------------- */
 function aplicarMascaraCPF(valor) {
-  return valor
+  return String(valor || "")
     .replace(/\D/g, "")
     .slice(0, 11)
     .replace(/(\d{3})(\d)/, "$1.$2")
@@ -53,8 +55,33 @@ function cpfChecksumValido(cpf) {
   return d1 === parseInt(s[9], 10) && d2 === parseInt(s[10], 10);
 }
 function validarCPF(c) {
-  const maskOk = /^\d{3}\.\d{3}\.\d{3}-\d{2}$/.test(c);
-  return maskOk && cpfChecksumValido(c);
+  // aceita com máscara OU só dígitos (colagem sem pontuação)
+  const digits = apenasDigitos(c);
+  if (digits.length !== 11) return false;
+  return cpfChecksumValido(digits);
+}
+function maskOkOuFormatar(value) {
+  const digits = apenasDigitos(value);
+  return aplicarMascaraCPF(digits);
+}
+
+/* ---------------------- mini ui ---------------------- */
+function MiniStatLite({ title, value, isDark }) {
+  return (
+    <div
+      className={[
+        "rounded-2xl border px-4 py-3 transition-colors",
+        isDark ? "border-white/10 bg-zinc-950/35" : "border-slate-200 bg-white shadow-sm",
+      ].join(" ")}
+    >
+      <div className={["text-[11px] font-bold", isDark ? "text-zinc-300" : "text-slate-500"].join(" ")}>
+        {title}
+      </div>
+      <div className={["mt-1 text-sm font-extrabold", isDark ? "text-zinc-100" : "text-slate-900"].join(" ")}>
+        {value}
+      </div>
+    </div>
+  );
 }
 
 export default function Login() {
@@ -98,7 +125,19 @@ export default function Login() {
     if (location.pathname === "/login" && token) navigate("/", { replace: true });
   }, [navigate, location]);
 
-  function persistirSessao(payload) {
+  // atalho: "/" foca CPF
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        cpfRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const persistirSessao = useCallback((payload) => {
     const { token, usuario } = payload || {};
     if (!token || !usuario) throw new Error("Resposta de login inválida.");
 
@@ -112,30 +151,36 @@ export default function Login() {
     localStorage.setItem("nome", usuario.nome || "");
     localStorage.setItem("perfil", JSON.stringify(perfilArray));
     localStorage.setItem("usuario", JSON.stringify({ ...usuario, perfil: perfilArray }));
-  }
+  }, []);
+
+  const validarFormulario = useCallback(() => {
+    setErroCpf("");
+    setErroSenha("");
+
+    const cpfDigits = apenasDigitos(cpf);
+    if (!validarCPF(cpfDigits)) {
+      setErroCpf("CPF inválido. Verifique os dígitos.");
+      cpfRef.current?.focus();
+      return false;
+    }
+    if (!senha) {
+      setErroSenha("Digite sua senha.");
+      senhaRef.current?.focus();
+      return false;
+    }
+    if (senha.length < 8) {
+      setErroSenha("A senha deve conter pelo menos 8 caracteres.");
+      senhaRef.current?.focus();
+      return false;
+    }
+    return true;
+  }, [cpf, senha]);
 
   async function handleLogin(e) {
     e.preventDefault();
     if (loading || loadingGoogle) return;
 
-    setErroCpf("");
-    setErroSenha("");
-
-    if (!validarCPF(cpf)) {
-      setErroCpf("CPF inválido. Verifique os dígitos e o formato 000.000.000-00.");
-      cpfRef.current?.focus();
-      return;
-    }
-    if (!senha) {
-      setErroSenha("Digite sua senha.");
-      senhaRef.current?.focus();
-      return;
-    }
-    if (senha.length < 8) {
-      setErroSenha("A senha deve conter pelo menos 8 caracteres.");
-      senhaRef.current?.focus();
-      return;
-    }
+    if (!validarFormulario()) return;
 
     setLoading(true);
     try {
@@ -191,9 +236,7 @@ export default function Login() {
     <main
       className={[
         "min-h-screen transition-colors",
-        isDark
-          ? "bg-gradient-to-b from-zinc-950 to-zinc-900 text-zinc-100"
-          : "bg-slate-50 text-slate-900",
+        isDark ? "bg-gradient-to-b from-zinc-950 to-zinc-900 text-zinc-100" : "bg-slate-50 text-slate-900",
       ].join(" ")}
     >
       {/* Skip link (a11y) */}
@@ -206,68 +249,72 @@ export default function Login() {
       </a>
 
       {/* Header hero */}
-<header className="relative overflow-hidden">
-  {/* Gradiente verde → roxo → azul */}
-  <div
-    className="
-      absolute inset-0
-      bg-gradient-to-br
-      from-emerald-600
-      via-teal-600
-      via-sky-700
-      to-violet-600
-      
-    "
-  />
-  {isDark && <div className="absolute inset-0 bg-black/35" />}
+      <header className="relative overflow-hidden">
+        {/* Gradiente verde → azul → roxo (corrigido: apenas 1 via) */}
+        <div className="absolute inset-0 bg-gradient-to-br from-emerald-600 via-sky-700 to-violet-600" />
+        {isDark && <div className="absolute inset-0 bg-black/35" />}
 
-  {/* blobs decorativos */}
-  <div className="absolute -top-24 -left-24 h-72 w-72 rounded-full bg-white/25 blur-3xl" />
-  <div className="absolute -bottom-28 -right-28 h-80 w-80 rounded-full bg-white/20 blur-3xl" />
+        {/* blobs decorativos */}
+        <div className="absolute -top-24 -left-24 h-72 w-72 rounded-full bg-white/25 blur-3xl" />
+        <div className="absolute -bottom-28 -right-28 h-80 w-80 rounded-full bg-white/20 blur-3xl" />
 
-  <div className="relative max-w-7xl mx-auto px-4 sm:px-6 py-10 md:py-12">
-    {/* Toggle de tema bem no canto */}
-    <div className="lg:absolute lg:right-4 lg:top-6 flex justify-end">
-      <ThemeTogglePills theme={theme} setTheme={setTheme} variant="glass" />
-    </div>
+        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 py-10 md:py-12">
+          {/* Toggle tema */}
+          <div className="flex justify-end sm:justify-end">
+            <ThemeTogglePills theme={theme} setTheme={setTheme} variant="glass" />
+          </div>
 
-    {/* Logo institucional à esquerda */}
-    <div className="absolute left-4 sm:left-6 top-1/2 -translate-y-1/2 hidden sm:flex">
-      <div className="rounded-3xl bg-white/25 backdrop-blur p-5 ring-1 ring-white/30 shadow-lg">
-        <img
-          src="/logo_escola.png"
-          alt="Logotipo da Escola Municipal de Saúde Pública de Santos"
-          className="h-20 w-20 md:h-24 md:w-24 object-contain"
-          loading="lazy"
-        />
-      </div>
-    </div>
+          {/* Header central */}
+          <div className="mt-5 flex flex-col items-center text-center gap-3">
+            <div className="inline-flex items-center gap-2 text-white/90 text-xs font-semibold">
+              <Sparkles className="h-4 w-4" aria-hidden="true" />
+              <span>Portal oficial • acesso autenticado</span>
+            </div>
 
-    {/* Conteúdo central */}
-    <div className="flex flex-col items-center text-center gap-3">
-      <div className="inline-flex items-center gap-2 text-white/90 text-xs font-semibold">
-        <Sparkles className="h-4 w-4" />
-        <span>Portal oficial • acesso autenticado</span>
-      </div>
+            <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight">
+              Escola Municipal de Saúde Pública de Santos
+            </h1>
 
-      <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight">
-        Escola Municipal de Saúde Pública de Santos
-      </h1>
+            <p className="text-sm text-white/90 max-w-2xl">
+              Acesse sua conta para inscrições, presenças, avaliações e certificados.
+            </p>
 
-      <p className="text-sm text-white/90 max-w-2xl">
-        Acesse sua conta para inscrições, presenças, avaliações e certificados.
-      </p>
-    </div>
-  </div>
-</header>
+            {/* logo mobile */}
+            <div className="mt-2 sm:hidden">
+              <div className="rounded-3xl bg-white/20 backdrop-blur p-4 ring-1 ring-white/25 shadow-lg inline-flex">
+                <img
+                  src="/logo_escola.png"
+                  alt="Logotipo da Escola Municipal de Saúde Pública de Santos"
+                  className="h-16 w-16 object-contain"
+                  loading="lazy"
+                />
+              </div>
+            </div>
 
+            {/* dica atalho */}
+            <p className="text-[11px] text-white/80">
+              Dica: pressione <strong>/</strong> para focar o CPF.
+            </p>
+          </div>
 
+          {/* logo desktop à esquerda */}
+          <div className="absolute left-4 sm:left-6 top-1/2 -translate-y-1/2 hidden sm:flex">
+            <div className="rounded-3xl bg-white/25 backdrop-blur p-5 ring-1 ring-white/30 shadow-lg">
+              <img
+                src="/logo_escola.png"
+                alt="Logotipo da Escola Municipal de Saúde Pública de Santos"
+                className="h-20 w-20 md:h-24 md:w-24 object-contain"
+                loading="lazy"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="h-px w-full bg-white/25" aria-hidden="true" />
+      </header>
 
       {/* Conteúdo */}
-      <section
-        id="conteudo"
-        className={["mx-auto max-w-6xl px-4 sm:px-6 py-8 md:py-12", isDark ? "bg-transparent" : "bg-slate-50"].join(" ")}
-      >
+      <section id="conteudo" className="mx-auto max-w-6xl px-4 sm:px-6 py-8 md:py-12">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
           {/* Painel lateral (desktop) */}
           <aside className="hidden lg:block lg:col-span-5">
@@ -313,7 +360,7 @@ export default function Login() {
                 isDark ? "border-white/10 bg-zinc-900/50 shadow-none" : "border-slate-200 bg-white shadow-xl",
               ].join(" ")}
             >
-              {/* Logo + título */}
+              {/* topo */}
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0">
                   <div
@@ -323,12 +370,7 @@ export default function Login() {
                     ].join(" ")}
                     aria-hidden="true"
                   >
-                    <img
-                      src="/logo_escola.png"
-                      alt=""
-                      className="h-10 w-10 object-contain"
-                      loading="lazy"
-                    />
+                    <img src="/logo_escola.png" alt="" className="h-10 w-10 object-contain" loading="lazy" />
                   </div>
 
                   <div className="min-w-0">
@@ -345,7 +387,7 @@ export default function Login() {
                     isDark ? "border-white/10 bg-zinc-950/40 text-zinc-200" : "border-slate-200 bg-slate-50 text-slate-700",
                   ].join(" ")}
                 >
-                  <ShieldCheck className="h-4 w-4" />
+                  <ShieldCheck className="h-4 w-4" aria-hidden="true" />
                   Ambiente autenticado
                 </span>
               </div>
@@ -364,7 +406,7 @@ export default function Login() {
 
                   <div className="mt-2 relative">
                     <span className={["absolute left-3 top-1/2 -translate-y-1/2", isDark ? "text-zinc-300" : "text-slate-500"].join(" ")}>
-                      <IdentIcon className="h-5 w-5" />
+                      <IdentIcon className="h-5 w-5" aria-hidden="true" />
                     </span>
 
                     <input
@@ -374,13 +416,14 @@ export default function Login() {
                       type="text"
                       value={cpf}
                       onChange={(e) => {
-                        setCpf(aplicarMascaraCPF(e.target.value));
+                        setCpf(maskOkOuFormatar(e.target.value));
                         if (erroCpf) setErroCpf("");
                       }}
                       onPaste={(e) => {
                         e.preventDefault();
                         const text = (e.clipboardData.getData("text") || "").trim();
-                        setCpf(aplicarMascaraCPF(text));
+                        setCpf(maskOkOuFormatar(text));
+                        if (erroCpf) setErroCpf("");
                       }}
                       onBlur={() => {
                         if (cpf && !validarCPF(cpf)) setErroCpf("CPF inválido.");
@@ -397,9 +440,8 @@ export default function Login() {
                           : "border-slate-300 bg-white text-slate-900 placeholder:text-slate-400",
                         erroCpf ? "ring-2 ring-red-500/60 border-red-500/60" : "",
                       ].join(" ")}
-                      aria-label="Digite seu CPF"
                       aria-invalid={!!erroCpf}
-                      aria-describedby={erroCpf ? "erro-cpf" : undefined}
+                      aria-describedby={erroCpf ? "erro-cpf" : "dica-cpf"}
                     />
                   </div>
 
@@ -409,8 +451,8 @@ export default function Login() {
                         {erroCpf}
                       </p>
                     ) : (
-                      <p className={["mt-2 text-xs", isDark ? "text-zinc-400" : "text-slate-500"].join(" ")}>
-                        Dica: CPF pode ser colado com ou sem pontuação.
+                      <p id="dica-cpf" className={["mt-2 text-xs", isDark ? "text-zinc-400" : "text-slate-500"].join(" ")}>
+                        Você pode colar o CPF com ou sem pontuação.
                       </p>
                     )}
                   </div>
@@ -424,7 +466,7 @@ export default function Login() {
 
                   <div className="mt-2 relative">
                     <span className={["absolute left-3 top-1/2 -translate-y-1/2", isDark ? "text-zinc-300" : "text-slate-500"].join(" ")}>
-                      <Lock className="h-5 w-5" />
+                      <Lock className="h-5 w-5" aria-hidden="true" />
                     </span>
 
                     <input
@@ -448,9 +490,8 @@ export default function Login() {
                           : "border-slate-300 bg-white text-slate-900 placeholder:text-slate-400",
                         erroSenha ? "ring-2 ring-red-500/60 border-red-500/60" : "",
                       ].join(" ")}
-                      aria-label="Digite sua senha"
                       aria-invalid={!!erroSenha}
-                      aria-describedby={erroSenha || capsLockOn ? "erro-senha aviso-caps" : undefined}
+                      aria-describedby={(erroSenha || capsLockOn) ? "senha-feedback" : undefined}
                     />
 
                     <button
@@ -464,24 +505,20 @@ export default function Login() {
                       aria-label={mostrarSenha ? "Ocultar senha" : "Mostrar senha"}
                       title={mostrarSenha ? "Ocultar senha" : "Mostrar senha"}
                     >
-                      {mostrarSenha ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                      {mostrarSenha ? <EyeOff className="h-5 w-5" aria-hidden="true" /> : <Eye className="h-5 w-5" aria-hidden="true" />}
                     </button>
                   </div>
 
-                  <div className="min-h-[1.25rem]" aria-live="polite">
+                  <div id="senha-feedback" className="min-h-[1.25rem]" aria-live="polite">
                     {erroSenha ? (
-                      <p id="erro-senha" className="text-red-500 dark:text-red-300 text-xs mt-1" role="alert">
+                      <p className="text-red-500 dark:text-red-300 text-xs mt-1" role="alert">
                         {erroSenha}
                       </p>
                     ) : null}
 
                     {capsLockOn && !erroSenha ? (
-                      <p
-                        id="aviso-caps"
-                        className={["mt-1 text-[11px] flex items-center gap-1", isDark ? "text-amber-300" : "text-amber-700"].join(" ")}
-                        role="status"
-                      >
-                        <AlertTriangle className="h-3 w-3" /> Atenção: Caps Lock está ativado.
+                      <p className={["mt-1 text-[11px] flex items-center gap-1", isDark ? "text-amber-300" : "text-amber-700"].join(" ")} role="status">
+                        <AlertTriangle className="h-3 w-3" aria-hidden="true" /> Atenção: Caps Lock está ativado.
                       </p>
                     ) : null}
                   </div>
@@ -513,7 +550,7 @@ export default function Login() {
                   </div>
                 </div>
 
-                {/* CTA principal (mantive seu BotaoPrimario) */}
+                {/* CTA principal */}
                 <BotaoPrimario
                   type="submit"
                   className="w-full flex justify-center items-center gap-2"
@@ -540,7 +577,7 @@ export default function Login() {
                         <GoogleLogin
                           onSuccess={handleLoginGoogle}
                           onError={() => toast.error("Erro no login com Google.")}
-                          theme="outline"
+                          theme={isDark ? "filled_black" : "outline"}
                           size="large"
                           shape="rectangular"
                           text="signin_with"
@@ -564,8 +601,8 @@ export default function Login() {
                 </div>
 
                 <p className={["pt-2 text-[11px] text-center", isDark ? "text-zinc-400" : "text-slate-500"].join(" ")}>
-                  Ao continuar, você concorda com o uso dos seus dados para fins de controle de
-                  eventos, presença e certificação, conforme a política institucional da Escola da Saúde.
+                  Ao continuar, você concorda com o uso dos seus dados para fins de controle de eventos,
+                  presença e certificação, conforme diretrizes institucionais.
                 </p>
 
                 {/* SR status */}
@@ -576,29 +613,11 @@ export default function Login() {
             </div>
 
             <p className={["mt-4 text-center text-xs", isDark ? "text-zinc-400" : "text-slate-500"].join(" ")}>
-              <span className="font-semibold">Segurança:</span> não compartilhe sua senha. Use um gerenciador de senhas, se possível.
+              <span className="font-semibold">Segurança:</span> não compartilhe sua senha.
             </p>
           </div>
         </div>
       </section>
     </main>
-  );
-}
-
-function MiniStatLite({ title, value, isDark }) {
-  return (
-    <div
-      className={[
-        "rounded-2xl border px-4 py-3 transition-colors",
-        isDark ? "border-white/10 bg-zinc-950/35" : "border-slate-200 bg-white shadow-sm",
-      ].join(" ")}
-    >
-      <div className={["text-[11px] font-bold", isDark ? "text-zinc-300" : "text-slate-500"].join(" ")}>
-        {title}
-      </div>
-      <div className={["mt-1 text-sm font-extrabold", isDark ? "text-zinc-100" : "text-slate-900"].join(" ")}>
-        {value}
-      </div>
-    </div>
   );
 }

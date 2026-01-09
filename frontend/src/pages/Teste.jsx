@@ -1,5 +1,5 @@
-// 📁 src/pages/Teste.jsx
-import { useEffect, useRef, useState, useCallback } from "react";
+// ✅ src/pages/Teste.jsx — premium + fixes (build/a11y/datas/produção)
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { toast } from "react-toastify";
 import Footer from "../components/Footer";
 import {
@@ -49,6 +49,52 @@ function HeaderHero() {
 }
 
 /* =========================================================================
+   Helpers (datas/anti-UTC)
+   - Aceita: "YYYY-MM-DD HH:mm", "YYYY-MM-DDTHH:mm:ss", "YYYY-MM-DD"
+   - Render: "dd/mm/yyyy HH:mm" ou "dd/mm/yyyy"
+   ========================================================================= */
+function parseLocalDateTime(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return null;
+
+  // YYYY-MM-DD
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) {
+    const y = +m[1], mo = +m[2], d = +m[3];
+    return new Date(y, mo - 1, d, 0, 0, 0, 0);
+  }
+
+  // YYYY-MM-DD HH:mm(:ss)?
+  m = s.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (m) {
+    const y = +m[1], mo = +m[2], d = +m[3];
+    const hh = +m[4], mm = +m[5], ss = +(m[6] || 0);
+    return new Date(y, mo - 1, d, hh, mm, ss, 0);
+  }
+
+  // fallback: Date.parse (pode variar; usamos só como última alternativa)
+  const dt = new Date(s);
+  if (Number.isNaN(dt.getTime())) return null;
+  return dt;
+}
+
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+
+function fmtDateTimeBR(raw, { withTime = true } = {}) {
+  const dt = parseLocalDateTime(raw);
+  if (!dt) return "—";
+  const dd = pad2(dt.getDate());
+  const mm = pad2(dt.getMonth() + 1);
+  const yyyy = dt.getFullYear();
+  if (!withTime) return `${dd}/${mm}/${yyyy}`;
+  const hh = pad2(dt.getHours());
+  const mi = pad2(dt.getMinutes());
+  return `${dd}/${mm}/${yyyy} ${hh}:${mi}`;
+}
+
+/* =========================================================================
    Primitivos de UI
    ========================================================================= */
 function Card({ children, className = "", ...rest }) {
@@ -74,7 +120,11 @@ function Chip({ children, tone = "default" }) {
     azul: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
   };
   return (
-    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${tones[tone] ?? tones.default}`}>
+    <span
+      className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
+        tones[tone] ?? tones.default
+      }`}
+    >
       {children}
     </span>
   );
@@ -88,7 +138,11 @@ function MiniStat({ icon: Icon, label, value, hint, loading = false }) {
       aria-live="polite"
     >
       <div className="rounded-lg p-2 bg-indigo-100 dark:bg-indigo-900/40">
-        {loading ? <Loader2 className="w-5 h-5 animate-spin" aria-hidden="true" /> : <Icon className="w-5 h-5" aria-hidden="true" />}
+        {loading ? (
+          <Loader2 className="w-5 h-5 animate-spin" aria-hidden="true" />
+        ) : (
+          <Icon className="w-5 h-5" aria-hidden="true" />
+        )}
       </div>
       <div className="flex-1">
         <div className="text-xs text-slate-600 dark:text-slate-300">{label}</div>
@@ -123,15 +177,21 @@ function Modal({ open, title, onClose, children, labelledById = "modal-title" })
 
   return (
     <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-labelledby={labelledById}>
-      <button className="absolute inset-0 bg-black/40 backdrop-blur-sm" aria-label="Fechar modal" onClick={onClose} />
+      <button
+        className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+        aria-label="Fechar modal"
+        onClick={onClose}
+      />
       <div className="min-h-full flex items-end sm:items-center justify-center p-3 sm:p-6">
         <div ref={dialogRef} className="w-full sm:max-w-2xl outline-none">
           <Card className="p-4 sm:p-6">
             <div className="flex items-start justify-between gap-3">
-              <h2 id={labelledById} tabIndex={-1} className="text-lg sm:text-xl font-bold tracking-tight">{title}</h2>
+              <h2 id={labelledById} tabIndex={-1} className="text-lg sm:text-xl font-bold tracking-tight">
+                {title}
+              </h2>
               <button
                 onClick={onClose}
-                className="inline-flex items-center justify-center rounded-xl p-2 hover:bg-black/5 dark:hover:bg白/10 transition"
+                className="inline-flex items-center justify-center rounded-xl p-2 hover:bg-black/5 dark:hover:bg-white/10 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600"
                 aria-label="Fechar"
               >
                 <X className="w-5 h-5" aria-hidden="true" />
@@ -149,24 +209,48 @@ function Modal({ open, title, onClose, children, labelledById = "modal-title" })
    Linha de progresso acessível
    ========================================================================= */
 function Progress({ value = 0, label = "Progresso" }) {
+  const v = Math.max(0, Math.min(100, Number(value) || 0));
   return (
     <div role="group" aria-label={label}>
       <div className="flex justify-between text-xs text-slate-600 dark:text-slate-300 mb-1">
         <span>{label}</span>
-        <span>{value}%</span>
+        <span>{v}%</span>
       </div>
       <div className="h-2 rounded-full bg-slate-200 dark:bg-zinc-800 overflow-hidden" aria-hidden="true">
-        <div className="h-full rounded-full bg-indigo-600" style={{ width: `${value}%` }} />
+        <div className="h-full rounded-full bg-indigo-600" style={{ width: `${v}%` }} />
       </div>
-      <div className="sr-only" role="progressbar" aria-valuenow={value} aria-valuemin={0} aria-valuemax={100} />
+      <div className="sr-only" role="progressbar" aria-valuenow={v} aria-valuemin={0} aria-valuemax={100} />
     </div>
   );
 }
 
 /* =========================================================================
-   Lista de testes — Tabela (desktop) + Cards (mobile) SEM perder nada
+   Lista de testes — Tabela (desktop) + Cards (mobile)
    ========================================================================= */
 function ListaTestes({ testes, onStart }) {
+  const renderStatus = (t) => {
+    if (t.status === "disponivel") return <Chip tone="azul">Disponível</Chip>;
+    if (t.status === "andamento") return <Chip tone="amarelo">Em andamento</Chip>;
+    if (t.status === "concluido") return <Chip tone="verde">Concluído</Chip>;
+    if (t.status === "bloqueado") return <Chip tone="vermelho">Bloqueado</Chip>;
+    return <Chip>—</Chip>;
+  };
+
+  const canStart = (t) => t.status === "disponivel" || t.status === "andamento";
+
+  const notaTxt = (t) => {
+    if (t.status !== "concluido") return "—";
+    const n = Number(t.nota);
+    if (!Number.isFinite(n)) return "—";
+    return `${n.toFixed(1)} / 10`;
+  };
+
+  const periodoTxt = (t) => {
+    const ini = fmtDateTimeBR(t.inicio);
+    const fim = fmtDateTimeBR(t.fim);
+    return `${ini} — ${fim}`;
+  };
+
   return (
     <>
       {/* 🟢 Mobile: cards */}
@@ -178,24 +262,17 @@ function ListaTestes({ testes, onStart }) {
           >
             <div className="font-medium break-words">{t.curso}</div>
             <div className="text-xs text-slate-600 dark:text-slate-300">{t.turma}</div>
-            <div className="mt-1 text-xs text-slate-600 dark:text-slate-300">
-              {t.inicio} — {t.fim}
-            </div>
+            <div className="mt-1 text-xs text-slate-600 dark:text-slate-300">{periodoTxt(t)}</div>
 
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              {t.status === "disponivel" && <Chip tone="azul">Disponível</Chip>}
-              {t.status === "andamento" && <Chip tone="amarelo">Em andamento</Chip>}
-              {t.status === "concluido" && <Chip tone="verde">Concluído</Chip>}
-              {t.status === "bloqueado" && <Chip tone="vermelho">Bloqueado</Chip>}
+              {renderStatus(t)}
               <div className="text-sm ml-auto">
-                {t.status === "concluido" ? (
-                  <span className="font-medium">{t.nota?.toFixed?.(1) ?? t.nota} / 10</span>
-                ) : "—"}
+                {t.status === "concluido" ? <span className="font-medium">{notaTxt(t)}</span> : "—"}
               </div>
             </div>
 
             <div className="mt-3 flex justify-end">
-              {(t.status === "disponivel" || t.status === "andamento") ? (
+              {canStart(t) ? (
                 <button
                   onClick={() => onStart?.(t)}
                   className="inline-flex items-center gap-2 rounded-xl px-3 py-2 bg-indigo-700 hover:bg-indigo-600 text-white text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
@@ -203,6 +280,8 @@ function ListaTestes({ testes, onStart }) {
                   <Play className="w-4 h-4" aria-hidden="true" />
                   Iniciar
                 </button>
+              ) : t.status === "bloqueado" ? (
+                <Chip tone="vermelho">Bloqueado</Chip>
               ) : (
                 <Chip tone="verde">Finalizado</Chip>
               )}
@@ -221,7 +300,7 @@ function ListaTestes({ testes, onStart }) {
       {/* 🟦 Desktop/Tablet: tabela com scroll horizontal seguro */}
       <div className="hidden sm:block">
         <div className="overflow-x-auto -mx-2 sm:mx-0">
-          <table className="w-full text-sm min-w-[720px]">
+          <table className="w-full text-sm min-w-[760px]">
             <thead>
               <tr className="text-left border-b border-black/10 dark:border-white/10">
                 <th className="py-3 pr-3 font-semibold">Curso / Turma</th>
@@ -239,20 +318,15 @@ function ListaTestes({ testes, onStart }) {
                     <div className="text-xs text-slate-600 dark:text-slate-300">{t.turma}</div>
                   </td>
                   <td className="py-3 pr-3 align-top whitespace-nowrap">
-                    <div className="text-xs text-slate-600 dark:text-slate-300">{t.inicio} — {t.fim}</div>
+                    <div className="text-xs text-slate-600 dark:text-slate-300">{periodoTxt(t)}</div>
                   </td>
+                  <td className="py-3 pr-3 align-top">{renderStatus(t)}</td>
                   <td className="py-3 pr-3 align-top">
-                    {t.status === "disponivel" && <Chip tone="azul">Disponível</Chip>}
-                    {t.status === "andamento" && <Chip tone="amarelo">Em andamento</Chip>}
-                    {t.status === "concluido" && <Chip tone="verde">Concluído</Chip>}
-                    {t.status === "bloqueado" && <Chip tone="vermelho">Bloqueado</Chip>}
-                  </td>
-                  <td className="py-3 pr-3 align-top">
-                    {t.status === "concluido" ? <span className="font-medium">{t.nota?.toFixed?.(1) ?? t.nota} / 10</span> : "—"}
+                    {t.status === "concluido" ? <span className="font-medium">{notaTxt(t)}</span> : "—"}
                   </td>
                   <td className="py-3 pr-3 align-top">
                     <div className="flex items-center gap-2">
-                      {(t.status === "disponivel" || t.status === "andamento") && (
+                      {canStart(t) && (
                         <button
                           onClick={() => onStart?.(t)}
                           className="inline-flex items-center gap-2 rounded-xl px-3 py-1.5 bg-indigo-700 hover:bg-indigo-600 text-white font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
@@ -261,9 +335,8 @@ function ListaTestes({ testes, onStart }) {
                           Iniciar
                         </button>
                       )}
-                      {t.status === "concluido" && (
-                        <Chip tone="verde">Finalizado</Chip>
-                      )}
+                      {t.status === "bloqueado" && <Chip tone="vermelho">Bloqueado</Chip>}
+                      {t.status === "concluido" && <Chip tone="verde">Finalizado</Chip>}
                     </div>
                   </td>
                 </tr>
@@ -287,7 +360,6 @@ function ListaTestes({ testes, onStart }) {
    Página
    ========================================================================= */
 export default function Teste() {
-  // ======= Ministats =======
   const [loadingStats, setLoadingStats] = useState(true);
   const [stats, setStats] = useState({
     disponiveis: 0,
@@ -296,37 +368,39 @@ export default function Teste() {
     notaMedia: 0, // /10
   });
 
-  // ======= Listas =======
   const [testes, setTestes] = useState([]);
 
-  // ======= Modal Iniciar Teste =======
   const [openModal, setOpenModal] = useState(false);
   const [testeSelecionado, setTesteSelecionado] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // ======= Fetch (demo mode se API indisponível) =======
   const fetchTudo = useCallback(async () => {
     setLoadingStats(true);
+
     try {
-      // TODO: alinhar com teu backend
-      // const m = await apiGet("/api/testes/metricas");
-      // const l = await apiGet("/api/testes/disponiveis");
-      const m = { ok: true, data: { disponiveis: 3, emAndamento: 1, concluidos: 5, notaMedia: 8.7 } };
-      const l = {
-        ok: true, data: [
-          { id: "t1", curso: "Acolhimento na APS", turma: "Turma 2025.2", inicio: "2025-10-18 08:00", fim: "2025-10-25 23:59", status: "disponivel" },
-          { id: "t2", curso: "Urgência e Emergência", turma: "Turma 2025.3", inicio: "2025-10-10 08:00", fim: "2025-10-20 18:00", status: "andamento" },
-          { id: "t3", curso: "Saúde Mental na Rede", turma: "Turma 2025.1", inicio: "2025-09-01 08:00", fim: "2025-09-10 18:00", status: "concluido", nota: 9.3 },
-        ]
-      };
+      // ✅ produção (ajuste as rotas no backend)
+      // GET /api/testes/metricas
+      // GET /api/testes/lista
+      const [m, l] = await Promise.all([
+        apiGet("/api/testes/metricas", { on403: "silent" }),
+        apiGet("/api/testes/lista", { on403: "silent" }),
+      ]);
 
-      if (m?.ok && m?.data) setStats(m.data);
-      else setStats({ disponiveis: 0, emAndamento: 0, concluidos: 0, notaMedia: 0 });
+      const md = m?.data ?? m; // suporte a apiGet que retorna {data} ou o objeto direto
+      const ld = l?.data ?? l;
 
-      if (l?.ok && l?.data) setTestes(l.data);
-      else setTestes([]);
-    } catch {
-      setStats({ disponiveis: 2, emAndamento: 0, concluidos: 0, notaMedia: 0 });
+      setStats({
+        disponiveis: md?.disponiveis ?? 0,
+        emAndamento: md?.emAndamento ?? 0,
+        concluidos: md?.concluidos ?? 0,
+        notaMedia: md?.notaMedia ?? 0,
+      });
+
+      setTestes(Array.isArray(ld) ? ld : []);
+    } catch (err) {
+      // fallback elegante
+      console.warn("[Teste] Falha ao carregar, usando fallback.", err);
+      setStats({ disponiveis: 0, emAndamento: 0, concluidos: 0, notaMedia: 0 });
       setTestes([]);
     } finally {
       setLoadingStats(false);
@@ -337,7 +411,6 @@ export default function Teste() {
     fetchTudo();
   }, [fetchTudo]);
 
-  // ======= Iniciar teste =======
   const abrirModalTeste = (t) => {
     setTesteSelecionado(t);
     setOpenModal(true);
@@ -345,17 +418,25 @@ export default function Teste() {
 
   const confirmarInicioTeste = async () => {
     if (!testeSelecionado) return;
+
     setSubmitting(true);
     try {
-      const resp = await apiPost?.("/api/testes/iniciar", { teste_id: testeSelecionado.id });
-      if (resp?.ok) {
-        toast.success("Teste iniciado! Boa prova. ✨");
-        setOpenModal(false);
-        fetchTudo();
-      } else {
-        toast.info("Ambiente de demonstração: início de teste simulado.");
-        setOpenModal(false);
+      const resp = await apiPost(
+        "/api/testes/iniciar",
+        { teste_id: testeSelecionado.id },
+        { on403: "silent" }
+      );
+
+      // se teu apiPost não retorna {ok}, só considera sucesso se não deu throw
+      if (resp?.ok === false) {
+        toast.error("Não foi possível iniciar o teste.");
+        return;
       }
+
+      toast.success("Teste iniciado! Boa prova. ✨");
+      setOpenModal(false);
+      setTesteSelecionado(null);
+      fetchTudo();
     } catch (err) {
       console.error(err);
       toast.error("Não foi possível iniciar o teste.");
@@ -364,8 +445,20 @@ export default function Teste() {
     }
   };
 
-  const totalItens = stats.concluidos + stats.emAndamento + stats.disponiveis;
-  const progressoGeral = Math.min(100, Math.round((stats.concluidos / Math.max(1, totalItens)) * 100));
+  const totalItens = useMemo(
+    () => (stats.concluidos || 0) + (stats.emAndamento || 0) + (stats.disponiveis || 0),
+    [stats]
+  );
+  const progressoGeral = useMemo(() => {
+    const denom = Math.max(1, totalItens);
+    return Math.min(100, Math.round(((stats.concluidos || 0) / denom) * 100));
+  }, [stats, totalItens]);
+
+  const notaMediaTxt = useMemo(() => {
+    const n = Number(stats.notaMedia);
+    if (!Number.isFinite(n)) return "0.0 / 10";
+    return `${n.toFixed(1)} / 10`;
+  }, [stats.notaMedia]);
 
   return (
     <div className="flex flex-col min-h-screen bg-zinc-50 dark:bg-neutral-900 text-black dark:text-white">
@@ -375,36 +468,14 @@ export default function Teste() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 sm:py-10">
           {/* ===================== Ministats ===================== */}
           <section aria-labelledby="metricas" className="mb-6 sm:mb-8">
-            <h2 id="metricas" className="sr-only">Métricas dos Testes</h2>
+            <h2 id="metricas" className="sr-only">
+              Métricas dos Testes
+            </h2>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
-              <MiniStat
-                icon={FileQuestion}
-                label="Disponíveis"
-                value={stats.disponiveis}
-                loading={loadingStats}
-                hint="Prontos para iniciar"
-              />
-              <MiniStat
-                icon={Clock3}
-                label="Em andamento"
-                value={stats.emAndamento}
-                loading={loadingStats}
-                hint="Ainda não finalizados"
-              />
-              <MiniStat
-                icon={Award}
-                label="Concluídos"
-                value={stats.concluidos}
-                loading={loadingStats}
-                hint="Histórico recente"
-              />
-              <MiniStat
-                icon={ShieldCheck}
-                label="Nota média"
-                value={`${stats.notaMedia?.toFixed?.(1) ?? stats.notaMedia} / 10`}
-                loading={loadingStats}
-                hint="Últimos testes concluídos"
-              />
+              <MiniStat icon={FileQuestion} label="Disponíveis" value={stats.disponiveis} loading={loadingStats} hint="Prontos para iniciar" />
+              <MiniStat icon={Clock3} label="Em andamento" value={stats.emAndamento} loading={loadingStats} hint="Ainda não finalizados" />
+              <MiniStat icon={Award} label="Concluídos" value={stats.concluidos} loading={loadingStats} hint="Histórico recente" />
+              <MiniStat icon={ShieldCheck} label="Nota média" value={notaMediaTxt} loading={loadingStats} hint="Últimos testes concluídos" />
             </div>
           </section>
 
@@ -417,7 +488,15 @@ export default function Teste() {
                   <BarChart3 className="w-5 h-5" aria-hidden="true" />
                   <h3 className="text-base sm:text-lg font-bold">Testes disponíveis / em andamento</h3>
                 </div>
+                <button
+                  type="button"
+                  onClick={fetchTudo}
+                  className="rounded-xl px-3 py-2 text-sm font-medium border border-black/10 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/5 transition"
+                >
+                  Atualizar
+                </button>
               </div>
+
               <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">
                 Selecione um teste disponível para iniciar. Testes concluídos exibem a nota final.
               </p>
@@ -427,15 +506,18 @@ export default function Teste() {
               </div>
             </Card>
 
-            {/* Dicas & Regras — sticky para melhor uso do espaço vertical */}
+            {/* Dicas & Regras */}
             <Card className="md:col-span-2 p-5 sm:p-6 md:sticky md:top-4 h-fit">
               <div className="flex items-center gap-2">
                 <BookOpenCheck className="w-5 h-5" aria-hidden="true" />
                 <h3 className="text-base sm:text-lg font-bold">Regras & Dicas</h3>
               </div>
+
               <ul className="mt-3 space-y-3 text-sm">
                 <li className="flex gap-3">
-                  <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-700 text-white text-xs">1</span>
+                  <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-700 text-white text-xs">
+                    1
+                  </span>
                   <div>
                     <div className="font-medium">Tempo e tentativas</div>
                     <div className="text-slate-600 dark:text-slate-300">
@@ -443,8 +525,11 @@ export default function Teste() {
                     </div>
                   </div>
                 </li>
+
                 <li className="flex gap-3">
-                  <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-700 text-white text-xs">2</span>
+                  <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-700 text-white text-xs">
+                    2
+                  </span>
                   <div>
                     <div className="font-medium">Conexão</div>
                     <div className="text-slate-600 dark:text-slate-300">
@@ -452,8 +537,11 @@ export default function Teste() {
                     </div>
                   </div>
                 </li>
+
                 <li className="flex gap-3">
-                  <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-700 text-white text-xs">3</span>
+                  <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-700 text-white text-xs">
+                    3
+                  </span>
                   <div>
                     <div className="font-medium">Aprovação</div>
                     <div className="text-slate-600 dark:text-slate-300">
@@ -463,7 +551,6 @@ export default function Teste() {
                 </li>
               </ul>
 
-              {/* Progresso geral */}
               <div className="mt-5">
                 <Progress value={progressoGeral} label="Progresso geral" />
               </div>
@@ -487,7 +574,7 @@ export default function Teste() {
               <div className="font-medium">{testeSelecionado.curso}</div>
               <div className="text-sm text-slate-600 dark:text-slate-300">{testeSelecionado.turma}</div>
               <div className="text-xs text-slate-600 dark:text-slate-300 mt-1">
-                Disponível: {testeSelecionado.inicio} — {testeSelecionado.fim}
+                Disponível: {fmtDateTimeBR(testeSelecionado.inicio)} — {fmtDateTimeBR(testeSelecionado.fim)}
               </div>
             </div>
 
@@ -504,12 +591,15 @@ export default function Teste() {
 
             <div className="flex items-center justify-end gap-2">
               <button
+                type="button"
                 onClick={() => setOpenModal(false)}
                 className="inline-flex items-center gap-2 rounded-xl px-4 py-2 bg-slate-200 hover:bg-slate-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-900 dark:text-slate-100 font-medium"
               >
                 Cancelar
               </button>
+
               <button
+                type="button"
                 onClick={confirmarInicioTeste}
                 disabled={submitting}
                 className="inline-flex items-center gap-2 rounded-xl px-4 py-2 bg-indigo-700 hover:bg-indigo-600 text-white font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-70"

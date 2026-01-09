@@ -63,6 +63,15 @@ const getToken = () => {
   }
 };
 
+// 🆕 id de requisição (útil em logs/monitoramento)
+function newRequestId() {
+  try {
+    const u = crypto.randomUUID?.();
+    if (u) return u;
+  } catch {}
+  return `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
 // 🆕 ——— Contexto de data/hora do cliente (para o backend interpretar "date-only")
 function getClientTZ() {
   try {
@@ -73,7 +82,9 @@ function getClientTZ() {
 }
 function getClientOffsetMinutes() {
   try {
-    return -new Date().getTimezoneOffset(); // ex.: -180 (Brasil -03:00) vira 180
+    // getTimezoneOffset(): minutos para converter LOCAL → UTC (ex.: São Paulo retorna 180)
+    // Retornamos o sinal invertido: offset efetivo do cliente (ex.: UTC-3 => -180).
+    return -new Date().getTimezoneOffset();
   } catch {
     return 0;
   }
@@ -87,10 +98,11 @@ function buildClientContextHeaders() {
   // Convenção: o backend pode usar esses headers para resolver "date-only" como YMD local.
   return {
     "X-Client-TZ": getClientTZ(),                      // e.g. America/Sao_Paulo
-    "X-Client-Offset-Minutes": String(getClientOffsetMinutes()), // e.g. 180
+    "X-Client-Offset-Minutes": String(getClientOffsetMinutes()), // e.g. -180 para UTC-3
     "X-Client-Today": todayLocalYMD(),                 // e.g. 2025-11-03
     "X-Client-Now-UTC": new Date().toISOString(),      // carimbo confiável
     "X-Date-Only-Semantics": "YMD_LOCAL",              // dica semântica p/ o servidor
+    "X-Request-Id": newRequestId(),                    // rastreio ponta a ponta
   };
 }
 
@@ -380,7 +392,30 @@ async function handle(res, { on401 = "silent", on403 = "silent" } = {}) {
 // ───────────────────────────────────────────────────────────────────
 const DEFAULT_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 15000);
 
-// Fetch centralizado (com timeout + retry com warm-up)
+// 🆕 Parser robusto para Content-Disposition
+function parseContentDispositionFilename(cd = "") {
+  if (!cd) return undefined;
+
+  // 1) filename* (RFC 5987): filename*=UTF-8''nome%20com%20acento.pptx
+  const star = cd.match(/filename\*=(?:UTF-8'')?([^;]+)/i);
+  if (star) {
+    try {
+      const val = star[1].trim().replace(/^"(.*)"$/, "$1");
+      return decodeURIComponent(val);
+    } catch {}
+  }
+
+  // 2) filename="..." (padrão)
+  const normal = cd.match(/filename=(?:"([^"]+)"|([^;]+))/i);
+  if (normal) {
+    const raw = (normal[1] || normal[2] || "").trim().replace(/^"(.*)"$/, "$1");
+    return raw.replace(/^'(.*)'$/, "$1").trim();
+  }
+
+  return undefined;
+}
+
+// Fetch centralizado (com timeout + retry com warm-up + backoff p/ 429/503)
 async function doFetch(
   path,
   { method = "GET", auth = true, headers, query, body, on401, on403 } = {}
@@ -467,6 +502,14 @@ async function doFetch(
         { status: 0, url, data: e2 }
       );
     }
+  }
+
+  // 🆕 Backoff simples para 429/503, uma única vez
+  if (res && (res.status === 429 || res.status === 503)) {
+    const retryAfter = Number(res.headers?.get?.("Retry-After")) || 0;
+    const waitMs = retryAfter ? retryAfter * 1000 : 500 + Math.floor(Math.random() * 600);
+    try { await new Promise((r) => setTimeout(r, waitMs)); } catch {}
+    res = await runOnce();
   }
 
   // Passa o contexto (on401/on403) para o handler
@@ -710,8 +753,7 @@ export async function apiPostFile(path, body, opts = {}) {
 
   const blob = await res.blob();
   const cd = res.headers.get("Content-Disposition") || "";
-  const m = cd.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)["']?/i);
-  const filename = m ? decodeURIComponent(m[1]) : undefined;
+  const filename = parseContentDispositionFilename(cd);
 
   return { blob, filename };
 }
@@ -791,8 +833,7 @@ export async function apiGetFile(path, opts = {}) {
 
   const blob = await res.blob();
   const cd = res.headers.get("Content-Disposition") || "";
-  const m = cd.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)["']?/i);
-  const filename = m ? decodeURIComponent(m[1]) : undefined;
+  const filename = parseContentDispositionFilename(cd);
 
   return { blob, filename };
 }

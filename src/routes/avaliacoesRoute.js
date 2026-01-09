@@ -1,6 +1,6 @@
 // 📁 src/routes/avaliacoesRoute.js
 const express = require("express");
-const router = express.Router();
+const { param, validationResult } = require("express-validator");
 
 const authMiddleware = require("../auth/authMiddleware");
 const authorizeRoles = require("../auth/authorizeRoles");
@@ -13,6 +13,46 @@ const {
   avaliacoesPorEvento,         // ✅ admin: agregado por evento
 } = require("../controllers/avaliacoesController");
 
+const router = express.Router();
+
+/* =========================
+   Helpers (premium)
+========================= */
+const asyncHandler =
+  (fn) =>
+  (req, res, next) =>
+    Promise.resolve(fn(req, res, next)).catch(next);
+
+function validate(req, res, next) {
+  const errors = validationResult(req);
+  if (errors.isEmpty()) return next();
+
+  return res.status(400).json({
+    erro: "Parâmetros inválidos.",
+    detalhes: errors.array().map((e) => ({ campo: e.path || e.param, msg: e.msg })),
+    requestId: res.getHeader?.("X-Request-Id"),
+  });
+}
+
+const idParam = (name) =>
+  param(name)
+    .exists({ checkFalsy: true })
+    .withMessage(`"${name}" é obrigatório.`)
+    .bail()
+    .isInt({ min: 1 })
+    .withMessage(`"${name}" deve ser um inteiro >= 1.`)
+    .toInt();
+
+function getPerfis(user) {
+  // suporta user.perfis (string/array) e user.perfil (string/array)
+  const raw = user?.perfis ?? user?.perfil ?? "";
+  if (Array.isArray(raw)) return raw.map(String).map((s) => s.trim().toLowerCase()).filter(Boolean);
+  return String(raw)
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
 /* ────────────── Middlewares auxiliares ────────────── */
 
 // Admin pode ver qualquer usuário; demais perfis só se :usuario_id === id do token
@@ -21,13 +61,7 @@ function ensureSelfOrAdmin(req, res, next) {
   const tokenId = Number(user.id);
   const paramId = Number(req.params.usuario_id);
 
-  const perfis = Array.isArray(user.perfil)
-    ? user.perfil.map(String)
-    : String(user.perfil || "")
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-
+  const perfis = getPerfis(user);
   const isAdmin = perfis.includes("administrador");
 
   if (!Number.isFinite(paramId)) {
@@ -37,59 +71,73 @@ function ensureSelfOrAdmin(req, res, next) {
   return res.status(403).json({ erro: "Acesso negado." });
 }
 
+/* =========================
+   Middlewares do grupo
+========================= */
+router.use(authMiddleware);
+
+// 🛡️ Premium: avaliações podem conter comentários → não cachear
+router.use((_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Pragma", "no-cache");
+  next();
+});
+
 /* ───────────────── Rotas ───────────────── */
 
 // 📝 1) Enviar avaliação
 router.post(
   "/",
-  authMiddleware,
   authorizeRoles("administrador", "instrutor", "usuario"),
-  enviarAvaliacao
+  asyncHandler(enviarAvaliacao)
 );
 
 // 📊 2b) (Admin) Todas as respostas da turma
 router.get(
   "/turma/:turma_id/all",
-  authMiddleware,
   authorizeRoles("administrador"),
-  avaliacoesPorTurma
+  [idParam("turma_id")],
+  validate,
+  asyncHandler(avaliacoesPorTurma)
 );
 
 // 📊 2) (Instrutor/Admin) Respostas da turma (restrito ao instrutor vinculado)
 router.get(
   "/turma/:turma_id",
-  authMiddleware,
   authorizeRoles("instrutor", "administrador"),
-  listarPorTurmaParaInstrutor
+  [idParam("turma_id")],
+  validate,
+  asyncHandler(listarPorTurmaParaInstrutor)
 );
 
 // 🧾 3) (Admin) Agregado por evento
 router.get(
   "/evento/:evento_id",
-  authMiddleware,
   authorizeRoles("administrador"),
-  avaliacoesPorEvento
+  [idParam("evento_id")],
+  validate,
+  asyncHandler(avaliacoesPorEvento)
 );
 
 // 📋 4a) (Usuário/Admin) Pendentes por usuário (protegido contra IDOR)
 router.get(
   "/disponiveis/:usuario_id",
-  authMiddleware,
   authorizeRoles("administrador", "instrutor", "usuario"),
+  [idParam("usuario_id")],
+  validate,
   ensureSelfOrAdmin,
-  listarAvaliacoesDisponiveis
+  asyncHandler(listarAvaliacoesDisponiveis)
 );
 
 // 📋 4b) (Usuário/Admin) Alias sem :usuario_id → usa ID do token
 router.get(
   "/disponiveis",
-  authMiddleware,
   authorizeRoles("administrador", "instrutor", "usuario"),
-  (req, res, next) => {
+  asyncHandler((req, res, next) => {
     if (!req.user?.id) return res.status(401).json({ erro: "Não autenticado." });
     req.params.usuario_id = String(req.user.id);
     return listarAvaliacoesDisponiveis(req, res, next);
-  }
+  })
 );
 
 module.exports = router;

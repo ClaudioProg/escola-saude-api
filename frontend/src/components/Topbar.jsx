@@ -221,7 +221,6 @@ export default function Topbar({
     if (path.startsWith("/instrutor")) return "Instrutor";
     if (path.startsWith("/usuario")) return "Usuário";
     if (path.startsWith("/eventos")) return "Eventos";
-    if (path.startsWith("/minhas-inscricoes")) return "Inscrições";
     if (path.startsWith("/minhas-presencas")) return "Presenças";
     if (path.startsWith("/certificados")) return "Certificados";
     if (path.startsWith("/agenda")) return "Agenda";
@@ -296,12 +295,7 @@ export default function Topbar({
                     Eventos
                   </ChipLink>
 
-                  <ChipLink to="/minhas-inscricoes" title="Minhas inscrições">
-                    <ClipboardList className="w-4 h-4 opacity-80" />
-                    Inscrições
-                  </ChipLink>
-
-                  <ChipLink to="/minhas-presencas" title="Minhas presenças">
+                           <ChipLink to="/minhas-presencas" title="Minhas presenças">
                     <ListChecks className="w-4 h-4 opacity-80" />
                     Presenças
                   </ChipLink>

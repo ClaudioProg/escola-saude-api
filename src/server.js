@@ -1,30 +1,27 @@
 // 📁 server.js
+/* eslint-disable no-console */
 const express = require("express");
 const cors = require("cors");
-const dotenv = require("dotenv");
 const path = require("path");
 const fs = require("fs");
 const rateLimit = require("express-rate-limit");
 const compression = require("compression");
 const helmet = require("helmet");
 const crypto = require("crypto");
-const morgan = require("morgan"); // ⬅️ logger
+const morgan = require("morgan");
 
-// ⚙️ .env
-dotenv.config();
+// ✅ dotenv só fora de produção
+if (process.env.NODE_ENV !== "production") {
+  // eslint-disable-next-line global-require
+  require("dotenv").config();
+}
 
 /* ───────── DB (adapter) ───────── */
 const rawDb = require("./db");
 const db = rawDb?.db ?? rawDb;
 
 /* ───────── Paths ───────── */
-const {
-  DATA_ROOT,
-  UPLOADS_DIR,
-  MODELOS_CHAMADAS_DIR,
-  CERT_DIR,
-  ensureDir,
-} = require("./paths");
+const { DATA_ROOT, UPLOADS_DIR, MODELOS_CHAMADAS_DIR, CERT_DIR, ensureDir } = require("./paths");
 
 /* ───────── Rotas ───────── */
 const assinaturaRoutes = require("./routes/assinaturaRoutes");
@@ -50,7 +47,7 @@ const unidadesRoutes = require("./routes/unidadesRoutes");
 const usuarioPublicoController = require("./controllers/usuarioPublicoController");
 const datasEventoRoute = require("./routes/datasEventoRoute");
 const perfilRoutes = require("./routes/perfilRoutes");
-const publicLookupsRoutes = require("./routes/publicLookupsRoutes");
+const lookupsPublicRoutes = require("./routes/lookupsPublicRoutes");
 const usuariosRoute = require("./routes/usuariosRoute");
 const metricasRoutes = require("./routes/metricasRoutes");
 const solicitacoesCursoRoute = require("./routes/solicitacoesCursoRoute");
@@ -70,55 +67,103 @@ app.disable("x-powered-by");
 
 /* ───────── Hardening / perf ───────── */
 app.set("trust proxy", 1);
+app.set("etag", "strong");
 
-// Nonce por requisição (CSP)
-app.use((_, res, next) => {
+/* ───────── PREMIUM: Request ID + response header ───────── */
+function getClientIp(req) {
+  return (
+    (req.headers["x-forwarded-for"]?.toString().split(",")[0] || "").trim() ||
+    req.ip ||
+    "unknown"
+  );
+}
+
+app.use((req, res, next) => {
+  const incoming = req.headers["x-request-id"];
+  const rid =
+    (typeof incoming === "string" && incoming.trim().slice(0, 128)) ||
+    crypto.randomUUID?.() ||
+    crypto.randomBytes(16).toString("hex");
+
+  req.requestId = rid;
+  res.setHeader("X-Request-Id", rid);
+  next();
+});
+
+/* ───────── CSP nonce por requisição ───────── */
+app.use((req, res, next) => {
   res.locals.cspNonce = crypto.randomBytes(16).toString("base64");
   next();
 });
 
-// Helmet + CSP
-app.use(
+/* ───────── Helmet + CSP (premium) ─────────
+   ✅ Agora o nonce entra direto no Helmet via função (sem replace string do header)
+*/
+app.use((req, res, next) => {
+  const nonce = res.locals.cspNonce;
+
+  const frontendFromEnv = (process.env.FRONTEND_URL || "").trim();
+  const connectSrc = [
+    "'self'",
+    "https://escola-saude-api.onrender.com",
+    "https://accounts.google.com",
+    "https://www.googleapis.com",
+    ...(frontendFromEnv ? [frontendFromEnv] : []),
+    ...(IS_DEV ? ["ws:", "http://localhost:5173", "http://127.0.0.1:5173"] : []),
+  ];
+
+  const scriptSrc = [
+    "'self'",
+    "https://accounts.google.com",
+    "https://www.gstatic.com",
+    `'nonce-${nonce}'`,
+    "'strict-dynamic'",
+    ...(IS_DEV ? ["'unsafe-eval'", "'unsafe-inline'"] : []),
+  ];
+
   helmet({
     crossOriginEmbedderPolicy: false,
     crossOriginOpenerPolicy: false,
     crossOriginResourcePolicy: { policy: "cross-origin" },
     hsts: IS_DEV ? false : undefined,
     referrerPolicy: { policy: "strict-origin-when-cross-origin" },
+    // PREMIUM: Permissions-Policy (antes “Feature-Policy”)
+    permissionsPolicy: {
+      features: {
+        geolocation: [],
+        microphone: [],
+        camera: [],
+        payment: [],
+        usb: [],
+        interestCohort: [],
+      },
+    },
     contentSecurityPolicy: {
       useDefaults: true,
       directives: {
         "default-src": ["'self'"],
+        "base-uri": ["'self'"],
+        "frame-ancestors": ["'self'"],
+
         "font-src": ["'self'", "data:", "https://fonts.gstatic.com"],
         "img-src": ["'self'", "data:", "https:", "blob:"],
         "object-src": ["'none'"],
-        "script-src": [
-          "'self'",
-          "https://accounts.google.com",
-          "https://www.gstatic.com",
-          (_, res) => `'nonce-${res.locals.cspNonce}'`,
-          "'strict-dynamic'",
-          ...(IS_DEV ? ["'unsafe-eval'", "'unsafe-inline'"] : []),
-        ],
+        "frame-src": ["https://accounts.google.com"],
+
         "style-src": [
           "'self'",
           "'unsafe-inline'",
           "https://fonts.googleapis.com",
           "https://accounts.google.com/gsi/style",
         ],
-        "connect-src": [
-          "'self'",
-          "https://escola-saude-api.onrender.com",
-          "https://accounts.google.com",
-          "https://www.googleapis.com",
-          ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []),
-          ...(IS_DEV ? ["ws:", "http://localhost:5173", "http://127.0.0.1:5173"] : []),
-        ],
-        "frame-src": ["https://accounts.google.com"],
+
+        "script-src": scriptSrc,
+
+        "connect-src": connectSrc,
       },
     },
-  })
-);
+  })(req, res, next);
+});
 
 app.use(compression());
 
@@ -136,6 +181,7 @@ const defaultAllowed = [
   "https://escola-saude-api-frontend.vercel.app",
   "https://escoladasaude.vercel.app",
 ];
+
 const allowedOrigins = [...defaultAllowed, ...fromEnv];
 const vercelRegex = /^https:\/\/[a-z0-9-]+\.vercel\.app$/i;
 
@@ -143,50 +189,59 @@ const corsOptions = {
   origin(origin, cb) {
     if (!origin) return cb(null, true);
     if (allowedOrigins.includes(origin) || vercelRegex.test(origin)) return cb(null, true);
-    const err = new Error("CORS bloqueado: " + origin);
+    const err = new Error("CORS bloqueado.");
     err.status = 403;
+    err.code = "CORS_BLOCKED";
     return cb(err);
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
-  exposedHeaders: [
-    "Content-Disposition",
-    "Content-Length",
-    "Last-Modified",
-    "ETag",
-    "X-Perfil-Incompleto",
-  ],
+  exposedHeaders: ["Content-Disposition", "Content-Length", "Last-Modified", "ETag", "X-Perfil-Incompleto", "X-Request-Id"],
   maxAge: 86400,
 };
 
 app.use(cors(corsOptions));
-app.use((_, res, next) => {
-  res.setHeader("Vary", "Origin");
+
+// ✅ Vary: Origin
+app.use((req, res, next) => {
+  const prev = res.getHeader("Vary");
+  const list = String(prev || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (!list.includes("Origin")) list.push("Origin");
+  res.setHeader("Vary", list.join(", "));
   next();
 });
+
 app.options("*", cors(corsOptions), (_req, res) => res.sendStatus(204));
 
 /* ───────── Parsers ───────── */
 app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 /* ───────── Diretórios ───────── */
 ensureDir(DATA_ROOT);
 ensureDir(UPLOADS_DIR);
 ensureDir(MODELOS_CHAMADAS_DIR);
 ensureDir(CERT_DIR);
-console.log("[FILES] DATA_ROOT:", DATA_ROOT);
-console.log("[FILES] UPLOADS_DIR:", UPLOADS_DIR);
-console.log("[FILES] MODELOS_CHAMADAS_DIR:", MODELOS_CHAMADAS_DIR);
-console.log("[FILES] CERT_DIR:", CERT_DIR);
 
+if (process.env.NODE_ENV !== "test") {
+  console.log("[FILES] DATA_ROOT:", DATA_ROOT);
+  console.log("[FILES] UPLOADS_DIR:", UPLOADS_DIR);
+  console.log("[FILES] MODELOS_CHAMADAS_DIR:", MODELOS_CHAMADAS_DIR);
+  console.log("[FILES] CERT_DIR:", CERT_DIR);
+}
+
+/* ───────── Static uploads ───────── */
 app.use(
   "/uploads",
   cors(corsOptions),
   express.static(UPLOADS_DIR, {
-    maxAge: "1h",
+    maxAge: IS_DEV ? 0 : "1h",
     setHeaders(res) {
-      res.setHeader("Cache-Control", "public, max-age=3600");
+      res.setHeader("Cache-Control", IS_DEV ? "no-store" : "public, max-age=3600");
+      res.setHeader("X-Content-Type-Options", "nosniff");
     },
   })
 );
@@ -211,11 +266,21 @@ app.use((req, _res, next) => {
   next();
 });
 
-/* ───────── Logger ───────── */
-app.use(morgan(':date[iso] :method :url :status :res[content-length] - :response-time ms'));
+/* ───────── Logger ─────────
+   PREMIUM: inclui requestId
+*/
+morgan.token("rid", (req) => req.requestId || "-");
+morgan.token("ip", (req) => getClientIp(req));
+
+app.use(
+  morgan(":date[iso] :ip :rid :method :url :status :res[content-length] - :response-time ms", {
+    skip: () => process.env.LOG_HTTP === "false",
+  })
+);
+
 if (IS_DEV) {
   app.use((req, _res, next) => {
-    console.log("[DEV-REQ]", { method: req.method, url: req.url });
+    console.log("[DEV-REQ]", { rid: req.requestId, method: req.method, url: req.url });
     next();
   });
 }
@@ -224,13 +289,29 @@ if (IS_DEV) {
 const loginLimiter = rateLimit({
   windowMs: 5 * 60 * 1000,
   max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
   message: { erro: "Muitas tentativas, tente novamente em alguns minutos." },
 });
+
 const recuperarSenhaLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
   message: { erro: "Muitas solicitações, aguarde antes de tentar novamente." },
 });
+
+/* ───────── Helpers de resposta (premium) ───────── */
+function sendError(res, status, message, extra = {}) {
+  const payload = {
+    ok: false,
+    erro: message,
+    requestId: res.getHeader("X-Request-Id"),
+    ...extra,
+  };
+  return res.status(status).json(payload);
+}
 
 /* ───────── Rotas de diagnóstico ───────── */
 app.get("/__version", (req, res) => {
@@ -238,15 +319,22 @@ app.get("/__version", (req, res) => {
     service: process.env.RENDER_SERVICE_NAME || "escola-saude-api",
     commit: process.env.RENDER_GIT_COMMIT || "local",
     node: process.version,
+    env: process.env.NODE_ENV || "dev",
+    uptime_s: Math.round(process.uptime()),
     now: new Date().toISOString(),
+    requestId: req.requestId,
   });
 });
+
 app.get("/__ping", (req, res) => {
-  console.log("[PING]", {
-    ip: req.headers["x-forwarded-for"] || req.ip,
-    ua: req.headers["user-agent"],
-  });
-  res.json({ ok: true });
+  if (IS_DEV) {
+    console.log("[PING]", {
+      rid: req.requestId,
+      ip: getClientIp(req),
+      ua: req.headers["user-agent"],
+    });
+  }
+  res.json({ ok: true, requestId: req.requestId });
 });
 
 /* ───────── Rotas ───────── */
@@ -282,78 +370,102 @@ app.use("/api/admin/avaliacoes", adminAvaliacoesRoutes);
 app.use("/api", chamadasRoutes);
 app.use("/api/trabalhos", trabalhosRoutes);
 app.use("/api/votacoes", votacoesRoutes);
-app.use("/api", publicLookupsRoutes);
+app.use("/api", lookupsPublicRoutes);
 app.use("/api/salas", salasRoutes);
-app.use("/api/calendario", calendarioRoutes); 
+app.use("/api/calendario", calendarioRoutes);
 app.use("/api/questionarios", require("./routes/questionariosRoute"));
 
 /* ───────── Recuperação de senha ───────── */
 app.post("/api/usuarios/recuperar-senha", recuperarSenhaLimiter, usuarioPublicoController.recuperarSenha);
 
 /* ───────── Health & SPA fallback ───────── */
-app.get("/api/health", (_req, res) =>
-  res.status(200).json({ ok: true, env: process.env.NODE_ENV || "dev" })
-);
+app.get("/api/health", (_req, res) => res.status(200).json({ ok: true, env: process.env.NODE_ENV || "dev" }));
+
+function renderSpaIndex(res, next) {
+  const indexPath = path.join(PUBLIC_DIR, "index.html");
+  if (!fs.existsSync(indexPath)) return false;
+
+  try {
+    const html = fs.readFileSync(indexPath, "utf8").replaceAll("{{CSP_NONCE}}", res.locals.cspNonce);
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.status(200).send(html);
+    return true;
+  } catch (e) {
+    next(e);
+    return true;
+  }
+}
 
 app.get("/", (req, res, next) => {
-  const indexPath = path.join(PUBLIC_DIR, "index.html");
-  if (fs.existsSync(indexPath)) {
-    try {
-      const html = fs
-        .readFileSync(indexPath, "utf8")
-        .replaceAll("{{CSP_NONCE}}", res.locals.cspNonce);
-      res.setHeader("Content-Type", "text/html; charset=utf-8");
-      return res.status(200).send(html);
-    } catch (e) {
-      return next(e);
-    }
-  }
+  if (renderSpaIndex(res, next)) return;
   return res.send("🟢 API da Escola da Saúde rodando!");
 });
 
 app.get(/^\/(?!api\/|uploads\/).+/, (req, res, next) => {
-  const indexPath = path.join(PUBLIC_DIR, "index.html");
-  if (!fs.existsSync(indexPath)) return next();
-  try {
-    const html = fs
-      .readFileSync(indexPath, "utf8")
-      .replaceAll("{{CSP_NONCE}}", res.locals.cspNonce);
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    return res.status(200).send(html);
-  } catch (e) {
-    return next(e);
-  }
+  if (renderSpaIndex(res, next)) return;
+  return next();
 });
 
 /* ───────── 404 / Errors ───────── */
 app.use((req, res) => {
   if (req.url.startsWith("/uploads/") && req.method === "GET") return res.status(404).end();
-  return res.status(404).json({ erro: "Rota não encontrada" });
+  return sendError(res, 404, "Rota não encontrada");
 });
 
-app.use((err, _req, res, _next) => {
-  if (err?.code === "LIMIT_FILE_SIZE")
-    return res.status(400).json({ erro: "Arquivo muito grande (máx. 50MB)." });
-  console.error("Erro inesperado:", err.stack || err.message || err);
-  res.status(err.status || 500).json({ erro: err.message || "Erro interno do servidor" });
+app.use((err, req, res, _next) => {
+  // Multer / upload
+  if (err?.code === "LIMIT_FILE_SIZE") return sendError(res, 400, "Arquivo muito grande (máx. 50MB).");
+
+  // CORS
+  if (err?.code === "CORS_BLOCKED") {
+    // não vaza origem em prod
+    return sendError(res, 403, "Origem não autorizada.", { code: "CORS_BLOCKED" });
+  }
+
+  const status = err?.status || 500;
+
+  // PREMIUM: Log consistente com requestId
+  console.error("[ERROR]", {
+    rid: req?.requestId,
+    status,
+    message: err?.message,
+    stack: IS_DEV ? err?.stack : undefined,
+  });
+
+  // PREMIUM: em prod, mensagem genérica
+  const message = IS_DEV ? err?.message || "Erro interno do servidor" : "Erro interno do servidor";
+
+  return sendError(res, status, message, IS_DEV ? { details: err?.details } : undefined);
 });
 
 /* ───────── Start / Shutdown ───────── */
 const PORT = process.env.PORT || 3000;
+
 const server = app.listen(PORT, () => {
   console.log(`🟢🚀 Servidor rodando na porta ${PORT} 🟢`);
 });
 
-function shutdown(signal) {
+async function shutdown(signal) {
   console.log(`\n${signal} recebido. Encerrando servidor...`);
-  server.close(() => {
+
+  server.close(async () => {
     console.log("✅ HTTP fechado.");
+
+    // fecha pool do DB se existir
+    try {
+      if (db?.shutdown) await db.shutdown();
+    } catch (e) {
+      console.warn("⚠️ Falha ao fechar DB:", e?.message || e);
+    }
+
     process.exit(0);
   });
+
   setTimeout(() => {
     console.warn("⏱️ Forçando shutdown.");
     process.exit(1);
   }, 10_000).unref();
 }
+
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));

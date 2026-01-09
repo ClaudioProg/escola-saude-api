@@ -1,5 +1,5 @@
-// 📁 src/components/ModalErro.jsx
-import { useEffect, useRef, useState } from "react";
+// ✅ src/components/ModalErro.jsx (Premium + A11y + ids únicos + bloqueios corretos)
+import { useEffect, useId, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import Modal from "./Modal";
 import { AlertTriangle, Clipboard, ChevronDown, RotateCcw, Check } from "lucide-react";
@@ -9,22 +9,45 @@ export default function ModalErro({
   onClose,
   titulo = "Erro",
   mensagem = "Ocorreu um erro inesperado.",
-  detalhes,                  // string opcional com stack/log
-  onTentarNovamente,         // callback opcional
+  detalhes, // string opcional com stack/log
+  onTentarNovamente, // callback opcional
   textoFechar = "Fechar",
   textoTentarNovamente = "Tentar novamente",
   bloqueiaCliqueFora = true, // força usuário a reconhecer
 }) {
+  const uid = useId();
+  const titleId = `modal-erro-titulo-${uid}`;
+  const descId = `modal-erro-mensagem-${uid}`;
+  const detalhesId = `modal-erro-detalhes-${uid}`;
+  const btnDetalhesId = `modal-erro-btndetalhes-${uid}`;
   const fecharBtnRef = useRef(null);
+
   const [mostrarDetalhes, setMostrarDetalhes] = useState(false);
   const [copiado, setCopiado] = useState(false);
+  const [msgA11y, setMsgA11y] = useState("");
 
-  // foca o botão fechar ao abrir
+  // Reset + foco ao abrir
   useEffect(() => {
     if (!isOpen) return;
-    const t = setTimeout(() => fecharBtnRef.current?.focus(), 30);
+    setMostrarDetalhes(false);
+    setCopiado(false);
+    setMsgA11y("");
+
+    const t = setTimeout(() => fecharBtnRef.current?.focus?.(), 40);
     return () => clearTimeout(t);
   }, [isOpen]);
+
+  // Mensagem assistiva (assertive)
+  useEffect(() => {
+    if (!isOpen) return;
+    const texto = `${titulo}. ${mensagem}`;
+    setMsgA11y(texto);
+    // força re-leitura em alguns leitores
+    requestAnimationFrame(() => {
+      setMsgA11y("");
+      requestAnimationFrame(() => setMsgA11y(texto));
+    });
+  }, [isOpen, titulo, mensagem]);
 
   const copyDetalhes = async () => {
     try {
@@ -32,14 +55,13 @@ export default function ModalErro({
       setCopiado(true);
       setTimeout(() => setCopiado(false), 1200);
     } catch {
-      // silencioso
+      // silencioso (pode falhar em contextos não HTTPS)
     }
   };
 
   if (!isOpen) return null;
 
-  const titleId = "modal-erro-titulo";
-  const descId = "modal-erro-mensagem";
+  const travaFechar = !!bloqueiaCliqueFora;
 
   return (
     <Modal
@@ -47,16 +69,18 @@ export default function ModalErro({
       onClose={onClose}
       labelledBy={titleId}
       describedBy={descId}
-      // quando bloqueia clique fora, não queremos fechar pelo overlay
-      closeOnBackdrop={!bloqueiaCliqueFora}
+      // 🔒 quando bloqueia clique fora, também bloqueia ESC
+      closeOnBackdrop={!travaFechar}
+      closeOnEscape={!travaFechar}
       className="w-[96%] max-w-md p-0 overflow-hidden"
-      role="alertdialog"
     >
+      {/* Live region (alerta) */}
+      <div aria-live="assertive" className="sr-only">
+        {msgA11y}
+      </div>
+
       {/* Header hero (degradê 3 cores) */}
-      <header
-        className="px-4 sm:px-6 py-4 text-white bg-gradient-to-br from-rose-900 via-red-800 to-orange-700"
-        aria-live="assertive"
-      >
+      <header className="px-4 sm:px-6 py-4 text-white bg-gradient-to-br from-rose-900 via-red-800 to-orange-700">
         <div className="flex items-center gap-2">
           <AlertTriangle className="w-6 h-6" aria-hidden="true" />
           <h2 id={titleId} className="text-xl sm:text-2xl font-extrabold tracking-tight">
@@ -71,14 +95,15 @@ export default function ModalErro({
       {/* Corpo */}
       <section className="px-4 sm:px-6 pt-4 pb-24">
         {/* Detalhes (opcional) */}
-        {detalhes && (
+        {detalhes ? (
           <div className="w-full">
             <button
+              id={btnDetalhesId}
               type="button"
               onClick={() => setMostrarDetalhes((v) => !v)}
               className="mx-auto flex items-center gap-1 text-sm text-slate-600 dark:text-slate-300 hover:underline"
               aria-expanded={mostrarDetalhes}
-              aria-controls="erro-detalhes"
+              aria-controls={detalhesId}
             >
               <ChevronDown
                 className={`w-4 h-4 transition-transform ${mostrarDetalhes ? "rotate-180" : ""}`}
@@ -89,8 +114,9 @@ export default function ModalErro({
 
             {mostrarDetalhes && (
               <pre
-                id="erro-detalhes"
+                id={detalhesId}
                 className="mt-2 max-h-56 overflow-auto bg-slate-50 dark:bg-zinc-900 text-left text-xs p-3 rounded-xl border border-slate-200 dark:border-zinc-700 text-slate-800 dark:text-slate-200 whitespace-pre-wrap"
+                aria-label="Detalhes técnicos do erro"
               >
                 {detalhes}
               </pre>
@@ -109,21 +135,22 @@ export default function ModalErro({
               </button>
             </div>
           </div>
-        )}
+        ) : null}
       </section>
 
       {/* Rodapé sticky */}
       <div className="sticky bottom-0 left-0 right-0 bg-white/85 dark:bg-zinc-950/85 backdrop-blur border-t border-slate-200 dark:border-slate-800 px-4 sm:px-6 py-3 flex flex-wrap items-center justify-end gap-2">
-        {onTentarNovamente && (
+        {onTentarNovamente ? (
           <button
             type="button"
             onClick={onTentarNovamente}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-600 text-white font-semibold hover:bg-amber-700 transition"
           >
-            <RotateCcw className="w-4 h-4" />
+            <RotateCcw className="w-4 h-4" aria-hidden="true" />
             {textoTentarNovamente}
           </button>
-        )}
+        ) : null}
+
         <button
           type="button"
           ref={fecharBtnRef}

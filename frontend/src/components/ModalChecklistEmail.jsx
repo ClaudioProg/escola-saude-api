@@ -1,77 +1,173 @@
-function ModalChecklistEmail({ open, onClose, onResend, cooldown, isDark }) {
-    const refFirst = useRef(null);
-  
-    useEffect(() => {
-      if (open) setTimeout(() => refFirst.current?.focus(), 60);
-    }, [open]);
-  
-    if (!open) return null;
-  
-    return (
-      <div
-        className="fixed inset-0 z-50 flex items-center justify-center px-4"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="titulo-checklist"
-        onKeyDown={(e) => e.key === "Escape" && onClose()}
-      >
-        {/* backdrop */}
-        <div
-          className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-          onClick={onClose}
-          aria-hidden="true"
-        />
-  
-        {/* modal */}
-        <div
-          className={[
-            "relative w-full max-w-md rounded-3xl border p-6 shadow-2xl",
-            isDark
-              ? "bg-zinc-900/80 border-white/10 text-zinc-100"
-              : "bg-white border-slate-200 text-slate-900",
-          ].join(" ")}
-        >
-          <h3 id="titulo-checklist" className="text-lg font-extrabold text-center mb-2">
-            Não recebeu o e-mail?
-          </h3>
-  
-          <p className={["text-sm text-center mb-4", isDark ? "text-zinc-300" : "text-slate-600"].join(" ")}>
-            Antes de reenviar, confira rapidamente:
-          </p>
-  
-          <ul className={["text-sm space-y-2", isDark ? "text-zinc-300" : "text-slate-700"].join(" ")}>
-            <li>• Verifique <strong>Spam</strong> e <strong>Lixeira</strong></li>
-            <li>• Aguarde até <strong>5 minutos</strong> (pode haver atraso)</li>
-            <li>• Confirme se digitou o e-mail corretamente</li>
-            <li>• Domínios institucionais podem filtrar mensagens</li>
-          </ul>
-  
-          <div className="mt-5 flex flex-col gap-2">
-            <BotaoPrimario
-              ref={refFirst}
-              type="button"
-              onClick={onResend}
-              disabled={cooldown > 0}
-              className="w-full"
-            >
-              {cooldown > 0 ? `Aguarde ${cooldown}s` : "Reenviar e-mail"}
-            </BotaoPrimario>
-  
-            <BotaoSecundario
-              type="button"
-              onClick={onClose}
-              className={[
-                "w-full rounded-2xl border py-3 font-extrabold",
-                isDark
-                  ? "border-white/10 bg-zinc-900/40 text-zinc-200 hover:bg-white/5"
-                  : "border-slate-200 bg-slate-50 text-slate-800 hover:bg-slate-100",
-              ].join(" ")}
-            >
-              Fechar
-            </BotaoSecundario>
+// ✅ src/components/ModalChecklistEmail.jsx
+import { useEffect, useMemo, useRef } from "react";
+import PropTypes from "prop-types";
+import { Mail, ShieldAlert, Trash2, Clock3, AtSign, Building2 } from "lucide-react";
+
+import Modal from "./Modal";
+import BotaoPrimario from "./BotaoPrimario";
+import BotaoSecundario from "./BotaoSecundario";
+
+export default function ModalChecklistEmail({
+  open,
+  onClose,
+  onResend,
+  cooldown = 0,
+  isDark, // compat (opcional). ideal: remover e usar só dark:
+}) {
+  const refFirst = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    // Modal já foca o primeiro elemento; isso garante foco no botão principal.
+    setTimeout(() => refFirst.current?.focus?.(), 30);
+  }, [open]);
+
+  const disabled = Number(cooldown) > 0;
+
+  const tituloBotao = useMemo(() => {
+    if (disabled) return `Aguarde ${cooldown}s`;
+    return "Reenviar e-mail";
+  }, [disabled, cooldown]);
+
+  const items = useMemo(
+    () => [
+      {
+        icon: ShieldAlert,
+        title: "Spam",
+        desc: "Verifique Spam e Promoções (Gmail) ou Junk (Outlook).",
+      },
+      {
+        icon: Trash2,
+        title: "Lixeira",
+        desc: "Às vezes o provedor move para Lixeira automaticamente.",
+      },
+      {
+        icon: Clock3,
+        title: "Aguarde um pouco",
+        desc: "Pode levar até 5 minutos para chegar (fila de e-mails).",
+      },
+      {
+        icon: AtSign,
+        title: "E-mail correto",
+        desc: "Confirme se digitou o endereço corretamente.",
+      },
+      {
+        icon: Building2,
+        title: "Domínio institucional",
+        desc: "Domínios .gov/.edu podem filtrar mensagens automaticamente.",
+      },
+    ],
+    []
+  );
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      labelledBy="titulo-checklist-email"
+      describedBy="desc-checklist-email"
+      className={[
+        "w-[96%] max-w-md p-0 overflow-hidden",
+        // compat: se algum lugar ainda passa isDark e você quer forçar visual,
+        // mantém; mas o ideal é deixar o tema por dark:
+        isDark ? "dark" : "",
+      ].join(" ")}
+      initialFocusRef={refFirst}
+    >
+      {/* Header premium */}
+      <header className="px-5 py-4 text-white bg-gradient-to-br from-fuchsia-900 via-violet-800 to-indigo-700">
+        <div className="flex items-start gap-3">
+          <span className="grid place-items-center w-10 h-10 rounded-2xl bg-white/15 border border-white/20">
+            <Mail className="w-5 h-5" aria-hidden="true" />
+          </span>
+
+          <div className="min-w-0">
+            <h3 id="titulo-checklist-email" className="text-lg font-extrabold tracking-tight">
+              Não recebeu o e-mail?
+            </h3>
+            <p id="desc-checklist-email" className="text-white/90 text-sm mt-1">
+              Antes de reenviar, confira rapidamente estes pontos.
+            </p>
           </div>
         </div>
+      </header>
+
+      {/* corpo */}
+      <div className="px-5 pt-4 pb-24">
+        {/* status cooldown */}
+        <div
+          className={[
+            "rounded-2xl border p-3 mb-4",
+            disabled
+              ? "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-200"
+              : "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-900/20 dark:text-emerald-200",
+          ].join(" ")}
+          aria-live="polite"
+        >
+          <div className="text-xs font-extrabold uppercase tracking-wide opacity-80">
+            Status
+          </div>
+          <div className="mt-0.5 text-sm font-semibold">
+            {disabled ? `Reenvio liberado em ${cooldown}s` : "Você já pode reenviar agora."}
+          </div>
+        </div>
+
+        {/* checklist */}
+        <ul className="space-y-3" aria-label="Checklist de verificação do e-mail">
+          {items.map(({ icon: Icon, title, desc }) => (
+            <li
+              key={title}
+              className="rounded-2xl border border-slate-200 bg-white shadow-sm p-3
+                         dark:border-slate-800 dark:bg-slate-950/40"
+            >
+              <div className="flex items-start gap-3">
+                <span className="grid place-items-center w-9 h-9 rounded-2xl bg-slate-100 border border-slate-200
+                                 dark:bg-slate-900 dark:border-slate-800">
+                  <Icon className="w-4 h-4 text-slate-700 dark:text-slate-200" aria-hidden="true" />
+                </span>
+                <div className="min-w-0">
+                  <div className="text-sm font-extrabold text-slate-900 dark:text-white">
+                    {title}
+                  </div>
+                  <div className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
+                    {desc}
+                  </div>
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
       </div>
-    );
-  }
-  
+
+      {/* footer sticky */}
+      <div className="sticky bottom-0 left-0 right-0 bg-white/85 dark:bg-slate-950/80 backdrop-blur
+                      border-t border-slate-200 dark:border-slate-800 px-5 py-3">
+        <div className="flex flex-col gap-2">
+          <BotaoPrimario
+            ref={refFirst}
+            type="button"
+            onClick={onResend}
+            disabled={disabled}
+            className="w-full"
+            aria-disabled={disabled ? "true" : "false"}
+            title={disabled ? "Aguarde o tempo de segurança para reenviar." : "Reenviar e-mail"}
+          >
+            {tituloBotao}
+          </BotaoPrimario>
+
+          <BotaoSecundario type="button" onClick={onClose} className="w-full">
+            Fechar
+          </BotaoSecundario>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+ModalChecklistEmail.propTypes = {
+  open: PropTypes.bool,
+  onClose: PropTypes.func,
+  onResend: PropTypes.func,
+  cooldown: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  isDark: PropTypes.bool, // compat
+};
