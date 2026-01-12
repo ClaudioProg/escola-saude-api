@@ -1,25 +1,14 @@
-// 📁 src/components/ModalConfirmacao.jsx
+// ✅ src/components/ModalConfirmacao.jsx (compat global + a11y + Enter-to-confirm)
+// - Aceita props em PT e EN (isOpen/open, titulo/title, mensagem/description, onConfirmar/onConfirm, onClose/onCancelar)
+// - Sem PropTypes .isRequired para não gerar warning quando faltar handler; botão fica desabilitado
+// - Mantém ModalBase, paletas, Enter para confirmar, foco inicial no confirmar
+
 import { useEffect, useRef, useMemo, useState, useId, useCallback } from "react";
 import PropTypes from "prop-types";
 import ModalBase from "./ModalBase";
 import { AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
 
-/**
- * Props:
- * - isOpen: boolean
- * - onClose: () => void
- * - onConfirmar: () => (void|boolean|Promise<void|boolean>)  // se retornar false, mantém aberto
- * - titulo?: string
- * - mensagem?: string | ReactNode
- * - textoBotaoConfirmar?: string
- * - textoBotaoCancelar?: string
- * - closeOnOverlay?: boolean  // default true
- * - variant?: "danger" | "primary" | "warning" | "neutral"   // default "danger"
- * - level?: number (empilhamento)
- *
- * Extras (opcionais, não quebram):
- * - confirmOnEnter?: boolean (default true)
- */
+/* ───────────────── helpers internos ───────────────── */
 function getTopmostLevel() {
   const nodes = Array.from(document.querySelectorAll("[data-modal-content]"));
   if (!nodes.length) return -Infinity;
@@ -35,48 +24,53 @@ function isEditableElement(el) {
   if (tag === "textarea") return true;
   if (tag === "input") {
     const type = String(el.getAttribute("type") || "text").toLowerCase();
-    // Enter em input text pode ser desejado, mas aqui evitamos confirmar acidentalmente
     return !["button", "submit", "checkbox", "radio", "file"].includes(type);
   }
   if (el.isContentEditable) return true;
   return false;
 }
 
-export default function ModalConfirmacao({
-  isOpen,
-  onClose,
-  onConfirmar,
-  titulo = "Confirmar Ação",
-  mensagem = "Tem certeza que deseja continuar?",
-  textoBotaoConfirmar = "Confirmar",
-  textoBotaoCancelar = "Cancelar",
-  closeOnOverlay = true,
-  variant = "danger",
-  level = 0,
-  confirmOnEnter = true,
-}) {
+/* ───────────────── componente ───────────────── */
+export default function ModalConfirmacao(rawProps) {
+  // 🔁 Compat de nomes (PT/EN) — fonte única derivada aqui
+  const isOpen     = !!(rawProps.isOpen ?? rawProps.open);
+  const onClose    = rawProps.onClose ?? rawProps.onCancelar;
+  const onConfirm  = rawProps.onConfirm ?? rawProps.onConfirmar;
+
+  const titulo     = rawProps.titulo ?? rawProps.title ?? "Confirmar Ação";
+  const mensagem   = rawProps.mensagem ?? rawProps.description ?? "Tem certeza que deseja continuar?";
+
+  const textoBotaoConfirmar = rawProps.textoBotaoConfirmar ?? rawProps.confirmText ?? "Confirmar";
+  const textoBotaoCancelar  = rawProps.textoBotaoCancelar  ?? rawProps.cancelText  ?? "Cancelar";
+
+  const closeOnOverlay = rawProps.closeOnOverlay ?? true;
+  const variant        = rawProps.variant ?? "danger";
+  const level          = Number(rawProps.level ?? 0);
+  const confirmOnEnter = rawProps.confirmOnEnter ?? true;
+
   const [confirmando, setConfirmando] = useState(false);
 
   const confirmBtnRef = useRef(null);
-  const modalContentRef = useRef(null); // pega o wrapper do conteúdo
+  const modalContentRef = useRef(null);
 
   // IDs únicos por instância (evita conflito ARIA)
   const uid = useId();
   const titleId = `modal-confirmacao-title-${uid}`;
-  const descId = `modal-confirmacao-desc-${uid}`;
+  const descId  = `modal-confirmacao-desc-${uid}`;
 
   const handleConfirm = useCallback(async () => {
     if (confirmando) return;
+    if (typeof onConfirm !== "function") return; // sem handler → botão ficará desabilitado
     try {
       setConfirmando(true);
-      const result = await Promise.resolve(onConfirmar?.());
+      const result = await Promise.resolve(onConfirm());
       if (result !== false) onClose?.();
     } catch {
-      // mantém aberto; chamador pode exibir toast/erro
+      // mantemos aberto; chamador exibe toast/erro se quiser
     } finally {
       setConfirmando(false);
     }
-  }, [confirmando, onConfirmar, onClose]);
+  }, [confirmando, onConfirm, onClose]);
 
   // Paletas por variante
   const palette = useMemo(() => {
@@ -119,7 +113,7 @@ export default function ModalConfirmacao({
 
   const Icon = palette.icon;
 
-  // Enter confirma (somente se topmost + foco dentro do modal + não está em input editável)
+  // Enter confirma (apenas topmost + foco dentro + não editável)
   useEffect(() => {
     if (!isOpen || !confirmOnEnter) return;
 
@@ -135,7 +129,6 @@ export default function ModalConfirmacao({
       const active = document.activeElement;
       const focusInside = !!(root && active && root.contains(active));
       if (!focusInside) return;
-
       if (isEditableElement(active)) return;
 
       e.preventDefault();
@@ -156,6 +149,9 @@ export default function ModalConfirmacao({
 
   if (!isOpen) return null;
 
+  const confirmarHabilitado = typeof onConfirm === "function";
+  const cancelarHabilitado  = typeof onClose   === "function";
+
   return (
     <ModalBase
       isOpen={isOpen}
@@ -170,7 +166,7 @@ export default function ModalConfirmacao({
       className="p-0 overflow-hidden"
     >
       {/* wrapper ref para checar foco dentro */}
-      <div ref={modalContentRef}>
+      <div ref={modalContentRef} data-modal-content data-level={level}>
         {/* Header hero */}
         <header
           className={`px-4 sm:px-5 py-4 text-white bg-gradient-to-br ${palette.header}`}
@@ -205,9 +201,9 @@ export default function ModalConfirmacao({
 
         {/* Corpo */}
         <section className="px-4 sm:px-5 py-4">
-          <div className="text-sm text-slate-800 dark:text-slate-200">{mensagem}</div>
-
-          {/* a11y status */}
+          <div className="text-sm text-slate-800 dark:text-slate-200 whitespace-pre-wrap">
+            {mensagem}
+          </div>
           <div aria-live="polite" className="sr-only">
             {confirmando ? "Processando confirmação." : ""}
           </div>
@@ -218,8 +214,8 @@ export default function ModalConfirmacao({
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2">
             <button
               type="button"
-              onClick={onClose}
-              disabled={confirmando}
+              onClick={cancelarHabilitado ? onClose : undefined}
+              disabled={!cancelarHabilitado || confirmando}
               className="w-full sm:w-auto px-4 py-2 rounded-2xl bg-slate-200 dark:bg-slate-800
                          text-slate-900 dark:text-slate-100 font-extrabold
                          hover:bg-slate-300 dark:hover:bg-slate-700 transition
@@ -231,8 +227,8 @@ export default function ModalConfirmacao({
             <button
               type="button"
               ref={confirmBtnRef}
-              onClick={handleConfirm}
-              disabled={confirmando}
+              onClick={confirmarHabilitado ? handleConfirm : undefined}
+              disabled={!confirmarHabilitado || confirmando}
               className={`w-full sm:w-auto inline-flex justify-center items-center gap-2 px-4 py-2 rounded-2xl
                           text-white font-extrabold transition disabled:opacity-60
                           focus:outline-none focus:ring-2 focus:ring-offset-2 ${palette.btn}`}
@@ -243,7 +239,6 @@ export default function ModalConfirmacao({
             </button>
           </div>
 
-          {/* hint teclado */}
           <div className="mt-2 text-[11px] text-slate-500 dark:text-slate-400 text-center sm:text-right">
             {confirmOnEnter ? "Dica: pressione Enter para confirmar." : ""}
           </div>
@@ -253,14 +248,32 @@ export default function ModalConfirmacao({
   );
 }
 
+/* ───────────────── PropTypes (flexíveis) ─────────────────
+   Sem .isRequired → sem warning mesmo se faltar handler.
+   Botões ficam desabilitados quando não houver callback. */
 ModalConfirmacao.propTypes = {
-  isOpen: PropTypes.bool.isRequired,
-  onClose: PropTypes.func.isRequired,
-  onConfirmar: PropTypes.func.isRequired,
+  // abertura
+  isOpen: PropTypes.bool,
+  open: PropTypes.bool,
+
+  // callbacks
+  onClose: PropTypes.func,
+  onCancelar: PropTypes.func,
+  onConfirm: PropTypes.func,
+  onConfirmar: PropTypes.func,
+
+  // textos
   titulo: PropTypes.string,
+  title: PropTypes.oneOfType([PropTypes.string, PropTypes.node]),
   mensagem: PropTypes.oneOfType([PropTypes.string, PropTypes.node]),
+  description: PropTypes.oneOfType([PropTypes.string, PropTypes.node]),
+
   textoBotaoConfirmar: PropTypes.string,
+  confirmText: PropTypes.string,
   textoBotaoCancelar: PropTypes.string,
+  cancelText: PropTypes.string,
+
+  // comportamento/estilo
   closeOnOverlay: PropTypes.bool,
   variant: PropTypes.oneOf(["danger", "primary", "warning", "neutral"]),
   level: PropTypes.number,

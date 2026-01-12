@@ -1,6 +1,5 @@
 // ✅ src/components/ModalReservaAdmin.jsx
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { motion } from "framer-motion";
 import {
   Users,
   Coffee,
@@ -17,6 +16,7 @@ import {
 import { toast } from "react-toastify";
 import api from "../services/api";
 import Modal from "./Modal";
+import ModalConfirmacao from "./ModalConfirmacao";
 
 const DIAS_SEMANA = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 const DIAS_SEMANA_LABEL_COMPLETO = [
@@ -86,6 +86,9 @@ export default function ModalReservaAdmin({
 
   const isEdicao = !!reserva;
   const baseURL = (api.defaults?.baseURL || "").replace(/\/+$/, "");
+
+  // ✅ confirmação premium (substitui window.confirm)
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   // Guards
   const dataISO = slot?.dataISO?.slice?.(0, 10) || "";
@@ -188,6 +191,9 @@ export default function ModalReservaAdmin({
     setMensalModo("dia_mes");
     setAnualModo("dia_mes");
     setMesesAnual([mesBaseIndex]);
+
+    // ✅ reset confirmação ao abrir
+    setConfirmDeleteOpen(false);
 
     const t = setTimeout(() => firstFocusRef.current?.focus?.(), 60);
     return () => clearTimeout(t);
@@ -380,9 +386,9 @@ export default function ModalReservaAdmin({
     }
   }
 
-  async function excluirReserva() {
+  // ✅ execução real da exclusão (chamada pelo ModalConfirmacao)
+  async function executarExcluirReserva() {
     if (!isEdicao) return;
-    if (!window.confirm("Tem certeza que deseja excluir esta reserva?")) return;
 
     try {
       setLoading(true);
@@ -398,7 +404,14 @@ export default function ModalReservaAdmin({
       setMsgA11y(msg);
     } finally {
       setLoading(false);
+      setConfirmDeleteOpen(false);
     }
+  }
+
+  function excluirReserva() {
+    if (!isEdicao) return;
+    if (loading) return;
+    setConfirmDeleteOpen(true);
   }
 
   function abrirCartazPDF() {
@@ -457,443 +470,463 @@ export default function ModalReservaAdmin({
   if (!isOpen) return null;
 
   return (
-    <Modal
-      open={isOpen}
-      onClose={loading ? undefined : onClose}
-      labelledBy={titleId}
-      describedBy={descId}
-      className="w-[96%] max-w-3xl p-0 overflow-hidden"
-    >
-      {/* Header Hero (tema exclusivo) */}
-      <header className="px-4 sm:px-6 py-4 text-white bg-gradient-to-br from-slate-900 via-emerald-900 to-teal-700">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h2 id={titleId} className="text-xl sm:text-2xl font-extrabold tracking-tight flex items-center gap-2">
-              <ShieldCheck className="w-5 h-5 text-emerald-300" />
-              {tituloModal}
-            </h2>
-            <p id={descId} className="text-white/85 text-sm mt-1">
-              {minis.data} • {minis.periodo} • {minis.sala}
-            </p>
-          </div>
+    <>
+      <Modal
+        open={isOpen}
+        onClose={loading ? undefined : onClose}
+        labelledBy={titleId}
+        describedBy={descId}
+        className="w-[96%] max-w-3xl p-0 overflow-hidden"
+      >
+        {/* Header Hero (tema exclusivo) */}
+        <header className="px-4 sm:px-6 py-4 text-white bg-gradient-to-br from-slate-900 via-emerald-900 to-teal-700">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 id={titleId} className="text-xl sm:text-2xl font-extrabold tracking-tight flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-emerald-300" />
+                {tituloModal}
+              </h2>
+              <p id={descId} className="text-white/85 text-sm mt-1">
+                {minis.data} • {minis.periodo} • {minis.sala}
+              </p>
+            </div>
 
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={loading}
-            className="p-2 rounded-xl hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-emerald-300 disabled:opacity-60"
-            aria-label="Fechar"
-          >
-            <CloseIcon className="w-5 h-5" />
-          </button>
+            <button
+              type="button"
+              onClick={loading ? undefined : onClose}
+              disabled={loading}
+              className="p-2 rounded-xl hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-emerald-300 disabled:opacity-60"
+              aria-label="Fechar"
+            >
+              <CloseIcon className="w-5 h-5" />
+            </button>
+          </div>
+        </header>
+
+        {/* Live region */}
+        <div aria-live="polite" className="sr-only">
+          {msgA11y}
         </div>
-      </header>
 
-      {/* Live region */}
-      <div aria-live="polite" className="sr-only">
-        {msgA11y}
-      </div>
-
-      {/* Ministats */}
-      <section className="px-4 sm:px-6 pt-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {[
-          { icon: <Building2 className="w-5 h-5" />, label: "Sala", value: minis.sala },
-          { icon: <Clock className="w-5 h-5" />, label: "Período", value: slot?.periodo === "manha" ? "Manhã" : "Tarde" },
-          { icon: <Users className="w-5 h-5" />, label: "Pessoas", value: minis.pessoas },
-          { icon: <CalendarDays className="w-5 h-5" />, label: "Capacidade", value: minis.cap },
-        ].map((m) => (
-          <div
-            key={m.label}
-            className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 shadow-sm"
-          >
-            <div className="flex items-center gap-2 text-slate-700 dark:text-slate-200">
-              {m.icon}
-              <span className="text-sm font-semibold">{m.label}</span>
+        {/* Ministats */}
+        <section className="px-4 sm:px-6 pt-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {[
+            { icon: <Building2 className="w-5 h-5" />, label: "Sala", value: minis.sala },
+            { icon: <Clock className="w-5 h-5" />, label: "Período", value: slot?.periodo === "manha" ? "Manhã" : "Tarde" },
+            { icon: <Users className="w-5 h-5" />, label: "Pessoas", value: minis.pessoas },
+            { icon: <CalendarDays className="w-5 h-5" />, label: "Capacidade", value: minis.cap },
+          ].map((m) => (
+            <div
+              key={m.label}
+              className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 shadow-sm"
+            >
+              <div className="flex items-center gap-2 text-slate-700 dark:text-slate-200">
+                {m.icon}
+                <span className="text-sm font-semibold">{m.label}</span>
+              </div>
+              <div className="mt-1 text-lg font-extrabold text-slate-900 dark:text-white break-words">
+                {m.value}
+              </div>
             </div>
-            <div className="mt-1 text-lg font-extrabold text-slate-900 dark:text-white break-words">
-              {m.value}
+          ))}
+        </section>
+
+        {/* Body */}
+        <div className="px-4 sm:px-6 pb-4 pt-4 space-y-4">
+          {solicitanteBox}
+
+          {/* Quantidade / Coffee / Status */}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3">
+              <label className="block text-xs font-medium text-slate-600 dark:text-slate-300">
+                Quantidade de pessoas
+              </label>
+              <input
+                ref={firstFocusRef}
+                type="number"
+                min={1}
+                max={max}
+                value={qtdPessoas}
+                onChange={(e) => setQtdPessoas(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                placeholder={`Até ${max} pessoas`}
+                disabled={loading}
+              />
+              <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                Capacidade máxima: <strong>{max}</strong> pessoas.
+              </p>
+
+              <div className="mt-3 flex items-center gap-2">
+                <Coffee className="w-4 h-4 text-slate-500" />
+                <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
+                  <input
+                    type="checkbox"
+                    className="rounded border-slate-300"
+                    checked={coffeeBreak}
+                    onChange={(e) => setCoffeeBreak(e.target.checked)}
+                    disabled={loading}
+                  />
+                  Haverá coffee break?
+                </label>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-600 dark:text-slate-300">
+                  Status
+                </label>
+                <select
+                  value={status}
+                  onChange={(e) => setStatus(e.target.value)}
+                  className="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  disabled={loading}
+                >
+                  <option value="pendente">Pendente</option>
+                  <option value="aprovado">Aprovado</option>
+                  <option value="rejeitado">Rejeitado</option>
+                  <option value="cancelado">Cancelado</option>
+                  <option value="bloqueado">Bloqueado (uso interno / evento fixo)</option>
+                </select>
+
+                {String(status) === "bloqueado" && (
+                  <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
+                    Para “Bloqueado”, recomendamos informar a finalidade/motivo.
+                  </p>
+                )}
+              </div>
             </div>
           </div>
-        ))}
-      </section>
 
-      {/* Body */}
-      <div className="px-4 sm:px-6 pb-4 pt-4 space-y-4">
-        {solicitanteBox}
-
-        {/* Quantidade / Coffee / Status */}
-        <div className="grid gap-3 sm:grid-cols-2">
+          {/* Finalidade */}
           <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3">
             <label className="block text-xs font-medium text-slate-600 dark:text-slate-300">
-              Quantidade de pessoas
+              Finalidade / evento {String(status) === "bloqueado" ? <span className="text-rose-600">*</span> : null}
             </label>
-            <input
-              ref={firstFocusRef}
-              type="number"
-              min={1}
-              max={max}
-              value={qtdPessoas}
-              onChange={(e) => setQtdPessoas(e.target.value)}
+            <textarea
+              rows={2}
+              value={finalidade}
+              onChange={(e) => setFinalidade(e.target.value)}
               className="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              placeholder={`Até ${max} pessoas`}
+              placeholder="Ex.: Reunião da equipe, Aula do Curso X, Oficina Y..."
               disabled={loading}
             />
             <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-              Capacidade máxima: <strong>{max}</strong> pessoas.
+              Descreva brevemente para qual atividade a sala será utilizada.
             </p>
-
-            <div className="mt-3 flex items-center gap-2">
-              <Coffee className="w-4 h-4 text-slate-500" />
-              <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
-                <input
-                  type="checkbox"
-                  className="rounded border-slate-300"
-                  checked={coffeeBreak}
-                  onChange={(e) => setCoffeeBreak(e.target.checked)}
-                  disabled={loading}
-                />
-                Haverá coffee break?
-              </label>
-            </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 space-y-3">
-            <div>
-              <label className="block text-xs font-medium text-slate-600 dark:text-slate-300">
-                Status
-              </label>
-              <select
-                value={status}
-                onChange={(e) => setStatus(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                disabled={loading}
-              >
-                <option value="pendente">Pendente</option>
-                <option value="aprovado">Aprovado</option>
-                <option value="rejeitado">Rejeitado</option>
-                <option value="cancelado">Cancelado</option>
-                <option value="bloqueado">Bloqueado (uso interno / evento fixo)</option>
-              </select>
-
-              {String(status) === "bloqueado" && (
-                <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
-                  Para “Bloqueado”, recomendamos informar a finalidade/motivo.
-                </p>
-              )}
-            </div>
+          {/* Observação */}
+          <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3">
+            <label className="block text-xs font-medium text-slate-600 dark:text-slate-300">
+              Observações internas (opcional)
+            </label>
+            <textarea
+              rows={2}
+              value={observacao}
+              onChange={(e) => setObservacao(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              placeholder="Ex.: reserva interna, observações para a equipe, etc."
+              disabled={loading}
+            />
           </div>
-        </div>
 
-        {/* Finalidade */}
-        <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3">
-          <label className="block text-xs font-medium text-slate-600 dark:text-slate-300">
-            Finalidade / evento {String(status) === "bloqueado" ? <span className="text-rose-600">*</span> : null}
-          </label>
-          <textarea
-            rows={2}
-            value={finalidade}
-            onChange={(e) => setFinalidade(e.target.value)}
-            className="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            placeholder="Ex.: Reunião da equipe, Aula do Curso X, Oficina Y..."
-            disabled={loading}
-          />
-          <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-            Descreva brevemente para qual atividade a sala será utilizada.
-          </p>
-        </div>
-
-        {/* Observação */}
-        <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3">
-          <label className="block text-xs font-medium text-slate-600 dark:text-slate-300">
-            Observações internas (opcional)
-          </label>
-          <textarea
-            rows={2}
-            value={observacao}
-            onChange={(e) => setObservacao(e.target.value)}
-            className="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            placeholder="Ex.: reserva interna, observações para a equipe, etc."
-            disabled={loading}
-          />
-        </div>
-
-        {/* Recorrência (somente criação) */}
-        {!isEdicao && (
-          <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 dark:bg-emerald-900/15 dark:border-emerald-900 p-3 space-y-3">
-            <div className="flex items-start gap-2">
-              <Repeat className="w-4 h-4 text-emerald-700 dark:text-emerald-300 mt-0.5" />
-              <div className="flex-1">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm font-extrabold text-emerald-900 dark:text-emerald-100">
-                    Recorrência (opcional)
-                  </p>
-                  <label className="inline-flex items-center gap-2 text-sm text-emerald-900 dark:text-emerald-100">
-                    <input
-                      type="checkbox"
-                      className="rounded border-emerald-400"
-                      checked={usarRecorrencia}
-                      onChange={(e) => setUsarRecorrencia(e.target.checked)}
-                      disabled={loading}
-                    />
-                    Aplicar
-                  </label>
-                </div>
-                <p className="text-[11px] text-emerald-900/80 dark:text-emerald-100/80 mt-1">
-                  Repita este horário como semanal, mensal, anual ou “sempre” (mensal contínuo).
-                </p>
-              </div>
-            </div>
-
-            {usarRecorrencia && (
-              <div className="space-y-3">
-                {/* Tipo + quantidade/limite */}
-                <div className="grid sm:grid-cols-[1.3fr,0.7fr] gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-emerald-900 dark:text-emerald-100">
-                      Tipo de recorrência
+          {/* Recorrência (somente criação) */}
+          {!isEdicao && (
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 dark:bg-emerald-900/15 dark:border-emerald-900 p-3 space-y-3">
+              <div className="flex items-start gap-2">
+                <Repeat className="w-4 h-4 text-emerald-700 dark:text-emerald-300 mt-0.5" />
+                <div className="flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-extrabold text-emerald-900 dark:text-emerald-100">
+                      Recorrência (opcional)
+                    </p>
+                    <label className="inline-flex items-center gap-2 text-sm text-emerald-900 dark:text-emerald-100">
+                      <input
+                        type="checkbox"
+                        className="rounded border-emerald-400"
+                        checked={usarRecorrencia}
+                        onChange={(e) => setUsarRecorrencia(e.target.checked)}
+                        disabled={loading}
+                      />
+                      Aplicar
                     </label>
-                    <select
-                      value={tipoRecorrencia}
-                      onChange={(e) => setTipoRecorrencia(e.target.value)}
-                      className="mt-1 w-full rounded-xl border border-emerald-200 bg-white dark:bg-slate-950 dark:border-emerald-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                      disabled={loading}
-                    >
-                      <option value="semanal">Semanal</option>
-                      <option value="mensal">Mensal</option>
-                      <option value="anual">Anual</option>
-                      <option value="sempre">Sempre (mensal contínuo)</option>
-                    </select>
+                  </div>
+                  <p className="text-[11px] text-emerald-900/80 dark:text-emerald-100/80 mt-1">
+                    Repita este horário como semanal, mensal, anual ou “sempre” (mensal contínuo).
+                  </p>
+                </div>
+              </div>
+
+              {usarRecorrencia && (
+                <div className="space-y-3">
+                  {/* Tipo + quantidade/limite */}
+                  <div className="grid sm:grid-cols-[1.3fr,0.7fr] gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-emerald-900 dark:text-emerald-100">
+                        Tipo de recorrência
+                      </label>
+                      <select
+                        value={tipoRecorrencia}
+                        onChange={(e) => setTipoRecorrencia(e.target.value)}
+                        className="mt-1 w-full rounded-xl border border-emerald-200 bg-white dark:bg-slate-950 dark:border-emerald-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        disabled={loading}
+                      >
+                        <option value="semanal">Semanal</option>
+                        <option value="mensal">Mensal</option>
+                        <option value="anual">Anual</option>
+                        <option value="sempre">Sempre (mensal contínuo)</option>
+                      </select>
+                    </div>
+
+                    {tipoRecorrencia === "sempre" ? (
+                      <div>
+                        <label className="block text-xs font-medium text-emerald-900 dark:text-emerald-100">
+                          Limite (meses)
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={120}
+                          value={limiteMesesSempre}
+                          onChange={(e) => setLimiteMesesSempre(e.target.value)}
+                          className="mt-1 w-full rounded-xl border border-emerald-200 bg-white dark:bg-slate-950 dark:border-emerald-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                          disabled={loading}
+                        />
+                        <p className="text-[10px] text-emerald-900/80 dark:text-emerald-100/80 mt-1">
+                          Repete mensalmente na mesma data por até {String(limiteMesesSempre)} mês(es).
+                        </p>
+                      </div>
+                    ) : (
+                      <div>
+                        <label className="block text-xs font-medium text-emerald-900 dark:text-emerald-100">
+                          Repetições
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={120}
+                          value={qtdRepeticoes}
+                          onChange={(e) => setQtdRepeticoes(e.target.value)}
+                          className="mt-1 w-full rounded-xl border border-emerald-200 bg-white dark:bg-slate-950 dark:border-emerald-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                          disabled={loading}
+                        />
+                        <p className="text-[10px] text-emerald-900/80 dark:text-emerald-100/80 mt-1">
+                          Apenas ocorrências futuras a partir da data selecionada.
+                        </p>
+                      </div>
+                    )}
                   </div>
 
-                  {tipoRecorrencia === "sempre" ? (
-                    <div>
-                      <label className="block text-xs font-medium text-emerald-900 dark:text-emerald-100">
-                        Limite (meses)
-                      </label>
-                      <input
-                        type="number"
-                        min={1}
-                        max={120}
-                        value={limiteMesesSempre}
-                        onChange={(e) => setLimiteMesesSempre(e.target.value)}
-                        className="mt-1 w-full rounded-xl border border-emerald-200 bg-white dark:bg-slate-950 dark:border-emerald-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                        disabled={loading}
-                      />
-                      <p className="text-[10px] text-emerald-900/80 dark:text-emerald-100/80 mt-1">
-                        Repete mensalmente na mesma data por até {String(limiteMesesSempre)} mês(es).
+                  {/* Semanal */}
+                  {tipoRecorrencia === "semanal" && (
+                    <div className="rounded-xl bg-white dark:bg-slate-950 border border-emerald-100 dark:border-emerald-900 p-3 space-y-2">
+                      <p className="text-xs font-extrabold text-emerald-900 dark:text-emerald-100">
+                        Semanal
                       </p>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-[11px] text-emerald-900 dark:text-emerald-100">A cada</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={52}
+                          value={intervaloSemanas}
+                          onChange={(e) => setIntervaloSemanas(e.target.value)}
+                          className="w-20 rounded-lg border border-emerald-200 dark:border-emerald-900 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                          disabled={loading}
+                        />
+                        <span className="text-[11px] text-emerald-900 dark:text-emerald-100">semana(s)</span>
+                      </div>
+
+                      <p className="text-[11px] font-semibold text-emerald-900 dark:text-emerald-100">Dias:</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {DIAS_SEMANA.map((label, idx) => (
+                          <button
+                            key={label}
+                            type="button"
+                            onClick={() => toggleDiaSemanaRecorrencia(idx)}
+                            disabled={loading}
+                            className={cls(
+                              "px-2 py-1 text-[11px] rounded-full border transition",
+                              diasSemanaRecorrencia.includes(idx)
+                                ? "bg-emerald-600 text-white border-emerald-600"
+                                : "bg-white dark:bg-slate-950 text-emerald-900 dark:text-emerald-100 border-emerald-200 dark:border-emerald-900"
+                            )}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  ) : (
-                    <div>
-                      <label className="block text-xs font-medium text-emerald-900 dark:text-emerald-100">
-                        Repetições
+                  )}
+
+                  {/* Mensal */}
+                  {tipoRecorrencia === "mensal" && (
+                    <div className="rounded-xl bg-white dark:bg-slate-950 border border-emerald-100 dark:border-emerald-900 p-3 space-y-2">
+                      <p className="text-xs font-extrabold text-emerald-900 dark:text-emerald-100">Mensal</p>
+
+                      <label className="flex items-center gap-2 text-[11px] text-emerald-900 dark:text-emerald-100">
+                        <input
+                          type="radio"
+                          className="text-emerald-600"
+                          checked={mensalModo === "dia_mes"}
+                          onChange={() => setMensalModo("dia_mes")}
+                          disabled={loading}
+                        />
+                        Todo dia <strong>{diaMesBase}</strong> de cada mês.
                       </label>
-                      <input
-                        type="number"
-                        min={1}
-                        max={120}
-                        value={qtdRepeticoes}
-                        onChange={(e) => setQtdRepeticoes(e.target.value)}
-                        className="mt-1 w-full rounded-xl border border-emerald-200 bg-white dark:bg-slate-950 dark:border-emerald-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                        disabled={loading}
-                      />
-                      <p className="text-[10px] text-emerald-900/80 dark:text-emerald-100/80 mt-1">
-                        Apenas ocorrências futuras a partir da data selecionada.
-                      </p>
+
+                      <label className="flex items-center gap-2 text-[11px] text-emerald-900 dark:text-emerald-100">
+                        <input
+                          type="radio"
+                          className="text-emerald-600"
+                          checked={mensalModo === "ordem_semana"}
+                          onChange={() => setMensalModo("ordem_semana")}
+                          disabled={loading}
+                        />
+                        Toda <strong>{ehUltimaSemana ? "última" : `${ordemSemanaBase}ª`}</strong>{" "}
+                        <strong>{diaSemanaBaseLabel}</strong> do mês.
+                      </label>
+                    </div>
+                  )}
+
+                  {/* Anual */}
+                  {tipoRecorrencia === "anual" && (
+                    <div className="rounded-xl bg-white dark:bg-slate-950 border border-emerald-100 dark:border-emerald-900 p-3 space-y-2">
+                      <p className="text-xs font-extrabold text-emerald-900 dark:text-emerald-100">Anual</p>
+
+                      <label className="flex items-center gap-2 text-[11px] text-emerald-900 dark:text-emerald-100">
+                        <input
+                          type="radio"
+                          className="text-emerald-600"
+                          checked={anualModo === "dia_mes"}
+                          onChange={() => setAnualModo("dia_mes")}
+                          disabled={loading}
+                        />
+                        Em <strong>{diaMesBase}/{String(mesBaseIndex + 1).padStart(2, "0")}</strong> nos meses selecionados.
+                      </label>
+
+                      <label className="flex items-center gap-2 text-[11px] text-emerald-900 dark:text-emerald-100">
+                        <input
+                          type="radio"
+                          className="text-emerald-600"
+                          checked={anualModo === "ordem_semana"}
+                          onChange={() => setAnualModo("ordem_semana")}
+                          disabled={loading}
+                        />
+                        Na <strong>{ehUltimaSemana ? "última" : `${ordemSemanaBase}ª`}</strong>{" "}
+                        <strong>{diaSemanaBaseLabel}</strong> dos meses selecionados.
+                      </label>
+
+                      <p className="text-[11px] font-semibold text-emerald-900 dark:text-emerald-100">Meses:</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {NOMES_MESES.map((nome, idx) => (
+                          <button
+                            key={nome}
+                            type="button"
+                            onClick={() => toggleMesAnual(idx)}
+                            disabled={loading}
+                            className={cls(
+                              "px-2 py-1 text-[11px] rounded-full border transition",
+                              mesesAnual.includes(idx)
+                                ? "bg-emerald-600 text-white border-emerald-600"
+                                : "bg-white dark:bg-slate-950 text-emerald-900 dark:text-emerald-100 border-emerald-200 dark:border-emerald-900"
+                            )}
+                          >
+                            {nome.slice(0, 3)}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>
+              )}
+            </div>
+          )}
 
-                {/* Semanal */}
-                {tipoRecorrencia === "semanal" && (
-                  <div className="rounded-xl bg-white dark:bg-slate-950 border border-emerald-100 dark:border-emerald-900 p-3 space-y-2">
-                    <p className="text-xs font-extrabold text-emerald-900 dark:text-emerald-100">
-                      Semanal
-                    </p>
+          {/* Aviso */}
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 dark:bg-slate-900 dark:border-slate-700 p-3 text-[11px] sm:text-xs text-slate-600 dark:text-slate-300 flex gap-2">
+            <Info className="w-4 h-4 mt-0.5 text-emerald-600 dark:text-emerald-300" />
+            <p className="leading-relaxed">
+              Use esta tela para aprovar/negar solicitações ou criar <strong>bloqueios internos</strong>. A recorrência é aplicada somente na criação.
+              Datas em finais de semana/feriados/pontos facultativos podem ser ignoradas automaticamente pelo backend.
+            </p>
+          </div>
+        </div>
 
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-[11px] text-emerald-900 dark:text-emerald-100">A cada</span>
-                      <input
-                        type="number"
-                        min={1}
-                        max={52}
-                        value={intervaloSemanas}
-                        onChange={(e) => setIntervaloSemanas(e.target.value)}
-                        className="w-20 rounded-lg border border-emerald-200 dark:border-emerald-900 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                        disabled={loading}
-                      />
-                      <span className="text-[11px] text-emerald-900 dark:text-emerald-100">semana(s)</span>
-                    </div>
+        {/* Footer sticky */}
+        <div className="sticky bottom-0 left-0 right-0 bg-white/85 dark:bg-zinc-950/85 backdrop-blur border-t border-slate-200 dark:border-slate-800 px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            {isEdicao && (
+              <>
+                <button
+                  type="button"
+                  onClick={excluirReserva}
+                  disabled={loading}
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-rose-200 text-rose-700 hover:bg-rose-50 dark:border-rose-900/40 dark:text-rose-300 dark:hover:bg-rose-900/20 disabled:opacity-60"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Excluir
+                </button>
 
-                    <p className="text-[11px] font-semibold text-emerald-900 dark:text-emerald-100">Dias:</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {DIAS_SEMANA.map((label, idx) => (
-                        <button
-                          key={label}
-                          type="button"
-                          onClick={() => toggleDiaSemanaRecorrencia(idx)}
-                          disabled={loading}
-                          className={cls(
-                            "px-2 py-1 text-[11px] rounded-full border transition",
-                            diasSemanaRecorrencia.includes(idx)
-                              ? "bg-emerald-600 text-white border-emerald-600"
-                              : "bg-white dark:bg-slate-950 text-emerald-900 dark:text-emerald-100 border-emerald-200 dark:border-emerald-900"
-                          )}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Mensal */}
-                {tipoRecorrencia === "mensal" && (
-                  <div className="rounded-xl bg-white dark:bg-slate-950 border border-emerald-100 dark:border-emerald-900 p-3 space-y-2">
-                    <p className="text-xs font-extrabold text-emerald-900 dark:text-emerald-100">Mensal</p>
-
-                    <label className="flex items-center gap-2 text-[11px] text-emerald-900 dark:text-emerald-100">
-                      <input
-                        type="radio"
-                        className="text-emerald-600"
-                        checked={mensalModo === "dia_mes"}
-                        onChange={() => setMensalModo("dia_mes")}
-                        disabled={loading}
-                      />
-                      Todo dia <strong>{diaMesBase}</strong> de cada mês.
-                    </label>
-
-                    <label className="flex items-center gap-2 text-[11px] text-emerald-900 dark:text-emerald-100">
-                      <input
-                        type="radio"
-                        className="text-emerald-600"
-                        checked={mensalModo === "ordem_semana"}
-                        onChange={() => setMensalModo("ordem_semana")}
-                        disabled={loading}
-                      />
-                      Toda <strong>{ehUltimaSemana ? "última" : `${ordemSemanaBase}ª`}</strong>{" "}
-                      <strong>{diaSemanaBaseLabel}</strong> do mês.
-                    </label>
-                  </div>
-                )}
-
-                {/* Anual */}
-                {tipoRecorrencia === "anual" && (
-                  <div className="rounded-xl bg-white dark:bg-slate-950 border border-emerald-100 dark:border-emerald-900 p-3 space-y-2">
-                    <p className="text-xs font-extrabold text-emerald-900 dark:text-emerald-100">Anual</p>
-
-                    <label className="flex items-center gap-2 text-[11px] text-emerald-900 dark:text-emerald-100">
-                      <input
-                        type="radio"
-                        className="text-emerald-600"
-                        checked={anualModo === "dia_mes"}
-                        onChange={() => setAnualModo("dia_mes")}
-                        disabled={loading}
-                      />
-                      Em <strong>{diaMesBase}/{String(mesBaseIndex + 1).padStart(2, "0")}</strong> nos meses selecionados.
-                    </label>
-
-                    <label className="flex items-center gap-2 text-[11px] text-emerald-900 dark:text-emerald-100">
-                      <input
-                        type="radio"
-                        className="text-emerald-600"
-                        checked={anualModo === "ordem_semana"}
-                        onChange={() => setAnualModo("ordem_semana")}
-                        disabled={loading}
-                      />
-                      Na <strong>{ehUltimaSemana ? "última" : `${ordemSemanaBase}ª`}</strong>{" "}
-                      <strong>{diaSemanaBaseLabel}</strong> dos meses selecionados.
-                    </label>
-
-                    <p className="text-[11px] font-semibold text-emerald-900 dark:text-emerald-100">Meses:</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {NOMES_MESES.map((nome, idx) => (
-                        <button
-                          key={nome}
-                          type="button"
-                          onClick={() => toggleMesAnual(idx)}
-                          disabled={loading}
-                          className={cls(
-                            "px-2 py-1 text-[11px] rounded-full border transition",
-                            mesesAnual.includes(idx)
-                              ? "bg-emerald-600 text-white border-emerald-600"
-                              : "bg-white dark:bg-slate-950 text-emerald-900 dark:text-emerald-100 border-emerald-200 dark:border-emerald-900"
-                          )}
-                        >
-                          {nome.slice(0, 3)}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
+                <button
+                  type="button"
+                  onClick={abrirCartazPDF}
+                  disabled={loading}
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-emerald-300 text-emerald-800 hover:bg-emerald-50 dark:border-emerald-900/50 dark:text-emerald-200 dark:hover:bg-emerald-900/20 disabled:opacity-60"
+                  title="Gerar cartaz em PDF para a porta da sala"
+                >
+                  <FileText className="w-4 h-4" />
+                  Cartaz (PDF)
+                </button>
+              </>
             )}
           </div>
-        )}
 
-        {/* Aviso */}
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 dark:bg-slate-900 dark:border-slate-700 p-3 text-[11px] sm:text-xs text-slate-600 dark:text-slate-300 flex gap-2">
-          <Info className="w-4 h-4 mt-0.5 text-emerald-600 dark:text-emerald-300" />
-          <p className="leading-relaxed">
-            Use esta tela para aprovar/negar solicitações ou criar <strong>bloqueios internos</strong>. A recorrência é aplicada somente na criação.
-            Datas em finais de semana/feriados/pontos facultativos podem ser ignoradas automaticamente pelo backend.
-          </p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={loading ? undefined : onClose}
+              disabled={loading}
+              className="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-slate-100 hover:bg-slate-300 dark:hover:bg-slate-700 transition disabled:opacity-60"
+            >
+              Cancelar
+            </button>
+
+            <button
+              type="button"
+              onClick={salvar}
+              disabled={loading}
+              className={cls(
+                "px-4 py-2 rounded-xl text-white font-semibold transition disabled:opacity-60",
+                "bg-emerald-600 hover:bg-emerald-700"
+              )}
+              aria-busy={loading ? "true" : "false"}
+            >
+              {loading ? (isEdicao ? "Salvando..." : "Criando...") : isEdicao ? "Salvar alterações" : "Criar reserva"}
+            </button>
+          </div>
         </div>
-      </div>
+      </Modal>
 
-      {/* Footer sticky */}
-      <div className="sticky bottom-0 left-0 right-0 bg-white/85 dark:bg-zinc-950/85 backdrop-blur border-t border-slate-200 dark:border-slate-800 px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          {isEdicao && (
-            <>
-              <button
-                type="button"
-                onClick={excluirReserva}
-                disabled={loading}
-                className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-rose-200 text-rose-700 hover:bg-rose-50 dark:border-rose-900/40 dark:text-rose-300 dark:hover:bg-rose-900/20 disabled:opacity-60"
-              >
-                <Trash2 className="w-4 h-4" />
-                Excluir
-              </button>
-
-              <button
-                type="button"
-                onClick={abrirCartazPDF}
-                disabled={loading}
-                className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-emerald-300 text-emerald-800 hover:bg-emerald-50 dark:border-emerald-900/50 dark:text-emerald-200 dark:hover:bg-emerald-900/20 disabled:opacity-60"
-                title="Gerar cartaz em PDF para a porta da sala"
-              >
-                <FileText className="w-4 h-4" />
-                Cartaz (PDF)
-              </button>
-            </>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={loading}
-            className="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-slate-100 hover:bg-slate-300 dark:hover:bg-slate-700 transition disabled:opacity-60"
-          >
-            Cancelar
-          </button>
-
-          <button
-            type="button"
-            onClick={salvar}
-            disabled={loading}
-            className={cls(
-              "px-4 py-2 rounded-xl text-white font-semibold transition disabled:opacity-60",
-              "bg-emerald-600 hover:bg-emerald-700"
-            )}
-            aria-busy={loading ? "true" : "false"}
-          >
-            {loading ? (isEdicao ? "Salvando..." : "Criando...") : isEdicao ? "Salvar alterações" : "Criar reserva"}
-          </button>
-        </div>
-      </div>
-    </Modal>
+      {/* ✅ ModalConfirmacao (substitui window.confirm) */}
+      <ModalConfirmacao
+        isOpen={confirmDeleteOpen}
+        title="Excluir esta reserva?"
+        description={
+          "Esta ação não pode ser desfeita.\n\nAo excluir, o horário ficará livre novamente para novas solicitações."
+        }
+        confirmText="Sim, excluir"
+        cancelText="Cancelar"
+        danger
+        loading={loading}
+        onClose={() => {
+          if (loading) return;
+          setConfirmDeleteOpen(false);
+        }}
+        onConfirm={executarExcluirReserva}
+      />
+    </>
   );
 }

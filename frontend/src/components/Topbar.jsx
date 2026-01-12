@@ -1,5 +1,5 @@
 // ✅ src/components/Topbar.jsx
-import { useEffect, useMemo, useCallback, useState } from "react";
+import { useEffect, useMemo, useCallback, useState, useRef } from "react";
 import { useLocation, useNavigate, Link } from "react-router-dom";
 import {
   Menu as MenuIcon,
@@ -8,33 +8,64 @@ import {
   ChevronRight,
   UserCog,
   CalendarDays,
-  ClipboardList,
   ListChecks,
+  FileText,
+  LayoutDashboard,
 } from "lucide-react";
 
 import { apiGet } from "../services/api";
 
 /* ────────────────────────────────────────────────────────────── */
-/* Helpers de sessão / perfil                                     */
+/* Helpers robustos de sessão / perfil                             */
 /* ────────────────────────────────────────────────────────────── */
+
+const DEBUG =
+  typeof import.meta !== "undefined" && import.meta.env?.VITE_DEBUG_TOPBAR
+    ? String(import.meta.env.VITE_DEBUG_TOPBAR) === "true"
+    : false;
+
+function safeAtob(b64) {
+  try {
+    return atob(b64);
+  } catch {
+    return "";
+  }
+}
 function decodeJwtPayload(token) {
   try {
-    const [, payloadB64Url] = String(token).split(".");
+    const [, payloadB64Url] = String(token || "").split(".");
     if (!payloadB64Url) return null;
     let b64 = payloadB64Url.replace(/-/g, "+").replace(/_/g, "/");
     while (b64.length % 4 !== 0) b64 += "=";
-    return JSON.parse(atob(b64));
+    const json = safeAtob(b64);
+    return json ? JSON.parse(json) : null;
   } catch {
     return null;
   }
 }
 function getValidToken() {
-  const token = localStorage.getItem("token");
+  let token = localStorage.getItem("token");
   if (!token) return null;
+
+  // aceita "Bearer x.y.z"
+  if (token.startsWith("Bearer ")) token = token.slice(7).trim();
+
   const payload = decodeJwtPayload(token);
-  if (payload?.exp && Date.now() >= payload.exp * 1000) return null;
+  const now = Date.now() / 1000;
+
+  // nbf/exp (se expirar, limpa chaves de auth)
+  if (payload?.nbf && now < payload.nbf) return null;
+  if (payload?.exp && now >= payload.exp) {
+    ["token", "refresh_token", "perfil", "usuario"].forEach((k) =>
+      localStorage.removeItem(k)
+    );
+    sessionStorage.removeItem("perfil_incompleto");
+    return null;
+  }
+
   return token;
 }
+
 function normPerfilStr(p) {
   return String(p ?? "")
     .replace(/[\[\]"]/g, "")
@@ -42,6 +73,7 @@ function normPerfilStr(p) {
     .map((x) => x.trim().toLowerCase())
     .filter(Boolean);
 }
+
 function getPerfisRobusto() {
   const out = new Set();
 
@@ -49,7 +81,8 @@ function getPerfisRobusto() {
   if (rawPerfil) {
     try {
       const parsed = JSON.parse(rawPerfil);
-      if (Array.isArray(parsed)) parsed.forEach((p) => out.add(String(p).toLowerCase()));
+      if (Array.isArray(parsed))
+        parsed.forEach((p) => out.add(String(p).toLowerCase()));
       else normPerfilStr(rawPerfil).forEach((p) => out.add(p));
     } catch {
       normPerfilStr(rawPerfil).forEach((p) => out.add(p));
@@ -60,20 +93,21 @@ function getPerfisRobusto() {
     const rawUser = localStorage.getItem("usuario");
     if (rawUser) {
       const u = JSON.parse(rawUser);
-      if (u?.perfil) {
-        if (Array.isArray(u.perfil)) u.perfil.forEach((p) => out.add(String(p).toLowerCase()));
-        else out.add(String(u.perfil).toLowerCase());
-      }
-      if (u?.perfis) {
-        if (Array.isArray(u.perfis)) u.perfis.forEach((p) => out.add(String(p).toLowerCase()));
-        else normPerfilStr(u.perfis).forEach((p) => out.add(p));
-      }
+      const pushAll = (val) =>
+        normPerfilStr(Array.isArray(val) ? val.join(",") : val).forEach((p) =>
+          out.add(p)
+        );
+
+      if (u?.perfil) pushAll(u.perfil);
+      if (u?.perfis) pushAll(u.perfis);
+      if (u?.roles) pushAll(u.roles);
     }
   } catch {}
 
   if (out.size === 0) out.add("usuario");
   return Array.from(out).filter(Boolean);
 }
+
 function getUsuarioLS() {
   try {
     return JSON.parse(localStorage.getItem("usuario") || "null");
@@ -91,7 +125,8 @@ function getIniciais(nome, email) {
   const n = String(nome || "").trim();
   if (n) {
     const parts = n.split(/\s+/).filter(Boolean);
-    if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    if (parts.length >= 2)
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
     return parts[0].slice(0, 2).toUpperCase();
   }
   const e = String(email || "").trim();
@@ -126,7 +161,7 @@ function ChipLink({ to, children, title }) {
 
 export default function Topbar({
   title = "Escola da Saúde",
-  onOpenMenu, // abre Drawer no mobile
+  onOpenMenu,
   showQuickActions = true,
   drawerId = "app-drawer",
 }) {
@@ -134,7 +169,7 @@ export default function Topbar({
   const location = useLocation();
 
   const [token, setToken] = useState(getValidToken());
-  const [perfil, setPerfil] = useState(() => getPerfisRobusto());
+  const [perfis, setPerfis] = useState(() => getPerfisRobusto());
   const [nomeUsuario, setNomeUsuario] = useState(() => getNomeUsuario());
   const [emailUsuario, setEmailUsuario] = useState(() => getEmailUsuario());
 
@@ -143,72 +178,107 @@ export default function Topbar({
     [nomeUsuario, emailUsuario]
   );
 
-  /* Notificações */
+  /* ───────────────── Notificações ───────────────── */
   const [totalNaoLidas, setTotalNaoLidas] = useState(0);
+  const abortNotifRef = useRef(null);
+
   const atualizarContadorNotificacoes = useCallback(async () => {
-    if (!getValidToken() || document.hidden) return;
+    const tk = getValidToken();
+    if (!tk || document.hidden) return;
+
+    // cancela request anterior
+    abortNotifRef.current?.abort?.();
+    const ac = new AbortController();
+    abortNotifRef.current = ac;
+
     try {
       const data = await apiGet("/api/notificacoes/nao-lidas/contagem", {
         on401: "silent",
         on403: "silent",
+        signal: ac.signal,
       });
-      setTotalNaoLidas(data?.totalNaoLidas ?? data?.total ?? 0);
-    } catch {
-      setTotalNaoLidas(0);
+      if (ac.signal.aborted) return;
+      setTotalNaoLidas(Number(data?.totalNaoLidas ?? data?.total ?? 0) || 0);
+    } catch (e) {
+      if (e?.name !== "AbortError") setTotalNaoLidas(0);
     }
   }, []);
 
   useEffect(() => {
     let intervalId;
+
     const tick = () => atualizarContadorNotificacoes();
+
     if (token) {
       tick();
       intervalId = setInterval(tick, 30000);
     }
+
     const onVisibility = () => {
       if (!document.hidden) tick();
     };
+
     document.addEventListener("visibilitychange", onVisibility);
+
+    // compat com chamadas externas existentes
     window.atualizarContadorNotificacoes = tick;
+
     return () => {
+      abortNotifRef.current?.abort?.();
       if (intervalId) clearInterval(intervalId);
       document.removeEventListener("visibilitychange", onVisibility);
       delete window.atualizarContadorNotificacoes;
     };
   }, [token, atualizarContadorNotificacoes]);
 
-  /* Storage sync */
-  useEffect(() => {
-    const refreshFromLS = () => {
-      setToken(getValidToken());
-      setPerfil(getPerfisRobusto());
-      setNomeUsuario(getNomeUsuario());
-      setEmailUsuario(getEmailUsuario());
-    };
-    const onStorage = (e) => {
-      if (["perfil", "usuario", "token"].includes(e.key)) refreshFromLS();
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
+  /* ───────────────── Sync de sessão (storage + auth:changed) ───────────────── */
+  const refreshFromLS = useCallback(() => {
+    setToken(getValidToken());
+    setPerfis(getPerfisRobusto());
+    setNomeUsuario(getNomeUsuario());
+    setEmailUsuario(getEmailUsuario());
   }, []);
 
   useEffect(() => {
-    setPerfil(getPerfisRobusto());
-    setNomeUsuario(getNomeUsuario());
-    setEmailUsuario(getEmailUsuario());
-    setToken(getValidToken());
-  }, [location.pathname]);
+    const onStorage = (e) => {
+      if (!e.key || ["perfil", "usuario", "token"].includes(e.key)) {
+        DEBUG && console.log("[Topbar] storage → refresh");
+        refreshFromLS();
+      }
+    };
+    const onAuthChanged = () => {
+      DEBUG && console.log("[Topbar] auth:changed → refresh");
+      refreshFromLS();
+    };
+
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("auth:changed", onAuthChanged);
+
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("auth:changed", onAuthChanged);
+    };
+  }, [refreshFromLS]);
+
+  useEffect(() => {
+    // em troca de rota, refresh (caso login/perfil tenha sido atualizado)
+    refreshFromLS();
+  }, [location.pathname, refreshFromLS]);
 
   const isUsuario =
-    perfil.includes("usuario") ||
-    perfil.includes("instrutor") ||
-    perfil.includes("administrador");
-  const isInstrutor = perfil.includes("instrutor") || perfil.includes("administrador");
-  const isAdmin = perfil.includes("administrador");
+    perfis.includes("usuario") ||
+    perfis.includes("instrutor") ||
+    perfis.includes("administrador");
+
+  const isInstrutor = perfis.includes("instrutor") || perfis.includes("administrador");
+  const isAdmin = perfis.includes("administrador");
 
   const sair = () => {
-    // ✅ tema é institucional → NÃO mexer aqui
-    ["token", "refresh_token", "perfil", "usuario"].forEach((k) => localStorage.removeItem(k));
+    ["token", "refresh_token", "perfil", "usuario"].forEach((k) =>
+      localStorage.removeItem(k)
+    );
+    sessionStorage.removeItem("perfil_incompleto");
+    window.dispatchEvent(new Event("auth:changed"));
     navigate("/login");
   };
 
@@ -230,8 +300,53 @@ export default function Topbar({
 
   const safeOpenMenu = () => {
     if (typeof onOpenMenu === "function") onOpenMenu();
-    else navigate("/");
+    else {
+      // fallback melhor: tenta focar no drawer se existir
+      const el = document.getElementById(drawerId);
+      el?.focus?.();
+    }
   };
+
+  // quick actions (mais coerente)
+  const quickActions = useMemo(() => {
+    if (!showQuickActions) return null;
+
+    return (
+      <div className="hidden sm:flex items-center gap-2">
+        {isUsuario && (
+          <>
+            <ChipLink to="/eventos" title="Eventos">
+              <CalendarDays className="w-4 h-4 opacity-80" />
+              Eventos
+            </ChipLink>
+
+            <ChipLink to="/minhas-presencas" title="Minhas presenças">
+              <ListChecks className="w-4 h-4 opacity-80" />
+              Presenças
+            </ChipLink>
+
+            <ChipLink to="/certificados" title="Meus certificados">
+              <FileText className="w-4 h-4 opacity-80" />
+              Certificados
+            </ChipLink>
+          </>
+        )}
+
+        {(isInstrutor || isAdmin) && (
+          <ChipLink to="/agenda" title="Agenda">
+            <CalendarDays className="w-4 h-4 opacity-80" />
+            Agenda
+          </ChipLink>
+        )}
+
+        {/* atalho “Dashboard” é útil quando o usuário está em áreas profundas */}
+        <ChipLink to={isAdmin ? "/administrador" : isInstrutor ? "/instrutor" : "/usuario/dashboard"} title="Dashboard">
+          <LayoutDashboard className="w-4 h-4 opacity-80" />
+          Painel
+        </ChipLink>
+      </div>
+    );
+  }, [showQuickActions, isUsuario, isInstrutor, isAdmin]);
 
   return (
     <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/70 dark:border-white/10 dark:bg-zinc-950/60 backdrop-blur-xl shadow-sm">
@@ -286,33 +401,7 @@ export default function Topbar({
 
         {/* DIREITA */}
         <div className="flex items-center gap-2">
-          {showQuickActions && (
-            <div className="hidden sm:flex items-center gap-2">
-              {isUsuario && (
-                <>
-                  <ChipLink to="/eventos" title="Eventos">
-                    <CalendarDays className="w-4 h-4 opacity-80" />
-                    Eventos
-                  </ChipLink>
-
-                           <ChipLink to="/minhas-presencas" title="Minhas presenças">
-                    <ListChecks className="w-4 h-4 opacity-80" />
-                    Presenças
-                  </ChipLink>
-
-                  <ChipLink to="/certificados" title="Meus certificados">
-                    Certificados
-                  </ChipLink>
-                </>
-              )}
-
-              {(isInstrutor || isAdmin) && (
-                <ChipLink to="/agenda" title="Agenda">
-                  Agenda
-                </ChipLink>
-              )}
-            </div>
-          )}
+          {quickActions}
 
           {/* Notificações */}
           <button
@@ -324,7 +413,10 @@ export default function Topbar({
           >
             <Bell className="w-5 h-5" aria-hidden="true" />
             {totalNaoLidas > 0 && (
-              <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[10px] font-bold px-1.5 rounded-full leading-tight">
+              <span
+                className="absolute -top-1 -right-1 bg-rose-600 text-white text-[10px] font-extrabold px-1.5 rounded-full leading-tight"
+                aria-live="polite"
+              >
                 {totalNaoLidas}
               </span>
             )}

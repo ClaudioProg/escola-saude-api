@@ -16,6 +16,7 @@ import { toast } from "react-toastify";
 import api from "../services/api";
 import Footer from "../components/Footer";
 import ModalSolicitarReserva from "../components/ModalSolicitarReserva";
+import ModalConfirmacao from "../components/ModalConfirmacao";
 
 /* ───────── Constantes ───────── */
 const NOMES_MESES = [
@@ -84,7 +85,6 @@ function AgendaSalasUsuario() {
    *      sala_reuniao: { manha: reserva, tarde: reserva }
    *   },
    *   ...
-   * }
    * Obs: rota /salas/agenda-usuario → somente reservas do usuário logado.
    */
   const [reservasMap, setReservasMap] = useState({});
@@ -94,6 +94,10 @@ function AgendaSalasUsuario() {
   const [slotSelecionado, setSlotSelecionado] = useState(null); // { dataISO, periodo, sala }
   const [modalModo, setModalModo] = useState("criar"); // 'criar' | 'editar'
   const [reservaEmEdicao, setReservaEmEdicao] = useState(null);
+
+  // ✅ confirmação premium (substitui window.confirm) + loading de exclusão
+  const [confirmDelete, setConfirmDelete] = useState({ open: false, reserva: null });
+  const [deletingId, setDeletingId] = useState(null);
 
   const semanas = useMemo(() => criarMatrixMes(ano, mesIndex), [ano, mesIndex]);
   const liveRef = useRef(null);
@@ -246,10 +250,24 @@ function AgendaSalasUsuario() {
     });
     setModalAberto(true);
   }
-  async function excluirReserva(reserva) {
+
+  // ✅ abrir confirmação
+  function solicitarExcluirReserva(reserva) {
+    if (!reserva?.id) return;
+    if (deletingId) return;
+    setConfirmDelete({ open: true, reserva });
+  }
+
+  // ✅ executar exclusão (chamado pelo ModalConfirmacao)
+  async function executarExcluirReserva() {
+    const reserva = confirmDelete?.reserva;
+    if (!reserva?.id) {
+      setConfirmDelete({ open: false, reserva: null });
+      return;
+    }
+
     try {
-      const ok = window.confirm("Confirmar exclusão desta solicitação?");
-      if (!ok) return;
+      setDeletingId(reserva.id);
       await api.delete(`/salas/minhas/${reserva.id}`);
       toast.success("Solicitação excluída com sucesso.");
       await carregarAgenda();
@@ -257,6 +275,9 @@ function AgendaSalasUsuario() {
       console.error("[excluirReserva] erro:", err);
       const msg = err?.response?.data?.erro || "Não foi possível excluir a solicitação.";
       toast.error(msg);
+    } finally {
+      setDeletingId(null);
+      setConfirmDelete({ open: false, reserva: null });
     }
   }
 
@@ -483,6 +504,8 @@ function AgendaSalasUsuario() {
                                 const reserva = getReservaDoSlot(salaItem.value, dataISO, p.value);
 
                                 if (status === "minha_solicitacao_pendente" && reserva) {
+                                  const disabledDelete = deletingId === reserva.id;
+
                                   return (
                                     <div
                                       key={p.value}
@@ -511,8 +534,9 @@ function AgendaSalasUsuario() {
                                         </button>
                                         <button
                                           type="button"
-                                          onClick={() => excluirReserva(reserva)}
-                                          className="inline-flex items-center justify-center p-1.5 rounded-md border border-red-300 text-red-700 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-300"
+                                          onClick={() => solicitarExcluirReserva(reserva)}
+                                          disabled={disabledDelete}
+                                          className="inline-flex items-center justify-center p-1.5 rounded-md border border-red-300 text-red-700 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-300 disabled:opacity-60 disabled:cursor-not-allowed"
                                           title="Excluir solicitação"
                                           aria-label="Excluir solicitação"
                                         >
@@ -592,6 +616,26 @@ function AgendaSalasUsuario() {
           reservaAtual={reservaEmEdicao} // objeto da reserva ao editar
         />
       )}
+
+      {/* ✅ ModalConfirmacao: excluir solicitação */}
+      <ModalConfirmacao
+        isOpen={!!confirmDelete.open}
+        title="Excluir solicitação?"
+        description={
+          confirmDelete?.reserva
+            ? `Confirmar exclusão da sua solicitação de reserva?\n\n${String(confirmDelete.reserva.finalidade || "Sem finalidade").trim()}`
+            : "Confirmar exclusão desta solicitação?"
+        }
+        confirmText="Sim, excluir"
+        cancelText="Cancelar"
+        danger
+        loading={!!deletingId}
+        onClose={() => {
+          if (deletingId) return;
+          setConfirmDelete({ open: false, reserva: null });
+        }}
+        onConfirm={executarExcluirReserva}
+      />
     </div>
   );
 }

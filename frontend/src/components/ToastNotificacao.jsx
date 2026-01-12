@@ -1,36 +1,23 @@
 // 📁 src/components/toastNotificacao.js
+import React from "react";
 import { toast } from "react-toastify";
 import { CheckCircle, XCircle, Info, AlertTriangle, Loader2 } from "lucide-react";
 
 /**
- * Toast helper centralizado (React-Toastify)
- * - Tema auto (light/dark), com override
- * - Ícones consistentes (Lucide)
- * - Evita duplicados (opcional via `dedupeKey`)
- * - Retorna `toastId` para controle (dismiss/update)
- * - Atalhos: sucesso, erro, alerta, info, carregando, promessa
+ * Toast helper centralizado (React-Toastify) — PREMIUM
+ * - Tema auto (tailwind 'dark' + prefers-color-scheme)
+ * - Ícones consistentes (Lucide) sem JSX (arquivo .js safe)
+ * - Dedupe por chave com opção de "atualizar em vez de ignorar"
+ * - Retorna toastId para controle (dismiss/update)
+ * - Atalhos: ok/erro/alerta/info/loading/promise
  */
 
 /* ===========================
-   Opções & utilitários
-   =========================== */
+   Config
+=========================== */
 
-/** Posição padrão global — altere se precisar */
 export const TOAST_POS = "top-right";
 
-/** Resolve tema: "light" | "dark" | "auto" */
-function resolveTheme(theme = "auto") {
-  if (theme !== "auto") return theme;
-  try {
-    // tenta classe 'dark' (Tailwind)
-    if (document.documentElement.classList.contains("dark")) return "dark";
-    // fallback via prefers-color-scheme
-    if (window.matchMedia?.("(prefers-color-scheme: dark)").matches) return "dark";
-  } catch {}
-  return "light";
-}
-
-/** Opções padrão */
 const BASE_DEFAULTS = {
   position: TOAST_POS,
   autoClose: 5000,
@@ -38,43 +25,73 @@ const BASE_DEFAULTS = {
   pauseOnHover: true,
   draggable: true,
   hideProgressBar: false,
-  theme: "auto",
+  theme: "auto", // 'auto' | 'light' | 'dark'
 };
 
-/**
- * Evita duplicados: mantém um mapa de dedupeKey -> toastId ativo.
- * Se ainda ativo, retorna o mesmo id e não cria um novo.
- */
-const activeByKey = new Map();
-function maybeDedup(dedupeKey) {
-  if (!dedupeKey) return null;
-  const existing = activeByKey.get(dedupeKey);
-  if (existing && toast.isActive(existing)) return existing;
-  return null;
-}
-function rememberKey(dedupeKey, id) {
-  if (dedupeKey && id) activeByKey.set(dedupeKey, id);
-}
-
-/** Cria um ícone consistente (com cor utilitária) */
-function iconEl(El, cls) {
-  return <El size={20} className={cls} />;
+function resolveTheme(theme = "auto") {
+  if (theme !== "auto") return theme;
+  try {
+    if (document.documentElement.classList.contains("dark")) return "dark";
+    if (window.matchMedia?.("(prefers-color-scheme: dark)").matches) return "dark";
+  } catch {}
+  return "light";
 }
 
 /* ===========================
-   Núcleo
-   =========================== */
+   Dedupe
+=========================== */
 
 /**
- * Exibe um toast genérico.
- * @param {'success'|'error'|'warn'|'info'} type
- * @param {string|React.ReactNode} mensagem
- * @param {object} opts
- *   - icon: ReactNode (sobrepõe o padrão)
- *   - theme: 'light'|'dark'|'auto' (default: 'auto')
- *   - position, autoClose, etc. (qualquer opção do toastify)
- *   - dedupeKey: string (evita duplicados enquanto ativo)
- * @returns {string|number} toastId
+ * Map dedupeKey -> toastId
+ * - removemos quando o toast fecha (onClose) pra evitar leak.
+ */
+const activeByKey = new Map();
+
+function getActiveIdByKey(key) {
+  if (!key) return null;
+  const id = activeByKey.get(key);
+  if (id && toast.isActive(id)) return id;
+  return null;
+}
+
+function rememberKey(key, id) {
+  if (!key || id == null) return;
+  activeByKey.set(key, id);
+}
+
+function forgetKey(key, id) {
+  if (!key) return;
+  const current = activeByKey.get(key);
+  if (current == null) return;
+  if (id == null || current === id) activeByKey.delete(key);
+}
+
+/* ===========================
+   Icon factory (no JSX)
+=========================== */
+
+function iconEl(Icon, className) {
+  return React.createElement(Icon, { size: 20, className });
+}
+
+// Classes de ícone que funcionam bem em light/dark
+const ICON_CLS = {
+  success: "text-emerald-600 dark:text-emerald-400",
+  error: "text-rose-600 dark:text-rose-400",
+  warn: "text-amber-600 dark:text-amber-300",
+  info: "text-sky-600 dark:text-sky-400",
+  spin: "animate-spin text-zinc-700 dark:text-zinc-200",
+};
+
+/* ===========================
+   Core
+=========================== */
+
+/**
+ * toastCustom(type, mensagem, opts)
+ * opts extras:
+ * - dedupeKey?: string
+ * - dedupeMode?: 'ignore' | 'update'  (default 'ignore')
  */
 export function toastCustom(type, mensagem, opts = {}) {
   const {
@@ -86,14 +103,35 @@ export function toastCustom(type, mensagem, opts = {}) {
     pauseOnHover = BASE_DEFAULTS.pauseOnHover,
     draggable = BASE_DEFAULTS.draggable,
     hideProgressBar = BASE_DEFAULTS.hideProgressBar,
+
     dedupeKey,
+    dedupeMode = "ignore", // 'ignore' | 'update'
     ...rest
   } = opts;
 
-  const dedupId = maybeDedup(dedupeKey);
-  if (dedupId != null) return dedupId;
-
   const resolvedTheme = resolveTheme(theme);
+  const existing = getActiveIdByKey(dedupeKey);
+
+  // 🔁 Se já existe e for "update", atualiza; se "ignore", só retorna
+  if (existing != null) {
+    if (dedupeMode === "update") {
+      toast.update(existing, {
+        render: mensagem,
+        type,
+        icon,
+        isLoading: false,
+        autoClose,
+        closeOnClick,
+        pauseOnHover,
+        draggable,
+        hideProgressBar,
+        theme: resolvedTheme,
+        ...rest,
+      });
+    }
+    return existing;
+  }
+
   const id = toast[type](mensagem, {
     icon,
     position,
@@ -103,6 +141,7 @@ export function toastCustom(type, mensagem, opts = {}) {
     draggable,
     hideProgressBar,
     theme: resolvedTheme,
+    onClose: () => forgetKey(dedupeKey, id),
     ...rest,
   });
 
@@ -111,131 +150,201 @@ export function toastCustom(type, mensagem, opts = {}) {
 }
 
 /* ===========================
-   Atalhos
-   =========================== */
+   Shortcuts (padrão)
+=========================== */
 
-export function toastSucesso(
-  mensagem = "Ação concluída com sucesso!",
-  opts = {}
-) {
-  const icon = opts.icon ?? iconEl(CheckCircle, "text-green-600");
+export function toastSucesso(mensagem = "Ação concluída com sucesso!", opts = {}) {
+  const icon = opts.icon ?? iconEl(CheckCircle, ICON_CLS.success);
   return toastCustom("success", mensagem, { ...opts, icon });
 }
 
-export function toastErro(
-  mensagem = "Ocorreu um erro ao processar.",
-  opts = {}
-) {
-  const icon = opts.icon ?? iconEl(XCircle, "text-red-600");
+export function toastErro(mensagem = "Ocorreu um erro ao processar.", opts = {}) {
+  const icon = opts.icon ?? iconEl(XCircle, ICON_CLS.error);
   return toastCustom("error", mensagem, { ...opts, icon });
 }
 
-export function toastAlerta(
-  mensagem = "Atenção! Verifique os dados.",
-  opts = {}
-) {
-  const icon = opts.icon ?? iconEl(AlertTriangle, "text-yellow-600");
+export function toastAlerta(mensagem = "Atenção! Verifique os dados.", opts = {}) {
+  const icon = opts.icon ?? iconEl(AlertTriangle, ICON_CLS.warn);
   return toastCustom("warn", mensagem, { ...opts, icon });
 }
 
-export function toastInfo(
-  mensagem = "Informação.",
-  opts = {}
-) {
-  const icon = opts.icon ?? iconEl(Info, "text-blue-600");
+export function toastInfo(mensagem = "Informação.", opts = {}) {
+  const icon = opts.icon ?? iconEl(Info, ICON_CLS.info);
   return toastCustom("info", mensagem, { ...opts, icon });
 }
 
+/* ===========================
+   Loading + update helpers
+=========================== */
+
 /**
  * Toast de carregamento persistente.
- * - Não fecha automaticamente (autoClose: false)
- * - Retorna id para depois atualizar/fechar
+ * - Não fecha automaticamente
+ * - Suporta dedupeKey (com update)
  */
-export function toastCarregando(
-  mensagem = "Processando…",
-  opts = {}
-) {
-  const icon = opts.icon ?? iconEl(Loader2, "animate-spin");
-  return toast.loading(mensagem, {
-    closeOnClick: false,
+export function toastCarregando(mensagem = "Processando…", opts = {}) {
+  const {
+    theme = BASE_DEFAULTS.theme,
+    position = BASE_DEFAULTS.position,
+    dedupeKey,
+    dedupeMode = "update",
+    icon,
+    ...rest
+  } = opts;
+
+  const resolvedTheme = resolveTheme(theme);
+  const existing = getActiveIdByKey(dedupeKey);
+
+  if (existing != null) {
+    if (dedupeMode === "update") {
+      toast.update(existing, {
+        render: mensagem,
+        isLoading: true,
+        autoClose: false,
+        closeOnClick: false,
+        draggable: false,
+        hideProgressBar: true,
+        theme: resolvedTheme,
+        icon: icon ?? iconEl(Loader2, ICON_CLS.spin),
+        ...rest,
+      });
+    }
+    return existing;
+  }
+
+  const id = toast.loading(mensagem, {
     autoClose: false,
+    closeOnClick: false,
     draggable: false,
     hideProgressBar: true,
-    position: opts.position ?? BASE_DEFAULTS.position,
-    theme: resolveTheme(opts.theme ?? BASE_DEFAULTS.theme),
-    icon,
-    ...opts,
+    position,
+    theme: resolvedTheme,
+    icon: icon ?? iconEl(Loader2, ICON_CLS.spin),
+    onClose: () => forgetKey(dedupeKey, id),
+    ...rest,
   });
+
+  rememberKey(dedupeKey, id);
+  return id;
 }
 
-/** Atualiza um toast existente (ex.: depois do loading) */
+/**
+ * Atualiza um toast existente (ex.: depois do loading)
+ * opts:
+ * - type: 'success'|'error'|'info'|'warning'
+ * - autoClose
+ * - icon
+ * - theme
+ */
 export function toastAtualizar(toastId, mensagem, opts = {}) {
+  if (toastId == null) return;
+
   toast.update(toastId, {
     render: mensagem,
     isLoading: false,
     autoClose: opts.autoClose ?? BASE_DEFAULTS.autoClose,
-    type: opts.type, // 'success'|'error'|'info'|'warning'
+    closeOnClick: opts.closeOnClick ?? true,
+    draggable: opts.draggable ?? true,
+    hideProgressBar: opts.hideProgressBar ?? false,
+    type: opts.type,
     icon: opts.icon,
     theme: resolveTheme(opts.theme ?? BASE_DEFAULTS.theme),
     ...opts,
   });
 }
 
-/** Fecha um toast específico (ou todos, se omitido) */
-export function toastFechar(toastId) {
-  if (typeof toastId === "undefined" || toastId === null) {
-    toast.dismiss();
-  } else {
-    toast.dismiss(toastId);
-  }
+/** Helpers semânticos p/ finalizar loading */
+export function toastConcluir(toastId, mensagem = "Concluído!", opts = {}) {
+  toastAtualizar(toastId, mensagem, {
+    type: "success",
+    icon: opts.icon ?? iconEl(CheckCircle, ICON_CLS.success),
+    ...opts,
+  });
 }
 
+export function toastFalhar(toastId, mensagem = "Falha na operação.", opts = {}) {
+  toastAtualizar(toastId, mensagem, {
+    type: "error",
+    icon: opts.icon ?? iconEl(XCircle, ICON_CLS.error),
+    ...opts,
+  });
+}
+
+/** Fecha um toast específico (ou todos, se omitido) */
+export function toastFechar(toastId) {
+  if (toastId == null) toast.dismiss();
+  else toast.dismiss(toastId);
+}
+
+/* ===========================
+   Promise helper (premium)
+=========================== */
+
 /**
- * Toast para promessas (syntactic sugar ao toast.promise)
- * @param {Promise<any>} promessa
- * @param {{pending?: string|ReactNode, success?: string|ReactNode|((val)=>ReactNode), error?: string|ReactNode|((err)=>ReactNode)}} mensagens
- * @param {object} opts Opções adicionais do toast
- * @returns {Promise<any>} reencaminha a promise original
+ * toastPromessa(promessa, mensagens, opts)
+ * mensagens:
+ * - pending: string|ReactNode
+ * - success: string|ReactNode|((val)=>ReactNode)
+ * - error: string|ReactNode|((err)=>ReactNode)
  */
 export function toastPromessa(promessa, mensagens = {}, opts = {}) {
   const theme = resolveTheme(opts.theme ?? BASE_DEFAULTS.theme);
+
   return toast.promise(
     promessa,
     {
       pending: {
         render: mensagens.pending ?? "Enviando…",
-        icon: opts.pendingIcon ?? iconEl(Loader2, "animate-spin"),
+        icon: opts.pendingIcon ?? iconEl(Loader2, ICON_CLS.spin),
       },
       success: {
         render: mensagens.success ?? "Concluído!",
-        icon: opts.successIcon ?? iconEl(CheckCircle, "text-green-600"),
+        icon: opts.successIcon ?? iconEl(CheckCircle, ICON_CLS.success),
       },
       error: {
         render: mensagens.error ?? "Falha na operação.",
-        icon: opts.errorIcon ?? iconEl(XCircle, "text-red-600"),
+        icon: opts.errorIcon ?? iconEl(XCircle, ICON_CLS.error),
       },
     },
     {
       theme,
       position: opts.position ?? BASE_DEFAULTS.position,
-      closeOnClick: true,
-      hideProgressBar: false,
+      closeOnClick: opts.closeOnClick ?? true,
+      pauseOnHover: opts.pauseOnHover ?? true,
+      draggable: opts.draggable ?? true,
+      hideProgressBar: opts.hideProgressBar ?? false,
       ...opts,
     }
   );
 }
 
 /* ===========================
-   Exemplos de uso:
-   ---------------------------
-   toastSucesso("Salvo!");
-   const id = toastCarregando("Gerando...");
-   // depois:
-   toastAtualizar(id, "Concluído", { type: "success", autoClose: 3000, icon: iconEl(CheckCircle, "text-green-600") });
+   Extras úteis (opcional)
+=========================== */
 
-   toastPromessa(api.save(data), {
-     pending: "Salvando...",
-     success: "Registro salvo!",
-     error: (e) => `Erro: ${e?.message || "desconhecido"}`
-   });
-   =========================== */
+/**
+ * Executa uma função async e dá feedback automático:
+ * - mostra loading
+ * - conclui/falha
+ * - dedupe por key (ex.: "salvar-perfil")
+ */
+export async function toastTask(task, messages = {}, opts = {}) {
+  const id = toastCarregando(messages.pending ?? "Processando…", {
+    dedupeKey: opts.dedupeKey,
+    dedupeMode: "update",
+    ...opts,
+  });
+
+  try {
+    const res = await task();
+    toastConcluir(id, typeof messages.success === "function" ? messages.success(res) : messages.success ?? "Concluído!");
+    return res;
+  } catch (e) {
+    const msg =
+      typeof messages.error === "function"
+        ? messages.error(e)
+        : messages.error ?? (e?.data?.message || e?.message || "Falha na operação.");
+    toastFalhar(id, msg);
+    throw e;
+  }
+}

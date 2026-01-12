@@ -1,4 +1,4 @@
-// ✅ src/pages/UsuarioSubmissoes.jsx — premium/robusto
+// ✅ src/pages/UsuarioSubmissoes.jsx — premium/robusto (ajustado p/ rotas públicas de modelos)
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { motion } from "framer-motion";
 import { toast } from "react-toastify";
@@ -26,24 +26,18 @@ import Footer from "../components/Footer";
 function toBrDateTimeSafe(input) {
   if (!input) return "—";
   const s = String(input).trim();
+  if (/^\d{2}\/\d{2}\/\d{4}/.test(s)) return s; // já BR
 
-  // já BR
-  if (/^\d{2}\/\d{2}\/\d{4}/.test(s)) return s;
-
-  // YYYY-MM-DD HH:mm(:ss) ou YYYY-MM-DDTHH:mm(:ss)
   const mDT = s.match(/^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})(?::(\d{2}))?/);
   if (mDT) {
     const [, yy, mm, dd, hh, mi] = mDT;
     return `${dd}/${mm}/${yy} ${hh}:${mi}`;
   }
-
-  // YYYY-MM-DD
   const mD = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (mD) {
     const [, yy, mm, dd] = mD;
     return `${dd}/${mm}/${yy}`;
   }
-
   return s;
 }
 
@@ -65,7 +59,6 @@ const okOral = (s) => {
   return oralLower === "aprovado" || stLower === "aprovado_oral" || Boolean(s?._oral_aprovada);
 };
 
-// (mantive, pode ser útil depois)
 const isFinalizado = (s) =>
   Boolean(
     s?._finalizado ||
@@ -508,6 +501,14 @@ export default function UsuarioSubmissoes() {
 
   const unwrap = (resp) => (Array.isArray(resp) ? resp : resp?.data || []);
 
+  /* ───── helpers de HEAD (200/204) ───── */
+  function headExists(resp) {
+    // aceita formatos diferentes vindos de apiHead
+    if (resp === true || resp === 200 || resp === 204) return true;
+    const st = resp?.status ?? resp?.data?.status;
+    return st === 200 || st === 204;
+  }
+
   /* ───── baixar modelo banner ───── */
   async function baixarModeloBanner(chId) {
     if (!chId) return;
@@ -523,18 +524,13 @@ export default function UsuarioSubmissoes() {
     }
   }
 
-  /* ───── baixar modelo oral (fallback) ───── */
+  /* ───── baixar modelo oral (público) ───── */
   async function baixarModeloOral(chId) {
     if (!chId) return;
     try {
       setBaixandoOralMap((m) => ({ ...m, [chId]: true }));
-      try {
-        const { blob, filename } = await apiGetFile(`/chamadas/${chId}/modelo-oral`);
-        downloadBlob(filename || `modelo-oral-${chId}.pptx`, blob);
-      } catch {
-        const { blob, filename } = await apiGetFile(`/chamadas/${chId}/modelo-oral/download`);
-        downloadBlob(filename || `modelo-oral-${chId}.pptx`, blob);
-      }
+      const { blob, filename } = await apiGetFile(`/chamadas/${chId}/modelo-oral`);
+      downloadBlob(filename || `modelo-oral-${chId}.pptx`, blob);
       toast.success("Modelo oral baixado.");
     } catch (e) {
       toast.error(e?.message || "Falha ao baixar o modelo de slides (oral).");
@@ -543,27 +539,22 @@ export default function UsuarioSubmissoes() {
     }
   }
 
-  /* ───── HEAD checks (banner/oral) com fallback ───── */
+  /* ───── HEAD checks (banner/oral) — público ───── */
   const checkModeloBanner = useCallback(async (chId) => {
     try {
-      const ok = await apiHead(`/chamadas/${chId}/modelo-banner`, { auth: true, on401: "silent", on403: "silent" });
-      return !!ok;
+      const resp = await apiHead(`/chamadas/${chId}/modelo-banner`, { auth: true, on401: "silent", on403: "silent" });
+      return headExists(resp);
     } catch {
-      return false;
+      return false; // 404/410 → indisponível (estado esperado)
     }
   }, []);
 
   const checkModeloOral = useCallback(async (chId) => {
     try {
-      const ok = await apiHead(`/chamadas/${chId}/modelo-oral`, { auth: true, on401: "silent", on403: "silent" });
-      return !!ok;
+      const resp = await apiHead(`/chamadas/${chId}/modelo-oral`, { auth: true, on401: "silent", on403: "silent" });
+      return headExists(resp);
     } catch {
-      try {
-        const ok2 = await apiHead(`/chamadas/${chId}/modelo-oral/download`, { auth: true, on401: "silent", on403: "silent" });
-        return !!ok2;
-      } catch {
-        return false;
-      }
+      return false;
     }
   }, []);
 
@@ -579,7 +570,6 @@ export default function UsuarioSubmissoes() {
 
         safeSet(() => {
           setChamadas(chamadasArr);
-          // ordena: se tiver atualizado_em/criado_em/data, põe mais recente em cima
           const sorted = [...minhasArr].sort((a, b) => {
             const da = new Date(a.atualizado_em || a.updated_at || a.criado_em || a.created_at || 0).getTime();
             const db = new Date(b.atualizado_em || b.updated_at || b.criado_em || b.created_at || 0).getTime();
@@ -588,7 +578,7 @@ export default function UsuarioSubmissoes() {
           setMinhas(sorted);
         });
 
-        // checks (banner/oral) em paralelo (settled)
+        // checks (banner/oral) em paralelo
         const ids = chamadasArr.map((ch) => ch.id).filter(Boolean);
         const bannerSettled = await Promise.allSettled(ids.map((id) => checkModeloBanner(id)));
         const oralSettled = await Promise.allSettled(ids.map((id) => checkModeloOral(id)));
@@ -851,7 +841,7 @@ export default function UsuarioSubmissoes() {
                               <button
                                 type="button"
                                 onClick={() => setModalInscricao({ chamadaId: ch.id })}
-                                className="flex items-center gap-2 text-sm bg-indigo-600 text-white px-3 py-2 rounded-md hover:bg-indigo-700 transition focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                                className="flex itemsler gap-2 text-sm bg-indigo-600 text-white px-3 py-2 rounded-md hover:bg-indigo-700 transition focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                                 aria-label="Submeter trabalho"
                               >
                                 <PlusCircle className="w-4 h-4" />

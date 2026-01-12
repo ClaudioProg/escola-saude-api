@@ -11,6 +11,7 @@ import {
   Search, RotateCcw, MapPin, Shield, Link2, Sparkles, ChevronLeft, ChevronRight
 } from "lucide-react";
 import { QRCodeCanvas, QRCodeSVG } from "qrcode.react";
+import ModalConfirmacao from "../components/ModalConfirmacao";
 
 /* ──────────────────────────── Helpers ──────────────────────────── */
 const fmt = (v, alt = "—") => (v === 0 || v ? String(v) : alt);
@@ -68,7 +69,16 @@ export default function AdminVotacoes() {
 
   const [sel, setSel] = useState(null);
   const [ranking, setRanking] = useState([]);
+
   const [loading, setLoading] = useState(false);
+
+  // ✅ confirmação premium p/ status (substitui window.confirm)
+  const [confirmStatus, setConfirmStatus] = useState({
+    open: false,
+    nextStatus: "",
+    label: "",
+  });
+  const [statusLoading, setStatusLoading] = useState(false);
 
   useEffect(() => { const t = setTimeout(() => setDebQ(busca), 250); return () => clearTimeout(t); }, [busca]);
   useEffect(() => { set({ q: debQ, page, per: perPage, id: sel?.id || url.id }); /* eslint-disable-next-line */}, [debQ, page, perPage, sel?.id]);
@@ -98,6 +108,7 @@ export default function AdminVotacoes() {
       ...v,
       endereco: v.endereco ?? "",
       raio_m: clamp(v.raio_m ?? 200, 1, 200),
+      opcoes: Array.isArray(v.opcoes) ? v.opcoes : [],
     });
     set({ id: String(id) });
     await carregaRanking(id);
@@ -140,10 +151,10 @@ export default function AdminVotacoes() {
 
       if (sel.id) {
         const upd = await adminAtualizar(sel.id, payload);
-        setSel({ ...sel, ...upd });
+        setSel({ ...sel, ...upd, opcoes: Array.isArray(upd?.opcoes) ? upd.opcoes : (sel.opcoes || []) });
       } else {
         const criado = await adminCriar(payload);
-        setSel(criado);
+        setSel({ ...criado, opcoes: Array.isArray(criado?.opcoes) ? criado.opcoes : [] });
         set({ id: String(criado.id) });
       }
       toast.success("Salvo!");
@@ -157,31 +168,69 @@ export default function AdminVotacoes() {
     if (!sel?.id) return toast.info("Salve a votação primeiro.");
     const ordem = (sel.opcoes?.length || 0) + 1;
     const o = await adminCriarOpcao(sel.id, { titulo: "Nova opção", ordem });
-    setSel({ ...sel, opcoes: [...(sel.opcoes || []), o] });
+    setSel((prev) => ({ ...prev, opcoes: [...(prev?.opcoes || []), o] }));
   }
 
-  async function salvarOpcao(o) {
-    const upd = await adminAtualizarOpcao(sel.id, o.id, {
+  async function salvarOpcao(idOpcao) {
+    if (!sel?.id) return;
+    const o = (sel.opcoes || []).find(x => x.id === idOpcao);
+    if (!o) return;
+
+    const payload = {
       ...o,
       ordem: toInt(o.ordem, 0),
       titulo: (o.titulo || "").trim(),
-    });
-    setSel({ ...sel, opcoes: (sel.opcoes || []).map(x => x.id === o.id ? upd : x) });
+    };
+
+    const upd = await adminAtualizarOpcao(sel.id, o.id, payload);
+    setSel((prev) => ({
+      ...prev,
+      opcoes: (prev?.opcoes || []).map(x => x.id === o.id ? upd : x),
+    }));
   }
 
-  async function mudarStatus(status) {
+  // ✅ update imutável da opção (sem mutar `o`)
+  const patchOpcao = useCallback((idOpcao, patch) => {
+    setSel((prev) => {
+      if (!prev) return prev;
+      const opcoes = (prev.opcoes || []).map((o) => (o.id === idOpcao ? { ...o, ...patch } : o));
+      return { ...prev, opcoes };
+    });
+  }, []);
+
+  // ✅ abre modal confirmação (status)
+  function solicitarMudarStatus(next) {
     if (!sel?.id) return;
-    const st = String(sel.status || "");
+
     const label =
-      status === "ativa" ? "Ativar" :
-      status === "encerrada" ? "Encerrar" : "Mover para rascunho";
-    const ok = window.confirm(`${label} a votação "${sel.titulo}"?`);
-    if (!ok) return;
-    const v = await adminStatus(sel.id, status);
-    setSel({ ...sel, status: v.status });
-    toast.success(`Status: ${v.status}`);
-    recarregar();
-    if (v.status === "encerrada") carregaRanking(sel.id).catch(() => {});
+      next === "ativa" ? "Ativar" :
+      next === "encerrada" ? "Encerrar" : "Mover para rascunho";
+
+    setConfirmStatus({ open: true, nextStatus: next, label });
+  }
+
+  // ✅ executa status (com loading)
+  async function executarMudarStatus() {
+    if (!sel?.id || !confirmStatus?.nextStatus) {
+      setConfirmStatus({ open: false, nextStatus: "", label: "" });
+      return;
+    }
+
+    const next = confirmStatus.nextStatus;
+
+    try {
+      setStatusLoading(true);
+      const v = await adminStatus(sel.id, next);
+      setSel((prev) => ({ ...prev, status: v.status }));
+      toast.success(`Status: ${v.status}`);
+      recarregar();
+      if (v.status === "encerrada") carregaRanking(sel.id).catch(() => {});
+    } catch (e) {
+      toast.error(e?.response?.data?.erro || "Erro ao alterar status.");
+    } finally {
+      setStatusLoading(false);
+      setConfirmStatus({ open: false, nextStatus: "", label: "" });
+    }
   }
 
   async function carregaRanking(id) {
@@ -276,6 +325,8 @@ export default function AdminVotacoes() {
     const enc = lista.filter(v => v.status === "encerrada").length;
     return { t, ativas, rasc, enc };
   }, [lista]);
+
+  const statusDisabled = loading || statusLoading || !sel?.id;
 
   return (
     <main className="min-h-screen bg-gelo dark:bg-zinc-950">
@@ -514,13 +565,28 @@ export default function AdminVotacoes() {
                   <button onClick={salvar} className="inline-flex items-center gap-2 rounded-xl px-3 py-2 bg-emerald-600 text-white">
                     <Save className="w-4 h-4" /> Salvar
                   </button>
-                  <button onClick={() => mudarStatus("ativa")} className="inline-flex items-center gap-2 rounded-xl px-3 py-2 border">
+
+                  <button
+                    onClick={() => solicitarMudarStatus("ativa")}
+                    disabled={statusDisabled || sel.status === "ativa"}
+                    className="inline-flex items-center gap-2 rounded-xl px-3 py-2 border disabled:opacity-50"
+                  >
                     <Play className="w-4 h-4" /> Ativar
                   </button>
-                  <button onClick={() => mudarStatus("rascunho")} className="inline-flex items-center gap-2 rounded-xl px-3 py-2 border">
+
+                  <button
+                    onClick={() => solicitarMudarStatus("rascunho")}
+                    disabled={statusDisabled || sel.status === "rascunho"}
+                    className="inline-flex items-center gap-2 rounded-xl px-3 py-2 border disabled:opacity-50"
+                  >
                     <Pause className="w-4 h-4" /> Rascunho
                   </button>
-                  <button onClick={() => mudarStatus("encerrada")} className="inline-flex items-center gap-2 rounded-xl px-3 py-2 border">
+
+                  <button
+                    onClick={() => solicitarMudarStatus("encerrada")}
+                    disabled={statusDisabled || sel.status === "encerrada"}
+                    className="inline-flex items-center gap-2 rounded-xl px-3 py-2 border disabled:opacity-50"
+                  >
                     <StopCircle className="w-4 h-4" /> Encerrar
                   </button>
                 </div>
@@ -572,23 +638,26 @@ export default function AdminVotacoes() {
                     <li key={o.id} className="grid md:grid-cols-4 gap-2 items-center">
                       <input
                         className="input md:col-span-2"
-                        value={o.titulo}
-                        onChange={e => o.titulo = e.target.value}
-                        onBlur={() => salvarOpcao(o)}
+                        value={o.titulo || ""}
+                        onChange={e => patchOpcao(o.id, { titulo: e.target.value })}
+                        onBlur={() => salvarOpcao(o.id)}
                         placeholder="Título da opção"
                       />
                       <input
                         className="input"
                         type="number"
-                        value={o.ordem}
-                        onChange={e => o.ordem = toInt(e.target.value, 0)}
-                        onBlur={() => salvarOpcao(o)}
+                        value={toInt(o.ordem, 0)}
+                        onChange={e => patchOpcao(o.id, { ordem: toInt(e.target.value, 0) })}
+                        onBlur={() => salvarOpcao(o.id)}
                         placeholder="Ordem"
                       />
                       <select
                         className="input"
                         value={o.ativo ? "1" : "0"}
-                        onChange={e => { o.ativo = e.target.value === "1"; salvarOpcao(o); }}
+                        onChange={e => {
+                          patchOpcao(o.id, { ativo: e.target.value === "1" });
+                          salvarOpcao(o.id);
+                        }}
                       >
                         <option value="1">Ativa</option>
                         <option value="0">Inativa</option>
@@ -632,6 +701,22 @@ export default function AdminVotacoes() {
           )}
         </section>
       </div>
+
+      {/* ✅ ModalConfirmacao: mudar status */}
+      <ModalConfirmacao
+        isOpen={!!confirmStatus.open}
+        title={`${confirmStatus.label} votação?`}
+        description={sel?.titulo ? `${confirmStatus.label} a votação "${sel.titulo}"?` : "Confirmar alteração de status?"}
+        confirmText={confirmStatus.label}
+        cancelText="Cancelar"
+        danger={confirmStatus.nextStatus === "encerrada"}
+        loading={statusLoading}
+        onClose={() => {
+          if (statusLoading) return;
+          setConfirmStatus({ open: false, nextStatus: "", label: "" });
+        }}
+        onConfirm={executarMudarStatus}
+      />
     </main>
   );
 }

@@ -1,5 +1,5 @@
 // ✅ src/components/SidebarNav.jsx
-import { useMemo, useState, useEffect, useCallback } from "react";
+import { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   X,
@@ -17,13 +17,13 @@ import {
   School,
   BarChart3,
   Users,
-  Shield,
   PlusCircle,
   ChevronsLeft,
   ChevronsRight,
   Sun,
   Moon,
   Monitor,
+  Check,
 } from "lucide-react";
 
 import useEscolaTheme from "../hooks/useEscolaTheme";
@@ -39,6 +39,13 @@ function normPerfilStr(p) {
     .map((x) => x.trim().toLowerCase())
     .filter(Boolean);
 }
+
+function pushAll(set, val) {
+  if (!val) return;
+  if (Array.isArray(val)) val.forEach((p) => set.add(String(p).toLowerCase()));
+  else normPerfilStr(val).forEach((p) => set.add(p));
+}
+
 function getPerfisRobusto() {
   const out = new Set();
 
@@ -46,10 +53,9 @@ function getPerfisRobusto() {
   if (rawPerfil) {
     try {
       const parsed = JSON.parse(rawPerfil);
-      if (Array.isArray(parsed)) parsed.forEach((p) => out.add(String(p).toLowerCase()));
-      else normPerfilStr(rawPerfil).forEach((p) => out.add(p));
+      pushAll(out, parsed);
     } catch {
-      normPerfilStr(rawPerfil).forEach((p) => out.add(p));
+      pushAll(out, rawPerfil);
     }
   }
 
@@ -57,14 +63,9 @@ function getPerfisRobusto() {
     const rawUser = localStorage.getItem("usuario");
     if (rawUser) {
       const u = JSON.parse(rawUser);
-      if (u?.perfil) {
-        if (Array.isArray(u.perfil)) u.perfil.forEach((p) => out.add(String(p).toLowerCase()));
-        else out.add(String(u.perfil).toLowerCase());
-      }
-      if (u?.perfis) {
-        if (Array.isArray(u.perfis)) u.perfis.forEach((p) => out.add(String(p).toLowerCase()));
-        else normPerfilStr(u.perfis).forEach((p) => out.add(p));
-      }
+      pushAll(out, u?.perfil);
+      pushAll(out, u?.perfis);
+      pushAll(out, u?.roles); // ✅ extra robustez
     }
   } catch {}
 
@@ -73,58 +74,80 @@ function getPerfisRobusto() {
 }
 
 /* =========================
+   Helpers
+========================= */
+function cx(...arr) {
+  return arr.filter(Boolean).join(" ");
+}
+
+function isActivePath(currentPath, itemPath) {
+  if (!itemPath) return false;
+  if (itemPath === "__open_submissions__") return currentPath.startsWith("/admin/submissoes");
+
+  // match exato
+  if (currentPath === itemPath) return true;
+
+  // prefixo seguro: "/x" casa com "/x/..."
+  if (itemPath !== "/" && currentPath.startsWith(itemPath + "/")) return true;
+
+  return false;
+}
+
+/* =========================
    UI pequenos (compact)
 ========================= */
 function IconTile({ active, isDark, Icon }) {
   return (
     <span
-      className={[
-        "inline-flex h-9 w-9 items-center justify-center rounded-xl border transition", // ✅ menor
+      className={cx(
+        "inline-flex h-9 w-9 items-center justify-center rounded-xl border transition",
         active
           ? "border-white/15 bg-white/10"
           : isDark
           ? "border-white/10 bg-zinc-900/20 group-hover:bg-white/5"
-          : "border-slate-200/80 bg-white shadow-[0_1px_0_rgba(15,23,42,0.04)] group-hover:bg-emerald-50/80 group-hover:border-emerald-200/60",
-      ].join(" ")}
+          : "border-slate-200/80 bg-white shadow-[0_1px_0_rgba(15,23,42,0.04)] group-hover:bg-emerald-50/80 group-hover:border-emerald-200/60"
+      )}
       aria-hidden="true"
     >
       {Icon ? (
         <Icon
-          className={[
-            "h-[18px] w-[18px] transition", // ✅ menor
-            active ? "text-white" : isDark ? "text-zinc-200" : "text-slate-700 group-hover:text-emerald-700",
-          ].join(" ")}
+          className={cx(
+            "h-[18px] w-[18px] transition",
+            active ? "text-white" : isDark ? "text-zinc-200" : "text-slate-700 group-hover:text-emerald-700"
+          )}
         />
       ) : null}
     </span>
   );
 }
 
-function MenuItem({ active, isDark, collapsed, icon: Icon, label, onClick }) {
+function MenuItem({ active, isDark, collapsed, icon: Icon, label, onClick, tabIndex, onKeyDown }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={[
-        "w-full text-left group relative flex items-center rounded-xl px-3 py-1.5", // ✅ compacto
-        "gap-2 text-[13px] font-extrabold transition", // ✅ compacto
-        "focus:outline-none focus:ring-2 focus:ring-emerald-500/70",
+      onKeyDown={onKeyDown}
+      tabIndex={tabIndex}
+      className={cx(
+        "w-full text-left group relative flex items-center rounded-xl px-3 py-1.5",
+        "gap-2 text-[13px] font-extrabold transition",
+        "focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/70",
         active
           ? "text-white bg-emerald-600 shadow-sm shadow-emerald-900/15"
           : isDark
           ? "text-zinc-200 hover:bg-white/5"
           : "text-slate-900 hover:bg-emerald-50/70 hover:shadow-[0_1px_0_rgba(15,23,42,0.04)]",
-        collapsed ? "justify-center px-2" : "",
-      ].join(" ")}
+        collapsed ? "justify-center px-2" : ""
+      )}
       aria-current={active ? "page" : undefined}
       title={collapsed ? label : undefined}
     >
       <span
         aria-hidden="true"
-        className={[
-          "absolute left-1 top-1.5 bottom-1.5 w-1 rounded-full transition", // ✅ compacto
-          active ? "bg-white/85 shadow-[0_0_18px_rgba(255,255,255,.35)]" : "bg-transparent",
-        ].join(" ")}
+        className={cx(
+          "absolute left-1 top-1.5 bottom-1.5 w-1 rounded-full transition",
+          active ? "bg-white/85 shadow-[0_0_18px_rgba(255,255,255,.35)]" : "bg-transparent"
+        )}
       />
 
       <IconTile active={active} isDark={isDark} Icon={Icon} />
@@ -141,19 +164,20 @@ function ThemeStackButton({ active, onClick, icon: Icon, label, isDark, collapse
       onClick={onClick}
       aria-pressed={active}
       title={label}
-      className={[
-        "w-full inline-flex items-center gap-2 rounded-xl px-3 py-1.5 text-xs font-extrabold transition", // ✅ compacto
-        "focus:outline-none focus:ring-2 focus:ring-emerald-500/70",
+      className={cx(
+        "w-full inline-flex items-center gap-2 rounded-xl px-3 py-1.5 text-xs font-extrabold transition",
+        "focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/70",
         active
           ? "bg-emerald-600 text-white"
           : isDark
           ? "text-zinc-200 hover:bg-white/10"
           : "text-slate-800 hover:bg-slate-100",
-        collapsed ? "justify-center px-2" : "",
-      ].join(" ")}
+        collapsed ? "justify-center px-2" : ""
+      )}
     >
-      <Icon className="w-4 h-4 shrink-0" />
+      <Icon className="w-4 h-4 shrink-0" aria-hidden="true" />
       {!collapsed && <span className="truncate">{label}</span>}
+      {active && !collapsed && <Check className="ml-auto w-4 h-4" aria-hidden="true" />}
     </button>
   );
 }
@@ -185,6 +209,7 @@ export default function SidebarNav({
       return false;
     }
   });
+
   const collapsed = typeof collapsedProp === "boolean" ? collapsedProp : collapsedState;
 
   const setCollapsed = useCallback(
@@ -296,15 +321,34 @@ export default function SidebarNav({
       .filter((sec) => sec.items.length > 0);
   }, [sectionsRaw, q]);
 
-  const go = (path) => {
-    if (path === "__open_submissions__") {
-      navigate("/admin/submissoes");
+  // A11y (roving tabindex opcional no desktop expandido)
+  const itemRefs = useRef([]);
+  itemRefs.current = [];
+  const [focusIdx, setFocusIdx] = useState(0);
+
+  const flatItems = useMemo(() => {
+    const out = [];
+    sections.forEach((sec) => sec.items.forEach((it) => out.push(it)));
+    return out;
+  }, [sections]);
+
+  useEffect(() => {
+    // mantém focusIdx dentro do range após filtrar
+    setFocusIdx((prev) => clamp(prev, 0, Math.max(0, flatItems.length - 1)));
+  }, [flatItems.length]);
+
+  const go = useCallback(
+    (path) => {
+      if (path === "__open_submissions__") {
+        navigate("/admin/submissoes");
+        onClose?.();
+        return;
+      }
+      navigate(path);
       onClose?.();
-      return;
-    }
-    navigate(path);
-    onClose?.();
-  };
+    },
+    [navigate, onClose]
+  );
 
   const shellCls = isDark
     ? "border-white/10 bg-zinc-900/45"
@@ -312,41 +356,49 @@ export default function SidebarNav({
 
   const themeCollapsed = collapsed && !isMobile;
 
+  // IDs p/ aria-controls
+  const listId = `sidebar-list-${variant}`;
+  const searchId = `sidebar-search-${variant}`;
+
   return (
     <nav
-      className={[
+      className={cx(
         "rounded-3xl border overflow-hidden",
         shellCls,
         isMobile ? "h-full" : "sticky top-24",
         themeCollapsed ? "w-[92px]" : "",
-        isMobile ? "flex flex-col" : "", // ✅ ajuda scroll interno
-      ].join(" ")}
+        "flex flex-col" // ✅ sempre flex p/ scroll interno perfeito
+      )}
       aria-label="Menu principal"
     >
-      {/* cap + header */}
-      <div className="p-3">
+      {/* HEADER (fixo dentro da sidebar) */}
+      <div className={cx("p-3", isMobile ? "shrink-0" : "shrink-0")}>
         <div
           aria-hidden="true"
-          className={[
-            "h-1.5 w-full rounded-full mb-2.5 bg-gradient-to-r", // ✅ compacto
+          className={cx(
+            "h-1.5 w-full rounded-full mb-2.5 bg-gradient-to-r",
             isDark
               ? "from-emerald-400/30 via-sky-400/20 to-violet-400/10"
-              : "from-emerald-500/40 via-sky-500/25 to-violet-500/15",
-          ].join(" ")}
+              : "from-emerald-500/40 via-sky-500/25 to-violet-500/15"
+          )}
         />
 
         <div className="flex items-center justify-between gap-2">
-          <div className="text-sm font-extrabold">{themeCollapsed ? "Menu" : "Navegação"}</div>
+          <div className="text-sm font-extrabold">
+            {themeCollapsed ? "Menu" : "Navegação"}
+          </div>
 
           {!isMobile ? (
             <button
               type="button"
               onClick={() => setCollapsed(!collapsed)}
-              className={[
+              className={cx(
                 "inline-flex items-center justify-center rounded-2xl p-2 border transition",
-                isDark ? "border-white/10 hover:bg-white/5" : "border-slate-200 hover:bg-slate-100 text-slate-700",
-              ].join(" ")}
+                isDark ? "border-white/10 hover:bg-white/5" : "border-slate-200 hover:bg-slate-100 text-slate-700"
+              )}
               aria-label={collapsed ? "Expandir menu" : "Recolher menu"}
+              aria-expanded={!collapsed}
+              aria-controls={listId}
               title={collapsed ? "Expandir menu" : "Recolher menu"}
             >
               {collapsed ? <ChevronsRight className="w-5 h-5" /> : <ChevronsLeft className="w-5 h-5" />}
@@ -355,10 +407,10 @@ export default function SidebarNav({
             <button
               type="button"
               onClick={() => onClose?.()}
-              className={[
+              className={cx(
                 "rounded-2xl p-2.5 border transition",
-                isDark ? "border-white/10 hover:bg-white/5" : "border-slate-200 hover:bg-slate-100",
-              ].join(" ")}
+                isDark ? "border-white/10 hover:bg-white/5" : "border-slate-200 hover:bg-slate-100"
+              )}
               aria-label="Fechar menu"
             >
               <X className="w-5 h-5" />
@@ -366,12 +418,12 @@ export default function SidebarNav({
           )}
         </div>
 
-        {/* ✅ Tema VERTICAL */}
+        {/* Tema VERTICAL */}
         <div
-          className={[
-            "mt-2.5 rounded-2xl border p-2", // ✅ compacto
-            isDark ? "border-white/10 bg-zinc-950/30" : "border-slate-200 bg-slate-50",
-          ].join(" ")}
+          className={cx(
+            "mt-2.5 rounded-2xl border p-2",
+            isDark ? "border-white/10 bg-zinc-950/30" : "border-slate-200 bg-slate-50"
+          )}
         >
           <div className="flex flex-col gap-1">
             <ThemeStackButton
@@ -404,63 +456,92 @@ export default function SidebarNav({
         {/* Busca (esconde no colapsado desktop) */}
         {!themeCollapsed && (
           <div className="mt-2.5">
-            <label className="sr-only" htmlFor={`sidebar-search-${variant}`}>
+            <label className="sr-only" htmlFor={searchId}>
               Buscar no menu
             </label>
             <input
-              id={`sidebar-search-${variant}`}
+              id={searchId}
               value={q}
               onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setQ("");
+              }}
               placeholder="Buscar…"
-              className={[
+              className={cx(
                 "w-full rounded-2xl border px-3 py-2 text-sm font-semibold outline-none",
                 "focus:ring-2 focus:ring-emerald-500/60",
                 isDark
                   ? "border-white/10 bg-zinc-950/30 text-zinc-100 placeholder:text-zinc-400"
-                  : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-500",
-              ].join(" ")}
+                  : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-500"
+              )}
             />
-            {q?.trim() && (
-              <div className={["mt-1 text-[11px]", isDark ? "text-zinc-400" : "text-slate-500"].join(" ")}>
-                Filtrando por: <span className="font-extrabold">{q.trim()}</span>
-              </div>
-            )}
+            <div className={cx("mt-1 text-[11px]", isDark ? "text-zinc-400" : "text-slate-500")} aria-live="polite">
+              {q?.trim()
+                ? <>Filtrando por: <span className="font-extrabold">{q.trim()}</span> • {flatItems.length} resultado(s)</>
+                : <>{flatItems.length} item(ns) disponível(is)</>}
+            </div>
           </div>
         )}
       </div>
 
-      {/* ✅ LISTA rolável no MOBILE */}
+      {/* LISTA (scroll interno perfeito) */}
       <div
-        className={[
-          "px-3 pb-3",
-          "space-y-3", // ✅ compacto
-          isMobile ? "min-h-0 flex-1 overflow-y-auto overscroll-contain pr-2" : "", // ✅ scroll interno
-          isMobile ? "max-h-[calc(100dvh-220px)]" : "", // ✅ fallback seguro
-        ].join(" ")}
-        style={isMobile ? { WebkitOverflowScrolling: "touch" } : undefined}
+        id={listId}
+        className={cx(
+          "px-3 pb-3 space-y-3",
+          "min-h-0 flex-1 overflow-y-auto overscroll-contain pr-2"
+        )}
+        style={{ WebkitOverflowScrolling: "touch" }}
       >
         {sections.length === 0 ? (
-          <div className={["px-2 pb-2 text-sm", isDark ? "text-zinc-300" : "text-slate-700"].join(" ")}>
+          <div className={cx("px-2 pb-2 text-sm", isDark ? "text-zinc-300" : "text-slate-700")}>
             Nenhum menu disponível para este perfil.
           </div>
         ) : (
           sections.map((sec) => (
             <div key={sec.title}>
               <div
-                className={[
-                  "px-2 pb-1.5 text-[11px] font-extrabold uppercase tracking-wide", // ✅ compacto
+                className={cx(
+                  "px-2 pb-1.5 text-[11px] font-extrabold uppercase tracking-wide",
                   isDark ? "text-zinc-400" : "text-slate-500",
-                  themeCollapsed ? "text-center" : "",
-                ].join(" ")}
+                  themeCollapsed ? "text-center" : ""
+                )}
               >
                 {themeCollapsed ? sec.title.slice(0, 3) : sec.title}
               </div>
 
               <div className="space-y-0.5">
                 {sec.items.map((item) => {
-                  const active =
-                    location.pathname === item.path ||
-                    (item.path !== "__open_submissions__" && location.pathname.startsWith(item.path + "/"));
+                  const active = isActivePath(location.pathname, item.path);
+
+                  // índice global p/ roving
+                  const globalIndex = flatItems.findIndex(
+                    (it) => it.path === item.path && it.label === item.label
+                  );
+                  const useRoving = !themeCollapsed && !isMobile;
+
+                  const tabIndex = useRoving ? (globalIndex === focusIdx ? 0 : -1) : 0;
+
+                  const onKeyDown = useRoving
+                    ? (e) => {
+                        if (e.key === "ArrowDown") {
+                          e.preventDefault();
+                          setFocusIdx((v) => clamp(v + 1, 0, Math.max(0, flatItems.length - 1)));
+                        } else if (e.key === "ArrowUp") {
+                          e.preventDefault();
+                          setFocusIdx((v) => clamp(v - 1, 0, Math.max(0, flatItems.length - 1)));
+                        } else if (e.key === "Home") {
+                          e.preventDefault();
+                          setFocusIdx(0);
+                        } else if (e.key === "End") {
+                          e.preventDefault();
+                          setFocusIdx(Math.max(0, flatItems.length - 1));
+                        } else if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          go(item.path);
+                        }
+                      }
+                    : undefined;
 
                   return (
                     <MenuItem
@@ -471,6 +552,8 @@ export default function SidebarNav({
                       icon={item.icon}
                       label={item.label}
                       onClick={() => go(item.path)}
+                      tabIndex={tabIndex}
+                      onKeyDown={onKeyDown}
                     />
                   );
                 })}
@@ -481,4 +564,10 @@ export default function SidebarNav({
       </div>
     </nav>
   );
+}
+
+/* util clamp local */
+function clamp(n, min, max) {
+  const x = Number.isFinite(+n) ? +n : 0;
+  return Math.min(Math.max(x, min), max);
 }

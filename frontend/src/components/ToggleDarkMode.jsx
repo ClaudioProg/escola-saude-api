@@ -1,52 +1,76 @@
 // 📁 src/components/ToggleDarkMode.jsx
-import { useEffect, useState } from "react";
 import PropTypes from "prop-types";
-import { Moon, Sun } from "lucide-react";
+import { Sun, Moon, Monitor } from "lucide-react";
+import useEscolaTheme from "../hooks/useEscolaTheme";
 
 /**
- * Componente de alternância entre modo claro/escuro.
- * - Persiste em localStorage
- * - Respeita `prefers-color-scheme` no primeiro carregamento
- * - Anima ícones suavemente
- * - Acessível com ARIA (role="switch")
+ * ToggleDarkMode — botão institucional de tema (light / dark / system)
+ *
+ * - Usa a fonte oficial de verdade (useEscolaTheme)
+ * - Suporta modo Sistema
+ * - Sincroniza entre abas
+ * - Acessível (role="switch")
+ * - Visual premium
  */
-export default function ToggleDarkMode({ className = "" }) {
-  const [darkMode, setDarkMode] = useState(() => {
-    if (typeof window === "undefined") return false;
-    const saved = localStorage.getItem("theme");
-    if (saved) return saved === "dark";
-    return window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ?? false;
-  });
+export default function ToggleDarkMode({ className = "", showSystem = false }) {
+  const { theme, setTheme, effectiveTheme } = useEscolaTheme();
 
-  useEffect(() => {
-    const root = document.documentElement;
-    root.classList.toggle("dark", darkMode);
-    localStorage.setItem("theme", darkMode ? "dark" : "light");
-  }, [darkMode]);
+  const isDark = effectiveTheme === "dark";
+
+  function toggle() {
+    // alterna apenas entre claro/escuro
+    setTheme(isDark ? "light" : "dark");
+  }
 
   return (
     <button
       type="button"
-      onClick={() => setDarkMode((v) => !v)}
+      onClick={toggle}
       role="switch"
-      aria-checked={darkMode}
-      aria-label={darkMode ? "Mudar para modo claro" : "Mudar para modo escuro"}
-      title={darkMode ? "Mudar para modo claro" : "Mudar para modo escuro"}
-      className={`inline-flex items-center gap-2 px-4 py-2 rounded-full shadow-sm font-medium transition-all duration-300
-        bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-100
-        hover:scale-105 focus:outline-none focus:ring-2 focus:ring-green-700/40
-        ${className}`}
+      aria-checked={isDark}
+      aria-label={isDark ? "Ativar modo claro" : "Ativar modo escuro"}
+      title={
+        theme === "system"
+          ? `Sistema (${effectiveTheme})`
+          : isDark
+          ? "Modo escuro ativo"
+          : "Modo claro ativo"
+      }
+      className={[
+        "inline-flex items-center gap-2 px-4 py-2 rounded-full",
+        "font-extrabold text-xs transition-all duration-300",
+        "border shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-600/50",
+        isDark
+          ? "bg-zinc-900 text-zinc-100 border-white/10 hover:bg-zinc-800"
+          : "bg-white text-slate-800 border-slate-200 hover:bg-slate-100",
+        "hover:scale-[1.04]",
+        className,
+      ].join(" ")}
     >
-      {darkMode ? (
-        <>
-          <Sun size={18} className="text-yellow-400 transition-transform rotate-0" aria-hidden="true" />
-          <span>Modo Claro</span>
-        </>
+      {isDark ? (
+        <Sun
+          size={18}
+          className="text-amber-400 transition-transform"
+          aria-hidden="true"
+        />
       ) : (
-        <>
-          <Moon size={18} className="text-sky-600 transition-transform rotate-0" aria-hidden="true" />
-          <span>Modo Escuro</span>
-        </>
+        <Moon
+          size={18}
+          className="text-sky-600 transition-transform"
+          aria-hidden="true"
+        />
+      )}
+
+      <span className="hidden sm:inline">
+        {isDark ? "Modo Claro" : "Modo Escuro"}
+      </span>
+
+      {showSystem && theme === "system" && (
+        <Monitor
+          size={16}
+          className="opacity-70"
+          aria-hidden="true"
+        />
       )}
     </button>
   );
@@ -54,4 +78,6 @@ export default function ToggleDarkMode({ className = "" }) {
 
 ToggleDarkMode.propTypes = {
   className: PropTypes.string,
+  /** Mostra ícone quando estiver em modo Sistema */
+  showSystem: PropTypes.bool,
 };

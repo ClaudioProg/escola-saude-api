@@ -7,7 +7,6 @@ import {
   Trash2,
   Edit2,
   Info,
-  RefreshCw,
   CalendarDays as TodayIcon,
 } from "lucide-react";
 import { toast } from "react-toastify";
@@ -15,6 +14,7 @@ import Skeleton from "react-loading-skeleton";
 import { useNavigate } from "react-router-dom";
 import api from "../services/api";
 import Footer from "../components/Footer";
+import ModalConfirmacao from "../components/ModalConfirmacao";
 
 /* ──────────────────────────────────────────────────────────
    Constantes de UI
@@ -127,6 +127,10 @@ export default function CalendarioBloqueiosAdmin() {
   });
   const [salvando, setSalvando] = useState(false);
 
+  // ✅ confirmação premium (substitui window.confirm)
+  const [confirmDelete, setConfirmDelete] = useState({ open: false, item: null });
+  const [deletingId, setDeletingId] = useState(null);
+
   const semanas = useMemo(() => criarMatrixMes(ano, mesIndex), [ano, mesIndex]);
 
   /* Carregar dados ao abrir a página */
@@ -234,15 +238,33 @@ export default function CalendarioBloqueiosAdmin() {
     }
   }
 
-  async function excluirRegistro(id) {
-    if (!window.confirm("Tem certeza que deseja excluir esta data?")) return;
+  // ✅ abre confirmação
+  function solicitarExcluirRegistro(ev) {
+    if (!ev?.id) return;
+    if (deletingId) return;
+    setConfirmDelete({ open: true, item: ev });
+  }
+
+  // ✅ executa exclusão (confirmada)
+  async function executarExcluirRegistro() {
+    const ev = confirmDelete?.item;
+    if (!ev?.id) {
+      setConfirmDelete({ open: false, item: null });
+      return;
+    }
+
     try {
-      await api.delete(`/calendario/${id}`);
+      setDeletingId(ev.id);
+      await api.delete(`/calendario/${ev.id}`);
       toast.success("Data removida com sucesso.");
       await carregar();
     } catch (err) {
       console.error("[CalendarioBloqueiosAdmin] erro ao excluir:", err);
-      toast.error("Erro ao excluir data.");
+      const msg = err?.response?.data?.erro || "Erro ao excluir data.";
+      toast.error(msg);
+    } finally {
+      setDeletingId(null);
+      setConfirmDelete({ open: false, item: null });
     }
   }
 
@@ -533,6 +555,8 @@ export default function CalendarioBloqueiosAdmin() {
                         <div className="mt-1 flex flex-col gap-1">
                           {eventosDia.map((ev) => {
                             const sty = TIPO_STYLE[ev.tipo] || TIPO_STYLE["bloqueio_interno"];
+                            const disabledDelete = deletingId === ev.id;
+
                             return (
                               <div
                                 key={ev.id}
@@ -562,8 +586,9 @@ export default function CalendarioBloqueiosAdmin() {
                                     </button>
                                     <button
                                       type="button"
-                                      onClick={() => excluirRegistro(ev.id)}
-                                      className="p-0.5 rounded hover:bg-red-100 dark:hover:bg-red-900/30"
+                                      onClick={() => solicitarExcluirRegistro(ev)}
+                                      disabled={disabledDelete}
+                                      className="p-0.5 rounded hover:bg-red-100 dark:hover:bg-red-900/30 disabled:opacity-60 disabled:cursor-not-allowed"
                                       title="Excluir"
                                     >
                                       <Trash2 className="w-3 h-3 text-red-600 dark:text-red-400" />
@@ -589,6 +614,26 @@ export default function CalendarioBloqueiosAdmin() {
       </main>
 
       <Footer />
+
+      {/* ✅ ModalConfirmacao: excluir data do calendário */}
+      <ModalConfirmacao
+        isOpen={!!confirmDelete.open}
+        title="Excluir data?"
+        description={
+          confirmDelete?.item
+            ? `Tem certeza que deseja excluir esta data do calendário?\n\n${toISO(confirmDelete.item.data)} • ${TIPO_LABEL[confirmDelete.item.tipo] || confirmDelete.item.tipo}${confirmDelete.item.descricao ? `\n${String(confirmDelete.item.descricao).trim()}` : ""}`
+            : "Tem certeza que deseja excluir esta data?"
+        }
+        confirmText="Sim, excluir"
+        cancelText="Cancelar"
+        danger
+        loading={!!deletingId}
+        onClose={() => {
+          if (deletingId) return;
+          setConfirmDelete({ open: false, item: null });
+        }}
+        onConfirm={executarExcluirRegistro}
+      />
     </div>
   );
 }

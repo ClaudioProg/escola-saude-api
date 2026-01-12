@@ -1401,6 +1401,124 @@ async function obterSubmissao(req, res) {
   }
 }
 
+/* ===================== Minhas submissões (usuário) ===================== */
+/** GET /api/submissoes/minhas */
+async function listarMinhas(req, res) {
+  try {
+    const uid = getUserIdOrThrow(req);
+
+    // SQL “completo”: tenta pegar linha temática, modalidade da chamada e nota média calculada
+    const SQL_V1 = `
+      WITH por_avaliador AS (
+        SELECT ai.submissao_id, ai.avaliador_id, SUM(ai.nota)::int AS total
+        FROM trabalhos_avaliacoes_itens ai
+        GROUP BY ai.submissao_id, ai.avaliador_id
+      )
+      SELECT
+        s.id,
+        s.titulo,
+        s.status,
+        s.status_escrita,
+        s.status_oral,
+        s.chamada_id,
+        s.criado_em AS submetido_em,
+        c.titulo AS chamada_titulo,
+        COALESCE(s.nota_visivel, false) AS nota_visivel,
+        tcl.nome AS linha_tematica_nome,
+        /* Modalidade vem da CHAMADA; NUNCA de s.modalidade */
+        c.modalidade AS modalidade,
+        /* nota_media calculada (s/ materializar) */
+        (
+          SELECT ROUND(COALESCE(SUM(p.total),0)::numeric / 4, 1)
+          FROM por_avaliador p
+          WHERE p.submissao_id = s.id
+        ) AS nota_media
+      FROM trabalhos_submissoes s
+      LEFT JOIN trabalhos_chamadas       c   ON c.id  = s.chamada_id
+      LEFT JOIN trabalhos_chamada_linhas tcl ON tcl.id = s.linha_tematica_id
+      WHERE s.usuario_id = $1
+      ORDER BY s.id DESC
+    `;
+
+    // Fallback 1: sem coluna nota_visivel e/ou sem tcl
+    const SQL_V2 = `
+      WITH por_avaliador AS (
+        SELECT ai.submissao_id, ai.avaliador_id, SUM(ai.nota)::int AS total
+        FROM trabalhos_avaliacoes_itens ai
+        GROUP BY ai.submissao_id, ai.avaliador_id
+      )
+      SELECT
+        s.id,
+        s.titulo,
+        s.status,
+        s.status_escrita,
+        s.status_oral,
+        s.chamada_id,
+        s.criado_em AS submetido_em,
+        c.titulo AS chamada_titulo,
+        false AS nota_visivel,
+        NULL::text AS linha_tematica_nome,
+        c.modalidade AS modalidade,
+        (
+          SELECT ROUND(COALESCE(SUM(p.total),0)::numeric / 4, 1)
+          FROM por_avaliador p
+          WHERE p.submissao_id = s.id
+        ) AS nota_media
+      FROM trabalhos_submissoes s
+      LEFT JOIN trabalhos_chamadas c ON c.id = s.chamada_id
+      WHERE s.usuario_id = $1
+      ORDER BY s.id DESC
+    `;
+
+    // Fallback 2: versão mínima (só campos essenciais)
+    const SQL_V3 = `
+      SELECT
+        s.id,
+        s.titulo,
+        s.status,
+        s.status_escrita,
+        s.status_oral,
+        s.chamada_id,
+        s.criado_em AS submetido_em,
+        NULL::text AS chamada_titulo,
+        false AS nota_visivel,
+        NULL::text AS linha_tematica_nome,
+        NULL::text AS modalidade,
+        NULL::numeric AS nota_media
+      FROM trabalhos_submissoes s
+      WHERE s.usuario_id = $1
+      ORDER BY s.id DESC
+    `;
+
+    const SQLS = [SQL_V1, SQL_V2, SQL_V3];
+
+    let rows = null, lastErr = null;
+    for (const sql of SQLS) {
+      try {
+        rows = await db.any(sql, [uid]);
+        break;
+      } catch (e) {
+        lastErr = e;
+        // Se for erro de coluna/tabela ausente, tenta o próximo
+        if (e?.code === "42703" || e?.code === "42P01") continue;
+        throw e;
+      }
+    }
+    if (!rows) throw lastErr || new Error("Falha ao listar submissões.");
+
+    // Enriquecimento leve + flags
+    const out = rows.map((r) => ({
+      ...r,
+      ...deriveAprovFlags(r),
+    }));
+
+    return res.json(out);
+  } catch (e) {
+    errlog("[listarMinhas]", e?.code, e?.message);
+    return sendError(res, e, "Erro ao listar suas submissões.");
+  }
+}
+
 /* ===================== Exports ===================== */
 module.exports = {
   // helpers
@@ -1446,4 +1564,6 @@ module.exports = {
 
   // detalhe
   obterSubmissao,
+
+  listarMinhas,
 };

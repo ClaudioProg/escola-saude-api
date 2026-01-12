@@ -1,5 +1,5 @@
 /* eslint-disable no-console */
-// ✅ src/components/ModalEvento.jsx (Premium + A11y + Upload flags seguras + Logger sem spam)
+// ✅ src/components/ModalEvento.jsx (Premium + A11y + Upload flags seguras + Logger sem spam + ModalConfirmacao no lugar de window.confirm)
 import { useEffect, useMemo, useRef, useState, useTransition, useId, useCallback } from "react";
 import { toast } from "react-toastify";
 import {
@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import ModalBase from "./ModalBase";
 import ModalTurma from "./ModalTurma";
+import ModalConfirmacao from "./ModalConfirmacao";
 import { formatarDataBrasileira } from "../utils/data";
 import { apiGet, apiDelete } from "../services/api";
 
@@ -238,6 +239,15 @@ export default function ModalEvento({
   const [modalTurmaAberto, setModalTurmaAberto] = useState(false);
   const [removendoId, setRemovendoId] = useState(null);
 
+  // ✅ Confirmação Premium (substitui window.confirm)
+  const [confirm, setConfirm] = useState({
+    open: false,
+    turma: null,
+    idx: null,
+    title: "",
+    description: "",
+  });
+
   // Restrição
   const [restrito, setRestrito] = useState(false);
   const [restritoModo, setRestritoModo] = useState("");
@@ -330,6 +340,9 @@ export default function ModalEvento({
       setRemoverProgramacaoExistente(false);
       if (folderInputRef.current) folderInputRef.current.value = "";
       if (pdfInputRef.current) pdfInputRef.current.value = "";
+
+      // confirmações pendentes: fecha ao trocar evento
+      setConfirm((c) => ({ ...c, open: false, turma: null, idx: null }));
 
       if (!evento) {
         setTitulo("");
@@ -448,7 +461,7 @@ export default function ModalEvento({
         if (Array.isArray(det.unidades_permitidas) && unidadesPermitidas.length === 0) {
           setUnidadesPermitidas(extractIds(det.unidades_permitidas));
         }
-      } catch (e) {
+      } catch {
         // silencioso
       }
     })();
@@ -583,12 +596,9 @@ export default function ModalEvento({
     setModalTurmaAberto(true);
   }
 
-  async function removerTurma(turma, idx) {
+  // ✅ Executa remoção (após confirmação)
+  async function executarRemocaoTurma(turma, idx) {
     const nome = turma?.nome || `Turma ${idx + 1}`;
-    const ok = window.confirm(
-      `Remover a turma "${nome}"?\n\nEsta ação não pode ser desfeita.\nSe houver presenças ou certificados, a exclusão será bloqueada.`
-    );
-    if (!ok) return;
 
     if (!turma?.id) {
       setTurmas((prev) => prev.filter((_, i) => i !== idx));
@@ -600,7 +610,7 @@ export default function ModalEvento({
       setRemovendoId(turma.id);
       await apiDelete(`/api/turmas/${turma.id}`);
       setTurmas((prev) => prev.filter((t) => t.id !== turma.id));
-      toast.success("Turma removida com sucesso.");
+      toast.success(`Turma "${nome}" removida com sucesso.`);
       onTurmaRemovida?.(turma.id);
     } catch (err) {
       const code = err?.data?.erro;
@@ -615,6 +625,20 @@ export default function ModalEvento({
     } finally {
       setRemovendoId(null);
     }
+  }
+
+  // ✅ Abre ModalConfirmacao (premium)
+  function solicitarConfirmacaoRemoverTurma(turma, idx) {
+    const nome = turma?.nome || `Turma ${idx + 1}`;
+
+    setConfirm({
+      open: true,
+      turma,
+      idx,
+      title: `Remover a turma "${nome}"?`,
+      description:
+        "Esta ação não pode ser desfeita.\n\nSe houver presenças ou certificados vinculados, a exclusão será bloqueada automaticamente.",
+    });
   }
 
   /* ================= Submit do formulário ================= */
@@ -763,7 +787,7 @@ export default function ModalEvento({
 
               <button
                 type="button"
-                onClick={() => removerTurma(t, i)}
+                onClick={() => solicitarConfirmacaoRemoverTurma(t, i)}
                 disabled={removendoId === t.id}
                 className="inline-flex items-center gap-1 rounded-lg bg-rose-100 text-rose-700 border border-rose-300 text-xs font-medium px-3 py-1.5 hover:bg-rose-200 dark:bg-rose-900/30 dark:border-rose-800 dark:text-rose-200 disabled:opacity-60 disabled:cursor-not-allowed"
               >
@@ -1441,6 +1465,37 @@ export default function ModalEvento({
           </div>
         </div>
       </ModalBase>
+
+      {/* ✅ MODAL CONFIRMAÇÃO (substitui window.confirm) */}
+      <ModalConfirmacao
+        isOpen={!!confirm.open}
+        title={confirm.title}
+        description={confirm.description}
+        confirmText="Sim, remover"
+        cancelText="Cancelar"
+        danger
+        loading={Number.isFinite(Number(confirm?.turma?.id)) && removendoId === confirm?.turma?.id}
+        onClose={() => {
+          // evita fechar no meio de uma remoção (quando turma tem id e está removendo)
+          const emRemocao = Number.isFinite(Number(confirm?.turma?.id)) && removendoId === confirm?.turma?.id;
+          if (emRemocao) return;
+          setConfirm((c) => ({ ...c, open: false, turma: null, idx: null }));
+        }}
+        onConfirm={async () => {
+          const turma = confirm.turma;
+          const idx = confirm.idx;
+
+          // fecha o modal imediatamente para dar sensação "snappy" (mas mantém bloqueio se estiver removendo)
+          setConfirm((c) => ({ ...c, open: false }));
+
+          if (!turma || idx == null) return;
+
+          await executarRemocaoTurma(turma, idx);
+
+          // limpa referência por segurança
+          setConfirm((c) => ({ ...c, turma: null, idx: null }));
+        }}
+      />
 
       {/* MODAL TURMA */}
       <ModalTurma

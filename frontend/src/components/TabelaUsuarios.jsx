@@ -1,5 +1,5 @@
 // 📁 src/components/TabelaUsuarios.jsx
-import { useMemo, useState } from "react";
+import { useMemo, useState, useCallback } from "react";
 import PropTypes from "prop-types";
 import {
   Pencil,
@@ -21,11 +21,12 @@ import {
 
 /* ===========================
    Normalização de perfis
-   =========================== */
+=========================== */
 const PERFIS_MAP = { 1: "administrador", 2: "instrutor", 3: "usuario" };
 
 function normalizePerfilItem(raw) {
   if (raw == null) return null;
+
   if (typeof raw === "object") {
     if (typeof raw.nome === "string") return raw.nome.trim();
     if (typeof raw.descricao === "string") return raw.descricao.trim();
@@ -34,14 +35,18 @@ function normalizePerfilItem(raw) {
     if (typeof raw.id === "number" && PERFIS_MAP[raw.id]) return PERFIS_MAP[raw.id];
     return String(raw).trim();
   }
+
   if (typeof raw === "number" && PERFIS_MAP[raw]) return PERFIS_MAP[raw];
   if (typeof raw === "string") return raw.trim();
+
   return String(raw).trim();
 }
+
 function splitPossiblyCommaSeparated(str) {
   if (typeof str !== "string") return [str];
   return str.split(/[;,]/).map((s) => s.trim()).filter(Boolean);
 }
+
 function extractPerfis(usuario) {
   const fontes = [
     usuario?.perfil,
@@ -51,9 +56,11 @@ function extractPerfis(usuario) {
     usuario?.perfil_id,
     usuario?.perfilObj,
   ];
+
   const itens = [];
   for (const fonte of fontes) {
     if (fonte == null) continue;
+
     if (Array.isArray(fonte)) {
       for (const f of fonte) {
         const val = normalizePerfilItem(f);
@@ -70,31 +77,38 @@ function extractPerfis(usuario) {
       }
     }
   }
+
   const set = new Set(itens.map((s) => String(s).trim().toLowerCase()).filter(Boolean));
   return Array.from(set).map((p) => p.charAt(0).toUpperCase() + p.slice(1));
 }
 
 /* ===========================
    UI helpers
-   =========================== */
-function perfilBadgeClass(perfil) {
-  const p = perfil.toLowerCase();
-  if (p.includes("admin"))
-    return "bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-500/20 dark:text-purple-200";
-  if (p.includes("instrutor"))
-    return "bg-teal-100 text-teal-700 border-teal-200 dark:bg-teal-500/20 dark:text-teal-200";
-  if (p.includes("gestor"))
-    return "bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-500/20 dark:text-rose-200";
-  return "bg-slate-100 text-slate-700 border-slate-200 dark:bg-zinc-600/30 dark:text-zinc-200";
+=========================== */
+function cx(...arr) {
+  return arr.filter(Boolean).join(" ");
 }
+
 const F = (v) => (v === null || v === undefined || v === "" ? "—" : String(v));
+
 const initials = (name = "") =>
-  name
+  String(name || "")
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)
     .map((s) => s[0]?.toUpperCase())
     .join("") || "?";
+
+function perfilBadgeClass(perfil) {
+  const p = String(perfil || "").toLowerCase();
+  if (p.includes("admin"))
+    return "bg-violet-500/12 text-violet-950 ring-1 ring-violet-700/20 dark:bg-violet-400/10 dark:text-violet-100 dark:ring-violet-300/20";
+  if (p.includes("instrutor"))
+    return "bg-teal-500/12 text-teal-950 ring-1 ring-teal-700/20 dark:bg-teal-400/10 dark:text-teal-100 dark:ring-teal-300/20";
+  if (p.includes("gestor"))
+    return "bg-rose-500/12 text-rose-950 ring-1 ring-rose-700/20 dark:bg-rose-400/10 dark:text-rose-100 dark:ring-rose-300/20";
+  return "bg-zinc-200/70 text-zinc-900 ring-1 ring-black/10 dark:bg-white/10 dark:text-zinc-100 dark:ring-white/15";
+}
 
 /* CPF seguro (default) */
 const maskCpfDefault = (cpf, revealed) => {
@@ -105,31 +119,83 @@ const maskCpfDefault = (cpf, revealed) => {
   return fmt.replace(/^\d{3}\.\d{3}\.\d{3}/, "***.***.***").replace(/\d{2}$/, "**");
 };
 
-/* Idade por data de nascimento (fallback) */
-const calcIdade = (nasc) => {
+/**
+ * Idade sem timezone-bug:
+ * - Se vier "YYYY-MM-DD" usamos parsing manual (sem new Date("YYYY-MM-DD"))
+ * - Se vier Date/ISO com hora, cai no Date normalmente.
+ */
+function calcIdadeSafe(nasc) {
   if (!nasc) return null;
-  const d = new Date(typeof nasc === "string" ? nasc.slice(0, 10) : nasc);
-  if (Number.isNaN(d.getTime())) return null;
-  const today = new Date();
-  let a = today.getFullYear() - d.getFullYear();
-  const m = today.getMonth() - d.getMonth();
-  if (m < 0 || (m === 0 && today.getDate() < d.getDate())) a--;
-  return a >= 0 ? a : null;
-};
+
+  // string YYYY-MM-DD
+  if (typeof nasc === "string") {
+    const s = nasc.includes("T") ? nasc.split("T")[0] : nasc;
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) {
+      const y = Number(m[1]);
+      const mo = Number(m[2]);
+      const d = Number(m[3]);
+      if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) return null;
+
+      const today = new Date();
+      let a = today.getFullYear() - y;
+      const mm = (today.getMonth() + 1) - mo;
+      if (mm < 0 || (mm === 0 && today.getDate() < d)) a--;
+      return a >= 0 ? a : null;
+    }
+
+    // fallback (se veio outra string)
+    const dt = new Date(nasc);
+    if (Number.isNaN(dt.getTime())) return null;
+    return calcIdadeSafe(dt);
+  }
+
+  if (nasc instanceof Date) {
+    if (Number.isNaN(nasc.getTime())) return null;
+    const today = new Date();
+    let a = today.getFullYear() - nasc.getFullYear();
+    const m = today.getMonth() - nasc.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < nasc.getDate())) a--;
+    return a >= 0 ? a : null;
+  }
+
+  return null;
+}
 
 /* Pill chip */
-function Pill({ Icon, label, value, title }) {
+function Pill({ Icon, label, value, title, tone = "violet" }) {
+  const toneCls =
+    tone === "emerald"
+      ? "border-emerald-200/70 bg-emerald-50 text-emerald-950 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-100"
+      : tone === "amber"
+      ? "border-amber-200/70 bg-amber-50 text-amber-950 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100"
+      : "border-violet-200/70 bg-violet-50 text-violet-950 dark:border-violet-500/20 dark:bg-violet-500/10 dark:text-violet-100";
+
   return (
     <div
-      className="inline-flex items-center gap-2 rounded-xl border border-violet-200/70 dark:border-violet-500/20 bg-violet-50 dark:bg-violet-500/10 px-3 py-1.5"
+      className={cx("inline-flex items-center gap-2 rounded-2xl border px-3 py-2", toneCls)}
       role="group"
       aria-label={label}
       title={title || label}
     >
       <Icon className="h-4 w-4" aria-hidden="true" />
       <div className="text-left leading-tight">
-        <div className="text-[11px] text-zinc-600 dark:text-zinc-300">{label}</div>
-        <div className="text-[15px] font-semibold">{value}</div>
+        <div className="text-[11px] opacity-80">{label}</div>
+        <div className="text-[15px] font-extrabold tabular-nums">{value}</div>
+      </div>
+    </div>
+  );
+}
+
+function IconMeta({ Icon, label, value, children }) {
+  return (
+    <div className="flex items-center gap-2 min-w-0">
+      <Icon className="h-4 w-4 text-zinc-500 dark:text-zinc-300 shrink-0" aria-hidden="true" />
+      <div className="min-w-0">
+        <div className="text-[11px] text-zinc-500 dark:text-zinc-400">{label}</div>
+        <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-100 break-words">
+          {children ?? value}
+        </div>
       </div>
     </div>
   );
@@ -137,14 +203,13 @@ function Pill({ Icon, label, value, title }) {
 
 /* ===========================
    Item (subcomponente)
-   =========================== */
+=========================== */
 function UsuarioItem({
   usuario,
   onEditar,
   onToggleCpf,
   isCpfRevealed,
   maskCpfFn,
-  // novos props p/ carregar sob demanda
   onCarregarResumo,
   isResumoLoading,
   hasResumo,
@@ -152,65 +217,55 @@ function UsuarioItem({
   const [expanded, setExpanded] = useState(false);
 
   const perfis = useMemo(() => extractPerfis(usuario), [usuario]);
-  const key = usuario.id ?? usuario.email;
-  const headingId = `user-heading-${key}`;
-
+  const key = String(usuario?.id ?? usuario?.email ?? Math.random());
   const nome = usuario?.nome || "—";
   const email = usuario?.email || "—";
-
   const id = usuario?.id;
+
   const revealed = typeof isCpfRevealed === "function" ? !!isCpfRevealed(id) : false;
   const cpfRender = (maskCpfFn || maskCpfDefault)(usuario?.cpf, revealed);
 
   const registro = F(usuario?.registro);
 
   const idadeDireta = usuario?.idade;
-  const idadeCalc = calcIdade(usuario?.data_nascimento);
+  const idadeCalc = calcIdadeSafe(usuario?.data_nascimento);
   const idade = idadeDireta ?? (idadeCalc ?? "—");
 
   const unidade = F(usuario?.unidade_nome ?? usuario?.unidade ?? usuario?.unidade_id);
-  const escolaridade = F(
-    usuario?.escolaridade_nome ?? usuario?.escolaridade ?? usuario?.escolaridade_id
-  );
+  const escolaridade = F(usuario?.escolaridade_nome ?? usuario?.escolaridade ?? usuario?.escolaridade_id);
   const cargo = F(usuario?.cargo_nome ?? usuario?.cargo ?? usuario?.cargo_id);
-  const deficiencia = F(
-    usuario?.deficiencia_nome ?? usuario?.deficiencia ?? usuario?.deficiencia_id
-  );
+  const deficiencia = F(usuario?.deficiencia_nome ?? usuario?.deficiencia ?? usuario?.deficiencia_id);
 
-  const temResumo = typeof hasResumo === "function" ? hasResumo(id) : false;
-  const carregandoResumo = typeof isResumoLoading === "function" ? isResumoLoading(id) : false;
+  const temResumo = typeof hasResumo === "function" ? !!hasResumo(id) : false;
+  const carregandoResumo = typeof isResumoLoading === "function" ? !!isResumoLoading(id) : false;
+
   const concluidos75 = temResumo ? Number(usuario?.cursos_concluidos_75 ?? 0) : "—";
   const certificados = temResumo ? Number(usuario?.certificados_emitidos ?? 0) : "—";
 
-  function toggleExpand() {
+  const toggleExpand = () => {
     const abrir = !expanded;
     setExpanded(abrir);
+
     if (abrir && !temResumo && typeof onCarregarResumo === "function" && !carregandoResumo) {
       onCarregarResumo(id);
     }
-  }
+  };
 
   const Chevron = expanded ? ChevronDown : ChevronRight;
 
   return (
     <article
-      className="group relative overflow-hidden rounded-2xl bg-white dark:bg-zinc-900/70 ring-1 ring-zinc-200 dark:ring-zinc-700 shadow-sm hover:shadow-md transition focus-within:shadow-md"
+      className={cx(
+        "group relative overflow-hidden rounded-3xl border",
+        "border-zinc-200 bg-white/70 shadow-[0_18px_55px_-40px_rgba(2,6,23,0.22)] ring-1 ring-black/5",
+        "dark:border-white/10 dark:bg-zinc-900/45 dark:ring-white/10",
+        "supports-[backdrop-filter]:backdrop-blur"
+      )}
       aria-label={`Usuário: ${nome}`}
-      aria-labelledby={headingId}
-      tabIndex={0}
-      role="article"
-      onKeyDown={(e) => {
-        if ((e.key === "Enter" || e.key === " ") && typeof onEditar === "function") {
-          e.preventDefault();
-          onEditar(usuario);
-        }
-      }}
     >
-      {/* top border accent */}
-      <div
-        className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-violet-500 via-fuchsia-500 to-indigo-500 opacity-70"
-        aria-hidden="true"
-      />
+      {/* top accent */}
+      <div className="absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r from-violet-600 via-fuchsia-600 to-indigo-600 opacity-80" aria-hidden="true" />
+      <div className="pointer-events-none absolute inset-x-0 -top-6 h-16 bg-[radial-gradient(closest-side,rgba(168,85,247,0.20),transparent)] blur-2xl" aria-hidden="true" />
 
       <div className="p-4 sm:p-5">
         {/* Cabeçalho */}
@@ -218,172 +273,170 @@ function UsuarioItem({
           {/* Avatar */}
           <div
             aria-hidden="true"
-            className="shrink-0 grid place-items-center h-12 w-12 rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500 text-white font-bold shadow-sm"
+            className="shrink-0 grid place-items-center h-12 w-12 rounded-2xl bg-gradient-to-br from-indigo-600 to-fuchsia-600 text-white font-extrabold shadow-sm"
           >
             {initials(nome)}
           </div>
 
           <div className="flex-1 min-w-0">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-            <h2
-  id={headingId}
-  className="text-base sm:text-lg font-bold text-gray-900 dark:text-white truncate flex items-center gap-2"
->
-  <UserRound className="h-4 w-4 text-zinc-500 dark:text-zinc-300" />
-  <span className="truncate">{nome}</span>
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+                <div className="min-w-0">
+                  <h2 className="text-base sm:text-lg font-extrabold text-zinc-900 dark:text-white flex items-center gap-2 min-w-0">
+                    <UserRound className="h-4 w-4 text-zinc-500 dark:text-zinc-300 shrink-0" aria-hidden="true" />
+                    <span className="truncate">{nome}</span>
 
-  {id != null && (
-    <span
-      className="ml-1 inline-flex items-center rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-mono text-zinc-600 dark:bg-zinc-800 dark:text-zinc-200"
-      title={`ID do usuário: ${id}`}
-      aria-label={`ID do usuário: ${id}`}
-    >
-      ID: {id}
-    </span>
-  )}
-</h2>
+                    {id != null && (
+                      <span
+                        className="ml-1 inline-flex items-center rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-mono text-zinc-600 dark:bg-zinc-800 dark:text-zinc-200 shrink-0"
+                        title={`ID do usuário: ${id}`}
+                        aria-label={`ID do usuário: ${id}`}
+                      >
+                        ID: {id}
+                      </span>
+                    )}
+                  </h2>
 
-              <div className="flex items-center gap-2 shrink-0">
-                {/* Botão de expandir (carrega sob demanda) */}
-                <button
-                  type="button"
-                  onClick={toggleExpand}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-zinc-300 dark:border-zinc-700 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
-                  aria-expanded={expanded ? "true" : "false"}
-                  aria-controls={`detalhes-${key}`}
-                  title={expanded ? "Recolher detalhes" : "Ver detalhes"}
-                >
-                  <Chevron className="h-4 w-4" />
-                  Detalhes
-                </button>
+                  <div className="mt-1 flex items-center gap-2 text-sm">
+                    <Mail className="h-4 w-4 text-zinc-500 dark:text-zinc-300" aria-hidden="true" />
+                    {email && email !== "—" ? (
+                      <a
+                        href={`mailto:${email}`}
+                        className="text-zinc-700 dark:text-zinc-200 break-all underline-offset-2 hover:underline"
+                        title={`Enviar e-mail para ${nome}`}
+                      >
+                        {email}
+                      </a>
+                    ) : (
+                      <span className="text-zinc-500 dark:text-zinc-400">—</span>
+                    )}
+                  </div>
 
-                {/* Editar */}
-                <button
-                  onClick={() => typeof onEditar === "function" && onEditar(usuario)}
-                  className="px-3 py-1.5 rounded-md bg-teal-600 hover:bg-teal-700 text-white text-sm font-medium inline-flex items-center gap-2 shadow transition-all focus:outline-none focus:ring-2 focus:ring-teal-700/40"
-                  aria-label={`Editar perfil de ${nome}`}
-                  title="Editar usuário"
-                >
-                  <Pencil size={16} />
-                  Editar
-                </button>
-              </div>
-            </div>
+                  {/* Perfis */}
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span className="sr-only">Perfis:</span>
+                    {perfis.length ? (
+                      perfis.map((p) => (
+                        <span
+                          key={p}
+                          className={cx(
+                            "text-xs font-extrabold rounded-full px-2.5 py-1 inline-flex items-center gap-1.5",
+                            perfilBadgeClass(p)
+                          )}
+                          title={`Perfil: ${p}`}
+                          role="status"
+                          aria-label={`Perfil: ${p}`}
+                        >
+                          <Shield className="h-3.5 w-3.5" aria-hidden="true" />
+                          {p}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="italic text-zinc-500 dark:text-zinc-400 text-sm">Sem perfis</span>
+                    )}
+                  </div>
+                </div>
 
-            {/* e-mail */}
-            <div className="mt-1 flex items-center gap-2 text-sm">
-              <Mail className="h-4 w-4 text-zinc-500 dark:text-zinc-300" aria-hidden="true" />
-              {email && email !== "—" ? (
-                <a
-                  href={`mailto:${email}`}
-                  className="text-gray-700 dark:text-gray-200 break-all underline-offset-2 hover:underline"
-                  title={`Enviar e-mail para ${nome}`}
-                >
-                  {email}
-                </a>
-              ) : (
-                <span className="text-gray-500 dark:text-gray-400">—</span>
-              )}
-            </div>
-
-            {/* Perfis */}
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <span className="sr-only">Perfis:</span>
-              {perfis.length > 0 ? (
-                perfis.map((p) => (
-                  <span
-                    key={p}
-                    className={`text-xs font-medium border rounded-full px-2 py-0.5 ${perfilBadgeClass(
-                      p
-                    )}`}
-                    title={`Perfil: ${p}`}
-                    role="status"
-                    aria-label={`Perfil: ${p}`}
+                {/* Ações */}
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={toggleExpand}
+                    className={cx(
+                      "inline-flex items-center gap-1.5 px-3 py-2 rounded-2xl border text-sm font-extrabold transition",
+                      "border-zinc-200 bg-white hover:bg-zinc-50",
+                      "dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10",
+                      "focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
+                    )}
+                    aria-expanded={expanded ? "true" : "false"}
+                    aria-controls={`detalhes-${key}`}
+                    title={expanded ? "Recolher detalhes" : "Ver detalhes"}
                   >
-                    <Shield className="inline -mt-0.5 mr-1 h-3 w-3" aria-hidden="true" />
-                    {p}
-                  </span>
-                ))
-              ) : (
-                <span className="ml-1 italic text-gray-400 text-sm">Sem perfis</span>
-              )}
+                    <Chevron className="h-4 w-4" aria-hidden="true" />
+                    Detalhes
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => typeof onEditar === "function" && onEditar(usuario)}
+                    className={cx(
+                      "inline-flex items-center gap-2 rounded-2xl px-3 py-2 text-sm font-extrabold text-white transition",
+                      "bg-teal-600 hover:bg-teal-700",
+                      "focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/60"
+                    )}
+                    aria-label={`Editar perfil de ${nome}`}
+                    title="Editar usuário"
+                  >
+                    <Pencil size={16} aria-hidden="true" />
+                    Editar
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Dados básicos (baratos) */}
-        <dl className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-2 text-sm">
-          <div className="flex items-center gap-2">
-            <IdCard className="h-4 w-4 text-zinc-500" aria-hidden="true" />
-            <dt className="text-gray-500 dark:text-gray-400">CPF:</dt>
-            <dd className="ml-1">
-              <span>{cpfRender}</span>
-              {typeof onToggleCpf === "function" &&
-                typeof isCpfRevealed === "function" && (
+        {/* Dados básicos (sempre visíveis) */}
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="rounded-2xl border border-zinc-200/80 bg-zinc-50/60 px-3 py-2 dark:border-white/10 dark:bg-white/5">
+            <IconMeta Icon={IdCard} label="CPF" value={cpfRender}>
+              <div className="flex items-center gap-2">
+                <span className="font-mono tabular-nums">{cpfRender}</span>
+                {typeof onToggleCpf === "function" && typeof isCpfRevealed === "function" && (
                   <button
                     type="button"
                     onClick={() => onToggleCpf(id)}
-                    className="ml-2 text-xs underline underline-offset-2 text-zinc-600 dark:text-zinc-300 hover:text-zinc-900"
+                    className="text-xs font-extrabold underline underline-offset-2 text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white"
                     aria-label={revealed ? "Ocultar CPF" : "Revelar CPF"}
+                    title={revealed ? "Ocultar CPF" : "Revelar CPF"}
                   >
                     {revealed ? "ocultar" : "revelar"}
                   </button>
                 )}
-            </dd>
+              </div>
+            </IconMeta>
           </div>
 
-          <div className="flex items-center gap-2">
-            <Hash className="h-4 w-4 text-zinc-500" aria-hidden="true" />
-            <dt className="text-gray-500 dark:text-gray-400">Registro:</dt>
-            <dd className="ml-1">{registro}</dd>
+          <div className="rounded-2xl border border-zinc-200/80 bg-zinc-50/60 px-3 py-2 dark:border-white/10 dark:bg-white/5">
+            <IconMeta Icon={Hash} label="Registro" value={registro} />
           </div>
 
-          <div className="flex items-center gap-2">
-            <CalendarClock className="h-4 w-4 text-zinc-500" aria-hidden="true" />
-            <dt className="text-gray-500 dark:text-gray-400">Idade:</dt>
-            <dd className="ml-1">{idade}</dd>
+          <div className="rounded-2xl border border-zinc-200/80 bg-zinc-50/60 px-3 py-2 dark:border-white/10 dark:bg-white/5">
+            <IconMeta Icon={CalendarClock} label="Idade" value={idade} />
           </div>
 
-          <div className="flex items-center gap-2">
-            <Building2 className="h-4 w-4 text-zinc-500" aria-hidden="true" />
-            <dt className="text-gray-500 dark:text-gray-400">Unidade:</dt>
-            <dd className="ml-1">{unidade}</dd>
+          <div className="rounded-2xl border border-zinc-200/80 bg-zinc-50/60 px-3 py-2 dark:border-white/10 dark:bg-white/5">
+            <IconMeta Icon={Building2} label="Unidade" value={unidade} />
           </div>
 
-          <div className="flex items-center gap-2">
-            <Briefcase className="h-4 w-4 text-zinc-500" aria-hidden="true" />
-            <dt className="text-gray-500 dark:text-gray-400">Cargo:</dt>
-            <dd className="ml-1">{cargo}</dd>
+          <div className="rounded-2xl border border-zinc-200/80 bg-zinc-50/60 px-3 py-2 dark:border-white/10 dark:bg-white/5">
+            <IconMeta Icon={Briefcase} label="Cargo" value={cargo} />
           </div>
 
-          <div className="flex items-center gap-2 lg:col-span-1">
-            <GraduationCap className="h-4 w-4 text-zinc-500" aria-hidden="true" />
-            <dt className="text-gray-500 dark:text-gray-400">Escolaridade:</dt>
-            <dd className="ml-1">{escolaridade}</dd>
+          <div className="rounded-2xl border border-zinc-200/80 bg-zinc-50/60 px-3 py-2 dark:border-white/10 dark:bg-white/5">
+            <IconMeta Icon={GraduationCap} label="Escolaridade" value={escolaridade} />
           </div>
 
-          <div className="flex items-center gap-2 lg:col-span-2">
-            <Accessibility className="h-4 w-4 text-zinc-500" aria-hidden="true" />
-            <dt className="text-gray-500 dark:text-gray-400">Deficiência:</dt>
-            <dd className="ml-1">{deficiencia}</dd>
+          <div className="rounded-2xl border border-zinc-200/80 bg-zinc-50/60 px-3 py-2 dark:border-white/10 dark:bg-white/5 lg:col-span-2">
+            <IconMeta Icon={Accessibility} label="Deficiência" value={deficiencia} />
           </div>
-        </dl>
+        </div>
 
-        {/* Detalhes (carregados sob demanda) */}
+        {/* Detalhes (lazy) */}
         {expanded && (
           <div
             id={`detalhes-${key}`}
-            className="mt-4 rounded-xl border border-zinc-200 dark:border-zinc-700 p-3 sm:p-4 bg-zinc-50/60 dark:bg-zinc-800/40"
+            className="mt-4 rounded-2xl border border-zinc-200 dark:border-white/10 bg-white/60 dark:bg-white/5 p-3 sm:p-4"
           >
             {carregandoResumo ? (
-              <div className="flex items-center gap-2 text-sm">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Carregando detalhes…
+              <div className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300" aria-live="polite">
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                Carregando indicadores…
               </div>
             ) : (
               <div className="flex flex-wrap gap-2">
-                <Pill Icon={GraduationCap} label="Cursos ≥75%" value={concluidos75} />
-                <Pill Icon={Award} label="Certificados" value={certificados} />
+                <Pill Icon={GraduationCap} label="Cursos ≥ 75%" value={concluidos75} tone="violet" />
+                <Pill Icon={Award} label="Certificados emitidos" value={certificados} tone="amber" />
               </div>
             )}
           </div>
@@ -394,53 +447,70 @@ function UsuarioItem({
 }
 
 /* ===========================
-   Componente (lista)
-   =========================== */
+   Lista (TabelaUsuarios)
+=========================== */
 export default function TabelaUsuarios({
   usuarios = [],
   onEditar = () => {},
   className = "",
-  onToggleCpf,     // (id) => void
-  isCpfRevealed,   // (id) => boolean
-  maskCpfFn,       // (cpf, revealed) => string
+  onToggleCpf,
+  isCpfRevealed,
+  maskCpfFn,
   loading = false,
-  onCarregarResumo,   // (id) => void   ⬅️ novo
-  isResumoLoading,    // (id) => boolean
-  hasResumo,          // (id) => boolean
+
+  // lazy resumo
+  onCarregarResumo,
+  isResumoLoading,
+  hasResumo,
+
   "data-testid": testId,
 }) {
+  const lista = useMemo(() => (Array.isArray(usuarios) ? usuarios : []), [usuarios]);
+
   if (loading) {
     return (
-      <ul className={`space-y-4 max-w-5xl mx-auto ${className}`} role="status" aria-busy="true" data-testid={testId}>
-        {Array.from({ length: 4 }).map((_, i) => (
-          <li key={i} className="rounded-2xl bg-white dark:bg-zinc-900/70 p-5 ring-1 ring-zinc-200 dark:ring-zinc-700 animate-pulse">
-            <div className="h-6 w-48 bg-gray-200 dark:bg-zinc-700 rounded mb-3" />
-            <div className="h-4 w-72 bg-gray-200 dark:bg-zinc-700 rounded mb-2" />
-            <div className="h-4 w-52 bg-gray-200 dark:bg-zinc-700 rounded mb-4" />
-            <div className="h-8 w-24 bg-gray-200 dark:bg-zinc-700 rounded" />
+      <ul
+        className={cx("space-y-4 max-w-6xl mx-auto", className)}
+        role="status"
+        aria-busy="true"
+        aria-label="Carregando usuários"
+        data-testid={testId}
+      >
+        {Array.from({ length: 6 }).map((_, i) => (
+          <li key={i}>
+            <SkeletonUsuarioCard />
           </li>
         ))}
       </ul>
     );
   }
 
-  if (!Array.isArray(usuarios) || usuarios.length === 0) {
+  if (!lista.length) {
     return (
-      <p className="text-center text-gray-600 dark:text-gray-300 py-4" aria-live="polite" data-testid={testId}>
-        Nenhum usuário encontrado.
-      </p>
+      <div
+        className={cx(
+          "max-w-5xl mx-auto mt-2 rounded-2xl border p-4 text-center",
+          "border-zinc-200 bg-white/70 dark:border-white/10 dark:bg-zinc-900/40",
+          className
+        )}
+        aria-live="polite"
+        data-testid={testId}
+      >
+        <p className="text-sm font-semibold text-zinc-700 dark:text-zinc-200">Nenhum usuário encontrado.</p>
+        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Tente ajustar os filtros e pesquisar novamente.</p>
+      </div>
     );
   }
 
   return (
     <ul
-      className={`space-y-4 max-w-5xl mx-auto ${className}`}
+      className={cx("space-y-4 max-w-6xl mx-auto", className)}
       role="list"
       aria-label="Lista de usuários"
       data-testid={testId}
     >
-      {usuarios.map((usuario, idx) => {
-        const key = usuario.id ?? usuario.email ?? idx;
+      {lista.map((usuario, idx) => {
+        const key = usuario?.id ?? usuario?.email ?? idx;
         return (
           <li key={key}>
             <UsuarioItem
@@ -461,14 +531,50 @@ export default function TabelaUsuarios({
 }
 
 /* ===========================
+   Skeleton premium (shimmer)
+=========================== */
+function SkeletonUsuarioCard() {
+  return (
+    <div className="relative overflow-hidden rounded-3xl border border-zinc-200 dark:border-white/10 bg-white/70 dark:bg-zinc-900/45 p-5">
+      <div className="h-1.5 w-full -mx-5 -mt-5 mb-4 bg-gradient-to-r from-violet-600/30 via-fuchsia-600/25 to-indigo-600/20" />
+      <div
+        className="pointer-events-none absolute inset-0 bg-[linear-gradient(110deg,transparent,rgba(255,255,255,0.55),transparent)] translate-x-[-100%] motion-safe:animate-[shimmer_1.6s_infinite]"
+        aria-hidden="true"
+      />
+      <div className="flex gap-3">
+        <div className="h-12 w-12 rounded-2xl bg-zinc-200/70 dark:bg-white/10 animate-pulse" />
+        <div className="flex-1">
+          <div className="h-5 w-56 rounded-xl bg-zinc-200/70 dark:bg-white/10 animate-pulse" />
+          <div className="mt-2 h-4 w-72 rounded-xl bg-zinc-200/60 dark:bg-white/10 animate-pulse" />
+          <div className="mt-3 h-6 w-52 rounded-full bg-zinc-200/60 dark:bg-white/10 animate-pulse" />
+        </div>
+      </div>
+      <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="h-14 rounded-2xl bg-zinc-100/80 dark:bg-white/5 animate-pulse" />
+        ))}
+      </div>
+      <style>{`
+        @keyframes shimmer {
+          0% { transform: translateX(-100%); }
+          100% { transform: translateX(100%); }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+/* ===========================
    PropTypes
-   =========================== */
+=========================== */
 Pill.propTypes = {
   Icon: PropTypes.elementType.isRequired,
   label: PropTypes.string.isRequired,
   value: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
   title: PropTypes.string,
+  tone: PropTypes.oneOf(["violet", "emerald", "amber"]),
 };
+
 UsuarioItem.propTypes = {
   usuario: PropTypes.object.isRequired,
   onEditar: PropTypes.func,
@@ -479,14 +585,15 @@ UsuarioItem.propTypes = {
   isResumoLoading: PropTypes.func,
   hasResumo: PropTypes.func,
 };
+
 TabelaUsuarios.propTypes = {
   usuarios: PropTypes.arrayOf(
     PropTypes.shape({
       id: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
       nome: PropTypes.string,
       email: PropTypes.string,
-      cpf: PropTypes.string,
-      registro: PropTypes.string,
+      cpf: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+      registro: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
       data_nascimento: PropTypes.oneOfType([PropTypes.string, PropTypes.instanceOf(Date)]),
       idade: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
       unidade_nome: PropTypes.any,

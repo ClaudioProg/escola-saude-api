@@ -2,6 +2,7 @@
 import { useMemo, useState, useCallback } from "react";
 import { toast } from "react-toastify";
 import StatusPresencaBadge from "./StatusPresencaBadge";
+import ModalConfirmacao from "../components/ModalConfirmacao";
 import { formatarDataBrasileira, formatarParaISO } from "../utils/data";
 import { apiPost } from "../services/api";
 
@@ -129,61 +130,84 @@ export default function PresencasTurmaExpandida({
   const [savingKey, setSavingKey] = useState(null);
   const [ariaMsg, setAriaMsg] = useState("");
 
-  // “agora” calculado 1x por render (evita repetir dentro de loops)
-  const agora = useMemo(() => new Date(), []);
+  // ✅ confirmação premium (substitui window.confirm)
+  const [confirm, setConfirm] = useState({
+    open: false,
+    key: null,
+    dataISO: "",
+    turmaId: null,
+    usuarioId: null,
+    nome: "",
+  });
 
-  const confirmarPresenca = useCallback(
-    async (dataSelecionada, turmaId, usuarioId, nome) => {
-      const confirmado = window.confirm(
-        `Confirmar presença de ${nome} em ${formatarDataBrasileira(dataSelecionada)}?`
-      );
-      if (!confirmado) return;
+  // “agora” por render (evita ficar congelado)
+  const agora = new Date();
 
-      const key = `${usuarioId}|${dataSelecionada}`;
+  const solicitarConfirmacaoPresenca = useCallback((dataISO, turmaId, usuarioId, nome) => {
+    const key = `${usuarioId}|${dataISO}`;
+    setConfirm({
+      open: true,
+      key,
+      dataISO,
+      turmaId,
+      usuarioId,
+      nome: nome || "Participante",
+    });
+  }, []);
 
-      try {
-        setSavingKey(key);
+  const executarConfirmacaoPresenca = useCallback(async () => {
+    if (!confirm?.turmaId || !confirm?.usuarioId || !confirm?.dataISO) {
+      setConfirm((c) => ({ ...c, open: false }));
+      return;
+    }
 
-        if (otimismo) {
-          setLocalPresencas((prev) => {
-            const clone = new Map(prev);
-            clone.set(key, true);
-            return clone;
-          });
-        }
+    const { dataISO, turmaId, usuarioId, nome, key } = confirm;
 
-        await apiPost("/api/presencas/confirmar-simples", {
-          turma_id: turmaId,
-          usuario_id: usuarioId,
-          data: dataSelecionada, // se seu backend exigir "data_presenca", troque aqui
+    try {
+      setSavingKey(key);
+
+      if (otimismo) {
+        setLocalPresencas((prev) => {
+          const clone = new Map(prev);
+          clone.set(key, true);
+          return clone;
         });
-
-        const okMsg = `Presença confirmada para ${nome} em ${formatarDataBrasileira(dataSelecionada)}.`;
-        toast.success(`✅ ${okMsg}`);
-        setAriaMsg(okMsg);
-
-        await carregarPresencas?.(turmaId);
-      } catch (err) {
-        if (otimismo) {
-          setLocalPresencas((prev) => {
-            const clone = new Map(prev);
-            clone.delete(key);
-            return clone;
-          });
-        }
-
-        console.error("Erro ao confirmar presença:", err);
-        const msg = err?.data?.erro || err?.message || "Erro ao confirmar presença.";
-        toast.error(`❌ ${msg}`);
-        setAriaMsg(`Erro ao confirmar presença: ${msg}.`);
-      } finally {
-        setSavingKey(null);
       }
-    },
-    [carregarPresencas, otimismo]
-  );
+
+      await apiPost("/api/presencas/confirmar-simples", {
+        turma_id: turmaId,
+        usuario_id: usuarioId,
+        data: dataISO, // se seu backend exigir "data_presenca", troque aqui
+      });
+
+      const okMsg = `Presença confirmada para ${nome} em ${formatarDataBrasileira(dataISO)}.`;
+      toast.success(`✅ ${okMsg}`);
+      setAriaMsg(okMsg);
+
+      await carregarPresencas?.(turmaId);
+    } catch (err) {
+      if (otimismo) {
+        setLocalPresencas((prev) => {
+          const clone = new Map(prev);
+          clone.delete(key);
+          return clone;
+        });
+      }
+
+      // eslint-disable-next-line no-console
+      console.error("Erro ao confirmar presença:", err);
+      const msg = err?.data?.erro || err?.message || "Erro ao confirmar presença.";
+      toast.error(`❌ ${msg}`);
+      setAriaMsg(`Erro ao confirmar presença: ${msg}.`);
+    } finally {
+      setSavingKey(null);
+      setConfirm((c) => ({ ...c, open: false }));
+    }
+  }, [confirm, carregarPresencas, otimismo]);
 
   if (!Array.isArray(inscritos) || inscritos.length === 0) return null;
+
+  const confirmLoading = !!confirm?.key && savingKey === confirm.key;
 
   return (
     <div className="mt-5 space-y-6">
@@ -278,7 +302,7 @@ export default function PresencasTurmaExpandida({
                           </td>
 
                           <td className="py-2 px-3 text-zinc-700 dark:text-zinc-200">
-                            {(hi && hf) ? `${fmtHora(hi)}–${fmtHora(hf)}` : "—"}
+                            {hi && hf ? `${fmtHora(hi)}–${fmtHora(hf)}` : "—"}
                           </td>
 
                           <td className="py-2 px-3">
@@ -292,7 +316,7 @@ export default function PresencasTurmaExpandida({
                             {!presente && dentroDaJanela && !antesDaJanela ? (
                               <button
                                 type="button"
-                                onClick={() => confirmarPresenca(dataISO, turma.id, usuarioId, nome)}
+                                onClick={() => solicitarConfirmacaoPresenca(dataISO, turma.id, usuarioId, nome)}
                                 disabled={disabled}
                                 className={classNames(
                                   "inline-flex items-center justify-center",
@@ -359,7 +383,7 @@ export default function PresencasTurmaExpandida({
                           {formatarDataBrasileira(dataISO)}
                         </div>
                         <div className="text-xs text-zinc-600 dark:text-zinc-300 mt-0.5">
-                          {(hi && hf) ? `${fmtHora(hi)}–${fmtHora(hf)}` : "—"}
+                          {hi && hf ? `${fmtHora(hi)}–${fmtHora(hf)}` : "—"}
                         </div>
                       </div>
 
@@ -374,7 +398,7 @@ export default function PresencasTurmaExpandida({
                       {!presente && dentroDaJanela && !antesDaJanela ? (
                         <button
                           type="button"
-                          onClick={() => confirmarPresenca(dataISO, turma.id, usuarioId, nome)}
+                          onClick={() => solicitarConfirmacaoPresenca(dataISO, turma.id, usuarioId, nome)}
                           disabled={disabled}
                           className={classNames(
                             "inline-flex items-center justify-center",
@@ -400,6 +424,25 @@ export default function PresencasTurmaExpandida({
           </section>
         );
       })}
+
+      {/* ✅ ModalConfirmacao: substitui window.confirm */}
+      <ModalConfirmacao
+        isOpen={!!confirm.open}
+        title="Confirmar presença?"
+        description={
+          confirm?.dataISO
+            ? `Confirmar presença de ${confirm.nome} em ${formatarDataBrasileira(confirm.dataISO)}?`
+            : "Confirmar presença?"
+        }
+        confirmText="Sim, confirmar"
+        cancelText="Cancelar"
+        loading={confirmLoading}
+        onClose={() => {
+          if (confirmLoading) return;
+          setConfirm((c) => ({ ...c, open: false }));
+        }}
+        onConfirm={executarConfirmacaoPresenca}
+      />
     </div>
   );
 }

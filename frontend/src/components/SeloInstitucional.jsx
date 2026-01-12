@@ -1,11 +1,12 @@
 import { memo, useMemo } from "react";
+import PropTypes from "prop-types";
 
 /**
  * SeloInstitucional
  * Assinatura visual institucional (não é hero)
  *
  * - Faixa superior com degradê
- * - Glow sutil (login-grade)
+ * - Glow sutil
  * - Micro-identidade (dot + nome)
  * - Badge institucional opcional
  *
@@ -18,7 +19,17 @@ function SeloInstitucional({
   badgeText = "Plataforma Oficial",
   showBadge = true,
   showSubtitle = true,
+  subtitle = "Secretaria Municipal de Saúde — Santos",
+
   className = "",
+
+  // extras premium (opcionais)
+  as = "section", // section | header | div
+  align = "between", // between | start
+  compact = false,
+  glowStrength = "md", // sm | md | lg
+  role = "banner",
+  ariaLabel = "Identidade institucional da plataforma",
 }) {
   const theme = useMemo(() => {
     const variants = {
@@ -87,24 +98,37 @@ function SeloInstitucional({
     return variants[variant] ?? variants.saude;
   }, [variant]);
 
+  const Tag = ["section", "header", "div"].includes(as) ? as : "section";
+
+  const glowSize =
+    glowStrength === "lg"
+      ? "h-10 -top-3 blur-2xl"
+      : glowStrength === "sm"
+      ? "h-6 -top-1.5 blur-lg"
+      : "h-8 -top-2 blur-xl";
+
+  const padY = compact ? "py-2" : "py-3";
+  const layout =
+    align === "start"
+      ? "justify-start"
+      : "justify-between";
+
   return (
-    <section
-      className={`w-full ${className}`}
-      role="banner"
-      aria-label="Identidade institucional da plataforma"
-    >
+    <Tag className={`w-full ${className}`} role={role} aria-label={ariaLabel}>
       {/* faixa superior */}
       <div className="relative">
         <div className={`h-[3px] w-full bg-gradient-to-r ${theme.bar}`} />
         <div
-          className={`pointer-events-none absolute inset-x-0 -top-2 h-8 bg-gradient-to-r ${theme.glow} blur-xl`}
+          className={`pointer-events-none absolute inset-x-0 ${glowSize} bg-gradient-to-r ${theme.glow}`}
           aria-hidden="true"
         />
+        {/* hairline extra (premium) */}
+        <div className="h-px w-full bg-black/5 dark:bg-white/10" aria-hidden="true" />
       </div>
 
       {/* micro-identidade */}
       <div className="mx-auto w-full max-w-7xl px-4 sm:px-6">
-        <div className="flex flex-wrap items-center justify-between gap-3 py-3">
+        <div className={`flex flex-wrap items-center ${layout} gap-3 ${padY}`}>
           <div className="flex items-center gap-2 min-w-0">
             <span
               className={`h-2.5 w-2.5 rounded-full ${theme.dot} ring-4 ${theme.ring}`}
@@ -114,9 +138,10 @@ function SeloInstitucional({
               <span className={`text-sm font-semibold ${theme.title} truncate`}>
                 {appName}
               </span>
+
               {showSubtitle && (
                 <span className={`hidden sm:inline text-xs ${theme.sub}`}>
-                  Secretaria Municipal de Saúde — Santos
+                  {subtitle}
                 </span>
               )}
             </div>
@@ -128,17 +153,31 @@ function SeloInstitucional({
               aria-label={badgeText}
               title={badgeText}
             >
-              <span
-                className="h-1.5 w-1.5 rounded-full bg-current opacity-70"
-                aria-hidden="true"
-              />
+              <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" aria-hidden="true" />
               <span className="whitespace-nowrap">{badgeText}</span>
             </div>
           )}
         </div>
       </div>
-    </section>
+    </Tag>
   );
 }
+
+SeloInstitucional.propTypes = {
+  appName: PropTypes.string,
+  variant: PropTypes.oneOf(["saude", "residencia", "petroleo", "violet", "amber", "rose"]),
+  badgeText: PropTypes.string,
+  showBadge: PropTypes.bool,
+  showSubtitle: PropTypes.bool,
+  subtitle: PropTypes.string,
+  className: PropTypes.string,
+
+  as: PropTypes.oneOf(["section", "header", "div"]),
+  align: PropTypes.oneOf(["between", "start"]),
+  compact: PropTypes.bool,
+  glowStrength: PropTypes.oneOf(["sm", "md", "lg"]),
+  role: PropTypes.string,
+  ariaLabel: PropTypes.string,
+};
 
 export default memo(SeloInstitucional);

@@ -475,9 +475,6 @@ export default function AgendaInstrutor() {
   const diaSelecionadoYMD = useMemo(() => format(viewDate, "yyyy-MM-dd"), [viewDate]);
   const eventosDoDia = eventosPorData[diaSelecionadoYMD] || [];
 
-  // progresso fino no topo
-  const reduceMotion = useReducedMotion();
-
   const irParaHoje = () => setViewDate(new Date());
 
   return (

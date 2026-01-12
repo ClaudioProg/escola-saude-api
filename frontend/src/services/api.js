@@ -340,7 +340,10 @@ async function warmup(authNeeded) {
 }
 
 // Handler centralizado — recebe contexto da requisição
-async function handle(res, { on401 = "silent", on403 = "silent" } = {}) {
+async function handle(
+     res,
+     { on401 = "silent", on403 = "silent", on404 = "throw", suppressGlobalError = false } = {}
+   ) {
   const url = res?.url || "";
   const status = res?.status;
 
@@ -349,6 +352,12 @@ async function handle(res, { on401 = "silent", on403 = "silent" } = {}) {
 
   let text = "";
   let data = null;
+
+    // 404 silencioso quando solicitado (útil para fallbacks)
+  if (status === 404 && on404 === "silent") {
+    // retorna null para o caller decidir (ex.: tentar outra rota)
+    return null;
+    }
 
   try { text = await res.text(); } catch {}
   try { data = text ? JSON.parse(text) : null; } catch { data = null; }
@@ -383,7 +392,12 @@ async function handle(res, { on401 = "silent", on403 = "silent" } = {}) {
 
   if (!res.ok) {
     const msg = data?.erro || data?.message || text || `HTTP ${status}`;
-    throw new ApiError(msg, { status, url, data: data ?? text });
+    const err = new ApiError(msg, { status, url, data: data ?? text });
+    if (suppressGlobalError) {
+      // deixa o caller decidir sem “barulho” global
+      err.silenced = true;
+    }
+    throw err;
   }
 
   return data;
@@ -513,7 +527,8 @@ async function doFetch(
   }
 
   // Passa o contexto (on401/on403) para o handler
-  return handle(res, { on401, on403 });
+  const { on404, suppressGlobalError } = (arguments[1] || {});
+    return handle(res, { on401, on403, on404, suppressGlobalError });
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -542,42 +557,159 @@ export const apiGetPublic = (path, opts = {}) =>
 export const apiPostPublic = (path, body, opts = {}) =>
   apiPost(path, body, { auth: false, on401: "silent", ...opts });
 
+// ───────────────────────────────────────────────────────────────────
+// HEAD cache/coalescing (evita spam e dupes em paralelo)
+// ───────────────────────────────────────────────────────────────────
+const HEAD_CACHE_TTL_MS = Number(import.meta.env.VITE_API_HEAD_TTL_MS || 120_000); // 2min
+const __headCache = new Map();    // key -> { value: boolean, expires: number }
+const __inflightHead = new Map(); // key -> Promise<boolean>
+
+/** Cria a chave canônica do cache de HEAD (por path normalizado) */
+function headKeyFromPath(path) {
+  return normalizePath(path);
+}
+
+/** Lê do cache se ainda válido */
+function headCacheGet(key) {
+  const ent = __headCache.get(key);
+  if (!ent) return undefined;
+  if (ent.expires < Date.now()) {
+    __headCache.delete(key);
+    return undefined;
+  }
+  return ent.value;
+}
+
+/** Grava no cache com TTL */
+function headCacheSet(key, value, ttlMs = HEAD_CACHE_TTL_MS) {
+  __headCache.set(key, { value: !!value, expires: Date.now() + ttlMs });
+}
+
+/** Invalida entradas cujo key comece com um prefix específico */
+export function invalidateHeadPrefix(prefixPath) {
+  const prefix = headKeyFromPath(prefixPath);
+  for (const k of __headCache.keys()) {
+    if (k.startsWith(prefix)) __headCache.delete(k);
+  }
+}
+
+// 🆕 Detecta paths de modelo (banner/oral) — útil p/ suprimir HEAD em DEV
+function isModeloFilePath(p = "") {
+  const s = String(p || "");
+  return /\/chamadas\/\d+\/modelo-(banner|oral)(?:\/download)?$/i.test(s);
+}
+
 /**
- * 🆕 HEAD simples — retorna boolean (res.ok).
- * Útil para checar existência de arquivos (ex.: modelo do banner).
+ * HEAD simples e resiliente — retorna boolean (existe/não).
+ * - Silencia 404/0 (considera false).
+ * - Coalesce requisições em paralelo para mesma URL.
+ * - TTL de cache configurável (VITE_API_HEAD_TTL_MS, default 120s).
+ * - 🆕 Em DEV, opcionalmente não faz request para paths de modelo e assume false (config: VITE_API_SUPPRESS_HEAD_404)
  */
 export async function apiHead(path, opts = {}) {
-  const { auth = true, headers, query, on401 = "silent", on403 = "silent" } = opts;
+  const {
+    auth = true,
+    headers,
+    query,
+    on401 = "silent",
+    on403 = "silent",
+    ttlMs = HEAD_CACHE_TTL_MS,
+    quiet = true, // não loga warnings para estados esperados
+    devSuppressModelo404 = (import.meta.env.VITE_API_SUPPRESS_HEAD_404 ?? "1") !== "0",
+  } = opts;
 
-  const safePath = normalizePath(path);
-  const isAbsolute = /^https?:\/\//i.test(safePath);
-  let url = isAbsolute ? safePath + qs(query) : ensureApi(API_BASE_URL, safePath) + qs(query);
-  try {
-    if (isHttpUrl(url)) {
-      const host = new URL(url).host;
-      if (!isLocalHost(host)) url = url.replace(/^http:\/\//i, "https://");
+  // 🆕 Dev-mode: evita flood de 404 no console para assets opcionais de modelo
+  if (IS_DEV && devSuppressModelo404 && isModeloFilePath(path)) {
+    const key = headKeyFromPath(path);
+    const cached = headCacheGet(key);
+    if (typeof cached === "boolean") return cached;   // respeita cache
+    headCacheSet(key, false, ttlMs);                  // assume "não existe" e cacheia
+    return false;                                     // 🔇 nenhum request → nenhum 404 no console
+  }
+
+  // chave canônica do cache (por PATH normalizado)
+  const key = headKeyFromPath(path);
+
+  // 1) cache quente
+  const cached = headCacheGet(key);
+  if (typeof cached === "boolean") return cached;
+
+  // 2) coalescing
+  if (__inflightHead.has(key)) return __inflightHead.get(key);
+
+  const p = (async () => {
+    // Monta URL final (como os demais helpers)
+    const safePath = normalizePath(path);
+    const isAbsolute = /^https?:\/\//i.test(safePath);
+    let url = isAbsolute ? safePath + qs(query) : ensureApi(API_BASE_URL, safePath) + qs(query);
+    try {
+      if (isHttpUrl(url)) {
+        const host = new URL(url).host;
+        if (!isLocalHost(host)) url = url.replace(/^http:\/\//i, "https://");
+      }
+    } catch {}
+
+    // Cabeçalhos
+    const jwt = getToken();
+    const hdrs =
+      auth && jwt
+        ? { Authorization: `Bearer ${jwt}`, ...buildClientContextHeaders(), ...(getDebugConflitos() ? { "X-Debug-Conflitos": "1" } : {}), ...(headers || {}) }
+        : { ...buildClientContextHeaders(), ...(getDebugConflitos() ? { "X-Debug-Conflitos": "1" } : {}), ...(headers || {}) };
+
+    // Execução com timeout curto (HEAD deve ser rápido)
+    const timeoutMs = Number(import.meta.env.VITE_API_HEAD_TIMEOUT_MS || 8000);
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(new Error("timeout")), timeoutMs);
+
+    let res;
+    try {
+      res = await fetch(url, {
+        method: "HEAD",
+        headers: hdrs,
+        credentials: "include",
+        mode: "cors",
+        cache: "no-store",
+        redirect: "follow",
+        referrerPolicy: "strict-origin-when-cross-origin",
+        signal: controller.signal,
+      });
+    } catch (e) {
+      // Falha de rede/abort → trate como "não existe" silenciosamente
+      if (!quiet) console.warn("[apiHead] erro de rede/abort:", e?.message || e);
+      res = { status: 0, ok: false, headers: new Headers() };
+    } finally {
+      clearTimeout(t);
     }
-  } catch {}
 
-  const jwt = getToken();
-  const res = await fetch(url, {
-    method: "HEAD",
-    headers: auth && jwt
-      ? { Authorization: `Bearer ${jwt}`, ...buildClientContextHeaders(), ...(getDebugConflitos() ? { "X-Debug-Conflitos": "1" } : {}), ...(headers || {}) }
-      : { ...buildClientContextHeaders(), ...(getDebugConflitos() ? { "X-Debug-Conflitos": "1" } : {}), ...(headers || {}) },
-    credentials: "include",
-    mode: "cors",
-    cache: "no-store",
-    redirect: "follow",
-    referrerPolicy: "strict-origin-when-cross-origin",
+    // sincroniza flag de perfil
+    try { syncPerfilHeader(res); } catch {}
+
+    const st = res?.status ?? 0;
+
+    // auth/perm: respeita flags, mas por padrão silencioso
+    if (st === 401 && on401 !== "silent" && !quiet) console.warn("[apiHead] 401 em", url);
+    if (st === 403 && on403 !== "silent" && !quiet) console.warn("[apiHead] 403 em", url);
+
+    // ok → true; 404/410/0 → false; demais → false (sem exceção)
+    const exists =
+      res?.ok || st === 200 || st === 204 ? true :
+      (st === 404 || st === 410 || st === 0) ? false :
+      false;
+
+    // grava cache
+    headCacheSet(key, exists, ttlMs);
+
+    return exists;
+  })();
+
+  __inflightHead.set(key, p);
+
+  // limpa o inflight assim que resolver (não segura promises velhas)
+  p.finally(() => {
+    setTimeout(() => __inflightHead.delete(key), 0);
   });
 
-  syncPerfilHeader(res);
-
-  if (res.status === 401 && on401 !== "silent") throw new Error("Não autorizado (401)");
-  if (res.status === 403 && on403 !== "silent") throw new Error("Sem permissão (403)");
-
-  return res.ok;
+  return p;
 }
 
 /**
@@ -998,10 +1130,17 @@ export async function apiChamadaModeloUpload(chamadaId, fileOrFormData) {
   if (!chamadaId && chamadaId !== 0) throw new Error("chamadaId é obrigatório");
   const idNum = Number(chamadaId);
   if (!Number.isFinite(idNum)) throw new Error("chamadaId inválido");
-  // força o nome do campo correto esperado pelo backend
-  return apiUpload(`/chamadas/${chamadaId}/modelo-banner`, fileOrFormData, {
+
+  const resp = await apiUpload(`/chamadas/${chamadaId}/modelo-banner`, fileOrFormData, {
     fieldName: "file",
   });
+
+  // 🧼 depois do upload, limpe o cache/head dessa chamada
+  try {
+    invalidateHeadPrefix(`/chamadas/${chamadaId}/modelo-banner`);
+  } catch {}
+
+  return resp;
 }
 
 /** GET admin (JSON): meta para o painel (exists/filename/size/mtime/mime) */

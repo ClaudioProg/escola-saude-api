@@ -1,4 +1,4 @@
-// ✅ src/pages/AvaliadorSubmissoes.jsx — premium++ (a11y, CSV, atalhos, bugfix nota)
+// ✅ src/pages/AvaliadorSubmissoes.jsx — premium++ (a11y, CSV, atalhos, bugfix nota + fallback 404)
 import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -16,6 +16,9 @@ import {
 import api from "../services/api";
 import Footer from "../components/Footer";
 import { useOnceEffect } from "../hooks/useOnceEffect";
+import {
+  listarTrabalhosAtribuidosAoAvaliador,
+} from "../services/submissoesAvaliadores";
 
 /* ───────────── utils ───────────── */
 const fmt = (v, alt = "—") => (v === 0 || !!v ? String(v) : alt);
@@ -414,7 +417,7 @@ function DrawerAvaliacao({ open, onClose, submissaoId, tipo }) {
 /* ───────────── Página principal ───────────── */
 export default function AvaliadorSubmissoes() {
   const [loading, setLoading] = useState(true);
-  const [lista, setLista] = useState([]);          // lista crua do backend (uma linha por atribuição)
+  const [lista, setLista] = useState([]);          // lista crua (uma linha por atribuição)
   const [busca, setBusca] = useState("");
   const [debounced, setDebounced] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -464,17 +467,23 @@ export default function AvaliadorSubmissoes() {
     try {
       setLoading(true);
 
-      // 1) lista
-      const r = await api.get("/avaliador/submissoes", { signal: ac.signal });
-      const arr = Array.isArray(r?.data) ? r.data : r;
-      setLista(arr);
+      // 1) lista usando serviço com fallback (evita 404 no /avaliador/submissoes)
+      const arr = await listarTrabalhosAtribuidosAoAvaliador().catch(() => []);
+      setLista(Array.isArray(arr) ? arr : []);
 
-      // 2) contagens
+      // 2) contagens (tenta endpoint dedicado; se falhar, calcula localmente)
       try {
-        const c = await api.get("/avaliador/minhas-contagens", { signal: ac.signal });
+        const c = await api.get("/avaliador/minhas-contagens", {
+          signal: ac.signal,
+          on404: "silent",
+          on401: "silent",
+          on403: "silent",
+          suppressGlobalError: true,
+        });
         const data = c?.data ?? {};
-        if (typeof data?.total !== "undefined") setContagens(data);
-        else {
+        if (typeof data?.total !== "undefined") {
+          setContagens(data);
+        } else {
           const pend = arr.filter((s) => !s.ja_avaliado).length;
           const done = arr.length - pend;
           setContagens({ total: arr.length, pendentes: pend, avaliados: done });
@@ -485,7 +494,7 @@ export default function AvaliadorSubmissoes() {
         setContagens({ total: arr.length, pendentes: pend, avaliados: done });
       }
 
-      // 3) notas por linha (respeitando a modalidade da linha)
+      // 3) notas por linha (respeitando a modalidade da linha) – busca detalhes da própria submissão
       const conc = 4;
       let i = 0;
       async function pegarNotaParaLinha(s) {
@@ -502,7 +511,7 @@ export default function AvaliadorSubmissoes() {
             setNotasMap((prev) => (prev[k] != null ? prev : { ...prev, [k]: nota }));
           }
         } catch {
-          /* sem avaliação ainda para esta modalidade — ok */
+          /* sem avaliação ainda — ok */
         }
       }
 
@@ -550,6 +559,16 @@ export default function AvaliadorSubmissoes() {
     return Number((soma / notasValidas.length).toFixed(1));
   }, [notasMap]);
 
+  // helpers de exportação (clean precisa vir ANTES de exportarCSV)
+  const clean = (s) => String(s ?? "").replaceAll(/[\r\n]+/g, " ").replaceAll(/;/g, ",");
+  function baixarArquivo(nome, conteudo, mime) {
+    const blob = new Blob([conteudo], { type: mime || "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = nome; a.rel = "noopener";
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }
   function exportarCSV(escopo = "geral") {
     const blocos = {
       geral: filtradas,
@@ -574,15 +593,6 @@ export default function AvaliadorSubmissoes() {
       ].join(";"));
     }
     baixarArquivo(`submissoes_${escopo}.csv`, linhas.join("\r\n"), "text/csv;charset=utf-8");
-  }
-  const clean = (s) => String(s ?? "").replaceAll(/[\r\n]+/g, " ").replaceAll(/;/g, ",");
-  function baixarArquivo(nome, conteudo, mime) {
-    const blob = new Blob([conteudo], { type: mime || "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = nome; a.rel = "noopener";
-    document.body.appendChild(a); a.click(); a.remove();
-    URL.revokeObjectURL(url);
   }
 
   if (loading) {
@@ -819,9 +829,9 @@ export default function AvaliadorSubmissoes() {
                 }
 
                 try {
-                  const r2 = await api.get("/avaliador/submissoes");
-                  const arr = Array.isArray(r2?.data) ? r2.data : r2;
-                  setLista(arr);
+                  // Recarrega lista via serviço com fallback (evita 404)
+                  const arr = await listarTrabalhosAtribuidosAoAvaliador().catch(() => []);
+                  setLista(Array.isArray(arr) ? arr : []);
 
                   try {
                     const c = await api.get("/avaliador/minhas-contagens");

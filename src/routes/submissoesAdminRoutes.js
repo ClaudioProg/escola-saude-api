@@ -40,11 +40,7 @@ const idParam = (req) => Number(req.params.id);
    Listagem administrativa de submissões
    GET /api/admin/submissoes
    ────────────────────────────────────────────── */
-router.get(
-  "/admin/submissoes",
-  requireAdmin,
-  wrap(ctrl.listarSubmissoesAdmin)
-);
+router.get("/admin/submissoes", requireAdmin, wrap(ctrl.listarSubmissoesAdmin));
 
 /* ──────────────────────────────────────────────
    Avaliadores (ADMIN)
@@ -62,7 +58,7 @@ router.post(
   wrap(ctrl.atribuirAvaliadores)
 );
 
-// ❌ Revogar (excluir lógico) avaliador
+// ❌ Revogar (exclusão lógica) avaliador
 router.delete(
   "/admin/submissoes/:id(\\d+)/avaliadores",
   requireAdmin,
@@ -76,7 +72,7 @@ router.patch(
   wrap(ctrl.restaurarAvaliadorFlex)
 );
 
-// (Opcional) Alias POST caso seu cliente não envie body em DELETE
+// (Opcional) Alias POST caso o cliente não envie body em DELETE
 router.post(
   "/admin/submissoes/:id(\\d+)/avaliadores/revogar",
   requireAdmin,
@@ -104,41 +100,60 @@ router.post(
    Atualização de nota média (materializada)
    POST /api/admin/submissoes/:id/atualizar-nota
    ────────────────────────────────────────────── */
-
 router.post(
   "/admin/submissoes/:id(\\d+)/atualizar-nota",
   requireAdmin,
   wrap(async (req, res) => {
-    // ✅ evita require dinâmico por request
     if (typeof ctrl.atualizarNotaMediaMaterializada !== "function") {
       return res
         .status(501)
         .json({ error: "Função atualizarNotaMediaMaterializada não implementada." });
     }
-
     await ctrl.atualizarNotaMediaMaterializada(idParam(req));
     return res.json({ ok: true });
   })
 );
 
 /* ──────────────────────────────────────────────
-   Download do pôster (PÚBLICO)
-   Mantém compatibilidade com /banner
-   GET /api/submissoes/:id/poster
-   GET /api/submissoes/:id/banner
-   ────────────────────────────────────────────── */
-router.get("/submissoes/:id(\\d+)/poster", wrap(ctrl.baixarBanner));
-router.get("/submissoes/:id(\\d+)/banner", wrap(ctrl.baixarBanner));
+   Modelos de PPTX (ADMIN) — comuns
+   GET  /api/admin/chamadas/:id/modelo-banner/meta
+   GET  /api/admin/chamadas/:id/modelo-banner        (download)
+   POST /api/admin/chamadas/:id/modelo-banner        (upload)
 
-/* ──────────────────────────────────────────────
-   Detalhe da submissão
-   (ADMIN/autor/avaliador)
-   GET /api/submissoes/:id
+   GET  /api/admin/chamadas/:id/modelo-oral/meta
+   GET  /api/admin/chamadas/:id/modelo-oral          (download)
+   POST /api/admin/chamadas/:id/modelo-oral          (upload)
    ────────────────────────────────────────────── */
 router.get(
-  "/submissoes/:id(\\d+)",
-  requireAuth,
-  wrap(ctrl.obterSubmissao)
+  "/admin/chamadas/:id(\\d+)/modelo-banner/meta",
+  requireAdmin,
+  wrap(ctrl.getModeloBannerMeta)
+);
+router.get(
+  "/admin/chamadas/:id(\\d+)/modelo-banner",
+  requireAdmin,
+  wrap(ctrl.downloadModeloBanner)
+);
+router.post(
+  "/admin/chamadas/:id(\\d+)/modelo-banner",
+  requireAdmin,
+  wrap(ctrl.uploadModeloBanner)
+);
+
+router.get(
+  "/admin/chamadas/:id(\\d+)/modelo-oral/meta",
+  requireAdmin,
+  wrap(ctrl.getModeloOralMeta)
+);
+router.get(
+  "/admin/chamadas/:id(\\d+)/modelo-oral",
+  requireAdmin,
+  wrap(ctrl.downloadModeloOral)
+);
+router.post(
+  "/admin/chamadas/:id(\\d+)/modelo-oral",
+  requireAdmin,
+  wrap(ctrl.uploadModeloOral)
 );
 
 /* ──────────────────────────────────────────────
@@ -153,10 +168,6 @@ router.get(
 );
 
 // Alias protegido (mantém)
-router.get(
-  "/avaliadores/resumo",
-  requireAdmin,
-  wrap(ctrl.resumoAvaliadores)
-);
+router.get("/avaliadores/resumo", requireAdmin, wrap(ctrl.resumoAvaliadores));
 
 module.exports = router;

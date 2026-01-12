@@ -1,12 +1,37 @@
 // 📁 src/components/StatusPresencaBadge.jsx
 import PropTypes from "prop-types";
-import { CheckCircle, XCircle, HelpCircle, Clock } from "lucide-react";
+import {
+  CheckCircle2,
+  XCircle,
+  HelpCircle,
+  Clock,
+  AlertTriangle,
+  Unlock,
+  Ban,
+} from "lucide-react";
+
+function cx(...arr) {
+  return arr.filter(Boolean).join(" ");
+}
 
 /**
- * Badge de status de presença.
- * - status aceitos: "presente" | "faltou" | "aguardando" | (outros → indefinido)
- * - label: sobrescreve o texto padrão
- * - size: "sm" | "md" | "lg"
+ * Badge de status de presença (premium)
+ *
+ * Status aceitos (case-insensitive):
+ * - "presente"
+ * - "faltou"
+ * - "aguardando"
+ * - "em_aberto"   (janela aberta p/ confirmar)
+ * - "bloqueado"   (fora da janela)
+ * - "justificado" (opcional)
+ * - outros -> "indefinido"
+ *
+ * Props:
+ * - label?: string (sobrescreve texto)
+ * - size?: "sm" | "md" | "lg"
+ * - ariaLive?: "off" | "polite" | "assertive"
+ * - announce?: boolean (default false) -> quando true, usa role="status"
+ * - showDot?: boolean (default false) -> mini bolinha de cor (fica lindo em tabela)
  */
 export default function StatusPresencaBadge({
   status,
@@ -14,54 +39,90 @@ export default function StatusPresencaBadge({
   className = "",
   size = "md",
   ariaLive = "polite",
+  announce = false,
+  showDot = false,
 }) {
   const norm = String(status || "").toLowerCase().trim();
 
   const SIZE = {
-    sm: { wrap: "px-1.5 py-0.5 text-[11px] rounded", icon: 12, gap: "gap-1" },
-    md: { wrap: "px-2 py-1 text-xs rounded", icon: 14, gap: "gap-1.5" },
-    lg: { wrap: "px-2.5 py-1.5 text-sm rounded-md", icon: 16, gap: "gap-2" },
-  }[size] || { wrap: "px-2 py-1 text-xs rounded", icon: 14, gap: "gap-1.5" };
+    sm: { wrap: "px-2 py-0.5 text-[11px] rounded-full", icon: 12, gap: "gap-1", dot: "h-1.5 w-1.5" },
+    md: { wrap: "px-2.5 py-1 text-xs rounded-full", icon: 14, gap: "gap-1.5", dot: "h-1.5 w-1.5" },
+    lg: { wrap: "px-3 py-1.5 text-sm rounded-full", icon: 16, gap: "gap-2", dot: "h-2 w-2" },
+  }[size] || { wrap: "px-2.5 py-1 text-xs rounded-full", icon: 14, gap: "gap-1.5", dot: "h-1.5 w-1.5" };
 
   const MAP = {
     presente: {
-      Icon: CheckCircle,
+      Icon: CheckCircle2,
       text: label || "Presente",
-      cls: "bg-green-100 text-green-800 dark:bg-green-800/30 dark:text-green-200 border border-green-200 dark:border-green-700/50",
-      iconColor: "text-green-700 dark:text-green-300",
+      cls: "bg-emerald-500/12 text-emerald-900 ring-1 ring-emerald-700/20 dark:bg-emerald-400/10 dark:text-emerald-100 dark:ring-emerald-300/20",
+      iconColor: "text-emerald-700 dark:text-emerald-300",
+      dot: "bg-emerald-500",
     },
     faltou: {
       Icon: XCircle,
       text: label || "Faltou",
-      cls: "bg-red-100 text-red-800 dark:bg-red-800/30 dark:text-red-200 border border-red-200 dark:border-red-700/50",
-      iconColor: "text-red-700 dark:text-red-300",
+      cls: "bg-rose-500/12 text-rose-900 ring-1 ring-rose-700/20 dark:bg-rose-400/10 dark:text-rose-100 dark:ring-rose-300/20",
+      iconColor: "text-rose-700 dark:text-rose-300",
+      dot: "bg-rose-500",
     },
     aguardando: {
       Icon: Clock,
       text: label || "Aguardando",
-      cls: "bg-amber-100 text-amber-900 dark:bg-amber-900/30 dark:text-amber-200 border border-amber-200 dark:border-amber-800/40",
+      cls: "bg-amber-500/14 text-amber-950 ring-1 ring-amber-700/20 dark:bg-amber-400/10 dark:text-amber-100 dark:ring-amber-300/20",
       iconColor: "text-amber-700 dark:text-amber-300",
+      dot: "bg-amber-500",
     },
-    // fallback
+    em_aberto: {
+      Icon: Unlock,
+      text: label || "Em aberto",
+      cls: "bg-sky-500/12 text-sky-950 ring-1 ring-sky-700/20 dark:bg-sky-400/10 dark:text-sky-100 dark:ring-sky-300/20",
+      iconColor: "text-sky-700 dark:text-sky-300",
+      dot: "bg-sky-500",
+    },
+    bloqueado: {
+      Icon: Ban,
+      text: label || "Fora da janela",
+      cls: "bg-zinc-500/12 text-zinc-900 ring-1 ring-zinc-700/20 dark:bg-white/10 dark:text-zinc-100 dark:ring-white/15",
+      iconColor: "text-zinc-700 dark:text-zinc-200",
+      dot: "bg-zinc-500",
+    },
+    justificado: {
+      Icon: AlertTriangle,
+      text: label || "Justificado",
+      cls: "bg-violet-500/12 text-violet-950 ring-1 ring-violet-700/20 dark:bg-violet-400/10 dark:text-violet-100 dark:ring-violet-300/20",
+      iconColor: "text-violet-700 dark:text-violet-300",
+      dot: "bg-violet-500",
+    },
     default: {
       Icon: HelpCircle,
       text: label || "Indefinido",
-      cls: "bg-gray-200 text-gray-800 dark:bg-zinc-700 dark:text-gray-200 border border-gray-300/60 dark:border-zinc-600",
-      iconColor: "text-gray-600 dark:text-gray-300",
+      cls: "bg-zinc-200/70 text-zinc-900 ring-1 ring-black/10 dark:bg-white/10 dark:text-zinc-100 dark:ring-white/15",
+      iconColor: "text-zinc-700 dark:text-zinc-200",
+      dot: "bg-zinc-500",
     },
   };
 
-  const { Icon, text, cls, iconColor } = MAP[norm] || MAP.default;
+  const picked = MAP[norm] || MAP.default;
+  const { Icon, text, cls, iconColor } = picked;
 
   return (
     <span
-      className={`inline-flex items-center ${SIZE.gap} font-semibold ${SIZE.wrap} ${cls} ${className}`}
-      role="status"
-      aria-live={ariaLive}
+      className={cx(
+        "inline-flex items-center font-extrabold whitespace-nowrap",
+        SIZE.gap,
+        SIZE.wrap,
+        cls,
+        "shadow-[0_10px_35px_-32px_rgba(2,6,23,0.35)]",
+        className
+      )}
+      role={announce ? "status" : undefined}
+      aria-live={announce ? ariaLive : undefined}
       aria-label={text}
+      title={text}
     >
+      {showDot && <span className={cx("rounded-full", SIZE.dot, picked.dot)} aria-hidden="true" />}
       <Icon size={SIZE.icon} className={iconColor} aria-hidden="true" />
-      {text}
+      <span className="leading-none">{text}</span>
     </span>
   );
 }
@@ -71,6 +132,7 @@ StatusPresencaBadge.propTypes = {
   label: PropTypes.string,
   className: PropTypes.string,
   size: PropTypes.oneOf(["sm", "md", "lg"]),
-  /** Controle de anúncio em leitores de tela ("polite" por padrão) */
   ariaLive: PropTypes.oneOf(["off", "polite", "assertive"]),
+  announce: PropTypes.bool,
+  showDot: PropTypes.bool,
 };

@@ -272,6 +272,7 @@ function adminUploadRoute(alias) {
   ];
 }
 
+/* ───────── PUBLIC HEAD (204/404) ───────── */
 function publicHeadRoute(alias) {
   const cfg = modeloTipoCfg(alias);
 
@@ -288,16 +289,24 @@ function publicHeadRoute(alias) {
       const abs = resolveAbsPath(row.storage_key);
       const exists = abs && fs.existsSync(abs);
 
-      // HEAD “limpo”
-      if (exists) {
-        res.setHeader("Cache-Control", "public, max-age=3600");
-        return res.status(200).end();
+      if (!exists) return res.status(404).end(); // ← contrato novo
+
+      // Alguns headers úteis para a UI
+      try {
+        const stat = await fsp.stat(abs);
+        res.setHeader("Content-Type", row.mime || mime.lookup(row.nome_arquivo) || "application/octet-stream");
+        res.setHeader("X-Modelo-Filename", encodeURIComponent(row.nome_arquivo || cfg.defaultName));
+        setPublicCache(res, stat);
+      } catch {
+        // se der erro no stat, ainda assim devolvemos 204
       }
-      return res.status(410).end();
+
+      return res.status(204).end(); // ← contrato novo
     }),
   ];
 }
 
+/* ───────── PUBLIC GET (download) ───────── */
 function publicGetRoute(alias) {
   const cfg = modeloTipoCfg(alias);
 
@@ -314,7 +323,7 @@ function publicGetRoute(alias) {
       const absPath = resolveAbsPath(m.storage_key);
       if (!absPath || !fs.existsSync(absPath)) {
         console.error(`[modelo-${alias}] arquivo ausente:`, { absPath, storage_key: m.storage_key });
-        return res.status(410).json({ erro: "Arquivo do modelo não está disponível" });
+        return res.status(404).json({ erro: "Arquivo do modelo não está disponível" }); // alinhar com HEAD 404
       }
 
       const stat = await fsp.stat(absPath);

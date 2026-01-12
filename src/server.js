@@ -56,7 +56,11 @@ const chamadasRoutes = require("./routes/chamadasRoutes");
 const trabalhosRoutes = require("./routes/trabalhosRoutes");
 const chamadasModeloRoutes = require("./routes/chamadasModeloRoutes");
 const usuariosEstatisticasRoute = require("./routes/usuariosEstatisticasRoute");
+
+// 🔹 Submissões (separadas)
 const submissoesAdminRoutes = require("./routes/submissoesAdminRoutes");
+const submissoesUsuarioRoutes = require("./routes/submissoesUsuarioRoutes"); // 🆕 NOVO
+
 const votacoesRoutes = require("./routes/votacoesRoute");
 const salasRoutes = require("./routes/salasRoutes");
 const calendarioRoutes = require("./routes/calendarioRoutes");
@@ -96,9 +100,7 @@ app.use((req, res, next) => {
   next();
 });
 
-/* ───────── Helmet + CSP (premium) ─────────
-   ✅ Agora o nonce entra direto no Helmet via função (sem replace string do header)
-*/
+/* ───────── Helmet + CSP (premium) ───────── */
 app.use((req, res, next) => {
   const nonce = res.locals.cspNonce;
 
@@ -127,7 +129,6 @@ app.use((req, res, next) => {
     crossOriginResourcePolicy: { policy: "cross-origin" },
     hsts: IS_DEV ? false : undefined,
     referrerPolicy: { policy: "strict-origin-when-cross-origin" },
-    // PREMIUM: Permissions-Policy (antes “Feature-Policy”)
     permissionsPolicy: {
       features: {
         geolocation: [],
@@ -266,9 +267,7 @@ app.use((req, _res, next) => {
   next();
 });
 
-/* ───────── Logger ─────────
-   PREMIUM: inclui requestId
-*/
+/* ───────── Logger ───────── */
 morgan.token("rid", (req) => req.requestId || "-");
 morgan.token("ip", (req) => getClientIp(req));
 
@@ -364,9 +363,8 @@ app.use("/api/assinatura", assinaturaRoutes);
 app.use("/api/datas", datasEventoRoute);
 app.use("/api/perfil", perfilRoutes);
 app.use("/api/solicitacoes-curso", solicitacoesCursoRoute);
-app.use("/api", chamadasModeloRoutes);
-app.use("/api", submissoesAdminRoutes);
 app.use("/api/admin/avaliacoes", adminAvaliacoesRoutes);
+app.use("/api", chamadasModeloRoutes);
 app.use("/api", chamadasRoutes);
 app.use("/api/trabalhos", trabalhosRoutes);
 app.use("/api/votacoes", votacoesRoutes);
@@ -374,6 +372,12 @@ app.use("/api", lookupsPublicRoutes);
 app.use("/api/salas", salasRoutes);
 app.use("/api/calendario", calendarioRoutes);
 app.use("/api/questionarios", require("./routes/questionariosRoute"));
+
+// 🔹 Submissões — ADMIN (mantém apenas admin)
+app.use("/api", submissoesAdminRoutes);
+
+// 🔹 Submissões — USUÁRIO/PÚBLICO (minhas, detalhe, poster/banner)
+app.use("/api", submissoesUsuarioRoutes); // 🆕 NOVO
 
 /* ───────── Recuperação de senha ───────── */
 app.post("/api/usuarios/recuperar-senha", recuperarSenhaLimiter, usuarioPublicoController.recuperarSenha);
@@ -418,7 +422,6 @@ app.use((err, req, res, _next) => {
 
   // CORS
   if (err?.code === "CORS_BLOCKED") {
-    // não vaza origem em prod
     return sendError(res, 403, "Origem não autorizada.", { code: "CORS_BLOCKED" });
   }
 
@@ -432,9 +435,7 @@ app.use((err, req, res, _next) => {
     stack: IS_DEV ? err?.stack : undefined,
   });
 
-  // PREMIUM: em prod, mensagem genérica
   const message = IS_DEV ? err?.message || "Erro interno do servidor" : "Erro interno do servidor";
-
   return sendError(res, status, message, IS_DEV ? { details: err?.details } : undefined);
 });
 

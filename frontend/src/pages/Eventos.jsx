@@ -16,6 +16,9 @@
 // - Reduced-motion (respeita acessibilidade)
 // - Progressbar sticky durante carregamentos
 // - Stats de “andamento” usando status real/fallback
+//
+// ✅ Alteração solicitada:
+// - Remove window.confirm → usa ModalConfirmacao.jsx (cancelar inscrição)
 
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { toast } from "react-toastify";
@@ -44,6 +47,7 @@ import NadaEncontrado from "../components/NadaEncontrado";
 import BotaoPrimario from "../components/BotaoPrimario";
 import BotaoSecundario from "../components/BotaoSecundario";
 import ListaTurmasEvento from "../components/ListaTurmasEvento";
+import ModalConfirmacao from "../components/ModalConfirmacao";
 import { apiGet, apiPost, apiDelete } from "../services/api";
 import { gerarLinkGoogleAgenda } from "../utils/gerarLinkGoogleAgenda";
 
@@ -114,7 +118,20 @@ function badgeClasses(status) {
 /* ------------------------------------------------------------------ */
 /*  Helpers de data/formatadores                                      */
 /* ------------------------------------------------------------------ */
-const MESES_ABREV_PT = ["jan.", "fev.", "mar.", "abr.", "mai.", "jun.", "jul.", "ago.", "set.", "out.", "nov.", "dez."];
+const MESES_ABREV_PT = [
+  "jan.",
+  "fev.",
+  "mar.",
+  "abr.",
+  "mai.",
+  "jun.",
+  "jul.",
+  "ago.",
+  "set.",
+  "out.",
+  "nov.",
+  "dez.",
+];
 const ymd = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
 
 function formatarDataCurtaSeguro(iso) {
@@ -176,7 +193,9 @@ function EventosHero({ onRefresh, stats }) {
           <span className="text-3xl" aria-hidden="true">
             🎓
           </span>
-          <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight drop-shadow">Eventos disponíveis</h1>
+          <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight drop-shadow">
+            Eventos disponíveis
+          </h1>
         </div>
 
         <p className="mt-2 text-sm sm:text-base text-white/90">
@@ -222,7 +241,9 @@ function MiniStat({ icon, label, value }) {
   return (
     <div className="rounded-2xl bg-white/10 border border-white/15 backdrop-blur px-4 py-3 text-left shadow-sm">
       <div className="flex items-center gap-2 text-white/90">
-        <span className="inline-flex w-8 h-8 rounded-xl bg-white/10 items-center justify-center">{icon}</span>
+        <span className="inline-flex w-8 h-8 rounded-xl bg-white/10 items-center justify-center">
+          {icon}
+        </span>
         <div className="min-w-0">
           <div className="text-xs text-white/80">{label}</div>
           <div className="text-xl font-extrabold tracking-tight">{Number(value) || 0}</div>
@@ -317,7 +338,9 @@ function Tip({ num, titulo, children }) {
         </div>
         <div className="min-w-0">
           <h4 className="font-semibold text-rose-900 dark:text-rose-200">{titulo}</h4>
-          <div className="mt-1.5 text-sm text-rose-950/90 dark:text-rose-100/90 leading-relaxed">{children}</div>
+          <div className="mt-1.5 text-sm text-rose-950/90 dark:text-rose-100/90 leading-relaxed">
+            {children}
+          </div>
         </div>
       </div>
     </div>
@@ -391,6 +414,14 @@ export default function Eventos() {
   const [carregandoTurmas, setCarregandoTurmas] = useState(null);
   const [carregandoEventos, setCarregandoEventos] = useState(true);
 
+  // ✅ Modal premium (substitui window.confirm no cancelamento)
+  const [confirmCancel, setConfirmCancel] = useState({
+    open: false,
+    turmaId: null,
+    inscricaoId: null,
+    turmaNome: "",
+  });
+
   const liveRef = useRef(null);
   const setLive = (msg) => {
     if (liveRef.current) liveRef.current.textContent = msg;
@@ -449,7 +480,9 @@ export default function Eventos() {
   const statusDoEvento = useCallback(
     (evento, turmasCarregadas) => {
       const ts =
-        Array.isArray(turmasCarregadas) && turmasCarregadas.length ? turmasCarregadas : turmasDoEvento(evento);
+        Array.isArray(turmasCarregadas) && turmasCarregadas.length
+          ? turmasCarregadas
+          : turmasDoEvento(evento);
 
       if (ts.length) {
         let andamento = false;
@@ -501,7 +534,9 @@ export default function Eventos() {
     if (!di) di = ymd(evento?.data_inicio_geral) || "9999-12-31";
 
     const h =
-      (typeof evento?.horario_inicio_geral === "string" && evento.horario_inicio_geral.slice(0, 5)) || "00:00";
+      (typeof evento?.horario_inicio_geral === "string" &&
+        evento.horario_inicio_geral.slice(0, 5)) ||
+      "00:00";
 
     return new Date(`${di}T${h}:00`).getTime();
   }, []);
@@ -746,8 +781,9 @@ export default function Eventos() {
     [inscricoes]
   );
 
+  // ✅ agora só abre ModalConfirmacao (sem window.confirm)
   const cancelarInscricaoByTurmaId = useCallback(
-    async (turmaId) => {
+    async (turmaId, turmaNome = "") => {
       const reg = getInscricaoPorTurmaId(turmaId);
       const inscricaoId = reg?.inscricao_id || reg?.id;
 
@@ -755,24 +791,44 @@ export default function Eventos() {
         toast.info("Não foi possível localizar a inscrição para cancelar.");
         return;
       }
-      if (!window.confirm("Tem certeza que deseja cancelar sua inscrição?")) return;
 
-      setCancelandoId(inscricaoId);
-      try {
-        await apiDelete(`/api/inscricoes/${inscricaoId}`);
-        toast.success("✅ Inscrição cancelada com sucesso.");
-        await carregarInscricoes();
-      } catch (err) {
-        const status = err?.status || err?.response?.status || 0;
-        const data = err?.data || err?.response?.data || {};
-        const msg = data?.mensagem || data?.message || err?.message || "Sem conexão";
-        toast.error(`❌ Erro ao cancelar inscrição${status ? ` (${status})` : ""}. ${msg}`);
-      } finally {
-        setCancelandoId(null);
-      }
+      setConfirmCancel({
+        open: true,
+        turmaId: Number(turmaId),
+        inscricaoId: Number(inscricaoId),
+        turmaNome: String(turmaNome || reg?.turma_nome || reg?.turma || "").trim(),
+      });
     },
-    [getInscricaoPorTurmaId, carregarInscricoes]
+    [getInscricaoPorTurmaId]
   );
+
+  // ✅ executa cancelamento após confirmar no modal
+  const executarCancelamento = useCallback(async () => {
+    const inscricaoId = confirmCancel?.inscricaoId;
+
+    if (!inscricaoId) {
+      setConfirmCancel({ open: false, turmaId: null, inscricaoId: null, turmaNome: "" });
+      return;
+    }
+
+    setCancelandoId(inscricaoId);
+
+    try {
+      await apiDelete(`/api/inscricoes/${inscricaoId}`);
+      toast.success("✅ Inscrição cancelada com sucesso.");
+      await carregarInscricoes();
+    } catch (err) {
+      const status = err?.status || err?.response?.status || 0;
+      const data = err?.data || err?.response?.data || {};
+      const msg = data?.mensagem || data?.message || err?.message || "Sem conexão";
+      toast.error(`❌ Erro ao cancelar inscrição${status ? ` (${status})` : ""}. ${msg}`);
+    } finally {
+      setCancelandoId(null);
+      setConfirmCancel({ open: false, turmaId: null, inscricaoId: null, turmaNome: "" });
+    }
+  }, [confirmCancel?.inscricaoId, carregarInscricoes]);
+
+  const isCancelModalLoading = cancelandoId && cancelandoId === confirmCancel?.inscricaoId;
 
   /* -------------------- UI -------------------- */
   return (
@@ -832,13 +888,17 @@ export default function Eventos() {
         ) : (
           <div className="grid grid-cols-1 gap-6">
             {eventos.map((evento, idx) => {
-              const localEvento = evento.local || evento.localizacao || evento.endereco || evento.localidade || null;
+              const localEvento =
+                evento.local || evento.localizacao || evento.endereco || evento.localidade || null;
               const statusEvt = statusBackendOuFallback(evento, turmasPorEvento[evento.id]);
               const ehInstrutor = Boolean(evento.ja_instrutor);
 
               // schema atual (banco): folder_url e programacao_pdf_url
               const programacaoPdfUrl =
-                evento.programacao_pdf_url || evento.programacao_pdf || evento.programacao_url || null;
+                evento.programacao_pdf_url ||
+                evento.programacao_pdf ||
+                evento.programacao_url ||
+                null;
               const folderUrl = evento.folder_url || evento.folder || null;
 
               return (
@@ -879,7 +939,9 @@ export default function Eventos() {
                     </div>
 
                     {evento.descricao && (
-                      <p className="mt-1.5 text-[15px] text-zinc-700 dark:text-zinc-300">{evento.descricao}</p>
+                      <p className="mt-1.5 text-[15px] text-zinc-700 dark:text-zinc-300">
+                        {evento.descricao}
+                      </p>
                     )}
 
                     {/* Local */}
@@ -973,6 +1035,46 @@ export default function Eventos() {
       </main>
 
       <Footer />
+
+      {/* ✅ ModalConfirmacao (substitui window.confirm) */}
+      <ModalConfirmacao
+        /* compat: alguns projetos usam 'open/titulo/descricao/confirmarTexto/cancelarTexto/onConfirmar/onCancelar' */
+        isOpen={!!confirmCancel.open}
+        open={!!confirmCancel.open}
+
+       title="Cancelar inscrição?"
+        titulo="Cancelar inscrição?"
+
+        description={
+          confirmCancel?.turmaNome
+            ? `Tem certeza que deseja cancelar sua inscrição na turma:\n\n“${confirmCancel.turmaNome}”?`
+            : "Tem certeza que deseja cancelar sua inscrição nesta turma?"
+       }
+        descricao={
+          confirmCancel?.turmaNome
+            ? `Tem certeza que deseja cancelar sua inscrição na turma:\n\n“${confirmCancel.turmaNome}”?`
+            : "Tem certeza que deseja cancelar sua inscrição nesta turma?"
+        }
+
+        confirmText="Sim, cancelar"
+       confirmarTexto="Sim, cancelar"
+        cancelText="Não"
+        cancelarTexto="Não"
+        danger
+        loading={!!isCancelModalLoading}
+
+        onClose={() => {
+         if (cancelandoId) return; // evita fechar durante requisição
+          setConfirmCancel({ open: false, turmaId: null, inscricaoId: null, turmaNome: "" });
+        }}
+        onCancelar={() => {
+          if (cancelandoId) return;
+          setConfirmCancel({ open: false, turmaId: null, inscricaoId: null, turmaNome: "" });
+        }}
+
+        onConfirm={executarCancelamento}
+        onConfirmar={executarCancelamento}
+      />
     </div>
   );
 }
@@ -1073,7 +1175,7 @@ function InscricoesAcoesRapidas({
                   <BotaoPrimario
                     className="sm:min-w-[180px]"
                     aria-label="Cancelar inscrição nesta turma"
-                    onClick={() => cancelarInscricaoByTurmaId(t.id)}
+                    onClick={() => cancelarInscricaoByTurmaId(t.id, t.nome)}
                     disabled={status !== "Programado" || cancelandoId === (reg?.inscricao_id || reg?.id)}
                     icone={<XCircle className="w-4 h-4" />}
                   >
