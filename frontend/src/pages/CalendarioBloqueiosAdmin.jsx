@@ -1,16 +1,14 @@
-// ✅ src/pages/CalendarioBloqueiosAdmin.jsx — PREMIUM (corrige "Tipo inválido." + UX melhor)
-// O backend aceita: bloqueio | feriado | manutencao | evento
-// Esta página mantém suas 4 opções ricas (feriado_nacional, etc),
-// mas agora envia "tipo_backend" compatível + grava o "subtipo" na descrição.
+// ✅ src/pages/CalendarioBloqueiosAdmin.jsx — PREMIUM (ALINHADO AO BANCO, sem mexer em schema)
+// Banco/Backend aceitam APENAS:
+// - feriado_nacional | feriado_municipal | ponto_facultativo | bloqueio_interno
 //
-// Principais upgrades:
-// - ✅ Mapeamento frontend -> backend (evita 400 "Tipo inválido.")
-// - ✅ Normalização robusta (trim/lower) e suporte caso venha objeto
-// - ✅ Anti-duplicidade mais inteligente (data + tipo_backend + subtipo)
-// - ✅ “mini-stats” no topo (total no mês, feriados, bloqueios, manutenção/evento)
-// - ✅ A11y: aria-live, foco/atalhos não atrapalham inputs/textarea
-// - ✅ Clique no dia preenche data e foca no tipo
-// - ✅ Carregar com AbortController (evita race conditions)
+// O que mudou vs versão que você colou:
+// - ✅ Remove mapeamento UI -> backend (não existe mais toBackendTipo / meta na descrição)
+// - ✅ Submit envia tipo = formData.tipo (normalizado)
+// - ✅ Editar registro usa tipo direto do banco (normalizado) e mostra descrição como está
+// - ✅ Anti-duplicidade por (data + tipo) (compatível com seu schema)
+// - ✅ Mini-stats agora contam pelos 4 tipos reais
+// - ✅ A11y/UX mantidos (aria-live, atalhos não atrapalham inputs, foco ao clicar no dia)
 
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import {
@@ -38,10 +36,7 @@ const NOMES_MESES = [
 ];
 const DIAS_SEMANA = ["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"];
 
-/**
- * UI do usuário (4 opções “ricas”)
- * Mas no backend: bloqueio | feriado | manutencao | evento
- */
+// ✅ TIPOS REAIS (iguais ao CHECK do Postgres + backend)
 const TIPOS_OPCOES = [
   { value: "feriado_nacional",  label: "Feriado nacional" },
   { value: "feriado_municipal", label: "Feriado municipal" },
@@ -51,7 +46,6 @@ const TIPOS_OPCOES = [
 
 const TIPO_LABEL = TIPOS_OPCOES.reduce((acc, t) => ((acc[t.value] = t.label), acc), {});
 
-/** Estilos por tipo “UI” */
 const TIPO_STYLE = {
   feriado_nacional:  {
     ring: "ring-rose-300",
@@ -125,69 +119,18 @@ function criarMatrixMes(ano, mesIndex) {
 }
 
 /* ──────────────────────────────────────────────────────────
-   Compat: mapeamento UI -> backend
-   Backend aceita: bloqueio | feriado | manutencao | evento
+   Normalizações (compat)
 ────────────────────────────────────────────────────────── */
-function normStr(v) {
-  if (v == null) return "";
-  if (typeof v === "object") {
-    // caso alguém troque select por react-select futuramente
-    if (v.value != null) return String(v.value);
-  }
-  return String(v);
+function normTipo(v) {
+  return String(v ?? "").trim().toLowerCase();
 }
-
-function toBackendTipo(uiTipo) {
-  const t = normStr(uiTipo).trim().toLowerCase();
-  if (t.startsWith("feriado")) return "feriado";           // feriado_nacional/municipal
-  if (t === "ponto_facultativo") return "feriado";         // ainda é “data não disponível”
-  if (t === "bloqueio_interno") return "bloqueio";
-  // fallback seguro
-  if (t === "bloqueio" || t === "feriado" || t === "manutencao" || t === "evento") return t;
-  return "bloqueio";
+function tipoValido(v) {
+  const t = normTipo(v);
+  return ["feriado_nacional","feriado_municipal","ponto_facultativo","bloqueio_interno"].includes(t);
 }
-
-function extractSubtipo(uiTipo) {
-  const t = normStr(uiTipo).trim().toLowerCase();
-  if (t === "feriado_nacional") return "feriado_nacional";
-  if (t === "feriado_municipal") return "feriado_municipal";
-  if (t === "ponto_facultativo") return "ponto_facultativo";
-  if (t === "bloqueio_interno") return "bloqueio_interno";
-  return "";
-}
-
-/** Grava subtipo na descrição sem “estragar” o texto do usuário */
-function buildDescricaoWithMeta(descricaoUser, uiTipo) {
-  const base = (descricaoUser || "").trim();
-  const subtipo = extractSubtipo(uiTipo);
-  // ✅ meta curto e estável (não muda UI)
-  const meta = subtipo ? `[${subtipo}]` : "";
-  if (!meta) return base || null;
-  if (!base) return meta;
-  // evita duplicar meta se o usuário editar e salvar novamente
-  if (base.includes(meta)) return base;
-  return `${meta} ${base}`.trim();
-}
-
-/** Ao editar, tentar recuperar o uiTipo baseado no meta salvo */
-function inferUiTipoFromRecord(rec) {
-  const tipo = (rec?.tipo || "").toLowerCase();
-  const desc = String(rec?.descricao || "");
-  if (desc.includes("[feriado_nacional]")) return "feriado_nacional";
-  if (desc.includes("[feriado_municipal]")) return "feriado_municipal";
-  if (desc.includes("[ponto_facultativo]")) return "ponto_facultativo";
-  if (desc.includes("[bloqueio_interno]")) return "bloqueio_interno";
-
-  // fallback por tipo backend:
-  if (tipo === "feriado") return "feriado_municipal"; // default amigável
-  if (tipo === "bloqueio") return "bloqueio_interno";
-  return "bloqueio_interno";
-}
-
-function stripMetaPrefix(descricao) {
-  const s = String(descricao || "").trim();
-  // remove apenas o prefixo meta se existir
-  return s.replace(/^\[(feriado_nacional|feriado_municipal|ponto_facultativo|bloqueio_interno)\]\s*/i, "");
+function normDescricao(v) {
+  const s = String(v ?? "").trim();
+  return s ? s.slice(0, 2000) : null;
 }
 
 /* ──────────────────────────────────────────────────────────
@@ -207,12 +150,11 @@ export default function CalendarioBloqueiosAdmin() {
   const [formData, setFormData] = useState({
     id: null,
     data: "",
-    tipo: "feriado_nacional", // UI tipo
+    tipo: "feriado_nacional",
     descricao: "",
   });
   const [salvando, setSalvando] = useState(false);
 
-  // ✅ confirmação premium (substitui window.confirm)
   const [confirmDelete, setConfirmDelete] = useState({ open: false, item: null });
   const [deletingId, setDeletingId] = useState(null);
 
@@ -231,7 +173,6 @@ export default function CalendarioBloqueiosAdmin() {
 
   useEffect(() => {
     const onKey = (e) => {
-      // não interferir quando está digitando em input/select/textarea
       const tag = (e?.target?.tagName || "").toLowerCase();
       if (tag === "input" || tag === "select" || tag === "textarea") return;
 
@@ -248,11 +189,12 @@ export default function CalendarioBloqueiosAdmin() {
       setLoading(true);
       const resp = await api.get("/calendario", { signal });
       const lista = resp?.data ?? resp ?? [];
-      setCalendario(
-        (lista || []).map((item) => ({ ...item, data: toISO(item.data) }))
-      );
+      setCalendario((lista || []).map((item) => ({
+        ...item,
+        data: toISO(item.data),
+        tipo: normTipo(item.tipo),
+      })));
     } catch (err) {
-      // abort => silencioso
       if (err?.name === "CanceledError" || err?.code === "ERR_CANCELED") return;
       console.error("[CalendarioBloqueiosAdmin] erro ao carregar:", err);
       toast.error("Erro ao carregar calendário de bloqueios.");
@@ -282,16 +224,15 @@ export default function CalendarioBloqueiosAdmin() {
   }
 
   function editarRegistro(reg) {
-    // reg.tipo é backend (feriado/bloqueio/...)
-    // descrição pode ter meta [feriado_nacional]
+    const tipo = normTipo(reg.tipo);
+
     setFormData({
       id: reg.id,
       data: toISO(reg.data),
-      tipo: inferUiTipoFromRecord(reg),              // volta para UI tipo
-      descricao: stripMetaPrefix(reg.descricao || ""),// mostra texto limpo
+      tipo: tipoValido(tipo) ? tipo : "bloqueio_interno",
+      descricao: reg.descricao || "",
     });
 
-    // foco no tipo (UX rápida)
     queueMicrotask(() => {
       try { tipoRef.current?.focus(); } catch {}
     });
@@ -301,37 +242,19 @@ export default function CalendarioBloqueiosAdmin() {
     setFormData({ id: null, data: "", tipo: "feriado_nacional", descricao: "" });
   }
 
-  // Evita duplicidade (data + tipo_backend + subtipo)
-  const existeDataTipo = useCallback((dataISO, uiTipo, ignoreId = null) => {
-    const tipo_backend = toBackendTipo(uiTipo);
-    const subtipo = extractSubtipo(uiTipo);
-
-    return calendario.some((c) => {
-      if (c.id === ignoreId) return false;
-      if (toISO(c.data) !== dataISO) return false;
-
-      const cTipo = String(c.tipo || "").toLowerCase();
-      if (cTipo !== tipo_backend) return false;
-
-      const cDesc = String(c.descricao || "");
-      // se houver subtipo, exige que o meta bata (para permitir vários “feriados” no mesmo dia, se você quiser no futuro)
-      if (subtipo) return cDesc.includes(`[${subtipo}]`);
-      return true;
-    });
+  // ✅ Anti-duplicidade compatível: (data + tipo)
+  const existeDataTipo = useCallback((dataISO, tipo, ignoreId = null) => {
+    const t = normTipo(tipo);
+    return calendario.some((c) => c.data === dataISO && normTipo(c.tipo) === t && c.id !== ignoreId);
   }, [calendario]);
 
   async function onSubmit(e) {
     e.preventDefault();
 
-    const dataISO = toISO(formData.data);
-    const uiTipo = formData.tipo;
-
     const payload = {
-      data: dataISO,
-      // ✅ envia tipo compatível com backend
-      tipo: toBackendTipo(uiTipo),
-      // ✅ guarda o subtipo (feriado_nacional etc.) no prefixo da descrição
-      descricao: buildDescricaoWithMeta(formData.descricao, uiTipo),
+      data: toISO(formData.data),
+      tipo: normTipo(formData.tipo),
+      descricao: normDescricao(formData.descricao),
     };
 
     if (!payload.data || !payload.tipo) {
@@ -339,7 +262,12 @@ export default function CalendarioBloqueiosAdmin() {
       return;
     }
 
-    if (existeDataTipo(payload.data, uiTipo, formData.id)) {
+    if (!tipoValido(payload.tipo)) {
+      toast.error("Tipo inválido. Selecione uma opção da lista.");
+      return;
+    }
+
+    if (existeDataTipo(payload.data, payload.tipo, formData.id)) {
       toast.info("Já existe um registro com essa data e tipo.");
       return;
     }
@@ -348,10 +276,7 @@ export default function CalendarioBloqueiosAdmin() {
       setSalvando(true);
 
       if (process.env.NODE_ENV !== "production") {
-        console.log("[CalendarioBloqueiosAdmin] submit payload:", payload, {
-          uiTipo,
-          backendTipo: payload.tipo,
-        });
+        console.log("[CalendarioBloqueiosAdmin] submit payload:", payload);
       }
 
       if (formData.id) {
@@ -364,7 +289,7 @@ export default function CalendarioBloqueiosAdmin() {
 
       await carregar();
       limparForm();
-      liveRef.current && (liveRef.current.textContent = "Calendário atualizado.");
+      if (liveRef.current) liveRef.current.textContent = "Calendário atualizado.";
     } catch (err) {
       console.error("[CalendarioBloqueiosAdmin] erro ao salvar:", err);
       const msg =
@@ -377,14 +302,12 @@ export default function CalendarioBloqueiosAdmin() {
     }
   }
 
-  // ✅ abre confirmação
   function solicitarExcluirRegistro(ev) {
     if (!ev?.id) return;
     if (deletingId) return;
     setConfirmDelete({ open: true, item: ev });
   }
 
-  // ✅ executa exclusão (confirmada)
   async function executarExcluirRegistro() {
     const ev = confirmDelete?.item;
     if (!ev?.id) {
@@ -397,7 +320,7 @@ export default function CalendarioBloqueiosAdmin() {
       await api.delete(`/calendario/${ev.id}`);
       toast.success("Data removida com sucesso.");
       await carregar();
-      liveRef.current && (liveRef.current.textContent = "Registro removido.");
+      if (liveRef.current) liveRef.current.textContent = "Registro removido.";
     } catch (err) {
       console.error("[CalendarioBloqueiosAdmin] erro ao excluir:", err);
       const msg = err?.response?.data?.erro || "Erro ao excluir data.";
@@ -415,7 +338,6 @@ export default function CalendarioBloqueiosAdmin() {
       if (!map[key]) map[key] = [];
       map[key].push(item);
     }
-    // ordena por tipo backend para padrão visual
     Object.keys(map).forEach((k) => {
       map[k].sort((a, b) => (a.tipo || "").localeCompare(b.tipo || ""));
     });
@@ -424,7 +346,7 @@ export default function CalendarioBloqueiosAdmin() {
 
   const anosDisponiveis = useMemo(() => {
     const y = new Date().getFullYear();
-    const size = 7; // 3 anos antes e 3 depois
+    const size = 7;
     return Array.from({ length: size }, (_, i) => y - 3 + i);
   }, []);
 
@@ -440,32 +362,33 @@ export default function CalendarioBloqueiosAdmin() {
     const prefix = `${ano}-${m}-`;
     const itens = calendario.filter((c) => String(c.data || "").startsWith(prefix));
 
-    const byTipo = { feriado: 0, bloqueio: 0, manutencao: 0, evento: 0 };
+    const byTipo = {
+      feriado_nacional: 0,
+      feriado_municipal: 0,
+      ponto_facultativo: 0,
+      bloqueio_interno: 0,
+    };
+
     for (const it of itens) {
-      const t = String(it.tipo || "").toLowerCase();
+      const t = normTipo(it.tipo);
       if (byTipo[t] != null) byTipo[t] += 1;
     }
 
-    return {
-      total: itens.length,
-      ...byTipo,
-    };
+    return { total: itens.length, ...byTipo };
   }, [calendario, ano, mesIndex]);
 
   function labelEv(ev) {
-    // tenta exibir rótulo UI a partir do meta, senão mostra backend tipo
-    const ui = inferUiTipoFromRecord(ev);
-    return TIPO_LABEL[ui] || ev.tipo || "—";
+    const t = normTipo(ev?.tipo);
+    return TIPO_LABEL[t] || t || "—";
   }
 
   function styleEv(ev) {
-    const ui = inferUiTipoFromRecord(ev);
-    return TIPO_STYLE[ui] || TIPO_STYLE["bloqueio_interno"];
+    const t = normTipo(ev?.tipo);
+    return TIPO_STYLE[t] || TIPO_STYLE["bloqueio_interno"];
   }
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-zinc-950">
-      {/* aria-live para feedback */}
       <div className="sr-only" aria-live="polite" ref={liveRef} />
 
       {/* Header */}
@@ -487,23 +410,23 @@ export default function CalendarioBloqueiosAdmin() {
             </div>
           </div>
 
-          {/* ✅ mini-stats (topo) */}
+          {/* mini-stats (topo) */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             <div className="rounded-2xl bg-white/10 border border-white/15 p-3">
               <p className="text-[11px] text-emerald-50">Total no mês</p>
               <p className="text-lg font-semibold">{statsMes.total}</p>
             </div>
             <div className="rounded-2xl bg-white/10 border border-white/15 p-3">
-              <p className="text-[11px] text-emerald-50">Feriados</p>
-              <p className="text-lg font-semibold">{statsMes.feriado}</p>
+              <p className="text-[11px] text-emerald-50">Feriado nacional</p>
+              <p className="text-lg font-semibold">{statsMes.feriado_nacional}</p>
             </div>
             <div className="rounded-2xl bg-white/10 border border-white/15 p-3">
-              <p className="text-[11px] text-emerald-50">Bloqueios</p>
-              <p className="text-lg font-semibold">{statsMes.bloqueio}</p>
+              <p className="text-[11px] text-emerald-50">Feriado municipal</p>
+              <p className="text-lg font-semibold">{statsMes.feriado_municipal}</p>
             </div>
             <div className="rounded-2xl bg-white/10 border border-white/15 p-3">
-              <p className="text-[11px] text-emerald-50">Manut./Eventos</p>
-              <p className="text-lg font-semibold">{statsMes.manutencao + statsMes.evento}</p>
+              <p className="text-[11px] text-emerald-50">Ponto/Bloqueio</p>
+              <p className="text-lg font-semibold">{statsMes.ponto_facultativo + statsMes.bloqueio_interno}</p>
             </div>
           </div>
         </div>
@@ -539,7 +462,6 @@ export default function CalendarioBloqueiosAdmin() {
               <ChevronRight className="w-4 h-4" />
             </button>
 
-            {/* pular para hoje */}
             <button
               type="button"
               onClick={irParaHoje}
@@ -610,7 +532,7 @@ export default function CalendarioBloqueiosAdmin() {
           ))}
         </div>
 
-        {/* Formulário de cadastro/edição */}
+        {/* Formulário */}
         <section
           aria-label="Formulário de cadastro e edição"
           className="mb-6 bg-white dark:bg-zinc-900 rounded-2xl shadow-sm border border-slate-100 dark:border-zinc-800 p-4 sm:p-5"
@@ -648,9 +570,6 @@ export default function CalendarioBloqueiosAdmin() {
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </select>
-              <p className="mt-1 text-[11px] text-slate-500 dark:text-zinc-400">
-                Internamente será salvo como: <span className="font-semibold">{toBackendTipo(formData.tipo)}</span>
-              </p>
             </div>
 
             <div className="sm:col-span-3">
@@ -687,7 +606,7 @@ export default function CalendarioBloqueiosAdmin() {
           </form>
         </section>
 
-        {/* Calendário com marcação das datas bloqueadas */}
+        {/* Calendário */}
         <section
           aria-label="Calendário com marcações"
           className="bg-white dark:bg-zinc-900 rounded-2xl shadow-sm border border-slate-100 dark:border-zinc-800 overflow-hidden mb-6"
@@ -802,9 +721,7 @@ export default function CalendarioBloqueiosAdmin() {
                                 </div>
 
                                 {ev.descricao && (
-                                  <p className={cls("text-[10px]", sty.text)}>
-                                    {stripMetaPrefix(ev.descricao)}
-                                  </p>
+                                  <p className={cls("text-[10px]", sty.text)}>{String(ev.descricao)}</p>
                                 )}
                               </div>
                             );
@@ -822,13 +739,12 @@ export default function CalendarioBloqueiosAdmin() {
 
       <Footer />
 
-      {/* ✅ ModalConfirmacao: excluir data do calendário */}
       <ModalConfirmacao
         isOpen={!!confirmDelete.open}
         title="Excluir data?"
         description={
           confirmDelete?.item
-            ? `Tem certeza que deseja excluir esta data do calendário?\n\n${toISO(confirmDelete.item.data)} • ${labelEv(confirmDelete.item)}${confirmDelete.item.descricao ? `\n${stripMetaPrefix(String(confirmDelete.item.descricao).trim())}` : ""}`
+            ? `Tem certeza que deseja excluir esta data do calendário?\n\n${toISO(confirmDelete.item.data)} • ${labelEv(confirmDelete.item)}${confirmDelete.item.descricao ? `\n${String(confirmDelete.item.descricao).trim()}` : ""}`
             : "Tem certeza que deseja excluir esta data?"
         }
         confirmText="Sim, excluir"
