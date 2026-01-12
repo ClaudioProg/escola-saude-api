@@ -3,16 +3,19 @@
   <head>
     <meta charset="utf-8" />
 
-    <!-- CSP vem por header via Helmet (com nonce dinâmico). Não duplicar via <meta>. -->
+    <!-- CSP vem por header via Vercel/Helmet (não duplicar via <meta>). -->
 
     <!-- Mobile / viewport -->
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 
     <title>Plataforma - Escola da Saúde</title>
-    <meta name="description" content="Plataforma oficial da Escola da Saúde de Santos para inscrições, presença e certificados de eventos." />
+    <meta
+      name="description"
+      content="Plataforma oficial da Escola da Saúde de Santos para inscrições, presença e certificados de eventos."
+    />
     <meta name="author" content="Escola da Saúde de Santos" />
 
-    <!-- Aparência clara/escura (coerente com tokens) -->
+    <!-- Aparência clara/escura -->
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#14532d" />
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b1220" />
@@ -32,21 +35,27 @@
     <!-- Social (OG/Twitter) -->
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Plataforma - Escola da Saúde" />
-    <meta property="og:description" content="Inscrições, presença e certificados de eventos da Escola da Saúde de Santos." />
+    <meta
+      property="og:description"
+      content="Inscrições, presença e certificados de eventos da Escola da Saúde de Santos."
+    />
     <meta property="og:image" content="/icons/og-image.png" />
     <meta property="og:locale" content="pt_BR" />
     <meta name="twitter:card" content="summary_large_image" />
 
-    <!-- Performance: pré-conexões para fontes e Google Sign-In -->
+    <!-- Performance: pré-conexões -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="preconnect" href="https://accounts.google.com" />
     <link rel="preconnect" href="https://www.gstatic.com" crossorigin />
 
-    <!-- Fontes (swap para evitar FOIT) -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
+    <!-- Fontes -->
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap"
+      rel="stylesheet"
+    />
 
-    <!-- Ícones (fav + PWA maskable) -->
+    <!-- Ícones -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/icons/icon-32.png" />
     <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
@@ -54,24 +63,16 @@
     <link rel="icon" sizes="512x512" href="/icons/maskable-512.png" />
     <link rel="mask-icon" href="/icons/maskable-512.svg" color="#14532d" />
 
-    <!-- Boot do tema (antes do render) — respeita ESCOLA_THEME_KEY e 'system' -->
-    <script nonce="{{CSP_NONCE}}">
-      (function () {
-        try {
-          var KEY = 'escola_theme';
-          var saved = localStorage.getItem(KEY) || localStorage.getItem('theme'); // migração
-          var valid = (saved === 'light' || saved === 'dark' || saved === 'system') ? saved : 'system';
-          var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-          var useDark = (valid === 'dark') || (valid === 'system' && prefersDark);
-          var root = document.documentElement;
-          if (useDark) root.classList.add('dark'); else root.classList.remove('dark');
-        } catch (e) {}
-      })();
-    </script>
+    <!-- ✅ Boot do tema (SEM inline): evita hash/nonce instável em produção -->
+    <script src="/theme-boot.js"></script>
 
-    <!-- Hint de fonte base para evitar flash de fallback muito diferente -->
+    <!-- Hint de fonte base (mantém UI estável) -->
     <style nonce="{{CSP_NONCE}}">
-      :root { --font-sans: "Inter", system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", sans-serif; }
+      :root {
+        --font-sans: "Inter", system-ui, -apple-system, Segoe UI, Roboto, Ubuntu,
+          "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji",
+          "Segoe UI Symbol", sans-serif;
+      }
       html { font-family: var(--font-sans); }
     </style>
   </head>
@@ -82,7 +83,7 @@
     <div id="root"></div>
     <div id="modal-root"></div>
 
-    <!-- Vite entry -->
+    <!-- Vite entry (DEV). Em PROD o Vite injeta assets automaticamente no build -->
     <script type="module" nonce="{{CSP_NONCE}}" src="/src/main.jsx"></script>
   </body>
 </html>
