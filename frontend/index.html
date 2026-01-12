@@ -63,8 +63,22 @@
     <link rel="icon" sizes="512x512" href="/icons/maskable-512.png" />
     <link rel="mask-icon" href="/icons/maskable-512.svg" color="#14532d" />
 
-    <!-- ✅ Boot do tema (SEM inline). PREMIUM: não trava a página se o arquivo ainda não existir no deploy -->
-    <script src="/theme-boot.js" defer></script>
+    <!-- ✅ Boot do tema inlined (com CSP nonce) -->
+    <script nonce="{{CSP_NONCE}}">
+      (function () {
+        try {
+          var KEY = "residencia_theme";           // mantém a mesma chave usada no app
+          var saved = localStorage.getItem(KEY) || "system";
+          var prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+          var mode = saved === "system" ? prefersDark : saved;
+          var html = document.documentElement;
+          html.dataset.theme = mode;
+          if (mode === "dark") html.classList.add("dark"); else html.classList.remove("dark");
+        } catch (e) {
+          /* silencia para não travar boot em ambientes restritos */
+        }
+      })();
+    </script>
 
     <!-- Hint de fonte base (mantém UI estável) -->
     <style nonce="{{CSP_NONCE}}">
