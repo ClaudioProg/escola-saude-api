@@ -63,8 +63,8 @@
     <link rel="icon" sizes="512x512" href="/icons/maskable-512.png" />
     <link rel="mask-icon" href="/icons/maskable-512.svg" color="#14532d" />
 
-    <!-- ✅ Boot do tema (SEM inline): evita hash/nonce instável em produção -->
-    <script src="/theme-boot.js"></script>
+    <!-- ✅ Boot do tema (SEM inline). PREMIUM: não trava a página se o arquivo ainda não existir no deploy -->
+    <script src="/theme-boot.js" defer></script>
 
     <!-- Hint de fonte base (mantém UI estável) -->
     <style nonce="{{CSP_NONCE}}">
@@ -83,7 +83,7 @@
     <div id="root"></div>
     <div id="modal-root"></div>
 
-    <!-- Vite entry (DEV). Em PROD o Vite injeta assets automaticamente no build -->
+    <!-- ✅ Vite entry (DEV). Em PROD o Vite injeta assets automaticamente no build -->
     <script type="module" nonce="{{CSP_NONCE}}" src="/src/main.jsx"></script>
   </body>
 </html>
