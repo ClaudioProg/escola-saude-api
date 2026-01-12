@@ -1,4 +1,15 @@
-// 📁 server.js
+// 📁 server.js — PREMIUM (CSP robusta p/ Vite DEV + PROD com nonce, sem loop de reload)
+// Fix principal:
+// - Em DEV: libera Vite HMR + inline/eval (necessário), e também vercel.live (feedback script) se aparecer.
+// - Em PROD: usa nonce no <script> do index.html (substitui {{CSP_NONCE}}) + allowlist enxuta.
+// - Evita CSP bloquear scripts e causar “carrega / aparece / carrega...”.
+//
+// Importante:
+// - Mantive sua estrutura inteira (rotas, logs, CORS, etc.)
+// - Ajustei CSP para incluir script-src-elem e connect-src completos.
+// - Ajustei frame-ancestors para 'none' (API não precisa ser embeddada). Se você EMBEDA em iframe, troque.
+
+"use strict";
 /* eslint-disable no-console */
 const express = require("express");
 const cors = require("cors");
@@ -103,14 +114,10 @@ app.use((req, res, next) => {
   next();
 });
 
-/* ───────── Normalização de auth (não quebra nada; só ajuda debug) ─────────
-   Muitos controllers quebram por req.user undefined e viram 500.
-   Aqui só “espelha” campos comuns para req.userId/req.perfilId quando existirem.
-*/
+/* ───────── Normalização de auth (não quebra nada; só ajuda debug) ───────── */
 app.use((req, _res, next) => {
   const u = req.user || req.usuario || req.auth || null;
 
-  // tenta pegar id de vários formatos comuns
   const userId =
     u?.id ??
     u?.usuario_id ??
@@ -137,28 +144,67 @@ app.use((req, res, next) => {
   next();
 });
 
-/* ───────── Helmet + CSP (premium) ───────── */
+/* ───────── Helmet + CSP (PREMIUM) ─────────
+   - DEV: precisa liberar Vite (unsafe-eval/inline + ws + localhost:5173)
+   - PROD: nonce + allowlist (sem unsafe-inline)
+   - Inclui vercel.live porque seu erro mostrou feedback.js sendo bloqueado
+*/
 app.use((req, res, next) => {
   const nonce = res.locals.cspNonce;
 
   const frontendFromEnv = (process.env.FRONTEND_URL || "").trim();
+
+  // allowlists úteis
+  const devConnect = IS_DEV
+    ? ["ws:", "http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000", "http://127.0.0.1:3000"]
+    : [];
+
   const connectSrc = [
     "'self'",
-    "https://escola-saude-api.onrender.com",
     "https://accounts.google.com",
     "https://www.googleapis.com",
+    // se seu front consome a API em outro domínio
     ...(frontendFromEnv ? [frontendFromEnv] : []),
-    ...(IS_DEV ? ["ws:", "http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000"] : []),
+    ...devConnect,
   ];
 
-  const scriptSrc = [
+  // Scripts (GSI + Vercel live)
+  const scriptSrcBase = [
     "'self'",
     "https://accounts.google.com",
     "https://www.gstatic.com",
+    "https://vercel.live",
     `'nonce-${nonce}'`,
-    "'strict-dynamic'",
-    ...(IS_DEV ? ["'unsafe-eval'", "'unsafe-inline'"] : []),
   ];
+
+  // PROD: strict-dynamic (se você usa nonce no index)
+  const scriptSrcProd = [...scriptSrcBase, "'strict-dynamic'"];
+
+  // DEV: precisa liberar inline/eval por causa do Vite/HMR e ferramentas
+  const scriptSrcDev = [...scriptSrcBase, "'unsafe-inline'", "'unsafe-eval'"];
+
+  const scriptSrc = IS_DEV ? scriptSrcDev : scriptSrcProd;
+
+  // styles: Vite injeta style tags; manter unsafe-inline (ok para CSS)
+  const styleSrc = [
+    "'self'",
+    "'unsafe-inline'",
+    "https://fonts.googleapis.com",
+    "https://accounts.google.com/gsi/style",
+  ];
+
+  // font/img
+  const fontSrc = ["'self'", "data:", "https://fonts.gstatic.com"];
+  const imgSrc = ["'self'", "data:", "https:", "blob:"];
+  const frameSrc = ["https://accounts.google.com"];
+
+  // HMR pode usar blob: para workers em algumas configs; manter em DEV no worker-src
+  const workerSrc = IS_DEV ? ["'self'", "blob:"] : ["'self'"];
+
+  // ⚠️ Importante: script-src-elem e script-src-attr (para evitar fallback do script-src)
+  // - script-src-elem: permite <script src="...">
+  // - script-src-attr: controla on* inline (vamos bloquear em PROD)
+  const scriptSrcAttr = IS_DEV ? ["'unsafe-inline'"] : ["'none'"];
 
   helmet({
     crossOriginEmbedderPolicy: false,
@@ -181,27 +227,29 @@ app.use((req, res, next) => {
       directives: {
         "default-src": ["'self'"],
         "base-uri": ["'self'"],
-        "frame-ancestors": ["'self'"],
+        "frame-ancestors": ["'none'"],
 
-        "font-src": ["'self'", "data:", "https://fonts.gstatic.com"],
-        "img-src": ["'self'", "data:", "https:", "blob:"],
+        "font-src": fontSrc,
+        "img-src": imgSrc,
         "object-src": ["'none'"],
-        "frame-src": ["https://accounts.google.com"],
-
-        "style-src": [
-          "'self'",
-          "'unsafe-inline'",
-          "https://fonts.googleapis.com",
-          "https://accounts.google.com/gsi/style",
-        ],
+        "frame-src": frameSrc,
+        "style-src": styleSrc,
 
         "script-src": scriptSrc,
+        "script-src-elem": scriptSrc,
+        "script-src-attr": scriptSrcAttr,
+
         "connect-src": connectSrc,
+
+        // opcional mas ajuda: evita bloqueio de preloads/scripts importados
+        "manifest-src": ["'self'"],
+        "worker-src": workerSrc,
       },
     },
   })(req, res, next);
 });
 
+/* ───────── Compression ───────── */
 app.use(compression());
 
 /* ───────── CORS (GLOBAL) ───────── */
@@ -456,7 +504,11 @@ function renderSpaIndex(res, next) {
   if (!fs.existsSync(indexPath)) return false;
 
   try {
-    const html = fs.readFileSync(indexPath, "utf8").replaceAll("{{CSP_NONCE}}", res.locals.cspNonce);
+    // ✅ injeta nonce em qualquer <script ... nonce="{{CSP_NONCE}}">
+    const html = fs
+      .readFileSync(indexPath, "utf8")
+      .replaceAll("{{CSP_NONCE}}", res.locals.cspNonce);
+
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.status(200).send(html);
     return true;
@@ -483,22 +535,18 @@ app.use((req, res) => {
 });
 
 app.use((err, req, res, _next) => {
-  // Multer / upload
   if (err?.code === "LIMIT_FILE_SIZE") return sendError(res, 400, "Arquivo muito grande (máx. 50MB).");
 
-  // CORS
   if (err?.code === "CORS_BLOCKED") {
     return sendError(res, 403, "Origem não autorizada.", { code: "CORS_BLOCKED" });
   }
 
-  // Auth: se algum middleware seu lançar algo tipo "Unauthorized"
   if (err?.name === "UnauthorizedError" || err?.code === "UNAUTHORIZED") {
     return sendError(res, 401, "Não autenticado.");
   }
 
   const status = err?.status || err?.statusCode || 500;
 
-  // PREMIUM: Log consistente com requestId
   console.error("[ERROR]", {
     rid: req?.requestId,
     status,
@@ -527,7 +575,6 @@ async function shutdown(signal) {
   server.close(async () => {
     console.log("✅ HTTP fechado.");
 
-    // fecha pool do DB se existir
     try {
       if (db?.shutdown) await db.shutdown();
     } catch (e) {
