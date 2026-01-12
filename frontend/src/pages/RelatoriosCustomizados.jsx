@@ -27,6 +27,7 @@ import DateRangePicker from "../components/DateRangePicker";
 import RelatoriosTabela from "../components/RelatoriosTabela";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import ErroCarregamento from "../components/ErroCarregamento";
+import NadaEncontrado from "../components/NadaEncontrado";
 import Footer from "../components/Footer";
 
 /* ---------------- Utils ---------------- */

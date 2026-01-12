@@ -1,12 +1,9 @@
-// ✅ src/pages/GestaoUsuarios.jsx (premium + mobile/PWA + a11y + filtros persistidos + anti-fuso)
-// - HeaderHero 3 cores + glow + ministats
-// - Sticky toolbar (busca + chips + selects + export)
-// - Persistência: perfis, unidade, cargo, pageSize e busca (localStorage)
-// - AbortController + mountedRef (evita setState em unmount)
-// - Erro premium (card + foco) + “Tentar novamente”
-// - Unidade: filtro/visual por SIGLA (deriva de unidade_sigla OU unidade_id->map)
-// - Mantém lazy ModalEditarPerfil
-// - Resumo por usuário: cache Map + loading Set (sob demanda via tabela)
+// ✅ src/pages/GestaoUsuarios.jsx — PREMIUM (server-side pagination + filtros no backend + export robusto)
+// - Agora busca/paginação é SERVER-SIDE (não carrega 1300+ no cliente)
+// - Envia: q, perfil(csv), unidade_id (via sigla->id), cargo_nome, page, pageSize
+// - KPIs: usa meta.total e contagem por perfil vinda da própria página carregada (com fallback)
+// - Mantém UX premium: sticky toolbar, chips, selects, persistência e a11y
+// - Export CSV: exporta RESULTADO FILTRADO COMPLETO via paginação automática (lotes) (limite de segurança)
 
 import {
   useEffect,
@@ -54,7 +51,7 @@ const maskCpf = (cpf, revealed = false) => {
 
 // Idade a partir de "YYYY-MM-DD" sem criar Date (anti-fuso)
 const idadeFromISO = (iso) => {
-  const s = String(iso || "");
+  const s = String(iso || "").slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
   const [yy, mm, dd] = s.split("-").map((x) => parseInt(x, 10));
   const today = new Date();
@@ -199,7 +196,6 @@ function HeaderHero({ onAtualizar, atualizando, total, kpis }) {
             </div>
           </div>
 
-          {/* Ministats no próprio hero */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <MiniStat label="Totais" value={kpis.total} accent="indigo" />
             <MiniStat label="Usuários" value={kpis.usuario} accent="emerald" />
@@ -217,6 +213,7 @@ function HeaderHero({ onAtualizar, atualizando, total, kpis }) {
 /* ============ Página ============ */
 export default function GestaoUsuarios() {
   const [usuarios, setUsuarios] = useState([]);
+  const [meta, setMeta] = useState({ total: 0, page: 1, pageSize: 25, pages: 1 });
   const [carregandoUsuarios, setCarregandoUsuarios] = useState(true);
   const [erro, setErro] = useState("");
   const [busca, setBusca] = useState(() => localStorage.getItem("usuarios:busca") || "");
@@ -231,13 +228,13 @@ export default function GestaoUsuarios() {
   const mountedRef = useRef(true);
 
   // cache de resumo sob demanda
-  const [resumoCache, setResumoCache] = useState(() => new Map()); // id -> { cursos_concluidos_75, certificados_emitidos }
-  const [loadingResumo, setLoadingResumo] = useState(() => new Set()); // ids carregando
+  const [resumoCache, setResumoCache] = useState(() => new Map());
+  const [loadingResumo, setLoadingResumo] = useState(() => new Set());
 
   // filtros + paginação (persistidos)
   const [fUnidade, setFUnidade] = useState(() => localStorage.getItem("usuarios:fUnidade") || "todas"); // SIGLA ou "todas"
   const [fCargo, setFCargo] = useState(() => localStorage.getItem("usuarios:fCargo") || "todos");
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useState(() => Number(localStorage.getItem("usuarios:page")) || 1);
   const [pageSize, setPageSize] = useState(() => Number(localStorage.getItem("usuarios:pageSize")) || 25);
 
   // perfis (persistido como CSV)
@@ -291,6 +288,9 @@ export default function GestaoUsuarios() {
   useEffect(() => {
     try { localStorage.setItem("usuarios:fPerfis", Array.from(fPerfis).join(",")); } catch { /* noop */ }
   }, [fPerfis]);
+  useEffect(() => {
+    try { localStorage.setItem("usuarios:page", String(page)); } catch { /* noop */ }
+  }, [page]);
 
   const [unidades, setUnidades] = useState([]);
   const [unidadesMap, setUnidadesMap] = useState(() => new Map()); // id -> {sigla,nome}
@@ -316,7 +316,40 @@ export default function GestaoUsuarios() {
     }
   }, []);
 
-  /* ---------- carregar usuários ---------- */
+  // ✅ resolve SIGLA -> unidade_id (para mandar pro backend)
+  const unidadeIdSelecionada = useMemo(() => {
+    if (!fUnidade || fUnidade === "todas") return null;
+    const s = String(fUnidade).trim().toUpperCase();
+    const found = (unidades || []).find((u) => String(u.sigla || "").trim().toUpperCase() === s);
+    return found?.id ? Number(found.id) : null;
+  }, [fUnidade, unidades]);
+
+  /* ---------- busca com debounce ---------- */
+  const [debouncedQ, setDebouncedQ] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(sLower(busca).trim()), 250);
+    return () => clearTimeout(t);
+  }, [busca]);
+
+  /* ---------- filtros por perfil ---------- */
+  const togglePerfil = (p) => {
+    const key = sLower(p);
+    setFPerfis((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      if (next.size === 0) PERFIS_PERMITIDOS.forEach((x) => next.add(x));
+      return next;
+    });
+  };
+  const resetPerfis = () => setFPerfis(new Set(PERFIS_PERMITIDOS));
+
+  // ✅ sempre que filtros mudarem, volta para página 1 (server-side)
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedQ, fUnidade, fCargo, fPerfis, pageSize]);
+
+  /* ---------- carregar usuários (SERVER-SIDE) ---------- */
   const carregarUsuarios = useCallback(async () => {
     try {
       setCarregandoUsuarios(true);
@@ -327,35 +360,36 @@ export default function GestaoUsuarios() {
       const ctrl = new AbortController();
       abortRef.current = ctrl;
 
-      const data = await apiGet("/api/usuarios", { on403: "silent", signal: ctrl.signal });
+      const params = new URLSearchParams();
+      if (debouncedQ) params.set("q", debouncedQ);
+      if (unidadeIdSelecionada != null) params.set("unidade_id", String(unidadeIdSelecionada));
+      if (fCargo && fCargo !== "todos") params.set("cargo_nome", String(fCargo));
+      params.set("page", String(page));
+      params.set("pageSize", String(pageSize));
 
-      const base = Array.isArray(data)
-        ? data
-        : Array.isArray(data?.lista)
-        ? data.lista
-        : Array.isArray(data?.usuarios)
-        ? data.usuarios
-        : [];
+      const perfisCsv = Array.from(fPerfis || []).filter(Boolean).join(",");
+      if (perfisCsv) params.set("perfil", perfisCsv);
 
-      const enriched = base.map((u) => {
+      const url = `/api/usuarios?${params.toString()}`;
+
+      const resp = await apiGet(url, { on403: "silent", signal: ctrl.signal });
+
+      const metaResp = resp?.meta || resp?.data?.meta || null;
+      const dataResp =
+        (Array.isArray(resp?.data) ? resp.data : null) ||
+        (Array.isArray(resp?.usuarios) ? resp.usuarios : null) ||
+        (Array.isArray(resp?.items) ? resp.items : null) ||
+        (Array.isArray(resp?.rows) ? resp.rows : null) ||
+        [];
+
+      const enriched = (dataResp || []).map((u) => {
         const perfilArr = toPerfilArray(u?.perfil);
 
-        const siglaJoin =
-          String(
-            u?.unidade_sigla ||
-              u?.sigla_unidade ||
-              u?.unidade_abrev ||
-              u?.unidade_sigla_nome ||
-              ""
-          )
-            .trim()
-            .toUpperCase() || "";
-
+        const siglaJoin = String(u?.unidade_sigla || "").trim().toUpperCase() || "";
         const siglaViaId =
           u?.unidade_id && unidadesMap?.get?.(u.unidade_id)?.sigla
             ? String(unidadesMap.get(u.unidade_id).sigla).trim().toUpperCase()
             : "";
-
         const unidade_sigla = (siglaJoin || siglaViaId) || null;
 
         const unidade_nome =
@@ -366,8 +400,8 @@ export default function GestaoUsuarios() {
 
         return {
           ...u,
-          idade: idadeFromISO(u?.data_nascimento) ?? undefined,
-          perfil: perfilArr, // array uniforme
+          idade: idadeFromISO(String(u?.data_nascimento || "").slice(0, 10)) ?? undefined,
+          perfil: perfilArr,
           cpf_masked: maskCpf(u?.cpf),
           unidade_sigla,
           unidade_nome,
@@ -382,7 +416,14 @@ export default function GestaoUsuarios() {
       if (!mountedRef.current) return;
 
       setUsuarios(enriched);
-      setResumoCache(new Map());
+      setResumoCache((prev) => (prev?.size ? prev : new Map())); // mantém cache quando navega páginas
+      setMeta({
+        total: Number(metaResp?.total ?? 0),
+        page: Number(metaResp?.page ?? page),
+        pageSize: Number(metaResp?.pageSize ?? pageSize),
+        pages: Number(metaResp?.pages ?? 1),
+      });
+
       setLive(`Usuários carregados: ${enriched.length}.`);
     } catch (e) {
       if (e?.name === "AbortError") return;
@@ -395,6 +436,7 @@ export default function GestaoUsuarios() {
       setErro(msg);
       toast.error(msg);
       setUsuarios([]);
+      setMeta({ total: 0, page, pageSize, pages: 1 });
       setLive("Falha ao carregar usuários.");
       setTimeout(() => erroRef.current?.focus?.(), 0);
     } finally {
@@ -403,24 +445,28 @@ export default function GestaoUsuarios() {
         setHydrating(false);
       }
     }
-  }, [unidadesMap]);
+  }, [debouncedQ, unidadeIdSelecionada, fCargo, fPerfis, page, pageSize, unidadesMap]);
 
   useEffect(() => {
     carregarUnidades();
   }, [carregarUnidades]);
 
+  // ✅ carrega sempre que mudar page/filtros
   useEffect(() => {
     carregarUsuarios();
   }, [carregarUsuarios]);
 
-  /* ---------- KPIs ---------- */
+  /* ---------- KPIs (melhor esforço) ---------- */
   const kpis = useMemo(() => {
-    const total = usuarios.length;
+    // total real do filtro (server meta.total)
+    const total = Number(meta?.total ?? 0);
+
+    // contagens por perfil: só da página atual (badge útil), com fallback
     let usuario = 0;
     let instrutor = 0;
     let administrador = 0;
 
-    for (const u of usuarios) {
+    for (const u of usuarios || []) {
       const perfis = toPerfilArray(u?.perfil);
       if (perfis.includes("usuario")) usuario++;
       if (perfis.includes("instrutor")) instrutor++;
@@ -433,7 +479,7 @@ export default function GestaoUsuarios() {
       instrutor: String(instrutor),
       administrador: String(administrador),
     };
-  }, [usuarios]);
+  }, [usuarios, meta]);
 
   /* ---------- carregar resumo POR usuário ---------- */
   async function carregarResumoUsuario(id) {
@@ -443,9 +489,10 @@ export default function GestaoUsuarios() {
     setLoadingResumo((prev) => new Set(prev).add(id));
     try {
       const r = await apiGet(`/api/usuarios/${id}/resumo`, { on404: "silent" });
+      const payload = r?.data ?? r; // compat (ok/data)
       const resumo = {
-        cursos_concluidos_75: Number(r?.cursos_concluidos_75 ?? 0),
-        certificados_emitidos: Number(r?.certificados_emitidos ?? 0),
+        cursos_concluidos_75: Number(payload?.cursos_concluidos_75 ?? 0),
+        certificados_emitidos: Number(payload?.certificados_emitidos ?? 0),
       };
 
       setResumoCache((prev) => {
@@ -488,116 +535,6 @@ export default function GestaoUsuarios() {
     }
   }
 
-  /* ---------- busca com debounce ---------- */
-  const [debouncedQ, setDebouncedQ] = useState("");
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedQ(sLower(busca).trim()), 250);
-    return () => clearTimeout(t);
-  }, [busca]);
-
-  /* ---------- filtros por perfil ---------- */
-  const togglePerfil = (p) => {
-    const key = sLower(p);
-    setFPerfis((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      if (next.size === 0) PERFIS_PERMITIDOS.forEach((x) => next.add(x));
-      return next;
-    });
-  };
-  const resetPerfis = () => setFPerfis(new Set(PERFIS_PERMITIDOS));
-
-  /* ---------- opções únicas (Unidade / Cargo) ---------- */
-  const { unidadesOpts, cargosOpts } = useMemo(() => {
-    const siglasUsadas = new Set();
-
-    (usuarios || []).forEach((u) => {
-      const fromJoin = String(u?.unidade_sigla || "").trim();
-      const fromId =
-        u?.unidade_id ? String(unidadesMap.get(u.unidade_id)?.sigla || "").trim() : "";
-      const s = (fromJoin || fromId).toUpperCase();
-      if (s) siglasUsadas.add(s);
-    });
-
-    let unidadesArr = Array.from(siglasUsadas).sort((a, b) => a.localeCompare(b, "pt-BR"));
-    if (unidadesArr.length === 0) {
-      unidadesArr = Array.from(
-        new Set(
-          (unidades || [])
-            .map((u) => (u.sigla || u.nome || "").trim())
-            .filter(Boolean)
-            .map((s) => s.toUpperCase())
-        )
-      ).sort((a, b) => a.localeCompare(b, "pt-BR"));
-    }
-
-    const cargosArr = Array.from(
-      new Set((usuarios || []).map((u) => String(u?.cargo_nome || "").trim()).filter(Boolean))
-    ).sort((a, b) => a.localeCompare(b, "pt-BR"));
-
-    return { unidadesOpts: unidadesArr, cargosOpts: cargosArr };
-  }, [usuarios, unidades, unidadesMap]);
-
-  /* ---------- filtro final (usa sigla da unidade) ---------- */
-  const usuariosFiltrados = useMemo(() => {
-    const q = debouncedQ;
-    const perfilOk = (p) => {
-      const roles = toPerfilArray(p);
-      return roles.some((r) => fPerfis.has(r));
-    };
-
-    return (usuarios || []).filter((u) => {
-      if (!perfilOk(u?.perfil)) return false;
-
-      // Unidade (somente SIGLA)
-      if (fUnidade !== "todas") {
-        const siglaJoin = String(u?.unidade_sigla || "").trim();
-        const siglaViaId = u?.unidade_id ? (unidadesMap.get(u.unidade_id)?.sigla || "") : "";
-        const siglaUser = (siglaJoin || siglaViaId).toLowerCase();
-        if (siglaUser !== fUnidade.toLowerCase()) return false;
-      }
-
-      // Cargo
-      if (fCargo !== "todos" && String(u?.cargo_nome ?? "").trim() !== fCargo) return false;
-
-      if (!q) return true;
-
-      const nome = sLower(u?.nome);
-      const email = sLower(u?.email);
-      const cpf = sLower(u?.cpf);
-      const registro = sLower(u?.registro);
-      const perfTxt = toPerfilArray(u?.perfil).join(" ");
-      const idStr = String(u?.id ?? "").toLowerCase();
-
-      return (
-        nome.includes(q) ||
-        email.includes(q) ||
-        cpf.includes(q) ||
-        registro.includes(q) ||
-        perfTxt.includes(q) ||
-        idStr.includes(q)
-      );
-    });
-  }, [usuarios, debouncedQ, fPerfis, fUnidade, fCargo, unidadesMap]);
-
-  /* ---------- paginação client-side ---------- */
-  const totalItems = usuariosFiltrados.length;
-  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
-
-  useEffect(() => {
-    setPage(1);
-  }, [debouncedQ, fPerfis, fUnidade, fCargo, pageSize]);
-
-  const pageClamped = Math.min(page, totalPages);
-  const sliceStart = (pageClamped - 1) * pageSize;
-  const sliceEnd = sliceStart + pageSize;
-
-  const usuariosPaginados = useMemo(
-    () => usuariosFiltrados.slice(sliceStart, sliceEnd),
-    [usuariosFiltrados, sliceStart, sliceEnd]
-  );
-
   /* ---------- CPF reveal/ocultar ---------- */
   const onToggleCpf = (id) => {
     setRevealCpfIds((prev) => {
@@ -608,51 +545,122 @@ export default function GestaoUsuarios() {
     });
   };
 
-  /* ---------- export CSV ---------- */
-  const onExportCsv = () => {
+  /* ---------- opções únicas (Unidade / Cargo) ---------- */
+  const { unidadesOpts, cargosOpts } = useMemo(() => {
+    // Unidade por SIGLA: lista do endpoint /api/unidades (completa/estável)
+    const unidadesArr = Array.from(
+      new Set(
+        (unidades || [])
+          .map((u) => String(u?.sigla || "").trim())
+          .filter(Boolean)
+          .map((s) => s.toUpperCase())
+      )
+    ).sort((a, b) => a.localeCompare(b, "pt-BR"));
+
+    // Cargo: como você tem 1300+, ideal seria um endpoint próprio.
+    // Aqui: vamos montar com base na página atual + manter seleção persistida.
+    const cargosSet = new Set(
+      (usuarios || []).map((u) => String(u?.cargo_nome || "").trim()).filter(Boolean)
+    );
+    if (fCargo && fCargo !== "todos") cargosSet.add(fCargo);
+
+    const cargosArr = Array.from(cargosSet).sort((a, b) => a.localeCompare(b, "pt-BR"));
+
+    return { unidadesOpts: unidadesArr, cargosOpts: cargosArr };
+  }, [unidades, usuarios, fCargo]);
+
+  /* ---------- export CSV (server-side: pagina tudo do filtro) ---------- */
+  const [exportando, setExportando] = useState(false);
+
+  const onExportCsv = async () => {
+    // limite de segurança pra não travar navegador (ajuste se quiser)
+    const HARD_LIMIT = 20000;
+
     try {
+      setExportando(true);
+
+      const total = Number(meta?.total ?? 0);
+      if (!total) {
+        toast.info("Nada para exportar com os filtros atuais.");
+        return;
+      }
+      if (total > HARD_LIMIT) {
+        toast.error(`Exportação muito grande (${total}). Refinar filtros antes de exportar.`);
+        return;
+      }
+
       const headers = ["id", "nome", "email", "perfil", "unidade_sigla", "cargo", "escolaridade", "idade"];
-      const rows = usuariosFiltrados.map((u) => {
-        const siglaViaId = u?.unidade_id ? (unidadesMap.get(u.unidade_id)?.sigla || "") : "";
-        const sigla = u?.unidade_sigla || siglaViaId || "";
-        return [
-          u?.id ?? "",
-          u?.nome ?? "",
-          u?.email ?? "",
-          toPerfilArray(u?.perfil).join(", "),
-          sigla,
-          u?.cargo_nome ?? "",
-          u?.escolaridade_nome ?? "",
-          Number.isFinite(u?.idade) ? u.idade : "",
-        ];
-      });
+      const rows = [];
+
+      const perfisCsv = Array.from(fPerfis || []).filter(Boolean).join(",");
+
+      // pagina em lotes grandes para export
+      const exportPageSize = 200;
+      const totalPages = Math.max(1, Math.ceil(total / exportPageSize));
+
+      for (let p = 1; p <= totalPages; p++) {
+        const params = new URLSearchParams();
+        if (debouncedQ) params.set("q", debouncedQ);
+        if (unidadeIdSelecionada != null) params.set("unidade_id", String(unidadeIdSelecionada));
+        if (fCargo && fCargo !== "todos") params.set("cargo_nome", String(fCargo));
+        if (perfisCsv) params.set("perfil", perfisCsv);
+        params.set("page", String(p));
+        params.set("pageSize", String(exportPageSize));
+
+        const resp = await apiGet(`/api/usuarios?${params.toString()}`, { on403: "silent" });
+        const dataResp =
+          (Array.isArray(resp?.data) ? resp.data : null) ||
+          (Array.isArray(resp?.usuarios) ? resp.usuarios : null) ||
+          (Array.isArray(resp?.items) ? resp.items : null) ||
+          (Array.isArray(resp?.rows) ? resp.rows : null) ||
+          [];
+
+        for (const u of dataResp) {
+          const sigla = String(u?.unidade_sigla || "").trim()
+            || (u?.unidade_id && unidadesMap.get(u.unidade_id)?.sigla ? String(unidadesMap.get(u.unidade_id).sigla).trim() : "");
+
+          rows.push([
+            u?.id ?? "",
+            u?.nome ?? "",
+            u?.email ?? "",
+            toPerfilArray(u?.perfil).join(", "),
+            sigla,
+            u?.cargo_nome ?? "",
+            u?.escolaridade_nome ?? "",
+            Number.isFinite(idadeFromISO(String(u?.data_nascimento || "").slice(0, 10))) ? idadeFromISO(String(u?.data_nascimento || "").slice(0, 10)) : "",
+          ]);
+        }
+      }
 
       const content = [headers, ...rows].map((r) => r.map(csvEscape).join(";")).join("\n");
       const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
       downloadBlob(`usuarios_${new Date().toISOString().slice(0, 10)}.csv`, blob);
-      toast.success("📄 CSV exportado da lista filtrada.");
+      toast.success("📄 CSV exportado do resultado filtrado.");
     } catch (e) {
       console.error("CSV erro", e);
       toast.error("Não foi possível exportar o CSV.");
+    } finally {
+      setExportando(false);
     }
   };
 
   const anyLoading = carregandoUsuarios;
 
+  const totalItems = Number(meta?.total ?? 0);
+  const totalPages = Math.max(1, Number(meta?.pages ?? 1));
+  const pageClamped = Math.min(Math.max(1, Number(meta?.page ?? page)), totalPages);
+
   return (
     <div className="flex min-h-screen flex-col bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
-      {/* live region acessível */}
       <p ref={liveRef} className="sr-only" aria-live="polite" aria-atomic="true" />
 
-      {/* header */}
       <HeaderHero
         onAtualizar={carregarUsuarios}
         atualizando={carregandoUsuarios || hydrating}
-        total={usuarios?.length || 0}
+        total={totalItems}
         kpis={kpis}
       />
 
-      {/* progress bar fina */}
       {anyLoading && (
         <div
           className="sticky top-0 z-40 h-1 w-full bg-fuchsia-100 dark:bg-fuchsia-950"
@@ -666,7 +674,6 @@ export default function GestaoUsuarios() {
       )}
 
       <main id="conteudo" className="mx-auto w-full max-w-6xl flex-1 px-3 sm:px-4 py-6">
-        {/* erro premium */}
         {!!erro && !anyLoading && (
           <div
             ref={erroRef}
@@ -695,13 +702,11 @@ export default function GestaoUsuarios() {
           </div>
         )}
 
-        {/* Barra de ações sticky (mobile-first) */}
         <section
           aria-label="Ferramentas de busca e filtros"
           className="sticky top-1 z-30 mb-5 rounded-2xl border border-zinc-200 bg-white/80 p-3 backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/80"
         >
           <div className="flex flex-col gap-3">
-            {/* Linha 1: Busca */}
             <div className="relative w-full">
               <Search
                 className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500"
@@ -719,13 +724,11 @@ export default function GestaoUsuarios() {
                 aria-describedby="resultados-count"
               />
               <p id="resultados-count" className="sr-only" aria-live="polite">
-                {usuariosFiltrados.length} resultado(s).
+                {totalItems} resultado(s).
               </p>
             </div>
 
-            {/* Linha 2: filtros e ações */}
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              {/* Chips de perfil */}
               <div className="flex flex-wrap items-center gap-2">
                 <span className="inline-flex items-center gap-1 text-xs text-zinc-500">
                   <Filter className="h-3.5 w-3.5" aria-hidden="true" /> Perfis:
@@ -751,9 +754,7 @@ export default function GestaoUsuarios() {
                 </button>
               </div>
 
-              {/* Selects Unidade / Cargo + Export */}
               <div className="flex flex-wrap items-center gap-2">
-                {/* Unidade: só SIGLA */}
                 <select
                   value={fUnidade}
                   onChange={(e) => setFUnidade(e.target.value)}
@@ -787,19 +788,18 @@ export default function GestaoUsuarios() {
                 <button
                   type="button"
                   onClick={onExportCsv}
-                  disabled={!usuariosFiltrados.length}
+                  disabled={exportando || totalItems === 0}
                   className="inline-flex items-center gap-2 rounded-xl bg-violet-700 px-3 py-2 text-xs font-semibold text-white hover:bg-violet-800 disabled:cursor-not-allowed disabled:opacity-60"
-                  title="Exportar CSV da lista filtrada"
+                  title="Exportar CSV do resultado filtrado"
                 >
-                  <Download className="h-4 w-4" aria-hidden="true" />
-                  Exportar CSV
+                  <Download className={`h-4 w-4 ${exportando ? "animate-pulse" : ""}`} aria-hidden="true" />
+                  {exportando ? "Exportando…" : "Exportar CSV"}
                 </button>
               </div>
             </div>
           </div>
         </section>
 
-        {/* lista */}
         {carregandoUsuarios ? (
           <div className="space-y-4" aria-busy="true" aria-live="polite">
             {[...Array(6)].map((_, i) => (
@@ -813,7 +813,7 @@ export default function GestaoUsuarios() {
         ) : (
           <>
             <TabelaUsuarios
-              usuarios={Array.isArray(usuariosPaginados) ? usuariosPaginados : []}
+              usuarios={Array.isArray(usuarios) ? usuarios : []}
               onEditar={(usuario) => setUsuarioSelecionado(usuario)}
               onToggleCpf={onToggleCpf}
               isCpfRevealed={(id) => revealCpfIds.has(id)}
@@ -823,10 +823,9 @@ export default function GestaoUsuarios() {
               hasResumo={(id) => resumoCache.has(id)}
             />
 
-            {/* Paginação */}
             <div className="mt-4 flex flex-col items-center justify-between gap-3 sm:flex-row">
               <div className="text-xs text-zinc-600 dark:text-zinc-400">
-                Mostrando <strong>{usuariosPaginados.length}</strong> de{" "}
+                Mostrando <strong>{usuarios.length}</strong> de{" "}
                 <strong>{totalItems}</strong> resultado(s) — página{" "}
                 <strong>{pageClamped}</strong> de <strong>{totalPages}</strong>
               </div>
@@ -838,7 +837,7 @@ export default function GestaoUsuarios() {
                   onChange={(e) => setPageSize(Number(e.target.value) || 25)}
                   className="rounded-xl border px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-violet-700 dark:border-zinc-700 dark:bg-zinc-800"
                 >
-                  {[10, 25, 50, 100].map((n) => (
+                  {[10, 25, 50, 100, 200].map((n) => (
                     <option key={n} value={n}>
                       {n}
                     </option>
@@ -869,7 +868,6 @@ export default function GestaoUsuarios() {
           </>
         )}
 
-        {/* modal (lazy) */}
         <Suspense fallback={null}>
           {usuarioSelecionado && (
             <ModalEditarPerfil
@@ -880,7 +878,6 @@ export default function GestaoUsuarios() {
           )}
         </Suspense>
 
-        {/* rodapé de segurança */}
         <div className="mt-8 flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
           <ShieldCheck className="h-4 w-4" aria-hidden="true" />
           <span>

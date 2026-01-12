@@ -1,10 +1,13 @@
 // 📁 src/controllers/usuarioAdministradorController.js
 /* eslint-disable no-console */
-const db = require("../db");
+"use strict";
+
+const rawDb = require("../db");
+const db = rawDb?.db ?? rawDb;
 
 /* ─────────────────────────────────────────────────────────────
    Helpers / Normalizações
-   ───────────────────────────────────────────────────────────── */
+───────────────────────────────────────────────────────────── */
 function toPerfilArray(perfil) {
   if (Array.isArray(perfil)) {
     return perfil.map((p) => String(p || "").toLowerCase().trim()).filter(Boolean);
@@ -51,26 +54,27 @@ function traduzPgError(err) {
 
 /* ─────────────────────────────────────────────────────────────
    LISTAR TODOS (ADMIN) — com filtros/paginação opcionais
-   GET /api/usuarios?q=&perfil=&unidade_id=&page=&pageSize=
-   - q: busca em nome/email/cpf
-   - perfil: csv (ex.: instrutor,administrador) → LIKE no CSV do banco
-   - unidade_id: number
-   - Retorna: { meta, data[] }  (mantém CSV em perfil por compat)
-   ───────────────────────────────────────────────────────────── */
+   GET /api/usuarios?q=&perfil=&unidade_id=&cargo_nome=&page=&pageSize=
+   Retorna:
+     - { meta, data } (contrato atual)
+     - + aliases: { ok, usuarios, items, rows } (compat)
+───────────────────────────────────────────────────────────── */
 async function listarUsuarios(req, res) {
   try {
     const page = clamp(numOrNull(req.query.page) ?? 1, 1, 1000000);
     const pageSize = clamp(numOrNull(req.query.pageSize) ?? 50, 1, 200);
+
     const q = normStr(req.query.q);
     const unidadeId = numOrNull(req.query.unidade_id);
-    const perfisFiltro = toPerfilArray(req.query.perfil); // csv → array minúsculo
+    const cargoNome = normStr(req.query.cargo_nome); // ✅ novo (server-side filter)
+    const perfisFiltro = toPerfilArray(req.query.perfil);
 
     const where = [];
     const params = [];
     let i = 1;
 
     if (q) {
-      where.push(`(u.nome ILIKE $${i} OR u.email ILIKE $${i} OR u.cpf ILIKE $${i})`);
+      where.push(`(u.nome ILIKE $${i} OR u.email ILIKE $${i} OR u.cpf ILIKE $${i} OR u.registro ILIKE $${i})`);
       params.push(`%${q}%`);
       i++;
     }
@@ -80,8 +84,13 @@ async function listarUsuarios(req, res) {
       params.push(unidadeId);
     }
 
+    // ✅ filtro por cargo (nome) — precisa do JOIN no COUNT também
+    if (cargoNome && cargoNome !== "todos") {
+      where.push(`ca.nome = $${i++}`);
+      params.push(cargoNome);
+    }
+
     if (perfisFiltro.length) {
-      // monta (LOWER(u.perfil) LIKE '%role1%' OR ... )
       const ors = perfisFiltro.map((r) => {
         params.push(`%${r}%`);
         return `LOWER(u.perfil) LIKE $${i++}`;
@@ -91,16 +100,21 @@ async function listarUsuarios(req, res) {
 
     const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
-    // total
+    // ✅ TOTAL (precisa dos JOINs usados nos filtros)
     const totalQ = await db.query(
-      `SELECT COUNT(*)::int AS n FROM usuarios u ${whereSql}`,
+      `
+      SELECT COUNT(*)::int AS n
+      FROM usuarios u
+      LEFT JOIN cargos ca ON ca.id = u.cargo_id
+      ${whereSql}
+      `,
       params
     );
-    const total = totalQ.rows[0]?.n || 0;
 
-    // paginação
+    const total = totalQ.rows?.[0]?.n || 0;
     const offset = (page - 1) * pageSize;
 
+    // página
     const rowsQ = await db.query(
       `
       SELECT
@@ -110,7 +124,7 @@ async function listarUsuarios(req, res) {
         u.email,
         u.registro,
         u.data_nascimento,
-        u.perfil,           -- mantém CSV por compat
+        u.perfil,           -- CSV por compat
         u.unidade_id,
         u.escolaridade_id,
         u.cargo_id,
@@ -132,12 +146,21 @@ async function listarUsuarios(req, res) {
       [...params, pageSize, offset]
     );
 
-    const data = rowsQ.rows; // mantém perfil como CSV (retrocompat)
+    const data = rowsQ.rows || [];
     const pages = Math.max(1, Math.ceil(total / pageSize));
 
+    // ✅ Compat premium: alguns fronts esperam `usuarios` ou array
+    res.setHeader("X-Usuarios-Shape", "meta+data+usuarios");
+
     return res.json({
+      ok: true,
       meta: { total, page, pageSize, pages },
       data,
+
+      // aliases (compat total)
+      usuarios: data,
+      items: data,
+      rows: data,
     });
   } catch (err) {
     console.error("❌ Erro ao listar usuários:", err);
@@ -148,8 +171,7 @@ async function listarUsuarios(req, res) {
 /* ─────────────────────────────────────────────────────────────
    BUSCAR POR ID (ADMIN ou o próprio)
    GET /api/usuarios/:id
-   Retorna perfil como array (UX melhor)
-   ───────────────────────────────────────────────────────────── */
+───────────────────────────────────────────────────────────── */
 async function buscarUsuarioPorId(req, res) {
   const { id } = req.params;
   const solicitante = req.user;
@@ -190,7 +212,7 @@ async function buscarUsuarioPorId(req, res) {
 
     if (!rows.length) return res.status(404).json({ erro: "Usuário não encontrado." });
     const u = rows[0];
-    return res.json({ ...u, perfil: toPerfilArray(u.perfil) });
+    return res.json({ ok: true, data: { ...u, perfil: toPerfilArray(u.perfil) } });
   } catch (err) {
     console.error("❌ Erro ao buscar usuário:", err);
     return res.status(500).json({ erro: "Erro ao buscar usuário." });
@@ -200,10 +222,7 @@ async function buscarUsuarioPorId(req, res) {
 /* ─────────────────────────────────────────────────────────────
    ATUALIZAR (ADMIN ou o próprio)
    PATCH/PUT /api/usuarios/:id
-   - Admin pode alterar perfil
-   - E-mail validado
-   - Retorna perfil como array
-   ───────────────────────────────────────────────────────────── */
+───────────────────────────────────────────────────────────── */
 async function atualizarUsuario(req, res) {
   const { id } = req.params;
   const { nome, email, perfil } = req.body;
@@ -222,13 +241,15 @@ async function atualizarUsuario(req, res) {
   if (nome !== undefined) {
     const n = normStr(nome);
     if (!n) return res.status(400).json({ erro: "Nome é obrigatório." });
-    updates.push(`nome = $${i++}`); vals.push(n);
+    updates.push(`nome = $${i++}`);
+    vals.push(n);
   }
 
   if (email !== undefined) {
     const e = normStr(email);
     if (!e || !isEmail(e)) return res.status(400).json({ erro: "E-mail inválido." });
-    updates.push(`email = $${i++}`); vals.push(e);
+    updates.push(`email = $${i++}`);
+    vals.push(e);
   }
 
   if (perfil !== undefined) {
@@ -236,11 +257,10 @@ async function atualizarUsuario(req, res) {
       return res.status(403).json({ erro: "Apenas administradores podem alterar perfil." });
     }
     const perfisValidos = ["usuario", "instrutor", "administrador"];
-    const csv = toPerfilCsv(
-      toPerfilArray(perfil).filter((p) => perfisValidos.includes(p))
-    );
+    const csv = toPerfilCsv(toPerfilArray(perfil).filter((p) => perfisValidos.includes(p)));
     if (!csv) return res.status(400).json({ erro: "Perfil inválido ou vazio." });
-    updates.push(`perfil = $${i++}`); vals.push(csv);
+    updates.push(`perfil = $${i++}`);
+    vals.push(csv);
   }
 
   if (!updates.length) {
@@ -263,7 +283,7 @@ async function atualizarUsuario(req, res) {
 
     if (!rows.length) return res.status(404).json({ erro: "Usuário não encontrado." });
     const u = rows[0];
-    return res.json({ ...u, perfil: toPerfilArray(u.perfil) });
+    return res.json({ ok: true, data: { ...u, perfil: toPerfilArray(u.perfil) } });
   } catch (err) {
     console.error("❌ Erro ao atualizar usuário:", err);
     const payload = traduzPgError(err);
@@ -275,7 +295,7 @@ async function atualizarUsuario(req, res) {
 /* ─────────────────────────────────────────────────────────────
    EXCLUIR (ADMIN)
    DELETE /api/usuarios/:id
-   ───────────────────────────────────────────────────────────── */
+───────────────────────────────────────────────────────────── */
 async function excluirUsuario(req, res) {
   const { id } = req.params;
   if (!isAdmin(req.user?.perfil)) {
@@ -291,6 +311,7 @@ async function excluirUsuario(req, res) {
 
     const u = rows[0];
     return res.json({
+      ok: true,
       mensagem: "Usuário excluído com sucesso.",
       usuario: { ...u, perfil: toPerfilArray(u.perfil) },
     });
@@ -302,8 +323,7 @@ async function excluirUsuario(req, res) {
 
 /* ─────────────────────────────────────────────────────────────
    LISTAR INSTRUTORES (com métricas)
-   Mantido seu CTE com média por desempenho do instrutor.
-   ───────────────────────────────────────────────────────────── */
+───────────────────────────────────────────────────────────── */
 async function listarInstrutoresCore(_req, res) {
   try {
     const { rows } = await db.query(`
@@ -329,10 +349,12 @@ async function listarInstrutoresCore(_req, res) {
           ROUND(AVG(
             CASE a.desempenho_instrutor
               WHEN 'Ótimo'  THEN 5
+              WHEN 'Otimo'  THEN 5
               WHEN 'Bom'    THEN 4
-              WHEN 'Regular'THEN 3
+              WHEN 'Regular' THEN 3
               WHEN 'Ruim'   THEN 2
-              WHEN 'Péssimo'THEN 1
+              WHEN 'Péssimo' THEN 1
+              WHEN 'Pessimo' THEN 1
               ELSE NULL
             END
           )::numeric, 1) AS media_avaliacao
@@ -346,7 +368,7 @@ async function listarInstrutoresCore(_req, res) {
       ORDER BY b.nome ASC;
     `);
 
-    const instrutores = rows.map((r) => ({
+    const instrutores = (rows || []).map((r) => ({
       id: r.id,
       nome: r.nome,
       email: r.email,
@@ -355,7 +377,7 @@ async function listarInstrutoresCore(_req, res) {
       possuiAssinatura: !!r.possui_assinatura,
     }));
 
-    return res.json(instrutores);
+    return res.json({ ok: true, data: instrutores, instrutores });
   } catch (err) {
     console.error("❌ Erro ao listar instrutores:", err);
     return res.status(500).json({ erro: "Erro ao listar instrutores." });
@@ -363,13 +385,13 @@ async function listarInstrutoresCore(_req, res) {
 }
 
 const listarInstrutores = listarInstrutoresCore;
-const listarInstrutor   = listarInstrutoresCore;
-const listarinstrutor   = listarInstrutoresCore;
+const listarInstrutor = listarInstrutoresCore;
+const listarinstrutor = listarInstrutoresCore;
 
 /* ─────────────────────────────────────────────────────────────
    ATUALIZAR PERFIL (apenas ADMIN)
    PATCH /api/usuarios/:id/perfil
-   ───────────────────────────────────────────────────────────── */
+───────────────────────────────────────────────────────────── */
 async function atualizarPerfil(req, res) {
   const { id } = req.params;
   const { perfil } = req.body;
@@ -379,9 +401,7 @@ async function atualizarPerfil(req, res) {
   }
 
   const perfisValidos = ["usuario", "instrutor", "administrador"];
-  const perfilCsv = toPerfilCsv(
-    toPerfilArray(perfil).filter((p) => perfisValidos.includes(p))
-  );
+  const perfilCsv = toPerfilCsv(toPerfilArray(perfil).filter((p) => perfisValidos.includes(p)));
   if (!perfilCsv) return res.status(400).json({ erro: "Perfil inválido ou vazio." });
 
   try {
@@ -391,7 +411,7 @@ async function atualizarPerfil(req, res) {
     );
     if (!rows.length) return res.status(404).json({ erro: "Usuário não encontrado." });
     const u = rows[0];
-    return res.json({ ...u, perfil: toPerfilArray(u.perfil) });
+    return res.json({ ok: true, data: { ...u, perfil: toPerfilArray(u.perfil) } });
   } catch (err) {
     console.error("❌ Erro ao atualizar perfil:", err);
     return res.status(500).json({ erro: "Erro ao atualizar perfil." });
@@ -400,34 +420,27 @@ async function atualizarPerfil(req, res) {
 
 /* ─────────────────────────────────────────────────────────────
    RESUMO POR USUÁRIO (cursos ≥75% e certificados)
-   Mantido seu cálculo (datas_turma + fallback; presença ≥ 75%)
-   ───────────────────────────────────────────────────────────── */
+   GET /api/usuarios/:id/resumo
+───────────────────────────────────────────────────────────── */
 async function getResumoUsuario(req, res) {
   const id = Number(req.params.id);
-  if (!Number.isFinite(id)) {
-    return res.status(400).json({ erro: "ID inválido." });
-  }
+  if (!Number.isFinite(id)) return res.status(400).json({ erro: "ID inválido." });
 
   try {
     const sqlCursos75 = `
       WITH minhas_turmas AS (
-        SELECT
-          t.id              AS turma_id,
-          t.data_inicio::date AS di_raw,
-          t.data_fim::date    AS df_raw
+        SELECT t.id AS turma_id, t.data_inicio::date AS di_raw, t.data_fim::date AS df_raw
         FROM inscricoes i
         JOIN turmas t ON t.id = i.turma_id
         WHERE i.usuario_id = $1
       ),
       datas_base AS (
-        -- 1) Preferir datas_turma
         SELECT mt.turma_id, (dt.data::date) AS d
         FROM minhas_turmas mt
         JOIN datas_turma dt ON dt.turma_id = mt.turma_id
 
         UNION ALL
 
-        -- 2) Fallback: janela di..df quando NÃO existem datas_turma
         SELECT mt.turma_id, gs::date AS d
         FROM minhas_turmas mt
         LEFT JOIN datas_turma dt ON dt.turma_id = mt.turma_id
@@ -435,7 +448,6 @@ async function getResumoUsuario(req, res) {
         WHERE dt.turma_id IS NULL
       ),
       pres AS (
-        -- presença consolidada por dia
         SELECT p.turma_id, p.data_presenca::date AS d, BOOL_OR(p.presente) AS presente
         FROM presencas p
         WHERE p.usuario_id = $1
@@ -450,13 +462,13 @@ async function getResumoUsuario(req, res) {
           COUNT(*) FILTER (WHERE db.d <= CURRENT_DATE) AS realizados,
           COUNT(*) FILTER (WHERE p.presente IS TRUE AND db.d <= CURRENT_DATE) AS presentes_passados
         FROM minhas_turmas mt
-        JOIN datas_base   db ON db.turma_id = mt.turma_id
-        LEFT JOIN pres     p ON p.turma_id  = mt.turma_id AND p.d = db.d
+        JOIN datas_base db ON db.turma_id = mt.turma_id
+        LEFT JOIN pres p ON p.turma_id = mt.turma_id AND p.d = db.d
         GROUP BY mt.turma_id
       )
       SELECT
-        COALESCE( COUNT(*) FILTER (
-          WHERE (CURRENT_DATE > df)              -- turma encerrada
+        COALESCE(COUNT(*) FILTER (
+          WHERE (CURRENT_DATE > df)
             AND total_encontros > 0
             AND (presentes_passados::numeric / total_encontros) >= 0.75
         ), 0)::int AS n
@@ -471,16 +483,19 @@ async function getResumoUsuario(req, res) {
 
     const [cursosQ, certsQ] = await Promise.all([
       db.query(sqlCursos75, [id]),
-      db.query(sqlCerts,     [id]),
+      db.query(sqlCerts, [id]),
     ]);
 
     const cursos75 = Number(cursosQ?.rows?.[0]?.n || 0);
-    const certificados = Number(cts = certsQ?.rows?.[0]?.n || 0);
+    const certificados = Number(certsQ?.rows?.[0]?.n || 0);
     const cursos_concluidos_75 = Math.max(cursos75, certificados);
 
     return res.json({
-      cursos_concluidos_75,
-      certificados_emitidos: certificados,
+      ok: true,
+      data: {
+        cursos_concluidos_75,
+        certificados_emitidos: certificados,
+      },
     });
   } catch (err) {
     console.error("❌ [getResumoUsuario] erro:", err);
@@ -491,7 +506,7 @@ async function getResumoUsuario(req, res) {
 /* ─────────────────────────────────────────────────────────────
    LISTAR AVALIADORES ELEGÍVEIS
    GET /api/usuarios/avaliadores?roles=instrutor,administrador
-   ───────────────────────────────────────────────────────────── */
+───────────────────────────────────────────────────────────── */
 async function listarAvaliadoresElegiveis(req, res) {
   try {
     const rolesQuery = String(req.query.roles || "instrutor,administrador")
@@ -499,10 +514,10 @@ async function listarAvaliadoresElegiveis(req, res) {
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean);
 
-    // WHERE dinâmico
     const params = [];
     let i = 1;
     let whereSql = "";
+
     if (rolesQuery.length) {
       const ors = rolesQuery.map((role) => {
         params.push(`%${role}%`);
@@ -521,14 +536,14 @@ async function listarAvaliadoresElegiveis(req, res) {
       params
     );
 
-    const data = rows.map((u) => ({
+    const data = (rows || []).map((u) => ({
       id: u.id,
       nome: u.nome,
       email: u.email,
       perfil: toPerfilArray(u.perfil),
     }));
 
-    return res.json(data);
+    return res.json({ ok: true, data, avaliadores: data });
   } catch (err) {
     console.error("❌ Erro ao listar avaliadores elegíveis:", err);
     return res.status(500).json({ erro: "Erro ao listar avaliadores." });

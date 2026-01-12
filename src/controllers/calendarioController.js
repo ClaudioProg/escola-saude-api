@@ -1,19 +1,28 @@
-// ✅ src/controllers/calendarioController.js
+// ✅ src/controllers/calendarioController.js — PREMIUM (alinhado ao BANCO, sem mexer em schema)
+// - Tipos permitidos = exatamente os 4 do CHECK do Postgres
+// - Normaliza tipo (case/trim) e aceita tipo vindo como objeto {value,label}
+// - Valida date-only "YYYY-MM-DD" (sem timezone shift)
+// - Mensagens consistentes (ApiError-friendly)
+// - Tratamento: duplicidade 23505, data inválida 22007, check 23514 (tipo inválido no banco)
+// - Atualização dinâmica segura
+
+"use strict";
 /* eslint-disable no-console */
 const dbFallback = require("../db");
 
 const IS_DEV = process.env.NODE_ENV !== "production";
 
-// ✅ ajuste conforme seus tipos reais (exemplos comuns)
+// ✅ TIPOS REAIS DO BANCO (CHECK calendario_bloqueios_tipo_check)
 const TIPOS_PERMITIDOS = new Set([
-  "bloqueio",
-  "feriado",
-  "manutencao",
-  "evento",
+  "feriado_nacional",
+  "feriado_municipal",
+  "ponto_facultativo",
+  "bloqueio_interno",
 ]);
 
 function getDb(req) {
-  return req?.db ?? dbFallback;
+  // suporta injeção (ex: middleware que injeta req.db)
+  return req?.db ?? dbFallback?.db ?? dbFallback;
 }
 
 function rid(req) {
@@ -29,9 +38,23 @@ function isYmd(s) {
   return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
 }
 
-function normTipo(tipo) {
+function pickTipoInput(tipo) {
+  // ✅ aceita:
+  // - "feriado_nacional"
+  // - { value: "feriado_nacional", label: "Feriado nacional" }
+  // - { tipo: "feriado_nacional" } (casos esquisitos)
   if (tipo == null) return "";
-  return String(tipo).trim().toLowerCase();
+  if (typeof tipo === "object") {
+    if (tipo.value != null) return String(tipo.value);
+    if (tipo.tipo != null) return String(tipo.tipo);
+    return "";
+  }
+  return String(tipo);
+}
+
+function normTipo(tipo) {
+  const raw = pickTipoInput(tipo);
+  return raw.trim().toLowerCase();
 }
 
 function normDescricao(descricao) {
@@ -42,11 +65,21 @@ function normDescricao(descricao) {
   return t.length > 2000 ? t.slice(0, 2000) : t;
 }
 
+function badRequest(res, msg, extra) {
+  return res.status(400).json({ erro: msg, ...(extra || {}) });
+}
+
+function serverError(res, msg, e) {
+  return res.status(500).json({
+    erro: msg,
+    detalhe: IS_DEV ? e?.message : undefined,
+  });
+}
+
 module.exports = {
   /* ─────────────────── Listar ─────────────────── */
   async listar(req, res) {
     const db = getDb(req);
-
     try {
       const sql = `
         SELECT id, data, tipo, descricao, criado_em, atualizado_em
@@ -56,11 +89,8 @@ module.exports = {
       const { rows } = await db.query(sql);
       return res.json(rows || []);
     } catch (e) {
-      console.error("[calendario] listar erro:", { rid: rid(req), msg: e?.message });
-      return res.status(500).json({
-        erro: "Erro ao listar datas.",
-        detalhe: IS_DEV ? e?.message : undefined,
-      });
+      console.error("[calendario] listar erro:", { rid: rid(req), msg: e?.message, code: e?.code });
+      return serverError(res, "Erro ao listar datas.", e);
     }
   },
 
@@ -69,28 +99,37 @@ module.exports = {
     const db = getDb(req);
 
     try {
-      const { data, tipo, descricao } = req.body || {};
-      const tipoNorm = normTipo(tipo);
-      const descNorm = normDescricao(descricao);
+      const body = req.body || {};
+      const dataRaw = body.data;
+      const tipoNorm = normTipo(body.tipo);
+      const descNorm = normDescricao(body.descricao);
+
+      const data = typeof dataRaw === "string" ? dataRaw.trim() : "";
 
       if (IS_DEV) {
-        console.log("[calendario] criar body recebido:", { rid: rid(req), data, tipo: tipoNorm, hasDescricao: !!descNorm });
+        console.log("[calendario] criar body recebido:", {
+          rid: rid(req),
+          data,
+          tipo: tipoNorm,
+          hasDescricao: !!descNorm,
+          tiposPermitidos: Array.from(TIPOS_PERMITIDOS),
+        });
       }
 
       if (!data || !tipoNorm) {
-        return res.status(400).json({ erro: "Data e tipo são obrigatórios." });
+        return badRequest(res, "Data e tipo são obrigatórios.");
       }
 
       // valida formato "YYYY-MM-DD" (date-only safe)
-      if (!isYmd(String(data).trim())) {
-        return res.status(400).json({ erro: "Data em formato inválido. Use o padrão AAAA-MM-DD." });
+      if (!isYmd(data)) {
+        return badRequest(res, "Data em formato inválido. Use o padrão AAAA-MM-DD.");
       }
 
-      // valida tipo
+      // valida tipo (igual ao CHECK do banco)
       if (TIPOS_PERMITIDOS.size && !TIPOS_PERMITIDOS.has(tipoNorm)) {
-        return res.status(400).json({
-          erro: "Tipo inválido.",
+        return badRequest(res, "Tipo inválido.", {
           tipos_permitidos: Array.from(TIPOS_PERMITIDOS),
+          recebido: tipoNorm,
         });
       }
 
@@ -99,8 +138,7 @@ module.exports = {
         VALUES ($1::date, $2, $3)
         RETURNING id, data, tipo, descricao, criado_em, atualizado_em;
       `;
-
-      const params = [String(data).trim(), tipoNorm, descNorm];
+      const params = [data, tipoNorm, descNorm];
 
       const { rows } = await db.query(sql, params);
 
@@ -118,18 +156,22 @@ module.exports = {
 
       // duplicidade (unique)
       if (e?.code === "23505") {
-        return res.status(400).json({ erro: "Esta data já foi cadastrada." });
+        return badRequest(res, "Esta data já foi cadastrada.");
+      }
+
+      // check constraint (tipo inválido no banco, etc.)
+      if (e?.code === "23514") {
+        return badRequest(res, "Tipo inválido (restrição do banco).", {
+          tipos_permitidos: Array.from(TIPOS_PERMITIDOS),
+        });
       }
 
       // erro de formato de data
       if (e?.code === "22007") {
-        return res.status(400).json({ erro: "Data em formato inválido. Use o padrão AAAA-MM-DD." });
+        return badRequest(res, "Data em formato inválido. Use o padrão AAAA-MM-DD.");
       }
 
-      return res.status(500).json({
-        erro: "Erro ao criar data.",
-        detalhe: IS_DEV ? e?.message : undefined,
-      });
+      return serverError(res, "Erro ao criar data.", e);
     }
   },
 
@@ -139,25 +181,39 @@ module.exports = {
 
     try {
       const id = toIntId(req.params.id);
-      if (!id) return res.status(400).json({ erro: "id inválido." });
+      if (!id) return badRequest(res, "id inválido.");
 
-      const { tipo, descricao } = req.body || {};
-      const tipoNorm = tipo == null ? null : normTipo(tipo);
-      const descNorm = descricao === undefined ? undefined : normDescricao(descricao);
+      const body = req.body || {};
 
-      if (IS_DEV) console.log("[calendario] atualizar:", { rid: rid(req), id, tipo: tipoNorm, hasDescricao: !!descNorm });
+      // tipo pode vir como null/undefined (não atualizar) ou string/obj (atualizar)
+      const tipoEnviado = Object.prototype.hasOwnProperty.call(body, "tipo");
+      const descEnviado = Object.prototype.hasOwnProperty.call(body, "descricao");
 
-      // não permite update vazio
-      if (tipoNorm == null && descNorm === undefined) {
-        return res.status(400).json({ erro: "Nada para atualizar. Envie 'tipo' e/ou 'descricao'." });
+      const tipoNorm = tipoEnviado ? normTipo(body.tipo) : null;
+      const descNorm = descEnviado ? normDescricao(body.descricao) : undefined;
+
+      if (IS_DEV) {
+        console.log("[calendario] atualizar:", {
+          rid: rid(req),
+          id,
+          tipoEnviado,
+          descEnviado,
+          tipo: tipoNorm,
+          hasDescricao: !!descNorm,
+        });
       }
 
-      if (tipoNorm != null) {
-        if (!tipoNorm) return res.status(400).json({ erro: "Tipo inválido." });
+      // não permite update vazio
+      if (!tipoEnviado && !descEnviado) {
+        return badRequest(res, "Nada para atualizar. Envie 'tipo' e/ou 'descricao'.");
+      }
+
+      if (tipoEnviado) {
+        if (!tipoNorm) return badRequest(res, "Tipo inválido.");
         if (TIPOS_PERMITIDOS.size && !TIPOS_PERMITIDOS.has(tipoNorm)) {
-          return res.status(400).json({
-            erro: "Tipo inválido.",
+          return badRequest(res, "Tipo inválido.", {
             tipos_permitidos: Array.from(TIPOS_PERMITIDOS),
+            recebido: tipoNorm,
           });
         }
       }
@@ -167,12 +223,12 @@ module.exports = {
       const params = [];
       let idx = 1;
 
-      if (tipoNorm != null) {
+      if (tipoEnviado) {
         sets.push(`tipo = $${idx++}`);
         params.push(tipoNorm);
       }
 
-      if (descNorm !== undefined) {
+      if (descEnviado) {
         sets.push(`descricao = $${idx++}`);
         params.push(descNorm ?? null);
       }
@@ -189,16 +245,25 @@ module.exports = {
       `;
 
       const { rows } = await db.query(sql, params);
-
-      if (!rows[0]) return res.status(404).json({ erro: "Registro não encontrado." });
+      if (!rows?.[0]) return res.status(404).json({ erro: "Registro não encontrado." });
 
       return res.json(rows[0]);
     } catch (e) {
-      console.error("[calendario] atualizar erro:", { rid: rid(req), msg: e?.message });
-      return res.status(500).json({
-        erro: "Erro ao atualizar data.",
-        detalhe: IS_DEV ? e?.message : undefined,
+      console.error("[calendario] atualizar erro:", {
+        rid: rid(req),
+        msg: e?.message,
+        code: e?.code,
+        detail: IS_DEV ? e?.detail : undefined,
+        constraint: e?.constraint,
       });
+
+      if (e?.code === "23514") {
+        return badRequest(res, "Tipo inválido (restrição do banco).", {
+          tipos_permitidos: Array.from(TIPOS_PERMITIDOS),
+        });
+      }
+
+      return serverError(res, "Erro ao atualizar data.", e);
     }
   },
 
@@ -208,21 +273,17 @@ module.exports = {
 
     try {
       const id = toIntId(req.params.id);
-      if (!id) return res.status(400).json({ erro: "id inválido." });
+      if (!id) return badRequest(res, "id inválido.");
 
       if (IS_DEV) console.log("[calendario] excluir:", { rid: rid(req), id });
 
       const { rowCount } = await db.query(`DELETE FROM calendario_bloqueios WHERE id = $1`, [id]);
-
       if (!rowCount) return res.status(404).json({ erro: "Registro não encontrado." });
 
       return res.json({ ok: true });
     } catch (e) {
-      console.error("[calendario] excluir erro:", { rid: rid(req), msg: e?.message });
-      return res.status(500).json({
-        erro: "Erro ao excluir data.",
-        detalhe: IS_DEV ? e?.message : undefined,
-      });
+      console.error("[calendario] excluir erro:", { rid: rid(req), msg: e?.message, code: e?.code });
+      return serverError(res, "Erro ao excluir data.", e);
     }
   },
 };

@@ -1,4 +1,10 @@
-// ✅ src/pages/AgendaSalasAdmin.jsx — versão premium, mobile-first, a11y, dark-mode
+// ✅ src/pages/AgendaSalasAdmin.jsx — PREMIUM++ (slots com “evento dentro”, bloqueios visíveis, hoje destacado, mobile→cards)
+// Alterações pedidas:
+// 1) “Manhã/Tarde” fora do espaço do evento (label fica como “aba”/tag no topo do slot; conteúdo do evento fica em área própria)
+// 2) Sábado/Domingo/Feriados/Datas bloqueadas mostram 1 retângulo cinza com o motivo (e feriado com nome)
+// 3) Dia vigente (hoje) com fundo azul claro (sem quebrar dark)
+// 4) Em mobile: troca grid por cards (um card por dia com seções por sala/turno)
+
 import { useEffect, useMemo, useState, useCallback } from "react";
 import {
   CalendarDays,
@@ -83,16 +89,16 @@ function normalizeReserva(r) {
   };
 }
 
-/* ─────────────────────── Chips de Status (legenda/slots) ─────────────────────── */
+/* ─────────────────────── Status / UI ─────────────────────── */
 function classesStatus(status) {
   switch (status) {
-    case "pendente":      return "bg-amber-100 text-amber-900 border border-amber-300";
-    case "aprovado":      return "bg-emerald-100 text-emerald-900 border border-emerald-300";
+    case "pendente":      return "bg-amber-50 text-amber-900 border border-amber-200 hover:bg-amber-100";
+    case "aprovado":      return "bg-emerald-50 text-emerald-900 border border-emerald-200 hover:bg-emerald-100";
     case "rejeitado":
-    case "cancelado":     return "bg-rose-100 text-rose-900 border border-rose-300";
-    case "bloqueado":     return "bg-sky-100 text-sky-900 border border-sky-300";
-    case "bloqueado_dia": return "bg-slate-200 text-slate-600 border border-slate-300 cursor-not-allowed";
-    default:              return "bg-slate-50 text-slate-700 border border-slate-200 hover:bg-slate-100 dark:bg-zinc-800 dark:text-zinc-100 dark:border-zinc-700";
+    case "cancelado":     return "bg-rose-50 text-rose-900 border border-rose-200 hover:bg-rose-100";
+    case "bloqueado":     return "bg-sky-50 text-sky-900 border border-sky-200 hover:bg-sky-100";
+    case "bloqueado_dia": return "bg-slate-100 text-slate-600 border border-slate-200 cursor-not-allowed";
+    default:              return "bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 dark:bg-zinc-800 dark:text-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-700";
   }
 }
 function labelStatus(status) {
@@ -107,10 +113,53 @@ function labelStatus(status) {
   }
 }
 
+/* ─────────────────────── Responsivo: detecta mobile ─────────────────────── */
+function useIsMobile(breakpointPx = 640) {
+  const [isMobile, setIsMobile] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia(`(max-width: ${breakpointPx}px)`).matches;
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const mq = window.matchMedia(`(max-width: ${breakpointPx}px)`);
+    const onChange = () => setIsMobile(mq.matches);
+    onChange();
+    if (mq.addEventListener) mq.addEventListener("change", onChange);
+    else mq.addListener(onChange);
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener("change", onChange);
+      else mq.removeListener(onChange);
+    };
+  }, [breakpointPx]);
+
+  return isMobile;
+}
+
+function capitalizePt(s) {
+  const str = String(s || "").trim();
+  if (!str) return "";
+  return str.charAt(0).toUpperCase() + str.slice(1);
+}
+function motivoBloqueio({ diaSemana, ehFeriado, feriadoObj, ehBloqueada, bloqueioObj }) {
+  if (ehBloqueada) {
+    const motivo = String(bloqueioObj?.motivo || bloqueioObj?.descricao || bloqueioObj?.titulo || "").trim();
+    return motivo ? `Indisponível — ${motivo}` : "Indisponível (bloqueado)";
+  }
+  if (ehFeriado) {
+    const nome = String(feriadoObj?.nome || feriadoObj?.titulo || feriadoObj?.descricao || "").trim();
+    return nome ? `Feriado — ${nome}` : "Feriado";
+  }
+  if (diaSemana === 6) return "Sábado";
+  if (diaSemana === 0) return "Domingo";
+  return "Indisponível";
+}
+
 /* ───────────────────────────── Página ───────────────────────────── */
 function AgendaSalasAdmin() {
   const hoje = new Date();
   const hojeISO = hoje.toISOString().slice(0, 10);
+
   const navigate = useNavigate();
   const baseURL = (api.defaults?.baseURL || "").replace(/\/+$/, "");
 
@@ -127,11 +176,18 @@ function AgendaSalasAdmin() {
   const [reservaSelecionada, setReservaSelecionada] = useState(null);
 
   const semanas = useMemo(() => criarMatrixMes(ano, mesIndex), [ano, mesIndex]);
+  const isMobile = useIsMobile(740); // agenda em cards em telas pequenas (pode ajustar)
 
   // atalhos ← →
   const handleKeyNav = useCallback((e) => {
     if (e.key === "ArrowLeft") { mudarMes(-1); }
     if (e.key === "ArrowRight") { mudarMes(1); }
+    // atalhos úteis
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "h") {
+      e.preventDefault();
+      hojeClick();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mesIndex, ano]);
 
   useEffect(() => {
@@ -271,7 +327,6 @@ function AgendaSalasAdmin() {
 
   /* ───────── Ministats (no topo) ───────── */
   const totalMes = useMemo(() => {
-    // conta quantos slots têm reserva (aprovado ou pendente) no mês
     let count = 0;
     Object.values(reservasMap.auditorio).forEach(() => count++);
     Object.values(reservasMap.sala_reuniao).forEach(() => count++);
@@ -287,6 +342,12 @@ function AgendaSalasAdmin() {
     const ok = (obj) => Object.values(obj).filter((r) => r?.status === "pendente").length;
     return ok(reservasMap.auditorio) + ok(reservasMap.sala_reuniao);
   }, [reservasMap]);
+
+  /* ───────── Listagem do mês para modo cards (mobile) ───────── */
+  const diasDoMes = useMemo(() => {
+    const last = new Date(ano, mesIndex + 1, 0).getDate();
+    return Array.from({ length: last }, (_, i) => i + 1);
+  }, [ano, mesIndex]);
 
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-b from-emerald-50 to-white dark:from-gray-900 dark:to-gray-950 text-gray-900 dark:text-gray-100">
@@ -399,6 +460,7 @@ function AgendaSalasAdmin() {
                 className="ml-2 px-3 py-1.5 rounded-xl text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
                 onClick={hojeClick}
                 aria-label="Ir para o mês atual"
+                title="Atalho: Ctrl/Cmd + H"
               >
                 Hoje
               </button>
@@ -438,7 +500,7 @@ function AgendaSalasAdmin() {
         {/* Legenda */}
         <div className="mb-4 flex flex-wrap gap-2 text-xs sm:text-sm">
           <span className="inline-flex items-center gap-1">
-            <span className="w-3 h-3 rounded-full bg-slate-50 border border-slate-200 dark:bg-zinc-800 dark:border-zinc-700" /> Livre
+            <span className="w-3 h-3 rounded-full bg-white border border-slate-200 dark:bg-zinc-800 dark:border-zinc-700" /> Livre
           </span>
           <span className="inline-flex items-center gap-1">
             <span className="w-3 h-3 rounded-full bg-amber-100 border border-amber-300" /> Pendente
@@ -452,113 +514,146 @@ function AgendaSalasAdmin() {
           <span className="inline-flex items-center gap-1">
             <span className="w-3 h-3 rounded-full bg-sky-100 border border-sky-300" /> Bloqueado (uso interno)
           </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="w-3 h-3 rounded-full bg-slate-200 border border-slate-300" /> Indisponível (fim de semana/feriado)
+          </span>
         </div>
 
-        {/* Calendário */}
-        <section className="bg-white dark:bg-zinc-900 rounded-2xl shadow-sm border border-slate-100 dark:border-zinc-800 overflow-hidden">
-          <div className="grid grid-cols-7 bg-slate-50 dark:bg-zinc-800 border-b border-slate-100 dark:border-zinc-800 text-xs sm:text-sm">
-            {DIAS_SEMANA.map((d) => (
-              <div key={d} className="py-2 text-center font-medium text-slate-600 dark:text-slate-200 uppercase">{d}</div>
-            ))}
-          </div>
+        {/* ===================== MOBILE: Cards ===================== */}
+        {isMobile ? (
+          <section className="space-y-3">
+            {diasDoMes.map((dia) => {
+              const dataISO = formatISO(ano, mesIndex, dia);
+              const eHoje = dataISO === hojeISO;
 
-          <div className="divide-y divide-slate-100 dark:divide-zinc-800">
-            {semanas.map((semana, idxSemana) => (
-              <div key={idxSemana} className="grid grid-cols-7">
-                {semana.map((dia, idxDia) => {
-                  if (!dia) {
-                    return (
-                      <div key={idxDia} className="min-h-[120px] sm:min-h-[160px] border-r border-slate-100 dark:border-zinc-800 bg-slate-50/40 dark:bg-zinc-900/40" />
-                    );
-                  }
+              const d = new Date(dataISO + "T12:00:00");
+              const diaSemana = d.getDay();
+              const ehFeriado = !!feriadosMap[dataISO];
+              const ehBloqueada = !!datasBloqueadasMap[dataISO];
+              const ehFimDeSemana = diaSemana === 0 || diaSemana === 6;
+              const diaIndisponivelGeral = ehFimDeSemana || ehFeriado || ehBloqueada;
 
-                  const dataISO = formatISO(ano, mesIndex, dia);
-                  const eHoje = dataISO === hojeISO;
+              const motivo = diaIndisponivelGeral
+                ? motivoBloqueio({
+                    diaSemana,
+                    ehFeriado,
+                    feriadoObj: feriadosMap[dataISO],
+                    ehBloqueada,
+                    bloqueioObj: datasBloqueadasMap[dataISO],
+                  })
+                : null;
 
-                  const d = new Date(dataISO + "T12:00:00");
-                  const diaSemana = d.getDay();
-                  const ehFeriado = !!feriadosMap[dataISO];
-                  const ehBloqueada = !!datasBloqueadasMap[dataISO];
-                  const ehFimDeSemana = diaSemana === 0 || diaSemana === 6;
-                  const diaIndisponivelGeral = ehFimDeSemana || ehFeriado || ehBloqueada;
-
-                  if (diaIndisponivelGeral) {
-                    return (
-                      <div
-                        key={idxDia}
-                        className="min-h-[120px] sm:min-h-[160px] border-r border-slate-100 dark:border-zinc-800 p-1.5 sm:p-2 flex flex-col bg-slate-50/40 dark:bg-zinc-900/30"
-                        title={ehFeriado ? "Feriado/Ponto facultativo" : "Indisponível"}
-                        aria-label="Dia indisponível para agendamento"
-                      >
-                        <div className="flex items-center justify-between mb-1">
-                          <span className={`text-xs sm:text-sm font-semibold ${eHoje ? "text-emerald-600 dark:text-emerald-400" : "text-slate-500 dark:text-slate-400"}`}>
-                            {dia}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <div
-                      key={idxDia}
-                      className="min-h-[120px] sm:min-h-[160px] border-r border-slate-100 dark:border-zinc-800 p-1.5 sm:p-2 flex flex-col"
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className={`text-xs sm:text-sm font-semibold ${eHoje ? "text-emerald-600 dark:text-emerald-400" : "text-slate-700 dark:text-slate-200"}`}>
-                          {dia}
+              return (
+                <article
+                  key={dataISO}
+                  className={[
+                    "rounded-2xl border shadow-sm overflow-hidden",
+                    "bg-white dark:bg-zinc-900 border-slate-100 dark:border-zinc-800",
+                    eHoje ? "ring-2 ring-sky-300/70 dark:ring-sky-700/60" : "",
+                  ].join(" ")}
+                  aria-label={`Dia ${dia}`}
+                >
+                  {/* header do card */}
+                  <div
+                    className={[
+                      "px-4 py-3 flex items-center justify-between",
+                      eHoje
+                        ? "bg-sky-50 dark:bg-sky-950/30"
+                        : "bg-slate-50 dark:bg-zinc-800/60",
+                      "border-b border-slate-100 dark:border-zinc-800",
+                    ].join(" ")}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-extrabold text-slate-900 dark:text-white">
+                        {dia}
+                      </span>
+                      <span className="text-xs text-slate-600 dark:text-slate-300">
+                        {DIAS_SEMANA[diaSemana]}
+                      </span>
+                      {eHoje && (
+                        <span className="ml-1 text-[11px] font-bold text-sky-900 bg-sky-100 px-2 py-0.5 rounded-full border border-sky-200 dark:text-sky-200 dark:bg-sky-900/30 dark:border-sky-800">
+                          Hoje
                         </span>
-                      </div>
+                      )}
+                    </div>
+                    <span className="text-[11px] text-slate-500 dark:text-slate-300">
+                      {String(mesIndex + 1).padStart(2, "0")}/{ano}
+                    </span>
+                  </div>
 
-                      <div className="flex flex-col gap-2 mt-auto">
-                        {["sala_reuniao","auditorio"].map((salaKey) => {
+                  {/* corpo */}
+                  <div className="p-4">
+                    {diaIndisponivelGeral ? (
+                      <div className="rounded-xl bg-slate-100 dark:bg-zinc-800/70 border border-slate-200 dark:border-zinc-700 px-3 py-3 text-sm text-slate-700 dark:text-slate-200">
+                        <span className="font-semibold">{motivo}</span>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        {["sala_reuniao", "auditorio"].map((salaKey) => {
                           const cap = CAPACIDADES_SALA[salaKey];
 
                           return (
-                            <div
-                              key={salaKey}
-                              className="rounded-xl border border-slate-100 dark:border-zinc-800 bg-slate-50/70 dark:bg-zinc-800/60 shadow-sm"
-                            >
-                              {/* Título da sala centralizado */}
-                              <div className="flex items-center justify-center px-2 pt-1">
-                                <span className="text-[11px] font-bold tracking-wide text-slate-700 dark:text-zinc-200">
+                            <div key={salaKey} className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <p className="text-sm font-extrabold text-slate-900 dark:text-white">
                                   {cap.labelCurta}
-                                </span>
+                                </p>
+                                <p className="text-[11px] text-slate-500 dark:text-slate-300">
+                                  {cap.conforto}/{cap.max}
+                                </p>
                               </div>
 
-                              {/* Caixinhas separadas para Manhã e Tarde */}
-                              <div className="px-1 pb-1 pt-1 grid grid-cols-1 gap-1.5">
+                              <div className="grid grid-cols-1 gap-2">
                                 {PERIODOS.map((p) => {
                                   const status = getStatusSlot(dataISO, p.value, salaKey);
                                   const disabled = status === "bloqueado_dia";
                                   const k = keySlot(dataISO, p.value);
                                   const res = reservasMap[salaKey]?.[k];
 
-                                  const textoDireita =
-                                    status === "aprovado" && res?.finalidade
-                                      ? res.finalidade
-                                      : (status === "pendente" && res?.finalidade
-                                          ? `Pendente — ${res.finalidade}`
-                                          : labelStatus(status));
+                                  const tituloEvento =
+                                    res?.finalidade?.trim()
+                                      ? res.finalidade.trim()
+                                      : labelStatus(status);
+
+                                  const subInfo =
+                                    res?.solicitante_nome || res?.solicitante_unidade
+                                      ? `${res?.solicitante_nome || "—"}${res?.solicitante_unidade ? ` • ${res.solicitante_unidade}` : ""}`
+                                      : "";
 
                                   return (
                                     <button
                                       key={p.value}
                                       type="button"
                                       onClick={() => !disabled && abrirModalSlot(dia, p.value, salaKey)}
-                                      className={`w-full text-left text-[11px] sm:text-xs px-2 py-2 rounded-xl flex items-start justify-between gap-2 transition ${classesStatus(status)} ${disabled ? "cursor-not-allowed" : "focus:outline-none focus:ring-2 focus:ring-emerald-500/60"}`}
-                                      aria-label={`${cap.labelCurta}, ${p.label}, ${textoDireita}`}
-                                      title={`${cap.labelCurta} • ${p.label} • ${textoDireita}`}
+                                      className={[
+                                        "w-full text-left rounded-2xl p-3 transition",
+                                        classesStatus(status),
+                                        disabled ? "cursor-not-allowed" : "focus:outline-none focus:ring-2 focus:ring-emerald-500/60",
+                                      ].join(" ")}
+                                      aria-label={`${cap.labelCurta}, ${p.label}, ${tituloEvento}`}
+                                      title={`${cap.labelCurta} • ${p.label} • ${tituloEvento}`}
                                     >
-                                      {/* Rótulo do período em chip independente */}
-                                      <span className="font-semibold shrink-0 px-1.5 py-0.5 rounded-md bg-white/60 text-slate-800 border border-white/70 dark:bg-zinc-900/40 dark:text-zinc-100 dark:border-zinc-700">
-                                        {p.label}
-                                      </span>
+                                      {/* “Manhã/Tarde” fora do bloco do evento: tag acima */}
+                                      <div className="flex items-center justify-between gap-2">
+                                        <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-white/70 border border-white/80 dark:bg-zinc-950/30 dark:border-zinc-700">
+                                          {p.label}
+                                        </span>
+                                        <span className="text-[11px] opacity-70">
+                                          {labelStatus(status)}
+                                        </span>
+                                      </div>
 
-                                      {/* Texto/descrição do status/uso */}
-                                      <span className="text-[10px] leading-snug break-words whitespace-normal text-right flex-1">
-                                        {textoDireita}
-                                      </span>
+                                      {/* Conteúdo do evento (área própria) */}
+                                      <div className="mt-2">
+                                        <p className="text-sm font-extrabold leading-snug break-words">
+                                          {tituloEvento}
+                                        </p>
+                                        {!!subInfo && (
+                                          <p className="mt-1 text-[12px] opacity-80 break-words">
+                                            {subInfo}
+                                          </p>
+                                        )}
+                                      </div>
                                     </button>
                                   );
                                 })}
@@ -567,22 +662,196 @@ function AgendaSalasAdmin() {
                           );
                         })}
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ))}
-          </div>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
+          </section>
+        ) : (
+          /* ===================== DESKTOP/TABLET: Grid ===================== */
+          <section className="bg-white dark:bg-zinc-900 rounded-2xl shadow-sm border border-slate-100 dark:border-zinc-800 overflow-hidden">
+            <div className="grid grid-cols-7 bg-slate-50 dark:bg-zinc-800 border-b border-slate-100 dark:border-zinc-800 text-xs sm:text-sm">
+              {DIAS_SEMANA.map((d) => (
+                <div key={d} className="py-2 text-center font-medium text-slate-600 dark:text-slate-200 uppercase">
+                  {d}
+                </div>
+              ))}
+            </div>
 
-          {/* Estado vazio elegante */}
-          {!loading &&
-            !Object.keys(reservasMap.auditorio).length &&
-            !Object.keys(reservasMap.sala_reuniao).length && (
-              <div className="p-6 text-center text-sm text-slate-500 dark:text-slate-300">
-                Nenhuma reserva localizada para {NOMES_MESES[mesIndex]} / {ano}. Clique em um período para criar.
-              </div>
-            )}
-        </section>
+            <div className="divide-y divide-slate-100 dark:divide-zinc-800">
+              {semanas.map((semana, idxSemana) => (
+                <div key={idxSemana} className="grid grid-cols-7">
+                  {semana.map((dia, idxDia) => {
+                    if (!dia) {
+                      return (
+                        <div
+                          key={idxDia}
+                          className="min-h-[120px] sm:min-h-[160px] border-r border-slate-100 dark:border-zinc-800 bg-slate-50/40 dark:bg-zinc-900/40"
+                        />
+                      );
+                    }
+
+                    const dataISO = formatISO(ano, mesIndex, dia);
+                    const eHoje = dataISO === hojeISO;
+
+                    const d = new Date(dataISO + "T12:00:00");
+                    const diaSemana = d.getDay();
+                    const ehFeriado = !!feriadosMap[dataISO];
+                    const ehBloqueada = !!datasBloqueadasMap[dataISO];
+                    const ehFimDeSemana = diaSemana === 0 || diaSemana === 6;
+                    const diaIndisponivelGeral = ehFimDeSemana || ehFeriado || ehBloqueada;
+
+                    if (diaIndisponivelGeral) {
+                      const motivo = motivoBloqueio({
+                        diaSemana,
+                        ehFeriado,
+                        feriadoObj: feriadosMap[dataISO],
+                        ehBloqueada,
+                        bloqueioObj: datasBloqueadasMap[dataISO],
+                      });
+
+                      return (
+                        <div
+                          key={idxDia}
+                          className={[
+                            "min-h-[120px] sm:min-h-[160px] border-r border-slate-100 dark:border-zinc-800 p-2 flex flex-col",
+                            eHoje ? "bg-sky-50/70 dark:bg-sky-950/20" : "bg-slate-50/40 dark:bg-zinc-900/30",
+                          ].join(" ")}
+                          title={motivo}
+                          aria-label={`Dia indisponível: ${motivo}`}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <span className={`text-xs sm:text-sm font-semibold ${eHoje ? "text-sky-700 dark:text-sky-300" : "text-slate-600 dark:text-slate-300"}`}>
+                              {dia}
+                            </span>
+                            {eHoje && (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-100 text-sky-900 border border-sky-200 dark:bg-sky-900/30 dark:text-sky-200 dark:border-sky-800">
+                                Hoje
+                              </span>
+                            )}
+                          </div>
+
+                          {/* retângulo único com motivo */}
+                          <div className="mt-auto rounded-xl bg-slate-200/70 dark:bg-zinc-800/70 border border-slate-200 dark:border-zinc-700 px-2 py-3 text-center">
+                            <p className="text-[11px] sm:text-xs font-semibold text-slate-700 dark:text-slate-200 break-words">
+                              {motivo}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div
+                        key={idxDia}
+                        className={[
+                          "min-h-[120px] sm:min-h-[160px] border-r border-slate-100 dark:border-zinc-800 p-2 flex flex-col",
+                          eHoje ? "bg-sky-50/70 dark:bg-sky-950/20" : "",
+                        ].join(" ")}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <span className={`text-xs sm:text-sm font-semibold ${eHoje ? "text-sky-700 dark:text-sky-300" : "text-slate-700 dark:text-slate-200"}`}>
+                            {dia}
+                          </span>
+                          {eHoje && (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-100 text-sky-900 border border-sky-200 dark:bg-sky-900/30 dark:text-sky-200 dark:border-sky-800">
+                              Hoje
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex flex-col gap-2 mt-auto">
+                          {["sala_reuniao","auditorio"].map((salaKey) => {
+                            const cap = CAPACIDADES_SALA[salaKey];
+
+                            return (
+                              <div
+                                key={salaKey}
+                                className="rounded-xl border border-slate-100 dark:border-zinc-800 bg-slate-50/70 dark:bg-zinc-800/60 shadow-sm"
+                              >
+                                <div className="flex items-center justify-center px-2 pt-1">
+                                  <span className="text-[11px] font-bold tracking-wide text-slate-700 dark:text-zinc-200">
+                                    {cap.labelCurta}
+                                  </span>
+                                </div>
+
+                                <div className="px-1 pb-1 pt-1 grid grid-cols-1 gap-1.5">
+                                  {PERIODOS.map((p) => {
+                                    const status = getStatusSlot(dataISO, p.value, salaKey);
+                                    const disabled = status === "bloqueado_dia";
+                                    const k = keySlot(dataISO, p.value);
+                                    const res = reservasMap[salaKey]?.[k];
+
+                                    // texto do evento (área própria)
+                                    const tituloEvento =
+                                      res?.finalidade?.trim()
+                                        ? res.finalidade.trim()
+                                        : labelStatus(status);
+
+                                    const detalhe =
+                                      res?.solicitante_nome || res?.solicitante_unidade
+                                        ? `${res?.solicitante_nome || "—"}${res?.solicitante_unidade ? ` • ${res.solicitante_unidade}` : ""}`
+                                        : "";
+
+                                    return (
+                                      <button
+                                        key={p.value}
+                                        type="button"
+                                        onClick={() => !disabled && abrirModalSlot(dia, p.value, salaKey)}
+                                        className={[
+                                          "w-full text-left rounded-xl transition",
+                                          classesStatus(status),
+                                          disabled ? "cursor-not-allowed" : "focus:outline-none focus:ring-2 focus:ring-emerald-500/60",
+                                        ].join(" ")}
+                                        aria-label={`${cap.labelCurta}, ${p.label}, ${tituloEvento}`}
+                                        title={`${cap.labelCurta} • ${p.label} • ${tituloEvento}`}
+                                      >
+                                        {/* Linha 1: “Manhã/Tarde” fora do espaço do evento */}
+                                        <div className="flex items-center justify-between gap-2 px-2 pt-2">
+                                          <span className="font-semibold shrink-0 px-1.5 py-0.5 rounded-md bg-white/70 text-slate-800 border border-white/80 dark:bg-zinc-900/40 dark:text-zinc-100 dark:border-zinc-700">
+                                            {p.label}
+                                          </span>
+                                          <span className="text-[10px] opacity-75">
+                                            {labelStatus(status)}
+                                          </span>
+                                        </div>
+
+                                        {/* Linha 2: área do evento (só conteúdo) */}
+                                        <div className="px-2 pb-2 pt-1">
+                                          <p className="text-[11px] sm:text-xs font-extrabold leading-snug break-words">
+                                            {tituloEvento}
+                                          </p>
+                                          {!!detalhe && (
+                                            <p className="mt-1 text-[10px] sm:text-[11px] opacity-80 break-words">
+                                              {detalhe}
+                                            </p>
+                                          )}
+                                        </div>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+
+            {!loading &&
+              !Object.keys(reservasMap.auditorio).length &&
+              !Object.keys(reservasMap.sala_reuniao).length && (
+                <div className="p-6 text-center text-sm text-slate-500 dark:text-slate-300">
+                  Nenhuma reserva localizada para {NOMES_MESES[mesIndex]} / {ano}. Clique em um período para criar.
+                </div>
+              )}
+          </section>
+        )}
       </main>
 
       <Footer />

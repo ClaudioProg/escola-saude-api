@@ -16,7 +16,7 @@ if (process.env.NODE_ENV !== "production") {
   require("dotenv").config();
 }
 
-/* ───────── DB (adapter) ───────── */
+/* ───────── DB (adapter resiliente) ───────── */
 const rawDb = require("./db");
 const db = rawDb?.db ?? rawDb;
 
@@ -57,13 +57,16 @@ const trabalhosRoutes = require("./routes/trabalhosRoutes");
 const chamadasModeloRoutes = require("./routes/chamadasModeloRoutes");
 const usuariosEstatisticasRoute = require("./routes/usuariosEstatisticasRoute");
 
-// 🔹 Submissões (separadas)
-const submissoesAdminRoutes = require("./routes/submissoesAdminRoutes");
-const submissoesUsuarioRoutes = require("./routes/submissoesUsuarioRoutes"); // 🆕 NOVO
-
 const votacoesRoutes = require("./routes/votacoesRoute");
 const salasRoutes = require("./routes/salasRoutes");
 const calendarioRoutes = require("./routes/calendarioRoutes");
+const questionariosRoute = require("./routes/questionariosRoute");
+
+// 🔹 Submissões (separadas)
+const submissoesAdminRoutes = require("./routes/submissoesAdminRoutes");
+const submissoesUsuarioRoutes = require("./routes/submissoesUsuarioRoutes");
+const submissoesAvaliadorRoutes = require("./routes/submissoesAvaliadorRoutes");
+const submissoesBridgeRoutes = require("./routes/submissoesBridgeRoutes");
 
 const IS_DEV = process.env.NODE_ENV !== "production";
 const app = express();
@@ -73,7 +76,7 @@ app.disable("x-powered-by");
 app.set("trust proxy", 1);
 app.set("etag", "strong");
 
-/* ───────── PREMIUM: Request ID + response header ───────── */
+/* ───────── Helpers ───────── */
 function getClientIp(req) {
   return (
     (req.headers["x-forwarded-for"]?.toString().split(",")[0] || "").trim() ||
@@ -82,6 +85,12 @@ function getClientIp(req) {
   );
 }
 
+// ✅ Wrapper para rotas async (evita crash silencioso / 500 sem log)
+function asyncHandler(fn) {
+  return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+}
+
+/* ───────── PREMIUM: Request ID + response header ───────── */
 app.use((req, res, next) => {
   const incoming = req.headers["x-request-id"];
   const rid =
@@ -91,6 +100,34 @@ app.use((req, res, next) => {
 
   req.requestId = rid;
   res.setHeader("X-Request-Id", rid);
+  next();
+});
+
+/* ───────── Normalização de auth (não quebra nada; só ajuda debug) ─────────
+   Muitos controllers quebram por req.user undefined e viram 500.
+   Aqui só “espelha” campos comuns para req.userId/req.perfilId quando existirem.
+*/
+app.use((req, _res, next) => {
+  const u = req.user || req.usuario || req.auth || null;
+
+  // tenta pegar id de vários formatos comuns
+  const userId =
+    u?.id ??
+    u?.usuario_id ??
+    u?.userId ??
+    req.userId ??
+    req.usuario_id ??
+    null;
+
+  const perfilId =
+    u?.perfil_id ??
+    u?.perfilId ??
+    req.perfil_id ??
+    null;
+
+  if (userId != null) req.userId = userId;
+  if (perfilId != null) req.perfilId = perfilId;
+
   next();
 });
 
@@ -111,7 +148,7 @@ app.use((req, res, next) => {
     "https://accounts.google.com",
     "https://www.googleapis.com",
     ...(frontendFromEnv ? [frontendFromEnv] : []),
-    ...(IS_DEV ? ["ws:", "http://localhost:5173", "http://127.0.0.1:5173"] : []),
+    ...(IS_DEV ? ["ws:", "http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000"] : []),
   ];
 
   const scriptSrc = [
@@ -159,7 +196,6 @@ app.use((req, res, next) => {
         ],
 
         "script-src": scriptSrc,
-
         "connect-src": connectSrc,
       },
     },
@@ -197,7 +233,14 @@ const corsOptions = {
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
-  exposedHeaders: ["Content-Disposition", "Content-Length", "Last-Modified", "ETag", "X-Perfil-Incompleto", "X-Request-Id"],
+  exposedHeaders: [
+    "Content-Disposition",
+    "Content-Length",
+    "Last-Modified",
+    "ETag",
+    "X-Perfil-Incompleto",
+    "X-Request-Id",
+  ],
   maxAge: 86400,
 };
 
@@ -215,6 +258,7 @@ app.use((req, res, next) => {
   next();
 });
 
+// Preflight
 app.options("*", cors(corsOptions), (_req, res) => res.sendStatus(204));
 
 /* ───────── Parsers ───────── */
@@ -270,16 +314,26 @@ app.use((req, _res, next) => {
 /* ───────── Logger ───────── */
 morgan.token("rid", (req) => req.requestId || "-");
 morgan.token("ip", (req) => getClientIp(req));
+morgan.token("uid", (req) => (req.userId != null ? String(req.userId) : "-"));
 
 app.use(
-  morgan(":date[iso] :ip :rid :method :url :status :res[content-length] - :response-time ms", {
+  morgan(":date[iso] :ip :rid :uid :method :url :status :res[content-length] - :response-time ms", {
     skip: () => process.env.LOG_HTTP === "false",
   })
 );
 
 if (IS_DEV) {
   app.use((req, _res, next) => {
-    console.log("[DEV-REQ]", { rid: req.requestId, method: req.method, url: req.url });
+    const hasAuth = Boolean(req.headers.authorization);
+    const hasCookie = Boolean(req.headers.cookie);
+    console.log("[DEV-REQ]", {
+      rid: req.requestId,
+      method: req.method,
+      url: req.url,
+      hasAuth,
+      hasCookie,
+      userId: req.userId ?? null,
+    });
     next();
   });
 }
@@ -312,31 +366,41 @@ function sendError(res, status, message, extra = {}) {
   return res.status(status).json(payload);
 }
 
+function sendOk(res, data = {}, extra = {}) {
+  return res.status(200).json({ ok: true, requestId: res.getHeader("X-Request-Id"), ...extra, ...data });
+}
+
 /* ───────── Rotas de diagnóstico ───────── */
-app.get("/__version", (req, res) => {
-  res.json({
-    service: process.env.RENDER_SERVICE_NAME || "escola-saude-api",
-    commit: process.env.RENDER_GIT_COMMIT || "local",
-    node: process.version,
-    env: process.env.NODE_ENV || "dev",
-    uptime_s: Math.round(process.uptime()),
-    now: new Date().toISOString(),
-    requestId: req.requestId,
-  });
-});
-
-app.get("/__ping", (req, res) => {
-  if (IS_DEV) {
-    console.log("[PING]", {
-      rid: req.requestId,
-      ip: getClientIp(req),
-      ua: req.headers["user-agent"],
+app.get(
+  "/__version",
+  asyncHandler(async (req, res) => {
+    return res.json({
+      service: process.env.RENDER_SERVICE_NAME || "escola-saude-api",
+      commit: process.env.RENDER_GIT_COMMIT || "local",
+      node: process.version,
+      env: process.env.NODE_ENV || "dev",
+      uptime_s: Math.round(process.uptime()),
+      now: new Date().toISOString(),
+      requestId: req.requestId,
     });
-  }
-  res.json({ ok: true, requestId: req.requestId });
-});
+  })
+);
 
-/* ───────── Rotas ───────── */
+app.get(
+  "/__ping",
+  asyncHandler(async (req, res) => {
+    if (IS_DEV) {
+      console.log("[PING]", {
+        rid: req.requestId,
+        ip: getClientIp(req),
+        ua: req.headers["user-agent"],
+      });
+    }
+    return sendOk(res);
+  })
+);
+
+/* ───────── Rotas principais ───────── */
 app.use("/api/login", loginLimiter, loginRoute);
 app.use("/api/administrador/turmas", turmasRouteAdministrador);
 app.use("/api/agenda", agendaRoute);
@@ -371,16 +435,18 @@ app.use("/api/votacoes", votacoesRoutes);
 app.use("/api", lookupsPublicRoutes);
 app.use("/api/salas", salasRoutes);
 app.use("/api/calendario", calendarioRoutes);
-app.use("/api/questionarios", require("./routes/questionariosRoute"));
-
-// 🔹 Submissões — ADMIN (mantém apenas admin)
-app.use("/api", submissoesAdminRoutes);
-
-// 🔹 Submissões — USUÁRIO/PÚBLICO (minhas, detalhe, poster/banner)
-app.use("/api", submissoesUsuarioRoutes); // 🆕 NOVO
+app.use("/api/questionarios", questionariosRoute);
+app.use("/api/admin", submissoesAdminRoutes);
+app.use("/api/avaliador", submissoesAvaliadorRoutes);
+app.use("/api", submissoesUsuarioRoutes);
+app.use("/api", submissoesBridgeRoutes);
 
 /* ───────── Recuperação de senha ───────── */
-app.post("/api/usuarios/recuperar-senha", recuperarSenhaLimiter, usuarioPublicoController.recuperarSenha);
+app.post(
+  "/api/usuarios/recuperar-senha",
+  recuperarSenhaLimiter,
+  asyncHandler(usuarioPublicoController.recuperarSenha)
+);
 
 /* ───────── Health & SPA fallback ───────── */
 app.get("/api/health", (_req, res) => res.status(200).json({ ok: true, env: process.env.NODE_ENV || "dev" }));
@@ -425,13 +491,22 @@ app.use((err, req, res, _next) => {
     return sendError(res, 403, "Origem não autorizada.", { code: "CORS_BLOCKED" });
   }
 
-  const status = err?.status || 500;
+  // Auth: se algum middleware seu lançar algo tipo "Unauthorized"
+  if (err?.name === "UnauthorizedError" || err?.code === "UNAUTHORIZED") {
+    return sendError(res, 401, "Não autenticado.");
+  }
+
+  const status = err?.status || err?.statusCode || 500;
 
   // PREMIUM: Log consistente com requestId
   console.error("[ERROR]", {
     rid: req?.requestId,
     status,
+    method: req?.method,
+    url: req?.originalUrl || req?.url,
+    userId: req?.userId ?? null,
     message: err?.message,
+    code: err?.code,
     stack: IS_DEV ? err?.stack : undefined,
   });
 
@@ -470,3 +545,11 @@ async function shutdown(signal) {
 
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[UNHANDLED_REJECTION]", reason);
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("[UNCAUGHT_EXCEPTION]", err);
+});

@@ -8,7 +8,7 @@ import { forwardRef, useMemo } from "react";
  * - Tones: solid (gradiente 3 cores), outline, ghost.
  * - UX: spinner com prefers-reduced-motion; previne navegação/clique quando loading/disabled.
  * - A11y: focus ring por cor, aria-busy e aria-live.
- * - Opções: size, fullWidth, leftIcon/rightIcon, cor, minWidth, shape, href/target, as, download.
+ * - Opções: size, fullWidth, leftIcon/rightIcon (ou iconLeft/iconRight), cor, minWidth, shape, href/target, as, download.
  */
 const BotaoPrimario = forwardRef(function BotaoPrimario(
   {
@@ -18,25 +18,40 @@ const BotaoPrimario = forwardRef(function BotaoPrimario(
     className = "",
     disabled = false,
     loading = false,
+
+    // ✅ novos (padrão)
     leftIcon = null,
     rightIcon = null,
-    size = "md",             // sm | md | lg
+
+    // ✅ aliases p/ compat (evita warning: não vai pro DOM)
+    iconLeft = null,
+    iconRight = null,
+    iconleft = null,
+    iconright = null,
+
+    size = "md", // sm | md | lg
     fullWidth = false,
     minWidth = 120,
-    cor = "verde",           // verde | amareloOuro | laranjaQueimado | vermelhoCoral | azulPetroleo | cinza
-    shape = "rounded-2xl",   // rounded-md | rounded-lg | rounded-2xl | rounded-full
-    tone = "solid",          // solid | outline | ghost
-    href,                    // vira <a>
+    cor = "verde", // verde | amareloOuro | laranjaQueimado | vermelhoCoral | azulPetroleo | cinza
+    shape = "rounded-2xl", // rounded-md | rounded-lg | rounded-2xl | rounded-full
+    tone = "solid", // solid | outline | ghost
+    href, // vira <a>
     target,
     rel,
-    as,                      // força a tag (ex.: "span")
-    download,                // forward p/ <a>
+    as, // força a tag (ex.: "span") OU componente
+    download, // forward p/ <a>
+    style, // ✅ preserva style externo
     "aria-label": ariaLabel,
     ...props
   },
   ref
 ) {
   const isDisabled = disabled || loading;
+
+  // ✅ resolve aliases (prioridade: leftIcon/rightIcon)
+  const _leftIcon = leftIcon ?? iconLeft ?? iconleft ?? null;
+  const _rightIcon = rightIcon ?? iconRight ?? iconright ?? null;
+
   const Tag = as || (href ? "a" : "button");
 
   const sizes = useMemo(
@@ -53,39 +68,57 @@ const BotaoPrimario = forwardRef(function BotaoPrimario(
   const palette = {
     verde: {
       ring: "focus-visible:ring-emerald-600/60",
-      solid: "bg-gradient-to-br from-[#0f2c1f] via-[#114b2d] to-[#166534] text-white border-emerald-900/40",
-      outline: "text-emerald-900 dark:text-emerald-200 border border-emerald-400 hover:bg-emerald-50 dark:border-emerald-700 dark:hover:bg-emerald-900/20",
-      ghost: "text-emerald-900 dark:text-emerald-200 hover:bg-black/5 dark:hover:bg-white/10",
+      solid:
+        "bg-gradient-to-br from-[#0f2c1f] via-[#114b2d] to-[#166534] text-white border-emerald-900/40",
+      outline:
+        "text-emerald-900 dark:text-emerald-200 border border-emerald-400 hover:bg-emerald-50 dark:border-emerald-700 dark:hover:bg-emerald-900/20",
+      ghost:
+        "text-emerald-900 dark:text-emerald-200 hover:bg-black/5 dark:hover:bg-white/10",
     },
     amareloOuro: {
       ring: "focus-visible:ring-amber-400/60",
-      solid: "bg-gradient-to-br from-amber-500 via-amber-600 to-amber-700 text-black border-amber-800/40",
-      outline: "text-amber-800 dark:text-amber-200 border border-amber-400 hover:bg-amber-50 dark:border-amber-700 dark:hover:bg-amber-900/20",
-      ghost: "text-amber-800 dark:text-amber-200 hover:bg-black/5 dark:hover:bg-white/10",
+      solid:
+        "bg-gradient-to-br from-amber-500 via-amber-600 to-amber-700 text-black border-amber-800/40",
+      outline:
+        "text-amber-800 dark:text-amber-200 border border-amber-400 hover:bg-amber-50 dark:border-amber-700 dark:hover:bg-amber-900/20",
+      ghost:
+        "text-amber-800 dark:text-amber-200 hover:bg-black/5 dark:hover:bg-white/10",
     },
     laranjaQueimado: {
       ring: "focus-visible:ring-orange-400/60",
-      solid: "bg-gradient-to-br from-orange-600 via-orange-700 to-orange-800 text-white border-orange-900/40",
-      outline: "text-orange-700 dark:text-orange-300 border border-orange-400 hover:bg-orange-50 dark:border-orange-600 dark:hover:bg-orange-900/20",
-      ghost: "text-orange-700 dark:text-orange-300 hover:bg-black/5 dark:hover:bg-white/10",
+      solid:
+        "bg-gradient-to-br from-orange-600 via-orange-700 to-orange-800 text-white border-orange-900/40",
+      outline:
+        "text-orange-700 dark:text-orange-300 border border-orange-400 hover:bg-orange-50 dark:border-orange-600 dark:hover:bg-orange-900/20",
+      ghost:
+        "text-orange-700 dark:text-orange-300 hover:bg-black/5 dark:hover:bg-white/10",
     },
     vermelhoCoral: {
       ring: "focus-visible:ring-red-400/60",
-      solid: "bg-gradient-to-br from-red-500 via-red-600 to-red-700 text-white border-red-900/40",
-      outline: "text-red-600 dark:text-red-300 border border-red-400 hover:bg-red-50 dark:border-red-600 dark:hover:bg-red-900/20",
-      ghost: "text-red-600 dark:text-red-300 hover:bg-black/5 dark:hover:bg-white/10",
+      solid:
+        "bg-gradient-to-br from-red-500 via-red-600 to-red-700 text-white border-red-900/40",
+      outline:
+        "text-red-600 dark:text-red-300 border border-red-400 hover:bg-red-50 dark:border-red-600 dark:hover:bg-red-900/20",
+      ghost:
+        "text-red-600 dark:text-red-300 hover:bg-black/5 dark:hover:bg-white/10",
     },
     azulPetroleo: {
       ring: "focus-visible:ring-cyan-600/60",
-      solid: "bg-gradient-to-br from-cyan-800 via-cyan-900 to-slate-900 text-white border-cyan-950/50",
-      outline: "text-cyan-800 dark:text-cyan-200 border border-cyan-500 hover:bg-cyan-50 dark:border-cyan-700 dark:hover:bg-slate-800/40",
-      ghost: "text-cyan-800 dark:text-cyan-200 hover:bg-black/5 dark:hover:bg-white/10",
+      solid:
+        "bg-gradient-to-br from-cyan-800 via-cyan-900 to-slate-900 text-white border-cyan-950/50",
+      outline:
+        "text-cyan-800 dark:text-cyan-200 border border-cyan-500 hover:bg-cyan-50 dark:border-cyan-700 dark:hover:bg-slate-800/40",
+      ghost:
+        "text-cyan-800 dark:text-cyan-200 hover:bg-black/5 dark:hover:bg-white/10",
     },
     cinza: {
       ring: "focus-visible:ring-gray-400/60",
-      solid: "bg-gradient-to-br from-gray-700 via-gray-800 to-gray-900 text-white border-gray-950/40",
-      outline: "text-gray-800 dark:text-gray-200 border border-gray-400 hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-800/40",
-      ghost: "text-gray-800 dark:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10",
+      solid:
+        "bg-gradient-to-br from-gray-700 via-gray-800 to-gray-900 text-white border-gray-950/40",
+      outline:
+        "text-gray-800 dark:text-gray-200 border border-gray-400 hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-800/40",
+      ghost:
+        "text-gray-800 dark:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10",
     },
   };
 
@@ -101,8 +134,14 @@ const BotaoPrimario = forwardRef(function BotaoPrimario(
     tone === "outline"
       ? theme.outline
       : tone === "ghost"
-      ? theme.ghost + " border border-transparent"
-      : theme.solid + " border hover:brightness-[1.05]";
+      ? `${theme.ghost} border border-transparent`
+      : `${theme.solid} border hover:brightness-[1.05]`;
+
+  // ✅ style: respeita style externo + minWidth controlado
+  const computedStyle = {
+    ...(style || {}),
+    ...(fullWidth ? {} : { minWidth }),
+  };
 
   // Props comuns por tag
   const commonProps = href
@@ -111,8 +150,14 @@ const BotaoPrimario = forwardRef(function BotaoPrimario(
         target,
         rel: rel ?? (target === "_blank" ? "noopener noreferrer" : undefined),
         role: "button",
+        tabIndex: isDisabled ? -1 : 0,
         "aria-disabled": isDisabled || undefined,
-        onClick: isDisabled ? (e) => e.preventDefault() : onClick,
+        onClick: isDisabled
+          ? (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }
+          : onClick,
         download,
       }
     : {
@@ -121,6 +166,11 @@ const BotaoPrimario = forwardRef(function BotaoPrimario(
         disabled: isDisabled,
       };
 
+  // ✅ NÃO deixar props custom vazar pro DOM
+  // (segurança extra: se alguém passou em props, remove)
+  // eslint-disable-next-line no-unused-vars
+  const { iconRight: _a, iconLeft: _b, iconright: _c, iconleft: _d, ...safeProps } = props;
+
   return (
     <Tag
       ref={ref}
@@ -128,7 +178,7 @@ const BotaoPrimario = forwardRef(function BotaoPrimario(
       aria-busy={loading || undefined}
       aria-live={loading ? "polite" : undefined}
       aria-label={ariaLabel}
-      style={{ ...(fullWidth ? {} : { minWidth }) }}
+      style={computedStyle}
       className={[
         base,
         theme.ring,
@@ -141,7 +191,7 @@ const BotaoPrimario = forwardRef(function BotaoPrimario(
       data-variant="BotaoPrimario"
       data-color={cor}
       data-tone={tone}
-      {...props}
+      {...safeProps}
     >
       {loading && (
         <span
@@ -150,14 +200,18 @@ const BotaoPrimario = forwardRef(function BotaoPrimario(
         />
       )}
 
-      {!loading && leftIcon && (
-        <span className="inline-flex shrink-0" aria-hidden="true">{leftIcon}</span>
+      {!loading && _leftIcon && (
+        <span className="inline-flex shrink-0" aria-hidden="true">
+          {_leftIcon}
+        </span>
       )}
 
       <span className={loading ? "opacity-90" : ""}>{children}</span>
 
-      {!loading && rightIcon && (
-        <span className="inline-flex shrink-0" aria-hidden="true">{rightIcon}</span>
+      {!loading && _rightIcon && (
+        <span className="inline-flex shrink-0" aria-hidden="true">
+          {_rightIcon}
+        </span>
       )}
     </Tag>
   );
@@ -170,11 +224,18 @@ BotaoPrimario.propTypes = {
   className: PropTypes.string,
   disabled: PropTypes.bool,
   loading: PropTypes.bool,
+
+  // ✅ padrão
   leftIcon: PropTypes.node,
   rightIcon: PropTypes.node,
+
+  // ✅ compat (não usar daqui pra frente, mas suporta)
+  iconLeft: PropTypes.node,
+  iconRight: PropTypes.node,
+
   size: PropTypes.oneOf(["sm", "md", "lg"]),
   fullWidth: PropTypes.bool,
-  minWidth: PropTypes.number,
+  minWidth: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
   cor: PropTypes.oneOf([
     "verde",
     "amareloOuro",
@@ -188,8 +249,9 @@ BotaoPrimario.propTypes = {
   href: PropTypes.string,
   target: PropTypes.string,
   rel: PropTypes.string,
-  as: PropTypes.string,
+  as: PropTypes.oneOfType([PropTypes.string, PropTypes.elementType]),
   download: PropTypes.oneOfType([PropTypes.bool, PropTypes.string]),
+  style: PropTypes.object,
   "aria-label": PropTypes.string,
 };
 

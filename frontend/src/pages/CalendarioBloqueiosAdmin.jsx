@@ -1,4 +1,17 @@
-// ✅ src/pages/CalendarioBloqueiosAdmin.jsx — versão premium
+// ✅ src/pages/CalendarioBloqueiosAdmin.jsx — PREMIUM (corrige "Tipo inválido." + UX melhor)
+// O backend aceita: bloqueio | feriado | manutencao | evento
+// Esta página mantém suas 4 opções ricas (feriado_nacional, etc),
+// mas agora envia "tipo_backend" compatível + grava o "subtipo" na descrição.
+//
+// Principais upgrades:
+// - ✅ Mapeamento frontend -> backend (evita 400 "Tipo inválido.")
+// - ✅ Normalização robusta (trim/lower) e suporte caso venha objeto
+// - ✅ Anti-duplicidade mais inteligente (data + tipo_backend + subtipo)
+// - ✅ “mini-stats” no topo (total no mês, feriados, bloqueios, manutenção/evento)
+// - ✅ A11y: aria-live, foco/atalhos não atrapalham inputs/textarea
+// - ✅ Clique no dia preenche data e foca no tipo
+// - ✅ Carregar com AbortController (evita race conditions)
+
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import {
   CalendarDays,
@@ -25,6 +38,10 @@ const NOMES_MESES = [
 ];
 const DIAS_SEMANA = ["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"];
 
+/**
+ * UI do usuário (4 opções “ricas”)
+ * Mas no backend: bloqueio | feriado | manutencao | evento
+ */
 const TIPOS_OPCOES = [
   { value: "feriado_nacional",  label: "Feriado nacional" },
   { value: "feriado_municipal", label: "Feriado municipal" },
@@ -32,7 +49,9 @@ const TIPOS_OPCOES = [
   { value: "bloqueio_interno",  label: "Bloqueio interno (administrativo)" },
 ];
 
-const TIPO_LABEL = TIPOS_OPCOES.reduce((acc, t) => (acc[t.value] = t.label, acc), {});
+const TIPO_LABEL = TIPOS_OPCOES.reduce((acc, t) => ((acc[t.value] = t.label), acc), {});
+
+/** Estilos por tipo “UI” */
 const TIPO_STYLE = {
   feriado_nacional:  {
     ring: "ring-rose-300",
@@ -71,7 +90,7 @@ const TIPO_STYLE = {
 function cls(...a){ return a.filter(Boolean).join(" "); }
 
 /* ──────────────────────────────────────────────────────────
-   Datas-only helpers (sem timezone)
+   Datas-only helpers (sem timezone shift)
 ────────────────────────────────────────────────────────── */
 function toISO(dateStr) { return (dateStr || "").slice(0, 10); }
 function hojeISOString() {
@@ -106,6 +125,72 @@ function criarMatrixMes(ano, mesIndex) {
 }
 
 /* ──────────────────────────────────────────────────────────
+   Compat: mapeamento UI -> backend
+   Backend aceita: bloqueio | feriado | manutencao | evento
+────────────────────────────────────────────────────────── */
+function normStr(v) {
+  if (v == null) return "";
+  if (typeof v === "object") {
+    // caso alguém troque select por react-select futuramente
+    if (v.value != null) return String(v.value);
+  }
+  return String(v);
+}
+
+function toBackendTipo(uiTipo) {
+  const t = normStr(uiTipo).trim().toLowerCase();
+  if (t.startsWith("feriado")) return "feriado";           // feriado_nacional/municipal
+  if (t === "ponto_facultativo") return "feriado";         // ainda é “data não disponível”
+  if (t === "bloqueio_interno") return "bloqueio";
+  // fallback seguro
+  if (t === "bloqueio" || t === "feriado" || t === "manutencao" || t === "evento") return t;
+  return "bloqueio";
+}
+
+function extractSubtipo(uiTipo) {
+  const t = normStr(uiTipo).trim().toLowerCase();
+  if (t === "feriado_nacional") return "feriado_nacional";
+  if (t === "feriado_municipal") return "feriado_municipal";
+  if (t === "ponto_facultativo") return "ponto_facultativo";
+  if (t === "bloqueio_interno") return "bloqueio_interno";
+  return "";
+}
+
+/** Grava subtipo na descrição sem “estragar” o texto do usuário */
+function buildDescricaoWithMeta(descricaoUser, uiTipo) {
+  const base = (descricaoUser || "").trim();
+  const subtipo = extractSubtipo(uiTipo);
+  // ✅ meta curto e estável (não muda UI)
+  const meta = subtipo ? `[${subtipo}]` : "";
+  if (!meta) return base || null;
+  if (!base) return meta;
+  // evita duplicar meta se o usuário editar e salvar novamente
+  if (base.includes(meta)) return base;
+  return `${meta} ${base}`.trim();
+}
+
+/** Ao editar, tentar recuperar o uiTipo baseado no meta salvo */
+function inferUiTipoFromRecord(rec) {
+  const tipo = (rec?.tipo || "").toLowerCase();
+  const desc = String(rec?.descricao || "");
+  if (desc.includes("[feriado_nacional]")) return "feriado_nacional";
+  if (desc.includes("[feriado_municipal]")) return "feriado_municipal";
+  if (desc.includes("[ponto_facultativo]")) return "ponto_facultativo";
+  if (desc.includes("[bloqueio_interno]")) return "bloqueio_interno";
+
+  // fallback por tipo backend:
+  if (tipo === "feriado") return "feriado_municipal"; // default amigável
+  if (tipo === "bloqueio") return "bloqueio_interno";
+  return "bloqueio_interno";
+}
+
+function stripMetaPrefix(descricao) {
+  const s = String(descricao || "").trim();
+  // remove apenas o prefixo meta se existir
+  return s.replace(/^\[(feriado_nacional|feriado_municipal|ponto_facultativo|bloqueio_interno)\]\s*/i, "");
+}
+
+/* ──────────────────────────────────────────────────────────
    Página
 ────────────────────────────────────────────────────────── */
 export default function CalendarioBloqueiosAdmin() {
@@ -122,7 +207,7 @@ export default function CalendarioBloqueiosAdmin() {
   const [formData, setFormData] = useState({
     id: null,
     data: "",
-    tipo: "feriado_nacional",
+    tipo: "feriado_nacional", // UI tipo
     descricao: "",
   });
   const [salvando, setSalvando] = useState(false);
@@ -133,27 +218,42 @@ export default function CalendarioBloqueiosAdmin() {
 
   const semanas = useMemo(() => criarMatrixMes(ano, mesIndex), [ano, mesIndex]);
 
+  const tipoRef = useRef(null);
+  const liveRef = useRef(null);
+
   /* Carregar dados ao abrir a página */
-  useEffect(() => { carregar(); }, []);
+  useEffect(() => {
+    const ac = new AbortController();
+    carregar(ac.signal);
+    return () => ac.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const onKey = (e) => {
+      // não interferir quando está digitando em input/select/textarea
+      const tag = (e?.target?.tagName || "").toLowerCase();
+      if (tag === "input" || tag === "select" || tag === "textarea") return;
+
       if (e.key === "ArrowLeft") mudarMes(-1);
       if (e.key === "ArrowRight") mudarMes(1);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ano, mesIndex]);
 
-  async function carregar() {
+  async function carregar(signal) {
     try {
       setLoading(true);
-      const resp = await api.get("/calendario");
+      const resp = await api.get("/calendario", { signal });
       const lista = resp?.data ?? resp ?? [];
       setCalendario(
-        lista.map((item) => ({ ...item, data: toISO(item.data) }))
+        (lista || []).map((item) => ({ ...item, data: toISO(item.data) }))
       );
     } catch (err) {
+      // abort => silencioso
+      if (err?.name === "CanceledError" || err?.code === "ERR_CANCELED") return;
       console.error("[CalendarioBloqueiosAdmin] erro ao carregar:", err);
       toast.error("Erro ao carregar calendário de bloqueios.");
     } finally {
@@ -182,11 +282,18 @@ export default function CalendarioBloqueiosAdmin() {
   }
 
   function editarRegistro(reg) {
+    // reg.tipo é backend (feriado/bloqueio/...)
+    // descrição pode ter meta [feriado_nacional]
     setFormData({
       id: reg.id,
-      data: reg.data,
-      tipo: reg.tipo,
-      descricao: reg.descricao || "",
+      data: toISO(reg.data),
+      tipo: inferUiTipoFromRecord(reg),              // volta para UI tipo
+      descricao: stripMetaPrefix(reg.descricao || ""),// mostra texto limpo
+    });
+
+    // foco no tipo (UX rápida)
+    queueMicrotask(() => {
+      try { tipoRef.current?.focus(); } catch {}
     });
   }
 
@@ -194,18 +301,37 @@ export default function CalendarioBloqueiosAdmin() {
     setFormData({ id: null, data: "", tipo: "feriado_nacional", descricao: "" });
   }
 
-  // Evita duplicidade de (data + tipo)
-  const existeDataTipo = useCallback((dataISO, tipo, ignoreId = null) => {
-    return calendario.some((c) => c.data === dataISO && c.tipo === tipo && c.id !== ignoreId);
+  // Evita duplicidade (data + tipo_backend + subtipo)
+  const existeDataTipo = useCallback((dataISO, uiTipo, ignoreId = null) => {
+    const tipo_backend = toBackendTipo(uiTipo);
+    const subtipo = extractSubtipo(uiTipo);
+
+    return calendario.some((c) => {
+      if (c.id === ignoreId) return false;
+      if (toISO(c.data) !== dataISO) return false;
+
+      const cTipo = String(c.tipo || "").toLowerCase();
+      if (cTipo !== tipo_backend) return false;
+
+      const cDesc = String(c.descricao || "");
+      // se houver subtipo, exige que o meta bata (para permitir vários “feriados” no mesmo dia, se você quiser no futuro)
+      if (subtipo) return cDesc.includes(`[${subtipo}]`);
+      return true;
+    });
   }, [calendario]);
 
   async function onSubmit(e) {
     e.preventDefault();
 
+    const dataISO = toISO(formData.data);
+    const uiTipo = formData.tipo;
+
     const payload = {
-      data: toISO(formData.data),
-      tipo: formData.tipo,
-      descricao: formData.descricao || null,
+      data: dataISO,
+      // ✅ envia tipo compatível com backend
+      tipo: toBackendTipo(uiTipo),
+      // ✅ guarda o subtipo (feriado_nacional etc.) no prefixo da descrição
+      descricao: buildDescricaoWithMeta(formData.descricao, uiTipo),
     };
 
     if (!payload.data || !payload.tipo) {
@@ -213,13 +339,21 @@ export default function CalendarioBloqueiosAdmin() {
       return;
     }
 
-    if (existeDataTipo(payload.data, payload.tipo, formData.id)) {
+    if (existeDataTipo(payload.data, uiTipo, formData.id)) {
       toast.info("Já existe um registro com essa data e tipo.");
       return;
     }
 
     try {
       setSalvando(true);
+
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[CalendarioBloqueiosAdmin] submit payload:", payload, {
+          uiTipo,
+          backendTipo: payload.tipo,
+        });
+      }
+
       if (formData.id) {
         await api.put(`/calendario/${formData.id}`, payload);
         toast.success("Data atualizada com sucesso.");
@@ -227,11 +361,16 @@ export default function CalendarioBloqueiosAdmin() {
         await api.post("/calendario", payload);
         toast.success("Data cadastrada com sucesso.");
       }
+
       await carregar();
       limparForm();
+      liveRef.current && (liveRef.current.textContent = "Calendário atualizado.");
     } catch (err) {
       console.error("[CalendarioBloqueiosAdmin] erro ao salvar:", err);
-      const msg = err?.response?.data?.erro || "Erro ao salvar data.";
+      const msg =
+        err?.response?.data?.erro ||
+        err?.response?.data?.message ||
+        "Erro ao salvar data.";
       toast.error(msg);
     } finally {
       setSalvando(false);
@@ -258,6 +397,7 @@ export default function CalendarioBloqueiosAdmin() {
       await api.delete(`/calendario/${ev.id}`);
       toast.success("Data removida com sucesso.");
       await carregar();
+      liveRef.current && (liveRef.current.textContent = "Registro removido.");
     } catch (err) {
       console.error("[CalendarioBloqueiosAdmin] erro ao excluir:", err);
       const msg = err?.response?.data?.erro || "Erro ao excluir data.";
@@ -275,7 +415,7 @@ export default function CalendarioBloqueiosAdmin() {
       if (!map[key]) map[key] = [];
       map[key].push(item);
     }
-    // ordena por tipo para manter padrão visual
+    // ordena por tipo backend para padrão visual
     Object.keys(map).forEach((k) => {
       map[k].sort((a, b) => (a.tipo || "").localeCompare(b.tipo || ""));
     });
@@ -283,7 +423,6 @@ export default function CalendarioBloqueiosAdmin() {
   }, [calendario]);
 
   const anosDisponiveis = useMemo(() => {
-    // cria uma faixa centrada no ano atual, útil p/ pular rápido
     const y = new Date().getFullYear();
     const size = 7; // 3 anos antes e 3 depois
     return Array.from({ length: size }, (_, i) => y - 3 + i);
@@ -291,10 +430,44 @@ export default function CalendarioBloqueiosAdmin() {
 
   function prefillDia(dateISO) {
     setFormData((f) => ({ ...f, data: dateISO }));
+    queueMicrotask(() => {
+      try { tipoRef.current?.focus(); } catch {}
+    });
+  }
+
+  const statsMes = useMemo(() => {
+    const m = String(mesIndex + 1).padStart(2, "0");
+    const prefix = `${ano}-${m}-`;
+    const itens = calendario.filter((c) => String(c.data || "").startsWith(prefix));
+
+    const byTipo = { feriado: 0, bloqueio: 0, manutencao: 0, evento: 0 };
+    for (const it of itens) {
+      const t = String(it.tipo || "").toLowerCase();
+      if (byTipo[t] != null) byTipo[t] += 1;
+    }
+
+    return {
+      total: itens.length,
+      ...byTipo,
+    };
+  }, [calendario, ano, mesIndex]);
+
+  function labelEv(ev) {
+    // tenta exibir rótulo UI a partir do meta, senão mostra backend tipo
+    const ui = inferUiTipoFromRecord(ev);
+    return TIPO_LABEL[ui] || ev.tipo || "—";
+  }
+
+  function styleEv(ev) {
+    const ui = inferUiTipoFromRecord(ev);
+    return TIPO_STYLE[ui] || TIPO_STYLE["bloqueio_interno"];
   }
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-zinc-950">
+      {/* aria-live para feedback */}
+      <div className="sr-only" aria-live="polite" ref={liveRef} />
+
       {/* Header */}
       <header className="bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-500 text-white shadow-lg">
         <div className="max-w-6xl mx-auto px-4 py-6 sm:py-8 flex flex-col gap-4">
@@ -313,6 +486,26 @@ export default function CalendarioBloqueiosAdmin() {
               </div>
             </div>
           </div>
+
+          {/* ✅ mini-stats (topo) */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <div className="rounded-2xl bg-white/10 border border-white/15 p-3">
+              <p className="text-[11px] text-emerald-50">Total no mês</p>
+              <p className="text-lg font-semibold">{statsMes.total}</p>
+            </div>
+            <div className="rounded-2xl bg-white/10 border border-white/15 p-3">
+              <p className="text-[11px] text-emerald-50">Feriados</p>
+              <p className="text-lg font-semibold">{statsMes.feriado}</p>
+            </div>
+            <div className="rounded-2xl bg-white/10 border border-white/15 p-3">
+              <p className="text-[11px] text-emerald-50">Bloqueios</p>
+              <p className="text-lg font-semibold">{statsMes.bloqueio}</p>
+            </div>
+            <div className="rounded-2xl bg-white/10 border border-white/15 p-3">
+              <p className="text-[11px] text-emerald-50">Manut./Eventos</p>
+              <p className="text-lg font-semibold">{statsMes.manutencao + statsMes.evento}</p>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -325,6 +518,7 @@ export default function CalendarioBloqueiosAdmin() {
               className="p-2 rounded-full bg-white dark:bg-zinc-900 shadow hover:bg-slate-50 dark:hover:bg-zinc-800"
               onClick={() => mudarMes(-1)}
               title="Mês anterior (←)"
+              type="button"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
@@ -340,6 +534,7 @@ export default function CalendarioBloqueiosAdmin() {
               className="p-2 rounded-full bg-white dark:bg-zinc-900 shadow hover:bg-slate-50 dark:hover:bg-zinc-800"
               onClick={() => mudarMes(1)}
               title="Próximo mês (→)"
+              type="button"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
@@ -416,8 +611,10 @@ export default function CalendarioBloqueiosAdmin() {
         </div>
 
         {/* Formulário de cadastro/edição */}
-        <section aria-label="Formulário de cadastro e edição"
-          className="mb-6 bg-white dark:bg-zinc-900 rounded-2xl shadow-sm border border-slate-100 dark:border-zinc-800 p-4 sm:p-5">
+        <section
+          aria-label="Formulário de cadastro e edição"
+          className="mb-6 bg-white dark:bg-zinc-900 rounded-2xl shadow-sm border border-slate-100 dark:border-zinc-800 p-4 sm:p-5"
+        >
           <h2 className="text-sm sm:text-base font-semibold text-slate-800 dark:text-zinc-100 mb-3">
             {formData.id ? "Editar data do calendário" : "Cadastrar nova data"}
           </h2>
@@ -439,6 +636,7 @@ export default function CalendarioBloqueiosAdmin() {
             <div>
               <label className="block text-xs font-medium text-slate-600 dark:text-zinc-300 mb-1">Tipo</label>
               <select
+                ref={tipoRef}
                 name="tipo"
                 value={formData.tipo}
                 onChange={handleChange}
@@ -450,6 +648,9 @@ export default function CalendarioBloqueiosAdmin() {
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </select>
+              <p className="mt-1 text-[11px] text-slate-500 dark:text-zinc-400">
+                Internamente será salvo como: <span className="font-semibold">{toBackendTipo(formData.tipo)}</span>
+              </p>
             </div>
 
             <div className="sm:col-span-3">
@@ -487,8 +688,10 @@ export default function CalendarioBloqueiosAdmin() {
         </section>
 
         {/* Calendário com marcação das datas bloqueadas */}
-        <section aria-label="Calendário com marcações"
-          className="bg-white dark:bg-zinc-900 rounded-2xl shadow-sm border border-slate-100 dark:border-zinc-800 overflow-hidden mb-6">
+        <section
+          aria-label="Calendário com marcações"
+          className="bg-white dark:bg-zinc-900 rounded-2xl shadow-sm border border-slate-100 dark:border-zinc-800 overflow-hidden mb-6"
+        >
           <div className="grid grid-cols-7 bg-slate-50 dark:bg-zinc-800/50 border-b border-slate-100 dark:border-zinc-800 text-xs sm:text-sm">
             {DIAS_SEMANA.map((d) => (
               <div key={d} className="py-2 text-center font-medium text-slate-600 dark:text-zinc-300 uppercase">
@@ -535,7 +738,9 @@ export default function CalendarioBloqueiosAdmin() {
                             onClick={() => prefillDia(dataISO)}
                             className={cls(
                               "text-left text-xs sm:text-sm font-semibold rounded px-1 py-0.5",
-                              eHoje ? "text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-900/20" : "text-slate-700 dark:text-zinc-200"
+                              eHoje
+                                ? "text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-900/20"
+                                : "text-slate-700 dark:text-zinc-200"
                             )}
                             title="Preencher data no formulário"
                           >
@@ -554,7 +759,7 @@ export default function CalendarioBloqueiosAdmin() {
 
                         <div className="mt-1 flex flex-col gap-1">
                           {eventosDia.map((ev) => {
-                            const sty = TIPO_STYLE[ev.tipo] || TIPO_STYLE["bloqueio_interno"];
+                            const sty = styleEv(ev);
                             const disabledDelete = deletingId === ev.id;
 
                             return (
@@ -572,7 +777,7 @@ export default function CalendarioBloqueiosAdmin() {
                                     className={cls("font-semibold", sty.text, "text-left")}
                                     title="Editar registro"
                                   >
-                                    {TIPO_LABEL[ev.tipo] || ev.tipo}
+                                    {labelEv(ev)}
                                   </button>
 
                                   <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition">
@@ -597,7 +802,9 @@ export default function CalendarioBloqueiosAdmin() {
                                 </div>
 
                                 {ev.descricao && (
-                                  <p className={cls("text-[10px]", sty.text)}>{ev.descricao}</p>
+                                  <p className={cls("text-[10px]", sty.text)}>
+                                    {stripMetaPrefix(ev.descricao)}
+                                  </p>
                                 )}
                               </div>
                             );
@@ -621,7 +828,7 @@ export default function CalendarioBloqueiosAdmin() {
         title="Excluir data?"
         description={
           confirmDelete?.item
-            ? `Tem certeza que deseja excluir esta data do calendário?\n\n${toISO(confirmDelete.item.data)} • ${TIPO_LABEL[confirmDelete.item.tipo] || confirmDelete.item.tipo}${confirmDelete.item.descricao ? `\n${String(confirmDelete.item.descricao).trim()}` : ""}`
+            ? `Tem certeza que deseja excluir esta data do calendário?\n\n${toISO(confirmDelete.item.data)} • ${labelEv(confirmDelete.item)}${confirmDelete.item.descricao ? `\n${stripMetaPrefix(String(confirmDelete.item.descricao).trim())}` : ""}`
             : "Tem certeza que deseja excluir esta data?"
         }
         confirmText="Sim, excluir"

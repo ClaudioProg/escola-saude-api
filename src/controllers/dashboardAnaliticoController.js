@@ -1,6 +1,10 @@
 // ✅ src/controllers/dashboardAnaliticoController.js
 /* eslint-disable no-console */
-const db = require("../db");
+"use strict";
+
+const rawDb = require("../db");
+const db = rawDb?.db ?? rawDb;
+
 const { formatarGrafico } = require("../utils/graficos");
 
 const IS_DEV = process.env.NODE_ENV !== "production";
@@ -20,19 +24,23 @@ const NOTAS_EVENTO = [
   "inscricao_online",
 ];
 
-// Mapeia texto para score (1..5) no SQL
-function sqlScore(col) {
+// Normaliza texto no SQL (remove acentos + lower) — funciona com enum via ::text
+function sqlNormText(expr) {
+  // expr deve ser algo como: a.campo::text
+  return `translate(lower(coalesce(${expr}, '')), 'áàãâéêíóôõúç', 'aaaaeeiooouc')`;
+}
+
+// Mapeia texto/enum para score (1..5) no SQL — robusto a Ótimo/Otimo/Péssimo/Pessimo etc.
+function sqlScore(colExpr) {
+  // colExpr: ex.: "a.divulgacao_evento" (enum ou text)
+  const norm = sqlNormText(`${colExpr}::text`);
   return `
-    CASE ${col}
-      WHEN 'Ótimo' THEN 5
-      WHEN 'Otimo' THEN 5
-      WHEN 'Excelente' THEN 5
-      WHEN 'Muito bom' THEN 5
-      WHEN 'Bom' THEN 4
-      WHEN 'Regular' THEN 3
-      WHEN 'Ruim' THEN 2
-      WHEN 'Péssimo' THEN 1
-      WHEN 'Pessimo' THEN 1
+    CASE
+      WHEN ${norm} IN ('otimo','excelente','muito bom','muitobom') THEN 5
+      WHEN ${norm} = 'bom' THEN 4
+      WHEN ${norm} = 'regular' THEN 3
+      WHEN ${norm} = 'ruim' THEN 2
+      WHEN ${norm} IN ('pessimo','pessima') THEN 1
       ELSE NULL
     END
   `;
@@ -45,7 +53,7 @@ function sqlScore(col) {
 async function obterDashboard(req, res) {
   const { ano, mes, tipo } = req.query;
 
-  // validação leve (o route já limita, mas aqui fica blindado)
+  // validação leve
   const anoNum = ano ? Number(ano) : null;
   const mesNum = mes ? Number(mes) : null;
   const tipoStr = tipo ? String(tipo).trim() : null;
@@ -69,11 +77,20 @@ async function obterDashboard(req, res) {
 
   const where = cond.length ? `WHERE ${cond.join(" AND ")}` : "";
 
+  // helper premium: Promise.allSettled com fallback
+  async function settled(label, promise, fallbackRows = []) {
+    const r = await Promise.allSettled([promise]);
+    const out = r[0];
+    if (out.status === "fulfilled") return out.value;
+    console.error(`❌ [dashboard-analitico:${label}]`, IS_DEV ? (out.reason?.stack || out.reason) : (out.reason?.message || out.reason));
+    return { rows: fallbackRows, rowCount: fallbackRows.length };
+  }
+
   try {
     if (IS_DEV) console.log("[dashboard-analitico] req:", { ano: anoNum, mes: mesNum, tipo: tipoStr });
 
     /* =====================================================
-       1) Métricas base (em paralelo)
+       1) Métricas base
     ====================================================== */
 
     const totalEventosSQL = `
@@ -111,7 +128,7 @@ async function obterDashboard(req, res) {
 
     const mediaInstrutorSQL = `
       SELECT ROUND(
-        AVG(${sqlScore("a.desempenho_instrutor")} )::numeric,
+        AVG(${sqlScore("a.desempenho_instrutor")})::numeric,
         2
       ) AS media_instrutor
       FROM avaliacoes a
@@ -121,10 +138,7 @@ async function obterDashboard(req, res) {
     `;
 
     /* =====================================================
-       2) Presença ≥ 75% (datas reais -> presenças -> intervalo)
-          - usa datas_turma se existir (melhor)
-          - conta “encontros ocorridos” até hoje
-          - elegível se presenças_distintas / encontros_ocorridos >= 0.75
+       2) Presença ≥ 75%
     ====================================================== */
 
     const presencaSQL = `
@@ -137,37 +151,28 @@ async function obterDashboard(req, res) {
       has_datas AS (
         SELECT (to_regclass('public.datas_turma') IS NOT NULL) AS ok
       ),
-
-      -- encontros_ocorridos por turma (até hoje)
       encontros AS (
         SELECT
           tf.turma_id,
           COUNT(*)::int AS total_encontros
         FROM turmas_filtradas tf, has_datas hd
         JOIN LATERAL (
-          -- prioridade: datas_turma
           SELECT dt.data::date AS d
           FROM datas_turma dt
           WHERE hd.ok = TRUE AND dt.turma_id = tf.turma_id
 
           UNION ALL
-
-          -- fallback: presenças (datas distintas)
           SELECT DISTINCT p.data_presenca::date AS d
           FROM presencas p
           WHERE hd.ok = FALSE AND p.turma_id = tf.turma_id
 
           UNION ALL
-
-          -- último fallback: intervalo di..df (se nada existir acima, vamos filtrar depois)
           SELECT gs::date AS d
           FROM generate_series(tf.di, tf.df, interval '1 day') gs
         ) x ON TRUE
         WHERE x.d <= NOW()::date
         GROUP BY tf.turma_id
       ),
-
-      -- presenças distintas do usuário por turma (presente=true)
       presencas_usuario AS (
         SELECT
           i.usuario_id,
@@ -181,7 +186,6 @@ async function obterDashboard(req, res) {
          AND p.presente = TRUE
         GROUP BY i.usuario_id, i.turma_id
       ),
-
       elegiveis_por_turma AS (
         SELECT
           pu.usuario_id,
@@ -196,7 +200,6 @@ async function obterDashboard(req, res) {
         JOIN turmas_filtradas tf ON tf.turma_id = pu.turma_id
         LEFT JOIN encontros e ON e.turma_id = pu.turma_id
       ),
-
       resumo_evento AS (
         SELECT
           e.id AS evento_id,
@@ -225,13 +228,14 @@ async function obterDashboard(req, res) {
     `;
 
     /* =====================================================
-       3) Gráficos (mantém contrato)
+       3) Gráficos
     ====================================================== */
 
     const eventosPorMesSQL = `
-      SELECT TO_CHAR(t.data_inicio, 'Mon') AS mes,
-             COUNT(*)::int AS total,
-             EXTRACT(MONTH FROM t.data_inicio)::int AS mes_num
+      SELECT
+        TO_CHAR(t.data_inicio, 'Mon') AS mes,
+        COUNT(*)::int AS total,
+        EXTRACT(MONTH FROM t.data_inicio)::int AS mes_num
       FROM eventos e
       JOIN turmas t ON t.evento_id = e.id
       ${where}
@@ -248,7 +252,7 @@ async function obterDashboard(req, res) {
       ORDER BY e.tipo
     `;
 
-    // 🚀 paralelo (premium)
+    // 🚀 paralelo — com allSettled (não derruba tudo)
     const [
       totalEventosQ,
       inscritosUnicosQ,
@@ -258,13 +262,13 @@ async function obterDashboard(req, res) {
       eventosPorMesQ,
       eventosPorTipoQ,
     ] = await Promise.all([
-      db.query(totalEventosSQL, params),
-      db.query(inscritosUnicosSQL, params),
-      db.query(mediaAvaliacoesSQL, params),
-      db.query(mediaInstrutorSQL, params),
-      db.query(presencaSQL, params),
-      db.query(eventosPorMesSQL, params),
-      db.query(eventosPorTipoSQL, params),
+      settled("totalEventos", db.query(totalEventosSQL, params), [{ total: 0 }]),
+      settled("inscritosUnicos", db.query(inscritosUnicosSQL, params), [{ total: 0 }]),
+      settled("mediaAvaliacoes", db.query(mediaAvaliacoesSQL, params), [{ media_evento: 0 }]),
+      settled("mediaInstrutor", db.query(mediaInstrutorSQL, params), [{ media_instrutor: 0 }]),
+      settled("presenca", db.query(presencaSQL, params), []),
+      settled("eventosPorMes", db.query(eventosPorMesSQL, params), []),
+      settled("eventosPorTipo", db.query(eventosPorTipoSQL, params), []),
     ]);
 
     // Global presença
@@ -279,13 +283,16 @@ async function obterDashboard(req, res) {
     const percentualPresencaGlobal =
       totalInscritosGlobal > 0 ? (totalElegiveisGlobal / totalInscritosGlobal) * 100 : 0;
 
-    // resposta
     res.setHeader("X-Dashboard-Handler", "dashboardAnaliticoController@premium");
     return res.json({
       totalEventos: Number(totalEventosQ.rows?.[0]?.total || 0),
       inscritosUnicos: Number(inscritosUnicosQ.rows?.[0]?.total || 0),
       mediaAvaliacoes: Number(mediaAvaliacoesQ.rows?.[0]?.media_evento || 0),
+      mediaInstrutor: Number(mediaInstrutorQ.rows?.[0]?.media_instrutor || 0),
+
+      // compat antiga (se algum front antigo usa esse campo)
       mediainstrutor: Number(mediaInstrutorQ.rows?.[0]?.media_instrutor || 0),
+
       percentualPresenca: Number(percentualPresencaGlobal.toFixed(2)),
 
       eventosPorMes: formatarGrafico(eventosPorMesQ.rows || [], "mes"),
@@ -293,8 +300,11 @@ async function obterDashboard(req, res) {
       presencaPorEvento: formatarGrafico(presencaQ.rows || [], "titulo"),
     });
   } catch (error) {
-    console.error("❌ [dashboard-analitico] erro:", error?.stack || error);
-    return res.status(500).json({ erro: "Erro ao gerar dashboard" });
+    console.error("❌ [dashboard-analitico] erro:", IS_DEV ? (error?.stack || error) : (error?.message || error));
+    return res.status(500).json({
+      erro: "Erro ao gerar dashboard",
+      ...(IS_DEV ? { details: error?.message } : {}),
+    });
   }
 }
 
