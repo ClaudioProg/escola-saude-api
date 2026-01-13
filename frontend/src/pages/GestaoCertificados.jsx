@@ -1,11 +1,11 @@
 // 📁 frontend/src/pages/GestaoCertificados.jsx
-/* eslint-disable no-alert */
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { toast } from "react-toastify";
 import { apiGet, apiPost, makeApiUrl } from "../services/api";
 import { fmtDataHora } from "../utils/data";
 import { useReducedMotion } from "framer-motion";
 import Footer from "../components/Footer";
+import ModalConfirmacao from "../components/ModalConfirmacao";
 import {
   ChevronDown,
   ChevronRight,
@@ -191,6 +191,10 @@ export default function GestaoCertificados() {
   const [openEventos, setOpenEventos] = useState({});
   const [openTurmas, setOpenTurmas] = useState({}); // key `${evento_id}:${turma_id}`
 
+  // 🔔 modal de confirmação (reset da turma)
+  const [confirmReset, setConfirmReset] = useState(null); // { turmaId, turmaNome? }
+  const [executandoReset, setExecutandoReset] = useState(false);
+
   const liveRef = useRef(null);
   const abortRef = useRef(null);
   const mountedRef = useRef(true);
@@ -252,11 +256,21 @@ export default function GestaoCertificados() {
     return { presentes, emitidos, pendentes };
   }, [data]);
 
-  const doResetTurma = async (turmaId) => {
-    if (!window.confirm(`Resetar certificados dos participantes da turma #${turmaId}?`)) return;
+  // ── fluxo com ModalConfirmacao (reset da turma)
+  const pedirResetTurma = (turmaId, turmaNome) => {
+    if (!turmaId) return;
+    setConfirmReset({ turmaId, turmaNome: turmaNome || null });
+  };
+
+  const confirmarResetTurma = async () => {
+    const alvo = confirmReset;
+    setConfirmReset(null);
+    if (!alvo?.turmaId) return;
+
     try {
-      setLive(`Resetando certificados da turma ${turmaId}…`);
-      await apiPost(`/certificados-admin/turmas/${turmaId}/reset`, {});
+      setExecutandoReset(true);
+      setLive(`Resetando certificados da turma ${alvo.turmaId}…`);
+      await apiPost(`/certificados-admin/turmas/${alvo.turmaId}/reset`, {});
       toast.success("✅ Reset concluído.");
       await fetchData();
       setLive("Reset concluído.");
@@ -264,6 +278,8 @@ export default function GestaoCertificados() {
       const msg = e?.message || "Falha ao resetar.";
       toast.error(`❌ ${msg}`);
       setLive("Falha ao resetar.");
+    } finally {
+      setExecutandoReset(false);
     }
   };
 
@@ -278,6 +294,34 @@ export default function GestaoCertificados() {
     <div className="min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white flex flex-col">
       {/* a11y live region */}
       <p ref={liveRef} className="sr-only" aria-live="polite" aria-atomic="true" />
+
+      {/* ── ModalConfirmacao: Reset da Turma ── */}
+      <ModalConfirmacao
+        open={!!confirmReset}
+        onClose={() => setConfirmReset(null)}
+        onConfirm={confirmarResetTurma}
+        titulo="Resetar certificados da turma"
+        confirmarTexto="Resetar"
+        cancelarTexto="Cancelar"
+        danger
+      >
+        <p className="text-sm text-zinc-700 dark:text-zinc-300">
+          Tem certeza que deseja resetar os certificados dos participantes da{" "}
+          {confirmReset?.turmaNome ? (
+            <>
+              turma <span className="font-semibold">{confirmReset.turmaNome}</span> (#{confirmReset.turmaId})?
+            </>
+          ) : (
+            <>turma #{confirmReset?.turmaId}?</>
+          )}{" "}
+          Esta ação não pode ser desfeita.
+        </p>
+        {executandoReset && (
+          <p className="mt-2 text-xs text-zinc-500" aria-live="polite">
+            Executando reset…
+          </p>
+        )}
+      </ModalConfirmacao>
 
       {/* Header */}
       <HeaderHero onRefresh={fetchData} loading={loading} />
@@ -453,7 +497,7 @@ export default function GestaoCertificados() {
                                 <div className="flex flex-wrap items-center gap-2">
                                   <button
                                     type="button"
-                                    onClick={() => doResetTurma(t.turma_id)}
+                                    onClick={() => pedirResetTurma(t.turma_id, t.turma_nome)}
                                     className="inline-flex items-center gap-1 rounded-xl bg-rose-600 px-3 py-2 text-white hover:bg-rose-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300 text-sm font-semibold"
                                     title="Resetar certificados desta turma"
                                   >

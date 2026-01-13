@@ -72,7 +72,7 @@ export default function AdminVotacoes() {
 
   const [loading, setLoading] = useState(false);
 
-  // ✅ confirmação premium p/ status (substitui window.confirm)
+  // ✅ confirmação premium p/ status
   const [confirmStatus, setConfirmStatus] = useState({
     open: false,
     nextStatus: "",

@@ -10,6 +10,7 @@
 // - Estado de erro com CTA
 // - Toggle publicar/despublicar com rollback já mantido e foco/a11y refinados
 // - Normalização de turmas: instrutores + assinante sempre alinhados e “clean()” consistente
+// - ❗️CONFIRMAÇÕES via ModalConfirmacao (excluir / publicar / despublicar)
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { toast } from "react-toastify";
@@ -27,6 +28,7 @@ import {
 
 import { apiGet, apiPost, apiPut, apiDelete } from "../services/api";
 import ModalEvento from "../components/ModalEvento";
+import ModalConfirmacao from "../components/ModalConfirmacao";
 import NenhumDado from "../components/NenhumDado";
 import SkeletonEvento from "../components/SkeletonEvento";
 import Footer from "../components/Footer";
@@ -398,6 +400,10 @@ export default function GerenciarEventos() {
   const [publishingId, setPublishingId] = useState(null);
   const [salvando, setSalvando] = useState(false);
 
+  // ── estados de confirmação via ModalConfirmacao
+  const [confirmDelete, setConfirmDelete] = useState(null); // { id, titulo }
+  const [confirmPublish, setConfirmPublish] = useState(null); // { id, titulo, publicadoAtual }
+
   const liveRef = useRef(null);
   const abortListRef = useRef(null);
   const abortEditRef = useRef(null);
@@ -486,15 +492,60 @@ export default function GerenciarEventos() {
     }
   }, []);
 
-  const excluirEvento = async (eventoId) => {
-    if (!window.confirm("Tem certeza que deseja excluir este evento?")) return;
+  /* -------- EXCLUIR (com ModalConfirmacao) -------- */
+  const pedirExclusao = (ev) => {
+    if (!ev?.id) return;
+    setConfirmDelete({ id: Number(ev.id), titulo: ev.titulo || "Evento" });
+  };
+
+  const confirmarExclusao = async () => {
+    const alvo = confirmDelete;
+    setConfirmDelete(null);
+    if (!alvo?.id) return;
+
     try {
-      await apiDelete(`/api/eventos/${eventoId}`);
+      await apiDelete(`/api/eventos/${alvo.id}`);
       toast.success("✅ Evento excluído.");
       await recarregarEventos();
     } catch (err) {
       console.error("delete evento erro:", err);
       toast.error(`❌ ${err?.message || "Erro ao excluir evento."}`);
+    }
+  };
+
+  /* -------- publicar / despublicar (admin) com ModalConfirmacao -------- */
+  const pedirTogglePublicacao = (ev) => {
+    if (!ev?.id) return;
+    setConfirmPublish({
+      id: Number(ev.id),
+      titulo: ev.titulo || "Evento",
+      publicadoAtual: !!ev.publicado,
+    });
+  };
+
+  const confirmarTogglePublicacao = async () => {
+    const alvo = confirmPublish;
+    setConfirmPublish(null);
+    if (!alvo?.id) return;
+
+    const id = alvo.id;
+    const publicado = alvo.publicadoAtual;
+    const acao = publicado ? "despublicar" : "publicar";
+
+    setPublishingId(id);
+
+    // otimista
+    setEventos((prev) => prev.map((e) => (Number(e.id) === id ? { ...e, publicado: !publicado } : e)));
+
+    try {
+      await apiPost(`/api/eventos/${id}/${acao}`, {});
+      toast.success(publicado ? "Evento despublicado." : "Evento publicado.");
+    } catch (e) {
+      // rollback
+      setEventos((prev) => prev.map((ev) => (Number(ev.id) === id ? { ...ev, publicado } : ev)));
+      toast.error(`❌ ${e?.message || "Falha ao alterar publicação."}`);
+    } finally {
+      setPublishingId(null);
     }
   };
 
@@ -663,37 +714,6 @@ export default function GerenciarEventos() {
     }
   };
 
-  /* -------- publicar / despublicar (admin) -------- */
-  const togglePublicacao = async (evento) => {
-    if (!evento?.id) return;
-    const id = Number(evento.id);
-    const publicado = !!evento.publicado;
-    const acao = publicado ? "despublicar" : "publicar";
-
-    const conf = window.confirm(
-      publicado
-        ? `Despublicar "${evento.titulo}"? Ele deixará de aparecer para os usuários.`
-        : `Publicar "${evento.titulo}"? Ele ficará visível para os usuários.`
-    );
-    if (!conf) return;
-
-    setPublishingId(id);
-
-    // otimista
-    setEventos((prev) => prev.map((e) => (Number(e.id) === id ? { ...e, publicado: !publicado } : e)));
-
-    try {
-      await apiPost(`/api/eventos/${id}/${acao}`, {});
-      toast.success(publicado ? "Evento despublicado." : "Evento publicado.");
-    } catch (e) {
-      // rollback
-      setEventos((prev) => prev.map((ev) => (Number(ev.id) === id ? { ...ev, publicado } : ev)));
-      toast.error(`❌ ${e?.message || "Falha ao alterar publicação."}`);
-    } finally {
-      setPublishingId(null);
-    }
-  };
-
   const anyLoading = loading;
 
   const headerHint = useMemo(() => {
@@ -705,6 +725,37 @@ export default function GerenciarEventos() {
     <main className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white overflow-x-hidden">
       {/* live region acessível */}
       <p ref={liveRef} className="sr-only" aria-live="polite" aria-atomic="true" />
+
+      {/* ── Modais de confirmação ── */}
+      <ModalConfirmacao
+        open={!!confirmDelete}
+        onClose={() => setConfirmDelete(null)}
+        onConfirm={confirmarExclusao}
+        titulo="Excluir evento"
+        confirmarTexto="Excluir"
+        cancelarTexto="Cancelar"
+        danger
+      >
+        <p className="text-sm text-zinc-700 dark:text-zinc-300">
+          Tem certeza que deseja excluir{" "}
+          <span className="font-semibold">{confirmDelete?.titulo}</span>? Essa ação não pode ser desfeita.
+        </p>
+      </ModalConfirmacao>
+
+      <ModalConfirmacao
+        open={!!confirmPublish}
+        onClose={() => setConfirmPublish(null)}
+        onConfirm={confirmarTogglePublicacao}
+        titulo={confirmPublish?.publicadoAtual ? "Despublicar evento" : "Publicar evento"}
+        confirmarTexto={confirmPublish?.publicadoAtual ? "Despublicar" : "Publicar"}
+        cancelarTexto="Cancelar"
+      >
+        <p className="text-sm text-zinc-700 dark:text-zinc-300">
+          {confirmPublish?.publicadoAtual
+            ? <>Despublicar <span className="font-semibold">{confirmPublish?.titulo}</span>? Ele deixará de aparecer para os usuários.</>
+            : <>Publicar <span className="font-semibold">{confirmPublish?.titulo}</span>? Ele ficará visível para os usuários.</>}
+        </p>
+      </ModalConfirmacao>
 
       {/* Header hero */}
       <HeaderHero onCriar={abrirModalCriar} onAtualizar={recarregarEventos} atualizando={anyLoading} />
@@ -827,7 +878,7 @@ export default function GerenciarEventos() {
                     <div className="flex flex-wrap gap-2 justify-end">
                       <button
                         type="button"
-                        onClick={() => togglePublicacao(ev)}
+                        onClick={() => pedirTogglePublicacao(ev)}
                         disabled={publishingId === Number(ev.id)}
                         className={`px-3 py-1.5 rounded-xl flex items-center gap-1 border text-sm font-extrabold
                           ${
@@ -862,7 +913,7 @@ export default function GerenciarEventos() {
 
                       <button
                         type="button"
-                        onClick={() => excluirEvento(ev.id)}
+                        onClick={() => pedirExclusao(ev)}
                         className="px-3 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white flex items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-300 font-extrabold text-sm"
                         aria-label={`Excluir evento ${ev.titulo}`}
                       >

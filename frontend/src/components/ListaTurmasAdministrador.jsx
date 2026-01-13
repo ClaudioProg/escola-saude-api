@@ -248,7 +248,7 @@ export default function ListaTurmasAdministrador({
   // loading por turma ao expandir
   const [loadingTurmaSet, setLoadingTurmaSet] = useState(() => new Set());
 
-  // Modais premium (sem window.confirm)
+  // Modais premium
   const [confirmPresenca, setConfirmPresenca] = useState(null); // {dataISO,turmaId,usuarioId,nome}
   const [confirmRemover, setConfirmRemover] = useState(null); // {turmaId,turmaNome}
 

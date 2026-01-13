@@ -1,4 +1,4 @@
-// ✅ src/pages/UsuarioSubmissoes.jsx — premium/robusto (ajustado p/ rotas públicas de modelos)
+// ✅ src/pages/UsuarioSubmissoes.jsx — premium/robusto (rotas públicas p/ modelos + ModalConfirmacao)
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { motion } from "framer-motion";
 import { toast } from "react-toastify";
@@ -20,6 +20,7 @@ import {
 import api, { apiGetFile, downloadBlob, apiHead } from "../services/api";
 import ModalVerEdital from "../components/ModalVerEdital";
 import ModalInscreverTrabalho from "../components/ModalInscreverTrabalho";
+import ModalConfirmacao from "../components/ModalConfirmacao";
 import Footer from "../components/Footer";
 
 /* ───────────────── Helpers de data ───────────────── */
@@ -95,9 +96,7 @@ function Chip({ children, tone = "default", title }) {
   };
   return (
     <span
-      className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
-        tones[tone] ?? tones.default
-      }`}
+      className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${tones[tone] ?? tones.default}`}
       title={title}
     >
       {children}
@@ -362,10 +361,7 @@ function NumberBullet({ n }) {
 function RegrasEDicasCardCol({ itens = [], start = 1 }) {
   return (
     <div className="rounded-2xl bg-[#fde6ef]/90 dark:bg-zinc-900/80 backdrop-blur border border-fuchsia-200/40 dark:border-white/10 shadow-sm p-5 transition-all duration-300 hover:shadow-md hover:border-fuchsia-300">
-      <ol
-        className="space-y-5 list-none pl-0 [&>li]:list-none [&>li]:marker:hidden [&>li]:before:hidden"
-        start={start}
-      >
+      <ol className="space-y-5 list-none pl-0 [&>li]:list-none [&>li]:marker:hidden [&>li]:before:hidden" start={start}>
         {itens.map((it, i) => {
           const n = start + i;
           return (
@@ -456,13 +452,7 @@ function RegrasEDicasSection() {
 }
 
 /* ───────────────── Constantes internas ───────────────── */
-const BLOQUEADOS = new Set([
-  "em_avaliacao",
-  "aprovado_exposicao",
-  "aprovado_oral",
-  "aprovado_escrita",
-  "reprovado",
-]);
+const BLOQUEADOS = new Set(["em_avaliacao", "aprovado_exposicao", "aprovado_oral", "aprovado_escrita", "reprovado"]);
 
 /* ───────────────── Página principal ───────────────── */
 export default function UsuarioSubmissoes() {
@@ -485,6 +475,9 @@ export default function UsuarioSubmissoes() {
 
   const [excluindoId, setExcluindoId] = useState(null);
 
+  // confirmação com modal
+  const [confirmacao, setConfirmacao] = useState(null); // { id, titulo }
+
   // filtro local (minhas)
   const [q, setQ] = useState("");
 
@@ -503,7 +496,6 @@ export default function UsuarioSubmissoes() {
 
   /* ───── helpers de HEAD (200/204) ───── */
   function headExists(resp) {
-    // aceita formatos diferentes vindos de apiHead
     if (resp === true || resp === 200 || resp === 204) return true;
     const st = resp?.status ?? resp?.data?.status;
     return st === 200 || st === 204;
@@ -542,16 +534,24 @@ export default function UsuarioSubmissoes() {
   /* ───── HEAD checks (banner/oral) — público ───── */
   const checkModeloBanner = useCallback(async (chId) => {
     try {
-      const resp = await apiHead(`/chamadas/${chId}/modelo-banner`, { auth: true, on401: "silent", on403: "silent" });
+      const resp = await apiHead(`/chamadas/${chId}/modelo-banner`, {
+        auth: false,
+        on401: "silent",
+        on403: "silent",
+      });
       return headExists(resp);
     } catch {
-      return false; // 404/410 → indisponível (estado esperado)
+      return false;
     }
   }, []);
 
   const checkModeloOral = useCallback(async (chId) => {
     try {
-      const resp = await apiHead(`/chamadas/${chId}/modelo-oral`, { auth: true, on401: "silent", on403: "silent" });
+      const resp = await apiHead(`/chamadas/${chId}/modelo-oral`, {
+        auth: false,
+        on401: "silent",
+        on403: "silent",
+      });
       return headExists(resp);
     } catch {
       return false;
@@ -648,31 +648,24 @@ export default function UsuarioSubmissoes() {
 
       if (st === "submetido") c.submetido++;
       else if (st === "em_avaliacao") c.em_avaliacao++;
-      else if (
-        st === "aprovado_exposicao" ||
-        st === "aprovado_oral" ||
-        st === "aprovado_escrita" ||
-        st === "aprovado" ||
-        expo ||
-        oral
-      )
+      else if (st === "aprovado_exposicao" || st === "aprovado_oral" || st === "aprovado_escrita" || st === "aprovado" || expo || oral)
         c.aprovado++;
       else if (st === "reprovado") c.reprovado++;
     }
     return c;
   }, [minhas]);
 
-  /* ───── excluir submissão ───── */
-  const handleExcluir = async (id) => {
-    if (!id) return;
-    const ok = window.confirm("Tem certeza que deseja excluir esta submissão? Essa ação não pode ser desfeita.");
-    if (!ok) return;
+  /* ───── fluxo de exclusão (ModalConfirmacao) ───── */
+  const pedirExclusao = (row) => {
+    setConfirmacao({ id: row?.id, titulo: row?.titulo || "submissão" });
+  };
 
+  const confirmarExclusao = async () => {
+    if (!confirmacao?.id) return;
     try {
-      setExcluindoId(id);
-      if (typeof api.delete === "function") await api.delete(`/submissoes/${id}`);
-      else await api({ method: "DELETE", url: `/submissoes/${id}` });
-
+      setExcluindoId(confirmacao.id);
+      if (typeof api.delete === "function") await api.delete(`/submissoes/${confirmacao.id}`);
+      else await api({ method: "DELETE", url: `/submissoes/${confirmacao.id}` });
       await handleSucesso();
       toast.success("Submissão excluída com sucesso.");
     } catch (e) {
@@ -680,6 +673,7 @@ export default function UsuarioSubmissoes() {
       toast.error("Não foi possível excluir a submissão.");
     } finally {
       setExcluindoId(null);
+      setConfirmacao(null);
     }
   };
 
@@ -689,13 +683,7 @@ export default function UsuarioSubmissoes() {
     if (!term) return minhas;
 
     return minhas.filter((m) => {
-      const hay = [
-        m.titulo,
-        m.chamada_titulo,
-        m.status,
-        m.linha_tematica_nome,
-        m.linha_tematica_codigo,
-      ]
+      const hay = [m.titulo, m.chamada_titulo, m.status, m.linha_tematica_nome, m.linha_tematica_codigo]
         .filter(Boolean)
         .join(" • ")
         .toLowerCase();
@@ -714,13 +702,31 @@ export default function UsuarioSubmissoes() {
 
   return (
     <div className="min-h-screen flex flex-col bg-zinc-50 dark:bg-neutral-900 text-black dark:text-white">
+      {/* Modal de confirmação */}
+      <ModalConfirmacao
+        open={!!confirmacao}
+        onClose={() => setConfirmacao(null)}
+        onConfirm={confirmarExclusao}
+        titulo="Excluir submissão"
+        confirmarTexto="Excluir"
+        cancelarTexto="Cancelar"
+        danger
+      >
+        <p className="text-sm text-zinc-700 dark:text-zinc-300">
+          Tem certeza que deseja <strong>excluir</strong> a submissão
+          {confirmacao?.titulo ? <> <em className="font-semibold">“{confirmacao.titulo}”</em></> : null}? Essa ação não pode ser desfeita.
+        </p>
+      </ModalConfirmacao>
+
       <HeaderHero onRefresh={refresh} refreshing={refreshing} />
 
       <main id="conteudo" className="flex-1">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 sm:py-10 space-y-10">
           {/* ───── Mini Stats ───── */}
           <section aria-labelledby="metricas">
-            <h2 id="metricas" className="sr-only">Métricas de Submissões</h2>
+            <h2 id="metricas" className="sr-only">
+              Métricas de Submissões
+            </h2>
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
               <Card className="p-4">
@@ -767,7 +773,9 @@ export default function UsuarioSubmissoes() {
 
           {/* ───── Regras & Dicas ───── */}
           <section aria-labelledby="regras-dicas">
-            <h2 id="regras-dicas" className="sr-only">Regras e Dicas</h2>
+            <h2 id="regras-dicas" className="sr-only">
+              Regras e Dicas
+            </h2>
             <RegrasEDicasSection />
           </section>
 
@@ -781,9 +789,7 @@ export default function UsuarioSubmissoes() {
             </div>
 
             {chamadas.length === 0 ? (
-              <p className="text-slate-600 dark:text-slate-300 italic text-center">
-                Nenhuma chamada disponível no momento.
-              </p>
+              <p className="text-slate-600 dark:text-slate-300 italic text-center">Nenhuma chamada disponível no momento.</p>
             ) : (
               <div className="grid md:grid-cols-2 gap-5">
                 {chamadas.map((ch) => {
@@ -796,13 +802,7 @@ export default function UsuarioSubmissoes() {
                   const dentro = !!(ch?.dentro_prazo ?? ch?.dentroPrazo);
 
                   return (
-                    <motion.div
-                      key={ch.id}
-                      initial={{ opacity: 0, y: 18 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.25 }}
-                      className="group"
-                    >
+                    <motion.div key={ch.id} initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }} className="group">
                       <Card className="p-5 h-full transition-shadow group-hover:shadow-md">
                         <div className="flex flex-col justify-between h-full">
                           <div>
@@ -816,9 +816,13 @@ export default function UsuarioSubmissoes() {
 
                             <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-xs font-medium text-zinc-800 dark:text-zinc-200">
                               {dentro ? (
-                                <Chip tone="verde" title="Dentro do prazo">Dentro do prazo</Chip>
+                                <Chip tone="verde" title="Dentro do prazo">
+                                  Dentro do prazo
+                                </Chip>
                               ) : (
-                                <Chip tone="vermelho" title="Fora do prazo">Fora do prazo</Chip>
+                                <Chip tone="vermelho" title="Fora do prazo">
+                                  Fora do prazo
+                                </Chip>
                               )}
                               <span className="text-slate-600 dark:text-slate-300">
                                 Prazo final (data e horário): <strong>{prazoFmt}</strong>
@@ -841,7 +845,7 @@ export default function UsuarioSubmissoes() {
                               <button
                                 type="button"
                                 onClick={() => setModalInscricao({ chamadaId: ch.id })}
-                                className="flex itemsler gap-2 text-sm bg-indigo-600 text-white px-3 py-2 rounded-md hover:bg-indigo-700 transition focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                                className="flex items-center gap-2 text-sm bg-indigo-600 text-white px-3 py-2 rounded-md hover:bg-indigo-700 transition focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                                 aria-label="Submeter trabalho"
                               >
                                 <PlusCircle className="w-4 h-4" />
@@ -898,7 +902,9 @@ export default function UsuarioSubmissoes() {
 
             {/* Busca local */}
             <div className="max-w-2xl mx-auto mb-4">
-              <label htmlFor="busca-minhas" className="sr-only">Buscar nas minhas submissões</label>
+              <label htmlFor="busca-minhas" className="sr-only">
+                Buscar nas minhas submissões
+              </label>
               <div className="relative">
                 <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" aria-hidden="true" />
                 <input
@@ -914,9 +920,7 @@ export default function UsuarioSubmissoes() {
             </div>
 
             {minhas.length === 0 ? (
-              <p className="text-slate-600 dark:text-slate-300 italic text-center">
-                Você ainda não submeteu nenhum trabalho.
-              </p>
+              <p className="text-slate-600 dark:text-slate-300 italic text-center">Você ainda não submeteu nenhum trabalho.</p>
             ) : minhasFiltradas.length === 0 ? (
               <Card className="p-6 text-center text-sm text-slate-600 dark:text-slate-300">
                 Nenhuma submissão encontrada para o termo informado.
@@ -939,7 +943,7 @@ export default function UsuarioSubmissoes() {
                       podeExcluir={podeExcluir}
                       excluindo={excluindoId === m.id}
                       onEditar={() => setModalInscricao({ submissaoId: m.id })}
-                      onExcluir={() => handleExcluir(m.id)}
+                      onExcluir={() => pedirExclusao(m)}
                       hasModeloOral={hasModeloOral}
                       baixandoModeloOral={baixandoOral}
                       onBaixarModeloOral={() => baixarModeloOral(chId)}

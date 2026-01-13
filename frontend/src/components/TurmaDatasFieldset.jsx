@@ -1,7 +1,8 @@
 // 📁 src/components/TurmaDatasFieldset.jsx
-import { useId, useMemo, useCallback } from "react";
+import { useId, useMemo, useCallback, useState } from "react";
 import PropTypes from "prop-types";
 import { Plus, Trash2, Copy } from "lucide-react";
+import ModalConfirmacao from "./ModalConfirmacao";
 
 /**
  * TurmaDatasFieldset (premium)
@@ -14,9 +15,17 @@ export default function TurmaDatasFieldset({
   value,
   onChange,
   className = "",
-  confirmOnRemove = false, // opcional: confirma remoção
+  confirmOnRemove = false,
+  confirmModalTitle = "Remover data da turma",
+  confirmModalMessage = "Tem certeza de que deseja remover esta data? Essa ação não pode ser desfeita.",
+  confirmModalConfirmText = "Remover",
+  confirmModalCancelText = "Cancelar",
 }) {
   const idBase = useId();
+
+  // ─────────────── estado do modal de confirmação ───────────────
+  const [pendingRemoveIndex, setPendingRemoveIndex] = useState(null);
+  const closeConfirm = () => setPendingRemoveIndex(null);
 
   /* ─────────────── helpers ─────────────── */
 
@@ -130,15 +139,15 @@ export default function TurmaDatasFieldset({
     ]);
   }, [rows, setRows, toHHMM]);
 
-  const removeRow = useCallback(
+  // inicia fluxo de remoção
+  const requestRemoveRow = useCallback(
     (idx) => {
-      if (rows.length <= 1) return;
-
+      if (rows.length <= 1) return; // mantém pelo menos uma linha
       if (confirmOnRemove) {
-        const ok = window.confirm("Remover esta data da turma?");
-        if (!ok) return;
+        setPendingRemoveIndex(idx); // abre modal
+        return;
       }
-
+      // sem confirmação: remove direto
       const arr = [...rows];
       arr.splice(idx, 1);
       setRows(arr);
@@ -146,14 +155,22 @@ export default function TurmaDatasFieldset({
     [rows, setRows, confirmOnRemove]
   );
 
+  // confirma remoção via modal
+  const confirmRemoveRow = useCallback(() => {
+    if (pendingRemoveIndex == null) return;
+    const idx = pendingRemoveIndex;
+    setPendingRemoveIndex(null);
+    const arr = [...rows];
+    if (idx >= 0 && idx < arr.length) {
+      arr.splice(idx, 1);
+      setRows(arr);
+    }
+  }, [pendingRemoveIndex, rows, setRows]);
+
   const updateRow = useCallback(
     (idx, field, v) => {
       const arr = [...rows];
-      const nextVal =
-        field === "horario_inicio" || field === "horario_fim"
-          ? toHHMM(v)
-          : normData(v);
-
+      const nextVal = field === "horario_inicio" || field === "horario_fim" ? toHHMM(v) : normData(v);
       arr[idx] = { ...arr[idx], [field]: nextVal };
       setRows(arr);
     },
@@ -163,65 +180,78 @@ export default function TurmaDatasFieldset({
   const podeRemover = rows.length > 1;
 
   return (
-    <fieldset className={`space-y-3 ${className}`}>
-      <legend className="sr-only">Datas da turma</legend>
+    <>
+      {/* Modal de confirmação (somente quando necessário) */}
+      <ModalConfirmacao
+        open={pendingRemoveIndex != null}
+        onClose={closeConfirm}
+        onConfirm={confirmRemoveRow}
+        titulo={confirmModalTitle}
+        confirmarTexto={confirmModalConfirmText}
+        cancelarTexto={confirmModalCancelText}
+        danger
+      >
+        <p className="text-sm text-zinc-600 dark:text-zinc-300">{confirmModalMessage}</p>
+      </ModalConfirmacao>
 
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-        <div className="min-w-0">
-          <div className="font-extrabold text-sm text-gray-800 dark:text-gray-100">
-            Datas da turma
-            <span className="ml-2 text-xs font-semibold text-gray-500 dark:text-gray-400">
-              ({rows.length} {rows.length > 1 ? "linhas" : "linha"})
-            </span>
+      <fieldset className={`space-y-3 ${className}`}>
+        <legend className="sr-only">Datas da turma</legend>
+
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+          <div className="min-w-0">
+            <div className="font-extrabold text-sm text-gray-800 dark:text-gray-100">
+              Datas da turma
+              <span className="ml-2 text-xs font-semibold text-gray-500 dark:text-gray-400">
+                ({rows.length} {rows.length > 1 ? "linhas" : "linha"})
+              </span>
+            </div>
+            <div className="text-[12px] text-gray-500 dark:text-gray-400">
+              Cadastre as datas e horários. Evite datas duplicadas (o sistema alerta).
+            </div>
           </div>
-          <div className="text-[12px] text-gray-500 dark:text-gray-400">
-            Cadastre as datas e horários. Evite datas duplicadas (o sistema alerta).
+
+          <div className="flex items-center gap-2 justify-start sm:justify-end">
+            <button
+              type="button"
+              onClick={duplicateLast}
+              className="inline-flex items-center gap-2 text-xs px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 dark:border-white/10 dark:bg-zinc-900/35 dark:text-zinc-200 dark:hover:bg-white/5 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+              title="Duplicar último horário (data em branco)"
+            >
+              <Copy size={16} />
+              Duplicar horário
+            </button>
+
+            <button
+              type="button"
+              onClick={addRow}
+              className="inline-flex items-center gap-2 text-xs px-3 py-2 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/60"
+              title="Adicionar nova data"
+            >
+              <Plus size={16} />
+              Adicionar
+            </button>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 justify-start sm:justify-end">
-          <button
-            type="button"
-            onClick={duplicateLast}
-            className="inline-flex items-center gap-2 text-xs px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 dark:border-white/10 dark:bg-zinc-900/35 dark:text-zinc-200 dark:hover:bg-white/5 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-            title="Duplicar último horário (data em branco)"
-          >
-            <Copy size={16} />
-            Duplicar horário
-          </button>
+        <div className="space-y-2">
+          {rows.map((row, i) => {
+            const dataId = `${idBase}-data-${i}`;
+            const iniId = `${idBase}-ini-${i}`;
+            const fimId = `${idBase}-fim-${i}`;
+            const msgId = `${idBase}-msg-${i}`;
 
-          <button
-            type="button"
-            onClick={addRow}
-            className="inline-flex items-center gap-2 text-xs px-3 py-2 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/60"
-            title="Adicionar nova data"
-          >
-            <Plus size={16} />
-            Adicionar
-          </button>
-        </div>
-      </div>
+            const dataVal = normData(row?.data);
+            const iniVal = toHHMM(row?.horario_inicio || "");
+            const fimVal = toHHMM(row?.horario_fim || "");
 
-      <div className="space-y-2">
-        {rows.map((row, i) => {
-          const dataId = `${idBase}-data-${i}`;
-          const iniId = `${idBase}-ini-${i}`;
-          const fimId = `${idBase}-fim-${i}`;
-          const msgId = `${idBase}-msg-${i}`;
+            const invalidHora = isHorarioInvalido(iniVal, fimVal);
+            const incomplete =
+              (!!dataVal && (!iniVal || !fimVal)) || ((!!iniVal || !!fimVal) && !dataVal);
 
-          const dataVal = normData(row?.data);
-          const iniVal = toHHMM(row?.horario_inicio || "");
-          const fimVal = toHHMM(row?.horario_fim || "");
+            const dup = dataVal && (dupDates.get(dataVal) || 0) > 1;
 
-          const invalidHora = isHorarioInvalido(iniVal, fimVal);
-          const incomplete =
-            (!!dataVal && (!iniVal || !fimVal)) || (!!iniVal || !!fimVal) && !dataVal;
-
-          const dup = dataVal && (dupDates.get(dataVal) || 0) > 1;
-
-          // mensagem prioriza o erro mais grave
-          const msg =
-            invalidHora
+            // mensagem prioriza o erro mais grave
+            const msg = invalidHora
               ? "O término deve ser maior ou igual ao início."
               : incomplete
               ? "Preencha data, início e fim."
@@ -229,123 +259,130 @@ export default function TurmaDatasFieldset({
               ? "Data duplicada: verifique se não repetiu o dia."
               : "";
 
-          const isInvalid = !!msg;
+            const isInvalid = !!msg;
 
-          return (
-            <div
-              key={`${idBase}-${i}`}
-              className={[
-                "rounded-2xl border p-3 sm:p-4",
-                "bg-white dark:bg-zinc-900/40",
-                isInvalid
-                  ? "border-rose-300/70 dark:border-rose-500/30"
-                  : "border-gray-200 dark:border-zinc-700",
-              ].join(" ")}
-            >
-              <div className="grid grid-cols-12 gap-2 items-end">
-                {/* Data */}
-                <div className="col-span-12 sm:col-span-4">
-                  <label htmlFor={dataId} className="text-xs font-semibold text-gray-600 dark:text-gray-300">
-                    Data
-                  </label>
-                  <input
-                    id={dataId}
-                    type="date"
-                    className={[
-                      "w-full rounded-xl px-3 py-2 bg-white dark:bg-zinc-800 dark:text-white",
-                      "border focus:outline-none focus:ring-2",
-                      isInvalid ? "border-rose-300 focus:ring-rose-500/30" : "border-gray-300 dark:border-zinc-600 focus:ring-emerald-500/40",
-                    ].join(" ")}
-                    value={dataVal}
-                    onChange={(e) => updateRow(i, "data", e.target.value)}
-                    required
-                    aria-invalid={isInvalid}
-                    aria-describedby={isInvalid ? msgId : undefined}
-                  />
+            return (
+              <div
+                key={`${idBase}-${i}`}
+                className={[
+                  "rounded-2xl border p-3 sm:p-4",
+                  "bg-white dark:bg-zinc-900/40",
+                  isInvalid
+                    ? "border-rose-300/70 dark:border-rose-500/30"
+                    : "border-gray-200 dark:border-zinc-700",
+                ].join(" ")}
+              >
+                <div className="grid grid-cols-12 gap-2 items-end">
+                  {/* Data */}
+                  <div className="col-span-12 sm:col-span-4">
+                    <label htmlFor={dataId} className="text-xs font-semibold text-gray-600 dark:text-gray-300">
+                      Data
+                    </label>
+                    <input
+                      id={dataId}
+                      type="date"
+                      className={[
+                        "w-full rounded-xl px-3 py-2 bg-white dark:bg-zinc-800 dark:text-white",
+                        "border focus:outline-none focus:ring-2",
+                        isInvalid
+                          ? "border-rose-300 focus:ring-rose-500/30"
+                          : "border-gray-300 dark:border-zinc-600 focus:ring-emerald-500/40",
+                      ].join(" ")}
+                      value={dataVal}
+                      onChange={(e) => updateRow(i, "data", e.target.value)}
+                      required
+                      aria-invalid={isInvalid}
+                      aria-describedby={isInvalid ? msgId : undefined}
+                    />
+                  </div>
+
+                  {/* Início */}
+                  <div className="col-span-6 sm:col-span-3">
+                    <label htmlFor={iniId} className="text-xs font-semibold text-gray-600 dark:text-gray-300">
+                      Início
+                    </label>
+                    <input
+                      id={iniId}
+                      type="time"
+                      step={300}
+                      className={[
+                        "w-full rounded-xl px-3 py-2 bg-white dark:bg-zinc-800 dark:text-white",
+                        "border focus:outline-none focus:ring-2",
+                        isInvalid
+                          ? "border-rose-300 focus:ring-rose-500/30"
+                          : "border-gray-300 dark:border-zinc-600 focus:ring-emerald-500/40",
+                      ].join(" ")}
+                      value={iniVal}
+                      onChange={(e) => updateRow(i, "horario_inicio", e.target.value)}
+                      required
+                      aria-invalid={isInvalid}
+                      aria-describedby={isInvalid ? msgId : undefined}
+                    />
+                  </div>
+
+                  {/* Fim */}
+                  <div className="col-span-6 sm:col-span-3">
+                    <label htmlFor={fimId} className="text-xs font-semibold text-gray-600 dark:text-gray-300">
+                      Fim
+                    </label>
+                    <input
+                      id={fimId}
+                      type="time"
+                      step={300}
+                      className={[
+                        "w-full rounded-xl px-3 py-2 bg-white dark:bg-zinc-800 dark:text-white",
+                        "border focus:outline-none focus:ring-2",
+                        isInvalid
+                          ? "border-rose-300 focus:ring-rose-500/30"
+                          : "border-gray-300 dark:border-zinc-600 focus:ring-emerald-500/40",
+                      ].join(" ")}
+                      value={fimVal}
+                      onChange={(e) => updateRow(i, "horario_fim", e.target.value)}
+                      required
+                      aria-invalid={isInvalid}
+                      aria-describedby={isInvalid ? msgId : undefined}
+                    />
+                  </div>
+
+                  {/* Remover */}
+                  <div className="col-span-12 sm:col-span-2 flex">
+                    <button
+                      type="button"
+                      onClick={() => requestRemoveRow(i)}
+                      className={[
+                        "ml-auto inline-flex items-center justify-center gap-2",
+                        "px-3 py-2 rounded-xl border text-sm font-bold",
+                        "border-rose-300 text-rose-700 hover:bg-rose-50",
+                        "dark:border-rose-500/30 dark:text-rose-200 dark:hover:bg-rose-500/10",
+                        "focus:outline-none focus:ring-2 focus:ring-rose-500/30",
+                        "disabled:opacity-50 disabled:cursor-not-allowed",
+                      ].join(" ")}
+                      disabled={!podeRemover}
+                      title={podeRemover ? "Remover esta data" : "Mantenha ao menos uma data"}
+                      aria-disabled={!podeRemover}
+                    >
+                      <Trash2 size={16} />
+                      Remover
+                    </button>
+                  </div>
+
+                  {/* Mensagem */}
+                  {isInvalid && (
+                    <p
+                      id={msgId}
+                      className="col-span-12 text-xs font-semibold text-rose-600 dark:text-rose-300 mt-1"
+                      aria-live="polite"
+                    >
+                      {msg}
+                    </p>
+                  )}
                 </div>
-
-                {/* Início */}
-                <div className="col-span-6 sm:col-span-3">
-                  <label htmlFor={iniId} className="text-xs font-semibold text-gray-600 dark:text-gray-300">
-                    Início
-                  </label>
-                  <input
-                    id={iniId}
-                    type="time"
-                    step={300}
-                    className={[
-                      "w-full rounded-xl px-3 py-2 bg-white dark:bg-zinc-800 dark:text-white",
-                      "border focus:outline-none focus:ring-2",
-                      isInvalid ? "border-rose-300 focus:ring-rose-500/30" : "border-gray-300 dark:border-zinc-600 focus:ring-emerald-500/40",
-                    ].join(" ")}
-                    value={iniVal}
-                    onChange={(e) => updateRow(i, "horario_inicio", e.target.value)}
-                    required
-                    aria-invalid={isInvalid}
-                    aria-describedby={isInvalid ? msgId : undefined}
-                  />
-                </div>
-
-                {/* Fim */}
-                <div className="col-span-6 sm:col-span-3">
-                  <label htmlFor={fimId} className="text-xs font-semibold text-gray-600 dark:text-gray-300">
-                    Fim
-                  </label>
-                  <input
-                    id={fimId}
-                    type="time"
-                    step={300}
-                    className={[
-                      "w-full rounded-xl px-3 py-2 bg-white dark:bg-zinc-800 dark:text-white",
-                      "border focus:outline-none focus:ring-2",
-                      isInvalid ? "border-rose-300 focus:ring-rose-500/30" : "border-gray-300 dark:border-zinc-600 focus:ring-emerald-500/40",
-                    ].join(" ")}
-                    value={fimVal}
-                    onChange={(e) => updateRow(i, "horario_fim", e.target.value)}
-                    required
-                    aria-invalid={isInvalid}
-                    aria-describedby={isInvalid ? msgId : undefined}
-                  />
-                </div>
-
-                {/* Remover */}
-                <div className="col-span-12 sm:col-span-2 flex">
-                  <button
-                    type="button"
-                    onClick={() => removeRow(i)}
-                    className={[
-                      "ml-auto inline-flex items-center justify-center gap-2",
-                      "px-3 py-2 rounded-xl border text-sm font-bold",
-                      "border-rose-300 text-rose-700 hover:bg-rose-50",
-                      "dark:border-rose-500/30 dark:text-rose-200 dark:hover:bg-rose-500/10",
-                      "focus:outline-none focus:ring-2 focus:ring-rose-500/30",
-                      "disabled:opacity-50 disabled:cursor-not-allowed",
-                    ].join(" ")}
-                    disabled={!podeRemover}
-                    title={podeRemover ? "Remover esta data" : "Mantenha ao menos uma data"}
-                    aria-disabled={!podeRemover}
-                  >
-                    <Trash2 size={16} />
-                    Remover
-                  </button>
-                </div>
-
-                {/* Mensagem */}
-                {isInvalid && (
-                  <p
-                    id={msgId}
-                    className="col-span-12 text-xs font-semibold text-rose-600 dark:text-rose-300 mt-1"
-                    aria-live="polite"
-                  >
-                    {msg}
-                  </p>
-                )}
               </div>
-            </div>
-          );
-        })}
-      </div>
-    </fieldset>
+            );
+          })}
+        </div>
+      </fieldset>
+    </>
   );
 }
 
@@ -360,4 +397,8 @@ TurmaDatasFieldset.propTypes = {
   onChange: PropTypes.func.isRequired,
   className: PropTypes.string,
   confirmOnRemove: PropTypes.bool,
+  confirmModalTitle: PropTypes.string,
+  confirmModalMessage: PropTypes.string,
+  confirmModalConfirmText: PropTypes.string,
+  confirmModalCancelText: PropTypes.string,
 };

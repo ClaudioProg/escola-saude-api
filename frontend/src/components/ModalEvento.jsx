@@ -1,5 +1,5 @@
 /* eslint-disable no-console */
-// ✅ src/components/ModalEvento.jsx (Premium + A11y + Upload flags seguras + Logger sem spam + ModalConfirmacao no lugar de window.confirm)
+// ✅ src/components/ModalEvento.jsx (Premium + A11y + Upload flags seguras + Logger sem spam + ModalConfirmacao)
 import { useEffect, useMemo, useRef, useState, useTransition, useId, useCallback } from "react";
 import { toast } from "react-toastify";
 import {
@@ -239,7 +239,7 @@ export default function ModalEvento({
   const [modalTurmaAberto, setModalTurmaAberto] = useState(false);
   const [removendoId, setRemovendoId] = useState(null);
 
-  // ✅ Confirmação Premium (substitui window.confirm)
+  // ✅ Confirmação Premium
   const [confirm, setConfirm] = useState({
     open: false,
     turma: null,
@@ -1466,7 +1466,7 @@ export default function ModalEvento({
         </div>
       </ModalBase>
 
-      {/* ✅ MODAL CONFIRMAÇÃO (substitui window.confirm) */}
+      {/* ✅ MODAL CONFIRMAÇÃO */}
       <ModalConfirmacao
         isOpen={!!confirm.open}
         title={confirm.title}

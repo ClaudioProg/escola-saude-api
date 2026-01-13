@@ -1,6 +1,6 @@
 // 📁 src/components/ModalBase.jsx
 /* eslint-disable react/prop-types */
-import React, { useEffect, useId, useMemo, useRef, useState, useCallback } from "react";
+import React, { useEffect, useId, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 
 /**
@@ -16,6 +16,8 @@ import { createPortal } from "react-dom";
  * - closeOnBackdrop?: boolean (default: true)
  * - closeOnEsc?: boolean (default: true)
  * - initialFocusRef?: React.RefObject<HTMLElement>
+ * - debug?: boolean (default: false) — logs para depuração de cliques/stack
+ * - debugName?: string (default: "ModalBase") — prefixo dos logs
  */
 
 const FOCUSABLE_SEL = [
@@ -52,11 +54,9 @@ function isElementActuallyFocusable(el) {
   if (el.getAttribute("aria-hidden") === "true") return false;
   if (el.tabIndex === -1) return false;
 
-  // evita elementos invisíveis / colapsados
   const rect = el.getBoundingClientRect?.();
   if (!rect || (rect.width === 0 && rect.height === 0)) return false;
 
-  // se estiver display:none, offsetParent costuma ser null (mas cuidado: position:fixed)
   const style = window.getComputedStyle?.(el);
   if (style && (style.display === "none" || style.visibility === "hidden")) return false;
 
@@ -81,7 +81,6 @@ function getScrollbarWidth() {
 /* ====================== ARIA app hiding (a11y) ====================== */
 function getAppRootsToHide(modalRootId = "modal-root") {
   const bodyChildren = Array.from(document.body.children || []);
-  // Esconde tudo exceto o modal-root (e qualquer coisa que já esteja aria-hidden)
   return bodyChildren.filter((el) => el.id !== modalRootId);
 }
 
@@ -98,8 +97,19 @@ export default function ModalBase({
   closeOnBackdrop = true,
   closeOnEsc = true,
   initialFocusRef,
+  debug = false,
+  debugName = "ModalBase",
 }) {
   const [portalEl, setPortalEl] = useState(null);
+
+  const dlog = useCallback(
+    (...args) => {
+      if (!debug) return;
+      // eslint-disable-next-line no-console
+      console.log(`[${debugName}]`, ...args);
+    },
+    [debug, debugName]
+  );
 
   // Portal root (cria 1x)
   useEffect(() => {
@@ -110,9 +120,10 @@ export default function ModalBase({
       root = document.createElement("div");
       root.id = "modal-root";
       document.body.appendChild(root);
+      dlog("created #modal-root");
     }
     setPortalEl(root);
-  }, [isOpen]);
+  }, [isOpen, dlog]);
 
   // IDs ARIA estáveis
   const autoTitleId = useId();
@@ -134,6 +145,19 @@ export default function ModalBase({
     return level >= top;
   }, [level]);
 
+  /* ====================== Debug snapshot (open) ====================== */
+  useEffect(() => {
+    if (!isOpen || !debug) return;
+    const top = getTopmostLevel();
+    dlog("OPEN", { level, BASE_Z, topmostLevel: top, isTopmost: isTopmost() });
+
+    const stack = getAllModalContents().map((el) => ({
+      level: Number(el.getAttribute("data-level") || 0),
+      rect: el.getBoundingClientRect?.(),
+    }));
+    dlog("STACK contents:", stack);
+  }, [isOpen, debug, dlog, level, BASE_Z, isTopmost]);
+
   /* ====================== Lock scroll (with gap) ====================== */
   useEffect(() => {
     if (!isOpen) return;
@@ -141,30 +165,31 @@ export default function ModalBase({
     const prevOverflow = document.body.style.overflow;
     const prevPaddingRight = document.body.style.paddingRight;
 
-    // Só aplica se for o topmost (melhor com múltiplos empilhados)
     if (isTopmost()) {
       const sw = getScrollbarWidth();
       document.body.style.overflow = "hidden";
       if (sw > 0) document.body.style.paddingRight = `${sw}px`;
+      dlog("scrollLock ON", { sw });
+    } else {
+      dlog("scrollLock skipped (not topmost)");
     }
 
     return () => {
-      // restaura apenas quando FECHA este modal e ele era topmost
-      // (se outro modal acima ainda está aberto, não desfaz)
       const top = getTopmostLevel();
-      const stillHasTop = top > -Infinity;
-      if (!stillHasTop) {
+      const stillHasAny = top > -Infinity;
+      if (!stillHasAny) {
         document.body.style.overflow = prevOverflow || "";
         document.body.style.paddingRight = prevPaddingRight || "";
+        dlog("scrollLock OFF (no modals left)");
+      } else {
+        dlog("scrollLock keep (another modal still open)", { top });
       }
     };
-  }, [isOpen, isTopmost]);
+  }, [isOpen, isTopmost, dlog]);
 
   /* ====================== Hide app roots for a11y (topmost) ====================== */
   useEffect(() => {
     if (!isOpen) return;
-
-    // só o topmost deve "mandar" no aria-hidden do app
     if (!isTopmost()) return;
 
     const roots = getAppRootsToHide("modal-root");
@@ -174,19 +199,23 @@ export default function ModalBase({
       prev.set(el, el.getAttribute("aria-hidden"));
       el.setAttribute("aria-hidden", "true");
     }
+    dlog("aria-hidden ON for app roots:", roots.map((r) => r.id || r.tagName));
 
     return () => {
-      // só restaura se não houver outro modal aberto
       const top = getTopmostLevel();
       const stillHasAny = top > -Infinity;
-      if (stillHasAny) return;
+      if (stillHasAny) {
+        dlog("aria-hidden keep (another modal still open)", { top });
+        return;
+      }
 
       for (const [el, old] of prev.entries()) {
         if (old == null) el.removeAttribute("aria-hidden");
         else el.setAttribute("aria-hidden", old);
       }
+      dlog("aria-hidden OFF (no modals left)");
     };
-  }, [isOpen, isTopmost]);
+  }, [isOpen, isTopmost, dlog]);
 
   /* ====================== Focus: only on closed→open + topmost ====================== */
   useEffect(() => {
@@ -205,6 +234,7 @@ export default function ModalBase({
         const active = document.activeElement;
         if (active && root.contains(active)) {
           openedOnceRef.current = true;
+          dlog("focus already inside modal");
           return;
         }
 
@@ -218,6 +248,7 @@ export default function ModalBase({
 
         el?.focus?.();
         openedOnceRef.current = true;
+        dlog("focused", el?.tagName, el?.className);
       }, 0);
 
       return () => clearTimeout(id);
@@ -233,10 +264,11 @@ export default function ModalBase({
         }
       }
       openedOnceRef.current = false;
+      dlog("restored focus to previous element");
     }
 
     prevIsOpenRef.current = isOpen;
-  }, [isOpen, isTopmost, initialFocusRef]);
+  }, [isOpen, isTopmost, initialFocusRef, dlog]);
 
   /* ====================== Keyboard: ESC + focus trap ====================== */
   useEffect(() => {
@@ -249,17 +281,18 @@ export default function ModalBase({
       const active = document.activeElement;
       const focusInside = active && root.contains(active);
 
-      // ESC: só topmost + foco dentro
       if (e.key === "Escape" && closeOnEsc) {
         if (isTopmost() && focusInside) {
           e.stopPropagation();
           e.preventDefault();
+          dlog("ESC → close");
           onClose?.();
+        } else {
+          dlog("ESC ignored", { focusInside, isTopmost: isTopmost() });
         }
         return;
       }
 
-      // TAB trap só se foco dentro
       if (e.key === "Tab" && focusInside) {
         const nodes = getFocusable(root);
         if (!nodes.length) {
@@ -281,27 +314,67 @@ export default function ModalBase({
 
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [isOpen, onClose, closeOnEsc, isTopmost]);
+  }, [isOpen, onClose, closeOnEsc, isTopmost, dlog]);
 
   /* ====================== Backdrop click (topmost) ====================== */
   const pointerDownTarget = useRef(null);
 
   const onPointerDown = (e) => {
     pointerDownTarget.current = e.target;
+    if (debug) {
+      dlog("backdrop pointerDown", {
+        targetIsBackdrop: e.target === overlayRef.current,
+        topmostLevel: getTopmostLevel(),
+        isTopmost: isTopmost(),
+      });
+    }
   };
 
   const onPointerUp = (e) => {
     if (!closeOnBackdrop) return;
     if (!isTopmost()) return;
 
-    // fecha apenas se down e up foram no backdrop (evita arrasto)
     const down = pointerDownTarget.current;
     const up = e.target;
 
+    if (debug) {
+      dlog("backdrop pointerUp", {
+        downIsBackdrop: down === overlayRef.current,
+        upIsBackdrop: up === overlayRef.current,
+      });
+    }
+
     if (down === overlayRef.current && up === overlayRef.current) {
+      dlog("closing by backdrop");
       onClose?.();
     }
   };
+
+  /* ====================== Debug: global click probe (capture) ====================== */
+  useEffect(() => {
+    if (!isOpen || !debug) return;
+
+    const handler = (e) => {
+      const el = e.target;
+      const overlay = overlayRef.current;
+      const content = contentRef.current;
+      const top = getTopmostLevel();
+
+      dlog("CLICK CAPTURE", {
+        target: el?.tagName,
+        id: el?.id,
+        class: typeof el?.className === "string" ? el.className : "[complex]",
+        topmostLevel: top,
+        thisLevel: level,
+        isTopmost: isTopmost(),
+        targetInsideThisContent: content ? content.contains(el) : false,
+        targetIsThisBackdrop: overlay ? el === overlay : false,
+      });
+    };
+
+    document.addEventListener("click", handler, true);
+    return () => document.removeEventListener("click", handler, true);
+  }, [isOpen, debug, dlog, level, isTopmost]);
 
   if (!isOpen || !portalEl) return null;
 
@@ -323,7 +396,7 @@ export default function ModalBase({
         data-modal-backdrop=""
       />
 
-      {/* Wrapper centralizador */}
+      {/* Wrapper */}
       <div className="relative w-full sm:w-auto" style={{ zIndex: BASE_Z + 1 }} data-modal-wrapper="">
         {/* Dialog */}
         <div
@@ -343,6 +416,7 @@ export default function ModalBase({
           data-modal-content=""
           data-level={level}
         >
+          {/* ✅ Região rolável oficial do ModalBase */}
           <div className="overflow-y-auto overscroll-contain" data-modal-scroll-region="">
             {React.Children.toArray(children)}
           </div>

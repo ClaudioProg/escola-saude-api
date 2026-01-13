@@ -130,7 +130,7 @@ export default function PresencasTurmaExpandida({
   const [savingKey, setSavingKey] = useState(null);
   const [ariaMsg, setAriaMsg] = useState("");
 
-  // ✅ confirmação premium (substitui window.confirm)
+  // ✅ confirmação premium 
   const [confirm, setConfirm] = useState({
     open: false,
     key: null,
@@ -425,7 +425,7 @@ export default function PresencasTurmaExpandida({
         );
       })}
 
-      {/* ✅ ModalConfirmacao: substitui window.confirm */}
+      {/* ✅ ModalConfirmacao*/}
       <ModalConfirmacao
         isOpen={!!confirm.open}
         title="Confirmar presença?"

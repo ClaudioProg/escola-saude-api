@@ -660,7 +660,7 @@ export default function EditarEvento() {
         </div>
       </motion.div>
 
-      {/* ✅ ModalConfirmacao premium (sem window.confirm) */}
+      {/* ✅ ModalConfirmacao premium */}
       <ModalConfirmacao
         isOpen={modalExcluirOpen}
         onClose={() => setModalExcluirOpen(false)}

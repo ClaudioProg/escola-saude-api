@@ -1,4 +1,4 @@
-// ✅ src/components/ListaTurmasPresenca.jsx (Premium + sem window.confirm + bugfix pad2)
+// ✅ src/components/ListaTurmasPresenca.jsx
 /* eslint-disable no-console */
 import { useMemo, useState, useCallback } from "react";
 import PropTypes from "prop-types";
@@ -205,7 +205,7 @@ export default function ListaTurmasPresenca({
   const [removendoId, setRemovendoId] = useState(null);
   const [idsRemovidos, setIdsRemovidos] = useState(() => new Set());
 
-  // MODAIS premium (sem window.confirm)
+  // MODAIS premium
   const [confirmPresenca, setConfirmPresenca] = useState(null); // {dataYMD, turmaId, usuarioId, nome}
   const [confirmRemover, setConfirmRemover] = useState(null); // {turmaId, turmaNome}
 

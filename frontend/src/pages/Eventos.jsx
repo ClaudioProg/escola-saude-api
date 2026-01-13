@@ -18,7 +18,6 @@
 // - Stats de “andamento” usando status real/fallback
 //
 // ✅ Alteração solicitada:
-// - Remove window.confirm → usa ModalConfirmacao.jsx (cancelar inscrição)
 
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { toast } from "react-toastify";
@@ -414,7 +413,7 @@ export default function Eventos() {
   const [carregandoTurmas, setCarregandoTurmas] = useState(null);
   const [carregandoEventos, setCarregandoEventos] = useState(true);
 
-  // ✅ Modal premium (substitui window.confirm no cancelamento)
+  // ✅ Modal premium 
   const [confirmCancel, setConfirmCancel] = useState({
     open: false,
     turmaId: null,
@@ -781,7 +780,7 @@ export default function Eventos() {
     [inscricoes]
   );
 
-  // ✅ agora só abre ModalConfirmacao (sem window.confirm)
+  // ✅ agora só abre ModalConfirmacao 
   const cancelarInscricaoByTurmaId = useCallback(
     async (turmaId, turmaNome = "") => {
       const reg = getInscricaoPorTurmaId(turmaId);
@@ -1036,7 +1035,7 @@ export default function Eventos() {
 
       <Footer />
 
-      {/* ✅ ModalConfirmacao (substitui window.confirm) */}
+      {/* ✅ ModalConfirmacao */}
       <ModalConfirmacao
         /* compat: alguns projetos usam 'open/titulo/descricao/confirmarTexto/cancelarTexto/onConfirmar/onCancelar' */
         isOpen={!!confirmCancel.open}

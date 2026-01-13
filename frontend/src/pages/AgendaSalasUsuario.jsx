@@ -95,7 +95,7 @@ function AgendaSalasUsuario() {
   const [modalModo, setModalModo] = useState("criar"); // 'criar' | 'editar'
   const [reservaEmEdicao, setReservaEmEdicao] = useState(null);
 
-  // ✅ confirmação premium (substitui window.confirm) + loading de exclusão
+  // ✅ confirmação premium  + loading de exclusão
   const [confirmDelete, setConfirmDelete] = useState({ open: false, reserva: null });
   const [deletingId, setDeletingId] = useState(null);
 

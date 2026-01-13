@@ -1,12 +1,4 @@
 // ✅ src/pages/SolicitacaoCurso.jsx — premium (mobile-first + a11y + debounce + chips + persistência + calendário clicável + “cards premium”)
-// Mantém TODAS as infos que você já exibe, mas melhora:
-// - HeaderHero com paleta exclusiva e “barrinha” premium
-// - Ministats com melhor contraste e variações elegantes
-// - Filtros: busca por texto + selects + botão limpar + persistência (localStorage)
-// - Debounce na busca + normalização (sem acento)
-// - Calendário: melhor UX (hover, focus, contagem, clique nos itens)
-// - Lista: card premium com barrinha por status, ações claras e acessíveis
-// - Sem new Date("YYYY-MM-DD") para datas-only (apenas string split/format) ✅
 
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { motion, useReducedMotion } from "framer-motion";
@@ -36,6 +28,7 @@ import api from "../services/api";
 import NadaEncontrado from "../components/NadaEncontrado";
 import Footer from "../components/Footer";
 import ModalSolicitacaoCurso from "../components/ModalSolicitacaoCurso";
+import ModalConfirmacao from "../components/ModalConfirmacao";
 
 /* ---------------- Constantes ---------------- */
 const MESES = [
@@ -155,6 +148,9 @@ export default function SolicitacaoCurso() {
 
   const [modalAberto, setModalAberto] = useState(false);
   const [solicitacaoEmEdicao, setSolicitacaoEmEdicao] = useState(null);
+
+  // Modal de confirmação (excluir)
+  const [confirmacao, setConfirmacao] = useState(null); // { id, titulo }
 
   // persistência
   useEffect(() => {
@@ -289,18 +285,23 @@ export default function SolicitacaoCurso() {
     setModalAberto(true);
   };
 
-  async function handleExcluir(curso) {
-    if (!window.confirm(`Excluir o curso "${curso.titulo}"?`)) return;
+  const pedirExclusao = (curso) => {
+    setConfirmacao({ id: curso.id, titulo: curso.titulo });
+  };
 
+  const confirmarExclusao = async () => {
+    if (!confirmacao?.id) return;
     try {
-      await api.delete(`/api/solicitacoes-curso/${curso.id}`);
+      await api.delete(`/api/solicitacoes-curso/${confirmacao.id}`);
       toast.success("Solicitação excluída.");
-      setCursos((prev) => prev.filter((c) => c.id !== curso.id));
+      setCursos((prev) => prev.filter((c) => c.id !== confirmacao.id));
     } catch (err) {
       console.error(err);
       toast.error("Erro ao excluir.");
+    } finally {
+      setConfirmacao(null);
     }
-  }
+  };
 
   const limparFiltros = () => {
     setFiltroUnidade("");
@@ -311,13 +312,42 @@ export default function SolicitacaoCurso() {
   };
 
   const monthLabel = `${MESES[currentMonthYear.month].label} de ${currentMonthYear.year}`;
-
   const totalVisiveis = cursosFiltrados.length;
+
+  const removerChip = (qual) => {
+    if (qual === "unidade") setFiltroUnidade("");
+    if (qual === "tipo") setFiltroTipo("");
+    if (qual === "busca") {
+      setBusca("");
+      setBuscaDeb("");
+    }
+  };
+
+  const temChips = !!(filtroUnidade || filtroTipo || buscaDeb);
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-zinc-950 text-slate-900 dark:text-white">
       {/* a11y live */}
       <p ref={liveRef} className="sr-only" aria-live="polite" />
+
+      {/* Modal Confirmacao (excluir) */}
+      <ModalConfirmacao
+        open={!!confirmacao}
+        onClose={() => setConfirmacao(null)}
+        onConfirm={confirmarExclusao}
+        titulo="Excluir solicitação"
+        confirmarTexto="Excluir"
+        cancelarTexto="Cancelar"
+        danger
+      >
+        <p className="text-sm text-zinc-700 dark:text-zinc-300">
+          Tem certeza que deseja <strong>excluir</strong> a solicitação
+          {confirmacao?.titulo ? (
+            <> <em className="font-semibold">“{confirmacao.titulo}”</em> </>
+          ) : null}
+          ?
+        </p>
+      </ModalConfirmacao>
 
       {/* HEADER HERO  */}
       <header className="relative overflow-hidden bg-gradient-to-br from-emerald-900 via-teal-800 to-cyan-700 text-white shadow-lg">
@@ -431,7 +461,7 @@ export default function SolicitacaoCurso() {
           </div>
 
           {/* Filtros */}
-          <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="mb-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <div className="flex flex-col gap-1 text-xs">
               <label className="font-semibold text-slate-600 dark:text-zinc-300">Unidade</label>
               <select
@@ -503,6 +533,25 @@ export default function SolicitacaoCurso() {
               </div>
             </div>
           </div>
+
+          {/* Chips de filtros ativos */}
+          {temChips && (
+            <div className="mb-4 flex flex-wrap items-center gap-2">
+              {filtroUnidade && (
+                <Chip text={`Unidade: ${unidades.find((u) => String(u.id) === String(filtroUnidade))?.nome ?? filtroUnidade}`} onClear={() => removerChip("unidade")} />
+              )}
+              {filtroTipo && <Chip text={`Tipo: ${filtroTipo}`} onClear={() => removerChip("tipo")} />}
+              {buscaDeb && <Chip text={`Busca: “${buscaDeb}”`} onClear={() => removerChip("busca")} />}
+              <button
+                type="button"
+                onClick={limparFiltros}
+                className="text-[11px] underline decoration-dotted hover:opacity-80"
+                aria-label="Limpar todos os filtros"
+              >
+                Limpar tudo
+              </button>
+            </div>
+          )}
 
           {/* 🗓️ Calendário */}
           <CalendarioMensal
@@ -584,7 +633,7 @@ export default function SolicitacaoCurso() {
                           <Edit2 className="h-3.5 w-3.5" aria-hidden="true" /> Editar
                         </button>
                         <button
-                          onClick={() => handleExcluir(curso)}
+                          onClick={() => pedirExclusao(curso)}
                           className="inline-flex items-center gap-2 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/40 px-3 py-2 rounded-xl text-xs font-semibold text-rose-700 dark:text-rose-200 hover:bg-rose-100/70 dark:hover:bg-rose-950/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
                           aria-label={`Excluir ${curso.titulo}`}
                         >
@@ -649,7 +698,7 @@ export default function SolicitacaoCurso() {
 
       <Footer />
 
-      {/* MODAL */}
+      {/* MODAL CRUD */}
       <ModalSolicitacaoCurso
         aberto={modalAberto}
         onClose={() => {
@@ -666,6 +715,24 @@ export default function SolicitacaoCurso() {
         podeEditarStatus={false}
       />
     </div>
+  );
+}
+
+/* ---------------- Chip de Filtro ---------------- */
+function Chip({ text, onClear }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 dark:bg-emerald-900/20 text-emerald-900 dark:text-emerald-100 px-2.5 py-1 text-[11px] font-semibold">
+      {text}
+      <button
+        type="button"
+        onClick={onClear}
+        className="ml-1 inline-flex h-4 w-4 items-center justify-center rounded-full hover:bg-emerald-100/70 dark:hover:bg-emerald-900/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+        aria-label={`Remover filtro: ${text}`}
+        title="Remover filtro"
+      >
+        <X className="h-3 w-3" aria-hidden="true" />
+      </button>
+    </span>
   );
 }
 

@@ -1,6 +1,5 @@
 // ✅ src/pages/ListaPresencasTurma.jsx (premium + mobile-first + a11y + cards no mobile + regras admin 15 dias)
-/* eslint-disable no-alert */
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { toast } from "react-toastify";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -21,6 +20,7 @@ import Footer from "../components/Footer";
 import NadaEncontrado from "../components/NadaEncontrado";
 import { formatarDataBrasileira, formatarCPF } from "../utils/data";
 import { apiPost } from "../services/api";
+import ModalConfirmacao from "../components/ModalConfirmacao";
 
 /* ───────────────────────────────
    Helpers anti-fuso (datas locais)
@@ -127,6 +127,16 @@ export default function ListaPresencasTurma({
   const [inscritosState, setInscritosState] = useState(inscritosPorTurma);
   const [loading, setLoading] = useState(null); // {turmaId, usuarioId, data}
 
+  // 🔔 modal de confirmação (confirmar presença)
+  const [confirmar, setConfirmar] = useState(null); // { turmaId, usuarioId, diaISO, nome }
+  const [executandoConfirmacao, setExecutandoConfirmacao] = useState(false);
+
+  // live region opcional
+  const liveRef = useRef(null);
+  const setLive = (msg) => {
+    if (liveRef.current) liveRef.current.textContent = msg;
+  };
+
   // mantém estado de inscritos sincronizado com prop
   useEffect(() => {
     setInscritosState(inscritosPorTurma);
@@ -150,18 +160,15 @@ export default function ListaPresencasTurma({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [turmaExpandidaId]);
 
-  const confirmarPresenca = useCallback(
-    async (turmaId, usuarioId, dataISO) => {
-      const confirmar = window.confirm("Deseja realmente confirmar presença deste usuário?");
-      if (!confirmar) return;
-
-      setLoading({ turmaId, usuarioId, data: dataISO });
-
+  const executarConfirmarPresenca = useCallback(
+    async ({ turmaId, usuarioId, diaISO }) => {
+      setLoading({ turmaId, usuarioId, data: diaISO });
       try {
+        setLive(`Confirmando presença de ${usuarioId} em ${formatarDataBrasileira(diaISO)}…`);
         await apiPost("/api/presencas/confirmar-simples", {
           turma_id: turmaId,
           usuario_id: usuarioId,
-          data: dataISO,
+          data: diaISO,
         });
 
         toast.success("✅ Presença confirmada com sucesso.", { ariaLive: "polite" });
@@ -176,26 +183,50 @@ export default function ListaPresencasTurma({
 
             // suporta dois formatos: array de presenças ou mapa { 'YYYY-MM-DD': true }
             if (Array.isArray(p.presencas)) {
-              const jaExiste = p.presencas.some((pp) => isoDia(pp.data_presenca) === dataISO);
+              const jaExiste = p.presencas.some((pp) => isoDia(pp.data_presenca) === diaISO);
               return jaExiste
                 ? p
-                : { ...p, presencas: [...p.presencas, { data_presenca: dataISO, presente: true }] };
+                : { ...p, presencas: [...p.presencas, { data_presenca: diaISO, presente: true }] };
             }
-            return { ...p, presencas: { ...(p.presencas || {}), [dataISO]: true } };
+            return { ...p, presencas: { ...(p.presencas || {}), [diaISO]: true } };
           });
           return next;
         });
 
         // sincroniza do servidor
         if (carregarInscritos) await carregarInscritos(turmaId);
+        setLive("Presença confirmada.");
       } catch (err) {
         toast.error("❌ " + (err?.message || "Erro ao confirmar presença"), { ariaLive: "assertive" });
+        setLive("Falha ao confirmar presença.");
       } finally {
         setLoading(null);
       }
     },
     [carregarInscritos]
   );
+
+  const abrirModalConfirmar = (turmaId, usuarioId, diaISO, nome) => {
+    setConfirmar({ turmaId, usuarioId, diaISO, nome: nome || null });
+  };
+
+  const onConfirmarModal = async () => {
+    if (!confirmar?.turmaId || !confirmar?.usuarioId || !confirmar?.diaISO) {
+      setConfirmar(null);
+      return;
+    }
+    try {
+      setExecutandoConfirmacao(true);
+      await executarConfirmarPresenca({
+        turmaId: confirmar.turmaId,
+        usuarioId: confirmar.usuarioId,
+        diaISO: confirmar.diaISO,
+      });
+    } finally {
+      setExecutandoConfirmacao(false);
+      setConfirmar(null);
+    }
+  };
 
   /* ─────────────── render vazio ─────────────── */
   if (!Array.isArray(turmas) || turmas.length === 0) {
@@ -215,6 +246,33 @@ export default function ListaPresencasTurma({
 
   return (
     <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
+      {/* live region a11y */}
+      <p ref={liveRef} className="sr-only" aria-live="polite" aria-atomic="true" />
+
+      {/* ModalConfirmacao (confirmar presença) */}
+      <ModalConfirmacao
+        open={!!confirmar}
+        onClose={() => setConfirmar(null)}
+        onConfirm={onConfirmarModal}
+        titulo="Confirmar presença"
+        confirmarTexto="Confirmar"
+        cancelarTexto="Cancelar"
+        danger={false}
+      >
+        <p className="text-sm text-zinc-700 dark:text-zinc-300">
+          Deseja realmente confirmar a presença
+          {confirmar?.nome ? (
+            <> de <span className="font-semibold">{confirmar.nome}</span></>
+          ) : null}{" "}
+          no dia <strong>{confirmar?.diaISO ? formatarDataBrasileira(confirmar.diaISO) : "—"}</strong>?
+        </p>
+        {executandoConfirmacao && (
+          <p className="mt-2 text-xs text-zinc-500" aria-live="polite">
+            Executando confirmação…
+          </p>
+        )}
+      </ModalConfirmacao>
+
       <PageHeader title="Presenças por Turma" icon={ClipboardList} variant="esmeralda" />
 
       <main className="flex-1 px-2 sm:px-4 py-6">
@@ -462,7 +520,7 @@ export default function ListaPresencasTurma({
                                                     {!presente ? (
                                                       <button
                                                         disabled={!podeConfirmar || isLoading}
-                                                        onClick={() => confirmarPresenca(turma.id, usuarioIdNorm, dia)}
+                                                        onClick={() => abrirModalConfirmar(turma.id, usuarioIdNorm, dia, pessoa.nome)}
                                                         className={[
                                                           "inline-flex items-center justify-center rounded-xl px-3 py-1.5 text-xs font-extrabold transition",
                                                           podeConfirmar
@@ -562,7 +620,7 @@ export default function ListaPresencasTurma({
                                                 {!presente ? (
                                                   <button
                                                     disabled={!podeConfirmar || isLoading}
-                                                    onClick={() => confirmarPresenca(turma.id, usuarioIdNorm, dia)}
+                                                    onClick={() => abrirModalConfirmar(turma.id, usuarioIdNorm, dia, pessoa.nome)}
                                                     className={[
                                                       "w-full inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-extrabold transition",
                                                       podeConfirmar
