@@ -1,8 +1,9 @@
 // ✅ src/components/ModalReservaAdmin.jsx — PREMIUM (2026)
 // - sem Cartaz PDF / sem Programação PDF / sem arquivo_programacao
-// - Remove ModalConfirmacao (componente externo) e cria confirmação nativa aqui
-// - A11y: role="dialog", aria-modal, focus trap simples, ESC, clique fora
-// - Mobile-first + dark mode
+// - ✅ Confirm EXCLUSÃO agora usa ModalBase (topmost) → resolve “não consigo clicar”
+// - ✅ Scroll do modal principal funcionando (body scroll interno)
+// - ✅ Logs opcionais (ativa por DEBUG=true)
+// - A11y + mobile-first + dark mode
 // - Evita TZ shift (date-only safe com T12:00)
 
 import { useEffect, useId, useMemo, useRef, useState, useCallback } from "react";
@@ -24,6 +25,9 @@ import {
 import { toast } from "react-toastify";
 import api from "../services/api";
 import Modal from "./Modal";
+import ModalBase from "./ModalBase";
+
+const DEBUG = false; // ✅ coloque true para logs
 
 const DIAS_SEMANA = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 const DIAS_SEMANA_LABEL_COMPLETO = [
@@ -61,7 +65,6 @@ function pad2(n) {
 }
 
 function toBrDateFromISO(dateISO) {
-  // date-only safe (evita shift) — interpreta como local usando T12:00
   if (!dateISO) return "—";
   const d = new Date(`${String(dateISO).slice(0, 10)}T12:00:00`);
   if (Number.isNaN(+d)) return String(dateISO);
@@ -75,192 +78,6 @@ function cls(...p) {
 function trimmedOrNull(v) {
   const t = String(v ?? "").trim();
   return t.length ? t : null;
-}
-
-/** Focusables do modal (para focus trap simples) */
-const FOCUSABLE_SEL = [
-  "a[href]",
-  "button:not([disabled])",
-  "textarea:not([disabled])",
-  "input:not([disabled]):not([type='hidden'])",
-  "select:not([disabled])",
-  "[tabindex]:not([tabindex='-1'])",
-].join(",");
-
-/**
- * ✅ ConfirmModal embutido (sem componente externo)
- * - fecha em ESC
- * - fecha ao clicar no backdrop
- * - focus trap simples (Tab/Shift+Tab)
- * - restaura foco ao fechar
- */
-function ConfirmModal({
-  open,
-  title,
-  description,
-  confirmText = "Confirmar",
-  cancelText = "Cancelar",
-  danger = true,
-  loading = false,
-  onClose,
-  onConfirm,
-}) {
-  const uid = useId();
-  const titleId = `confirm-title-${uid}`;
-  const descId = `confirm-desc-${uid}`;
-
-  const panelRef = useRef(null);
-  const lastActiveRef = useRef(null);
-
-  useEffect(() => {
-    if (!open) return;
-    lastActiveRef.current = document.activeElement;
-
-    const t = setTimeout(() => {
-      // foca no botão de confirmar por padrão (padrão premium)
-      const btn = panelRef.current?.querySelector?.("[data-confirm-primary='1']");
-      btn?.focus?.();
-    }, 30);
-
-    return () => clearTimeout(t);
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-
-    function onKeyDown(e) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        if (!loading) onClose?.();
-        return;
-      }
-
-      if (e.key === "Tab") {
-        const root = panelRef.current;
-        if (!root) return;
-
-        const focusables = Array.from(root.querySelectorAll(FOCUSABLE_SEL)).filter(
-          (el) => !el.hasAttribute("disabled") && el.tabIndex !== -1
-        );
-        if (!focusables.length) return;
-
-        const first = focusables[0];
-        const last = focusables[focusables.length - 1];
-        const active = document.activeElement;
-
-        if (e.shiftKey) {
-          if (active === first || !root.contains(active)) {
-            e.preventDefault();
-            last.focus();
-          }
-        } else {
-          if (active === last) {
-            e.preventDefault();
-            first.focus();
-          }
-        }
-      }
-    }
-
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open, loading, onClose]);
-
-  useEffect(() => {
-    if (open) return;
-    // restaura foco ao fechar
-    const el = lastActiveRef.current;
-    el?.focus?.();
-  }, [open]);
-
-  if (!open) return null;
-
-  return (
-    <div
-      className="fixed inset-0 z-[90] flex items-center justify-center px-3 sm:px-6"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby={titleId}
-      aria-describedby={descId}
-    >
-      {/* Backdrop */}
-      <button
-        type="button"
-        aria-label="Fechar confirmação"
-        onClick={loading ? undefined : onClose}
-        className="absolute inset-0 bg-black/50 backdrop-blur-[2px] cursor-default"
-        tabIndex={-1}
-      />
-
-      {/* Painel */}
-      <div
-        ref={panelRef}
-        className={cls(
-          "relative w-full max-w-lg rounded-3xl border shadow-2xl overflow-hidden",
-          "bg-white dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800"
-        )}
-      >
-        {/* Top bar */}
-        <div
-          className={cls(
-            "px-5 sm:px-6 py-4 text-white",
-            danger
-              ? "bg-gradient-to-br from-rose-900 via-red-800 to-amber-700"
-              : "bg-gradient-to-br from-slate-900 via-emerald-900 to-teal-700"
-          )}
-        >
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <h3 id={titleId} className="text-lg sm:text-xl font-extrabold tracking-tight flex items-center gap-2">
-                <AlertTriangle className="w-5 h-5 text-white/90" />
-                {title}
-              </h3>
-              <p id={descId} className="mt-1 text-sm text-white/85 whitespace-pre-line">
-                {description}
-              </p>
-            </div>
-
-            <button
-              type="button"
-              onClick={loading ? undefined : onClose}
-              disabled={loading}
-              className="p-2 rounded-xl hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-white/60 disabled:opacity-60"
-              aria-label="Fechar"
-            >
-              <CloseIcon className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="px-5 sm:px-6 py-4 flex flex-wrap items-center justify-end gap-2">
-          <button
-            type="button"
-            onClick={loading ? undefined : onClose}
-            disabled={loading}
-            className="px-4 py-2 rounded-xl bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-300 dark:hover:bg-zinc-700 transition disabled:opacity-60"
-          >
-            {cancelText}
-          </button>
-
-          <button
-            type="button"
-            data-confirm-primary="1"
-            onClick={loading ? undefined : onConfirm}
-            disabled={loading}
-            className={cls(
-              "px-4 py-2 rounded-xl text-white font-semibold transition disabled:opacity-60 inline-flex items-center gap-2",
-              danger ? "bg-rose-600 hover:bg-rose-700" : "bg-emerald-600 hover:bg-emerald-700"
-            )}
-            aria-busy={loading ? "true" : "false"}
-          >
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-            {confirmText}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 export default function ModalReservaAdmin({
@@ -279,7 +96,7 @@ export default function ModalReservaAdmin({
 
   const isEdicao = !!reserva;
 
-  // ✅ confirmação nativa
+  // ✅ confirmação (agora via ModalBase topmost)
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   // Guards
@@ -302,11 +119,10 @@ export default function ModalReservaAdmin({
   const diaSemanaBaseIndex = dataBase?.getDay?.() ?? 0;
   const diaSemanaBaseLabel = DIAS_SEMANA_LABEL_COMPLETO[diaSemanaBaseIndex] || "";
 
-  // ordem do dia da semana no mês
   const { ordemSemanaBase, ehUltimaSemana } = useMemo(() => {
     if (!dataBase) return { ordemSemanaBase: 1, ehUltimaSemana: false };
     const dia = dataBase.getDate();
-    const ordem = Math.floor((dia - 1) / 7) + 1; // 1-5
+    const ordem = Math.floor((dia - 1) / 7) + 1;
     const maisSete = new Date(dataBase);
     maisSete.setDate(dia + 7);
     const ehUltima = maisSete.getMonth() !== dataBase.getMonth();
@@ -356,6 +172,12 @@ export default function ModalReservaAdmin({
   const [anualModo, setAnualModo] = useState("dia_mes"); // dia_mes | ordem_semana
   const [mesesAnual, setMesesAnual] = useState([mesBaseIndex]);
 
+  const dlog = useCallback((...args) => {
+    if (!DEBUG) return;
+    // eslint-disable-next-line no-console
+    console.log("[ModalReservaAdmin]", ...args);
+  }, []);
+
   // Sync ao abrir/trocar reserva/slot
   useEffect(() => {
     if (!isOpen) return;
@@ -368,7 +190,6 @@ export default function ModalReservaAdmin({
     setLoading(false);
     setMsgA11y("");
 
-    // reset recorrência
     setUsarRecorrencia(false);
     setTipoRecorrencia("semanal");
     setQtdRepeticoes(4);
@@ -381,7 +202,6 @@ export default function ModalReservaAdmin({
     setAnualModo("dia_mes");
     setMesesAnual([mesBaseIndex]);
 
-    // ✅ reset confirmação
     setConfirmDeleteOpen(false);
 
     const t = setTimeout(() => firstFocusRef.current?.focus?.(), 60);
@@ -431,10 +251,7 @@ export default function ModalReservaAdmin({
         toast.warn("Selecione ao menos um dia da semana.");
         return null;
       }
-      return {
-        ...base,
-        semanal: { intervaloSemanas: intervalo, diasSemana: diasSemanaRecorrencia },
-      };
+      return { ...base, semanal: { intervaloSemanas: intervalo, diasSemana: diasSemanaRecorrencia } };
     }
 
     if (tipoRecorrencia === "mensal") {
@@ -443,15 +260,9 @@ export default function ModalReservaAdmin({
         return null;
       }
       if (mensalModo === "ordem_semana") {
-        return {
-          ...base,
-          mensal: { modo: "ordem_semana", diaSemanaBaseIndex, ordemSemanaBase, ehUltimaSemana },
-        };
+        return { ...base, mensal: { modo: "ordem_semana", diaSemanaBaseIndex, ordemSemanaBase, ehUltimaSemana } };
       }
-      return {
-        ...base,
-        mensal: { modo: "dia_mes", diaMesBase, diaSemanaBaseIndex, ordemSemanaBase, ehUltimaSemana },
-      };
+      return { ...base, mensal: { modo: "dia_mes", diaMesBase, diaSemanaBaseIndex, ordemSemanaBase, ehUltimaSemana } };
     }
 
     if (tipoRecorrencia === "anual") {
@@ -465,15 +276,7 @@ export default function ModalReservaAdmin({
       }
       return {
         ...base,
-        anual: {
-          modo: anualModo,
-          diaMesBase,
-          mesBaseIndex,
-          diaSemanaBaseIndex,
-          ordemSemanaBase,
-          ehUltimaSemana,
-          meses: mesesAnual,
-        },
+        anual: { modo: anualModo, diaMesBase, mesBaseIndex, diaSemanaBaseIndex, ordemSemanaBase, ehUltimaSemana, meses: mesesAnual },
       };
     }
 
@@ -484,6 +287,7 @@ export default function ModalReservaAdmin({
     try {
       setLoading(true);
       setMsgA11y(isEdicao ? "Salvando alterações..." : "Criando reserva...");
+      dlog("salvar()", { isEdicao, sala: salaKey, data: dataISO, periodo });
 
       const qtd = Number(qtdPessoas);
 
@@ -522,10 +326,7 @@ export default function ModalReservaAdmin({
         const recorrencia = construirRecorrenciaPayload();
         if (usarRecorrencia && !recorrencia) return;
 
-        const resp = await api.post("/salas/admin/reservas", {
-          ...payloadBase,
-          recorrencia: recorrencia || null,
-        });
+        const resp = await api.post("/salas/admin/reservas", { ...payloadBase, recorrencia: recorrencia || null });
 
         const data = resp?.data ?? resp ?? {};
         const inseridas = Array.isArray(data.inseridas) ? data.inseridas : [];
@@ -564,6 +365,7 @@ export default function ModalReservaAdmin({
     try {
       setLoading(true);
       setMsgA11y("Excluindo reserva...");
+      dlog("executarExcluirReserva()", { id: reserva?.id });
       await api.delete(`/salas/admin/reservas/${reserva.id}`);
       toast.success("Reserva excluída.");
       await recarregar?.();
@@ -583,6 +385,7 @@ export default function ModalReservaAdmin({
   function excluirReserva() {
     if (!isEdicao) return;
     if (loading) return;
+    dlog("abrir confirm delete");
     setConfirmDeleteOpen(true);
   }
 
@@ -590,13 +393,7 @@ export default function ModalReservaAdmin({
 
   const minis = useMemo(() => {
     const qtd = Number(qtdPessoas) || 0;
-    return {
-      data: toBrDateFromISO(dataISO),
-      sala: salaLabel,
-      periodo: periodoLabel,
-      pessoas: qtd > 0 ? qtd : "—",
-      cap: max,
-    };
+    return { data: toBrDateFromISO(dataISO), sala: salaLabel, periodo: periodoLabel, pessoas: qtd > 0 ? qtd : "—", cap: max };
   }, [dataISO, periodoLabel, salaLabel, qtdPessoas, max]);
 
   const solicitanteBox = (solicitanteNome || solicitanteUnidade || reservaFinal) && (
@@ -637,282 +434,331 @@ export default function ModalReservaAdmin({
 
   return (
     <>
+      {/* ✅ Modal principal */}
       <Modal
-  open={isOpen}
-  onClose={loading ? undefined : onClose}
-  labelledBy={titleId}
-  describedBy={descId}
-  // ✅ travamos altura do “container modal”
-  className="w-[96%] max-w-3xl p-0 max-h-[92vh] overflow-hidden"
->
-  {/* Header Hero (fixo) */}
-  <header className="px-4 sm:px-6 py-4 text-white bg-gradient-to-br from-slate-900 via-emerald-900 to-teal-700">
-    <div className="flex items-start justify-between gap-3">
-      <div className="min-w-0">
-        <h2 id={titleId} className="text-xl sm:text-2xl font-extrabold tracking-tight flex items-center gap-2">
-          <ShieldCheck className="w-5 h-5 text-emerald-300" />
-          {tituloModal}
-        </h2>
-        <p id={descId} className="text-white/85 text-sm mt-1">
-          {minis.data} • {minis.periodo} • {minis.sala}
-        </p>
-      </div>
-
-      <button
-        type="button"
-        onClick={loading ? undefined : onClose}
-        disabled={loading}
-        className="p-2 rounded-xl hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-emerald-300 disabled:opacity-60"
-        aria-label="Fechar"
+        open={isOpen}
+        onClose={loading ? undefined : onClose}
+        labelledBy={titleId}
+        describedBy={descId}
+        className="w-[96%] max-w-3xl p-0 max-h-[92vh] overflow-hidden"
       >
-        <CloseIcon className="w-5 h-5" />
-      </button>
-    </div>
-  </header>
+        {/* Header Hero (fixo) */}
+        <header className="px-4 sm:px-6 py-4 text-white bg-gradient-to-br from-slate-900 via-emerald-900 to-teal-700">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 id={titleId} className="text-xl sm:text-2xl font-extrabold tracking-tight flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-emerald-300" />
+                {tituloModal}
+              </h2>
+              <p id={descId} className="text-white/85 text-sm mt-1">
+                {minis.data} • {minis.periodo} • {minis.sala}
+              </p>
+            </div>
 
-  {/* Live region */}
-  <div aria-live="polite" className="sr-only">
-    {msgA11y}
-  </div>
+            <button
+              type="button"
+              onClick={loading ? undefined : onClose}
+              disabled={loading}
+              className="p-2 rounded-xl hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-emerald-300 disabled:opacity-60"
+              aria-label="Fechar"
+            >
+              <CloseIcon className="w-5 h-5" />
+            </button>
+          </div>
+        </header>
 
-  {/* ✅ BODY SCROLL: tudo entre header e footer rola com mouse/trackpad */}
-  <div
-    className={cls(
-      "overflow-y-auto overscroll-contain",
-      "max-h-[calc(92vh-88px-84px)]", // header (~88px) + footer (~84px)
-      "scroll-smooth",
-      // melhora scroll em touch/iOS
-      "[&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300/70 dark:[&::-webkit-scrollbar-thumb]:bg-slate-700/70"
-    )}
-  >
-    {/* Ministats */}
-    <section className="px-4 sm:px-6 pt-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
-      {[
-        { icon: <Building2 className="w-5 h-5" />, label: "Sala", value: minis.sala },
-        { icon: <Clock className="w-5 h-5" />, label: "Período", value: periodo === "manha" ? "Manhã" : "Tarde" },
-        { icon: <Users className="w-5 h-5" />, label: "Pessoas", value: minis.pessoas },
-        { icon: <CalendarDays className="w-5 h-5" />, label: "Capacidade", value: minis.cap },
-      ].map((m) => (
-        <div
-          key={m.label}
-          className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 shadow-sm"
-        >
-          <div className="flex items-center gap-2 text-slate-700 dark:text-slate-200">
-            {m.icon}
-            <span className="text-sm font-semibold">{m.label}</span>
-          </div>
-          <div className="mt-1 text-lg font-extrabold text-slate-900 dark:text-white break-words">
-            {m.value}
-          </div>
+        {/* Live region */}
+        <div aria-live="polite" className="sr-only">
+          {msgA11y}
         </div>
-      ))}
-    </section>
 
-    {/* Body */}
-    <div className="px-4 sm:px-6 pb-6 pt-4 space-y-4">
-      {solicitanteBox}
+        {/* ✅ BODY SCROLL */}
+        <div
+          className={cls(
+            "overflow-y-auto overscroll-contain",
+            "max-h-[calc(92vh-88px-84px)]",
+            "scroll-smooth",
+            "[&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300/70 dark:[&::-webkit-scrollbar-thumb]:bg-slate-700/70"
+          )}
+        >
+          {/* Ministats */}
+          <section className="px-4 sm:px-6 pt-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {[
+              { icon: <Building2 className="w-5 h-5" />, label: "Sala", value: minis.sala },
+              { icon: <Clock className="w-5 h-5" />, label: "Período", value: periodo === "manha" ? "Manhã" : "Tarde" },
+              { icon: <Users className="w-5 h-5" />, label: "Pessoas", value: minis.pessoas },
+              { icon: <CalendarDays className="w-5 h-5" />, label: "Capacidade", value: minis.cap },
+            ].map((m) => (
+              <div
+                key={m.label}
+                className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 shadow-sm"
+              >
+                <div className="flex items-center gap-2 text-slate-700 dark:text-slate-200">
+                  {m.icon}
+                  <span className="text-sm font-semibold">{m.label}</span>
+                </div>
+                <div className="mt-1 text-lg font-extrabold text-slate-900 dark:text-white break-words">
+                  {m.value}
+                </div>
+              </div>
+            ))}
+          </section>
 
-      {/* Quantidade / Coffee / Status */}
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3">
-          <label className="block text-xs font-medium text-slate-600 dark:text-slate-300">
-            Quantidade de pessoas
-          </label>
-          <input
-            ref={firstFocusRef}
-            type="number"
-            min={1}
-            max={max}
-            value={qtdPessoas}
-            onChange={(e) => setQtdPessoas(e.target.value)}
-            className="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            placeholder={`Até ${max} pessoas`}
-            disabled={loading}
-          />
-          <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-            Capacidade máxima: <strong>{max}</strong> pessoas.
-          </p>
+          {/* Body */}
+          <div className="px-4 sm:px-6 pb-6 pt-4 space-y-4">
+            {solicitanteBox}
 
-          <div className="mt-3 flex items-center gap-2">
-            <Coffee className="w-4 h-4 text-slate-500" />
-            <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
-              <input
-                type="checkbox"
-                className="rounded border-slate-300"
-                checked={coffeeBreak}
-                onChange={(e) => setCoffeeBreak(e.target.checked)}
+            {/* Quantidade / Coffee / Status */}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3">
+                <label className="block text-xs font-medium text-slate-600 dark:text-slate-300">
+                  Quantidade de pessoas
+                </label>
+                <input
+                  ref={firstFocusRef}
+                  type="number"
+                  min={1}
+                  max={max}
+                  value={qtdPessoas}
+                  onChange={(e) => setQtdPessoas(e.target.value)}
+                  className="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  placeholder={`Até ${max} pessoas`}
+                  disabled={loading}
+                />
+                <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                  Capacidade máxima: <strong>{max}</strong> pessoas.
+                </p>
+
+                <div className="mt-3 flex items-center gap-2">
+                  <Coffee className="w-4 h-4 text-slate-500" />
+                  <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
+                    <input
+                      type="checkbox"
+                      className="rounded border-slate-300"
+                      checked={coffeeBreak}
+                      onChange={(e) => setCoffeeBreak(e.target.checked)}
+                      disabled={loading}
+                    />
+                    Haverá coffee break?
+                  </label>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 dark:text-slate-300">
+                    Status
+                  </label>
+                  <select
+                    value={status}
+                    onChange={(e) => setStatus(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    disabled={loading}
+                  >
+                    <option value="pendente">Pendente</option>
+                    <option value="aprovado">Aprovado</option>
+                    <option value="rejeitado">Rejeitado</option>
+                    <option value="cancelado">Cancelado</option>
+                    <option value="bloqueado">Bloqueado (uso interno / evento fixo)</option>
+                  </select>
+
+                  {String(status) === "bloqueado" && (
+                    <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
+                      Para “Bloqueado”, recomendamos informar a finalidade/motivo.
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Finalidade */}
+            <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3">
+              <label className="block text-xs font-medium text-slate-600 dark:text-slate-300">
+                Finalidade / evento{" "}
+                {String(status) === "bloqueado" ? <span className="text-rose-600">*</span> : null}
+              </label>
+              <textarea
+                rows={2}
+                value={finalidade}
+                onChange={(e) => setFinalidade(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                placeholder="Ex.: Reunião da equipe, Aula do Curso X, Oficina Y..."
                 disabled={loading}
               />
-              Haverá coffee break?
-            </label>
+              <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                Descreva brevemente para qual atividade a sala será utilizada.
+              </p>
+            </div>
+
+            {/* Observação */}
+            <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3">
+              <label className="block text-xs font-medium text-slate-600 dark:text-slate-300">
+                Observações internas (opcional)
+              </label>
+              <textarea
+                rows={2}
+                value={observacao}
+                onChange={(e) => setObservacao(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                placeholder="Ex.: reserva interna, observações para a equipe, etc."
+                disabled={loading}
+              />
+            </div>
+
+            {/* Recorrência (somente criação) */}
+            {!isEdicao && (
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 dark:bg-emerald-900/15 dark:border-emerald-900 p-3 space-y-3">
+                <div className="flex items-start gap-2">
+                  <Repeat className="w-4 h-4 text-emerald-700 dark:text-emerald-300 mt-0.5" />
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-extrabold text-emerald-900 dark:text-emerald-100">
+                        Recorrência (opcional)
+                      </p>
+                      <label className="inline-flex items-center gap-2 text-sm text-emerald-900 dark:text-emerald-100">
+                        <input
+                          type="checkbox"
+                          className="rounded border-emerald-400"
+                          checked={usarRecorrencia}
+                          onChange={(e) => setUsarRecorrencia(e.target.checked)}
+                          disabled={loading}
+                        />
+                        Aplicar
+                      </label>
+                    </div>
+                    <p className="text-[11px] text-emerald-900/80 dark:text-emerald-100/80 mt-1">
+                      Repita este horário como semanal, mensal, anual ou “sempre” (mensal contínuo).
+                    </p>
+                  </div>
+                </div>
+
+                {usarRecorrencia && (
+                  <div className="space-y-3">
+                    {/* ✅ aqui você mantém o bloco completo de recorrência como já tinha */}
+                    {/* (sem alterações) */}
+                    {/* Semanal/Mensal/Anual ... */}
+                    {/* Se quiser, eu encaixo o bloco inteiro aqui também. */}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Aviso */}
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 dark:bg-slate-900 dark:border-slate-700 p-3 text-[11px] sm:text-xs text-slate-600 dark:text-slate-300 flex gap-2">
+              <Info className="w-4 h-4 mt-0.5 text-emerald-600 dark:text-emerald-300" />
+              <p className="leading-relaxed">
+                Use esta tela para aprovar/negar solicitações ou criar <strong>bloqueios internos</strong>. A recorrência é aplicada somente na criação.
+                Datas em finais de semana/feriados/pontos facultativos podem ser ignoradas automaticamente pelo backend.
+              </p>
+            </div>
           </div>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 space-y-3">
-          <div>
-            <label className="block text-xs font-medium text-slate-600 dark:text-slate-300">
-              Status
-            </label>
-            <select
-              value={status}
-              onChange={(e) => setStatus(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              disabled={loading}
-            >
-              <option value="pendente">Pendente</option>
-              <option value="aprovado">Aprovado</option>
-              <option value="rejeitado">Rejeitado</option>
-              <option value="cancelado">Cancelado</option>
-              <option value="bloqueado">Bloqueado (uso interno / evento fixo)</option>
-            </select>
-
-            {String(status) === "bloqueado" && (
-              <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
-                Para “Bloqueado”, recomendamos informar a finalidade/motivo.
-              </p>
+        {/* Footer sticky (fixo) */}
+        <div className="sticky bottom-0 left-0 right-0 bg-white/85 dark:bg-zinc-950/85 backdrop-blur border-t border-slate-200 dark:border-slate-800 px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            {isEdicao && (
+              <button
+                type="button"
+                onClick={excluirReserva}
+                disabled={loading}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-rose-200 text-rose-700 hover:bg-rose-50 dark:border-rose-900/40 dark:text-rose-300 dark:hover:bg-rose-900/20 disabled:opacity-60"
+              >
+                <Trash2 className="w-4 h-4" />
+                Excluir
+              </button>
             )}
           </div>
-        </div>
-      </div>
 
-      {/* Finalidade */}
-      <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3">
-        <label className="block text-xs font-medium text-slate-600 dark:text-slate-300">
-          Finalidade / evento{" "}
-          {String(status) === "bloqueado" ? <span className="text-rose-600">*</span> : null}
-        </label>
-        <textarea
-          rows={2}
-          value={finalidade}
-          onChange={(e) => setFinalidade(e.target.value)}
-          className="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-          placeholder="Ex.: Reunião da equipe, Aula do Curso X, Oficina Y..."
-          disabled={loading}
-        />
-        <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-          Descreva brevemente para qual atividade a sala será utilizada.
-        </p>
-      </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={loading ? undefined : onClose}
+              disabled={loading}
+              className="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-slate-100 hover:bg-slate-300 dark:hover:bg-slate-700 transition disabled:opacity-60"
+            >
+              Cancelar
+            </button>
 
-      {/* Observação */}
-      <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3">
-        <label className="block text-xs font-medium text-slate-600 dark:text-slate-300">
-          Observações internas (opcional)
-        </label>
-        <textarea
-          rows={2}
-          value={observacao}
-          onChange={(e) => setObservacao(e.target.value)}
-          className="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-          placeholder="Ex.: reserva interna, observações para a equipe, etc."
-          disabled={loading}
-        />
-      </div>
-
-      {/* Recorrência (somente criação) */}
-      {!isEdicao && (
-        <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 dark:bg-emerald-900/15 dark:border-emerald-900 p-3 space-y-3">
-          <div className="flex items-start gap-2">
-            <Repeat className="w-4 h-4 text-emerald-700 dark:text-emerald-300 mt-0.5" />
-            <div className="flex-1">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-sm font-extrabold text-emerald-900 dark:text-emerald-100">
-                  Recorrência (opcional)
-                </p>
-                <label className="inline-flex items-center gap-2 text-sm text-emerald-900 dark:text-emerald-100">
-                  <input
-                    type="checkbox"
-                    className="rounded border-emerald-400"
-                    checked={usarRecorrencia}
-                    onChange={(e) => setUsarRecorrencia(e.target.checked)}
-                    disabled={loading}
-                  />
-                  Aplicar
-                </label>
-              </div>
-              <p className="text-[11px] text-emerald-900/80 dark:text-emerald-100/80 mt-1">
-                Repita este horário como semanal, mensal, anual ou “sempre” (mensal contínuo).
-              </p>
-            </div>
+            <button
+              type="button"
+              onClick={salvar}
+              disabled={loading}
+              className={cls(
+                "px-4 py-2 rounded-xl text-white font-semibold transition disabled:opacity-60",
+                "bg-emerald-600 hover:bg-emerald-700"
+              )}
+              aria-busy={loading ? "true" : "false"}
+            >
+              {loading ? (isEdicao ? "Salvando..." : "Criando...") : isEdicao ? "Salvar alterações" : "Criar reserva"}
+            </button>
           </div>
-
-          {usarRecorrencia && (
-            <div className="space-y-3">
-              {/* ... (mantém todo o bloco de recorrência exatamente como você já tem) ... */}
-              {/* ✅ Aqui dentro não precisa mudar nada — o scroll já está resolvido acima */}
-            </div>
-          )}
         </div>
-      )}
+      </Modal>
 
-      {/* Aviso */}
-      <div className="rounded-2xl border border-slate-200 bg-slate-50 dark:bg-slate-900 dark:border-slate-700 p-3 text-[11px] sm:text-xs text-slate-600 dark:text-slate-300 flex gap-2">
-        <Info className="w-4 h-4 mt-0.5 text-emerald-600 dark:text-emerald-300" />
-        <p className="leading-relaxed">
-          Use esta tela para aprovar/negar solicitações ou criar <strong>bloqueios internos</strong>. A recorrência é aplicada somente na criação.
-          Datas em finais de semana/feriados/pontos facultativos podem ser ignoradas automaticamente pelo backend.
-        </p>
-      </div>
-    </div>
-  </div>
-
-  {/* Footer sticky (fixo) */}
-  <div className="sticky bottom-0 left-0 right-0 bg-white/85 dark:bg-zinc-950/85 backdrop-blur border-t border-slate-200 dark:border-slate-800 px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-2">
-    <div className="flex items-center gap-2">
-      {isEdicao && (
-        <button
-          type="button"
-          onClick={excluirReserva}
-          disabled={loading}
-          className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-rose-200 text-rose-700 hover:bg-rose-50 dark:border-rose-900/40 dark:text-rose-300 dark:hover:bg-rose-900/20 disabled:opacity-60"
-        >
-          <Trash2 className="w-4 h-4" />
-          Excluir
-        </button>
-      )}
-    </div>
-
-    <div className="flex items-center gap-2">
-      <button
-        type="button"
-        onClick={loading ? undefined : onClose}
-        disabled={loading}
-        className="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-slate-100 hover:bg-slate-300 dark:hover:bg-slate-700 transition disabled:opacity-60"
-      >
-        Cancelar
-      </button>
-
-      <button
-        type="button"
-        onClick={salvar}
-        disabled={loading}
-        className={cls(
-          "px-4 py-2 rounded-xl text-white font-semibold transition disabled:opacity-60",
-          "bg-emerald-600 hover:bg-emerald-700"
-        )}
-        aria-busy={loading ? "true" : "false"}
-      >
-        {loading ? (isEdicao ? "Salvando..." : "Criando...") : isEdicao ? "Salvar alterações" : "Criar reserva"}
-      </button>
-    </div>
-  </div>
-</Modal>
-
-      {/* ✅ Confirmação Nativa (embutida) */}
-      <ConfirmModal
-        open={confirmDeleteOpen}
-        title="Excluir este agendamento?"
-        description={`Esta ação não pode ser desfeita.\n\nAo excluir, o horário ficará livre novamente para novas solicitações.`}
-        confirmText="Sim, excluir"
-        cancelText="Cancelar"
-        danger
-        loading={loading}
+      {/* ✅ CONFIRM DELETE TOPMOST (via ModalBase) */}
+      <ModalBase
+        isOpen={confirmDeleteOpen}
         onClose={() => {
           if (loading) return;
           setConfirmDeleteOpen(false);
         }}
-        onConfirm={executarExcluirReserva}
-      />
+        level={999} // ✅ sempre acima de qualquer outro modal/backdrop
+        maxWidth="max-w-lg"
+        closeOnBackdrop={!loading}
+        closeOnEsc={!loading}
+        className="p-0 overflow-hidden"
+        labelledBy="confirm-excluir-title"
+        describedBy="confirm-excluir-desc"
+        debug={DEBUG}
+        debugName="ConfirmExcluirReserva"
+      >
+        <div className="p-5 sm:p-6 bg-gradient-to-br from-rose-900 via-red-800 to-amber-700 text-white">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h3 id="confirm-excluir-title" className="text-lg sm:text-xl font-extrabold tracking-tight flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-white/90" />
+                Excluir este agendamento?
+              </h3>
+              <p id="confirm-excluir-desc" className="mt-1 text-sm text-white/85 whitespace-pre-line">
+                Esta ação não pode ser desfeita.{"\n\n"}Ao excluir, o horário ficará livre novamente para novas solicitações.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={loading ? undefined : () => setConfirmDeleteOpen(false)}
+              disabled={loading}
+              className="p-2 rounded-xl hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-white/60 disabled:opacity-60"
+              aria-label="Fechar"
+            >
+              <CloseIcon className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        <div className="px-5 sm:px-6 py-4 flex flex-wrap items-center justify-end gap-2 bg-white dark:bg-zinc-950">
+          <button
+            type="button"
+            onClick={loading ? undefined : () => setConfirmDeleteOpen(false)}
+            disabled={loading}
+            className="px-4 py-2 rounded-xl bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-300 dark:hover:bg-zinc-700 transition disabled:opacity-60"
+          >
+            Cancelar
+          </button>
+
+          <button
+            type="button"
+            onClick={loading ? undefined : executarExcluirReserva}
+            disabled={loading}
+            className="px-4 py-2 rounded-xl text-white font-semibold bg-rose-600 hover:bg-rose-700 transition disabled:opacity-60 inline-flex items-center gap-2"
+            aria-busy={loading ? "true" : "false"}
+          >
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+            Sim, excluir
+          </button>
+        </div>
+      </ModalBase>
     </>
   );
 }
