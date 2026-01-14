@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CalendarDays, Clock, Hash, Type, PlusCircle, Trash2, Users } from "lucide-react";
 import { toast } from "react-toastify";
-import ModalBase from "./ModalBase";
+import Modal from "./Modal";
 
 /* ===================== Logger cirúrgico ===================== */
 // ✅ Vite/ESM-safe
@@ -478,7 +478,7 @@ export default function ModalTurma({
   const descId = "modal-turma-desc";
 
   return (
-    <ModalBase
+    <Modal
       isOpen={isOpen}
       onClose={() => {
         log("Fechar/Cancelar no ModalTurma.");
@@ -759,6 +759,6 @@ export default function ModalTurma({
           </div>
         </div>
       </div>
-    </ModalBase>
+    </Modal>
   );
 }

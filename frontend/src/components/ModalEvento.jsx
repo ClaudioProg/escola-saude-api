@@ -21,7 +21,7 @@ import {
   ShieldCheck,
   Info,
 } from "lucide-react";
-import ModalBase from "./ModalBase";
+import Modal from "./Modal";
 import ModalTurma from "./ModalTurma";
 import ModalConfirmacao from "./ModalConfirmacao";
 import { formatarDataBrasileira } from "../utils/data";
@@ -868,7 +868,7 @@ export default function ModalEvento({
   /* ========================= Render ========================= */
   return (
     <>
-      <ModalBase
+      <Modal
         isOpen={isOpen}
         onClose={closeBlocked ? undefined : onClose}
         level={0}
@@ -1464,7 +1464,7 @@ export default function ModalEvento({
             </div>
           </div>
         </div>
-      </ModalBase>
+      </Modal>
 
       {/* ✅ MODAL CONFIRMAÇÃO */}
       <ModalConfirmacao

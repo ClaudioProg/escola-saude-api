@@ -6,7 +6,7 @@
 // - Cards premium com barrinha por status + botões acessíveis
 // - Calendário premium (clique abre modal) + melhores focus/hover
 // - Mantém rotas e o ModalSolicitacaoCurso (com podeEditarStatus=true)
-// - ✅ Exclusão com modal nativo (ModalBase) — sem window.confirm
+// - ✅ Exclusão com modal nativo (Modal) — sem window.confirm
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
@@ -36,7 +36,7 @@ import api from "../services/api";
 import NadaEncontrado from "../components/NadaEncontrado";
 import Footer from "../components/Footer";
 import ModalSolicitacaoCurso from "../components/ModalSolicitacaoCurso";
-import ModalBase from "../components/ModalBase";
+import Modal from "../components/Modal";
 
 const MESES = [
   { value: "01", label: "Janeiro" },
@@ -363,7 +363,7 @@ export default function SolicitacaoCursoAdmin() {
       <p ref={liveRef} className="sr-only" aria-live="polite" />
 
       {/* ✅ Modal confirmação exclusão (nativo) */}
-      <ModalBase
+      <Modal
         isOpen={!!confirmacao}
         onClose={() => {
           if (excluindo) return;
@@ -440,7 +440,7 @@ export default function SolicitacaoCursoAdmin() {
             )}
           </button>
         </div>
-      </ModalBase>
+      </Modal>
 
       {/* HeaderHero administrador premium */}
       <header className="relative overflow-hidden bg-gradient-to-br from-sky-900 via-indigo-800 to-fuchsia-700 text-white shadow-lg">

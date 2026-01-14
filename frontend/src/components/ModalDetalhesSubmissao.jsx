@@ -1,4 +1,4 @@
-// ✅ src/components/ModalDetalhesSubmissao.jsx (Premium + ModalBase + date-safe)
+// ✅ src/components/ModalDetalhesSubmissao.jsx (Premium + Modal + date-safe)
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { motion } from "framer-motion";
 import {
@@ -14,7 +14,7 @@ import {
   UserRound,
 } from "lucide-react";
 import { toast } from "react-toastify";
-import ModalBase from "./ModalBase";
+import Modal from "./Modal";
 import api, { apiGetFile, downloadBlob } from "../services/api";
 
 /* ========================= Helpers (seguros) ========================= */
@@ -246,7 +246,7 @@ export default function ModalDetalhesSubmissao({ open, onClose, submissao, onDet
   if (!open) return null;
 
   return (
-    <ModalBase
+    <Modal
       isOpen={open}
       onClose={onClose}
       maxWidth="max-w-4xl"
@@ -524,6 +524,6 @@ export default function ModalDetalhesSubmissao({ open, onClose, submissao, onDet
           </div>
         </>
       )}
-    </ModalBase>
+    </Modal>
   );
 }

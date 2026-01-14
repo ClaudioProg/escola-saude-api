@@ -1,11 +1,11 @@
 // ✅ src/components/ModalConfirmacao.jsx (compat global + a11y + Enter-to-confirm)
 // - Aceita props em PT e EN (isOpen/open, titulo/title, mensagem/description, onConfirmar/onConfirm, onClose/onCancelar)
 // - Sem PropTypes .isRequired para não gerar warning quando faltar handler; botão fica desabilitado
-// - Mantém ModalBase, paletas, Enter para confirmar, foco inicial no confirmar
+// - Mantém Modal, paletas, Enter para confirmar, foco inicial no confirmar
 
 import { useEffect, useRef, useMemo, useState, useId, useCallback } from "react";
 import PropTypes from "prop-types";
-import ModalBase from "./ModalBase";
+import Modal from "./Modal";
 import { AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
 
 /* ───────────────── helpers internos ───────────────── */
@@ -153,7 +153,7 @@ export default function ModalConfirmacao(rawProps) {
   const cancelarHabilitado  = typeof onClose   === "function";
 
   return (
-    <ModalBase
+    <Modal
       isOpen={isOpen}
       onClose={onClose}
       level={level}
@@ -244,7 +244,7 @@ export default function ModalConfirmacao(rawProps) {
           </div>
         </div>
       </div>
-    </ModalBase>
+    </Modal>
   );
 }
 

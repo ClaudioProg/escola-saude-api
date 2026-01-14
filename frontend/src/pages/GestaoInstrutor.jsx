@@ -204,7 +204,7 @@ function HeaderHero({ onRefresh, carregando, busca, setBusca, kpis }) {
 }
 
 /* ───────── Modal styles (mobile-first, premium) ───────── */
-const modalBaseStyle = {
+const modalStyle = {
   overlay: {
     backgroundColor: "rgba(0,0,0,0.55)",
     zIndex: 80,
@@ -530,7 +530,7 @@ export default function GestaoInstrutor() {
       <Modal
         isOpen={modalHistoricoAberto}
         onRequestClose={() => setModalHistoricoAberto(false)}
-        style={modalBaseStyle}
+        style={modalStyle}
         contentLabel="Histórico do instrutor"
         shouldCloseOnOverlayClick
         shouldCloseOnEsc
