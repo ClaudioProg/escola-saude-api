@@ -362,7 +362,6 @@ router.use("/questionario", questionarioRoute);
 router.use("/questionarios", questionarioRoute);
 
 router.use("/votacao", votacaoRoute);
-router.use("/votacoes", votacaoRoute);
 
 // ✅ Métricas (com aliases)
 router.use("/metric", metricRoute);

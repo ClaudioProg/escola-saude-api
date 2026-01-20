@@ -1,5 +1,5 @@
 // src/services/votacao.js
-import { apiGet, apiPost, apiPut, apiPatch, apiDelete } from "../services/api";
+import { apiGet, apiPost, apiPut, apiPatch, apiDelete } from "./api";
 
 /* ============================================================================
  * Utils locais
