@@ -202,7 +202,7 @@ export default function EditarTurma() {
     [turma, salvando, id, navigate, original]
   );
 
-  const descartarAlteracoes = useCallback(() => {
+  const descartarAlteracao = useCallback(() => {
     if (!original) return;
     setTurma(original);
     setErrors({});
@@ -452,7 +452,7 @@ export default function EditarTurma() {
               </BotaoSecundario>
 
               {houveMudancas && (
-                <BotaoSecundario onClick={descartarAlteracoes} variant="outline">
+                <BotaoSecundario onClick={descartarAlteracao} variant="outline">
                   Descartar
                 </BotaoSecundario>
               )}

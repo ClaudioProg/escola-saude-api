@@ -5,7 +5,7 @@ import Skeleton from "react-loading-skeleton";
 import { useReducedMotion, motion } from "framer-motion";
 import { Search, X, RefreshCw, SlidersHorizontal } from "lucide-react";
 
-import CardEventoadministrador from "../components/CardEventoadministrador";
+import CardEventoAdministrador from "../components/CardEventoAdministrador";
 import Footer from "../components/Footer";
 import { apiGet } from "../services/api";
 
@@ -156,7 +156,7 @@ export default function DashboardAdministrador() {
   const [eventos, setEventos] = useState([]);
   const [turmasPorEvento, setTurmasPorEvento] = useState({});
   const [inscritosPorTurma, setInscritosPorTurma] = useState({});
-  const [avaliacoesPorTurma, setAvaliacoesPorTurma] = useState({});
+  const [avaliacaoPorTurma, setAvaliacaoPorTurma] = useState({});
   const [presencasPorTurma, setPresencasPorTurma] = useState({});
   const [eventoExpandido, setEventoExpandido] = useState(null);
 
@@ -242,25 +242,25 @@ export default function DashboardAdministrador() {
 
   const carregarInscritos = useCallback(async (turmaId) => {
     try {
-      const data = await apiGet(`inscricoes/turma/${turmaId}`, { on403: "silent" });
+      const data = await apiGet(`inscricao/turma/${turmaId}`, { on403: "silent" });
       setInscritosPorTurma((prev) => ({ ...prev, [turmaId]: Array.isArray(data) ? data : [] }));
     } catch {
       toast.error("❌ Erro ao carregar inscritos.");
     }
   }, []);
 
-  const carregarAvaliacoes = useCallback(
+  const carregarAvaliacao = useCallback(
     async (turmaId) => {
-      if (avaliacoesPorTurma[turmaId]) return;
+      if (avaliacaoPorTurma[turmaId]) return;
       try {
-        const data = await apiGet(`avaliacoes/turma/${turmaId}/all`, { on403: "silent" });
-        setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: data || {} }));
+        const data = await apiGet(`avaliacao/turma/${turmaId}/all`, { on403: "silent" });
+        setAvaliacaoPorTurma((prev) => ({ ...prev, [turmaId]: data || {} }));
       } catch (err) {
         console.error("❌ Erro ao carregar avaliações:", err);
         toast.error("❌ Erro ao carregar avaliações.");
       }
     },
-    [avaliacoesPorTurma]
+    [avaliacaoPorTurma]
   );
 
   // retorna payload pra evitar race-condition
@@ -428,7 +428,7 @@ export default function DashboardAdministrador() {
     try {
       let inscritos = inscritosPorTurma[turmaId];
       if (!Array.isArray(inscritos)) {
-        const data = await apiGet(`inscricoes/turma/${turmaId}`, { on403: "silent" });
+        const data = await apiGet(`inscricao/turma/${turmaId}`, { on403: "silent" });
         inscritos = Array.isArray(data) ? data : [];
         setInscritosPorTurma((prev) => ({ ...prev, [turmaId]: inscritos }));
       }
@@ -761,15 +761,15 @@ export default function DashboardAdministrador() {
                 transition={{ duration: 0.2 }}
                 className="min-w-0 overflow-hidden"
               >
-                <CardEventoadministrador
+                <CardEventoAdministrador
                   evento={evento}
                   expandido={eventoExpandido === evento.id}
                   toggleExpandir={toggleExpandir}
                   turmas={turmasPorEvento[evento.id] || []}
                   carregarInscritos={carregarInscritos}
                   inscritosPorTurma={inscritosPorTurma}
-                  carregarAvaliacoes={carregarAvaliacoes}
-                  avaliacoesPorTurma={avaliacoesPorTurma}
+                  carregarAvaliacao={carregarAvaliacao}
+                  avaliacaoPorTurma={avaliacaoPorTurma}
                   presencasPorTurma={presencasPorTurma}
                   carregarPresencas={carregarPresencas}
                   gerarRelatorioPDF={gerarRelatorioPDF}

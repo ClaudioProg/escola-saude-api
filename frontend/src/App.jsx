@@ -45,8 +45,8 @@ const Teste = lazy(() => import("./pages/Teste"));
 const AgendaSalasUsuario = lazy(() => import("./pages/AgendaSalasUsuario"));
 const SolicitacaoCurso = lazy(() => import("./pages/SolicitacaoCurso"));
 const RepositorioTrabalhos = lazy(() => import("./pages/RepositorioTrabalhos"));
-const UsuarioSubmissoes = lazy(() => import("./pages/UsuarioSubmissoes"));
-const AvaliadorSubmissoes = lazy(() => import("./pages/AvaliadorSubmissoes"));
+const Usuariosubmissao = lazy(() => import("./pages/Usuariosubmissao"));
+const Avaliadorsubmissao = lazy(() => import("./pages/Avaliadorsubmissao"));
 
 const DashboardInstrutor = lazy(() => import("./pages/DashboardInstrutor"));
 const AgendaInstrutor = lazy(() => import("./pages/AgendaInstrutor"));
@@ -66,13 +66,13 @@ const GerenciarEventos = lazy(() => import("./pages/GerenciarEventos"));
 const PresencasPorTurma = lazy(() => import("./pages/PresencasPorTurma"));
 const Perfil = lazy(() => import("./pages/Perfil"));
 const Ajuda = lazy(() => import("./pages/Ajuda"));
-const Notificacoes = lazy(() => import("./pages/Notificacoes"));
+const Notificacao = lazy(() => import("./pages/Notificacao"));
 const AgendaAdministrador = lazy(() => import("./pages/AgendaAdministrador"));
 const Avaliacao = lazy(() => import("./pages/Avaliacao"));
 const GestaoPresencas = lazy(() => import("./pages/GestaoPresenca"));
-const CancelarInscricoesAdmin = lazy(() => import("./pages/CancelarInscricoesAdmin"));
-const AdminAvaliacoes = lazy(() => import("./pages/AdminAvaliacoes"));
-const VotacoesUsuario = lazy(() => import("./pages/VotacoesUsuario"));
+const CancelarInscricaoAdmin = lazy(() => import("./pages/CancelarInscricaoAdmin"));
+const AdminAvaliacao = lazy(() => import("./pages/AdminAvaliacao"));
+const VotacaoUsuario = lazy(() => import("./pages/VotacaoUsuario"));
 const AgendaSalasAdmin = lazy(() => import("./pages/AgendaSalasAdmin"));
 const AdminChamadaForm = lazy(() => import("./pages/AdminChamadaForm"));
 const CalendarioBloqueiosAdmin = lazy(() => import("./pages/CalendarioBloqueiosAdmin"));
@@ -90,10 +90,10 @@ const Privacidade = lazy(() => import("./pages/Privacidade"));
 const HomeEscola = lazy(() => import("./pages/HomeEscola"));
 
 // 🆕 Admin – Votações
-const AdminVotacoes = lazy(() => import("./pages/AdminVotacoes"));
+const AdminVotacao = lazy(() => import("./pages/AdminVotacao"));
 
-// ⚠️ AdminSubmissoes (wrapper usa :chamadaId)
-const AdminSubmissoes = lazy(() => import("./pages/AdminSubmissoes"));
+// ⚠️ Adminsubmissao (wrapper usa :chamadaId)
+const Adminsubmissao = lazy(() => import("./pages/Adminsubmissao"));
 
 /* A11y: Announcer de mudanças de rota */
 function RouteChangeAnnouncer() {
@@ -263,9 +263,9 @@ function AdminChamadaFormWrapper() {
   const { id } = useParams();
   return <AdminChamadaForm chamadaId={id} />;
 }
-function AdminSubmissoesRouteWrapper() {
+function AdminsubmissaoRouteWrapper() {
   const { chamadaId } = useParams();
-  return <AdminSubmissoes chamadaId={chamadaId ? Number(chamadaId) : undefined} />;
+  return <Adminsubmissao chamadaId={chamadaId ? Number(chamadaId) : undefined} />;
 }
 
 /* ✅ Layout privado: autentica e envolve com EscolaAppShell */
@@ -363,7 +363,7 @@ export default function App() {
               <Route path="certificados" element={<MeusCertificados />} />
               <Route path="perfil" element={<Perfil />} />
               <Route path="ajuda" element={<Ajuda />} />
-              <Route path="notificacoes" element={<Notificacoes />} />
+              <Route path="notificacao" element={<Notificacao />} />
               <Route path="avaliacao" element={<Avaliacao />} />
               <Route path="avaliar/:turmaId" element={<Avaliacao />} />
               <Route path="teste" element={<Teste />} />
@@ -375,7 +375,7 @@ export default function App() {
               <Route path="manual" element={<ManualUsuario />} />
 
               {/* Submissões */}
-              <Route path="submissoes" element={<UsuarioSubmissoes />} />
+              <Route path="submissao" element={<Usuariosubmissao />} />
 
               {/* 🧑‍🏫 Instrutor / Avaliador */}
               <Route
@@ -427,10 +427,10 @@ export default function App() {
                 }
               />
               <Route
-                path="avaliador/submissoes"
+                path="avaliador/submissao"
                 element={
                   <PrivateRoute permitido={["instrutor", "administrador"]}>
-                    <AvaliadorSubmissoes />
+                    <Avaliadorsubmissao />
                   </PrivateRoute>
                 }
               />
@@ -533,25 +533,25 @@ export default function App() {
                 }
               />
               <Route
-                path="admin/cancelar-inscricoes"
+                path="admin/cancelar-inscricao"
                 element={
                   <PrivateRoute permitido={["administrador"]}>
-                    <CancelarInscricoesAdmin />
+                    <CancelarInscricaoAdmin />
                   </PrivateRoute>
                 }
               />
               <Route
-                path="admin/avaliacoes"
+                path="admin/avaliacao"
                 element={
                   <PrivateRoute permitido={["administrador"]}>
-                    <AdminAvaliacoes />
+                    <AdminAvaliacao />
                   </PrivateRoute>
                 }
               />
 
               {/* Salas */}
               <Route
-                path="admin/solicitacoes-curso"
+                path="admin/solicitacao-curso"
                 element={
                   <PrivateRoute permitido={["administrador"]}>
                     <SolicitacaoCursoAdmin />
@@ -585,14 +585,14 @@ export default function App() {
 
               {/* Votações */}
               <Route
-                path="admin/votacoes"
+                path="admin/votacao"
                 element={
                   <PrivateRoute permitido={["administrador"]}>
-                    <AdminVotacoes />
+                    <AdminVotacao />
                   </PrivateRoute>
                 }
               />
-              <Route path="votacoes/:votacaoId" element={<VotacoesUsuario />} />
+              <Route path="votacao/:votacaoId" element={<VotacaoUsuario />} />
 
               {/* Submissões Admin */}
               <Route
@@ -612,18 +612,18 @@ export default function App() {
                 }
               />
               <Route
-                path="admin/submissoes"
+                path="admin/submissao"
                 element={
                   <PrivateRoute permitido={["administrador"]}>
-                    <AdminSubmissoesRouteWrapper />
+                    <AdminsubmissaoRouteWrapper />
                   </PrivateRoute>
                 }
               />
               <Route
-                path="admin/chamadas/:chamadaId/submissoes"
+                path="admin/chamadas/:chamadaId/submissao"
                 element={
                   <PrivateRoute permitido={["administrador"]}>
-                    <AdminSubmissoesRouteWrapper />
+                    <AdminsubmissaoRouteWrapper />
                   </PrivateRoute>
                 }
               />

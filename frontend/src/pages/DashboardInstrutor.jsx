@@ -101,7 +101,7 @@ export default function DashboardInstrutor() {
     proximasAulas: 0,
     presencaMediaGeral: 0, // %
     notaMediaGeral: 0, // 0–10
-    totalAvaliacoes: 0,
+    totalAvaliacao: 0,
   });
 
   const [seriePresencaTurma, setSeriePresencaTurma] = useState({ labels: [], datasets: [] });
@@ -158,7 +158,7 @@ export default function DashboardInstrutor() {
       // 2) Eventos + notas médias (0–10 já ajustado no seu controller)
       let notasEventos = [];
       if (usuarioId) {
-        const ev = await apiGet(`/api/instrutor/${usuarioId}/eventos-avaliacoes`, {
+        const ev = await apiGet(`/api/instrutor/${usuarioId}/eventos-avaliacao`, {
           on403: "silent",
           signal: ctrl.signal,
         }).catch(() => []);
@@ -243,7 +243,7 @@ export default function DashboardInstrutor() {
         return Math.round(m * 10) / 10;
       })();
 
-      const totalAvaliacoes = notasEventos.length;
+      const totalAvaliacao = notasEventos.length;
 
       setKpi({
         totalTurmas,
@@ -251,7 +251,7 @@ export default function DashboardInstrutor() {
         proximasAulas,
         presencaMediaGeral: presGeral,
         notaMediaGeral,
-        totalAvaliacoes,
+        totalAvaliacao,
       });
 
       // Séries: Presença por Turma
@@ -306,7 +306,7 @@ export default function DashboardInstrutor() {
         proximasAulas: 0,
         presencaMediaGeral: 0,
         notaMediaGeral: 0,
-        totalAvaliacoes: 0,
+        totalAvaliacao: 0,
       });
       resetGraficos();
       setLive("Falha ao carregar o painel.");
@@ -435,7 +435,7 @@ export default function DashboardInstrutor() {
             <MiniStat
               icon={BarChart3}
               titulo="Eventos Avaliados"
-              valor={kpi.totalAvaliacoes}
+              valor={kpi.totalAvaliacao}
               descricao="Com avaliações registradas"
               accent="from-slate-600 to-gray-700"
               reduceMotion={reduceMotion}

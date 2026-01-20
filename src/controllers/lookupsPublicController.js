@@ -160,7 +160,7 @@ async function listGeneros(req, res) {
   }
 }
 
-async function listOrientacoesSexuais(req, res) {
+async function listOrientacaoSexuais(req, res) {
   const rid = mkRid();
   try {
     setLookupCache(res);
@@ -179,7 +179,7 @@ async function listOrientacoesSexuais(req, res) {
 
     return res.json(rows);
   } catch (e) {
-    log(rid, "error", "listOrientacoesSexuais erro", e);
+    log(rid, "error", "listOrientacaoSexuais erro", e);
     return res.status(500).json({ erro: "Falha ao listar orientações sexuais." });
   }
 }
@@ -260,7 +260,7 @@ module.exports = {
   listCargos,
   listUnidades,
   listGeneros,
-  listOrientacoesSexuais,
+  listOrientacaoSexuais,
   listCoresRacas,
   listEscolaridades,
   listDeficiencias,

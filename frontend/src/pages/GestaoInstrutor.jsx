@@ -356,7 +356,7 @@ export default function GestaoInstrutor() {
 
     try {
       setLive(`Carregando histórico de ${instrutor?.nome}…`);
-      const data = await apiGet(`/api/instrutor/${instrutor.id}/eventos-avaliacoes`, { on403: "silent" });
+      const data = await apiGet(`/api/instrutor/${instrutor.id}/eventos-avaliacao`, { on403: "silent" });
 
       const eventos = (Array.isArray(data) ? data : []).map((ev) => ({
         id: ev.evento_id ?? ev.id ?? `${ev.evento}-${ev.data_inicio}-${ev.data_fim}`,

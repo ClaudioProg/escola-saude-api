@@ -229,7 +229,7 @@ function CardTrabalho({ trabalho, reduceMotion }) {
     objetivos,
     metodo,
     resultados,
-    consideracoes,
+    consideracao,
     bibliografia,
     status,
     status_escrita,
@@ -267,7 +267,7 @@ function CardTrabalho({ trabalho, reduceMotion }) {
   };
 
   // Preview: sem introdução (prioriza resultados, depois considerações/objetivos)
-  const previewTexto = resultados || consideracoes || objetivos || "";
+  const previewTexto = resultados || consideracao || objetivos || "";
 
   return (
     <article
@@ -369,7 +369,7 @@ function CardTrabalho({ trabalho, reduceMotion }) {
             {secao("Objetivos", objetivos)}
             {secao("Método / Descrição da prática", metodo)}
             {secao("Resultados / Impactos", resultados)}
-            {secao("Considerações finais", consideracoes)}
+            {secao("Considerações finais", consideracao)}
             {secao("Referências / Bibliografia", bibliografia)}
           </motion.div>
         )}
@@ -581,7 +581,7 @@ export default function RepositorioTrabalhos() {
           d?.objetivos,
           d?.metodo,
           d?.resultados,
-          d?.consideracoes,
+          d?.consideracao,
           d?.bibliografia,
         ]
           .filter(Boolean)

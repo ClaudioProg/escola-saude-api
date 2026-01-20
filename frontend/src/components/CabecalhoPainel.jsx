@@ -15,7 +15,7 @@ const TITULO_POR_CAMINHO = {
   "/eventos": "Painel de Eventos",
   "/scanner": "Registro de Presença",
   "/perfil": "Perfil do Usuário",
-  "/notificacoes": "Notificações",
+  "/notificacao": "Notificações",
   "/gestor": "Painel do Gestor",
 };
 
@@ -32,7 +32,7 @@ const VARIANT_POR_CAMINHO = {
   "/eventos": "emerald",
   "/scanner": "orange",
   "/perfil": "sky",
-  "/notificacoes": "rose",
+  "/notificacao": "rose",
   "/gestor": "cyan",
 };
 

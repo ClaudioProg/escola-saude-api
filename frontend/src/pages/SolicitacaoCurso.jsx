@@ -177,9 +177,9 @@ export default function SolicitacaoCurso() {
       setLive("Carregando solicitações…");
 
       const [cursosRes, unidadesRes, tiposRes] = await Promise.all([
-        api.get("/api/solicitacoes-curso"),
+        api.get("/api/solicitacao-curso"),
         api.get("/api/unidades"),
-        api.get("/api/solicitacoes-curso/tipos"),
+        api.get("/api/solicitacao-curso/tipos"),
       ]);
 
       const cursosArr = Array.isArray(cursosRes) ? cursosRes : cursosRes?.data || [];
@@ -292,7 +292,7 @@ export default function SolicitacaoCurso() {
   const confirmarExclusao = async () => {
     if (!confirmacao?.id) return;
     try {
-      await api.delete(`/api/solicitacoes-curso/${confirmacao.id}`);
+      await api.delete(`/api/solicitacao-curso/${confirmacao.id}`);
       toast.success("Solicitação excluída.");
       setCursos((prev) => prev.filter((c) => c.id !== confirmacao.id));
     } catch (err) {

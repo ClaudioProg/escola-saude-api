@@ -11,7 +11,7 @@ import {
   gerarIntervaloDeDatas,
   formatarCPF,
   formatarParaISO,
-} from "../utils/data";
+} from "../utils/dateTime";
 import { apiGet, apiPost, apiDelete } from "../services/api";
 import {
   Trash2,
@@ -178,10 +178,10 @@ export default function ListaTurmasPresenca({
   eventos = [],
   hoje,
   carregarInscritos,
-  carregarAvaliacoes,
+  carregarAvaliacao,
   gerarRelatorioPDF,
   inscritosPorTurma,
-  avaliacoesPorTurma,
+  avaliacaoPorTurma,
   navigate,
   modoadministradorPresencas = false,
   onTurmaRemovida,
@@ -546,7 +546,7 @@ export default function ListaTurmasPresenca({
                                       const novaTurma = estaExpandida ? null : turma.id;
                                       if (!estaExpandida) {
                                         carregarInscritos?.(turma.id);
-                                        carregarAvaliacoes?.(turma.id);
+                                        carregarAvaliacao?.(turma.id);
                                         carregarPresencas(turma.id);
                                       }
                                       setTurmaExpandidaId(novaTurma);
@@ -1233,10 +1233,10 @@ ListaTurmasPresenca.propTypes = {
   ),
   hoje: PropTypes.instanceOf(Date),
   carregarInscritos: PropTypes.func.isRequired,
-  carregarAvaliacoes: PropTypes.func.isRequired,
+  carregarAvaliacao: PropTypes.func.isRequired,
   gerarRelatorioPDF: PropTypes.func,
   inscritosPorTurma: PropTypes.object.isRequired,
-  avaliacoesPorTurma: PropTypes.object,
+  avaliacaoPorTurma: PropTypes.object,
   navigate: PropTypes.func,
   modoadministradorPresencas: PropTypes.bool,
   onTurmaRemovida: PropTypes.func,

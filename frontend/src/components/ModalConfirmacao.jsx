@@ -1,23 +1,19 @@
-// ✅ src/components/ModalConfirmacao.jsx (compat global + a11y + Enter-to-confirm)
-// - Aceita props em PT e EN (isOpen/open, titulo/title, mensagem/description, onConfirmar/onConfirm, onClose/onCancelar)
-// - Sem PropTypes .isRequired para não gerar warning quando faltar handler; botão fica desabilitado
-// - Mantém Modal, paletas, Enter para confirmar, foco inicial no confirmar
+// ✅ src/components/ModalConfirmacao.jsx — PREMIUM (global + a11y + Enter-to-confirm + stack-safe)
+// - ✅ Compat PT/EN: isOpen/open, titulo/title, mensagem/description, onConfirmar/onConfirm, onClose/onCancelar
+// - ✅ Usa o Modal ÚNICO (stack-safe) — sem props antigas (level/maxWidth/isOpen/closeOnEsc)
+// - ✅ Enter confirma (somente quando foco NÃO estiver em input/textarea/contenteditable)
+// - ✅ Foco inicial no confirmar (quando habilitado) ou no cancelar
+// - ✅ Suporta async confirm com estado "confirmando"
+// - ✅ Variants premium: danger | warning | primary | neutral | success
+// - ✅ Mobile-first + dark mode + acessibilidade refinada
+// - ✅ Não usa PropTypes .isRequired: se faltar handler, botão fica desabilitado sem warning
 
-import { useEffect, useRef, useMemo, useState, useId, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useId, useCallback } from "react";
 import PropTypes from "prop-types";
 import Modal from "./Modal";
-import { AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, XCircle, Info as InfoIcon } from "lucide-react";
 
 /* ───────────────── helpers internos ───────────────── */
-function getTopmostLevel() {
-  const nodes = Array.from(document.querySelectorAll("[data-modal-content]"));
-  if (!nodes.length) return -Infinity;
-  return nodes.reduce((acc, el) => {
-    const lvl = Number(el.getAttribute("data-level") || 0);
-    return Number.isFinite(lvl) ? Math.max(acc, lvl) : acc;
-  }, -Infinity);
-}
-
 function isEditableElement(el) {
   if (!el) return false;
   const tag = String(el.tagName || "").toLowerCase();
@@ -30,102 +26,132 @@ function isEditableElement(el) {
   return false;
 }
 
+function cls(...p) {
+  return p.filter(Boolean).join(" ");
+}
+
 /* ───────────────── componente ───────────────── */
 export default function ModalConfirmacao(rawProps) {
-  // 🔁 Compat de nomes (PT/EN) — fonte única derivada aqui
-  const isOpen     = !!(rawProps.isOpen ?? rawProps.open);
-  const onClose    = rawProps.onClose ?? rawProps.onCancelar;
-  const onConfirm  = rawProps.onConfirm ?? rawProps.onConfirmar;
+  // 🔁 Compat de nomes (PT/EN)
+  const open = !!(rawProps.open ?? rawProps.isOpen);
 
-  const titulo     = rawProps.titulo ?? rawProps.title ?? "Confirmar Ação";
-  const mensagem   = rawProps.mensagem ?? rawProps.description ?? "Tem certeza que deseja continuar?";
+  const onClose = rawProps.onClose ?? rawProps.onCancelar;
+  const onConfirm = rawProps.onConfirm ?? rawProps.onConfirmar;
 
-  const textoBotaoConfirmar = rawProps.textoBotaoConfirmar ?? rawProps.confirmText ?? "Confirmar";
-  const textoBotaoCancelar  = rawProps.textoBotaoCancelar  ?? rawProps.cancelText  ?? "Cancelar";
+  const titulo = rawProps.titulo ?? rawProps.title ?? "Confirmar ação";
+  const mensagem = rawProps.mensagem ?? rawProps.description ?? "Tem certeza que deseja continuar?";
+
+  const confirmText = rawProps.textoBotaoConfirmar ?? rawProps.confirmText ?? "Confirmar";
+  const cancelText = rawProps.textoBotaoCancelar ?? rawProps.cancelText ?? "Cancelar";
 
   const closeOnOverlay = rawProps.closeOnOverlay ?? true;
-  const variant        = rawProps.variant ?? "danger";
-  const level          = Number(rawProps.level ?? 0);
+  const variant = rawProps.variant ?? "danger";
   const confirmOnEnter = rawProps.confirmOnEnter ?? true;
+
+  // stacking (se quiser elevar por cima de outros modais)
+  const zIndex = Number(rawProps.zIndex ?? 1300);
 
   const [confirmando, setConfirmando] = useState(false);
 
   const confirmBtnRef = useRef(null);
-  const modalContentRef = useRef(null);
+  const cancelBtnRef = useRef(null);
 
-  // IDs únicos por instância (evita conflito ARIA)
+  // wrapper para checar foco dentro
+  const contentRef = useRef(null);
+
+  // IDs únicos por instância (ARIA)
   const uid = useId();
   const titleId = `modal-confirmacao-title-${uid}`;
-  const descId  = `modal-confirmacao-desc-${uid}`;
+  const descId = `modal-confirmacao-desc-${uid}`;
 
-  const handleConfirm = useCallback(async () => {
-    if (confirmando) return;
-    if (typeof onConfirm !== "function") return; // sem handler → botão ficará desabilitado
-    try {
-      setConfirmando(true);
-      const result = await Promise.resolve(onConfirm());
-      if (result !== false) onClose?.();
-    } catch {
-      // mantemos aberto; chamador exibe toast/erro se quiser
-    } finally {
-      setConfirmando(false);
-    }
-  }, [confirmando, onConfirm, onClose]);
+  const confirmarHabilitado = typeof onConfirm === "function";
+  const cancelarHabilitado = typeof onClose === "function";
 
-  // Paletas por variante
   const palette = useMemo(() => {
+    // ✅ Paletas premium por variante
     switch (variant) {
       case "primary":
         return {
           header: "from-sky-900 via-sky-800 to-blue-700",
-          btn: "bg-sky-600 hover:bg-sky-700 focus:ring-sky-400",
+          btn: "bg-sky-600 hover:bg-sky-700 focus-visible:ring-sky-400",
+          ring: "focus-visible:ring-sky-400",
           icon: CheckCircle2,
           chip:
             "bg-sky-50 text-sky-800 border-sky-200 dark:bg-sky-900/30 dark:text-sky-200 dark:border-sky-800",
+          hint: "Confirmação necessária",
         };
       case "warning":
         return {
           header: "from-amber-900 via-orange-800 to-yellow-700",
-          btn: "bg-amber-600 hover:bg-amber-700 focus:ring-amber-400",
+          btn: "bg-amber-600 hover:bg-amber-700 focus-visible:ring-amber-400",
+          ring: "focus-visible:ring-amber-400",
           icon: AlertTriangle,
           chip:
             "bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-900/30 dark:text-amber-200 dark:border-amber-800",
+          hint: "Requer atenção",
         };
       case "neutral":
         return {
           header: "from-slate-900 via-slate-800 to-zinc-700",
-          btn: "bg-slate-700 hover:bg-slate-800 focus:ring-slate-400",
-          icon: CheckCircle2,
+          btn: "bg-slate-700 hover:bg-slate-800 focus-visible:ring-slate-400",
+          ring: "focus-visible:ring-slate-400",
+          icon: InfoIcon,
           chip:
             "bg-zinc-100 text-zinc-800 border-zinc-200 dark:bg-zinc-800/60 dark:text-zinc-200 dark:border-zinc-700",
+          hint: "Confirmação",
+        };
+      case "success":
+        return {
+          header: "from-emerald-900 via-emerald-800 to-teal-700",
+          btn: "bg-emerald-600 hover:bg-emerald-700 focus-visible:ring-emerald-400",
+          ring: "focus-visible:ring-emerald-400",
+          icon: CheckCircle2,
+          chip:
+            "bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-800",
+          hint: "Tudo certo",
         };
       case "danger":
       default:
         return {
           header: "from-rose-900 via-red-800 to-orange-700",
-          btn: "bg-red-600 hover:bg-red-700 focus:ring-red-400",
+          btn: "bg-rose-600 hover:bg-rose-700 focus-visible:ring-rose-400",
+          ring: "focus-visible:ring-rose-400",
           icon: XCircle,
           chip:
             "bg-rose-50 text-rose-800 border-rose-200 dark:bg-rose-900/30 dark:text-rose-200 dark:border-rose-800",
+          hint: "Ação irreversível",
         };
     }
   }, [variant]);
 
   const Icon = palette.icon;
 
-  // Enter confirma (apenas topmost + foco dentro + não editável)
+  const handleConfirm = useCallback(async () => {
+    if (confirmando) return;
+    if (!confirmarHabilitado) return;
+
+    try {
+      setConfirmando(true);
+      const result = await Promise.resolve(onConfirm());
+      // se o confirm retornar explicitamente false, mantém aberto
+      if (result !== false) onClose?.();
+    } catch {
+      // mantém aberto; quem chama pode exibir toast
+    } finally {
+      setConfirmando(false);
+    }
+  }, [confirmando, confirmarHabilitado, onConfirm, onClose]);
+
+  // Enter confirma (somente quando foco estiver no modal e NÃO em campos editáveis)
   useEffect(() => {
-    if (!isOpen || !confirmOnEnter) return;
+    if (!open || !confirmOnEnter) return;
 
     const onKey = (e) => {
       if (e.key !== "Enter") return;
       if (confirmando) return;
+      if (!confirmarHabilitado) return;
 
-      const top = getTopmostLevel();
-      const isTopmost = level >= top;
-      if (!isTopmost) return;
-
-      const root = modalContentRef.current;
+      const root = contentRef.current;
       const active = document.activeElement;
       const focusInside = !!(root && active && root.contains(active));
       if (!focusInside) return;
@@ -138,45 +164,53 @@ export default function ModalConfirmacao(rawProps) {
 
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
-  }, [isOpen, confirmOnEnter, confirmando, level, handleConfirm]);
+  }, [open, confirmOnEnter, confirmando, confirmarHabilitado, handleConfirm]);
 
-  // foco no botão confirmar ao abrir
+  // foco inicial ao abrir: confirmar se habilitado; senão cancelar
   useEffect(() => {
-    if (!isOpen) return;
-    const t = setTimeout(() => confirmBtnRef.current?.focus?.(), 30);
+    if (!open) return;
+    const t = setTimeout(() => {
+      if (confirmarHabilitado) confirmBtnRef.current?.focus?.();
+      else cancelBtnRef.current?.focus?.();
+    }, 30);
     return () => clearTimeout(t);
-  }, [isOpen]);
+  }, [open, confirmarHabilitado]);
 
-  if (!isOpen) return null;
-
-  const confirmarHabilitado = typeof onConfirm === "function";
-  const cancelarHabilitado  = typeof onClose   === "function";
+  if (!open) return null;
 
   return (
     <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      level={level}
+      open={open}
+      onClose={cancelarHabilitado ? onClose : undefined}
       labelledBy={titleId}
       describedBy={descId}
-      closeOnBackdrop={closeOnOverlay}
-      closeOnEsc
-      initialFocusRef={confirmBtnRef}
-      maxWidth="max-w-md"
+      ariaLabel={!rawProps.labelledBy ? "Confirmação" : undefined}
+      closeOnBackdrop={closeOnOverlay && !confirmando}
+      closeOnEscape={!confirmando}
+      initialFocusRef={confirmarHabilitado ? confirmBtnRef : cancelBtnRef}
       className="p-0 overflow-hidden"
+      // ✅ nosso Modal premium suporta zIndex
+      zIndex={zIndex}
+      // ✅ já estamos desenhando o nosso header com botão fechar; evita “X” duplicado
+      showCloseButton={false}
+      // ✅ aqui é um confirm → largura ideal menor e sem padding forçado do Modal
+      size="sm"
+      padding={false}
+      align="center"
     >
-      {/* wrapper ref para checar foco dentro */}
-      <div ref={modalContentRef} data-modal-content data-level={level}>
+      {/* wrapper para checar foco dentro */}
+      <div ref={contentRef}>
         {/* Header hero */}
         <header
-          className={`px-4 sm:px-5 py-4 text-white bg-gradient-to-br ${palette.header}`}
+          className={cls("px-4 sm:px-5 py-4 text-white bg-gradient-to-br", palette.header)}
           role="group"
-          aria-label="Confirmar ação"
+          aria-label="Confirmação"
         >
           <div className="flex items-start gap-3">
             <span className="grid place-items-center w-10 h-10 rounded-2xl bg-white/15 border border-white/20">
               <Icon className="w-5 h-5" aria-hidden="true" />
             </span>
+
             <div className="min-w-0">
               <h2 id={titleId} className="text-xl sm:text-2xl font-extrabold tracking-tight">
                 {titulo}
@@ -185,16 +219,31 @@ export default function ModalConfirmacao(rawProps) {
                 Revise antes de confirmar.
               </p>
             </div>
+
+            {/* botão fechar (opcional) */}
+            <button
+              type="button"
+              onClick={confirmando ? undefined : cancelarHabilitado ? onClose : undefined}
+              disabled={!cancelarHabilitado || confirmando}
+              className="ml-auto p-2 rounded-2xl hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 disabled:opacity-60"
+              aria-label="Fechar"
+            >
+              <span className="text-xl leading-none" aria-hidden="true">
+                ×
+              </span>
+            </button>
           </div>
 
           {/* chip contextual */}
           <div className="mt-3">
-            <span className={`inline-flex items-center gap-2 text-xs font-extrabold px-2.5 py-1 rounded-full border ${palette.chip}`}>
-              {variant === "danger"
-                ? "Ação irreversível"
-                : variant === "warning"
-                ? "Requer atenção"
-                : "Confirmação necessária"}
+            <span
+              className={cls(
+                "inline-flex items-center gap-2 text-xs font-extrabold px-2.5 py-1 rounded-full border",
+                palette.chip
+              )}
+            >
+              {palette.hint}
+              {confirmOnEnter ? <span className="opacity-90">• Enter</span> : null}
             </span>
           </div>
         </header>
@@ -204,6 +253,7 @@ export default function ModalConfirmacao(rawProps) {
           <div className="text-sm text-slate-800 dark:text-slate-200 whitespace-pre-wrap">
             {mensagem}
           </div>
+
           <div aria-live="polite" className="sr-only">
             {confirmando ? "Processando confirmação." : ""}
           </div>
@@ -214,28 +264,36 @@ export default function ModalConfirmacao(rawProps) {
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2">
             <button
               type="button"
-              onClick={cancelarHabilitado ? onClose : undefined}
+              ref={cancelBtnRef}
+              onClick={cancelarHabilitado && !confirmando ? onClose : undefined}
               disabled={!cancelarHabilitado || confirmando}
-              className="w-full sm:w-auto px-4 py-2 rounded-2xl bg-slate-200 dark:bg-slate-800
-                         text-slate-900 dark:text-slate-100 font-extrabold
-                         hover:bg-slate-300 dark:hover:bg-slate-700 transition
-                         disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-400"
+              className={cls(
+                "w-full sm:w-auto px-4 py-2 rounded-2xl",
+                "bg-slate-200 dark:bg-slate-800",
+                "text-slate-900 dark:text-slate-100 font-extrabold",
+                "hover:bg-slate-300 dark:hover:bg-slate-700 transition",
+                "disabled:opacity-60",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-slate-400"
+              )}
             >
-              {textoBotaoCancelar}
+              {cancelText}
             </button>
 
             <button
               type="button"
               ref={confirmBtnRef}
-              onClick={confirmarHabilitado ? handleConfirm : undefined}
+              onClick={!confirmando && confirmarHabilitado ? handleConfirm : undefined}
               disabled={!confirmarHabilitado || confirmando}
-              className={`w-full sm:w-auto inline-flex justify-center items-center gap-2 px-4 py-2 rounded-2xl
-                          text-white font-extrabold transition disabled:opacity-60
-                          focus:outline-none focus:ring-2 focus:ring-offset-2 ${palette.btn}`}
+              className={cls(
+                "w-full sm:w-auto inline-flex justify-center items-center gap-2 px-4 py-2 rounded-2xl",
+                "text-white font-extrabold transition disabled:opacity-60",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2",
+                palette.btn
+              )}
               aria-busy={confirmando ? "true" : "false"}
             >
-              <Icon className="w-5 h-5" aria-hidden="true" />
-              {confirmando ? "Processando..." : textoBotaoConfirmar}
+              <Icon className={cls("w-5 h-5", confirmando ? "animate-pulse" : "")} aria-hidden="true" />
+              {confirmando ? "Processando..." : confirmText}
             </button>
           </div>
 
@@ -263,7 +321,7 @@ ModalConfirmacao.propTypes = {
   onConfirmar: PropTypes.func,
 
   // textos
-  titulo: PropTypes.string,
+  titulo: PropTypes.oneOfType([PropTypes.string, PropTypes.node]),
   title: PropTypes.oneOfType([PropTypes.string, PropTypes.node]),
   mensagem: PropTypes.oneOfType([PropTypes.string, PropTypes.node]),
   description: PropTypes.oneOfType([PropTypes.string, PropTypes.node]),
@@ -275,7 +333,7 @@ ModalConfirmacao.propTypes = {
 
   // comportamento/estilo
   closeOnOverlay: PropTypes.bool,
-  variant: PropTypes.oneOf(["danger", "primary", "warning", "neutral"]),
-  level: PropTypes.number,
+  variant: PropTypes.oneOf(["danger", "primary", "warning", "neutral", "success"]),
   confirmOnEnter: PropTypes.bool,
+  zIndex: PropTypes.number,
 };

@@ -1,4 +1,4 @@
-// 📁 src/components/ModalAvaliacoes.jsx
+// 📁 src/components/ModalAvaliacao.jsx
 import PropTypes from "prop-types";
 import Modal from "./Modal";
 import { Star, Gauge, CalendarDays, Info, UserStar } from "lucide-react";
@@ -101,7 +101,7 @@ function MiniCard({ icon: Icon, title, children }) {
 }
 
 /* ====================== Componente ====================== */
-export default function ModalAvaliacoes({ isOpen, onClose, avaliacao }) {
+export default function ModalAvaliacao({ isOpen, onClose, avaliacao }) {
   if (!avaliacao) return null;
 
   const dataAval =
@@ -350,7 +350,7 @@ export default function ModalAvaliacoes({ isOpen, onClose, avaliacao }) {
   );
 }
 
-ModalAvaliacoes.propTypes = {
+ModalAvaliacao.propTypes = {
   isOpen: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
   avaliacao: PropTypes.object, // estrutura flexível

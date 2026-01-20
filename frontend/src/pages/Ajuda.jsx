@@ -80,7 +80,7 @@ function HeaderHero({ onManual, onFaq, theme, setTheme, isDark }) {
       <div className="relative max-w-7xl mx-auto px-4 sm:px-6 py-8 md:py-10">
         {/* toggle */}
         <div className="lg:absolute lg:right-4 lg:top-6 flex justify-end">
-          <ThemeTogglePills theme={theme} setTheme={setTheme} variant="glass" />
+          <ThemeTogglePills variant="glass" />
         </div>
 
         <div className="flex flex-col items-center text-center gap-3">

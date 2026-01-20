@@ -199,9 +199,9 @@ export default function SolicitacaoCursoAdmin() {
       setLive("Carregando solicitações…");
 
       const [cursosRes, unidadesRes, tiposRes] = await Promise.all([
-        api.get("/api/solicitacoes-curso"),
+        api.get("/api/solicitacao-curso"),
         api.get("/api/unidades"),
-        api.get("/api/solicitacoes-curso/tipos"),
+        api.get("/api/solicitacao-curso/tipos"),
       ]);
 
       setCursos(Array.isArray(cursosRes) ? cursosRes : cursosRes?.data || []);
@@ -342,7 +342,7 @@ export default function SolicitacaoCursoAdmin() {
       setExcluindo(true);
       setLive("Excluindo solicitação…");
 
-      await api.delete(`/api/solicitacoes-curso/${confirmacao.id}`);
+      await api.delete(`/api/solicitacao-curso/${confirmacao.id}`);
 
       toast.success("Solicitação excluída com sucesso.");
       setCursos((prev) => prev.filter((c) => String(c.id) !== String(confirmacao.id)));

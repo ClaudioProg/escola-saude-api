@@ -170,7 +170,7 @@ export default function EditarEvento() {
         if (!prev) return prev;
         let next = { ...prev, [name]: value };
 
-        // Auto-coesão do período (date-only)
+        // Auto-caoão do período (date-only)
         if (name === "data_inicio") {
           const di = normalizeYMD(value);
           const df = normalizeYMD(prev?.data_fim);

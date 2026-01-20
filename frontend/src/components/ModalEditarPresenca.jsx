@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, useId, useCallback } from "react"
 import { Check, X, ClipboardSignature, AlertTriangle } from "lucide-react";
 import Modal from "./Modal";
 
-const STATUS_OPCOES = ["presente", "faltou"];
+const STATUS_OPcao = ["presente", "faltou"];
 
 function cls(...p) {
   return p.filter(Boolean).join(" ");
@@ -27,7 +27,7 @@ export default function ModalEditarPresenca({
 
   const statusInicial = useMemo(() => {
     const s = (inscrito?.status || "faltou").toLowerCase().trim();
-    return STATUS_OPCOES.includes(s) ? s : "faltou";
+    return STATUS_OPcao.includes(s) ? s : "faltou";
   }, [inscrito]);
 
   const [status, setStatus] = useState(statusInicial);

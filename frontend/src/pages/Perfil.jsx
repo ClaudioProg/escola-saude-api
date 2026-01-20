@@ -62,7 +62,7 @@ function HeaderHero({
             {atualizando ? "Atualizando…" : "Atualizar"}
           </button>
 
-          <ThemeTogglePills theme={theme} setTheme={setTheme} variant="glass" />
+          <ThemeTogglePills variant="glass" />
         </div>
 
         {/* logo grande à esquerda (desktop) */}
@@ -176,7 +176,7 @@ export default function Perfil() {
   const [unidades, setUnidades] = useState([]);
   const [cargos, setCargos] = useState([]);
   const [generos, setGeneros] = useState([]);
-  const [orientacoes, setOrientacoes] = useState([]);
+  const [orientacao, setOrientacao] = useState([]);
   const [coresRacas, setCoresRacas] = useState([]);
   const [escolaridades, setEscolaridades] = useState([]);
   const [deficiencias, setDeficiencias] = useState([]);
@@ -469,7 +469,7 @@ export default function Perfil() {
           apiGet("/unidades", { on403: "silent" }),
           apiGet("/cargos", { on403: "silent" }),
           apiGet("/generos", { on403: "silent" }),
-          apiGet("/orientacoes-sexuais", { on403: "silent" }),
+          apiGet("/orientacao-sexuais", { on403: "silent" }),
           apiGet("/cores-racas", { on403: "silent" }),
           apiGet("/escolaridades", { on403: "silent" }),
           apiGet("/deficiencias", { on403: "silent" }),
@@ -479,7 +479,7 @@ export default function Perfil() {
         setCargos((car || []).sort((a, b) => stripPrefixNum(a.nome).localeCompare(stripPrefixNum(b.nome), "pt-BR", { sensitivity: "base" })));
 
         setGeneros(gen || []);
-        setOrientacoes(ori || []);
+        setOrientacao(ori || []);
         setCoresRacas(cr || []);
         setEscolaridades(esc || []);
         setDeficiencias(def || []);
@@ -523,7 +523,7 @@ export default function Perfil() {
 
   const stats = useMemo(() => ({ completo, pendentes, percent }), [completo, pendentes, percent]);
 
-  const salvarAlteracoes = useCallback(async () => {
+  const salvarAlteracao = useCallback(async () => {
     if (!usuario?.id) return;
     if (!dirty) {
       toast.info("Nenhuma alteração para salvar.");
@@ -639,11 +639,11 @@ export default function Perfil() {
       const isSave = (e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === "s";
       if (!isSave) return;
       e.preventDefault();
-      salvarAlteracoes();
+      salvarAlteracao();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [salvarAlteracoes]);
+  }, [salvarAlteracao]);
 
   if (!usuario) {
     return (
@@ -652,7 +652,7 @@ export default function Perfil() {
           theme={theme}
           setTheme={setTheme}
           isDark={isDark}
-          onSave={salvarAlteracoes}
+          onSave={salvarAlteracao}
           onRefresh={refreshPerfil}
           onAssinatura={() => setModalAberto(true)}
           podeGerenciarAssinatura={false}
@@ -678,7 +678,7 @@ export default function Perfil() {
         theme={theme}
         setTheme={setTheme}
         isDark={isDark}
-        onSave={salvarAlteracoes}
+        onSave={salvarAlteracao}
         onRefresh={refreshPerfil}
         onAssinatura={() => setModalAberto(true)}
         podeGerenciarAssinatura={podeGerenciarAssinatura}
@@ -704,7 +704,7 @@ export default function Perfil() {
             </BotaoPrimario>
 
             <BotaoPrimario
-              onClick={salvarAlteracoes}
+              onClick={salvarAlteracao}
               disabled={salvando || !dirty}
               className="flex-1 flex items-center justify-center gap-2"
               icone={<Save className="w-4 h-4" />}
@@ -1016,7 +1016,7 @@ export default function Perfil() {
                   aria-describedby={eOrientacao ? "erro-orientacao" : undefined}
                 >
                   <option value="">{carregandoListas ? "Carregando..." : "Selecione…"}</option>
-                  {orientacoes.map((o) => (
+                  {orientacao.map((o) => (
                     <option key={o.id} value={String(o.id)}>{o.nome}</option>
                   ))}
                 </select>

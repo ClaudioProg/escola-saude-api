@@ -261,7 +261,7 @@ export default function Login() {
         <div className="relative max-w-7xl mx-auto px-4 sm:px-6 py-10 md:py-12">
           {/* Toggle tema */}
           <div className="flex justify-end sm:justify-end">
-            <ThemeTogglePills theme={theme} setTheme={setTheme} variant="glass" />
+            <ThemeTogglePills variant="glass" />
           </div>
 
           {/* Header central */}

@@ -24,7 +24,7 @@ import {
 import Modal from "./Modal";
 import ModalTurma from "./ModalTurma";
 import ModalConfirmacao from "./ModalConfirmacao";
-import { formatarDataBrasileira } from "../utils/data";
+import { formatarDataBrasileira } from "../utils/dateTime";
 import { apiGet, apiDelete } from "../services/api";
 
 /* ========================= Backend base ========================= */
@@ -495,7 +495,7 @@ export default function ModalEvento({
     return [...setUnicos].filter((c) => !jaUsados.has(c.toLowerCase())).sort((a, b) => a.localeCompare(b));
   }, [usuarios, fallbackCargos, cargosPermitidos]);
 
-  const opcoesInstrutor = useMemo(() => {
+  const opcaoInstrutor = useMemo(() => {
     return (usuarios || [])
       .filter((usuario) => {
         const perfil = (Array.isArray(usuario.perfil) ? usuario.perfil.join(",") : String(usuario.perfil || "")).toLowerCase();
@@ -1502,7 +1502,7 @@ export default function ModalEvento({
         isOpen={modalTurmaAberto}
         onClose={() => setModalTurmaAberto(false)}
         initialTurma={editandoTurmaIndex != null ? turmas[editandoTurmaIndex] : null}
-        usuarios={opcoesInstrutor}
+        usuarios={opcaoInstrutor}
         onSalvar={(turmaPayload) => {
           const normalizada = normalizarDatasTurma(turmaPayload);
           const turmaFinal = {

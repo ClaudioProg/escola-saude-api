@@ -1,4 +1,4 @@
-// src/services/votacoes.js
+// src/services/votacao.js
 import { apiGet, apiPost, apiPut, apiPatch, apiDelete } from "../services/api";
 
 /* ============================================================================
@@ -32,8 +32,8 @@ function optStr(v) {
  * Lista votações abertas/elegíveis ao usuário atual.
  * Compat: mantém assinatura original (sem filtros).
  */
-export const listarVotacoesElegiveis = () =>
-  apiGet("/votacoes/abertas/mine");
+export const listarVotacaoElegiveis = () =>
+  apiGet("/votacao/abertas/mine");
 
 /**
  * Envia voto do usuário.
@@ -45,7 +45,7 @@ export const votar = (id, payload) => {
   if (!payload || !payload.opcaoId) {
     throw new Error("payload.opcaoId é obrigatório para votar.");
   }
-  return apiPost(`/votacoes/${id}/votar`, payload);
+  return apiPost(`/votacao/${id}/votar`, payload);
 };
 
 /* ============================================================================
@@ -76,7 +76,7 @@ export const adminListar = (filtros = {}) => {
     fimDe,
     fimAte,
   } = filtros || {};
-  return apiGet("/votacoes", {
+  return apiGet("/votacao", {
     query: {
       busca: optStr(busca),
       status: optStr(status),
@@ -96,7 +96,7 @@ export const adminListar = (filtros = {}) => {
  */
 export const adminObter = (id) => {
   assertId(id, "id (votação)");
-  return apiGet(`/votacoes/${id}`);
+  return apiGet(`/votacao/${id}`);
 };
 
 /**
@@ -107,7 +107,7 @@ export const adminCriar = (data) => {
   if (!data || !data.titulo) {
     throw new Error("Título é obrigatório para criar uma votação.");
   }
-  return apiPost("/votacoes", data);
+  return apiPost("/votacao", data);
 };
 
 /**
@@ -117,7 +117,7 @@ export const adminCriar = (data) => {
  */
 export const adminAtualizar = (id, data) => {
   assertId(id, "id (votação)");
-  return apiPut(`/votacoes/${id}`, data || {});
+  return apiPut(`/votacao/${id}`, data || {});
 };
 
 /**
@@ -130,7 +130,7 @@ export const adminCriarOpcao = (id, data) => {
   if (!data || !optStr(data.titulo)) {
     throw new Error("Título da opção é obrigatório.");
   }
-  return apiPost(`/votacoes/${id}/opcoes`, data);
+  return apiPost(`/votacao/${id}/opcao`, data);
 };
 
 /**
@@ -142,7 +142,7 @@ export const adminCriarOpcao = (id, data) => {
 export const adminAtualizarOpcao = (id, opcaoId, data) => {
   assertId(id, "id (votação)");
   assertId(opcaoId, "opcaoId");
-  return apiPut(`/votacoes/${id}/opcoes/${opcaoId}`, data || {});
+  return apiPut(`/votacao/${id}/opcao/${opcaoId}`, data || {});
 };
 
 /**
@@ -154,7 +154,7 @@ export const adminStatus = (id, status) => {
   assertId(id, "id (votação)");
   const st = optStr(status);
   if (!st) throw new Error("status é obrigatório.");
-  return apiPatch(`/votacoes/${id}/status`, { status: st });
+  return apiPatch(`/votacao/${id}/status`, { status: st });
 };
 
 /**
@@ -165,7 +165,7 @@ export const adminStatus = (id, status) => {
 export const adminRanking = (id, opts = {}) => {
   assertId(id, "id (votação)");
   const { top } = opts || {};
-  return apiGet(`/votacoes/${id}/ranking`, {
+  return apiGet(`/votacao/${id}/ranking`, {
     query: { top },
   });
 };
@@ -177,12 +177,12 @@ export const adminRanking = (id, opts = {}) => {
 /** Exclui votação (admin). */
 export const adminExcluir = (id) => {
   assertId(id, "id (votação)");
-  return apiDelete(`/votacoes/${id}`);
+  return apiDelete(`/votacao/${id}`);
 };
 
 /** Exclui opção (admin). */
 export const adminExcluirOpcao = (id, opcaoId) => {
   assertId(id, "id (votação)");
   assertId(opcaoId, "opcaoId");
-  return apiDelete(`/votacoes/${id}/opcoes/${opcaoId}`);
+  return apiDelete(`/votacao/${id}/opcao/${opcaoId}`);
 };

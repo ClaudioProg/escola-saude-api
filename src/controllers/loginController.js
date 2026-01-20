@@ -4,7 +4,7 @@ const dbMod = require("../db");
 const bcrypt = require("bcrypt");
 const generateToken = require("../auth/generateToken");
 const formatarPerfil = require("../utils/formatarPerfil");
-const { gerarNotificacoesDeAvaliacao } = require("./notificacoesController");
+const { gerarNotificacaoDeAvaliacao } = require("./notificacaoController");
 
 // Compat: db pode exportar { query } ou pool etc.
 const pool = dbMod.pool || dbMod.Pool || dbMod.pool?.pool || dbMod;
@@ -144,7 +144,7 @@ async function loginUsuario(req, res) {
 
     // 🛎️ notifs de avaliação (best-effort)
     try {
-      await gerarNotificacoesDeAvaliacao(usuario.id);
+      await gerarNotificacaoDeAvaliacao(usuario.id);
     } catch (e) {
       log(rid, "warn", "Falha ao gerar notificações de avaliação (não bloqueante)", e?.message || e);
     }

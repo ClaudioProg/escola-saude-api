@@ -79,7 +79,7 @@ function HeaderHero({ theme, setTheme, isDark }) {
       <div className="relative max-w-7xl mx-auto px-4 sm:px-6 py-10 md:py-12">
         {/* toggle */}
         <div className="lg:absolute lg:right-4 lg:top-6 flex justify-end">
-          <ThemeTogglePills theme={theme} setTheme={setTheme} variant="glass" />
+          <ThemeTogglePills variant="glass" />
         </div>
 
         {/* logo lateral */}
@@ -242,7 +242,14 @@ export default function RedefinirSenha() {
 
       try {
         // ✅ sem "/api" (api.js injeta)
-        await apiPost("/usuarios/redefinir-senha", { token, novaSenha: s1 }, { auth: false, on401: "silent" });
+        const rawToken = String(token || "");
+const decodedToken = decodeURIComponent(rawToken);
+
+await apiPost(
+  "/usuarios/redefinir-senha",
+  { token: decodedToken, novaSenha: s1 },
+  { auth: false, on401: "silent" }
+);
 
         const ok = "Senha redefinida com sucesso! Redirecionando para o login…";
         setMensagem(ok);
@@ -471,17 +478,18 @@ export default function RedefinirSenha() {
                   </BotaoPrimario>
 
                   <BotaoSecundario
-                    type="button"
-                    onClick={() => navigate("/login")}
-                    className={cx(
-                      "w-full rounded-2xl py-3 flex items-center justify-center gap-2",
-                      "focus-visible:ring-2 focus-visible:ring-amber-500/60 transition"
-                    )}
-                    aria-label="Voltar ao login"
-                  >
-                    <LogIn size={16} aria-hidden="true" />
-                    Voltar ao login
-                  </BotaoSecundario>
+  type="button"
+  onClick={() => navigate("/login")}
+  fullWidth
+  size="lg"
+  cor="verde"
+  className="focus-visible:ring-2 focus-visible:ring-amber-500/60 transition"
+  leftIcon={<LogIn size={16} />}
+  aria-label="Voltar ao login"
+>
+  Voltar ao login
+</BotaoSecundario>
+
                 </form>
               </motion.div>
             </div>

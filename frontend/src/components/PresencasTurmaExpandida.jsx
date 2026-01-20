@@ -3,7 +3,7 @@ import { useMemo, useState, useCallback } from "react";
 import { toast } from "react-toastify";
 import StatusPresencaBadge from "./StatusPresencaBadge";
 import ModalConfirmacao from "../components/ModalConfirmacao";
-import { formatarDataBrasileira, formatarParaISO } from "../utils/data";
+import { formatarDataBrasileira, formatarParaISO } from "../utils/dateTime";
 import { apiPost } from "../services/api";
 
 /* ──────────────────────────────────────────────────────────────

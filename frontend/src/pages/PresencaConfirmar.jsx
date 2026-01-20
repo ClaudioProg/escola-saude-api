@@ -389,7 +389,7 @@ export default function ConfirmarPresenca() {
 
                   <button
                     type="button"
-                    onClick={() => navigate("/notificacoes")}
+                    onClick={() => navigate("/notificacao")}
                     className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border dark:border-zinc-700 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800"
                     title="Ver notificações"
                   >

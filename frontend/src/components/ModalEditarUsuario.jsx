@@ -6,7 +6,7 @@ import Modal from "./Modal";
 import { toast } from "react-toastify";
 import { User, Mail, BadgeAsterisk } from "lucide-react";
 import { apiPut } from "../services/api";
-import { formatarCPF as formatarCPFUtils } from "../utils/data";
+import { formatarCPF as formatarCPFUtils } from "../utils/dateTime";
 
 /* ================= Helpers ================= */
 const somenteDigitos = (s = "") => String(s || "").replace(/\D/g, "");

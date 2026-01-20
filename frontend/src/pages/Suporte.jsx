@@ -280,9 +280,9 @@ function FormAbrirChamado({ onSubmit, submitting }) {
                      focus:outline-none focus:ring-2 focus:ring-violet-500"
         >
           <option value="certificados">Certificados</option>
-          <option value="inscricoes">Inscrições</option>
+          <option value="inscricao">Inscrições</option>
           <option value="presencas">Presenças</option>
-          <option value="avaliacoes">Avaliações</option>
+          <option value="avaliacao">Avaliações</option>
           <option value="outros">Outros</option>
         </select>
       </div>
@@ -564,8 +564,8 @@ export default function Suporte() {
           </section>
 
           {/* ===================== Orientações ===================== */}
-          <section className="mb-8 sm:mb-10" aria-labelledby="orientacoes-heading">
-            <h2 id="orientacoes-heading" className="text-base sm:text-lg font-extrabold">
+          <section className="mb-8 sm:mb-10" aria-labelledby="orientacao-heading">
+            <h2 id="orientacao-heading" className="text-base sm:text-lg font-extrabold">
               📜 Orientações sobre Certificados
             </h2>
             <ul className="mt-3 list-disc list-inside text-sm space-y-2 text-gray-700 dark:text-gray-300">

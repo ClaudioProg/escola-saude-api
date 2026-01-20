@@ -15,23 +15,23 @@ import { createRoot } from "react-dom/client";
  * @param {Object} turma                         - { id, nome? }
  * @param {string} [nomeEvento="Evento"]
  * @param {string} [nomeInstrutor="Instrutor"]
- * @param {Object} [opcoes]
- * @param {string} [opcoes.baseUrl]              - força base customizada
- * @param {number} [opcoes.qrSize=320]          - pixels do canvas (antes de DPR)
- * @param {"L"|"M"|"Q"|"H"} [opcoes.errorCorrectionLevel="M"]
- * @param {boolean} [opcoes.includeMargin=true]
- * @param {"portrait"|"landscape"} [opcoes.orientacao="landscape"]
- * @param {string} [opcoes.nomeArquivo]
- * @param {number} [opcoes.qrLarguraPdf=120]     - largura do QR no PDF (mm)
- * @param {number} [opcoes.margemPdf=10]         - margem externa (mm)
- * @param {string} [opcoes.qrFgColor="#000000"]  - cor do QR
- * @param {string} [opcoes.qrBgColor="#ffffff"]  - fundo do QR
+ * @param {Object} [opcao]
+ * @param {string} [opcao.baseUrl]              - força base customizada
+ * @param {number} [opcao.qrSize=320]          - pixels do canvas (antes de DPR)
+ * @param {"L"|"M"|"Q"|"H"} [opcao.errorCorrectionLevel="M"]
+ * @param {boolean} [opcao.includeMargin=true]
+ * @param {"portrait"|"landscape"} [opcao.orientacao="landscape"]
+ * @param {string} [opcao.nomeArquivo]
+ * @param {number} [opcao.qrLarguraPdf=120]     - largura do QR no PDF (mm)
+ * @param {number} [opcao.margemPdf=10]         - margem externa (mm)
+ * @param {string} [opcao.qrFgColor="#000000"]  - cor do QR
+ * @param {string} [opcao.qrBgColor="#ffffff"]  - fundo do QR
  */
 export async function gerarQrCodePresencaPDF(
   turma,
   nomeEvento = "Evento",
   nomeInstrutor = "Instrutor",
-  opcoes = {}
+  opcao = {}
 ) {
   const {
     baseUrl,
@@ -44,7 +44,7 @@ export async function gerarQrCodePresencaPDF(
     margemPdf = 10,
     qrFgColor = "#000000",
     qrBgColor = "#ffffff",
-  } = opcoes || {};
+  } = opcao || {};
 
   // ────────────────────────────────────────────────────────────
   // Guardas iniciais / ambiente

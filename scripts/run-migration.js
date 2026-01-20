@@ -167,7 +167,7 @@ async function resolveFiles(args, log) {
       "..",
       "db",
       "migrations",
-      "2025-08-27-inscricoes-multipla-congresso.sql"
+      "2025-08-27-inscricao-multipla-congresso.sql"
     );
     if (await exists(legacy)) {
       log.debug("usando caminho legado:", legacy);

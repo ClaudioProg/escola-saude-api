@@ -2,12 +2,12 @@
 
 /**
  * Tipo esperado (flexível):
- * avaliacoes: Array<{
+ * avaliacao: Array<{
  *   criterios?: Array<{ nota: number | null | undefined }>
  *   // OU flatten: { nota1?: number, nota2?: number, ... }
  * }>
  *
- * @param {Array<object>} avaliacoes
+ * @param {Array<object>} avaliacao
  * @param {number} criteriosEsperados - ex.: 4
  * @param {number} avaliadoresEsperados - ex.: 2
  * @param {object} [opts]
@@ -30,7 +30,7 @@
 * }}
 */
 export function computeMedia10(
- avaliacoes = [],
+ avaliacao = [],
  criteriosEsperados = 4,
  avaliadoresEsperados = 2,
  opts = {}
@@ -92,8 +92,8 @@ export function computeMedia10(
  let recebidas = 0;   // avaliadores que entregaram ao menos 1 nota válida
  let soma5Total = 0;  // soma ponderada (0..5) de TUDO
 
- for (let idx = 0; idx < (avaliacoes?.length || 0); idx++) {
-   const notas = notasDeAvaliador(avaliacoes[idx]);
+ for (let idx = 0; idx < (avaliacao?.length || 0); idx++) {
+   const notas = notasDeAvaliador(avaliacao[idx]);
 
    // checa se entregou algo válido
    const temValida = notas.some((n) => n !== null);
@@ -171,12 +171,12 @@ export function computeMedia10(
 * (útil para estrelas, gauges etc.)
 * ------------------------------------------------------------------ */
 export function computeMedia5(
- avaliacoes = [],
+ avaliacao = [],
  criteriosEsperados = 4,
  avaliadoresEsperados = 2,
  opts = {}
 ) {
- const r = computeMedia10(avaliacoes, criteriosEsperados, avaliadoresEsperados, {
+ const r = computeMedia10(avaliacao, criteriosEsperados, avaliadoresEsperados, {
    ...opts,
    escalamax: 5,
  });

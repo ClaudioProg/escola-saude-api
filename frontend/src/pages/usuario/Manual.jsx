@@ -110,9 +110,9 @@ const SECTIONS = [
   { id: "cadastro", label: "Cadastro" },
   { id: "painel", label: "Painel" },
   { id: "cadastro-atualizacao", label: "Atualizar cadastro" },
-  { id: "notificacoes", label: "Notificações" },
+  { id: "notificacao", label: "Notificações" },
   { id: "faq", label: "Ajuda/FAQ" },
-  { id: "inscricoes", label: "Inscrições" },
+  { id: "inscricao", label: "Inscrições" },
   { id: "acompanhamento", label: "Acompanhamento" },
   { id: "avaliacao", label: "Avaliação" },
   { id: "certificados", label: "Certificados" },
@@ -311,8 +311,8 @@ export default function Manual() {
             </ol>
           </section>
 
-          <section id="notificacoes" aria-labelledby="notificacoes_h">
-            <h2 id="notificacoes_h" className="scroll-mt-24">5. 🔔 Notificações</h2>
+          <section id="notificacao" aria-labelledby="notificacao_h">
+            <h2 id="notificacao_h" className="scroll-mt-24">5. 🔔 Notificações</h2>
             <ul>
               <li>Inscrições confirmadas;</li>
               <li>Liberação de avaliações;</li>
@@ -330,8 +330,8 @@ export default function Manual() {
             </ul>
           </section>
 
-          <section id="inscricoes" aria-labelledby="inscricoes_h">
-            <h2 id="inscricoes_h" className="scroll-mt-24">7. 📋 Inscrições em Eventos</h2>
+          <section id="inscricao" aria-labelledby="inscricao_h">
+            <h2 id="inscricao_h" className="scroll-mt-24">7. 📋 Inscrições em Eventos</h2>
             <ol>
               <li>Menu Usuário → <strong>Eventos</strong>;</li>
               <li>Escolha o evento → “Ver Turmas” → “Inscrever-se”;</li>

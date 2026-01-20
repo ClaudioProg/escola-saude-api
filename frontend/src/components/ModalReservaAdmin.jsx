@@ -1,6 +1,6 @@
 // ✅ src/components/ModalReservaAdmin.jsx — PREMIUM (2026)
 // - sem Cartaz PDF / sem Programação PDF / sem arquivo_programacao
-// - ✅ Confirm EXCLUSÃO usa Modal (stack-safe) + desliga o modal de trás (inert/pointer-events)
+// - ✅ Confirm EXCLUSÃO usa ModalConfirmacao (stack-safe) + desliga o modal de trás (inert/pointer-events)
 // - ✅ Scroll do modal principal funcionando (body scroll interno)
 // - ✅ Logs opcionais (ativa por DEBUG=true)
 // - A11y + mobile-first + dark mode
@@ -19,16 +19,14 @@ import {
   Clock,
   Building2,
   FileText,
-  AlertTriangle,
-  Loader2,
 } from "lucide-react";
 import { toast } from "react-toastify";
 import api from "../services/api";
 import Modal from "./Modal";
+import ModalConfirmacao from "./ModalConfirmacao";
 
 const DEBUG = false; // ✅ coloque true para logs
 
-const DIAS_SEMANA = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 const DIAS_SEMANA_LABEL_COMPLETO = [
   "domingo",
   "segunda-feira",
@@ -37,21 +35,6 @@ const DIAS_SEMANA_LABEL_COMPLETO = [
   "quinta-feira",
   "sexta-feira",
   "sábado",
-];
-
-const NOMES_MESES = [
-  "Janeiro",
-  "Fevereiro",
-  "Março",
-  "Abril",
-  "Maio",
-  "Junho",
-  "Julho",
-  "Agosto",
-  "Setembro",
-  "Outubro",
-  "Novembro",
-  "Dezembro",
 ];
 
 const PERIODOS = {
@@ -95,7 +78,7 @@ export default function ModalReservaAdmin({
 
   const isEdicao = !!reserva;
 
-  // ✅ confirmação (Modal topmost)
+  // ✅ confirmação (ModalConfirmacao)
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   // Guards
@@ -158,7 +141,7 @@ export default function ModalReservaAdmin({
   // Recorrência (apenas criação)
   const [usarRecorrencia, setUsarRecorrencia] = useState(false);
   const [tipoRecorrencia, setTipoRecorrencia] = useState("semanal"); // semanal | mensal | anual | sempre
-  const [qtdRepeticoes, setQtdRepeticoes] = useState(4);
+  const [qtdRepeticao, setQtdRepeticao] = useState(4);
   const [limiteMesesSempre, setLimiteMesesSempre] = useState(24);
 
   // semanal
@@ -192,7 +175,7 @@ export default function ModalReservaAdmin({
 
     setUsarRecorrencia(false);
     setTipoRecorrencia("semanal");
-    setQtdRepeticoes(4);
+    setQtdRepeticao(4);
     setLimiteMesesSempre(24);
 
     setIntervaloSemanas(1);
@@ -237,13 +220,13 @@ export default function ModalReservaAdmin({
       return { tipo: "sempre", limiteMeses: limite };
     }
 
-    const repeticoes = Number(qtdRepeticoes) || 0;
-    if (repeticoes <= 0) {
+    const repeticao = Number(qtdRepeticao) || 0;
+    if (repeticao <= 0) {
       toast.warn("Informe a quantidade de repetições.");
       return null;
     }
 
-    const base = { tipo: tipoRecorrencia, repeticoes };
+    const base = { tipo: tipoRecorrencia, repeticao };
 
     if (tipoRecorrencia === "semanal") {
       const intervalo = Math.max(1, Math.min(52, Number(intervaloSemanas) || 1));
@@ -408,7 +391,7 @@ export default function ModalReservaAdmin({
     if (loading) return;
     dlog("abrir confirm delete");
 
-    // ✅ solta o foco do textarea antes de abrir confirmação (evita warning + travas)
+    // ✅ solta o foco de inputs/textarea antes de abrir confirmação (evita warning + travas)
     try {
       document.activeElement?.blur?.();
     } catch {
@@ -479,6 +462,13 @@ export default function ModalReservaAdmin({
         labelledBy={titleId}
         describedBy={descId}
         className="w-[96%] max-w-3xl p-0 max-h-[92vh] overflow-hidden"
+        // ✅ opcional: z-index base do modal principal
+        zIndex={1200}
+        // ✅ estamos usando nosso header com botão fechar
+        showCloseButton={false}
+        // ✅ aqui é layout "custom", então sem padding padrão
+        padding={false}
+        size="lg"
       >
         <div
           aria-hidden={behindDisabled ? "true" : undefined}
@@ -685,7 +675,6 @@ export default function ModalReservaAdmin({
                   {usarRecorrencia && (
                     <div className="space-y-3">
                       {/* ✅ mantém seu bloco completo de recorrência aqui */}
-                      {/* Semanal/Mensal/Anual ... */}
                     </div>
                   )}
                 </div>
@@ -746,68 +735,26 @@ export default function ModalReservaAdmin({
         </div>
       </Modal>
 
-      {/* ✅ CONFIRM DELETE TOPMOST (via Modal) */}
-      <Modal
+      {/* ✅ CONFIRM DELETE TOPMOST — via ModalConfirmacao */}
+      <ModalConfirmacao
         open={confirmDeleteOpen}
         onClose={() => {
           if (loading) return;
           setConfirmDeleteOpen(false);
         }}
-        closeOnBackdrop={!loading}
+        onConfirmar={executarExcluirReserva}
+        titulo="Excluir este agendamento?"
+        mensagem={
+          "Esta ação não pode ser desfeita.\n\nAo excluir, o horário ficará livre novamente para novas solicitações."
+        }
+        confirmText="Sim, excluir"
+        cancelText="Cancelar"
+        variant="danger"
+        closeOnOverlay={!loading}
         closeOnEscape={!loading}
-        ariaLabel="Confirmar exclusão"
-        className="w-[min(560px,92vw)] p-0 overflow-hidden"
-        // ✅ se seu Modal.jsx tiver suporte a zIndex (recomendado), mantenha:
+        confirmOnEnter
         zIndex={1300}
-        // ✅ evita botão “X” duplicado (já temos)
-        hideCloseButton
-      >
-        <div className="p-5 sm:p-6 bg-gradient-to-br from-rose-900 via-red-800 to-amber-700 text-white">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <h3 id="confirm-excluir-title" className="text-lg sm:text-xl font-extrabold tracking-tight flex items-center gap-2">
-                <AlertTriangle className="w-5 h-5 text-white/90" />
-                Excluir este agendamento?
-              </h3>
-              <p id="confirm-excluir-desc" className="mt-1 text-sm text-white/85 whitespace-pre-line">
-                Esta ação não pode ser desfeita.{"\n\n"}Ao excluir, o horário ficará livre novamente para novas solicitações.
-              </p>
-            </div>
-
-            <button
-              type="button"
-              onClick={loading ? undefined : () => setConfirmDeleteOpen(false)}
-              disabled={loading}
-              className="p-2 rounded-xl hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-white/60 disabled:opacity-60"
-              aria-label="Fechar"
-            >
-              <CloseIcon className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-
-        <div className="px-5 sm:px-6 py-4 flex flex-wrap items-center justify-end gap-2 bg-white dark:bg-zinc-950">
-          <button
-            type="button"
-            onClick={loading ? undefined : () => setConfirmDeleteOpen(false)}
-            disabled={loading}
-            className="px-4 py-2 rounded-xl bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-300 dark:hover:bg-zinc-700 transition disabled:opacity-60"
-          >
-            Cancelar
-          </button>
-
-          <button
-            type="button"
-            onClick={loading ? undefined : executarExcluirReserva}
-            disabled={loading}
-            className="px-4 py-2 rounded-xl text-white font-semibold bg-rose-600 hover:bg-rose-700 transition disabled:opacity-60 inline-flex items-center gap-2"
-            aria-busy={loading ? "true" : "false"}
-          >
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-            Sim, excluir
-          </button>
-        </div>
-      </Modal>
+      />
     </>
   );
 }

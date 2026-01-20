@@ -19,7 +19,7 @@ import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import ErroCarregamento from "../components/ErroCarregamento";
 import Footer from "../components/Footer";
 import NadaEncontrado from "../components/NadaEncontrado";
-import { formatarCPF } from "../utils/data";
+import { formatarCPF } from "../utils/dateTime";
 
 /* ───────────────── helpers anti-UTC (date-only safe) ───────────────── */
 const hojeLocalISO = () => {

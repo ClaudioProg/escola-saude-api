@@ -20,7 +20,7 @@ import { apiGet, apiPost } from "../services/api";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import ErroCarregamento from "../components/ErroCarregamento";
 import NadaEncontrado from "../components/NadaEncontrado";
-import { formatarCPF, formatarDataBrasileira } from "../utils/data";
+import { formatarCPF, formatarDataBrasileira } from "../utils/dateTime";
 import Footer from "../components/Footer";
 
 /* ───────────────── helpers anti-UTC ───────────────── */

@@ -67,7 +67,7 @@ export async function baixarBannerTrabalho(submissaoId, nomeSugestao) {
 
     // Usamos a rota pública autenticada da API central.
     // apiGetResponse mantém os headers intactos para lermos Content-Disposition
-    const res = await apiGetResponse(`/trabalhos/submissoes/${submissaoId}/banner`, {
+    const res = await apiGetResponse(`/trabalhos/submissao/${submissaoId}/banner`, {
       auth: true,
       on401: "silent",
       on403: "silent",

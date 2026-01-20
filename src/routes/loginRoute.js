@@ -1,4 +1,4 @@
-// 📁 src/routes/authRoute.js — PREMIUM (seguro, resiliente, pronto p/ produção)
+// 📁 src/routes/loginRoute.js — PREMIUM (seguro, resiliente, pronto p/ produção)
 /* eslint-disable no-console */
 const express = require("express");
 const router = express.Router();

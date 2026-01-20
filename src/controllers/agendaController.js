@@ -1,5 +1,7 @@
 // 📁 src/controllers/agendaController.js
 /* eslint-disable no-console */
+"use strict";
+
 const dbFallback = require("../db");
 
 /* =========================
@@ -9,13 +11,23 @@ function getDb(req) {
   return req?.db ?? dbFallback;
 }
 function getUserId(req) {
-  return req.user?.id ?? req.user?.usuario_id ?? null;
+  return req.user?.id ?? req.user?.usuario_id ?? req.usuario?.id ?? null;
 }
 function rid(req) {
   return req?.requestId;
 }
 function asArrayJson(v) {
   return Array.isArray(v) ? v : [];
+}
+
+// ✅ datas-only (YYYY-MM-DD), evita bug de fuso
+function isDateOnly(v) {
+  return typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+}
+
+function toIntId(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
 }
 
 /**
@@ -86,7 +98,7 @@ function sqlOcorrenciasPorEventoDoUsuario(eventoIdExpr) {
       WHEN EXISTS (
         SELECT 1
           FROM turmas tx
-          JOIN inscricoes i2 ON i2.turma_id = tx.id AND i2.usuario_id = $1
+          JOIN inscricao i2 ON i2.turma_id = tx.id AND i2.usuario_id = $1
           JOIN datas_turma dt ON dt.turma_id = tx.id
          WHERE tx.evento_id = ${eventoIdExpr}
       ) THEN (
@@ -94,7 +106,7 @@ function sqlOcorrenciasPorEventoDoUsuario(eventoIdExpr) {
         FROM (
           SELECT DISTINCT to_char(dt.data::date, 'YYYY-MM-DD') AS d
             FROM turmas tx
-            JOIN inscricoes i2 ON i2.turma_id = tx.id AND i2.usuario_id = $1
+            JOIN inscricao i2 ON i2.turma_id = tx.id AND i2.usuario_id = $1
             JOIN datas_turma dt ON dt.turma_id = tx.id
            WHERE tx.evento_id = ${eventoIdExpr}
            ORDER BY 1
@@ -218,7 +230,6 @@ async function buscarAgendaInstrutor(req, res) {
     const params = [Number(usuarioId)];
     let whereExtra = "";
 
-    // filtra turmas do evento pra recorte de período
     if (start) {
       params.push(start);
       whereExtra += ` AND t.data_inicio >= $${params.length}`;
@@ -257,6 +268,7 @@ async function buscarAgendaInstrutor(req, res) {
       JOIN turmas t            ON t.evento_id = e.id
       LEFT JOIN evento_instrutor ei2 ON ei2.evento_id = e.id
       LEFT JOIN usuarios u2          ON u2.id = ei2.instrutor_id
+      WHERE 1=1
       ${whereExtra}
       GROUP BY e.id, e.titulo, e.local
       ORDER BY MIN(t.data_inicio) DESC
@@ -326,10 +338,11 @@ async function buscarAgendaMinha(req, res) {
         ${sqlOcorrenciasPorEventoDoUsuario("e.id")} AS ocorrencias
 
       FROM eventos e
-      JOIN turmas t                 ON t.evento_id = e.id
-      JOIN inscricoes i             ON i.turma_id = t.id AND i.usuario_id = $1
-      LEFT JOIN evento_instrutor ei ON ei.evento_id = e.id
-      LEFT JOIN usuarios u          ON u.id = ei.instrutor_id
+      JOIN turmas t                  ON t.evento_id = e.id
+      JOIN inscricao i               ON i.turma_id = t.id AND i.usuario_id = $1
+      LEFT JOIN evento_instrutor ei  ON ei.evento_id = e.id
+      LEFT JOIN usuarios u           ON u.id = ei.instrutor_id
+      WHERE 1=1
       ${whereExtra}
       GROUP BY e.id, e.titulo, e.local
       ORDER BY MIN(t.data_inicio)
@@ -353,7 +366,6 @@ async function buscarAgendaMinha(req, res) {
 /* =========================
    4) Minha agenda como INSTRUTOR (novo)
    GET /api/agenda/minha-instrutor?start=&end=
-   - turma_instrutor (novo) + evento_instrutor (legado)
 ========================= */
 async function buscarAgendaMinhaInstrutor(req, res) {
   const db = getDb(req);
@@ -431,7 +443,6 @@ async function buscarAgendaMinhaInstrutor(req, res) {
           "MAX(tt.data_fim::timestamp + tt.horario_fim)"
         )} AS status,
 
-        /* Instrutores do evento: une evento_instrutor + turma_instrutor */
         COALESCE((
           SELECT json_agg(DISTINCT jsonb_build_object('id', u.id, 'nome', u.nome))
           FROM (
@@ -467,9 +478,121 @@ async function buscarAgendaMinhaInstrutor(req, res) {
   }
 }
 
+/* =======================================================================
+   ✅ 5) Calendário de Bloqueios/Feriados (Admin)
+   - resolve o 404 do POST /api/calendario
+   Payload do front:
+     { data:'YYYY-MM-DD', tipo:'feriado_municipal', descricao:'...' }
+======================================================================== */
+
+/** tenta executar uma lista de SQLs (schemas diferentes) */
+async function trySqlList(db, sqls, params) {
+  let last = null;
+  for (const s of sqls) {
+    try {
+      return await db.query(s, params);
+    } catch (e) {
+      last = e;
+      // tabelas/colunas inexistentes etc
+      if (["42P01", "42703", "42883"].includes(e?.code)) continue;
+      throw e;
+    }
+  }
+  throw last || new Error("Falha ao executar SQL.");
+}
+
+/** GET /api/calendario */
+async function listarBloqueios(req, res) {
+  const db = getDb(req);
+  try {
+    const sqls = [
+      `SELECT id, to_char(data::date,'YYYY-MM-DD') AS data, tipo, descricao
+         FROM calendario_bloqueios
+        ORDER BY data ASC, id ASC`,
+      `SELECT id, data::text AS data, tipo, descricao
+         FROM calendario_bloqueios
+        ORDER BY data ASC, id ASC`,
+      `SELECT id, to_char(data::date,'YYYY-MM-DD') AS data, tipo, descricao
+         FROM calendario
+        ORDER BY data ASC, id ASC`,
+    ];
+
+    const r = await trySqlList(db, sqls, []);
+    return res.status(200).json(r.rows || []);
+  } catch (e) {
+    console.error("[calendario] listarBloqueios erro:", { rid: rid(req), code: e?.code, msg: e?.message });
+    return res.status(500).json({ erro: "Erro ao listar calendário." });
+  }
+}
+
+/** POST /api/calendario */
+async function criarBloqueio(req, res) {
+  const db = getDb(req);
+
+  try {
+    const { data, tipo, descricao } = req.body || {};
+
+    if (!isDateOnly(data)) return res.status(400).json({ erro: "Campo 'data' deve ser YYYY-MM-DD." });
+    if (!tipo || typeof tipo !== "string") return res.status(400).json({ erro: "Campo 'tipo' é obrigatório." });
+
+    const desc = typeof descricao === "string" ? descricao.trim() : "";
+
+    const sqls = [
+      `INSERT INTO calendario_bloqueios (data, tipo, descricao, criado_em)
+       VALUES ($1::date, $2, $3, NOW())
+       RETURNING id, to_char(data::date,'YYYY-MM-DD') AS data, tipo, descricao`,
+      `INSERT INTO calendario_bloqueios (data, tipo, descricao)
+       VALUES ($1::date, $2, $3)
+       RETURNING id, to_char(data::date,'YYYY-MM-DD') AS data, tipo, descricao`,
+      `INSERT INTO calendario (data, tipo, descricao, criado_em)
+       VALUES ($1::date, $2, $3, NOW())
+       RETURNING id, to_char(data::date,'YYYY-MM-DD') AS data, tipo, descricao`,
+    ];
+
+    const r = await trySqlList(db, sqls, [data, tipo.trim(), desc || null]);
+    return res.status(201).json({ ok: true, item: r.rows?.[0] || null });
+  } catch (e) {
+    // idempotência simples se você tiver unique(data,tipo) no banco
+    if (e?.code === "23505") return res.status(409).json({ erro: "Já existe um bloqueio/feriado nesta data." });
+
+    console.error("[calendario] criarBloqueio erro:", { rid: rid(req), code: e?.code, msg: e?.message });
+    return res.status(500).json({ erro: "Erro ao salvar no calendário." });
+  }
+}
+
+/** DELETE /api/calendario/:id */
+async function removerBloqueio(req, res) {
+  const db = getDb(req);
+
+  try {
+    const id = toIntId(req.params?.id);
+    if (!id) return res.status(400).json({ erro: "ID inválido." });
+
+    const sqls = [
+      `DELETE FROM calendario_bloqueios WHERE id = $1`,
+      `DELETE FROM calendario WHERE id = $1`,
+    ];
+
+    const r = await trySqlList(db, sqls, [id]);
+    const count = Number(r.rowCount || 0);
+    if (!count) return res.status(404).json({ erro: "Item não encontrado." });
+
+    return res.status(200).json({ ok: true });
+  } catch (e) {
+    console.error("[calendario] removerBloqueio erro:", { rid: rid(req), code: e?.code, msg: e?.message });
+    return res.status(500).json({ erro: "Erro ao remover do calendário." });
+  }
+}
+
 module.exports = {
+  // Agenda
   buscarAgenda,
   buscarAgendaInstrutor,
   buscarAgendaMinha,
   buscarAgendaMinhaInstrutor,
+
+  // Calendário (bloqueios/feriados)
+  listarBloqueios,
+  criarBloqueio,
+  removerBloqueio,
 };

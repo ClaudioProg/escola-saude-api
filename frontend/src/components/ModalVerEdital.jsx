@@ -480,13 +480,13 @@ export default function ModalVerEdital({ isOpen = true, chamadaId, onClose }) {
               ) : null}
 
               {/* Disposições finais */}
-              {chamada?.disposicoes_finais_texto ? (
+              {chamada?.disposicao_finais_texto ? (
                 <section className="mb-6">
                   <h3 className="flex items-center gap-2 text-slate-700 dark:text-slate-300 font-semibold text-lg mb-2">
                     <FileText className="w-5 h-5" /> Disposições Finais
                   </h3>
                   <div className="prose prose-sm sm:prose-base max-w-none dark:prose-invert">
-                    <ReactMarkdown>{normalizeDatesInsideText(chamada.disposicoes_finais_texto)}</ReactMarkdown>
+                    <ReactMarkdown>{normalizeDatesInsideText(chamada.disposicao_finais_texto)}</ReactMarkdown>
                   </div>
                 </section>
               ) : null}

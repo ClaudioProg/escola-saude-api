@@ -2,7 +2,7 @@
 import PropTypes from "prop-types";
 import { CalendarDays, Clock } from "lucide-react";
 import { useMemo, useCallback } from "react";
-import { formatarDataBrasileira } from "../utils/data";
+import { formatarDataBrasileira } from "../utils/dateTime";
 
 /* ───────────────── helpers ───────────────── */
 

@@ -1,4 +1,4 @@
-// src/services/submissoesAdmin.js
+// src/services/submissaoAdmin.js
 import {
   apiGet,
   apiPost,
@@ -62,7 +62,7 @@ function ensureArray(v) {
  * @param {number} [filtros.notaMax]
  * @param {boolean} [filtros.comPendencias]
  */
-export const listarSubmissoesAdmin = (filtros = {}) => {
+export const listarsubmissaoAdmin = (filtros = {}) => {
   const {
     page,
     perPage,
@@ -104,20 +104,20 @@ export const listarSubmissoesAdmin = (filtros = {}) => {
     comPendencias: boolTo01(comPendencias),
   };
 
-  return apiGet("/admin/submissoes", { query });
+  return apiGet("/admin/submissao", { query });
 };
 
 /**
  * Obtém uma submissão específica.
  * @param {number|string} id
  * @param {Object} [opts]
- * @param {string} [opts.include] - dica opcional para o backend (ex.: "avaliacoes,avaliadores")
+ * @param {string} [opts.include] - dica opcional para o backend (ex.: "avaliacao,avaliadores")
  */
 export const obterSubmissao = (id, opts = {}) => {
   assertId(id);
   const { include } = opts || {};
   const query = include ? { include } : undefined;
-  return apiGet(`/submissoes/${id}`, { query });
+  return apiGet(`/submissao/${id}`, { query });
 };
 
 /* ============================================================================
@@ -131,7 +131,7 @@ export const obterSubmissao = (id, opts = {}) => {
  */
 export const listarAvaliadores = (id, tipo = "todos") => {
   assertId(id);
-  return apiGet(`/admin/submissoes/${id}/avaliadores`, { query: { tipo } });
+  return apiGet(`/admin/submissao/${id}/avaliadores`, { query: { tipo } });
 };
 
 /**
@@ -142,7 +142,7 @@ export const listarAvaliadores = (id, tipo = "todos") => {
 export const incluirAvaliadores = (id, itens) => {
   assertId(id);
   const payload = { itens: ensureArray(itens) };
-  return apiPost(`/admin/submissoes/${id}/avaliadores`, payload);
+  return apiPost(`/admin/submissao/${id}/avaliadores`, payload);
 };
 
 /**
@@ -154,7 +154,7 @@ export const revogarAvaliador = (id, { avaliadorId, tipo }) => {
   assertId(id);
   assertId(avaliadorId, "avaliadorId");
   // body no DELETE é suportado na nossa api central
-  return apiDelete(`/admin/submissoes/${id}/avaliadores`, {
+  return apiDelete(`/admin/submissao/${id}/avaliadores`, {
     body: { avaliadorId, tipo },
   });
 };
@@ -167,7 +167,7 @@ export const revogarAvaliador = (id, { avaliadorId, tipo }) => {
 export const restaurarAvaliador = (id, { avaliadorId, tipo }) => {
   assertId(id);
   assertId(avaliadorId, "avaliadorId");
-  return apiPatch(`/admin/submissoes/${id}/avaliadores/restore`, {
+  return apiPatch(`/admin/submissao/${id}/avaliadores/restore`, {
     avaliadorId,
     tipo,
   });
@@ -182,10 +182,10 @@ export const restaurarAvaliador = (id, { avaliadorId, tipo }) => {
  * @param {number|string} id
  * @param {{ detalhe?: "min"|"full" }} [opts]
  */
-export const listarAvaliacoes = (id, opts = {}) => {
+export const listarAvaliacao = (id, opts = {}) => {
   assertId(id);
   const { detalhe } = opts || {};
-  return apiGet(`/admin/submissoes/${id}/avaliacoes`, {
+  return apiGet(`/admin/submissao/${id}/avaliacao`, {
     query: detalhe ? { detalhe } : undefined,
   });
 };
@@ -197,7 +197,7 @@ export const listarAvaliacoes = (id, opts = {}) => {
  */
 export const definirNotaVisivel = (id, visivel) => {
   assertId(id);
-  return apiPost(`/admin/submissoes/${id}/nota-visivel`, {
+  return apiPost(`/admin/submissao/${id}/nota-visivel`, {
     visivel: !!visivel,
   });
 };
@@ -208,7 +208,7 @@ export const definirNotaVisivel = (id, visivel) => {
  */
 export const recalcularNota = (id) => {
   assertId(id);
-  return apiPost(`/admin/submissoes/${id}/atualizar-nota`, {});
+  return apiPost(`/admin/submissao/${id}/atualizar-nota`, {});
 };
 
 /* ============================================================================
@@ -222,7 +222,7 @@ export const recalcularNota = (id) => {
  */
 export const existePoster = async (id) => {
   assertId(id);
-  return apiHead(`/submissoes/${id}/poster`);
+  return apiHead(`/submissao/${id}/poster`);
 };
 
 /**
@@ -231,7 +231,7 @@ export const existePoster = async (id) => {
  */
 export const baixarPoster = async (id) => {
   assertId(id);
-  const { blob, filename } = await apiGetFile(`/submissoes/${id}/poster`);
+  const { blob, filename } = await apiGetFile(`/submissao/${id}/poster`);
   downloadBlob(filename || `poster-${id}.bin`, blob);
 };
 
@@ -242,7 +242,7 @@ export const baixarPoster = async (id) => {
  */
 export const baixarPosterComo = async (id, nomeArquivo = "") => {
   assertId(id);
-  const { blob, filename } = await apiGetFile(`/submissoes/${id}/poster`);
+  const { blob, filename } = await apiGetFile(`/submissao/${id}/poster`);
   const finalName = (nomeArquivo || filename || `poster-${id}.bin`).trim();
   downloadBlob(finalName, blob);
 };

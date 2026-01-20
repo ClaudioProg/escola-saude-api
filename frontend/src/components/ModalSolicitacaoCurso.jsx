@@ -19,14 +19,14 @@ import {
 import api from "../services/api";
 import Modal from "./Modal";
 
-const STATUS_OPCOES = [
+const STATUS_OPcao = [
   { value: "planejado", label: "Planejado" },
   { value: "em_analise", label: "Em análise" },
   { value: "confirmado", label: "Confirmado" },
   { value: "cancelado", label: "Cancelado" },
 ];
 
-const MODALIDADE_OPCOES = [
+const MODALIDADE_OPcao = [
   { value: "presencial", label: "Presencial" },
   { value: "online", label: "On-line" },
   { value: "hibrido", label: "Híbrido" },
@@ -348,10 +348,10 @@ export default function ModalSolicitacaoCurso({
       setMsgA11y(isEdicao ? "Salvando alterações..." : "Cadastrando solicitação...");
 
       if (isEdicao) {
-        await api.put(`/api/solicitacoes-curso/${solicitacao.id}`, payload);
+        await api.put(`/api/solicitacao-curso/${solicitacao.id}`, payload);
         toast.success("Solicitação atualizada com sucesso.");
       } else {
-        await api.post("/api/solicitacoes-curso", payload);
+        await api.post("/api/solicitacao-curso", payload);
         toast.success("Solicitação criada com sucesso.");
       }
 
@@ -516,7 +516,7 @@ export default function ModalSolicitacaoCurso({
                 disabled={salvando}
               >
                 <option value="">Selecione</option>
-                {MODALIDADE_OPCOES.map((op) => (
+                {MODALIDADE_OPcao.map((op) => (
                   <option key={op.value} value={op.value}>
                     {op.label}
                   </option>
@@ -613,7 +613,7 @@ export default function ModalSolicitacaoCurso({
                     className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                     disabled={salvando}
                   >
-                    {STATUS_OPCOES.map((s) => (
+                    {STATUS_OPcao.map((s) => (
                       <option key={s.value} value={s.value}>
                         {s.label}
                       </option>

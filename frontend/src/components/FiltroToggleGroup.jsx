@@ -37,7 +37,7 @@ const SIZES = {
 };
 
 export default function FiltroToggleGroup({
-  opcoes = [],
+  opcao = [],
   valorSelecionado,
   aoSelecionar,
   ariaLabel = "Grupo de filtros",
@@ -55,10 +55,10 @@ export default function FiltroToggleGroup({
   // Lista somente com opções válidas
   const lista = useMemo(
     () =>
-      (Array.isArray(opcoes) ? opcoes : [])
+      (Array.isArray(opcao) ? opcao : [])
         .filter((o) => o && typeof o.valor === "string" && (typeof o.rotulo === "string" || typeof o.rotulo === "number"))
         .map((o) => ({ ...o, disabled: Boolean(o.disabled) })),
-    [opcoes]
+    [opcao]
   );
 
   // índices "focáveis"
@@ -196,7 +196,7 @@ export default function FiltroToggleGroup({
 }
 
 FiltroToggleGroup.propTypes = {
-  opcoes: PropTypes.arrayOf(
+  opcao: PropTypes.arrayOf(
     PropTypes.shape({
       valor: PropTypes.string.isRequired,
       rotulo: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,

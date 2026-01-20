@@ -14,7 +14,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 
-import { formatarDataBrasileira, formatarParaISO } from "../utils/data";
+import { formatarDataBrasileira, formatarParaISO } from "../utils/dateTime";
 import Footer from "../components/Footer";
 import NadaEncontrado from "../components/NadaEncontrado";
 import BotaoPrimario from "../components/BotaoPrimario";

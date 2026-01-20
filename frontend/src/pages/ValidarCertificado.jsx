@@ -7,7 +7,7 @@ import { toast } from "react-toastify";
 import BotaoPrimario from "../components/BotaoPrimario";
 import NadaEncontrado from "../components/NadaEncontrado";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
-import { formatarDataHoraBrasileira } from "../utils/data";
+import { formatarDataHoraBrasileira } from "../utils/dateTime";
 import { apiGet } from "../services/api";
 
 import PageHeader from "../components/PageHeader";

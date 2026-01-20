@@ -50,7 +50,7 @@ function HeaderHero({ theme, setTheme, isDark }) {
       <div className="relative max-w-7xl mx-auto px-4 sm:px-6 py-10 md:py-12">
         {/* toggle no canto */}
         <div className="lg:absolute lg:right-4 lg:top-6 flex justify-end">
-          <ThemeTogglePills theme={theme} setTheme={setTheme} variant="glass" />
+          <ThemeTogglePills variant="glass" />
         </div>
 
         {/* logo grande à esquerda (desktop) */}
@@ -337,8 +337,8 @@ export default function RecuperarSenha() {
         setLive("Solicitação enviada.");
         toast.success("✅ Instruções enviadas (se cadastrado).");
 
-        setEmail("");
-        startCooldown(30);
+// ✅ mantém o e-mail preenchido para reenvio/checagem
+startCooldown(30);
       } catch (err) {
         // ✅ segurança: evitar mensagem que possa permitir enumeração de usuários
         console.error(err);
@@ -357,9 +357,35 @@ export default function RecuperarSenha() {
   // Reenvio
   const reenviarEmail = useCallback(async () => {
     if (cooldown > 0 || loading) return;
+  
+    const emailTrim = String(email).trim();
+    if (!emailTrim) return fail("Digite seu e-mail.");
+    if (!emailValido(emailTrim)) return fail("Informe um e-mail válido.");
+  
     setAbrirNaoRecebi(false);
-    await handleSubmit({ preventDefault: () => {} });
-  }, [cooldown, handleSubmit, loading]);
+    setLoading(true);
+    setLive("Reenviando solicitação…");
+  
+    try {
+      await apiPost("/usuarios/recuperar-senha", { email: emailTrim }, { auth: false, on401: "silent" });
+  
+      setMensagem(okMessage);
+      setErro("");
+      setLive("Solicitação enviada.");
+      toast.success("✅ Instruções enviadas (se cadastrado).");
+      startCooldown(30);
+    } catch (err) {
+      console.error(err);
+      setMensagem(okMessage);
+      setErro("");
+      setLive("Solicitação enviada.");
+      toast.success("✅ Instruções enviadas (se cadastrado).");
+      startCooldown(30);
+    } finally {
+      setLoading(false);
+    }
+  }, [cooldown, loading, email, emailValido, fail, okMessage, setLive, startCooldown]);
+  
 
   return (
     <main
@@ -513,21 +539,27 @@ export default function RecuperarSenha() {
                     Não recebi o e-mail
                   </button>
 
-                  <div className="flex flex-col sm:flex-row gap-2">
-                    <BotaoSecundario
-                      type="button"
-                      onClick={() => window.history.back()}
-                      className={cx(
-                        "w-full rounded-2xl border text-sm font-extrabold py-3 flex items-center justify-center gap-2",
-                        isDark
-                          ? "border-white/10 bg-zinc-900/40 text-zinc-200 hover:bg-white/5"
-                          : "border-slate-200 bg-slate-50 text-slate-800 hover:bg-slate-100",
-                        "focus-visible:ring-2 focus-visible:ring-teal-500/60 transition"
-                      )}
-                    >
-                      <ArrowLeft size={16} />
-                      Voltar
-                    </BotaoSecundario>
+                  <div className="w-full">
+                  <button
+  type="button"
+  onClick={() => window.history.back()}
+  className={cx(
+    // LARGURA TOTAL + ALINHAMENTO HORIZONTAL
+    "w-full inline-flex items-center justify-center gap-2 whitespace-nowrap",
+    // ALTURA/RAIO iguais ao padrão
+    "rounded-2xl text-sm font-extrabold py-3",
+    // VISUAL (dark/light)
+    isDark
+      ? "bg-emerald-700/40 hover:bg-emerald-700/60 border border-emerald-600/50 text-emerald-100"
+      : "bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800",
+    // A11y/foco
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60 transition"
+  )}
+  aria-label="Voltar para a página anterior"
+>
+  <ArrowLeft className="w-4 h-4 shrink-0" />
+  <span>Voltar</span>
+</button>
                   </div>
 
                   <div className={cx("mt-1 rounded-2xl border p-3 text-xs flex gap-2", isDark ? "border-white/10 bg-white/5 text-zinc-200" : "border-slate-200 bg-slate-50 text-slate-700")}>

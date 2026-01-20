@@ -166,7 +166,7 @@ export default function PaginaGestaoPresencas() {
 
   const [eventos, setEventos] = useState([]);
   const [inscritosPorTurma, setInscritosPorTurma] = useState({});
-  const [avaliacoesPorTurma, setAvaliacoesPorTurma] = useState({});
+  const [avaliacaoPorTurma, setAvaliacaoPorTurma] = useState({});
   const [carregandoEventos, setCarregandoEventos] = useState(true);
   const [erro, setErro] = useState("");
 
@@ -261,7 +261,7 @@ export default function PaginaGestaoPresencas() {
   async function carregarInscritos(turmaId) {
     try {
       setLive(`Carregando inscritos da turma ${turmaId}…`);
-      const data = await apiGet(`/api/inscricoes/turma/${turmaId}`, { on403: "silent" });
+      const data = await apiGet(`/api/inscricao/turma/${turmaId}`, { on403: "silent" });
       const lista = Array.isArray(data) ? data : data?.lista;
       setInscritosPorTurma((prev) => ({ ...prev, [turmaId]: Array.isArray(lista) ? lista : [] }));
       setLive(`Inscritos da turma ${turmaId} carregados.`);
@@ -271,11 +271,11 @@ export default function PaginaGestaoPresencas() {
     }
   }
 
-  async function carregarAvaliacoes(turmaId) {
+  async function carregarAvaliacao(turmaId) {
     try {
       setLive(`Carregando avaliações da turma ${turmaId}…`);
-      const data = await apiGet(`/api/avaliacoes/turma/${turmaId}`, { on403: "silent" });
-      setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: Array.isArray(data) ? data : [] }));
+      const data = await apiGet(`/api/avaliacao/turma/${turmaId}`, { on403: "silent" });
+      setAvaliacaoPorTurma((prev) => ({ ...prev, [turmaId]: Array.isArray(data) ? data : [] }));
       setLive("Avaliações carregadas.");
     } catch {
       toast.error("Erro ao carregar avaliações.");
@@ -351,10 +351,10 @@ export default function PaginaGestaoPresencas() {
             eventos={eventos}
             hoje={agora}
             carregarInscritos={carregarInscritos}
-            carregarAvaliacoes={carregarAvaliacoes}
+            carregarAvaliacao={carregarAvaliacao}
             gerarRelatorioPDF={() => {}}
             inscritosPorTurma={inscritosPorTurma}
-            avaliacoesPorTurma={avaliacoesPorTurma}
+            avaliacaoPorTurma={avaliacaoPorTurma}
             navigate={navigate}
             modoadministradorPresencas
             agrupamento={agrupamento}

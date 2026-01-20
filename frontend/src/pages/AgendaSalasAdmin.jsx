@@ -87,7 +87,7 @@ function normalizeReserva(r) {
     status: r.status || "pendente",
     qtd_pessoas:  r.qtd_pessoas ?? r.qtdPessoas ?? r.qtd ?? r.capacidade ?? null,
     coffee_break: r.coffee_break ?? r.coffeeBreak ?? r.coffee ?? false,
-    observacao:   r.observacao ?? r.obs ?? r.observacoes ?? r.observacao_admin ?? "",
+    observacao:   r.observacao ?? r.obs ?? r.observacao ?? r.observacao_admin ?? "",
     finalidade:   r.finalidade ?? r.descricao ?? r.titulo ?? r.assunto ?? "",
     solicitante_id: r.solicitante_id ?? r.usuario_id ?? r.user_id ?? null,
     solicitante_nome: r.solicitante_nome ?? r.usuario_nome ?? r.nome_solicitante ?? r.nome ?? null,

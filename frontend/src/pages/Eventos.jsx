@@ -223,7 +223,7 @@ function EventosHero({ onRefresh, stats }) {
           <MiniStat
             icon={<BookOpen className="w-4 h-4" />}
             label="Minhas inscrições ativas"
-            value={stats?.inscricoesAtivas ?? 0}
+            value={stats?.inscricaoAtivas ?? 0}
           />
           <MiniStat
             icon={<ShieldCheck className="w-4 h-4" />}
@@ -405,8 +405,8 @@ export default function Eventos() {
   const [eventos, setEventos] = useState([]);
   const [turmasPorEvento, setTurmasPorEvento] = useState({});
   const [turmasVisiveis, setTurmasVisiveis] = useState({});
-  const [inscricoes, setInscricoes] = useState([]);
-  const [inscricoesTurmaIds, setInscricoesTurmaIds] = useState([]);
+  const [inscricao, setInscricao] = useState([]);
+  const [inscricaoTurmaIds, setInscricaoTurmaIds] = useState([]);
   const [erro, setErro] = useState("");
   const [inscrevendo, setInscrevendo] = useState(null);
   const [cancelandoId, setCancelandoId] = useState(null);
@@ -427,7 +427,7 @@ export default function Eventos() {
   };
 
   const abortEventosRef = useRef(null);
-  const abortInscricoesRef = useRef(null);
+  const abortInscricaoRef = useRef(null);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -435,7 +435,7 @@ export default function Eventos() {
     return () => {
       mountedRef.current = false;
       abortEventosRef.current?.abort?.("unmount");
-      abortInscricoesRef.current?.abort?.("unmount");
+      abortInscricaoRef.current?.abort?.("unmount");
     };
   }, []);
 
@@ -541,13 +541,13 @@ export default function Eventos() {
   }, []);
 
   /* -------------------- carregamentos -------------------- */
-  const carregarInscricoes = useCallback(async () => {
+  const carregarInscricao = useCallback(async () => {
     try {
-      abortInscricoesRef.current?.abort?.("new-request");
+      abortInscricaoRef.current?.abort?.("new-request");
       const ctrl = new AbortController();
-      abortInscricoesRef.current = ctrl;
+      abortInscricaoRef.current = ctrl;
 
-      const data = await apiGet("/api/inscricoes/minhas", { signal: ctrl.signal }).catch(() => []);
+      const data = await apiGet("/api/inscricao/minhas", { signal: ctrl.signal }).catch(() => []);
       const arr = Array.isArray(data) ? data : [];
 
       const ativas = arr.filter((it) => {
@@ -559,8 +559,8 @@ export default function Eventos() {
       });
 
       if (!mountedRef.current) return;
-      setInscricoes(ativas);
-      setInscricoesTurmaIds(ativas.map((i) => Number(i?.turma_id)).filter((n) => Number.isFinite(n)));
+      setInscricao(ativas);
+      setInscricaoTurmaIds(ativas.map((i) => Number(i?.turma_id)).filter((n) => Number.isFinite(n)));
     } catch {
       toast.error("Erro ao carregar suas inscrições ativas.");
     }
@@ -611,13 +611,13 @@ export default function Eventos() {
   }, []);
 
   useEffect(() => {
-    carregarInscricoes();
+    carregarInscricao();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const stats = useMemo(() => {
     const eventosDisponiveis = Array.isArray(eventos) ? eventos.length : 0;
-    const inscricoesAtivas = Array.isArray(inscricoesTurmaIds) ? inscricoesTurmaIds.length : 0;
+    const inscricaoAtivas = Array.isArray(inscricaoTurmaIds) ? inscricaoTurmaIds.length : 0;
 
     // premium: “andamento” usando o mesmo status real/fallback
     const eventosAndamento = (eventos || []).filter((e) => {
@@ -625,8 +625,8 @@ export default function Eventos() {
       return st === "andamento";
     }).length;
 
-    return { eventosDisponiveis, inscricoesAtivas, eventosAndamento };
-  }, [eventos, inscricoesTurmaIds, statusBackendOuFallback, turmasPorEvento]);
+    return { eventosDisponiveis, inscricaoAtivas, eventosAndamento };
+  }, [eventos, inscricaoTurmaIds, statusBackendOuFallback, turmasPorEvento]);
 
   /* -------------------- carregar turmas de um evento -------------------- */
   const carregarTurmas = useCallback(
@@ -734,9 +734,9 @@ export default function Eventos() {
 
       setInscrevendo(turmaId);
       try {
-        await apiPost("/api/inscricoes", { turma_id: turmaId });
+        await apiPost("/api/inscricao", { turma_id: turmaId });
         toast.success("✅ Inscrição realizada com sucesso!");
-        await carregarInscricoes();
+        await carregarInscricao();
 
         // atualiza turmas do evento (para refletir vagas/inscrito)
         try {
@@ -772,12 +772,12 @@ export default function Eventos() {
         setInscrevendo(null);
       }
     },
-    [inscrevendo, eventos, usuarioId, carregarInscricoes]
+    [inscrevendo, eventos, usuarioId, carregarInscricao]
   );
 
   const getInscricaoPorTurmaId = useCallback(
-    (turmaId) => inscricoes.find((i) => Number(i?.turma_id) === Number(turmaId)) || null,
-    [inscricoes]
+    (turmaId) => inscricao.find((i) => Number(i?.turma_id) === Number(turmaId)) || null,
+    [inscricao]
   );
 
   // ✅ agora só abre ModalConfirmacao 
@@ -813,9 +813,9 @@ export default function Eventos() {
     setCancelandoId(inscricaoId);
 
     try {
-      await apiDelete(`/api/inscricoes/${inscricaoId}`);
+      await apiDelete(`/api/inscricao/${inscricaoId}`);
       toast.success("✅ Inscrição cancelada com sucesso.");
-      await carregarInscricoes();
+      await carregarInscricao();
     } catch (err) {
       const status = err?.status || err?.response?.status || 0;
       const data = err?.data || err?.response?.data || {};
@@ -825,7 +825,7 @@ export default function Eventos() {
       setCancelandoId(null);
       setConfirmCancel({ open: false, turmaId: null, inscricaoId: null, turmaNome: "" });
     }
-  }, [confirmCancel?.inscricaoId, carregarInscricoes]);
+  }, [confirmCancel?.inscricaoId, carregarInscricao]);
 
   const isCancelModalLoading = cancelandoId && cancelandoId === confirmCancel?.inscricaoId;
 
@@ -838,7 +838,7 @@ export default function Eventos() {
         stats={stats}
         onRefresh={async () => {
           await carregarEventos();
-          await carregarInscricoes();
+          await carregarInscricao();
         }}
       />
 
@@ -871,7 +871,7 @@ export default function Eventos() {
               <BotaoPrimario
                 onClick={async () => {
                   await carregarEventos();
-                  await carregarInscricoes();
+                  await carregarInscricao();
                 }}
                 icone={<RefreshCw className="w-4 h-4" />}
               >
@@ -996,16 +996,16 @@ export default function Eventos() {
                           eventoId={evento.id}
                           eventoTipo={evento.tipo}
                           hoje={new Date()}
-                          inscricoesConfirmadas={inscricoesTurmaIds}
+                          inscricaoConfirmadas={inscricaoTurmaIds}
                           inscrever={(tid) => inscrever(tid, evento.id)}
                           inscrevendo={inscrevendo}
                           jaInscritoNoEvento={(() => {
-                            const ids = new Set(inscricoesTurmaIds);
+                            const ids = new Set(inscricaoTurmaIds);
                             return (turmasPorEvento[evento.id] || []).some((t) => ids.has(Number(t.id)));
                           })()}
                           jaInstrutorDoEvento={!!evento.ja_instrutor}
                           carregarInscritos={() => {}}
-                          carregarAvaliacoes={() => {}}
+                          carregarAvaliacao={() => {}}
                           gerarRelatorioPDF={() => {}}
                           mostrarStatusTurma={false}
                           exibirRealizadosTotal
@@ -1016,10 +1016,10 @@ export default function Eventos() {
 
                     {/* AÇÕES RÁPIDAS APÓS INSCRIÇÃO */}
                     {turmasVisiveis[evento.id] && (
-                      <InscricoesAcoesRapidas
+                      <InscricaoAcaoRapidas
                         evento={evento}
                         turmas={turmasPorEvento[evento.id] || []}
-                        inscricoes={inscricoes}
+                        inscricao={inscricao}
                         cancelarInscricaoByTurmaId={cancelarInscricaoByTurmaId}
                         buildAgendaHref={buildAgendaHref}
                         cancelandoId={cancelandoId}
@@ -1079,10 +1079,10 @@ export default function Eventos() {
 }
 
 /* ────────────────────────────── Bloco de ações por turma inscrita ────────────────────────────── */
-function InscricoesAcoesRapidas({
+function InscricaoAcaoRapidas({
   evento,
   turmas,
-  inscricoes,
+  inscricao,
   cancelarInscricaoByTurmaId,
   buildAgendaHref,
   cancelandoId,
@@ -1090,7 +1090,7 @@ function InscricoesAcoesRapidas({
   if (!Array.isArray(turmas) || turmas.length === 0) return null;
 
   const porTurma = new Map();
-  for (const i of inscricoes) {
+  for (const i of inscricao) {
     const tId = Number(i?.turma_id);
     if (!Number.isFinite(tId)) continue;
     if (turmas.some((t) => Number(t.id) === tId)) porTurma.set(tId, i);

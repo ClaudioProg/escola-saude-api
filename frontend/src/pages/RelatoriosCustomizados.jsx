@@ -123,9 +123,9 @@ function endOfDayLocalISO(dateLike) {
 
 /* ======================= Metadata dos relatórios ======================= */
 const REPORTS = [
-  { key: "participacoes_usuario", label: "Cursos por usuário", hint: "Cursos por usuário, com presenças/faltas e status de avaliação/certificado." },
+  { key: "participacao_usuario", label: "Cursos por usuário", hint: "Cursos por usuário, com presenças/faltas e status de avaliação/certificado." },
   { key: "frequencia_detalhada", label: "Frequência detalhada", hint: "Presenças e faltas por encontro, por turma/curso." },
-  { key: "avaliacoes", label: "Avaliações", hint: "Status de avaliação, notas e médias por curso/usuário." },
+  { key: "avaliacao", label: "Avaliações", hint: "Status de avaliação, notas e médias por curso/usuário." },
   { key: "certificados", label: "Certificados", hint: "Certificados gerados, pendentes e datas de emissão." },
   { key: "por_curso", label: "Inscritos e presentes (curso)", hint: "Inscritos vs participantes, presenças e certificados por turma." },
   { key: "ranking_presencas", label: "Ranking: mais presentes", hint: "Usuários com maior participação em eventos." },
@@ -195,7 +195,7 @@ export default function RelatoriosCustomizados() {
   const [buscaValue, setBuscaValue] = useState(filtros.busca || "");
   const [buscaDebounced, setBuscaDebounced] = useState(filtros.busca || "");
 
-  const [opcoes, setOpcoes] = useState({
+  const [opcao, setOpcao] = useState({
     eventos: [],
     turmas: [],
     instrutor: [],
@@ -250,7 +250,7 @@ export default function RelatoriosCustomizados() {
   }, [buscaValue]);
 
   /* --------- Carregar opções (eventos, turmas, instrutor, unidades) --------- */
-  const carregarOpcoes = useCallback(async () => {
+  const carregarOpcao = useCallback(async () => {
     // abort request anterior
     try {
       abortRef.current?.abort?.();
@@ -262,7 +262,7 @@ export default function RelatoriosCustomizados() {
       setErroCarregamento(false);
       setLive("Carregando filtros de relatório…");
 
-      const data = await apiGet("relatorios/opcoes", { on403: "silent", signal: ac?.signal });
+      const data = await apiGet("relatorios/opcao", { on403: "silent", signal: ac?.signal });
 
       const eventos = (data?.eventos || []).map((e) => ({
         value: String(e.id),
@@ -291,7 +291,7 @@ export default function RelatoriosCustomizados() {
         }
       }
 
-      setOpcoes({ eventos, instrutor, unidades, turmas });
+      setOpcao({ eventos, instrutor, unidades, turmas });
       setLive("Filtros atualizados.");
     } catch (e) {
       if (e?.name === "AbortError") return;
@@ -302,15 +302,15 @@ export default function RelatoriosCustomizados() {
   }, [filtros.eventoId, setLive]);
 
   useEffect(() => {
-    carregarOpcoes();
+    carregarOpcao();
     return () => abortRef.current?.abort?.();
-  }, [carregarOpcoes]);
+  }, [carregarOpcao]);
 
   // recarrega turmas ao mudar evento
   useEffect(() => {
     (async () => {
       if (!filtros.eventoId) {
-        setOpcoes((o) => ({ ...o, turmas: [] }));
+        setOpcao((o) => ({ ...o, turmas: [] }));
         setFiltros((f) => ({ ...f, turmaId: "" }));
         return;
       }
@@ -320,12 +320,12 @@ export default function RelatoriosCustomizados() {
           value: String(t.id),
           label: t.nome || `Turma #${t.id}`,
         }));
-        setOpcoes((o) => ({ ...o, turmas }));
+        setOpcao((o) => ({ ...o, turmas }));
         if (!turmas.some((t) => t.value === filtros.turmaId)) {
           setFiltros((f) => ({ ...f, turmaId: "" }));
         }
       } catch {
-        setOpcoes((o) => ({ ...o, turmas: [] }));
+        setOpcao((o) => ({ ...o, turmas: [] }));
         setFiltros((f) => ({ ...f, turmaId: "" }));
       }
     })();
@@ -482,7 +482,7 @@ export default function RelatoriosCustomizados() {
     if (!dadosFiltrados.length) return { ...base, aLabel: "Registros", bLabel: "Página", cLabel: "Páginas", a: 0, b: pageSafe, c: totalPages };
 
     switch (reportKey) {
-      case "participacoes_usuario": {
+      case "participacao_usuario": {
         const cursosUnicos = new Set(dadosFiltrados.map((r) => r.curso_id || r.cursoId || r.curso));
         const usuariosUnicos = new Set(dadosFiltrados.map((r) => r.usuario_id || r.usuarioId || r.usuario));
         const certificados = dadosFiltrados.filter((r) => r.certificado_gerado || r.certificado === true).length;
@@ -510,7 +510,7 @@ export default function RelatoriosCustomizados() {
 
   return (
     <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white">
-      <HeaderHero onRefresh={carregarOpcoes} carregando={carregando || exportando} />
+      <HeaderHero onRefresh={carregarOpcao} carregando={carregando || exportando} />
 
       {/* barra de progresso fina no topo */}
       {(carregando || exportando) && (
@@ -536,7 +536,7 @@ export default function RelatoriosCustomizados() {
               <ErroCarregamento mensagem="Falha ao carregar os filtros disponíveis." />
               <div className="text-center">
                 <button
-                  onClick={carregarOpcoes}
+                  onClick={carregarOpcao}
                   className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold border border-pink-600 text-pink-700 hover:bg-pink-50 dark:text-pink-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-pink-600 transition"
                 >
                   <RefreshCcw className="w-4 h-4" />
@@ -600,28 +600,28 @@ export default function RelatoriosCustomizados() {
                   <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                     <Select
                       label="Evento"
-                      options={opcoes.eventos}
+                      options={opcao.eventos}
                       value={filtros.eventoId}
                       onChange={(v) => setFiltros((f) => ({ ...f, eventoId: v }))}
                       placeholder="Selecione..."
                     />
                     <Select
                       label="Turma"
-                      options={opcoes.turmas}
+                      options={opcao.turmas}
                       value={filtros.turmaId}
                       onChange={(v) => setFiltros((f) => ({ ...f, turmaId: v }))}
                       placeholder="—"
                     />
                     <Select
                       label="Instrutor"
-                      options={opcoes.instrutor}
+                      options={opcao.instrutor}
                       value={filtros.instrutorId}
                       onChange={(v) => setFiltros((f) => ({ ...f, instrutorId: v }))}
                       placeholder="Selecione..."
                     />
                     <Select
                       label="Unidade"
-                      options={opcoes.unidades}
+                      options={opcao.unidades}
                       value={filtros.unidadeId}
                       onChange={(v) => setFiltros((f) => ({ ...f, unidadeId: v }))}
                       placeholder="Selecione..."

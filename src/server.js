@@ -1,16 +1,7 @@
 // 📁 server.js — PREMIUM (CSP robusta p/ Vite DEV + PROD com nonce, sem loop de reload)
-// Fix principal:
-// - Em DEV: libera Vite HMR + inline/eval (necessário), e também vercel.live (feedback script) se aparecer.
-// - Em PROD: usa nonce no <script> do index.html (substitui {{CSP_NONCE}}) + allowlist enxuta.
-// - Evita CSP bloquear scripts e causar “carrega / aparece / carrega...”.
-//
-// Importante:
-// - Mantive sua estrutura inteira (rotas, logs, CORS, etc.)
-// - Ajustei CSP para incluir script-src-elem e connect-src completos.
-// - Ajustei frame-ancestors para 'none' (API não precisa ser embeddada). Se você EMBEDA em iframe, troque.
-
 "use strict";
 /* eslint-disable no-console */
+
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
@@ -34,50 +25,8 @@ const db = rawDb?.db ?? rawDb;
 /* ───────── Paths ───────── */
 const { DATA_ROOT, UPLOADS_DIR, MODELOS_CHAMADAS_DIR, CERT_DIR, ensureDir } = require("./paths");
 
-/* ───────── Rotas ───────── */
-const assinaturaRoutes = require("./routes/assinaturaRoutes");
-const turmasRouteAdministrador = require("./routes/turmasRouteAdministrador");
-const agendaRoute = require("./routes/agendaRoute");
-const avaliacoesRoute = require("./routes/avaliacoesRoute");
-const certificadosRoute = require("./routes/certificadosRoute");
-const certificadosAdminRoutes = require("./routes/certificadosAdminRoutes");
-const certificadosAvulsosRoutes = require("./routes/certificadosAvulsosRoutes");
-const eventosRoute = require("./routes/eventosRoute");
-const inscricoesRoute = require("./routes/inscricoesRoute");
-const loginRoute = require("./routes/loginRoute");
-const presencasRoute = require("./routes/presencasRoute");
-const relatorioPresencasRoute = require("./routes/relatorioPresencasRoute");
-const turmasRoute = require("./routes/turmasRoute");
-const instrutorRoute = require("./routes/instrutorRoutes");
-const relatoriosRoute = require("./routes/relatoriosRoutes");
-const dashboardAnaliticoRoutes = require("./routes/dashboardAnaliticoRoutes");
-const dashboardUsuarioRoute = require("./routes/dashboardUsuarioRoute");
-const notificacoesRoute = require("./routes/notificacoesRoute");
-const authGoogleRoute = require("./auth/authGoogle");
-const unidadesRoutes = require("./routes/unidadesRoutes");
-const usuarioPublicoController = require("./controllers/usuarioPublicoController");
-const datasEventoRoute = require("./routes/datasEventoRoute");
-const perfilRoutes = require("./routes/perfilRoutes");
-const lookupsPublicRoutes = require("./routes/lookupsPublicRoutes");
-const usuariosRoute = require("./routes/usuariosRoute");
-const metricasRoutes = require("./routes/metricasRoutes");
-const solicitacoesCursoRoute = require("./routes/solicitacoesCursoRoute");
-const adminAvaliacoesRoutes = require("./routes/adminAvaliacoesRoutes");
-const chamadasRoutes = require("./routes/chamadasRoutes");
-const trabalhosRoutes = require("./routes/trabalhosRoutes");
-const chamadasModeloRoutes = require("./routes/chamadasModeloRoutes");
-const usuariosEstatisticasRoute = require("./routes/usuariosEstatisticasRoute");
-
-const votacoesRoutes = require("./routes/votacoesRoute");
-const salasRoutes = require("./routes/salasRoutes");
-const calendarioRoutes = require("./routes/calendarioRoutes");
-const questionariosRoute = require("./routes/questionariosRoute");
-
-// 🔹 Submissões (separadas)
-const submissoesAdminRoutes = require("./routes/submissoesAdminRoutes");
-const submissoesUsuarioRoutes = require("./routes/submissoesUsuarioRoutes");
-const submissoesAvaliadorRoutes = require("./routes/submissoesAvaliadorRoutes");
-const submissoesBridgeRoutes = require("./routes/submissoesBridgeRoutes");
+/* ───────── Rotas (fonte única) ───────── */
+const apiRoutes = require("./routes"); // ✅ src/routes/index.js
 
 const IS_DEV = process.env.NODE_ENV !== "production";
 const app = express();
@@ -96,7 +45,6 @@ function getClientIp(req) {
   );
 }
 
-// ✅ Wrapper para rotas async (evita crash silencioso / 500 sem log)
 function asyncHandler(fn) {
   return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 }
@@ -144,31 +92,29 @@ app.use((req, res, next) => {
   next();
 });
 
-/* ───────── Helmet + CSP (PREMIUM) ─────────
-   - DEV: precisa liberar Vite (unsafe-eval/inline + ws + localhost:5173)
-   - PROD: nonce + allowlist (sem unsafe-inline)
-   - Inclui vercel.live porque seu erro mostrou feedback.js sendo bloqueado
-*/
+/* ───────── Helmet + CSP (PREMIUM) ───────── */
 app.use((req, res, next) => {
   const nonce = res.locals.cspNonce;
-
   const frontendFromEnv = (process.env.FRONTEND_URL || "").trim();
 
-  // allowlists úteis
   const devConnect = IS_DEV
-    ? ["ws:", "http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000", "http://127.0.0.1:3000"]
+    ? [
+        "ws:",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+      ]
     : [];
 
   const connectSrc = [
     "'self'",
     "https://accounts.google.com",
     "https://www.googleapis.com",
-    // se seu front consome a API em outro domínio
     ...(frontendFromEnv ? [frontendFromEnv] : []),
     ...devConnect,
   ];
 
-  // Scripts (GSI + Vercel live)
   const scriptSrcBase = [
     "'self'",
     "https://accounts.google.com",
@@ -177,15 +123,10 @@ app.use((req, res, next) => {
     `'nonce-${nonce}'`,
   ];
 
-  // PROD: strict-dynamic (se você usa nonce no index)
   const scriptSrcProd = [...scriptSrcBase, "'strict-dynamic'"];
-
-  // DEV: precisa liberar inline/eval por causa do Vite/HMR e ferramentas
   const scriptSrcDev = [...scriptSrcBase, "'unsafe-inline'", "'unsafe-eval'"];
-
   const scriptSrc = IS_DEV ? scriptSrcDev : scriptSrcProd;
 
-  // styles: Vite injeta style tags; manter unsafe-inline (ok para CSS)
   const styleSrc = [
     "'self'",
     "'unsafe-inline'",
@@ -193,17 +134,10 @@ app.use((req, res, next) => {
     "https://accounts.google.com/gsi/style",
   ];
 
-  // font/img
   const fontSrc = ["'self'", "data:", "https://fonts.gstatic.com"];
   const imgSrc = ["'self'", "data:", "https:", "blob:"];
   const frameSrc = ["https://accounts.google.com"];
-
-  // HMR pode usar blob: para workers em algumas configs; manter em DEV no worker-src
   const workerSrc = IS_DEV ? ["'self'", "blob:"] : ["'self'"];
-
-  // ⚠️ Importante: script-src-elem e script-src-attr (para evitar fallback do script-src)
-  // - script-src-elem: permite <script src="...">
-  // - script-src-attr: controla on* inline (vamos bloquear em PROD)
   const scriptSrcAttr = IS_DEV ? ["'unsafe-inline'"] : ["'none'"];
 
   helmet({
@@ -241,7 +175,6 @@ app.use((req, res, next) => {
 
         "connect-src": connectSrc,
 
-        // opcional mas ajuda: evita bloqueio de preloads/scripts importados
         "manifest-src": ["'self'"],
         "worker-src": workerSrc,
       },
@@ -353,7 +286,7 @@ if (fs.existsSync(PUBLIC_DIR)) {
   );
 }
 
-/* ───────── DB global ───────── */
+/* ───────── DB global em req.db ───────── */
 app.use((req, _res, next) => {
   if (!req.db) req.db = db;
   next();
@@ -372,21 +305,19 @@ app.use(
 
 if (IS_DEV) {
   app.use((req, _res, next) => {
-    const hasAuth = Boolean(req.headers.authorization);
-    const hasCookie = Boolean(req.headers.cookie);
     console.log("[DEV-REQ]", {
       rid: req.requestId,
       method: req.method,
       url: req.url,
-      hasAuth,
-      hasCookie,
+      hasAuth: Boolean(req.headers.authorization),
+      hasCookie: Boolean(req.headers.cookie),
       userId: req.userId ?? null,
     });
     next();
   });
 }
 
-/* ───────── Rate limiters ───────── */
+/* ───────── Rate limiters específicos (mantidos) ───────── */
 const loginLimiter = rateLimit({
   windowMs: 5 * 60 * 1000,
   max: 10,
@@ -405,17 +336,21 @@ const recuperarSenhaLimiter = rateLimit({
 
 /* ───────── Helpers de resposta (premium) ───────── */
 function sendError(res, status, message, extra = {}) {
-  const payload = {
+  return res.status(status).json({
     ok: false,
     erro: message,
     requestId: res.getHeader("X-Request-Id"),
     ...extra,
-  };
-  return res.status(status).json(payload);
+  });
 }
 
 function sendOk(res, data = {}, extra = {}) {
-  return res.status(200).json({ ok: true, requestId: res.getHeader("X-Request-Id"), ...extra, ...data });
+  return res.status(200).json({
+    ok: true,
+    requestId: res.getHeader("X-Request-Id"),
+    ...extra,
+    ...data,
+  });
 }
 
 /* ───────── Rotas de diagnóstico ───────── */
@@ -437,74 +372,34 @@ app.get(
 app.get(
   "/__ping",
   asyncHandler(async (req, res) => {
-    if (IS_DEV) {
-      console.log("[PING]", {
-        rid: req.requestId,
-        ip: getClientIp(req),
-        ua: req.headers["user-agent"],
-      });
-    }
+    if (IS_DEV) console.log("[PING]", { rid: req.requestId, ip: getClientIp(req) });
     return sendOk(res);
   })
 );
 
-/* ───────── Rotas principais ───────── */
-app.use("/api/login", loginLimiter, loginRoute);
-app.use("/api/administrador/turmas", turmasRouteAdministrador);
-app.use("/api/agenda", agendaRoute);
-app.use("/api/avaliacoes", avaliacoesRoute);
-app.use("/api/certificados", certificadosRoute);
-app.use("/api/certificados-admin", certificadosAdminRoutes);
-app.use("/api/certificados-avulsos", certificadosAvulsosRoutes);
-app.use("/api/eventos", eventosRoute);
-app.use("/api/inscricoes", inscricoesRoute);
-app.use("/api/presencas", presencasRoute);
-app.use("/api/relatorio-presencas", relatorioPresencasRoute);
-app.use("/api/turmas", turmasRoute);
-app.use("/api/metricas", metricasRoutes);
-app.use("/api", usuariosEstatisticasRoute);
-app.use("/api/usuarios", usuariosRoute);
-app.use("/api/instrutor", instrutorRoute);
-app.use("/api/relatorios", relatoriosRoute);
-app.use("/api/dashboard-analitico", dashboardAnaliticoRoutes);
-app.use("/api/dashboard-usuario", dashboardUsuarioRoute);
-app.use("/api/notificacoes", notificacoesRoute);
-app.use("/api/auth", authGoogleRoute);
-app.use("/api/unidades", unidadesRoutes);
-app.use("/api/assinatura", assinaturaRoutes);
-app.use("/api/datas", datasEventoRoute);
-app.use("/api/perfil", perfilRoutes);
-app.use("/api/solicitacoes-curso", solicitacoesCursoRoute);
-app.use("/api/admin/avaliacoes", adminAvaliacoesRoutes);
-app.use("/api", chamadasModeloRoutes);
-app.use("/api", chamadasRoutes);
-app.use("/api/trabalhos", trabalhosRoutes);
-app.use("/api/votacoes", votacoesRoutes);
-app.use("/api", lookupsPublicRoutes);
-app.use("/api/salas", salasRoutes);
-app.use("/api/calendario", calendarioRoutes);
-app.use("/api/questionarios", questionariosRoute);
-app.use("/api/admin", submissoesAdminRoutes);
-app.use("/api/avaliador", submissoesAvaliadorRoutes);
-app.use("/api", submissoesUsuarioRoutes);
-app.use("/api", submissoesBridgeRoutes);
+/* ───────── API (fonte única) ─────────
+   ✅ tudo dentro de src/routes/index.js
+*/
+app.use("/api", apiRoutes);
 
-/* ───────── Recuperação de senha ───────── */
-app.post(
-  "/api/usuarios/recuperar-senha",
-  recuperarSenhaLimiter,
-  asyncHandler(usuarioPublicoController.recuperarSenha)
-);
+/* ───────── Rate limits extras (sem depender do index) ─────────
+   Se você quiser o limiter de login obrigatório, mantemos um “cap” aqui.
+   Ele não executa login por si só; só limita chamadas para /api/login/* e /api/usuario/recuperar-senha
+*/
+app.use("/api/login", loginLimiter);
+app.use("/api/usuarios/recuperar-senha", recuperarSenhaLimiter);
+app.use("/api/usuario/recuperar-senha", recuperarSenhaLimiter);
 
 /* ───────── Health & SPA fallback ───────── */
-app.get("/api/health", (_req, res) => res.status(200).json({ ok: true, env: process.env.NODE_ENV || "dev" }));
+app.get("/api/health", (_req, res) =>
+  res.status(200).json({ ok: true, env: process.env.NODE_ENV || "dev" })
+);
 
 function renderSpaIndex(res, next) {
   const indexPath = path.join(PUBLIC_DIR, "index.html");
   if (!fs.existsSync(indexPath)) return false;
 
   try {
-    // ✅ injeta nonce em qualquer <script ... nonce="{{CSP_NONCE}}">
     const html = fs
       .readFileSync(indexPath, "utf8")
       .replaceAll("{{CSP_NONCE}}", res.locals.cspNonce);
@@ -518,12 +413,12 @@ function renderSpaIndex(res, next) {
   }
 }
 
-app.get("/", (req, res, next) => {
+app.get("/", (_req, res, next) => {
   if (renderSpaIndex(res, next)) return;
   return res.send("🟢 API da Escola da Saúde rodando!");
 });
 
-app.get(/^\/(?!api\/|uploads\/).+/, (req, res, next) => {
+app.get(/^\/(?!api\/|uploads\/).+/, (_req, res, next) => {
   if (renderSpaIndex(res, next)) return;
   return next();
 });
@@ -536,10 +431,7 @@ app.use((req, res) => {
 
 app.use((err, req, res, _next) => {
   if (err?.code === "LIMIT_FILE_SIZE") return sendError(res, 400, "Arquivo muito grande (máx. 50MB).");
-
-  if (err?.code === "CORS_BLOCKED") {
-    return sendError(res, 403, "Origem não autorizada.", { code: "CORS_BLOCKED" });
-  }
+  if (err?.code === "CORS_BLOCKED") return sendError(res, 403, "Origem não autorizada.", { code: "CORS_BLOCKED" });
 
   if (err?.name === "UnauthorizedError" || err?.code === "UNAUTHORIZED") {
     return sendError(res, 401, "Não autenticado.");

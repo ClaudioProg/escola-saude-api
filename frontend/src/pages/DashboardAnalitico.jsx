@@ -166,7 +166,7 @@ export default function DashboardAnalitico() {
   const [dados, setDados] = useState({
     totalEventos: 0,
     inscritosUnicos: 0,
-    mediaAvaliacoes: 0,
+    mediaAvaliacao: 0,
     percentualPresenca: 0,
     totalInscritos: 0,
     totalElegiveis: 0,
@@ -499,7 +499,7 @@ export default function DashboardAnalitico() {
               <MiniStat
                 icon={Star}
                 titulo="Média de Avaliações"
-                valor={`${safeNumber(dados?.mediaAvaliacoes, 0).toFixed(1)} ⭐`}
+                valor={`${safeNumber(dados?.mediaAvaliacao, 0).toFixed(1)} ⭐`}
                 descricao="Média geral dos eventos"
                 accent="from-amber-600 to-orange-600"
               />

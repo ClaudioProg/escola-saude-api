@@ -168,7 +168,7 @@ export default function RankingModal({ open, onClose, itens = [], onStatusChange
   const base = useMemo(() => (Array.isArray(itens) ? itens.filter((s) => !isReprovado(s)) : []), [itens]);
 
   /* Opções de filtros */
-  const opcoesChamadas = useMemo(() => {
+  const opcaoChamadas = useMemo(() => {
     const mapa = new Map();
     for (const s of base) {
       const nome = (s?.chamada_titulo || "").trim();
@@ -178,7 +178,7 @@ export default function RankingModal({ open, onClose, itens = [], onStatusChange
     return [{ value: "__all__", label: "Todas as chamadas" }, ...arr.map((v) => ({ value: v, label: v }))];
   }, [base]);
 
-  const opcoesLinha = useMemo(() => {
+  const opcaoLinha = useMemo(() => {
     const mapa = new Map();
     for (const s of base) {
       const nome = (s?.linha_tematica_nome || "").trim();
@@ -222,7 +222,7 @@ export default function RankingModal({ open, onClose, itens = [], onStatusChange
   const patchStatus = useCallback(
     async (id, patch, optimistic) => {
       try {
-        await api.post(`/admin/submissoes/${id}/status`, patch);
+        await api.post(`/admin/submissao/${id}/status`, patch);
         onStatusChange?.(id, optimistic);
         toast.success("✅ Status atualizado.");
         setA11yMsg("Status atualizado com sucesso.");
@@ -249,7 +249,7 @@ export default function RankingModal({ open, onClose, itens = [], onStatusChange
         status: "aprovado_exposicao",
         status_escrita: "aprovado",
         status_oral: jaOral ? "aprovado" : s.status_oral ?? null,
-        observacoes_admin: null,
+        observacao_admin: null,
       };
 
       const optimistic = {
@@ -279,7 +279,7 @@ export default function RankingModal({ open, onClose, itens = [], onStatusChange
         status: "aprovado_oral",
         status_oral: "aprovado",
         status_escrita: jaExpo ? "aprovado" : s.status_escrita ?? null,
-        observacoes_admin: null,
+        observacao_admin: null,
       };
 
       const optimistic = {
@@ -305,7 +305,7 @@ export default function RankingModal({ open, onClose, itens = [], onStatusChange
 
       await patchStatus(
         s.id,
-        { status: "reprovado", observacoes_admin: null },
+        { status: "reprovado", observacao_admin: null },
         { status: "reprovado", _exposicao_aprovada: false, _oral_aprovada: false }
       );
     } finally {
@@ -437,7 +437,7 @@ export default function RankingModal({ open, onClose, itens = [], onStatusChange
                       "ring-offset-2 focus:outline-none focus:ring-2 focus:ring-amber-500/70",
                     ].join(" ")}
                   >
-                    {opcoesChamadas.map((o) => (
+                    {opcaoChamadas.map((o) => (
                       <option key={o.value} value={o.value}>
                         {o.label}
                       </option>
@@ -456,7 +456,7 @@ export default function RankingModal({ open, onClose, itens = [], onStatusChange
                     "ring-offset-2 focus:outline-none focus:ring-2 focus:ring-amber-500/70",
                   ].join(" ")}
                 >
-                  {opcoesLinha.map((o) => (
+                  {opcaoLinha.map((o) => (
                     <option key={o.value} value={o.value}>
                       {o.label}
                     </option>

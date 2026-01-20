@@ -2,6 +2,9 @@
 import PropTypes from "prop-types";
 import { forwardRef } from "react";
 
+
+const cx = (...c) => c.filter(Boolean).join(" ");
+
 /**
  * Botão secundário (neutral/outline/ghost) — premium + a11y.
  * - Focus ring acompanha a cor.
@@ -104,10 +107,12 @@ const BotaoSecundario = forwardRef(function BotaoSecundario(
   };
 
   const base =
-    "inline-flex items-center justify-center gap-2 rounded-2xl font-medium shadow-sm " +
-    "transition focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 " +
-    `${tone.ring} focus-visible:ring-offset-white dark:focus-visible:ring-offset-zinc-800 ` +
-    "disabled:opacity-60 disabled:cursor-not-allowed select-none";
+  "inline-flex items-center justify-center gap-2 rounded-2xl font-medium shadow-sm " +
+  "transition focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 " +
+  `${tone.ring} focus-visible:ring-offset-white dark:focus-visible:ring-offset-zinc-800 ` +
+  // ✅ premium: evita quebra e “engordar” botões com ícone + texto
+  "whitespace-nowrap flex-nowrap leading-none " +
+  "disabled:opacity-60 disabled:cursor-not-allowed select-none";
 
   const classes = [
     base,
@@ -153,8 +158,13 @@ const BotaoSecundario = forwardRef(function BotaoSecundario(
         {...props}
       >
         {loading ? spinner : leftIcon ? <span className="shrink-0" aria-hidden="true">{leftIcon}</span> : null}
-        <span className={loading ? "opacity-90" : ""}>{children}</span>
-        {rightIcon ? <span className="shrink-0" aria-hidden="true">{rightIcon}</span> : null}
+
+{/* ✅ conteúdo trava em 1 linha e não quebra */}
+<span className={cx("min-w-0 truncate", loading ? "opacity-90" : "")}>
+  {children}
+</span>
+
+{rightIcon ? <span className="shrink-0" aria-hidden="true">{rightIcon}</span> : null}
       </a>
     );
   }
@@ -180,8 +190,13 @@ const BotaoSecundario = forwardRef(function BotaoSecundario(
       {...props}
     >
       {loading ? spinner : leftIcon ? <span className="shrink-0" aria-hidden="true">{leftIcon}</span> : null}
-      <span className={loading ? "opacity-90" : ""}>{children}</span>
-      {rightIcon ? <span className="shrink-0" aria-hidden="true">{rightIcon}</span> : null}
+
+{/* ✅ conteúdo trava em 1 linha e não quebra */}
+<span className={cx("min-w-0 truncate", loading ? "opacity-90" : "")}>
+  {children}
+</span>
+
+{rightIcon ? <span className="shrink-0" aria-hidden="true">{rightIcon}</span> : null}
     </button>
   );
 });

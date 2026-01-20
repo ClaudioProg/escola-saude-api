@@ -55,11 +55,11 @@ function badRequest(res, msg) {
 }
 
 /* ────────────────────────────────────────────────────────────────
-   GET /api/perfil/opcoes
+   GET /api/perfil/opcao
    - tenta colunas "modernas" (is_active/display_order/sigla)
    - fallback sem quebrar base antiga
    ──────────────────────────────────────────────────────────────── */
-async function listarOpcoesPerfil(req, res) {
+async function listarOpcaoPerfil(req, res) {
   try {
     const fetchCargos = async () => {
       try {
@@ -98,7 +98,7 @@ async function listarOpcoesPerfil(req, res) {
       }
     };
 
-    const fetchOrientacoes = async () => {
+    const fetchOrientacao = async () => {
       try {
         return await query(
           `SELECT id, nome, display_order
@@ -154,12 +154,12 @@ async function listarOpcoesPerfil(req, res) {
       }
     };
 
-    const [cargos, unidades, generos, orientacoes, cores, escolaridades, deficiencias] =
+    const [cargos, unidades, generos, orientacao, cores, escolaridades, deficiencias] =
       await Promise.all([
         fetchCargos(),
         fetchUnidades(),
         fetchGeneros(),
-        fetchOrientacoes(),
+        fetchOrientacao(),
         fetchCores(),
         fetchEscolaridades(),
         fetchDeficiencias(),
@@ -169,7 +169,7 @@ async function listarOpcoesPerfil(req, res) {
     const cargosRows = (cargos.rows || []).map((x) => ({ ...x, display_order: x.display_order ?? null }));
     const unidadesRows = (unidades.rows || []).map((x) => ({ ...x, sigla: x.sigla ?? null }));
     const generosRows = (generos.rows || []).map((x) => ({ ...x, display_order: x.display_order ?? null }));
-    const orientRows = (orientacoes.rows || []).map((x) => ({ ...x, display_order: x.display_order ?? null }));
+    const orientRows = (orientacao.rows || []).map((x) => ({ ...x, display_order: x.display_order ?? null }));
     const coresRows = (cores.rows || []).map((x) => ({ ...x, display_order: x.display_order ?? null }));
     const escolRows = (escolaridades.rows || []).map((x) => ({ ...x, display_order: x.display_order ?? null }));
     const defRows = (deficiencias.rows || []).map((x) => ({ ...x, display_order: x.display_order ?? null }));
@@ -178,13 +178,13 @@ async function listarOpcoesPerfil(req, res) {
       cargos: cargosRows,
       unidades: unidadesRows,
       generos: generosRows,
-      orientacoesSexuais: orientRows,
+      orientacaoSexuais: orientRows,
       coresRacas: coresRows,
       escolaridades: escolRows,
       deficiencias: defRows,
     });
   } catch (err) {
-    console.error("listarOpcoesPerfil:", err?.message || err);
+    console.error("listarOpcaoPerfil:", err?.message || err);
     return res.status(500).json({ erro: "Falha ao listar opções." });
   }
 }
@@ -324,4 +324,4 @@ async function atualizarMeuPerfil(req, res) {
   }
 }
 
-module.exports = { listarOpcoesPerfil, meuPerfil, atualizarMeuPerfil };
+module.exports = { listarOpcaoPerfil, meuPerfil, atualizarMeuPerfil };

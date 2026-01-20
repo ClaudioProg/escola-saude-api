@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useCallback, useMemo } from "react"
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, CalendarDays, MapPin, Info, Users } from "lucide-react";
-import { formatarDataBrasileira } from "../utils/data";
+import { formatarDataBrasileira } from "../utils/dateTime";
 
 /* ====================== prefers-reduced-motion (SSR safe) ====================== */
 const prefersReduced =

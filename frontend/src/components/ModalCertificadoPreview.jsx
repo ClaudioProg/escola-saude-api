@@ -14,7 +14,7 @@ import {
   FileWarning,
 } from "lucide-react";
 import Modal from "./Modal";
-import { formatarCPF } from "../utils/data";
+import { formatarCPF } from "../utils/dateTime";
 
 /* ====================== Helpers (sem timezone shift) ====================== */
 // date-only: YYYY-MM-DD -> DD/MM/YYYY

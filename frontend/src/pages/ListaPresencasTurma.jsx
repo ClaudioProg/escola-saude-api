@@ -18,7 +18,7 @@ import Breadcrumbs from "../components/Breadcrumbs";
 import PageHeader from "../components/PageHeader";
 import Footer from "../components/Footer";
 import NadaEncontrado from "../components/NadaEncontrado";
-import { formatarDataBrasileira, formatarCPF } from "../utils/data";
+import { formatarDataBrasileira, formatarCPF } from "../utils/dateTime";
 import { apiPost } from "../services/api";
 import ModalConfirmacao from "../components/ModalConfirmacao";
 

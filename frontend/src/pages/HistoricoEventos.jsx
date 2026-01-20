@@ -31,7 +31,7 @@ import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import PageHeader from "../components/PageHeader";
 import Footer from "../components/Footer";
 
-import { formatarDataBrasileira } from "../utils/data";
+import { formatarDataBrasileira } from "../utils/dateTime";
 import { apiGet, apiGetFile } from "../services/api";
 
 /* ---------------- helpers anti-fuso (sem Date/UTC) ---------------- */

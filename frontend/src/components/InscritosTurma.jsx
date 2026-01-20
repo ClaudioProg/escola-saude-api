@@ -55,7 +55,7 @@ export default function InscritosTurma() {
       try {
         const [turmaData, inscritosData] = await Promise.all([
           apiGet(`/api/turmas/${id}`, { signal: ctrl.signal }),
-          apiGet(`/api/inscricoes/turma/${id}`, { signal: ctrl.signal }),
+          apiGet(`/api/inscricao/turma/${id}`, { signal: ctrl.signal }),
         ]);
         setTurma(turmaData ?? null);
 

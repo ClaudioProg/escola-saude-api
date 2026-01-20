@@ -8,7 +8,7 @@ import { BarChart3, ClipboardList, MessageSquare, School, RefreshCw, CalendarRan
 import Footer from "../components/Footer";
 import NadaEncontrado from "../components/NadaEncontrado";
 import { apiGet } from "../services/api";
-import { formatarDataBrasileira } from "../utils/data";
+import { formatarDataBrasileira } from "../utils/dateTime";
 import BotaoPrimario from "../components/BotaoPrimario";
 
 /* ---------------------- Debug helpers (logs) ---------------------- */
@@ -131,7 +131,7 @@ export default function AvaliacaoInstrutor() {
             delete cp[String(eventoId)];
             return cp;
           });
-          carregarAvaliacoesDoEvento(eventoId);
+          carregarAvaliacaoDoEvento(eventoId);
         } else {
           carregarEventos();
         }
@@ -209,7 +209,7 @@ export default function AvaliacaoInstrutor() {
   }
 
   // carrega avaliações de todas as turmas do evento selecionado
-  const carregarAvaliacoesDoEvento = useCallback(async (id) => {
+  const carregarAvaliacaoDoEvento = useCallback(async (id) => {
     const ev = eventos.find((x) => String(x.id) === String(id));
     if (!ev) {
       log.warn("Evento não encontrado no estado:", id);
@@ -226,10 +226,10 @@ export default function AvaliacaoInstrutor() {
       await Promise.all(
         (ev.turmas || []).map(async (t) => {
           try {
-            const resp = await apiGet(`/api/avaliacoes/turma/${t.id}`, { on401: "silent", on403: "silent" });
+            const resp = await apiGet(`/api/avaliacao/turma/${t.id}`, { on401: "silent", on403: "silent" });
             const lista =
               Array.isArray(resp) ? resp :
-              Array.isArray(resp?.avaliacoes) ? resp.avaliacoes :
+              Array.isArray(resp?.avaliacao) ? resp.avaliacao :
               Array.isArray(resp?.itens) ? resp.itens :
               Array.isArray(resp?.comentarios) ? resp.comentarios : [];
             if (lista.length) respostas.push(...lista.map((item) => ({ ...item, __turmaId: t.id, __turmaNome: t.nome })));
@@ -302,7 +302,7 @@ export default function AvaliacaoInstrutor() {
       return;
     }
     log.info("Evento selecionado:", eventoId, "→ carregando avaliações…");
-    carregarAvaliacoesDoEvento(eventoId);
+    carregarAvaliacaoDoEvento(eventoId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventoId]);
 
@@ -358,7 +358,7 @@ export default function AvaliacaoInstrutor() {
     }
 
     const csv = linhas.join("\r\n");
-    baixarArquivo(`avaliacoes_evento_${eventoAtual.id}.csv`, csv, "text/csv;charset=utf-8");
+    baixarArquivo(`avaliacao_evento_${eventoAtual.id}.csv`, csv, "text/csv;charset=utf-8");
     toast.success("CSV gerado com sucesso.");
   }
   const limparCSV = (s) => String(s).replaceAll(/[\r\n]+/g, " ").replaceAll(/;/g, ",");
@@ -382,7 +382,7 @@ export default function AvaliacaoInstrutor() {
             delete cp[String(eventoId)];
             return cp;
           });
-          if (eventoId) carregarAvaliacoesDoEvento(eventoId);
+          if (eventoId) carregarAvaliacaoDoEvento(eventoId);
           else carregarEventos();
         }}
         carregando={carregando}

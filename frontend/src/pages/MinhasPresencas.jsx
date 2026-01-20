@@ -28,7 +28,7 @@ import BotaoPrimario from "../components/BotaoPrimario";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
 import NadaEncontrado from "../components/NadaEncontrado";
 import Footer from "../components/Footer";
-import { formatarDataBrasileira } from "../utils/data";
+import { formatarDataBrasileira } from "../utils/dateTime";
 
 const CERT_THRESHOLD = 75;
 

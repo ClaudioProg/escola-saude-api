@@ -207,7 +207,7 @@ export default function Cadastro() {
   const [unidades, setUnidades] = useState([]);
   const [cargos, setCargos] = useState([]);
   const [generos, setGeneros] = useState([]);
-  const [orientacoes, setOrientacoes] = useState([]);
+  const [orientacao, setOrientacao] = useState([]);
   const [coresRacas, setCoresRacas] = useState([]);
   const [escolaridades, setEscolaridades] = useState([]);
   const [deficiencias, setDeficiencias] = useState([]);
@@ -266,13 +266,13 @@ export default function Cadastro() {
     (async () => {
       try {
         setLoadingLookups(true);
-        const data = await apiGetPublic("/perfil/opcoes");
+        const data = await apiGetPublic("/perfil/opcao");
         if (!alive) return;
 
         const uni = Array.isArray(data?.unidades) ? data.unidades : [];
         const car = Array.isArray(data?.cargos) ? data.cargos : [];
         const gen = Array.isArray(data?.generos) ? data.generos : [];
-        const ori = Array.isArray(data?.orientacoesSexuais) ? data.orientacoesSexuais : [];
+        const ori = Array.isArray(data?.orientacaoSexuais) ? data.orientacaoSexuais : [];
         const cr  = Array.isArray(data?.coresRacas) ? data.coresRacas : [];
         const esc = Array.isArray(data?.escolaridades) ? data.escolaridades : [];
         const def = Array.isArray(data?.deficiencias) ? data.deficiencias : [];
@@ -284,7 +284,7 @@ export default function Cadastro() {
         setUnidades(orderBySigla(unidadesFinal));
         setCargos([...car].sort((a, b) => (a?.nome || "").localeCompare(b?.nome || "", "pt-BR", { sensitivity: "base" })));
         setGeneros(gen);
-        setOrientacoes(ori);
+        setOrientacao(ori);
         setCoresRacas(cr);
         setEscolaridades(esc);
         setDeficiencias(def);
@@ -486,7 +486,7 @@ export default function Cadastro() {
 
           <div className="relative max-w-7xl mx-auto px-4 sm:px-6 py-10 md:py-12">
             <div className="lg:absolute lg:right-4 lg:top-6 flex justify-end">
-              <ThemeTogglePills theme={theme} setTheme={setTheme} variant="glass" />
+              <ThemeTogglePills variant="glass" />
             </div>
 
             <div className="absolute left-4 sm:left-6 top-1/2 -translate-y-1/2 hidden sm:flex">
@@ -746,7 +746,7 @@ export default function Cadastro() {
                           required
                         >
                           <option value="">{loadingLookups ? "Carregando..." : "Selecione…"}</option>
-                          {orientacoes.map((o) => (
+                          {orientacao.map((o) => (
                             <option key={o.id} value={String(o.id)}>{o.nome}</option>
                           ))}
                         </select>

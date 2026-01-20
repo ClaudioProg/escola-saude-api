@@ -25,7 +25,7 @@ import {
   gerarIntervaloDeDatas,
   formatarCPF,
   formatarParaISO,
-} from "../utils/data";
+} from "../utils/dateTime";
 import { apiGet, apiPost, apiDelete } from "../services/api";
 
 /* ============================== Helpers ============================== */
@@ -228,10 +228,10 @@ export default function ListaTurmasAdministrador({
   eventos = [],
   hoje, // compat
   carregarInscritos,
-  carregarAvaliacoes,
+  carregarAvaliacao,
   gerarRelatorioPDF, // compat
   inscritosPorTurma,
-  avaliacoesPorTurma, // compat
+  avaliacaoPorTurma, // compat
   navigate, // compat
   modoadministradorPresencas = false,
   onTurmaRemovida,
@@ -557,7 +557,7 @@ export default function ListaTurmasAdministrador({
                                       const nova = estaExpandida ? null : turma.id;
                                       if (!estaExpandida) {
                                         carregarInscritos?.(turma.id);
-                                        carregarAvaliacoes?.(turma.id);
+                                        carregarAvaliacao?.(turma.id);
                                         carregarPresencas(turma.id);
                                       }
                                       setTurmaExpandidaId(nova);
@@ -999,10 +999,10 @@ ListaTurmasAdministrador.propTypes = {
   ),
   hoje: PropTypes.any,
   carregarInscritos: PropTypes.func,
-  carregarAvaliacoes: PropTypes.func,
+  carregarAvaliacao: PropTypes.func,
   gerarRelatorioPDF: PropTypes.func,
   inscritosPorTurma: PropTypes.object.isRequired,
-  avaliacoesPorTurma: PropTypes.object,
+  avaliacaoPorTurma: PropTypes.object,
   navigate: PropTypes.func,
   modoadministradorPresencas: PropTypes.bool,
   onTurmaRemovida: PropTypes.func,

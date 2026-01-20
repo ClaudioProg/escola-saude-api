@@ -155,7 +155,7 @@ export default function EditarUsuario() {
     [usuario, salvando, id, navigate, original]
   );
 
-  const descartarAlteracoes = useCallback(() => {
+  const descartarAlteracao = useCallback(() => {
     if (!original) return;
     setUsuario(original);
     setErrors({});
@@ -368,7 +368,7 @@ export default function EditarUsuario() {
               </BotaoSecundario>
 
               {houveMudancas && (
-                <BotaoSecundario onClick={descartarAlteracoes} variant="outline">
+                <BotaoSecundario onClick={descartarAlteracao} variant="outline">
                   Descartar
                 </BotaoSecundario>
               )}

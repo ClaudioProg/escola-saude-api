@@ -217,7 +217,7 @@ export default function ListaTurmasEvento({
   eventoId,
   eventoTipo = "",
   hoje = new Date(),
-  inscricoesConfirmadas = [],
+  inscricaoConfirmadas = [],
   inscrever,
   inscrevendo,
   jaInscritoNoEvento = false,
@@ -230,8 +230,8 @@ export default function ListaTurmasEvento({
 
   // ✅ perf: sets memoizados
   const inscritosSet = useMemo(
-    () => new Set((inscricoesConfirmadas || []).map((x) => Number(x))),
-    [inscricoesConfirmadas]
+    () => new Set((inscricaoConfirmadas || []).map((x) => Number(x))),
+    [inscricaoConfirmadas]
   );
   const conflitosSet = useMemo(
     () => new Set((turmasEmConflito || []).map((x) => Number(x))),
@@ -584,7 +584,7 @@ ListaTurmasEvento.propTypes = {
   eventoId: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
   eventoTipo: PropTypes.string,
   hoje: PropTypes.instanceOf(Date),
-  inscricoesConfirmadas: PropTypes.arrayOf(
+  inscricaoConfirmadas: PropTypes.arrayOf(
     PropTypes.oneOfType([PropTypes.number, PropTypes.string])
   ),
   inscrever: PropTypes.func,

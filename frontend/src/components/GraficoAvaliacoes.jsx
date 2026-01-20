@@ -1,4 +1,4 @@
-// ✅ src/components/GraficoAvaliacoes.jsx
+// ✅ src/components/GraficoAvaliacao.jsx
 import { useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import { Pie } from "react-chartjs-2";
@@ -46,7 +46,7 @@ function mapLabelToKey(label) {
 }
 
 /** Normaliza entradas variadas para { otimo, bom, regular, ruim, pessimo } */
-export function normalizeAvaliacoes(input) {
+export function normalizeAvaliacao(input) {
   const base = { otimo: 0, bom: 0, regular: 0, ruim: 0, pessimo: 0 };
   if (!input) return base;
 
@@ -137,7 +137,7 @@ const CenterLabelPlugin = {
 };
 
 /* ------------------------- Componente principal ------------------------- */
-export default function GraficoAvaliacoes({
+export default function GraficoAvaliacao({
   dados = {},
   height = 260,
   className = "",
@@ -149,7 +149,7 @@ export default function GraficoAvaliacoes({
   centerLabel,             // sobrescreve label central (texto)
   centerSub,               // sobrescreve sublabel central (texto)
 }) {
-  const norm = useMemo(() => normalizeAvaliacoes(dados), [dados]);
+  const norm = useMemo(() => normalizeAvaliacao(dados), [dados]);
   const total = norm.otimo + norm.bom + norm.regular + norm.ruim + norm.pessimo;
 
   const [reduceMotion, setReduceMotion] = useState(false);
@@ -255,7 +255,7 @@ export default function GraficoAvaliacoes({
   );
 }
 
-GraficoAvaliacoes.propTypes = {
+GraficoAvaliacao.propTypes = {
   dados: PropTypes.oneOfType([PropTypes.object, PropTypes.array]),
   height: PropTypes.number,
   className: PropTypes.string,

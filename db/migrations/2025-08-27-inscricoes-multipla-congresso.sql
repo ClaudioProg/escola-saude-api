@@ -44,10 +44,10 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- 2) Trigger que chama a função acima (idempotente)
-DROP TRIGGER IF EXISTS trg_bloquear_inscricao_multipla ON inscricoes;
+DROP TRIGGER IF EXISTS trg_bloquear_inscricao_multipla ON inscricao;
 
 CREATE TRIGGER trg_bloquear_inscricao_multipla
-BEFORE INSERT ON inscricoes
+BEFORE INSERT ON inscricao
 FOR EACH ROW
 EXECUTE FUNCTION fn_bloquear_inscricao_multipla();
 
@@ -57,16 +57,16 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1
       FROM pg_constraint
-     WHERE conname = 'uk_inscricoes_usuario_turma'
+     WHERE conname = 'uk_inscricao_usuario_turma'
   ) THEN
-    ALTER TABLE inscricoes
-      ADD CONSTRAINT uk_inscricoes_usuario_turma
+    ALTER TABLE inscricao
+      ADD CONSTRAINT uk_inscricao_usuario_turma
       UNIQUE (usuario_id, turma_id);
   END IF;
 END$$;
 
 -- 4) Índices úteis (idempotentes)
-CREATE INDEX IF NOT EXISTS idx_inscricoes_usuario ON inscricoes (usuario_id);
+CREATE INDEX IF NOT EXISTS idx_inscricao_usuario ON inscricao (usuario_id);
 CREATE INDEX IF NOT EXISTS idx_turmas_evento     ON turmas (evento_id);
 
 COMMIT;
@@ -74,7 +74,7 @@ COMMIT;
 -- =========================== [Opcional] ===============================
 -- Rollback manual:
 --   BEGIN;
---   DROP TRIGGER IF EXISTS trg_bloquear_inscricao_multipla ON inscricoes;
+--   DROP TRIGGER IF EXISTS trg_bloquear_inscricao_multipla ON inscricao;
 --   DROP FUNCTION IF EXISTS fn_bloquear_inscricao_multipla();
---   -- ALTER TABLE inscricoes DROP CONSTRAINT IF EXISTS uk_inscricoes_usuario_turma;
+--   -- ALTER TABLE inscricao DROP CONSTRAINT IF EXISTS uk_inscricao_usuario_turma;
 --   COMMIT;

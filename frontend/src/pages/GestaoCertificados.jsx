@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { toast } from "react-toastify";
 import { apiGet, apiPost, makeApiUrl } from "../services/api";
-import { fmtDataHora } from "../utils/data";
+import { fmtDataHora } from "../utils/dateTime";
 import { useReducedMotion } from "framer-motion";
 import Footer from "../components/Footer";
 import ModalConfirmacao from "../components/ModalConfirmacao";

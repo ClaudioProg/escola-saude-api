@@ -37,14 +37,14 @@ const NOMES_MESES = [
 const DIAS_SEMANA = ["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"];
 
 // ✅ TIPOS REAIS (iguais ao CHECK do Postgres + backend)
-const TIPOS_OPCOES = [
+const TIPOS_OPcao = [
   { value: "feriado_nacional",  label: "Feriado nacional" },
   { value: "feriado_municipal", label: "Feriado municipal" },
   { value: "ponto_facultativo", label: "Ponto facultativo" },
   { value: "bloqueio_interno",  label: "Bloqueio interno (administrativo)" },
 ];
 
-const TIPO_LABEL = TIPOS_OPCOES.reduce((acc, t) => ((acc[t.value] = t.label), acc), {});
+const TIPO_LABEL = TIPOS_OPcao.reduce((acc, t) => ((acc[t.value] = t.label), acc), {});
 
 const TIPO_STYLE = {
   feriado_nacional:  {
@@ -516,7 +516,7 @@ export default function CalendarioBloqueiosAdmin() {
         </div>
 
         <div className="mb-4 flex flex-wrap items-center gap-2 text-[11px] sm:text-xs">
-          {TIPOS_OPCOES.map((t) => (
+          {TIPOS_OPcao.map((t) => (
             <span
               key={t.value}
               className={cls(
@@ -566,7 +566,7 @@ export default function CalendarioBloqueiosAdmin() {
                 required
                 aria-required="true"
               >
-                {TIPOS_OPCOES.map((opt) => (
+                {TIPOS_OPcao.map((opt) => (
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </select>

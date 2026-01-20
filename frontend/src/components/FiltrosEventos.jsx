@@ -7,7 +7,7 @@ import FiltroToggleGroup from "./FiltroToggleGroup";
 const ACEITOS = new Set(["todos", "programado", "andamento", "encerrado"]);
 
 /** Lista base de opções (pode ser enriquecida com contagens) */
-const BASE_OPCOES = [
+const BASE_OPcao = [
   { valor: "todos",       rotulo: "Todos" },
   { valor: "programado",  rotulo: "Programados" },
   { valor: "andamento",   rotulo: "Em andamento" },
@@ -37,9 +37,9 @@ export default function FiltrosEventos({
   const valorSeguro = normalizarValor(filtroSelecionado);
 
   // Constrói rótulos com contagem quando fornecida
-  const opcoes = useMemo(() => {
-    if (!contagens || typeof contagens !== "object") return BASE_OPCOES;
-    return BASE_OPCOES.map((o) => {
+  const opcao = useMemo(() => {
+    if (!contagens || typeof contagens !== "object") return BASE_OPcao;
+    return BASE_OPcao.map((o) => {
       const qtd = Number.isFinite(Number(contagens[o.valor])) ? Number(contagens[o.valor]) : null;
       return qtd != null ? { ...o, rotulo: `${o.rotulo} (${qtd})` } : o;
     });
@@ -59,9 +59,9 @@ export default function FiltrosEventos({
   const liveRef = useRef(null);
   useEffect(() => {
     if (!liveRef.current) return;
-    const labelAtual = opcoes.find((o) => o.valor === valorSeguro)?.rotulo || "Todos";
+    const labelAtual = opcao.find((o) => o.valor === valorSeguro)?.rotulo || "Todos";
     liveRef.current.textContent = `Filtro selecionado: ${labelAtual}.`;
-  }, [valorSeguro, opcoes]);
+  }, [valorSeguro, opcao]);
 
   return (
     <div
@@ -78,7 +78,7 @@ export default function FiltrosEventos({
       <p ref={liveRef} className="sr-only" aria-live="polite" />
 
       <FiltroToggleGroup
-        opcoes={opcoes}
+        opcao={opcao}
         valorSelecionado={valorSeguro}
         aoSelecionar={handleSelecionar}
         ariaLabel="Filtrar eventos por status"

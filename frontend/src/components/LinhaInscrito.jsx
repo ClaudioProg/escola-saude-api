@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 
 import BotaoSecundario from "./BotaoSecundario";
-import { formatarCPF as formatarCPFUtils } from "../utils/data";
+import { formatarCPF as formatarCPFUtils } from "../utils/dateTime";
 import { apiPost } from "../services/api";
 
 /* ======================= Datas (date-only safe / fuso local) ======================= */

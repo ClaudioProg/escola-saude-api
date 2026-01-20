@@ -98,7 +98,7 @@ export default function RankingOralModal({ open, onClose, itens = [] }) {
   const aprovados = useMemo(() => (Array.isArray(itens) ? itens.filter(aprovadoOral) : []), [itens]);
 
   /* Opções de filtros (baseados apenas nos aprovados) */
-  const opcoesChamadas = useMemo(() => {
+  const opcaoChamadas = useMemo(() => {
     const set = new Set();
     for (const s of aprovados) {
       const nome = (s?.chamada_titulo || "").trim();
@@ -107,7 +107,7 @@ export default function RankingOralModal({ open, onClose, itens = [] }) {
     return ["__all__", ...Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR"))];
   }, [aprovados]);
 
-  const opcoesLinhas = useMemo(() => {
+  const opcaoLinhas = useMemo(() => {
     const set = new Set();
     for (const s of aprovados) {
       const nome = (s?.linha_tematica_nome || "").trim();
@@ -273,7 +273,7 @@ export default function RankingOralModal({ open, onClose, itens = [] }) {
                     ].join(" ")}
                     aria-label="Filtrar por chamada"
                   >
-                    {opcoesChamadas.map((v) => (
+                    {opcaoChamadas.map((v) => (
                       <option key={v} value={v}>
                         {v === "__all__" ? "Todas as chamadas" : v}
                       </option>
@@ -296,7 +296,7 @@ export default function RankingOralModal({ open, onClose, itens = [] }) {
                   ].join(" ")}
                   aria-label="Filtrar por linha temática"
                 >
-                  {opcoesLinhas.map((v) => (
+                  {opcaoLinhas.map((v) => (
                     <option key={v} value={v}>
                       {v === "__all__" ? "Todas as linhas" : v}
                     </option>

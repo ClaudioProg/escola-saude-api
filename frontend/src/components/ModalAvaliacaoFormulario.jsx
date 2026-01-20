@@ -14,14 +14,14 @@ import {
 } from "lucide-react";
 
 /* ===================== Opções e utilidades ===================== */
-const OPCOES = [
+const OPcao = [
   { label: "Ótimo", value: "Ótimo", nota: 5 },
   { label: "Bom", value: "Bom", nota: 4 },
   { label: "Regular", value: "Regular", nota: 3 },
   { label: "Ruim", value: "Ruim", nota: 2 },
   { label: "Péssimo", value: "Péssimo", nota: 1 },
 ];
-const LABELS_VALIDAS = new Set(OPCOES.map((o) => o.value));
+const LABELS_VALIDAS = new Set(OPcao.map((o) => o.value));
 const NORM = (s) =>
   (s || "")
     .toString()
@@ -148,7 +148,7 @@ function RatingField({
       )}
 
       <div className="mt-2 flex flex-wrap gap-2">
-        {OPCOES.map(({ label, value: v, nota }, idx) => {
+        {OPcao.map(({ label, value: v, nota }, idx) => {
           const checked = String(value) === v;
 
           return (
@@ -236,7 +236,7 @@ export default function ModalAvaliacaoFormulario({
       .filter((v) => LABELS_VALIDAS.has(v));
     if (!labels.length) return null;
     const soma = labels.reduce((acc, lab) => {
-      const item = OPCOES.find((o) => o.value === lab);
+      const item = OPcao.find((o) => o.value === lab);
       return acc + (item?.nota ?? 0);
     }, 0);
     return (soma / labels.length).toFixed(1);
@@ -318,7 +318,7 @@ export default function ModalAvaliacaoFormulario({
         if (notas[chave]) payload[chave] = String(notas[chave]);
       }
 
-      await apiPost("/api/avaliacoes", payload);
+      await apiPost("/api/avaliacao", payload);
 
       setMsgA11y("Avaliação enviada com sucesso.");
       toast.success("✅ Avaliação enviada com sucesso!");

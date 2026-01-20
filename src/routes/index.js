@@ -1,185 +1,358 @@
-// ✅ src/routes/index.js
+/* eslint-disable no-console */
+// ✅ src/routes/index.js — PREMIUM (fonte única de mounts + singular + aliases)
+"use strict";
+
 const express = require("express");
 const router = express.Router();
+
+/* ───────────────── Helpers premium ───────────────── */
+const asyncHandler =
+  (fn) =>
+  (req, res, next) =>
+    Promise.resolve(fn(req, res, next)).catch(next);
+
+/* ───────────────── Auth resiliente (p/ bridges globais) ───────────────── */
+const _auth = require("../auth/authMiddleware");
+const requireAuth =
+  typeof _auth === "function" ? _auth : _auth?.default || _auth?.authMiddleware || _auth?.auth;
+
+if (typeof requireAuth !== "function") {
+  console.error("[routes:index] authMiddleware inválido:", _auth);
+  throw new Error("authMiddleware não é função (verifique exports em src/auth/authMiddleware.js)");
+}
+
+/* ───────────────── Controller ÚNICO de submissões (inclui avaliador) ───────────────── */
+let submissaoCtrl = null;
+try {
+  submissaoCtrl = require("../controllers/submissaoController");
+} catch (e) {
+  console.warn("[routes] ⚠️ submissaoController não carregou:", e?.message || e);
+  submissaoCtrl = null;
+}
 
 /* =========================
    Imports (conforme /src/routes)
 ========================= */
 
 // Core / Públicos
-const lookupsPublicRoutes = require("./lookupsPublicRoutes");
+const lookupsPublicRoute = require("./lookupsPublicRoute");
 
 // Auth / Perfil / Login
 const loginRoute = require("./loginRoute");
-const perfilRoutes = require("./perfilRoutes");
+const perfilRoute = require("./perfilRoute");
 
 // Upload
-const uploadRoutes = require("./uploadRoutes");
+const uploadRoute = require("./uploadRoute");
 
-// Eventos / Turmas / Inscrições / Agenda
-const eventosRoute = require("./eventosRoute");
-const turmasRoute = require("./turmasRoute");
-const inscricoesRoute = require("./inscricoesRoute");
+// Eventos / Turma / Inscrição / Agenda
+const eventoRoute = require("./eventoRoute");
+const turmaRoute = require("./turmaRoute");
+const inscricaoRoute = require("./inscricaoRoute");
 const agendaRoute = require("./agendaRoute");
 
-// Presenças / Relatórios
-const presencasRoute = require("./presencasRoute");
-const relatorioPresencasRoute = require("./relatorioPresencasRoute");
-const relatoriosRoutes = require("./relatoriosRoutes");
+// ✅ Calendário/Bloqueios (admin)
+const calendarioRoute = require("./calendarioRoute");
 
-// Usuários / Instrutor / Unidades
-const usuariosRoute = require("./usuariosRoute");
-const instrutorRoutes = require("./instrutorRoutes");
-const unidadesRoutes = require("./unidadesRoutes");
-const usuariosEstatisticasRoute = require("./usuariosEstatisticasRoute");
+// Presença / Relatório
+const presencaRoute = require("./presencaRoute");
+const relatorioRoute = require("./relatorioRoute");
 
-// Avaliações / Dashboard usuário
-const avaliacoesRoute = require("./avaliacoesRoute");
-const dashboardUsuarioRoute = require("./dashboardUsuarioRoute");
+// Usuário / Instrutor / Unidade
+const usuarioRoute = require("./usuarioRoute");
+const instrutorRoute = require("./instrutorRoute");
+const unidadeRoute = require("./unidadeRoute");
 
-// Admin: avaliações / turmas / dashboard analítico
-const adminAvaliacoesRoutes = require("./adminAvaliacoesRoutes");
-const administradorTurmasRoute = require("./administradorTurmasRoute");
-const turmasRouteAdministrador = require("./turmasRouteAdministrador"); // (compat, se existir rota antiga)
-const dashboardAnaliticoRoutes = require("./dashboardAnaliticoRoutes");
+// Avaliação
+const avaliacaoRoute = require("./avaliacaoRoute");
 
-// Certificados
-const certificadosRoute = require("./certificadosRoute");
-const certificadosAdminRoutes = require("./certificadosAdminRoutes");
-const certificadosAvulsosRoutes = require("./certificadosAvulsosRoutes");
+// Dashboard / Certificado
+const dashboardRoute = require("./dashboardRoute");
+const certificadoRoute = require("./certificadoRoute");
 
-// Assinatura / Calendário
-const assinaturaRoutes = require("./assinaturaRoutes");
-const calendarioRoutes = require("./calendarioRoutes");
+// ✅ Trabalhos (repositório / submissões / uploads)
+const trabalhoRoute = require("./trabalhoRoute");
 
-// Datas (turma)
-const datasEventoRoute = require("./datasEventoRoute");
+// ✅ Assinatura (instrutor/admin)
+const assinaturaRoute = require("./assinaturaRoute");
 
-// Chamadas / Trabalhos / Submissões (admin)
-const chamadasRoutes = require("./chamadasRoutes");
-const chamadasModeloRoutes = require("./chamadasModeloRoutes");
-const trabalhosRoutes = require("./trabalhosRoutes");
-const submissoesAdminRoutes = require("./submissoesAdminRoutes");
+// ✅ CHAMADAS (router próprio, NÃO “auto-prefixado” na raiz)
+const chamadaRoute = require("./chamadaRoute");
 
-// Outros módulos (do seu diretório)
-const salasRoutes = require("./salasRoutes");
-const solicitacoesCursoRoute = require("./solicitacoesCursoRoute");
-const questionariosRoute = require("./questionariosRoute");
-const metricasRoutes = require("./metricasRoutes");
-const notificacoesRoute = require("./notificacoesRoute");
-const votacoesRoute = require("./votacoesRoute");
+// Submissão (opcional) — com LOG do motivo quando falha
+let submissaoRoute = null;
+try {
+  submissaoRoute = require("./submissaoRoute");
+  console.log("[routes] ✅ submissaoRoute carregado:", typeof submissaoRoute);
+} catch (e) {
+  console.warn("[routes] ⚠️ submissaoRoute não carregou:", e?.message || e);
+  submissaoRoute = null;
+}
+
+// Outros módulos
+const salaRoute = require("./salaRoute");
+const solicitacaoCursoRoute = require("./solicitacaoCursoRoute");
+const questionarioRoute = require("./questionarioRoute");
+const votacaoRoute = require("./votacaoRoute");
+
+// ✅ Métricas via route wrapper
+const metricRoute = require("./metricRoute");
+
+// Datas (turma/evento)
+const dataEventoRoute = require("./dataEventoRoute");
+
+// Notificação (opcional) — com LOG do motivo quando falha
+let notificacaoRoute = null;
+try {
+  notificacaoRoute = require("./notificacaoRoute");
+  console.log("[routes] ✅ notificacaoRoute carregado:", typeof notificacaoRoute);
+} catch (e) {
+  console.warn("[routes] ⚠️ notificacaoRoute não carregou:", e?.message || e);
+  notificacaoRoute = null;
+}
 
 /* =========================
-   Healthcheck (útil em deploy)
+   Healthcheck
 ========================= */
 router.get("/health", (_req, res) => res.json({ ok: true }));
 
 /* =========================
    Público / Lookups
 ========================= */
-router.use("/public", lookupsPublicRoutes);
+router.use("/public", lookupsPublicRoute);
 
 /* =========================
    Auth / Perfil / Login
 ========================= */
 router.use("/login", loginRoute);
-router.use("/perfil", perfilRoutes);
+router.use("/perfil", perfilRoute);
 
 /* =========================
    Upload
 ========================= */
-router.use("/upload", uploadRoutes);
+router.use("/upload", uploadRoute);
 
 /* =========================
-   Eventos / Turmas / Inscrições / Agenda
+   Eventos / Turma / Inscrição / Agenda
 ========================= */
-router.use("/eventos", eventosRoute);
-router.use("/turmas", turmasRoute);
-router.use("/inscricoes", inscricoesRoute);
+router.use("/evento", eventoRoute);
+router.use("/turma", turmaRoute);
+router.use("/inscricao", inscricaoRoute);
 router.use("/agenda", agendaRoute);
 
-/* =========================
-   Presenças / Relatórios
-========================= */
-router.use("/presencas", presencasRoute);
-router.use("/relatorio-presencas", relatorioPresencasRoute);
-router.use("/relatorios", relatoriosRoutes);
+// ✅ Aliases plural/legado
+router.use("/eventos", eventoRoute);
+router.use("/turmas", turmaRoute);
+router.use("/inscricoes", inscricaoRoute);
 
 /* =========================
-   Usuários / Instrutores / Unidades / Estatísticas
+   ✅ Calendário / Bloqueios (front legado chama /api/calendario)
+   Lugar certo: módulo próprio.
 ========================= */
-router.use("/usuarios", usuariosRoute);
-router.use("/instrutor", instrutorRoutes);
-router.use("/unidades", unidadesRoutes);
-router.use("/usuarios-estatisticas", usuariosEstatisticasRoute);
+router.use("/calendario", calendarioRoute);
+router.use("/calendarios", calendarioRoute);
+router.use("/calendar", calendarioRoute);
+router.use("/calendars", calendarioRoute);
 
 /* =========================
-   Avaliações / Dashboard usuário
+   Presença / Relatório
 ========================= */
-router.use("/avaliacoes", avaliacoesRoute);
-router.use("/dashboard-usuario", dashboardUsuarioRoute);
+router.use("/presenca", presencaRoute);
+router.use("/relatorio", relatorioRoute);
+
+// ✅ Aliases legado
+router.use("/presencas", presencaRoute);
+router.use("/relatorios", relatorioRoute);
+router.use("/relatorio-presencas", relatorioRoute);
+router.use("/relatorio-presenca", relatorioRoute);
 
 /* =========================
-   Admin / Analytics
+   Usuário / Instrutor / Unidade
 ========================= */
-router.use("/admin/avaliacoes", adminAvaliacoesRoutes);
-router.use("/dashboard-analitico", dashboardAnaliticoRoutes);
+router.use("/usuario", usuarioRoute);
+router.use("/instrutor", instrutorRoute);
+router.use("/unidade", unidadeRoute);
 
-/**
- * ✅ Turmas (admin)
- * Mantém dois mounts por compatibilidade:
- * - /administrador/turmas  (padrão legado)
- * - /admin/turmas          (padrão novo “mais REST”)
- */
-router.use("/administrador/turmas", administradorTurmasRoute);
-router.use("/admin/turmas", administradorTurmasRoute);
+// ✅ Aliases legado
+router.use("/usuarios", usuarioRoute);
+router.use("/instrutores", instrutorRoute);
+router.use("/unidades", unidadeRoute);
 
-// Alias (se você ainda usa este arquivo antigo em algum lugar)
-router.use("/administrador/turmas-legacy", turmasRouteAdministrador);
+/* =========================================================
+   ✅ BRIDGE GLOBAL — Avaliador/Submissões (frontend legado)
+   ⚠️ PRECISA vir ANTES de /avaliacao (porque /avaliacao é um mount)
+========================================================= */
+if (submissaoCtrl) {
+  // /api/avaliador/*
+  router.get("/avaliador/submissao", requireAuth, asyncHandler(submissaoCtrl.listarAtribuidas));
+  router.get("/avaliador/pendentes", requireAuth, asyncHandler(submissaoCtrl.listarPendentes));
+  router.get("/avaliador/minhas-contagens", requireAuth, asyncHandler(submissaoCtrl.minhasContagens));
+  router.get("/avaliador/para-mim", requireAuth, asyncHandler(submissaoCtrl.paraMim));
+  router.get("/avaliador/minhas-submissao", requireAuth, asyncHandler(submissaoCtrl.listarAtribuidas)); // alias
+
+  // legacy diretos
+  router.get("/avaliacao/atribuidas", requireAuth, asyncHandler(submissaoCtrl.listarAtribuidas));
+  router.get("/submissao/atribuidas", requireAuth, asyncHandler(submissaoCtrl.listarAtribuidas));
+  router.get("/submissao/para-mim", requireAuth, asyncHandler(submissaoCtrl.paraMim));
+  router.get("/admin/submissao/para-mim", requireAuth, asyncHandler(submissaoCtrl.paraMim));
+
+  // HEADs “descoberta”
+  router.head("/avaliador/submissao", (_req, res) => res.sendStatus(204));
+  router.head("/avaliador/pendentes", (_req, res) => res.sendStatus(204));
+  router.head("/avaliador/minhas-contagens", (_req, res) => res.sendStatus(204));
+  router.head("/avaliador/para-mim", (_req, res) => res.sendStatus(204));
+  router.head("/avaliacao/atribuidas", (_req, res) => res.sendStatus(204));
+  router.head("/submissao/atribuidas", (_req, res) => res.sendStatus(204));
+  router.head("/submissao/para-mim", (_req, res) => res.sendStatus(204));
+  router.head("/admin/submissao/para-mim", (_req, res) => res.sendStatus(204));
+}
+
+/* =========================================================
+   ✅ BRIDGE GLOBAL — Admin Avaliação (frontend legado)
+   Front chama: /api/admin/avaliacao/eventos
+   ✅ Corrige o caso em que o avaliacaoRoute usa /admin/evento (singular)
+========================================================= */
+function forwardTryAvaliacao(makeCandidates) {
+  return (req, res, next) => {
+    const originalUrl = req.url; // ex.: "/eventos"
+    const candidates = makeCandidates(originalUrl);
+
+    let i = 0;
+    const attempt = () => {
+      if (i >= candidates.length) {
+        req.url = originalUrl;
+        return next();
+      }
+
+      req.url = candidates[i++];
+      return avaliacaoRoute(req, res, (err) => {
+        if (err) return next(err);
+        if (res.headersSent) return;
+        return attempt();
+      });
+    };
+
+    return attempt();
+  };
+}
+
+// helpers de plural->singular (eventos->evento, turmas->turma)
+function singularizeAdminSuffix(suffix) {
+  // suffix sempre começa com "/"
+  // "/eventos" -> "/evento"
+  // "/eventos/123" -> "/evento/123"
+  // "/turmas/55" -> "/turma/55"
+  return String(suffix)
+    .replace(/^\/eventos(\/|$)/, "/evento$1")
+    .replace(/^\/turmas(\/|$)/, "/turma$1");
+}
+
+router.use(
+  "/admin/avaliacao",
+  requireAuth,
+  forwardTryAvaliacao((suffix) => {
+    const s = String(suffix || "/");
+    const sSing = singularizeAdminSuffix(s);
+
+    return [
+      // ✅ formato esperado pelo seu avaliacaoRoute atual: /api/avaliacao/admin/evento...
+      `/admin${sSing}`,             // /admin/evento   ✅ para /eventos do front
+      `/admin${s}`,                 // /admin/eventos  (se algum dia existir)
+      `/admin/avaliacao${sSing}`,   // /admin/avaliacao/evento
+      `/admin/avaliacao${s}`,       // /admin/avaliacao/eventos
+      `/admin/avaliacoes${sSing}`,  // /admin/avaliacoes/evento
+      `/admin/avaliacoes${s}`,      // /admin/avaliacoes/eventos
+      `${sSing}`,                   // /evento (fallback)
+      `${s}`,                       // /eventos (fallback)
+    ];
+  })
+);
 
 /* =========================
-   Certificados
+   Avaliação
 ========================= */
-router.use("/certificados", certificadosRoute);
-router.use("/certificados-admin", certificadosAdminRoutes);
-router.use("/certificados-avulsos", certificadosAvulsosRoutes);
+router.use("/avaliacao", avaliacaoRoute);
+router.use("/avaliacoes", avaliacaoRoute);
 
 /* =========================
-   Assinatura / Calendário / Datas
+   Dashboard
 ========================= */
-router.use("/assinatura", assinaturaRoutes);
-router.use("/calendario", calendarioRoutes);
-
-// seu controller espera /api/datas/turma/:id → então o mount deve ser /datas
-router.use("/datas", datasEventoRoute);
+router.use("/dashboard", dashboardRoute);
+router.use("/dashboard-usuario", dashboardRoute);
+router.use("/dashboard-analitico", dashboardRoute);
 
 /* =========================
-   Chamadas / Trabalhos / Submissões
+   Certificado
 ========================= */
-// chamadas públicas + admin (conforme seu arquivo)
-router.use("/", chamadasRoutes); // ele já tem /chamadas/... e /admin/chamadas/... dentro
+router.use("/certificado", certificadoRoute);
+router.use("/certificados", certificadoRoute);
+router.use("/certificados-admin", certificadoRoute);
+router.use("/certificados-avulsos", certificadoRoute);
 
-// modelos (banner/oral) públicos e admin (conforme chamadasModeloRoutes)
-router.use("/", chamadasModeloRoutes);
+/* =========================
+   Calendário / Datas (turma/evento)
+========================= */
+router.use("/data", dataEventoRoute);
+router.use("/datas", dataEventoRoute);
 
-router.use("/trabalhos", trabalhosRoutes);
-router.use("/admin/submissoes", submissoesAdminRoutes);
+/* =========================
+   Trabalhos (repositório)
+========================= */
+router.use("/trabalho", trabalhoRoute);
+router.use("/trabalhos", trabalhoRoute);
+
+/* =========================
+   Assinatura
+========================= */
+router.use("/assinatura", assinaturaRoute);
+router.use("/assinaturas", assinaturaRoute);
+
+/* =========================
+   ✅ CHAMADAS — mounts corretos (NÃO na raiz "/")
+   Isso evita “roubar” rotas como /submissao/:id e /admin/avaliacao/...
+========================= */
+router.use("/chamada", chamadaRoute);
+router.use("/chamadas", chamadaRoute);
+
+/* =========================
+   Submissão (se existir)
+========================= */
+if (submissaoRoute) {
+  router.use("/submissao", submissaoRoute);
+  router.use("/submissoes", submissaoRoute);
+} else {
+  // DEV fallback mínimo
+  router.get("/submissao/minhas", (_req, res) => res.json([]));
+  router.get("/submissoes/minhas", (_req, res) => res.json([]));
+}
 
 /* =========================
    Outros módulos
 ========================= */
-router.use("/salas", salasRoutes);
-router.use("/solicitacoes-curso", solicitacoesCursoRoute);
-router.use("/questionarios", questionariosRoute);
-router.use("/metricas", metricasRoutes);
-router.use("/notificacoes", notificacoesRoute);
-router.use("/votacoes", votacoesRoute);
+router.use("/sala", salaRoute);
+router.use("/salas", salaRoute);
+
+router.use("/solicitacao-curso", solicitacaoCursoRoute);
+
+router.use("/questionario", questionarioRoute);
+router.use("/questionarios", questionarioRoute);
+
+router.use("/votacao", votacaoRoute);
+router.use("/votacoes", votacaoRoute);
+
+// ✅ Métricas (com aliases)
+router.use("/metric", metricRoute);
+router.use("/metrica", metricRoute);
+router.use("/metricas", metricRoute);
+
+// ✅ Notificação (só se existir)
+if (notificacaoRoute) {
+  router.use("/notificacao", notificacaoRoute);
+  router.use("/notificacoes", notificacaoRoute);
+}
 
 /* =========================
    Fallback 404 (API)
 ========================= */
-router.use((_req, res) => {
-  return res.status(404).json({ erro: "Rota não encontrada." });
-});
+router.use((_req, res) => res.status(404).json({ erro: "Rota não encontrada." }));
 
 module.exports = router;

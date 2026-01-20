@@ -802,7 +802,7 @@ export async function apiUpload(path, formDataOrFile, opts = {}) {
 // 🆕 Atalho específico para pôster (.ppt/.pptx)
 export const apiUploadPoster = (submissaoId, fileOrFormData, opts = {}) => {
   if (!submissaoId) throw new Error("submissaoId é obrigatório");
-  return apiUpload(`/submissoes/${submissaoId}/poster`, fileOrFormData, {
+  return apiUpload(`/submissao/${submissaoId}/poster`, fileOrFormData, {
     ...opts,
     fieldName: "poster",
   });
@@ -1048,9 +1048,9 @@ export async function apiCertAvulsoPDF(id, { palestrante = false, assinatura2_id
 // ───────────────────────────────────────────────────────────────────
 // 🆕 APIs de Perfil (cadastro obrigatório) — ÚNICAS
 // ───────────────────────────────────────────────────────────────────
-export async function apiPerfilOpcoes(opts = {}) {
+export async function apiPerfilOpcao(opts = {}) {
   // sensível → 401 silencioso para não perder a sessão
-  return apiGet("/perfil/opcoes", { auth: true, on401: "silent", on403: "silent", ...opts });
+  return apiGet("/perfil/opcao", { auth: true, on401: "silent", on403: "silent", ...opts });
 }
 
 function inferPerfilIncompleto(me) {

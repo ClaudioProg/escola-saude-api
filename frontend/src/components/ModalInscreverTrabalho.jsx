@@ -85,7 +85,7 @@ function validarForm(form, limites = {}, dentroPrazo = true) {
   if (!toMonthValue(form.inicio_experiencia)) errs.push("Selecione o mês/ano de início da experiência.");
   if (!form.linha_tematica_id) errs.push("Selecione a linha temática.");
 
-  const longos = ["introducao", "objetivos", "metodo", "resultados", "consideracoes", "bibliografia"];
+  const longos = ["introducao", "objetivos", "metodo", "resultados", "consideracao", "bibliografia"];
   longos.forEach((k) => {
     const max = Number(limites[k]) || 2000;
     if ((form[k] || "").length > max) errs.push(`Campo "${k}" ultrapassa o limite de ${max} caracteres.`);
@@ -145,7 +145,7 @@ export default function ModalInscreverTrabalho({
     objetivos: "",
     metodo: "",
     resultados: "",
-    consideracoes: "",
+    consideracao: "",
     bibliografia: "",
     coautores: [],
     poster: null,
@@ -236,7 +236,7 @@ export default function ModalInscreverTrabalho({
         setMsgA11y("Carregando dados da submissão...");
 
         if (propSubId) {
-          const s = unwrap(await api.get(`/submissoes/${propSubId}`));
+          const s = unwrap(await api.get(`/submissao/${propSubId}`));
           if (!alive) return;
 
           setSubmissaoId(s.id);
@@ -250,7 +250,7 @@ export default function ModalInscreverTrabalho({
             objetivos: s.objetivos || "",
             metodo: s.metodo || "",
             resultados: s.resultados || "",
-            consideracoes: s.consideracoes || "",
+            consideracao: s.consideracoes || "",
             bibliografia: s.bibliografia || "",
             coautores: Array.isArray(s.coautores)
               ? s.coautores.map((c) => ({
@@ -398,12 +398,12 @@ export default function ModalInscreverTrabalho({
     };
 
     if (!submissaoId) {
-      const r = await api.post(`/chamadas/${chamada?.id || propChamadaId}/submissoes`, payload);
+      const r = await api.post(`/chamadas/${chamada?.id || propChamadaId}/submissao`, payload);
       const id = r?.data?.id ?? r?.id;
       if (id) setSubmissaoId(id);
       return id;
     } else {
-      await api.put(`/submissoes/${submissaoId}`, payload);
+      await api.put(`/submissao/${submissaoId}`, payload);
       return submissaoId;
     }
   }
@@ -437,7 +437,7 @@ export default function ModalInscreverTrabalho({
     setMsgA11y("Enviando pôster...");
 
     const attempt = async () =>
-      apiUpload(`/submissoes/${id}/poster`, fd, {
+      apiUpload(`/submissao/${id}/poster`, fd, {
         onUploadProgress: (evt) => {
           if (!evt?.total) return;
           const pct = Math.round((evt.loaded / evt.total) * 100);
@@ -692,7 +692,7 @@ export default function ModalInscreverTrabalho({
           </div>
 
           {/* Campos longos */}
-          {["introducao", "objetivos", "metodo", "resultados", "consideracoes", "bibliografia"].map((field) => {
+          {["introducao", "objetivos", "metodo", "resultados", "consideracao", "bibliografia"].map((field) => {
             const max = Number(limites[field]) || 2000;
             const label = field.charAt(0).toUpperCase() + field.slice(1).replace("_", " ");
             return (

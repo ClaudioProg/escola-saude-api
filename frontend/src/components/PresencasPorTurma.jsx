@@ -46,7 +46,7 @@ function turmaTemEncontroNoDia(turma, isoDate) {
 export default function PresencasPorTurma() {
   const [eventos, setEventos] = useState([]);
   const [inscritosPorTurma, setInscritosPorTurma] = useState({});
-  const [avaliacoesPorTurma, setAvaliacoesPorTurma] = useState({});
+  const [avaliacaoPorTurma, setAvaliacaoPorTurma] = useState({});
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [a11yMsg, setA11yMsg] = useState("");
@@ -112,17 +112,17 @@ export default function PresencasPorTurma() {
     }
   }, []);
 
-  const carregarAvaliacoes = useCallback(async (turmaId) => {
+  const carregarAvaliacao = useCallback(async (turmaId) => {
     try {
-      const data = await apiGet(`/api/avaliacoes/turma/${turmaId}`, {
+      const data = await apiGet(`/api/avaliacao/turma/${turmaId}`, {
         on401: "silent",
         on403: "silent",
       });
-      setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: Array.isArray(data) ? data : [] }));
+      setAvaliacaoPorTurma((prev) => ({ ...prev, [turmaId]: Array.isArray(data) ? data : [] }));
     } catch (err) {
       console.error("Erro ao carregar avaliações:", err);
       toast.error("❌ Erro ao carregar avaliações.");
-      setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: [] }));
+      setAvaliacaoPorTurma((prev) => ({ ...prev, [turmaId]: [] }));
     }
   }, []);
 
@@ -235,9 +235,9 @@ export default function PresencasPorTurma() {
               eventos={eventos}
               hoje={hoje}
               inscritosPorTurma={inscritosPorTurma}
-              avaliacoesPorTurma={avaliacoesPorTurma}
+              avaliacaoPorTurma={avaliacaoPorTurma}
               carregarInscritos={carregarInscritos}
-              carregarAvaliacoes={carregarAvaliacoes}
+              carregarAvaliacao={carregarAvaliacao}
               modoadministradorPresencas={true}
               onTurmaRemovida={handleTurmaRemovida}
               mostrarBotaoRemover={true}

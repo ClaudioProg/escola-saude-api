@@ -271,7 +271,7 @@ export default function ModalTurma({
   };
 
   /* ======= Instrutores / Assinante ======= */
-  const instrutoresOpcoes = useMemo(() => {
+  const instrutoresOpcao = useMemo(() => {
     const list = (usuarios || [])
       .filter((u) => {
         const perfil = Array.isArray(u.perfil) ? u.perfil.join(",") : String(u.perfil || "");
@@ -285,7 +285,7 @@ export default function ModalTurma({
   const getInstrutorDisponivel = (index) => {
     const selecionados = instrutoresSel.map(String);
     const atual = selecionados[index];
-    return instrutoresOpcoes.filter(
+    return instrutoresOpcao.filter(
       (i) => !selecionados.includes(String(i.id)) || String(i.id) === String(atual)
     );
   };
@@ -312,10 +312,10 @@ export default function ModalTurma({
     });
   };
 
-  const assinanteOpcoes = useMemo(() => {
+  const assinanteOpcao = useMemo(() => {
     const ids = new Set(instrutoresSel.filter(Boolean).map((x) => Number(x)));
-    return instrutoresOpcoes.filter((u) => ids.has(Number(u.id)));
-  }, [instrutoresSel, instrutoresOpcoes]);
+    return instrutoresOpcao.filter((u) => ids.has(Number(u.id)));
+  }, [instrutoresSel, instrutoresOpcao]);
 
   /* validação/salvar */
   const validar = () => {
@@ -623,7 +623,7 @@ export default function ModalTurma({
                 required
               >
                 <option value="">Selecione o assinante</option>
-                {assinanteOpcoes.map((u) => (
+                {assinanteOpcao.map((u) => (
                   <option key={u.id} value={String(u.id)}>
                     {u.nome}
                   </option>

@@ -102,7 +102,7 @@ export default function ModalDetalhesSubmissao({ open, onClose, submissao, onDet
   const [full, setFull] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const [avaliacoes, setAvaliacoes] = useState([]);
+  const [avaliacao, setAvaliacao] = useState([]);
   const [notaVisivel, setNotaVisivel] = useState(false);
   const [totalGeral, setTotalGeral] = useState(0);
   const [notaDivididaPor4, setNotaDivididaPor4] = useState(0);
@@ -125,11 +125,11 @@ export default function ModalDetalhesSubmissao({ open, onClose, submissao, onDet
         // submissão completa (tenta pública, cai no admin se 404)
         let sub;
         try {
-          const r = await api.get(`/submissoes/${submissao.id}`, { signal: ac.signal });
+          const r = await api.get(`/submissao/${submissao.id}`, { signal: ac.signal });
           sub = Array.isArray(r) ? r[0] : r?.data ?? r;
         } catch (e) {
           if (e?.status === 404 || e?.response?.status === 404) {
-            const r2 = await api.get(`/admin/submissoes/${submissao.id}`, { signal: ac.signal });
+            const r2 = await api.get(`/admin/submissao/${submissao.id}`, { signal: ac.signal });
             sub = Array.isArray(r2) ? r2[0] : r2?.data ?? r2;
           } else {
             throw e;
@@ -141,7 +141,7 @@ export default function ModalDetalhesSubmissao({ open, onClose, submissao, onDet
 
         // notas
         try {
-          const nr = await api.get(`/admin/submissoes/${submissao.id}/avaliacoes`, { signal: ac.signal });
+          const nr = await api.get(`/admin/submissao/${submissao.id}/avaliacao`, { signal: ac.signal });
           const payload = nr?.data || {};
           const itens = Array.isArray(payload.itens) ? payload.itens : [];
 
@@ -157,13 +157,13 @@ export default function ModalDetalhesSubmissao({ open, onClose, submissao, onDet
             return { nome, notas: notasArr, total };
           });
 
-          setAvaliacoes(normalizados);
+          setAvaliacao(normalizados);
           setNotaVisivel(!!payload.nota_visivel);
           setTotalGeral(Number(payload.total_geral || 0));
           setNotaDivididaPor4(Number(payload.nota_dividida_por_4 || 0));
         } catch {
           // sem notas: ok
-          setAvaliacoes([]);
+          setAvaliacao([]);
           setNotaVisivel(false);
           setTotalGeral(0);
           setNotaDivididaPor4(0);
@@ -181,8 +181,8 @@ export default function ModalDetalhesSubmissao({ open, onClose, submissao, onDet
   }, [open, submissao?.id, onDetectAnexo]);
 
   const totalObtido = useMemo(
-    () => totalGeral || (avaliacoes || []).reduce((a, b) => a + Number(b.total || 0), 0),
-    [avaliacoes, totalGeral]
+    () => totalGeral || (avaliacao || []).reduce((a, b) => a + Number(b.total || 0), 0),
+    [avaliacao, totalGeral]
   );
 
   const mediaFinal = useMemo(
@@ -201,7 +201,7 @@ export default function ModalDetalhesSubmissao({ open, onClose, submissao, onDet
     if (!data?.id || baixandoPoster) return;
     setBaixandoPoster(true);
     try {
-      const { blob, filename } = await apiGetFile(`/submissoes/${data.id}/poster`);
+      const { blob, filename } = await apiGetFile(`/submissao/${data.id}/poster`);
       downloadBlob(filename || posterNome || `poster_${data.id}.pptx`, blob);
       toast.success("✅ Pôster baixado.");
     } catch (e) {
@@ -216,7 +216,7 @@ export default function ModalDetalhesSubmissao({ open, onClose, submissao, onDet
     if (!data?.id || baixandoBanner) return;
     setBaixandoBanner(true);
     try {
-      const { blob, filename } = await apiGetFile(`/submissoes/${data.id}/banner`);
+      const { blob, filename } = await apiGetFile(`/submissao/${data.id}/banner`);
       downloadBlob(filename || bannerNome || `banner_${data.id}`, blob);
       toast.success("✅ Anexo baixado.");
     } catch (e) {
@@ -232,7 +232,7 @@ export default function ModalDetalhesSubmissao({ open, onClose, submissao, onDet
     setTogglingNota(true);
     try {
       const novo = !notaVisivel;
-      await api.post(`/admin/submissoes/${data.id}/nota-visivel`, { visivel: novo });
+      await api.post(`/admin/submissao/${data.id}/nota-visivel`, { visivel: novo });
       setNotaVisivel(novo);
       toast.success(novo ? "✅ Nota liberada ao autor." : "✅ Nota ocultada do autor.");
     } catch (e) {
@@ -295,7 +295,7 @@ export default function ModalDetalhesSubmissao({ open, onClose, submissao, onDet
               <MiniStat
                 icon={UserRound}
                 label="Avaliadores"
-                value={avaliacoes?.length ? `${avaliacoes.length}` : "—"}
+                value={avaliacao?.length ? `${avaliacao.length}` : "—"}
                 tone="violet"
               />
               <MiniStat
@@ -313,7 +313,7 @@ export default function ModalDetalhesSubmissao({ open, onClose, submissao, onDet
                   <h4 className="font-extrabold text-zinc-900 dark:text-white">Nota do trabalho</h4>
                   <p className="text-sm text-zinc-600 dark:text-zinc-300 mt-1">
                     Média final: <strong>{fmtNum(mediaFinal, 1)}</strong> / 10
-                    {avaliacoes?.length > 0 ? (
+                    {avaliacao?.length > 0 ? (
                       <span className="ml-2 opacity-70">
                         (Soma avaliadores: <strong>{totalObtido}</strong> / 40)
                       </span>
@@ -321,7 +321,7 @@ export default function ModalDetalhesSubmissao({ open, onClose, submissao, onDet
                   </p>
                 </div>
 
-                {avaliacoes?.length > 0 && (
+                {avaliacao?.length > 0 && (
                   <button
                     ref={firstBtnRef}
                     onClick={toggleVisibilidadeNota}
@@ -407,11 +407,11 @@ export default function ModalDetalhesSubmissao({ open, onClose, submissao, onDet
             </section>
 
             {/* Texto (seções) */}
-            {["introducao", "objetivos", "metodo", "resultados", "consideracoes", "bibliografia"].some((k) => !!data?.[k]) && (
+            {["introducao", "objetivos", "metodo", "resultados", "consideracao", "bibliografia"].some((k) => !!data?.[k]) && (
               <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/40 p-4">
                 <h4 className="font-extrabold text-zinc-900 dark:text-white">Texto do trabalho</h4>
                 <div className="mt-3 space-y-4">
-                  {["introducao", "objetivos", "metodo", "resultados", "consideracoes", "bibliografia"].map((k) =>
+                  {["introducao", "objetivos", "metodo", "resultados", "consideracao", "bibliografia"].map((k) =>
                     data?.[k] ? (
                       <div key={k}>
                         <div className="text-sm font-extrabold text-zinc-900 dark:text-white capitalize">{k}</div>
@@ -426,7 +426,7 @@ export default function ModalDetalhesSubmissao({ open, onClose, submissao, onDet
             )}
 
             {/* Notas por avaliador */}
-            {avaliacoes?.length > 0 && (
+            {avaliacao?.length > 0 && (
               <section className="rounded-2xl border border-amber-200 dark:border-amber-900/40 bg-amber-50/40 dark:bg-zinc-900/40 p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -450,7 +450,7 @@ export default function ModalDetalhesSubmissao({ open, onClose, submissao, onDet
 
                 {/* Mobile: cards */}
                 <div className="mt-4 grid gap-2 md:hidden">
-                  {avaliacoes.map((a, i) => {
+                  {avaliacao.map((a, i) => {
                     const [c1 = 0, c2 = 0, c3 = 0, c4 = 0] = a.notas || [];
                     const tot = Number.isFinite(a.total) ? a.total : c1 + c2 + c3 + c4;
 
@@ -492,7 +492,7 @@ export default function ModalDetalhesSubmissao({ open, onClose, submissao, onDet
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800 bg-white dark:bg-transparent">
-                      {avaliacoes.map((a, i) => {
+                      {avaliacao.map((a, i) => {
                         const [c1 = 0, c2 = 0, c3 = 0, c4 = 0] = a.notas || [];
                         const tot = Number.isFinite(a.total) ? a.total : c1 + c2 + c3 + c4;
                         return (

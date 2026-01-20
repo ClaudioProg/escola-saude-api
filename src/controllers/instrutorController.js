@@ -47,7 +47,7 @@ function getUsuarioId(req) {
  * - SEMPRE castea para text antes de comparar/converter
  * - Aceita "1..5" (com vírgula/ponto), e textos comuns (ótimo, bom, etc.)
  *
- * Observação: usa alias "a" (avaliacoes) — mantenha o alias como "a" nas CTEs/joins.
+ * Observação: usa alias "a" (avaliacao) — mantenha o alias como "a" nas CTEs/joins.
  */
 const SQL_MAP_NOTA = `
   CASE
@@ -65,7 +65,7 @@ const SQL_MAP_NOTA = `
 
 /* ────────────────────────────────────────────────────────────────
    📋 Lista instrutores com médias/contadores
-   - Liga por evento_instrutor → turmas → avaliacoes (a.turma_id).
+   - Liga por evento_instrutor → turmas → avaliacao (a.turma_id).
    - Evita multiplicação indevida com LEFT JOIN (CTEs agregadas).
    ──────────────────────────────────────────────────────────────── */
 async function listarInstrutor(req, res) {
@@ -132,11 +132,11 @@ async function listarInstrutor(req, res) {
 
 /* ────────────────────────────────────────────────────────────────
    📊 Eventos ministrados por instrutor (período, média e total)
-   @route GET /api/instrutor/:id/eventos-avaliacoes
+   @route GET /api/instrutor/:id/eventos-avaliacao
    - Período calculado em DATE (sem Date JS)
    - Média/contagem calculadas sem multiplicar linhas
    ──────────────────────────────────────────────────────────────── */
-async function getEventosAvaliacoesPorInstrutor(req, res) {
+async function getEventosAvaliacaoPorInstrutor(req, res) {
   const rid = mkRid();
   const instrutorId = asPositiveInt(req.params?.id);
 
@@ -187,7 +187,7 @@ async function getEventosAvaliacoesPorInstrutor(req, res) {
     `;
 
     const { rows } = await query(sql, [instrutorId]);
-    log(rid, "info", "getEventosAvaliacoesPorInstrutor OK", { instrutorId, count: rows.length });
+    log(rid, "info", "getEventosAvaliacaoPorInstrutor OK", { instrutorId, count: rows.length });
     return res.json(rows);
   } catch (error) {
     log(rid, "error", "Erro ao buscar eventos do instrutor", error);
@@ -303,7 +303,7 @@ async function getMinhasTurmasInstrutor(req, res) {
 
 module.exports = {
   listarInstrutor,
-  getEventosAvaliacoesPorInstrutor,
+  getEventosAvaliacaoPorInstrutor,
   getTurmasComEventoPorInstrutor,
   getMinhasTurmasInstrutor,
 };

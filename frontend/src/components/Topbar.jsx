@@ -182,7 +182,7 @@ export default function Topbar({
   const [totalNaoLidas, setTotalNaoLidas] = useState(0);
   const abortNotifRef = useRef(null);
 
-  const atualizarContadorNotificacoes = useCallback(async () => {
+  const atualizarContadorNotificacao = useCallback(async () => {
     const tk = getValidToken();
     if (!tk || document.hidden) return;
 
@@ -192,7 +192,7 @@ export default function Topbar({
     abortNotifRef.current = ac;
 
     try {
-      const data = await apiGet("/api/notificacoes/nao-lidas/contagem", {
+      const data = await apiGet("/api/notificacao/nao-lidas/contagem", {
         on401: "silent",
         on403: "silent",
         signal: ac.signal,
@@ -207,7 +207,7 @@ export default function Topbar({
   useEffect(() => {
     let intervalId;
 
-    const tick = () => atualizarContadorNotificacoes();
+    const tick = () => atualizarContadorNotificacao();
 
     if (token) {
       tick();
@@ -221,15 +221,15 @@ export default function Topbar({
     document.addEventListener("visibilitychange", onVisibility);
 
     // compat com chamadas externas existentes
-    window.atualizarContadorNotificacoes = tick;
+    window.atualizarContadorNotificacao = tick;
 
     return () => {
       abortNotifRef.current?.abort?.();
       if (intervalId) clearInterval(intervalId);
       document.removeEventListener("visibilitychange", onVisibility);
-      delete window.atualizarContadorNotificacoes;
+      delete window.atualizarContadorNotificacao;
     };
-  }, [token, atualizarContadorNotificacoes]);
+  }, [token, atualizarContadorNotificacao]);
 
   /* ───────────────── Sync de sessão (storage + auth:changed) ───────────────── */
   const refreshFromLS = useCallback(() => {
@@ -406,7 +406,7 @@ export default function Topbar({
           {/* Notificações */}
           <button
             type="button"
-            onClick={() => navigate("/notificacoes")}
+            onClick={() => navigate("/notificacao")}
             className="relative inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 bg-white hover:bg-slate-100 dark:border-white/10 dark:bg-zinc-900/35 dark:hover:bg-white/5 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60"
             aria-label={`Abrir notificações${totalNaoLidas ? `, ${totalNaoLidas} não lidas` : ""}`}
             title="Notificações"

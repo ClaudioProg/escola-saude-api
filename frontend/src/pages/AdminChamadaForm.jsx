@@ -9,7 +9,7 @@ import Footer from "../components/Footer";
 import {
   datetimeLocalToBrWall, wallToDatetimeLocal, isIsoWithTz, isWallDateTime,
   isoToDatetimeLocalInZone, fmtWallDateTime, fmtDataHora
-} from "../utils/data";
+} from "../utils/dateTime";
 import {
   apiGet, apiPost, apiPut, apiDelete, apiUpload as apiUploadSvc,
   apiGetFile, downloadBlob
@@ -535,11 +535,11 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
     linhas: [],
     criterios: [],
     criterios_orais: [],
-    limites: { titulo: 100, introducao: 2000, objetivos: 1000, metodo: 1500, resultados: 1500, consideracoes: 1000 },
+    limites: { titulo: 100, introducao: 2000, objetivos: 1000, metodo: 1500, resultados: 1500, consideracao: 1000 },
     criterios_outros: "",
     oral_outros: "",
     premiacao_texto: "",
-    disposicoes_finais_texto: "",
+    disposicao_finais_texto: "",
   });
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -698,12 +698,12 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
               objetivos: Number(r?.limites?.objetivos ?? 1000),
               metodo: Number(r?.limites?.metodo ?? 1500),
               resultados: Number(r?.limites?.resultados ?? 1500),
-              consideracoes: Number(r?.limites?.consideracoes ?? 1000),
+              consideracao: Number(r?.limites?.consideracao ?? 1000),
             },
             criterios_outros: r?.criterios_outros || "",
             oral_outros: r?.oral_outros || "",
             premiacao_texto: r?.premiacao_texto || "",
-            disposicoes_finais_texto: r?.disposicoes_finais_texto || "",
+            disposicao_finais_texto: r?.disposicao_finais_texto || "",
           });
 
           try {
@@ -768,12 +768,12 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
           objetivos: enforceBackend(clampUi(form.limites.objetivos)),
           metodo: enforceBackend(clampUi(form.limites.metodo)),
           resultados: enforceBackend(clampUi(form.limites.resultados)),
-          consideracoes: enforceBackend(clampUi(form.limites.consideracoes)),
+          consideracao: enforceBackend(clampUi(form.limites.consideracoes)),
         },
         criterios_outros: form.criterios_outros || "",
         oral_outros: form.oral_outros || "",
         premiacao_texto: form.premiacao_texto || "",
-        disposicoes_finais_texto: form.disposicoes_finais_texto || "",
+        disposicao_finais_texto: form.disposicao_finais_texto || "",
       };
 
       let savedId = chamadaId || null;
@@ -958,7 +958,7 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
                   ["objetivos", "Objetivos"],
                   ["metodo", "Método/Descrição da prática"],
                   ["resultados", "Resultados/Impactos"],
-                  ["consideracoes", "Considerações finais"],
+                  ["consideracao", "Considerações finais"],
                 ].map(([key, rot]) => (
                   <Field
                     key={key}
@@ -1218,8 +1218,8 @@ function AddEditChamadaModal({ open, onClose, chamadaId, onSaved }) {
           <section id="s9" className="grid grid-cols-1 gap-4">
             <h2 className="mb-2 text-base font-semibold">Disposições finais</h2>
             <Field label="Texto das disposições finais">
-              <textarea className={`${inputBase} min-h-[120px] rounded-2xl`} value={form.disposicoes_finais_texto}
-                onChange={(e) => update("disposicoes_finais_texto", e.target.value)} placeholder="Informe as disposições finais..." />
+              <textarea className={`${inputBase} min-h-[120px] rounded-2xl`} value={form.disposicao_finais_texto}
+                onChange={(e) => update("disposicao_finais_texto", e.target.value)} placeholder="Informe as disposições finais..." />
             </Field>
           </section>
         </div>

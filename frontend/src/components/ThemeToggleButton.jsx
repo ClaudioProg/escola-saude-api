@@ -1,5 +1,11 @@
-// ✅ src/components/ThemeToggleButton.jsx
-import { useEffect, useMemo, useRef, useState } from "react";
+// ✅ src/components/ThemeToggleButton.jsx — PREMIUM (2026)
+// - Usa o motor único via useEscolaTheme (que agora faz broadcast/DOM apply)
+// - Clique rápido alterna light <-> dark (respeita effectiveTheme)
+// - Menu acessível: ESC fecha, clique fora fecha, foco/teclado ok
+// - Long-press mobile abre menu SEM “vazar” timers
+// - Enter/Espaço no botão: mantém comportamento padrão do button
+
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { Sun, Moon, Monitor, Check } from "lucide-react";
 import useEscolaTheme from "../hooks/useEscolaTheme";
 
@@ -12,34 +18,8 @@ export default function ThemeToggleButton({ className = "" }) {
   const isDarkEffective = effectiveTheme === "dark";
 
   const [open, setOpen] = useState(false);
-  const btnRef = useRef(null);
-
-  // clique rápido alterna light <-> dark
-  function onClick() {
-    const next = isDarkEffective ? "light" : "dark";
-    setTheme(next);
-  }
-
-  // fecha menu ao clicar fora / ESC
-  useEffect(() => {
-    if (!open) return;
-
-    const onKey = (e) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    const onPointer = (e) => {
-      const el = btnRef.current;
-      if (!el) return;
-      if (!el.contains(e.target)) setOpen(false);
-    };
-
-    document.addEventListener("keydown", onKey);
-    document.addEventListener("pointerdown", onPointer);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.removeEventListener("pointerdown", onPointer);
-    };
-  }, [open]);
+  const rootRef = useRef(null);
+  const longPressTimerRef = useRef(null);
 
   const label = useMemo(() => {
     if (theme === "system") return `Sistema (${effectiveTheme})`;
@@ -48,12 +28,56 @@ export default function ThemeToggleButton({ className = "" }) {
 
   const icon = isDarkEffective ? <Sun size={18} /> : <Moon size={18} />;
 
+  // clique rápido alterna light <-> dark (sempre baseado no efetivo atual)
+  const onQuickToggle = useCallback(() => {
+    const next = isDarkEffective ? "light" : "dark";
+    setTheme(next);
+  }, [isDarkEffective, setTheme]);
+
+  // fechar menu
+  const closeMenu = useCallback(() => setOpen(false), []);
+
+  // fecha menu ao clicar fora / ESC (captura p/ ser bem robusto)
+  useEffect(() => {
+    if (!open) return;
+
+    const onKey = (e) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        closeMenu();
+      }
+    };
+
+    const onPointerDown = (e) => {
+      const root = rootRef.current;
+      if (!root) return;
+      if (!root.contains(e.target)) closeMenu();
+    };
+
+    document.addEventListener("keydown", onKey, true);
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("pointerdown", onPointerDown, true);
+    };
+  }, [open, closeMenu]);
+
+  // limpeza do long-press
+  useEffect(() => {
+    return () => {
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+      }
+    };
+  }, []);
+
   const baseBtn = cx(
     "relative inline-flex items-center gap-2 rounded-2xl px-3 py-2",
     "border text-xs font-extrabold transition",
     "focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60",
     "active:scale-[0.98] motion-reduce:active:scale-100",
-    "min-h-[40px]" // tap target
+    "min-h-[40px]"
   );
 
   const skin = cx(
@@ -62,21 +86,27 @@ export default function ThemeToggleButton({ className = "" }) {
   );
 
   return (
-    <div className={cx("relative inline-flex", className)} ref={btnRef}>
+    <div className={cx("relative inline-flex", className)} ref={rootRef}>
       <button
         type="button"
-        onClick={onClick}
+        onClick={onQuickToggle}
         onContextMenu={(e) => {
-          // clique direito abre o menu (desktop)
+          // clique direito abre/fecha menu (desktop)
           e.preventDefault();
           setOpen((v) => !v);
         }}
-        onPointerDown={(e) => {
-          // long-press abre o menu (mobile)
-          const t = setTimeout(() => setOpen(true), 420);
-          const clear = () => clearTimeout(t);
-          window.addEventListener("pointerup", clear, { once: true });
-          window.addEventListener("pointercancel", clear, { once: true });
+        onPointerDown={() => {
+          // long-press abre menu (mobile)
+          if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+          longPressTimerRef.current = setTimeout(() => setOpen(true), 420);
+        }}
+        onPointerUp={() => {
+          if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+          longPressTimerRef.current = null;
+        }}
+        onPointerCancel={() => {
+          if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+          longPressTimerRef.current = null;
         }}
         aria-label={isDarkEffective ? "Ativar modo claro" : "Ativar modo escuro"}
         aria-haspopup="menu"
@@ -107,7 +137,7 @@ export default function ThemeToggleButton({ className = "" }) {
           <Monitor className="ml-1 h-4 w-4 opacity-70" aria-hidden="true" />
         )}
 
-        {/* hint do menu (3 pontinhos) */}
+        {/* hint do menu */}
         <span className="ml-1 opacity-60 text-[10px]" aria-hidden="true">
           ⋯
         </span>
@@ -130,7 +160,7 @@ export default function ThemeToggleButton({ className = "" }) {
             icon={Sun}
             onClick={() => {
               setTheme("light");
-              setOpen(false);
+              closeMenu();
             }}
           />
           <MenuItem
@@ -139,7 +169,7 @@ export default function ThemeToggleButton({ className = "" }) {
             icon={Moon}
             onClick={() => {
               setTheme("dark");
-              setOpen(false);
+              closeMenu();
             }}
           />
           <MenuItem
@@ -149,7 +179,7 @@ export default function ThemeToggleButton({ className = "" }) {
             sub={`(agora: ${effectiveTheme})`}
             onClick={() => {
               setTheme("system");
-              setOpen(false);
+              closeMenu();
             }}
           />
         </div>

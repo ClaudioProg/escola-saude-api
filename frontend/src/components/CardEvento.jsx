@@ -70,9 +70,9 @@ function notaEnumParaNumero(valor) {
   }
 }
 
-function calcularMediaEventoViaLista(avaliacoes) {
-  if (!Array.isArray(avaliacoes) || avaliacoes.length === 0) return "—";
-  const medias = avaliacoes
+function calcularMediaEventoViaLista(avaliacao) {
+  if (!Array.isArray(avaliacao) || avaliacao.length === 0) return "—";
+  const medias = avaliacao
     .map((av) => {
       let soma = 0, qtd = 0;
       for (const campo of CAMPOS_NOTA_EVENTO) {
@@ -148,8 +148,8 @@ export default function CardEvento({
   turmas,
   carregarInscritos,
   inscritosPorTurma,
-  carregarAvaliacoes,
-  avaliacoesPorTurma,
+  carregarAvaliacao,
+  avaliacaoPorTurma,
   presencasPorTurma,
   carregarPresencas,
   gerarRelatorioPDF,
@@ -161,13 +161,13 @@ export default function CardEvento({
 
   const stats = useMemo(() => {
     if (!expandido || !Array.isArray(turmas) || !turmas.length) {
-      return { totalInscritos: 0, totalPresentes: 0, presencaMedia: "0", totalAvaliacoes: 0, notaMedia: "—" };
+      return { totalInscritos: 0, totalPresentes: 0, presencaMedia: "0", totalAvaliacao: 0, notaMedia: "—" };
     }
     let totalInscritos = 0;
     let totalPresentes = 0;
-    let totalAvaliacoes = 0;
+    let totalAvaliacao = 0;
     const mediasDiretas = [];
-    const todasAvaliacoes = [];
+    const todasAvaliacao = [];
 
     for (const t of turmas) {
       const inscritos = normalizaArr(inscritosPorTurma?.[t.id]);
@@ -176,16 +176,16 @@ export default function CardEvento({
       const presencas = normalizaArr(presencasPorTurma?.[t.id]);
       totalPresentes += presencas.filter((p) => p?.presente === true).length;
 
-      const blocoAval = avaliacoesPorTurma?.[t.id] || {};
-      const avalArr = Array.isArray(blocoAval.avaliacoes) ? blocoAval.avaliacoes : normalizaArr(blocoAval);
-      const qtd = Number(blocoAval.total_avaliacoes);
-      totalAvaliacoes += Number.isFinite(qtd) ? qtd : avalArr.length;
+      const blocoAval = avaliacaoPorTurma?.[t.id] || {};
+      const avalArr = Array.isArray(blocoAval.avaliacao) ? blocoAval.avaliacao : normalizaArr(blocoAval);
+      const qtd = Number(blocoAval.total_avaliacao);
+      totalAvaliacao += Number.isFinite(qtd) ? qtd : avalArr.length;
 
       if (blocoAval.media_evento != null && blocoAval.media_evento !== "—") {
         const m = Number(blocoAval.media_evento);
         if (!Number.isNaN(m)) mediasDiretas.push(m);
       } else {
-        todasAvaliacoes.push(...avalArr);
+        todasAvaliacao.push(...avalArr);
       }
     }
 
@@ -195,18 +195,18 @@ export default function CardEvento({
     if (mediasDiretas.length) {
       const m = mediasDiretas.reduce((a, v) => a + v, 0) / mediasDiretas.length;
       notaMedia = m.toFixed(1);
-    } else if (todasAvaliacoes.length) {
-      notaMedia = calcularMediaEventoViaLista(todasAvaliacoes);
+    } else if (todasAvaliacao.length) {
+      notaMedia = calcularMediaEventoViaLista(todasAvaliacao);
     }
 
-    return { totalInscritos, totalPresentes, presencaMedia, totalAvaliacoes, notaMedia };
-  }, [expandido, turmas, inscritosPorTurma, presencasPorTurma, avaliacoesPorTurma, normalizaArr]);
+    return { totalInscritos, totalPresentes, presencaMedia, totalAvaliacao, notaMedia };
+  }, [expandido, turmas, inscritosPorTurma, presencasPorTurma, avaliacaoPorTurma, normalizaArr]);
 
   useEffect(() => {
     if (!expandido || !Array.isArray(turmas)) return;
     for (const turma of turmas) {
       if (!inscritosPorTurma?.[turma.id]) carregarInscritos(turma.id);
-      if (!avaliacoesPorTurma?.[turma.id]) carregarAvaliacoes(turma.id);
+      if (!avaliacaoPorTurma?.[turma.id]) carregarAvaliacao(turma.id);
       if (!presencasPorTurma?.[turma.id]) carregarPresencas(turma.id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -315,7 +315,7 @@ export default function CardEvento({
             <StatCard
               icon={<Star aria-hidden="true" />}
               label="Avaliações"
-              value={stats.totalAvaliacoes}
+              value={stats.totalAvaliacao}
               accent="amber"
             />
             <StatCard
@@ -339,11 +339,11 @@ export default function CardEvento({
               turma={turma}
               hoje={new Date()} // ok usar "agora" aqui
               inscritos={inscritosPorTurma?.[turma.id]}
-              avaliacoes={avaliacoesPorTurma?.[turma.id]}
+              avaliacao={avaliacaoPorTurma?.[turma.id]}
               carregarInscritos={carregarInscritos}
-              carregarAvaliacoes={carregarAvaliacoes}
+              carregarAvaliacao={carregarAvaliacao}
               gerarRelatorioPDF={gerarRelatorioPDF}
-              inscricoesConfirmadas={[]}
+              inscricaoConfirmadas={[]}
             />
           ))}
         </div>
@@ -375,8 +375,8 @@ CardEvento.propTypes = {
   ),
   carregarInscritos: PropTypes.func.isRequired,
   inscritosPorTurma: PropTypes.object,
-  carregarAvaliacoes: PropTypes.func.isRequired,
-  avaliacoesPorTurma: PropTypes.object,
+  carregarAvaliacao: PropTypes.func.isRequired,
+  avaliacaoPorTurma: PropTypes.object,
   presencasPorTurma: PropTypes.object,
   carregarPresencas: PropTypes.func.isRequired,
   gerarRelatorioPDF: PropTypes.func,

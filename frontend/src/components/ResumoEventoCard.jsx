@@ -26,7 +26,7 @@ import {
 const ICONES = {
   inscritos: <Users className="h-6 w-6" aria-hidden="true" />,
   presencas: <CheckCircle className="h-6 w-6" aria-hidden="true" />,
-  avaliacoes: <Star className="h-6 w-6" aria-hidden="true" />,
+  avaliacao: <Star className="h-6 w-6" aria-hidden="true" />,
 };
 
 const THEMES = {
@@ -46,7 +46,7 @@ const THEMES = {
     ring: "ring-emerald-500/15 dark:ring-emerald-300/10",
     glow: "shadow-[0_18px_55px_-40px_rgba(16,185,129,0.55)]",
   },
-  avaliacoes: {
+  avaliacao: {
     grad: "from-amber-50 via-amber-100 to-amber-200 dark:from-amber-950 dark:via-amber-900/60 dark:to-amber-900/30",
     text: "text-amber-950 dark:text-amber-50",
     iconBg: "bg-white/70 dark:bg-white/10",
@@ -203,7 +203,7 @@ export default function ResumoEventoCard({
 }
 
 ResumoEventoCard.propTypes = {
-  tipo: PropTypes.oneOf(["inscritos", "presencas", "avaliacoes"]),
+  tipo: PropTypes.oneOf(["inscritos", "presencas", "avaliacao"]),
   titulo: PropTypes.string.isRequired,
   valor: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
   compact: PropTypes.bool,

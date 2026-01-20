@@ -398,15 +398,15 @@ export default function HomeEscola() {
   }, [carregarResumo]);
 
   const stats = useMemo(() => {
-    const inscricoes = Number(resumo?.inscricoesFuturas ?? resumo?.proximosEventos ?? 0) || 0;
-    const avalPend = Number(resumo?.avaliacoesPendentes ?? 0) || 0;
+    const inscricao = Number(resumo?.inscricaoFuturas ?? resumo?.proximosEventos ?? 0) || 0;
+    const avalPend = Number(resumo?.avaliacaoPendentes ?? 0) || 0;
     const certEmit = Number(resumo?.certificadosEmitidos ?? resumo?.certificados ?? 0) || 0;
 
     const presencas = Number(resumo?.presencasTotal ?? 0) || 0;
     const faltas = Number(resumo?.faltasTotal ?? 0) || 0;
     const nota = resumo?.notaUsuario ?? resumo?.nota ?? null;
 
-    return { inscricoes, avalPend, certEmit, presencas, faltas, nota };
+    return { inscricao, avalPend, certEmit, presencas, faltas, nota };
   }, [resumo]);
 
   // Ações QR
@@ -490,7 +490,7 @@ export default function HomeEscola() {
             <MiniStat
               icon={ClipboardList}
               label="Inscrições"
-              value={loadingResumo ? "…" : stats.inscricoes}
+              value={loadingResumo ? "…" : stats.inscricao}
               hint="Cursos que você ainda vai fazer"
               tone="emerald"
               onClick={() => go("/eventos")}

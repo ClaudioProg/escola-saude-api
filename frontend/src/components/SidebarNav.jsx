@@ -82,7 +82,7 @@ function cx(...arr) {
 
 function isActivePath(currentPath, itemPath) {
   if (!itemPath) return false;
-  if (itemPath === "__open_submissions__") return currentPath.startsWith("/admin/submissoes");
+  if (itemPath === "__open_submissions__") return currentPath.startsWith("/admin/submissao");
 
   // match exato
   if (currentPath === itemPath) return true;
@@ -259,7 +259,7 @@ export default function SidebarNav({
       { label: "Meus Certificados", path: "/certificados", icon: FileText },
       { label: "Agendamento de Sala", path: "/agenda-salas", icon: CalendarDays },
       { label: "Solicitar Curso", path: "/solicitar-curso", icon: Presentation },
-      { label: "Submissão de Trabalhos", path: "/submissoes", icon: Presentation },
+      { label: "Submissão de Trabalhos", path: "/submissao", icon: Presentation },
       { label: "Repositório de Trabalhos", path: "/repositorio-trabalhos", icon: FolderOpenDot },
       { label: "Manual do Usuário", path: "/usuario/manual", icon: BookOpen },
       { label: "Escanear", path: "/scanner", icon: QrCode },
@@ -274,7 +274,7 @@ export default function SidebarNav({
       { label: "Presença", path: "/instrutor/presenca", icon: QrCode },
       { label: "Certificados", path: "/instrutor/certificados", icon: FileText },
       { label: "Avaliação", path: "/instrutor/avaliacao", icon: PencilLine },
-      { label: "Avaliar Trabalhos Atribuídos", path: "/avaliador/submissoes", icon: FolderOpenDot },
+      { label: "Avaliar Trabalhos Atribuídos", path: "/avaliador/submissao", icon: FolderOpenDot },
     ],
     []
   );
@@ -285,13 +285,13 @@ export default function SidebarNav({
       { label: "Dashboard Analítico", path: "/dashboard-analitico", icon: BarChart3 },
       { label: "Agenda", path: "/agenda-administrador", icon: ListChecks },
       { label: "Agenda de Salas", path: "/admin/agenda-salas", icon: CalendarDays },
-      { label: "Solicitações de Curso", path: "/admin/solicitacoes-curso", icon: School },
+      { label: "Solicitações de Curso", path: "/admin/solicitacao-curso", icon: School },
       { label: "Certificados Avulsos", path: "/certificados-avulsos", icon: FileText },
       { label: "Gestão de Usuários", path: "/gestao-usuarios", icon: Users },
       { label: "Gestão de Instrutor", path: "/gestao-instrutor", icon: Presentation },
       { label: "Gestão de Eventos", path: "/gerenciar-eventos", icon: CalendarDays },
       { label: "Gestão de Presença", path: "/gestao-presenca", icon: QrCode },
-      { label: "Gestão de Avaliações", path: "/admin/avaliacoes", icon: ClipboardList },
+      { label: "Gestão de Avaliações", path: "/admin/avaliacao", icon: ClipboardList },
       { label: "Gestão de Certificados", path: "/gestao-certificados", icon: History },
       { label: "Relatórios Customizados", path: "/relatorios-customizados", icon: ClipboardList },
       { label: "Criar Submissão de Trabalho", path: "/admin/chamadas/new", icon: PlusCircle },
@@ -340,7 +340,7 @@ export default function SidebarNav({
   const go = useCallback(
     (path) => {
       if (path === "__open_submissions__") {
-        navigate("/admin/submissoes");
+        navigate("/admin/submissao");
         onClose?.();
         return;
       }

@@ -49,7 +49,7 @@ const LABELS = {
   oficinas: "Oficinas",
 };
 
-const OPCOES_NOTA = ["Ótimo", "Bom", "Regular", "Ruim", "Péssimo"];
+const OPcao_NOTA = ["Ótimo", "Bom", "Regular", "Ruim", "Péssimo"];
 
 /** storage key por turma */
 const draftKey = (turmaId) => `avaliacao-evento:${turmaId}`;
@@ -206,7 +206,7 @@ export default function AvaliacaoEvento() {
 
       try {
         setEnviando(true);
-        await apiPost("/api/avaliacoes", corpo);
+        await apiPost("/api/avaliacao", corpo);
         toast.success("✅ Avaliação enviada com sucesso!");
         sujo.current = false;
         localStorage.removeItem(draftKey(turma_id));
@@ -324,7 +324,7 @@ export default function AvaliacaoEvento() {
                       aria-invalid={erro || undefined}
                       className="flex gap-2 overflow-x-auto py-1"
                     >
-                      {OPCOES_NOTA.map((opcao) => {
+                      {OPcao_NOTA.map((opcao) => {
                         const checked = form[campo] === opcao;
                         const optId = `${rgId}-${opcao}`;
                         return (

@@ -1,4 +1,4 @@
-// 📁 src/components/Notificacoes.jsx
+// 📁 src/components/Notificacao.jsx
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CalendarDays, FileText, Star, Check, RefreshCw, Bell } from "lucide-react";
 import { toast } from "react-toastify";
@@ -166,8 +166,8 @@ function isoNow() {
 /* Componente                                                     */
 /* ────────────────────────────────────────────────────────────── */
 
-export default function Notificacoes() {
-  const [notificacoes, setNotificacoes] = useState([]);
+export default function Notificacao() {
+  const [notificacao, setNotificacao] = useState([]);
   const [loading, setLoading] = useState(true);
   const [marcando, setMarcando] = useState(null); // id em progresso
   const [marcandoTodas, setMarcandoTodas] = useState(false);
@@ -182,16 +182,16 @@ export default function Notificacoes() {
     // a11yRef.current?.focus?.();
   }, []);
 
-  const carregarNotificacoes = useCallback(async () => {
+  const carregarNotificacao = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await apiGet("/api/notificacoes");
+      const data = await apiGet("/api/notificacao");
       const arr = Array.isArray(data) ? data : [];
-      setNotificacoes(arr);
+      setNotificacao(arr);
       anunciar(`Lista atualizada. ${arr.length} notificação(ões).`);
     } catch {
       toast.error("❌ Erro ao carregar notificações.");
-      setNotificacoes([]);
+      setNotificacao([]);
       anunciar("Erro ao carregar notificações.");
     } finally {
       setLoading(false);
@@ -199,46 +199,46 @@ export default function Notificacoes() {
   }, [anunciar]);
 
   useEffect(() => {
-    carregarNotificacoes();
-  }, [carregarNotificacoes]);
+    carregarNotificacao();
+  }, [carregarNotificacao]);
 
   // ordena: não lidas primeiro; depois por data desc (sem timezone shift)
   const listaOrdenada = useMemo(() => {
-    return [...notificacoes].sort((a, b) => {
+    return [...notificacao].sort((a, b) => {
       const unreadDelta = (isNaoLida(b) ? 1 : 0) - (isNaoLida(a) ? 1 : 0);
       if (unreadDelta !== 0) return unreadDelta;
       const ka = sortKeyNoShift(pickDateField(a));
       const kb = sortKeyNoShift(pickDateField(b));
       return kb - ka;
     });
-  }, [notificacoes]);
+  }, [notificacao]);
 
   const totalNaoLidas = useMemo(
-    () => notificacoes.reduce((acc, n) => acc + (isNaoLida(n) ? 1 : 0), 0),
-    [notificacoes]
+    () => notificacao.reduce((acc, n) => acc + (isNaoLida(n) ? 1 : 0), 0),
+    [notificacao]
   );
 
   const porTipo = useMemo(() => {
     const base = { evento: 0, avaliacao: 0, documento: 0, outros: 0 };
-    for (const n of notificacoes) base[tipoNorm(n)]++;
+    for (const n of notificacao) base[tipoNorm(n)]++;
     return base;
-  }, [notificacoes]);
+  }, [notificacao]);
 
   const marcarComoLida = useCallback(
     async (id) => {
       if (!id) return;
       try {
         setMarcando(id);
-        await apiPost(`/api/notificacoes/${id}/lida`, {});
+        await apiPost(`/api/notificacao/${id}/lida`, {});
         const now = isoNow();
-        setNotificacoes((prev) =>
+        setNotificacao((prev) =>
           prev.map((n) =>
             n.id === id
               ? { ...n, lida: true, lido: true, lida_em: now, lidaEm: now }
               : n
           )
         );
-        window.atualizarContadorNotificacoes?.();
+        window.atualizarContadorNotificacao?.();
         anunciar("Notificação marcada como lida.");
       } catch {
         toast.error("❌ Não foi possível marcar como lida.");
@@ -250,17 +250,17 @@ export default function Notificacoes() {
   );
 
   const marcarTodas = useCallback(async () => {
-    const ids = notificacoes.filter(isNaoLida).map((n) => n.id).filter(Boolean);
+    const ids = notificacao.filter(isNaoLida).map((n) => n.id).filter(Boolean);
     if (ids.length === 0) return;
     setMarcandoTodas(true);
 
     try {
-      await Promise.allSettled(ids.map((id) => apiPost(`/api/notificacoes/${id}/lida`, {})));
+      await Promise.allSettled(ids.map((id) => apiPost(`/api/notificacao/${id}/lida`, {})));
       const now = isoNow();
-      setNotificacoes((prev) =>
+      setNotificacao((prev) =>
         prev.map((n) => (isNaoLida(n) ? { ...n, lida: true, lido: true, lida_em: now, lidaEm: now } : n))
       );
-      window.atualizarContadorNotificacoes?.();
+      window.atualizarContadorNotificacao?.();
       toast.success("✅ Todas as não lidas foram marcadas como lidas.");
       anunciar("Todas as notificações não lidas foram marcadas como lidas.");
     } catch {
@@ -268,7 +268,7 @@ export default function Notificacoes() {
     } finally {
       setMarcandoTodas(false);
     }
-  }, [notificacoes, anunciar]);
+  }, [notificacao, anunciar]);
 
   /* ────────────── HeaderHero + Ministats ────────────── */
   const Header = (
@@ -289,7 +289,7 @@ export default function Notificacoes() {
 
           <div className="flex flex-wrap items-center gap-2">
             <button
-              onClick={carregarNotificacoes}
+              onClick={carregarNotificacao}
               className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 focus:outline-none focus:ring-2 focus:ring-white/60"
               title="Atualizar lista"
             >
@@ -318,7 +318,7 @@ export default function Notificacoes() {
         <div className="mt-4 grid grid-cols-2 sm:grid-cols-5 gap-2">
           <div className="rounded-xl bg-white/10 p-2">
             <div className="text-[11px] uppercase tracking-wide opacity-80">Total</div>
-            <div className="text-sm font-bold">{notificacoes.length}</div>
+            <div className="text-sm font-bold">{notificacao.length}</div>
           </div>
           <div className="rounded-xl bg-white/10 p-2">
             <div className="text-[11px] uppercase tracking-wide opacity-80">Não lidas</div>
@@ -368,7 +368,7 @@ export default function Notificacoes() {
   }
 
   /* ────────────── Empty ────────────── */
-  if (notificacoes.length === 0) {
+  if (notificacao.length === 0) {
     return (
       <section className="mb-8">
         {Header}

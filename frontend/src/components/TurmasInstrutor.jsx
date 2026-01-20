@@ -3,10 +3,10 @@
 import PropTypes from "prop-types";
 import { motion, AnimatePresence } from "framer-motion";
 import { useMemo, useState } from "react";
-import AvaliacoesEvento from "./AvaliacoesEvento";
+import AvaliacaoEvento from "./AvaliacaoEvento";
 import { toast } from "react-toastify";
 import { apiPatch, apiPost } from "../services/api";
-import { formatarCPF } from "../utils/data";
+import { formatarCPF } from "../utils/dateTime";
 import {
   Users,
   Star,
@@ -199,10 +199,10 @@ function DonutPresenca({ pct }) {
 export default function TurmasInstrutor({
   turmas = [],
   inscritosPorTurma = {},
-  avaliacoesPorTurma = {},
+  avaliacaoPorTurma = {},
   presencasPorTurma = {},
   onVerInscritos,
-  onVerAvaliacoes,
+  onVerAvaliacao,
   onExportarListaAssinaturaPDF,
   onExportarQrCodePDF,
   token = null,
@@ -210,8 +210,8 @@ export default function TurmasInstrutor({
   carregando = false,
   turmaExpandidaInscritos = null,
   setTurmaExpandidaInscritos = () => {},
-  turmaExpandidaAvaliacoes = null,
-  setTurmaExpandidaAvaliacoes = () => {},
+  turmaExpandidaAvaliacao = null,
+  setTurmaExpandidaAvaliacao = () => {},
   datasPorTurma = {},
   carregarDatasPorTurma,
   className = "",
@@ -331,7 +331,7 @@ export default function TurmasInstrutor({
                 if (Number.isNaN(idSeguro)) return null;
 
                 const expandindoInscritos = turmaExpandidaInscritos === idSeguro;
-                const expandindoAvaliacoes = turmaExpandidaAvaliacoes === idSeguro;
+                const expandindoAvaliacao = turmaExpandidaAvaliacao === idSeguro;
 
                 const st = statusFromTurma(turma);
                 const chipCls = `inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 rounded-full border ${CHIP_STYLES[st]}`;
@@ -426,7 +426,7 @@ export default function TurmasInstrutor({
                             setDataAtivaPorTurma((p) => ({ ...p, [idSeguro]: datas[0].data }));
                           }
                           setTurmaExpandidaInscritos(expandindoInscritos ? null : idSeguro);
-                          setTurmaExpandidaAvaliacoes(null);
+                          setTurmaExpandidaAvaliacao(null);
                         }}
                         aria-expanded={expandindoInscritos}
                         aria-controls={`painel-inscritos-${idSeguro}`}
@@ -437,12 +437,12 @@ export default function TurmasInstrutor({
 
                       <button
                         onClick={() => {
-                          onVerAvaliacoes?.(idSeguro);
-                          setTurmaExpandidaAvaliacoes(expandindoAvaliacoes ? null : idSeguro);
+                          onVerAvaliacao?.(idSeguro);
+                          setTurmaExpandidaAvaliacao(expandindoAvaliacao ? null : idSeguro);
                           setTurmaExpandidaInscritos(null);
                         }}
-                        aria-expanded={expandindoAvaliacoes}
-                        aria-controls={`painel-avaliacoes-${idSeguro}`}
+                        aria-expanded={expandindoAvaliacao}
+                        aria-controls={`painel-avaliacao-${idSeguro}`}
                         className="inline-flex items-center gap-2 bg-fuchsia-600 hover:bg-fuchsia-700 text-white text-sm px-3 py-1.5 rounded-lg focus:outline-none focus:ring-2 focus:ring-fuchsia-700/40"
                       >
                         <Star className="w-4 h-4" /> Avaliações
@@ -707,27 +707,27 @@ export default function TurmasInstrutor({
 
                     {/* Avaliações */}
                     <AnimatePresence>
-                      {expandindoAvaliacoes && (
+                      {expandindoAvaliacao && (
                         <motion.div
-                          id={`painel-avaliacoes-${idSeguro}`}
+                          id={`painel-avaliacao-${idSeguro}`}
                           initial={{ opacity: 0, height: 0 }}
                           animate={{ opacity: 1, height: "auto" }}
                           exit={{ opacity: 0, height: 0 }}
                           className="overflow-hidden px-4 pb-4"
                         >
                           {(() => {
-                            const raw = avaliacoesPorTurma[idSeguro];
+                            const raw = avaliacaoPorTurma[idSeguro];
                             const comentarios = Array.isArray(raw)
                               ? raw
                               : Array.isArray(raw?.comentarios)
                               ? raw.comentarios
                               : Array.isArray(raw?.itens)
                               ? raw.itens
-                              : Array.isArray(raw?.avaliacoes)
-                              ? raw.avaliacoes
+                              : Array.isArray(raw?.avaliacao)
+                              ? raw.avaliacao
                               : [];
                             return comentarios.length > 0 ? (
-                              <AvaliacoesEvento avaliacoes={comentarios} />
+                              <AvaliacaoEvento avaliacao={comentarios} />
                             ) : (
                               <p className="text-sm text-gray-600 italic dark:text-gray-300">Nenhuma avaliação registrada para esta turma.</p>
                             );
@@ -767,10 +767,10 @@ TurmasInstrutor.propTypes = {
     })
   ),
   inscritosPorTurma: PropTypes.object,
-  avaliacoesPorTurma: PropTypes.object,
+  avaliacaoPorTurma: PropTypes.object,
   presencasPorTurma: PropTypes.object,
   onVerInscritos: PropTypes.func,
-  onVerAvaliacoes: PropTypes.func,
+  onVerAvaliacao: PropTypes.func,
   onExportarListaAssinaturaPDF: PropTypes.func,
   onExportarQrCodePDF: PropTypes.func,
   token: PropTypes.any,
@@ -778,8 +778,8 @@ TurmasInstrutor.propTypes = {
   carregando: PropTypes.bool,
   turmaExpandidaInscritos: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
   setTurmaExpandidaInscritos: PropTypes.func,
-  turmaExpandidaAvaliacoes: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
-  setTurmaExpandidaAvaliacoes: PropTypes.func,
+  turmaExpandidaAvaliacao: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  setTurmaExpandidaAvaliacao: PropTypes.func,
   datasPorTurma: PropTypes.object,
   carregarDatasPorTurma: PropTypes.func,
   className: PropTypes.string,

@@ -21,7 +21,7 @@ import ErroCarregamento from "../components/ErroCarregamento";
 import ModalAssinatura from "../components/ModalAssinatura";
 import Footer from "../components/Footer";
 
-import { formatarCPF, formatarDataBrasileira } from "../utils/data";
+import { formatarCPF, formatarDataBrasileira } from "../utils/dateTime";
 import { apiGet, apiGetTurmaDatasAuto } from "../services/api";
 
 /* ───────────────────────────── HeaderHero (3 cores) ───────────────────────────── */
@@ -259,9 +259,9 @@ export default function InstrutorPresenca() {
   const [filtro, setFiltro] = useState("todos");
 
   const [inscritosPorTurma, setInscritosPorTurma] = useState({});
-  const [avaliacoesPorTurma, setAvaliacoesPorTurma] = useState({});
+  const [avaliacaoPorTurma, setAvaliacaoPorTurma] = useState({});
   const [turmaExpandidaInscritos, setTurmaExpandidaInscritos] = useState(null);
-  const [turmaExpandidaAvaliacoes, setTurmaExpandidaAvaliacoes] = useState(null);
+  const [turmaExpandidaAvaliacao, setTurmaExpandidaAvaliacao] = useState(null);
 
   const [modalAssinaturaAberto, setModalAssinaturaAberto] = useState(false);
   const [assinatura, setAssinatura] = useState(null);
@@ -452,35 +452,35 @@ export default function InstrutorPresenca() {
       return;
     }
     try {
-      const data = await apiGet(`/inscricoes/turma/${turmaId}`, { on403: "silent" });
+      const data = await apiGet(`/inscricao/turma/${turmaId}`, { on403: "silent" });
       setInscritosPorTurma((prev) => ({ ...prev, [turmaId]: Array.isArray(data) ? data : [] }));
     } catch {
       toast.error("Erro ao carregar inscritos.");
     }
   };
 
-  const carregarAvaliacoes = async (turmaIdRaw) => {
+  const carregarAvaliacao = async (turmaIdRaw) => {
     const turmaId = parseInt(turmaIdRaw, 10);
     if (!turmaId || Number.isNaN(turmaId)) {
       toast.error("Erro: Turma inválida.");
       return;
     }
-    if (avaliacoesPorTurma[turmaId]) return;
+    if (avaliacaoPorTurma[turmaId]) return;
     try {
-      const data = await apiGet(`/avaliacoes/turma/${turmaId}`, { on403: "silent" });
+      const data = await apiGet(`/avaliacao/turma/${turmaId}`, { on403: "silent" });
       const lista = Array.isArray(data)
         ? data
         : Array.isArray(data?.comentarios)
         ? data.comentarios
         : Array.isArray(data?.itens)
         ? data.itens
-        : Array.isArray(data?.avaliacoes)
-        ? data.avaliacoes
+        : Array.isArray(data?.avaliacao)
+        ? data.avaliacao
         : [];
-      setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: lista }));
+      setAvaliacaoPorTurma((prev) => ({ ...prev, [turmaId]: lista }));
     } catch {
       toast.error("Erro ao carregar avaliações.");
-      setAvaliacoesPorTurma((prev) => ({ ...prev, [turmaId]: [] }));
+      setAvaliacaoPorTurma((prev) => ({ ...prev, [turmaId]: [] }));
     }
   };
 
@@ -611,7 +611,7 @@ export default function InstrutorPresenca() {
       const turma = turmas.find((t) => t.id === turmaId);
       let alunos = inscritosPorTurma[turmaId];
       if (!alunos) {
-        alunos = await apiGet(`/inscricoes/turma/${turmaId}`, { on403: "silent" });
+        alunos = await apiGet(`/inscricao/turma/${turmaId}`, { on403: "silent" });
       }
       if (!turma || !alunos?.length) {
         toast.warning("⚠️ Nenhum inscrito encontrado para esta turma.");
@@ -789,10 +789,10 @@ export default function InstrutorPresenca() {
             <TurmasInstrutor
               turmas={turmasFiltradas}
               inscritosPorTurma={inscritosPorTurma}
-              avaliacoesPorTurma={avaliacoesPorTurma}
+              avaliacaoPorTurma={avaliacaoPorTurma}
               presencasPorTurma={presencasPorTurma}
               onVerInscritos={carregarInscritos}
-              onVerAvaliacoes={carregarAvaliacoes}
+              onVerAvaliacao={carregarAvaliacao}
               carregarPresencas={carregarPresencas}
               gerarRelatorioPDF={gerarRelatorioPDF}
               onExportarListaAssinaturaPDF={gerarListaAssinaturaPDF}
@@ -800,8 +800,8 @@ export default function InstrutorPresenca() {
               carregando={carregando}
               turmaExpandidaInscritos={turmaExpandidaInscritos}
               setTurmaExpandidaInscritos={setTurmaExpandidaInscritos}
-              turmaExpandidaAvaliacoes={turmaExpandidaAvaliacoes}
-              setTurmaExpandidaAvaliacoes={setTurmaExpandidaAvaliacoes}
+              turmaExpandidaAvaliacao={turmaExpandidaAvaliacao}
+              setTurmaExpandidaAvaliacao={setTurmaExpandidaAvaliacao}
               datasPorTurma={datasPorTurma}
               carregarDatasPorTurma={carregarDatasPorTurma}
             />

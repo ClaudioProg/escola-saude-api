@@ -3,12 +3,12 @@ import { useEffect, useMemo, useState, useCallback } from "react";
 import Modal from "./Modal";
 import { toast } from "react-toastify";
 import {
-  listarAtribuicoes,
+  listarAtribuicao,
   incluirAvaliadoresFlex,
   revogarAvaliadorFlex,
   restaurarAvaliadorFlex,
   listarElegiveis,
-} from "../services/submissoesAvaliadores";
+} from "../services/submissaoAvaliadores";
 import {
   Loader2,
   Users,
@@ -70,7 +70,7 @@ export default function ModalAtribuirAvaliadores({
   const [saving, setSaving] = useState(false);
 
   const [elegiveis, setElegiveis] = useState([]);
-  const [atribuicoes, setAtribuicoes] = useState([]);
+  const [atribuicao, setAtribuicao] = useState([]);
 
   const [selecionado, setSelecionado] = useState("");
   const [query, setQuery] = useState("");
@@ -80,25 +80,25 @@ export default function ModalAtribuirAvaliadores({
 
   const tabLabel = useMemo(() => TABS.find((t) => t.key === tab)?.label || tab, [tab]);
 
-  const ativos = useMemo(() => atribuicoes.filter((a) => !a.revogado), [atribuicoes]);
-  const revogados = useMemo(() => atribuicoes.filter((a) => !!a.revogado), [atribuicoes]);
+  const ativos = useMemo(() => atribuicao.filter((a) => !a.revogado), [atribuicao]);
+  const revogados = useMemo(() => atribuicao.filter((a) => !!a.revogado), [atribuicao]);
 
   const ativosDoTipo = useMemo(
     () => ativos.filter((a) => a.tipo === tab),
     [ativos, tab]
   );
 
-  const atribuicoesDoTipo = useMemo(
-    () => atribuicoes.filter((a) => a.tipo === tab),
-    [atribuicoes, tab]
+  const atribuicaoDoTipo = useMemo(
+    () => atribuicao.filter((a) => a.tipo === tab),
+    [atribuicao, tab]
   );
 
   // Set para impedir duplicidade no tipo
   const idsAtribuidosNoTipo = useMemo(() => {
     const s = new Set();
-    for (const a of atribuicoesDoTipo) s.add(String(a.avaliador_id));
+    for (const a of atribuicaoDoTipo) s.add(String(a.avaliador_id));
     return s;
-  }, [atribuicoesDoTipo]);
+  }, [atribuicaoDoTipo]);
 
   // Elegíveis filtrados por busca (nome/email)
   const elegiveisFiltrados = useMemo(() => {
@@ -114,7 +114,7 @@ export default function ModalAtribuirAvaliadores({
   }, [elegiveis, query]);
 
   // Normaliza atribuições usando elegíveis como “fonte de nome/email”
-  const normalizeAtribuicoes = useCallback(
+  const normalizeAtribuicao = useCallback(
     (rowsA) => {
       const rows = Array.isArray(rowsA) ? rowsA : [];
       const map = new Map((elegiveis || []).map((u) => [String(u.id), u]));
@@ -137,15 +137,15 @@ export default function ModalAtribuirAvaliadores({
 
   const refresh = useCallback(async () => {
     try {
-      const todos = await listarAtribuicoes(submissaoId, "todos");
+      const todos = await listarAtribuicao(submissaoId, "todos");
       const rowsA = Array.isArray(todos) ? todos : todos?.data ?? [];
-      setAtribuicoes(normalizeAtribuicoes(rowsA));
+      setAtribuicao(normalizeAtribuicao(rowsA));
       onChanged?.();
     } catch (e) {
       console.error(e);
       toast.error("❌ Falha ao atualizar atribuições.");
     }
-  }, [submissaoId, normalizeAtribuicoes, onChanged]);
+  }, [submissaoId, normalizeAtribuicao, onChanged]);
 
   // Carrega ao abrir
   useEffect(() => {
@@ -162,7 +162,7 @@ export default function ModalAtribuirAvaliadores({
       try {
         const [cands, todos] = await Promise.all([
           listarElegiveis(),
-          listarAtribuicoes(submissaoId, "todos"),
+          listarAtribuicao(submissaoId, "todos"),
         ]);
 
         const rowsC = Array.isArray(cands) ? cands : cands?.data ?? [];
@@ -171,7 +171,7 @@ export default function ModalAtribuirAvaliadores({
         if (!on) return;
 
         setElegiveis(rowsC);
-        // normaliza usando o map de elegíveis (feito via normalizeAtribuicoes)
+        // normaliza usando o map de elegíveis (feito via normalizeAtribuicao)
         // mas normalize usa estado elegiveis, então fazemos um normalize local aqui
         const map = new Map(rowsC.map((u) => [String(u.id), u]));
         const norm = rowsA.map((a) => {
@@ -186,7 +186,7 @@ export default function ModalAtribuirAvaliadores({
             revogado: !!a.revogado,
           };
         });
-        setAtribuicoes(norm);
+        setAtribuicao(norm);
       } catch (e) {
         console.error(e);
         toast.error("❌ Não foi possível carregar avaliadores/atribuições.");
@@ -418,7 +418,7 @@ export default function ModalAtribuirAvaliadores({
             </h4>
 
             <ul className="mt-3 space-y-2">
-              {atribuicoesDoTipo.map((a) => {
+              {atribuicaoDoTipo.map((a) => {
                 const isRev = !!a.revogado;
                 const kRestore = `restaurar#${a.tipo}#${a.avaliador_id}`;
                 const kRevoke = `revogar#${a.tipo}#${a.avaliador_id}`;
@@ -487,7 +487,7 @@ export default function ModalAtribuirAvaliadores({
                 );
               })}
 
-              {atribuicoesDoTipo.length === 0 && (
+              {atribuicaoDoTipo.length === 0 && (
                 <li className="text-sm text-zinc-600 dark:text-zinc-300">
                   Nenhum atribuído.
                 </li>

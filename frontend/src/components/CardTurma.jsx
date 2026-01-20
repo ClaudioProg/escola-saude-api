@@ -3,7 +3,7 @@ import PropTypes from "prop-types";
 import { useMemo } from "react";
 import { motion } from "framer-motion";
 import { Users, CalendarDays, Clock3, Megaphone } from "lucide-react";
-import { formatarDataBrasileira } from "../utils/data";
+import { formatarDataBrasileira } from "../utils/dateTime";
 import BadgeStatus from "../components/BadgeStatus";
 
 /* ===== Helpers de data no fuso local ===== */
@@ -78,13 +78,13 @@ export default function CardTurma({
   eventoId,
   hoje,
   carregarInscritos,
-  carregarAvaliacoes,
+  carregarAvaliacao,
   gerarRelatorioPDF,
   inscritos,
-  avaliacoes,
+  avaliacao,
   inscrever,
   inscrevendo,
-  inscricoesConfirmadas,
+  inscricaoConfirmadas,
   bloquearInscricao = false,
 }) {
   const total = Number(turma.vagas_total || 0);
@@ -304,7 +304,7 @@ export default function CardTurma({
         {/* CTA de inscrição, no padrão dos novos botões */}
         <div className="mt-4 flex justify-end">
           {inscrever && (
-            inscricoesConfirmadas.includes(turma.id) ? (
+            inscricaoConfirmadas.includes(turma.id) ? (
               <span
                 className="inline-flex items-center rounded-full border font-semibold px-4 py-1 cursor-default
                            bg-emerald-50 text-emerald-800 border-emerald-300
@@ -378,20 +378,20 @@ CardTurma.propTypes = {
   eventoId: PropTypes.oneOfType([PropTypes.number, PropTypes.string]).isRequired,
   hoje: PropTypes.instanceOf(Date).isRequired,
   carregarInscritos: PropTypes.func.isRequired,
-  carregarAvaliacoes: PropTypes.func.isRequired,
+  carregarAvaliacao: PropTypes.func.isRequired,
   gerarRelatorioPDF: PropTypes.func.isRequired,
   inscritos: PropTypes.array,
-  avaliacoes: PropTypes.array,
+  avaliacao: PropTypes.array,
   inscrever: PropTypes.func.isRequired,
   inscrevendo: PropTypes.number,
-  inscricoesConfirmadas: PropTypes.array,
+  inscricaoConfirmadas: PropTypes.array,
   bloquearInscricao: PropTypes.bool,
 };
 
 CardTurma.defaultProps = {
   inscritos: [],
-  avaliacoes: [],
+  avaliacao: [],
   inscrevendo: null,
-  inscricoesConfirmadas: [],
+  inscricaoConfirmadas: [],
   bloquearInscricao: false,
 };

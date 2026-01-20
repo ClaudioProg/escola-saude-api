@@ -7,7 +7,7 @@ import { ClipboardList, RefreshCw, Award, Clock3 } from "lucide-react";
 import Footer from "../components/Footer";
 import ModalAvaliacaoFormulario from "../components/ModalAvaliacaoFormulario";
 import { apiGet } from "../services/api";
-import { formatarDataBrasileira, formatarParaISO } from "../utils/data";
+import { formatarDataBrasileira, formatarParaISO } from "../utils/dateTime";
 import BotaoPrimario from "../components/BotaoPrimario";
 
 /* ───────────────── HeaderHero (paleta exclusiva desta página) ─────────────────
@@ -86,7 +86,7 @@ function fmtSeguroData(valor) {
 
 /* ───────────────── Página ───────────────── */
 export default function Avaliacao() {
-  const [avaliacoesPendentes, setAvaliacoesPendentes] = useState([]);
+  const [avaliacaoPendentes, setAvaliacaoPendentes] = useState([]);
   const [carregando, setCarregando] = useState(true);
   const [modalAberto, setModalAberto] = useState(false);
   const [avaliacaoSelecionada, setAvaliacaoSelecionada] = useState(null);
@@ -99,14 +99,14 @@ export default function Avaliacao() {
 
   useEffect(() => {
     document.title = "Avaliações | Escola da Saúde";
-    carregarAvaliacoes();
+    carregarAvaliacao();
     // atalho de teclado: R para atualizar (fora de inputs)
     const keyHandler = (e) => {
       const tag = document.activeElement?.tagName?.toLowerCase();
       const isTyping = ["input", "textarea", "select"].includes(tag);
       if (!isTyping && (e.key === "r" || e.key === "R")) {
         e.preventDefault();
-        carregarAvaliacoes();
+        carregarAvaliacao();
       }
     };
     window.addEventListener("keydown", keyHandler);
@@ -115,19 +115,19 @@ export default function Avaliacao() {
   }, []);
 
   const totalPendentes = useMemo(
-    () => (Array.isArray(avaliacoesPendentes) ? avaliacoesPendentes.length : 0),
-    [avaliacoesPendentes]
+    () => (Array.isArray(avaliacaoPendentes) ? avaliacaoPendentes.length : 0),
+    [avaliacaoPendentes]
   );
 
   // ordena por data_fim desc (mais recente primeiro)
   const listaOrdenada = useMemo(() => {
-    const arr = Array.isArray(avaliacoesPendentes) ? [...avaliacoesPendentes] : [];
+    const arr = Array.isArray(avaliacaoPendentes) ? [...avaliacaoPendentes] : [];
     return arr.sort((a, b) => {
       const da = formatarParaISO(a.data_fim ?? a.df ?? a.fim) || "";
       const db = formatarParaISO(b.data_fim ?? b.df ?? b.fim) || "";
       return (db > da) ? 1 : (db < da) ? -1 : 0;
     });
-  }, [avaliacoesPendentes]);
+  }, [avaliacaoPendentes]);
 
   const ultimoEncerrado = useMemo(() => {
     const first = listaOrdenada[0];
@@ -140,14 +140,14 @@ export default function Avaliacao() {
 
   const qtdElegiveis = useMemo(() => {
     // se backend já envia uma flag `elegivel_certificado`, aproveitamos
-    const arr = Array.isArray(avaliacoesPendentes) ? avaliacoesPendentes : [];
+    const arr = Array.isArray(avaliacaoPendentes) ? avaliacaoPendentes : [];
     const n = arr.filter((x) => x.elegivel_certificado === true).length;
     return n > 0 ? n : null; // oculta o card se null
-  }, [avaliacoesPendentes]);
+  }, [avaliacaoPendentes]);
 
   const setLive = (msg) => { if (liveRef.current) liveRef.current.textContent = msg; };
 
-  const carregarAvaliacoes = useCallback(async () => {
+  const carregarAvaliacao = useCallback(async () => {
     try {
       setErro("");
       setCarregando(true);
@@ -156,14 +156,14 @@ export default function Avaliacao() {
       const u = seguroUsuario();
       if (!u?.id) {
         toast.error("Usuário não identificado.");
-        setAvaliacoesPendentes([]);
+        setAvaliacaoPendentes([]);
         setLive("Usuário não identificado.");
         return;
       }
 
-      const data = await apiGet(`/api/avaliacoes/disponiveis/${u.id}`, { on401: "silent", on403: "silent" });
+      const data = await apiGet(`/api/avaliacao/disponiveis/${u.id}`, { on401: "silent", on403: "silent" });
       const arr = Array.isArray(data) ? data : [];
-      setAvaliacoesPendentes(arr);
+      setAvaliacaoPendentes(arr);
 
       setLive(arr.length
         ? `Encontradas ${arr.length} avaliação(ões) pendente(s).`
@@ -172,7 +172,7 @@ export default function Avaliacao() {
       console.error(err);
       setErro("Não foi possível carregar as avaliações.");
       toast.error("❌ Erro ao carregar avaliações pendentes.");
-      setAvaliacoesPendentes([]);
+      setAvaliacaoPendentes([]);
       setLive("Falha ao carregar avaliações.");
     } finally {
       setCarregando(false);
@@ -190,7 +190,7 @@ export default function Avaliacao() {
 
   return (
     <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900">
-      <HeaderHero onRefresh={carregarAvaliacoes} nome={nome} />
+      <HeaderHero onRefresh={carregarAvaliacao} nome={nome} />
 
       <main id="conteudo" role="main" className="flex-1 px-4 py-6 max-w-6xl mx-auto">
         {/* feedback acessível */}
@@ -245,7 +245,7 @@ export default function Avaliacao() {
             <p className="text-red-800 dark:text-red-200 text-sm">{erro}</p>
             <div className="mt-3">
               <BotaoPrimario
-                onClick={carregarAvaliacoes}
+                onClick={carregarAvaliacao}
                 icone={<RefreshCw className="w-4 h-4" />}
                 aria-label="Tentar novamente"
               >
@@ -258,7 +258,7 @@ export default function Avaliacao() {
             <p className="text-gray-700 dark:text-gray-300">Nenhuma avaliação pendente no momento.</p>
             <div className="mt-4 flex items-center justify-center">
               <BotaoPrimario
-                onClick={carregarAvaliacoes}
+                onClick={carregarAvaliacao}
                 variante="secundario"
                 icone={<RefreshCw className="w-4 h-4" />}
               >
@@ -323,7 +323,7 @@ export default function Avaliacao() {
           onClose={fecharModal}
           evento={avaliacaoSelecionada}
           turma_id={avaliacaoSelecionada?.turma_id ?? null}
-          recarregar={carregarAvaliacoes}
+          recarregar={carregarAvaliacao}
         />
       </main>
 
