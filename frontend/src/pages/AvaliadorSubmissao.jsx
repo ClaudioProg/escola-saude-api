@@ -1,4 +1,4 @@
-// ✅ src/pages/Avaliadorsubmissao.jsx — premium++ (a11y, CSV, atalhos, bugfix nota + fallback 404)
+// ✅ src/pages/AvaliadorSubmissao.jsx — premium++ (a11y, CSV, atalhos, bugfix nota + fallback 404)
 import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -415,7 +415,7 @@ function DrawerAvaliacao({ open, onClose, submissaoId, tipo }) {
 }
 
 /* ───────────── Página principal ───────────── */
-export default function Avaliadorsubmissao() {
+export default function AvaliadorSubmissao() {
   const [loading, setLoading] = useState(true);
   const [lista, setLista] = useState([]);          // lista crua (uma linha por atribuição)
   const [busca, setBusca] = useState("");

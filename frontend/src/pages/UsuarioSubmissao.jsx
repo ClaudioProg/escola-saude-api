@@ -1,4 +1,4 @@
-// ✅ src/pages/Usuariosubmissao.jsx — premium/robusto (rotas públicas p/ modelos + ModalConfirmacao)
+// ✅ src/pages/UsuarioSubmissao.jsx — premium/robusto (rotas públicas p/ modelos + ModalConfirmacao)
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { motion } from "framer-motion";
 import { toast } from "react-toastify";
@@ -455,7 +455,7 @@ function RegrasEDicasSection() {
 const BLOQUEADOS = new Set(["em_avaliacao", "aprovado_exposicao", "aprovado_oral", "aprovado_escrita", "reprovado"]);
 
 /* ───────────────── Página principal ───────────────── */
-export default function Usuariosubmissao() {
+export default function UsuarioSubmissao() {
   const mountedRef = useRef(true);
 
   const [loading, setLoading] = useState(true);

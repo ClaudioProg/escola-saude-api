@@ -45,8 +45,8 @@ const Teste = lazy(() => import("./pages/Teste"));
 const AgendaSalasUsuario = lazy(() => import("./pages/AgendaSalasUsuario"));
 const SolicitacaoCurso = lazy(() => import("./pages/SolicitacaoCurso"));
 const RepositorioTrabalhos = lazy(() => import("./pages/RepositorioTrabalhos"));
-const Usuariosubmissao = lazy(() => import("./pages/Usuariosubmissao"));
-const Avaliadorsubmissao = lazy(() => import("./pages/Avaliadorsubmissao"));
+const UsuarioSubmissao = lazy(() => import("./pages/UsuarioSubmissao"));
+const AvaliadorSubmissao = lazy(() => import("./pages/AvaliadorSubmissao"));
 
 const DashboardInstrutor = lazy(() => import("./pages/DashboardInstrutor"));
 const AgendaInstrutor = lazy(() => import("./pages/AgendaInstrutor"));
@@ -375,7 +375,7 @@ export default function App() {
               <Route path="manual" element={<ManualUsuario />} />
 
               {/* Submissões */}
-              <Route path="submissao" element={<Usuariosubmissao />} />
+              <Route path="submissao" element={<UsuarioSubmissao />} />
 
               {/* 🧑‍🏫 Instrutor / Avaliador */}
               <Route
@@ -430,7 +430,7 @@ export default function App() {
                 path="avaliador/submissao"
                 element={
                   <PrivateRoute permitido={["instrutor", "administrador"]}>
-                    <Avaliadorsubmissao />
+                    <AvaliadorSubmissao />
                   </PrivateRoute>
                 }
               />
