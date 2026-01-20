@@ -478,8 +478,8 @@ router.delete(
 
 // Listagem “todas” (se existir)
 if (typeof trabCtrl.listarsubmissaoAdminTodas === "function") {
-  router.get("/admin/submissao", asyncHandler(trabCtrl.listarsubmissaoAdminTodas));   // singular
-  router.get("/admin/submissoes", asyncHandler(trabCtrl.listarsubmissaoAdminTodas)); // plural/compat
+  router.get("/admin/submissao", asyncHandler(trabCtrl.listarsubmissaoAdminTodas));   // novo
+  router.get("/admin/submissoes", asyncHandler(trabCtrl.listarsubmissaoAdminTodas));  // compat plural
 }
 
 // Submissões por chamada

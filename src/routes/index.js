@@ -146,7 +146,6 @@ router.use("/inscricoes", inscricaoRoute);
 
 /* =========================
    ✅ Calendário / Bloqueios (front legado chama /api/calendario)
-   Lugar certo: módulo próprio.
 ========================= */
 router.use("/calendario", calendarioRoute);
 router.use("/calendarios", calendarioRoute);
@@ -179,7 +178,7 @@ router.use("/unidades", unidadeRoute);
 
 /* =========================================================
    ✅ BRIDGE GLOBAL — Avaliador/Submissões (frontend legado)
-   ⚠️ PRECISA vir ANTES de /avaliacao (porque /avaliacao é um mount)
+   ⚠️ PRECISA vir ANTES de /avaliacao (mount)
 ========================================================= */
 if (submissaoCtrl) {
   // /api/avaliador/*
@@ -205,6 +204,37 @@ if (submissaoCtrl) {
   router.head("/submissao/para-mim", (_req, res) => res.sendStatus(204));
   router.head("/admin/submissao/para-mim", (_req, res) => res.sendStatus(204));
 }
+
+/* =========================================================
+   ✅ BRIDGE GLOBAL — Admin Submissão/Chamada (frontend legado)
+   Front chama: /api/admin/submissao, /api/admin/chamada...
+   Encaminha para o chamadaRoute SEM montar na raiz.
+========================================================= */
+function forwardToChamadaRoute(prefixToAdd) {
+  return (req, res, next) => {
+    // Ex.: chegou em /api/admin/submissao
+    // aqui req.url começa com "/" (ex.: "/")
+    // queremos que o chamadaRoute receba "/admin/submissao"
+    const original = req.url;
+    req._bridgedFrom = req.originalUrl || req.url;
+
+    // garante prefixo ("/admin") e mantém o sufixo
+    req.url = `${prefixToAdd}${original}`; // ex: "/admin/submissao" + "/"
+    return chamadaRoute(req, res, (err) => {
+      if (err) return next(err);
+      if (res.headersSent) return;
+      req.url = original;
+      return next();
+    });
+  };
+}
+
+// ✅ cobre exatamente as rotas que o front legado usa
+router.use("/admin/submissao", requireAuth, forwardToChamadaRoute("/admin/submissao"));
+router.use("/admin/submissoes", requireAuth, forwardToChamadaRoute("/admin/submissoes"));
+
+router.use("/admin/chamada", requireAuth, forwardToChamadaRoute("/admin/chamada"));
+router.use("/admin/chamadas", requireAuth, forwardToChamadaRoute("/admin/chamadas"));
 
 /* =========================================================
    ✅ BRIDGE GLOBAL — Admin Avaliação (frontend legado)
@@ -237,10 +267,6 @@ function forwardTryAvaliacao(makeCandidates) {
 
 // helpers de plural->singular (eventos->evento, turmas->turma)
 function singularizeAdminSuffix(suffix) {
-  // suffix sempre começa com "/"
-  // "/eventos" -> "/evento"
-  // "/eventos/123" -> "/evento/123"
-  // "/turmas/55" -> "/turma/55"
   return String(suffix)
     .replace(/^\/eventos(\/|$)/, "/evento$1")
     .replace(/^\/turmas(\/|$)/, "/turma$1");
@@ -254,15 +280,14 @@ router.use(
     const sSing = singularizeAdminSuffix(s);
 
     return [
-      // ✅ formato esperado pelo seu avaliacaoRoute atual: /api/avaliacao/admin/evento...
-      `/admin${sSing}`,             // /admin/evento   ✅ para /eventos do front
-      `/admin${s}`,                 // /admin/eventos  (se algum dia existir)
-      `/admin/avaliacao${sSing}`,   // /admin/avaliacao/evento
-      `/admin/avaliacao${s}`,       // /admin/avaliacao/eventos
-      `/admin/avaliacoes${sSing}`,  // /admin/avaliacoes/evento
-      `/admin/avaliacoes${s}`,      // /admin/avaliacoes/eventos
-      `${sSing}`,                   // /evento (fallback)
-      `${s}`,                       // /eventos (fallback)
+      `/admin${sSing}`,             // /admin/evento   ✅
+      `/admin${s}`,                 // /admin/eventos
+      `/admin/avaliacao${sSing}`,
+      `/admin/avaliacao${s}`,
+      `/admin/avaliacoes${sSing}`,
+      `/admin/avaliacoes${s}`,
+      `${sSing}`,
+      `${s}`,
     ];
   })
 );
@@ -307,8 +332,8 @@ router.use("/assinatura", assinaturaRoute);
 router.use("/assinaturas", assinaturaRoute);
 
 /* =========================
-   ✅ CHAMADAS — mounts corretos (NÃO na raiz "/")
-   Isso evita “roubar” rotas como /submissao/:id e /admin/avaliacao/...
+   ✅ CHAMADAS — mounts “bonitos” (público)
+   (admin legado já é atendido pelo bridge acima)
 ========================= */
 router.use("/chamada", chamadaRoute);
 router.use("/chamadas", chamadaRoute);
