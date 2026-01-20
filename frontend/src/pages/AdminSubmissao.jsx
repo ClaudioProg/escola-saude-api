@@ -1,4 +1,4 @@
-// 📁 src/pages/Adminsubmissao.jsx
+// 📁 src/pages/AdminSubmissao.jsx
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -261,7 +261,7 @@ const useUrlState = () => {
 };
 
 /* ————————————————— Página principal ————————————————— */
-export default function Adminsubmissao() {
+export default function AdminSubmissao() {
   const { get, set } = useUrlState();
   const url = get();
 

@@ -92,8 +92,8 @@ const HomeEscola = lazy(() => import("./pages/HomeEscola"));
 // 🆕 Admin – Votações
 const AdminVotacao = lazy(() => import("./pages/AdminVotacao"));
 
-// ⚠️ Adminsubmissao (wrapper usa :chamadaId)
-const Adminsubmissao = lazy(() => import("./pages/Adminsubmissao"));
+// ⚠️ AdminSubmissao (wrapper usa :chamadaId)
+const AdminSubmissao = lazy(() => import("./pages/AdminSubmissao"));
 
 /* A11y: Announcer de mudanças de rota */
 function RouteChangeAnnouncer() {
@@ -263,9 +263,9 @@ function AdminChamadaFormWrapper() {
   const { id } = useParams();
   return <AdminChamadaForm chamadaId={id} />;
 }
-function AdminsubmissaoRouteWrapper() {
+function AdminSubmissaoRouteWrapper() {
   const { chamadaId } = useParams();
-  return <Adminsubmissao chamadaId={chamadaId ? Number(chamadaId) : undefined} />;
+  return <AdminSubmissao chamadaId={chamadaId ? Number(chamadaId) : undefined} />;
 }
 
 /* ✅ Layout privado: autentica e envolve com EscolaAppShell */
@@ -615,7 +615,7 @@ export default function App() {
                 path="admin/submissao"
                 element={
                   <PrivateRoute permitido={["administrador"]}>
-                    <AdminsubmissaoRouteWrapper />
+                    <AdminSubmissaoRouteWrapper />
                   </PrivateRoute>
                 }
               />
@@ -623,7 +623,7 @@ export default function App() {
                 path="admin/chamadas/:chamadaId/submissao"
                 element={
                   <PrivateRoute permitido={["administrador"]}>
-                    <AdminsubmissaoRouteWrapper />
+                    <AdminSubmissaoRouteWrapper />
                   </PrivateRoute>
                 }
               />
