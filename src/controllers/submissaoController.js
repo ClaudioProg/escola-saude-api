@@ -5,8 +5,6 @@
  * ✅ Controlador Único de Submissões (Admin + Avaliador + Usuário)
  * - Consolida:
  *   • submissaoController
- *   • submissaoAvaliadorController
- *   • submissaoUsuarioController (delegava p/ Admin)
  * - Mantém compatibilidade de exports antigos via aliases.
  * - SQLs resilientes a diferenças de schema (revoked_at, enum, etc.).
  */

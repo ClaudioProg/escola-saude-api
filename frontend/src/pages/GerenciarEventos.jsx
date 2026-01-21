@@ -1,16 +1,13 @@
 /* eslint-disable no-console */
-// ✅ src/pages/GerenciarEventos.jsx (admin) — PREMIUM (robusto, a11y, mobile-first, sem mudar regras)
-// Agora: sem bloqueios de edição, instrutores por TURMA, assinante por turma,
-// restrição por cargos/unidades e upload de folder (png/jpg) + programação (pdf).
-//
-// ✅ Premium extra aplicado:
-// - AbortController + mountedRef (evita race conditions ao recarregar/abrir modal rápido)
-// - “Refetch seguro” ao editar (cancela requests antigos)
-// - Barra de progresso respeita reduced-motion
-// - Estado de erro com CTA
-// - Toggle publicar/despublicar com rollback já mantido e foco/a11y refinados
-// - Normalização de turmas: instrutores + assinante sempre alinhados e “clean()” consistente
-// - ❗️CONFIRMAÇÕES via ModalConfirmacao (excluir / publicar / despublicar)
+// ✅ src/pages/GerenciarEventos.jsx (admin) — PREMIUM++ (clean + institucional + discreto + poster + ministats + chips filtro)
+// - Mantém TODAS as regras/fluxos (fetch, abort, editar refina, publicar com rollback, confirmações)
+// - Visual alinhado ao "Painel do Usuário": cores discretas, botões suaves, hierarquia clara, cards limpos
+// - Poster/folder aparece como thumbnail elegante (fallback premium)
+// - Ministats: estilo clean (card branco) + ícone em círculo com cor suave
+// - ✅ Chips: ATIVOS (programado + em andamento) | ENCERRADOS
+// - ✅ Ministats: remove Restritos/Folder e adiciona Eventos 2025/2026
+// - Botões: cor contida (texto/ícone + hover suave), sem chapado
+// - A11y: live region, skip link, aria labels e estados
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { toast } from "react-toastify";
@@ -18,12 +15,19 @@ import { motion, useReducedMotion } from "framer-motion";
 import {
   Pencil,
   Trash2,
-  PlusCircle,
+  Plus,
   Lock,
   RefreshCcw,
   Eye,
   EyeOff,
   AlertTriangle,
+  LayoutGrid,
+  CalendarCheck2,
+  BadgeCheck,
+  BadgeX,
+  Sparkles,
+  MapPin,
+  CalendarDays,
 } from "lucide-react";
 
 import { apiGet, apiPost, apiPut, apiDelete } from "../services/api";
@@ -39,10 +43,7 @@ import Footer from "../components/Footer";
 const clean = (obj) =>
   Object.fromEntries(
     Object.entries(obj || {}).filter(
-      ([, v]) =>
-        v !== undefined &&
-        v !== null &&
-        !(typeof v === "string" && v.trim() === "")
+      ([, v]) => v !== undefined && v !== null && !(typeof v === "string" && v.trim() === "")
     )
   );
 
@@ -55,6 +56,8 @@ const hhmm = (s) => {
   if (/^\d{2}:\d{2}:\d{2}$/.test(v)) return v.slice(0, 5);
   return v ? v.slice(0, 5) : "";
 };
+
+const iso = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
 
 // extrai ids numéricos
 const extractIds = (arr) => {
@@ -72,28 +75,107 @@ const extractStrs = (arr) => {
     new Set(
       arr
         .map((v) =>
-          String(
-            typeof v === "object" ? v?.codigo || v?.sigla || v?.nome || "" : v
-          ).trim()
+          String(typeof v === "object" ? v?.codigo || v?.sigla || v?.nome || "" : v).trim()
         )
         .filter(Boolean)
     )
   );
 };
 
-/* ======== Helpers p/ encontros/datas ======== */
-const iso = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
+/* =============================
+   Poster (folder) helpers
+============================= */
+const isAbsUrl = (u = "") => /^https?:\/\//i.test(String(u || ""));
 
+function resolveAssetUrl(raw) {
+  const v = String(raw || "").trim();
+  if (!v) return "";
+  if (isAbsUrl(v)) return v;
+
+  const base =
+    (import.meta?.env?.VITE_API_URL && String(import.meta.env.VITE_API_URL).replace(/\/+$/, "")) ||
+    "";
+
+  if (base) return `${base}${v.startsWith("/") ? "" : "/"}${v}`;
+  return v.startsWith("/") ? v : `/${v}`;
+}
+
+function getPosterUrl(ev) {
+  const raw =
+    ev?.folder_url ??
+    ev?.folderUrl ??
+    ev?.folder ??
+    ev?.poster_url ??
+    ev?.posterUrl ??
+    ev?.capa_url ??
+    ev?.capaUrl ??
+    ev?.imagem_url ??
+    ev?.imagemUrl ??
+    ev?.arquivo_folder ??
+    ev?.arquivoFolder ??
+    "";
+  return resolveAssetUrl(raw);
+}
+
+/* =============================
+   Ano do evento (para stats 2025/2026)
+   - tenta achar a primeira data disponível sem criar Date()
+============================= */
+function yearFromYmd(s) {
+  const v = String(s || "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
+  const y = Number(v.slice(0, 4));
+  return Number.isFinite(y) ? y : null;
+}
+
+function getEventYear(ev) {
+  // 1) campos diretos
+  const direct =
+    yearFromYmd(ev?.data_inicio) ??
+    yearFromYmd(ev?.data_fim) ??
+    yearFromYmd(ev?.inicio) ??
+    yearFromYmd(ev?.fim);
+
+  if (direct) return direct;
+
+  // 2) turmas: data_inicio/data_fim
+  const turmas = Array.isArray(ev?.turmas) ? ev.turmas : [];
+  for (const t of turmas) {
+    const y1 = yearFromYmd(t?.data_inicio);
+    if (y1) return y1;
+    const y2 = yearFromYmd(t?.data_fim);
+    if (y2) return y2;
+
+    // 3) turmas.datas[]
+    const datas = Array.isArray(t?.datas) ? t.datas : [];
+    for (const d of datas) {
+      const y = yearFromYmd(d?.data);
+      if (y) return y;
+    }
+  }
+
+  // 4) fallback comum (alguns backends mandam "criado_em"/"created_at")
+  const created =
+    yearFromYmd(ev?.criado_em) ??
+    yearFromYmd(ev?.created_at) ??
+    yearFromYmd(ev?.atualizado_em) ??
+    yearFromYmd(ev?.updated_at);
+
+  if (created) return created;
+
+  return null;
+}
+
+/* =============================
+   Carga horária (datas)
+============================= */
 const cargaHorariaFromEncontros = (encs) => {
   let total = 0;
   for (const e of encs) {
     const [h1, m1] = String(e.inicio || "00:00").split(":").map(Number);
     const [h2, m2] = String(e.fim || "00:00").split(":").map(Number);
-    const diffH = Math.max(
-      0,
-      (h2 * 60 + (m2 || 0) - (h1 * 60 + (m1 || 0))) / 60
-    );
-    total += diffH >= 8 ? diffH - 1 : diffH; // desconta 1h se >= 8h
+    const diffH = Math.max(0, (h2 * 60 + (m2 || 0) - (h1 * 60 + (m1 || 0))) / 60);
+    total += diffH >= 8 ? diffH - 1 : diffH;
   }
   return Math.round(total);
 };
@@ -104,10 +186,8 @@ function normalizeTurmas(turmas = []) {
     const hiBase = hhmm(t.horario_inicio || "08:00");
     const hfBase = hhmm(t.horario_fim || "17:00");
 
-    // Fonte: prioriza t.datas no formato {data, horario_inicio, horario_fim}
     let datas = Array.isArray(t.datas) ? t.datas : [];
 
-    // Se vieram encontros no formato {data,inicio,fim}, converte para datas
     if ((!datas || datas.length === 0) && Array.isArray(t.encontros)) {
       datas = t.encontros
         .map((e) =>
@@ -131,10 +211,7 @@ function normalizeTurmas(turmas = []) {
       .filter((d) => d.data)
       .sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : 0));
 
-    const encontrosCalc = datas.map((d) => ({
-      inicio: d.horario_inicio,
-      fim: d.horario_fim,
-    }));
+    const encontrosCalc = datas.map((d) => ({ inicio: d.horario_inicio, fim: d.horario_fim }));
 
     let ch = Number(t.carga_horaria);
     if (!Number.isFinite(ch) || ch <= 0) ch = cargaHorariaFromEncontros(encontrosCalc) || 1;
@@ -142,15 +219,10 @@ function normalizeTurmas(turmas = []) {
     const vagas = Number.isFinite(Number(t.vagas_total)) ? Number(t.vagas_total) : Number(t.vagas);
     const vagasOk = Number.isFinite(vagas) && vagas > 0 ? vagas : 1;
 
-    // ✅ instrutores e assinante por TURMA
     const instrutores = extractIds(t.instrutores || t.instrutor || t.professores || []);
 
-    // cobre todas as variantes possíveis vindas do servidor/modais
     const _assinanteRaw =
-      t.assinante_id ??
-      t.instrutor_assinante_id ?? // preferencial
-      t.instrutor_assinante ?? // legado
-      t.assinante;
+      t.assinante_id ?? t.instrutor_assinante_id ?? t.instrutor_assinante ?? t.assinante;
 
     const assinanteNum = Number(_assinanteRaw);
     const hasAssinante = Number.isFinite(assinanteNum);
@@ -162,7 +234,6 @@ function normalizeTurmas(turmas = []) {
       carga_horaria: ch,
       datas,
       instrutores,
-      // Sempre enviar os dois campos (espelho), se houver assinante
       ...(hasAssinante ? { assinante_id: assinanteNum } : {}),
       ...(hasAssinante ? { instrutor_assinante_id: assinanteNum } : {}),
     });
@@ -170,11 +241,8 @@ function normalizeTurmas(turmas = []) {
 }
 
 /* ========= Restrição: normalização ========= */
-const normRegistro = (v) => String(v || "").replace(/\D/g, "");
 const normRegistros = (arr) =>
-  Array.from(
-    new Set((arr || []).map(normRegistro).filter((r) => /^\d{6}$/.test(r)))
-  );
+  Array.from(new Set((arr || []).map((v) => String(v || "").replace(/\D/g, "")).filter((r) => /^\d{6}$/.test(r))));
 
 /* =============================
    Fetch auxiliares
@@ -213,7 +281,6 @@ async function fetchEventoCompleto(eventoId) {
 
 /* =============================
    Upload helpers (folder/programação)
-   — Authorization + cookies
 ============================= */
 function getAuthToken() {
   try {
@@ -226,9 +293,7 @@ function getAuthToken() {
 async function authFetch(url, opts = {}) {
   const token = getAuthToken();
   const headers = new Headers(opts.headers || {});
-  if (token && !headers.has("Authorization")) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
+  if (token && !headers.has("Authorization")) headers.set("Authorization", `Bearer ${token}`);
   return fetch(url, { ...opts, headers, credentials: "include" });
 }
 
@@ -278,27 +343,27 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
 
   body.publico_alvo = (dadosDoModal?.publico_alvo ?? baseServidor?.publico_alvo ?? "").trim();
 
-  // Restrição/visibilidade
   const restrito = Boolean(
     dadosDoModal?.restrito ??
       (typeof baseServidor?.restrito === "boolean" ? baseServidor.restrito : false)
   );
   body.restrito = restrito;
+  body.restrito_modo = restrito
+    ? dadosDoModal?.restrito_modo ?? baseServidor?.restrito_modo ?? null
+    : null;
 
-  body.restrito_modo = restrito ? dadosDoModal?.restrito_modo ?? baseServidor?.restrito_modo ?? null : null;
-
-  // lista de registros (opcional, legado)
   if (restrito && body.restrito_modo === "lista_registros") {
     const fonteModal =
       (Array.isArray(dadosDoModal?.registros_permitidos) && dadosDoModal.registros_permitidos) ||
       (Array.isArray(dadosDoModal?.registros) && dadosDoModal.registros) ||
       [];
-    const fonteServer = Array.isArray(baseServidor?.registros_permitidos) ? baseServidor.registros_permitidos : [];
+    const fonteServer = Array.isArray(baseServidor?.registros_permitidos)
+      ? baseServidor.registros_permitidos
+      : [];
     const regs = normRegistros(fonteModal.length ? fonteModal : fonteServer);
     if (regs.length) body.registros_permitidos = regs;
   }
 
-  // ✅ filtros por cargos/unidades
   const cargosModal = extractStrs(dadosDoModal?.cargos_permitidos);
   const cargosServer = extractStrs(baseServidor?.cargos_permitidos);
   if (restrito && cargosModal.length) body.cargos_permitidos = cargosModal;
@@ -309,7 +374,6 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
   if (restrito && unidsModal.length) body.unidades_permitidas = unidsModal;
   else if (restrito && unidsServer.length) body.unidades_permitidas = unidsServer;
 
-  // Turmas (agora carregam instrutores e assinante)
   let turmasFonte = [];
   if (Array.isArray(dadosDoModal?.turmas) && dadosDoModal.turmas.length > 0) turmasFonte = dadosDoModal.turmas;
   else if (Array.isArray(baseServidor?.turmas) && baseServidor.turmas.length > 0) turmasFonte = baseServidor.turmas;
@@ -317,13 +381,140 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
   const turmasPayload = normalizeTurmas(turmasFonte);
   if (turmasPayload.length > 0) body.turmas = turmasPayload;
 
+  // ✅ pós-curso (se veio do modal)
+  if (dadosDoModal?.pos_curso_tipo) body.pos_curso_tipo = String(dadosDoModal.pos_curso_tipo);
+
   return clean(body);
 }
 
-/* ---------------- HeaderHero ---------------- */
-function HeaderHero({ onCriar, onAtualizar, atualizando }) {
+/* =============================
+   UI atoms (premium clean)
+============================= */
+function SoftButton({ children, className = "", ...props }) {
   return (
-    <header className="relative isolate overflow-hidden bg-indigo-700 text-white" role="banner">
+    <button
+      {...props}
+      className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm font-extrabold transition
+      focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-500
+      ${className}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Chip({ tone = "zinc", children, title }) {
+  const map = {
+    zinc: "bg-zinc-100 text-zinc-700 border-zinc-200 dark:bg-zinc-900/40 dark:text-zinc-200 dark:border-zinc-800",
+    indigo:
+      "bg-indigo-50 text-indigo-800 border-indigo-200 dark:bg-indigo-950/25 dark:text-indigo-200 dark:border-indigo-900/40",
+    amber:
+      "bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/25 dark:text-amber-200 dark:border-amber-900/40",
+  };
+  return (
+    <span
+      title={title}
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border ${map[tone]}`}
+    >
+      {children}
+    </span>
+  );
+}
+
+function FilterChip({ active, onClick, label, count }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-extrabold border transition
+        focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-500
+        ${
+          active
+            ? "bg-emerald-600 text-white border-emerald-600 shadow-sm"
+            : "bg-white dark:bg-zinc-950 text-zinc-700 dark:text-zinc-200 border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-900/40"
+        }`}
+      aria-pressed={active ? "true" : "false"}
+    >
+      <span>{label}</span>
+      <span
+        className={`text-[11px] px-2 py-0.5 rounded-full ${
+          active ? "bg-white/20 text-white" : "bg-zinc-100 dark:bg-white/5 text-zinc-700 dark:text-zinc-200"
+        }`}
+      >
+        {count}
+      </span>
+    </button>
+  );
+}
+
+/* =============================
+   Ministats (ícone colorido contido)
+============================= */
+function StatPill({ icon: Icon, label, value, tone = "zinc" }) {
+  const tones = {
+    zinc: {
+      wrap: "bg-zinc-100 dark:bg-white/5",
+      icon: "text-zinc-700 dark:text-zinc-200",
+    },
+    indigo: {
+      wrap: "bg-indigo-100/80 dark:bg-indigo-950/30",
+      icon: "text-indigo-700 dark:text-indigo-200",
+    },
+    emerald: {
+      wrap: "bg-emerald-100/80 dark:bg-emerald-950/30",
+      icon: "text-emerald-700 dark:text-emerald-200",
+    },
+    amber: {
+      wrap: "bg-amber-100/80 dark:bg-amber-950/30",
+      icon: "text-amber-700 dark:text-amber-200",
+    },
+    rose: {
+      wrap: "bg-rose-100/80 dark:bg-rose-950/30",
+      icon: "text-rose-700 dark:text-rose-200",
+    },
+    sky: {
+      wrap: "bg-sky-100/80 dark:bg-sky-950/30",
+      icon: "text-sky-700 dark:text-sky-200",
+    },
+  };
+
+  const t = tones[tone] || tones.zinc;
+
+  return (
+    <div className="rounded-2xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-3 shadow-sm">
+      <div className="flex items-center gap-2">
+        <span className={`inline-flex items-center justify-center w-10 h-10 rounded-2xl ${t.wrap}`}>
+          <Icon className={`w-5 h-5 ${t.icon}`} aria-hidden="true" />
+        </span>
+
+        <div className="min-w-0">
+          <div className="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">{label}</div>
+          <div className="text-lg font-extrabold text-zinc-900 dark:text-white">{value}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* =============================
+   Header
+============================= */
+function HeaderHero({ onCriar, onAtualizar, atualizando, hint }) {
+  return (
+    <header className="relative isolate overflow-hidden" role="banner">
+  <div
+    className="absolute inset-0 bg-gradient-to-br from-emerald-700 via-teal-700 to-indigo-800 pointer-events-none"
+    aria-hidden="true"
+  />
+  <div
+    className="absolute -top-28 -left-28 w-80 h-80 rounded-full bg-white/10 blur-3xl pointer-events-none"
+    aria-hidden="true"
+  />
+  <div
+    className="absolute -bottom-28 -right-28 w-80 h-80 rounded-full bg-black/10 blur-3xl pointer-events-none"
+    aria-hidden="true"
+  />
+
       <a
         href="#conteudo"
         className="sr-only focus:not-sr-only focus:block focus:bg-white/20 focus:text-white text-sm px-3 py-2"
@@ -331,37 +522,44 @@ function HeaderHero({ onCriar, onAtualizar, atualizando }) {
         Ir para o conteúdo
       </a>
 
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-7 sm:py-8 md:py-9 min-h-[140px] sm:min-h-[170px]">
-        <div className="flex flex-col items-center text-center gap-2.5 sm:gap-3">
-          <div className="inline-flex items-center justify-center gap-2">
+      <div className="relative z-10 pointer-events-auto max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-9 md:py-10">
+        <div className="flex flex-col items-center text-center gap-2.5">
+          <div className="inline-flex items-center justify-center gap-2 text-white">
+            <span className="inline-flex items-center justify-center w-10 h-10 rounded-2xl bg-white/15 backdrop-blur">
+              <LayoutGrid className="w-5 h-5" aria-hidden="true" />
+            </span>
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Gerenciar Eventos</h1>
           </div>
 
-          <p className="text-sm sm:text-base text-white/90 max-w-2xl">Crie, publique e edite seus eventos e turmas.</p>
+          <p className="text-sm sm:text-base text-white/90 max-w-2xl">
+            Crie, publique e edite eventos e turmas — com visual limpo e institucional.
+          </p>
 
-          <div className="mt-2.5 sm:mt-3.5 flex flex-wrap items-center justify-center gap-2">
-            <button
+          <div className="text-[12px] sm:text-xs text-white/80">{hint}</div>
+
+          <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+            <SoftButton
               type="button"
               onClick={onAtualizar}
               disabled={atualizando}
-              className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-extrabold transition
-                ${atualizando ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-white/15 hover:bg-white/25"} text-white`}
+              className={`text-white bg-white/15 hover:bg-white/20 backdrop-blur border border-white/20
+              ${atualizando ? "opacity-60 cursor-not-allowed" : "hover:-translate-y-[1px]"}`}
               aria-label="Atualizar lista de eventos"
               aria-busy={atualizando ? "true" : "false"}
             >
               <RefreshCcw className="w-4 h-4" aria-hidden="true" />
               {atualizando ? "Atualizando…" : "Atualizar"}
-            </button>
+            </SoftButton>
 
-            <button
+            <SoftButton
               type="button"
               onClick={onCriar}
-              className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-extrabold bg-amber-400 text-slate-900 hover:bg-amber-300 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-400"
+              className="bg-white text-zinc-900 hover:bg-white/90 border border-white/40 shadow-md"
               aria-label="Criar novo evento"
             >
-              <PlusCircle className="w-5 h-5" aria-hidden="true" />
-              Criar Evento
-            </button>
+              <Plus className="w-4.5 h-4.5" aria-hidden="true" />
+              Criar evento
+            </SoftButton>
           </div>
         </div>
       </div>
@@ -371,7 +569,7 @@ function HeaderHero({ onCriar, onAtualizar, atualizando }) {
   );
 }
 
-/* ========= Status do evento + cores de barra ========= */
+/* ========= Status ========= */
 function deduzStatus(ev) {
   const raw = String(ev?.status || "").toLowerCase();
   if (raw === "andamento") return "em_andamento";
@@ -379,11 +577,17 @@ function deduzStatus(ev) {
   if (raw === "encerrado") return "encerrado";
   return "programado";
 }
-function statusBarClasses(status) {
-  if (status === "programado") return "bg-gradient-to-r from-emerald-700 via-emerald-600 to-emerald-500";
-  if (status === "em_andamento") return "bg-gradient-to-r from-amber-700 via-amber-600 to-amber-400";
-  if (status === "encerrado") return "bg-gradient-to-r from-rose-800 via-rose-700 to-rose-500";
-  return "bg-gradient-to-r from-slate-400 to-slate-300";
+function statusDotClass(status) {
+  if (status === "programado") return "bg-emerald-500";
+  if (status === "em_andamento") return "bg-amber-500";
+  if (status === "encerrado") return "bg-rose-500";
+  return "bg-zinc-400";
+}
+function statusLabel(status) {
+  if (status === "programado") return "Programado";
+  if (status === "em_andamento") return "Em andamento";
+  if (status === "encerrado") return "Encerrado";
+  return "Programado";
 }
 
 /* =============================
@@ -400,9 +604,12 @@ export default function GerenciarEventos() {
   const [publishingId, setPublishingId] = useState(null);
   const [salvando, setSalvando] = useState(false);
 
-  // ── estados de confirmação via ModalConfirmacao
-  const [confirmDelete, setConfirmDelete] = useState(null); // { id, titulo }
-  const [confirmPublish, setConfirmPublish] = useState(null); // { id, titulo, publicadoAtual }
+  // ✅ filtros (chips)
+  // "ativos" = programado + em_andamento | "encerrados" = encerrado
+  const [filtroStatus, setFiltroStatus] = useState("ativos");
+
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [confirmPublish, setConfirmPublish] = useState(null);
 
   const liveRef = useRef(null);
   const abortListRef = useRef(null);
@@ -472,16 +679,13 @@ export default function GerenciarEventos() {
     setEventoSelecionado(evento);
     setModalAberto(true);
 
-    // refina com dados completos (cancelável)
     abortEditRef.current?.abort?.("new-edit");
     const ctrl = new AbortController();
     abortEditRef.current = ctrl;
 
     try {
       let turmas = Array.isArray(evento.turmas) ? evento.turmas : [];
-      if ((!turmas || turmas.length === 0) && evento?.id) {
-        turmas = await fetchTurmasDoEvento(evento.id);
-      }
+      if ((!turmas || turmas.length === 0) && evento?.id) turmas = await fetchTurmasDoEvento(evento.id);
       const base = (await fetchEventoCompleto(evento.id)) || evento;
       const combinado = { ...evento, ...base, turmas };
       if (!mountedRef.current || ctrl.signal.aborted) return;
@@ -492,7 +696,7 @@ export default function GerenciarEventos() {
     }
   }, []);
 
-  /* -------- EXCLUIR (com ModalConfirmacao) -------- */
+  /* -------- EXCLUIR -------- */
   const pedirExclusao = (ev) => {
     if (!ev?.id) return;
     setConfirmDelete({ id: Number(ev.id), titulo: ev.titulo || "Evento" });
@@ -513,7 +717,7 @@ export default function GerenciarEventos() {
     }
   };
 
-  /* -------- publicar / despublicar (admin) com ModalConfirmacao -------- */
+  /* -------- publicar/despublicar -------- */
   const pedirTogglePublicacao = (ev) => {
     if (!ev?.id) return;
     setConfirmPublish({
@@ -533,15 +737,12 @@ export default function GerenciarEventos() {
     const acao = publicado ? "despublicar" : "publicar";
 
     setPublishingId(id);
-
-    // otimista
     setEventos((prev) => prev.map((e) => (Number(e.id) === id ? { ...e, publicado: !publicado } : e)));
 
     try {
       await apiPost(`/api/eventos/${id}/${acao}`, {});
       toast.success(publicado ? "Evento despublicado." : "Evento publicado.");
     } catch (e) {
-      // rollback
       setEventos((prev) => prev.map((ev) => (Number(ev.id) === id ? { ...ev, publicado } : ev)));
       toast.error(`❌ ${e?.message || "Falha ao alterar publicação."}`);
     } finally {
@@ -549,14 +750,12 @@ export default function GerenciarEventos() {
     }
   };
 
-  // valida as turmas: se houver assinante, ele deve estar na lista de instrutores
   function validarTurmasComInstrutores(turmasNorm) {
     for (const t of turmasNorm) {
       const instrs = Array.isArray(t.instrutores) ? t.instrutores : [];
       const assinante = Number.isFinite(Number(t.assinante_id))
         ? Number(t.assinante_id)
         : Number(t.instrutor_assinante_id);
-
       if (Number.isFinite(assinante) && !instrs.includes(assinante)) {
         return `O assinante selecionado na turma "${t.nome}" precisa estar entre os instrutores da turma.`;
       }
@@ -569,7 +768,6 @@ export default function GerenciarEventos() {
       setSalvando(true);
       const isEdicao = Boolean(eventoSelecionado?.id);
 
-      // ====== EDIÇÃO ======
       if (isEdicao) {
         let baseServidor = await fetchEventoCompleto(eventoSelecionado.id);
 
@@ -597,11 +795,9 @@ export default function GerenciarEventos() {
 
         const body = buildUpdateBody(baseServidor, dadosDoModal);
 
-        // ✅ incluir sinalizações de remoção vindas do Modal
         if (dadosDoModal?.remover_folder === true) body.remover_folder = true;
         if (dadosDoModal?.remover_programacao === true) body.remover_programacao = true;
 
-        // validação soft
         if (Array.isArray(body.turmas) && body.turmas.length > 0) {
           const msg = validarTurmasComInstrutores(body.turmas);
           if (msg) {
@@ -612,10 +808,12 @@ export default function GerenciarEventos() {
 
         await apiPut(`/api/eventos/${eventoSelecionado.id}`, body);
 
-        // Uploads (folder/programação) se enviados
-        if (dadosDoModal?.folderFile instanceof File) await uploadFolder(eventoSelecionado.id, dadosDoModal.folderFile);
-        if (dadosDoModal?.programacaoFile instanceof File)
+        if (dadosDoModal?.folderFile instanceof File) {
+          await uploadFolder(eventoSelecionado.id, dadosDoModal.folderFile);
+        }
+        if (dadosDoModal?.programacaoFile instanceof File) {
           await uploadProgramacao(eventoSelecionado.id, dadosDoModal.programacaoFile);
+        }
 
         await recarregarEventos();
         toast.success("✅ Evento salvo com sucesso.");
@@ -627,7 +825,6 @@ export default function GerenciarEventos() {
         return;
       }
 
-      // ====== CRIAÇÃO ======
       const base = {
         titulo: (dadosDoModal?.titulo || "").trim(),
         tipo: (dadosDoModal?.tipo || "").trim(),
@@ -635,9 +832,9 @@ export default function GerenciarEventos() {
         descricao: (dadosDoModal?.descricao || "").trim(),
         local: (dadosDoModal?.local || "").trim(),
         publico_alvo: (dadosDoModal?.publico_alvo || "").trim(),
+        ...(dadosDoModal?.pos_curso_tipo ? { pos_curso_tipo: String(dadosDoModal.pos_curso_tipo) } : {}),
       };
 
-      // turmas (com instrutores e assinante)
       const turmas =
         Array.isArray(dadosDoModal?.turmas) && dadosDoModal.turmas.length
           ? normalizeTurmas(dadosDoModal.turmas)
@@ -693,14 +890,10 @@ export default function GerenciarEventos() {
       });
 
       const criado = await apiPost("/api/eventos", bodyCreate);
-
-      // id do evento recém criado
       const novoId = Number(criado?.id) || Number(criado?.evento?.id) || Number(criado?.dados?.id);
 
-      // Uploads após criar
       if (novoId && dadosDoModal?.folderFile instanceof File) await uploadFolder(novoId, dadosDoModal.folderFile);
-      if (novoId && dadosDoModal?.programacaoFile instanceof File)
-        await uploadProgramacao(novoId, dadosDoModal.programacaoFile);
+      if (novoId && dadosDoModal?.programacaoFile instanceof File) await uploadProgramacao(novoId, dadosDoModal.programacaoFile);
 
       await recarregarEventos();
       toast.success("✅ Evento salvo com sucesso.");
@@ -714,21 +907,63 @@ export default function GerenciarEventos() {
     }
   };
 
-  const anyLoading = loading;
-
   const headerHint = useMemo(() => {
-    if (anyLoading) return "Carregando…";
+    if (loading) return "Carregando…";
     return `${eventos.length} evento(s)`;
-  }, [anyLoading, eventos.length]);
+  }, [loading, eventos.length]);
+
+  // ✅ ministats (agora: total, publicados, rascunhos, andamento, 2025, 2026)
+  const stats = useMemo(() => {
+    const total = eventos.length;
+    let publicados = 0;
+    let rascunhos = 0;
+    let em_andamento = 0;
+    let ano2025 = 0;
+    let ano2026 = 0;
+
+    for (const ev of eventos) {
+      if (ev?.publicado) publicados += 1;
+      else rascunhos += 1;
+
+      const st = deduzStatus(ev);
+      if (st === "em_andamento") em_andamento += 1;
+
+      const y = getEventYear(ev);
+      if (y === 2025) ano2025 += 1;
+      if (y === 2026) ano2026 += 1;
+    }
+
+    return { total, publicados, rascunhos, em_andamento, ano2025, ano2026 };
+  }, [eventos]);
+
+  // ✅ contagens para chips
+  const countsByChip = useMemo(() => {
+    let ativos = 0;
+    let encerrados = 0;
+
+    for (const ev of eventos) {
+      const st = deduzStatus(ev);
+      if (st === "encerrado") encerrados += 1;
+      else ativos += 1; // programado + em_andamento + fallback
+    }
+    return { ativos, encerrados };
+  }, [eventos]);
+
+  // ✅ eventos filtrados (chips)
+  const eventosFiltrados = useMemo(() => {
+    if (filtroStatus === "encerrados") {
+      return eventos.filter((ev) => deduzStatus(ev) === "encerrado");
+    }
+    return eventos.filter((ev) => deduzStatus(ev) !== "encerrado");
+  }, [eventos, filtroStatus]);
 
   return (
     <main className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white overflow-x-hidden">
-      {/* live region acessível */}
       <p ref={liveRef} className="sr-only" aria-live="polite" aria-atomic="true" />
 
-      {/* ── Modais de confirmação ── */}
       <ModalConfirmacao
         open={!!confirmDelete}
+        isOpen={!!confirmDelete}
         onClose={() => setConfirmDelete(null)}
         onConfirm={confirmarExclusao}
         titulo="Excluir evento"
@@ -737,47 +972,88 @@ export default function GerenciarEventos() {
         danger
       >
         <p className="text-sm text-zinc-700 dark:text-zinc-300">
-          Tem certeza que deseja excluir{" "}
-          <span className="font-semibold">{confirmDelete?.titulo}</span>? Essa ação não pode ser desfeita.
+          Tem certeza que deseja excluir <span className="font-semibold">{confirmDelete?.titulo}</span>? Essa ação não pode ser desfeita.
         </p>
       </ModalConfirmacao>
 
       <ModalConfirmacao
         open={!!confirmPublish}
+        isOpen={!!confirmPublish}
         onClose={() => setConfirmPublish(null)}
         onConfirm={confirmarTogglePublicacao}
-        titulo={confirmPublish?.publicadoAtual ? "Despublicar evento" : "Publicar evento"}
-        confirmarTexto={confirmPublish?.publicadoAtual ? "Despublicar" : "Publicar"}
+        titulo={confirmPublish?.publicadoAtual ? "Ocultar evento" : "Publicar evento"}
+        confirmarTexto={confirmPublish?.publicadoAtual ? "Ocultar" : "Publicar"}
         cancelarTexto="Cancelar"
       >
         <p className="text-sm text-zinc-700 dark:text-zinc-300">
-          {confirmPublish?.publicadoAtual
-            ? <>Despublicar <span className="font-semibold">{confirmPublish?.titulo}</span>? Ele deixará de aparecer para os usuários.</>
-            : <>Publicar <span className="font-semibold">{confirmPublish?.titulo}</span>? Ele ficará visível para os usuários.</>}
+          {confirmPublish?.publicadoAtual ? (
+            <>
+              Ocultar <span className="font-semibold">{confirmPublish?.titulo}</span>? Ele deixará de aparecer para os usuários.
+            </>
+          ) : (
+            <>
+              Publicar <span className="font-semibold">{confirmPublish?.titulo}</span>? Ele ficará visível para os usuários.
+            </>
+          )}
         </p>
       </ModalConfirmacao>
 
-      {/* Header hero */}
-      <HeaderHero onCriar={abrirModalCriar} onAtualizar={recarregarEventos} atualizando={anyLoading} />
+      <HeaderHero onCriar={abrirModalCriar} onAtualizar={recarregarEventos} atualizando={loading} hint={headerHint} />
 
-      {/* barra de carregamento fina no topo */}
-      {anyLoading && (
+      {loading && (
         <div
-          className="sticky top-0 left-0 w-full h-1 bg-indigo-100 dark:bg-indigo-950/30 z-40"
+          className="sticky top-0 left-0 w-full h-1 bg-emerald-100 dark:bg-emerald-950/30 z-40"
           role="progressbar"
           aria-label="Carregando dados"
         >
-          <div className={`h-full bg-indigo-700 ${reduceMotion ? "" : "animate-pulse"} w-1/3`} />
+          <div className={`h-full bg-emerald-600 ${reduceMotion ? "" : "animate-pulse"} w-1/3`} />
         </div>
       )}
 
-      <div id="conteudo" className="px-2 sm:px-4 py-6 max-w-6xl mx-auto w-full min-w-0">
-        {/* mini hint */}
-        <div className="mb-3 text-xs text-zinc-500 dark:text-zinc-300 text-center">{headerHint}</div>
+      <div id="conteudo" className="px-3 sm:px-4 py-6 max-w-6xl mx-auto w-full min-w-0">
+        {!loading && (
+          <section aria-label="Métricas dos eventos" className="mb-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-3">
+              <StatPill icon={CalendarCheck2} label="Total" value={stats.total} tone="zinc" />
+              <StatPill icon={BadgeCheck} label="Publicados" value={stats.publicados} tone="indigo" />
+              <StatPill icon={BadgeX} label="Rascunhos" value={stats.rascunhos} tone="zinc" />
+              <StatPill icon={Sparkles} label="Andamento" value={stats.em_andamento} tone="amber" />
+              <StatPill icon={CalendarDays} label="Eventos 2025" value={stats.ano2025} tone="sky" />
+              <StatPill icon={CalendarDays} label="Eventos 2026" value={stats.ano2026} tone="emerald" />
+            </div>
+          </section>
+        )}
+
+        {/* ✅ CHIPS FILTRO (Ativos x Encerrados) */}
+        {!loading && eventos.length > 0 && (
+          <section aria-label="Filtros por status" className="mb-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <div className="flex flex-wrap gap-2">
+                <FilterChip
+                  active={filtroStatus === "ativos"}
+                  onClick={() => setFiltroStatus("ativos")}
+                  label="Ativos"
+                  count={countsByChip.ativos}
+                />
+                <FilterChip
+                  active={filtroStatus === "encerrados"}
+                  onClick={() => setFiltroStatus("encerrados")}
+                  label="Encerrados"
+                  count={countsByChip.encerrados}
+                />
+              </div>
+
+              <div className="text-xs text-zinc-500 dark:text-zinc-400">
+                Mostrando <span className="font-semibold">{eventosFiltrados.length}</span> de{" "}
+                <span className="font-semibold">{eventos.length}</span>
+              </div>
+            </div>
+          </section>
+        )}
 
         {!!erro && !loading && (
           <div
-            className="rounded-2xl border border-rose-200 dark:border-rose-900/40 bg-rose-50 dark:bg-rose-950/25 p-4 mb-4"
+            className="rounded-3xl border border-rose-200 dark:border-rose-900/40 bg-rose-50 dark:bg-rose-950/25 p-4 mb-4"
             role="alert"
           >
             <div className="flex items-start gap-3">
@@ -786,14 +1062,14 @@ export default function GerenciarEventos() {
                 <p className="font-extrabold text-rose-800 dark:text-rose-200">Falha ao carregar eventos</p>
                 <p className="text-sm text-rose-800/90 dark:text-rose-200/90 mt-1 break-words">{erro}</p>
 
-                <button
+                <SoftButton
                   type="button"
                   onClick={recarregarEventos}
-                  className="mt-3 inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-extrabold bg-rose-100 hover:bg-rose-200 dark:bg-rose-900/40 dark:hover:bg-rose-900/60"
+                  className="mt-3 bg-white/80 dark:bg-rose-950/10 border border-rose-200 dark:border-rose-900/40 text-rose-800 dark:text-rose-200 hover:bg-white"
                 >
                   <RefreshCcw className="w-4 h-4" aria-hidden="true" />
                   Tentar novamente
-                </button>
+                </SoftButton>
               </div>
             </div>
           </div>
@@ -801,146 +1077,152 @@ export default function GerenciarEventos() {
 
         {loading ? (
           <SkeletonEvento />
-        ) : eventos.length === 0 ? (
-          <NenhumDado mensagem="Nenhum evento cadastrado." />
+        ) : eventosFiltrados.length === 0 ? (
+          <NenhumDado mensagem={filtroStatus === "encerrados" ? "Nenhum evento encerrado." : "Nenhum evento ativo."} />
         ) : (
-          <ul className="space-y-4 sm:space-y-6">
-            {eventos.map((ev) => {
+          <ul className="space-y-4 sm:space-y-5">
+            {eventosFiltrados.map((ev) => {
               const publicado = !!ev.publicado;
               const status = deduzStatus(ev);
-              const bar = statusBarClasses(status);
+              const posterUrl = getPosterUrl(ev);
 
               return (
                 <motion.li
                   key={ev.id || ev.titulo}
                   initial={reduceMotion ? false : { opacity: 0, y: 10 }}
                   animate={reduceMotion ? {} : { opacity: 1, y: 0 }}
-                  className="relative bg-white dark:bg-zinc-950 p-4 sm:p-5 rounded-2xl shadow-sm border border-gray-200 dark:border-zinc-800 overflow-hidden min-w-0"
+                  className="relative bg-white dark:bg-zinc-950 rounded-3xl shadow-sm border border-gray-200 dark:border-zinc-800 overflow-hidden pointer-events-auto"
                 >
-                  {/* Barra colorida superior (gradiente por status) */}
-                  <div className={`absolute top-0 left-0 right-0 h-1.5 ${bar}`} aria-hidden="true" />
+                  <div className="h-1 bg-gradient-to-r from-emerald-500/80 via-teal-500/70 to-indigo-500/70" aria-hidden="true" />
 
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between min-w-0">
-                    {/* Título + badges */}
-                    <div className="flex items-center gap-3 flex-wrap min-w-0">
-                      <span className="font-extrabold text-lg text-lousa dark:text-white break-words">
-                        {ev.titulo}
-                      </span>
+                  <div className="p-4 sm:p-5 flex flex-col gap-4">
+                    <div className="flex flex-col sm:flex-row gap-4 sm:items-start sm:justify-between">
+                      <div className="flex gap-4 min-w-0">
+                        <div className="shrink-0">
+                          {posterUrl ? (
+                            <img
+                              src={posterUrl}
+                              alt={`Folder do evento ${ev.titulo}`}
+                              className="w-[96px] h-[96px] sm:w-[112px] sm:h-[112px] rounded-2xl object-cover border border-white/10 shadow-sm bg-zinc-100 dark:bg-zinc-900"
+                              loading="lazy"
+                              onError={(e) => {
+                                e.currentTarget.style.display = "none";
+                              }}
+                            />
+                          ) : (
+                            <div className="w-[96px] h-[96px] sm:w-[112px] sm:h-[112px] rounded-2xl border border-dashed border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/40 flex flex-col items-center justify-center gap-1 text-[11px] text-zinc-500 dark:text-zinc-400 px-2 text-center">
+                              <CalendarDays className="w-5 h-5 opacity-70" />
+                              Sem folder
+                            </div>
+                          )}
+                        </div>
 
-                      {/* Badge de publicação */}
-                      <span
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border
-                          ${
-                            publicado
-                              ? "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-200 border-indigo-200 dark:border-indigo-800"
-                              : "bg-zinc-100 text-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-200 border-zinc-200 dark:border-zinc-700"
-                          }`}
-                        title={publicado ? "Visível aos usuários" : "Oculto aos usuários"}
-                      >
-                        {publicado ? "Publicado" : "Rascunho"}
-                      </span>
+                        <div className="min-w-0">
+                          <h3 className="text-base sm:text-lg font-extrabold text-zinc-900 dark:text-white break-words">
+                            {ev.titulo}
+                          </h3>
 
-                      {/* Status textual */}
-                      <span
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-800 dark:bg-zinc-900/40 dark:text-zinc-200 border border-gray-200 dark:border-zinc-700"
-                        title="Status calculado por data/horário"
-                      >
-                        {status === "programado" ? "Programado" : status === "em_andamento" ? "Em andamento" : "Encerrado"}
-                      </span>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <Chip tone={publicado ? "indigo" : "zinc"} title={publicado ? "Visível aos usuários" : "Oculto aos usuários"}>
+                              {publicado ? <Eye className="w-3.5 h-3.5" aria-hidden="true" /> : <EyeOff className="w-3.5 h-3.5" aria-hidden="true" />}
+                              {publicado ? "Publicado" : "Rascunho"}
+                            </Chip>
 
-                      {/* Badge de restrição */}
-                      {ev?.restrito && (
-                        <span
-                          title={
-                            ev.restrito_modo === "lista_registros"
-                              ? "Restrito a uma lista de registros"
-                              : ev.restrito_modo === "cargos"
-                              ? "Restrito por cargos"
-                              : ev.restrito_modo === "unidades"
-                              ? "Restrito por unidades"
-                              : "Visível a todos os servidores"
-                          }
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 border border-amber-300 dark:border-amber-800"
+                            <Chip tone="zinc" title="Status calculado">
+                              <span className={`w-2 h-2 rounded-full ${statusDotClass(status)}`} aria-hidden="true" />
+                              {statusLabel(status)}
+                            </Chip>
+
+                            {ev?.restrito && (
+                              <Chip tone="amber" title="Evento restrito">
+                                <Lock className="w-3.5 h-3.5" aria-hidden="true" />
+                                Restrito
+                              </Chip>
+                            )}
+                          </div>
+
+                          <div className="mt-3 text-sm text-zinc-600 dark:text-zinc-300 space-y-1">
+                            <div className="flex flex-wrap gap-x-4 gap-y-1">
+                              {ev?.tipo && (
+                                <span className="inline-flex items-center gap-1">
+                                  <Sparkles className="w-4 h-4 opacity-70" />
+                                  <span>
+                                    Tipo: <span className="font-medium">{ev.tipo}</span>
+                                  </span>
+                                </span>
+                              )}
+                              {ev?.local && (
+                                <span className="inline-flex items-center gap-1">
+                                  <MapPin className="w-4 h-4 opacity-70" />
+                                  <span className="break-words">
+                                    Local: <span className="font-medium">{ev.local}</span>
+                                  </span>
+                                </span>
+                              )}
+                            </div>
+
+                            {ev?.publico_alvo && (
+                              <div className="break-words">
+                                Público-alvo: <span className="font-medium">{ev.publico_alvo}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* ✅ Botões com cor contida (premium) */}
+                      <div className="relative z-10 pointer-events-auto flex flex-wrap gap-2 justify-end">
+                        {/* Publicar/Ocultar */}
+                        <SoftButton
+                          type="button"
+                          onClick={() => pedirTogglePublicacao(ev)}
+                          disabled={publishingId === Number(ev.id)}
+                          className={`border disabled:opacity-60
+                            ${
+                              publicado
+                                ? "border-indigo-200 dark:border-indigo-900/40 text-indigo-700 dark:text-indigo-200 bg-white dark:bg-zinc-950 hover:bg-indigo-50 dark:hover:bg-indigo-950/25"
+                                : "border-emerald-200 dark:border-emerald-900/40 text-emerald-700 dark:text-emerald-200 bg-white dark:bg-zinc-950 hover:bg-emerald-50 dark:hover:bg-emerald-950/25"
+                            }`}
+                          aria-label={publicado ? `Ocultar evento ${ev.titulo}` : `Publicar evento ${ev.titulo}`}
+                          aria-pressed={publicado ? "true" : "false"}
                         >
-                          <Lock size={12} aria-hidden="true" />
-                          {ev.restrito_modo === "lista_registros"
-                            ? "Lista"
-                            : ev.restrito_modo === "cargos"
-                            ? "Cargos"
-                            : ev.restrito_modo === "unidades"
-                            ? "Unidades"
-                            : "Servidores"}
-                        </span>
-                      )}
-                    </div>
+                          {publishingId === Number(ev.id) ? (
+                            <span className="animate-pulse">…</span>
+                          ) : publicado ? (
+                            <>
+                              <EyeOff className="w-4 h-4" aria-hidden="true" /> Ocultar
+                            </>
+                          ) : (
+                            <>
+                              <Eye className="w-4 h-4" aria-hidden="true" /> Publicar
+                            </>
+                          )}
+                        </SoftButton>
 
-                    {/* Ações */}
-                    <div className="flex flex-wrap gap-2 justify-end">
-                      <button
-                        type="button"
-                        onClick={() => pedirTogglePublicacao(ev)}
-                        disabled={publishingId === Number(ev.id)}
-                        className={`px-3 py-1.5 rounded-xl flex items-center gap-1 border text-sm font-extrabold
-                          ${
-                            publicado
-                              ? "border-indigo-300 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-200 dark:hover:bg-indigo-900/30"
-                              : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
-                          } disabled:opacity-60`}
-                        aria-label={publicado ? `Despublicar evento ${ev.titulo}` : `Publicar evento ${ev.titulo}`}
-                        aria-pressed={publicado ? "true" : "false"}
-                      >
-                        {publishingId === Number(ev.id) ? (
-                          <span className="animate-pulse">…</span>
-                        ) : publicado ? (
-                          <>
-                            <EyeOff size={16} aria-hidden="true" /> Despublicar
-                          </>
-                        ) : (
-                          <>
-                            <Eye size={16} aria-hidden="true" /> Publicar
-                          </>
-                        )}
-                      </button>
+                        {/* Editar */}
+                        <SoftButton
+                          type="button"
+                          onClick={() => abrirModalEditar(ev)}
+                          className="border border-sky-200 dark:border-sky-900/40 text-sky-700 dark:text-sky-200 bg-white dark:bg-zinc-950 hover:bg-sky-50 dark:hover:bg-sky-950/25"
+                          aria-label={`Editar evento ${ev.titulo}`}
+                        >
+                          <Pencil className="w-4 h-4" aria-hidden="true" />
+                          Editar
+                        </SoftButton>
 
-                      <button
-                        type="button"
-                        onClick={() => abrirModalEditar(ev)}
-                        className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 font-extrabold text-sm"
-                        aria-label={`Editar evento ${ev.titulo}`}
-                      >
-                        <Pencil size={16} aria-hidden="true" /> Editar
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => pedirExclusao(ev)}
-                        className="px-3 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white flex items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-300 font-extrabold text-sm"
-                        aria-label={`Excluir evento ${ev.titulo}`}
-                      >
-                        <Trash2 size={16} aria-hidden="true" /> Excluir
-                      </button>
+                        {/* Excluir (perigo só no hover) */}
+                        <SoftButton
+                          type="button"
+                          onClick={() => pedirExclusao(ev)}
+                          className="border border-rose-200 dark:border-rose-900/40 text-rose-700 dark:text-rose-200 bg-white dark:bg-zinc-950 hover:bg-rose-50 dark:hover:bg-rose-950/25"
+                          aria-label={`Excluir evento ${ev.titulo}`}
+                        >
+                          <Trash2 className="w-4 h-4" aria-hidden="true" />
+                          Excluir
+                        </SoftButton>
+                      </div>
                     </div>
                   </div>
-
-                  {(ev?.publico_alvo || ev?.tipo || ev?.local) && (
-                    <div className="mt-2 text-sm text-zinc-600 dark:text-zinc-300 break-words">
-                      {ev?.tipo && (
-                        <span className="mr-3">
-                          Tipo: <span className="font-medium">{ev.tipo}</span>
-                        </span>
-                      )}
-                      {ev?.local && (
-                        <span className="mr-3">
-                          Local: <span className="font-medium">{ev.local}</span>
-                        </span>
-                      )}
-                      {ev?.publico_alvo && (
-                        <span>
-                          Público-alvo: <span className="font-medium">{ev.publico_alvo}</span>
-                        </span>
-                      )}
-                    </div>
-                  )}
                 </motion.li>
               );
             })}
@@ -950,6 +1232,7 @@ export default function GerenciarEventos() {
 
       <ModalEvento
         isOpen={modalAberto}
+        open={modalAberto} // ✅ compat
         onClose={() => setModalAberto(false)}
         onSalvar={salvarEvento}
         evento={eventoSelecionado}

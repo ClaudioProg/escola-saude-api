@@ -42,18 +42,18 @@ try {
 // Usuário (minhas, detalhe, download)
 let userCtrl = null;
 try {
-  userCtrl = require("../controllers/submissaoUsuarioController");
+  userCtrl = require("../controllers/submissaoController");
 } catch (e) {
-  console.warn("[submissaoRoute] ⚠️ submissaoUsuarioController não carregou:", e?.message || e);
+  console.warn("[submissaoRoute] ⚠️ submissaoController não carregou:", e?.message || e);
   userCtrl = null;
 }
 
 // Avaliador (opcional)
 let avaliadorCtrl = null;
 try {
-  avaliadorCtrl = require("../controllers/submissaoAvaliadorController");
+  avaliadorCtrl = require("../controllers/submissaoController");
 } catch (e) {
-  console.warn("[submissaoRoute] ⚠️ submissaoAvaliadorController não encontrado. Fallback p/ submissaoController.");
+  console.warn("[submissaoRoute] ⚠️ submissaoController não encontrado. Fallback p/ submissaoController.");
   avaliadorCtrl = adminCtrl;
 }
 

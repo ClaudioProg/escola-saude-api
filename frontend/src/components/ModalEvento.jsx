@@ -1,5 +1,12 @@
 /* eslint-disable no-console */
-// ✅ src/components/ModalEvento.jsx (Premium + A11y + Upload flags seguras + Logger sem spam + ModalConfirmacao)
+// ✅ src/components/ModalEvento.jsx — PREMIUM++ (A11y + ministats + pós-curso (questionário/teste) + uploads seguros + compat open/isOpen)
+// - Visual premium (header gradiente + cards + chips + ministats)
+// - A11y: labelledBy/describedBy, SR-only, foco/esc
+// - Compat: aceita `open` OU `isOpen` (resolve casos onde a página passa open)
+// - Upload flags seguras: remover_folder / remover_programacao só quando existe algo a remover
+// - Logger DEV only (sem spam)
+// - ModalConfirmacao compat (open/isOpen)
+
 import { useEffect, useMemo, useRef, useState, useTransition, useId, useCallback } from "react";
 import { toast } from "react-toastify";
 import {
@@ -20,7 +27,14 @@ import {
   File as FileIcon,
   ShieldCheck,
   Info,
+  Sparkles,
+  ClipboardList,
+  CheckCircle2,
+  HelpCircle,
+  Building2,
+  Save, // ✅ ação rápida "Salvar"
 } from "lucide-react";
+
 import Modal from "./Modal";
 import ModalTurma from "./ModalTurma";
 import ModalConfirmacao from "./ModalConfirmacao";
@@ -28,8 +42,7 @@ import { formatarDataBrasileira } from "../utils/dateTime";
 import { apiGet, apiDelete } from "../services/api";
 
 /* ========================= Backend base ========================= */
-const API_BASE =
-  (typeof import.meta !== "undefined" && import.meta?.env?.VITE_API_URL) || "";
+const API_BASE = (typeof import.meta !== "undefined" && import.meta?.env?.VITE_API_URL) || "";
 
 function withBackendBase(u) {
   if (!u) return null;
@@ -66,6 +79,12 @@ const TIPOS_EVENTO = ["Congresso", "Curso", "Oficina", "Palestra", "Seminário",
 
 const MAX_IMG_MB = 5;
 const MAX_PDF_MB = 10;
+
+const POS_CURSO_OPCOES = [
+  { key: "nenhum", label: "Sem avaliação", desc: "Não haverá avaliação após o evento.", icon: HelpCircle },
+  { key: "questionario", label: "Questionário", desc: "Perguntas de opinião/feedback após o evento.", icon: ClipboardList },
+  { key: "teste", label: "Teste", desc: "Perguntas para avaliar o aprendizado (nota).", icon: CheckCircle2 },
+];
 
 const hh = (s) => (typeof s === "string" ? s.slice(0, 5) : "");
 const minDate = (arr) => arr.map((d) => d.data).sort()[0];
@@ -131,8 +150,7 @@ function normalizarDatasTurma(t, hiBase = "08:00", hfBase = "17:00") {
   const hi = hh(t.horario_inicio || t.hora_inicio || hiBase);
   const hf = hh(t.horario_fim || t.hora_fim || hfBase);
 
-  const datasRaw =
-    (Array.isArray(t.datas) && t.datas.length && t.datas) || encontrosParaDatas(t) || [];
+  const datasRaw = (Array.isArray(t.datas) && t.datas.length && t.datas) || encontrosParaDatas(t) || [];
 
   const datas = (datasRaw || [])
     .map((d) => {
@@ -198,15 +216,118 @@ function extrairCargoUsuario(u) {
 let cacheUnidades = null;
 let cacheUsuarios = null;
 
+/* ========================= UI helpers ========================= */
+function Chip({ tone = "zinc", children, title }) {
+  const map = {
+    zinc: "bg-zinc-100 text-zinc-800 border-zinc-200 dark:bg-zinc-900/40 dark:text-zinc-200 dark:border-zinc-700",
+    emerald:
+      "bg-emerald-100 text-emerald-900 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-800",
+    indigo:
+      "bg-indigo-100 text-indigo-900 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-200 dark:border-indigo-800",
+    amber:
+      "bg-amber-100 text-amber-900 border-amber-200 dark:bg-amber-900/30 dark:text-amber-200 dark:border-amber-800",
+    rose:
+      "bg-rose-100 text-rose-900 border-rose-200 dark:bg-rose-900/30 dark:text-rose-200 dark:border-rose-800",
+  };
+  return (
+    <span
+      title={title}
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] border ${map[tone] || map.zinc}`}
+    >
+      {children}
+    </span>
+  );
+}
+
+function StatMini({ icon: Icon, label, value, tone = "zinc" }) {
+  const map = {
+    zinc: "bg-white dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800",
+    emerald: "bg-emerald-50/90 dark:bg-emerald-950/20 border-emerald-200/70 dark:border-emerald-900/40",
+    indigo: "bg-indigo-50/90 dark:bg-indigo-950/20 border-indigo-200/70 dark:border-indigo-900/40",
+    amber: "bg-amber-50/90 dark:bg-amber-950/20 border-amber-200/70 dark:border-amber-900/40",
+    rose: "bg-rose-50/90 dark:bg-rose-950/20 border-rose-200/70 dark:border-rose-900/40",
+    violet: "bg-violet-50/90 dark:bg-violet-950/20 border-violet-200/70 dark:border-violet-900/40",
+    sky: "bg-sky-50/90 dark:bg-sky-950/20 border-sky-200/70 dark:border-sky-900/40",
+  };
+  return (
+    <div className={`rounded-2xl border ${map[tone] || map.zinc} p-3 shadow-sm`}>
+      <div className="flex items-center gap-2">
+        <span className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-black/5 dark:bg-white/5">
+          <Icon className="w-5 h-5" aria-hidden="true" />
+        </span>
+        <div className="min-w-0">
+          <div className="text-[11px] uppercase tracking-wide text-zinc-600 dark:text-zinc-300">{label}</div>
+          <div className="text-lg font-extrabold text-zinc-900 dark:text-white">{value}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ========================= ActionButton (compat) ========================= */
+// ✅ Suporta exatamente como você usa no arquivo: tone, size, children, disabled, aria-label etc.
+function ActionButton({
+  children,
+  onClick,
+  type = "button",
+  disabled = false,
+  className = "",
+  tone = "neutral", // neutral | success | info | danger | warning
+  size = "md", // xs | sm | md
+  ...rest
+}) {
+  const toneMap = {
+    neutral:
+      "bg-slate-200 hover:bg-slate-300 text-slate-900 dark:bg-zinc-800 dark:hover:bg-zinc-700 dark:text-zinc-100 focus:ring-slate-400/60",
+    success:
+      "bg-emerald-700 hover:bg-emerald-600 text-white focus:ring-emerald-500/60",
+    info:
+      "bg-indigo-700 hover:bg-indigo-600 text-white focus:ring-indigo-500/60",
+    warning:
+      "bg-amber-600 hover:bg-amber-500 text-white focus:ring-amber-400/60",
+    danger:
+      "bg-rose-600 hover:bg-rose-500 text-white focus:ring-rose-400/60",
+  };
+
+  const sizeMap = {
+    xs: "px-3 py-2 text-xs rounded-2xl",
+    sm: "px-3.5 py-2 text-sm rounded-2xl",
+    md: "px-4 py-2.5 text-sm rounded-2xl",
+  };
+
+  return (
+    <button
+      type={type}
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "inline-flex items-center justify-center gap-2 font-extrabold shadow-sm",
+        "transition active:scale-[0.99]",
+        "focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-white dark:focus:ring-offset-zinc-900",
+        "disabled:opacity-60 disabled:cursor-not-allowed",
+        toneMap[tone] || toneMap.neutral,
+        sizeMap[size] || sizeMap.md,
+        className,
+      ].join(" ")}
+      {...rest}
+    >
+      {children}
+    </button>
+  );
+}
+
 /* ========================= Componente ========================= */
 export default function ModalEvento({
   isOpen,
+  open, // ✅ compat
   onClose,
   onSalvar,
   evento,
   onTurmaRemovida,
   salvando = false,
 }) {
+  const effectiveOpen = Boolean(open ?? isOpen);
+
   const uid = useId();
   const titleId = `modal-evento-titulo-${uid}`;
   const descId = `modal-evento-desc-${uid}`;
@@ -228,6 +349,9 @@ export default function ModalEvento({
   const [tipo, setTipo] = useState("");
   const [unidadeId, setUnidadeId] = useState("");
   const [publicoAlvo, setPublicoAlvo] = useState("");
+
+  // ✅ Pós-curso (questionário/teste)
+  const [posCursoTipo, setPosCursoTipo] = useState("nenhum");
 
   // Auxiliares
   const [unidades, setUnidades] = useState([]);
@@ -321,7 +445,7 @@ export default function ModalEvento({
 
   /* ========= Reidratar ao abrir/trocar id ========= */
   useEffect(() => {
-    if (!isOpen) return;
+    if (!effectiveOpen) return;
 
     const curKey = evento?.id != null ? Number(evento.id) : "NEW";
     if (prevEventoKeyRef.current === curKey) return;
@@ -359,6 +483,8 @@ export default function ModalEvento({
         setCargosPermitidos([]);
         setUnidadesPermitidas([]);
 
+        setPosCursoTipo("nenhum");
+
         // ✅ novo evento: sem “existentes”
         setFolderUrlExistente(undefined);
         setProgramacaoUrlExistente(undefined);
@@ -370,6 +496,10 @@ export default function ModalEvento({
         setTipo(evento.tipo || "");
         setUnidadeId(evento.unidade_id ? String(evento.unidade_id) : "");
         setPublicoAlvo(evento.publico_alvo || "");
+
+        // pós-curso (se backend já mandar algo, respeita; senão "nenhum")
+        const pc = String(evento.pos_curso_tipo || evento.posCursoTipo || "nenhum").toLowerCase();
+        setPosCursoTipo(["nenhum", "questionario", "teste"].includes(pc) ? pc : "nenhum");
 
         // existentes vindos do backend
         setFolderUrlExistente(evento.folder_url || evento.folder || undefined);
@@ -430,16 +560,21 @@ export default function ModalEvento({
     });
 
     prevEventoKeyRef.current = curKey;
-  }, [isOpen, evento]);
+  }, [effectiveOpen, evento]);
 
   /* ========= GET fresh detalhe (sob demanda) ========= */
   useEffect(() => {
-    if (!isOpen || !evento?.id) return;
+    if (!effectiveOpen || !evento?.id) return;
     if (registros.length > 0 && cargosPermitidos.length > 0 && unidadesPermitidas.length > 0) return;
 
     (async () => {
       try {
         const det = await apiGet(`/api/eventos/${evento.id}`);
+
+        // pós-curso
+        const pc = String(det?.pos_curso_tipo || det?.posCursoTipo || posCursoTipo || "nenhum").toLowerCase();
+        if (["nenhum", "questionario", "teste"].includes(pc)) setPosCursoTipo(pc);
+
         if (typeof det.restrito === "boolean") setRestrito(!!det.restrito);
 
         let modo = det.restrito_modo;
@@ -465,7 +600,8 @@ export default function ModalEvento({
         // silencioso
       }
     })();
-  }, [isOpen, evento?.id, registros.length, cargosPermitidos.length, unidadesPermitidas.length]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveOpen, evento?.id, registros.length, cargosPermitidos.length, unidadesPermitidas.length]);
 
   /* ========= Sugestões de cargos (on demand) ========= */
   useEffect(() => {
@@ -476,9 +612,7 @@ export default function ModalEvento({
       try {
         const lista = await apiGet("/api/eventos/cargos/sugerir?limit=50");
         const jaUsados = new Set(cargosPermitidos.map((c) => c.toLowerCase()));
-        const norm = (Array.isArray(lista) ? lista : [])
-          .map(normalizarCargo)
-          .filter((s) => s && !jaUsados.has(s.toLowerCase()));
+        const norm = (Array.isArray(lista) ? lista : []).map(normalizarCargo).filter((s) => s && !jaUsados.has(s.toLowerCase()));
         setFallbackCargos(norm);
       } catch {
         // silencioso
@@ -511,6 +645,11 @@ export default function ModalEvento({
     },
     [usuarios]
   );
+
+  const unidadeNome = useMemo(() => {
+    const u = unidades.find((x) => String(x.id) === String(unidadeId));
+    return u?.nome || "";
+  }, [unidades, unidadeId]);
 
   /* ================= Handlers de registros ================= */
   const addRegistro = () => {
@@ -596,7 +735,6 @@ export default function ModalEvento({
     setModalTurmaAberto(true);
   }
 
-  // ✅ Executa remoção (após confirmação)
   async function executarRemocaoTurma(turma, idx) {
     const nome = turma?.nome || `Turma ${idx + 1}`;
 
@@ -627,7 +765,6 @@ export default function ModalEvento({
     }
   }
 
-  // ✅ Abre ModalConfirmacao (premium)
   function solicitarConfirmacaoRemoverTurma(turma, idx) {
     const nome = turma?.nome || `Turma ${idx + 1}`;
 
@@ -640,6 +777,43 @@ export default function ModalEvento({
         "Esta ação não pode ser desfeita.\n\nSe houver presenças ou certificados vinculados, a exclusão será bloqueada automaticamente.",
     });
   }
+
+  /* ================= Ministats (evento) ================= */
+  const stats = useMemo(() => {
+    const ts = Array.isArray(turmas) ? turmas : [];
+    let encontros = 0;
+    let carga = 0;
+
+    for (const t of ts) {
+      const baseDatas = Array.isArray(t.datas) && t.datas.length ? t.datas : encontrosParaDatas(t);
+      encontros += Array.isArray(baseDatas) ? baseDatas.length : 0;
+
+      const n = normalizarDatasTurma(t);
+      const ch = Number.isFinite(Number(t.carga_horaria)) ? Number(t.carga_horaria) : calcularCargaHorariaDatas(n.datas);
+      carga += Number.isFinite(ch) ? ch : 0;
+    }
+
+    const temFolder = Boolean(folderFile || folderPreview || (folderUrlExistente && !removerFolderExistente));
+    const temPdf = Boolean(programacaoFile || (programacaoUrlExistente && !removerProgramacaoExistente));
+
+    return {
+      turmas: ts.length,
+      encontros,
+      cargaTotal: carga,
+      restrito: Boolean(restrito),
+      anexos: `${temFolder ? 1 : 0} img • ${temPdf ? 1 : 0} pdf`,
+    };
+  }, [
+    turmas,
+    restrito,
+    folderFile,
+    folderPreview,
+    folderUrlExistente,
+    removerFolderExistente,
+    programacaoFile,
+    programacaoUrlExistente,
+    removerProgramacaoExistente,
+  ]);
 
   /* ================= Submit do formulário ================= */
   const handleSubmit = (e) => {
@@ -692,10 +866,8 @@ export default function ModalEvento({
       if (!modosValidos.includes(restritoModo)) return toast.error("Defina o modo de restrição do evento.");
       if (restritoModo === "lista_registros" && registros.length === 0)
         return toast.error("Inclua pelo menos um registro (6 dígitos) para este evento.");
-      if (restritoModo === "cargos" && cargosPermitidos.length === 0)
-        return toast.error("Inclua ao menos um cargo permitido.");
-      if (restritoModo === "unidades" && unidadesPermitidas.length === 0)
-        return toast.error("Inclua ao menos uma unidade permitida.");
+      if (restritoModo === "cargos" && cargosPermitidos.length === 0) return toast.error("Inclua ao menos um cargo permitido.");
+      if (restritoModo === "unidades" && unidadesPermitidas.length === 0) return toast.error("Inclua ao menos uma unidade permitida.");
     }
 
     // Montagem turmas
@@ -730,6 +902,10 @@ export default function ModalEvento({
       tipo,
       unidade_id: Number(unidadeId),
       publico_alvo: publicoAlvo,
+
+      // ✅ pós-curso
+      pos_curso_tipo: posCursoTipo,
+
       turmas: turmasCompletas,
       restrito: !!restrito,
       restrito_modo: restrito ? restritoModo || "todos_servidores" : null,
@@ -751,6 +927,25 @@ export default function ModalEvento({
 
   const regCount = registros.length;
 
+  /* ========================= Navegação por seções ========================= */
+  const scrollToSection = useCallback((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    // funciona bem dentro do container com overflow-y
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
+  const SECOES = useMemo(
+    () => [
+      { id: `sec-dados-${uid}`, label: "Dados" },
+      { id: `sec-pos-${uid}`, label: "Pós-curso" },
+      { id: `sec-vis-${uid}`, label: "Visibilidade" },
+      { id: `sec-anexos-${uid}`, label: "Anexos" },
+      { id: `sec-turmas-${uid}`, label: "Turmas" },
+    ],
+    [uid]
+  );
+
   /* ========================= Render Turmas (memo) ========================= */
   const turmasRender = useMemo(() => {
     return (turmas || []).map((t, i) => {
@@ -768,54 +963,56 @@ export default function ModalEvento({
       return (
         <div
           key={t.id ?? `temp-${i}`}
-          className="rounded-xl border border-black/10 dark:border-white/10 bg-gradient-to-b from-zinc-50/90 to-white dark:from-zinc-800/70 dark:to-zinc-900/50 p-3 text-sm shadow-sm hover:shadow transition-shadow"
+          className="rounded-2xl border border-black/10 dark:border-white/10 bg-gradient-to-b from-zinc-50/90 to-white dark:from-zinc-800/70 dark:to-zinc-900/50 p-3 sm:p-4 text-sm shadow-sm hover:shadow transition-shadow"
         >
-          <div className="h-1 rounded-t-md bg-gradient-to-r from-emerald-600 via-teal-500 to-cyan-500 mb-2" />
+          <div className="h-1.5 rounded-t-xl bg-gradient-to-r from-emerald-600 via-teal-500 to-cyan-500 mb-3" />
 
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
-            <p className="font-bold text-slate-900 dark:text-white break-words leading-tight">{t.nome}</p>
+            <div className="min-w-0">
+              <p className="font-extrabold text-slate-900 dark:text-white break-words leading-tight text-[15px] sm:text-base">
+                {t.nome}
+              </p>
+
+              <div className="mt-1.5 flex flex-wrap gap-2">
+                <Chip tone="zinc" title="Encontros">{qtd} encontro(s)</Chip>
+                <Chip tone="indigo" title="Vagas">{Number(t.vagas_total) || 0} vagas</Chip>
+                <Chip tone="emerald" title="Carga horária">{Number(t.carga_horaria) || 0}h</Chip>
+              </div>
+            </div>
 
             <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => abrirEditarTurma(i)}
-                className="inline-flex items-center gap-1 rounded-lg bg-amber-100 text-amber-900 border border-amber-300 text-xs font-medium px-3 py-1.5 hover:bg-amber-200 dark:bg-amber-900/30 dark:border-amber-800 dark:text-amber-200"
-              >
+  <ActionButton
+    type="button"
+    onClick={() => abrirEditarTurma(i)}
+    tone="info"
+    size="xs"
+    aria-label={`Editar turma ${t.nome}`}
+  >
                 <Pencil className="w-4 h-4" aria-hidden="true" />
                 Editar
-              </button>
+              </ActionButton>
 
-              <button
+              <ActionButton
                 type="button"
                 onClick={() => solicitarConfirmacaoRemoverTurma(t, i)}
                 disabled={removendoId === t.id}
-                className="inline-flex items-center gap-1 rounded-lg bg-rose-100 text-rose-700 border border-rose-300 text-xs font-medium px-3 py-1.5 hover:bg-rose-200 dark:bg-rose-900/30 dark:border-rose-800 dark:text-rose-200 disabled:opacity-60 disabled:cursor-not-allowed"
+                tone="danger"
+                size="xs"
+                aria-label={`Remover turma ${t.nome}`}
               >
                 <Trash2 className="w-4 h-4" aria-hidden="true" />
-                {removendoId === t.id ? "Removendo..." : "Remover"}
-              </button>
+                {removendoId === t.id ? "Removendo…" : "Remover"}
+              </ActionButton>
             </div>
           </div>
 
-          <div className="mt-2 text-[13px] text-slate-700 dark:text-slate-200 space-y-1">
+          <div className="mt-3 text-[13px] text-slate-700 dark:text-slate-200 space-y-2">
             <div className="flex flex-wrap gap-1 items-start">
               <CalendarDays size={14} className="text-indigo-700 dark:text-indigo-300 mt-[2px]" />
-              <span className="font-medium">{qtd} encontro(s)</span>
-              <span>•</span>
               <span>
                 {formatarDataBrasileira(di)} a {formatarDataBrasileira(df)}
               </span>
             </div>
-
-            {qtd > 0 && (
-              <ul className="text-xs text-slate-600 dark:text-slate-300 list-disc list-inside">
-                {baseDatas.map((d, idx) => (
-                  <li key={`${t.id ?? i}-d-${idx}`} className="break-words">
-                    {formatarDataBrasileira(d.data)} — {hh(d.horario_inicio)} às {hh(d.horario_fim)}
-                  </li>
-                ))}
-              </ul>
-            )}
 
             {hi && hf && (
               <div className="flex flex-wrap gap-1 items-start">
@@ -826,39 +1023,44 @@ export default function ModalEvento({
               </div>
             )}
 
-            <div className="flex flex-wrap gap-3 items-start">
-              <span className="flex items-start gap-1">
-                <Users size={14} className="text-indigo-700 dark:text-indigo-300 mt-[2px]" />
-                <span>{Number(t.vagas_total) || 0} vagas</span>
-              </span>
+            {qtd > 0 && (
+              <details className="rounded-xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 p-2">
+                <summary className="cursor-pointer text-xs font-extrabold text-slate-800 dark:text-slate-100">
+                  Ver encontros
+                </summary>
+                <ul className="mt-2 text-xs text-slate-600 dark:text-slate-300 list-disc list-inside">
+                  {baseDatas.map((d, idx) => (
+                    <li key={`${t.id ?? i}-d-${idx}`} className="break-words">
+                      {formatarDataBrasileira(d.data)} — {hh(d.horario_inicio)} às {hh(d.horario_fim)}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
 
-              <span className="flex items-start gap-1">
-                <Clock size={14} className="text-indigo-700 dark:text-indigo-300 mt-[2px]" />
-                <span>{Number(t.carga_horaria) || 0}h</span>
-              </span>
-            </div>
-
-            <div className="flex flex-wrap gap-2 items-center pt-1">
-              {instrs.length > 0 && (
-                <div className="text-xs">
-                  <span className="font-semibold">Instrutores: </span>
-                  <span>
-                    {instrs.map((id, idx) => (
-                      <span key={id}>
-                        {nomePorId(id)}
-                        {idx < instrs.length - 1 ? ", " : ""}
-                      </span>
-                    ))}
-                  </span>
-                </div>
-              )}
-              {Number.isFinite(assinante) && (
-                <div className="text-xs">
-                  <span className="font-semibold">Assinante: </span>
-                  <span>{nomePorId(assinante)}</span>
-                </div>
-              )}
-            </div>
+            {(instrs.length > 0 || Number.isFinite(assinante)) && (
+              <div className="rounded-xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 p-2">
+                {instrs.length > 0 && (
+                  <div className="text-xs">
+                    <span className="font-extrabold">Instrutores: </span>
+                    <span>
+                      {instrs.map((id, idx) => (
+                        <span key={id}>
+                          {nomePorId(id)}
+                          {idx < instrs.length - 1 ? ", " : ""}
+                        </span>
+                      ))}
+                    </span>
+                  </div>
+                )}
+                {Number.isFinite(assinante) && (
+                  <div className="text-xs mt-1">
+                    <span className="font-extrabold">Assinante: </span>
+                    <span>{nomePorId(assinante)}</span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       );
@@ -869,170 +1071,374 @@ export default function ModalEvento({
   return (
     <>
       <Modal
-        isOpen={isOpen}
+        isOpen={effectiveOpen}
         onClose={closeBlocked ? undefined : onClose}
         level={0}
-        maxWidth="max-w-3xl"
+        maxWidth="max-w-4xl"
         labelledBy={titleId}
         describedBy={descId}
         closeOnBackdrop={!closeBlocked}
         closeOnEsc={!closeBlocked}
       >
-        <div className="grid grid-rows-[auto,1fr,auto] max-h-[90vh] rounded-2xl overflow-hidden bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/10 shadow-2xl">
-          <div className="h-1 bg-gradient-to-r from-emerald-600 via-teal-500 to-cyan-500" />
+        <div className="grid grid-rows-[auto,1fr,auto] max-h-[92vh] rounded-3xl overflow-hidden bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/10 shadow-2xl">
+          {/* Top gradient bar */}
+          <div className="h-1.5 bg-gradient-to-r from-emerald-600 via-indigo-600 to-fuchsia-600" />
 
           {/* HEADER */}
-          <div className="p-5 border-b border-black/5 dark:border-white/10 bg-white/80 dark:bg-zinc-900/80 backdrop-blur">
-            <div className="flex items-center justify-between">
-              <h2 id={titleId} className="text-lg sm:text-xl font-extrabold tracking-tight flex items-center gap-2">
-                <ShieldCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
-                {evento?.id ? "Editar Evento" : "Novo Evento"}
-              </h2>
-              <button
-                type="button"
-                onClick={closeBlocked ? undefined : onClose}
-                disabled={closeBlocked}
-                className="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-black/5 dark:hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-60"
-                aria-label="Fechar"
-              >
-                <X className="w-5 h-5" aria-hidden="true" />
-              </button>
+          <div className="relative p-5 sm:p-6 border-b border-black/5 dark:border-white/10 bg-white/80 dark:bg-zinc-900/80 backdrop-blur">
+          <div className="absolute inset-0 pointer-events-none">
+              <div className="absolute -top-16 -left-24 w-56 h-56 rounded-full bg-emerald-500/12 blur-2xl" />
+              <div className="absolute -bottom-20 -right-24 w-64 h-64 rounded-full bg-teal-500/12 blur-2xl" />
             </div>
-            <p id={descId} className="sr-only">
-              Formulário para criação ou edição de evento, incluindo turmas, anexos e restrições de acesso.
-            </p>
+
+            <div className="relative flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+              <div className="min-w-0">
+                <h2
+                  id={titleId}
+                  className="text-lg sm:text-2xl font-extrabold tracking-tight flex items-center gap-2"
+                >
+                  <span className="inline-flex items-center justify-center w-9 h-9 rounded-2xl bg-black/5 dark:bg-white/5">
+                    <ShieldCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                  </span>
+                  <span className="truncate">{evento?.id ? "Editar Evento" : "Novo Evento"}</span>
+                </h2>
+
+                <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
+                  Configure dados, turmas, anexos e a avaliação pós-curso.
+                </p>
+
+                <p id={descId} className="sr-only">
+                  Formulário para criação ou edição de evento, incluindo turmas, anexos e restrições de acesso.
+                </p>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {tipo ? (
+                    <Chip tone="indigo" title="Tipo do evento">
+                      <Layers3 className="w-3.5 h-3.5" aria-hidden="true" /> {tipo}
+                    </Chip>
+                  ) : (
+                    <Chip tone="zinc" title="Tipo pendente">
+                      <HelpCircle className="w-3.5 h-3.5" aria-hidden="true" /> Tipo pendente
+                    </Chip>
+                  )}
+
+                  {unidadeNome ? (
+                    <Chip tone="emerald" title="Unidade">
+                      <Building2 className="w-3.5 h-3.5" aria-hidden="true" /> {unidadeNome}
+                    </Chip>
+                  ) : (
+                    <Chip tone="zinc" title="Unidade pendente">
+                      <HelpCircle className="w-3.5 h-3.5" aria-hidden="true" /> Unidade pendente
+                    </Chip>
+                  )}
+
+                  <Chip
+                    tone={restrito ? "amber" : "zinc"}
+                    title={restrito ? "Evento restrito" : "Evento público interno"}
+                  >
+                    {restrito ? <Lock className="w-3.5 h-3.5" aria-hidden="true" /> : <Unlock className="w-3.5 h-3.5" aria-hidden="true" />}
+                    {restrito ? "Restrito" : "Padrão"}
+                  </Chip>
+
+                  <Chip tone="violet" title="Pós-curso">
+                    <Sparkles className="w-3.5 h-3.5" aria-hidden="true" />
+                    {posCursoTipo === "questionario"
+                      ? "Questionário"
+                      : posCursoTipo === "teste"
+                      ? "Teste"
+                      : "Sem avaliação"}
+                  </Chip>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 justify-end">
+                {/* ✅ ações rápidas no topo (ótimo no mobile) */}
+                <button
+                  type="button"
+                  onClick={closeBlocked ? undefined : onClose}
+                  disabled={closeBlocked}
+                  className="hidden sm:inline-flex rounded-2xl px-4 py-2.5 bg-slate-200 hover:bg-slate-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-900 dark:text-slate-100 font-extrabold focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-60"
+                >
+                  Cancelar
+                </button>
+
+                <button
+                  type="submit"
+                  form={`form-evento-${uid}`}
+                  disabled={salvando}
+                  className={`hidden sm:inline-flex items-center gap-2 rounded-2xl px-4 py-2.5 font-extrabold text-white ${
+                    salvando
+                      ? "bg-emerald-900 cursor-not-allowed"
+                      : "bg-emerald-700 hover:bg-emerald-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500"
+                  }`}
+                >
+                  <Save className="w-4 h-4" aria-hidden="true" />
+                  {salvando ? "Salvando..." : "Salvar"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={closeBlocked ? undefined : onClose}
+                  disabled={closeBlocked}
+                  className="inline-flex items-center justify-center rounded-2xl p-2 hover:bg-black/5 dark:hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-60"
+                  aria-label="Fechar"
+                  title={closeBlocked ? "Aguarde o salvamento" : "Fechar"}
+                >
+                  <X className="w-5 h-5" aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+
+            {/* Ministats */}
+            <div className="relative mt-5 grid grid-cols-2 sm:grid-cols-5 gap-2">
+              <StatMini icon={Layers3} label="Turmas" value={stats.turmas} tone="zinc" />
+              <StatMini icon={CalendarDays} label="Encontros" value={stats.encontros} tone="indigo" />
+              <StatMini icon={Clock} label="Carga total" value={`${stats.cargaTotal}h`} tone="emerald" />
+              <StatMini icon={Lock} label="Restrição" value={stats.restrito ? "Sim" : "Não"} tone={stats.restrito ? "amber" : "sky"} />
+              <StatMini icon={Paperclip} label="Anexos" value={stats.anexos} tone="violet" />
+            </div>
+
+            {/* ✅ atalhos por seção (mobile-friendly, horizontal scroll) */}
+            <div className="relative mt-4 flex gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]">
+              {SECOES.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => scrollToSection(s.id)}
+                  className="shrink-0 inline-flex items-center gap-2 rounded-full px-3 py-2 text-xs font-extrabold border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
+                  {s.label}
+                </button>
+              ))}
+            </div>
           </div>
 
+
           {/* BODY */}
-          <div className="p-5 overflow-y-auto">
+          <div className="p-5 sm:p-6 overflow-y-auto">
             {isPending ? (
               <p className="text-center text-sm text-slate-500" role="status" aria-live="polite">
                 Carregando…
               </p>
             ) : (
-              <form id="form-evento" onSubmit={handleSubmit} className="space-y-4" aria-labelledby={titleId} noValidate>
-                {/* TÍTULO */}
-                <div className="grid gap-1">
-                  <label htmlFor="evento-titulo" className="text-sm font-medium">
-                    Título <span className="text-rose-600">*</span>
-                  </label>
-                  <div className="relative">
-                    <FileText className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
-                    <input
-                      id="evento-titulo"
-                      value={titulo}
-                      onChange={(e) => setTitulo(e.target.value)}
-                      placeholder="Ex.: Curso de Atualização em Urgência"
-                      className="w-full pl-10 pr-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                      required
-                    />
+              <form
+                id={`form-evento-${uid}`}
+                onSubmit={handleSubmit}
+                className="space-y-5"
+                aria-labelledby={titleId}
+                noValidate
+              >
+                {/* Bloco principal */}
+                <section
+                  id={`sec-dados-${uid}`}
+                  className="rounded-3xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 p-4 sm:p-5 shadow-sm scroll-mt-3"
+                >
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="inline-flex items-center justify-center w-9 h-9 rounded-2xl bg-black/5 dark:bg-white/5">
+                      <FileText className="w-5 h-5 text-indigo-600 dark:text-indigo-300" aria-hidden="true" />
+                    </span>
+                    <h3 className="text-base sm:text-lg font-extrabold">Dados do Evento</h3>
                   </div>
-                </div>
 
-                {/* DESCRIÇÃO */}
-                <div className="grid gap-1">
-                  <label htmlFor="evento-descricao" className="text-sm font-medium">Descrição</label>
-                  <div className="relative">
-                    <FileText className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
-                    <textarea
-                      id="evento-descricao"
-                      value={descricao}
-                      onChange={(e) => setDescricao(e.target.value)}
-                      placeholder="Contexto, objetivos e observações do evento."
-                      className="w-full pl-10 pr-3 py-2 h-24 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                    />
-                  </div>
-                </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    {/* TÍTULO */}
+                    <div className="grid gap-1 sm:col-span-2">
+                      <label htmlFor={`evento-titulo-${uid}`} className="text-sm font-medium">
+                        Título <span className="text-rose-600">*</span>
+                      </label>
+                      <div className="relative">
+                        <FileText className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
+                        <input
+                          id={`evento-titulo-${uid}`}
+                          value={titulo}
+                          onChange={(e) => setTitulo(e.target.value)}
+                          placeholder="Ex.: Curso de Atualização em Urgência"
+                          className="w-full pl-10 pr-3 py-2.5 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                          required
+                        />
+                      </div>
+                    </div>
 
-                {/* PÚBLICO-ALVO */}
-                <div className="grid gap-1">
-                  <label htmlFor="evento-publico" className="text-sm font-medium">Público-alvo</label>
-                  <div className="relative">
-                    <Info className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
-                    <input
-                      id="evento-publico"
-                      value={publicoAlvo}
-                      onChange={(e) => setPublicoAlvo(e.target.value)}
-                      placeholder="Ex.: Profissionais da APS, enfermeiros, médicos"
-                      className="w-full pl-10 pr-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                    />
-                  </div>
-                </div>
+                    {/* DESCRIÇÃO */}
+                    <div className="grid gap-1 sm:col-span-2">
+                      <label htmlFor={`evento-descricao-${uid}`} className="text-sm font-medium">
+                        Descrição
+                      </label>
+                      <div className="relative">
+                        <FileText className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
+                        <textarea
+                          id={`evento-descricao-${uid}`}
+                          value={descricao}
+                          onChange={(e) => setDescricao(e.target.value)}
+                          placeholder="Contexto, objetivos e observações do evento."
+                          className="w-full pl-10 pr-3 py-2.5 h-24 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+                    </div>
 
-                {/* LOCAL */}
-                <div className="grid gap-1">
-                  <label htmlFor="evento-local" className="text-sm font-medium">
-                    Local <span className="text-rose-600">*</span>
-                  </label>
-                  <div className="relative">
-                    <MapPin className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
-                    <input
-                      id="evento-local"
-                      value={local}
-                      onChange={(e) => setLocal(e.target.value)}
-                      placeholder="Ex.: Auditório da Escola da Saúde"
-                      className="w-full pl-10 pr-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                      required
-                    />
-                  </div>
-                </div>
+                    {/* PÚBLICO-ALVO */}
+                    <div className="grid gap-1 sm:col-span-2">
+                      <label htmlFor={`evento-publico-${uid}`} className="text-sm font-medium">
+                        Público-alvo
+                      </label>
+                      <div className="relative">
+                        <Info className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
+                        <input
+                          id={`evento-publico-${uid}`}
+                          value={publicoAlvo}
+                          onChange={(e) => setPublicoAlvo(e.target.value)}
+                          placeholder="Ex.: Profissionais da APS, enfermeiros, médicos"
+                          className="w-full pl-10 pr-3 py-2.5 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+                    </div>
 
-                {/* TIPO */}
-                <div className="grid gap-1">
-                  <label htmlFor="evento-tipo" className="text-sm font-medium">
-                    Tipo <span className="text-rose-600">*</span>
-                  </label>
-                  <div className="relative">
-                    <Layers3 className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
-                    <select
-                      id="evento-tipo"
-                      value={String(tipo ?? "")}
-                      onChange={(e) => setTipo(String(e.target.value))}
-                      className="w-full pl-10 pr-10 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                      required
-                    >
-                      <option value="">Selecione o tipo</option>
-                      {TIPOS_EVENTO.map((t) => (
-                        <option key={t} value={t}>{t}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
+                    {/* LOCAL */}
+                    <div className="grid gap-1">
+                      <label htmlFor={`evento-local-${uid}`} className="text-sm font-medium">
+                        Local <span className="text-rose-600">*</span>
+                      </label>
+                      <div className="relative">
+                        <MapPin className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
+                        <input
+                          id={`evento-local-${uid}`}
+                          value={local}
+                          onChange={(e) => setLocal(e.target.value)}
+                          placeholder="Ex.: Auditório da Escola da Saúde"
+                          className="w-full pl-10 pr-3 py-2.5 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                          required
+                        />
+                      </div>
+                    </div>
 
-                {/* UNIDADE */}
-                <div className="grid gap-1">
-                  <label htmlFor="evento-unidade" className="text-sm font-medium">
-                    Unidade <span className="text-rose-600">*</span>
-                  </label>
-                  <div className="relative">
-                    <Layers3 className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
-                    <select
-                      id="evento-unidade"
-                      value={String(unidadeId ?? "")}
-                      onChange={(e) => setUnidadeId(String(e.target.value))}
-                      className="w-full pl-10 pr-10 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                      required
-                    >
-                      <option value="">Selecione a unidade</option>
-                      {unidades.map((u) => (
-                        <option key={u.id} value={String(u.id)}>{u.nome}</option>
-                      ))}
-                    </select>
+                    {/* TIPO */}
+                    <div className="grid gap-1">
+                      <label htmlFor={`evento-tipo-${uid}`} className="text-sm font-medium">
+                        Tipo <span className="text-rose-600">*</span>
+                      </label>
+                      <div className="relative">
+                        <Layers3 className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
+                        <select
+                          id={`evento-tipo-${uid}`}
+                          value={String(tipo ?? "")}
+                          onChange={(e) => setTipo(String(e.target.value))}
+                          className="w-full pl-10 pr-10 py-2.5 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                          required
+                        >
+                          <option value="">Selecione o tipo</option>
+                          {TIPOS_EVENTO.map((t) => (
+                            <option key={t} value={t}>
+                              {t}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* UNIDADE */}
+                    <div className="grid gap-1 sm:col-span-2">
+                      <label htmlFor={`evento-unidade-${uid}`} className="text-sm font-medium">
+                        Unidade <span className="text-rose-600">*</span>
+                      </label>
+                      <div className="relative">
+                        <Building2 className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
+                        <select
+                          id={`evento-unidade-${uid}`}
+                          value={String(unidadeId ?? "")}
+                          onChange={(e) => setUnidadeId(String(e.target.value))}
+                          className="w-full pl-10 pr-10 py-2.5 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                          required
+                        >
+                          <option value="">Selecione a unidade</option>
+                          {unidades.map((u) => (
+                            <option key={u.id} value={String(u.id)}>
+                              {u.nome}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
                   </div>
-                </div>
+                </section>
+
+                {/* Pós-curso */}
+                <section
+                  id={`sec-pos-${uid}`}
+                  className="rounded-3xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 p-4 sm:p-5 shadow-sm scroll-mt-3"
+                >
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="inline-flex items-center justify-center w-9 h-9 rounded-2xl bg-black/5 dark:bg-white/5">
+                      <Sparkles className="w-5 h-5 text-fuchsia-600 dark:text-fuchsia-300" aria-hidden="true" />
+                    </span>
+                    <div className="min-w-0">
+                      <h3 className="text-base sm:text-lg font-extrabold">Avaliação pós-curso</h3>
+                      <p className="text-xs text-zinc-600 dark:text-zinc-300">
+                        Escolha se o evento terá <strong>questionário</strong> ou <strong>teste</strong> após o término.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    {POS_CURSO_OPCOES.map((opt) => {
+                      const Icon = opt.icon;
+                      const active = posCursoTipo === opt.key;
+                      return (
+                        <button
+                          key={opt.key}
+                          type="button"
+                          onClick={() => setPosCursoTipo(opt.key)}
+                          className={`text-left rounded-2xl border p-3 transition shadow-sm ${
+                            active
+                              ? "border-emerald-400 bg-emerald-50/70 dark:bg-emerald-950/20"
+                              : "border-black/10 dark:border-white/10 bg-white/80 dark:bg-zinc-900/40 hover:bg-black/5 dark:hover:bg-white/5"
+                          }`}
+                          aria-pressed={active ? "true" : "false"}
+                        >
+                          <div className="flex items-start gap-2">
+                            <span className="inline-flex items-center justify-center w-9 h-9 rounded-2xl bg-black/5 dark:bg-white/5">
+                              <Icon className="w-5 h-5" aria-hidden="true" />
+                            </span>
+                            <div className="min-w-0">
+                              <div className="font-extrabold">{opt.label}</div>
+                              <div className="text-xs text-zinc-600 dark:text-zinc-300">{opt.desc}</div>
+                              {active && (
+                                <div className="mt-2">
+                                  <Chip tone="emerald">Selecionado</Chip>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {posCursoTipo !== "nenhum" && (
+                    <div className="mt-3 rounded-2xl border border-black/10 dark:border-white/10 bg-white/80 dark:bg-zinc-900/40 p-3 text-xs text-zinc-700 dark:text-zinc-200">
+                      <strong>Dica:</strong> Na próxima etapa, vamos configurar as perguntas e regras (nota mínima, tentativas, etc.).
+                    </div>
+                  )}
+                </section>
 
                 {/* 🔒 RESTRIÇÃO */}
-                <fieldset className="border rounded-xl p-4 mt-2 border-black/10 dark:border-white/10 bg-white/50 dark:bg-zinc-900/40">
-                  <legend className="px-1 font-semibold flex items-center gap-2">
-                    {restrito ? <Lock size={16} /> : <Unlock size={16} />} Visibilidade do evento
-                    {restrito && restritoModo === "lista_registros" && regCount > 0 && (
-                      <span className="ml-2 inline-flex items-center justify-center text-[11px] px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 dark:bg-zinc-800 dark:text-zinc-200">
-                        {regCount}
-                      </span>
-                    )}
-                  </legend>
+                <section
+                  id={`sec-vis-${uid}`}
+                  className="rounded-3xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 p-4 sm:p-5 shadow-sm scroll-mt-3"
+                >
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="inline-flex items-center justify-center w-9 h-9 rounded-2xl bg-black/5 dark:bg-white/5">
+                      <Lock className="w-5 h-5 text-amber-600 dark:text-amber-300" aria-hidden="true" />
+                    </span>
+                    <div className="min-w-0">
+                      <h3 className="text-base sm:text-lg font-extrabold">Visibilidade do evento</h3>
+                      <p className="text-xs text-zinc-600 dark:text-zinc-300">
+                        Controle quem pode ver/inscrever-se no evento (por registros, cargos ou unidades).
+                      </p>
+                    </div>
+                  </div>
 
-                  <label className="inline-flex items-center gap-2 mt-2">
+                  <label className="inline-flex items-center gap-2">
                     <input
                       type="checkbox"
                       checked={restrito}
@@ -1043,7 +1449,7 @@ export default function ModalEvento({
                         else if (!restritoModo) setRestritoModo("todos_servidores");
                       }}
                     />
-                    <span>Evento restrito</span>
+                    <span className="font-medium">{restrito ? "Evento restrito" : "Evento padrão"}</span>
                   </label>
 
                   {restrito && (
@@ -1101,7 +1507,7 @@ export default function ModalEvento({
 
                       {/* Sub-seções */}
                       {restritoModo === "lista_registros" && (
-                        <div className="mt-2 space-y-2">
+                        <div className="mt-3 space-y-2">
                           <div className="flex gap-2">
                             <input
                               value={registroInput}
@@ -1119,21 +1525,21 @@ export default function ModalEvento({
                                 addRegistrosBulk(txt);
                               }}
                               placeholder="Cole registros (extraímos blocos de 6 dígitos) e Enter"
-                              className="w-full px-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                              className="w-full px-3 py-2.5 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                             />
-                            <button
-                              type="button"
-                              onClick={addRegistro}
-                              className="px-3 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500"
-                            >
-                              Adicionar
-                            </button>
+                            <ActionButton
+  type="button"
+  onClick={addRegistro}
+  tone="success"
+  aria-label="Adicionar registros à lista"
+>
+  <PlusCircle className="w-4 h-4" aria-hidden="true" />
+  Adicionar
+</ActionButton>
                           </div>
 
                           <div className="mt-1 flex items-center justify-between">
-                            <div className="text-xs text-slate-600 dark:text-slate-300">
-                              {regCount} registro(s) na lista
-                            </div>
+                            <div className="text-xs text-slate-600 dark:text-slate-300">{regCount} registro(s) na lista</div>
                             {regCount > 0 && (
                               <button
                                 type="button"
@@ -1171,22 +1577,24 @@ export default function ModalEvento({
                       )}
 
                       {restritoModo === "cargos" && (
-                        <div className="mt-2 space-y-2">
+                        <div className="mt-3 space-y-2">
                           <div className="flex gap-2">
                             <select
                               value={String(cargoAdd || "")}
                               onChange={(e) => setCargoAdd(e.target.value)}
-                              className="w-full px-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                              className="w-full px-3 py-2.5 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                             >
                               <option value="">Selecione o cargo</option>
                               {cargosSugestoes.map((c) => (
-                                <option key={c} value={c}>{c}</option>
+                                <option key={c} value={c}>
+                                  {c}
+                                </option>
                               ))}
                             </select>
                             <button
                               type="button"
                               onClick={addCargo}
-                              className="px-3 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500"
+                              className="px-3 py-2.5 rounded-2xl bg-emerald-700 hover:bg-emerald-600 text-white font-extrabold shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500"
                             >
                               Adicionar
                             </button>
@@ -1219,24 +1627,26 @@ export default function ModalEvento({
                       )}
 
                       {restritoModo === "unidades" && (
-                        <div className="mt-2 space-y-2">
+                        <div className="mt-3 space-y-2">
                           <div className="flex gap-2">
                             <select
                               value={String(unidadeAddId || "")}
                               onChange={(e) => setUnidadeAddId(e.target.value)}
-                              className="w-full px-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                              className="w-full px-3 py-2.5 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                             >
                               <option value="">Selecione a unidade</option>
                               {unidades
                                 .filter((u) => !unidadesPermitidas.includes(Number(u.id)))
                                 .map((u) => (
-                                  <option key={u.id} value={String(u.id)}>{u.nome}</option>
+                                  <option key={u.id} value={String(u.id)}>
+                                    {u.nome}
+                                  </option>
                                 ))}
                             </select>
                             <button
                               type="button"
                               onClick={addUnidade}
-                              className="px-3 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500"
+                              className="px-3 py-2.5 rounded-2xl bg-emerald-700 hover:bg-emerald-600 text-white font-extrabold shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500"
                             >
                               Adicionar
                             </button>
@@ -1268,207 +1678,232 @@ export default function ModalEvento({
                       )}
                     </div>
                   )}
-                </fieldset>
+                </section>
 
                 {/* UPLOADS */}
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {/* Folder */}
-                  <div className="grid gap-1">
-                    <label className="text-sm font-medium flex items-center gap-2">
-                      <ImageIcon size={16} /> Folder do evento (PNG/JPG)
-                    </label>
+                <section
+                  id={`sec-anexos-${uid}`}
+                  className="rounded-3xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 p-4 sm:p-5 shadow-sm scroll-mt-3"
+                >
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="inline-flex items-center justify-center w-9 h-9 rounded-2xl bg-black/5 dark:bg-white/5">
+                      <Paperclip className="w-5 h-5 text-violet-600 dark:text-violet-300" aria-hidden="true" />
+                    </span>
+                    <div className="min-w-0">
+                      <h3 className="text-base sm:text-lg font-extrabold">Anexos</h3>
+                      <p className="text-xs text-zinc-600 dark:text-zinc-300">Folder (imagem) e Programação (PDF).</p>
+                    </div>
+                  </div>
 
-                    {!folderFile && !!folderUrlExistente && !removerFolderExistente && (
-                      <div className="rounded-lg border border-black/10 dark:border-white/10 p-2">
-                        <img
-                          src={withBackendBase(folderUrlExistente)}
-                          alt="Folder atual do evento"
-                          className="max-h-40 rounded-md"
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {/* Folder */}
+                    <div className="grid gap-2">
+                      <label className="text-sm font-extrabold flex items-center gap-2">
+                        <ImageIcon size={16} /> Folder do evento (PNG/JPG)
+                      </label>
+
+                      {!folderFile && !!folderUrlExistente && !removerFolderExistente && (
+                        <div className="rounded-2xl border border-black/10 dark:border-white/10 p-2 bg-white/80 dark:bg-zinc-900/40">
+                          <img
+                            src={withBackendBase(folderUrlExistente)}
+                            alt="Folder atual do evento"
+                            className="max-h-44 w-full object-cover rounded-xl border border-black/10 dark:border-white/10"
+                          />
+                          <div className="mt-2 flex items-center justify-between gap-3">
+                            <a
+                              href={withBackendBase(folderUrlExistente)}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-xs underline text-emerald-700 dark:text-emerald-300"
+                            >
+                              Abrir imagem
+                            </a>
+                            <button
+                              type="button"
+                              onClick={limparFolder}
+                              className="text-xs underline text-red-700 dark:text-red-300"
+                              title="Remover imagem existente"
+                            >
+                              Remover
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      <label className="flex items-center justify-between gap-2 px-3 py-2.5 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 cursor-pointer hover:border-emerald-400/60 transition-colors">
+                        <span className="inline-flex items-center gap-2">
+                          <Paperclip size={16} />
+                          <span className="text-sm">{folderFile ? folderFile.name : `Selecionar imagem… (máx. ${MAX_IMG_MB}MB)`}</span>
+                        </span>
+                        <Chip tone="zinc">PNG/JPG</Chip>
+                        <input
+                          ref={folderInputRef}
+                          type="file"
+                          accept="image/png,image/jpeg"
+                          className="hidden"
+                          onChange={onChangeFolder}
+                          aria-label="Selecionar folder do evento"
                         />
-                        <div className="mt-2 flex items-center gap-3">
+                      </label>
+
+                      {folderPreview && (
+                        <div className="rounded-2xl border border-black/10 dark:border-white/10 p-2 bg-white/80 dark:bg-zinc-900/40">
+                          <img
+                            src={folderPreview}
+                            alt="Pré-visualização do folder"
+                            className="max-h-44 w-full object-cover rounded-xl border border-black/10 dark:border-white/10"
+                          />
+                          <div className="mt-2">
+                            <button type="button" onClick={limparFolder} className="text-xs underline text-red-700 dark:text-red-300">
+                              Remover imagem
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {removerFolderExistente && (
+                        <p className="text-xs text-rose-700 dark:text-rose-300">✅ A imagem existente será removida ao salvar.</p>
+                      )}
+                    </div>
+
+                    {/* Programação */}
+                    <div className="grid gap-2">
+                      <label className="text-sm font-extrabold flex items-center gap-2">
+                        <FileIcon size={16} /> Programação (PDF)
+                      </label>
+
+                      {!programacaoFile && !!programacaoUrlExistente && !removerProgramacaoExistente && (
+                        <div className="rounded-2xl border border-black/10 dark:border-white/10 p-3 bg-white/80 dark:bg-zinc-900/40 flex items-center justify-between gap-3">
                           <a
-                            href={withBackendBase(folderUrlExistente)}
+                            href={withBackendBase(programacaoUrlExistente)}
                             target="_blank"
                             rel="noreferrer"
-                            className="text-xs underline text-emerald-700 dark:text-emerald-300"
+                            className="text-sm underline text-emerald-700 dark:text-emerald-300 break-words"
                           >
-                            Abrir imagem em nova aba
+                            {programacaoNomeExistente || "Baixar programação (PDF)"}
                           </a>
                           <button
                             type="button"
-                            onClick={limparFolder}
-                            className="text-xs underline text-red-700 dark:text-red-300"
-                            title="Remover imagem existente"
+                            onClick={limparProgramacao}
+                            className="text-xs underline text-red-700 dark:text-red-300 whitespace-nowrap"
+                            title="Remover PDF existente"
                           >
-                            Remover imagem
+                            Remover
                           </button>
                         </div>
-                      </div>
-                    )}
+                      )}
 
-                    <label className="flex items-center gap-2 px-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 cursor-pointer hover:border-emerald-400/60 transition-colors">
-                      <Paperclip size={16} />
-                      <span className="text-sm">
-                        {folderFile ? folderFile.name : `Selecionar imagem… (máx. ${MAX_IMG_MB}MB)`}
-                      </span>
-                      <input
-                        ref={folderInputRef}
-                        type="file"
-                        accept="image/png,image/jpeg"
-                        className="hidden"
-                        onChange={onChangeFolder}
-                        aria-label="Selecionar folder do evento"
-                      />
-                    </label>
-
-                    {folderPreview && (
-                      <div className="mt-2">
-                        <img
-                          src={folderPreview}
-                          alt="Pré-visualização do folder"
-                          className="max-h-40 rounded-lg border border-black/10 dark:border-white/10"
+                      <label className="flex items-center justify-between gap-2 px-3 py-2.5 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 cursor-pointer hover:border-emerald-400/60 transition-colors">
+                        <span className="inline-flex items-center gap-2">
+                          <Paperclip size={16} />
+                          <span className="text-sm">{programacaoFile ? programacaoFile.name : `Selecionar PDF… (máx. ${MAX_PDF_MB}MB)`}</span>
+                        </span>
+                        <Chip tone="zinc">PDF</Chip>
+                        <input
+                          ref={pdfInputRef}
+                          type="file"
+                          accept="application/pdf"
+                          className="hidden"
+                          onChange={onChangeProgramacao}
+                          aria-label="Selecionar PDF de programação"
                         />
-                        <div className="mt-2">
-                          <button
-                            type="button"
-                            onClick={limparFolder}
-                            className="text-xs underline text-red-700 dark:text-red-300"
-                          >
-                            Remover imagem
+                      </label>
+
+                      {programacaoFile && (
+                        <div className="mt-1">
+                          <button type="button" onClick={limparProgramacao} className="text-xs underline text-red-700 dark:text-red-300">
+                            Remover PDF
                           </button>
                         </div>
-                      </div>
-                    )}
+                      )}
 
-                    {removerFolderExistente && (
-                      <p className="text-xs text-rose-700 dark:text-rose-300">
-                        ✅ A imagem existente será removida ao salvar.
-                      </p>
-                    )}
+                      {removerProgramacaoExistente && (
+                        <p className="text-xs text-rose-700 dark:text-rose-300">✅ O PDF existente será removido ao salvar.</p>
+                      )}
+                    </div>
                   </div>
-
-                  {/* Programação */}
-                  <div className="grid gap-1">
-                    <label className="text-sm font-medium flex items-center gap-2">
-                      <FileIcon size={16} /> Programação (PDF)
-                    </label>
-
-                    {!programacaoFile && !!programacaoUrlExistente && !removerProgramacaoExistente && (
-                      <div className="rounded-lg border border-black/10 dark:border-white/10 p-2 flex items-center justify-between">
-                        <a
-                          href={withBackendBase(programacaoUrlExistente)}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-sm underline text-emerald-700 dark:text-emerald-300"
-                        >
-                          {programacaoNomeExistente || "Baixar programação (PDF)"}
-                        </a>
-                        <button
-                          type="button"
-                          onClick={limparProgramacao}
-                          className="text-xs underline text-red-700 dark:text-red-300"
-                          title="Remover PDF existente"
-                        >
-                          Remover PDF
-                        </button>
-                      </div>
-                    )}
-
-                    <label className="flex items-center gap-2 px-3 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 cursor-pointer hover:border-emerald-400/60 transition-colors">
-                      <Paperclip size={16} />
-                      <span className="text-sm">
-                        {programacaoFile ? programacaoFile.name : `Selecionar PDF… (máx. ${MAX_PDF_MB}MB)`}
-                      </span>
-                      <input
-                        ref={pdfInputRef}
-                        type="file"
-                        accept="application/pdf"
-                        className="hidden"
-                        onChange={onChangeProgramacao}
-                        aria-label="Selecionar PDF de programação"
-                      />
-                    </label>
-
-                    {programacaoFile && (
-                      <div className="mt-1">
-                        <button
-                          type="button"
-                          onClick={limparProgramacao}
-                          className="text-xs underline text-red-700 dark:text-red-300"
-                        >
-                          Remover PDF
-                        </button>
-                      </div>
-                    )}
-
-                    {removerProgramacaoExistente && (
-                      <p className="text-xs text-rose-700 dark:text-rose-300">
-                        ✅ O PDF existente será removido ao salvar.
-                      </p>
-                    )}
-                  </div>
-                </div>
+                </section>
 
                 {/* TURMAS */}
-                <div>
-                  <h3 className="text-sm sm:text-base font-semibold mt-4 flex items-center gap-2">
-                    <Layers3 className="w-4 h-4" aria-hidden="true" /> Turmas Cadastradas
-                  </h3>
+                <section
+                  id={`sec-turmas-${uid}`}
+                  className="rounded-3xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 p-4 sm:p-5 shadow-sm scroll-mt-3"
+                >
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="inline-flex items-center justify-center w-9 h-9 rounded-2xl bg-black/5 dark:bg-white/5">
+                      <Users className="w-5 h-5 text-sky-600 dark:text-sky-300" aria-hidden="true" />
+                    </span>
+                    <div className="min-w-0">
+                      <h3 className="text-base sm:text-lg font-extrabold">Turmas</h3>
+                      <p className="text-xs text-zinc-600 dark:text-zinc-300">
+                        Turmas com encontros, instrutores e assinante por turma.
+                      </p>
+                    </div>
+                  </div>
 
                   {turmas.length === 0 ? (
-                    <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">Nenhuma turma cadastrada.</p>
+                    <div className="rounded-2xl border border-dashed border-zinc-300 dark:border-zinc-700 bg-white/60 dark:bg-zinc-900/30 p-4 text-sm text-zinc-600 dark:text-zinc-300">
+                      Nenhuma turma cadastrada ainda.
+                    </div>
                   ) : (
-                    <div className="mt-2 space-y-3">{turmasRender}</div>
+                    <div className="space-y-3">{turmasRender}</div>
                   )}
 
-                  <div className="flex justify-center mt-3">
+                  <div className="flex justify-center mt-4">
                     <button
                       type="button"
                       onClick={abrirCriarTurma}
-                      className="inline-flex items-center gap-2 rounded-xl px-4 py-2 bg-emerald-700 hover:bg-emerald-600 text-white font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500"
+                      className="inline-flex items-center gap-2 rounded-2xl px-4 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white font-extrabold shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500"
                       aria-label="Adicionar nova turma"
                     >
                       <PlusCircle className="w-4 h-4" />
                       Adicionar Turma
                     </button>
                   </div>
-                </div>
+                </section>
               </form>
             )}
           </div>
 
           {/* FOOTER */}
-          <div className="p-4 border-t border-black/5 dark:border-white/10 bg-zinc-50 dark:bg-zinc-800">
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={closeBlocked ? undefined : onClose}
-                disabled={closeBlocked}
-                className="rounded-xl px-4 py-2 bg-slate-200 hover:bg-slate-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-60"
-              >
-                Cancelar
-              </button>
+          <div className="p-4 sm:p-5 border-t border-black/5 dark:border-white/10 bg-zinc-50 dark:bg-zinc-800">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="text-xs text-zinc-600 dark:text-zinc-300">
+                Campos obrigatórios: <strong>Título</strong>, <strong>Local</strong>, <strong>Tipo</strong>, <strong>Unidade</strong> e ao menos <strong>1 turma</strong>.
+              </div>
 
-              <button
-                type="submit"
-                form="form-evento"
-                disabled={salvando}
-                className={`rounded-xl px-4 py-2 font-semibold text-white ${
-                  salvando
-                    ? "bg-emerald-900 cursor-not-allowed"
-                    : "bg-emerald-700 hover:bg-emerald-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500"
-                }`}
-              >
-                {salvando ? "Salvando..." : "Salvar"}
-              </button>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={closeBlocked ? undefined : onClose}
+                  disabled={closeBlocked}
+                  className="rounded-2xl px-4 py-2.5 bg-slate-200 hover:bg-slate-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-900 dark:text-slate-100 font-extrabold focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-60"
+                >
+                  Cancelar
+                </button>
+
+                <button
+                  type="submit"
+                  form={`form-evento-${uid}`}
+                  disabled={salvando}
+                  className={`rounded-2xl px-4 py-2.5 font-extrabold text-white ${
+                    salvando
+                      ? "bg-emerald-900 cursor-not-allowed"
+                      : "bg-emerald-700 hover:bg-emerald-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500"
+                  }`}
+                >
+                  {salvando ? "Salvando..." : "Salvar"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
       </Modal>
 
-      {/* ✅ MODAL CONFIRMAÇÃO */}
+      {/* ✅ MODAL CONFIRMAÇÃO (compat open/isOpen) */}
       <ModalConfirmacao
         isOpen={!!confirm.open}
+        open={!!confirm.open}
         title={confirm.title}
         description={confirm.description}
         confirmText="Sim, remover"
@@ -1476,7 +1911,6 @@ export default function ModalEvento({
         danger
         loading={Number.isFinite(Number(confirm?.turma?.id)) && removendoId === confirm?.turma?.id}
         onClose={() => {
-          // evita fechar no meio de uma remoção (quando turma tem id e está removendo)
           const emRemocao = Number.isFinite(Number(confirm?.turma?.id)) && removendoId === confirm?.turma?.id;
           if (emRemocao) return;
           setConfirm((c) => ({ ...c, open: false, turma: null, idx: null }));
@@ -1485,14 +1919,11 @@ export default function ModalEvento({
           const turma = confirm.turma;
           const idx = confirm.idx;
 
-          // fecha o modal imediatamente para dar sensação "snappy" (mas mantém bloqueio se estiver removendo)
           setConfirm((c) => ({ ...c, open: false }));
 
           if (!turma || idx == null) return;
 
           await executarRemocaoTurma(turma, idx);
-
-          // limpa referência por segurança
           setConfirm((c) => ({ ...c, turma: null, idx: null }));
         }}
       />
@@ -1500,6 +1931,7 @@ export default function ModalEvento({
       {/* MODAL TURMA */}
       <ModalTurma
         isOpen={modalTurmaAberto}
+        open={modalTurmaAberto}
         onClose={() => setModalTurmaAberto(false)}
         initialTurma={editandoTurmaIndex != null ? turmas[editandoTurmaIndex] : null}
         usuarios={opcaoInstrutor}
