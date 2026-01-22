@@ -80,11 +80,16 @@ const TIPOS_EVENTO = ["Congresso", "Curso", "Oficina", "Palestra", "Seminário",
 const MAX_IMG_MB = 5;
 const MAX_PDF_MB = 10;
 
-const POS_CURSO_OPCOES = [
-  { key: "nenhum", label: "Sem avaliação", desc: "Não haverá avaliação após o evento.", icon: HelpCircle },
-  { key: "questionario", label: "Questionário", desc: "Perguntas de opinião/feedback após o evento.", icon: ClipboardList },
-  { key: "teste", label: "Teste", desc: "Perguntas para avaliar o aprendizado (nota).", icon: CheckCircle2 },
-];
+/* ========================= Pós-curso (novo) ========================= */
+// ✅ Feedback do curso é SEMPRE obrigatório no sistema.
+// Aqui o admin decide somente se haverá TESTE para liberar certificado.
+const TESTE_DEFAULT = {
+  titulo: "",
+  descricao: "",
+  nota_minima: 7, // 0..10
+  tentativas: 1, // 1..10
+  perguntas: [], // opcional (você pode evoluir depois)
+};
 
 const hh = (s) => (typeof s === "string" ? s.slice(0, 5) : "");
 const minDate = (arr) => arr.map((d) => d.data).sort()[0];
@@ -122,6 +127,16 @@ const parseRegsBulk = (txt) => {
   }
   return [...new Set(out)];
 };
+
+/* ========================= API helpers (normalização) ========================= */
+function asArray(x) {
+  // aceita: [] | {data: []} | {rows: []} | {items: []} | {result: []}
+  if (Array.isArray(x)) return x;
+  if (!x || typeof x !== "object") return [];
+  const candidates = [x.data, x.rows, x.items, x.result, x.results, x.unidades, x.usuarios];
+  for (const c of candidates) if (Array.isArray(c)) return c;
+  return [];
+}
 
 function encontrosParaDatas(turma) {
   const baseHi = hh(turma.horario_inicio || turma.hora_inicio || "08:00");
@@ -316,6 +331,145 @@ function ActionButton({
   );
 }
 
+function ModalConfigTeste({ open, onClose, value, onSave }) {
+  const [draft, setDraft] = useState(value || TESTE_DEFAULT);
+
+  useEffect(() => {
+    if (open) setDraft(value || TESTE_DEFAULT);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  const setNum = (key, min, max) => (e) => {
+    const n = Number(String(e.target.value || "").replace(",", "."));
+    const safe = Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : min;
+    setDraft((p) => ({ ...p, [key]: safe }));
+  };
+
+  if (!open) return null;
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      size="md"
+      align="center"
+      padding
+      labelledBy="cfg-teste-title"
+      describedBy="cfg-teste-desc"
+      closeOnBackdrop
+      closeOnEscape
+      zIndex={1300}
+    >
+      <div className="space-y-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 id="cfg-teste-title" className="text-lg font-extrabold tracking-tight">
+              Configurar teste obrigatório
+            </h3>
+            <p id="cfg-teste-desc" className="text-sm text-zinc-600 dark:text-zinc-300">
+              O participante só libera certificado após: <strong>frequência ≥ 75%</strong> +{" "}
+              <strong>avaliação (feedback)</strong> + <strong>teste aprovado</strong>.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-10 w-10 rounded-2xl grid place-items-center border border-black/10 dark:border-white/10
+                       bg-white/70 dark:bg-zinc-900/60 hover:bg-black/5 dark:hover:bg-white/5"
+            aria-label="Fechar"
+          >
+            <span className="text-2xl leading-none" aria-hidden="true">
+              ×
+            </span>
+          </button>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-1 sm:col-span-2">
+            <label className="text-sm font-extrabold">Título do teste</label>
+            <input
+              value={draft.titulo}
+              onChange={(e) => setDraft((p) => ({ ...p, titulo: e.target.value }))}
+              placeholder="Ex.: Avaliação de conhecimentos"
+              className="w-full px-3 py-2.5 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900
+                         shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+          </div>
+
+          <div className="grid gap-1 sm:col-span-2">
+            <label className="text-sm font-extrabold">Descrição (opcional)</label>
+            <textarea
+              value={draft.descricao}
+              onChange={(e) => setDraft((p) => ({ ...p, descricao: e.target.value }))}
+              placeholder="Regras e observações do teste"
+              className="w-full px-3 py-2.5 h-24 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900
+                         shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+          </div>
+
+          <div className="grid gap-1">
+            <label className="text-sm font-extrabold">Nota mínima</label>
+            <input
+              type="number"
+              min={0}
+              max={10}
+              step={0.1}
+              value={draft.nota_minima}
+              onChange={setNum("nota_minima", 0, 10)}
+              className="w-full px-3 py-2.5 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900
+                         shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+            <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Escala 0 a 10 (aceita decimal).</p>
+          </div>
+
+          <div className="grid gap-1">
+            <label className="text-sm font-extrabold">Tentativas</label>
+            <input
+              type="number"
+              min={1}
+              max={10}
+              step={1}
+              value={draft.tentativas}
+              onChange={setNum("tentativas", 1, 10)}
+              className="w-full px-3 py-2.5 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900
+                         shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+            <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Recomendado: 1 a 3.</p>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 p-3">
+          <div className="text-xs text-zinc-700 dark:text-zinc-200">
+            <strong>Próximo passo:</strong> (quando você quiser) adicionamos editor de perguntas com
+            múltipla escolha / V-F / dissertativa.
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-2xl px-4 py-2.5 bg-slate-200 hover:bg-slate-300 dark:bg-zinc-800 dark:hover:bg-zinc-700
+                       text-slate-900 dark:text-slate-100 font-extrabold"
+          >
+            Cancelar
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onSave?.(draft)}
+            className="rounded-2xl px-4 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white font-extrabold
+                       focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500"
+          >
+            Salvar configuração
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 /* ========================= Componente ========================= */
 export default function ModalEvento({
   isOpen,
@@ -350,8 +504,10 @@ export default function ModalEvento({
   const [unidadeId, setUnidadeId] = useState("");
   const [publicoAlvo, setPublicoAlvo] = useState("");
 
-  // ✅ Pós-curso (questionário/teste)
-  const [posCursoTipo, setPosCursoTipo] = useState("nenhum");
+  // ✅ TESTE (admin decide) — feedback do curso é sempre obrigatório e NÃO entra aqui
+const [testeObrigatorio, setTesteObrigatorio] = useState(false);
+const [testeConfig, setTesteConfig] = useState(TESTE_DEFAULT);
+const [modalTesteAberto, setModalTesteAberto] = useState(false);
 
   // Auxiliares
   const [unidades, setUnidades] = useState([]);
@@ -408,40 +564,51 @@ export default function ModalEvento({
   const [isPending, startTransition] = useTransition();
 
   /* ========= Carregamento paralelo + cache ========= */
-  useEffect(() => {
-    let mounted = true;
+useEffect(() => {
+  let mounted = true;
 
-    if (cacheUnidades) setUnidades(cacheUnidades);
-    if (cacheUsuarios) setUsuarios(cacheUsuarios);
-    if (cacheUnidades && cacheUsuarios) return () => {};
+  if (cacheUnidades) setUnidades(cacheUnidades);
+  if (cacheUsuarios) setUsuarios(cacheUsuarios);
+  if (cacheUnidades && cacheUsuarios) return () => {};
 
-    (async () => {
-      try {
-        const [uRes, usrRes] = await Promise.allSettled([apiGet("/api/unidades"), apiGet("/api/usuarios")]);
-        if (!mounted) return;
+  (async () => {
+    try {
+      const [uRes, usrRes] = await Promise.allSettled([
+        apiGet("/api/unidades"),
+        apiGet("/api/usuarios"),
+      ]);
+      if (!mounted) return;
 
-        if (uRes.status === "fulfilled") {
-          const arr = (Array.isArray(uRes.value) ? uRes.value : []).sort((a, b) =>
-            String(a.nome || "").localeCompare(String(b.nome || ""))
-          );
-          setUnidades(arr);
-          cacheUnidades = arr;
-        }
-
-        if (usrRes.status === "fulfilled") {
-          const arr = Array.isArray(usrRes.value) ? usrRes.value : [];
-          setUsuarios(arr);
-          cacheUsuarios = arr;
-        }
-      } catch (e) {
-        L.warn("bootstrap error", e);
+      if (uRes.status === "fulfilled") {
+        const raw = asArray(uRes.value);
+        const arr = raw
+          .filter(Boolean)
+          .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
+        setUnidades(arr);
+        cacheUnidades = arr;
+        L.info("Unidades carregadas", { total: arr.length });
+      } else {
+        L.warn("Falha ao carregar unidades", uRes.reason);
       }
-    })();
 
-    return () => {
-      mounted = false;
-    };
-  }, []);
+      if (usrRes.status === "fulfilled") {
+        const raw = asArray(usrRes.value);
+        const arr = raw.filter(Boolean);
+        setUsuarios(arr);
+        cacheUsuarios = arr;
+        L.info("Usuários carregados", { total: arr.length });
+      } else {
+        L.warn("Falha ao carregar usuários", usrRes.reason);
+      }
+    } catch (e) {
+      L.warn("bootstrap error", e);
+    }
+  })();
+
+  return () => {
+    mounted = false;
+  };
+}, []);
 
   /* ========= Reidratar ao abrir/trocar id ========= */
   useEffect(() => {
@@ -483,7 +650,9 @@ export default function ModalEvento({
         setCargosPermitidos([]);
         setUnidadesPermitidas([]);
 
-        setPosCursoTipo("nenhum");
+        setTesteObrigatorio(false);
+setTesteConfig(TESTE_DEFAULT);
+setModalTesteAberto(false);
 
         // ✅ novo evento: sem “existentes”
         setFolderUrlExistente(undefined);
@@ -497,14 +666,31 @@ export default function ModalEvento({
         setUnidadeId(evento.unidade_id ? String(evento.unidade_id) : "");
         setPublicoAlvo(evento.publico_alvo || "");
 
-        // pós-curso (se backend já mandar algo, respeita; senão "nenhum")
-        const pc = String(evento.pos_curso_tipo || evento.posCursoTipo || "nenhum").toLowerCase();
-        setPosCursoTipo(["nenhum", "questionario", "teste"].includes(pc) ? pc : "nenhum");
+        // ✅ teste obrigatório (se backend mandar "teste", ativa; qualquer outro vira false)
+const pc = String(evento.pos_curso_tipo || evento.posCursoTipo || "nenhum").toLowerCase();
+setTesteObrigatorio(pc === "teste");
 
-        // existentes vindos do backend
-        setFolderUrlExistente(evento.folder_url || evento.folder || undefined);
-        setProgramacaoUrlExistente(evento.programacao_url || evento.programacao_pdf || undefined);
-        setProgramacaoNomeExistente(evento.programacao_nome || undefined);
+// opcional: se backend já mandar config do teste
+if (evento?.teste_config && typeof evento.teste_config === "object") {
+  setTesteConfig((prev) => ({ ...prev, ...evento.teste_config }));
+} else {
+  setTesteConfig(TESTE_DEFAULT);
+}
+
+        // ✅ existentes vindos do backend
+setFolderUrlExistente(evento.folder_url || evento.folder || undefined);
+
+// ✅ (NOVO) — linha anterior incluída acima
+setProgramacaoUrlExistente(
+  evento.programacao_pdf_url ||
+  evento.programacao_url ||
+  evento.programacao_pdf ||
+  undefined
+);
+
+setProgramacaoNomeExistente(
+  evento.programacao_nome || evento.programacao_pdf_nome || undefined
+);
 
         // turmas (rota leve)
         (async () => {
@@ -571,9 +757,15 @@ export default function ModalEvento({
       try {
         const det = await apiGet(`/api/eventos/${evento.id}`);
 
-        // pós-curso
-        const pc = String(det?.pos_curso_tipo || det?.posCursoTipo || posCursoTipo || "nenhum").toLowerCase();
-        if (["nenhum", "questionario", "teste"].includes(pc)) setPosCursoTipo(pc);
+        // ✅ teste obrigatório
+const pc = String(det?.pos_curso_tipo || det?.posCursoTipo || "nenhum").toLowerCase();
+setTesteObrigatorio(pc === "teste");
+
+// opcional: config
+if (det?.teste_config && typeof det.teste_config === "object") {
+  setTesteConfig((prev) => ({ ...prev, ...det.teste_config }));
+}
+
 
         if (typeof det.restrito === "boolean") setRestrito(!!det.restrito);
 
@@ -834,6 +1026,24 @@ export default function ModalEvento({
       return;
     }
 
+    // ✅ (NOVO) teste obrigatório precisa de config mínima
+    if (testeObrigatorio) {
+      const nm = Number(testeConfig?.nota_minima);
+      const tt = Number(testeConfig?.tentativas);
+      if (!testeConfig?.titulo?.trim()) {
+        toast.error("❌ Configure o teste: informe um título.");
+        return;
+      }
+      if (!Number.isFinite(nm) || nm < 0 || nm > 10) {
+        toast.error("❌ Configure o teste: nota mínima inválida (0 a 10).");
+        return;
+      }
+      if (!Number.isFinite(tt) || tt < 1 || tt > 10) {
+        toast.error("❌ Configure o teste: tentativas inválidas (1 a 10).");
+        return;
+      }
+    }
+
     // Validações por turma
     for (const t of turmas) {
       if (!t.nome || !Number(t.vagas_total) || !Number.isFinite(Number(t.carga_horaria))) {
@@ -904,7 +1114,10 @@ export default function ModalEvento({
       publico_alvo: publicoAlvo,
 
       // ✅ pós-curso
-      pos_curso_tipo: posCursoTipo,
+      pos_curso_tipo: testeObrigatorio ? "teste" : "nenhum",
+
+      // ✅ (NOVO) só envia config se o teste estiver ativo
+      ...(testeObrigatorio ? { teste_config: testeConfig } : {}),
 
       turmas: turmasCompletas,
       restrito: !!restrito,
@@ -1140,14 +1353,10 @@ export default function ModalEvento({
                     {restrito ? "Restrito" : "Padrão"}
                   </Chip>
 
-                  <Chip tone="violet" title="Pós-curso">
-                    <Sparkles className="w-3.5 h-3.5" aria-hidden="true" />
-                    {posCursoTipo === "questionario"
-                      ? "Questionário"
-                      : posCursoTipo === "teste"
-                      ? "Teste"
-                      : "Sem avaliação"}
-                  </Chip>
+                  <Chip tone="violet" title="Teste obrigatório">
+  <Sparkles className="w-3.5 h-3.5" aria-hidden="true" />
+  {testeObrigatorio ? "Teste obrigatório" : "Sem teste"}
+</Chip>
                 </div>
               </div>
 
@@ -1362,64 +1571,76 @@ export default function ModalEvento({
                   </div>
                 </section>
 
-                {/* Pós-curso */}
-                <section
-                  id={`sec-pos-${uid}`}
-                  className="rounded-3xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 p-4 sm:p-5 shadow-sm scroll-mt-3"
-                >
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className="inline-flex items-center justify-center w-9 h-9 rounded-2xl bg-black/5 dark:bg-white/5">
-                      <Sparkles className="w-5 h-5 text-fuchsia-600 dark:text-fuchsia-300" aria-hidden="true" />
-                    </span>
-                    <div className="min-w-0">
-                      <h3 className="text-base sm:text-lg font-extrabold">Avaliação pós-curso</h3>
-                      <p className="text-xs text-zinc-600 dark:text-zinc-300">
-                        Escolha se o evento terá <strong>questionário</strong> ou <strong>teste</strong> após o término.
-                      </p>
-                    </div>
-                  </div>
+                {/* TESTE obrigatório */}
+<section
+  id={`sec-pos-${uid}`}
+  className="rounded-3xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 p-4 sm:p-5 shadow-sm scroll-mt-3"
+>
+  <div className="flex items-center gap-2 mb-3">
+    <span className="inline-flex items-center justify-center w-9 h-9 rounded-2xl bg-black/5 dark:bg-white/5">
+      <CheckCircle2 className="w-5 h-5 text-violet-600 dark:text-violet-300" aria-hidden="true" />
+    </span>
+    <div className="min-w-0">
+      <h3 className="text-base sm:text-lg font-extrabold">Teste obrigatório</h3>
+      <p className="text-xs text-zinc-600 dark:text-zinc-300">
+        A <strong>avaliação (feedback)</strong> do curso já é obrigatória em todos os eventos.
+        Aqui você define apenas se haverá <strong>teste</strong> para liberar o certificado.
+      </p>
+    </div>
+  </div>
 
-                  <div className="grid gap-2 sm:grid-cols-3">
-                    {POS_CURSO_OPCOES.map((opt) => {
-                      const Icon = opt.icon;
-                      const active = posCursoTipo === opt.key;
-                      return (
-                        <button
-                          key={opt.key}
-                          type="button"
-                          onClick={() => setPosCursoTipo(opt.key)}
-                          className={`text-left rounded-2xl border p-3 transition shadow-sm ${
-                            active
-                              ? "border-emerald-400 bg-emerald-50/70 dark:bg-emerald-950/20"
-                              : "border-black/10 dark:border-white/10 bg-white/80 dark:bg-zinc-900/40 hover:bg-black/5 dark:hover:bg-white/5"
-                          }`}
-                          aria-pressed={active ? "true" : "false"}
-                        >
-                          <div className="flex items-start gap-2">
-                            <span className="inline-flex items-center justify-center w-9 h-9 rounded-2xl bg-black/5 dark:bg-white/5">
-                              <Icon className="w-5 h-5" aria-hidden="true" />
-                            </span>
-                            <div className="min-w-0">
-                              <div className="font-extrabold">{opt.label}</div>
-                              <div className="text-xs text-zinc-600 dark:text-zinc-300">{opt.desc}</div>
-                              {active && (
-                                <div className="mt-2">
-                                  <Chip tone="emerald">Selecionado</Chip>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
+  <div className="rounded-2xl border border-black/10 dark:border-white/10 bg-white/80 dark:bg-zinc-900/40 p-3">
+    <label className="flex items-start gap-3">
+      <input
+        type="checkbox"
+        checked={testeObrigatorio}
+        onChange={(e) => setTesteObrigatorio(e.target.checked)}
+      />
+      <div className="min-w-0">
+        <div className="font-extrabold">Exigir teste para gerar certificado</div>
+        <div className="text-xs text-zinc-600 dark:text-zinc-300">
+          Quando ativado, o participante só libera o certificado após:
+          <strong> frequência ≥ 75%</strong> + <strong>avaliação (feedback)</strong> +{" "}
+          <strong>teste aprovado</strong>.
+        </div>
+      </div>
+    </label>
 
-                  {posCursoTipo !== "nenhum" && (
-                    <div className="mt-3 rounded-2xl border border-black/10 dark:border-white/10 bg-white/80 dark:bg-zinc-900/40 p-3 text-xs text-zinc-700 dark:text-zinc-200">
-                      <strong>Dica:</strong> Na próxima etapa, vamos configurar as perguntas e regras (nota mínima, tentativas, etc.).
-                    </div>
-                  )}
-                </section>
+    {testeObrigatorio && (
+      <>
+        {/* linha anterior ao trecho novo (acréscimo) */}
+        <div className="mt-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+          <div className="text-xs text-zinc-700 dark:text-zinc-200">
+            <strong>Configuração:</strong>{" "}
+            {testeConfig?.titulo ? (
+              <>
+                {testeConfig.titulo} • nota mín. {Number(testeConfig.nota_minima ?? 0)} •{" "}
+                {Number(testeConfig.tentativas ?? 1)} tentativa(s)
+              </>
+            ) : (
+              <>nenhum teste configurado ainda</>
+            )}
+          </div>
+
+          <ActionButton
+            type="button"
+            onClick={() => setModalTesteAberto(true)}
+            tone="info"
+            size="sm"
+            aria-label="Configurar teste obrigatório"
+          >
+            <ClipboardList className="w-4 h-4" aria-hidden="true" />
+            Configurar teste
+          </ActionButton>
+        </div>
+
+        <div className="mt-3 rounded-2xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 p-3 text-xs text-zinc-700 dark:text-zinc-200">
+          <strong>Dica:</strong> Você pode configurar nota mínima e tentativas. (Editor de perguntas entra no próximo upgrade.)
+        </div>
+      </>
+    )}
+  </div>
+</section>
 
                 {/* 🔒 RESTRIÇÃO */}
                 <section

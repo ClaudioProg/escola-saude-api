@@ -20,6 +20,13 @@ import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { createPortal } from "react-dom";
 
 /* =========================
+   DEV logger (Modal)
+========================= */
+const IS_DEV = import.meta?.env?.MODE !== "production";
+const logM = (...a) => IS_DEV && console.log("[Modal]", ...a);
+const warnM = (...a) => IS_DEV && console.warn("[Modal]", ...a);
+
+/* =========================
    Focus helpers
 ========================= */
 const FOCUSABLE = [
@@ -77,6 +84,17 @@ function ensureModalRoot() {
     root = document.createElement("div");
     root.id = "modal-root";
     document.body.appendChild(root);
+    logM("ensureModalRoot: created #modal-root", {
+      id: root.id,
+      inBody: document.body.contains(root),
+    });
+  } else {
+    logM("ensureModalRoot: found #modal-root", {
+      children: root.childElementCount,
+      display: window.getComputedStyle?.(root)?.display,
+      visibility: window.getComputedStyle?.(root)?.visibility,
+      pointerEvents: window.getComputedStyle?.(root)?.pointerEvents,
+    });
   }
   return root;
 }
@@ -201,6 +219,7 @@ const SIZE_MAP = {
 const Modal = forwardRef(function Modal(
   {
     open,
+    isOpen, // ✅ compat: alguns componentes ainda mandam isOpen
     onClose,
     children,
 
@@ -246,6 +265,18 @@ const Modal = forwardRef(function Modal(
 ) {
   const reduceMotion = useReducedMotion();
 
+  // 🔎 render trace
+  logM("render", {
+    open,
+    size,
+    align,
+    zIndex,
+    closeOnBackdrop,
+    closeOnEscape,
+    lockScroll,
+    showCloseButton,
+  });
+
   const containerRef = useRef(null);
   const panelRef = useRef(null);
   const prevFocusRef = useRef(null);
@@ -253,9 +284,25 @@ const Modal = forwardRef(function Modal(
   const openedOnceRef = useRef(false);
   const modalRootRef = useRef(null);
 
+  const openFinal = !!(open ?? isOpen); // ✅ normaliza
+
   React.useImperativeHandle(forwardedRef, () => panelRef.current);
 
   const ariaLabelFinal = !labelledBy ? ariaLabel || "Janela modal" : undefined;
+
+  // 🔎 render trace (agora com openFinal)
+  logM("render", {
+    open,
+    isOpen,
+    openFinal,
+    size,
+    align,
+    zIndex,
+    closeOnBackdrop,
+    closeOnEscape,
+    lockScroll,
+    showCloseButton,
+  });
 
   const motionOverlay = useMemo(() => {
     if (reduceMotion) return { initial: { opacity: 1 }, animate: { opacity: 1 }, exit: { opacity: 1 } };
@@ -291,13 +338,21 @@ const Modal = forwardRef(function Modal(
 
   // garante root do portal
   useEffect(() => {
-    if (!open) return;
-    modalRootRef.current = ensureModalRoot();
+    if (!openFinal) return;
+    const node = ensureModalRoot();
+    modalRootRef.current = node;
+
+    logM("useEffect(open): modalRootRef set", {
+      exists: !!node,
+      children: node?.childElementCount ?? null,
+      inBody: node ? document.body.contains(node) : false,
+    });
   }, [open]);
+
 
   // foco ao abrir / restaurar ao fechar (RAF)
   useEffect(() => {
-    if (open) {
+    if (openFinal) {
       openedOnceRef.current = true;
       prevFocusRef.current = document.activeElement;
 
@@ -381,11 +436,21 @@ const Modal = forwardRef(function Modal(
     if (!open) return;
 
     const afterInc = incStack();
-    if (afterInc === 1) hideAppRoots();
+    logM("stack inc", { afterInc });
+
+    if (afterInc === 1) {
+      logM("hideAppRoots()");
+      hideAppRoots();
+    }
 
     return () => {
       const afterDec = decStack();
-      if (afterDec === 0) restoreAppRoots();
+      logM("stack dec", { afterDec });
+
+      if (afterDec === 0) {
+        logM("restoreAppRoots()");
+        restoreAppRoots();
+      }
     };
   }, [open]);
 
@@ -409,10 +474,16 @@ const Modal = forwardRef(function Modal(
     }
   }
 
-  if (!open) return null;
+  if (!openFinal) {
+    warnM("return null (openFinal=false)", { open, isOpen });
+    return null;
+  }
 
   const mountNode = modalRootRef.current || ensureModalRoot();
-  if (!mountNode) return null;
+  if (!mountNode) {
+    warnM("return null (mountNode=null)");
+    return null;
+  }
 
   const overlayShade = shade === "light" ? "bg-black/25" : "bg-black/45";
   const overlayBlur = blur ? "backdrop-blur-[2px]" : "";
@@ -519,7 +590,27 @@ const Modal = forwardRef(function Modal(
     </AnimatePresence>
   );
 
+  logM("createPortal -> mountNode", {
+    mountId: mountNode?.id,
+    mountChildrenBefore: mountNode?.childElementCount ?? null,
+    mountInBody: mountNode ? document.body.contains(mountNode) : false,
+  });
+
+  // ✅ após o paint, checa se o portal realmente inseriu DOM
+  if (IS_DEV) {
+    setTimeout(() => {
+      const r = document.getElementById("modal-root");
+      logM("post-paint check", {
+        modalRootExists: !!r,
+        modalRootChildren: r?.childElementCount ?? null,
+        stackCount: document.body?.dataset?.__modal_stack_count__ ?? null,
+        scrollLockCount: document.body?.dataset?.__modal_scroll_lock_count__ ?? null,
+      });
+    }, 0);
+  }
+
   return createPortal(content, mountNode);
+
 });
 
 export default Modal;

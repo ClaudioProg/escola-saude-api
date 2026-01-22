@@ -38,6 +38,32 @@ import SkeletonEvento from "../components/SkeletonEvento";
 import Footer from "../components/Footer";
 
 /* =============================
+   Logs DEV (sem spam em prod)
+============================= */
+const IS_DEV = import.meta?.env?.MODE !== "production";
+const logDev = (...a) => IS_DEV && console.log("[GerenciarEventos]", ...a);
+const warnDev = (...a) => IS_DEV && console.warn("[GerenciarEventos]", ...a);
+const errDev = (...a) => IS_DEV && console.error("[GerenciarEventos]", ...a);
+
+function snapshotModalRoot() {
+  try {
+    const root = document.getElementById("modal-root");
+    if (!root) return { exists: false };
+    const cs = window.getComputedStyle(root);
+    return {
+      exists: true,
+      children: root.childElementCount,
+      display: cs.display,
+      visibility: cs.visibility,
+      pointerEvents: cs.pointerEvents,
+      zIndex: cs.zIndex,
+    };
+  } catch {
+    return { exists: false };
+  }
+}
+
+/* =============================
    Helpers básicos
 ============================= */
 const clean = (obj) =>
@@ -92,12 +118,21 @@ function resolveAssetUrl(raw) {
   if (!v) return "";
   if (isAbsUrl(v)) return v;
 
-  const base =
-    (import.meta?.env?.VITE_API_URL && String(import.meta.env.VITE_API_URL).replace(/\/+$/, "")) ||
-    "";
+  const isDev = import.meta?.env?.MODE !== "production";
 
-  if (base) return `${base}${v.startsWith("/") ? "" : "/"}${v}`;
-  return v.startsWith("/") ? v : `/${v}`;
+  // ✅ Base explícita (se você quiser setar em .env)
+  const envBase =
+    (import.meta?.env?.VITE_FILES_BASE_URL || import.meta?.env?.VITE_API_URL || "").trim().replace(/\/+$/, "");
+
+  // ✅ No DEV, se não houver env, usa o backend local
+  const devBase = "http://localhost:3000";
+
+  const base = envBase || (isDev ? devBase : "");
+
+  // Em produção, se o back estiver no mesmo domínio e servir /uploads via reverse proxy, base pode ficar ""
+  if (!base) return v.startsWith("/") ? v : `/${v}`;
+
+  return `${base}${v.startsWith("/") ? "" : "/"}${v}`;
 }
 
 function getPosterUrl(ev) {
@@ -552,11 +587,16 @@ function HeaderHero({ onCriar, onAtualizar, atualizando, hint }) {
             </SoftButton>
 
             <SoftButton
-              type="button"
-              onClick={onCriar}
-              className="bg-white text-zinc-900 hover:bg-white/90 border border-white/40 shadow-md"
-              aria-label="Criar novo evento"
-            >
+  type="button"
+  onClick={(e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    console.log("[CLICK] Criar evento", { onCriarType: typeof onCriar });
+    onCriar?.();
+  }}
+  className="bg-white text-zinc-900 hover:bg-white/90 border border-white/40 shadow-md"
+  aria-label="Criar novo evento"
+>
               <Plus className="w-4.5 h-4.5" aria-hidden="true" />
               Criar evento
             </SoftButton>
@@ -610,6 +650,17 @@ export default function GerenciarEventos() {
 
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [confirmPublish, setConfirmPublish] = useState(null);
+
+  // ✅ DEBUG: estados principais (quando mudar)
+  useEffect(() => {
+    logDev("[STATE]", {
+      modalAberto,
+      eventoSelecionado: eventoSelecionado?.id ?? null,
+      confirmDelete: !!confirmDelete,
+      confirmPublish: !!confirmPublish,
+      modalRoot: snapshotModalRoot(),
+    });
+  }, [modalAberto, eventoSelecionado, confirmDelete, confirmPublish]);
 
   const liveRef = useRef(null);
   const abortListRef = useRef(null);
@@ -670,14 +721,52 @@ export default function GerenciarEventos() {
     recarregarEventos();
   }, [recarregarEventos]);
 
+  // ✅ DEBUG: quando modal estiver aberto, monitora ESC/clicks globais (captura)
+  useEffect(() => {
+    if (!modalAberto) return;
+
+    const onKey = (e) => {
+      if (e.key === "Escape") warnDev("[GLOBAL] Escape capturado com modalAberto=true");
+    };
+    const onPointer = (e) => {
+      const t = e.target;
+      warnDev("[GLOBAL] pointerdown (capture) com modalAberto=true", {
+        tag: t?.tagName,
+        id: t?.id,
+        class: t?.className,
+      });
+    };
+
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("pointerdown", onPointer, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("pointerdown", onPointer, true);
+    };
+  }, [modalAberto]);
+
   const abrirModalCriar = () => {
+    logDev("[ACTION] abrirModalCriar()", { before: { modalAberto, eventoSelecionado: eventoSelecionado?.id ?? null } });
     setEventoSelecionado(null);
     setModalAberto(true);
+    // dá 1 tick pra React aplicar e a gente ver se “desfaz”
+    setTimeout(() => {
+      logDev("[AFTER] abrirModalCriar tick", { modalAberto: true, modalRoot: snapshotModalRoot() });
+    }, 0);
   };
 
   const abrirModalEditar = useCallback(async (evento) => {
+    logDev("[ACTION] abrirModalEditar()", {
+      incoming: { id: evento?.id ?? null, titulo: evento?.titulo },
+      before: { modalAberto, eventoSelecionado: eventoSelecionado?.id ?? null },
+    });
+
     setEventoSelecionado(evento);
     setModalAberto(true);
+
+    setTimeout(() => {
+      logDev("[AFTER] abrirModalEditar tick", { modalAberto: true, modalRoot: snapshotModalRoot() });
+    }, 0);
 
     abortEditRef.current?.abort?.("new-edit");
     const ctrl = new AbortController();
@@ -685,14 +774,30 @@ export default function GerenciarEventos() {
 
     try {
       let turmas = Array.isArray(evento.turmas) ? evento.turmas : [];
-      if ((!turmas || turmas.length === 0) && evento?.id) turmas = await fetchTurmasDoEvento(evento.id);
+      logDev("[EDIT] turmas iniciais", { len: turmas?.length ?? 0 });
+
+      if ((!turmas || turmas.length === 0) && evento?.id) {
+        logDev("[EDIT] buscando turmas do evento...", { id: evento.id });
+        turmas = await fetchTurmasDoEvento(evento.id);
+        logDev("[EDIT] turmas carregadas", { len: turmas?.length ?? 0 });
+      }
+
+      logDev("[EDIT] buscando evento completo...", { id: evento?.id });
       const base = (await fetchEventoCompleto(evento.id)) || evento;
+      logDev("[EDIT] evento completo ok", { id: base?.id ?? null });
+
       const combinado = { ...evento, ...base, turmas };
-      if (!mountedRef.current || ctrl.signal.aborted) return;
+      if (!mountedRef.current || ctrl.signal.aborted) {
+        warnDev("[EDIT] abortado/unmounted", { aborted: ctrl.signal.aborted, mounted: mountedRef.current });
+        return;
+      }
+
       setEventoSelecionado(combinado);
+      logDev("[EDIT] setEventoSelecionado(combinado)", { id: combinado?.id ?? null, turmas: combinado?.turmas?.length ?? 0 });
     } catch (e) {
+
       if (e?.name === "AbortError") return;
-      console.warn("[abrirModalEditar] falha ao refinar:", e);
+      warnDev("[abrirModalEditar] falha ao refinar:", e?.message || e);
     }
   }, []);
 
@@ -1201,8 +1306,13 @@ export default function GerenciarEventos() {
 
                         {/* Editar */}
                         <SoftButton
-                          type="button"
-                          onClick={() => abrirModalEditar(ev)}
+  type="button"
+  onClick={(e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    console.log("[CLICK] Editar", { id: ev?.id, titulo: ev?.titulo, fn: typeof abrirModalEditar });
+    abrirModalEditar?.(ev);
+  }}
                           className="border border-sky-200 dark:border-sky-900/40 text-sky-700 dark:text-sky-200 bg-white dark:bg-zinc-950 hover:bg-sky-50 dark:hover:bg-sky-950/25"
                           aria-label={`Editar evento ${ev.titulo}`}
                         >
@@ -1231,9 +1341,17 @@ export default function GerenciarEventos() {
       </div>
 
       <ModalEvento
-        isOpen={modalAberto}
-        open={modalAberto} // ✅ compat
-        onClose={() => setModalAberto(false)}
+              isOpen={modalAberto}
+              open={modalAberto} // ✅ compat
+              onClose={() => {
+                warnDev("[ACTION] ModalEvento onClose()", {
+                  before: { modalAberto, eventoSelecionado: eventoSelecionado?.id ?? null },
+                  modalRoot: snapshotModalRoot(),
+                  activeEl: document?.activeElement?.tagName || null,
+                });
+                setModalAberto(false);
+              }}
+      
         onSalvar={salvarEvento}
         evento={eventoSelecionado}
         salvando={salvando}

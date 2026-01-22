@@ -116,11 +116,15 @@ export default defineConfig(({ mode }) => {
         "/api": {
           target: proxyTarget,
           changeOrigin: true,
-          secure: isHttps, // verifica TLS do alvo quando https
-          // rewrite opcional (mantemos /api)
-          // rewrite: (p) => p,
+          secure: isHttps,
+        },
+        "/uploads": {
+          target: proxyTarget,
+          changeOrigin: true,
+          secure: isHttps,
         },
       },
+      
     },
 
     resolve: {

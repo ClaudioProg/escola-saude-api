@@ -224,7 +224,14 @@ const uploadEventos = (req, res, next) => {
 function pegarUploadUrl(req, field) {
   const fSpecific = req.files?.[field]?.[0];
   const fGeneric = req.files?.file?.[0];
-  const f = fSpecific || fGeneric;
+
+  // ✅ (NOVO) — linha anterior incluída acima
+  const fSingle =
+    req.file && (req.file.fieldname === field || (field === "file" && req.file.fieldname === "file"))
+      ? req.file
+      : null;
+
+  const f = fSpecific || fSingle || fGeneric;
   if (!f) return null;
   return `/uploads/eventos/${path.basename(f.path)}`;
 }

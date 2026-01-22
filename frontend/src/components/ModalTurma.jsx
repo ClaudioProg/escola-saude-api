@@ -1,14 +1,32 @@
 /* eslint-disable no-console */
-// 📁 src/components/ModalTurma.jsx
-import { useEffect, useMemo, useRef, useState } from "react";
-import { CalendarDays, Clock, Hash, Type, PlusCircle, Trash2, Users } from "lucide-react";
+// 📁 src/components/ModalTurma.jsx — PREMIUM++ (A11y + ministats + fallback de lista + mobile-first)
+// - Visual no padrão "plataforma top": HeaderHero gradiente + cards + chips + ministats
+// - A11y: labelledBy/describedBy, SR-only, foco, esc/backdrop via Modal base
+// - Compat: aceita isOpen OU open
+// - Listas resilientes: usa `usuarios` do pai, mas faz fallback `/api/usuarios` se vier vazio
+// - Filtro instrutores robusto (perfil string/array/obj) + fallback se filtro zerar
+// - Datas SEM pulo de fuso: mantém YYYY-MM-DD como string
+
+import { useEffect, useMemo, useRef, useState, useId, useCallback } from "react";
+import {
+  CalendarDays,
+  Clock,
+  Hash,
+  Type,
+  PlusCircle,
+  Trash2,
+  Users,
+  BadgeCheck,
+  Sparkles,
+  X,
+  Copy,
+} from "lucide-react";
 import { toast } from "react-toastify";
 import Modal from "./Modal";
+import { apiGet } from "../services/api";
 
-/* ===================== Logger cirúrgico ===================== */
-// ✅ Vite/ESM-safe
-const IS_DEV = (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.DEV) ? true : false;
-
+/* ===================== Logger (DEV only, cirúrgico) ===================== */
+const IS_DEV = (typeof import.meta !== "undefined" && import.meta?.env?.DEV) ? true : false;
 const LOG_TAG = "[ModalTurma]";
 const stamp = () => new Date().toISOString().replace("T", " ").replace("Z", "");
 const log = (msg, data) => {
@@ -16,13 +34,28 @@ const log = (msg, data) => {
   if (data !== undefined) console.log(`${stamp()} ${LOG_TAG} ${msg}`, data);
   else console.log(`${stamp()} ${LOG_TAG} ${msg}`);
 };
-const group = (title) => IS_DEV && console.groupCollapsed(`${stamp()} ${LOG_TAG} ${title}`);
-const groupEnd = () => IS_DEV && console.groupEnd();
-const time = (id) => IS_DEV && console.time(`${LOG_TAG} ${id}`);
-const timeEnd = (id) => IS_DEV && console.timeEnd(`${LOG_TAG} ${id}`);
+const warn = (msg, data) => {
+  if (!IS_DEV) return;
+  if (data !== undefined) console.warn(`${stamp()} ${LOG_TAG} ${msg}`, data);
+  else console.warn(`${stamp()} ${LOG_TAG} ${msg}`);
+};
 
 /* ===================== Helpers ===================== */
 const NOME_TURMA_MAX = 200;
+
+// ✅ normaliza resposta do apiGet para array (se vier {data: [...]}, {rows: [...]}, etc.)
+function asArray(v) {
+  if (!v) return [];
+  if (Array.isArray(v)) return v;
+  if (Array.isArray(v.data)) return v.data;
+  if (Array.isArray(v.rows)) return v.rows;
+  if (Array.isArray(v.result)) return v.result;
+  return [];
+}
+
+function cx(...arr) {
+  return arr.filter(Boolean).join(" ");
+}
 
 const parseHora = (val) => {
   if (typeof val !== "string") return "";
@@ -46,12 +79,7 @@ const parseHora = (val) => {
 };
 const hhmm = (s, fb = "") => parseHora(s) || fb;
 
-/**
- * ✅ Mantém “YYYY-MM-DD” SEM deslocar fuso.
- * - Se vier string, extrai os 10 primeiros do padrão.
- * - Se vier Date, usa getters locais (não UTC).
- * - Se vier number/object estranho, retorna "" (não inventa).
- */
+/** ✅ Mantém “YYYY-MM-DD” SEM deslocar fuso. */
 const isoDay = (v) => {
   if (!v) return "";
   if (typeof v === "string") {
@@ -67,18 +95,19 @@ const isoDay = (v) => {
   return "";
 };
 
+const brDate = (iso) => (iso ? iso.split("-").reverse().join("/") : "—");
+
 const calcularCargaHorariaTotal = (arr) => {
   let horas = 0;
   for (const e of arr) {
     const [h1, m1] = hhmm(e.inicio, "00:00").split(":").map(Number);
     const [h2, m2] = hhmm(e.fim, "00:00").split(":").map(Number);
     const diffH = Math.max(0, (h2 * 60 + (m2 || 0) - (h1 * 60 + (m1 || 0))) / 60);
-    horas += diffH >= 8 ? diffH - 1 : diffH; // regra do almoço
+    horas += diffH >= 8 ? diffH - 1 : diffH; // almoço
   }
   return Math.round(horas);
 };
 
-/** Tenta extrair um array de datas/encontros de diferentes formatos */
 const pickDatasArray = (t) => {
   if (!t) return null;
   const candidatos = [t.datas, t.encontros, t.datas_turma, t.datasReais].filter(Array.isArray);
@@ -103,10 +132,6 @@ const datasParaEncontros = (t) => {
   return arr.length ? arr : null;
 };
 
-/**
- * Aceita encontros tanto com {inicio,fim} quanto {horario_inicio,horario_fim}.
- * Fallback: se não houver array, tenta montar com data_inicio/data_fim.
- */
 const encontrosDoInitial = (t) => {
   const baseHi = hhmm(t?.horario_inicio, "08:00");
   const baseHf = hhmm(t?.horario_fim, "17:00");
@@ -125,22 +150,147 @@ const encontrosDoInitial = (t) => {
     ];
   }
   if (di) return [{ data: di, inicio: baseHi, fim: baseHf }];
-
   return [{ data: "", inicio: "", fim: "" }];
 };
 
 const extractIds = (arr) =>
   Array.isArray(arr) ? arr.map((v) => Number(v?.id ?? v)).filter((n) => Number.isFinite(n)) : [];
 
+// ✅ filtro robusto para identificar instrutores/admin
+function isInstrutorLike(u) {
+  if (!u) return false;
+  const p = u.perfil;
+
+  const s = Array.isArray(p)
+    ? p.join(",")
+    : typeof p === "object" && p
+    ? String(p.nome || p.tipo || p.value || "")
+    : String(p || "");
+
+  const low = s.toLowerCase();
+  return low.includes("instrutor") || low.includes("administrador") || low.includes("admin");
+}
+
+/* ===================== Cache local (fallback) ===================== */
+let cacheUsuariosFallback = null;
+
+/* ===================== UI helpers ===================== */
+function Chip({ tone = "zinc", children, title }) {
+  const map = {
+    zinc: "bg-zinc-100 text-zinc-800 border-zinc-200 dark:bg-zinc-900/40 dark:text-zinc-200 dark:border-zinc-700",
+    emerald:
+      "bg-emerald-100 text-emerald-900 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-800",
+    indigo:
+      "bg-indigo-100 text-indigo-900 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-200 dark:border-indigo-800",
+    amber:
+      "bg-amber-100 text-amber-900 border-amber-200 dark:bg-amber-900/30 dark:text-amber-200 dark:border-amber-800",
+    rose:
+      "bg-rose-100 text-rose-900 border-rose-200 dark:bg-rose-900/30 dark:text-rose-200 dark:border-rose-800",
+    violet:
+      "bg-violet-100 text-violet-900 border-violet-200 dark:bg-violet-900/30 dark:text-violet-200 dark:border-violet-800",
+  };
+  return (
+    <span
+      title={title}
+      className={cx(
+        "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] border",
+        map[tone] || map.zinc
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+function StatMini({ icon: Icon, label, value, tone = "zinc" }) {
+  const map = {
+    zinc: "bg-white dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800",
+    indigo: "bg-indigo-50/90 dark:bg-indigo-950/20 border-indigo-200/70 dark:border-indigo-900/40",
+    violet: "bg-violet-50/90 dark:bg-violet-950/20 border-violet-200/70 dark:border-violet-900/40",
+    emerald: "bg-emerald-50/90 dark:bg-emerald-950/20 border-emerald-200/70 dark:border-emerald-900/40",
+  };
+  return (
+    <div className={cx("rounded-2xl border p-3 shadow-sm", map[tone] || map.zinc)}>
+      <div className="flex items-center gap-2">
+        <span className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-black/5 dark:bg-white/5">
+          <Icon className="w-5 h-5" aria-hidden="true" />
+        </span>
+        <div className="min-w-0">
+          <div className="text-[11px] uppercase tracking-wide text-zinc-600 dark:text-zinc-300">{label}</div>
+          <div className="text-lg font-extrabold text-zinc-900 dark:text-white">{value}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ActionButton({
+  children,
+  onClick,
+  type = "button",
+  disabled = false,
+  className = "",
+  tone = "neutral", // neutral | success | info | danger | warning
+  size = "md", // xs | sm | md
+  ...rest
+}) {
+  const toneMap = {
+    neutral:
+      "bg-slate-200 hover:bg-slate-300 text-slate-900 dark:bg-zinc-800 dark:hover:bg-zinc-700 dark:text-zinc-100 focus:ring-slate-400/60",
+    success:
+      "bg-emerald-700 hover:bg-emerald-600 text-white focus:ring-emerald-500/60",
+    info:
+      "bg-indigo-700 hover:bg-indigo-600 text-white focus:ring-indigo-500/60",
+    warning:
+      "bg-amber-600 hover:bg-amber-500 text-white focus:ring-amber-400/60",
+    danger:
+      "bg-rose-600 hover:bg-rose-500 text-white focus:ring-rose-400/60",
+  };
+
+  const sizeMap = {
+    xs: "px-3 py-2 text-xs rounded-2xl",
+    sm: "px-3.5 py-2 text-sm rounded-2xl",
+    md: "px-4 py-2.5 text-sm rounded-2xl",
+  };
+
+  return (
+    <button
+      type={type}
+      onClick={onClick}
+      disabled={disabled}
+      className={cx(
+        "inline-flex items-center justify-center gap-2 font-extrabold shadow-sm",
+        "transition active:scale-[0.99]",
+        "focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-white dark:focus:ring-offset-zinc-900",
+        "disabled:opacity-60 disabled:cursor-not-allowed",
+        toneMap[tone] || toneMap.neutral,
+        sizeMap[size] || sizeMap.md,
+        className
+      )}
+      {...rest}
+    >
+      {children}
+    </button>
+  );
+}
+
 /* ===================== Componente ===================== */
 export default function ModalTurma({
   isOpen,
+  open, // ✅ compat
   onClose,
   onSalvar,
   initialTurma = null,
   onExcluir,
   usuarios = [],
 }) {
+  const effectiveOpen = Boolean(open ?? isOpen);
+
+  const uid = useId();
+  const titleId = `modal-turma-title-${uid}`;
+  const descId = `modal-turma-desc-${uid}`;
+
+  // Estados do form
   const [nome, setNome] = useState("");
   const [vagasTotal, setVagasTotal] = useState("");
   const [encontros, setEncontros] = useState([{ data: "", inicio: "", fim: "" }]);
@@ -148,37 +298,40 @@ export default function ModalTurma({
   const [instrutoresSel, setInstrutoresSel] = useState([""]);
   const [assinanteId, setAssinanteId] = useState("");
 
+  // Lista resiliente
+  const [usuariosLocal, setUsuariosLocal] = useState([]);
+  const [usuariosLoading, setUsuariosLoading] = useState(false);
+
   // ✅ Rehidrata quando abre OU quando muda a turma mesmo aberto
   const lastHydratedKeyRef = useRef(null);
   const initialKey = String(initialTurma?.id ?? "new");
 
+  // auto-resize do nome
+  const refNome = useRef(null);
+  const autosizeNome = useCallback(() => {
+    const el = refNome.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
+  }, []);
+
   useEffect(() => {
-    if (!isOpen) {
-      if (lastHydratedKeyRef.current != null) {
-        log("Fechando modal — limpando lastHydratedKeyRef.");
-      }
+    if (!effectiveOpen) {
       lastHydratedKeyRef.current = null;
       return;
     }
-
     if (lastHydratedKeyRef.current === initialKey) return;
 
-    group("Abertura/Troca de Turma • Hidratação");
-    time("hydrate");
-
-    log("isOpen=true | initialTurma recebido:", initialTurma);
+    log("Hidratação do ModalTurma", { initialKey, initialTurma });
 
     setNome(initialTurma?.nome || "");
     setVagasTotal(initialTurma?.vagas_total != null ? String(initialTurma.vagas_total) : "");
 
     const encontrosInit = encontrosDoInitial(initialTurma);
-    log("Encontros parseados a partir do initialTurma:", encontrosInit);
     setEncontros(encontrosInit);
 
     const ids = extractIds(initialTurma?.instrutores);
-    const arrInstr = ids.length ? ids.map(String) : [""];
-    log("Instrutores (ids) hidratados:", arrInstr);
-    setInstrutoresSel(arrInstr);
+    setInstrutoresSel(ids.length ? ids.map(String) : [""]);
 
     const assinante =
       Number.isFinite(Number(initialTurma?.assinante_id))
@@ -186,39 +339,70 @@ export default function ModalTurma({
         : Number.isFinite(Number(initialTurma?.instrutor_assinante_id))
         ? String(initialTurma.instrutor_assinante_id)
         : "";
-    log("Assinante hidratado:", assinante);
     setAssinanteId(assinante);
 
     lastHydratedKeyRef.current = initialKey;
-
-    setTimeout(() => {
-      autosizeNome();
-      timeEnd("hydrate");
-      groupEnd();
-    }, 0);
+    setTimeout(() => autosizeNome(), 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, initialKey]);
+  }, [effectiveOpen, initialKey]);
+
+  // ✅ fallback de usuários se vier vazio do pai
+  useEffect(() => {
+    let alive = true;
+    if (!effectiveOpen) return;
+
+    if (Array.isArray(usuarios) && usuarios.length > 0) {
+      setUsuariosLocal(usuarios);
+      setUsuariosLoading(false);
+      return;
+    }
+
+    if (cacheUsuariosFallback) {
+      setUsuariosLocal(cacheUsuariosFallback);
+      setUsuariosLoading(false);
+      return;
+    }
+
+    setUsuariosLoading(true);
+    (async () => {
+      try {
+        const res = await apiGet("/api/usuarios");
+        const arr = asArray(res);
+        const sorted = arr
+          .filter(Boolean)
+          .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
+
+        if (!alive) return;
+        cacheUsuariosFallback = sorted;
+        setUsuariosLocal(sorted);
+        log("Fallback /api/usuarios ok", { total: sorted.length });
+      } catch (e) {
+        if (!alive) return;
+        warn("Fallback /api/usuarios falhou", e);
+        setUsuariosLocal([]);
+      } finally {
+        if (alive) setUsuariosLoading(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [effectiveOpen, usuarios]);
 
   // se assinante sair da lista de instrutores, limpar
   useEffect(() => {
     const setIds = new Set(instrutoresSel.filter(Boolean).map(String));
-    if (assinanteId && !setIds.has(String(assinanteId))) {
-      log("Assinante não está mais na lista; limpando.", { assinanteIdAntes: assinanteId, instrutoresSel });
-      setAssinanteId("");
-    }
+    if (assinanteId && !setIds.has(String(assinanteId))) setAssinanteId("");
   }, [instrutoresSel, assinanteId]);
 
-  // auto-resize do título
-  const refNome = useRef(null);
-  const autosizeNome = () => {
-    const el = refNome.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
-  };
+  useEffect(() => {
+    autosizeNome();
+  }, [nome, autosizeNome]);
 
+  // Encontros (normalizados e ordenados)
   const encontrosOrdenados = useMemo(() => {
-    const norm = [...(encontros || [])]
+    return [...(encontros || [])]
       .map((e) => ({
         ...e,
         data: isoDay(e.data),
@@ -227,71 +411,64 @@ export default function ModalTurma({
       }))
       .filter((e) => e.data)
       .sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : 0));
-    return norm;
   }, [encontros]);
 
   const data_inicio = encontrosOrdenados[0]?.data || null;
   const data_fim = encontrosOrdenados.at(-1)?.data || null;
 
-  const carga_horaria_preview = useMemo(
+  const cargaPreview = useMemo(
     () => calcularCargaHorariaTotal(encontrosOrdenados.filter((e) => e.data && e.inicio && e.fim)),
     [encontrosOrdenados]
   );
 
-  /* CRUD encontros */
+  /* ======= CRUD encontros ======= */
   const addEncontro = () => {
     const last = encontros[encontros.length - 1] || {};
     const novo = { data: "", inicio: hhmm(last.inicio, ""), fim: hhmm(last.fim, "") };
-    log("Adicionar encontro (preview):", novo);
-    setEncontros((prev) => {
-      const next = [...prev, novo];
-      log("Encontros após adicionar:", next);
-      return next;
-    });
+    setEncontros((prev) => [...prev, novo]);
+  };
+
+  const clonarUltimoHorario = () => {
+    const last = encontros[encontros.length - 1] || {};
+    setEncontros((prev) => [...prev, { data: "", inicio: hhmm(last.inicio, ""), fim: hhmm(last.fim, "") }]);
   };
 
   const removeEncontro = (idx) => {
-    log("Remover encontro:", { index: idx, totalAtual: encontros.length });
     setEncontros((prev) => {
-      if (prev.length <= 1) {
-        log("Remoção ignorada: precisa manter ao menos um encontro.");
-        return prev;
-      }
-      const next = prev.filter((_, i) => i !== idx);
-      log("Encontros após remoção:", next);
-      return next;
+      if (prev.length <= 1) return prev;
+      return prev.filter((_, i) => i !== idx);
     });
   };
 
   const updateEncontro = (idx, field, value) => {
-    // não “quebra” o input time/date, mas normaliza leve
-    const v = field === "data" ? value : value;
-    log("Atualizar encontro:", { index: idx, field, value: v });
-    setEncontros((prev) => prev.map((e, i) => (i === idx ? { ...e, [field]: v } : e)));
+    setEncontros((prev) => prev.map((e, i) => (i === idx ? { ...e, [field]: value } : e)));
   };
 
   /* ======= Instrutores / Assinante ======= */
   const instrutoresOpcao = useMemo(() => {
-    const list = (usuarios || [])
-      .filter((u) => {
-        const perfil = Array.isArray(u.perfil) ? u.perfil.join(",") : String(u.perfil || "");
-        const p = perfil.toLowerCase();
-        return p.includes("instrutor") || p.includes("administrador");
-      })
-      .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
-    return list;
-  }, [usuarios]);
+    const base = Array.isArray(usuariosLocal) ? usuariosLocal : [];
+    const instr = base.filter(isInstrutorLike);
+
+    // ✅ se o filtro “zerar” tudo, não bloqueia o usuário — usa base como fallback
+    const finalList = instr.length ? instr : base;
+
+    return finalList.sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
+  }, [usuariosLocal]);
+
+  const filtroZerou = useMemo(() => {
+    const base = Array.isArray(usuariosLocal) ? usuariosLocal : [];
+    if (base.length === 0) return false;
+    const instr = base.filter(isInstrutorLike);
+    return instr.length === 0;
+  }, [usuariosLocal]);
 
   const getInstrutorDisponivel = (index) => {
     const selecionados = instrutoresSel.map(String);
     const atual = selecionados[index];
-    return instrutoresOpcao.filter(
-      (i) => !selecionados.includes(String(i.id)) || String(i.id) === String(atual)
-    );
+    return instrutoresOpcao.filter((i) => !selecionados.includes(String(i.id)) || String(i.id) === String(atual));
   };
 
   const handleSelecionarInstrutor = (index, valor) => {
-    log("Selecionar/alterar instrutor:", { index, valor });
     setInstrutoresSel((prev) => {
       const nova = [...prev];
       nova[index] = valor;
@@ -299,13 +476,9 @@ export default function ModalTurma({
     });
   };
 
-  const adicionarInstrutor = () => {
-    log("Adicionar slot de instrutor.");
-    setInstrutoresSel((l) => [...l, ""]);
-  };
+  const adicionarInstrutor = () => setInstrutoresSel((l) => [...l, ""]);
 
   const removerInstrutor = (index) => {
-    log("Remover instrutor na posição:", index);
     setInstrutoresSel((prev) => {
       const next = prev.filter((_, i) => i !== index);
       return next.length ? next : [""];
@@ -317,32 +490,18 @@ export default function ModalTurma({
     return instrutoresOpcao.filter((u) => ids.has(Number(u.id)));
   }, [instrutoresSel, instrutoresOpcao]);
 
-  /* validação/salvar */
+  /* ======= validação/salvar ======= */
   const validar = () => {
-    time("validar");
+    if (!nome.trim()) return toast.warning("Informe o nome da turma."), false;
+    if (nome.length > NOME_TURMA_MAX) return toast.error(`O nome não pode exceder ${NOME_TURMA_MAX} caracteres.`), false;
 
-    if (!nome.trim()) {
-      toast.warning("Informe o nome da turma.");
-      log("Validação falhou: nome vazio.");
-      timeEnd("validar");
-      return false;
-    }
-    if (nome.length > NOME_TURMA_MAX) {
-      toast.error(`O nome não pode exceder ${NOME_TURMA_MAX} caracteres.`);
-      log("Validação falhou: nome longo.", { len: nome.length });
-      timeEnd("validar");
-      return false;
-    }
     if (vagasTotal === "" || !Number.isFinite(Number(vagasTotal)) || Number(vagasTotal) <= 0) {
       toast.warning("Quantidade de vagas deve ser número ≥ 1.");
-      log("Validação falhou: vagas inválidas.", { vagasTotal });
-      timeEnd("validar");
       return false;
     }
+
     if (!encontrosOrdenados.length) {
       toast.warning("Inclua pelo menos uma data de encontro.");
-      log("Validação falhou: sem encontros válidos.");
-      timeEnd("validar");
       return false;
     }
 
@@ -350,68 +509,35 @@ export default function ModalTurma({
       const e = encontrosOrdenados[i];
       if (!e.data || !e.inicio || !e.fim) {
         toast.error(`Preencha data e horários do encontro #${i + 1}.`);
-        log("Validação falhou: campo vazio em encontro.", { index: i, e });
-        timeEnd("validar");
         return false;
       }
       const [h1, m1] = hhmm(e.inicio, "00:00").split(":").map(Number);
       const [h2, m2] = hhmm(e.fim, "00:00").split(":").map(Number);
       if (h2 * 60 + (m2 || 0) <= h1 * 60 + (m1 || 0)) {
         toast.error(`Horários inválidos no encontro #${i + 1}.`);
-        log("Validação falhou: fim <= início.", { index: i, e });
-        timeEnd("validar");
         return false;
       }
     }
 
-    const instrSel = instrutoresSel
-      .map((v) => Number(String(v).trim()))
-      .filter((id) => Number.isFinite(id));
+    const instrSel = instrutoresSel.map((v) => Number(String(v).trim())).filter((id) => Number.isFinite(id));
+    if (instrSel.length === 0) return toast.error("Selecione ao menos um instrutor para a turma."), false;
 
-    if (instrSel.length === 0) {
-      toast.error("Selecione ao menos um instrutor para a turma.");
-      log("Validação falhou: nenhum instrutor selecionado.");
-      timeEnd("validar");
-      return false;
-    }
-
-    if (!assinanteId) {
-      toast.error("Selecione o assinante da turma.");
-      log("Validação falhou: assinante vazio.");
-      timeEnd("validar");
-      return false;
-    }
-
+    if (!assinanteId) return toast.error("Selecione o assinante da turma."), false;
     if (!instrSel.includes(Number(assinanteId))) {
       toast.error("O assinante precisa estar entre os instrutores selecionados.");
-      log("Validação falhou: assinante fora da lista.", { instrSel, assinanteId });
-      timeEnd("validar");
       return false;
     }
 
-    log("Validação OK.", {
-      nome,
-      vagasTotal: Number(vagasTotal),
-      encontrosValidos: encontrosOrdenados.length,
-      instrutoresSel,
-      assinanteId,
-    });
-
-    timeEnd("validar");
     return true;
   };
 
   const montarPayload = () => {
-    time("montarPayload");
-
     const horario_inicio_base = hhmm(encontrosOrdenados[0]?.inicio, "08:00");
     const horario_fim_base = hhmm(encontrosOrdenados[0]?.fim, "17:00");
 
-    const instrSel = instrutoresSel
-      .map((v) => Number(String(v).trim()))
-      .filter((id) => Number.isFinite(id));
+    const instrSel = instrutoresSel.map((v) => Number(String(v).trim())).filter((id) => Number.isFinite(id));
 
-    const payload = {
+    return {
       ...(initialTurma?.id ? { id: initialTurma.id } : {}),
       nome: nome.trim(),
       vagas_total: Number(vagasTotal),
@@ -421,7 +547,6 @@ export default function ModalTurma({
       horario_inicio: horario_inicio_base,
       horario_fim: horario_fim_base,
 
-      // compat: backend antigo/novo
       encontros: encontrosOrdenados.map((e) => ({
         data: e.data,
         inicio: hhmm(e.inicio, horario_inicio_base),
@@ -437,325 +562,470 @@ export default function ModalTurma({
       assinante_id: Number(assinanteId),
       instrutor_assinante_id: Number(assinanteId),
     };
-
-    log("Payload montado:", payload);
-    timeEnd("montarPayload");
-    return payload;
   };
 
   const handleSalvar = () => {
-    group("Salvar Turma • submit");
-    if (!validar()) {
-      groupEnd();
-      return;
-    }
-
+    if (!validar()) return;
     const payload = montarPayload();
-
-    try {
-      log("Disparando onSalvar(payload).");
-      onSalvar?.(payload);
-      log("onSalvar chamado.");
-
-      // reset apenas para criação (novo)
-      if (!initialTurma?.id) {
-        log("Resetando formulário (nova turma).");
-        setNome("");
-        setVagasTotal("");
-        setEncontros([{ data: "", inicio: "", fim: "" }]);
-        setInstrutoresSel([""]);
-        setAssinanteId("");
-        setTimeout(autosizeNome, 0);
-      }
-    } catch (err) {
-      console.error(`${stamp()} ${LOG_TAG} Erro no onSalvar:`, err);
-    } finally {
-      groupEnd();
-    }
+    onSalvar?.(payload);
   };
 
-  const titleId = "modal-turma-title";
-  const descId = "modal-turma-desc";
-
+  /* ===================== Render ===================== */
   return (
     <Modal
-      isOpen={isOpen}
-      onClose={() => {
-        log("Fechar/Cancelar no ModalTurma.");
-        onClose?.();
-      }}
+      isOpen={effectiveOpen}
+      onClose={() => onClose?.()}
       level={1}
-      maxWidth="max-w-2xl"
+      maxWidth="max-w-4xl"
       labelledBy={titleId}
       describedBy={descId}
       className="p-0 overflow-hidden"
     >
-      <div className="flex flex-col max-h-[90vh] bg-white dark:bg-zinc-900">
-        <header
-          className="px-5 py-4 text-white bg-gradient-to-br from-teal-900 via-indigo-800 to-violet-700"
-          role="group"
-          aria-label="Edição de turma"
-        >
-          <h2 id={titleId} className="text-xl sm:text-2xl font-extrabold tracking-tight">
-            {initialTurma?.id ? "Editar Turma" : "Nova Turma"}
-          </h2>
-          <p id={descId} className="text-white/90 text-sm mt-1">
-            Defina nome, instrutores, encontros e vagas. A carga horária é estimada automaticamente.
-          </p>
-        </header>
+      <div className="grid grid-rows-[auto,1fr,auto] max-h-[92vh] rounded-3xl overflow-hidden bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/10 shadow-2xl">
+        {/* top bar */}
+        <div className="h-1.5 bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600" />
 
-        {/* Ministats */}
-        <section className="px-5 pt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="rounded-2xl border border-indigo-100 dark:border-indigo-900 p-3 shadow-sm bg-white dark:bg-slate-900">
-            <div className="text-xs text-slate-500 dark:text-slate-300 mb-1">Período</div>
-            <div className="text-sm font-semibold">
-              {data_inicio ? data_inicio.split("-").reverse().join("/") : "—"}
-              {data_fim && data_fim !== data_inicio ? ` — ${data_fim.split("-").reverse().join("/")}` : ""}
-            </div>
+        {/* HEADER HERO */}
+        <div className="relative p-5 sm:p-6 border-b border-black/5 dark:border-white/10 bg-white/80 dark:bg-zinc-900/80 backdrop-blur">
+          <div className="absolute inset-0 pointer-events-none">
+            <div className="absolute -top-16 -left-24 w-56 h-56 rounded-full bg-indigo-500/12 blur-2xl" />
+            <div className="absolute -bottom-20 -right-24 w-64 h-64 rounded-full bg-fuchsia-500/12 blur-2xl" />
           </div>
 
-          <div className="rounded-2xl border border-indigo-100 dark:border-indigo-900 p-3 shadow-sm bg-white dark:bg-slate-900">
-            <div className="text-xs text-slate-500 dark:text-slate-300 mb-1">Encontros</div>
-            <div className="text-sm font-semibold">{encontrosOrdenados.length || "—"}</div>
-          </div>
+          <div className="relative flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 id={titleId} className="text-lg sm:text-2xl font-extrabold tracking-tight flex items-center gap-2">
+                <span className="inline-flex items-center justify-center w-9 h-9 rounded-2xl bg-black/5 dark:bg-white/5">
+                  <Sparkles className="w-5 h-5 text-violet-600 dark:text-violet-300" aria-hidden="true" />
+                </span>
+                <span className="truncate">{initialTurma?.id ? "Editar Turma" : "Nova Turma"}</span>
+              </h2>
 
-          <div className="rounded-2xl border border-indigo-100 dark:border-indigo-900 p-3 shadow-sm bg-white dark:bg-slate-900">
-            <div className="text-xs text-slate-500 dark:text-slate-300 mb-1">Carga estimada</div>
-            <div className="text-sm font-semibold">{carga_horaria_preview ? `${carga_horaria_preview}h` : "—"}</div>
-          </div>
-        </section>
+              <p id={descId} className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
+                Defina nome, instrutores, encontros e vagas. A carga horária é estimada automaticamente.
+              </p>
 
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            handleSalvar();
-          }}
-          className="px-5 pt-4 pb-24 overflow-y-auto max-h-[60vh] bg-white dark:bg-zinc-900"
-        >
-          {/* Nome */}
-          <div className="relative mb-4">
-            <Type className="absolute left-3 top-3 text-slate-500" size={18} aria-hidden />
-            <textarea
-              ref={refNome}
-              data-initial-focus
-              value={nome}
-              onChange={(e) => {
-                const v = e.target.value.slice(0, NOME_TURMA_MAX);
-                setNome(v);
-                e.target.style.height = "auto";
-                e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`;
-              }}
-              placeholder="Nome da turma"
-              maxLength={NOME_TURMA_MAX}
-              rows={2}
-              className="w-full pl-10 pr-14 py-2 border rounded-xl shadow-sm dark:bg-zinc-900 dark:text-white border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[56px] max-h-[200px] overflow-y-auto resize-none"
-              autoComplete="off"
-              aria-describedby="nome-turma-help nome-turma-count"
-            />
-            <div
-              id="nome-turma-count"
-              className={`absolute right-3 top-2 text-xs ${
-                nome.length >= NOME_TURMA_MAX * 0.9 ? "text-amber-600" : "text-slate-500"
-              }`}
-            >
-              {nome.length}/{NOME_TURMA_MAX}
-            </div>
-            <p id="nome-turma-help" className="mt-1 text-xs text-slate-500">
-              Máximo de {NOME_TURMA_MAX} caracteres.
-            </p>
-          </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Chip tone="indigo" title="Período">
+                  <CalendarDays className="w-3.5 h-3.5" aria-hidden="true" /> {brDate(data_inicio)} — {brDate(data_fim)}
+                </Chip>
 
-          {/* Instrutores e Assinante */}
-          <div className="mb-5 space-y-2">
-            <div className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
-              <Users size={16} /> Instrutores da turma
-            </div>
+                <Chip tone="violet" title="Encontros">
+                  <Clock className="w-3.5 h-3.5" aria-hidden="true" /> {encontrosOrdenados.length || 0} encontro(s)
+                </Chip>
 
-            {instrutoresSel.map((valor, index) => (
-              <div key={`instrutor-${index}`} className="flex gap-2 items-center">
-                <select
-                  value={String(valor ?? "")}
-                  onChange={(e) => handleSelecionarInstrutor(index, e.target.value)}
-                  className="w-full pl-3 pr-10 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm"
-                  required={index === 0}
-                  aria-label={index === 0 ? "Instrutor principal" : `Instrutor adicional ${index}`}
-                >
-                  <option value="">Selecione o instrutor</option>
-                  {getInstrutorDisponivel(index).map((i) => (
-                    <option key={i.id} value={String(i.id)}>
-                      {i.nome}
-                    </option>
-                  ))}
-                </select>
+                <Chip tone="emerald" title="Carga estimada">
+                  <BadgeCheck className="w-3.5 h-3.5" aria-hidden="true" /> {cargaPreview ? `${cargaPreview}h` : "—"}
+                </Chip>
 
-                {index > 0 ? (
-                  <button
-                    type="button"
-                    onClick={() => removerInstrutor(index)}
-                    className="inline-flex items-center gap-1 rounded-lg px-3 py-2 border border-rose-200 dark:border-rose-900/40 text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/20"
-                    title="Remover este instrutor"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                    Remover
-                  </button>
+                {usuariosLoading ? (
+                  <Chip tone="amber" title="Carregando lista">
+                    <Users className="w-3.5 h-3.5" aria-hidden="true" /> Carregando lista…
+                  </Chip>
+                ) : filtroZerou ? (
+                  <Chip tone="amber" title="Perfil não identificado; usando lista geral">
+                    <Users className="w-3.5 h-3.5" aria-hidden="true" /> Lista geral (sem perfil)
+                  </Chip>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={adicionarInstrutor}
-                    className="inline-flex items-center gap-2 rounded-xl px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                  >
-                    <PlusCircle className="w-4 h-4" />
-                    Incluir outro
-                  </button>
+                  <Chip tone="zinc" title="Instrutores filtrados">
+                    <Users className="w-3.5 h-3.5" aria-hidden="true" /> Instrutores
+                  </Chip>
                 )}
               </div>
-            ))}
-
-            <div className="mt-3">
-              <label className="text-sm font-medium">Assinante do certificado *</label>
-              <select
-                value={String(assinanteId || "")}
-                onChange={(e) => {
-                  log("Alterar assinante:", { de: assinanteId, para: e.target.value });
-                  setAssinanteId(e.target.value);
-                }}
-                className="w-full mt-1 pl-3 pr-10 py-2 rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm"
-                required
-              >
-                <option value="">Selecione o assinante</option>
-                {assinanteOpcao.map((u) => (
-                  <option key={u.id} value={String(u.id)}>
-                    {u.nome}
-                  </option>
-                ))}
-              </select>
-              <p className="text-xs text-slate-500 mt-1">
-                O assinante precisa estar entre os instrutores selecionados desta turma.
-              </p>
             </div>
+
+            <button
+              type="button"
+              onClick={() => onClose?.()}
+              className="inline-flex items-center justify-center rounded-2xl p-2 hover:bg-black/5 dark:hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-violet-500"
+              aria-label="Fechar"
+              title="Fechar"
+            >
+              <X className="w-5 h-5" aria-hidden="true" />
+            </button>
           </div>
 
-          {/* Encontros */}
-          <div className="space-y-3">
-            <div className="font-semibold text-sm text-slate-800 dark:text-slate-100">Encontros</div>
+          {/* Ministats */}
+          <div className="relative mt-5 grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <StatMini icon={CalendarDays} label="Início" value={brDate(data_inicio)} tone="indigo" />
+            <StatMini icon={CalendarDays} label="Fim" value={brDate(data_fim)} tone="violet" />
+            <StatMini icon={Clock} label="Encontros" value={encontrosOrdenados.length || 0} tone="zinc" />
+            <StatMini icon={BadgeCheck} label="Carga" value={cargaPreview ? `${cargaPreview}h` : "—"} tone="emerald" />
+          </div>
+        </div>
 
-            {encontros.map((e, idx) => (
-              <div key={idx} className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
-                <div className="relative">
-                  <CalendarDays className="absolute left-3 top-3 text-slate-500" size={18} aria-hidden />
-                  <input
-                    type="date"
-                    value={isoDay(e.data)}
-                    onChange={(ev) => updateEncontro(idx, "data", ev.target.value)}
-                    className="w-full pl-10 py-2 border rounded-xl shadow-sm dark:bg-zinc-900 dark:text-white border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    required
-                  />
+        {/* BODY */}
+        <div className="p-5 sm:p-6 overflow-y-auto">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleSalvar();
+            }}
+            className="space-y-5"
+            aria-labelledby={titleId}
+            noValidate
+          >
+            {/* NOME */}
+            <section className="rounded-3xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 p-4 sm:p-5 shadow-sm">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="inline-flex items-center justify-center w-9 h-9 rounded-2xl bg-black/5 dark:bg-white/5">
+                  <Type className="w-5 h-5 text-indigo-600 dark:text-indigo-300" aria-hidden="true" />
+                </span>
+                <h3 className="text-base sm:text-lg font-extrabold">Nome da turma</h3>
+              </div>
+
+              <div className="relative">
+                <textarea
+                  ref={refNome}
+                  data-initial-focus
+                  value={nome}
+                  onChange={(e) => setNome(e.target.value.slice(0, NOME_TURMA_MAX))}
+                  placeholder="Ex.: Turma A — Urgência e Emergência"
+                  maxLength={NOME_TURMA_MAX}
+                  rows={2}
+                  className="w-full px-4 py-3 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-violet-500 resize-none"
+                  autoComplete="off"
+                  aria-describedby={`nome-turma-help-${uid} nome-turma-count-${uid}`}
+                />
+                <div
+                  id={`nome-turma-count-${uid}`}
+                  className={cx(
+                    "absolute right-3 top-3 text-xs",
+                    nome.length >= NOME_TURMA_MAX * 0.9 ? "text-amber-600" : "text-zinc-500 dark:text-zinc-300"
+                  )}
+                >
+                  {nome.length}/{NOME_TURMA_MAX}
                 </div>
+              </div>
 
-                <div className="relative">
-                  <Clock className="absolute left-3 top-3 text-slate-500" size={18} aria-hidden />
-                  <input
-                    type="time"
-                    value={hhmm(e.inicio, "")}
-                    onChange={(ev) => updateEncontro(idx, "inicio", ev.target.value)}
-                    className="w-full pl-10 py-2 border rounded-xl shadow-sm dark:bg-zinc-900 dark:text-white border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    required
-                  />
+              <p id={`nome-turma-help-${uid}`} className="mt-2 text-xs text-zinc-600 dark:text-zinc-300">
+                Máximo de {NOME_TURMA_MAX} caracteres.
+              </p>
+            </section>
+
+            {/* INSTRUTORES */}
+            <section className="rounded-3xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 p-4 sm:p-5 shadow-sm">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="inline-flex items-center justify-center w-9 h-9 rounded-2xl bg-black/5 dark:bg-white/5">
+                  <Users className="w-5 h-5 text-violet-600 dark:text-violet-300" aria-hidden="true" />
+                </span>
+                <div className="min-w-0">
+                  <h3 className="text-base sm:text-lg font-extrabold">Instrutores e assinante</h3>
+                  <p className="text-xs text-zinc-600 dark:text-zinc-300">
+                    O assinante precisa estar entre os instrutores selecionados.
+                  </p>
                 </div>
+              </div>
 
-                <div className="relative">
-                  <Clock className="absolute left-3 top-3 text-slate-500" size={18} aria-hidden />
-                  <div className="flex gap-2">
-                    <input
-                      type="time"
-                      value={hhmm(e.fim, "")}
-                      onChange={(ev) => updateEncontro(idx, "fim", ev.target.value)}
-                      className="w-full pl-10 py-2 border rounded-xl shadow-sm dark:bg-zinc-900 dark:text-white border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      required
-                    />
-
-                    {encontros.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => removeEncontro(idx)}
-                        className="px-3 py-2 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:border-rose-900/40 dark:bg-rose-900/20 dark:text-rose-200 dark:hover:bg-rose-900/30"
-                        title="Remover este encontro"
+              {usuariosLoading ? (
+                <div className="rounded-2xl border border-dashed border-zinc-300 dark:border-zinc-700 bg-white/60 dark:bg-zinc-900/30 p-4 text-sm text-zinc-600 dark:text-zinc-300">
+                  Carregando lista de usuários…
+                </div>
+              ) : instrutoresOpcao.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-zinc-300 dark:border-zinc-700 bg-white/60 dark:bg-zinc-900/30 p-4 text-sm text-zinc-600 dark:text-zinc-300">
+                  Nenhum usuário encontrado para seleção.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {instrutoresSel.map((valor, index) => (
+                    <div key={`instrutor-${index}`} className="flex flex-col sm:flex-row gap-2 sm:items-center">
+                      <select
+                        value={String(valor ?? "")}
+                        onChange={(e) => handleSelecionarInstrutor(index, e.target.value)}
+                        className="w-full px-4 py-3 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
+                        required={index === 0}
+                        aria-label={index === 0 ? "Instrutor principal" : `Instrutor adicional ${index}`}
                       >
-                        <Trash2 size={16} aria-hidden />
-                        <span className="sr-only">Remover encontro {idx + 1}</span>
-                      </button>
+                        <option value="">Selecione o instrutor</option>
+                        {getInstrutorDisponivel(index).map((i) => (
+                          <option key={i.id} value={String(i.id)}>
+                            {i.nome}
+                          </option>
+                        ))}
+                      </select>
+
+                      <div className="flex gap-2">
+                        {index === 0 ? (
+                          <ActionButton type="button" onClick={adicionarInstrutor} tone="info" size="sm">
+                            <PlusCircle className="w-4 h-4" aria-hidden="true" />
+                            Incluir outro
+                          </ActionButton>
+                        ) : (
+                          <ActionButton type="button" onClick={() => removerInstrutor(index)} tone="danger" size="sm">
+                            <Trash2 className="w-4 h-4" aria-hidden="true" />
+                            Remover
+                          </ActionButton>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+
+                  <div className="mt-2">
+                    <label className="text-sm font-extrabold">
+                      Assinante do certificado <span className="text-rose-600">*</span>
+                    </label>
+                    <select
+                      value={String(assinanteId || "")}
+                      onChange={(e) => setAssinanteId(e.target.value)}
+                      className="w-full mt-2 px-4 py-3 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
+                      required
+                    >
+                      <option value="">Selecione o assinante</option>
+                      {assinanteOpcao.map((u) => (
+                        <option key={u.id} value={String(u.id)}>
+                          {u.nome}
+                        </option>
+                      ))}
+                    </select>
+
+                    {instrutoresSel.filter(Boolean).length > 0 && assinanteOpcao.length === 0 && (
+                      <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
+                        Selecione ao menos um instrutor para liberar a lista de assinantes.
+                      </p>
                     )}
                   </div>
                 </div>
-              </div>
-            ))}
+              )}
+            </section>
 
-            <div className="flex justify-center">
-              <button
+            {/* ENCONTROS (PREMIUM ÚNICO — sem duplicar) */}
+            <section className="space-y-3">
+              <div className="flex items-start sm:items-center sm:justify-between gap-2">
+                <div>
+                  <div className="text-sm font-extrabold text-slate-900 dark:text-white">Encontros</div>
+                  <div className="text-xs text-slate-600 dark:text-slate-300">
+                    Informe <strong>data</strong> e <strong>horários</strong> de cada encontro.
+                  </div>
+                </div>
+
+                <div className="shrink-0 inline-flex items-center gap-2 rounded-full px-3 py-2 text-xs font-extrabold border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40">
+                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-600" />
+                  {encontrosOrdenados.length || 0} encontro(s)
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                {encontros.map((e, idx) => {
+                  const isFirst = idx === 0;
+                  const canRemove = encontros.length > 1;
+
+                  return (
+                    <div
+                      key={idx}
+                      className="rounded-3xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 shadow-sm overflow-hidden"
+                    >
+                      <div className="h-1.5 bg-gradient-to-r from-indigo-600 via-fuchsia-600 to-violet-600" />
+
+                      <div className="p-3 sm:p-4">
+                        <div className="flex items-start justify-between gap-2 mb-3">
+                          <div className="min-w-0">
+                            <div className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-300">
+                              Encontro #{idx + 1}
+                              {isFirst ? " • base" : ""}
+                            </div>
+                            <div className="text-[13px] text-slate-700 dark:text-slate-200">
+                              {isoDay(e.data) ? brDate(isoDay(e.data)) : "Data não informada"}
+                            </div>
+                          </div>
+
+                          {canRemove ? (
+                            <button
+                              type="button"
+                              onClick={() => removeEncontro(idx)}
+                              className="inline-flex items-center gap-2 rounded-2xl px-3 py-2 text-xs font-extrabold
+                                         border border-rose-200 dark:border-rose-900/40
+                                         bg-rose-50/80 dark:bg-rose-900/20
+                                         text-rose-700 dark:text-rose-200
+                                         hover:bg-rose-100 dark:hover:bg-rose-900/30
+                                         focus:outline-none focus:ring-2 focus:ring-rose-500"
+                              title="Remover este encontro"
+                            >
+                              <Trash2 size={16} aria-hidden="true" />
+                              Remover
+                              <span className="sr-only">encontro {idx + 1}</span>
+                            </button>
+                          ) : (
+                            <div className="text-[11px] font-bold text-slate-500 dark:text-slate-300">(mínimo 1)</div>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+                          {/* Data */}
+                          <div className="md:col-span-4">
+                            <label className="block text-xs font-extrabold text-slate-700 dark:text-slate-200 mb-1">
+                              Data <span className="text-rose-600">*</span>
+                            </label>
+                            <div className="relative">
+                              <CalendarDays className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
+                              <input
+                                type="date"
+                                value={isoDay(e.data)}
+                                onChange={(ev) => updateEncontro(idx, "data", ev.target.value)}
+                                className="w-full pl-10 pr-3 py-2.5 rounded-2xl border border-black/10 dark:border-white/10
+                                           bg-white dark:bg-zinc-900 shadow-sm
+                                           focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                required
+                                aria-label={`Data do encontro ${idx + 1}`}
+                              />
+                            </div>
+                          </div>
+
+                          {/* Início */}
+                          <div className="md:col-span-4">
+                            <label className="block text-xs font-extrabold text-slate-700 dark:text-slate-200 mb-1">
+                              Início <span className="text-rose-600">*</span>
+                            </label>
+                            <div className="relative">
+                              <Clock className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
+                              <input
+                                type="time"
+                                value={hhmm(e.inicio, "")}
+                                onChange={(ev) => updateEncontro(idx, "inicio", ev.target.value)}
+                                className="w-full pl-10 pr-3 py-2.5 rounded-2xl border border-black/10 dark:border-white/10
+                                           bg-white dark:bg-zinc-900 shadow-sm
+                                           focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                required
+                                aria-label={`Horário de início do encontro ${idx + 1}`}
+                              />
+                            </div>
+                          </div>
+
+                          {/* Fim */}
+                          <div className="md:col-span-4">
+                            <label className="block text-xs font-extrabold text-slate-700 dark:text-slate-200 mb-1">
+                              Fim <span className="text-rose-600">*</span>
+                            </label>
+                            <div className="relative">
+                              <Clock className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
+                              <input
+                                type="time"
+                                value={hhmm(e.fim, "")}
+                                onChange={(ev) => updateEncontro(idx, "fim", ev.target.value)}
+                                className="w-full pl-10 pr-3 py-2.5 rounded-2xl border border-black/10 dark:border-white/10
+                                           bg-white dark:bg-zinc-900 shadow-sm
+                                           focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                required
+                                aria-label={`Horário de fim do encontro ${idx + 1}`}
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mt-3 rounded-2xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 p-3 text-xs text-slate-700 dark:text-slate-200">
+                          <strong>Dica:</strong> Para eventos longos, use “Adicionar data” e ajuste apenas o que mudar.
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={addEncontro}
+                  className="inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5
+                             bg-indigo-700 hover:bg-indigo-600 text-white font-extrabold shadow-sm
+                             focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                >
+                  <PlusCircle size={16} aria-hidden="true" />
+                  Adicionar data
+                </button>
+
+                <button
+                  type="button"
+                  onClick={clonarUltimoHorario}
+                  className="inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5
+                             bg-white/80 dark:bg-zinc-900/40 border border-black/10 dark:border-white/10
+                             text-slate-900 dark:text-white font-extrabold shadow-sm
+                             hover:bg-black/5 dark:hover:bg-white/5
+                             focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  title="Clonar encontro (horários)"
+                >
+                  <Copy size={16} aria-hidden="true" />
+                  Clonar (horários)
+                </button>
+              </div>
+            </section>
+
+            {/* VAGAS (PREMIUM) */}
+            <section className="mt-1 rounded-3xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 p-3 sm:p-4 shadow-sm">
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="text-sm font-extrabold text-slate-900 dark:text-white">Vagas</div>
+                <div className="text-xs text-slate-600 dark:text-slate-300">mínimo: 1</div>
+              </div>
+
+              <div className="relative">
+                <Hash className="absolute left-3 top-2.5 text-slate-400" size={18} aria-hidden="true" />
+                <input
+                  type="number"
+                  value={vagasTotal}
+                  onChange={(e) => setVagasTotal(e.target.value)}
+                  placeholder="Quantidade de vagas"
+                  className="w-full pl-10 pr-3 py-2.5 rounded-2xl border border-black/10 dark:border-white/10
+                             bg-white dark:bg-zinc-900 shadow-sm
+                             focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  min={1}
+                  required
+                  inputMode="numeric"
+                  aria-label="Quantidade de vagas da turma"
+                />
+              </div>
+
+              <div className="mt-2 text-xs text-slate-600 dark:text-slate-300">
+                Esta informação é usada para controle de inscrições.
+              </div>
+            </section>
+          </form>
+        </div>
+
+        {/* FOOTER STICKY (PREMIUM) */}
+        <div className="mt-auto sticky bottom-0 left-0 right-0 bg-white/85 dark:bg-zinc-950/85 backdrop-blur border-t border-black/10 dark:border-white/10 px-5 py-3">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="min-w-[1.5rem]">
+              {initialTurma?.id && onExcluir ? (
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-2 rounded-2xl px-4 py-2.5
+                             bg-rose-600 hover:bg-rose-700 text-white font-extrabold shadow-sm
+                             focus:outline-none focus:ring-2 focus:ring-rose-500"
+                  onClick={() => {
+                    log("Clique em Excluir turma.", { turmaId: initialTurma?.id });
+                    onExcluir();
+                  }}
+                  title="Excluir turma"
+                >
+                  <Trash2 size={16} aria-hidden="true" />
+                  Excluir turma
+                </button>
+              ) : null}
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 sm:justify-end">
+              <ActionButton
                 type="button"
-                onClick={addEncontro}
-                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-full transition"
+                onClick={() => onClose?.()}
+                tone="neutral"
+                size="md"
+                aria-label="Cancelar"
               >
-                <PlusCircle size={16} />
-                Adicionar data
-              </button>
+                Cancelar
+              </ActionButton>
+
+              <ActionButton
+                type="button"
+                onClick={handleSalvar}
+                tone="success"
+                size="md"
+                aria-label="Salvar turma"
+              >
+                Salvar Turma
+              </ActionButton>
             </div>
           </div>
 
-          {/* Vagas */}
-          <div className="relative mt-5">
-            <Hash className="absolute left-3 top-3 text-slate-500" size={18} aria-hidden />
-            <input
-              type="number"
-              value={vagasTotal}
-              onChange={(e) => setVagasTotal(e.target.value)}
-              placeholder="Quantidade de vagas"
-              className="w-full pl-10 py-2 border rounded-xl shadow-sm dark:bg-zinc-900 dark:text-white border-slate-300 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              min={1}
-              required
-              inputMode="numeric"
-            />
-          </div>
-        </form>
-
-        {/* Footer sticky */}
-        <div className="mt-auto sticky bottom-0 left-0 right-0 bg-white/85 dark:bg-zinc-950/85 backdrop-blur border-t border-slate-200 dark:border-slate-800 px-5 py-3 flex justify-between gap-3">
-          <div className="min-w-[1.5rem]">
-            {initialTurma?.id && onExcluir ? (
-              <button
-                type="button"
-                className="flex items-center gap-2 px-3 py-2 rounded-xl bg-rose-600 text-white hover:bg-rose-700 transition"
-                onClick={() => {
-                  log("Clique em Excluir turma.", { turmaId: initialTurma?.id });
-                  onExcluir();
-                }}
-                title="Excluir turma"
-              >
-                <Trash2 size={16} />
-                Excluir turma
-              </button>
-            ) : null}
-          </div>
-
-          <div className="flex gap-3">
-            <button
-              onClick={() => {
-                log("Clique em Cancelar no rodapé.");
-                onClose?.();
-              }}
-              className="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-slate-100 hover:bg-slate-300 dark:hover:bg-slate-700 transition"
-              type="button"
-            >
-              Cancelar
-            </button>
-
-            <button
-              onClick={handleSalvar}
-              className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 transition"
-              type="button"
-            >
-              Salvar Turma
-            </button>
+          <div className="mt-2 text-[11px] text-zinc-600 dark:text-zinc-300">
+            Campos obrigatórios: <strong>nome</strong>, <strong>instrutor(es)</strong>, <strong>assinante</strong>, <strong>encontros</strong> e <strong>vagas</strong>.
           </div>
         </div>
       </div>
