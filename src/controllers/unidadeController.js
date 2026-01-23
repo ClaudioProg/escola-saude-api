@@ -12,15 +12,17 @@ function getDb(req) {
   throw new Error("DB não inicializado.");
 }
 
-function parseQueryParams(qs = {}) {
-  const {
-    q = "",
-    limit = "50",
-    offset = "0",
-    orderBy = "sigla",
-    direction = "asc",
-    fields = "", // ex.: "id,nome,sigla"
-  } = qs;
+const {
+  q = "",
+  limit = "200", // ✅ default alinhado ao máximo real
+  offset = "0",
+  orderBy = "sigla",
+  direction = "asc",
+  fields = "",
+} = qs;
+
+// ✅ (NOVO) — linha anterior incluída acima
+const lim = Math.min(Math.max(parseInt(limit, 10) || 200, 1), 200); // 1..200 (definitivo)
 
   const safeOrderBy = ["id", "nome", "sigla"].includes(String(orderBy).toLowerCase())
     ? String(orderBy).toLowerCase()
@@ -28,7 +30,6 @@ function parseQueryParams(qs = {}) {
 
   const safeDirection = String(direction).toLowerCase() === "desc" ? "DESC" : "ASC";
 
-  const lim = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200); // 1..200
   const off = Math.max(parseInt(offset, 10) || 0, 0);
 
   const allowed = new Set(["id", "nome", "sigla"]);

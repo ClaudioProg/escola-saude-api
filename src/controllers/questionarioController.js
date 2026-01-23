@@ -527,11 +527,21 @@ async function publicarQuestionario(req, res) {
 
     // valida: tem questões
     const questoes = await query(
-      `SELECT id, tipo FROM questoes_questionario WHERE questionario_id = $1`,
+      `SELECT id, tipo, peso FROM questoes_questionario WHERE questionario_id = $1`,
       [questionarioId]
     );
     if (!questoes.rowCount) {
       return res.status(400).json({ error: "Não é possível publicar: adicione ao menos 1 questão." });
+    }
+    
+    // ✅ (NOVO) — pesos precisam fechar 10
+    const soma = questoes.rows.reduce((acc, qx) => acc + Number(qx.peso || 0), 0);
+    const somaArred = Math.round(soma * 100) / 100;
+    if (somaArred !== 10) {
+      return res.status(400).json({
+        error: "Não é possível publicar: a soma dos pesos das questões deve fechar exatamente 10.",
+        soma_pesos: somaArred,
+      });
     }
 
     // valida MCQ: cada questão MCQ tem >=2 alternativas e exatamente 1 correta
@@ -735,7 +745,17 @@ async function obterQuestionarioParaResponder(req, res) {
       alternativas = alt.rows;
     }
 
-    // NÃO envia "correta"
+    function shuffle(arr) {
+      const a = [...arr];
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    }
+    
+    const questoesMix = shuffle(questoes.rows);
+    
     return res.json({
       id: q.rows[0].id,
       titulo: q.rows[0].titulo,
@@ -743,15 +763,22 @@ async function obterQuestionarioParaResponder(req, res) {
       min_nota: q.rows[0].min_nota,
       tentativas_max: q.rows[0].tentativas_max,
       turma_id: turmaId,
-      questoes: questoes.rows.map((qq) => ({
-        id: qq.id,
-        tipo: qq.tipo,
-        enunciado: qq.enunciado,
-        ordem: qq.ordem,
-        peso: qq.peso,
-        alternativas: qq.tipo === "multipla_escolha" ? alternativas.filter((a) => a.questao_id === qq.id) : [],
-      })),
+      questoes: questoesMix.map((qq) => {
+        const alts = qq.tipo === "multipla_escolha"
+          ? shuffle(alternativas.filter((a) => a.questao_id === qq.id))
+          : [];
+    
+        return {
+          id: qq.id,
+          tipo: qq.tipo,
+          enunciado: qq.enunciado,
+          ordem: qq.ordem,
+          peso: qq.peso,
+          alternativas: alts,
+        };
+      }),
     });
+    
   } catch (err) {
     console.error("[questionarios] obterQuestionarioParaResponder", err?.message || err);
     return res.status(500).json({ error: "Erro ao obter questionário." });

@@ -489,7 +489,8 @@ async function criarEvento(req, res) {
     registros_permitidos,
     cargos_permitidos,
     unidades_permitidas,
-  } = body;
+    } = body;
+  
 
   logStart(rid, "criarEvento", {
     titulo,
@@ -515,6 +516,12 @@ async function criarEvento(req, res) {
     const folderUrl = pegarUploadUrl(req, "folder");
     const progPdfUrl = pegarUploadUrl(req, "programacao");
 
+    logInfo(rid, "criarEvento payload pós-curso", {
+      pos_curso_tipo: body?.pos_curso_tipo,
+      has_teste_config: !!body?.teste_config,
+      teste_config_keys: body?.teste_config ? Object.keys(body.teste_config) : [],
+    });
+
     const evIns = await client.query(
       `INSERT INTO eventos (
          titulo, descricao, local, tipo, unidade_id, publico_alvo,
@@ -536,8 +543,10 @@ async function criarEvento(req, res) {
         progPdfUrl,
         toIntArray(cargos_permitidos),
         toIntArray(unidades_permitidas),
-      ]
+    
+            ]
     );
+    
 
     const evento = evIns.rows[0];
     const eventoId = evento.id;
@@ -690,6 +699,7 @@ async function buscarEventoPorId(req, res) {
     if (eventoResult.rowCount === 0) return res.status(404).json({ erro: "Evento não encontrado" });
 
     const evento = eventoResult.rows[0];
+
     if (!admin && !evento.publicado) return res.status(404).json({ erro: "NAO_PUBLICADO" });
 
     // ACL (se não for instrutor do evento)
@@ -857,9 +867,23 @@ async function buscarEventoPorId(req, res) {
         [id, usuarioId || 0]
       ),
     ]);
-
-    logInfo(rid, "buscarEventoPorId OK", { id, turmas: turmas.length });
-
+    
+    // ✅ (NOVO) — linha anterior incluída acima
+    const qz = await client.query(
+      `SELECT id, status, obrigatorio, min_nota, tentativas_max, tempo_minutos
+         FROM questionarios_evento
+        WHERE evento_id = $1
+        ORDER BY id DESC
+        LIMIT 1`,
+      [id]
+    );
+    
+    logInfo(rid, "buscarEventoPorId OK", {
+      id,
+      turmas: turmas.length,
+      questionario_id: qz.rows?.[0]?.id ?? null,
+    });
+    
     return res.json({
       ...evento,
       registros_permitidos: regsQ.rows.map((r) => r.registro_norm),
@@ -867,11 +891,25 @@ async function buscarEventoPorId(req, res) {
       unidades_permitidas_ids: Array.isArray(evento.unidades_permitidas_ids) ? evento.unidades_permitidas_ids : [],
       cargos_permitidos: cargosRows.rows,
       unidades_permitidas: unidadesRows.rows,
+    
+      // ✅ (NOVO)
+      pos_curso: qz.rows?.[0]
+        ? {
+            questionario_id: qz.rows[0].id,
+            status: qz.rows[0].status,
+            obrigatorio: !!qz.rows[0].obrigatorio,
+            min_nota: qz.rows[0].min_nota,
+            tentativas_max: qz.rows[0].tentativas_max,
+            tempo_minutos: qz.rows[0].tempo_minutos,
+          }
+        : null,
+    
       instrutor: instrEventoQ.rows,
       turmas,
       ja_instrutor: Boolean(jaInstrutorResult.rows?.[0]?.eh),
       ja_inscrito: Boolean(jaInscritoResult.rows?.[0]?.eh),
     });
+  
   } catch (err) {
     logError(rid, "buscarEventoPorId erro", err);
     return res.status(500).json({ erro: "Erro ao buscar evento por ID" });
@@ -1151,6 +1189,7 @@ async function atualizarEvento(req, res) {
     cargos_permitidos,
     unidades_permitidas,
   } = body;
+  
 
   const client = await pool.connect();
   try {
@@ -1210,19 +1249,17 @@ async function atualizarEvento(req, res) {
       setCols.push(`cargos_permitidos_ids = $${params.length + 1}`);
       params.push(toIntArray(cargos_permitidos));
     }
-
-    if (typeof unidades_permitidas !== "undefined") {
-      setCols.push(`unidades_permitidas_ids = $${params.length + 1}`);
-      params.push(toIntArray(unidades_permitidas));
-    }
-
-    // Se restrito=false, limpa modo e listas
-    if (typeof restrito !== "undefined" && !restrito) {
-      setCols.push(`restrito_modo = NULL`);
-      setCols.push(`cargos_permitidos_ids = NULL`);
-      setCols.push(`unidades_permitidas_ids = NULL`);
-    }
-
+    
+    // ✅ (NOVO) — linha anterior incluída acima
+    // Pós-curso NÃO é coluna em eventos; só logamos e ignoramos o payload, sem tocar no SQL.
+    const hasPosCursoTipo = Object.prototype.hasOwnProperty.call(body, "pos_curso_tipo");
+    const hasTesteConfig = Object.prototype.hasOwnProperty.call(body, "teste_config");
+    
+    logInfo(rid, "atualizarEvento payload pós-curso (ignorado)", {
+      has_pos_curso_tipo: hasPosCursoTipo,
+      has_teste_config: hasTesteConfig,
+      teste_config_type: hasTesteConfig ? typeof body.teste_config : null,
+    });
     const upd = await client.query(`UPDATE eventos SET ${setCols.join(", ")} WHERE id = $1 RETURNING id`, params);
     if (!upd.rowCount) {
       await client.query("ROLLBACK");

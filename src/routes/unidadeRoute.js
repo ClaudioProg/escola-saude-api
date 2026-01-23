@@ -8,37 +8,35 @@ const router = express.Router();
    Helpers
 ────────────────────────────────────────────────────────────── */
 function getDb(req) {
-  // Suporta tanto req.db quanto require("../db").db
   try {
-    if (req && req.db && typeof req.db.query === "function") return req.db;
+    if (req?.db && typeof req.db.query === "function") return req.db;
     const mod = require("../db");
     if (mod && typeof mod.query === "function") return mod;
-    if (mod && mod.db && typeof mod.db.query === "function") return mod.db;
+    if (mod?.db && typeof mod.db.query === "function") return mod.db;
   } catch (_) {}
   throw new Error("DB não inicializado.");
 }
 
-function parseQueryParams(qs) {
+function parseQueryParams(qs = {}) {
   const {
     q = "",
-    limit = "50",
+    limit = "200", // ✅ default 200
     offset = "0",
     orderBy = "nome",
     direction = "asc",
     fields = "", // ex.: "id,nome,sigla"
   } = qs;
 
-  // Sanitização básica
   const safeOrderBy = ["nome", "sigla", "id"].includes(String(orderBy).toLowerCase())
     ? String(orderBy).toLowerCase()
     : "nome";
 
   const safeDirection = String(direction).toLowerCase() === "desc" ? "DESC" : "ASC";
 
-  const lim = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);    // 1..200
+  // ✅ teto 200 (você disse que nunca passará disso)
+  const lim = Math.min(Math.max(parseInt(limit, 10) || 200, 1), 200); // 1..200
   const off = Math.max(parseInt(offset, 10) || 0, 0);
 
-  // Campos selecionáveis (whitelist)
   const allowed = new Set(["id", "nome", "sigla"]);
   const selectedFields = String(fields)
     .split(",")
@@ -46,7 +44,6 @@ function parseQueryParams(qs) {
     .filter(Boolean)
     .filter((f) => allowed.has(f));
 
-  // se nada foi pedido explicitamente, preserva id/nome/sigla como padrão
   const finalFields = selectedFields.length ? selectedFields : ["id", "nome", "sigla"];
 
   return {
@@ -65,7 +62,6 @@ function buildETag(payload) {
 
 function setCachingHeaders(res, etag) {
   res.setHeader("ETag", etag);
-  // 60s de cache + 5min de tolerância para SWR
   res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
 }
 

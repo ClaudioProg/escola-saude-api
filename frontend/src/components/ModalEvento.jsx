@@ -1,11 +1,13 @@
 /* eslint-disable no-console */
-// ✅ src/components/ModalEvento.jsx — PREMIUM++ (A11y + ministats + pós-curso (questionário/teste) + uploads seguros + compat open/isOpen)
-// - Visual premium (header gradiente + cards + chips + ministats)
-// - A11y: labelledBy/describedBy, SR-only, foco/esc
-// - Compat: aceita `open` OU `isOpen` (resolve casos onde a página passa open)
-// - Upload flags seguras: remover_folder / remover_programacao só quando existe algo a remover
-// - Logger DEV only (sem spam)
-// - ModalConfirmacao compat (open/isOpen)
+/**
+ * ✅ src/components/ModalEvento.jsx — PREMIUM++ (A11y + ministats + pós-curso (questionário/teste) + uploads seguros + compat open/isOpen)
+ * - Visual premium (header gradiente + cards + chips + ministats)
+ * - A11y: labelledBy/describedBy, SR-only, foco/esc
+ * - Compat: aceita `open` OU `isOpen` (resolve casos onde a página passa open)
+ * - Upload flags seguras: remover_folder / remover_programacao só quando existe algo a remover
+ * - Logger DEV only (sem spam)
+ * - ModalConfirmacao compat (open/isOpen)
+ */
 
 import { useEffect, useMemo, useRef, useState, useTransition, useId, useCallback } from "react";
 import { toast } from "react-toastify";
@@ -32,12 +34,13 @@ import {
   CheckCircle2,
   HelpCircle,
   Building2,
-  Save, // ✅ ação rápida "Salvar"
+  Save,
 } from "lucide-react";
 
 import Modal from "./Modal";
 import ModalTurma from "./ModalTurma";
 import ModalConfirmacao from "./ModalConfirmacao";
+import ModalQuestionarioEvento from "./ModalQuestionarioEvento";
 import { formatarDataBrasileira } from "../utils/dateTime";
 import { apiGet, apiDelete } from "../services/api";
 import { resolveAssetUrl, openAsset } from "../utils/assets";
@@ -97,6 +100,13 @@ function calcularCargaHorariaDatas(datas = []) {
     }
   }
   return Math.round(total);
+}
+
+// ✅ helper numérico seguro — necessário p/ resumo do questionário + onConfigSaved
+function clamp(n, min, max) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return min;
+  return Math.min(max, Math.max(min, v));
 }
 
 const normReg = (s) => String(s || "").replace(/\D/g, "");
@@ -230,6 +240,9 @@ function Chip({ tone = "zinc", children, title }) {
       "bg-amber-100 text-amber-900 border-amber-200 dark:bg-amber-900/30 dark:text-amber-200 dark:border-amber-800",
     rose:
       "bg-rose-100 text-rose-900 border-rose-200 dark:bg-rose-900/30 dark:text-rose-200 dark:border-rose-800",
+    violet:
+      "bg-violet-100 text-violet-900 border-violet-200 dark:bg-violet-900/30 dark:text-violet-200 dark:border-violet-800",
+    sky: "bg-sky-100 text-sky-900 border-sky-200 dark:bg-sky-900/30 dark:text-sky-200 dark:border-sky-800",
   };
   return (
     <span
@@ -267,7 +280,6 @@ function StatMini({ icon: Icon, label, value, tone = "zinc" }) {
 }
 
 /* ========================= ActionButton (compat) ========================= */
-// ✅ Suporta exatamente como você usa no arquivo: tone, size, children, disabled, aria-label etc.
 function ActionButton({
   children,
   onClick,
@@ -281,14 +293,10 @@ function ActionButton({
   const toneMap = {
     neutral:
       "bg-slate-200 hover:bg-slate-300 text-slate-900 dark:bg-zinc-800 dark:hover:bg-zinc-700 dark:text-zinc-100 focus:ring-slate-400/60",
-    success:
-      "bg-emerald-700 hover:bg-emerald-600 text-white focus:ring-emerald-500/60",
-    info:
-      "bg-indigo-700 hover:bg-indigo-600 text-white focus:ring-indigo-500/60",
-    warning:
-      "bg-amber-600 hover:bg-amber-500 text-white focus:ring-amber-400/60",
-    danger:
-      "bg-rose-600 hover:bg-rose-500 text-white focus:ring-rose-400/60",
+    success: "bg-emerald-700 hover:bg-emerald-600 text-white focus:ring-emerald-500/60",
+    info: "bg-indigo-700 hover:bg-indigo-600 text-white focus:ring-indigo-500/60",
+    warning: "bg-amber-600 hover:bg-amber-500 text-white focus:ring-amber-400/60",
+    danger: "bg-rose-600 hover:bg-rose-500 text-white focus:ring-rose-400/60",
   };
 
   const sizeMap = {
@@ -318,145 +326,6 @@ function ActionButton({
   );
 }
 
-function ModalConfigTeste({ open, onClose, value, onSave }) {
-  const [draft, setDraft] = useState(value || TESTE_DEFAULT);
-
-  useEffect(() => {
-    if (open) setDraft(value || TESTE_DEFAULT);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
-  const setNum = (key, min, max) => (e) => {
-    const n = Number(String(e.target.value || "").replace(",", "."));
-    const safe = Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : min;
-    setDraft((p) => ({ ...p, [key]: safe }));
-  };
-
-  if (!open) return null;
-
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      size="md"
-      align="center"
-      padding
-      labelledBy="cfg-teste-title"
-      describedBy="cfg-teste-desc"
-      closeOnBackdrop
-      closeOnEscape
-      zIndex={1300}
-    >
-      <div className="space-y-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h3 id="cfg-teste-title" className="text-lg font-extrabold tracking-tight">
-              Configurar teste obrigatório
-            </h3>
-            <p id="cfg-teste-desc" className="text-sm text-zinc-600 dark:text-zinc-300">
-              O participante só libera certificado após: <strong>frequência ≥ 75%</strong> +{" "}
-              <strong>avaliação (feedback)</strong> + <strong>teste aprovado</strong>.
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={onClose}
-            className="h-10 w-10 rounded-2xl grid place-items-center border border-black/10 dark:border-white/10
-                       bg-white/70 dark:bg-zinc-900/60 hover:bg-black/5 dark:hover:bg-white/5"
-            aria-label="Fechar"
-          >
-            <span className="text-2xl leading-none" aria-hidden="true">
-              ×
-            </span>
-          </button>
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="grid gap-1 sm:col-span-2">
-            <label className="text-sm font-extrabold">Título do teste</label>
-            <input
-              value={draft.titulo}
-              onChange={(e) => setDraft((p) => ({ ...p, titulo: e.target.value }))}
-              placeholder="Ex.: Avaliação de conhecimentos"
-              className="w-full px-3 py-2.5 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900
-                         shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            />
-          </div>
-
-          <div className="grid gap-1 sm:col-span-2">
-            <label className="text-sm font-extrabold">Descrição (opcional)</label>
-            <textarea
-              value={draft.descricao}
-              onChange={(e) => setDraft((p) => ({ ...p, descricao: e.target.value }))}
-              placeholder="Regras e observações do teste"
-              className="w-full px-3 py-2.5 h-24 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900
-                         shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            />
-          </div>
-
-          <div className="grid gap-1">
-            <label className="text-sm font-extrabold">Nota mínima</label>
-            <input
-              type="number"
-              min={0}
-              max={10}
-              step={0.1}
-              value={draft.nota_minima}
-              onChange={setNum("nota_minima", 0, 10)}
-              className="w-full px-3 py-2.5 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900
-                         shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            />
-            <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Escala 0 a 10 (aceita decimal).</p>
-          </div>
-
-          <div className="grid gap-1">
-            <label className="text-sm font-extrabold">Tentativas</label>
-            <input
-              type="number"
-              min={1}
-              max={10}
-              step={1}
-              value={draft.tentativas}
-              onChange={setNum("tentativas", 1, 10)}
-              className="w-full px-3 py-2.5 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900
-                         shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            />
-            <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Recomendado: 1 a 3.</p>
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 p-3">
-          <div className="text-xs text-zinc-700 dark:text-zinc-200">
-            <strong>Próximo passo:</strong> (quando você quiser) adicionamos editor de perguntas com
-            múltipla escolha / V-F / dissertativa.
-          </div>
-        </div>
-
-        <div className="flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-2xl px-4 py-2.5 bg-slate-200 hover:bg-slate-300 dark:bg-zinc-800 dark:hover:bg-zinc-700
-                       text-slate-900 dark:text-slate-100 font-extrabold"
-          >
-            Cancelar
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onSave?.(draft)}
-            className="rounded-2xl px-4 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white font-extrabold
-                       focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500"
-          >
-            Salvar configuração
-          </button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
 /* ========================= Componente ========================= */
 export default function ModalEvento({
   isOpen,
@@ -476,6 +345,8 @@ export default function ModalEvento({
   const dbgId = useRef(Math.random().toString(36).slice(2, 7)).current;
   const closeBlocked = salvando; // bloqueia fechar durante salvamento
 
+  const lastCfgSigRef = useRef(null);
+
   // ✅ logger de mount real
   useEffect(() => {
     L.info("MOUNT", { dbgId, eventoId: evento?.id ?? null });
@@ -491,14 +362,28 @@ export default function ModalEvento({
   const [unidadeId, setUnidadeId] = useState("");
   const [publicoAlvo, setPublicoAlvo] = useState("");
 
-  // ✅ TESTE (admin decide) — feedback do curso é sempre obrigatório e NÃO entra aqui
-const [testeObrigatorio, setTesteObrigatorio] = useState(false);
-const [testeConfig, setTesteConfig] = useState(TESTE_DEFAULT);
-const [modalTesteAberto, setModalTesteAberto] = useState(false);
+  const [testeObrigatorio, setTesteObrigatorio] = useState(false);
+
+  // ✅ resumo rápido (mostra no ModalEvento)
+  const [testeConfig, setTesteConfig] = useState({
+    titulo: "",
+    nota_minima: 7, // UI 0..10
+    tentativas: 1, // UI 1..50
+    tempo_minutos: 30,
+
+    // ✅ extras do questionário
+    questionario_id: null,
+    questoes_count: 0,
+    peso_total: 0,
+    publicado: false,
+  });
+
+  const [modalQuestionarioAberto, setModalQuestionarioAberto] = useState(false);
 
   // Auxiliares
   const [unidades, setUnidades] = useState([]);
   const [usuarios, setUsuarios] = useState([]);
+  const [usuariosLoading, setUsuariosLoading] = useState(false);
 
   // Turmas
   const [turmas, setTurmas] = useState([]);
@@ -534,8 +419,8 @@ const [modalTesteAberto, setModalTesteAberto] = useState(false);
   const [programacaoFile, setProgramacaoFile] = useState(null);
   const [folderPreview, setFolderPreview] = useState(null);
 
-  // ✅ URLs existentes + flags de remoção (sem ambiguidade com "novo evento")
-  const [folderUrlExistente, setFolderUrlExistente] = useState(undefined); // string | undefined
+  // ✅ URLs existentes + flags de remoção
+  const [folderUrlExistente, setFolderUrlExistente] = useState(undefined);
   const [programacaoUrlExistente, setProgramacaoUrlExistente] = useState(undefined);
   const [programacaoNomeExistente, setProgramacaoNomeExistente] = useState(undefined);
 
@@ -551,51 +436,66 @@ const [modalTesteAberto, setModalTesteAberto] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   /* ========= Carregamento paralelo + cache ========= */
-useEffect(() => {
-  let mounted = true;
+  useEffect(() => {
+    let mounted = true;
 
-  if (cacheUnidades) setUnidades(cacheUnidades);
-  if (cacheUsuarios) setUsuarios(cacheUsuarios);
-  if (cacheUnidades && cacheUsuarios) return () => {};
+    // mostra rápido via cache (boa UX)
+    if (cacheUnidades) setUnidades(cacheUnidades);
+    if (cacheUsuarios) setUsuarios(cacheUsuarios);
 
-  (async () => {
-    try {
-      const [uRes, usrRes] = await Promise.allSettled([
-        apiGet("/api/unidades"),
-        apiGet("/api/usuarios"),
-      ]);
-      if (!mounted) return;
+    // ✅ regra: se cache parece incompleto, força refresh
+    const CACHE_UNIDADES_MIN = 70;
+    const precisaRefresh =
+      !Array.isArray(cacheUnidades) ||
+      cacheUnidades.length < CACHE_UNIDADES_MIN ||
+      !Array.isArray(cacheUsuarios) ||
+      cacheUsuarios.length === 0;
 
-      if (uRes.status === "fulfilled") {
-        const raw = asArray(uRes.value);
-        const arr = raw
-          .filter(Boolean)
-          .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
-        setUnidades(arr);
-        cacheUnidades = arr;
-        L.info("Unidades carregadas", { total: arr.length });
-      } else {
-        L.warn("Falha ao carregar unidades", uRes.reason);
+    (async () => {
+      try {
+        if (!precisaRefresh) {
+          L.info("Cache OK — mantendo (sem refresh)", {
+            unidades: cacheUnidades?.length,
+            usuarios: cacheUsuarios?.length,
+          });
+          return;
+        }
+
+        setUsuariosLoading(true);
+
+        const [uRes, usrRes] = await Promise.allSettled([apiGet("/api/unidades?limit=200&offset=0"), apiGet("/api/usuarios")]);
+        if (!mounted) return;
+
+        if (uRes.status === "fulfilled") {
+          const raw = asArray(uRes.value);
+          const arr = raw.filter(Boolean).sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
+          setUnidades(arr);
+          cacheUnidades = arr;
+          L.info("Unidades carregadas (refresh)", { total: arr.length });
+        } else {
+          L.warn("Falha ao carregar unidades", uRes.reason);
+        }
+
+        if (usrRes.status === "fulfilled") {
+          const raw = asArray(usrRes.value);
+          const arr = raw.filter(Boolean);
+          setUsuarios(arr);
+          cacheUsuarios = arr;
+          L.info("Usuários carregados (refresh)", { total: arr.length });
+        } else {
+          L.warn("Falha ao carregar usuários", usrRes.reason);
+        }
+      } catch (e) {
+        L.warn("bootstrap error", e);
+      } finally {
+        if (mounted) setUsuariosLoading(false);
       }
+    })();
 
-      if (usrRes.status === "fulfilled") {
-        const raw = asArray(usrRes.value);
-        const arr = raw.filter(Boolean);
-        setUsuarios(arr);
-        cacheUsuarios = arr;
-        L.info("Usuários carregados", { total: arr.length });
-      } else {
-        L.warn("Falha ao carregar usuários", usrRes.reason);
-      }
-    } catch (e) {
-      L.warn("bootstrap error", e);
-    }
-  })();
-
-  return () => {
-    mounted = false;
-  };
-}, []);
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   /* ========= Reidratar ao abrir/trocar id ========= */
   useEffect(() => {
@@ -638,8 +538,18 @@ useEffect(() => {
         setUnidadesPermitidas([]);
 
         setTesteObrigatorio(false);
-setTesteConfig(TESTE_DEFAULT);
-setModalTesteAberto(false);
+        setTesteConfig({
+          titulo: "",
+          nota_minima: 7,
+          tentativas: 1,
+          tempo_minutos: 30,
+          questionario_id: null,
+          questoes_count: 0,
+          peso_total: 0,
+          publicado: false,
+        });
+
+        setModalQuestionarioAberto(false);
 
         // ✅ novo evento: sem “existentes”
         setFolderUrlExistente(undefined);
@@ -653,31 +563,23 @@ setModalTesteAberto(false);
         setUnidadeId(evento.unidade_id ? String(evento.unidade_id) : "");
         setPublicoAlvo(evento.publico_alvo || "");
 
-        // ✅ teste obrigatório (se backend mandar "teste", ativa; qualquer outro vira false)
-const pc = String(evento.pos_curso_tipo || evento.posCursoTipo || "nenhum").toLowerCase();
-setTesteObrigatorio(pc === "teste");
+        // ✅ Pós-curso NÃO confia na listagem (evento vem “seco”)
+        setTesteObrigatorio(false);
+        setTesteConfig((prev) => ({
+          ...prev,
+          ...TESTE_DEFAULT,
+          questionario_id: null,
+          questoes_count: 0,
+          peso_total: 0,
+          publicado: false,
+        }));
 
-// opcional: se backend já mandar config do teste
-if (evento?.teste_config && typeof evento.teste_config === "object") {
-  setTesteConfig((prev) => ({ ...prev, ...evento.teste_config }));
-} else {
-  setTesteConfig(TESTE_DEFAULT);
-}
+        // ✅ anexos existentes vindos do backend
+        setFolderUrlExistente(evento.folder_url || evento.folder || undefined);
 
-        // ✅ existentes vindos do backend
-setFolderUrlExistente(evento.folder_url || evento.folder || undefined);
+        setProgramacaoUrlExistente(evento.programacao_pdf_url || evento.programacao_url || evento.programacao_pdf || undefined);
 
-// ✅ (NOVO) — linha anterior incluída acima
-setProgramacaoUrlExistente(
-  evento.programacao_pdf_url ||
-  evento.programacao_url ||
-  evento.programacao_pdf ||
-  undefined
-);
-
-setProgramacaoNomeExistente(
-  evento.programacao_nome || evento.programacao_pdf_nome || undefined
-);
+        setProgramacaoNomeExistente(evento.programacao_nome || evento.programacao_pdf_nome || undefined);
 
         // turmas (rota leve)
         (async () => {
@@ -686,9 +588,7 @@ setProgramacaoNomeExistente(
             const turmasBack = Array.isArray(resp) ? resp : [];
             const turmasNormalizadas = turmasBack.map((t) => {
               const n = normalizarDatasTurma(t);
-              const cargaCalc = Number.isFinite(Number(t.carga_horaria))
-                ? Number(t.carga_horaria)
-                : calcularCargaHorariaDatas(n.datas);
+              const cargaCalc = Number.isFinite(Number(t.carga_horaria)) ? Number(t.carga_horaria) : calcularCargaHorariaDatas(n.datas);
 
               return {
                 ...t,
@@ -714,7 +614,7 @@ setProgramacaoNomeExistente(
 
         let modo = evento.restrito_modo;
         if (!modo && restr) modo = evento.vis_reg_tipo === "lista" ? "lista_registros" : "todos_servidores";
-        setRestritoModo(restr ? (modo || "todos_servidores") : "");
+        setRestritoModo(restr ? modo || "todos_servidores" : "");
 
         const lista =
           (Array.isArray(evento.registros_permitidos) ? evento.registros_permitidos : null) ??
@@ -733,54 +633,98 @@ setProgramacaoNomeExistente(
     });
 
     prevEventoKeyRef.current = curKey;
-  }, [effectiveOpen, evento]);
+  }, [effectiveOpen, evento?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ========= GET fresh detalhe (sob demanda) ========= */
   useEffect(() => {
     if (!effectiveOpen || !evento?.id) return;
-    if (registros.length > 0 && cargosPermitidos.length > 0 && unidadesPermitidas.length > 0) return;
+
+    let alive = true;
 
     (async () => {
       try {
         const det = await apiGet(`/api/eventos/${evento.id}`);
+        if (!alive) return;
 
-        // ✅ teste obrigatório
-const pc = String(det?.pos_curso_tipo || det?.posCursoTipo || "nenhum").toLowerCase();
-setTesteObrigatorio(pc === "teste");
+        // ✅ FONTE DE VERDADE DO PÓS-CURSO
+        const pc = det?.pos_curso || null;
+        const hasTeste = !!pc?.questionario_id;
 
-// opcional: config
-if (det?.teste_config && typeof det.teste_config === "object") {
-  setTesteConfig((prev) => ({ ...prev, ...det.teste_config }));
-}
+        setTesteObrigatorio(hasTeste);
 
-
-        if (typeof det.restrito === "boolean") setRestrito(!!det.restrito);
-
-        let modo = det.restrito_modo;
-        if (!modo && det.restrito) modo = det.vis_reg_tipo === "lista" ? "lista_registros" : "todos_servidores";
-        setRestritoModo(det.restrito ? (modo || "todos_servidores") : "");
-
-        const lista = Array.isArray(det.registros_permitidos)
-          ? det.registros_permitidos
-          : Array.isArray(det.registros)
-          ? det.registros
-          : [];
-
-        const parsed = (lista || []).map(normReg).filter((r) => /^\d{6}$/.test(r));
-        if (parsed.length && registros.length === 0) setRegistros([...new Set(parsed)]);
-
-        if (Array.isArray(det.cargos_permitidos) && cargosPermitidos.length === 0) {
-          setCargosPermitidos([...new Set(det.cargos_permitidos.map((s) => String(s || "").trim()).filter(Boolean))]);
+        if (!hasTeste) {
+          setTesteConfig((prev) => ({
+            ...prev,
+            ...TESTE_DEFAULT,
+            questionario_id: null,
+            questoes_count: 0,
+            peso_total: 0,
+            publicado: false,
+          }));
+        } else {
+          setTesteConfig((prev) => ({
+            ...prev,
+            nota_minima: Number.isFinite(Number(pc?.min_nota)) ? clamp(Number(pc.min_nota) / 10, 0, 10) : prev.nota_minima, // 0..100 -> 0..10
+            tentativas: Number.isFinite(Number(pc?.tentativas_max)) ? clamp(Number(pc.tentativas_max), 1, 50) : prev.tentativas,
+            tempo_minutos: Number.isFinite(Number(pc?.tempo_minutos)) ? clamp(Number(pc.tempo_minutos), 5, 240) : prev.tempo_minutos,
+            questionario_id: pc?.questionario_id ?? prev.questionario_id,
+            publicado: String(pc?.status || "").toLowerCase() === "publicado" ? true : prev.publicado,
+          }));
         }
-        if (Array.isArray(det.unidades_permitidas) && unidadesPermitidas.length === 0) {
-          setUnidadesPermitidas(extractIds(det.unidades_permitidas));
+
+        // anexos (opcional)
+        if (det?.folder_url || det?.folder) setFolderUrlExistente(det.folder_url || det.folder);
+        if (det?.programacao_pdf_url || det?.programacao_url || det?.programacao_pdf) {
+          setProgramacaoUrlExistente(det.programacao_pdf_url || det.programacao_url || det.programacao_pdf);
+          setProgramacaoNomeExistente(det.programacao_nome || det.programacao_pdf_nome);
         }
-      } catch {
-        // silencioso
+      } catch (e) {
+        console.warn("[ModalEvento] Falha ao carregar detalhe do evento", e);
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveOpen, evento?.id, registros.length, cargosPermitidos.length, unidadesPermitidas.length]);
+
+    return () => {
+      alive = false;
+    };
+  }, [effectiveOpen, evento?.id]);
+
+  // ✅ Ao abrir o evento, tenta carregar o resumo REAL do questionário (se existir)
+  useEffect(() => {
+    if (!effectiveOpen || !evento?.id) return;
+
+    let alive = true;
+
+    (async () => {
+      try {
+        const qz = await apiGet(`/api/questionarios/evento/${Number(evento.id)}`);
+        if (!alive) return;
+
+        // ✅ Se existe questionário, então o evento TEM teste obrigatório
+        if (qz?.id) setTesteObrigatorio(true);
+
+        setTesteConfig((prev) => ({
+          ...prev,
+          titulo: String(qz?.titulo || prev.titulo || "").trim(),
+          nota_minima: Number.isFinite(Number(qz?.min_nota)) ? clamp(Number(qz.min_nota) / 10, 0, 10) : prev.nota_minima,
+          tentativas: Number.isFinite(Number(qz?.tentativas_max)) ? clamp(Number(qz.tentativas_max), 1, 50) : prev.tentativas,
+          tempo_minutos: Number.isFinite(Number(qz?.tempo_minutos)) ? clamp(Number(qz.tempo_minutos), 5, 240) : prev.tempo_minutos,
+
+          questionario_id: qz?.id ?? prev.questionario_id,
+          questoes_count: Array.isArray(qz?.questoes) ? qz.questoes.length : Number(qz?.questoes_count) || prev.questoes_count || 0,
+          peso_total: Number.isFinite(Number(qz?.peso_total)) ? Number(qz.peso_total) : prev.peso_total,
+          publicado: !!qz?.publicado,
+        }));
+      } catch (e) {
+        // ✅ Se não existe questionário, não liga teste automaticamente
+        if (e?.status === 404) return;
+        console.warn("[ModalEvento] Falha ao carregar questionário", e);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [effectiveOpen, evento?.id]);
 
   /* ========= Sugestões de cargos (on demand) ========= */
   useEffect(() => {
@@ -791,7 +735,9 @@ if (det?.teste_config && typeof det.teste_config === "object") {
       try {
         const lista = await apiGet("/api/eventos/cargos/sugerir?limit=50");
         const jaUsados = new Set(cargosPermitidos.map((c) => c.toLowerCase()));
-        const norm = (Array.isArray(lista) ? lista : []).map(normalizarCargo).filter((s) => s && !jaUsados.has(s.toLowerCase()));
+        const norm = (Array.isArray(lista) ? lista : [])
+          .map(normalizarCargo)
+          .filter((s) => s && !jaUsados.has(s.toLowerCase()));
         setFallbackCargos(norm);
       } catch {
         // silencioso
@@ -817,12 +763,36 @@ if (det?.teste_config && typeof det.teste_config === "object") {
       .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
   }, [usuarios]);
 
+  // ✅ Mapa rápido (id -> nome) para evitar .find() toda hora e eliminar “15” na UI
+  const usuariosById = useMemo(() => {
+    const m = new Map();
+    for (const u of usuarios || []) {
+      const idNum = Number(u?.id);
+      if (Number.isFinite(idNum)) m.set(idNum, String(u?.nome || "").trim());
+    }
+    return m;
+  }, [usuarios]);
+
+  // ✅ Resolve nome por id com fallback inteligente
   const nomePorId = useCallback(
-    (id) => {
-      const u = (usuarios || []).find((x) => Number(x.id) === Number(id));
-      return u?.nome || String(id);
+    (id, turmaMaybe = null) => {
+      const idNum = Number(id);
+      if (!Number.isFinite(idNum)) return "—";
+
+      // 1) lista global carregada
+      const nome = usuariosById.get(idNum);
+      if (nome) return nome;
+
+      // 2) fallback: se a turma trouxer objetos em instrutores
+      const arr = Array.isArray(turmaMaybe?.instrutores) ? turmaMaybe.instrutores : [];
+      const hit = arr.find((x) => Number(x?.id ?? x) === idNum);
+      const nomeLocal = String(hit?.nome || "").trim();
+      if (nomeLocal) return nomeLocal;
+
+      // 3) fallback final
+      return usuariosLoading ? "Carregando…" : "Usuário não encontrado";
     },
-    [usuarios]
+    [usuariosById, usuariosLoading]
   );
 
   const unidadeNome = useMemo(() => {
@@ -874,7 +844,7 @@ if (det?.teste_config && typeof det.teste_config === "object") {
     if (!validaTamanho(f, MAX_IMG_MB)) return toast.error(`Imagem muito grande. Máx. ${MAX_IMG_MB} MB.`);
 
     setFolderFile(f);
-    setRemoverFolderExistente(false); // ✅ se selecionou novo, não remove “existente” sozinho
+    setRemoverFolderExistente(false);
     const reader = new FileReader();
     reader.onload = () => setFolderPreview(reader.result);
     reader.readAsDataURL(f);
@@ -894,7 +864,6 @@ if (det?.teste_config && typeof det.teste_config === "object") {
     setFolderFile(null);
     setFolderPreview(null);
     if (folderInputRef.current) folderInputRef.current.value = "";
-    // ✅ só marca remoção se houver existente
     if (folderUrlExistente) setRemoverFolderExistente(true);
   };
 
@@ -1013,22 +982,9 @@ if (det?.teste_config && typeof det.teste_config === "object") {
       return;
     }
 
-    // ✅ (NOVO) teste obrigatório precisa de config mínima
-    if (testeObrigatorio) {
-      const nm = Number(testeConfig?.nota_minima);
-      const tt = Number(testeConfig?.tentativas);
-      if (!testeConfig?.titulo?.trim()) {
-        toast.error("❌ Configure o teste: informe um título.");
-        return;
-      }
-      if (!Number.isFinite(nm) || nm < 0 || nm > 10) {
-        toast.error("❌ Configure o teste: nota mínima inválida (0 a 10).");
-        return;
-      }
-      if (!Number.isFinite(tt) || tt < 1 || tt > 10) {
-        toast.error("❌ Configure o teste: tentativas inválidas (1 a 10).");
-        return;
-      }
+    // ✅ teste obrigatório: aviso se ainda não há questionário
+    if (testeObrigatorio && !testeConfig?.questionario_id) {
+      toast.info("Teste obrigatório marcado, mas ainda sem questionário configurado. Você pode configurar depois.");
     }
 
     // Validações por turma
@@ -1100,18 +1056,16 @@ if (det?.teste_config && typeof det.teste_config === "object") {
       unidade_id: Number(unidadeId),
       publico_alvo: publicoAlvo,
 
-      // ✅ pós-curso
-      pos_curso_tipo: testeObrigatorio ? "teste" : "nenhum",
-
-      // ✅ (NOVO) só envia config se o teste estiver ativo
-      ...(testeObrigatorio ? { teste_config: testeConfig } : {}),
-
+      // ✅ Pós-curso NÃO é coluna de eventos.
+      // Config do teste é feita no modal / endpoint próprio (ModalQuestionarioEvento).
       turmas: turmasCompletas,
       restrito: !!restrito,
       restrito_modo: restrito ? restritoModo || "todos_servidores" : null,
+
       ...(restrito && restritoModo === "lista_registros" && regs6.length > 0 ? { registros_permitidos: regs6 } : {}),
       ...(restrito && restritoModo === "cargos" && cargosPermitidos.length > 0 ? { cargos_permitidos: cargosPermitidos } : {}),
       ...(restrito && restritoModo === "unidades" && unidadesPermitidas.length > 0 ? { unidades_permitidas: unidadesPermitidas } : {}),
+
       ...(removerFolderExistente ? { remover_folder: true } : {}),
       ...(removerProgramacaoExistente ? { remover_programacao: true } : {}),
     };
@@ -1131,7 +1085,6 @@ if (det?.teste_config && typeof det.teste_config === "object") {
   const scrollToSection = useCallback((id) => {
     const el = document.getElementById(id);
     if (!el) return;
-    // funciona bem dentro do container com overflow-y
     el.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
@@ -1174,20 +1127,26 @@ if (det?.teste_config && typeof det.teste_config === "object") {
               </p>
 
               <div className="mt-1.5 flex flex-wrap gap-2">
-                <Chip tone="zinc" title="Encontros">{qtd} encontro(s)</Chip>
-                <Chip tone="indigo" title="Vagas">{Number(t.vagas_total) || 0} vagas</Chip>
-                <Chip tone="emerald" title="Carga horária">{Number(t.carga_horaria) || 0}h</Chip>
+                <Chip tone="zinc" title="Encontros">
+                  {qtd} encontro(s)
+                </Chip>
+                <Chip tone="indigo" title="Vagas">
+                  {Number(t.vagas_total) || 0} vagas
+                </Chip>
+                <Chip tone="emerald" title="Carga horária">
+                  {Number(t.carga_horaria) || 0}h
+                </Chip>
               </div>
             </div>
 
             <div className="flex flex-wrap gap-2">
-  <ActionButton
-    type="button"
-    onClick={() => abrirEditarTurma(i)}
-    tone="info"
-    size="xs"
-    aria-label={`Editar turma ${t.nome}`}
-  >
+              <ActionButton
+                type="button"
+                onClick={() => abrirEditarTurma(i)}
+                tone="info"
+                size="xs"
+                aria-label={`Editar turma ${t.nome}`}
+              >
                 <Pencil className="w-4 h-4" aria-hidden="true" />
                 Editar
               </ActionButton>
@@ -1246,7 +1205,7 @@ if (det?.teste_config && typeof det.teste_config === "object") {
                     <span>
                       {instrs.map((id, idx) => (
                         <span key={id}>
-                          {nomePorId(id)}
+                          {nomePorId(id, t)}
                           {idx < instrs.length - 1 ? ", " : ""}
                         </span>
                       ))}
@@ -1256,7 +1215,7 @@ if (det?.teste_config && typeof det.teste_config === "object") {
                 {Number.isFinite(assinante) && (
                   <div className="text-xs mt-1">
                     <span className="font-extrabold">Assinante: </span>
-                    <span>{nomePorId(assinante)}</span>
+                    <span>{nomePorId(assinante, t)}</span>
                   </div>
                 )}
               </div>
@@ -1272,13 +1231,14 @@ if (det?.teste_config && typeof det.teste_config === "object") {
     <>
       <Modal
         isOpen={effectiveOpen}
+        open={effectiveOpen} // ✅ compat extra
         onClose={closeBlocked ? undefined : onClose}
         level={0}
         maxWidth="max-w-4xl"
         labelledBy={titleId}
         describedBy={descId}
         closeOnBackdrop={!closeBlocked}
-        closeOnEsc={!closeBlocked}
+        closeOnEscape={!closeBlocked}
       >
         <div className="grid grid-rows-[auto,1fr,auto] max-h-[92vh] rounded-3xl overflow-hidden bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/10 shadow-2xl">
           {/* Top gradient bar */}
@@ -1286,26 +1246,21 @@ if (det?.teste_config && typeof det.teste_config === "object") {
 
           {/* HEADER */}
           <div className="relative p-5 sm:p-6 border-b border-black/5 dark:border-white/10 bg-white/80 dark:bg-zinc-900/80 backdrop-blur">
-          <div className="absolute inset-0 pointer-events-none">
+            <div className="absolute inset-0 pointer-events-none">
               <div className="absolute -top-16 -left-24 w-56 h-56 rounded-full bg-emerald-500/12 blur-2xl" />
               <div className="absolute -bottom-20 -right-24 w-64 h-64 rounded-full bg-teal-500/12 blur-2xl" />
             </div>
 
             <div className="relative flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
               <div className="min-w-0">
-                <h2
-                  id={titleId}
-                  className="text-lg sm:text-2xl font-extrabold tracking-tight flex items-center gap-2"
-                >
+                <h2 id={titleId} className="text-lg sm:text-2xl font-extrabold tracking-tight flex items-center gap-2">
                   <span className="inline-flex items-center justify-center w-9 h-9 rounded-2xl bg-black/5 dark:bg-white/5">
                     <ShieldCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
                   </span>
                   <span className="truncate">{evento?.id ? "Editar Evento" : "Novo Evento"}</span>
                 </h2>
 
-                <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
-                  Configure dados, turmas, anexos e a avaliação pós-curso.
-                </p>
+                <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">Configure dados, turmas, anexos e a avaliação pós-curso.</p>
 
                 <p id={descId} className="sr-only">
                   Formulário para criação ou edição de evento, incluindo turmas, anexos e restrições de acesso.
@@ -1332,23 +1287,23 @@ if (det?.teste_config && typeof det.teste_config === "object") {
                     </Chip>
                   )}
 
-                  <Chip
-                    tone={restrito ? "amber" : "zinc"}
-                    title={restrito ? "Evento restrito" : "Evento público interno"}
-                  >
-                    {restrito ? <Lock className="w-3.5 h-3.5" aria-hidden="true" /> : <Unlock className="w-3.5 h-3.5" aria-hidden="true" />}
+                  <Chip tone={restrito ? "amber" : "zinc"} title={restrito ? "Evento restrito" : "Evento público interno"}>
+                    {restrito ? (
+                      <Lock className="w-3.5 h-3.5" aria-hidden="true" />
+                    ) : (
+                      <Unlock className="w-3.5 h-3.5" aria-hidden="true" />
+                    )}
                     {restrito ? "Restrito" : "Padrão"}
                   </Chip>
 
                   <Chip tone="violet" title="Teste obrigatório">
-  <Sparkles className="w-3.5 h-3.5" aria-hidden="true" />
-  {testeObrigatorio ? "Teste obrigatório" : "Sem teste"}
-</Chip>
+                    <Sparkles className="w-3.5 h-3.5" aria-hidden="true" />
+                    {testeObrigatorio ? "Teste obrigatório" : "Sem teste"}
+                  </Chip>
                 </div>
               </div>
 
               <div className="flex items-center gap-2 justify-end">
-                {/* ✅ ações rápidas no topo (ótimo no mobile) */}
                 <button
                   type="button"
                   onClick={closeBlocked ? undefined : onClose}
@@ -1394,7 +1349,7 @@ if (det?.teste_config && typeof det.teste_config === "object") {
               <StatMini icon={Paperclip} label="Anexos" value={stats.anexos} tone="violet" />
             </div>
 
-            {/* ✅ atalhos por seção (mobile-friendly, horizontal scroll) */}
+            {/* atalhos por seção */}
             <div className="relative mt-4 flex gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]">
               {SECOES.map((s) => (
                 <button
@@ -1410,7 +1365,6 @@ if (det?.teste_config && typeof det.teste_config === "object") {
             </div>
           </div>
 
-
           {/* BODY */}
           <div className="p-5 sm:p-6 overflow-y-auto">
             {isPending ? (
@@ -1418,14 +1372,8 @@ if (det?.teste_config && typeof det.teste_config === "object") {
                 Carregando…
               </p>
             ) : (
-              <form
-                id={`form-evento-${uid}`}
-                onSubmit={handleSubmit}
-                className="space-y-5"
-                aria-labelledby={titleId}
-                noValidate
-              >
-                {/* Bloco principal */}
+              <form id={`form-evento-${uid}`} onSubmit={handleSubmit} className="space-y-5" aria-labelledby={titleId} noValidate>
+                {/* DADOS */}
                 <section
                   id={`sec-dados-${uid}`}
                   className="rounded-3xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 p-4 sm:p-5 shadow-sm scroll-mt-3"
@@ -1558,78 +1506,80 @@ if (det?.teste_config && typeof det.teste_config === "object") {
                   </div>
                 </section>
 
-                {/* TESTE obrigatório */}
-<section
-  id={`sec-pos-${uid}`}
-  className="rounded-3xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 p-4 sm:p-5 shadow-sm scroll-mt-3"
->
-  <div className="flex items-center gap-2 mb-3">
-    <span className="inline-flex items-center justify-center w-9 h-9 rounded-2xl bg-black/5 dark:bg-white/5">
-      <CheckCircle2 className="w-5 h-5 text-violet-600 dark:text-violet-300" aria-hidden="true" />
-    </span>
-    <div className="min-w-0">
-      <h3 className="text-base sm:text-lg font-extrabold">Teste obrigatório</h3>
-      <p className="text-xs text-zinc-600 dark:text-zinc-300">
-        A <strong>avaliação (feedback)</strong> do curso já é obrigatória em todos os eventos.
-        Aqui você define apenas se haverá <strong>teste</strong> para liberar o certificado.
-      </p>
-    </div>
-  </div>
+                {/* PÓS-CURSO: TESTE */}
+                <section
+                  id={`sec-pos-${uid}`}
+                  className="rounded-3xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 p-4 sm:p-5 shadow-sm scroll-mt-3"
+                >
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="inline-flex items-center justify-center w-9 h-9 rounded-2xl bg-black/5 dark:bg-white/5">
+                      <CheckCircle2 className="w-5 h-5 text-violet-600 dark:text-violet-300" aria-hidden="true" />
+                    </span>
+                    <div className="min-w-0">
+                      <h3 className="text-base sm:text-lg font-extrabold">Teste obrigatório</h3>
+                      <p className="text-xs text-zinc-600 dark:text-zinc-300">
+                        A <strong>avaliação (feedback)</strong> do curso já é obrigatória em todos os eventos. Aqui você define
+                        apenas se haverá <strong>teste</strong> para liberar o certificado.
+                      </p>
+                    </div>
+                  </div>
 
-  <div className="rounded-2xl border border-black/10 dark:border-white/10 bg-white/80 dark:bg-zinc-900/40 p-3">
-    <label className="flex items-start gap-3">
-      <input
-        type="checkbox"
-        checked={testeObrigatorio}
-        onChange={(e) => setTesteObrigatorio(e.target.checked)}
-      />
-      <div className="min-w-0">
-        <div className="font-extrabold">Exigir teste para gerar certificado</div>
-        <div className="text-xs text-zinc-600 dark:text-zinc-300">
-          Quando ativado, o participante só libera o certificado após:
-          <strong> frequência ≥ 75%</strong> + <strong>avaliação (feedback)</strong> +{" "}
-          <strong>teste aprovado</strong>.
-        </div>
-      </div>
-    </label>
+                  <div className="rounded-2xl border border-black/10 dark:border-white/10 bg-white/80 dark:bg-zinc-900/40 p-3">
+                    <label className="flex items-start gap-3">
+                      <input type="checkbox" checked={testeObrigatorio} onChange={(e) => setTesteObrigatorio(e.target.checked)} />
+                      <div className="min-w-0">
+                        <div className="font-extrabold">Exigir teste para gerar certificado</div>
+                        <div className="text-xs text-zinc-600 dark:text-zinc-300">
+                          Quando ativado, o participante só libera o certificado após: <strong>frequência ≥ 75%</strong> +{" "}
+                          <strong>avaliação (feedback)</strong> + <strong>teste aprovado</strong>.
+                        </div>
+                      </div>
+                    </label>
 
-    {testeObrigatorio && (
-      <>
-        {/* linha anterior ao trecho novo (acréscimo) */}
-        <div className="mt-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-          <div className="text-xs text-zinc-700 dark:text-zinc-200">
-            <strong>Configuração:</strong>{" "}
-            {testeConfig?.titulo ? (
-              <>
-                {testeConfig.titulo} • nota mín. {Number(testeConfig.nota_minima ?? 0)} •{" "}
-                {Number(testeConfig.tentativas ?? 1)} tentativa(s)
-              </>
-            ) : (
-              <>nenhum teste configurado ainda</>
-            )}
-          </div>
+                    {testeObrigatorio && (
+                      <>
+                        <div className="mt-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                          <div className="text-xs text-zinc-700 dark:text-zinc-200">
+                            <strong>Configuração:</strong>{" "}
+                            {testeConfig?.questionario_id ? (
+                              <>
+                                {testeConfig?.titulo || "Questionário"} • {Number(testeConfig.questoes_count || 0)} questão(ões) •
+                                nota mín. {Number(testeConfig.nota_minima ?? 0)} • {Number(testeConfig.tentativas ?? 1)} tentativa(s)
+                                {Number.isFinite(Number(testeConfig.tempo_minutos)) ? ` • ${Number(testeConfig.tempo_minutos)} min` : ""}
+                              </>
+                            ) : (
+                              <>nenhum teste configurado ainda</>
+                            )}
+                          </div>
 
-          <ActionButton
-            type="button"
-            onClick={() => setModalTesteAberto(true)}
-            tone="info"
-            size="sm"
-            aria-label="Configurar teste obrigatório"
-          >
-            <ClipboardList className="w-4 h-4" aria-hidden="true" />
-            Configurar teste
-          </ActionButton>
-        </div>
+                          <ActionButton
+                            type="button"
+                            onClick={() => {
+                              if (!evento?.id) {
+                                toast.info("Você pode salvar o evento agora e configurar o teste depois.");
+                                return;
+                              }
+                              setModalQuestionarioAberto(true);
+                            }}
+                            tone="info"
+                            size="sm"
+                            aria-label="Criar/Configurar teste obrigatório"
+                          >
+                            <ClipboardList className="w-4 h-4" aria-hidden="true" />
+                            {evento?.id ? "Criar / Configurar teste" : "Salve o evento para criar o teste"}
+                          </ActionButton>
+                        </div>
 
-        <div className="mt-3 rounded-2xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 p-3 text-xs text-zinc-700 dark:text-zinc-200">
-          <strong>Dica:</strong> Você pode configurar nota mínima e tentativas. (Editor de perguntas entra no próximo upgrade.)
-        </div>
-      </>
-    )}
-  </div>
-</section>
+                        <div className="mt-3 rounded-2xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 p-3 text-xs text-zinc-700 dark:text-zinc-200">
+                          <strong>Dica:</strong> Configure título, nota mínima, tentativas e tempo. (Editor avançado de questões entra no
+                          próximo upgrade.)
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </section>
 
-                {/* 🔒 RESTRIÇÃO */}
+                {/* VISIBILIDADE */}
                 <section
                   id={`sec-vis-${uid}`}
                   className="rounded-3xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 p-4 sm:p-5 shadow-sm scroll-mt-3"
@@ -1670,7 +1620,9 @@ if (det?.teste_config && typeof det.teste_config === "object") {
                           checked={restritoModo === "todos_servidores"}
                           onChange={() => setRestritoModo("todos_servidores")}
                         />
-                        <span>Todos os servidores (somente quem possui <strong>registro</strong> cadastrado)</span>
+                        <span>
+                          Todos os servidores (somente quem possui <strong>registro</strong> cadastrado)
+                        </span>
                       </label>
 
                       <label className="flex items-center gap-2">
@@ -1713,7 +1665,7 @@ if (det?.teste_config && typeof det.teste_config === "object") {
                         <span>Restringir por unidades</span>
                       </label>
 
-                      {/* Sub-seções */}
+                      {/* lista_registros */}
                       {restritoModo === "lista_registros" && (
                         <div className="mt-3 space-y-2">
                           <div className="flex gap-2">
@@ -1735,15 +1687,10 @@ if (det?.teste_config && typeof det.teste_config === "object") {
                               placeholder="Cole registros (extraímos blocos de 6 dígitos) e Enter"
                               className="w-full px-3 py-2.5 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                             />
-                            <ActionButton
-  type="button"
-  onClick={addRegistro}
-  tone="success"
-  aria-label="Adicionar registros à lista"
->
-  <PlusCircle className="w-4 h-4" aria-hidden="true" />
-  Adicionar
-</ActionButton>
+                            <ActionButton type="button" onClick={addRegistro} tone="success" aria-label="Adicionar registros à lista">
+                              <PlusCircle className="w-4 h-4" aria-hidden="true" />
+                              Adicionar
+                            </ActionButton>
                           </div>
 
                           <div className="mt-1 flex items-center justify-between">
@@ -1784,6 +1731,7 @@ if (det?.teste_config && typeof det.teste_config === "object") {
                         </div>
                       )}
 
+                      {/* cargos */}
                       {restritoModo === "cargos" && (
                         <div className="mt-3 space-y-2">
                           <div className="flex gap-2">
@@ -1828,12 +1776,11 @@ if (det?.teste_config && typeof det.teste_config === "object") {
                             ))}
                           </div>
 
-                          {cargosSugestoes.length === 0 && (
-                            <p className="text-xs text-slate-600 dark:text-slate-300">Sem sugestões no momento.</p>
-                          )}
+                          {cargosSugestoes.length === 0 && <p className="text-xs text-slate-600 dark:text-slate-300">Sem sugestões no momento.</p>}
                         </div>
                       )}
 
+                      {/* unidades */}
                       {restritoModo === "unidades" && (
                         <div className="mt-3 space-y-2">
                           <div className="flex gap-2">
@@ -1888,7 +1835,7 @@ if (det?.teste_config && typeof det.teste_config === "object") {
                   )}
                 </section>
 
-                {/* UPLOADS */}
+                {/* ANEXOS */}
                 <section
                   id={`sec-anexos-${uid}`}
                   className="rounded-3xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 p-4 sm:p-5 shadow-sm scroll-mt-3"
@@ -1911,39 +1858,39 @@ if (det?.teste_config && typeof det.teste_config === "object") {
                       </label>
 
                       {!folderFile && !!folderUrlExistente && !removerFolderExistente && (
-  <div className="rounded-2xl border border-black/10 dark:border-white/10 p-2 bg-white/80 dark:bg-zinc-900/40">
-    <img
-      src={resolveAssetUrl(folderUrlExistente)}
-      alt="Folder atual do evento"
-      className="max-h-44 w-full object-cover rounded-xl border border-black/10 dark:border-white/10"
-      loading="lazy"
-      referrerPolicy="no-referrer"
-      onError={(e) => {
-        e.currentTarget.src = "";
-        e.currentTarget.alt = "Imagem indisponível";
-      }}
-    />
+                        <div className="rounded-2xl border border-black/10 dark:border-white/10 p-2 bg-white/80 dark:bg-zinc-900/40">
+                          <img
+                            src={resolveAssetUrl(folderUrlExistente)}
+                            alt="Folder atual do evento"
+                            className="max-h-44 w-full object-cover rounded-xl border border-black/10 dark:border-white/10"
+                            loading="lazy"
+                            referrerPolicy="no-referrer"
+                            onError={(e) => {
+                              e.currentTarget.src = "";
+                              e.currentTarget.alt = "Imagem indisponível";
+                            }}
+                          />
 
-    <div className="mt-2 flex items-center justify-between gap-3">
-      <button
-        type="button"
-        onClick={() => openAsset(folderUrlExistente)}
-        className="text-xs underline text-emerald-700 dark:text-emerald-300"
-      >
-        Abrir imagem
-      </button>
+                          <div className="mt-2 flex items-center justify-between gap-3">
+                            <button
+                              type="button"
+                              onClick={() => openAsset(folderUrlExistente)}
+                              className="text-xs underline text-emerald-700 dark:text-emerald-300"
+                            >
+                              Abrir imagem
+                            </button>
 
-      <button
-        type="button"
-        onClick={limparFolder}
-        className="text-xs underline text-red-700 dark:text-red-300"
-        title="Remover imagem existente"
-      >
-        Remover
-      </button>
-    </div>
-  </div>
-)}
+                            <button
+                              type="button"
+                              onClick={limparFolder}
+                              className="text-xs underline text-red-700 dark:text-red-300"
+                              title="Remover imagem existente"
+                            >
+                              Remover
+                            </button>
+                          </div>
+                        </div>
+                      )}
 
                       <label className="flex items-center justify-between gap-2 px-3 py-2.5 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 cursor-pointer hover:border-emerald-400/60 transition-colors">
                         <span className="inline-flex items-center gap-2">
@@ -1990,12 +1937,12 @@ if (det?.teste_config && typeof det.teste_config === "object") {
                       {!programacaoFile && !!programacaoUrlExistente && !removerProgramacaoExistente && (
                         <div className="rounded-2xl border border-black/10 dark:border-white/10 p-3 bg-white/80 dark:bg-zinc-900/40 flex items-center justify-between gap-3">
                           <button
-  type="button"
-  onClick={() => openAsset(programacaoUrlExistente)}
-  className="text-sm underline text-emerald-700 dark:text-emerald-300 break-words text-left"
->
-  {programacaoNomeExistente || "Baixar programação (PDF)"}
-</button>
+                            type="button"
+                            onClick={() => openAsset(programacaoUrlExistente)}
+                            className="text-sm underline text-emerald-700 dark:text-emerald-300 break-words text-left"
+                          >
+                            {programacaoNomeExistente || "Baixar programação (PDF)"}
+                          </button>
                           <button
                             type="button"
                             onClick={limparProgramacao}
@@ -2049,9 +1996,7 @@ if (det?.teste_config && typeof det.teste_config === "object") {
                     </span>
                     <div className="min-w-0">
                       <h3 className="text-base sm:text-lg font-extrabold">Turmas</h3>
-                      <p className="text-xs text-zinc-600 dark:text-zinc-300">
-                        Turmas com encontros, instrutores e assinante por turma.
-                      </p>
+                      <p className="text-xs text-zinc-600 dark:text-zinc-300">Turmas com encontros, instrutores e assinante por turma.</p>
                     </div>
                   </div>
 
@@ -2083,7 +2028,8 @@ if (det?.teste_config && typeof det.teste_config === "object") {
           <div className="p-4 sm:p-5 border-t border-black/5 dark:border-white/10 bg-zinc-50 dark:bg-zinc-800">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div className="text-xs text-zinc-600 dark:text-zinc-300">
-                Campos obrigatórios: <strong>Título</strong>, <strong>Local</strong>, <strong>Tipo</strong>, <strong>Unidade</strong> e ao menos <strong>1 turma</strong>.
+                Campos obrigatórios: <strong>Título</strong>, <strong>Local</strong>, <strong>Tipo</strong>, <strong>Unidade</strong> e
+                ao menos <strong>1 turma</strong>.
               </div>
 
               <div className="flex justify-end gap-2">
@@ -2139,6 +2085,76 @@ if (det?.teste_config && typeof det.teste_config === "object") {
 
           await executarRemocaoTurma(turma, idx);
           setConfirm((c) => ({ ...c, turma: null, idx: null }));
+        }}
+      />
+
+      {/* ✅ MODAL QUESTIONÁRIO / TESTE (ADMIN) */}
+      <ModalQuestionarioEvento
+        open={modalQuestionarioAberto}
+        onClose={() => setModalQuestionarioAberto(false)}
+        eventoId={Number(evento?.id)}
+        onlyAdmin
+        onConfigSaved={(cfg) => {
+          const c = cfg || {};
+
+          // ✅ Assinatura para evitar spam (se vier igual, não repete)
+          const sig = JSON.stringify({
+            titulo: String(c.titulo ?? ""),
+            nota10: c.nota_minima_10 ?? null,
+            nota100: c.min_nota ?? null,
+            tentMax: c.tentativas_max ?? null,
+            tent: c.tentativas ?? null,
+            tempo: c.tempo_minutos ?? null,
+            qid: c.questionario_id ?? c.id ?? null,
+            qcount: c.questoes_count ?? (Array.isArray(c.questoes) ? c.questoes.length : null),
+            peso: c.peso_total ?? null,
+            publicado: typeof c.publicado === "boolean" ? c.publicado : null,
+          });
+
+          if (sig === lastCfgSigRef.current) return;
+          lastCfgSigRef.current = sig;
+
+          setTesteConfig((prev) => {
+            const titulo = String(c.titulo ?? prev.titulo ?? "").trim();
+
+            const nota_minima = Number.isFinite(Number(c.nota_minima_10))
+              ? clamp(Number(c.nota_minima_10), 0, 10)
+              : Number.isFinite(Number(c.min_nota))
+              ? clamp(Number(c.min_nota) / 10, 0, 10)
+              : prev.nota_minima;
+
+            const tentativas = Number.isFinite(Number(c.tentativas_max))
+              ? clamp(Number(c.tentativas_max), 1, 50)
+              : Number.isFinite(Number(c.tentativas))
+              ? clamp(Number(c.tentativas), 1, 50)
+              : prev.tentativas;
+
+            const tempo_minutos = Number.isFinite(Number(c.tempo_minutos)) ? clamp(Number(c.tempo_minutos), 5, 240) : prev.tempo_minutos;
+
+            const questionario_id = c.questionario_id ?? c.id ?? prev.questionario_id;
+
+            const questoes_count = Number.isFinite(Number(c.questoes_count))
+              ? Number(c.questoes_count)
+              : Array.isArray(c.questoes)
+              ? c.questoes.length
+              : prev.questoes_count;
+
+            const peso_total = Number.isFinite(Number(c.peso_total)) ? Number(c.peso_total) : prev.peso_total;
+
+            const publicado = typeof c.publicado === "boolean" ? c.publicado : prev.publicado;
+
+            return {
+              ...prev,
+              titulo,
+              nota_minima,
+              tentativas,
+              tempo_minutos,
+              questionario_id,
+              questoes_count,
+              peso_total,
+              publicado,
+            };
+          });
         }}
       />
 

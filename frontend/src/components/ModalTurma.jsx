@@ -8,23 +8,10 @@
 // - Datas SEM pulo de fuso: mantém YYYY-MM-DD como string
 
 import { useEffect, useMemo, useRef, useState, useId, useCallback } from "react";
-import {
-  CalendarDays,
-  Clock,
-  Hash,
-  Type,
-  PlusCircle,
-  Trash2,
-  Users,
-  BadgeCheck,
-  Sparkles,
-  X,
-  Copy,
-} from "lucide-react";
+import { CalendarDays, Clock, Hash, Type, PlusCircle, Trash2, Users, BadgeCheck, Sparkles, X, Copy } from "lucide-react";
 import { toast } from "react-toastify";
 import Modal from "./Modal";
 import { apiGet } from "../services/api";
-import { resolveAssetUrl, openAsset } from "../utils/assets";
 
 /* ===================== Logger (DEV only, cirúrgico) ===================== */
 const IS_DEV = (typeof import.meta !== "undefined" && import.meta?.env?.DEV) ? true : false;
@@ -51,29 +38,14 @@ function asArray(v) {
   if (Array.isArray(v.data)) return v.data;
   if (Array.isArray(v.rows)) return v.rows;
   if (Array.isArray(v.result)) return v.result;
+  if (Array.isArray(v.results)) return v.results;
+  if (Array.isArray(v.items)) return v.items;
   return [];
 }
 
 function cx(...arr) {
   return arr.filter(Boolean).join(" ");
 }
-
-// ✅ garante "/api/..." mesmo se alguém passar "api/..."
-const apiPath = (p = "") => {
-  const s = String(p || "").trim();
-  if (!s) return "/api";
-  if (s.startsWith("/api")) return s;
-  if (s.startsWith("api/")) return `/${s}`;
-  if (s.startsWith("/")) return `/api${s}`;
-  return `/api/${s}`;
-};
-
-// ✅ padrão premium pra abrir qualquer arquivo vindo do backend (folder, pdf, etc.)
-const openFile = (rawPath) => {
-  const url = resolveAssetUrl(rawPath);
-  if (!url) return;
-  openAsset(url);
-};
 
 const parseHora = (val) => {
   if (typeof val !== "string") return "";
@@ -174,19 +146,49 @@ const encontrosDoInitial = (t) => {
 const extractIds = (arr) =>
   Array.isArray(arr) ? arr.map((v) => Number(v?.id ?? v)).filter((n) => Number.isFinite(n)) : [];
 
-// ✅ filtro robusto para identificar instrutores/admin
+// ✅ filtro ULTRA robusto: só instrutor/admin (string/array/obj + campos alternativos + flags)
 function isInstrutorLike(u) {
   if (!u) return false;
-  const p = u.perfil;
 
-  const s = Array.isArray(p)
-    ? p.join(",")
-    : typeof p === "object" && p
-    ? String(p.nome || p.tipo || p.value || "")
-    : String(p || "");
+  // 1) flags comuns (se existirem no seu backend)
+  const boolTrue = (v) => v === true || v === 1 || v === "1" || String(v).toLowerCase() === "true";
+  if (boolTrue(u.is_admin) || boolTrue(u.admin) || boolTrue(u.administrador)) return true;
+  if (boolTrue(u.is_instrutor) || boolTrue(u.instrutor)) return true;
 
-  const low = s.toLowerCase();
-  return low.includes("instrutor") || low.includes("administrador") || low.includes("admin");
+  // 2) junta possíveis fontes de "perfil/role"
+  const fontes = [
+    u.perfil,
+    u.perfis,
+    u.roles,
+    u.role,
+    u.tipo,
+    u.tipo_usuario,
+    u.categoria,
+    u.grupo,
+    u.grupos,
+    u.perfil_nome,
+    u.perfilName,
+  ];
+
+  const flattenToText = (v) => {
+    if (!v) return [];
+    if (typeof v === "string") return [v];
+    if (typeof v === "number") return [String(v)];
+    if (Array.isArray(v)) return v.flatMap(flattenToText);
+    if (typeof v === "object") {
+      return [v.nome, v.name, v.tipo, v.value, v.label, v.codigo, v.sigla].filter(Boolean).map(String);
+    }
+    return [String(v)];
+  };
+
+  const texto = fontes.flatMap(flattenToText).join(" | ").toLowerCase();
+
+  return (
+    texto.includes("instrutor") ||
+    texto.includes("palestrante") || // legado tolerante
+    texto.includes("administrador") ||
+    texto.includes("admin")
+  );
 }
 
 /* ===================== Cache local (fallback) ===================== */
@@ -210,10 +212,7 @@ function Chip({ tone = "zinc", children, title }) {
   return (
     <span
       title={title}
-      className={cx(
-        "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] border",
-        map[tone] || map.zinc
-      )}
+      className={cx("inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] border", map[tone] || map.zinc)}
     >
       {children}
     </span>
@@ -255,14 +254,10 @@ function ActionButton({
   const toneMap = {
     neutral:
       "bg-slate-200 hover:bg-slate-300 text-slate-900 dark:bg-zinc-800 dark:hover:bg-zinc-700 dark:text-zinc-100 focus:ring-slate-400/60",
-    success:
-      "bg-emerald-700 hover:bg-emerald-600 text-white focus:ring-emerald-500/60",
-    info:
-      "bg-indigo-700 hover:bg-indigo-600 text-white focus:ring-indigo-500/60",
-    warning:
-      "bg-amber-600 hover:bg-amber-500 text-white focus:ring-amber-400/60",
-    danger:
-      "bg-rose-600 hover:bg-rose-500 text-white focus:ring-rose-400/60",
+    success: "bg-emerald-700 hover:bg-emerald-600 text-white focus:ring-emerald-500/60",
+    info: "bg-indigo-700 hover:bg-indigo-600 text-white focus:ring-indigo-500/60",
+    warning: "bg-amber-600 hover:bg-amber-500 text-white focus:ring-amber-400/60",
+    danger: "bg-rose-600 hover:bg-rose-500 text-white focus:ring-rose-400/60",
   };
 
   const sizeMap = {
@@ -369,29 +364,33 @@ export default function ModalTurma({
     let alive = true;
     if (!effectiveOpen) return;
 
+    // 1) prioridade: usuarios do pai
     if (Array.isArray(usuarios) && usuarios.length > 0) {
       setUsuariosLocal(usuarios);
       setUsuariosLoading(false);
       return;
     }
 
-    if (cacheUsuariosFallback) {
+    // 2) cache local (boa UX)
+    if (Array.isArray(cacheUsuariosFallback) && cacheUsuariosFallback.length > 0) {
       setUsuariosLocal(cacheUsuariosFallback);
       setUsuariosLoading(false);
       return;
     }
 
+    // 3) fallback: /api/usuarios
     setUsuariosLoading(true);
     (async () => {
       try {
-        const res = await apiGet(apiPath("/usuarios"));
+        const res = await apiGet("/api/usuarios");
         const arr = asArray(res);
         const sorted = arr
           .filter(Boolean)
           .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
 
-        if (!alive) return;
         cacheUsuariosFallback = sorted;
+        if (!alive) return;
+
         setUsuariosLocal(sorted);
         log("Fallback /api/usuarios ok", { total: sorted.length });
       } catch (e) {
@@ -465,19 +464,19 @@ export default function ModalTurma({
   /* ======= Instrutores / Assinante ======= */
   const instrutoresOpcao = useMemo(() => {
     const base = Array.isArray(usuariosLocal) ? usuariosLocal : [];
-    const instr = base.filter(isInstrutorLike);
+    const filtrados = base.filter(isInstrutorLike);
 
-    // ✅ se o filtro “zerar” tudo, não bloqueia o usuário — usa base como fallback
-    const finalList = instr.length ? instr : base;
+    // ✅ fallback: se o filtro zerar, permite selecionar da lista geral (pra não travar a UI)
+    const final = filtrados.length ? filtrados : base;
 
-    return finalList.sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
+    return final.sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
   }, [usuariosLocal]);
 
   const filtroZerou = useMemo(() => {
     const base = Array.isArray(usuariosLocal) ? usuariosLocal : [];
     if (base.length === 0) return false;
-    const instr = base.filter(isInstrutorLike);
-    return instr.length === 0;
+    const filtrados = base.filter(isInstrutorLike);
+    return filtrados.length === 0;
   }, [usuariosLocal]);
 
   const getInstrutorDisponivel = (index) => {
@@ -499,7 +498,7 @@ export default function ModalTurma({
   const removerInstrutor = (index) => {
     setInstrutoresSel((prev) => {
       const next = prev.filter((_, i) => i !== index);
-      return next.length ? next : [""];
+      return next.length ? next : [""]; // mantém 1 slot
     });
   };
 
@@ -510,8 +509,14 @@ export default function ModalTurma({
 
   /* ======= validação/salvar ======= */
   const validar = () => {
-    if (!nome.trim()) return toast.warning("Informe o nome da turma."), false;
-    if (nome.length > NOME_TURMA_MAX) return toast.error(`O nome não pode exceder ${NOME_TURMA_MAX} caracteres.`), false;
+    if (!nome.trim()) {
+      toast.warning("Informe o nome da turma.");
+      return false;
+    }
+    if (nome.length > NOME_TURMA_MAX) {
+      toast.error(`O nome não pode exceder ${NOME_TURMA_MAX} caracteres.`);
+      return false;
+    }
 
     if (vagasTotal === "" || !Number.isFinite(Number(vagasTotal)) || Number(vagasTotal) <= 0) {
       toast.warning("Quantidade de vagas deve ser número ≥ 1.");
@@ -538,9 +543,15 @@ export default function ModalTurma({
     }
 
     const instrSel = instrutoresSel.map((v) => Number(String(v).trim())).filter((id) => Number.isFinite(id));
-    if (instrSel.length === 0) return toast.error("Selecione ao menos um instrutor para a turma."), false;
+    if (instrSel.length === 0) {
+      toast.error("Selecione ao menos um instrutor para a turma.");
+      return false;
+    }
 
-    if (!assinanteId) return toast.error("Selecione o assinante da turma."), false;
+    if (!assinanteId) {
+      toast.error("Selecione o assinante da turma.");
+      return false;
+    }
     if (!instrSel.includes(Number(assinanteId))) {
       toast.error("O assinante precisa estar entre os instrutores selecionados.");
       return false;
@@ -592,6 +603,7 @@ export default function ModalTurma({
   return (
     <Modal
       isOpen={effectiveOpen}
+      open={effectiveOpen} // ✅ compat extra
       onClose={() => onClose?.()}
       level={1}
       maxWidth="max-w-4xl"
@@ -641,8 +653,8 @@ export default function ModalTurma({
                     <Users className="w-3.5 h-3.5" aria-hidden="true" /> Carregando lista…
                   </Chip>
                 ) : filtroZerou ? (
-                  <Chip tone="amber" title="Perfil não identificado; usando lista geral">
-                    <Users className="w-3.5 h-3.5" aria-hidden="true" /> Lista geral (sem perfil)
+                  <Chip tone="amber" title="Não foi possível identificar perfis; usando lista geral">
+                    <Users className="w-3.5 h-3.5" aria-hidden="true" /> Lista geral
                   </Chip>
                 ) : (
                   <Chip tone="zinc" title="Instrutores filtrados">
@@ -729,9 +741,7 @@ export default function ModalTurma({
                 </span>
                 <div className="min-w-0">
                   <h3 className="text-base sm:text-lg font-extrabold">Instrutores e assinante</h3>
-                  <p className="text-xs text-zinc-600 dark:text-zinc-300">
-                    O assinante precisa estar entre os instrutores selecionados.
-                  </p>
+                  <p className="text-xs text-zinc-600 dark:text-zinc-300">O assinante precisa estar entre os instrutores selecionados.</p>
                 </div>
               </div>
 
@@ -806,7 +816,7 @@ export default function ModalTurma({
               )}
             </section>
 
-            {/* ENCONTROS (PREMIUM ÚNICO — sem duplicar) */}
+            {/* ENCONTROS */}
             <section className="space-y-3">
               <div className="flex items-start sm:items-center sm:justify-between gap-2">
                 <div>
@@ -966,7 +976,7 @@ export default function ModalTurma({
               </div>
             </section>
 
-            {/* VAGAS (PREMIUM) */}
+            {/* VAGAS */}
             <section className="mt-1 rounded-3xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 p-3 sm:p-4 shadow-sm">
               <div className="flex items-center justify-between gap-2 mb-2">
                 <div className="text-sm font-extrabold text-slate-900 dark:text-white">Vagas</div>
@@ -990,14 +1000,12 @@ export default function ModalTurma({
                 />
               </div>
 
-              <div className="mt-2 text-xs text-slate-600 dark:text-slate-300">
-                Esta informação é usada para controle de inscrições.
-              </div>
+              <div className="mt-2 text-xs text-slate-600 dark:text-slate-300">Esta informação é usada para controle de inscrições.</div>
             </section>
           </form>
         </div>
 
-        {/* FOOTER STICKY (PREMIUM) */}
+        {/* FOOTER STICKY */}
         <div className="mt-auto sticky bottom-0 left-0 right-0 bg-white/85 dark:bg-zinc-950/85 backdrop-blur border-t border-black/10 dark:border-white/10 px-5 py-3">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div className="min-w-[1.5rem]">
@@ -1020,30 +1028,19 @@ export default function ModalTurma({
             </div>
 
             <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 sm:justify-end">
-              <ActionButton
-                type="button"
-                onClick={() => onClose?.()}
-                tone="neutral"
-                size="md"
-                aria-label="Cancelar"
-              >
+              <ActionButton type="button" onClick={() => onClose?.()} tone="neutral" size="md" aria-label="Cancelar">
                 Cancelar
               </ActionButton>
 
-              <ActionButton
-                type="button"
-                onClick={handleSalvar}
-                tone="success"
-                size="md"
-                aria-label="Salvar turma"
-              >
+              <ActionButton type="button" onClick={handleSalvar} tone="success" size="md" aria-label="Salvar turma">
                 Salvar Turma
               </ActionButton>
             </div>
           </div>
 
           <div className="mt-2 text-[11px] text-zinc-600 dark:text-zinc-300">
-            Campos obrigatórios: <strong>nome</strong>, <strong>instrutor(es)</strong>, <strong>assinante</strong>, <strong>encontros</strong> e <strong>vagas</strong>.
+            Campos obrigatórios: <strong>nome</strong>, <strong>instrutor(es)</strong>, <strong>assinante</strong>,{" "}
+            <strong>encontros</strong> e <strong>vagas</strong>.
           </div>
         </div>
       </div>

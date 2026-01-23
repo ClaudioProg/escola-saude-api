@@ -341,13 +341,13 @@ const Modal = forwardRef(function Modal(
     if (!openFinal) return;
     const node = ensureModalRoot();
     modalRootRef.current = node;
-
-    logM("useEffect(open): modalRootRef set", {
+  
+    logM("useEffect(openFinal): modalRootRef set", {
       exists: !!node,
       children: node?.childElementCount ?? null,
       inBody: node ? document.body.contains(node) : false,
     });
-  }, [open]);
+  }, [openFinal]);
 
 
   // foco ao abrir / restaurar ao fechar (RAF)
@@ -355,16 +355,16 @@ const Modal = forwardRef(function Modal(
     if (openFinal) {
       openedOnceRef.current = true;
       prevFocusRef.current = document.activeElement;
-
+  
       const id = raf(() => {
         focusFirst();
         onAfterOpen?.();
       });
       return () => caf(id);
     }
-
+  
     if (!openedOnceRef.current) return;
-
+  
     if (restoreFocus && prevFocusRef.current?.focus) {
       const id = raf(() => {
         prevFocusRef.current?.focus?.();
@@ -372,14 +372,15 @@ const Modal = forwardRef(function Modal(
       });
       return () => caf(id);
     }
-
+  
     const id = raf(() => onAfterClose?.());
     return () => caf(id);
-  }, [open, restoreFocus, focusFirst, onAfterOpen, onAfterClose]);
+  }, [openFinal, restoreFocus, focusFirst, onAfterOpen, onAfterClose]);
+  
 
   // ESC + Trap foco (capture)
   useEffect(() => {
-    if (!open) return;
+    if (!openFinal) return;
 
     function onKeyDown(e) {
       const panel = panelRef.current;
@@ -419,40 +420,40 @@ const Modal = forwardRef(function Modal(
     }
 
     window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [open, onClose, closeOnEscape]);
+  return () => window.removeEventListener("keydown", onKeyDown, true);
+}, [openFinal, onClose, closeOnEscape]);
 
   // Scroll lock (counter)
   useEffect(() => {
     if (!lockScroll) return;
-    if (!open) return;
-
+    if (!openFinal) return;
+  
     lockBodyScroll();
     return () => unlockBodyScroll();
-  }, [open, lockScroll]);
+  }, [openFinal, lockScroll]);
 
   // Stack + a11y hide app roots somente no 1º modal
   useLayoutEffect(() => {
-    if (!open) return;
-
+    if (!openFinal) return;
+  
     const afterInc = incStack();
     logM("stack inc", { afterInc });
-
+  
     if (afterInc === 1) {
       logM("hideAppRoots()");
       hideAppRoots();
     }
-
+  
     return () => {
       const afterDec = decStack();
       logM("stack dec", { afterDec });
-
+  
       if (afterDec === 0) {
         logM("restoreAppRoots()");
         restoreAppRoots();
       }
     };
-  }, [open]);
+  }, [openFinal]);
 
   // backdrop click (drag-safe)
   const mouseDownRef = useRef(false);
@@ -474,10 +475,29 @@ const Modal = forwardRef(function Modal(
     }
   }
 
-  if (!openFinal) {
-    warnM("return null (openFinal=false)", { open, isOpen });
-    return null;
+  const IS_DEV =
+  (typeof import.meta !== "undefined" && import.meta?.env?.MODE !== "production") ||
+  (typeof process !== "undefined" && process?.env?.NODE_ENV !== "production");
+
+const warnedRef = useRef(false);
+
+if (!openFinal) {
+  // ✅ Modal fechado = caminho normal. Não é warning.
+  // Só avisa 1x se o dev estiver passando props inconsistentes.
+  if (IS_DEV && !warnedRef.current) {
+    const bothMissing = open === undefined && isOpen === undefined;
+    const bothFalsey = Boolean(open) === false && Boolean(isOpen) === false;
+
+    if (!bothMissing && bothFalsey) {
+      // (opcional) debug leve, 1 vez
+      // console.debug("[Modal] closed", { open, isOpen });
+    } else if (bothMissing) {
+      console.debug("[Modal] closed (no open/isOpen prop)", { open, isOpen });
+    }
+    warnedRef.current = true;
   }
+  return null;
+}
 
   const mountNode = modalRootRef.current || ensureModalRoot();
   if (!mountNode) {
