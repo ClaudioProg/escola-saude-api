@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 
 import { apiGet, apiPost, apiPut, apiDelete } from "../services/api";
+import { resolveAssetUrl, openAsset } from "../utils/assets";
 import ModalEvento from "../components/ModalEvento";
 import ModalConfirmacao from "../components/ModalConfirmacao";
 import NenhumDado from "../components/NenhumDado";
@@ -108,33 +109,6 @@ const extractStrs = (arr) => {
   );
 };
 
-/* =============================
-   Poster (folder) helpers
-============================= */
-const isAbsUrl = (u = "") => /^https?:\/\//i.test(String(u || ""));
-
-function resolveAssetUrl(raw) {
-  const v = String(raw || "").trim();
-  if (!v) return "";
-  if (isAbsUrl(v)) return v;
-
-  const isDev = import.meta?.env?.MODE !== "production";
-
-  // ✅ Base explícita (se você quiser setar em .env)
-  const envBase =
-    (import.meta?.env?.VITE_FILES_BASE_URL || import.meta?.env?.VITE_API_URL || "").trim().replace(/\/+$/, "");
-
-  // ✅ No DEV, se não houver env, usa o backend local
-  const devBase = "http://localhost:3000";
-
-  const base = envBase || (isDev ? devBase : "");
-
-  // Em produção, se o back estiver no mesmo domínio e servir /uploads via reverse proxy, base pode ficar ""
-  if (!base) return v.startsWith("/") ? v : `/${v}`;
-
-  return `${base}${v.startsWith("/") ? "" : "/"}${v}`;
-}
-
 function getPosterUrl(ev) {
   const raw =
     ev?.folder_url ??
@@ -149,6 +123,7 @@ function getPosterUrl(ev) {
     ev?.arquivo_folder ??
     ev?.arquivoFolder ??
     "";
+
   return resolveAssetUrl(raw);
 }
 
@@ -1203,24 +1178,32 @@ export default function GerenciarEventos() {
                   <div className="p-4 sm:p-5 flex flex-col gap-4">
                     <div className="flex flex-col sm:flex-row gap-4 sm:items-start sm:justify-between">
                       <div className="flex gap-4 min-w-0">
-                        <div className="shrink-0">
-                          {posterUrl ? (
-                            <img
-                              src={posterUrl}
-                              alt={`Folder do evento ${ev.titulo}`}
-                              className="w-[96px] h-[96px] sm:w-[112px] sm:h-[112px] rounded-2xl object-cover border border-white/10 shadow-sm bg-zinc-100 dark:bg-zinc-900"
-                              loading="lazy"
-                              onError={(e) => {
-                                e.currentTarget.style.display = "none";
-                              }}
-                            />
-                          ) : (
-                            <div className="w-[96px] h-[96px] sm:w-[112px] sm:h-[112px] rounded-2xl border border-dashed border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/40 flex flex-col items-center justify-center gap-1 text-[11px] text-zinc-500 dark:text-zinc-400 px-2 text-center">
-                              <CalendarDays className="w-5 h-5 opacity-70" />
-                              Sem folder
-                            </div>
-                          )}
-                        </div>
+                      <div className="shrink-0">
+  {posterUrl ? (
+    <img
+      src={posterUrl}
+      alt={`Folder do evento ${ev.titulo}`}
+      className="w-[96px] h-[96px] sm:w-[112px] sm:h-[112px] rounded-2xl object-cover border border-white/10 shadow-sm bg-zinc-100 dark:bg-zinc-900"
+      loading="lazy"
+      referrerPolicy="no-referrer"
+      onError={(e) => {
+        // ✅ em vez de sumir, forçamos fallback (evita layout quebrado)
+        e.currentTarget.src = "";
+        e.currentTarget.alt = "Folder indisponível";
+      }}
+    />
+  ) : (
+    <div className="w-[96px] h-[96px] sm:w-[112px] sm:h-[112px] rounded-2xl border border-dashed border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/40 flex flex-col items-center justify-center gap-1 text-[11px] text-zinc-500 dark:text-zinc-400 px-2 text-center">
+      <CalendarDays className="w-5 h-5 opacity-70" />
+      Sem folder
+    </div>
+  )}
+
+  {/* ✅ Se a imagem falhar e virar "", o navegador não renderiza; então garantimos fallback */}
+  {posterUrl && (
+    <noscript />
+  )}
+</div>
 
                         <div className="min-w-0">
                           <h3 className="text-base sm:text-lg font-extrabold text-zinc-900 dark:text-white break-words">

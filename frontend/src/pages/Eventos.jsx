@@ -49,39 +49,11 @@ import ListaTurmasEvento from "../components/ListaTurmasEvento";
 import ModalConfirmacao from "../components/ModalConfirmacao";
 import { apiGet, apiPost, apiDelete } from "../services/api";
 import { gerarLinkGoogleAgenda } from "../utils/gerarLinkGoogleAgenda";
+import { resolveAssetUrl, openAsset } from "../utils/assets";
 
 /* ───────────────── Helpers globais ───────────────── */
 function isValidDate(d) {
   return d instanceof Date && !Number.isNaN(d.getTime());
-}
-
-/* ───────────────── URL helpers (resolve /uploads do backend) ───────────── */
-const API_BASE =
-  (typeof import.meta !== "undefined" && import.meta?.env?.VITE_API_URL) || "";
-
-function withBackendBase(u) {
-  if (!u) return null;
-  const s = String(u);
-
-  // já é absoluta
-  if (/^https?:\/\//i.test(s)) return s;
-
-  // caminho do backend (/uploads/...)
-  if (s.startsWith("/")) {
-    const base = String(API_BASE || "").replace(/\/+$/g, "");
-    return base ? `${base}${s}` : s;
-  }
-
-  return null;
-}
-
-function safeHref(u) {
-  return withBackendBase(u) || null;
-}
-
-function openExternal(href) {
-  if (!href) return;
-  window.open(href, "_blank", "noopener,noreferrer");
 }
 
 /* ───────────────── Status ───────────────── */
@@ -350,8 +322,12 @@ function Tip({ num, titulo, children }) {
 /*  Componentes de mídia/ações do card                                */
 /* ------------------------------------------------------------------ */
 function BannerEvento({ titulo, src }) {
-  const href = safeHref(src);
+  const href = useMemo(() => resolveAssetUrl(src), [src]);
   const [ok, setOk] = useState(true);
+
+  useEffect(() => {
+    setOk(true); // ✅ se mudar de evento/banner, tenta renderizar de novo
+  }, [href]);
 
   return (
     <div className="relative w-full h-44 sm:h-52 bg-gradient-to-r from-zinc-200 via-zinc-100 to-zinc-200 dark:from-zinc-800 dark:via-zinc-900 dark:to-zinc-800 overflow-hidden">
@@ -378,14 +354,15 @@ function BannerEvento({ titulo, src }) {
   );
 }
 
+
 function BotaoProgramacao({ programacaoPdfUrl }) {
-  const pdfHref = safeHref(programacaoPdfUrl);
+  const pdfHref = useMemo(() => resolveAssetUrl(programacaoPdfUrl), [programacaoPdfUrl]);
   if (!pdfHref) return null;
 
   return (
     <BotaoSecundario
       type="button"
-      onClick={() => openExternal(pdfHref)}
+      onClick={() => openAsset(programacaoPdfUrl)} // ✅ passa o RAW mesmo (util resolve)
       icone={<Download className="w-4 h-4" />}
       aria-label="Baixar programação (PDF)"
       title="Baixar programação (PDF)"

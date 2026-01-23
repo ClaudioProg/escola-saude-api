@@ -24,6 +24,7 @@ import {
 import { toast } from "react-toastify";
 import Modal from "./Modal";
 import { apiGet } from "../services/api";
+import { resolveAssetUrl, openAsset } from "../utils/assets";
 
 /* ===================== Logger (DEV only, cirúrgico) ===================== */
 const IS_DEV = (typeof import.meta !== "undefined" && import.meta?.env?.DEV) ? true : false;
@@ -56,6 +57,23 @@ function asArray(v) {
 function cx(...arr) {
   return arr.filter(Boolean).join(" ");
 }
+
+// ✅ garante "/api/..." mesmo se alguém passar "api/..."
+const apiPath = (p = "") => {
+  const s = String(p || "").trim();
+  if (!s) return "/api";
+  if (s.startsWith("/api")) return s;
+  if (s.startsWith("api/")) return `/${s}`;
+  if (s.startsWith("/")) return `/api${s}`;
+  return `/api/${s}`;
+};
+
+// ✅ padrão premium pra abrir qualquer arquivo vindo do backend (folder, pdf, etc.)
+const openFile = (rawPath) => {
+  const url = resolveAssetUrl(rawPath);
+  if (!url) return;
+  openAsset(url);
+};
 
 const parseHora = (val) => {
   if (typeof val !== "string") return "";
@@ -366,7 +384,7 @@ export default function ModalTurma({
     setUsuariosLoading(true);
     (async () => {
       try {
-        const res = await apiGet("/api/usuarios");
+        const res = await apiGet(apiPath("/usuarios"));
         const arr = asArray(res);
         const sorted = arr
           .filter(Boolean)
