@@ -3,28 +3,31 @@ import { CalendarDays, Users, Star, BarChart, Image as ImageIcon } from "lucide-
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useCallback } from "react";
 import CardTurma from "./CardTurma";
+import { resolveAssetUrl } from "../utils/assets";
 
 /* =========================
    Helpers de Data (fuso local)
    ========================= */
-function isDateOnly(str) {
-  return typeof str === "string" && /^\d{4}-\d{2}-\d{2}$/.test(str);
-}
-
-function toLocalDate(input) {
-  if (!input) return null;
-  if (input instanceof Date) return input;
-
-  if (typeof input === "string") {
-    if (isDateOnly(input)) {
-      const [y, m, d] = input.split("-").map(Number);
-      // constrói data local sem deslocamento UTC
+   function isYmdPrefix(str) {
+    return typeof str === "string" && /^\d{4}-\d{2}-\d{2}/.test(str);
+  }
+  
+  function toLocalDate(input) {
+    if (!input) return null;
+    if (input instanceof Date) return input;
+  
+    // ✅ Regra PREMIUM: se tem prefixo YYYY-MM-DD (mesmo com hora/Z), usa só o YMD
+    // Evita shift de fuso (ex.: 2026-01-23T03:00:00.000Z virar dia anterior)
+    if (typeof input === "string" && isYmdPrefix(input)) {
+      const ymd = input.slice(0, 10);
+      const [y, m, d] = ymd.split("-").map(Number);
       return new Date(y, m - 1, d);
     }
-    return new Date(input); // se tiver timezone, respeita; senão, assume local
+  
+    // fallback para timestamps numéricos etc.
+    return new Date(input);
   }
-  return new Date(input);
-}
+  
 
 function formatarDataLocal(d) {
   const dt = toLocalDate(d);
@@ -129,16 +132,6 @@ function getPeriodoEvento(evento, turmas) {
 }
 
 /* =========================
-   URL helper p/ folder/programação
-   ========================= */
-function absUrl(u) {
-  if (!u) return null;
-  if (/^https?:\/\//i.test(u)) return u;
-  const base = import.meta.env?.VITE_API_BASE_URL || "";
-  return base ? `${base}${u}` : u;
-}
-
-/* =========================
    Componente
    ========================= */
 export default function CardEvento({
@@ -219,7 +212,8 @@ export default function CardEvento({
   const tituloId = `evento-${evento.id}-titulo`;
   const periodoId = `evento-${evento.id}-periodo`;
 
-  const folderUrl = absUrl(evento?.folder_url);
+  const folderUrl = useMemo(() => resolveAssetUrl(evento?.folder_url), [evento?.folder_url]);
+const [imgOk, setImgOk] = useState(true);
 
   return (
     <section
@@ -232,20 +226,23 @@ export default function CardEvento({
         {/* Coluna da imagem (folder) — esconde em xs para dar prioridade ao título */}
         <div className="hidden sm:block shrink-0">
           <div className="w-40 h-28 rounded-xl overflow-hidden border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-700 flex items-center justify-center">
-            {folderUrl ? (
-              <img
-                src={folderUrl}
-                alt={`Imagem de divulgação do evento “${evento?.titulo ?? ""}”`}
-                loading="lazy"
-                className="w-full h-full object-cover"
-                draggable={false}
-              />
-            ) : (
-              <div className="flex flex-col items-center justify-center text-gray-400">
-                <ImageIcon className="w-8 h-8" aria-hidden="true" />
-                <span className="text-[11px] mt-1">Sem imagem</span>
-              </div>
-            )}
+          {folderUrl && imgOk ? (
+  <img
+    src={folderUrl}
+    alt={`Imagem de divulgação do evento “${evento?.titulo ?? ""}”`}
+    loading="lazy"
+    className="w-full h-full object-cover"
+    draggable={false}
+    referrerPolicy="no-referrer"
+    onError={() => setImgOk(false)}
+  />
+) : (
+  <div className="flex flex-col items-center justify-center text-gray-400">
+    <ImageIcon className="w-8 h-8" aria-hidden="true" />
+    <span className="text-[11px] mt-1">{folderUrl ? "Imagem indisponível" : "Sem imagem"}</span>
+  </div>
+)}
+
           </div>
         </div>
 

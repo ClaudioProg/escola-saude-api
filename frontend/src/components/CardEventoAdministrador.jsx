@@ -5,13 +5,19 @@ import { CalendarDays, FileDown, Eye, Ear, Accessibility } from "lucide-react";
 import BadgeStatus from "./BadgeStatus";
 import CardTurmaAdministrador from "./CardTurmaAdministrador";
 import { idadeDe } from "../utils/dateTime";
+import { resolveAssetUrl } from "../utils/assets";
 
 /* ========================= Helpers ========================= */
 const isDateOnly = (str) => typeof str === "string" && /^\d{4}-\d{2}-\d{2}$/.test(str);
 const ymd = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
 const onlyHHmm = (s) => (typeof s === "string" ? s.slice(0, 5) : "");
-const toLocalDateFromYMD = (ymdStr, hhmm = "12:00") =>
-  ymdStr ? new Date(`${ymdStr}T${(hhmm || "12:00").slice(0, 5)}:00`) : null;
+const toLocalDateFromYMD = (ymdStr, hhmm = "12:00") => {
+  if (!ymdStr) return null;
+  const [Y, M, D] = String(ymdStr).slice(0, 10).split("-").map(Number);
+  const [HH, MM] = String(hhmm || "12:00").slice(0, 5).split(":").map(Number);
+  if (!Number.isFinite(Y) || !Number.isFinite(M) || !Number.isFinite(D)) return null;
+  return new Date(Y, (M || 1) - 1, D, Number.isFinite(HH) ? HH : 12, Number.isFinite(MM) ? MM : 0, 0, 0);
+};
 
 function toLocalDate(input) {
   if (!input) return null;
@@ -336,6 +342,10 @@ export default function CardEventoAdministrador({
 
   const tituloEvento = evento?.titulo || evento?.nome || "—";
 
+  // ✅ folder_url (imagem do evento) resolvida corretamente (prod/dev)
+  const folderUrl = useMemo(() => resolveAssetUrl(evento?.folder_url), [evento?.folder_url]);
+  const [imgOk, setImgOk] = useState(true);
+
   const statusEvento = getStatusEvento({ evento, turmas });
   const styles = STATUS_STYLES[statusEvento] || STATUS_STYLES.todos;
 
@@ -356,10 +366,35 @@ export default function CardEventoAdministrador({
       {/* 🔹 barrinha degradê superior (3 cores) */}
       <div className={`pointer-events-none absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r ${styles.bar}`} />
 
-      {/* TOPO */}
-      <div className="flex justify-between items-start gap-4 min-w-0">
-        {/* bloco da esquerda */}
-        <div className="min-w-0 flex-1">
+            {/* TOPO */}
+            <div className="flex items-start gap-4 min-w-0">
+        {/* 🖼️ Thumb do evento (esconde no xs) */}
+        <div className="hidden sm:block shrink-0">
+          <div className="w-44 h-28 rounded-2xl overflow-hidden border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/40 flex items-center justify-center shadow-sm">
+            {folderUrl && imgOk ? (
+              <img
+                src={folderUrl}
+                alt={`Imagem de divulgação do evento “${tituloEvento}”`}
+                loading="lazy"
+                draggable={false}
+                className="w-full h-full object-cover"
+                referrerPolicy="no-referrer"
+                onError={() => setImgOk(false)}
+              />
+            ) : (
+              <div className="flex flex-col items-center justify-center text-zinc-400">
+                <ImageIcon className="w-7 h-7" aria-hidden="true" />
+                <span className="text-[11px] mt-1">{folderUrl ? "Imagem indisponível" : "Sem imagem"}</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* bloco de texto + ações (cresce) */}
+        <div className="flex-1 min-w-0">
+          <div className="flex justify-between items-start gap-4 min-w-0">
+            {/* bloco da esquerda */}
+            <div className="min-w-0 flex-1">
           {/* Título do evento - AGORA QUEBRA LINHA */}
           <h3 className={nomeEventoClass + " min-w-0"} title={tituloEvento}>
             {tituloEvento}
@@ -390,7 +425,10 @@ export default function CardEventoAdministrador({
             onClick={() => toggleExpandir(evento.id)}
             aria-expanded={!!expandido}
             aria-controls={turmasId}
-            className="text-sm px-4 py-1 bg-green-900 text-white rounded-full hover:bg-green-900/90 transition whitespace-nowrap focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-500/60"
+            className="text-sm px-4 py-1 rounded-full transition whitespace-nowrap
+                       text-white shadow-sm hover:brightness-[1.06]
+                       bg-gradient-to-br from-zinc-950 via-emerald-950 to-emerald-800
+                       focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-500/60"
             title={expandido ? "Recolher detalhes do evento" : "Ver turmas do evento"}
           >
             {expandido ? "Recolher" : "Ver Turmas"}
