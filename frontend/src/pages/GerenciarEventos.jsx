@@ -1180,28 +1180,67 @@ export default function GerenciarEventos() {
                       <div className="flex gap-4 min-w-0">
                       <div className="shrink-0">
   {posterUrl ? (
-    <img
-      src={posterUrl}
-      alt={`Folder do evento ${ev.titulo}`}
-      className="w-[96px] h-[96px] sm:w-[112px] sm:h-[112px] rounded-2xl object-cover border border-white/10 shadow-sm bg-zinc-100 dark:bg-zinc-900"
-      loading="lazy"
-      referrerPolicy="no-referrer"
-      onError={(e) => {
-        // ✅ em vez de sumir, forçamos fallback (evita layout quebrado)
-        e.currentTarget.src = "";
-        e.currentTarget.alt = "Folder indisponível";
-      }}
-    />
+    <div
+      className="
+        w-[96px] h-[128px]
+        sm:w-[132px] sm:h-[176px]
+        md:w-[148px] md:h-[196px]
+        rounded-2xl border border-white/10 shadow-sm
+        bg-zinc-100 dark:bg-zinc-900
+        overflow-hidden grid place-items-center
+      "
+      aria-label={`Folder do evento ${ev.titulo}`}
+    >
+      <img
+        src={posterUrl}
+        alt={`Folder do evento ${ev.titulo}`}
+        className="w-full h-full object-contain"
+        loading="lazy"
+        referrerPolicy="no-referrer"
+        onError={(e) => {
+          // 🔒 fallback: esconde a imagem e mostra o placeholder abaixo
+          e.currentTarget.style.display = "none";
+          const box = e.currentTarget.parentElement;
+          if (box) box.setAttribute("data-img-fail", "1");
+        }}
+      />
+
+      {/* Placeholder (aparece quando a imagem falha) */}
+      <div
+        className="
+          hidden
+          w-full h-full
+          flex-col items-center justify-center gap-1
+          text-[11px] text-zinc-500 dark:text-zinc-400 px-2 text-center
+          data-[show=true]:flex
+        "
+        // truque simples sem state: se marcou data-img-fail no pai, exibimos via JS logo abaixo
+        ref={(el) => {
+          if (!el) return;
+          const box = el.parentElement;
+          const failed = box?.getAttribute("data-img-fail") === "1";
+          el.dataset.show = failed ? "true" : "false";
+        }}
+      >
+        <CalendarDays className="w-5 h-5 opacity-70" />
+        Folder indisponível
+      </div>
+    </div>
   ) : (
-    <div className="w-[96px] h-[96px] sm:w-[112px] sm:h-[112px] rounded-2xl border border-dashed border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/40 flex flex-col items-center justify-center gap-1 text-[11px] text-zinc-500 dark:text-zinc-400 px-2 text-center">
+    <div
+      className="
+        w-[96px] h-[128px]
+        sm:w-[132px] sm:h-[176px]
+        md:w-[148px] md:h-[196px]
+        rounded-2xl border border-dashed border-zinc-300 dark:border-zinc-700
+        bg-zinc-50 dark:bg-zinc-900/40
+        flex flex-col items-center justify-center gap-1
+        text-[11px] text-zinc-500 dark:text-zinc-400 px-2 text-center
+      "
+    >
       <CalendarDays className="w-5 h-5 opacity-70" />
       Sem folder
     </div>
-  )}
-
-  {/* ✅ Se a imagem falhar e virar "", o navegador não renderiza; então garantimos fallback */}
-  {posterUrl && (
-    <noscript />
   )}
 </div>
 

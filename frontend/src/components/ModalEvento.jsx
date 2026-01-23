@@ -40,20 +40,7 @@ import ModalTurma from "./ModalTurma";
 import ModalConfirmacao from "./ModalConfirmacao";
 import { formatarDataBrasileira } from "../utils/dateTime";
 import { apiGet, apiDelete } from "../services/api";
-
-/* ========================= Backend base ========================= */
-const API_BASE = (typeof import.meta !== "undefined" && import.meta?.env?.VITE_API_URL) || "";
-
-function withBackendBase(u) {
-  if (!u) return null;
-  const s = String(u);
-  if (/^https?:\/\//i.test(s)) return s;
-  if (s.startsWith("/")) {
-    const base = String(API_BASE || "").replace(/\/+$/g, "");
-    return base ? `${base}${s}` : s;
-  }
-  return null;
-}
+import { resolveAssetUrl, openAsset } from "../utils/assets";
 
 /* ========================= Logger (DEV only) ========================= */
 const IS_DEV =
@@ -1924,32 +1911,39 @@ if (det?.teste_config && typeof det.teste_config === "object") {
                       </label>
 
                       {!folderFile && !!folderUrlExistente && !removerFolderExistente && (
-                        <div className="rounded-2xl border border-black/10 dark:border-white/10 p-2 bg-white/80 dark:bg-zinc-900/40">
-                          <img
-                            src={withBackendBase(folderUrlExistente)}
-                            alt="Folder atual do evento"
-                            className="max-h-44 w-full object-cover rounded-xl border border-black/10 dark:border-white/10"
-                          />
-                          <div className="mt-2 flex items-center justify-between gap-3">
-                            <a
-                              href={withBackendBase(folderUrlExistente)}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-xs underline text-emerald-700 dark:text-emerald-300"
-                            >
-                              Abrir imagem
-                            </a>
-                            <button
-                              type="button"
-                              onClick={limparFolder}
-                              className="text-xs underline text-red-700 dark:text-red-300"
-                              title="Remover imagem existente"
-                            >
-                              Remover
-                            </button>
-                          </div>
-                        </div>
-                      )}
+  <div className="rounded-2xl border border-black/10 dark:border-white/10 p-2 bg-white/80 dark:bg-zinc-900/40">
+    <img
+      src={resolveAssetUrl(folderUrlExistente)}
+      alt="Folder atual do evento"
+      className="max-h-44 w-full object-cover rounded-xl border border-black/10 dark:border-white/10"
+      loading="lazy"
+      referrerPolicy="no-referrer"
+      onError={(e) => {
+        e.currentTarget.src = "";
+        e.currentTarget.alt = "Imagem indisponível";
+      }}
+    />
+
+    <div className="mt-2 flex items-center justify-between gap-3">
+      <button
+        type="button"
+        onClick={() => openAsset(folderUrlExistente)}
+        className="text-xs underline text-emerald-700 dark:text-emerald-300"
+      >
+        Abrir imagem
+      </button>
+
+      <button
+        type="button"
+        onClick={limparFolder}
+        className="text-xs underline text-red-700 dark:text-red-300"
+        title="Remover imagem existente"
+      >
+        Remover
+      </button>
+    </div>
+  </div>
+)}
 
                       <label className="flex items-center justify-between gap-2 px-3 py-2.5 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 cursor-pointer hover:border-emerald-400/60 transition-colors">
                         <span className="inline-flex items-center gap-2">
@@ -1995,14 +1989,13 @@ if (det?.teste_config && typeof det.teste_config === "object") {
 
                       {!programacaoFile && !!programacaoUrlExistente && !removerProgramacaoExistente && (
                         <div className="rounded-2xl border border-black/10 dark:border-white/10 p-3 bg-white/80 dark:bg-zinc-900/40 flex items-center justify-between gap-3">
-                          <a
-                            href={withBackendBase(programacaoUrlExistente)}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-sm underline text-emerald-700 dark:text-emerald-300 break-words"
-                          >
-                            {programacaoNomeExistente || "Baixar programação (PDF)"}
-                          </a>
+                          <button
+  type="button"
+  onClick={() => openAsset(programacaoUrlExistente)}
+  className="text-sm underline text-emerald-700 dark:text-emerald-300 break-words text-left"
+>
+  {programacaoNomeExistente || "Baixar programação (PDF)"}
+</button>
                           <button
                             type="button"
                             onClick={limparProgramacao}
