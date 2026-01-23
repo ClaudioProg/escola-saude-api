@@ -1,7 +1,7 @@
 // 📁 src/components/CardEventoAdministrador.jsx
 import PropTypes from "prop-types";
-import { useEffect, useMemo } from "react";
-import { CalendarDays, FileDown, Eye, Ear, Accessibility } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { CalendarDays, FileDown, Eye, Ear, Accessibility, Image as ImageIcon } from "lucide-react";
 import BadgeStatus from "./BadgeStatus";
 import CardTurmaAdministrador from "./CardTurmaAdministrador";
 import { idadeDe } from "../utils/dateTime";
@@ -346,6 +346,10 @@ export default function CardEventoAdministrador({
   const folderUrl = useMemo(() => resolveAssetUrl(evento?.folder_url), [evento?.folder_url]);
   const [imgOk, setImgOk] = useState(true);
 
+  useEffect(() => {
+    setImgOk(true);
+  }, [folderUrl]);
+  
   const statusEvento = getStatusEvento({ evento, turmas });
   const styles = STATUS_STYLES[statusEvento] || STATUS_STYLES.todos;
 
@@ -434,11 +438,16 @@ export default function CardEventoAdministrador({
             {expandido ? "Recolher" : "Ver Turmas"}
           </button>
         </div>
-      </div>
+      </div> {/* ✅ fecha flex justify-between */}
 
-      {/* STATS + TURMAS */}
-      {expandido && (
-        <>
+    </div> {/* ✅ fecha flex-1 (texto + ações) */}
+
+  </div> {/* ✅ fecha TOPO flex (thumb + conteúdo) */}
+
+  {/* STATS + TURMAS */}
+  {expandido && (
+    <>
+
           <h4 className="sr-only">Estatísticas do evento</h4>
 
           {/* indicativos do evento */}
