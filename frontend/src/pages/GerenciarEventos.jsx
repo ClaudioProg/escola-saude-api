@@ -124,7 +124,51 @@ function getPosterUrl(ev) {
     ev?.arquivoFolder ??
     "";
 
-  return resolveAssetUrl(raw);
+  return raw ? resolveAssetUrl(raw) : "";
+}
+
+/* =============================
+   ✅ Poster blob (novo) — cache + fetch com auth
+   - Se NÃO existir folder_url, tenta /api/eventos/:id/folder via authFetch (blob)
+   - Cacheia objectURL pra não refazer download
+============================= */
+const posterBlobCache = new Map(); // key: eventoId -> objectURL
+const posterBlobPending = new Map(); // key: eventoId -> Promise<string>
+
+async function getPosterBlobUrl(eventoId) {
+  const id = Number(eventoId);
+  if (!Number.isFinite(id) || id <= 0) return "";
+
+  if (posterBlobCache.has(id)) return posterBlobCache.get(id);
+
+  if (posterBlobPending.has(id)) return posterBlobPending.get(id);
+
+  const p = (async () => {
+    // endpoint novo (GET) — precisa existir no backend
+    const apiPath = `/api/eventos/${id}/folder`;
+    const resp = await authFetch(apiPath, { method: "GET", cache: "no-store" });
+
+    // ✅ 404 = sem folder (silencioso)
+    if (resp.status === 404) return "";
+    
+    // ✅ 401/403 = sem permissão (silencioso no admin; evita spam)
+    if (resp.status === 401 || resp.status === 403) return "";
+    
+    // outros erros: também não precisa “quebrar” a UI
+    if (!resp.ok) return "";
+
+    const blob = await resp.blob();
+    if (!blob || !blob.size) return "";
+
+    const objectUrl = URL.createObjectURL(blob);
+    posterBlobCache.set(id, objectUrl);
+    return objectUrl;
+  })()
+    .catch(() => "")
+    .finally(() => posterBlobPending.delete(id));
+
+  posterBlobPending.set(id, p);
+  return p;
 }
 
 /* =============================
@@ -606,9 +650,93 @@ function statusLabel(status) {
 }
 
 /* =============================
+   ✅ Poster Thumb (folder_url OU blob)
+============================= */
+function PosterThumb({ ev, title }) {
+  const [src, setSrc] = useState("");
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    const legacy = getPosterUrl(ev); // folder_url / etc.
+
+    // 1) legado (url)
+    if (legacy) {
+      setSrc(legacy);
+      setFailed(false);
+      return () => {};
+    }
+
+    // 2) novo (blob) — só se tiver id
+    (async () => {
+      const blobUrl = await getPosterBlobUrl(ev?.id);
+      if (!alive) return;
+      if (blobUrl) {
+        setSrc(blobUrl);
+        setFailed(false);
+      } else {
+        setSrc("");
+        setFailed(true);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [ev?.id, ev?.folder_url, ev?.folderUrl, ev?.folder]);
+
+  if (!src || failed) {
+    return (
+      <div
+        className="
+          w-[96px] h-[128px]
+          sm:w-[132px] sm:h-[176px]
+          md:w-[148px] md:h-[196px]
+          rounded-2xl border border-dashed border-zinc-300 dark:border-zinc-700
+          bg-zinc-50 dark:bg-zinc-900/40
+          flex flex-col items-center justify-center gap-1
+          text-[11px] text-zinc-500 dark:text-zinc-400 px-2 text-center
+        "
+        aria-label={`Folder indisponível para ${title}`}
+      >
+        <CalendarDays className="w-5 h-5 opacity-70" />
+        Sem folder
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="
+        w-[96px] h-[128px]
+        sm:w-[132px] sm:h-[176px]
+        md:w-[148px] md:h-[196px]
+        rounded-2xl border border-white/10 shadow-sm
+        bg-zinc-100 dark:bg-zinc-900
+        overflow-hidden grid place-items-center
+      "
+      aria-label={`Folder do evento ${title}`}
+    >
+      <img
+        src={src}
+        alt={`Folder do evento ${title}`}
+        className="w-full h-full object-contain"
+        loading="lazy"
+        referrerPolicy="no-referrer"
+        onError={() => {
+          setFailed(true);
+          setSrc("");
+        }}
+      />
+    </div>
+  );
+}
+
+/* =============================
    Página
 ============================= */
 export default function GerenciarEventos() {
+
   const reduceMotion = useReducedMotion();
 
   const [eventos, setEventos] = useState([]);
@@ -648,8 +776,16 @@ export default function GerenciarEventos() {
       mountedRef.current = false;
       abortListRef.current?.abort?.("unmount");
       abortEditRef.current?.abort?.("unmount");
+  
+      // ✅ limpa objectURLs (evita leak)
+      for (const [, url] of posterBlobCache.entries()) {
+        try { URL.revokeObjectURL(url); } catch {}
+      }
+      posterBlobCache.clear();
+      posterBlobPending.clear();
     };
   }, []);
+  
 
   const setLive = (msg) => {
     if (liveRef.current) liveRef.current.textContent = msg;
@@ -1164,8 +1300,7 @@ export default function GerenciarEventos() {
             {eventosFiltrados.map((ev) => {
               const publicado = !!ev.publicado;
               const status = deduzStatus(ev);
-              const posterUrl = getPosterUrl(ev);
-
+              
               return (
                 <motion.li
                   key={ev.id || ev.titulo}
@@ -1177,74 +1312,12 @@ export default function GerenciarEventos() {
 
                   <div className="p-4 sm:p-5 flex flex-col gap-4">
                     <div className="flex flex-col sm:flex-row gap-4 sm:items-start sm:justify-between">
-                      <div className="flex gap-4 min-w-0">
-                      <div className="shrink-0">
-  {posterUrl ? (
-    <div
-      className="
-        w-[96px] h-[128px]
-        sm:w-[132px] sm:h-[176px]
-        md:w-[148px] md:h-[196px]
-        rounded-2xl border border-white/10 shadow-sm
-        bg-zinc-100 dark:bg-zinc-900
-        overflow-hidden grid place-items-center
-      "
-      aria-label={`Folder do evento ${ev.titulo}`}
-    >
-      <img
-        src={posterUrl}
-        alt={`Folder do evento ${ev.titulo}`}
-        className="w-full h-full object-contain"
-        loading="lazy"
-        referrerPolicy="no-referrer"
-        onError={(e) => {
-          // 🔒 fallback: esconde a imagem e mostra o placeholder abaixo
-          e.currentTarget.style.display = "none";
-          const box = e.currentTarget.parentElement;
-          if (box) box.setAttribute("data-img-fail", "1");
-        }}
-      />
+                    <div className="flex gap-4 min-w-0">
+  <div className="shrink-0">
+    <PosterThumb ev={ev} title={ev.titulo} />
+  </div>
 
-      {/* Placeholder (aparece quando a imagem falha) */}
-      <div
-        className="
-          hidden
-          w-full h-full
-          flex-col items-center justify-center gap-1
-          text-[11px] text-zinc-500 dark:text-zinc-400 px-2 text-center
-          data-[show=true]:flex
-        "
-        // truque simples sem state: se marcou data-img-fail no pai, exibimos via JS logo abaixo
-        ref={(el) => {
-          if (!el) return;
-          const box = el.parentElement;
-          const failed = box?.getAttribute("data-img-fail") === "1";
-          el.dataset.show = failed ? "true" : "false";
-        }}
-      >
-        <CalendarDays className="w-5 h-5 opacity-70" />
-        Folder indisponível
-      </div>
-    </div>
-  ) : (
-    <div
-      className="
-        w-[96px] h-[128px]
-        sm:w-[132px] sm:h-[176px]
-        md:w-[148px] md:h-[196px]
-        rounded-2xl border border-dashed border-zinc-300 dark:border-zinc-700
-        bg-zinc-50 dark:bg-zinc-900/40
-        flex flex-col items-center justify-center gap-1
-        text-[11px] text-zinc-500 dark:text-zinc-400 px-2 text-center
-      "
-    >
-      <CalendarDays className="w-5 h-5 opacity-70" />
-      Sem folder
-    </div>
-  )}
-</div>
-
-                        <div className="min-w-0">
+  <div className="min-w-0">
                           <h3 className="text-base sm:text-lg font-extrabold text-zinc-900 dark:text-white break-words">
                             {ev.titulo}
                           </h3>

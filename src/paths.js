@@ -1,4 +1,8 @@
-// 📁 src/paths.js
+// 📁 src/paths.js — PREMIUM++ (Render Disk-first em PROD, sem quebrar DEV/Windows)
+// - ✅ Em PROD: se RENDER_DISK_PATH existir e for gravável, ele vira o DATA_ROOT (prioridade absoluta)
+// - ✅ Em DEV: mantém comportamento atual (primeiro gravável) com preferência por ./data no Windows
+// - ✅ Mantém toPosixKey + safeJoin + probes
+
 /* eslint-disable no-console */
 const path = require("path");
 const fs = require("fs");
@@ -23,14 +27,12 @@ function ensureDir(p) {
 function normalizeCandidate(p) {
   if (!p) return null;
   const s = String(p).trim().replace(/^"(.*)"$/, "$1").replace(/^'(.*)'$/, "$1");
-  // normaliza separadores para o OS
   return path.normalize(s);
 }
 
 /** Rejeita paths "suspeitos" tipo "\var\data" no Windows */
 function isSuspiciousWindowsPath(p) {
   if (!IS_WIN) return false;
-  // "\var\data" ou "/var/data" em Windows são geralmente inválidos/enganosos
   return /^([\\/])var([\\/]|$)/i.test(p);
 }
 
@@ -67,42 +69,63 @@ function safeJoin(baseDir, storageKey) {
   return path.join(baseDir, key);
 }
 
-/* ───────────────── DATA_ROOT (ordem de candidatos) ─────────────────
- * Primeiro diretório gravável na lista vence.
- * Premium: em Windows priorizamos ./data antes de /var/data
- */
-const rawCandidates = [
-  process.env.FILES_BASE,
-  process.env.DATA_DIR,
-  process.env.RENDER_DISK_PATH,
+/* ───────────────── DATA_ROOT (estratégia) ─────────────────
+   ✅ Regra PREMIUM:
+   - Em PRODUÇÃO no Render: se existir RENDER_DISK_PATH gravável, ele vence SEM DISCUSSÃO.
+   - Em DEV/local: mantém estratégia "primeiro gravável" com prioridades amigáveis.
+*/
 
-  // locais comuns:
-  IS_WIN ? path.join(process.cwd(), "data") : "/var/data",
-  path.join(process.cwd(), "data"),
-  path.join(process.cwd(), ".data"),
-  path.join(os.tmpdir(), "escola-saude"),
-].filter(Boolean);
+const ENV_RENDER_DISK = normalizeCandidate(process.env.RENDER_DISK_PATH);
+const ENV_FILES_BASE = normalizeCandidate(process.env.FILES_BASE);
+const ENV_DATA_DIR = normalizeCandidate(process.env.DATA_DIR);
 
-const candidates = rawCandidates
-  .map(normalizeCandidate)
-  .filter(Boolean)
-  .filter((p) => !(IS_WIN && isSuspiciousWindowsPath(p)));
+const hasRenderDisk =
+  ENV_RENDER_DISK &&
+  !(IS_WIN && isSuspiciousWindowsPath(ENV_RENDER_DISK)) &&
+  isWritable(ENV_RENDER_DISK);
 
-let DATA_ROOT = candidates.find(isWritable);
+let DATA_ROOT = null;
 
+// ✅ 1) Produção: Render Disk-first (se configurado)
+if (!IS_DEV && hasRenderDisk) {
+  DATA_ROOT = ENV_RENDER_DISK;
+}
+
+// ✅ 2) Caso contrário (DEV ou sem disk), usa candidatos na ordem
 if (!DATA_ROOT) {
-  // Último recurso: tmp (sempre disponível; volátil)
+  const rawCandidates = [
+    ENV_FILES_BASE,
+    ENV_DATA_DIR,
+    ENV_RENDER_DISK,
+
+    // locais comuns:
+    IS_WIN ? path.join(process.cwd(), "data") : "/var/data",
+    path.join(process.cwd(), "data"),
+    path.join(process.cwd(), ".data"),
+    path.join(os.tmpdir(), "escola-saude"),
+  ].filter(Boolean);
+
+  const candidates = rawCandidates
+    .map(normalizeCandidate)
+    .filter(Boolean)
+    .filter((p) => !(IS_WIN && isSuspiciousWindowsPath(p)));
+
+  DATA_ROOT = candidates.find(isWritable) || null;
+}
+
+// ✅ 3) Último recurso: tmp (sempre disponível; volátil)
+if (!DATA_ROOT) {
   DATA_ROOT = path.join(os.tmpdir(), "escola-saude");
   ensureDir(DATA_ROOT);
 }
 
 /* ───────────────── Estrutura de subpastas ───────────────── */
-const UPLOADS_DIR          = path.join(DATA_ROOT, "uploads");
-const EVENTOS_DIR          = path.join(UPLOADS_DIR, "eventos");
+const UPLOADS_DIR = path.join(DATA_ROOT, "uploads");
+const EVENTOS_DIR = path.join(UPLOADS_DIR, "eventos");
 const MODELOS_CHAMADAS_DIR = path.join(UPLOADS_DIR, "modelos", "chamadas");
-const CERT_DIR             = path.join(DATA_ROOT, "certificados");
-const TMP_DIR              = path.join(DATA_ROOT, "tmp");
-const POSTERS_DIR          = path.join(UPLOADS_DIR, "posters");
+const CERT_DIR = path.join(DATA_ROOT, "certificados");
+const TMP_DIR = path.join(DATA_ROOT, "tmp");
+const POSTERS_DIR = path.join(UPLOADS_DIR, "posters");
 
 /* ───────────────── Garantia de criação ───────────────── */
 [
@@ -117,7 +140,11 @@ const POSTERS_DIR          = path.join(UPLOADS_DIR, "posters");
 
 /* ───────────────── Logs úteis ───────────────── */
 if (process.env.NODE_ENV !== "test") {
-  console.log("[FILES] DATA_ROOT:", DATA_ROOT);
+  console.log("[FILES] DATA_ROOT:", DATA_ROOT, {
+    IS_DEV,
+    usingRenderDisk: !IS_DEV && hasRenderDisk,
+    RENDER_DISK_PATH: ENV_RENDER_DISK || null,
+  });
   console.log("[FILES] UPLOADS_DIR:", UPLOADS_DIR);
   console.log("[FILES] EVENTOS_DIR:", EVENTOS_DIR);
   console.log("[FILES] MODELOS_CHAMADAS_DIR:", MODELOS_CHAMADAS_DIR);

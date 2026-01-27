@@ -1,4 +1,9 @@
-// 📁 server.js — PREMIUM (CSP robusta p/ Vite DEV + PROD com nonce, sem loop de reload)
+// 📁 server.js — PREMIUM++ (CSP robusta DEV/PROD + nonce + uploads estáticos corretos + CORS + logs + rate limit)
+// - ✅ FIX: /uploads/eventos servindo corretamente (evita 404 no Render quando o arquivo existe)
+// - ✅ Rate limit aplicado ANTES das rotas
+// - ✅ Headers corretos p/ assets e no-store no dev
+// - ✅ SPA fallback com nonce
+
 "use strict";
 /* eslint-disable no-console */
 
@@ -29,6 +34,7 @@ const { DATA_ROOT, UPLOADS_DIR, MODELOS_CHAMADAS_DIR, CERT_DIR, ensureDir } = re
 const apiRoutes = require("./routes"); // ✅ src/routes/index.js
 
 const IS_DEV = process.env.NODE_ENV !== "production";
+
 const app = express();
 app.disable("x-powered-by");
 
@@ -54,8 +60,7 @@ app.use((req, res, next) => {
   const incoming = req.headers["x-request-id"];
   const rid =
     (typeof incoming === "string" && incoming.trim().slice(0, 128)) ||
-    crypto.randomUUID?.() ||
-    crypto.randomBytes(16).toString("hex");
+    (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex"));
 
   req.requestId = rid;
   res.setHeader("X-Request-Id", rid);
@@ -227,7 +232,7 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
-// ✅ Vary: Origin
+/* ✅ Vary: Origin */
 app.use((req, res, next) => {
   const prev = res.getHeader("Vary");
   const list = String(prev || "")
@@ -252,23 +257,46 @@ ensureDir(UPLOADS_DIR);
 ensureDir(MODELOS_CHAMADAS_DIR);
 ensureDir(CERT_DIR);
 
+// ✅ garante também subpastas essenciais (evita 404 por falta de dir)
+ensureDir(path.join(UPLOADS_DIR, "eventos"));
+ensureDir(path.join(UPLOADS_DIR, "posters"));
+ensureDir(path.join(UPLOADS_DIR, "modelos"));
+
 if (process.env.NODE_ENV !== "test") {
   console.log("[FILES] DATA_ROOT:", DATA_ROOT);
   console.log("[FILES] UPLOADS_DIR:", UPLOADS_DIR);
   console.log("[FILES] MODELOS_CHAMADAS_DIR:", MODELOS_CHAMADAS_DIR);
   console.log("[FILES] CERT_DIR:", CERT_DIR);
+  console.log("[FILES] UPLOADS/eventos:", path.join(UPLOADS_DIR, "eventos"));
 }
 
-/* ───────── Static uploads ───────── */
+/* ───────── Static uploads (FIX DEFINITIVO) ───────── */
+// ✅ helper de headers de asset
+function setUploadHeaders(res) {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+  res.setHeader("Cache-Control", IS_DEV ? "no-store" : "public, max-age=3600");
+}
+
+// ✅ (NOVO) Serve exatamente /uploads/eventos -> UPLOADS_DIR/eventos
+app.use(
+  "/uploads/eventos",
+  cors(corsOptions),
+  express.static(path.join(UPLOADS_DIR, "eventos"), {
+    fallthrough: false, // ✅ se não existir, 404 direto (sem cair em SPA)
+    maxAge: IS_DEV ? 0 : "1h",
+    setHeaders: setUploadHeaders,
+  })
+);
+
+// ✅ mantém /uploads geral (outras pastas)
 app.use(
   "/uploads",
   cors(corsOptions),
   express.static(UPLOADS_DIR, {
+    fallthrough: true, // deixa outras rotas continuarem se for necessário
     maxAge: IS_DEV ? 0 : "1h",
-    setHeaders(res) {
-      res.setHeader("Cache-Control", IS_DEV ? "no-store" : "public, max-age=3600");
-      res.setHeader("X-Content-Type-Options", "nosniff");
-    },
+    setHeaders: setUploadHeaders,
   })
 );
 
@@ -317,7 +345,7 @@ if (IS_DEV) {
   });
 }
 
-/* ───────── Rate limiters específicos (mantidos) ───────── */
+/* ───────── Rate limiters (ANTES das rotas) ───────── */
 const loginLimiter = rateLimit({
   windowMs: 5 * 60 * 1000,
   max: 10,
@@ -333,6 +361,11 @@ const recuperarSenhaLimiter = rateLimit({
   legacyHeaders: false,
   message: { erro: "Muitas solicitações, aguarde antes de tentar novamente." },
 });
+
+// ✅ agora pega de verdade
+app.use("/api/login", loginLimiter);
+app.use("/api/usuarios/recuperar-senha", recuperarSenhaLimiter);
+app.use("/api/usuario/recuperar-senha", recuperarSenhaLimiter);
 
 /* ───────── Helpers de resposta (premium) ───────── */
 function sendError(res, status, message, extra = {}) {
@@ -377,18 +410,8 @@ app.get(
   })
 );
 
-/* ───────── API (fonte única) ─────────
-   ✅ tudo dentro de src/routes/index.js
-*/
+/* ───────── API (fonte única) ───────── */
 app.use("/api", apiRoutes);
-
-/* ───────── Rate limits extras (sem depender do index) ─────────
-   Se você quiser o limiter de login obrigatório, mantemos um “cap” aqui.
-   Ele não executa login por si só; só limita chamadas para /api/login/* e /api/usuario/recuperar-senha
-*/
-app.use("/api/login", loginLimiter);
-app.use("/api/usuarios/recuperar-senha", recuperarSenhaLimiter);
-app.use("/api/usuario/recuperar-senha", recuperarSenhaLimiter);
 
 /* ───────── Health & SPA fallback ───────── */
 app.get("/api/health", (_req, res) =>
@@ -418,6 +441,7 @@ app.get("/", (_req, res, next) => {
   return res.send("🟢 API da Escola da Saúde rodando!");
 });
 
+// ✅ SPA fallback NÃO deve capturar uploads
 app.get(/^\/(?!api\/|uploads\/).+/, (_req, res, next) => {
   if (renderSpaIndex(res, next)) return;
   return next();
@@ -430,7 +454,7 @@ app.use((req, res) => {
 });
 
 app.use((err, req, res, _next) => {
-  if (err?.code === "LIMIT_FILE_SIZE") return sendError(res, 400, "Arquivo muito grande (máx. 50MB).");
+  if (err?.code === "LIMIT_FILE_SIZE") return sendError(res, 400, "Arquivo muito grande (máx. 15MB).");
   if (err?.code === "CORS_BLOCKED") return sendError(res, 403, "Origem não autorizada.", { code: "CORS_BLOCKED" });
 
   if (err?.name === "UnauthorizedError" || err?.code === "UNAUTHORIZED") {

@@ -82,8 +82,8 @@ const TESTE_DEFAULT = {
 };
 
 const hh = (s) => (typeof s === "string" ? s.slice(0, 5) : "");
-const minDate = (arr) => arr.map((d) => d.data).sort()[0];
-const maxDate = (arr) => arr.map((d) => d.data).sort().slice(-1)[0];
+const minDate = (arr) => (arr || []).map((d) => d?.data).filter(Boolean).sort()[0];
+const maxDate = (arr) => (arr || []).map((d) => d?.data).filter(Boolean).sort().slice(-1)[0];
 
 function calcularCargaHorariaDatas(datas = []) {
   let total = 0;
@@ -186,13 +186,46 @@ function normalizarDatasTurma(t, hiBase = "08:00", hfBase = "17:00") {
 const extractIds = (arr) =>
   Array.isArray(arr) ? arr.map((v) => Number(v?.id ?? v)).filter((n) => Number.isFinite(n)) : [];
 
+function stripDiacritics(s) {
+  return String(s || "")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "");
+}
+
 function normalizarCargo(v) {
-  const s = String(v || "").trim();
-  if (!s) return "";
-  return s
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .replace(/\b\w/g, (m) => m.toUpperCase());
+  const raw = String(v || "").trim();
+  if (!raw) return "";
+
+  const s = raw.replace(/\s+/g, " ");
+
+  const minusculas = new Set([
+    "de","da","do","das","dos",
+    "e","em","para","por",
+    "a","o","as","os",
+    "à","às","ao","aos",
+  ]);
+
+  const siglas = new Set(["SMS","SUS","CNPJ","CPF","RH","TI","UPA","UBS","SAMU"]);
+
+  const roman = /^(i|ii|iii|iv|v|vi|vii|viii|ix|x)$/i;
+
+  const words = s.split(" ").filter(Boolean);
+
+  return words
+    .map((w, idx) => {
+      const clean = w.replace(/[()]/g, "");
+      const upper = clean.toUpperCase();
+
+      if (siglas.has(upper)) return upper;
+      if (roman.test(clean)) return upper; // II, III...
+
+      const lower = clean.toLocaleLowerCase("pt-BR");
+
+      if (idx !== 0 && minusculas.has(lower)) return lower;
+
+      return lower.charAt(0).toLocaleUpperCase("pt-BR") + lower.slice(1);
+    })
+    .join(" ");
 }
 
 function extrairCargoUsuario(u) {
@@ -421,6 +454,12 @@ export default function ModalEvento({
 
   // ✅ URLs existentes + flags de remoção
   const [folderUrlExistente, setFolderUrlExistente] = useState(undefined);
+const [hasFolderServidor, setHasFolderServidor] = useState(false);
+
+function folderEndpointPath(eventoId) {
+  const idNum = Number(eventoId);
+  return Number.isFinite(idNum) ? `/api/eventos/${idNum}/folder` : null;
+}
   const [programacaoUrlExistente, setProgramacaoUrlExistente] = useState(undefined);
   const [programacaoNomeExistente, setProgramacaoNomeExistente] = useState(undefined);
 
@@ -575,7 +614,8 @@ export default function ModalEvento({
         }));
 
         // ✅ anexos existentes vindos do backend
-        setFolderUrlExistente(evento.folder_url || evento.folder || undefined);
+        setHasFolderServidor(false);
+setFolderUrlExistente(evento.folder_url || evento.folder || undefined);
 
         setProgramacaoUrlExistente(evento.programacao_pdf_url || evento.programacao_url || evento.programacao_pdf || undefined);
 
@@ -585,7 +625,7 @@ export default function ModalEvento({
         (async () => {
           try {
             const resp = await apiGet(`/api/eventos/${evento.id}/turmas-simples`);
-            const turmasBack = Array.isArray(resp) ? resp : [];
+            const turmasBack = asArray(resp);
             const turmasNormalizadas = turmasBack.map((t) => {
               const n = normalizarDatasTurma(t);
               const cargaCalc = Number.isFinite(Number(t.carga_horaria)) ? Number(t.carga_horaria) : calcularCargaHorariaDatas(n.datas);
@@ -619,16 +659,23 @@ export default function ModalEvento({
         const lista =
           (Array.isArray(evento.registros_permitidos) ? evento.registros_permitidos : null) ??
           (Array.isArray(evento.registros) ? evento.registros : []);
-        const regs = [...new Set((lista || []).map(normReg).filter((r) => /^\d{6}$/.test(r)))];
-        setRegistros(regs);
-
-        setCargosPermitidos(
-          Array.isArray(evento.cargos_permitidos)
-            ? [...new Set(evento.cargos_permitidos.map((s) => String(s || "").trim()).filter(Boolean))]
-            : []
-        );
-
-        setUnidadesPermitidas(Array.isArray(evento.unidades_permitidas) ? extractIds(evento.unidades_permitidas) : []);
+          const regs = [...new Set((lista || []).map(normReg).filter((r) => /^\d{6}$/.test(r)))];
+          setRegistros(regs);
+  
+          // ✅ aceita ["Enfermeiro"] OU [{id,nome}]
+          setCargosPermitidos(
+            Array.isArray(evento.cargos_permitidos)
+              ? [
+                  ...new Set(
+                    evento.cargos_permitidos
+                      .map((c) => String(c?.nome ?? c ?? "").trim())
+                      .filter(Boolean)
+                  ),
+                ]
+              : []
+          );
+  
+          setUnidadesPermitidas(Array.isArray(evento.unidades_permitidas) ? extractIds(evento.unidades_permitidas) : []);
       }
     });
 
@@ -673,7 +720,47 @@ export default function ModalEvento({
         }
 
         // anexos (opcional)
-        if (det?.folder_url || det?.folder) setFolderUrlExistente(det.folder_url || det.folder);
+        // anexos (opcional) — LEGADO
+if (det?.folder_url || det?.folder) {
+  setFolderUrlExistente(det.folder_url || det.folder);
+  setHasFolderServidor(true);
+} else {
+  // ✅ NOVO: tenta folder blob via endpoint
+  const p = folderEndpointPath(evento.id);
+  if (p) {
+    try {
+      const url = resolveAssetUrl(p);
+
+      // HEAD primeiro (leve). Se não suportar, cai pro GET.
+      let ok = false;
+      try {
+        const head = await fetch(url, { method: "HEAD", cache: "no-store" });
+        ok = head.ok;
+      } catch {
+        ok = false;
+      }
+
+      if (!ok) {
+        const get = await fetch(url, { method: "GET", cache: "no-store" });
+        ok = get.ok;
+        // evita download inútil
+        try { get.body?.cancel?.(); } catch {}
+      }
+
+      if (ok) {
+        setFolderUrlExistente(p); // path relativo (resolveAssetUrl cuida)
+        setHasFolderServidor(true);
+      } else {
+        setFolderUrlExistente(undefined);
+        setHasFolderServidor(false);
+      }
+    } catch {
+      setFolderUrlExistente(undefined);
+      setHasFolderServidor(false);
+    }
+  }
+}
+
         if (det?.programacao_pdf_url || det?.programacao_url || det?.programacao_pdf) {
           setProgramacaoUrlExistente(det.programacao_pdf_url || det.programacao_url || det.programacao_pdf);
           setProgramacaoNomeExistente(det.programacao_nome || det.programacao_pdf_nome);
@@ -748,10 +835,25 @@ export default function ModalEvento({
   /* ========= Opções (memo) ========= */
   const cargosSugestoes = useMemo(() => {
     const dosUsuarios = (usuarios || []).map((u) => extrairCargoUsuario(u)).filter(Boolean);
-    const todos = [...dosUsuarios, ...fallbackCargos].map(normalizarCargo).filter(Boolean);
-    const setUnicos = new Set(todos);
-    const jaUsados = new Set(cargosPermitidos.map((c) => c.toLowerCase()));
-    return [...setUnicos].filter((c) => !jaUsados.has(c.toLowerCase())).sort((a, b) => a.localeCompare(b));
+    const todos = [...dosUsuarios, ...fallbackCargos]
+      .map(normalizarCargo)
+      .filter(Boolean);
+  
+    const jaUsados = new Set(
+      cargosPermitidos.map((c) => stripDiacritics(c).toLocaleLowerCase("pt-BR"))
+    );
+  
+    // ✅ dedupe por chave sem acento
+    const byKey = new Map();
+    for (const c of todos) {
+      const key = stripDiacritics(c).toLocaleLowerCase("pt-BR");
+      if (!key) continue;
+      if (jaUsados.has(key)) continue;
+      // mantém a “melhor” forma (com acento) se aparecer depois
+      byKey.set(key, c);
+    }
+  
+    return [...byKey.values()].sort((a, b) => a.localeCompare(b, "pt-BR"));
   }, [usuarios, fallbackCargos, cargosPermitidos]);
 
   const opcaoInstrutor = useMemo(() => {
@@ -819,7 +921,7 @@ export default function ModalEvento({
 
   /* ================= Filtros: Cargos e Unidades ================= */
   const addCargo = () => {
-    const v = String(cargoAdd || "").trim();
+    const v = normalizarCargo(String(cargoAdd || "").trim());
     if (!v) return;
     setCargosPermitidos((prev) => (prev.some((x) => x.toLowerCase() === v.toLowerCase()) ? prev : [...prev, v]));
     setCargoAdd("");
@@ -865,6 +967,7 @@ export default function ModalEvento({
     setFolderPreview(null);
     if (folderInputRef.current) folderInputRef.current.value = "";
     if (folderUrlExistente) setRemoverFolderExistente(true);
+    setHasFolderServidor(false);
   };
 
   const limparProgramacao = () => {
@@ -926,44 +1029,7 @@ export default function ModalEvento({
     });
   }
 
-  /* ================= Ministats (evento) ================= */
-  const stats = useMemo(() => {
-    const ts = Array.isArray(turmas) ? turmas : [];
-    let encontros = 0;
-    let carga = 0;
-
-    for (const t of ts) {
-      const baseDatas = Array.isArray(t.datas) && t.datas.length ? t.datas : encontrosParaDatas(t);
-      encontros += Array.isArray(baseDatas) ? baseDatas.length : 0;
-
-      const n = normalizarDatasTurma(t);
-      const ch = Number.isFinite(Number(t.carga_horaria)) ? Number(t.carga_horaria) : calcularCargaHorariaDatas(n.datas);
-      carga += Number.isFinite(ch) ? ch : 0;
-    }
-
-    const temFolder = Boolean(folderFile || folderPreview || (folderUrlExistente && !removerFolderExistente));
-    const temPdf = Boolean(programacaoFile || (programacaoUrlExistente && !removerProgramacaoExistente));
-
-    return {
-      turmas: ts.length,
-      encontros,
-      cargaTotal: carga,
-      restrito: Boolean(restrito),
-      anexos: `${temFolder ? 1 : 0} img • ${temPdf ? 1 : 0} pdf`,
-    };
-  }, [
-    turmas,
-    restrito,
-    folderFile,
-    folderPreview,
-    folderUrlExistente,
-    removerFolderExistente,
-    programacaoFile,
-    programacaoUrlExistente,
-    removerProgramacaoExistente,
-  ]);
-
-  /* ================= Submit do formulário ================= */
+   /* ================= Submit do formulário ================= */
   const handleSubmit = (e) => {
     e.preventDefault();
     if (salvando) return;
@@ -1081,25 +1147,7 @@ export default function ModalEvento({
 
   const regCount = registros.length;
 
-  /* ========================= Navegação por seções ========================= */
-  const scrollToSection = useCallback((id) => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, []);
-
-  const SECOES = useMemo(
-    () => [
-      { id: `sec-dados-${uid}`, label: "Dados" },
-      { id: `sec-pos-${uid}`, label: "Pós-curso" },
-      { id: `sec-vis-${uid}`, label: "Visibilidade" },
-      { id: `sec-anexos-${uid}`, label: "Anexos" },
-      { id: `sec-turmas-${uid}`, label: "Turmas" },
-    ],
-    [uid]
-  );
-
-  /* ========================= Render Turmas (memo) ========================= */
+    /* ========================= Render Turmas (memo) ========================= */
   const turmasRender = useMemo(() => {
     return (turmas || []).map((t, i) => {
       const baseDatas = Array.isArray(t.datas) && t.datas.length ? t.datas : encontrosParaDatas(t);
@@ -1230,22 +1278,33 @@ export default function ModalEvento({
   return (
     <>
       <Modal
-        isOpen={effectiveOpen}
-        open={effectiveOpen} // ✅ compat extra
-        onClose={closeBlocked ? undefined : onClose}
-        level={0}
-        maxWidth="max-w-4xl"
-        labelledBy={titleId}
-        describedBy={descId}
-        closeOnBackdrop={!closeBlocked}
-        closeOnEscape={!closeBlocked}
+  open={effectiveOpen}
+  onClose={closeBlocked ? undefined : onClose}
+  padding={false}
+  scroll="content"
+  size="xl"
+  labelledBy={titleId}
+  describedBy={descId}
+  closeOnBackdrop={!closeBlocked}
+  closeOnEscape={!closeBlocked}
       >
-        <div className="grid grid-rows-[auto,1fr,auto] max-h-[92vh] rounded-3xl overflow-hidden bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/10 shadow-2xl">
+        <div
+          className={[
+            "grid grid-rows-[auto,1fr,auto]",
+            // ✅ MOBILE: tela cheia real (dvh evita bug da barra do navegador)
+            "w-[100vw] max-w-[100vw] h-[100dvh] max-h-[100dvh]",
+            // ✅ DESKTOP: mantém comportamento atual
+            "sm:w-auto sm:max-w-none sm:h-auto sm:max-h-[92vh]",
+            // ✅ MOBILE: sem bordas arredondadas pra não “cortar”
+            "rounded-none sm:rounded-3xl overflow-hidden",
+            "bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/10 shadow-2xl",
+          ].join(" ")}
+        >
           {/* Top gradient bar */}
           <div className="h-1.5 bg-gradient-to-r from-emerald-600 via-indigo-600 to-fuchsia-600" />
 
           {/* HEADER */}
-          <div className="relative p-5 sm:p-6 border-b border-black/5 dark:border-white/10 bg-white/80 dark:bg-zinc-900/80 backdrop-blur">
+          <div className="relative p-4 sm:p-6 border-b border-black/5 dark:border-white/10 bg-white/80 dark:bg-zinc-900/80 backdrop-blur">
             <div className="absolute inset-0 pointer-events-none">
               <div className="absolute -top-16 -left-24 w-56 h-56 rounded-full bg-emerald-500/12 blur-2xl" />
               <div className="absolute -bottom-20 -right-24 w-64 h-64 rounded-full bg-teal-500/12 blur-2xl" />
@@ -1340,33 +1399,10 @@ export default function ModalEvento({
               </div>
             </div>
 
-            {/* Ministats */}
-            <div className="relative mt-5 grid grid-cols-2 sm:grid-cols-5 gap-2">
-              <StatMini icon={Layers3} label="Turmas" value={stats.turmas} tone="zinc" />
-              <StatMini icon={CalendarDays} label="Encontros" value={stats.encontros} tone="indigo" />
-              <StatMini icon={Clock} label="Carga total" value={`${stats.cargaTotal}h`} tone="emerald" />
-              <StatMini icon={Lock} label="Restrição" value={stats.restrito ? "Sim" : "Não"} tone={stats.restrito ? "amber" : "sky"} />
-              <StatMini icon={Paperclip} label="Anexos" value={stats.anexos} tone="violet" />
             </div>
-
-            {/* atalhos por seção */}
-            <div className="relative mt-4 flex gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]">
-              {SECOES.map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  onClick={() => scrollToSection(s.id)}
-                  className="shrink-0 inline-flex items-center gap-2 rounded-full px-3 py-2 text-xs font-extrabold border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 hover:bg-black/5 dark:hover:bg-white/5"
-                >
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
-                  {s.label}
-                </button>
-              ))}
-            </div>
-          </div>
 
           {/* BODY */}
-          <div className="p-5 sm:p-6 overflow-y-auto">
+          <div className="p-4 sm:p-6 overflow-y-auto overscroll-contain pb-[max(1rem,env(safe-area-inset-bottom))]">
             {isPending ? (
               <p className="text-center text-sm text-slate-500" role="status" aria-live="polite">
                 Carregando…
@@ -1857,40 +1893,44 @@ export default function ModalEvento({
                         <ImageIcon size={16} /> Folder do evento (PNG/JPG)
                       </label>
 
-                      {!folderFile && !!folderUrlExistente && !removerFolderExistente && (
-                        <div className="rounded-2xl border border-black/10 dark:border-white/10 p-2 bg-white/80 dark:bg-zinc-900/40">
-                          <img
-                            src={resolveAssetUrl(folderUrlExistente)}
-                            alt="Folder atual do evento"
-                            className="max-h-44 w-full object-cover rounded-xl border border-black/10 dark:border-white/10"
-                            loading="lazy"
-                            referrerPolicy="no-referrer"
-                            onError={(e) => {
-                              e.currentTarget.src = "";
-                              e.currentTarget.alt = "Imagem indisponível";
-                            }}
-                          />
+                      {!folderFile && hasFolderServidor && !!folderUrlExistente && !removerFolderExistente && (
+  <div className="rounded-2xl border border-black/10 dark:border-white/10 p-2 bg-white/80 dark:bg-zinc-900/40">
+    <img
+      src={resolveAssetUrl(folderUrlExistente)}
+      alt="Folder atual do evento"
+      className="max-h-44 w-full object-cover rounded-xl border border-black/10 dark:border-white/10"
+      loading="lazy"
+      referrerPolicy="no-referrer"
+      onError={(e) => {
+        // ✅ se quebrar por qualquer motivo, some com o bloco
+        e.currentTarget.src = "";
+        e.currentTarget.alt = "Imagem indisponível";
+        setHasFolderServidor(false);
+        setFolderUrlExistente(undefined);
+      }}
+    />
 
-                          <div className="mt-2 flex items-center justify-between gap-3">
-                            <button
-                              type="button"
-                              onClick={() => openAsset(folderUrlExistente)}
-                              className="text-xs underline text-emerald-700 dark:text-emerald-300"
-                            >
-                              Abrir imagem
-                            </button>
+    <div className="mt-2 flex items-center justify-between gap-3">
+      <button
+        type="button"
+        onClick={() => openAsset(folderUrlExistente)}
+        className="text-xs underline text-emerald-700 dark:text-emerald-300"
+      >
+        Abrir imagem
+      </button>
 
-                            <button
-                              type="button"
-                              onClick={limparFolder}
-                              className="text-xs underline text-red-700 dark:text-red-300"
-                              title="Remover imagem existente"
-                            >
-                              Remover
-                            </button>
-                          </div>
-                        </div>
-                      )}
+      <button
+        type="button"
+        onClick={limparFolder}
+        className="text-xs underline text-red-700 dark:text-red-300"
+        title="Remover imagem existente"
+      >
+        Remover
+      </button>
+    </div>
+  </div>
+)}
+
 
                       <label className="flex items-center justify-between gap-2 px-3 py-2.5 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 cursor-pointer hover:border-emerald-400/60 transition-colors">
                         <span className="inline-flex items-center gap-2">
@@ -2024,20 +2064,20 @@ export default function ModalEvento({
             )}
           </div>
 
-          {/* FOOTER */}
-          <div className="p-4 sm:p-5 border-t border-black/5 dark:border-white/10 bg-zinc-50 dark:bg-zinc-800">
+                    {/* FOOTER */}
+                    <div className="p-4 sm:p-5 border-t border-black/5 dark:border-white/10 bg-zinc-50 dark:bg-zinc-800 pb-[max(1rem,env(safe-area-inset-bottom))]">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div className="text-xs text-zinc-600 dark:text-zinc-300">
                 Campos obrigatórios: <strong>Título</strong>, <strong>Local</strong>, <strong>Tipo</strong>, <strong>Unidade</strong> e
                 ao menos <strong>1 turma</strong>.
               </div>
 
-              <div className="flex justify-end gap-2">
+              <div className="flex flex-col sm:flex-row justify-end gap-2 w-full sm:w-auto">
                 <button
                   type="button"
                   onClick={closeBlocked ? undefined : onClose}
                   disabled={closeBlocked}
-                  className="rounded-2xl px-4 py-2.5 bg-slate-200 hover:bg-slate-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-900 dark:text-slate-100 font-extrabold focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-60"
+                  className="w-full sm:w-auto rounded-2xl px-4 py-2.5 bg-slate-200 hover:bg-slate-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-900 dark:text-slate-100 font-extrabold focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-60"
                 >
                   Cancelar
                 </button>
@@ -2046,7 +2086,7 @@ export default function ModalEvento({
                   type="submit"
                   form={`form-evento-${uid}`}
                   disabled={salvando}
-                  className={`rounded-2xl px-4 py-2.5 font-extrabold text-white ${
+                  className={`w-full sm:w-auto rounded-2xl px-4 py-2.5 font-extrabold text-white ${
                     salvando
                       ? "bg-emerald-900 cursor-not-allowed"
                       : "bg-emerald-700 hover:bg-emerald-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500"

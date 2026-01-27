@@ -6,7 +6,8 @@
 // ✅ Pointer events e “drag-safe” no backdrop
 // ✅ Reduced motion respeitado
 // ✅ iOS: overscroll/touch melhorado
-// ✅ Opções premium: size, align, padding, blur, variant, showClose, allowOutsideClick, closeOnEscape, zIndex
+// ✅ MOBILE: fullscreen por padrão (sem margem / sem corte)
+// ✅ Compat: open/isOpen + maxWidth (tailwind) + level (ignorado sem quebrar)
 
 import React, {
   useEffect,
@@ -22,7 +23,10 @@ import { createPortal } from "react-dom";
 /* =========================
    DEV logger (Modal)
 ========================= */
-const IS_DEV = import.meta?.env?.MODE !== "production";
+const IS_DEV =
+  (typeof import.meta !== "undefined" && import.meta?.env?.MODE !== "production") ||
+  (typeof process !== "undefined" && process?.env?.NODE_ENV !== "production");
+
 const logM = (...a) => IS_DEV && console.log("[Modal]", ...a);
 const warnM = (...a) => IS_DEV && console.warn("[Modal]", ...a);
 
@@ -54,13 +58,11 @@ function isFocusable(el) {
   if (!rect || (rect.width === 0 && rect.height === 0)) return false;
   return true;
 }
-
 function getFocusable(container) {
   if (!container) return [];
   const nodes = Array.from(container.querySelectorAll(FOCUSABLE));
   return nodes.filter(isFocusable);
 }
-
 function raf(cb) {
   if (typeof window === "undefined") return 0;
   return window.requestAnimationFrame(cb);
@@ -69,7 +71,6 @@ function caf(id) {
   if (typeof window === "undefined") return;
   window.cancelAnimationFrame(id);
 }
-
 function supportsInert() {
   return typeof HTMLElement !== "undefined" && "inert" in HTMLElement.prototype;
 }
@@ -84,17 +85,7 @@ function ensureModalRoot() {
     root = document.createElement("div");
     root.id = "modal-root";
     document.body.appendChild(root);
-    logM("ensureModalRoot: created #modal-root", {
-      id: root.id,
-      inBody: document.body.contains(root),
-    });
-  } else {
-    logM("ensureModalRoot: found #modal-root", {
-      children: root.childElementCount,
-      display: window.getComputedStyle?.(root)?.display,
-      visibility: window.getComputedStyle?.(root)?.visibility,
-      pointerEvents: window.getComputedStyle?.(root)?.pointerEvents,
-    });
+    logM("ensureModalRoot: created #modal-root", { id: root.id });
   }
   return root;
 }
@@ -166,7 +157,6 @@ function getAppRootsToHide(modalRootId = "modal-root") {
   const kids = Array.from(document.body.children || []);
   return kids.filter((el) => el.id !== modalRootId);
 }
-
 function hideAppRoots() {
   const roots = getAppRootsToHide("modal-root");
   const canInert = supportsInert();
@@ -180,7 +170,6 @@ function hideAppRoots() {
     if (canInert) el.inert = true;
   });
 }
-
 function restoreAppRoots() {
   const roots = getAppRootsToHide("modal-root");
   const canInert = supportsInert();
@@ -204,14 +193,34 @@ function cls(...parts) {
 
 /* =========================
    Size presets
+   - MOBILE: fullscreen (w-screen/h-dvh) por padrão
+   - DESKTOP: largura controlada
 ========================= */
 const SIZE_MAP = {
-  sm: "w-[min(520px,92vw)]",
-  md: "w-[min(720px,92vw)]",
-  lg: "w-[min(960px,92vw)]",
-  xl: "w-[min(1120px,92vw)]",
-  auto: "w-[92vw] sm:w-auto",
+  sm: "sm:w-[min(520px,92vw)]",
+  md: "sm:w-[min(720px,92vw)]",
+  lg: "sm:w-[min(960px,92vw)]",
+  xl: "sm:w-[min(1120px,92vw)]",
+  auto: "sm:w-auto",
+  full: "sm:w-[min(1120px,92vw)]", // desktop “grande”, mobile continua fullscreen
 };
+
+function mapMaxWidthToSize(maxWidth) {
+  // Compat: ModalEvento tentou passar maxWidth="max-w-4xl"
+  // A gente mapeia para o size mais próximo sem quebrar o CSS.
+  const s = String(maxWidth || "");
+  if (!s) return null;
+  if (s.includes("max-w-sm")) return "sm";
+  if (s.includes("max-w-md")) return "md";
+  if (s.includes("max-w-lg")) return "lg";
+  if (s.includes("max-w-xl")) return "xl";
+  if (s.includes("max-w-2xl")) return "xl";
+  if (s.includes("max-w-3xl")) return "xl";
+  if (s.includes("max-w-4xl")) return "xl";
+  if (s.includes("max-w-5xl")) return "full";
+  if (s.includes("max-w-6xl")) return "full";
+  return null;
+}
 
 /* =========================
    Component
@@ -219,7 +228,7 @@ const SIZE_MAP = {
 const Modal = forwardRef(function Modal(
   {
     open,
-    isOpen, // ✅ compat: alguns componentes ainda mandam isOpen
+    isOpen, // ✅ compat
     onClose,
     children,
 
@@ -242,9 +251,9 @@ const Modal = forwardRef(function Modal(
     className = "",
     overlayClassName = "",
 
-    padding = true, // true -> p-5/p-6; false -> não força padding
-    size = "lg", // sm|md|lg|xl|auto
-    align = "center", // center|bottom (mobile bottom-sheet vibe)
+    padding = true,
+    size = "lg", // sm|md|lg|xl|auto|full
+    align = "center", // center|bottom
     blur = true,
     shade = "dark", // dark|light
     showCloseButton = true,
@@ -258,24 +267,25 @@ const Modal = forwardRef(function Modal(
     onAfterClose,
 
     /* advanced */
-    allowOutsideClick = true, // se false, ignora click no backdrop mesmo com closeOnBackdrop
-    preventCloseWhenBusy = false, // se true, bloqueia fechar quando aria-busy/disabled (você controla por onClose)
+    allowOutsideClick = true,
+    preventCloseWhenBusy = false,
+
+    /* ✅ NOVO: scroll strategy
+       - "panel"  : painel rola (padrão antigo)
+       - "content": painel não rola (overflow-hidden), conteúdo controla rolagem (ideal p/ grids)
+    */
+    scroll = "panel",
+
+    /* ✅ NOVO: mobile fullscreen default */
+    mobileFullScreen = true,
+
+    /* ✅ compat extra (não quebra chamadas antigas) */
+    maxWidth, // ex.: "max-w-4xl"
+    level, // ignorado (stack é pelo zIndex)
   },
   forwardedRef
 ) {
   const reduceMotion = useReducedMotion();
-
-  // 🔎 render trace
-  logM("render", {
-    open,
-    size,
-    align,
-    zIndex,
-    closeOnBackdrop,
-    closeOnEscape,
-    lockScroll,
-    showCloseButton,
-  });
 
   const containerRef = useRef(null);
   const panelRef = useRef(null);
@@ -284,25 +294,19 @@ const Modal = forwardRef(function Modal(
   const openedOnceRef = useRef(false);
   const modalRootRef = useRef(null);
 
-  const openFinal = !!(open ?? isOpen); // ✅ normaliza
+  const openFinal = !!(open ?? isOpen);
 
   React.useImperativeHandle(forwardedRef, () => panelRef.current);
 
   const ariaLabelFinal = !labelledBy ? ariaLabel || "Janela modal" : undefined;
 
-  // 🔎 render trace (agora com openFinal)
-  logM("render", {
-    open,
-    isOpen,
-    openFinal,
-    size,
-    align,
-    zIndex,
-    closeOnBackdrop,
-    closeOnEscape,
-    lockScroll,
-    showCloseButton,
-  });
+  // ✅ compat: maxWidth -> size (se size não foi explicitamente “diferente”)
+  const sizeFinal = useMemo(() => {
+    const mapped = mapMaxWidthToSize(maxWidth);
+    // se o dev setou size explicitamente, respeita
+    if (size && size !== "lg") return size;
+    return mapped || size;
+  }, [maxWidth, size]);
 
   const motionOverlay = useMemo(() => {
     if (reduceMotion) return { initial: { opacity: 1 }, animate: { opacity: 1 }, exit: { opacity: 1 } };
@@ -339,32 +343,24 @@ const Modal = forwardRef(function Modal(
   // garante root do portal
   useEffect(() => {
     if (!openFinal) return;
-    const node = ensureModalRoot();
-    modalRootRef.current = node;
-  
-    logM("useEffect(openFinal): modalRootRef set", {
-      exists: !!node,
-      children: node?.childElementCount ?? null,
-      inBody: node ? document.body.contains(node) : false,
-    });
+    modalRootRef.current = ensureModalRoot();
   }, [openFinal]);
 
-
-  // foco ao abrir / restaurar ao fechar (RAF)
+  // foco ao abrir / restaurar ao fechar
   useEffect(() => {
     if (openFinal) {
       openedOnceRef.current = true;
       prevFocusRef.current = document.activeElement;
-  
+
       const id = raf(() => {
         focusFirst();
         onAfterOpen?.();
       });
       return () => caf(id);
     }
-  
+
     if (!openedOnceRef.current) return;
-  
+
     if (restoreFocus && prevFocusRef.current?.focus) {
       const id = raf(() => {
         prevFocusRef.current?.focus?.();
@@ -372,11 +368,10 @@ const Modal = forwardRef(function Modal(
       });
       return () => caf(id);
     }
-  
+
     const id = raf(() => onAfterClose?.());
     return () => caf(id);
   }, [openFinal, restoreFocus, focusFirst, onAfterOpen, onAfterClose]);
-  
 
   // ESC + Trap foco (capture)
   useEffect(() => {
@@ -420,14 +415,14 @@ const Modal = forwardRef(function Modal(
     }
 
     window.addEventListener("keydown", onKeyDown, true);
-  return () => window.removeEventListener("keydown", onKeyDown, true);
-}, [openFinal, onClose, closeOnEscape]);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [openFinal, onClose, closeOnEscape]);
 
   // Scroll lock (counter)
   useEffect(() => {
     if (!lockScroll) return;
     if (!openFinal) return;
-  
+
     lockBodyScroll();
     return () => unlockBodyScroll();
   }, [openFinal, lockScroll]);
@@ -435,23 +430,13 @@ const Modal = forwardRef(function Modal(
   // Stack + a11y hide app roots somente no 1º modal
   useLayoutEffect(() => {
     if (!openFinal) return;
-  
+
     const afterInc = incStack();
-    logM("stack inc", { afterInc });
-  
-    if (afterInc === 1) {
-      logM("hideAppRoots()");
-      hideAppRoots();
-    }
-  
+    if (afterInc === 1) hideAppRoots();
+
     return () => {
       const afterDec = decStack();
-      logM("stack dec", { afterDec });
-  
-      if (afterDec === 0) {
-        logM("restoreAppRoots()");
-        restoreAppRoots();
-      }
+      if (afterDec === 0) restoreAppRoots();
     };
   }, [openFinal]);
 
@@ -475,40 +460,48 @@ const Modal = forwardRef(function Modal(
     }
   }
 
-  const IS_DEV =
-  (typeof import.meta !== "undefined" && import.meta?.env?.MODE !== "production") ||
-  (typeof process !== "undefined" && process?.env?.NODE_ENV !== "production");
-
-const warnedRef = useRef(false);
-
-if (!openFinal) {
-  // ✅ Modal fechado = caminho normal. Não é warning.
-  // Só avisa 1x se o dev estiver passando props inconsistentes.
-  if (IS_DEV && !warnedRef.current) {
-    const bothMissing = open === undefined && isOpen === undefined;
-    const bothFalsey = Boolean(open) === false && Boolean(isOpen) === false;
-
-    if (!bothMissing && bothFalsey) {
-      // (opcional) debug leve, 1 vez
-      // console.debug("[Modal] closed", { open, isOpen });
-    } else if (bothMissing) {
-      console.debug("[Modal] closed (no open/isOpen prop)", { open, isOpen });
-    }
-    warnedRef.current = true;
-  }
-  return null;
-}
+  if (!openFinal) return null;
 
   const mountNode = modalRootRef.current || ensureModalRoot();
-  if (!mountNode) {
-    warnM("return null (mountNode=null)");
-    return null;
-  }
+  if (!mountNode) return null;
 
   const overlayShade = shade === "light" ? "bg-black/25" : "bg-black/45";
   const overlayBlur = blur ? "backdrop-blur-[2px]" : "";
-  const overlayAlign = align === "bottom" ? "items-end sm:items-center" : "items-center";
-  const panelRadius = align === "bottom" ? "rounded-t-3xl sm:rounded-3xl" : "rounded-3xl";
+
+  // ✅ MOBILE fullscreen: sem padding (p-0) e panel ocupa toda tela
+  const overlayPadding = mobileFullScreen ? "p-0 sm:p-4" : "p-2 sm:p-4";
+
+  // Align
+  const overlayAlign =
+    align === "bottom"
+      ? "items-end sm:items-center"
+      : "items-center";
+
+  // Radius
+  const panelRadius =
+    mobileFullScreen
+      ? (align === "bottom" ? "rounded-t-3xl sm:rounded-3xl" : "rounded-none sm:rounded-3xl")
+      : (align === "bottom" ? "rounded-t-3xl sm:rounded-3xl" : "rounded-3xl");
+
+  // ✅ Panel sizing/height
+  const panelSizeClass = SIZE_MAP[sizeFinal] || SIZE_MAP.lg;
+
+  const panelMobileFull = mobileFullScreen
+    ? cls(
+        "w-screen max-w-[100vw]",
+        "h-[100dvh] max-h-[100dvh]",
+        "sm:h-auto sm:max-h-[min(92vh,860px)]",
+        panelSizeClass
+      )
+    : cls(panelSizeClass, "max-h-[min(92vh,860px)]");
+
+  // ✅ scroll strategy
+  const panelOverflow =
+    scroll === "content"
+      ? "overflow-hidden"
+      : "overflow-auto";
+
+  const panelPadding = padding ? "p-5 sm:p-6" : "";
 
   const content = (
     <AnimatePresence>
@@ -522,8 +515,10 @@ if (!openFinal) {
           overlayAlign,
           overlayShade,
           overlayBlur,
-          "p-2 sm:p-4",
+          overlayPadding,
           "pointer-events-auto",
+          // ✅ iOS / mobile
+          "overscroll-none touch-manipulation",
           overlayClassName
         )}
         style={{ zIndex }}
@@ -550,24 +545,25 @@ if (!openFinal) {
           role="document"
           {...motionPanel}
           className={cls(
-            "relative",
+            "relative min-h-0", // ✅ IMPORTANTÍSSIMO p/ grids internos com overflow
             panelRadius,
             "border border-zinc-200/70 dark:border-zinc-800",
             "bg-white text-zinc-900 dark:bg-zinc-950 dark:text-white",
             "shadow-[0_28px_90px_-54px_rgba(0,0,0,0.85)]",
-            SIZE_MAP[size] || SIZE_MAP.lg,
-            "max-h-[min(92vh,860px)]",
-            "overflow-auto outline-none",
+            panelMobileFull,
+            panelOverflow,
+            "outline-none",
             "overscroll-contain touch-pan-y",
             "[scrollbar-gutter:stable]",
-            padding ? "p-5 sm:p-6" : "",
-            // ✅ melhora clique em iOS dentro de overlays
+            panelPadding,
+            // ✅ safe-area em mobile (principalmente iOS)
+            mobileFullScreen ? "pb-[env(safe-area-inset-bottom)]" : "",
             "pointer-events-auto",
             className
           )}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          {/* glows premium (não interferem com clique) */}
+          {/* glows premium */}
           <div className="pointer-events-none absolute -top-28 -right-28 h-72 w-72 rounded-full bg-emerald-400/10 blur-3xl" />
           <div className="pointer-events-none absolute -bottom-28 -left-28 h-72 w-72 rounded-full bg-fuchsia-400/10 blur-3xl" />
 
@@ -593,7 +589,7 @@ if (!openFinal) {
             </button>
           )}
 
-          <div className="relative">{children}</div>
+          <div className="relative min-h-0">{children}</div>
         </motion.div>
 
         {/* sentinela inferior (focus wrap) */}
@@ -603,34 +599,14 @@ if (!openFinal) {
           onFocus={() => {
             const panel = panelRef.current;
             const focusables = getFocusable(panel);
-            (focusables[0] || panel)?.focus?.();
+            (focusables[focusables[0] ? 0 : 0] || panel)?.focus?.();
           }}
         />
       </motion.div>
     </AnimatePresence>
   );
 
-  logM("createPortal -> mountNode", {
-    mountId: mountNode?.id,
-    mountChildrenBefore: mountNode?.childElementCount ?? null,
-    mountInBody: mountNode ? document.body.contains(mountNode) : false,
-  });
-
-  // ✅ após o paint, checa se o portal realmente inseriu DOM
-  if (IS_DEV) {
-    setTimeout(() => {
-      const r = document.getElementById("modal-root");
-      logM("post-paint check", {
-        modalRootExists: !!r,
-        modalRootChildren: r?.childElementCount ?? null,
-        stackCount: document.body?.dataset?.__modal_stack_count__ ?? null,
-        scrollLockCount: document.body?.dataset?.__modal_scroll_lock_count__ ?? null,
-      });
-    }, 0);
-  }
-
   return createPortal(content, mountNode);
-
 });
 
 export default Modal;

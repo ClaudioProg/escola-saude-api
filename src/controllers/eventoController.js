@@ -22,6 +22,7 @@ const { normalizeRegistro, normalizeListaRegistros } = require("../utils/registr
 
 const IS_DEV = process.env.NODE_ENV !== "production";
 
+
 /* ====================== Paths / Uploads ====================== */
 const UP_BASE = EVENTOS_DIR;
 try {
@@ -76,9 +77,76 @@ function toHm(v) {
   return `${hh}:${mm}`;
 }
 
+/* ====================== Texto: normalização PT-BR (cargos etc.) ====================== */
+function normalizarTituloPtBr(input = "") {
+  const raw = String(input || "").trim();
+  if (!raw) return "";
+
+  // espaços consistentes
+  const s = raw.replace(/\s+/g, " ");
+
+  // palavras que ficam minúsculas (exceto se forem a 1ª)
+  const minusculas = new Set([
+    "de", "da", "do", "das", "dos",
+    "e", "em", "para", "por",
+    "a", "o", "as", "os",
+    "à", "às", "ao", "aos",
+  ]);
+
+  // siglas que queremos preservar
+  const siglas = new Set(["SMS", "SUS", "CNPJ", "CPF", "RH", "TI", "UPA", "UBS", "SAMU"]);
+
+  // romanos comuns
+  const roman = /^(i|ii|iii|iv|v|vi|vii|viii|ix|x)$/i;
+
+  const words = s.split(" ").filter(Boolean);
+  return words
+    .map((w, idx) => {
+      const clean = w.replace(/[()]/g, "");
+      const upper = clean.toUpperCase();
+
+      if (siglas.has(upper)) return upper;
+      if (roman.test(clean)) return upper; // II, III...
+
+      const lower = clean.toLocaleLowerCase("pt-BR");
+
+      if (idx !== 0 && minusculas.has(lower)) return lower;
+
+      // Capitaliza respeitando acentos
+      return lower.charAt(0).toLocaleUpperCase("pt-BR") + lower.slice(1);
+    })
+    .join(" ");
+}
+
 /* ====================== Helpers arrays ====================== */
 const toIntArray = (v) =>
   Array.isArray(v) ? v.map((n) => Number(n)).filter(Number.isFinite) : [];
+
+// ✅ (NOVO) — aceita [ids] OU ["nomes de cargo"] e resolve para ids
+async function resolveCargoIds(client, cargosInput) {
+  const arr = Array.isArray(cargosInput) ? cargosInput : [];
+  if (!arr.length) return [];
+
+  // 1) se já forem ids
+  const asIds = arr.map((x) => Number(x)).filter(Number.isFinite);
+  if (asIds.length) return [...new Set(asIds)];
+
+  // 2) se forem nomes (strings), mapeia por tabela cargos
+  const nomes = arr
+    .map((x) => String(x || "").trim())
+    .filter(Boolean);
+
+  if (!nomes.length) return [];
+
+  const { rows } = await client.query(
+    `SELECT id
+       FROM cargos
+      WHERE lower(trim(nome)) = ANY($1::text[])`,
+    [nomes.map((n) => n.toLowerCase().trim())]
+  );
+
+  return [...new Set(rows.map((r) => Number(r.id)).filter(Number.isFinite))];
+}
 
 const toIdArray = (v) =>
   Array.isArray(v)
@@ -144,8 +212,13 @@ function extrairDatasDaTurma(t) {
 }
 
 /* ====================== Uploads premium (Multer) ====================== */
-const MAX_FILE_MB = 15;
-const MAX_FILE_BYTES = MAX_FILE_MB * 1024 * 1024;
+// ✅ Folder no banco: 2MB (render-safe)
+// ✅ Programação PDF mantém em disco (como hoje)
+const MAX_FOLDER_MB = 2;
+const MAX_FOLDER_BYTES = MAX_FOLDER_MB * 1024 * 1024;
+
+const MAX_PDF_MB = 15;
+const MAX_PDF_BYTES = MAX_PDF_MB * 1024 * 1024;
 
 function sanitizeBaseName(name = "arquivo") {
   const ext = path.extname(name).toLowerCase();
@@ -158,7 +231,8 @@ const allowedFolderMime = new Set(["image/png", "image/jpeg"]);
 const allowedPdfExt = new Set([".pdf"]);
 const allowedPdfMime = new Set(["application/pdf"]);
 
-const storage = multer.diskStorage({
+// ✅ PDF continua em DISCO (para não estourar DB com PDFs grandes)
+const storagePdf = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, UP_BASE),
   filename: (_req, file, cb) => {
     const ext = path.extname(file.originalname || "").toLowerCase();
@@ -167,73 +241,158 @@ const storage = multer.diskStorage({
   },
 });
 
-function fileFilter(_req, file, cb) {
-  const ext = path.extname(file.originalname || "").toLowerCase();
-  const mime = String(file.mimetype || "").toLowerCase();
+// ✅ Folder vai em MEMÓRIA (buffer) — para gravar no BYTEA
+const uploadFolderMem = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_FOLDER_BYTES },
+  fileFilter(_req, file, cb) {
+    const ext = path.extname(file.originalname || "").toLowerCase();
+    const mime = String(file.mimetype || "").toLowerCase();
 
-  if (file.fieldname === "folder") {
+    if (file.fieldname !== "folder") return cb(new Error("Campo inválido para folder."));
     if (!allowedFolderExt.has(ext) || !allowedFolderMime.has(mime)) {
       return cb(new Error("Imagem do folder deve ser PNG/JPG"));
     }
     return cb(null, true);
-  }
+  },
+});
 
-  if (file.fieldname === "programacao") {
+// ✅ Programação PDF em DISCO
+const uploadPdfDisk = multer({
+  storage: storagePdf,
+  limits: { fileSize: MAX_PDF_BYTES },
+  fileFilter(_req, file, cb) {
+    const ext = path.extname(file.originalname || "").toLowerCase();
+    const mime = String(file.mimetype || "").toLowerCase();
+
+    if (file.fieldname !== "programacao") return cb(new Error("Campo inválido para PDF."));
     if (!allowedPdfExt.has(ext) || !allowedPdfMime.has(mime)) {
       return cb(new Error("Arquivo de programação deve ser PDF"));
     }
     return cb(null, true);
-  }
-
-  if (file.fieldname === "file") {
-    const ok =
-      (allowedFolderExt.has(ext) && allowedFolderMime.has(mime)) ||
-      (allowedPdfExt.has(ext) && allowedPdfMime.has(mime));
-    if (!ok) return cb(new Error("Arquivo inválido (use PNG/JPG ou PDF)."));
-    return cb(null, true);
-  }
-
-  return cb(new Error("Campo de upload inválido."));
-}
-
-const upload = multer({
-  storage,
-  fileFilter,
-  limits: { fileSize: MAX_FILE_BYTES },
+  },
 });
 
+// ✅ (legado) "file" genérico: aceitaremos como folder (mem) OU pdf (disco)?
+// Para manter compat: se vier field "file", trataremos como folder (mem) por padrão.
+const uploadGenericMem = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_FOLDER_BYTES },
+  fileFilter(_req, file, cb) {
+    const ext = path.extname(file.originalname || "").toLowerCase();
+    const mime = String(file.mimetype || "").toLowerCase();
+
+    if (file.fieldname !== "file") return cb(new Error("Campo inválido."));
+    const ok = allowedFolderExt.has(ext) && allowedFolderMime.has(mime);
+    if (!ok) return cb(new Error("Arquivo inválido para 'file' (use PNG/JPG)."));
+    return cb(null, true);
+  },
+});
+
+// ✅ Middleware único: folder (mem) + programacao (disk) + compat file(mem)
 const uploadEventos = (req, res, next) => {
   const rid = mkRid();
-  const handler = upload.fields([
-    { name: "folder", maxCount: 1 },
-    { name: "programacao", maxCount: 1 },
-    { name: "file", maxCount: 1 },
-  ]);
 
-  handler(req, res, (err) => {
-    if (!err) return next();
-    const msg =
-      err.code === "LIMIT_FILE_SIZE"
-        ? `Arquivo excede o limite de ${MAX_FILE_MB}MB.`
-        : err.message || "Falha no upload.";
-    logWarn(rid, "uploadEventos erro", { message: msg, code: err.code });
-    return res.status(400).json({ erro: msg });
+  const folderHandler = uploadFolderMem.single("folder");
+  folderHandler(req, res, (err1) => {
+    if (err1) {
+      const msg =
+        err1.code === "LIMIT_FILE_SIZE"
+          ? `Folder excede o limite de ${MAX_FOLDER_MB}MB.`
+          : err1.message || "Falha no upload do folder.";
+      logWarn(rid, "uploadEventos/folder erro", { msg, code: err1.code });
+      return res.status(400).json({ erro: msg });
+    }
+
+    // compat: se veio "file" (imagem), aceita como folder
+    const fileHandler = uploadGenericMem.single("file");
+    fileHandler(req, res, (errF) => {
+      if (errF) {
+        // se não enviou "file", multer não erra; só erra se enviou inválido
+        const hasFileAttempt = Boolean(req.headers["content-type"]?.includes("multipart/form-data"));
+        if (errF && (errF.message || errF.code)) {
+          const msg =
+            errF.code === "LIMIT_FILE_SIZE"
+              ? `Imagem excede o limite de ${MAX_FOLDER_MB}MB.`
+              : errF.message || "Falha no upload do arquivo.";
+          // só retorna erro se de fato tentaram enviar "file" e falhou
+          logWarn(rid, "uploadEventos/file erro", { msg, code: errF.code, hasFileAttempt });
+          return res.status(400).json({ erro: msg });
+        }
+      }
+
+      // ✅ remove o campo "folder" do stream para o multer do PDF não reclamar
+// (multer do pdf só aceita "programacao")
+if (req.file && (req.file.fieldname === "folder" || req.file.fieldname === "file")) {
+  // mantém o buffer salvo, mas "esconde" para o próximo multer
+  req._folderFile = req.file;
+  req.file = undefined;
+}
+
+      const pdfHandler = uploadPdfDisk.single("programacao");
+      pdfHandler(req, res, (err2) => {
+        if (err2) {
+          const msg =
+            err2.code === "LIMIT_FILE_SIZE"
+              ? `PDF excede o limite de ${MAX_PDF_MB}MB.`
+              : err2.message || "Falha no upload do PDF.";
+          logWarn(rid, "uploadEventos/programacao erro", { msg, code: err2.code });
+          return res.status(400).json({ erro: msg });
+        }
+
+        return next();
+      });
+    });
   });
 };
 
+// ✅ helper mantém compat para PDF em disco
 function pegarUploadUrl(req, field) {
-  const fSpecific = req.files?.[field]?.[0];
-  const fGeneric = req.files?.file?.[0];
+  // programacao vem em req.file quando uploadPdfDisk.single("programacao") roda por último
+  if (field === "programacao") {
+    const f = req.file && req.file.fieldname === "programacao" ? req.file : null;
+    if (!f?.path) return null;
+    return `/uploads/eventos/${path.basename(f.path)}`;
+  }
+  // folder não tem mais path (vai pro banco)
+  return null;
+}
 
-  // ✅ (NOVO) — linha anterior incluída acima
-  const fSingle =
-    req.file && (req.file.fieldname === field || (field === "file" && req.file.fieldname === "file"))
-      ? req.file
-      : null;
+// ✅ Folder no DB (BYTEA)
+async function salvarFolderNoEvento(client, eventoId, file) {
+  if (!file?.buffer?.length) return;
 
-  const f = fSpecific || fSingle || fGeneric;
-  if (!f) return null;
-  return `/uploads/eventos/${path.basename(f.path)}`;
+  const mime = String(file.mimetype || "").toLowerCase();
+  if (!allowedFolderMime.has(mime)) {
+    throw Object.assign(new Error("MIME inválido para folder."), { status: 400 });
+  }
+  if (file.size > MAX_FOLDER_BYTES) {
+    throw Object.assign(new Error(`Folder excede ${MAX_FOLDER_MB}MB.`), { status: 400 });
+  }
+
+  await client.query(
+    `UPDATE eventos
+        SET folder_blob = $2,
+            folder_mime = $3,
+            folder_size = $4,
+            folder_updated_at = NOW(),
+            folder_url = NULL
+      WHERE id = $1`,
+    [eventoId, file.buffer, mime, Number(file.size || 0)]
+  );
+}
+
+async function limparFolderDoEvento(client, eventoId) {
+  await client.query(
+    `UPDATE eventos
+        SET folder_blob = NULL,
+            folder_mime = NULL,
+            folder_size = NULL,
+            folder_updated_at = NOW(),
+            folder_url = NULL
+      WHERE id = $1`,
+    [eventoId]
+  );
 }
 
 /* ====================== Visibilidade ====================== */
@@ -310,6 +469,12 @@ async function listarEventos(req, res) {
     )
     SELECT 
       e.*,
+      ('/api/eventos/' || e.id || '/folder') AS folder_blob_url,
+      CASE
+        WHEN e.folder_blob IS NOT NULL THEN 'blob'
+        WHEN NULLIF(e.folder_url,'') IS NOT NULL THEN 'url'
+        ELSE 'none'
+      END AS folder_kind,
       COALESCE((
         SELECT array_agg(er.registro_norm ORDER BY er.registro_norm)
         FROM evento_registros er WHERE er.evento_id = e.id
@@ -371,9 +536,12 @@ async function listarEventos(req, res) {
   const compatSQL = `
     SELECT
       e.*,
+      ('/api/eventos/' || e.id || '/folder') AS folder_blob_url,
+      CASE
+        WHEN NULLIF(e.folder_url,'') IS NOT NULL THEN 'url'
+        ELSE 'none'
+      END AS folder_kind,
       (SELECT MIN(t.data_inicio) FROM turmas t WHERE t.evento_id = e.id) AS data_inicio_geral,
-      (SELECT MAX(t.data_fim)    FROM turmas t WHERE t.evento_id = e.id) AS data_fim_geral,
-      (SELECT MIN(t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id) AS horario_inicio_geral,
       (SELECT MAX(t.horario_fim)    FROM turmas t WHERE t.evento_id = e.id) AS horario_fim_geral,
       CASE
         WHEN CURRENT_TIMESTAMP::timestamp < (
@@ -513,7 +681,11 @@ async function criarEvento(req, res) {
   try {
     await client.query("BEGIN");
 
-    const folderUrl = pegarUploadUrl(req, "folder");
+    // ✅ folder agora vem em memória: pode estar em req.file (folder) OU em req.file (file compat)
+    const folderFile =
+      (req.file && (req.file.fieldname === "folder" || req.file.fieldname === "file")) ? req.file : null;
+
+    // ✅ PDF continua em disco
     const progPdfUrl = pegarUploadUrl(req, "programacao");
 
     logInfo(rid, "criarEvento payload pós-curso", {
@@ -521,6 +693,8 @@ async function criarEvento(req, res) {
       has_teste_config: !!body?.teste_config,
       teste_config_keys: body?.teste_config ? Object.keys(body.teste_config) : [],
     });
+
+    const cargosIds = await resolveCargoIds(client, cargos_permitidos);
 
     const evIns = await client.query(
       `INSERT INTO eventos (
@@ -539,17 +713,20 @@ async function criarEvento(req, res) {
         (publico_alvo || "").trim(),
         !!restrito,
         restrito ? restrito_modo || null : null,
-        folderUrl,
+        null,
         progPdfUrl,
-        toIntArray(cargos_permitidos),
+        cargosIds,                      // ✅ aqui!
         toIntArray(unidades_permitidas),
-    
-            ]
+      ]
     );
     
-
     const evento = evIns.rows[0];
     const eventoId = evento.id;
+
+    // ✅ salva folder no banco (se veio)
+    if (folderFile?.buffer?.length) {
+      await salvarFolderNoEvento(client, eventoId, folderFile);
+    }
 
     // Registros (lista)
     if (restrito && restrito_modo === MODO_LISTA) {
@@ -675,6 +852,38 @@ async function criarEvento(req, res) {
       await client.query("ROLLBACK");
     } catch {}
     return res.status(500).json({ erro: "Erro ao criar evento" });
+  } finally {
+    client.release();
+  }
+}
+
+async function obterFolderDoEvento(req, res) {
+  const rid = mkRid();
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id) || id <= 0) return res.status(400).end();
+
+  const client = await pool.connect();
+  try {
+    const r = await client.query(
+      `SELECT folder_blob, folder_mime
+         FROM eventos
+        WHERE id = $1`,
+      [id]
+    );
+
+    if (!r.rowCount) return res.status(404).end();
+    const row = r.rows[0];
+    if (!row.folder_blob) return res.status(404).end();
+
+    res.setHeader("Content-Type", row.folder_mime || "image/jpeg");
+    res.setHeader("Cache-Control", IS_DEV ? "no-store" : "public, max-age=3600");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    logInfo(rid, "obterFolderDoEvento OK", { id });
+
+    return res.status(200).send(row.folder_blob);
+  } catch (e) {
+    logError(rid, "obterFolderDoEvento erro", e);
+    return res.status(500).end();
   } finally {
     client.release();
   }
@@ -825,6 +1034,8 @@ async function buscarEventoPorId(req, res) {
       const assinante =
         Number.isFinite(assinanteId) ? instrutores.find((i) => i.id === assinanteId) || null : null;
 
+       
+
       return {
         ...t,
         data_inicio: toYmd(t.data_inicio),
@@ -883,16 +1094,22 @@ async function buscarEventoPorId(req, res) {
       turmas: turmas.length,
       questionario_id: qz.rows?.[0]?.id ?? null,
     });
+
+    const folder_blob_url = `/api/eventos/${id}/folder`;
     
     return res.json({
       ...evento,
+      folder_blob_url,
       registros_permitidos: regsQ.rows.map((r) => r.registro_norm),
       cargos_permitidos_ids: Array.isArray(evento.cargos_permitidos_ids) ? evento.cargos_permitidos_ids : [],
       unidades_permitidas_ids: Array.isArray(evento.unidades_permitidas_ids) ? evento.unidades_permitidas_ids : [],
-      cargos_permitidos: cargosRows.rows,
+      cargos_permitidos: (cargosRows.rows || []).map((c) => ({
+        ...c,
+        nome: normalizarTituloPtBr(c.nome),
+      })),
       unidades_permitidas: unidadesRows.rows,
-    
-      // ✅ (NOVO)
+      
+           // ✅ (NOVO)
       pos_curso: qz.rows?.[0]
         ? {
             questionario_id: qz.rows[0].id,
@@ -1196,7 +1413,10 @@ async function atualizarEvento(req, res) {
     logStart(rid, "atualizarEvento BEGIN", { eventoId, hasTurmas: Array.isArray(turmas), restrito, restrito_modo });
     await client.query("BEGIN");
 
-    const folderUrl = pegarUploadUrl(req, "folder");
+    // ✅ folder vem em memória (req.file folder ou file compat)
+    const folderFile = req._folderFile || ((req.file && (req.file.fieldname === "folder" || req.file.fieldname === "file")) ? req.file : null);
+
+    // ✅ PDF continua em disco
     const progPdfUrl = pegarUploadUrl(req, "programacao");
 
     const remover_folder = String(body?.remover_folder ?? "").toLowerCase() === "true";
@@ -1231,10 +1451,13 @@ async function atualizarEvento(req, res) {
       params.push(restrito ? restrito_modo || null : null);
     }
 
-    if (folderUrl) {
-      setCols.push(`folder_url = $${params.length + 1}`);
-      params.push(folderUrl);
+    if (folderFile?.buffer?.length) {
+      // ✅ folder novo: salva blob e garante folder_url NULL
+      await salvarFolderNoEvento(client, eventoId, folderFile);
+      setCols.push(`folder_url = NULL`);
     } else if (remover_folder) {
+      // ✅ remove folder (blob e url)
+      await limparFolderDoEvento(client, eventoId);
       setCols.push(`folder_url = NULL`);
     }
 
@@ -1246,8 +1469,11 @@ async function atualizarEvento(req, res) {
     }
 
     if (typeof cargos_permitidos !== "undefined") {
+      // ✅ (NOVO) — resolve ids mesmo se vierem nomes
+      const cargosIds = await resolveCargoIds(client, cargos_permitidos);
+    
       setCols.push(`cargos_permitidos_ids = $${params.length + 1}`);
-      params.push(toIntArray(cargos_permitidos));
+      params.push(cargosIds);
     }
     
     // ✅ (NOVO) — linha anterior incluída acima
@@ -1286,8 +1512,10 @@ async function atualizarEvento(req, res) {
       }
 
       if (typeof cargos_permitidos !== "undefined") {
+        const cargosIds = await resolveCargoIds(client, cargos_permitidos);
+
         await execIgnoreMissing(client, `DELETE FROM evento_cargos WHERE evento_id=$1`, [eventoId]);
-        for (const cid of toIntArray(cargos_permitidos)) {
+        for (const cid of cargosIds) {
           await execIgnoreMissing(
             client,
             `INSERT INTO evento_cargos (evento_id, cargo) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
@@ -1295,6 +1523,7 @@ async function atualizarEvento(req, res) {
           );
         }
       }
+
 
       if (typeof unidades_permitidas !== "undefined") {
         await execIgnoreMissing(client, `DELETE FROM evento_unidades WHERE evento_id=$1`, [eventoId]);
@@ -1901,7 +2130,20 @@ async function sugerirCargos(req, res) {
       `;
       const { rows } = await query(sql, [limit]);
       logInfo(rid, "sugerirCargos sem q OK", { count: rows.length });
-      return res.json(rows.map((r) => r.cargo));
+
+      // ✅ normaliza + remove duplicados após normalização
+      const vistos = new Set();
+      const out = [];
+      for (const r of rows) {
+        const norm = normalizarTituloPtBr(r.cargo);
+        if (!norm) continue;
+        const key = norm.toLocaleLowerCase("pt-BR");
+        if (vistos.has(key)) continue;
+        vistos.add(key);
+        out.push(norm);
+      }
+
+      return res.json(out);
     }
 
     const sql = `
@@ -1914,7 +2156,20 @@ async function sugerirCargos(req, res) {
     `;
     const { rows } = await query(sql, [`%${q}%`, limit]);
     logInfo(rid, "sugerirCargos com q OK", { count: rows.length });
-    return res.json(rows.map((r) => r.cargo));
+
+    const vistos = new Set();
+    const out = [];
+    for (const r of rows) {
+      const norm = normalizarTituloPtBr(r.cargo);
+      if (!norm) continue;
+      const key = norm.toLocaleLowerCase("pt-BR");
+      if (vistos.has(key)) continue;
+      vistos.add(key);
+      out.push(norm);
+    }
+
+    return res.json(out);
+
   } catch (err) {
     logError(rid, "sugerirCargos erro", err);
     return res.status(500).json({ erro: "Erro ao sugerir cargos" });
@@ -1924,63 +2179,69 @@ async function sugerirCargos(req, res) {
 /* =====================================================================
    📎 Atualizar somente arquivos (folder/programação)
    ===================================================================== */
-async function atualizarArquivosDoEvento(req, res) {
-  const rid = mkRid();
-  try {
+   async function atualizarArquivosDoEvento(req, res) {
+    const rid = mkRid();
     const id = Number(req.params.id);
-    if (!Number.isFinite(id) || id <= 0) {
-      return res.status(400).json({ erro: "EVENTO_ID_INVALIDO" });
-    }
-
-    const folderUrl = pegarUploadUrl(req, "folder");
+    if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ erro: "EVENTO_ID_INVALIDO" });
+  
+    const folderFile =
+      (req.file && (req.file.fieldname === "folder" || req.file.fieldname === "file")) ? req.file : null;
+  
     const progPdfUrl = pegarUploadUrl(req, "programacao");
-
-    if (!folderUrl && !progPdfUrl) {
+  
+    if (!folderFile?.buffer?.length && !progPdfUrl) {
       return res.status(400).json({ erro: "Nenhum arquivo enviado." });
     }
-
-    const setCols = [];
-    const params = [id];
-
-    if (folderUrl) {
-      setCols.push(`folder_url = $${params.length + 1}`);
-      params.push(folderUrl);
+  
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+  
+      const setCols = [];
+      const params = [id];
+  
+      if (folderFile?.buffer?.length) {
+        await salvarFolderNoEvento(client, id, folderFile);
+        setCols.push(`folder_url = NULL`);
+      }
+  
+      if (progPdfUrl) {
+        setCols.push(`programacao_pdf_url = $${params.length + 1}`);
+        params.push(progPdfUrl);
+      }
+  
+      const sql =
+        setCols.length
+          ? `UPDATE eventos SET ${setCols.join(", ")} WHERE id = $1 RETURNING id, folder_url, programacao_pdf_url`
+          : `SELECT id, folder_url, programacao_pdf_url FROM eventos WHERE id = $1`;
+  
+      const r = await client.query(sql, params);
+  
+      if (!r.rowCount) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ erro: "Evento não encontrado." });
+      }
+  
+      await client.query("COMMIT");
+      logInfo(rid, "atualizarArquivosDoEvento OK", { id });
+  
+      return res.json({ ok: true, mensagem: "Arquivos do evento atualizados.", arquivos: r.rows[0] });
+    } catch (err) {
+      logError(rid, "atualizarArquivosDoEvento erro", err);
+      try { await client.query("ROLLBACK"); } catch {}
+      return res.status(500).json({ erro: "Erro ao atualizar arquivos do evento." });
+    } finally {
+      client.release();
     }
-    if (progPdfUrl) {
-      setCols.push(`programacao_pdf_url = $${params.length + 1}`);
-      params.push(progPdfUrl);
-    }
-
-    const r = await query(
-      `UPDATE eventos
-          SET ${setCols.join(", ")}
-        WHERE id = $1
-        RETURNING id, folder_url, programacao_pdf_url`,
-      params
-    );
-
-    logInfo(rid, "atualizarArquivosDoEvento", { id, rowCount: r.rowCount });
-    if (r.rowCount === 0) {
-      return res.status(404).json({ erro: "Evento não encontrado." });
-    }
-
-    return res.json({
-      ok: true,
-      mensagem: "Arquivos do evento atualizados.",
-      arquivos: r.rows[0],
-    });
-  } catch (err) {
-    logError(rid, "atualizarArquivosDoEvento erro", err);
-    return res.status(500).json({ erro: "Erro ao atualizar arquivos do evento." });
   }
-}
+ 
 
 /* =====================================================================
    ✅ Export único (sem duplicações)
    ===================================================================== */
 module.exports = {
   uploadEventos,
-
+  obterFolderDoEvento,
   listarEventos,
   listarEventosParaMim,
 
