@@ -260,7 +260,7 @@ export default function ModalEditarPerfil({
         </fieldset>
       </section>
 
-      {/* Rodapé sticky */}
+      {/* Rodapé c sticky */}
       <div className="sticky bottom-0 left-0 right-0 bg-white/85 dark:bg-zinc-950/85 backdrop-blur border-t border-slate-200 dark:border-slate-800 px-4 sm:px-5 py-3 flex items-center justify-end gap-2">
         <button
           onClick={onFechar}
