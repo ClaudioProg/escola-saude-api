@@ -533,32 +533,44 @@ async function listarEventos(req, res) {
              e.id DESC;
   `;
 
-  const compatSQL = `
-    SELECT
-      e.*,
-      ('/api/eventos/' || e.id || '/folder') AS folder_blob_url,
-      CASE
-        WHEN NULLIF(e.folder_url,'') IS NOT NULL THEN 'url'
-        ELSE 'none'
-      END AS folder_kind,
-      (SELECT MIN(t.data_inicio) FROM turmas t WHERE t.evento_id = e.id) AS data_inicio_geral,
-      (SELECT MAX(t.horario_fim)    FROM turmas t WHERE t.evento_id = e.id) AS horario_fim_geral,
-      CASE
-        WHEN CURRENT_TIMESTAMP::timestamp < (
-          SELECT MIN(t.data_inicio::date + COALESCE(t.horario_inicio::time,'00:00'::time))
-          FROM turmas t WHERE t.evento_id = e.id
-        ) THEN 'programado'
-        WHEN CURRENT_TIMESTAMP::timestamp <= (
-          SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time,'23:59'::time))
-          FROM turmas t WHERE t.evento_id = e.id
-        ) THEN 'andamento'
-        ELSE 'encerrado'
-      END AS status
-    FROM eventos e
-    ORDER BY (SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time,'23:59'::time))
-              FROM turmas t WHERE t.evento_id = e.id) DESC NULLS LAST,
-             e.id DESC;
-  `;
+  const compatSQLPlus = `
+  SELECT
+    e.*,
+    ('/api/eventos/' || e.id || '/folder') AS folder_blob_url,
+    CASE
+      WHEN NULLIF(e.folder_url,'') IS NOT NULL THEN 'url'
+      ELSE 'none'
+    END AS folder_kind,
+
+    COALESCE((
+      SELECT json_agg(DISTINCT jsonb_build_object('id', u.id, 'nome', u.nome))
+      FROM turmas t2
+      JOIN turma_instrutor ti2 ON ti2.turma_id = t2.id
+      JOIN usuarios u ON u.id = ti2.instrutor_id
+      WHERE t2.evento_id = e.id
+    ), '[]'::json) AS instrutor,
+
+    (SELECT MIN(t.data_inicio)    FROM turmas t WHERE t.evento_id = e.id) AS data_inicio_geral,
+    (SELECT MAX(t.data_fim)       FROM turmas t WHERE t.evento_id = e.id) AS data_fim_geral,
+    (SELECT MIN(t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id) AS horario_inicio_geral,
+    (SELECT MAX(t.horario_fim)    FROM turmas t WHERE t.evento_id = e.id) AS horario_fim_geral,
+
+    CASE
+      WHEN CURRENT_TIMESTAMP::timestamp < (
+        SELECT MIN(t.data_inicio::date + COALESCE(t.horario_inicio::time,'00:00'::time))
+        FROM turmas t WHERE t.evento_id = e.id
+      ) THEN 'programado'
+      WHEN CURRENT_TIMESTAMP::timestamp <= (
+        SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time,'23:59'::time))
+        FROM turmas t WHERE t.evento_id = e.id
+      ) THEN 'andamento'
+      ELSE 'encerrado'
+    END AS status
+  FROM eventos e
+  ORDER BY (SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time,'23:59'::time))
+            FROM turmas t WHERE t.evento_id = e.id) DESC NULLS LAST,
+           e.id DESC;
+`;
 
   try {
     const r = await query(richSQL, [usuarioId, usuarioId]);
@@ -568,7 +580,7 @@ async function listarEventos(req, res) {
     const pgCode = err?.code;
     logWarn(rid, "listarEventos fallback", { pgCode });
     if (pgCode === "42P01" || pgCode === "42703") {
-      const r2 = await query(compatSQL, []);
+      const r2 = await query(compatSQLPlus, []);
       logInfo(rid, "listarEventos compat OK", { count: r2.rowCount });
       return res.json(r2.rows);
     }
@@ -865,23 +877,48 @@ async function obterFolderDoEvento(req, res) {
 
   const client = await pool.connect();
   try {
-    const r = await client.query(
-      `SELECT folder_blob, folder_mime
+    let r;
+try {
+  // tenta pegar blob + url (se existir)
+  r = await client.query(
+    `SELECT folder_blob, folder_mime, folder_url
+       FROM eventos
+      WHERE id = $1`,
+    [id]
+  );
+} catch (e) {
+  // se folder_blob/folder_mime não existirem no ambiente
+  if (e?.code === "42703") {
+    r = await client.query(
+      `SELECT folder_url
          FROM eventos
         WHERE id = $1`,
       [id]
     );
+  } else {
+    throw e;
+  }
+}
 
-    if (!r.rowCount) return res.status(404).end();
-    const row = r.rows[0];
-    if (!row.folder_blob) return res.status(404).end();
+if (!r.rowCount) return res.status(404).end();
+const row = r.rows[0];
 
-    res.setHeader("Content-Type", row.folder_mime || "image/jpeg");
-    res.setHeader("Cache-Control", IS_DEV ? "no-store" : "public, max-age=3600");
-    res.setHeader("X-Content-Type-Options", "nosniff");
-    logInfo(rid, "obterFolderDoEvento OK", { id });
+// 1) blob
+if (row.folder_blob) {
+  res.setHeader("Content-Type", row.folder_mime || "image/jpeg");
+  res.setHeader("Cache-Control", IS_DEV ? "no-store" : "public, max-age=3600");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  return res.status(200).send(row.folder_blob);
+}
 
-    return res.status(200).send(row.folder_blob);
+// 2) url antiga (uploads)
+if (row.folder_url) {
+  res.setHeader("Cache-Control", IS_DEV ? "no-store" : "public, max-age=3600");
+  return res.redirect(302, row.folder_url);
+}
+
+return res.status(404).end();
+
   } catch (e) {
     logError(rid, "obterFolderDoEvento erro", e);
     return res.status(500).end();
@@ -1125,15 +1162,26 @@ async function buscarEventoPorId(req, res) {
       ),
     ]);
     
-    // ✅ (NOVO) — linha anterior incluída acima
-    const qz = await client.query(
-      `SELECT id, status, obrigatorio, min_nota, tentativas_max, tempo_minutos
-         FROM questionarios_evento
-        WHERE evento_id = $1
-        ORDER BY id DESC
-        LIMIT 1`,
-      [id]
-    );
+   // ✅ (NOVO) — pós-curso: tenta, mas NÃO derruba se tabela/coluna não existir no servidor
+let qz = { rows: [] }; // fallback seguro
+try {
+  qz = await client.query(
+    `SELECT id, status, obrigatorio, min_nota, tentativas_max, tempo_minutos
+       FROM questionarios_evento
+      WHERE evento_id = $1
+      ORDER BY id DESC
+      LIMIT 1`,
+    [id]
+  );
+} catch (e) {
+  // 42P01 = relation does not exist | 42703 = column does not exist
+  if (e?.code === "42P01" || e?.code === "42703") {
+    logWarn(rid, "questionarios_evento indisponível neste ambiente (ignorado)", { code: e.code });
+    qz = { rows: [] };
+  } else {
+    throw e; // erro real de DB/SQL
+  }
+}
     
     logInfo(rid, "buscarEventoPorId OK", {
       id,
