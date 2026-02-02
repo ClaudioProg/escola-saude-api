@@ -123,12 +123,20 @@ router.get(
 /* ───────────────────────────────────────────────────────────────
    🔎 Auto-complete de cargos (ANTES de '/:id')
    ─────────────────────────────────────────────────────────────── */
-router.get(
-  "/cargos/sugerir",
-  requireAuth,
-  routeTag("eventosRoute:/cargos/sugerir"),
-  handle(eventoController.sugerirCargos)
-);
+   router.get(
+    "/cargos/sugerir",
+    requireAuth,
+    routeTag("eventosRoute:/cargos/sugerir"),
+    handle(eventoController.sugerirCargos)
+  );
+  
+  // ✅ NOVO — lista só instrutores/admins (para selects do modal)
+  router.get(
+    "/instrutores/disponiveis",
+    requireAuth,
+    routeTag("eventosRoute:/instrutores/disponiveis"),
+    handle(eventoController.listarInstrutoresDisponiveis)
+  );
 
 /* ───────────────────────────────────────────────────────────────
    📅 CRUD principal de eventos
@@ -212,7 +220,7 @@ router.post(
   requireAuth,
   authorizeRoles("administrador"),
   ensureNumericParam("id"),
-  eventoController.uploadEventos,
+  eventoController.uploadFolderOnly, // ✅ evita Unexpected end of form
   routeTag("eventosRoute:/:id/folder"),
   handle(eventoController.atualizarArquivosDoEvento)
 );
@@ -222,7 +230,7 @@ router.post(
   requireAuth,
   authorizeRoles("administrador"),
   ensureNumericParam("id"),
-  eventoController.uploadEventos,
+  eventoController.uploadProgramacaoOnly, // ✅ evita Unexpected end of form
   routeTag("eventosRoute:/:id/programacao"),
   handle(eventoController.atualizarArquivosDoEvento)
 );

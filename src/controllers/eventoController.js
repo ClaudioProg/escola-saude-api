@@ -683,7 +683,8 @@ async function criarEvento(req, res) {
 
     // ✅ folder agora vem em memória: pode estar em req.file (folder) OU em req.file (file compat)
     const folderFile =
-      (req.file && (req.file.fieldname === "folder" || req.file.fieldname === "file")) ? req.file : null;
+  req._folderFile ||
+  ((req.file && (req.file.fieldname === "folder" || req.file.fieldname === "file")) ? req.file : null);
 
     // ✅ PDF continua em disco
     const progPdfUrl = pegarUploadUrl(req, "programacao");
@@ -888,6 +889,51 @@ async function obterFolderDoEvento(req, res) {
     client.release();
   }
 }
+
+// ✅ Folder-only (mem) — para /:id/folder (POST)
+const uploadFolderOnly = (req, res, next) => {
+  const rid = mkRid();
+
+  const folderHandler = uploadFolderMem.single("folder");
+  folderHandler(req, res, (err) => {
+    if (err) {
+      const msg =
+        err.code === "LIMIT_FILE_SIZE"
+          ? `Folder excede o limite de ${MAX_FOLDER_MB}MB.`
+          : err.message || "Falha no upload do folder.";
+      logWarn(rid, "uploadFolderOnly erro", { msg, code: err.code });
+      return res.status(400).json({ erro: msg });
+    }
+
+    // ✅ padroniza: controller lê sempre de req._folderFile
+    if (req.file && req.file.fieldname === "folder") {
+      req._folderFile = req.file;
+      req.file = undefined;
+    }
+
+    return next();
+  });
+};
+
+// ✅ Programacao-only (disk) — para /:id/programacao (POST)
+const uploadProgramacaoOnly = (req, res, next) => {
+  const rid = mkRid();
+
+  const pdfHandler = uploadPdfDisk.single("programacao");
+  pdfHandler(req, res, (err) => {
+    if (err) {
+      const msg =
+        err.code === "LIMIT_FILE_SIZE"
+          ? `PDF excede o limite de ${MAX_PDF_MB}MB.`
+          : err.message || "Falha no upload do PDF.";
+      logWarn(rid, "uploadProgramacaoOnly erro", { msg, code: err.code });
+      return res.status(400).json({ erro: msg });
+    }
+
+    return next();
+  });
+};
+
 
 /* =====================================================================
    🔍 Buscar por ID (com listas, turmas e flags)
@@ -2185,7 +2231,8 @@ async function sugerirCargos(req, res) {
     if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ erro: "EVENTO_ID_INVALIDO" });
   
     const folderFile =
-      (req.file && (req.file.fieldname === "folder" || req.file.fieldname === "file")) ? req.file : null;
+  req._folderFile ||
+  ((req.file && (req.file.fieldname === "folder" || req.file.fieldname === "file")) ? req.file : null);
   
     const progPdfUrl = pegarUploadUrl(req, "programacao");
   
@@ -2234,32 +2281,115 @@ async function sugerirCargos(req, res) {
       client.release();
     }
   }
- 
+
+  /* =====================================================================
+   👥 Listar usuários aptos a serem instrutores (instrutor OU administrador)
+   ===================================================================== */
+     async function listarInstrutoresDisponiveis(req, res) {
+      const rid = mkRid();
+      logStart(rid, "listarInstrutoresDisponiveis");
+  
+      try {
+        // 1) tenta por coluna perfis (text[])
+        const sqlPerfisArray = `
+          SELECT id, nome, email
+          FROM usuarios
+          WHERE
+            ('instrutor' = ANY(perfis))
+            OR ('administrador' = ANY(perfis))
+          ORDER BY nome ASC
+        `;
+  
+        // 2) tenta por coluna perfil (string)
+        const sqlPerfilString = `
+          SELECT id, nome, email
+          FROM usuarios
+          WHERE
+            lower(coalesce(perfil,'')) IN ('instrutor','administrador')
+            OR lower(coalesce(perfil,'')) LIKE '%instrutor%'
+            OR lower(coalesce(perfil,'')) LIKE '%administrador%'
+          ORDER BY nome ASC
+        `;
+  
+        // 3) fallback REAL: quem já é instrutor em alguma turma
+        // (não depende de perfil no usuário)
+        const sqlPorVinculoTurmaInstrutor = `
+          SELECT DISTINCT u.id, u.nome, u.email
+          FROM turma_instrutor ti
+          JOIN usuarios u ON u.id = ti.instrutor_id
+          ORDER BY u.nome ASC
+        `;
+  
+        let rows = [];
+  
+        // tenta perfis[]
+        try {
+          ({ rows } = await query(sqlPerfisArray, []));
+          if (rows?.length) {
+            logInfo(rid, "listarInstrutoresDisponiveis via usuarios.perfis", { count: rows.length });
+            return res.json(rows);
+          }
+        } catch (e) {
+          if (e?.code !== "42703") throw e;
+          logWarn(rid, "usuarios.perfis não existe (ok, fallback)", { code: e?.code });
+        }
+  
+        // tenta perfil string
+        try {
+          ({ rows } = await query(sqlPerfilString, []));
+          if (rows?.length) {
+            logInfo(rid, "listarInstrutoresDisponiveis via usuarios.perfil", { count: rows.length });
+            return res.json(rows);
+          }
+        } catch (e) {
+          if (e?.code !== "42703") throw e;
+          logWarn(rid, "usuarios.perfil não existe (ok, fallback)", { code: e?.code });
+        }
+  
+        // fallback definitivo: instrutores reais por vínculo
+        ({ rows } = await query(sqlPorVinculoTurmaInstrutor, []));
+        logInfo(rid, "listarInstrutoresDisponiveis via turma_instrutor", { count: rows.length });
+  
+        return res.json(rows || []);
+      } catch (err) {
+        logError(rid, "listarInstrutoresDisponiveis erro", err);
+        return res.status(500).json({ erro: "Erro ao listar instrutores disponíveis." });
+      }
+    }
+  
 
 /* =====================================================================
    ✅ Export único (sem duplicações)
    ===================================================================== */
-module.exports = {
-  uploadEventos,
-  obterFolderDoEvento,
-  listarEventos,
-  listarEventosParaMim,
-
-  criarEvento,
-  buscarEventoPorId,
-  atualizarEvento,
-  excluirEvento,
-
-  listarTurmasDoEvento,
-  listarTurmasSimples,
-
-  getAgendaEventos,
-  listarEventosDoinstrutor,
-
-  listarDatasDaTurma,
-  publicarEvento,
-  despublicarEvento,
-
-  sugerirCargos,
-  atualizarArquivosDoEvento,
-};
+   module.exports = {
+    // ✅ novos
+    uploadFolderOnly,
+    uploadProgramacaoOnly,
+  
+    // mantém o antigo para rotas que mandam tudo junto (POST/PUT evento)
+    uploadEventos,
+  
+    obterFolderDoEvento,
+    listarEventos,
+    listarEventosParaMim,
+  
+    criarEvento,
+    buscarEventoPorId,
+    atualizarEvento,
+    excluirEvento,
+  
+    listarTurmasDoEvento,
+    listarTurmasSimples,
+  
+    getAgendaEventos,
+    listarEventosDoinstrutor,
+  
+    listarDatasDaTurma,
+    publicarEvento,
+    despublicarEvento,
+  
+    sugerirCargos,
+    listarInstrutoresDisponiveis,
+    atualizarArquivosDoEvento,
+  };
+  

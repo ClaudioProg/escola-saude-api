@@ -11,6 +11,11 @@ function isHttpUrl(u) {
 }
 
 // Decide a base automaticamente
+function isVercelHost(host = "") {
+  const h = String(host || "").toLowerCase();
+  return h.endsWith(".vercel.app") || h.includes("vercel.app");
+}
+
 function computeBase() {
   const raw = (import.meta.env.VITE_API_BASE_URL || "").trim().replace(/\/+$/, "");
   if (raw) return raw; // sempre prioriza variável explícita
@@ -18,14 +23,19 @@ function computeBase() {
   // 👉 Em DEV SEMPRE usa same-origin + proxy do Vite: /api
   if (IS_DEV) return "";
 
-  // Em produção: se o front estiver no mesmo domínio da API, use same-origin (/api)
-  if (typeof window !== "undefined" && !isLocalHost(window.location.host)) {
-    return ""; // deixa o reverse proxy/ingress cuidar
-  }
+  const host = typeof window !== "undefined" ? window.location.host : "";
 
-  // Fallback (ex.: build estático rodando fora do domínio da API)
-  return "https://escola-saude-api.onrender.com/api";
+  // ✅ Front em Vercel NÃO tem /api -> backend (a menos que você configure rewrite).
+  // Então aponta direto pro backend.
+  if (isVercelHost(host)) return "https://escola-saude-api.onrender.com";
+
+  // ✅ Se você estiver em um domínio que realmente faz reverse proxy de /api -> backend, mantenha same-origin.
+  if (host && !isLocalHost(host)) return "";
+
+  // Fallback final
+  return "https://escola-saude-api.onrender.com";
 }
+
 
 let API_BASE_URL = computeBase();
 
