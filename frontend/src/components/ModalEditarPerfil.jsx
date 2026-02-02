@@ -1,9 +1,11 @@
 // ✅ src/components/ModalEditarPerfil.jsx (Premium + A11y + keyboard + ids únicos)
+// - CONTROLADO por isOpen (props)
+// - NÃO faz apiPut aqui (evita salvar duplicado)
+// - Salvar chama onSalvar(id, payloadPerfil) e fecha via onFechar
+
 import { useEffect, useMemo, useRef, useState, useId, useCallback } from "react";
 import PropTypes from "prop-types";
-import { toast } from "react-toastify";
 import Modal from "./Modal";
-import { apiPut } from "../services/api";
 import { UserCog, ShieldCheck, Users, GraduationCap } from "lucide-react";
 
 /* ========================= Helpers ========================= */
@@ -74,7 +76,9 @@ export default function ModalEditarPerfil({
     if (!isOpen) return;
 
     const t = setTimeout(() => {
-      const idxAtual = perfisDisponiveis.findIndex((p) => p.value === (perfilSelecionado || perfilInicial));
+      const idxAtual = perfisDisponiveis.findIndex(
+        (p) => p.value === (perfilSelecionado || perfilInicial)
+      );
       const idx = idxAtual >= 0 ? idxAtual : 0;
       chipRefs.current[idx]?.focus?.();
     }, 50);
@@ -99,12 +103,13 @@ export default function ModalEditarPerfil({
       e.preventDefault();
       const v = values[next];
       setPerfilSelecionado(v);
-      // foca no label/botão correspondente
       requestAnimationFrame(() => chipRefs.current[next]?.focus?.());
     },
     [perfisDisponiveis, perfilSelecionado]
   );
 
+  // ✅ Agora salvar NÃO chama API aqui.
+  // Quem salva é o pai (GestaoUsuarios) via onSalvar.
   const salvar = async () => {
     if (!podeSalvar) return;
 
@@ -113,11 +118,11 @@ export default function ModalEditarPerfil({
 
     try {
       const payloadPerfil = enviarComoString ? perfilSelecionado : [perfilSelecionado];
-      await apiPut(`/api/usuarios/${usuario.id}/perfil`, { perfil: payloadPerfil });
 
-      toast.success("✅ Perfil atualizado com sucesso!");
+      // ✅ delega o salvamento ao pai
+      await onSalvar?.(usuario.id, payloadPerfil);
+
       setMsgA11y("Perfil atualizado com sucesso.");
-      onSalvar?.(usuario.id, payloadPerfil);
       onFechar?.();
     } catch (error) {
       const msg =
@@ -125,8 +130,9 @@ export default function ModalEditarPerfil({
         error?.data?.message ||
         error?.message ||
         "Erro ao atualizar perfil";
-      toast.error(`❌ ${msg}`);
       setMsgA11y(`Erro ao atualizar perfil: ${msg}`);
+      // O pai normalmente já dá toast, mas se quiser duplicar, dá pra por toast aqui.
+      throw error;
     } finally {
       setSalvando(false);
     }
@@ -136,11 +142,10 @@ export default function ModalEditarPerfil({
 
   return (
     <Modal
-      open={isOpen}
+      open={isOpen} // ✅ CONTROLADO PELO PAI
       onClose={salvando ? undefined : onFechar}
       labelledBy={titleId}
       describedBy={descId}
-      // enquanto salvando: evita fechar por backdrop/ESC (seu Modal respeita onClose)
       closeOnBackdrop={!salvando}
       closeOnEscape={!salvando}
       className="w-[96%] max-w-md p-0 overflow-hidden"
@@ -235,12 +240,15 @@ export default function ModalEditarPerfil({
                     disabled={salvando}
                   />
 
-                  <span className={cls(
-                    "inline-flex h-8 w-8 items-center justify-center rounded-xl border",
-                    selected
-                      ? "bg-emerald-100 border-emerald-200 text-emerald-800 dark:bg-emerald-900/40 dark:border-emerald-800 dark:text-emerald-200"
-                      : "bg-slate-100 border-slate-200 text-slate-700 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-200"
-                  )} aria-hidden="true">
+                  <span
+                    className={cls(
+                      "inline-flex h-8 w-8 items-center justify-center rounded-xl border",
+                      selected
+                        ? "bg-emerald-100 border-emerald-200 text-emerald-800 dark:bg-emerald-900/40 dark:border-emerald-800 dark:text-emerald-200"
+                        : "bg-slate-100 border-slate-200 text-slate-700 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-200"
+                    )}
+                    aria-hidden="true"
+                  >
                     <Icon className="w-4 h-4" />
                   </span>
 
@@ -286,6 +294,6 @@ ModalEditarPerfil.propTypes = {
     perfil: PropTypes.oneOfType([PropTypes.string, PropTypes.arrayOf(PropTypes.string)]),
   }).isRequired,
   onFechar: PropTypes.func.isRequired,
-  onSalvar: PropTypes.func, // (id, novoPerfil) => void
+  onSalvar: PropTypes.func, // async (id, payloadPerfil) => Promise
   enviarComoString: PropTypes.bool,
 };

@@ -636,16 +636,37 @@ async function atualizarPerfil(req, res) {
   if (!perfilCsv) return res.status(400).json({ erro: "Perfil inválido ou vazio." });
 
   try {
-    const { rows } = await db.query(
-      "UPDATE usuarios SET perfil = $1, atualizado_em=NOW() WHERE id = $2 RETURNING id, nome, email, perfil",
-      [perfilCsv, id]
-    );
-    if (!rows.length) return res.status(404).json({ erro: "Usuário não encontrado." });
+    let rows;
+  
+    try {
+      // ✅ tenta com atualizado_em (se existir)
+      const r1 = await db.query(
+        "UPDATE usuarios SET perfil = $1, atualizado_em = NOW() WHERE id = $2 RETURNING id, nome, email, perfil",
+        [perfilCsv, id]
+      );
+      rows = r1.rows;
+    } catch (err) {
+      // ✅ fallback: se a coluna não existir, tenta sem ela
+      if (err?.code === "42703") {
+        const r2 = await db.query(
+          "UPDATE usuarios SET perfil = $1 WHERE id = $2 RETURNING id, nome, email, perfil",
+          [perfilCsv, id]
+        );
+        rows = r2.rows;
+      } else {
+        throw err;
+      }
+    }
+  
+    if (!rows?.length) return res.status(404).json({ erro: "Usuário não encontrado." });
+  
     const u = rows[0];
     return res.json({ ok: true, data: { ...u, perfil: toPerfilArray(u.perfil) } });
   } catch (err) {
     console.error("❌ Erro ao atualizar perfil:", err);
-    return res.status(500).json({ erro: "Erro ao atualizar perfil." });
+    const payload = traduzPgError(err);
+    const isClientErr = ["23505", "23514", "23503", "23502", "22P02"].includes(err?.code);
+    return res.status(isClientErr ? 400 : 500).json(payload.erro ? payload : { erro: "Erro ao atualizar perfil." });
   }
 }
 

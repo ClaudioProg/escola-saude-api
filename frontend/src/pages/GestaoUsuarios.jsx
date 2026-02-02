@@ -217,7 +217,11 @@ export default function GestaoUsuarios() {
   const [carregandoUsuarios, setCarregandoUsuarios] = useState(true);
   const [erro, setErro] = useState("");
   const [busca, setBusca] = useState(() => localStorage.getItem("usuarios:busca") || "");
+
+  // ✅ modal edit: selecionado + open (controlado)
   const [usuarioSelecionado, setUsuarioSelecionado] = useState(null);
+  const [modalEditOpen, setModalEditOpen] = useState(false);
+
   const [revealCpfIds, setRevealCpfIds] = useState(() => new Set());
   const [hydrating, setHydrating] = useState(false);
 
@@ -250,6 +254,18 @@ export default function GestaoUsuarios() {
   const setLive = (msg) => {
     if (liveRef.current) liveRef.current.textContent = msg;
   };
+
+  // ✅ handler único de abertura do modal (garante que o clique abre)
+  const abrirEdicao = useCallback((usuario) => {
+    console.log("✅ CLICK EDITAR ->", usuario?.id, usuario?.nome);
+    setUsuarioSelecionado(usuario);
+    setModalEditOpen(true);
+  }, []);
+
+  const fecharEdicao = useCallback(() => {
+    setModalEditOpen(false);
+    setUsuarioSelecionado(null);
+  }, []);
 
   // mounted/abort
   useEffect(() => {
@@ -458,10 +474,8 @@ export default function GestaoUsuarios() {
 
   /* ---------- KPIs (melhor esforço) ---------- */
   const kpis = useMemo(() => {
-    // total real do filtro (server meta.total)
     const total = Number(meta?.total ?? 0);
 
-    // contagens por perfil: só da página atual (badge útil), com fallback
     let usuario = 0;
     let instrutor = 0;
     let administrador = 0;
@@ -489,7 +503,7 @@ export default function GestaoUsuarios() {
     setLoadingResumo((prev) => new Set(prev).add(id));
     try {
       const r = await apiGet(`/api/usuarios/${id}/resumo`, { on404: "silent" });
-      const payload = r?.data ?? r; // compat (ok/data)
+      const payload = r?.data ?? r;
       const resumo = {
         cursos_concluidos_75: Number(payload?.cursos_concluidos_75 ?? 0),
         certificados_emitidos: Number(payload?.certificados_emitidos ?? 0),
@@ -526,7 +540,7 @@ export default function GestaoUsuarios() {
     try {
       await apiPut(`/api/usuarios/${id}/perfil`, { perfil: perfilStr });
       toast.success("✅ Perfil atualizado com sucesso!");
-      setUsuarioSelecionado(null);
+      fecharEdicao();
       carregarUsuarios();
     } catch (err) {
       const msg = err?.message || err?.erro || "❌ Erro ao atualizar perfil.";
@@ -547,7 +561,6 @@ export default function GestaoUsuarios() {
 
   /* ---------- opções únicas (Unidade / Cargo) ---------- */
   const { unidadesOpts, cargosOpts } = useMemo(() => {
-    // Unidade por SIGLA: lista do endpoint /api/unidades (completa/estável)
     const unidadesArr = Array.from(
       new Set(
         (unidades || [])
@@ -557,8 +570,6 @@ export default function GestaoUsuarios() {
       )
     ).sort((a, b) => a.localeCompare(b, "pt-BR"));
 
-    // Cargo: como você tem 1300+, ideal seria um endpoint próprio.
-    // Aqui: vamos montar com base na página atual + manter seleção persistida.
     const cargosSet = new Set(
       (usuarios || []).map((u) => String(u?.cargo_nome || "").trim()).filter(Boolean)
     );
@@ -573,7 +584,6 @@ export default function GestaoUsuarios() {
   const [exportando, setExportando] = useState(false);
 
   const onExportCsv = async () => {
-    // limite de segurança pra não travar navegador (ajuste se quiser)
     const HARD_LIMIT = 20000;
 
     try {
@@ -594,7 +604,6 @@ export default function GestaoUsuarios() {
 
       const perfisCsv = Array.from(fPerfis || []).filter(Boolean).join(",");
 
-      // pagina em lotes grandes para export
       const exportPageSize = 200;
       const totalPages = Math.max(1, Math.ceil(total / exportPageSize));
 
@@ -616,8 +625,11 @@ export default function GestaoUsuarios() {
           [];
 
         for (const u of dataResp) {
-          const sigla = String(u?.unidade_sigla || "").trim()
-            || (u?.unidade_id && unidadesMap.get(u.unidade_id)?.sigla ? String(unidadesMap.get(u.unidade_id).sigla).trim() : "");
+          const sigla =
+            String(u?.unidade_sigla || "").trim() ||
+            (u?.unidade_id && unidadesMap.get(u.unidade_id)?.sigla
+              ? String(unidadesMap.get(u.unidade_id).sigla).trim()
+              : "");
 
           rows.push([
             u?.id ?? "",
@@ -627,7 +639,9 @@ export default function GestaoUsuarios() {
             sigla,
             u?.cargo_nome ?? "",
             u?.escolaridade_nome ?? "",
-            Number.isFinite(idadeFromISO(String(u?.data_nascimento || "").slice(0, 10))) ? idadeFromISO(String(u?.data_nascimento || "").slice(0, 10)) : "",
+            Number.isFinite(idadeFromISO(String(u?.data_nascimento || "").slice(0, 10)))
+              ? idadeFromISO(String(u?.data_nascimento || "").slice(0, 10))
+              : "",
           ]);
         }
       }
@@ -814,7 +828,7 @@ export default function GestaoUsuarios() {
           <>
             <TabelaUsuarios
               usuarios={Array.isArray(usuarios) ? usuarios : []}
-              onEditar={(usuario) => setUsuarioSelecionado(usuario)}
+              onEditar={abrirEdicao}   // ✅ aqui
               onToggleCpf={onToggleCpf}
               isCpfRevealed={(id) => revealCpfIds.has(id)}
               maskCpfFn={maskCpf}
@@ -868,13 +882,23 @@ export default function GestaoUsuarios() {
           </>
         )}
 
-        <Suspense fallback={null}>
+        {/* ✅ Modal (lazy) com fallback VISÍVEL */}
+        <Suspense
+          fallback={
+            <div className="fixed inset-0 z-[9999] grid place-items-center bg-black/40 backdrop-blur-sm">
+              <div className="rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 px-5 py-4 text-sm font-extrabold">
+                Carregando editor…
+              </div>
+            </div>
+          }
+        >
           {usuarioSelecionado && (
             <ModalEditarPerfil
-              usuario={usuarioSelecionado}
-              onFechar={() => setUsuarioSelecionado(null)}
-              onSalvar={salvarPerfil}
-            />
+            usuario={usuarioSelecionado}
+            isOpen={modalEditOpen}   // ✅ NOME CERTO
+            onFechar={fecharEdicao}
+            onSalvar={salvarPerfil}
+          />
           )}
         </Suspense>
 
