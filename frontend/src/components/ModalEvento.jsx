@@ -2230,6 +2230,8 @@ if (det?.folder_url || det?.folder) {
         }}
       />
 
+      
+
       {/* MODAL TURMA */}
       <ModalTurma
         isOpen={modalTurmaAberto}

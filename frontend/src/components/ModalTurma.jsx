@@ -202,7 +202,7 @@ function isInstrutorLike(u) {
 }
 
 /* ===================== Cache local (fallback) ===================== */
-let cacheUsuariosFallback = null;
+let cacheUsuariosFallback = { rows: null, filtrados: false };
 
 /* ===================== UI helpers ===================== */
 function Chip({ tone = "zinc", children, title }) {
@@ -323,7 +323,10 @@ export default function ModalTurma({
 
   // Lista resiliente
   const [usuariosLocal, setUsuariosLocal] = useState([]);
-  const [usuariosLoading, setUsuariosLoading] = useState(false);
+const [usuariosLoading, setUsuariosLoading] = useState(false);
+
+// ✅ quando true, significa que veio do endpoint já filtrado (id/nome/email)
+const [usuariosJaFiltrados, setUsuariosJaFiltrados] = useState(false);
 
   // ✅ Rehidrata quando abre OU quando muda a turma mesmo aberto
   const lastHydratedKeyRef = useRef(null);
@@ -376,22 +379,41 @@ export default function ModalTurma({
   
     // ✅ se a lista do pai vier (mesmo vazia), não “gruda” em cache antigo
     if (Array.isArray(usuarios) && usuarios.length === 0) {
-      cacheUsuariosFallback = null; // limpa cache ruim de sessão
+      cacheUsuariosFallback = { rows: null, filtrados: false };
     }
 
     // 1) prioridade: usuarios do pai
-    if (Array.isArray(usuarios) && usuarios.length > 0) {
-      setUsuariosLocal(usuarios);
-      setUsuariosLoading(false);
-      return;
-    }
+if (Array.isArray(usuarios) && usuarios.length > 0) {
+  setUsuariosLocal(usuarios);
+  setUsuariosJaFiltrados(false);
+  setUsuariosLoading(false);
+
+  // ✅ se o pai não manda perfil/perfis, o filtro zera.
+  // então: se ninguém parece instrutor/admin, buscamos a lista real do backend.
+  const algumInstrutorNoPai = usuarios.some((u) => u && isInstrutorLike(u));
+
+  if (algumInstrutorNoPai) {
+    return; // ✅ ok: já dá pra filtrar no front
+  }
+
+  // ⚠️ cai no fetch abaixo (endpoint filtrado) para não ficar sem opções
+  log("Pai mandou usuarios, mas sem perfil/sem instrutores detectáveis; vou buscar endpoint filtrado.", {
+    total: usuarios.length,
+  });
+}
+
+// ✅ aqui ainda NÃO existe "sorted". Não logar sorted fora do try.
 
     // 2) cache local (boa UX)
-    if (Array.isArray(cacheUsuariosFallback) && cacheUsuariosFallback.length > 0) {
-      setUsuariosLocal(cacheUsuariosFallback);
+    if (cacheUsuariosFallback?.rows?.length) {
+      setUsuariosLocal(cacheUsuariosFallback.rows);
+      setUsuariosJaFiltrados(!!cacheUsuariosFallback.filtrados);
       setUsuariosLoading(false);
       return;
     }
+    // ✅ aqui ainda NÃO existe "sorted". Não logar sorted fora do try.
+
+    
 
         // 3) fallback PREMIUM: lista já filtrada no backend (instrutor/admin)
         setUsuariosLoading(true);
@@ -399,16 +421,22 @@ export default function ModalTurma({
       try {
         // ✅ apiGet já roda com base "/api" no seu services/api
         const res = await apiGet("/eventos/instrutores/disponiveis");
-        const arr = asArray(res);
-            const sorted = arr
-              .filter(Boolean)
-              .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
-    
-            cacheUsuariosFallback = sorted;
-            if (!alive) return;
-    
-            setUsuariosLocal(sorted);
-            log("Fallback /api/eventos/instrutores/disponiveis ok", { total: sorted.length });
+log("Resposta raw do endpoint instrutores", res); // ✅ LOG AQUI
+const arr = asArray(res);
+log("Array normalizado do endpoint instrutores", { len: arr.length, first: arr?.[0] }); // ✅ LOG AQUI
+
+const sorted = arr
+  .filter(Boolean)
+  .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
+
+  cacheUsuariosFallback = { rows: sorted, filtrados: true };
+  setUsuariosLocal(sorted);
+  setUsuariosJaFiltrados(true);
+  
+  log("Fallback /api/eventos/instrutores/disponiveis ok", {
+    total: sorted.length,
+  });
+  
           } catch (e) {
             if (!alive) return;
     
@@ -417,17 +445,16 @@ export default function ModalTurma({
             try {
               // ✅ idem: sem "/api" aqui
               const res2 = await apiGet("/usuarios");
-              const arr2 = asArray(res2);
-              const sorted2 = arr2
-                .filter(Boolean)
-                // ✅ não filtra aqui — é último recurso pra não travar a UI
-                .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
-    
-              cacheUsuariosFallback = sorted2;
-              if (!alive) return;
-    
-              setUsuariosLocal(sorted2);
-              log("Fallback último recurso /api/usuarios ok (filtrado)", { total: sorted2.length });
+const arr2 = asArray(res2);
+
+const sorted2 = arr2
+  .filter(Boolean)
+  .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
+
+  cacheUsuariosFallback = { rows: sorted2, filtrados: false };
+  setUsuariosLocal(sorted2);
+  setUsuariosJaFiltrados(false);
+log("Fallback último recurso /api/usuarios ok", { total: sorted2.length });
             } catch (e2) {
               if (!alive) return;
               warn("Fallback /api/usuarios (último recurso) falhou", e2);
@@ -499,22 +526,43 @@ export default function ModalTurma({
   };
 
   /* ======= Instrutores / Assinante ======= */
+  
   const instrutoresOpcao = useMemo(() => {
-    const base = Array.isArray(usuariosLocal) ? usuariosLocal : [];
+    const baseArr = Array.isArray(usuariosLocal) ? usuariosLocal : [];
   
-    // ✅ filtra instrutor/admin de forma robusta
-    const filtrados = base.filter((u) => u && isInstrutorLike(u));
+    // ✅ se veio do endpoint já filtrado, usa direto; senão aplica filtro
+    const candidatos = usuariosJaFiltrados
+      ? baseArr
+      : baseArr.filter((u) => u && isInstrutorLike(u));
   
-    // ✅ dedupe por id (evita “Alessandra” duplicada)
     const byId = new Map();
-    for (const u of filtrados) {
+    for (const u of candidatos) {
       const idNum = Number(u?.id);
       if (!Number.isFinite(idNum)) continue;
       if (!byId.has(idNum)) byId.set(idNum, u);
     }
   
-    return [...byId.values()].sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
-  }, [usuariosLocal]);
+    return [...byId.values()].sort((a, b) =>
+      String(a.nome || "").localeCompare(String(b.nome || ""))
+    );
+  }, [usuariosLocal, usuariosJaFiltrados]);
+
+  useEffect(() => {
+    if (!effectiveOpen) return;
+  
+    console.group("[DEBUG ModalTurma - Instrutores]");
+    console.log("props.usuarios:", usuarios?.length, usuarios?.[0]);
+    console.log("usuariosLocal:", usuariosLocal?.length, usuariosLocal?.[0]);
+    console.log("usuariosJaFiltrados:", usuariosJaFiltrados);
+    console.log("instrutoresOpcao:", instrutoresOpcao?.length, instrutoresOpcao?.[0]);
+    console.groupEnd();
+  }, [
+    effectiveOpen,
+    usuarios,
+    usuariosLocal,
+    usuariosJaFiltrados,
+    instrutoresOpcao,
+  ]);
 
   const filtroZerou = useMemo(() => {
     const base = Array.isArray(usuariosLocal) ? usuariosLocal : [];
@@ -1089,4 +1137,4 @@ export default function ModalTurma({
       </div>
     </Modal>
   );
-}
+  }
