@@ -127,11 +127,25 @@ const parseRegsBulk = (txt) => {
 
 /* ========================= API helpers (normalização) ========================= */
 function asArray(x) {
-  // aceita: [] | {data: []} | {rows: []} | {items: []} | {result: []}
+  if (!x) return [];
   if (Array.isArray(x)) return x;
-  if (!x || typeof x !== "object") return [];
-  const candidates = [x.data, x.rows, x.items, x.result, x.results, x.unidades, x.usuarios];
-  for (const c of candidates) if (Array.isArray(c)) return c;
+  if (typeof x !== "object") return [];
+
+  // diretos
+  if (Array.isArray(x.data)) return x.data;
+  if (Array.isArray(x.rows)) return x.rows;
+  if (Array.isArray(x.items)) return x.items;
+  if (Array.isArray(x.results)) return x.results;
+  if (Array.isArray(x.result)) return x.result;
+  if (Array.isArray(x.unidades)) return x.unidades;
+  if (Array.isArray(x.usuarios)) return x.usuarios;
+
+  // aninhados (muito comum com pg)
+  if (x.data && Array.isArray(x.data.rows)) return x.data.rows;
+  if (x.data && Array.isArray(x.data.items)) return x.data.items;
+  if (x.data && Array.isArray(x.data.results)) return x.data.results;
+  if (x.result && Array.isArray(x.result.rows)) return x.result.rows;
+
   return [];
 }
 
@@ -502,7 +516,10 @@ function folderEndpointPath(eventoId) {
 
         setUsuariosLoading(true);
 
-        const [uRes, usrRes] = await Promise.allSettled([apiGet("/api/unidades?limit=200&offset=0"), apiGet("/api/usuarios")]);
+        const [uRes, usrRes] = await Promise.allSettled([
+          apiGet("/unidades", { query: { limit: 200, offset: 0 } }),
+          apiGet("/usuarios")
+        ]);
         if (!mounted) return;
 
         if (uRes.status === "fulfilled") {
@@ -624,7 +641,7 @@ setFolderUrlExistente(evento.folder_url || evento.folder || undefined);
         // turmas (rota leve)
         (async () => {
           try {
-            const resp = await apiGet(`/api/eventos/${evento.id}/turmas-simples`);
+            const resp = await apiGet(`/eventos/${evento.id}/turmas-simples`);
             const turmasBack = asArray(resp);
             const turmasNormalizadas = turmasBack.map((t) => {
               const n = normalizarDatasTurma(t);
@@ -690,7 +707,7 @@ setFolderUrlExistente(evento.folder_url || evento.folder || undefined);
 
     (async () => {
       try {
-        const det = await apiGet(`/api/eventos/${evento.id}`);
+        const det = await apiGet(`/eventos/${evento.id}`);
         if (!alive) return;
 
         // ✅ FONTE DE VERDADE DO PÓS-CURSO
@@ -783,7 +800,7 @@ if (det?.folder_url || det?.folder) {
 
     (async () => {
       try {
-        const qz = await apiGet(`/api/questionarios/evento/${Number(evento.id)}`);
+        const qz = await apiGet(`/questionarios/evento/${Number(evento.id)}`, { on404: "silent" });
         if (!alive) return;
 
         // ✅ Se existe questionário, então o evento TEM teste obrigatório
@@ -820,7 +837,7 @@ if (det?.folder_url || det?.folder) {
       if ((fallbackCargos || []).length > 0) return;
 
       try {
-        const lista = await apiGet("/api/eventos/cargos/sugerir?limit=50");
+        const lista = await apiGet("/eventos/cargos/sugerir", { query: { limit: 50 } });
         const jaUsados = new Set(cargosPermitidos.map((c) => c.toLowerCase()));
         const norm = (Array.isArray(lista) ? lista : [])
           .map(normalizarCargo)
@@ -857,10 +874,25 @@ if (det?.folder_url || det?.folder) {
   }, [usuarios, fallbackCargos, cargosPermitidos]);
 
   const opcaoInstrutor = useMemo(() => {
+    const toText = (v) => {
+      if (!v) return "";
+      if (typeof v === "string") return v;
+      if (Array.isArray(v)) return v.map(toText).join(" ");
+      if (typeof v === "object") return String(v.nome || v.name || v.label || v.value || "");
+      return String(v);
+    };
+  
     return (usuarios || [])
-      .filter((usuario) => {
-        const perfil = (Array.isArray(usuario.perfil) ? usuario.perfil.join(",") : String(usuario.perfil || "")).toLowerCase();
-        return perfil.includes("instrutor") || perfil.includes("administrador");
+      .filter((u) => {
+        const texto = [
+          toText(u.perfil),
+          toText(u.perfis),
+          toText(u.role),
+          toText(u.roles),
+          toText(u.tipo),
+        ].join(" ").toLowerCase();
+  
+        return texto.includes("instrutor") || texto.includes("administrador") || texto.includes("admin");
       })
       .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
   }, [usuarios]);
@@ -2204,7 +2236,7 @@ if (det?.folder_url || det?.folder) {
         open={modalTurmaAberto}
         onClose={() => setModalTurmaAberto(false)}
         initialTurma={editandoTurmaIndex != null ? turmas[editandoTurmaIndex] : null}
-        usuarios={opcaoInstrutor}
+        usuarios={usuarios}
         onSalvar={(turmaPayload) => {
           const normalizada = normalizarDatasTurma(turmaPayload);
           const turmaFinal = {

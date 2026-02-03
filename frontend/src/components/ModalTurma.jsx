@@ -35,11 +35,21 @@ const NOME_TURMA_MAX = 200;
 function asArray(v) {
   if (!v) return [];
   if (Array.isArray(v)) return v;
+
+  // formatos diretos
   if (Array.isArray(v.data)) return v.data;
   if (Array.isArray(v.rows)) return v.rows;
-  if (Array.isArray(v.result)) return v.result;
-  if (Array.isArray(v.results)) return v.results;
   if (Array.isArray(v.items)) return v.items;
+  if (Array.isArray(v.results)) return v.results;
+  if (Array.isArray(v.result)) return v.result;
+  if (Array.isArray(v.usuarios)) return v.usuarios;
+
+  // formatos aninhados (bem comuns)
+  if (v.data && Array.isArray(v.data.rows)) return v.data.rows;
+  if (v.data && Array.isArray(v.data.items)) return v.data.items;
+  if (v.data && Array.isArray(v.data.results)) return v.data.results;
+  if (v.result && Array.isArray(v.result.rows)) return v.result.rows;
+
   return [];
 }
 
@@ -363,6 +373,11 @@ export default function ModalTurma({
   useEffect(() => {
     let alive = true;
     if (!effectiveOpen) return;
+  
+    // ✅ se a lista do pai vier (mesmo vazia), não “gruda” em cache antigo
+    if (Array.isArray(usuarios) && usuarios.length === 0) {
+      cacheUsuariosFallback = null; // limpa cache ruim de sessão
+    }
 
     // 1) prioridade: usuarios do pai
     if (Array.isArray(usuarios) && usuarios.length > 0) {
@@ -486,9 +501,19 @@ export default function ModalTurma({
   /* ======= Instrutores / Assinante ======= */
   const instrutoresOpcao = useMemo(() => {
     const base = Array.isArray(usuariosLocal) ? usuariosLocal : [];
-    return base
-      .filter(Boolean)
-      .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
+  
+    // ✅ filtra instrutor/admin de forma robusta
+    const filtrados = base.filter((u) => u && isInstrutorLike(u));
+  
+    // ✅ dedupe por id (evita “Alessandra” duplicada)
+    const byId = new Map();
+    for (const u of filtrados) {
+      const idNum = Number(u?.id);
+      if (!Number.isFinite(idNum)) continue;
+      if (!byId.has(idNum)) byId.set(idNum, u);
+    }
+  
+    return [...byId.values()].sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
   }, [usuariosLocal]);
 
   const filtroZerou = useMemo(() => {

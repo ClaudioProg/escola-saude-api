@@ -122,31 +122,50 @@ function normalizarTituloPtBr(input = "") {
 const toIntArray = (v) =>
   Array.isArray(v) ? v.map((n) => Number(n)).filter(Number.isFinite) : [];
 
-// ✅ (NOVO) — aceita [ids] OU ["nomes de cargo"] e resolve para ids
-async function resolveCargoIds(client, cargosInput) {
-  const arr = Array.isArray(cargosInput) ? cargosInput : [];
-  if (!arr.length) return [];
-
-  // 1) se já forem ids
-  const asIds = arr.map((x) => Number(x)).filter(Number.isFinite);
-  if (asIds.length) return [...new Set(asIds)];
-
-  // 2) se forem nomes (strings), mapeia por tabela cargos
-  const nomes = arr
-    .map((x) => String(x || "").trim())
-    .filter(Boolean);
-
-  if (!nomes.length) return [];
-
-  const { rows } = await client.query(
-    `SELECT id
-       FROM cargos
-      WHERE lower(trim(nome)) = ANY($1::text[])`,
-    [nomes.map((n) => n.toLowerCase().trim())]
-  );
-
-  return [...new Set(rows.map((r) => Number(r.id)).filter(Number.isFinite))];
+// ✅ multipart-safe: campos podem vir como string JSON no req.body
+function parseMaybeJson(v, fallback) {
+  if (v == null) return fallback;
+  if (typeof v === "string") {
+    const s = v.trim();
+    if (!s) return fallback;
+    // tenta JSON
+    if ((s.startsWith("{") && s.endsWith("}")) || (s.startsWith("[") && s.endsWith("]"))) {
+      try { return JSON.parse(s); } catch { return fallback; }
+    }
+    return fallback;
+  }
+  return v; // já é obj/array
 }
+
+function normalizeBodyMultipart(body = {}) {
+  const out = { ...body };
+
+  // turmas e listas podem vir string
+  out.turmas = parseMaybeJson(body.turmas, body.turmas);
+
+// ✅ extra blindagem: se turmas vierem OK mas algum campo interno vier string
+if (Array.isArray(out.turmas)) {
+  out.turmas = out.turmas.map((t) => {
+    const tt = { ...t };
+    tt.instrutores = parseMaybeJson(t?.instrutores, t?.instrutores);
+    tt.datas = parseMaybeJson(t?.datas, t?.datas);
+    tt.encontros = parseMaybeJson(t?.encontros, t?.encontros);
+    return tt;
+  });
+}
+  out.registros_permitidos = parseMaybeJson(body.registros_permitidos, body.registros_permitidos);
+  out.cargos_permitidos = parseMaybeJson(body.cargos_permitidos, body.cargos_permitidos);
+  out.unidades_permitidas = parseMaybeJson(body.unidades_permitidas, body.unidades_permitidas);
+
+  // booleans multipart vêm como "true"/"false"
+  const b = (x) => (String(x).toLowerCase() === "true" ? true : String(x).toLowerCase() === "false" ? false : x);
+  out.restrito = b(body.restrito);
+  out.remover_folder = b(body.remover_folder);
+  out.remover_programacao = b(body.remover_programacao);
+
+  return out;
+}
+
 
 const toIdArray = (v) =>
   Array.isArray(v)
@@ -651,28 +670,36 @@ async function listarEventosParaMim(req, res) {
 /* =====================================================================
    ➕ Criar evento
    ===================================================================== */
-async function criarEvento(req, res) {
-  const rid = mkRid();
-  const body = req.body || {};
-
-  const {
-    titulo,
-    descricao,
-    local,
-    tipo,
-    unidade_id,
-    publico_alvo,
-    turmas = [],
-    restrito = false,
-    restrito_modo = null,
-    registros,
-    registros_permitidos,
-    cargos_permitidos,
-    unidades_permitidas,
-    } = body;
+   async function criarEvento(req, res) {
+    const rid = mkRid();
   
+    // ✅ multipart-safe
+    const body = normalizeBodyMultipart(req.body || {});
 
-  logStart(rid, "criarEvento", {
+    logInfo(rid, "atualizarEvento tipos", {
+      contentType: req.headers["content-type"],
+      turmasType: typeof body.turmas,
+      turmasIsArray: Array.isArray(body.turmas),
+      firstInstrIsArray: Array.isArray(body.turmas) ? Array.isArray(body.turmas?.[0]?.instrutores) : null,
+    });
+  
+    const {
+      titulo,
+      descricao,
+      local,
+      tipo,
+      unidade_id,
+      publico_alvo,
+      turmas = [],
+      restrito = false,
+      restrito_modo = null,
+      registros,
+      registros_permitidos,
+      cargos_permitidos,
+      unidades_permitidas,
+    } = body;
+
+    logStart(rid, "criarEvento", {
     titulo,
     local,
     tipo,
@@ -1479,27 +1506,36 @@ async function listarTurmasSimples(req, res) {
 /* =====================================================================
    🔄 Atualizar evento (sem duplicações)
    ===================================================================== */
-async function atualizarEvento(req, res) {
-  const rid = mkRid();
-  const eventoId = Number(req.params.id);
-  if (!Number.isFinite(eventoId) || eventoId <= 0) return res.status(400).json({ erro: "EVENTO_ID_INVALIDO" });
+   async function atualizarEvento(req, res) {
+    const rid = mkRid();
+    const eventoId = Number(req.params.id);
+  
+    // ✅ multipart-safe
+    const body = normalizeBodyMultipart(req.body || {});
 
-  const body = req.body || {};
-  const {
-    titulo,
-    descricao,
-    local,
-    tipo,
-    unidade_id,
-    publico_alvo,
-    turmas,
-    restrito,
-    restrito_modo,
-    registros,
-    registros_permitidos,
-    cargos_permitidos,
-    unidades_permitidas,
-  } = body;
+    logInfo(rid, "atualizarEvento tipos", {
+      contentType: req.headers["content-type"],
+      turmasType: typeof body.turmas,
+      turmasIsArray: Array.isArray(body.turmas),
+      firstInstrIsArray: Array.isArray(body.turmas) ? Array.isArray(body.turmas?.[0]?.instrutores) : null,
+    });
+  
+    const {
+      titulo,
+      descricao,
+      local,
+      tipo,
+      unidade_id,
+      publico_alvo,
+      turmas,
+      restrito,
+      restrito_modo,
+      registros,
+      registros_permitidos,
+      cargos_permitidos,
+      unidades_permitidas,
+    } = body;
+  
   
 
   const client = await pool.connect();
@@ -1513,8 +1549,8 @@ async function atualizarEvento(req, res) {
     // ✅ PDF continua em disco
     const progPdfUrl = pegarUploadUrl(req, "programacao");
 
-    const remover_folder = String(body?.remover_folder ?? "").toLowerCase() === "true";
-    const remover_programacao = String(body?.remover_programacao ?? "").toLowerCase() === "true";
+    const remover_folder = body?.remover_folder === true;
+const remover_programacao = body?.remover_programacao === true;
 
     const setCols = [
       `titulo       = COALESCE($2, titulo)`,
