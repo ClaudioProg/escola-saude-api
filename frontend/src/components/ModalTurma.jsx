@@ -380,10 +380,11 @@ export default function ModalTurma({
 
         // 3) fallback PREMIUM: lista já filtrada no backend (instrutor/admin)
         setUsuariosLoading(true);
-        (async () => {
-          try {
-            const res = await apiGet("/api/eventos/instrutores/disponiveis");
-            const arr = asArray(res);
+    (async () => {
+      try {
+        // ✅ apiGet já roda com base "/api" no seu services/api
+        const res = await apiGet("/eventos/instrutores/disponiveis");
+        const arr = asArray(res);
             const sorted = arr
               .filter(Boolean)
               .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
@@ -399,7 +400,8 @@ export default function ModalTurma({
             // ✅ último recurso (não travar UI): tenta /api/usuarios e filtra no front
             warn("Fallback instrutores falhou; tentando /api/usuarios como último recurso", e);
             try {
-              const res2 = await apiGet("/api/usuarios");
+              // ✅ idem: sem "/api" aqui
+              const res2 = await apiGet("/usuarios");
               const arr2 = asArray(res2);
               const sorted2 = arr2
                 .filter(Boolean)
