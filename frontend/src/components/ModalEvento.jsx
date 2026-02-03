@@ -432,6 +432,9 @@ export default function ModalEvento({
   const [usuarios, setUsuarios] = useState([]);
   const [usuariosLoading, setUsuariosLoading] = useState(false);
 
+  // ✅ lista “curada” (instrutor/admin) — usada para resolver nomes no card de turmas
+  const [instrutoresDisponiveis, setInstrutoresDisponiveis] = useState([]);
+
   // Turmas
   const [turmas, setTurmas] = useState([]);
   const [editandoTurmaIndex, setEditandoTurmaIndex] = useState(null);
@@ -552,6 +555,34 @@ function folderEndpointPath(eventoId) {
       mounted = false;
     };
   }, []);
+
+    // ✅ Carrega lista “curada” de instrutores/admin (para resolver nomes no card sem depender do /usuarios)
+    useEffect(() => {
+      let alive = true;
+  
+      (async () => {
+        try {
+          const res = await apiGet("/eventos/instrutores/disponiveis");
+          const arr = asArray(res)
+            .filter(Boolean)
+            .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
+  
+          if (!alive) return;
+          setInstrutoresDisponiveis(arr);
+  
+          L.info("Instrutores disponíveis carregados", { total: arr.length });
+        } catch (e) {
+          // silencioso: não quebra UI
+          L.warn("Falha ao carregar instrutores disponíveis", e);
+          if (!alive) return;
+          setInstrutoresDisponiveis([]);
+        }
+      })();
+  
+      return () => {
+        alive = false;
+      };
+    }, []);
 
   /* ========= Reidratar ao abrir/trocar id ========= */
   useEffect(() => {
@@ -900,12 +931,21 @@ if (det?.folder_url || det?.folder) {
   // ✅ Mapa rápido (id -> nome) para evitar .find() toda hora e eliminar “15” na UI
   const usuariosById = useMemo(() => {
     const m = new Map();
+
+    // 1) instrutores (preferência: é a lista mais relevante pro card)
+    for (const u of instrutoresDisponiveis || []) {
+      const idNum = Number(u?.id);
+      if (Number.isFinite(idNum) && !m.has(idNum)) m.set(idNum, String(u?.nome || "").trim());
+    }
+
+    // 2) usuários gerais (completa o que faltar)
     for (const u of usuarios || []) {
       const idNum = Number(u?.id);
-      if (Number.isFinite(idNum)) m.set(idNum, String(u?.nome || "").trim());
+      if (Number.isFinite(idNum) && !m.has(idNum)) m.set(idNum, String(u?.nome || "").trim());
     }
+
     return m;
-  }, [usuarios]);
+  }, [instrutoresDisponiveis, usuarios]);
 
   // ✅ Resolve nome por id com fallback inteligente
   const nomePorId = useCallback(
@@ -924,7 +964,8 @@ if (det?.folder_url || det?.folder) {
       if (nomeLocal) return nomeLocal;
 
       // 3) fallback final
-      return usuariosLoading ? "Carregando…" : "Usuário não encontrado";
+      const carregando = usuariosLoading || (Array.isArray(instrutoresDisponiveis) && instrutoresDisponiveis.length === 0);
+      return carregando ? "Carregando…" : "Usuário não encontrado";
     },
     [usuariosById, usuariosLoading]
   );
