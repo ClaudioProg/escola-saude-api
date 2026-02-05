@@ -51,10 +51,64 @@ import { apiGet, apiPost, apiDelete } from "../services/api";
 import { gerarLinkGoogleAgenda } from "../utils/gerarLinkGoogleAgenda";
 import { resolveAssetUrl, openAsset } from "../utils/assets";
 
+/* =============================
+   ✅ Poster blob (cache + fetch com auth)
+   - Se NÃO existir folder_url (ou estiver vazio),
+     tenta GET /api/eventos/:id/folder com Authorization
+   - Cacheia objectURL pra não refazer download
+============================= */
+const posterBlobCache = new Map(); // key: eventoId -> objectURL
+const posterBlobPending = new Map(); // key: eventoId -> Promise<string>
+
+function getAuthToken() {
+  try {
+    return localStorage.getItem("token") || localStorage.getItem("authToken") || "";
+  } catch {
+    return "";
+  }
+}
+
+async function authFetch(url, opts = {}) {
+  const token = getAuthToken();
+  const headers = new Headers(opts.headers || {});
+  if (token && !headers.has("Authorization")) headers.set("Authorization", `Bearer ${token}`);
+  return fetch(url, { ...opts, headers, credentials: "include" });
+}
+
+async function getPosterBlobUrl(eventoId) {
+  const id = Number(eventoId);
+  if (!Number.isFinite(id) || id <= 0) return "";
+
+  if (posterBlobCache.has(id)) return posterBlobCache.get(id);
+  if (posterBlobPending.has(id)) return posterBlobPending.get(id);
+
+  const p = (async () => {
+    const apiPath = `/api/eventos/${id}/folder`;
+    const resp = await authFetch(apiPath, { method: "GET", cache: "no-store" });
+
+    if (resp.status === 404) return "";
+    if (resp.status === 401 || resp.status === 403) return "";
+    if (!resp.ok) return "";
+
+    const blob = await resp.blob();
+    if (!blob || !blob.size) return "";
+
+    const objectUrl = URL.createObjectURL(blob);
+    posterBlobCache.set(id, objectUrl);
+    return objectUrl;
+  })()
+    .catch(() => "")
+    .finally(() => posterBlobPending.delete(id));
+
+  posterBlobPending.set(id, p);
+  return p;
+}
+
 /* ───────────────── Helpers globais ───────────────── */
 function isValidDate(d) {
   return d instanceof Date && !Number.isNaN(d.getTime());
 }
+
 
 /* ───────────────── Status ───────────────── */
 function statusText(dataInicioISO, dataFimISO, horarioInicio, horarioFim) {
@@ -321,39 +375,78 @@ function Tip({ num, titulo, children }) {
 /* ------------------------------------------------------------------ */
 /*  Componentes de mídia/ações do card                                */
 /* ------------------------------------------------------------------ */
-function ThumbEvento({ titulo, src }) {
-  const href = useMemo(() => resolveAssetUrl(src), [src]);
-  const [ok, setOk] = useState(true);
+function ThumbEvento({ ev, titulo, raw }) {
+  const [src, setSrc] = useState("");
+  const [failed, setFailed] = useState(false);
+
+  const legacyHref = useMemo(() => {
+    const v = (raw ?? "").toString().trim();
+    return v ? resolveAssetUrl(v) : "";
+  }, [raw]);
 
   useEffect(() => {
-    setOk(true);
-  }, [href]);
+    let alive = true;
 
-  return (
-    <div className="w-[120px] sm:w-[140px] md:w-[160px] shrink-0">
-      {href && ok ? (
-        <div className="aspect-[3/4] rounded-2xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-200/70 dark:border-zinc-800 overflow-hidden flex items-center justify-center">
-          <img
-            src={href}
-            alt={`Folder do evento: ${titulo}`}
-            loading="lazy"
-            decoding="async"
-            className="w-full h-full object-contain"
-            // ✅ em geral isso não é necessário, mas mantemos compatível
-            onError={() => setOk(false)}
-          />
-        </div>
-      ) : (
+    // 1) URL legada (se existir)
+    if (legacyHref) {
+      setSrc(legacyHref);
+      setFailed(false);
+      return () => {
+        alive = false;
+      };
+    }
+
+    // 2) blob via authFetch
+    (async () => {
+      const blobUrl = await getPosterBlobUrl(ev?.id);
+      if (!alive) return;
+      if (blobUrl) {
+        setSrc(blobUrl);
+        setFailed(false);
+      } else {
+        setSrc("");
+        setFailed(true);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [legacyHref, ev?.id]);
+
+  if (!src || failed) {
+    return (
+      <div className="w-[120px] sm:w-[140px] md:w-[160px] shrink-0">
         <div className="aspect-[3/4] rounded-2xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-200/70 dark:border-zinc-800 flex items-center justify-center text-zinc-500 dark:text-zinc-400">
           <div className="flex items-center gap-2 text-xs">
             <ImageIcon className="w-4 h-4" />
             <span>Sem folder</span>
           </div>
         </div>
-      )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-[120px] sm:w-[140px] md:w-[160px] shrink-0">
+      <div className="aspect-[3/4] rounded-2xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-200/70 dark:border-zinc-800 overflow-hidden flex items-center justify-center">
+        <img
+          src={src}
+          alt={`Folder do evento: ${titulo}`}
+          loading="lazy"
+          decoding="async"
+          className="w-full h-full object-contain"
+          referrerPolicy="no-referrer"
+          onError={() => {
+            setFailed(true);
+            setSrc("");
+          }}
+        />
+      </div>
     </div>
   );
 }
+
 
 function BotaoProgramacao({ programacaoPdfUrl }) {
   const pdfHref = useMemo(() => resolveAssetUrl(programacaoPdfUrl), [programacaoPdfUrl]);
@@ -413,6 +506,13 @@ export default function Eventos() {
       mountedRef.current = false;
       abortEventosRef.current?.abort?.("unmount");
       abortInscricaoRef.current?.abort?.("unmount");
+  
+      // ✅ evita leak de memória de objectURLs
+      for (const [, url] of posterBlobCache.entries()) {
+        try { URL.revokeObjectURL(url); } catch {}
+      }
+      posterBlobCache.clear();
+      posterBlobPending.clear();
     };
   }, []);
 
@@ -877,10 +977,10 @@ evento.programacao_url ||
 null;
 
 // ✅ folder: prioriza blob_url quando backend indicar blob; fallback monta a rota
-const folderSrc =
-String(evento?.folder_kind || "").toLowerCase() === "blob"
-  ? (evento.folder_blob_url || evento.folderBlobUrl || `/api/eventos/${evento.id}/folder`)
-  : (evento.folder_url || evento.folder || null);
+const folderRaw =
+  String(evento?.folder_kind || "").toLowerCase() === "blob"
+    ? (evento.folder_blob_url || evento.folderBlobUrl || "")
+    : (evento.folder_url || evento.folder || "");
 
 return (
 <motion.article
@@ -897,7 +997,7 @@ return (
   <div className="p-5">
   {/* ✅ topo: thumb + conteúdo */}
   <div className="flex flex-col sm:flex-row gap-4">
-    <ThumbEvento titulo={evento.titulo} src={folderSrc} />
+  <ThumbEvento ev={evento} titulo={evento.titulo} raw={folderRaw} />
 
     <div className="min-w-0 flex-1">
       {/* Título + status */}
