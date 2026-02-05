@@ -387,7 +387,7 @@ export default function HomeEscola() {
     } catch (err) {
       console.error("❌ Erro ao carregar resumo:", err);
       setResumo(null);
-      toast.error("Não foi possível carregar seu resumo agora.");
+      toast.error("Faça LOGIN na plataforma");
     } finally {
       setLoadingResumo(false);
     }

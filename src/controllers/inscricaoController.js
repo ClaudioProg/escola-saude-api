@@ -374,28 +374,28 @@ async function inscreverEmTurma(req, res) {
     }
 
     // 7) Inserir inscrição (pode existir trigger)
-    let insert;
-    try {
-      insert = await q(
-        `INSERT INTO inscricao (usuario_id, turma_id, data_inscricao) 
-         VALUES ($1, $2, NOW()) 
-         RETURNING id`,
-        [usuarioId, turmaId]
-      );
-    } catch (e) {
-      // trigger de conflito
-      if (e?.code === "P0001") {
-        await q("ROLLBACK");
-        return res.status(409).json({ erro: e?.message || "Inscrição bloqueada por conflito de horário." });
-      }
-      // unique (usuario_id,turma_id)
-      if (e?.code === "23505") {
-        await q("ROLLBACK");
-        return res.status(409).json({ erro: "Usuário já inscrito nesta turma." });
-      }
-      log(rid, "error", "Erro no INSERT (inscricao)", e);
-      throw e;
-    }
+let insert;
+try {
+  insert = await q(
+    `INSERT INTO inscricoes (usuario_id, turma_id, data_inscricao) 
+     VALUES ($1, $2, NOW()) 
+     RETURNING id`,
+    [usuarioId, turmaId]
+  );
+} catch (e) {
+  // trigger de conflito
+  if (e?.code === "P0001") {
+    await q("ROLLBACK");
+    return res.status(409).json({ erro: e?.message || "Inscrição bloqueada por conflito de horário." });
+  }
+  // unique (usuario_id,turma_id)
+  if (e?.code === "23505") {
+    await q("ROLLBACK");
+    return res.status(409).json({ erro: "Usuário já inscrito nesta turma." });
+  }
+  log(rid, "error", "Erro no INSERT (inscricoes)", e);
+  throw e;
+}
 
     if (!insert?.rowCount) {
       await q("ROLLBACK");
