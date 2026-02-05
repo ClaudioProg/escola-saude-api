@@ -321,39 +321,39 @@ function Tip({ num, titulo, children }) {
 /* ------------------------------------------------------------------ */
 /*  Componentes de mídia/ações do card                                */
 /* ------------------------------------------------------------------ */
-function BannerEvento({ titulo, src }) {
+function ThumbEvento({ titulo, src }) {
   const href = useMemo(() => resolveAssetUrl(src), [src]);
   const [ok, setOk] = useState(true);
 
   useEffect(() => {
-    setOk(true); // ✅ se mudar de evento/banner, tenta renderizar de novo
+    setOk(true);
   }, [href]);
 
   return (
-    <div className="relative w-full h-44 sm:h-52 bg-gradient-to-r from-zinc-200 via-zinc-100 to-zinc-200 dark:from-zinc-800 dark:via-zinc-900 dark:to-zinc-800 overflow-hidden">
+    <div className="w-[120px] sm:w-[140px] md:w-[160px] shrink-0">
       {href && ok ? (
-        <img
-          src={href}
-          alt={`Banner do evento: ${titulo}`}
-          loading="lazy"
-          decoding="async"
-          className="w-full h-full object-cover"
-          referrerPolicy="no-referrer"
-          onError={() => setOk(false)}
-        />
+        <div className="aspect-[3/4] rounded-2xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-200/70 dark:border-zinc-800 overflow-hidden flex items-center justify-center">
+          <img
+            src={href}
+            alt={`Folder do evento: ${titulo}`}
+            loading="lazy"
+            decoding="async"
+            className="w-full h-full object-contain"
+            // ✅ em geral isso não é necessário, mas mantemos compatível
+            onError={() => setOk(false)}
+          />
+        </div>
       ) : (
-        <div className="absolute inset-0 grid place-items-center text-zinc-500 dark:text-zinc-400">
-          <div className="flex items-center gap-2 text-sm">
+        <div className="aspect-[3/4] rounded-2xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-200/70 dark:border-zinc-800 flex items-center justify-center text-zinc-500 dark:text-zinc-400">
+          <div className="flex items-center gap-2 text-xs">
             <ImageIcon className="w-4 h-4" />
-            <span>Sem imagem do evento</span>
+            <span>Sem folder</span>
           </div>
         </div>
       )}
-      <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-black/35 to-transparent pointer-events-none" />
     </div>
   );
 }
-
 
 function BotaoProgramacao({ programacaoPdfUrl }) {
   const pdfHref = useMemo(() => resolveAssetUrl(programacaoPdfUrl), [programacaoPdfUrl]);
@@ -869,142 +869,152 @@ export default function Eventos() {
               const statusEvt = statusBackendOuFallback(evento, turmasPorEvento[evento.id]);
               const ehInstrutor = Boolean(evento.ja_instrutor);
 
-              // schema atual (banco): folder_url e programacao_pdf_url
-              const programacaoPdfUrl =
-                evento.programacao_pdf_url ||
-                evento.programacao_pdf ||
-                evento.programacao_url ||
-                null;
-              const folderUrl = evento.folder_url || evento.folder || null;
+              // schema atual (banco): folder_url + folder_blob_url (quando blob) + programacao_pdf_url
+const programacaoPdfUrl =
+evento.programacao_pdf_url ||
+evento.programacao_pdf ||
+evento.programacao_url ||
+null;
 
-              return (
-                <motion.article
-                  key={evento.id ?? idx}
-                  initial={reduceMotion ? false : { opacity: 0, y: 14 }}
-                  animate={reduceMotion ? {} : { opacity: 1, y: 0 }}
-                  transition={{ duration: 0.28 }}
-                  className="group rounded-2xl overflow-hidden border border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-neutral-900 shadow-md hover:shadow-xl transition-shadow"
-                  aria-labelledby={`evt-${evento.id}-titulo`}
-                >
-                  {/* Banner */}
-                  <BannerEvento titulo={evento.titulo} src={folderUrl} />
+// ✅ folder: prioriza blob_url quando backend indicar blob; fallback monta a rota
+const folderSrc =
+String(evento?.folder_kind || "").toLowerCase() === "blob"
+  ? (evento.folder_blob_url || evento.folderBlobUrl || `/api/eventos/${evento.id}/folder`)
+  : (evento.folder_url || evento.folder || null);
 
-                  {/* faixa destaque */}
-                  <div className="h-1 w-full bg-gradient-to-r from-rose-500 via-fuchsia-500 to-indigo-500" />
+return (
+<motion.article
+  key={evento.id ?? idx}
+  initial={reduceMotion ? false : { opacity: 0, y: 14 }}
+  animate={reduceMotion ? {} : { opacity: 1, y: 0 }}
+  transition={{ duration: 0.28 }}
+  className="group rounded-2xl overflow-hidden border border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-neutral-900 shadow-md hover:shadow-xl transition-shadow"
+  aria-labelledby={`evt-${evento.id}-titulo`}
+>
+  {/* faixa destaque (mantida) */}
+  <div className="h-1 w-full bg-gradient-to-r from-rose-500 via-fuchsia-500 to-indigo-500" />
 
-                  <div className="p-5">
-                    {/* Título + status */}
-                    <div className="flex items-start justify-between gap-3">
-                      <h3
-                        id={`evt-${evento.id}-titulo`}
-                        className="text-xl font-extrabold text-zinc-900 dark:text-white"
-                      >
-                        {evento.titulo}
-                      </h3>
+  <div className="p-5">
+  {/* ✅ topo: thumb + conteúdo */}
+  <div className="flex flex-col sm:flex-row gap-4">
+    <ThumbEvento titulo={evento.titulo} src={folderSrc} />
 
-                      <span
-                        className={`text-xs px-2 py-1 rounded-full ${
-                          statusEvt === "andamento"
-                            ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200 border border-amber-200 dark:border-amber-800"
-                            : "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800"
-                        }`}
-                        role="status"
-                      >
-                        {statusEvt === "andamento" ? "Em andamento" : "Programado"}
-                      </span>
-                    </div>
+    <div className="min-w-0 flex-1">
+      {/* Título + status */}
+      <div className="flex items-start justify-between gap-3">
+        <h3
+          id={`evt-${evento.id}-titulo`}
+          className="text-xl font-extrabold text-zinc-900 dark:text-white"
+        >
+          {evento.titulo}
+        </h3>
 
-                    {evento.descricao && (
-                      <p className="mt-1.5 text-[15px] text-zinc-700 dark:text-zinc-300">
-                        {evento.descricao}
-                      </p>
-                    )}
+        <span
+          className={`text-xs px-2 py-1 rounded-full ${
+            statusEvt === "andamento"
+              ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200 border border-amber-200 dark:border-amber-800"
+              : "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800"
+          }`}
+          role="status"
+        >
+          {statusEvt === "andamento" ? "Em andamento" : "Programado"}
+        </span>
+      </div>
 
-                    {/* Local */}
-                    <div className="mt-3 flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
-                      <MapPin className="w-4 h-4 text-rose-600 dark:text-rose-300" aria-hidden="true" />
-                      <span>{localEvento || "Local a definir"}</span>
-                    </div>
+      {evento.descricao && (
+        <p className="mt-1.5 text-[15px] text-zinc-700 dark:text-zinc-300">
+          {evento.descricao}
+        </p>
+      )}
 
-                    {/* Datas gerais */}
-                    <div className="mt-1 text-sm text-gray-500 dark:text-gray-400 flex items-center gap-2">
-                      <CalendarDays className="w-4 h-4" aria-hidden="true" />
-                      <span>
-                        {evento.data_inicio_geral && evento.data_fim_geral
-                          ? `${formatarDataCurtaSeguro(evento.data_inicio_geral)} até ${formatarDataCurtaSeguro(
-                              evento.data_fim_geral
-                            )}`
-                          : "Datas a definir"}
-                      </span>
-                    </div>
+      {/* Local */}
+      <div className="mt-3 flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+        <MapPin className="w-4 h-4 text-rose-600 dark:text-rose-300" aria-hidden="true" />
+        <span>{localEvento || "Local a definir"}</span>
+      </div>
 
-                    {ehInstrutor && (
-                      <div className="mt-2 text-xs font-extrabold inline-flex items-center gap-2 px-2 py-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 border border-amber-200 dark:border-amber-800">
-                        Você é instrutor deste evento
-                      </div>
-                    )}
+      {/* Datas gerais */}
+      <div className="mt-1 text-sm text-gray-500 dark:text-gray-400 flex items-center gap-2">
+        <CalendarDays className="w-4 h-4" aria-hidden="true" />
+        <span>
+          {evento.data_inicio_geral && evento.data_fim_geral
+            ? `${formatarDataCurtaSeguro(evento.data_inicio_geral)} até ${formatarDataCurtaSeguro(
+                evento.data_fim_geral
+              )}`
+            : "Datas a definir"}
+        </span>
+      </div>
 
-                    {/* Ações principais (mesma linha) */}
-                    <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <BotaoProgramacao programacaoPdfUrl={programacaoPdfUrl} />
-                      </div>
+      {ehInstrutor && (
+        <div className="mt-2 text-xs font-extrabold inline-flex items-center gap-2 px-2 py-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 border border-amber-200 dark:border-amber-800">
+          Você é instrutor deste evento
+        </div>
+      )}
 
-                      <BotaoPrimario
-                        onClick={() => carregarTurmas(evento.id)}
-                        disabled={carregandoTurmas === evento.id}
-                        aria-expanded={!!turmasVisiveis[evento.id]}
-                        aria-controls={`turmas-${evento.id}`}
-                        className="sm:min-w-[160px]"
-                      >
-                        {carregandoTurmas === evento.id
-                          ? "Carregando..."
-                          : turmasVisiveis[evento.id]
-                          ? "Ocultar turmas"
-                          : "Ver turmas"}
-                      </BotaoPrimario>
-                    </div>
+      {/* Ações principais */}
+      <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <BotaoProgramacao programacaoPdfUrl={programacaoPdfUrl} />
+        </div>
 
-                    {/* Lista de turmas */}
-                    {turmasVisiveis[evento.id] && turmasPorEvento[evento.id] && (
-                      <div id={`turmas-${evento.id}`} className="mt-4">
-                        <ListaTurmasEvento
-                          turmas={turmasPorEvento[evento.id]}
-                          eventoId={evento.id}
-                          eventoTipo={evento.tipo}
-                          hoje={new Date()}
-                          inscricaoConfirmadas={inscricaoTurmaIds}
-                          inscrever={(tid) => inscrever(tid, evento.id)}
-                          inscrevendo={inscrevendo}
-                          jaInscritoNoEvento={(() => {
-                            const ids = new Set(inscricaoTurmaIds);
-                            return (turmasPorEvento[evento.id] || []).some((t) => ids.has(Number(t.id)));
-                          })()}
-                          jaInstrutorDoEvento={!!evento.ja_instrutor}
-                          carregarInscritos={() => {}}
-                          carregarAvaliacao={() => {}}
-                          gerarRelatorioPDF={() => {}}
-                          mostrarStatusTurma={false}
-                          exibirRealizadosTotal
-                          turmasEmConflito={[]}
-                        />
-                      </div>
-                    )}
+        <BotaoPrimario
+          onClick={() => carregarTurmas(evento.id)}
+          disabled={carregandoTurmas === evento.id}
+          aria-expanded={!!turmasVisiveis[evento.id]}
+          aria-controls={`turmas-${evento.id}`}
+          className="sm:min-w-[160px]"
+        >
+          {carregandoTurmas === evento.id
+            ? "Carregando..."
+            : turmasVisiveis[evento.id]
+            ? "Ocultar turmas"
+            : "Ver turmas"}
+        </BotaoPrimario>
+      </div>
+    </div>
+  </div>
 
-                    {/* AÇÕES RÁPIDAS APÓS INSCRIÇÃO */}
-                    {turmasVisiveis[evento.id] && (
-                      <InscricaoAcaoRapidas
-                        evento={evento}
-                        turmas={turmasPorEvento[evento.id] || []}
-                        inscricao={inscricao}
-                        cancelarInscricaoByTurmaId={cancelarInscricaoByTurmaId}
-                        buildAgendaHref={buildAgendaHref}
-                        cancelandoId={cancelandoId}
-                      />
-                    )}
-                  </div>
-                </motion.article>
-              );
+  {/* ✅ FULL WIDTH: fora do flex acima */}
+  {turmasVisiveis[evento.id] && (
+    <div className="mt-5 w-full">
+      {turmasPorEvento[evento.id] && (
+        <div id={`turmas-${evento.id}`} className="w-full">
+          <ListaTurmasEvento
+            turmas={turmasPorEvento[evento.id]}
+            eventoId={evento.id}
+            eventoTipo={evento.tipo}
+            hoje={new Date()}
+            inscricaoConfirmadas={inscricaoTurmaIds}
+            inscrever={(tid) => inscrever(tid, evento.id)}
+            inscrevendo={inscrevendo}
+            jaInscritoNoEvento={(() => {
+              const ids = new Set(inscricaoTurmaIds);
+              return (turmasPorEvento[evento.id] || []).some((t) => ids.has(Number(t.id)));
+            })()}
+            jaInstrutorDoEvento={!!evento.ja_instrutor}
+            carregarInscritos={() => {}}
+            carregarAvaliacao={() => {}}
+            gerarRelatorioPDF={() => {}}
+            mostrarStatusTurma={false}
+            exibirRealizadosTotal
+            turmasEmConflito={[]}
+          />
+        </div>
+      )}
+
+      <InscricaoAcaoRapidas
+        evento={evento}
+        turmas={turmasPorEvento[evento.id] || []}
+        inscricao={inscricao}
+        cancelarInscricaoByTurmaId={cancelarInscricaoByTurmaId}
+        buildAgendaHref={buildAgendaHref}
+        cancelandoId={cancelandoId}
+      />
+    </div>
+  )}
+</div>
+</motion.article>
+);
             })}
           </div>
         )}
