@@ -122,6 +122,37 @@ function normalizarTituloPtBr(input = "") {
 const toIntArray = (v) =>
   Array.isArray(v) ? v.map((n) => Number(n)).filter(Number.isFinite) : [];
 
+// ✅ Resolve cargos_permitidos -> lista de IDs (int[])
+// Aceita: [1,2], [{id:1}], ["Enfermeiro"], ["1"], etc.
+async function resolveCargoIds(client, cargos_permitidos) {
+  // 1) normaliza para array
+  const arr = Array.isArray(cargos_permitidos) ? cargos_permitidos : [];
+
+  // 2) tenta extrair IDs diretos
+  const idsDiretos = arr
+    .map((x) => (typeof x === "object" && x !== null ? x.id : x))
+    .map((n) => Number(n))
+    .filter(Number.isFinite);
+
+  if (idsDiretos.length) return [...new Set(idsDiretos)];
+
+  // 3) se não tem ids, tenta resolver por nome (string)
+  const nomes = arr
+    .map((x) => (typeof x === "string" ? x.trim() : ""))
+    .filter(Boolean);
+
+  if (!nomes.length) return [];
+
+  // 4) busca ids por nome (match case-insensitive)
+  //    Ajuste o campo conforme sua tabela cargos (aqui usei "nome")
+  const { rows } = await client.query(
+    `SELECT id FROM cargos WHERE lower(nome) = ANY($1::text[])`,
+    [nomes.map((s) => s.toLocaleLowerCase("pt-BR"))]
+  );
+
+  return [...new Set((rows || []).map((r) => Number(r.id)).filter(Number.isFinite))];
+}
+
 // ✅ multipart-safe: campos podem vir como string JSON no req.body
 function parseMaybeJson(v, fallback) {
   if (v == null) return fallback;
@@ -676,7 +707,7 @@ async function listarEventosParaMim(req, res) {
     // ✅ multipart-safe
     const body = normalizeBodyMultipart(req.body || {});
 
-    logInfo(rid, "atualizarEvento tipos", {
+    logInfo(rid, "criarEvento tipos", {
       contentType: req.headers["content-type"],
       turmasType: typeof body.turmas,
       turmasIsArray: Array.isArray(body.turmas),
@@ -891,8 +922,26 @@ async function listarEventosParaMim(req, res) {
     try {
       await client.query("ROLLBACK");
     } catch {}
-    return res.status(500).json({ erro: "Erro ao criar evento" });
+
+    const isDev = process.env.NODE_ENV !== "production";
+
+    return res.status(500).json({
+      erro: "Erro ao criar evento",
+      rid,
+      ...(isDev
+        ? {
+            detalhe: err?.message,
+            pg: {
+              code: err?.code,
+              constraint: err?.constraint,
+              detail: err?.detail,
+              where: err?.where,
+            },
+          }
+        : {}),
+    });
   } finally {
+
     client.release();
   }
 }
