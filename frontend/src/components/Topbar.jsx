@@ -11,9 +11,13 @@ import {
   ListChecks,
   FileText,
   LayoutDashboard,
+  Sun,
+  Moon,
+  Monitor,
 } from "lucide-react";
 
 import { apiGet } from "../services/api";
+import useEscolaTheme from "../hooks/useEscolaTheme";
 
 /* ────────────────────────────────────────────────────────────── */
 /* Helpers robustos de sessão / perfil                             */
@@ -156,6 +160,38 @@ function ChipLink({ to, children, title }) {
     >
       {children}
     </Link>
+  );
+}
+
+function nextTheme(t) {
+  if (t === "light") return "dark";
+  if (t === "dark") return "system";
+  return "light";
+}
+
+function ThemeCycleButton() {
+  const { theme, setTheme, isDark } = useEscolaTheme();
+
+  const label = theme === "light" ? "Claro" : theme === "dark" ? "Escuro" : "Sistema";
+  const Icon = theme === "light" ? Sun : theme === "dark" ? Moon : Monitor;
+
+  return (
+    <button
+      type="button"
+      onClick={() => setTheme(nextTheme(theme))}
+      className={[
+        "inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-extrabold border transition",
+        "focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60",
+        isDark
+          ? "border-white/10 bg-zinc-900/35 hover:bg-white/10 text-zinc-100"
+          : "border-slate-200 bg-white hover:bg-slate-100 text-slate-700",
+      ].join(" ")}
+      aria-label={`Tema: ${label}. Clique para alternar.`}
+      title={`Tema: ${label} (clique para alternar)`}
+    >
+      <Icon className="w-4 h-4 opacity-90" aria-hidden="true" />
+      <span className="hidden sm:inline">{label}</span>
+    </button>
   );
 }
 
@@ -402,6 +438,9 @@ export default function Topbar({
         {/* DIREITA */}
         <div className="flex items-center gap-2">
           {quickActions}
+
+          {/* Tema (ciclo) — Claro → Escuro → Sistema */}
+          <ThemeCycleButton />
 
           {/* Notificações */}
           <button

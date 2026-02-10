@@ -7,6 +7,8 @@ const { criarNotificacao } = require("./notificacaoController");
 
 const IS_DEV = process.env.NODE_ENV !== "production";
 
+const { normalizeRegistro } = require("../utils/registro");
+
 /* ────────────────────────────────────────────────────────────────
    Logger util (RID) — sem barulho em produção
    ──────────────────────────────────────────────────────────────── */
@@ -282,17 +284,80 @@ async function inscreverEmTurma(req, res) {
           (tipo::text) AS tipo,
           CASE WHEN tipo::text ILIKE 'congresso' THEN TRUE ELSE FALSE END AS is_congresso,
           COALESCE(titulo, 'Evento') AS titulo,
-          COALESCE(local,  'A definir') AS local
+          COALESCE(local,  'A definir') AS local,
+
+          restrito,
+          restrito_modo,
+          COALESCE(cargos_permitidos_ids, '{}')   AS cargos_permitidos_ids,
+          COALESCE(unidades_permitidas_ids, '{}') AS unidades_permitidas_ids
        FROM eventos
        WHERE id = $1`,
       [turma.evento_id]
     );
+
     if (!evRows.length) {
       await q("ROLLBACK");
       return res.status(404).json({ erro: "Evento da turma não encontrado." });
     }
     const evento = evRows[0];
     const isCongresso = !!evento.is_congresso;
+
+        // ✅ Permissão (mesma regra de visibilidade/inscrição)
+        if (evento.restrito) {
+          const { rows: uRows } = await q(
+            `SELECT registro, cargo_id, unidade_id
+               FROM usuarios
+              WHERE id = $1`,
+            [usuarioId]
+          );
+          const u = uRows?.[0] || {};
+          const regNorm = normalizeRegistro(u.registro || "");
+          const cargoId = Number(u.cargo_id) || null;
+          const unidadeId = Number(u.unidade_id) || null;
+    
+          const cargosPermitidos = Array.isArray(evento.cargos_permitidos_ids)
+            ? evento.cargos_permitidos_ids.map(Number).filter(Number.isFinite)
+            : [];
+    
+          const unidadesPermitidas = Array.isArray(evento.unidades_permitidas_ids)
+            ? evento.unidades_permitidas_ids.map(Number).filter(Number.isFinite)
+            : [];
+    
+          // regras por cargo/unidade
+          const okCargo = Number.isFinite(cargoId) && cargosPermitidos.includes(cargoId);
+const okUnidade = Number.isFinite(unidadeId) && unidadesPermitidas.includes(unidadeId);
+    
+          // regra por lista de registros (se usada)
+          let okRegistro = false;
+          if (String(evento.restrito_modo || "") === "lista_registros" && regNorm) {
+            const hit = await q(
+              `SELECT 1 FROM evento_registros WHERE evento_id=$1 AND registro_norm=$2 LIMIT 1`,
+              [evento.id, regNorm]
+            );
+            okRegistro = hit.rowCount > 0;
+          }
+    
+          if (!okCargo && !okUnidade && !okRegistro) {
+            await q("ROLLBACK");
+            log(rid, "warn", "inscreverEmTurma:403 restrito", {
+              usuarioId,
+              turmaId,
+              eventoId: evento.id,
+              cargoId,
+              unidadeId,
+              regNorm,
+              cargosPermitidos,
+              unidadesPermitidas,
+              restrito_modo: evento.restrito_modo,
+            });
+            return res.status(403).json({
+              erro: "Sem permissão (evento restrito).",
+              motivo: "EVENTO_RESTRITO",
+              rid,
+            });
+          }
+        }
+    
 
     // 3) Bloqueio: instrutor do evento
     const ehInstrutor = await q(

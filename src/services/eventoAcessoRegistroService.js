@@ -15,6 +15,7 @@ const MOTIVOS = {
   USUARIO_NAO_ENCONTRADO: "USUARIO_NAO_ENCONTRADO",
   SEM_REGISTRO: "SEM_REGISTRO",
   REGISTRO_NAO_AUTORIZADO: "REGISTRO_NAO_AUTORIZADO",
+  EVENTO_RESTRITO: "EVENTO_RESTRITO",              // ✅ novo
   MODO_RESTRICAO_INVALIDO: "MODO_RESTRICAO_INVALIDO",
 };
 
@@ -28,7 +29,9 @@ async function carregarEvento(id, t = db) {
   const { rows } = await t.query(
     `SELECT id, titulo,
             COALESCE(restrito, false) AS restrito,
-            restrito_modo
+            restrito_modo,
+            COALESCE(cargos_permitidos_ids, '{}')   AS cargos_permitidos_ids,
+            COALESCE(unidades_permitidas_ids, '{}') AS unidades_permitidas_ids
        FROM eventos
       WHERE id = $1
       LIMIT 1`,
@@ -43,7 +46,7 @@ async function carregarUsuario(id, t = db) {
   if (!Number.isFinite(userId) || userId <= 0) return null;
 
   const { rows } = await t.query(
-    `SELECT id, nome, registro
+    `SELECT id, nome, registro, cargo_id, unidade_id
        FROM usuarios
       WHERE id = $1
       LIMIT 1`,
@@ -64,15 +67,27 @@ async function carregarUsuario(id, t = db) {
 async function checarAcessoPorRegistro(usuario, evento, t = db) {
   if (!usuario || !evento) return { ok: false, motivo: MOTIVOS.DADOS_INVALIDOS };
 
-  // sem restrição → todos autenticados veem
+  // sem restrição → ok
   if (!evento.restrito) return { ok: true };
 
   const regNorm = normRegistro(usuario.registro);
+  const cargoId = Number(usuario.cargo_id) || null;
+  const unidadeId = Number(usuario.unidade_id) || null;
 
+  const cargosPermitidos = Array.isArray(evento.cargos_permitidos_ids)
+    ? evento.cargos_permitidos_ids.map(Number).filter(Number.isFinite)
+    : [];
+
+  const unidadesPermitidas = Array.isArray(evento.unidades_permitidas_ids)
+    ? evento.unidades_permitidas_ids.map(Number).filter(Number.isFinite)
+    : [];
+
+  // 1) todos_servidores → precisa registro
   if (evento.restrito_modo === MODO_TODOS) {
     return regNorm ? { ok: true } : { ok: false, motivo: MOTIVOS.SEM_REGISTRO };
   }
 
+  // 2) lista_registros → precisa registro e estar em evento_registros
   if (evento.restrito_modo === MODO_LISTA) {
     if (!regNorm) return { ok: false, motivo: MOTIVOS.SEM_REGISTRO };
 
@@ -90,7 +105,16 @@ async function checarAcessoPorRegistro(usuario, evento, t = db) {
       : { ok: false, motivo: MOTIVOS.REGISTRO_NAO_AUTORIZADO };
   }
 
-  return { ok: false, motivo: MOTIVOS.MODO_RESTRICAO_INVALIDO };
+  // 3) demais modos (inclui null/undefined) → cargo/unidade
+  const okCargo = cargoId && cargosPermitidos.includes(cargoId);
+  const okUnidade = unidadeId && unidadesPermitidas.includes(unidadeId);
+
+  if (okCargo || okUnidade) return { ok: true };
+
+  // se chegou aqui e não bateu nada:
+  // - evento está restrito, mas o usuário não tem vínculo
+  // - ou o evento foi configurado com modo inválido e sem listas cargo/unidade
+  return { ok: false, motivo: MOTIVOS.EVENTO_RESTRITO };
 }
 
 /**

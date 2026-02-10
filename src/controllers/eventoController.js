@@ -476,7 +476,7 @@ async function podeVerEvento({ client, usuarioId, eventoId, req }) {
   const usuario = uQ.rows?.[0] || {};
   const regNorm = normalizeRegistro(usuario.registro || "");
   const cargoId = Number(usuario.cargo_id) || null;
-  const unidadeId = usuario.unidade_id ?? null;
+  const unidadeId = Number(usuario.unidade_id) || null;
 
   if (evento.restrito_modo === MODO_TODOS) {
     if (regNorm) return { ok: true };
@@ -496,7 +496,8 @@ async function podeVerEvento({ client, usuarioId, eventoId, req }) {
   const unidadesIdsPermitidas = Array.isArray(evento.unidades_permitidas_ids) ? evento.unidades_permitidas_ids : [];
 
   if (cargoId && cargosIdsPermitidos.includes(cargoId)) return { ok: true };
-  if (unidadeId != null && unidadesIdsPermitidas.includes(unidadeId)) return { ok: true };
+  if (unidadeId != null && unidadesIdsPermitidas.map(Number).includes(unidadeId)) return { ok: true };
+
 
   return { ok: false, motivo: "SEM_PERMISSAO" };
 }

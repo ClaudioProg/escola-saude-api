@@ -20,14 +20,7 @@ import {
   PlusCircle,
   ChevronsLeft,
   ChevronsRight,
-  Sun,
-  Moon,
-  Monitor,
-  Check,
 } from "lucide-react";
-
-import useEscolaTheme from "../hooks/useEscolaTheme";
-import { ESCOLA_THEME_KEY } from "../theme/escolaTheme";
 
 /* =========================
    Perfis (robusto)
@@ -197,10 +190,13 @@ export default function SidebarNav({
   const navigate = useNavigate();
   const isMobile = variant === "mobile";
 
-  const { theme, setTheme, isDark } = useEscolaTheme();
+  const isDark = document.documentElement.classList.contains("dark");
 
   const [perfis, setPerfis] = useState(() => getPerfisRobusto());
-  const [q, setQ] = useState("");
+
+  // ✅ Accordion: só 1 seção aberta por vez
+  const [openSection, setOpenSection] = useState(null);
+  const isSearching = false;
 
   const [collapsedState, setCollapsedState] = useState(() => {
     try {
@@ -235,15 +231,10 @@ export default function SidebarNav({
         onCollapsedChange?.(v);
       }
 
-      if (e.key === ESCOLA_THEME_KEY) {
-        const saved = e.newValue;
-        if (saved === "light" || saved === "dark" || saved === "system") setTheme(saved);
-      }
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
-  }, [collapsedProp, onCollapsedChange, setTheme]);
-
+  }, [collapsedProp, onCollapsedChange]);
   const isUsuario =
     perfis.includes("usuario") || perfis.includes("instrutor") || perfis.includes("administrador");
   const isInstrutor = perfis.includes("instrutor") || perfis.includes("administrador");
@@ -308,18 +299,22 @@ export default function SidebarNav({
     return secs;
   }, [isUsuario, isInstrutor, isAdmin, menusUsuario, menusInstrutor, menusAdmin]);
 
-  // Busca
-  const sections = useMemo(() => {
-    const term = String(q || "").trim().toLowerCase();
-    if (!term) return sectionsRaw;
+    // ✅ Quando muda de rota, abre automaticamente a seção do item ativo
+    useEffect(() => {
+      if (collapsed || isSearching) return;
+  
+      const secs = sectionsRaw || [];
+      const found = secs.find((sec) =>
+        sec.items.some((it) => isActivePath(location.pathname, it.path))
+      );
+  
+      if (found?.title) setOpenSection(found.title);
+      else if (!openSection && secs[0]?.title) setOpenSection(secs[0].title);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [location.pathname, collapsed, isSearching, sectionsRaw]);
 
-    return sectionsRaw
-      .map((sec) => ({
-        ...sec,
-        items: sec.items.filter((it) => String(it.label).toLowerCase().includes(term)),
-      }))
-      .filter((sec) => sec.items.length > 0);
-  }, [sectionsRaw, q]);
+  // Busca
+  const sections = useMemo(() => sectionsRaw, [sectionsRaw]);
 
   // A11y (roving tabindex opcional no desktop expandido)
   const itemRefs = useRef([]);
@@ -358,7 +353,6 @@ export default function SidebarNav({
 
   // IDs p/ aria-controls
   const listId = `sidebar-list-${variant}`;
-  const searchId = `sidebar-search-${variant}`;
 
   return (
     <nav
@@ -417,73 +411,9 @@ export default function SidebarNav({
             </button>
           )}
         </div>
-
-        {/* Tema VERTICAL */}
-        <div
-          className={cx(
-            "mt-2.5 rounded-2xl border p-2",
-            isDark ? "border-white/10 bg-zinc-950/30" : "border-slate-200 bg-slate-50"
-          )}
-        >
-          <div className="flex flex-col gap-1">
-            <ThemeStackButton
-              active={theme === "light"}
-              onClick={() => setTheme("light")}
-              icon={Sun}
-              label="Claro"
-              isDark={isDark}
-              collapsed={themeCollapsed}
-            />
-            <ThemeStackButton
-              active={theme === "dark"}
-              onClick={() => setTheme("dark")}
-              icon={Moon}
-              label="Escuro"
-              isDark={isDark}
-              collapsed={themeCollapsed}
-            />
-            <ThemeStackButton
-              active={theme === "system"}
-              onClick={() => setTheme("system")}
-              icon={Monitor}
-              label="Sistema"
-              isDark={isDark}
-              collapsed={themeCollapsed}
-            />
-          </div>
         </div>
 
-        {/* Busca (esconde no colapsado desktop) */}
-        {!themeCollapsed && (
-          <div className="mt-2.5">
-            <label className="sr-only" htmlFor={searchId}>
-              Buscar no menu
-            </label>
-            <input
-              id={searchId}
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") setQ("");
-              }}
-              placeholder="Buscar…"
-              className={cx(
-                "w-full rounded-2xl border px-3 py-2 text-sm font-semibold outline-none",
-                "focus:ring-2 focus:ring-emerald-500/60",
-                isDark
-                  ? "border-white/10 bg-zinc-950/30 text-zinc-100 placeholder:text-zinc-400"
-                  : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-500"
-              )}
-            />
-            <div className={cx("mt-1 text-[11px]", isDark ? "text-zinc-400" : "text-slate-500")} aria-live="polite">
-              {q?.trim()
-                ? <>Filtrando por: <span className="font-extrabold">{q.trim()}</span> • {flatItems.length} resultado(s)</>
-                : <>{flatItems.length} item(ns) disponível(is)</>}
-            </div>
-          </div>
-        )}
-      </div>
-
+        
       {/* LISTA (scroll interno perfeito) */}
       <div
         id={listId}
@@ -497,70 +427,110 @@ export default function SidebarNav({
           <div className={cx("px-2 pb-2 text-sm", isDark ? "text-zinc-300" : "text-slate-700")}>
             Nenhum menu disponível para este perfil.
           </div>
-        ) : (
-          sections.map((sec) => (
-            <div key={sec.title}>
-              <div
-                className={cx(
-                  "px-2 pb-1.5 text-[11px] font-extrabold uppercase tracking-wide",
-                  isDark ? "text-zinc-400" : "text-slate-500",
-                  themeCollapsed ? "text-center" : ""
+                ) : (
+                  sections.map((sec) => {
+                    // ✅ Regras de abertura:
+                    // - Se estiver buscando: abre tudo para mostrar resultados
+                    // - Se sidebar estiver colapsada (ícones): mantém tudo visível (fica compacto)
+                    // - Caso normal: só a seção "openSection" fica aberta
+                    const expanded = themeCollapsed || isSearching || openSection === sec.title;
+        
+                    return (
+                      <div key={sec.title} className="rounded-2xl">
+                        {/* HEADER clicável */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (themeCollapsed) return;
+                            setOpenSection((prev) => (prev === sec.title ? null : sec.title));
+                          }}
+                          className={cx(
+                            "w-full flex items-center justify-between gap-2 px-2 py-2 rounded-2xl transition",
+                            "focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/70",
+                            isDark ? "hover:bg-white/5" : "hover:bg-slate-100/70",
+                            themeCollapsed ? "justify-center" : ""
+                          )}
+                          aria-expanded={expanded}
+                          aria-controls={`sec-${variant}-${sec.title}`}
+                        >
+                          <div
+                            className={cx(
+                              "text-[11px] font-extrabold uppercase tracking-wide",
+                              isDark ? "text-zinc-400" : "text-slate-500",
+                              themeCollapsed ? "text-center" : ""
+                            )}
+                          >
+                            {themeCollapsed ? sec.title.slice(0, 3) : sec.title}
+                          </div>
+        
+                          {/* Chevron (só aparece no expandido normal) */}
+                          {!themeCollapsed && (
+                            <span
+                              aria-hidden="true"
+                              className={cx(
+                                "text-xs font-black select-none transition",
+                                expanded ? "opacity-100" : "opacity-70"
+                              )}
+                            >
+                              {expanded ? "▾" : "▸"}
+                            </span>
+                          )}
+                        </button>
+        
+                        {/* CONTEÚDO */}
+                        {expanded && (
+                          <div id={`sec-${variant}-${sec.title}`} className="space-y-0.5">
+                            {sec.items.map((item) => {
+                              const active = isActivePath(location.pathname, item.path);
+        
+                              const globalIndex = flatItems.findIndex(
+                                (it) => it.path === item.path && it.label === item.label
+                              );
+                              const useRoving = !themeCollapsed && !isMobile;
+        
+                              const tabIndex = useRoving ? (globalIndex === focusIdx ? 0 : -1) : 0;
+        
+                              const onKeyDown = useRoving
+                                ? (e) => {
+                                    if (e.key === "ArrowDown") {
+                                      e.preventDefault();
+                                      setFocusIdx((v) => clamp(v + 1, 0, Math.max(0, flatItems.length - 1)));
+                                    } else if (e.key === "ArrowUp") {
+                                      e.preventDefault();
+                                      setFocusIdx((v) => clamp(v - 1, 0, Math.max(0, flatItems.length - 1)));
+                                    } else if (e.key === "Home") {
+                                      e.preventDefault();
+                                      setFocusIdx(0);
+                                    } else if (e.key === "End") {
+                                      e.preventDefault();
+                                      setFocusIdx(Math.max(0, flatItems.length - 1));
+                                    } else if (e.key === "Enter" || e.key === " ") {
+                                      e.preventDefault();
+                                      go(item.path);
+                                    }
+                                  }
+                                : undefined;
+        
+                              return (
+                                <MenuItem
+                                  key={`${sec.title}-${item.label}-${item.path}`}
+                                  active={active}
+                                  isDark={isDark}
+                                  collapsed={themeCollapsed}
+                                  icon={item.icon}
+                                  label={item.label}
+                                  onClick={() => go(item.path)}
+                                  tabIndex={tabIndex}
+                                  onKeyDown={onKeyDown}
+                                />
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
                 )}
-              >
-                {themeCollapsed ? sec.title.slice(0, 3) : sec.title}
-              </div>
-
-              <div className="space-y-0.5">
-                {sec.items.map((item) => {
-                  const active = isActivePath(location.pathname, item.path);
-
-                  // índice global p/ roving
-                  const globalIndex = flatItems.findIndex(
-                    (it) => it.path === item.path && it.label === item.label
-                  );
-                  const useRoving = !themeCollapsed && !isMobile;
-
-                  const tabIndex = useRoving ? (globalIndex === focusIdx ? 0 : -1) : 0;
-
-                  const onKeyDown = useRoving
-                    ? (e) => {
-                        if (e.key === "ArrowDown") {
-                          e.preventDefault();
-                          setFocusIdx((v) => clamp(v + 1, 0, Math.max(0, flatItems.length - 1)));
-                        } else if (e.key === "ArrowUp") {
-                          e.preventDefault();
-                          setFocusIdx((v) => clamp(v - 1, 0, Math.max(0, flatItems.length - 1)));
-                        } else if (e.key === "Home") {
-                          e.preventDefault();
-                          setFocusIdx(0);
-                        } else if (e.key === "End") {
-                          e.preventDefault();
-                          setFocusIdx(Math.max(0, flatItems.length - 1));
-                        } else if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          go(item.path);
-                        }
-                      }
-                    : undefined;
-
-                  return (
-                    <MenuItem
-                      key={`${sec.title}-${item.label}-${item.path}`}
-                      active={active}
-                      isDark={isDark}
-                      collapsed={themeCollapsed}
-                      icon={item.icon}
-                      label={item.label}
-                      onClick={() => go(item.path)}
-                      tabIndex={tabIndex}
-                      onKeyDown={onKeyDown}
-                    />
-                  );
-                })}
-              </div>
-            </div>
-          ))
-        )}
       </div>
     </nav>
   );
