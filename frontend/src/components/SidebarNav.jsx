@@ -239,6 +239,7 @@ export default function SidebarNav({
     perfis.includes("usuario") || perfis.includes("instrutor") || perfis.includes("administrador");
   const isInstrutor = perfis.includes("instrutor") || perfis.includes("administrador");
   const isAdmin = perfis.includes("administrador");
+  const isGestor = isAdmin;
 
   // ✅ Menus COMPLETOS
   const menusUsuario = useMemo(
@@ -270,22 +271,34 @@ export default function SidebarNav({
     []
   );
 
+  // ✅ Admin fica só com o que NÃO é gestão
   const menusAdmin = useMemo(
     () => [
       { label: "Painel do Administrador", path: "/administrador", icon: LayoutDashboard },
       { label: "Dashboard Analítico", path: "/dashboard-analitico", icon: BarChart3 },
+
+      // (Opcional) Se você considerar "Agenda" como visão operacional e não gestão, pode ficar aqui.
+      // Se você quiser TUDO operacional em "Gestor", mova esse item também.
       { label: "Agenda", path: "/agenda-administrador", icon: ListChecks },
       { label: "Agenda de Salas", path: "/admin/agenda-salas", icon: CalendarDays },
       { label: "Solicitações de Curso", path: "/admin/solicitacao-curso", icon: School },
       { label: "Certificados Avulsos", path: "/certificados-avulsos", icon: FileText },
+      { label: "Criar Submissão de Trabalho", path: "/admin/chamadas/new", icon: PlusCircle },
+      { label: "Relatórios Customizados", path: "/relatorios-customizados", icon: ClipboardList },
+    ],
+    []
+  );
+
+  // ✅ NOVO: tudo que é "gestão/gerenciamento" vem pra cá
+  const menusGestor = useMemo(
+    () => [
+
       { label: "Gestão de Usuários", path: "/gestao-usuarios", icon: Users },
       { label: "Gestão de Instrutor", path: "/gestao-instrutor", icon: Presentation },
       { label: "Gestão de Eventos", path: "/gerenciar-eventos", icon: CalendarDays },
       { label: "Gestão de Presença", path: "/gestao-presenca", icon: QrCode },
       { label: "Gestão de Avaliações", path: "/admin/avaliacao", icon: ClipboardList },
       { label: "Gestão de Certificados", path: "/gestao-certificados", icon: History },
-      { label: "Relatórios Customizados", path: "/relatorios-customizados", icon: ClipboardList },
-      { label: "Criar Submissão de Trabalho", path: "/admin/chamadas/new", icon: PlusCircle },
       { label: "Gerenciar Submissões", path: "__open_submissions__", icon: FolderOpenDot },
     ],
     []
@@ -295,9 +308,24 @@ export default function SidebarNav({
     const secs = [];
     if (isUsuario) secs.push({ title: "Usuário", items: menusUsuario });
     if (isInstrutor) secs.push({ title: "Instrutor", items: menusInstrutor });
+
+    // ✅ Administrador vem ANTES
     if (isAdmin) secs.push({ title: "Administrador", items: menusAdmin });
+
+    // ✅ Gestor depois
+    if (isGestor) secs.push({ title: "Gestor", items: menusGestor });
+
     return secs;
-  }, [isUsuario, isInstrutor, isAdmin, menusUsuario, menusInstrutor, menusAdmin]);
+  }, [
+    isUsuario,
+    isInstrutor,
+    isAdmin,
+    isGestor,
+    menusUsuario,
+    menusInstrutor,
+    menusAdmin,
+    menusGestor,
+  ]);
 
     // ✅ Quando muda de rota, abre automaticamente a seção do item ativo
     useEffect(() => {

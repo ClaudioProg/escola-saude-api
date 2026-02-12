@@ -1,14 +1,12 @@
-// 📁 src/components/BotaoPrimario.jsx
 import PropTypes from "prop-types";
 import { forwardRef, useMemo } from "react";
 
 /**
- * Botão primário padrão da plataforma (premium + a11y).
- * - Paleta: verde (padrão) + amarelo-ouro, laranja-queimado, vermelho-coral, azul-petróleo, cinza.
- * - Tones: solid (gradiente 3 cores), outline, ghost.
- * - UX: spinner com prefers-reduced-motion; previne navegação/clique quando loading/disabled.
- * - A11y: focus ring por cor, aria-busy e aria-live.
- * - Opções: size, fullWidth, leftIcon/rightIcon (ou iconLeft/iconRight), cor, minWidth, shape, href/target, as, download.
+ * Botão primário padrão da plataforma — PREMIUM++++ (tech, não chapado, a11y)
+ * - Visual: gradiente com profundidade + highlight sutil + “glow” controlado + shadow premium
+ * - Estados: hover/active/disabled/loading com microinterações discretas
+ * - A11y: focus ring, aria-busy, aria-live, sem props vazando pro DOM
+ * - Mantém compat: leftIcon/rightIcon + iconLeft/iconRight etc.
  */
 const BotaoPrimario = forwardRef(function BotaoPrimario(
   {
@@ -19,11 +17,11 @@ const BotaoPrimario = forwardRef(function BotaoPrimario(
     disabled = false,
     loading = false,
 
-    // ✅ novos (padrão)
+    // ✅ padrão
     leftIcon = null,
     rightIcon = null,
 
-    // ✅ aliases p/ compat (evita warning: não vai pro DOM)
+    // ✅ aliases p/ compat
     iconLeft = null,
     iconRight = null,
     iconleft = null,
@@ -32,15 +30,18 @@ const BotaoPrimario = forwardRef(function BotaoPrimario(
     size = "md", // sm | md | lg
     fullWidth = false,
     minWidth = 120,
-    cor = "verde", // verde | amareloOuro | laranjaQueimado | vermelhoCoral | azulPetroleo | cinza
+
+    // ✅ cor e shape
+    cor = "laranjaQueimado", // verde | amareloOuro | laranjaQueimado | vermelhoCoral | azulPetroleo | cinza
     shape = "rounded-2xl", // rounded-md | rounded-lg | rounded-2xl | rounded-full
     tone = "solid", // solid | outline | ghost
-    href, // vira <a>
+
+    href,
     target,
     rel,
-    as, // força a tag (ex.: "span") OU componente
-    download, // forward p/ <a>
-    style, // ✅ preserva style externo
+    as,
+    download,
+    style,
     "aria-label": ariaLabel,
     ...props
   },
@@ -56,86 +57,223 @@ const BotaoPrimario = forwardRef(function BotaoPrimario(
 
   const sizes = useMemo(
     () => ({
-      sm: "px-4 py-1.5 text-sm min-h-[36px]",
-      md: "px-6 py-2 text-base min-h-[40px]",
-      lg: "px-7 py-3 text-lg min-h-[46px]",
+      sm: "px-4 py-2 text-[13px] min-h-[38px]",
+      md: "px-5 py-2.5 text-[14px] min-h-[42px]",
+      lg: "px-6 py-3 text-[15px] min-h-[48px]",
     }),
     []
   );
   const sizeClasses = sizes[size] || sizes.md;
 
-  // Paleta por cor (ring + sólidos/outline)
+  /**
+   * 🎨 Paleta premium (com camadas)
+   * - solid: gradiente + overlay highlight + sombra + borda translúcida
+   * - outline: vidro + borda colorida + texto forte (sem ficar “chapado”)
+   * - ghost: vidro leve + hover “ink” sutil
+   */
   const palette = {
     verde: {
-      ring: "focus-visible:ring-emerald-600/60",
-      solid:
-        "bg-gradient-to-br from-[#0f2c1f] via-[#114b2d] to-[#166534] text-white border-emerald-900/40",
-      outline:
-        "text-emerald-900 dark:text-emerald-200 border border-emerald-400 hover:bg-emerald-50 dark:border-emerald-700 dark:hover:bg-emerald-900/20",
-      ghost:
-        "text-emerald-900 dark:text-emerald-200 hover:bg-black/5 dark:hover:bg-white/10",
+      ring: "focus-visible:ring-emerald-500/50",
+      solid: [
+        // base (profundidade)
+        "text-white",
+        "bg-gradient-to-br from-[#0b2a1d] via-[#0f4a2c] to-[#1b7a46]",
+        "border border-emerald-950/35",
+        // shadow premium
+        "shadow-[0_10px_24px_-12px_rgba(16,185,129,0.45)]",
+      ].join(" "),
+      outline: [
+        "text-emerald-900 dark:text-emerald-200",
+        "bg-white/70 dark:bg-zinc-900/25 backdrop-blur",
+        "border border-emerald-300/70 dark:border-emerald-800/55",
+        "shadow-[0_10px_24px_-14px_rgba(16,185,129,0.25)]",
+        "hover:bg-emerald-50/70 dark:hover:bg-emerald-900/15",
+      ].join(" "),
+      ghost: [
+        "text-emerald-900 dark:text-emerald-200",
+        "bg-transparent border border-transparent",
+        "hover:bg-emerald-50/60 dark:hover:bg-white/10",
+      ].join(" "),
+      glow: "after:shadow-[0_0_0_1px_rgba(16,185,129,0.25)]",
+      sheen: "before:from-white/20 before:to-transparent",
     },
+
     amareloOuro: {
-      ring: "focus-visible:ring-amber-400/60",
-      solid:
-        "bg-gradient-to-br from-amber-500 via-amber-600 to-amber-700 text-black border-amber-800/40",
-      outline:
-        "text-amber-800 dark:text-amber-200 border border-amber-400 hover:bg-amber-50 dark:border-amber-700 dark:hover:bg-amber-900/20",
-      ghost:
-        "text-amber-800 dark:text-amber-200 hover:bg-black/5 dark:hover:bg-white/10",
+      ring: "focus-visible:ring-amber-400/55",
+      solid: [
+        "text-[#1a1400]",
+        "bg-gradient-to-br from-[#f7d56a] via-[#f2b832] to-[#d68a0c]",
+        "border border-amber-900/25",
+        "shadow-[0_10px_24px_-12px_rgba(245,158,11,0.40)]",
+      ].join(" "),
+      outline: [
+        "text-amber-900 dark:text-amber-200",
+        "bg-white/70 dark:bg-zinc-900/25 backdrop-blur",
+        "border border-amber-300/75 dark:border-amber-800/55",
+        "shadow-[0_10px_24px_-14px_rgba(245,158,11,0.25)]",
+        "hover:bg-amber-50/70 dark:hover:bg-amber-900/15",
+      ].join(" "),
+      ghost: [
+        "text-amber-900 dark:text-amber-200",
+        "bg-transparent border border-transparent",
+        "hover:bg-amber-50/60 dark:hover:bg-white/10",
+      ].join(" "),
+      glow: "after:shadow-[0_0_0_1px_rgba(245,158,11,0.22)]",
+      sheen: "before:from-white/22 before:to-transparent",
     },
+
     laranjaQueimado: {
-      ring: "focus-visible:ring-orange-400/60",
-      solid:
-        "bg-gradient-to-br from-orange-600 via-orange-700 to-orange-800 text-white border-orange-900/40",
-      outline:
-        "text-orange-700 dark:text-orange-300 border border-orange-400 hover:bg-orange-50 dark:border-orange-600 dark:hover:bg-orange-900/20",
-      ghost:
-        "text-orange-700 dark:text-orange-300 hover:bg-black/5 dark:hover:bg-white/10",
+      ring: "focus-visible:ring-orange-400/55",
+      solid: [
+        "text-white",
+        "bg-gradient-to-br from-[#7a2f00] via-[#c24a06] to-[#ff8a1f]",
+        "border border-orange-950/25",
+        "shadow-[0_10px_24px_-12px_rgba(249,115,22,0.40)]",
+      ].join(" "),
+      outline: [
+        "text-orange-800 dark:text-orange-200",
+        "bg-white/70 dark:bg-zinc-900/25 backdrop-blur",
+        "border border-orange-300/75 dark:border-orange-800/55",
+        "shadow-[0_10px_24px_-14px_rgba(249,115,22,0.25)]",
+        "hover:bg-orange-50/70 dark:hover:bg-orange-900/15",
+      ].join(" "),
+      ghost: [
+        "text-orange-800 dark:text-orange-200",
+        "bg-transparent border border-transparent",
+        "hover:bg-orange-50/60 dark:hover:bg-white/10",
+      ].join(" "),
+      glow: "after:shadow-[0_0_0_1px_rgba(249,115,22,0.20)]",
+      sheen: "before:from-white/20 before:to-transparent",
     },
+
     vermelhoCoral: {
-      ring: "focus-visible:ring-red-400/60",
-      solid:
-        "bg-gradient-to-br from-red-500 via-red-600 to-red-700 text-white border-red-900/40",
-      outline:
-        "text-red-600 dark:text-red-300 border border-red-400 hover:bg-red-50 dark:border-red-600 dark:hover:bg-red-900/20",
-      ghost:
-        "text-red-600 dark:text-red-300 hover:bg-black/5 dark:hover:bg-white/10",
+      ring: "focus-visible:ring-rose-400/55",
+      solid: [
+        "text-white",
+        "bg-gradient-to-br from-[#5b0a12] via-[#c81d35] to-[#ff5a7a]",
+        "border border-rose-950/25",
+        "shadow-[0_10px_24px_-12px_rgba(244,63,94,0.42)]",
+      ].join(" "),
+      outline: [
+        "text-rose-700 dark:text-rose-200",
+        "bg-white/70 dark:bg-zinc-900/25 backdrop-blur",
+        "border border-rose-300/75 dark:border-rose-800/55",
+        "shadow-[0_10px_24px_-14px_rgba(244,63,94,0.25)]",
+        "hover:bg-rose-50/70 dark:hover:bg-rose-900/15",
+      ].join(" "),
+      ghost: [
+        "text-rose-700 dark:text-rose-200",
+        "bg-transparent border border-transparent",
+        "hover:bg-rose-50/60 dark:hover:bg-white/10",
+      ].join(" "),
+      glow: "after:shadow-[0_0_0_1px_rgba(244,63,94,0.22)]",
+      sheen: "before:from-white/18 before:to-transparent",
     },
+
     azulPetroleo: {
-      ring: "focus-visible:ring-cyan-600/60",
-      solid:
-        "bg-gradient-to-br from-cyan-800 via-cyan-900 to-slate-900 text-white border-cyan-950/50",
-      outline:
-        "text-cyan-800 dark:text-cyan-200 border border-cyan-500 hover:bg-cyan-50 dark:border-cyan-700 dark:hover:bg-slate-800/40",
-      ghost:
-        "text-cyan-800 dark:text-cyan-200 hover:bg-black/5 dark:hover:bg-white/10",
+      ring: "focus-visible:ring-cyan-500/50",
+      solid: [
+        "text-white",
+        "bg-gradient-to-br from-[#08323a] via-[#0b4b57] to-[#0f172a]",
+        "border border-cyan-950/35",
+        "shadow-[0_10px_24px_-12px_rgba(6,182,212,0.32)]",
+      ].join(" "),
+      outline: [
+        "text-cyan-900 dark:text-cyan-200",
+        "bg-white/70 dark:bg-zinc-900/25 backdrop-blur",
+        "border border-cyan-300/75 dark:border-cyan-800/55",
+        "shadow-[0_10px_24px_-14px_rgba(6,182,212,0.20)]",
+        "hover:bg-cyan-50/70 dark:hover:bg-slate-800/30",
+      ].join(" "),
+      ghost: [
+        "text-cyan-900 dark:text-cyan-200",
+        "bg-transparent border border-transparent",
+        "hover:bg-cyan-50/60 dark:hover:bg-white/10",
+      ].join(" "),
+      glow: "after:shadow-[0_0_0_1px_rgba(6,182,212,0.18)]",
+      sheen: "before:from-white/16 before:to-transparent",
     },
+
     cinza: {
-      ring: "focus-visible:ring-gray-400/60",
-      solid:
-        "bg-gradient-to-br from-gray-700 via-gray-800 to-gray-900 text-white border-gray-950/40",
-      outline:
-        "text-gray-800 dark:text-gray-200 border border-gray-400 hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-800/40",
-      ghost:
-        "text-gray-800 dark:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10",
+      ring: "focus-visible:ring-slate-400/55",
+      solid: [
+        "text-white",
+        "bg-gradient-to-br from-[#111827] via-[#334155] to-[#0b1220]",
+        "border border-slate-950/35",
+        "shadow-[0_10px_24px_-12px_rgba(148,163,184,0.25)]",
+      ].join(" "),
+      outline: [
+        "text-slate-900 dark:text-zinc-100",
+        "bg-white/70 dark:bg-zinc-900/25 backdrop-blur",
+        "border border-slate-300/75 dark:border-zinc-700/65",
+        "shadow-[0_10px_24px_-14px_rgba(148,163,184,0.18)]",
+        "hover:bg-slate-50/70 dark:hover:bg-zinc-800/35",
+      ].join(" "),
+      ghost: [
+        "text-slate-900 dark:text-zinc-100",
+        "bg-transparent border border-transparent",
+        "hover:bg-black/5 dark:hover:bg-white/10",
+      ].join(" "),
+      glow: "after:shadow-[0_0_0_1px_rgba(148,163,184,0.18)]",
+      sheen: "before:from-white/14 before:to-transparent",
     },
   };
 
   const theme = palette[cor] || palette.verde;
 
-  const base =
-    "inline-flex items-center justify-center gap-2 font-semibold shadow transition " +
-    "focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 " +
-    "focus-visible:ring-offset-white dark:focus-visible:ring-offset-zinc-800 " +
-    "disabled:opacity-60 disabled:cursor-not-allowed select-none";
+  const base = [
+    "relative isolate",
+    "inline-flex items-center justify-center gap-2",
+    "font-extrabold tracking-tight",
+    "select-none",
+    "transition-all duration-200",
+    "focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2",
+    "focus-visible:ring-offset-white dark:focus-visible:ring-offset-zinc-800",
+    "disabled:opacity-60 disabled:cursor-not-allowed",
+    // micro motion
+    "active:translate-y-[1px]",
+  ].join(" ");
+
+  // ✅ Camadas que dão “tech premium” sem exagero
+  // - before: highlight sutil (sheen)
+  // - after: borda/glow sutil
+  const layers = [
+    "before:content-[''] before:absolute before:inset-0 before:rounded-[inherit]",
+    "before:bg-gradient-to-br",
+    "before:opacity-0 hover:before:opacity-100",
+    "before:transition-opacity before:duration-200",
+    "before:pointer-events-none",
+
+    "after:content-[''] after:absolute after:inset-0 after:rounded-[inherit]",
+    "after:pointer-events-none",
+  ].join(" ");
 
   const toneClasses =
     tone === "outline"
       ? theme.outline
       : tone === "ghost"
-      ? `${theme.ghost} border border-transparent`
-      : `${theme.solid} border hover:brightness-[1.05]`;
+      ? `${theme.ghost}`
+      : `${theme.solid} hover:brightness-[1.03]`;
+
+  const sheen =
+    tone === "solid"
+      ? [
+          "before:mix-blend-soft-light",
+          "before:opacity-0 hover:before:opacity-100",
+          "before:bg-[radial-gradient(circle_at_30%_25%,rgba(255,255,255,0.35),transparent_48%)]",
+        ].join(" ")
+      : theme.sheen;
+
+  const glow =
+    tone === "solid"
+      ? [
+          // borda/luz discretas
+          "after:shadow-[0_0_0_1px_rgba(255,255,255,0.10)]",
+          theme.glow,
+          // sombra extra no hover (controlada)
+          "hover:shadow-[0_16px_34px_-18px_rgba(0,0,0,0.35)]",
+        ].join(" ")
+      : theme.glow;
 
   // ✅ style: respeita style externo + minWidth controlado
   const computedStyle = {
@@ -167,7 +305,6 @@ const BotaoPrimario = forwardRef(function BotaoPrimario(
       };
 
   // ✅ NÃO deixar props custom vazar pro DOM
-  // (segurança extra: se alguém passou em props, remove)
   // eslint-disable-next-line no-unused-vars
   const { iconRight: _a, iconLeft: _b, iconright: _c, iconleft: _d, ...safeProps } = props;
 
@@ -181,11 +318,16 @@ const BotaoPrimario = forwardRef(function BotaoPrimario(
       style={computedStyle}
       className={[
         base,
+        layers,
         theme.ring,
         toneClasses,
+        sheen,
+        glow,
         sizeClasses,
         shape,
         fullWidth ? "w-full" : "w-auto",
+        // melhora clique em mobile
+        "touch-manipulation",
         className,
       ].join(" ")}
       data-variant="BotaoPrimario"
@@ -193,6 +335,7 @@ const BotaoPrimario = forwardRef(function BotaoPrimario(
       data-tone={tone}
       {...safeProps}
     >
+      {/* Spinner */}
       {loading && (
         <span
           className="inline-block h-4 w-4 border-2 border-current border-t-transparent rounded-full motion-safe:animate-spin motion-reduce:animate-none"
@@ -200,16 +343,19 @@ const BotaoPrimario = forwardRef(function BotaoPrimario(
         />
       )}
 
+      {/* Left icon */}
       {!loading && _leftIcon && (
-        <span className="inline-flex shrink-0" aria-hidden="true">
+        <span className="inline-flex shrink-0 opacity-95" aria-hidden="true">
           {_leftIcon}
         </span>
       )}
 
+      {/* Label */}
       <span className={loading ? "opacity-90" : ""}>{children}</span>
 
+      {/* Right icon */}
       {!loading && _rightIcon && (
-        <span className="inline-flex shrink-0" aria-hidden="true">
+        <span className="inline-flex shrink-0 opacity-95" aria-hidden="true">
           {_rightIcon}
         </span>
       )}
@@ -225,25 +371,16 @@ BotaoPrimario.propTypes = {
   disabled: PropTypes.bool,
   loading: PropTypes.bool,
 
-  // ✅ padrão
   leftIcon: PropTypes.node,
   rightIcon: PropTypes.node,
 
-  // ✅ compat (não usar daqui pra frente, mas suporta)
   iconLeft: PropTypes.node,
   iconRight: PropTypes.node,
 
   size: PropTypes.oneOf(["sm", "md", "lg"]),
   fullWidth: PropTypes.bool,
   minWidth: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
-  cor: PropTypes.oneOf([
-    "verde",
-    "amareloOuro",
-    "laranjaQueimado",
-    "vermelhoCoral",
-    "azulPetroleo",
-    "cinza",
-  ]),
+  cor: PropTypes.oneOf(["verde", "amareloOuro", "laranjaQueimado", "vermelhoCoral", "azulPetroleo", "cinza"]),
   shape: PropTypes.oneOf(["rounded-md", "rounded-lg", "rounded-2xl", "rounded-full"]),
   tone: PropTypes.oneOf(["solid", "outline", "ghost"]),
   href: PropTypes.string,

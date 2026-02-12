@@ -454,15 +454,16 @@ function BotaoProgramacao({ programacaoPdfUrl }) {
 
   return (
     <BotaoSecundario
-      type="button"
-      onClick={() => openAsset(programacaoPdfUrl)} // ✅ passa o RAW mesmo (util resolve)
-      icone={<Download className="w-4 h-4" />}
-      aria-label="Baixar programação (PDF)"
-      title="Baixar programação (PDF)"
-      className="whitespace-nowrap"
-    >
-      Baixar programação (PDF)
-    </BotaoSecundario>
+  type="button"
+  onClick={() => openAsset(programacaoPdfUrl)}
+  leftIcon={<Download className="w-4 h-4" />}
+  aria-label="Baixar programação (PDF)"
+  title="Baixar programação (PDF)"
+  size="md"
+  className="whitespace-nowrap min-w-[210px]"
+>
+  Baixar programação (PDF)
+</BotaoSecundario>
   );
 }
 
@@ -999,33 +1000,94 @@ return (
   <div className="flex flex-col sm:flex-row gap-4">
   <ThumbEvento ev={evento} titulo={evento.titulo} raw={folderRaw} />
 
-    <div className="min-w-0 flex-1">
-      {/* Título + status */}
-      <div className="flex items-start justify-between gap-3">
+      <div className="min-w-0 flex-1">
+  {/* Título + status */}
+  <div className="flex items-start justify-between gap-3">
+    <div className="min-w-0">
+      <div className="flex items-center gap-2 flex-wrap">
         <h3
           id={`evt-${evento.id}-titulo`}
           className="text-xl font-extrabold text-zinc-900 dark:text-white"
         >
           {evento.titulo}
         </h3>
+              </div>
 
-        <span
-          className={`text-xs px-2 py-1 rounded-full ${
-            statusEvt === "andamento"
-              ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200 border border-amber-200 dark:border-amber-800"
-              : "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800"
-          }`}
-          role="status"
-        >
-          {statusEvt === "andamento" ? "Em andamento" : "Programado"}
+      {/* ✅ (NOVO) — Tipo + Público-alvo */}
+      <div className="mt-2 flex flex-wrap gap-2">
+        {String(evento?.tipo || "").trim() && (
+          <span
+            className="text-[11px] px-2 py-1 rounded-full font-extrabold
+                       bg-indigo-100 text-indigo-900 border border-indigo-200
+                       dark:bg-indigo-900/30 dark:text-indigo-200 dark:border-indigo-800/60"
+            title="Tipo do evento"
+          >
+            {evento.tipo}
+          </span>
+        )}
+
+        {String(evento?.publico_alvo || "").trim() && (
+          <span
+            className="text-[11px] px-2 py-1 rounded-full font-extrabold
+                       bg-emerald-100 text-emerald-900 border border-emerald-200
+                       dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-800/60"
+            title="Público-alvo"
+          >
+            {evento.publico_alvo}
+          </span>
+        )}
+
+        {/* ✅ (NOVO) — Inscrição no EVENTO */}
+        {!!evento.ja_inscrito && (
+          <span
+            className="text-[11px] px-2 py-1 rounded-full font-extrabold
+                       bg-sky-100 text-sky-900 border border-sky-200
+                       dark:bg-sky-900/30 dark:text-sky-200 dark:border-sky-800/60"
+            title="Você já está inscrito em alguma turma deste evento."
+          >
+            ✓ Inscrito
+          </span>
+        )}
+      </div>
+    </div>
+
+    <span
+      className={`text-xs px-2 py-1 rounded-full ${
+        statusEvt === "andamento"
+          ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200 border border-amber-200 dark:border-amber-800"
+          : "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800"
+      }`}
+      role="status"
+    >
+      {statusEvt === "andamento" ? "Em andamento" : "Programado"}
+    </span>
+  </div>
+
+  {/* ✅ (mantém) descrição */}
+  {String(evento?.descricao || "").trim() && (
+    <p className="mt-2 text-[15px] text-zinc-700 dark:text-zinc-300 leading-relaxed">
+      {evento.descricao}
+    </p>
+  )}
+
+  {/* ✅ (NOVO) — Instrutores do EVENTO (se vier como 'instrutor' OU 'instrutores') */}
+  {(() => {
+    const lista =
+      (Array.isArray(evento?.instrutores) && evento.instrutores) ||
+      (Array.isArray(evento?.instrutor) && evento.instrutor) ||
+      [];
+    if (!lista.length) return null;
+
+    return (
+      <div className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
+        <span className="font-extrabold">Instrutor{lista.length > 1 ? "es" : ""}:</span>{" "}
+        <span className="font-medium">
+          {lista.map((p) => p?.nome).filter(Boolean).join(", ")}
         </span>
       </div>
+    );
+  })()}
 
-      {evento.descricao && (
-        <p className="mt-1.5 text-[15px] text-zinc-700 dark:text-zinc-300">
-          {evento.descricao}
-        </p>
-      )}
 
       {/* Local */}
       <div className="mt-3 flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">

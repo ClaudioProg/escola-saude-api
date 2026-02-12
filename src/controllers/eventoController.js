@@ -666,29 +666,73 @@ async function listarEventosParaMim(req, res) {
     }
 
     const sql = `
-      SELECT 
-        e.*,
-        (SELECT MIN(t.data_inicio)    FROM turmas t WHERE t.evento_id = e.id) AS data_inicio_geral,
-        (SELECT MAX(t.data_fim)       FROM turmas t WHERE t.evento_id = e.id) AS data_fim_geral,
-        (SELECT MIN(t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id) AS horario_inicio_geral,
-        (SELECT MAX(t.horario_fim)    FROM turmas t WHERE t.evento_id = e.id) AS horario_fim_geral,
-        CASE
-          WHEN CURRENT_TIMESTAMP::timestamp < (
-            SELECT MIN(t.data_inicio::date + COALESCE(t.horario_inicio::time,'00:00'::time))
-            FROM turmas t WHERE t.evento_id = e.id
-          ) THEN 'programado'
-          WHEN CURRENT_TIMESTAMP::timestamp <= (
-            SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time,'23:59'::time))
-            FROM turmas t WHERE t.evento_id = e.id
-          ) THEN 'andamento'
-          ELSE 'encerrado'
-        END AS status
-      FROM eventos e
-      WHERE e.id = ANY($1::int[])
-      ORDER BY (SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time,'23:59'::time))
-                FROM turmas t WHERE t.evento_id = e.id) DESC NULLS LAST, e.id DESC;
-    `;
-    const { rows } = await client.query(sql, [visiveis]);
+  SELECT 
+    e.*,
+
+    ('/api/eventos/' || e.id || '/folder') AS folder_blob_url,
+
+    CASE
+      WHEN e.folder_blob IS NOT NULL THEN 'blob'
+      WHEN NULLIF(e.folder_url,'') IS NOT NULL THEN 'url'
+      ELSE 'none'
+    END AS folder_kind,
+
+    -- Datas gerais
+    (SELECT MIN(t.data_inicio)    FROM turmas t WHERE t.evento_id = e.id) AS data_inicio_geral,
+    (SELECT MAX(t.data_fim)       FROM turmas t WHERE t.evento_id = e.id) AS data_fim_geral,
+    (SELECT MIN(t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id) AS horario_inicio_geral,
+    (SELECT MAX(t.horario_fim)    FROM turmas t WHERE t.evento_id = e.id) AS horario_fim_geral,
+
+    -- Status por data + hora
+    CASE
+      WHEN CURRENT_TIMESTAMP::timestamp < (
+        SELECT MIN(t.data_inicio::date + COALESCE(t.horario_inicio::time,'00:00'::time))
+        FROM turmas t WHERE t.evento_id = e.id
+      ) THEN 'programado'
+      WHEN CURRENT_TIMESTAMP::timestamp <= (
+        SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time,'23:59'::time))
+        FROM turmas t WHERE t.evento_id = e.id
+      ) THEN 'andamento'
+      ELSE 'encerrado'
+    END AS status,
+
+    -- ✅ JA INSCRITO
+    (
+      SELECT COUNT(*) > 0
+      FROM inscricoes i
+      JOIN turmas t ON t.id = i.turma_id
+      WHERE i.usuario_id = $2 AND t.evento_id = e.id
+    ) AS ja_inscrito,
+
+    -- ✅ JA INSTRUTOR
+    (
+      SELECT COUNT(*) > 0
+      FROM turmas t
+      JOIN turma_instrutor ti ON ti.turma_id = t.id
+      WHERE t.evento_id = e.id AND ti.instrutor_id = $2
+    ) AS ja_instrutor,
+
+    -- ✅ LISTA DE INSTRUTORES DO EVENTO
+    COALESCE((
+      SELECT json_agg(
+        DISTINCT jsonb_build_object(
+          'id', u.id,
+          'nome', u.nome
+        )
+      )
+      FROM turmas t2
+      JOIN turma_instrutor ti2 ON ti2.turma_id = t2.id
+      JOIN usuarios u ON u.id = ti2.instrutor_id
+      WHERE t2.evento_id = e.id
+    ), '[]'::json) AS instrutor
+
+  FROM eventos e
+  WHERE e.id = ANY($1::int[])
+  ORDER BY (SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time,'23:59'::time))
+            FROM turmas t WHERE t.evento_id = e.id) DESC NULLS LAST,
+           e.id DESC;
+`;
+const { rows } = await client.query(sql, [visiveis, usuarioId]);
     logInfo(rid, "listarEventosParaMim OK", { count: rows.length });
     return res.json({ ok: true, eventos: rows });
   } catch (err) {

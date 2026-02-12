@@ -1,12 +1,26 @@
-// 📁 src/componentes/CardTurma.jsx
-import PropTypes from "prop-types";
-import { useMemo } from "react";
-import { motion } from "framer-motion";
-import { Users, CalendarDays, Clock3, Megaphone } from "lucide-react";
-import { formatarDataBrasileira } from "../utils/dateTime";
-import BadgeStatus from "../components/BadgeStatus";
+/* eslint-disable no-console */
+// 📁 src/componentes/CardTurma.jsx — PREMIUM+++++
+// (mobile-first + tech discreto + instrutores + ministats + sem “primário/secundário”)
 
-/* ===== Helpers de data no fuso local ===== */
+import PropTypes from "prop-types";
+import { useEffect, useMemo } from "react";
+import { motion } from "framer-motion";
+import {
+  Users,
+  CalendarDays,
+  Clock3,
+  Megaphone,
+  UserRound,
+  BadgeCheck,
+  Ban,
+  Loader2,
+  Sparkles,
+  FileText,
+} from "lucide-react";
+import { formatarDataBrasileira } from "../utils/dateTime";
+import BadgeStatus from "../components/BadgeStatus"; // ajuste se seu projeto usa "../componentes/BadgeStatus"
+
+/* ===== Helpers de data no fuso local (sem shift) ===== */
 function isDateOnly(str) {
   return typeof str === "string" && /^\d{4}-\d{2}-\d{2}$/.test(str);
 }
@@ -41,7 +55,7 @@ function minutesBetween(hhmmIni, hhmmFim) {
   return Math.max(0, v);
 }
 
-/* ===== Status key (usa datas reais da turma + agora = 'hoje') ===== */
+/* ===== Status key (datas reais + horário do último dia) ===== */
 function getStatusKeyByDates(minData, maxData, horarioFimUltimoDia = "23:59", agora = new Date()) {
   if (!minData || !maxData) return "desconhecido";
   const dataInicio = startOfDayLocal(minData);
@@ -54,11 +68,10 @@ function getStatusKeyByDates(minData, maxData, horarioFimUltimoDia = "23:59", ag
 
   if (agora < dataInicio) return "programado";
   if (agora > dataFim) return "encerrado";
-  // 🔁 alinhar com <BadgeStatus />: usamos "em_andamento"
   return "em_andamento";
 }
 
-/* ===== Mapeamentos visuais por status ===== */
+/* ===== Mapeamentos visuais por status (padrão do projeto) ===== */
 const BAR_GRADIENT = {
   programado: "bg-gradient-to-r from-emerald-700 via-teal-600 to-lime-600",
   em_andamento: "bg-gradient-to-r from-amber-600 via-yellow-600 to-orange-600",
@@ -67,9 +80,106 @@ const BAR_GRADIENT = {
 };
 
 const PERCENT_BADGE = {
-  full: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-200",
-  high: "bg-orange-100 text-orange-900 dark:bg-orange-900/30 dark:text-orange-200",
-  ok: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-200",
+  full: "bg-rose-50 text-rose-900 border-rose-200/80 dark:bg-rose-900/20 dark:text-rose-200 dark:border-rose-900/40",
+  high: "bg-amber-50 text-amber-900 border-amber-200/80 dark:bg-amber-900/20 dark:text-amber-200 dark:border-amber-900/40",
+  ok: "bg-emerald-50 text-emerald-900 border-emerald-200/80 dark:bg-emerald-900/20 dark:text-emerald-200 dark:border-emerald-900/40",
+};
+
+/* ===== UI: MiniChip (ministats) ===== */
+function MiniChip({ icon, label, value }) {
+  return (
+    <div
+      className={[
+        "flex items-center gap-2",
+        "rounded-2xl border",
+        "bg-white/70 dark:bg-zinc-900/25",
+        "border-slate-200/80 dark:border-zinc-700/70",
+        "px-3 py-2",
+        "min-w-[0]",
+      ].join(" ")}
+      role="group"
+      aria-label={`${label}: ${value ?? "—"}`}
+      title={`${label}: ${value ?? "—"}`}
+    >
+      <span className="opacity-80 shrink-0" aria-hidden="true">
+        {icon}
+      </span>
+      <div className="min-w-0">
+        <div className="text-[11px] font-bold text-slate-600 dark:text-zinc-300 leading-none">{label}</div>
+        <div className="text-[13px] font-extrabold text-slate-900 dark:text-zinc-50 truncate">{value ?? "—"}</div>
+      </div>
+    </div>
+  );
+}
+MiniChip.propTypes = {
+  icon: PropTypes.node,
+  label: PropTypes.string.isRequired,
+  value: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+};
+
+/* ===== UI: Botão “tech discreto” (mesmo espírito do CardEvento) ===== */
+function TechButton({ children, onClick, disabled, loading, title, ariaLabel, variant = "ghost" }) {
+  const base = [
+    "inline-flex items-center justify-center gap-2",
+    "rounded-2xl px-4 py-2.5",
+    "text-[13px] font-extrabold",
+    "border transition select-none",
+    "shadow-sm hover:shadow",
+    "focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:ring-offset-2",
+    "focus-visible:ring-offset-white dark:focus-visible:ring-offset-neutral-900",
+  ].join(" ");
+
+  const styles = {
+    ghost: [
+      "bg-white/70 dark:bg-zinc-900/25",
+      "border-slate-200/80 dark:border-zinc-700/70",
+      "text-slate-900 dark:text-zinc-100",
+      "hover:bg-slate-50 dark:hover:bg-zinc-800/40",
+    ].join(" "),
+    filled: [
+      "bg-gradient-to-r from-slate-900 via-slate-900 to-indigo-950",
+      "border-white/10 dark:border-white/10",
+      "text-white",
+      "hover:brightness-[1.05]",
+    ].join(" "),
+    soft: [
+      "bg-indigo-50/80 dark:bg-indigo-900/20",
+      "border-indigo-200/70 dark:border-indigo-800/60",
+      "text-indigo-900 dark:text-indigo-200",
+      "hover:bg-indigo-50 dark:hover:bg-indigo-900/25",
+    ].join(" "),
+  };
+
+  const cls = [
+    base,
+    styles[variant] || styles.ghost,
+    disabled || loading ? "opacity-60 cursor-not-allowed pointer-events-none" : "",
+  ].join(" ");
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled || loading}
+      title={title}
+      aria-label={ariaLabel}
+      aria-busy={loading || undefined}
+      className={cls}
+    >
+      {loading ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : null}
+      {children}
+    </button>
+  );
+}
+
+TechButton.propTypes = {
+  children: PropTypes.node,
+  onClick: PropTypes.func,
+  disabled: PropTypes.bool,
+  loading: PropTypes.bool,
+  title: PropTypes.string,
+  ariaLabel: PropTypes.string,
+  variant: PropTypes.oneOf(["ghost", "filled", "soft"]),
 };
 
 /* ===== Componente ===== */
@@ -87,7 +197,18 @@ export default function CardTurma({
   inscricaoConfirmadas,
   bloquearInscricao = false,
 }) {
+  const turmaIdNum = Number(turma?.id);
+
+  // ✅ Carregar dados (se esta tela usa/precisa)
+  useEffect(() => {
+    if (!turmaIdNum || !Number.isFinite(turmaIdNum)) return;
+    if (typeof carregarInscritos === "function" && !Array.isArray(inscritos)) carregarInscritos(turmaIdNum);
+    if (typeof carregarAvaliacao === "function" && !avaliacao) carregarAvaliacao(turmaIdNum);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [turmaIdNum]);
+
   const total = Number(turma.vagas_total || 0);
+
   const ocupadas = Array.isArray(turma.inscritos)
     ? turma.inscritos.length
     : Number(turma.vagas_preenchidas ?? turma.inscritos_confirmados ?? turma.inscritos ?? 0);
@@ -95,7 +216,7 @@ export default function CardTurma({
   const percentual = total > 0 ? Math.max(0, Math.min(100, Math.round((ocupadas / total) * 100))) : 0;
 
   // ================== Deriva dados a partir de turma.datas ==================
-  const { minData, maxData, horasTotal, horarioFimUltimoDia, datasOrdenadas } = useMemo(() => {
+  const { minData, maxData, horasTotal, horarioFimUltimoDia, datasOrdenadas, horarioPreview } = useMemo(() => {
     const arr = Array.isArray(turma.datas) ? [...turma.datas] : [];
     arr.sort((a, b) => String(a?.data || "").localeCompare(String(b?.data || "")));
 
@@ -105,14 +226,12 @@ export default function CardTurma({
     const minD = first?.data || turma.data_inicio || null;
     const maxD = last?.data || turma.data_fim || null;
 
-    // soma de horas por dia (regra do almoço: −1h quando >= 6h)
     let totalMin = 0;
     for (const d of arr) {
       const mins = minutesBetween(d?.horario_inicio, d?.horario_fim);
       if (mins > 0) totalMin += mins >= 360 ? mins - 60 : mins;
     }
 
-    // fallback: 1 dia com horário global
     if (arr.length === 0 && turma.horario_inicio && turma.horario_fim && minD) {
       let mins = minutesBetween(turma.horario_inicio, turma.horario_fim);
       if (mins > 0) totalMin += mins >= 360 ? mins - 60 : mins;
@@ -123,20 +242,30 @@ export default function CardTurma({
       (turma.horario_fim && String(turma.horario_fim).slice(0, 5)) ||
       "23:59";
 
+    const hi =
+      (first?.horario_inicio && String(first.horario_inicio).slice(0, 5)) ||
+      (turma.horario_inicio && String(turma.horario_inicio).slice(0, 5)) ||
+      "";
+    const hf =
+      (first?.horario_fim && String(first.horario_fim).slice(0, 5)) ||
+      (turma.horario_fim && String(turma.horario_fim).slice(0, 5)) ||
+      "";
+
+    const horarioTxt = hi && hf ? `${hi} às ${hf}` : hi ? hi : hf ? hf : "A definir";
+
     return {
       minData: minD,
       maxData: maxD,
       horasTotal: totalMin / 60,
       horarioFimUltimoDia: hfUltimo,
       datasOrdenadas: arr,
+      horarioPreview: horarioTxt,
     };
   }, [turma]);
 
-  // ======= Status (BadgeStatus) — usa 'hoje' quando informado =======
   const agoraRef = hoje instanceof Date ? hoje : new Date();
   const statusKey = getStatusKeyByDates(minData, maxData, horarioFimUltimoDia, agoraRef);
 
-  // ======= Texto do período =======
   const periodoTexto =
     minData && maxData
       ? `${formatarDataBrasileira(minData)} a ${formatarDataBrasileira(maxData)}`
@@ -144,7 +273,6 @@ export default function CardTurma({
       ? formatarDataBrasileira(minData)
       : "Datas a definir";
 
-  // ======= Carga horária =======
   const cargaTotalRaw = Number.isFinite(Number(turma.carga_horaria_real))
     ? Number(turma.carga_horaria_real)
     : Number.isFinite(horasTotal)
@@ -152,34 +280,28 @@ export default function CardTurma({
     : 0;
   const cargaTotal = Math.max(0, Number(cargaTotalRaw));
 
-  // ======= Bloqueio de inscrição por data real =======
   function bloquearInscricaoPorData() {
     const fimTurma = endOfDayLocal(maxData || turma.data_fim);
     return fimTurma ? fimTurma < agoraRef : false;
   }
-  const bloquear = bloquearInscricao || bloquearInscricaoPorData();
+  const bloquear = Boolean(bloquearInscricao || bloquearInscricaoPorData());
 
-  // ======= Visual: barra superior por status =======
   const barClass = BAR_GRADIENT[statusKey] || BAR_GRADIENT.desconhecido;
 
-  // ======= Barra de progresso (cores com bom contraste) =======
-  const corBarra =
-    percentual >= 100 ? "bg-red-600" : percentual >= 75 ? "bg-orange-500" : "bg-green-600";
-
+  const corBarra = percentual >= 100 ? "bg-rose-600" : percentual >= 75 ? "bg-amber-500" : "bg-emerald-600";
   const badgePercentClasses =
     percentual >= 100 ? PERCENT_BADGE.full : percentual >= 75 ? PERCENT_BADGE.high : PERCENT_BADGE.ok;
 
-  // ======= Prévia de datas (opcional) =======
   const previewDatas =
     (datasOrdenadas?.length || 0) > 1
       ? datasOrdenadas.slice(0, 3).map((d) => formatarDataBrasileira(d.data)).join(" • ")
       : null;
 
-  // ======= Instrutores da turma (chips) =======
   const instrutores = Array.isArray(turma.instrutores) ? turma.instrutores : [];
-  const assinanteId = Number.isFinite(Number(turma.instrutor_assinante_id))
-    ? Number(turma.instrutor_assinante_id)
-    : null;
+  const assinanteId = Number.isFinite(Number(turma.instrutor_assinante_id)) ? Number(turma.instrutor_assinante_id) : null;
+
+  const confirmado = Array.isArray(inscricaoConfirmadas) && inscricaoConfirmadas.includes(turmaIdNum);
+  const loadingInscricao = Number.isFinite(turmaIdNum) && inscrevendo === turmaIdNum;
 
   const headingId = `turma-${eventoId}-${turma.id}-titulo`;
   const progressId = `turma-${eventoId}-${turma.id}-progress`;
@@ -190,21 +312,21 @@ export default function CardTurma({
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -10 }}
       layout
-      className="relative rounded-2xl bg-white dark:bg-neutral-900 shadow border border-gray-200 dark:border-gray-700 overflow-hidden"
+      className="relative rounded-2xl bg-white dark:bg-neutral-900 shadow border border-slate-200/80 dark:border-zinc-700/70 overflow-hidden"
       aria-labelledby={headingId}
       aria-describedby={progressId}
     >
       {/* Barrinha superior com gradiente por status */}
       <div className={`h-1.5 w-full ${barClass}`} aria-hidden="true" />
 
-      <div className="p-6">
-        <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 mb-4">
+      <div className="p-5 sm:p-6">
+        {/* Header: título + status */}
+        <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
           <div className="w-full min-w-0">
-            {/* Título + badge de status */}
-            <div className="flex items-center gap-2 mb-1">
+            <div className="flex flex-wrap items-center gap-2">
               <h4
                 id={headingId}
-                className="text-base font-bold text-green-900 dark:text-green-200 truncate"
+                className="text-base font-black text-slate-900 dark:text-zinc-50 truncate"
                 title={turma.nome}
                 aria-live="polite"
               >
@@ -213,82 +335,85 @@ export default function CardTurma({
               <BadgeStatus status={statusKey} size="sm" variant="soft" />
             </div>
 
-            {/* Evento (opcional) */}
-            {turma.evento_titulo && (
-              <span
-                className="text-xs text-gray-500 dark:text-gray-400 block mb-1 truncate"
-                title={turma.evento_titulo}
-              >
-                <CalendarDays size={14} className="inline mr-1" /> Evento: {turma.evento_titulo}
-              </span>
-            )}
+            {/* ministats topo */}
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <MiniChip icon={<CalendarDays className="w-4 h-4" />} label="Período" value={periodoTexto} />
+              <MiniChip icon={<Clock3 className="w-4 h-4" />} label="Horário" value={horarioPreview} />
+              <MiniChip
+                icon={<Users className="w-4 h-4" />}
+                label="Vagas"
+                value={`${ocupadas}/${total || "—"} (${total > 0 ? percentual : 0}%)`}
+              />
+            </div>
 
-            {/* ⬇️ Instrutores da turma (vindo do backend via turma_instrutor) */}
+            {/* instrutores */}
             {instrutores.length > 0 && (
-              <div className="flex flex-wrap items-center gap-2 mt-1" aria-label="Instrutores">
+              <div className="flex flex-wrap items-center gap-2 mt-4" aria-label="Instrutores da turma">
+                <span className="inline-flex items-center gap-1.5 text-[12px] font-extrabold text-slate-700 dark:text-zinc-200">
+                  <UserRound className="w-4 h-4 opacity-80" aria-hidden="true" />
+                  Instrutor{instrutores.length > 1 ? "es" : ""}:
+                </span>
+
                 {instrutores.map((p) => {
                   const ehAssinante = assinanteId && Number(p.id) === assinanteId;
                   return (
                     <span
                       key={p.id}
                       className={[
-                        "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium",
+                        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1",
+                        "text-[12px] font-extrabold",
                         ehAssinante
-                          ? "bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-900/20 dark:text-amber-200 dark:border-amber-800/60"
-                          : "bg-emerald-50 text-emerald-800 border-emerald-300 dark:bg-emerald-900/20 dark:text-emerald-200 dark:border-emerald-800/60",
+                          ? "bg-amber-50/80 text-amber-900 border-amber-200/80 dark:bg-amber-900/20 dark:text-amber-200 dark:border-amber-800/60"
+                          : "bg-slate-50/80 text-slate-800 border-slate-200/80 dark:bg-zinc-900/25 dark:text-zinc-200 dark:border-zinc-700/70",
                       ].join(" ")}
                       title={ehAssinante ? "Instrutor assinante" : "Instrutor"}
                       aria-label={ehAssinante ? `Instrutor (assinante): ${p.nome}` : `Instrutor: ${p.nome}`}
                     >
-                      {ehAssinante && <Megaphone size={14} className="mr-1" aria-hidden="true" />}
-                      {p.nome}
+                      {ehAssinante ? (
+                        <Megaphone size={14} aria-hidden="true" />
+                      ) : (
+                        <BadgeCheck className="w-4 h-4 opacity-80" aria-hidden="true" />
+                      )}
+                      <span className="truncate max-w-[260px]">{p.nome}</span>
                     </span>
                   );
                 })}
               </div>
             )}
 
-            {/* Período */}
-            <span className="text-xs text-gray-600 dark:text-gray-300 block mt-1">
-              <CalendarDays size={14} className="inline mr-1" />
-              {periodoTexto}
-            </span>
-
-            {/* Horário compacto quando for um único dia */}
-            {turma.horario_inicio && turma.horario_fim && (datasOrdenadas?.length || 0) <= 1 && (
-              <span className="text-xs text-gray-600 dark:text-gray-300 block mt-0.5">
-                <Clock3 size={14} className="inline mr-1" />
-                Horário: {String(turma.horario_inicio).slice(0, 5)} às {String(turma.horario_fim).slice(0, 5)}
+            {/* carga + datas */}
+            <div className="mt-3 space-y-1">
+              <span className="text-xs text-slate-600 dark:text-zinc-300 block">
+                ⏱️ Carga horária total: <span className="font-extrabold text-slate-900 dark:text-zinc-50">{cargaTotal.toFixed(1)}h</span>
               </span>
-            )}
 
-            {/* Carga horária total */}
-            <span className="text-xs text-gray-600 dark:text-gray-300 block mt-0.5">
-              ⏱️ Carga horária total: {cargaTotal.toFixed(1)}h
-            </span>
-
-            {/* Prévia de datas (ministats) */}
-            {previewDatas && (
-              <span className="text-xs text-gray-500 dark:text-gray-400 block mt-0.5" title={previewDatas}>
-                📅 Próximas datas: {previewDatas}
-                {datasOrdenadas.length > 3 ? ` +${datasOrdenadas.length - 3}` : ""}
-              </span>
-            )}
-
-            {/* Barra de Progresso */}
-            <div className="mt-3" aria-label="Progresso de ocupação de vagas">
-              <div className="flex justify-between text-xs text-gray-600 dark:text-gray-300 mb-1">
-                <span>
-                  <Users size={14} className="inline mr-1" />
-                  {ocupadas} de {total} vagas preenchidas
+              {previewDatas && (
+                <span className="text-xs text-slate-500 dark:text-zinc-400 block" title={previewDatas}>
+                  ✨ Datas: {previewDatas}
+                  {datasOrdenadas.length > 3 ? ` +${datasOrdenadas.length - 3}` : ""}
                 </span>
-                <span className={`ml-2 px-2 py-0.5 rounded ${badgePercentClasses} text-xs`} aria-live="polite">
+              )}
+            </div>
+
+            {/* progressbar */}
+            <div className="mt-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-700 dark:text-zinc-200 mb-1">
+                <span className="inline-flex items-center">
+                  <Sparkles size={14} className="mr-1 opacity-80" aria-hidden="true" />
+                  Ocupação
+                </span>
+
+                <span
+                  className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-extrabold ${badgePercentClasses}`}
+                  aria-live="polite"
+                >
                   {percentual}%
                 </span>
               </div>
+
               <div
                 id={progressId}
-                className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden"
+                className="w-full h-2 bg-slate-200 dark:bg-zinc-800 rounded-full overflow-hidden"
                 role="progressbar"
                 aria-valuemin={0}
                 aria-valuemax={100}
@@ -299,45 +424,58 @@ export default function CardTurma({
               </div>
             </div>
           </div>
-        </div>
 
-        {/* CTA de inscrição, no padrão dos novos botões */}
-        <div className="mt-4 flex justify-end">
-          {inscrever && (
-            inscricaoConfirmadas.includes(turma.id) ? (
-              <span
-                className="inline-flex items-center rounded-full border font-semibold px-4 py-1 cursor-default
-                           bg-emerald-50 text-emerald-800 border-emerald-300
-                           dark:bg-emerald-900/20 dark:text-emerald-200 dark:border-emerald-800/60"
-                aria-label="Inscrição confirmada"
-              >
-                ✅ Inscrito
-              </span>
-            ) : bloquear ? (
-              <span
-                className="inline-flex items-center rounded-full border font-semibold px-4 py-1 cursor-not-allowed
-                           bg-gray-200 text-gray-500 border-gray-300 dark:bg-gray-800 dark:text-gray-300/60 dark:border-gray-700"
-                aria-label="Inscrição indisponível"
-              >
-                Inscrição indisponível
-              </span>
-            ) : (
-              <button
-                type="button"
-                className="px-4 py-2 rounded-full font-semibold text-white transition
-                           bg-green-900 hover:bg-green-900/90
-                           focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-500/60
-                           dark:focus-visible:ring-offset-neutral-900"
-                onClick={() => inscrever(Number(turma.id))}
-                disabled={inscrevendo === Number(turma.id)}
-                aria-busy={inscrevendo === Number(turma.id) || undefined}
-                aria-label="Inscrever-se nesta turma"
-                title="Inscrever-se nesta turma"
-              >
-                {inscrevendo === Number(turma.id) ? "Inscrevendo..." : "Inscrever-se"}
-              </button>
-            )
-          )}
+          {/* ações (tech, discretas, alinhadas) */}
+          <div className="shrink-0 w-full lg:w-auto">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-2">
+              {confirmado ? (
+                <div
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-2.5 border
+                             bg-indigo-50/80 text-indigo-900 border-indigo-200/70
+                             dark:bg-indigo-900/20 dark:text-indigo-200 dark:border-indigo-800/60"
+                  aria-label="Inscrição confirmada"
+                  title="Você já está inscrito nesta turma."
+                >
+                  <BadgeCheck className="w-4 h-4" aria-hidden="true" />
+                  <span className="text-[13px] font-extrabold">Inscrito</span>
+                </div>
+              ) : bloquear ? (
+                <div
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-2.5 border
+                             bg-slate-50 text-slate-600 border-slate-200/80
+                             dark:bg-zinc-900/25 dark:text-zinc-300 dark:border-zinc-700/70"
+                  aria-label="Inscrição indisponível"
+                  title="Inscrição indisponível (turma encerrada ou bloqueada)."
+                >
+                  <Ban className="w-4 h-4" aria-hidden="true" />
+                  <span className="text-[13px] font-extrabold">Indisponível</span>
+                </div>
+              ) : (
+                <TechButton
+                  onClick={() => (typeof inscrever === "function" ? inscrever(turmaIdNum) : null)}
+                  disabled={!Number.isFinite(turmaIdNum)}
+                  loading={loadingInscricao}
+                  ariaLabel="Inscrever-se nesta turma"
+                  title="Inscrever-se nesta turma"
+                  variant="filled"
+                >
+                  {loadingInscricao ? "Inscrevendo..." : "Inscrever-se"}
+                </TechButton>
+              )}
+
+              {typeof gerarRelatorioPDF === "function" && Number.isFinite(turmaIdNum) ? (
+                <TechButton
+                  onClick={() => gerarRelatorioPDF?.(turmaIdNum)}
+                  ariaLabel="Gerar relatório PDF desta turma"
+                  title="Gerar relatório PDF"
+                  variant="ghost"
+                >
+                  <FileText className="w-4 h-4" aria-hidden="true" />
+                  Relatório PDF
+                </TechButton>
+              ) : null}
+            </div>
+          </div>
         </div>
       </div>
     </motion.div>
@@ -350,6 +488,7 @@ CardTurma.propTypes = {
     id: PropTypes.oneOfType([PropTypes.number, PropTypes.string]).isRequired,
     nome: PropTypes.string,
     evento_titulo: PropTypes.string,
+
     datas: PropTypes.arrayOf(
       PropTypes.shape({
         data: PropTypes.string,
@@ -357,13 +496,18 @@ CardTurma.propTypes = {
         horario_fim: PropTypes.string,
       })
     ),
+
     data_inicio: PropTypes.oneOfType([PropTypes.string, PropTypes.instanceOf(Date)]),
     data_fim: PropTypes.oneOfType([PropTypes.string, PropTypes.instanceOf(Date)]),
+
     horario_inicio: PropTypes.string,
     horario_fim: PropTypes.string,
+
     vagas_total: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
     inscritos: PropTypes.array,
     vagas_preenchidas: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+    inscritos_confirmados: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+
     instrutores: PropTypes.arrayOf(
       PropTypes.shape({
         id: PropTypes.oneOfType([PropTypes.number, PropTypes.string]).isRequired,
@@ -372,26 +516,36 @@ CardTurma.propTypes = {
       })
     ),
     instrutor_assinante_id: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+
     carga_horaria_real: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
   }).isRequired,
 
   eventoId: PropTypes.oneOfType([PropTypes.number, PropTypes.string]).isRequired,
-  hoje: PropTypes.instanceOf(Date).isRequired,
-  carregarInscritos: PropTypes.func.isRequired,
-  carregarAvaliacao: PropTypes.func.isRequired,
-  gerarRelatorioPDF: PropTypes.func.isRequired,
-  inscritos: PropTypes.array,
-  avaliacao: PropTypes.array,
-  inscrever: PropTypes.func.isRequired,
+  hoje: PropTypes.instanceOf(Date),
+
+  carregarInscritos: PropTypes.func,
+  carregarAvaliacao: PropTypes.func,
+  gerarRelatorioPDF: PropTypes.func,
+
+  inscritos: PropTypes.any,
+  avaliacao: PropTypes.any,
+
+  inscrever: PropTypes.func,
   inscrevendo: PropTypes.number,
   inscricaoConfirmadas: PropTypes.array,
+
   bloquearInscricao: PropTypes.bool,
 };
 
 CardTurma.defaultProps = {
-  inscritos: [],
-  avaliacao: [],
+  hoje: new Date(),
+  inscritos: null,
+  avaliacao: null,
+  inscrever: null,
   inscrevendo: null,
   inscricaoConfirmadas: [],
   bloquearInscricao: false,
+  carregarInscritos: null,
+  carregarAvaliacao: null,
+  gerarRelatorioPDF: null,
 };

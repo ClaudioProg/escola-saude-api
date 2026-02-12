@@ -1,17 +1,14 @@
-// 📁 src/components/BotaoSecundario.jsx
 import PropTypes from "prop-types";
-import { forwardRef } from "react";
-
+import { forwardRef, useMemo } from "react";
 
 const cx = (...c) => c.filter(Boolean).join(" ");
 
 /**
- * Botão secundário (neutral/outline/ghost) — premium + a11y.
- * - Focus ring acompanha a cor.
- * - Suporta <button> (padrão) ou <a>.
- * - A11y: aria-busy (loading), aria-disabled (links) e aria-live.
- * - UX: evita clique enquanto loading/disabled; spinner respeita prefers-reduced-motion.
- * - Cores: verde (padrão), amareloOuro, laranjaQueimado, vermelhoCoral, azulPetroleo.
+ * Botão secundário — PREMIUM++++ (tech glass + outline/ghost, não chapado, a11y)
+ * - Visual: glass + borda translúcida + sheen sutil + shadow controlada
+ * - Diferenciação real do Primário: por padrão NÃO é solid chamativo
+ * - A11y: aria-busy, aria-disabled (links), aria-live, focus ring por cor
+ * - UX: bloqueia clique em loading/disabled; spinner respeita reduced-motion
  */
 const BotaoSecundario = forwardRef(function BotaoSecundario(
   {
@@ -22,7 +19,7 @@ const BotaoSecundario = forwardRef(function BotaoSecundario(
     href,
     target,
     rel,
-    download, // opcional quando as='a'
+    download,
     className = "",
     disabled = false,
     loading = false,
@@ -30,8 +27,16 @@ const BotaoSecundario = forwardRef(function BotaoSecundario(
     rightIcon = null,
     size = "md", // sm | md | lg
     fullWidth = false,
+
+    // ✅ variantes
+    // neutral: “glass” levemente preenchido (default)
+    // outline: vidro transparente + borda colorida
+    // ghost: sem borda, hover sutil
     variant = "neutral", // neutral | outline | ghost
-    cor = "verde", // verde | amareloOuro | laranjaQueimado | vermelhoCoral | azulPetroleo
+
+    // ✅ cores (controladas)
+    cor = "azulPetroleo", // verde | amareloOuro | laranjaQueimado | vermelhoCoral | azulPetroleo
+
     "aria-label": ariaLabel,
     tabIndex = 0,
     style = {},
@@ -45,83 +50,136 @@ const BotaoSecundario = forwardRef(function BotaoSecundario(
 
   const sizeClasses =
     size === "sm"
-      ? "px-3 py-1.5 text-sm min-h-[36px]"
+      ? "px-3.5 py-2 text-[13px] min-h-[38px]"
       : size === "lg"
-      ? "px-5 py-3 text-base min-h-[46px]"
-      : "px-4 py-2 text-base min-h-[40px]";
+      ? "px-5 py-3 text-[14px] min-h-[48px]"
+      : "px-4.5 py-2.5 text-[14px] min-h-[42px]";
 
-  // Paletas por cor para outline/ghost/neutral
-  const tones = {
-    verde: {
-      text: "text-emerald-800 dark:text-emerald-200",
-      border: "border-emerald-300 dark:border-emerald-700",
-      hoverBg: "hover:bg-emerald-50 dark:hover:bg-emerald-900/20",
-      neutralBg: "bg-emerald-100 dark:bg-emerald-900/25",
-      neutralHover: "hover:bg-emerald-200 dark:hover:bg-emerald-900/35",
-      ring: "focus-visible:ring-emerald-500/60",
-    },
-    amareloOuro: {
-      text: "text-amber-800 dark:text-amber-200",
-      border: "border-amber-300 dark:border-amber-700",
-      hoverBg: "hover:bg-amber-50 dark:hover:bg-amber-900/20",
-      neutralBg: "bg-amber-100 dark:bg-amber-900/25",
-      neutralHover: "hover:bg-amber-200 dark:hover:bg-amber-900/35",
-      ring: "focus-visible:ring-amber-400/60",
-    },
-    laranjaQueimado: {
-      text: "text-orange-700 dark:text-orange-300",
-      border: "border-orange-300 dark:border-orange-700",
-      hoverBg: "hover:bg-orange-50 dark:hover:bg-orange-900/20",
-      neutralBg: "bg-orange-100 dark:bg-orange-900/25",
-      neutralHover: "hover:bg-orange-200 dark:hover:bg-orange-900/35",
-      ring: "focus-visible:ring-orange-400/60",
-    },
-    vermelhoCoral: {
-      text: "text-red-700 dark:text-red-300",
-      border: "border-red-300 dark:border-red-700",
-      hoverBg: "hover:bg-red-50 dark:hover:bg-red-900/20",
-      neutralBg: "bg-red-100 dark:bg-red-900/25",
-      neutralHover: "hover:bg-red-200 dark:hover:bg-red-900/35",
-      ring: "focus-visible:ring-red-400/60",
-    },
-    azulPetroleo: {
-      text: "text-cyan-800 dark:text-cyan-200",
-      border: "border-cyan-300 dark:border-cyan-700",
-      hoverBg: "hover:bg-cyan-50 dark:hover:bg-cyan-900/20",
-      neutralBg: "bg-cyan-100 dark:bg-cyan-900/25",
-      neutralHover: "hover:bg-cyan-200 dark:hover:bg-cyan-900/35",
-      ring: "focus-visible:ring-cyan-500/60",
-    },
-  };
-  const tone = tones[cor] || tones.verde;
+  /**
+   * 🎨 Paletas premium por cor (controladas)
+   * - text: cor do texto/ícone
+   * - ring: focus ring
+   * - border: borda do outline
+   * - glow: glow discreto (after)
+   * - tint: leve “tinta” do neutral (glass fill)
+   */
+  const tones = useMemo(
+    () => ({
+      verde: {
+        text: "text-emerald-900 dark:text-emerald-200",
+        ring: "focus-visible:ring-emerald-500/55",
+        border: "border-emerald-300/75 dark:border-emerald-800/55",
+        glow: "after:shadow-[0_0_0_1px_rgba(16,185,129,0.20)]",
+        tint: "bg-emerald-50/70 dark:bg-emerald-950/25",
+        hoverTint: "hover:bg-emerald-50/90 dark:hover:bg-emerald-900/15",
+      },
+      amareloOuro: {
+        text: "text-amber-900 dark:text-amber-200",
+        ring: "focus-visible:ring-amber-400/60",
+        border: "border-amber-300/80 dark:border-amber-800/55",
+        glow: "after:shadow-[0_0_0_1px_rgba(245,158,11,0.18)]",
+        tint: "bg-amber-50/70 dark:bg-amber-950/20",
+        hoverTint: "hover:bg-amber-50/95 dark:hover:bg-amber-900/14",
+      },
+      laranjaQueimado: {
+        text: "text-orange-900 dark:text-orange-200",
+        ring: "focus-visible:ring-orange-400/60",
+        border: "border-orange-300/80 dark:border-orange-800/55",
+        glow: "after:shadow-[0_0_0_1px_rgba(249,115,22,0.16)]",
+        tint: "bg-orange-50/70 dark:bg-orange-950/18",
+        hoverTint: "hover:bg-orange-50/95 dark:hover:bg-orange-900/14",
+      },
+      vermelhoCoral: {
+        text: "text-rose-800 dark:text-rose-200",
+        ring: "focus-visible:ring-rose-400/60",
+        border: "border-rose-300/80 dark:border-rose-800/55",
+        glow: "after:shadow-[0_0_0_1px_rgba(244,63,94,0.18)]",
+        tint: "bg-rose-50/70 dark:bg-rose-950/20",
+        hoverTint: "hover:bg-rose-50/95 dark:hover:bg-rose-900/14",
+      },
+      azulPetroleo: {
+        text: "text-cyan-900 dark:text-cyan-200",
+        ring: "focus-visible:ring-cyan-500/55",
+        border: "border-cyan-300/80 dark:border-cyan-800/55",
+        glow: "after:shadow-[0_0_0_1px_rgba(6,182,212,0.16)]",
+        tint: "bg-cyan-50/65 dark:bg-slate-950/25",
+        hoverTint: "hover:bg-cyan-50/90 dark:hover:bg-slate-800/30",
+      },
+    }),
+    []
+  );
 
+  const tone = tones[cor] || tones.azulPetroleo;
+
+  /**
+   * ✅ Base premium “tech glass”
+   * - before: sheen radial (highlight)
+   * - after: borda/glow sutil
+   * - shadow: discreta (não chapada)
+   */
+  const base = cx(
+    "relative isolate",
+    "inline-flex items-center justify-center gap-2",
+    "rounded-2xl",
+    "font-extrabold tracking-tight",
+    "shadow-[0_10px_22px_-18px_rgba(0,0,0,0.30)]",
+    "transition-all duration-200",
+    "focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2",
+    "focus-visible:ring-offset-white dark:focus-visible:ring-offset-zinc-800",
+    tone.ring,
+    "whitespace-nowrap flex-nowrap leading-none",
+    "active:translate-y-[1px]",
+    "disabled:opacity-60 disabled:cursor-not-allowed select-none",
+    // camadas
+    "before:content-[''] before:absolute before:inset-0 before:rounded-[inherit] before:pointer-events-none",
+    "before:opacity-0 hover:before:opacity-100 before:transition-opacity before:duration-200",
+    "before:bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.22),transparent_55%)]",
+    "after:content-[''] after:absolute after:inset-0 after:rounded-[inherit] after:pointer-events-none"
+  );
+
+  /**
+   * ✅ Variants: neutral | outline | ghost
+   * - neutral: vidro levemente preenchido (ótimo pro “Google Agenda”)
+   * - outline: vidro transparente + borda colorida
+   * - ghost: minimalista com hover sutil
+   */
   const variants = {
-    neutral: [
-      tone.neutralBg,
+    neutral: cx(
+      tone.tint,
+      tone.text,
+      "backdrop-blur",
+      "border border-white/50 dark:border-white/10",
+      "hover:shadow-[0_14px_28px_-20px_rgba(0,0,0,0.35)]",
+      tone.hoverTint,
+      tone.glow
+    ),
+    outline: cx(
+      "bg-white/40 dark:bg-zinc-900/15 backdrop-blur",
+      tone.text,
+      "border",
+      tone.border,
+      "hover:bg-white/55 dark:hover:bg-zinc-800/20",
+      "hover:shadow-[0_14px_28px_-20px_rgba(0,0,0,0.35)]",
+      tone.glow
+    ),
+    ghost: cx(
+      "bg-transparent",
       tone.text,
       "border border-transparent",
-      tone.neutralHover,
-    ].join(" "),
-    outline: ["bg-transparent border", tone.border, tone.text, tone.hoverBg].join(" "),
-    ghost: ["bg-transparent", tone.text, tone.hoverBg, "border border-transparent"].join(" "),
+      "hover:bg-black/5 dark:hover:bg-white/10",
+      "hover:shadow-[0_10px_22px_-18px_rgba(0,0,0,0.22)]"
+    ),
   };
 
-  const base =
-  "inline-flex items-center justify-center gap-2 rounded-2xl font-medium shadow-sm " +
-  "transition focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 " +
-  `${tone.ring} focus-visible:ring-offset-white dark:focus-visible:ring-offset-zinc-800 ` +
-  // ✅ premium: evita quebra e “engordar” botões com ícone + texto
-  "whitespace-nowrap flex-nowrap leading-none " +
-  "disabled:opacity-60 disabled:cursor-not-allowed select-none";
-
-  const classes = [
+  const classes = cx(
     base,
     variants[variant] ?? variants.neutral,
     sizeClasses,
     fullWidth ? "w-full" : "w-auto",
     isDisabled ? "pointer-events-none" : "",
-    className,
-  ].join(" ");
+    "touch-manipulation",
+    className
+  );
 
   const spinner = (
     <span
@@ -130,8 +188,28 @@ const BotaoSecundario = forwardRef(function BotaoSecundario(
     />
   );
 
+  const Content = (
+    <>
+      {loading ? (
+        spinner
+      ) : leftIcon ? (
+        <span className="shrink-0 opacity-95" aria-hidden="true">
+          {leftIcon}
+        </span>
+      ) : null}
+
+      {/* ✅ conteúdo trava em 1 linha e não quebra */}
+      <span className={cx("min-w-0 truncate", loading ? "opacity-90" : "")}>{children}</span>
+
+      {rightIcon ? (
+        <span className="shrink-0 opacity-95" aria-hidden="true">
+          {rightIcon}
+        </span>
+      ) : null}
+    </>
+  );
+
   if (!isBtn) {
-    // Renderiza como <a>
     return (
       <a
         ref={ref}
@@ -157,19 +235,11 @@ const BotaoSecundario = forwardRef(function BotaoSecundario(
         }}
         {...props}
       >
-        {loading ? spinner : leftIcon ? <span className="shrink-0" aria-hidden="true">{leftIcon}</span> : null}
-
-{/* ✅ conteúdo trava em 1 linha e não quebra */}
-<span className={cx("min-w-0 truncate", loading ? "opacity-90" : "")}>
-  {children}
-</span>
-
-{rightIcon ? <span className="shrink-0" aria-hidden="true">{rightIcon}</span> : null}
+        {Content}
       </a>
     );
   }
 
-  // Renderiza como <button>
   return (
     <button
       ref={ref}
@@ -189,14 +259,7 @@ const BotaoSecundario = forwardRef(function BotaoSecundario(
       data-tone={variant}
       {...props}
     >
-      {loading ? spinner : leftIcon ? <span className="shrink-0" aria-hidden="true">{leftIcon}</span> : null}
-
-{/* ✅ conteúdo trava em 1 linha e não quebra */}
-<span className={cx("min-w-0 truncate", loading ? "opacity-90" : "")}>
-  {children}
-</span>
-
-{rightIcon ? <span className="shrink-0" aria-hidden="true">{rightIcon}</span> : null}
+      {Content}
     </button>
   );
 });

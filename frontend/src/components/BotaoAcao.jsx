@@ -1,101 +1,235 @@
-// 📁 src/components/BotaoAcao.jsx
 import PropTypes from "prop-types";
 
 /**
- * Botão de ação compacto (chip).
- * - Retrocompatível com a API antiga (label, icon, onClick, cor, disabled, loading, className).
- * - Gradiente 3 cores (solid), outline e ghost.
- * - Tamanhos xs/sm/md, shapes, foco visível, a11y e link via href/target.
+ * Botão de ação compacto (chip) — PREMIUM++++ (tech glass, não chapado)
+ * - Retrocompatível (label, icon, onClick, cor, disabled, loading, className).
+ * - Visual: glass + borda translúcida + sheen discreto + micro-sombra
+ * - Tones: solid (grad 3 cores), outline (glass + borda colorida), ghost (minimal)
+ * - A11y: focus ring por cor, aria-busy e aria-disabled
+ * - Link via href/target/rel/download
  */
 export default function BotaoAcao({
   label,
-  icon,                 // compat: vira leftIcon se leftIcon não vier
+  icon,
   onClick,
-  cor = "blue",
+  cor = "azulPetroleo",
   disabled = false,
   loading = false,
   className = "",
 
-  /* novos (retrocompat) */
-  tone = "solid",        // "solid" | "outline" | "ghost"
-  size = "md",           // "xs" | "sm" | "md"
-  shape = "full",        // "full" | "lg" | "md"
-  ariaLabel,             // default = label
-  title,                 // tooltip
-  href,                  // vira <a>
+  tone = "outline", // ✅ default melhor p/ chip: outline (menos chamativo)
+  size = "md", // xs | sm | md
+  shape = "full", // full | lg | md
+  ariaLabel,
+  title,
+  href,
   target,
   rel,
-  as,                    // força tag raiz
-
-  /* opcionais extras */
-  leftIcon,             // preferível ao 'icon'
+  as,
+  leftIcon,
   rightIcon,
   fullWidth = false,
+  download,
 }) {
-  /* ====== Tabelas de estilo ====== */
+  /* ====== Size / radius ====== */
   const sizeMap = {
-    xs: "text-[11px] px-2 py-0.5 gap-1 min-h-[28px]",
-    sm: "text-xs px-2.5 py-1 gap-1.5 min-h-[32px]",
-    md: "text-xs px-3 py-1 gap-1.5 min-h-[36px]",
+    xs: "text-[11px] px-2 py-1 gap-1 min-h-[30px]",
+    sm: "text-[12px] px-2.5 py-1.5 gap-1.5 min-h-[34px]",
+    md: "text-[12px] px-3 py-2 gap-1.5 min-h-[38px]",
   };
 
   const roundMap = {
     full: "rounded-full",
-    lg: "rounded-xl",
-    md: "rounded-lg",
+    lg: "rounded-2xl",
+    md: "rounded-xl",
   };
 
-  // Paleta institucional (cores + ring)
+  /* ====== Paletas (controladas, premium) ====== */
   const palette = {
-    blue:      { ring: "ring-blue-400",      solid: "from-blue-600 via-blue-700 to-blue-800 text-white border-blue-900/40",       outline: "text-blue-700 border-blue-400 dark:text-blue-300 dark:border-blue-600",       ghost: "text-blue-700 dark:text-blue-300" },
-    purple:    { ring: "ring-purple-400",    solid: "from-purple-700 via-purple-800 to-purple-900 text-white border-purple-950/40", outline: "text-purple-700 border-purple-400 dark:text-purple-300 dark:border-purple-600", ghost: "text-purple-700 dark:text-purple-300" },
-    green:     { ring: "ring-green-500",     solid: "from-green-700 via-green-800 to-green-900 text-white border-green-950/40",    outline: "text-green-700 border-green-400 dark:text-green-300 dark:border-green-600",    ghost: "text-green-700 dark:text-green-300" },
-    gray:      { ring: "ring-gray-400",      solid: "from-gray-700 via-gray-800 to-gray-900 text-white border-gray-950/40",        outline: "text-gray-700 border-gray-400 dark:text-gray-300 dark:border-gray-600",       ghost: "text-gray-700 dark:text-gray-300" },
-    red:       { ring: "ring-red-500",       solid: "from-red-600 via-red-700 to-red-800 text-white border-red-900/40",            outline: "text-red-700 border-red-400 dark:text-red-300 dark:border-red-600",           ghost: "text-red-700 dark:text-red-300" },
-    orange:    { ring: "ring-orange-400",    solid: "from-orange-600 via-orange-700 to-orange-800 text-white border-orange-900/40", outline: "text-orange-700 border-orange-400 dark:text-orange-300 dark:border-orange-600", ghost: "text-orange-700 dark:text-orange-300" },
-    verde:     { ring: "ring-emerald-600",   solid: "from-[#0f2c1f] via-[#114b2d] to-[#166534] text-white border-emerald-900/40",  outline: "text-emerald-800 border-emerald-400 dark:text-emerald-200 dark:border-emerald-700", ghost: "text-emerald-800 dark:text-emerald-200" },
-    amareloOuro:     { ring: "ring-amber-300",   solid: "from-amber-500 via-amber-600 to-amber-700 text-black border-amber-800/40",    outline: "text-amber-800 border-amber-400 dark:text-amber-200 dark:border-amber-700",    ghost: "text-amber-800 dark:text-amber-200" },
-    laranjaQueimado: { ring: "ring-orange-400",  solid: "from-orange-600 via-orange-700 to-orange-800 text-white border-orange-900/40", outline: "text-orange-700 border-orange-400 dark:text-orange-300 dark:border-orange-600", ghost: "text-orange-700 dark:text-orange-300" },
-    vermelhoCoral:   { ring: "ring-red-400",     solid: "from-red-500 via-red-600 to-red-700 text-white border-red-900/40",            outline: "text-red-600 border-red-400 dark:text-red-300 dark:border-red-600",            ghost: "text-red-600 dark:text-red-300" },
-    azulPetroleo:    { ring: "ring-cyan-600",    solid: "from-cyan-800 via-cyan-900 to-slate-900 text-white border-cyan-950/50",       outline: "text-cyan-800 border-cyan-500 dark:text-cyan-200 dark:border-cyan-700",        ghost: "text-cyan-800 dark:text-cyan-200" },
+    blue: {
+      ring: "focus-visible:ring-blue-400/60",
+      solid: "from-blue-600 via-blue-700 to-blue-800 text-white border-blue-900/40",
+      outlineText: "text-blue-800 dark:text-blue-200",
+      outlineBorder: "border-blue-300/80 dark:border-blue-800/60",
+      ghostText: "text-blue-800 dark:text-blue-200",
+      glow: "after:shadow-[0_0_0_1px_rgba(59,130,246,0.18)]",
+      tint: "bg-blue-50/60 dark:bg-blue-950/18",
+    },
+    purple: {
+      ring: "focus-visible:ring-purple-400/60",
+      solid: "from-purple-700 via-purple-800 to-purple-900 text-white border-purple-950/40",
+      outlineText: "text-purple-800 dark:text-purple-200",
+      outlineBorder: "border-purple-300/80 dark:border-purple-800/60",
+      ghostText: "text-purple-800 dark:text-purple-200",
+      glow: "after:shadow-[0_0_0_1px_rgba(168,85,247,0.16)]",
+      tint: "bg-purple-50/60 dark:bg-purple-950/16",
+    },
+    green: {
+      ring: "focus-visible:ring-emerald-500/55",
+      solid: "from-emerald-600 via-emerald-700 to-emerald-800 text-white border-emerald-950/40",
+      outlineText: "text-emerald-900 dark:text-emerald-200",
+      outlineBorder: "border-emerald-300/80 dark:border-emerald-800/60",
+      ghostText: "text-emerald-900 dark:text-emerald-200",
+      glow: "after:shadow-[0_0_0_1px_rgba(16,185,129,0.16)]",
+      tint: "bg-emerald-50/60 dark:bg-emerald-950/18",
+    },
+    gray: {
+      ring: "focus-visible:ring-slate-400/60",
+      solid: "from-slate-700 via-slate-800 to-slate-900 text-white border-slate-950/40",
+      outlineText: "text-slate-800 dark:text-zinc-200",
+      outlineBorder: "border-slate-300/80 dark:border-zinc-700/70",
+      ghostText: "text-slate-800 dark:text-zinc-200",
+      glow: "after:shadow-[0_0_0_1px_rgba(100,116,139,0.18)]",
+      tint: "bg-slate-50/60 dark:bg-zinc-900/22",
+    },
+    red: {
+      ring: "focus-visible:ring-rose-400/60",
+      solid: "from-rose-600 via-rose-700 to-rose-800 text-white border-rose-950/40",
+      outlineText: "text-rose-800 dark:text-rose-200",
+      outlineBorder: "border-rose-300/80 dark:border-rose-800/60",
+      ghostText: "text-rose-800 dark:text-rose-200",
+      glow: "after:shadow-[0_0_0_1px_rgba(244,63,94,0.16)]",
+      tint: "bg-rose-50/60 dark:bg-rose-950/18",
+    },
+    orange: {
+      ring: "focus-visible:ring-orange-400/60",
+      solid: "from-orange-600 via-orange-700 to-orange-800 text-white border-orange-950/40",
+      outlineText: "text-orange-900 dark:text-orange-200",
+      outlineBorder: "border-orange-300/80 dark:border-orange-800/60",
+      ghostText: "text-orange-900 dark:text-orange-200",
+      glow: "after:shadow-[0_0_0_1px_rgba(249,115,22,0.16)]",
+      tint: "bg-orange-50/60 dark:bg-orange-950/16",
+    },
+
+    // ✅ suas cores “oficiais”
+    verde: {
+      ring: "focus-visible:ring-emerald-500/55",
+      solid: "from-[#0f2c1f] via-[#114b2d] to-[#166534] text-white border-emerald-950/40",
+      outlineText: "text-emerald-900 dark:text-emerald-200",
+      outlineBorder: "border-emerald-300/80 dark:border-emerald-800/60",
+      ghostText: "text-emerald-900 dark:text-emerald-200",
+      glow: "after:shadow-[0_0_0_1px_rgba(16,185,129,0.18)]",
+      tint: "bg-emerald-50/60 dark:bg-emerald-950/18",
+    },
+    amareloOuro: {
+      ring: "focus-visible:ring-amber-400/60",
+      solid: "from-amber-500 via-amber-600 to-amber-700 text-black border-amber-900/35",
+      outlineText: "text-amber-900 dark:text-amber-200",
+      outlineBorder: "border-amber-300/80 dark:border-amber-800/60",
+      ghostText: "text-amber-900 dark:text-amber-200",
+      glow: "after:shadow-[0_0_0_1px_rgba(245,158,11,0.16)]",
+      tint: "bg-amber-50/60 dark:bg-amber-950/14",
+    },
+    laranjaQueimado: {
+      ring: "focus-visible:ring-orange-400/60",
+      solid: "from-orange-600 via-orange-700 to-orange-800 text-white border-orange-950/40",
+      outlineText: "text-orange-900 dark:text-orange-200",
+      outlineBorder: "border-orange-300/80 dark:border-orange-800/60",
+      ghostText: "text-orange-900 dark:text-orange-200",
+      glow: "after:shadow-[0_0_0_1px_rgba(249,115,22,0.16)]",
+      tint: "bg-orange-50/60 dark:bg-orange-950/16",
+    },
+    vermelhoCoral: {
+      ring: "focus-visible:ring-rose-400/60",
+      solid: "from-rose-500 via-rose-600 to-rose-700 text-white border-rose-950/40",
+      outlineText: "text-rose-800 dark:text-rose-200",
+      outlineBorder: "border-rose-300/80 dark:border-rose-800/60",
+      ghostText: "text-rose-800 dark:text-rose-200",
+      glow: "after:shadow-[0_0_0_1px_rgba(244,63,94,0.16)]",
+      tint: "bg-rose-50/60 dark:bg-rose-950/18",
+    },
+    azulPetroleo: {
+      ring: "focus-visible:ring-cyan-500/55",
+      solid: "from-cyan-800 via-cyan-900 to-slate-900 text-white border-cyan-950/50",
+      outlineText: "text-cyan-900 dark:text-cyan-200",
+      outlineBorder: "border-cyan-300/80 dark:border-cyan-800/60",
+      ghostText: "text-cyan-900 dark:text-cyan-200",
+      glow: "after:shadow-[0_0_0_1px_rgba(6,182,212,0.14)]",
+      tint: "bg-cyan-50/55 dark:bg-slate-950/25",
+    },
   };
 
-  const pal = palette[cor] || palette.blue;
+  const pal = palette[cor] || palette.azulPetroleo;
 
+  /* ====== tone classes (glass/outline/ghost) ====== */
   const toneClasses =
-    tone === "outline"
-      ? `bg-transparent border ${pal.outline} hover:bg-black/5 dark:hover:bg-white/10`
-      : tone === "ghost"
-      ? `bg-transparent ${pal.ghost} hover:bg-black/5 dark:hover:bg-white/10 border border-transparent`
-      : `bg-gradient-to-br ${pal.solid} border hover:brightness-110`;
+    tone === "ghost"
+      ? [
+          "bg-transparent border border-transparent",
+          pal.ghostText,
+          "hover:bg-black/5 dark:hover:bg-white/10",
+          "hover:shadow-[0_10px_18px_-16px_rgba(0,0,0,0.25)]",
+        ].join(" ")
+      : tone === "solid"
+      ? [
+          "bg-gradient-to-br",
+          pal.solid,
+          "border",
+          "hover:brightness-[1.06]",
+          "hover:shadow-[0_14px_26px_-20px_rgba(0,0,0,0.35)]",
+        ].join(" ")
+      : [
+          // ✅ OUTLINE (default): tech glass com borda colorida
+          "bg-white/50 dark:bg-zinc-900/20 backdrop-blur",
+          "border",
+          pal.outlineBorder,
+          pal.outlineText,
+          "hover:bg-white/70 dark:hover:bg-zinc-800/25",
+          "hover:shadow-[0_14px_26px_-20px_rgba(0,0,0,0.35)]",
+          pal.glow,
+        ].join(" ");
 
-  /* ====== Semântica/Tag ====== */
+  /* ====== Tag + props ====== */
   const Tag = as || (href ? "a" : "button");
+
+  const isDisabled = disabled || loading;
 
   const commonProps = href
     ? {
-        href,
+        href: isDisabled ? undefined : href,
         target,
         rel: rel ?? (target === "_blank" ? "noopener noreferrer" : undefined),
         role: "button",
-        "aria-disabled": disabled || loading || undefined,
-        onClick: disabled || loading ? (e) => e.preventDefault() : onClick,
+        tabIndex: isDisabled ? -1 : 0,
+        "aria-disabled": isDisabled || undefined,
+        download,
+        onClick: isDisabled
+          ? (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }
+          : onClick,
       }
     : {
         type: "button",
-        onClick: !disabled && !loading ? onClick : undefined,
-        disabled: disabled || loading,
+        onClick: isDisabled ? undefined : onClick,
+        disabled: isDisabled,
       };
 
-  /* ====== Classes base ====== */
-  const base =
-    "inline-flex items-center justify-center select-none " +
-    "transition focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 " +
-    "disabled:opacity-60 disabled:cursor-not-allowed";
+  /* ====== base classes (tech chip) ====== */
+  const base = [
+    "relative isolate",
+    "inline-flex items-center justify-center select-none",
+    "font-extrabold tracking-tight",
+    "transition-all duration-200",
+    "focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2",
+    "focus-visible:ring-offset-white dark:focus-visible:ring-offset-zinc-900",
+    pal.ring,
+    "shadow-[0_10px_22px_-18px_rgba(0,0,0,0.30)]",
+    "active:translate-y-[1px]",
+    "disabled:opacity-60 disabled:cursor-not-allowed",
+    "whitespace-nowrap",
+    // sheen sutil (não exagerado)
+    "before:content-[''] before:absolute before:inset-0 before:rounded-[inherit] before:pointer-events-none",
+    "before:opacity-0 hover:before:opacity-100 before:transition-opacity before:duration-200",
+    "before:bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.18),transparent_55%)]",
+    // after: contorno sutil (glow já vem em pal.glow quando outline)
+    "after:content-[''] after:absolute after:inset-0 after:rounded-[inherit] after:pointer-events-none",
+  ].join(" ");
 
   const widthCls = fullWidth ? "w-full" : "w-auto";
 
-  /* ====== Ícones (retrocompat) ====== */
+  /* ====== ícones (retrocompat) ====== */
   const left = leftIcon ?? icon ?? null;
 
   return (
@@ -106,12 +240,11 @@ export default function BotaoAcao({
       aria-busy={loading || undefined}
       className={[
         base,
-        sizeMap[size],
-        roundMap[shape],
+        sizeMap[size] || sizeMap.md,
+        roundMap[shape] || roundMap.full,
         toneClasses,
         widthCls,
         className,
-        pal.ring, // cor do foco
       ].join(" ")}
       data-variant="BotaoAcao"
       data-tone={tone}
@@ -120,14 +253,24 @@ export default function BotaoAcao({
     >
       {loading ? (
         <span
-          className="h-3 w-3 border-2 border-current border-t-transparent rounded-full motion-safe:animate-spin motion-reduce:animate-none"
+          className="h-3.5 w-3.5 border-2 border-current border-t-transparent rounded-full motion-safe:animate-spin motion-reduce:animate-none"
           aria-hidden="true"
         />
       ) : (
         <>
-          {left && <span className="shrink-0" aria-hidden="true">{left}</span>}
-          <span className="whitespace-nowrap">{label}</span>
-          {rightIcon && <span className="shrink-0" aria-hidden="true">{rightIcon}</span>}
+          {left && (
+            <span className="shrink-0 opacity-95" aria-hidden="true">
+              {left}
+            </span>
+          )}
+
+          <span className="min-w-0 truncate">{label}</span>
+
+          {rightIcon && (
+            <span className="shrink-0 opacity-95" aria-hidden="true">
+              {rightIcon}
+            </span>
+          )}
         </>
       )}
     </Tag>
@@ -139,14 +282,22 @@ BotaoAcao.propTypes = {
   icon: PropTypes.node,
   onClick: PropTypes.func,
   cor: PropTypes.oneOf([
-    "blue","purple","green","gray","red","orange","verde",
-    "amareloOuro","laranjaQueimado","vermelhoCoral","azulPetroleo",
+    "blue",
+    "purple",
+    "green",
+    "gray",
+    "red",
+    "orange",
+    "verde",
+    "amareloOuro",
+    "laranjaQueimado",
+    "vermelhoCoral",
+    "azulPetroleo",
   ]),
   disabled: PropTypes.bool,
   loading: PropTypes.bool,
   className: PropTypes.string,
 
-  /* novos */
   tone: PropTypes.oneOf(["solid", "outline", "ghost"]),
   size: PropTypes.oneOf(["xs", "sm", "md"]),
   shape: PropTypes.oneOf(["full", "lg", "md"]),
@@ -159,4 +310,5 @@ BotaoAcao.propTypes = {
   leftIcon: PropTypes.node,
   rightIcon: PropTypes.node,
   fullWidth: PropTypes.bool,
+  download: PropTypes.oneOfType([PropTypes.bool, PropTypes.string]),
 };
