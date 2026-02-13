@@ -363,8 +363,6 @@ export default function App() {
               <Route path="perfil" element={<Perfil />} />
               <Route path="ajuda" element={<Ajuda />} />
               <Route path="notificacao" element={<Notificacao />} />
-              <Route path="avaliacao" element={<Avaliacao />} />
-              <Route path="avaliar/:turmaId" element={<Avaliacao />} />
               <Route path="teste" element={<Teste />} />
               <Route path="solicitar-curso" element={<SolicitacaoCurso />} />
               <Route path="repositorio-trabalhos" element={<RepositorioTrabalhos />} />
