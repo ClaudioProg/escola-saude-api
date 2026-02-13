@@ -15,6 +15,34 @@ const IS_DEV = process.env.NODE_ENV !== "production";
 /* =========================================================================
    Helpers gerais (singular)
 =========================================================================== */
+
+async function turmaEncerradaSP(db, turmaId) {
+  const r = await db.query(
+    `
+    SELECT
+      (NOW() AT TIME ZONE 'America/Sao_Paulo') >=
+      COALESCE(
+        (
+          SELECT (dt.data::date + COALESCE(dt.horario_fim::time, t.horario_fim::time, '23:59'::time))
+          FROM datas_turma dt
+          JOIN turmas t ON t.id = dt.turma_id
+          WHERE dt.turma_id = $1
+          ORDER BY dt.data DESC, COALESCE(dt.horario_fim, t.horario_fim) DESC
+          LIMIT 1
+        ),
+        (
+          SELECT (t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time))
+          FROM turmas t
+          WHERE t.id = $1
+          LIMIT 1
+        )
+      ) AS encerrou
+    `,
+    [Number(turmaId)]
+  );
+  return r.rows?.[0]?.encerrou === true;
+}
+
 function getDb(req) {
   return req?.db ?? dbFallback;
 }
@@ -223,12 +251,23 @@ async function tryQRCodeDataURL(texto) {
 }
 async function usuarioFezAvaliacao(usuario_id, turma_id, req = null) {
   const db = getDb(req);
-  const q = await db.query(
+  const variants = [
     `SELECT 1 FROM avaliacoes WHERE usuario_id = $1 AND turma_id = $2 LIMIT 1`,
-    [Number(usuario_id), Number(turma_id)]
-  );
-  return q.rowCount > 0;
+    `SELECT 1 FROM avaliacao  WHERE usuario_id = $1 AND turma_id = $2 LIMIT 1`,
+  ];
+
+  for (const sql of variants) {
+    try {
+      const q = await db.query(sql, [Number(usuario_id), Number(turma_id)]);
+      if (q.rowCount > 0) return true;
+    } catch (e) {
+      if (["42P01", "42703"].includes(e?.code)) continue;
+      throw e;
+    }
+  }
+  return false;
 }
+
 
 /* =========================================================================
    Datas reais / resumo turma
@@ -533,12 +572,15 @@ async function gerarCertificado(req, res) {
       );
       if (vinc.rowCount === 0) return res.status(403).json({ erro: "Você não está vinculado como instrutor nesta turma." });
 
-      const fimYmd = ymdFromAny(TURMA.data_fim);
-      const hf = typeof TURMA.horario_fim === "string" ? TURMA.horario_fim.slice(0, 5) : "23:59";
-      const fimDT = ymdToLocalDate(fimYmd, hf);
-      if (fimDT && new Date() < fimDT) {
-        return res.status(400).json({ erro: "A turma ainda não encerrou para emissão do certificado de instrutor." });
-      }
+      const encerrou = await turmaEncerradaSP(db, turma_id);
+if (!encerrou) {
+  return res.status(400).json({
+    erro:
+      tipo === "instrutor"
+        ? "A turma ainda não encerrou para emissão do certificado de instrutor."
+        : "A turma ainda não encerrou. O certificado só pode ser gerado após o término.",
+  });
+}
     }
 
     const resumo = await resumoDatasTurma(turma_id, usuario_id, req);
@@ -820,7 +862,20 @@ async function listarElegivel(req, res) {
           t.data_inicio,
           t.data_fim,
           t.horario_fim,
-          (now() > (t.data_fim::timestamp + COALESCE(t.horario_fim,'23:59'::time))) AS acabou
+          (
+  (NOW() AT TIME ZONE 'America/Sao_Paulo') >=
+  COALESCE(
+    (
+      SELECT (dt.data::date + COALESCE(dt.horario_fim::time, t.horario_fim::time, '23:59'::time))
+      FROM datas_turma dt
+      WHERE dt.turma_id = t.id
+      ORDER BY dt.data DESC, COALESCE(dt.horario_fim, t.horario_fim) DESC
+      LIMIT 1
+    ),
+    (t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time))
+  )
+) AS acabou
+
         FROM turmas t
       ),
       freq AS (
@@ -969,6 +1024,7 @@ async function resetTurma(req, res) {
       const nome = r.arquivo_pdf;
       if (!nome) continue;
       const p = path.join(CERT_DIR, nome);
+      if (!p.startsWith(path.resolve(CERT_DIR))) continue;
       await fsp.unlink(p).catch(() => {});
     }
 

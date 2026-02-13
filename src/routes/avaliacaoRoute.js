@@ -71,18 +71,33 @@ function getPerfis(user) {
 }
 
 // Admin pode ver qualquer usuário; demais perfis só se :usuario_id === id do token
+function getUserId(req) {
+  const u = req.user || req.usuario || {};
+  return (
+    u?.id ??
+    u?.usuario_id ??
+    req?.user?.usuario_id ??
+    req?.usuario?.usuario_id ??
+    req?.auth?.userId ??
+    null
+  );
+}
+
 function ensureSelfOrAdmin(req, res, next) {
   const user = req.user || req.usuario || {};
-  const tokenId = Number(user.id);
+  const tokenId = Number(getUserId(req));
   const paramId = Number(req.params.usuario_id);
 
   const perfis = getPerfis(user);
   const isAdmin = perfis.includes("administrador");
 
-  if (!Number.isFinite(paramId)) return res.status(400).json({ erro: "usuario_id inválido." });
+  if (!Number.isFinite(paramId) || paramId <= 0) return res.status(400).json({ erro: "usuario_id inválido." });
+  if (!Number.isFinite(tokenId) || tokenId <= 0) return res.status(401).json({ erro: "Não autenticado." });
+
   if (isAdmin || tokenId === paramId) return next();
   return res.status(403).json({ erro: "Acesso negado." });
 }
+
 
 /* =========================
    Middlewares do grupo

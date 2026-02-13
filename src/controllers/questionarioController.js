@@ -12,18 +12,40 @@ const query =
         ? db
         : db?.db?.query?.bind(db.db);
 
-// transação helpers (pg: BEGIN/COMMIT/ROLLBACK)
+// transação helpers (pg: BEGIN/COMMIT/ROLLBACK) — PREMIUM (client dedicado)
 async function withTx(fn) {
-  await query("BEGIN");
+  // tenta extrair pool/client do db de forma compat
+  const pool =
+    db?.pool || db?.Pool || db?.db?.pool || db?.default?.pool || null;
+
+  // se não achou pool, cai no modo antigo (não quebra)
+  if (!pool || typeof pool.connect !== "function") {
+    await query("BEGIN");
+    try {
+      const out = await fn({ query });
+      await query("COMMIT");
+      return out;
+    } catch (e) {
+      await query("ROLLBACK");
+      throw e;
+    }
+  }
+
+  const client = await pool.connect();
   try {
-    const out = await fn();
-    await query("COMMIT");
+    const q = client.query.bind(client);
+    await q("BEGIN");
+    const out = await fn({ query: q });
+    await q("COMMIT");
     return out;
   } catch (e) {
-    await query("ROLLBACK");
+    try { await client.query("ROLLBACK"); } catch (_) {}
     throw e;
+  } finally {
+    client.release();
   }
 }
+
 
 /* =========================================================
    Helpers premium (sem “pulo” de fuso / datas-only)
@@ -903,7 +925,7 @@ async function enviarTentativa(req, res) {
     }
 
     // transação (evita estado quebrado entre tentativa/respostas/nota)
-    const result = await withTx(async () => {
+    const result = await withTx(async ({ query }) => {
       // locka a tentativa mais recente para evitar “duplo submit” (race)
       const tent = await query(
         `

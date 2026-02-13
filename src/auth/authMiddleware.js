@@ -67,9 +67,22 @@ function authMiddleware(req, res, next) {
     }
 
     req.db = req.db ?? db;
-    req.user = user;
-    res.locals.user = user;
-    return next();
+
+// ✅ padrão principal
+req.user = user;
+
+// ✅ compat com legado (muitos controllers/middlewares usam req.usuario)
+req.usuario = user;
+
+// ✅ facilita logs/middlewares que procuram userId direto
+req.userId = user.id;
+
+// (opcional) se você usa req.auth em algum lugar
+req.auth = req.auth ?? { userId: user.id, perfil: user.perfil };
+
+res.locals.user = user;
+return next();
+
   } catch (e) {
     // ⚠️ Não vazar detalhes: log interno, resposta genérica
     console.error("🔴 [authMiddleware] JWT inválido:", e?.message || e);

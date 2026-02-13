@@ -16,10 +16,13 @@ if (typeof requireAuth !== "function") {
 
 const _roles = require("../middlewares/authorize");
 const authorizeRoles =
-  typeof _roles === "function" ? _roles : _roles?.default || _roles?.authorizeRoles;
+  (typeof _roles === "function" ? _roles : _roles?.authorizeRoles) ||
+  _roles?.authorizeRole ||
+  _roles?.authorize?.any ||
+  _roles?.authorize ||
+  _roles?.default;
 
 if (typeof authorizeRoles !== "function") {
-  // eslint-disable-next-line no-console
   console.error("[questionariosRoute] authorizeRoles inválido:", _roles);
   throw new Error("authorizeRoles não é função (verifique exports em src/middlewares/authorize.js)");
 }
@@ -172,12 +175,47 @@ router.post(
    ─────────────────────────────────────────────────────────────── */
 
 // lista questionários disponíveis para um usuário
+function getPerfis(user) {
+  const raw = user?.perfis ?? user?.perfil ?? user?.roles ?? user?.role ?? "";
+  if (Array.isArray(raw)) return raw.map(String).map((s) => s.trim().toLowerCase()).filter(Boolean);
+  return String(raw).split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+}
+
+function getUserId(req) {
+  const u = req.user || req.usuario || {};
+  return (
+    u?.id ??
+    u?.usuario_id ??
+    req?.user?.usuario_id ??
+    req?.usuario?.usuario_id ??
+    req?.auth?.userId ??
+    null
+  );
+}
+
+function ensureSelfOrAdmin(req, res, next) {
+  const user = req.user || req.usuario || {};
+  const tokenId = Number(getUserId(req));
+  const paramId = Number(req.params.usuario_id);
+
+  const perfis = getPerfis(user);
+  const isAdmin = perfis.includes("administrador");
+
+  if (!Number.isFinite(paramId) || paramId <= 0) return res.status(400).json({ erro: "usuario_id inválido." });
+  if (!Number.isFinite(tokenId) || tokenId <= 0) return res.status(401).json({ erro: "Não autenticado." });
+
+  if (isAdmin || tokenId === paramId) return next();
+  return res.status(403).json({ erro: "Acesso negado." });
+}
+
 router.get(
   "/disponiveis/usuario/:usuario_id",
   authorizeRoles("administrador", "instrutor", "coordenador", "usuario"),
   ensureNumericParam("usuario_id"),
+  ensureSelfOrAdmin,
   wrap(listarDisponiveisParaUsuario)
 );
+
 
 // obter questionário para responder (por turma)
 router.get(

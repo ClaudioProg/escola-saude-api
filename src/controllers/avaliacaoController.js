@@ -263,19 +263,72 @@ async function usuarioAtingiu75(dbConn, usuarioId, turmaId) {
   return !!row && Number(row.qtd_presencas) >= Number(row.minimo_75);
 }
 
-async function turmaEncerrada(dbConn, turmaId) {
+
+async function fimRealTurmaTS(dbConn, turmaId) {
   const r = await dbConn.query(
     `
-    SELECT 1
-      FROM turmas t
-     WHERE t.id = $1
-       AND (now() > (t.data_fim::timestamp + t.horario_fim))
-     LIMIT 1
+    WITH base AS (
+      SELECT
+        (
+          SELECT (dt.data::date + COALESCE(dt.horario_fim::time, t.horario_fim::time, '23:59'::time))
+          FROM datas_turma dt
+          JOIN turmas t ON t.id = dt.turma_id
+          WHERE dt.turma_id = $1
+          ORDER BY dt.data DESC, COALESCE(dt.horario_fim, t.horario_fim) DESC
+          LIMIT 1
+        ) AS fim_dt,
+        (
+          SELECT (t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time))
+          FROM turmas t WHERE t.id = $1
+          LIMIT 1
+        ) AS fim_tb
+    )
+    SELECT COALESCE(fim_dt, fim_tb) AS fim_local
+    FROM base;
     `,
     [Number(turmaId)]
   );
-  return (r.rowCount || 0) > 0;
+  return r.rows?.[0]?.fim_local || null; // timestamp without tz (local)
 }
+
+async function fimRealTurmaTS(dbConn, turmaId) {
+  const r = await dbConn.query(
+    `
+    WITH base AS (
+      SELECT
+        (
+          SELECT (dt.data::date + COALESCE(dt.horario_fim::time, t.horario_fim::time, '23:59'::time))
+          FROM datas_turma dt
+          JOIN turmas t ON t.id = dt.turma_id
+          WHERE dt.turma_id = $1
+          ORDER BY dt.data DESC, COALESCE(dt.horario_fim, t.horario_fim) DESC
+          LIMIT 1
+        ) AS fim_dt,
+        (
+          SELECT (t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time))
+          FROM turmas t WHERE t.id = $1
+          LIMIT 1
+        ) AS fim_tb
+    )
+    SELECT COALESCE(fim_dt, fim_tb) AS fim_local
+    FROM base;
+    `,
+    [Number(turmaId)]
+  );
+  return r.rows?.[0]?.fim_local || null;
+}
+
+async function turmaEncerrada(dbConn, turmaId) {
+  const fimLocal = await fimRealTurmaTS(dbConn, turmaId);
+  if (!fimLocal) return false;
+
+  const r = await dbConn.query(
+    `SELECT (NOW() AT TIME ZONE 'America/Sao_Paulo') >= $1::timestamp AS encerrou`,
+    [fimLocal]
+  );
+  return r.rows?.[0]?.encerrou === true;
+}
+
 
 /* ────────────────────────────────────────────────────────────────
    Endpoints — Usuário / Instrutor
@@ -439,7 +492,9 @@ async function listarAvaliacaoDisponiveis(req, res) {
   const dbConn = getDb(req);
   const usuario_id = Number(req.params.usuario_id);
 
-  if (!Number.isFinite(usuario_id) || usuario_id <= 0) return res.status(400).json({ erro: "usuario_id inválido." });
+  if (!Number.isFinite(usuario_id) || usuario_id <= 0) {
+    return res.status(400).json({ erro: "usuario_id inválido." });
+  }
 
   try {
     const sqlVariants = [
@@ -459,7 +514,19 @@ async function listarAvaliacaoDisponiveis(req, res) {
             AND a.turma_id   = t.id
       WHERE i.usuario_id = $1
         AND a.id IS NULL
-        AND ( now() > (t.data_fim::timestamp + t.horario_fim) )
+        AND (
+          (NOW() AT TIME ZONE 'America/Sao_Paulo') >=
+          COALESCE(
+            (
+              SELECT (dt.data::date + COALESCE(dt.horario_fim::time, t.horario_fim::time, '23:59'::time))
+              FROM datas_turma dt
+              WHERE dt.turma_id = t.id
+              ORDER BY dt.data DESC, COALESCE(dt.horario_fim, t.horario_fim) DESC
+              LIMIT 1
+            ),
+            (t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time))
+          )
+        )
         AND (
           (
             SELECT COUNT(DISTINCT p.data_presenca)::int
@@ -488,7 +555,28 @@ async function listarAvaliacaoDisponiveis(req, res) {
             AND a.turma_id   = t.id
       WHERE i.usuario_id = $1
         AND a.id IS NULL
-        AND ( now() > (t.data_fim::timestamp + t.horario_fim) )
+        AND (
+          (NOW() AT TIME ZONE 'America/Sao_Paulo') >=
+          COALESCE(
+            (
+              SELECT (dt.data::date + COALESCE(dt.horario_fim::time, t.horario_fim::time, '23:59'::time))
+              FROM datas_turma dt
+              WHERE dt.turma_id = t.id
+              ORDER BY dt.data DESC, COALESCE(dt.horario_fim, t.horario_fim) DESC
+              LIMIT 1
+            ),
+            (t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time))
+          )
+        )
+        AND (
+          (
+            SELECT COUNT(DISTINCT p.data_presenca)::int
+              FROM presencas p
+             WHERE p.usuario_id = i.usuario_id
+               AND p.turma_id   = t.id
+               AND (p.presente = true)
+          ) >= CEIL(0.75 * ( (t.data_fim - t.data_inicio) + 1 ))
+        )
       ORDER BY t.data_fim DESC
       `,
     ];

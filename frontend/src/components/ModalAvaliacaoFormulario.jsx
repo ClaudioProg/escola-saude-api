@@ -83,10 +83,8 @@ const OBRIGATORIOS = new Set([
 /* ===================== Mini components ===================== */
 function MiniCard({ icon: Icon, title, children, tone = "emerald" }) {
   const tones = {
-    emerald:
-      "border-emerald-100 dark:border-emerald-900 bg-white dark:bg-slate-900",
-    amber:
-      "border-amber-200 dark:border-amber-900 bg-white dark:bg-slate-900",
+    emerald: "border-emerald-100 dark:border-emerald-900 bg-white dark:bg-slate-900",
+    amber: "border-amber-200 dark:border-amber-900 bg-white dark:bg-slate-900",
     zinc: "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900",
   };
   return (
@@ -127,11 +125,7 @@ function RatingField({
       <legend className="text-sm font-extrabold text-slate-800 dark:text-slate-100">
         {rotulo}{" "}
         {obrig && (
-          <span
-            className="text-rose-600"
-            title="Obrigatório"
-            aria-label="Obrigatório"
-          >
+          <span className="text-rose-600" title="Obrigatório" aria-label="Obrigatório">
             *
           </span>
         )}
@@ -203,7 +197,7 @@ export default function ModalAvaliacaoFormulario({
 
   const tipoNorm = NORM(evento?.tipo);
   const isCongresso = tipoNorm === "congresso";
-  const isSimposio = tipoNorm === "simposio" || tipoNorm === "simposio"; // já normalizado sem acento
+  const isSimposio = tipoNorm === "simposio"; // ✅ corrigido (já normalizado)
 
   const camposObrigatorios = useMemo(() => CAMPOS_BASE, []);
   const camposExtras = useMemo(() => {
@@ -235,10 +229,12 @@ export default function ModalAvaliacaoFormulario({
       .map((c) => notas[c])
       .filter((v) => LABELS_VALIDAS.has(v));
     if (!labels.length) return null;
+
     const soma = labels.reduce((acc, lab) => {
       const item = OPcao.find((o) => o.value === lab);
       return acc + (item?.nota ?? 0);
     }, 0);
+
     return (soma / labels.length).toFixed(1);
   }, [notas]);
 
@@ -262,14 +258,12 @@ export default function ModalAvaliacaoFormulario({
     setMsgA11y("");
     setShowExtras(false);
 
-    // foco premium sem setTimeout
     requestAnimationFrame(() => {
       primeiroCampoRef.current?.focus?.();
     });
   }, [isOpen, evento?.id, turma_id]);
 
-  if (!isOpen || !evento) return null;
-
+  // ✅✅ CRÍTICO: hooks SEMPRE antes do return condicional
   const handleNotaChange = useCallback((campo, valorLabel) => {
     setNotas((prev) => ({ ...prev, [campo]: valorLabel }));
   }, []);
@@ -277,11 +271,12 @@ export default function ModalAvaliacaoFormulario({
   const focusPrimeiroPendente = useCallback(() => {
     const first = faltandoObrig[0];
     if (!first) return;
-    // tenta focar o primeiro input do grupo (guardamos no fieldRefs ao render)
     requestAnimationFrame(() => {
       fieldRefs.current[first]?.focus?.();
     });
   }, [faltandoObrig]);
+
+  if (!isOpen || !evento) return null;
 
   async function enviarAvaliacao() {
     const usuario = JSON.parse(localStorage.getItem("usuario") || "{}");
@@ -350,10 +345,7 @@ export default function ModalAvaliacaoFormulario({
         role="group"
         aria-label="Cabeçalho do formulário de avaliação"
       >
-        <h2
-          id="titulo-avaliacao"
-          className="text-xl sm:text-2xl font-extrabold tracking-tight"
-        >
+        <h2 id="titulo-avaliacao" className="text-xl sm:text-2xl font-extrabold tracking-tight">
           ✍️ Avaliar: {titulo}
         </h2>
         <p id="descricao-avaliacao" className="text-white/90 text-sm mt-1">
@@ -369,14 +361,8 @@ export default function ModalAvaliacaoFormulario({
             <div className="text-sm text-slate-600 dark:text-slate-300 mb-2">
               {preenchidosObrig}/{totalObrig} obrigatórios
             </div>
-            <div
-              className="h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden"
-              aria-hidden="true"
-            >
-              <div
-                className="h-full bg-emerald-500 transition-all"
-                style={{ width: `${pctObrig}%` }}
-              />
+            <div className="h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden" aria-hidden="true">
+              <div className="h-full bg-emerald-500 transition-all" style={{ width: `${pctObrig}%` }} />
             </div>
           </MiniCard>
 
@@ -429,13 +415,6 @@ export default function ModalAvaliacaoFormulario({
               const invalido =
                 obrig && (!notas[chave] || !LABELS_VALIDAS.has(String(notas[chave])));
 
-              // ref do primeiro radio do grupo (para “pular pro pendente”)
-              const setFirstRef = (el) => {
-                if (!el) return;
-                // salvamos por chave (primeiro input do grupo)
-                if (!fieldRefs.current[chave]) fieldRefs.current[chave] = el;
-              };
-
               return (
                 <RatingField
                   key={chave}
@@ -447,22 +426,13 @@ export default function ModalAvaliacaoFormulario({
                   invalid={invalido}
                   hintId={`hint-${chave}`}
                   focusRef={idx === 0 ? primeiroCampoRef : { current: null }}
-                >
-                  {/* noop */}
-                </RatingField>
+                />
               );
             })}
           </div>
         </div>
 
-        {/* Corrige refs do “pular pro pendente”: coloca ref no 1º radio */}
-        <div className="sr-only" aria-hidden="true">
-          {/* esse bloco não renderiza nada visualmente; refs são setadas abaixo */}
-        </div>
-
-        {/* Re-render dos obrigatórios com refs reais no 1º radio (sem duplicar UI):
-            solução simples: set ref via callback dentro do map de opções.
-            Para não complicar, vamos fazer por “hook” no DOM após render. */}
+        {/* Rebind refs (para foco no “pendente”) */}
         <RebindFirstRadios fieldRefs={fieldRefs} />
 
         {/* Extras (condicionais) */}
@@ -483,32 +453,25 @@ export default function ModalAvaliacaoFormulario({
                 Extras (opcionais) — {isCongresso ? "Congresso" : "Simpósio/Congresso"}
               </div>
               <ChevronDown
-                className={cls(
-                  "w-5 h-5 transition-transform",
-                  showExtras ? "rotate-180" : ""
-                )}
+                className={cls("w-5 h-5 transition-transform", showExtras ? "rotate-180" : "")}
                 aria-hidden="true"
               />
             </button>
 
             {showExtras && (
               <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {camposExtras.map(({ chave, rotulo }) => {
-                  const obrig = OBRIGATORIOS.has(chave); // deve ser false
-                  const invalido = false;
-                  return (
-                    <RatingField
-                      key={chave}
-                      rotulo={rotulo}
-                      chave={chave}
-                      obrig={obrig}
-                      value={notas[chave]}
-                      onChange={handleNotaChange}
-                      invalid={invalido}
-                      hintId={`hint-${chave}`}
-                    />
-                  );
-                })}
+                {camposExtras.map(({ chave, rotulo }) => (
+                  <RatingField
+                    key={chave}
+                    rotulo={rotulo}
+                    chave={chave}
+                    obrig={false}
+                    value={notas[chave]}
+                    onChange={handleNotaChange}
+                    invalid={false}
+                    hintId={`hint-${chave}`}
+                  />
+                ))}
               </div>
             )}
           </div>
@@ -596,15 +559,13 @@ export default function ModalAvaliacaoFormulario({
 }
 
 /**
- * Helper: após render, captura o primeiro radio de cada grupo obrigatório
+ * Helper: após render, captura o primeiro radio de cada grupo
  * e guarda no fieldRefs para focar no “primeiro pendente”.
- * Mantém o componente principal limpo e não duplica UI.
  */
 function RebindFirstRadios({ fieldRefs }) {
   useEffect(() => {
     try {
       const groups = document.querySelectorAll('fieldset [type="radio"]');
-      // mapeia o primeiro radio de cada name
       const seen = new Set();
       for (const el of groups) {
         const name = el.getAttribute("name") || "";

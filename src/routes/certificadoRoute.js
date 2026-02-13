@@ -28,7 +28,10 @@ if (typeof authorizeRoles !== "function") {
 }
 
 const { extrairPerfis } = require("../utils/perfil");
-const dbFallback = require("../db");
+
+// ✅ normaliza db (alguns módulos exportam { db }, outros exportam direto)
+const dbMod = require("../db");
+const dbFallback = dbMod?.db ?? dbMod;
 
 /* ───────────────── Controllers (mantidos) ───────────────── */
 const ctrl = require("../controllers/certificadoController");
@@ -63,7 +66,9 @@ const asyncHandler = (fn) => {
 };
 
 function getDb(req) {
-  return req?.db ?? dbFallback;
+  // ✅ também normaliza req.db caso venha no mesmo padrão
+  const fromReq = req?.db?.db ?? req?.db;
+  return fromReq ?? dbFallback;
 }
 
 function toIntId(v) {
@@ -86,9 +91,36 @@ function validate(req, res, next) {
 
 /** Permite admin; demais perfis só se req.body.usuario_id === id do token. */
 function ensureBodySelfOrAdmin(req, res, next) {
-  const user = req.usuario ?? req.user ?? {};
-  const tokenId = toIntId(user.id);
-  const perfis = extrairPerfis({ usuario: user, user });
+  function getUserId(req) {
+    const u = req.usuario ?? req.user ?? {};
+    const a = req.auth ?? {};
+
+    return toIntId(
+      // ✅ mais comuns (várias bases usam isso)
+      req.userId ??
+      req.usuario_id ??
+      req.user?.id ??
+      req.usuario?.id ??
+
+      // ✅ seus objetos normalizados
+      u?.id ??
+      u?.usuario_id ??
+
+      // ✅ auth context (muito comum em middleware JWT)
+      a?.id ??
+      a?.usuario_id ??
+      a?.userId ??
+      a?.sub ??
+      a?.payload?.id ??
+      a?.payload?.usuario_id
+    );
+  }
+
+  const tokenId = getUserId(req);
+
+  // ✅ pega o usuário do req (compat)
+  const uctx = req.usuario ?? req.user ?? null;
+  const perfis = extrairPerfis({ usuario: uctx, user: uctx });
   const isAdmin = perfis.includes("administrador");
 
   const bodyId = toIntId(req.body?.usuario_id);
@@ -99,32 +131,62 @@ function ensureBodySelfOrAdmin(req, res, next) {
   return res.status(403).json({ erro: "Acesso negado." });
 }
 
-/** Permite admin; demais perfis só se o certificado pertence ao token. */
+
+// ✅ Middleware anti-IDOR: dono do certificado OU admin
 async function ensureCertOwnerOrAdmin(req, res, next) {
   try {
-    const user = req.usuario ?? req.user ?? {};
-    const tokenId = toIntId(user.id);
-    const perfis = extrairPerfis({ usuario: user, user });
+    const rid = res.getHeader?.("X-Request-Id") || "no-rid";
+
+    const tokenId = toIntId(
+      req.userId ??
+      req.usuario_id ??
+      req.user?.id ??
+      req.usuario?.id ??
+      req.auth?.userId ??
+      req.auth?.id ??
+      req.auth?.sub
+    );
+
+    const perfis = extrairPerfis(req);         // ✅ sempre definido aqui
     const isAdmin = perfis.includes("administrador");
 
-    const id = toIntId(req.params.id);
-    if (!id) return res.status(400).json({ erro: "ID de certificado inválido." });
+    const certId = toIntId(req.params.id);
+    if (!certId) return res.status(400).json({ erro: "ID de certificado inválido." });
+
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[CERT-AUTH]", { rid, certId, tokenId, perfis, isAdmin });
+    }
+
     if (isAdmin) return next();
     if (!tokenId) return res.status(401).json({ erro: "Não autenticado." });
 
     const db = getDb(req);
-    const q = await db.query(
-      "SELECT 1 FROM certificados WHERE id = $1 AND usuario_id = $2 LIMIT 1",
-      [id, tokenId]
-    );
-    if (q.rowCount > 0) return next();
 
-    return res.status(403).json({ erro: "Acesso negado ao certificado." });
+    const q = await db.query(
+      "SELECT usuario_id FROM certificados WHERE id = $1 LIMIT 1",
+      [certId]
+    );
+
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[CERT-AUTH] DB:", q.rows);
+    }
+
+    if (q.rowCount === 0) return res.status(404).json({ erro: "Certificado não encontrado." });
+
+    if (Number(q.rows[0].usuario_id) !== Number(tokenId)) {
+      return res.status(403).json({ erro: "Acesso negado ao certificado." });
+    }
+
+    return next();
   } catch (e) {
-    console.error("[certificado] ensureCertOwnerOrAdmin:", e?.message || e);
-    return res.status(500).json({ erro: "Erro de autorização." });
+    console.error("[CERT-AUTH-ERRO]", e?.stack || e);
+    return res.status(500).json({
+      erro: process.env.NODE_ENV !== "production" ? e.message : "Erro de autorização.",
+      requestId: res.getHeader?.("X-Request-Id"),
+    });
   }
 }
+
 
 /* =========================
    Rate limits (premium)
@@ -212,12 +274,14 @@ router.get(
   })
 );
 
-/* 📥 Baixar certificado (público p/ QR/terceiros) */
+// ✅ Download passa a ser autenticado (evita vazamento)
 router.get(
   "/:id/download",
-  publicLimiter,
+  requireAuth,
+  privateLimiter,
   [param("id").isInt({ min: 1 }).withMessage("id inválido.").toInt()],
   validate,
+  ensureCertOwnerOrAdmin,
   asyncHandler(ctrl.baixarCertificado)
 );
 

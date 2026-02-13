@@ -247,7 +247,6 @@ export default function SidebarNav({
       { label: "Painel do Usuário", path: "/usuario/dashboard", icon: LayoutDashboard },
       { label: "Eventos", path: "/eventos", icon: CalendarDays },
       { label: "Minhas Presenças", path: "/minhas-presencas", icon: ListChecks },
-      { label: "Avaliações Pendentes", path: "/avaliacao", icon: PencilLine },
       { label: "Meus Certificados", path: "/certificados", icon: FileText },
       { label: "Agendamento de Sala", path: "/agenda-salas", icon: CalendarDays },
       { label: "Solicitar Curso", path: "/solicitar-curso", icon: Presentation },

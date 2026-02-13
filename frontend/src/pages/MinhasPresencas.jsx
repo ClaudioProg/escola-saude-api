@@ -235,7 +235,16 @@ export default function MinhasPresencas() {
       setLoading(true);
       setLive("Carregando suas presenças…");
       const resp = await apiGetMinhasPresencas();
-      setData(resp || { turmas: [] });
+
+// aceita: { turmas: [...] } OU { data: [...] } OU array direto OU resumo antigo
+const turmas =
+  Array.isArray(resp) ? resp :
+  Array.isArray(resp?.turmas) ? resp.turmas :
+  Array.isArray(resp?.data) ? resp.data :
+  Array.isArray(resp?.itens) ? resp.itens :
+  [];
+
+setData({ ...(resp || {}), turmas });
       setLive("Presenças carregadas.");
     } catch (e) {
       console.error(e);

@@ -71,13 +71,39 @@ function isPerfilIncompleto(u) {
  * Extrai e normaliza a lista de perfis de um usuário autenticado.
  * Aceita req.usuario / req.user e perfil como string, lista ou CSV.
  */
-function extrairPerfis(req) {
+function extrairPerfis(input) {
+  // Aceita:
+  // 1) req express: { usuario, user, auth }
+  // 2) contexto:    { usuario, user, auth } (onde usuario/user podem ser o "user" direto)
+  // 3) user direto: { perfil/perfis } (caso alguém passe só o usuário por engano)
+
+  const isReqLike = !!(input && (input.usuario || input.user || input.auth));
+
+  const req = isReqLike ? input : { user: input };
+
+  // ✅ fontes possíveis (req.usuario / req.user / req.auth / user direto)
   const candidato =
     req?.usuario?.perfis ??
     req?.usuario?.perfil ??
+    req?.usuario?.roles ??
     req?.user?.perfis ??
     req?.user?.perfil ??
+    req?.user?.roles ??
+    req?.auth?.perfis ??
+    req?.auth?.perfil ??
+    req?.auth?.roles ??
+    // ✅ se alguém passar { usuario: userDireto } mas sem .perfil/.perfis no nível certo:
+    req?.usuario ??
+    req?.user ??
+    req?.auth ??
     [];
+
+  // se candidato virou objeto user direto, tenta ler perfil/perfis dele
+  if (candidato && typeof candidato === "object" && !Array.isArray(candidato)) {
+    const obj = candidato;
+    const cand2 = obj?.perfis ?? obj?.perfil ?? obj?.roles ?? [];
+    return toArrayLower(cand2);
+  }
 
   return toArrayLower(candidato);
 }

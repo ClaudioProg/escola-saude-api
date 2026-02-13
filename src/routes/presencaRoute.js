@@ -47,6 +47,7 @@ const required = [
   "listaPresencasTurma",
   "exportarPresencasPDF",
   "obterMinhasPresencas",
+  "listarMinhasPresencas",
 ];
 for (const fn of required) {
   if (typeof ctrl?.[fn] !== "function") {
@@ -196,17 +197,31 @@ router.get(
    Rotas AUTENTICADAS
 ─────────────────────────────── */
 
-// 👤 Minhas presenças (todas as turmas)
+// 👤 Minhas presenças (lista completa de turmas)
 router.get(
   "/minhas",
   requireAuth,
   routeTag("presencasRoute:GET /minhas"),
-  handle(ctrl.obterMinhasPresencas)
+  handle(ctrl.listarMinhasPresencas)
 );
 router.get(
   "/me",
   requireAuth,
   routeTag("presencasRoute:GET /me"),
+  handle(ctrl.listarMinhasPresencas)
+);
+
+// 📊 Resumo (cards simples)
+router.get(
+  "/minhas/resumo",
+  requireAuth,
+  routeTag("presencasRoute:GET /minhas/resumo"),
+  handle(ctrl.obterMinhasPresencas)
+);
+router.get(
+  "/me/resumo",
+  requireAuth,
+  routeTag("presencasRoute:GET /me/resumo"),
   handle(ctrl.obterMinhasPresencas)
 );
 
