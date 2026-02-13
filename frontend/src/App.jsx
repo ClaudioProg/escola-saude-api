@@ -68,7 +68,7 @@ const Perfil = lazy(() => import("./pages/Perfil"));
 const Ajuda = lazy(() => import("./pages/Ajuda"));
 const Notificacao = lazy(() => import("./pages/Notificacao"));
 const AgendaAdministrador = lazy(() => import("./pages/AgendaAdministrador"));
-const GestaoPresencas = lazy(() => import("./pages/GestaoPresencas"));
+const GestaoPresencas = lazy(() => import("./pages/GestaoPresenca"));
 const CancelarInscricaoAdmin = lazy(() => import("./pages/CancelarInscricaoAdmin"));
 const AdminAvaliacao = lazy(() => import("./pages/AdminAvaliacao"));
 const VotacaoUsuario = lazy(() => import("./pages/VotacaoUsuario"));
