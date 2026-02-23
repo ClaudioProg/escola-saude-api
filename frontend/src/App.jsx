@@ -339,12 +339,14 @@ export default function App() {
             <Route path="/historico" element={<HistoricoEventos />} />
             <Route path="/recuperar-senha" element={<RecuperarSenha />} />
             <Route path="/redefinir-senha/:token" element={<RedefinirSenha />} />
-            <Route path="/scanner" element={<Scanner />} />
 
             {/* 🔐 protegidas (tudo aqui dentro ganha Topbar+Sidebar) */}
             <Route element={<PrivateShell />}>
               {/* ✅ Home pós-login (painel oficial) */}
               <Route index element={<HomeEscola />} />
+
+              {/* ✅ Scanner COM sidebar */}
+              <Route path="scanner" element={<Scanner />} />
 
               {/* ✅ Painel do Usuário — rota oficial + aliases */}
               <Route path="usuario/dashboard" element={<HomeEscola />} />

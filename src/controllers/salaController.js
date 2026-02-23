@@ -224,33 +224,42 @@ async function listarAgendaUsuario(req, res) {
     log(r, "[listarAgendaUsuario] query:", { ano, mes, sala, usuarioId });
 
     const params = [ano, mes, usuarioId];
-    let whereSala = "";
-    if (sala) {
-      params.push(sala);
-      whereSala = ` AND rs.sala = $${params.length}`;
-    }
+let whereSala = "";
+if (sala) {
+  params.push(sala);
+  whereSala = ` AND rs.sala = $${params.length}`;
+}
 
-    const { rows: reservas } = await query(
-      `
-      SELECT
-        rs.id,
-        rs.sala,
-        rs.data::date AS data,
-        rs.periodo,
-        rs.status,
-        rs.qtd_pessoas,
-        rs.coffee_break,
-        rs.finalidade,
-        rs.solicitante_id
-      FROM reservas_salas rs
-      WHERE EXTRACT(YEAR FROM rs.data) = $1
-        AND EXTRACT(MONTH FROM rs.data) = $2
-        AND rs.solicitante_id = $3
-        ${whereSala}
-      ORDER BY rs.data, rs.sala, rs.periodo
-      `,
-      params
-    );
+const { rows: reservas } = await query(
+  `
+  SELECT
+    rs.id,
+    rs.sala,
+    rs.data::date AS data,
+    rs.periodo,
+    rs.status,
+    rs.qtd_pessoas,
+    rs.coffee_break,
+
+    -- ✅ privacidade: só devolve finalidade se for do usuário logado
+    CASE WHEN rs.solicitante_id = $3 THEN rs.finalidade ELSE NULL END AS finalidade,
+
+    rs.solicitante_id,
+
+    -- ✅ flag pro frontend
+    (rs.solicitante_id = $3) AS minha
+  FROM reservas_salas rs
+  WHERE EXTRACT(YEAR FROM rs.data) = $1
+    AND EXTRACT(MONTH FROM rs.data) = $2
+
+    -- ✅ remove canceladas/rejeitadas sem quebrar enum
+    AND (rs.status IS NULL OR rs.status NOT IN ('cancelado'::status_reserva_sala, 'rejeitado'::status_reserva_sala))
+
+    ${whereSala}
+  ORDER BY rs.data, rs.sala, rs.periodo
+  `,
+  params
+);
 
     const { rows: bloqueios } = await query(
       `
@@ -271,7 +280,15 @@ async function listarAgendaUsuario(req, res) {
     return res.json({ ano, mes, reservas, feriados, datas_bloqueadas });
   } catch (e) {
     errlog(r, "[listarAgendaUsuario] erro:", e?.message);
-    return res.status(500).json({ ok: false, erro: "Erro ao carregar disponibilidade das salas.", requestId: r });
+    errlog(r, "[listarAgendaUsuario] code:", e?.code);
+    errlog(r, "[listarAgendaUsuario] stack:", e?.stack);
+  
+    return res.status(500).json({
+      ok: false,
+      erro: "Erro ao carregar disponibilidade das salas.",
+      requestId: r,
+      ...(IS_DEV ? { detalhe: e?.message, code: e?.code } : {}),
+    });
   }
 }
 

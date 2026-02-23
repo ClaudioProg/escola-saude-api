@@ -217,13 +217,17 @@ function AgendaSalasUsuario() {
     if (diaSemana === 0 || diaSemana === 6 || ehFeriado || ehBloqueada) return "oculto";
 
     const reserva = reservasMap[dataISO]?.[salaValue]?.[periodo] || null;
-    if (!reserva) return "livre";
-    if (reserva.status === "bloqueado") return "oculto";
-    if (reserva.status === "cancelado" || reserva.status === "rejeitado") return "livre";
+if (!reserva) return "livre";
 
-    if (["pendente","em_analise","solicitado"].includes(reserva.status)) return "minha_solicitacao_pendente";
-    if (["aprovado","confirmado"].includes(reserva.status)) return "minha_reserva_aprovada";
-    return "minha_solicitacao_pendente";
+// ✅ se existe reserva e NÃO é minha, o usuário deve ver como BLOQUEADO
+if (reserva && reserva.minha === false) return "bloqueado_por_outro";
+
+if (reserva.status === "bloqueado") return "oculto";
+if (reserva.status === "cancelado" || reserva.status === "rejeitado") return "livre";
+
+if (["pendente","em_analise","solicitado"].includes(reserva.status)) return "minha_solicitacao_pendente";
+if (["aprovado","confirmado"].includes(reserva.status)) return "minha_reserva_aprovada";
+return "minha_solicitacao_pendente";
   }
   function getReservaDoSlot(salaValue, dataISO, periodo) {
     return reservasMap[dataISO]?.[salaValue]?.[periodo] || null;
@@ -231,11 +235,17 @@ function AgendaSalasUsuario() {
 
   function classesStatus(status) {
     switch (status) {
-      case "minha_solicitacao_pendente": return "bg-amber-50 text-amber-700 border border-amber-200 cursor-default";
-      case "minha_reserva_aprovada":     return "bg-sky-50 text-sky-700 border border-sky-200 cursor-default";
-      case "livre":                      return "bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100";
+      case "minha_solicitacao_pendente":
+        return "bg-amber-50 text-amber-700 border border-amber-200 cursor-default";
+      case "minha_reserva_aprovada":
+        return "bg-sky-50 text-sky-700 border border-sky-200 cursor-default";
+      case "bloqueado_por_outro":
+        return "bg-zinc-50 text-zinc-600 border border-zinc-200 cursor-not-allowed dark:bg-zinc-800/70 dark:text-zinc-200 dark:border-zinc-700";
+      case "livre":
+        return "bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100";
       case "oculto":
-      default:                           return "";
+      default:
+        return "";
     }
   }
 
@@ -412,16 +422,22 @@ function AgendaSalasUsuario() {
 
         {/* Legenda */}
         <div className="mb-4 flex flex-wrap gap-2 text-xs sm:text-sm">
-          <span className="inline-flex items-center gap-1">
-            <span className="w-3 h-3 rounded-full bg-emerald-50 border border-emerald-200" /> Disponível para solicitar
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <span className="w-3 h-3 rounded-full bg-amber-50 border border-amber-200" /> Minha solicitação (em análise)
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <span className="w-3 h-3 rounded-full bg-sky-50 border border-sky-200" /> Minha reserva aprovada
-          </span>
-        </div>
+  <span className="inline-flex items-center gap-1">
+    <span className="w-3 h-3 rounded-full bg-emerald-50 border border-emerald-200" /> Disponível para solicitar
+  </span>
+  <span className="inline-flex items-center gap-1">
+    <span className="w-3 h-3 rounded-full bg-amber-50 border border-amber-200" /> Minha solicitação (em análise)
+  </span>
+  <span className="inline-flex items-center gap-1">
+    <span className="w-3 h-3 rounded-full bg-sky-50 border border-sky-200" /> Minha reserva aprovada
+  </span>
+
+  {/* ✅ novo */}
+  <span className="inline-flex items-center gap-1">
+    <span className="w-3 h-3 rounded-full bg-zinc-50 border border-zinc-200 dark:bg-zinc-800 dark:border-zinc-700" />
+    Ocupado/Bloqueado
+  </span>
+</div>
 
         {/* Calendário */}
         <section className="bg-white dark:bg-zinc-900 rounded-2xl shadow-sm border border-slate-100 dark:border-zinc-800 overflow-hidden">
@@ -568,21 +584,38 @@ function AgendaSalasUsuario() {
                                   );
                                 }
 
-                                return (
-                                  <button
-                                    key={p.value}
-                                    type="button"
-                                    onClick={() => abrirModalSlot(dia, salaItem.value, p.value)}
-                                    className={`w-full text-left text-[11px] sm:text-xs px-2 py-2 rounded-xl flex items-center justify-between gap-2 transition ${classesStatus(status)} focus:outline-none focus:ring-2 focus:ring-sky-500/60`}
-                                    aria-label={`${salaItem.label}, ${p.label}, disponível para solicitar`}
-                                    title={`${salaItem.label} • ${p.label} • Disponível`}
-                                  >
-                                    <span className="font-semibold shrink-0 px-1.5 py-0.5 rounded-md bg-white/60 text-slate-800 border border-white/70">
-                                      {p.label}
-                                    </span>
-                                    <span className="text-[10px] truncate">Disponível</span>
-                                  </button>
-                                );
+                                // ✅ NOVO: reserva de outro usuário → mostrar como bloqueado (sem clique)
+if (status === "bloqueado_por_outro") {
+  return (
+    <div
+      key={p.value}
+      className={`w-full text-left text-[11px] sm:text-xs px-2 py-2 rounded-xl flex items-center justify-between gap-2 ${classesStatus(status)}`}
+      aria-label={`${salaItem.label}, ${p.label}, horário indisponível`}
+      title={`${salaItem.label} • ${p.label} • Indisponível`}
+    >
+      <span className="font-semibold shrink-0 px-1.5 py-0.5 rounded-md bg-white/60 text-slate-800 border border-white/70 dark:bg-zinc-900/50 dark:text-zinc-100 dark:border-zinc-700">
+        {p.label}
+      </span>
+      <span className="text-[10px] truncate">Indisponível</span>
+    </div>
+  );
+}
+
+return (
+  <button
+    key={p.value}
+    type="button"
+    onClick={() => abrirModalSlot(dia, salaItem.value, p.value)}
+    className={`w-full text-left text-[11px] sm:text-xs px-2 py-2 rounded-xl flex items-center justify-between gap-2 transition ${classesStatus(status)} focus:outline-none focus:ring-2 focus:ring-sky-500/60`}
+    aria-label={`${salaItem.label}, ${p.label}, disponível para solicitar`}
+    title={`${salaItem.label} • ${p.label} • Disponível`}
+  >
+    <span className="font-semibold shrink-0 px-1.5 py-0.5 rounded-md bg-white/60 text-slate-800 border border-white/70">
+      {p.label}
+    </span>
+    <span className="text-[10px] truncate">Disponível</span>
+  </button>
+);
                               })}
                             </div>
                           </div>

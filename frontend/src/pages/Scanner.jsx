@@ -1,11 +1,9 @@
 // ✅ frontend/src/pages/Scanner.jsx — premium (a11y + motion-safe + controle real de câmeras + restart robusto + sem loop infinito)
-// Melhorias principais:
-// - Usa Abort/locks mais seguros e evita setState em cascata dentro do start (que podia “reentrar”).
-// - Descobre câmeras 1x e alterna por deviceId sem depender de label “back”.
-// - Resume ao voltar para a aba e reinicia em resize/orientation com throttle.
-// - UI: ministats, mensagens SR, overlay “handoff”, estados claros, botões premium.
-// - Mantém html5-qrcode e navegação para /validar-presenca?codigo=...
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+// Observação importante:
+// - Sidebar NÃO deve ser renderizada aqui. Ela vem do Layout (shell) das rotas.
+// - Este arquivo foi ajustado para “encaixar” perfeitamente dentro do Layout (sem min-h-screen duplicado).
+
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Html5Qrcode } from "html5-qrcode";
 import { useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
@@ -31,7 +29,11 @@ import BotaoPrimario from "../components/BotaoPrimario";
 const cx = (...c) => c.filter(Boolean).join(" ");
 
 function isSecureOk() {
-  return window.isSecureContext || location.hostname === "localhost" || location.hostname === "127.0.0.1";
+  return (
+    window.isSecureContext ||
+    location.hostname === "localhost" ||
+    location.hostname === "127.0.0.1"
+  );
 }
 
 function mapCameraError(err) {
@@ -218,9 +220,12 @@ export default function Scanner() {
       const devices = await Html5Qrcode.getCameras();
       if (Array.isArray(devices) && devices.length) {
         devicesRef.current = devices;
+
         // Se ainda não escolheu, tenta preferir “traseira” pelo label; se não, pega a primeira.
         if (!deviceId) {
-          const idxBack = devices.findIndex((d) => /back|traseir|rear|environment/i.test(d.label || ""));
+          const idxBack = devices.findIndex((d) =>
+            /back|traseir|rear|environment/i.test(d.label || "")
+          );
           currentIndexRef.current = idxBack >= 0 ? idxBack : 0;
           setDeviceId(devices[currentIndexRef.current]?.id || null);
         } else {
@@ -289,9 +294,7 @@ export default function Scanner() {
         const onError = () => {}; // reduz ruído
 
         // configuração: preferimos deviceId se houver; senão tentamos facingMode environment
-        const configArg = deviceId
-          ? { deviceId: { exact: deviceId } }
-          : { facingMode: "environment" };
+        const configArg = deviceId ? { deviceId: { exact: deviceId } } : { facingMode: "environment" };
 
         await html5QrCode.start(configArg, { fps: 10, qrbox: computeQrbox() }, onSuccess, onError);
 
@@ -418,7 +421,8 @@ export default function Scanner() {
   const ready = !erro && !iniciando && !handoff;
 
   return (
-    <div className="flex flex-col min-h-screen bg-gelo dark:bg-neutral-900">
+    // ✅ Não usa min-h-screen aqui para não “brigar” com o Layout que já define altura/scroll.
+    <div className="flex flex-col w-full bg-gelo dark:bg-neutral-900">
       <HeaderHero
         onRestart={handleRestart}
         onToggleCamera={handleToggleCamera}
@@ -434,7 +438,8 @@ export default function Scanner() {
           initial={reduceMotion ? false : { opacity: 0, y: 14 }}
           animate={reduceMotion ? {} : { opacity: 1, y: 0 }}
           transition={{ duration: 0.25 }}
-          className="text-center py-8 px-4"
+          // ✅ container consistente com páginas premium (Eventos etc.)
+          className="text-center px-2 sm:px-4 py-6 max-w-6xl mx-auto"
         >
           <p className="text-gray-700 dark:text-gray-300 mb-3 max-w-md mx-auto" aria-live="polite">
             Se solicitado, permita o acesso à câmera do dispositivo.
