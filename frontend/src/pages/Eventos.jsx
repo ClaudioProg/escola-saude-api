@@ -20,6 +20,8 @@
 // ✅ Alteração solicitada:
 
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { createAsyncQueue } from "../utils/asyncQueue";
+import { useInViewOnce } from "../hooks/useInViewOnce";
 import { toast } from "react-toastify";
 import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
@@ -57,8 +59,11 @@ import { resolveAssetUrl, openAsset } from "../utils/assets";
      tenta GET /api/eventos/:id/folder com Authorization
    - Cacheia objectURL pra não refazer download
 ============================= */
-const posterBlobCache = new Map(); // key: eventoId -> objectURL
-const posterBlobPending = new Map(); // key: eventoId -> Promise<string>
+const posterBlobCache = new Map();
+const posterBlobPending = new Map();
+
+// 🆕 fila de downloads (evita burst)
+const posterDownloadQueue = createAsyncQueue(4); // 3..6 é um range bom
 
 function getAuthToken() {
   try {
@@ -82,7 +87,7 @@ async function getPosterBlobUrl(eventoId) {
   if (posterBlobCache.has(id)) return posterBlobCache.get(id);
   if (posterBlobPending.has(id)) return posterBlobPending.get(id);
 
-  const p = (async () => {
+  const p = posterDownloadQueue(async () => {
     const apiPath = `/api/eventos/${id}/folder`;
     const resp = await authFetch(apiPath, { method: "GET", cache: "no-store" });
 
@@ -96,7 +101,7 @@ async function getPosterBlobUrl(eventoId) {
     const objectUrl = URL.createObjectURL(blob);
     posterBlobCache.set(id, objectUrl);
     return objectUrl;
-  })()
+  })
     .catch(() => "")
     .finally(() => posterBlobPending.delete(id));
 
@@ -384,22 +389,23 @@ function ThumbEvento({ ev, titulo, raw }) {
     return v ? resolveAssetUrl(v) : "";
   }, [raw]);
 
+  const { ref: inViewRef, inView } = useInViewOnce({ rootMargin: "700px 0px", threshold: 0.01 });
+
   useEffect(() => {
     let alive = true;
 
-    // 1) URL legada (se existir)
     if (legacyHref) {
       setSrc(legacyHref);
       setFailed(false);
-      return () => {
-        alive = false;
-      };
+      return () => { alive = false; };
     }
 
-    // 2) blob via authFetch
+    if (!inView) return () => { alive = false; };
+
     (async () => {
       const blobUrl = await getPosterBlobUrl(ev?.id);
       if (!alive) return;
+
       if (blobUrl) {
         setSrc(blobUrl);
         setFailed(false);
@@ -409,14 +415,12 @@ function ThumbEvento({ ev, titulo, raw }) {
       }
     })();
 
-    return () => {
-      alive = false;
-    };
-  }, [legacyHref, ev?.id]);
+    return () => { alive = false; };
+  }, [legacyHref, inView, ev?.id]);
 
   if (!src || failed) {
     return (
-      <div className="w-[120px] sm:w-[140px] md:w-[160px] shrink-0">
+      <div ref={inViewRef} className="w-[120px] sm:w-[140px] md:w-[160px] shrink-0">
         <div className="aspect-[3/4] rounded-2xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-200/70 dark:border-zinc-800 flex items-center justify-center text-zinc-500 dark:text-zinc-400">
           <div className="flex items-center gap-2 text-xs">
             <ImageIcon className="w-4 h-4" />
@@ -428,7 +432,7 @@ function ThumbEvento({ ev, titulo, raw }) {
   }
 
   return (
-    <div className="w-[120px] sm:w-[140px] md:w-[160px] shrink-0">
+    <div ref={inViewRef} className="w-[120px] sm:w-[140px] md:w-[160px] shrink-0">
       <div className="aspect-[3/4] rounded-2xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-200/70 dark:border-zinc-800 overflow-hidden flex items-center justify-center">
         <img
           src={src}
@@ -438,6 +442,9 @@ function ThumbEvento({ ev, titulo, raw }) {
           className="w-full h-full object-contain"
           referrerPolicy="no-referrer"
           onError={() => {
+            try {
+              if (src?.startsWith?.("blob:")) URL.revokeObjectURL(src);
+            } catch {}
             setFailed(true);
             setSrc("");
           }}
@@ -447,26 +454,25 @@ function ThumbEvento({ ev, titulo, raw }) {
   );
 }
 
-
+// ✅ segue normal, sem nenhum return “solto”
 function BotaoProgramacao({ programacaoPdfUrl }) {
   const pdfHref = useMemo(() => resolveAssetUrl(programacaoPdfUrl), [programacaoPdfUrl]);
   if (!pdfHref) return null;
 
   return (
     <BotaoSecundario
-  type="button"
-  onClick={() => openAsset(programacaoPdfUrl)}
-  leftIcon={<Download className="w-4 h-4" />}
-  aria-label="Baixar programação (PDF)"
-  title="Baixar programação (PDF)"
-  size="md"
-  className="whitespace-nowrap min-w-[210px]"
->
-  Baixar programação (PDF)
-</BotaoSecundario>
+      type="button"
+      onClick={() => openAsset(programacaoPdfUrl)}
+      icone={<Download className="w-4 h-4" />}
+      aria-label="Baixar programação (PDF)"
+      title="Baixar programação (PDF)"
+      size="md"
+      className="whitespace-nowrap min-w-[210px]"
+    >
+      Baixar programação (PDF)
+    </BotaoSecundario>
   );
 }
-
 /* ------------------------------------------------------------------ */
 /*  Página                                                             */
 /* ------------------------------------------------------------------ */
@@ -618,6 +624,31 @@ export default function Eventos() {
     return new Date(`${di}T${h}:00`).getTime();
   }, []);
 
+  function isAbortLike(err) {
+    if (!err) return false;
+  
+    const name = String(err?.name || "");
+    const msg = String(err?.message || "");
+    const dataMsg = String(err?.data?.message || err?.data?.erro || "");
+    const full = `${name} ${msg} ${dataMsg}`.toLowerCase();
+  
+    // ✅ ApiError do seu api.js costuma vir com status 0
+    const st = Number(err?.status ?? err?.response?.status ?? 0);
+  
+    return (
+      name === "AbortError" ||
+      st === 0 || // 👈 IMPORTANTÍSSIMO (canceled / network / warmup)
+      full.includes("abort") ||
+      full.includes("canceled") ||
+      full.includes("cancelled") ||
+      full.includes("failed to fetch") ||
+      full.includes("falha de rede") ||
+      full.includes("cors") ||
+      full.includes("tempo de resposta excedido") ||
+      full.includes("timeout")
+    );
+  }
+
   /* -------------------- carregamentos -------------------- */
   const carregarInscricao = useCallback(async () => {
     try {
@@ -631,20 +662,21 @@ export default function Eventos() {
       const ativas = arr.filter((it) => {
         const { status } = statusText(it.data_inicio, it.data_fim, it.horario_inicio, it.horario_fim);
         const fimISO = (it.data_fim || it.data_inicio || "").slice(0, 10);
-        const hojeISO = new Date().toISOString().slice(0, 10);
-        const encerrado = fimISO && fimISO < hojeISO;
+        const hojeISO = HOJE_ISO;
+const encerrado = fimISO && fimISO < hojeISO;
         return (status === "Programado" || status === "Em andamento") && !encerrado;
       });
 
       if (!mountedRef.current) return;
       setInscricao(ativas);
       setInscricaoTurmaIds(ativas.map((i) => Number(i?.turma_id)).filter((n) => Number.isFinite(n)));
-    } catch {
+    } catch (e) {
+      if (isAbortLike(e)) return;
       toast.error("Erro ao carregar suas inscrições ativas.");
     }
   }, []);
 
-  const carregarEventos = useCallback(async () => {
+    const carregarEventos = useCallback(async () => {
     setCarregandoEventos(true);
     setLive("Carregando eventos…");
     setErro("");
@@ -674,7 +706,18 @@ export default function Eventos() {
       setErro("");
       setLive("Eventos atualizados.");
     } catch (e) {
-      if (e?.name === "AbortError") return;
+      if (isAbortLike(e)) {
+        if (import.meta.env.DEV) console.log("[Eventos] cancelado/abort (ok):", e?.message || e);
+        return;
+      }
+    
+      if (Array.isArray(eventos) && eventos.length > 0) {
+        setErro("");
+        toast.warn("⚠️ Não foi possível atualizar os eventos agora. Mantive a lista atual.");
+        setLive("Falha ao atualizar eventos; mantendo lista atual.");
+        return;
+      }
+    
       setErro("Erro ao carregar eventos");
       toast.error("❌ Erro ao carregar eventos");
       setLive("Falha ao carregar eventos.");

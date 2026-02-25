@@ -1034,11 +1034,13 @@ if (row.folder_blob) {
 
 // 2) url antiga (uploads)
 if (row.folder_url) {
-  res.setHeader("Cache-Control", IS_DEV ? "no-store" : "public, max-age=3600");
+  res.setHeader("Cache-Control", IS_DEV ? "no-store" : "public, max-age=3600, stale-while-revalidate=86400");
   return res.redirect(302, row.folder_url);
 }
 
-return res.status(404).end();
+// ✅ sem folder: 204 (não é erro)
+res.setHeader("Cache-Control", IS_DEV ? "no-store" : "public, max-age=3600, stale-while-revalidate=86400");
+return res.status(204).end();
 
   } catch (e) {
     logError(rid, "obterFolderDoEvento erro", e);

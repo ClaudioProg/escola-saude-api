@@ -442,7 +442,18 @@ function parseContentDispositionFilename(cd = "") {
 // Fetch centralizado (com timeout + retry com warm-up + backoff p/ 429/503)
 async function doFetch(
   path,
-  { method = "GET", auth = true, headers, query, body, on401, on403 } = {}
+  {
+    method = "GET",
+    auth = true,
+    headers,
+    query,
+    body,
+    on401,
+    on403,
+    on404 = "throw",
+    suppressGlobalError = false,
+    signal,
+  } = {}
 ) {
   const safePath = normalizePath(path);
 
@@ -451,7 +462,7 @@ async function doFetch(
   let url = isAbsolute
     ? safePath + qs(query)
     : ensureApi(API_BASE_URL, safePath) + qs(query);
-
+  
   // Upgrade http→https para hosts externos
   try {
     if (isHttpUrl(url)) {
@@ -492,19 +503,34 @@ async function doFetch(
 
   const hadAuthHeader = !!init.headers?.Authorization;
 
-  // ⏱️ timeout com AbortController
+  // ⏱️ timeout com AbortController + ✅ merge com signal externo
   async function runOnce() {
     const controller = new AbortController();
+
+    // ✅ se vier signal externo, "encadeia" abort
+    const abortFromOuter = () => {
+      try { controller.abort(signal?.reason || new Error("aborted")); } catch {}
+    };
+    if (signal) {
+      if (signal.aborted) abortFromOuter();
+      else signal.addEventListener("abort", abortFromOuter, { once: true });
+    }
+
     const timeoutId = setTimeout(
       () => controller.abort(new Error("timeout")),
       DEFAULT_TIMEOUT_MS
     );
+
     try {
       return await fetch(url, { ...init, signal: controller.signal });
     } finally {
       clearTimeout(timeoutId);
+      if (signal) {
+        try { signal.removeEventListener("abort", abortFromOuter); } catch {}
+      }
     }
   }
+
 
   let res;
 
@@ -512,15 +538,34 @@ async function doFetch(
   try {
     res = await runOnce();
   } catch (e1) {
+    // ✅ CANCELAMENTO (AbortController) NÃO é erro: apenas propaga
+    if (
+      e1?.name === "AbortError" ||
+      String(e1?.message || "").toLowerCase().includes("aborted") ||
+      signal?.aborted
+    ) {
+      throw e1;
+    }
+
     // Erro de rede/timeout → warm-up e retry 1x
     const reason = e1?.message || e1?.name || String(e1);
 
     await warmup(auth && hadAuthHeader);
+
     try {
       res = await runOnce();
     } catch (e2) {
+      // ✅ se o retry foi abortado, também propaga como abort
+      if (
+        e2?.name === "AbortError" ||
+        String(e2?.message || "").toLowerCase().includes("aborted") ||
+        signal?.aborted
+      ) {
+        throw e2;
+      }
+
       throw new ApiError(
-        reason?.toLowerCase?.().includes("timeout") || e2?.name === "AbortError"
+        String(reason).toLowerCase().includes("timeout")
           ? "Tempo de resposta excedido."
           : "Falha de rede ou CORS",
         { status: 0, url, data: e2 }
@@ -537,8 +582,7 @@ async function doFetch(
   }
 
   // Passa o contexto (on401/on403) para o handler
-  const { on404, suppressGlobalError } = (arguments[1] || {});
-    return handle(res, { on401, on403, on404, suppressGlobalError });
+  return handle(res, { on401, on403, on404, suppressGlobalError });
 }
 
 // ───────────────────────────────────────────────────────────────────

@@ -10,6 +10,8 @@
 // - A11y: live region, skip link, aria labels e estados
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { createAsyncQueue } from "../utils/asyncQueue";
+import { useInViewOnce } from "../hooks/useInViewOnce";
 import { toast } from "react-toastify";
 import { motion, useReducedMotion } from "framer-motion";
 import {
@@ -135,6 +137,9 @@ function getPosterUrl(ev) {
 const posterBlobCache = new Map(); // key: eventoId -> objectURL
 const posterBlobPending = new Map(); // key: eventoId -> Promise<string>
 
+// 🆕 fila de downloads (evita burst / 100 requests em paralelo)
+const posterDownloadQueue = createAsyncQueue(4); // <= ajuste fino: 3..6
+
 async function getPosterBlobUrl(eventoId) {
   const id = Number(eventoId);
   if (!Number.isFinite(id) || id <= 0) return "";
@@ -143,27 +148,26 @@ async function getPosterBlobUrl(eventoId) {
 
   if (posterBlobPending.has(id)) return posterBlobPending.get(id);
 
-  const p = (async () => {
-    // endpoint novo (GET) — precisa existir no backend
+  const p = posterDownloadQueue(async () => {
     const apiPath = `/api/eventos/${id}/folder`;
     const resp = await authFetch(apiPath, { method: "GET", cache: "no-store" });
-
+  
     // ✅ 404 = sem folder (silencioso)
     if (resp.status === 404) return "";
-    
-    // ✅ 401/403 = sem permissão (silencioso no admin; evita spam)
+  
+    // ✅ 401/403 = sem permissão (silencioso)
     if (resp.status === 401 || resp.status === 403) return "";
-    
-    // outros erros: também não precisa “quebrar” a UI
+  
+    // outros erros: também não quebra UI
     if (!resp.ok) return "";
-
+  
     const blob = await resp.blob();
     if (!blob || !blob.size) return "";
-
+  
     const objectUrl = URL.createObjectURL(blob);
     posterBlobCache.set(id, objectUrl);
     return objectUrl;
-  })()
+  })
     .catch(() => "")
     .finally(() => posterBlobPending.delete(id));
 
@@ -656,21 +660,27 @@ function PosterThumb({ ev, title }) {
   const [src, setSrc] = useState("");
   const [failed, setFailed] = useState(false);
 
+  // 🆕 só carrega blob quando estiver perto da tela
+  const { ref: inViewRef, inView } = useInViewOnce({ rootMargin: "600px 0px", threshold: 0.01 });
+
   useEffect(() => {
     let alive = true;
-    const legacy = getPosterUrl(ev); // folder_url / etc.
 
-    // 1) legado (url)
+    // 1) legado (url direta)
+    const legacy = getPosterUrl(ev);
     if (legacy) {
       setSrc(legacy);
       setFailed(false);
-      return () => {};
+      return () => { alive = false; };
     }
 
-    // 2) novo (blob) — só se tiver id
+    // 2) blob (apenas quando entrar em view)
+    if (!inView) return () => { alive = false; };
+
     (async () => {
       const blobUrl = await getPosterBlobUrl(ev?.id);
       if (!alive) return;
+
       if (blobUrl) {
         setSrc(blobUrl);
         setFailed(false);
@@ -680,14 +690,13 @@ function PosterThumb({ ev, title }) {
       }
     })();
 
-    return () => {
-      alive = false;
-    };
-  }, [ev?.id, ev?.folder_url, ev?.folderUrl, ev?.folder]);
+    return () => { alive = false; };
+  }, [inView, ev?.id, ev?.folder_url, ev?.folderUrl, ev?.folder]);
 
   if (!src || failed) {
     return (
       <div
+        ref={inViewRef}
         className="
           w-[96px] h-[128px]
           sm:w-[132px] sm:h-[176px]
@@ -704,6 +713,34 @@ function PosterThumb({ ev, title }) {
       </div>
     );
   }
+
+  return (
+    <div
+      ref={inViewRef}
+      className="
+        w-[96px] h-[128px]
+        sm:w-[132px] sm:h-[176px]
+        md:w-[148px] md:h-[196px]
+        rounded-2xl border border-white/10 shadow-sm
+        bg-zinc-100 dark:bg-zinc-900
+        overflow-hidden grid place-items-center
+      "
+      aria-label={`Folder do evento ${title}`}
+    >
+      <img
+        src={src}
+        alt={`Folder do evento ${title}`}
+        className="w-full h-full object-contain"
+        loading="lazy"
+        referrerPolicy="no-referrer"
+        onError={() => {
+          setFailed(true);
+          setSrc("");
+        }}
+      />
+    </div>
+  );
+}
 
   return (
     <div
@@ -730,7 +767,6 @@ function PosterThumb({ ev, title }) {
       />
     </div>
   );
-}
 
 /* =============================
    Página
