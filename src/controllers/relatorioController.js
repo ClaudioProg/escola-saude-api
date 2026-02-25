@@ -130,9 +130,10 @@ async function montarSQLBaseEFiltros({ evento, instrutor, unidade, from, to }) {
       COALESCE(SUM(COALESCE(pa.pres_true, 0)), 0)                 AS presencas
     FROM eventos e
       JOIN turmas t             ON t.evento_id = e.id
-      JOIN evento_instrutor ei  ON ei.evento_id = e.id
-      JOIN usuarios u           ON u.id = ei.instrutor_id
-      LEFT JOIN inscricao i    ON i.turma_id = t.id
+      LEFT JOIN turma_instrutor ti ON ti.turma_id = t.id
+LEFT JOIN evento_instrutor ei ON ei.evento_id = e.id
+LEFT JOIN usuarios u ON u.id = COALESCE(ti.instrutor_id, ei.instrutor_id)
+      LEFT JOIN inscricoes i   ON i.turma_id = t.id
       LEFT JOIN pres_ag pa      ON pa.turma_id = t.id AND pa.usuario_id = i.usuario_id
     WHERE 1=1
   `;
@@ -298,9 +299,12 @@ async function opcaoRelatorios(_req, res) {
       db.query(`SELECT id, titulo FROM eventos ORDER BY titulo`),
       db.query(`
         SELECT DISTINCT u.id, u.nome
-        FROM usuarios u
-        JOIN evento_instrutor ei ON ei.instrutor_id = u.id
-        ORDER BY u.nome
+FROM usuarios u
+LEFT JOIN turma_instrutor ti ON ti.instrutor_id = u.id
+LEFT JOIN evento_instrutor ei ON ei.instrutor_id = u.id
+WHERE ti.instrutor_id IS NOT NULL
+   OR ei.instrutor_id IS NOT NULL
+ORDER BY u.nome
       `),
       db.query(`SELECT id, nome FROM unidades ORDER BY nome`),
     ]);
@@ -543,7 +547,7 @@ async function presencasPorEvento(req, res) {
         to_char(t.data_fim::date,'YYYY-MM-DD')    AS data_fim,
         COUNT(DISTINCT CASE WHEN p.presente IS TRUE THEN p.data_presenca::date END)::int AS presentes
       FROM turmas t
-      JOIN inscricao i ON i.turma_id = t.id
+      JOIN inscricoes i ON i.turma_id = t.id
       JOIN usuarios u   ON u.id = i.usuario_id
       LEFT JOIN presencas p
         ON p.turma_id = t.id

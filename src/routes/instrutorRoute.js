@@ -1,12 +1,14 @@
 // 📁 src/routes/instrutorRoute.js — PREMIUM (robusto, consistente, sem conflito de rotas)
 /* eslint-disable no-console */
+"use strict";
+
 const express = require("express");
 const router = express.Router();
 
 /* ───────────────── Auth/roles resilientes ───────────────── */
 const _auth = require("../auth/authMiddleware");
 const requireAuth =
-  typeof _auth === "function" ? _auth : _auth?.default || _auth?.authMiddleware;
+  typeof _auth === "function" ? _auth : _auth?.default || _auth?.authMiddleware || _auth?.auth;
 
 if (typeof requireAuth !== "function") {
   console.error("[instrutorRoute] authMiddleware inválido:", _auth);
@@ -15,13 +17,16 @@ if (typeof requireAuth !== "function") {
 
 const _roles = require("../middlewares/authorize");
 const authorizeRoles =
-  typeof _roles === "function" ? _roles : _roles?.default || _roles?.authorizeRoles;
+  typeof _roles === "function"
+    ? _roles
+    : _roles?.default || _roles?.authorizeRoles || _roles?.authorizeRole;
 
 if (typeof authorizeRoles !== "function") {
   console.error("[instrutorRoute] authorizeRoles inválido:", _roles);
   throw new Error("authorizeRoles não é função (verifique exports em src/middlewares/authorize.js)");
 }
 
+/* ───────────────── Controller ───────────────── */
 const {
   listarInstrutor,
   getEventosAvaliacaoPorInstrutor,
@@ -31,8 +36,10 @@ const {
 
 /* ───────────────── Helpers premium ───────────────── */
 const routeTag = (tag) => (req, res, next) => {
-  res.set("X-Route-Handler", tag);
-  res.set("Cache-Control", "no-store");
+  try {
+    res.set("X-Route-Handler", tag);
+    res.set("Cache-Control", "no-store");
+  } catch {}
   return next();
 };
 
@@ -58,9 +65,10 @@ const handle =
 
 /* ──────────────────────────────────────────────────────────
    🚦 Rotas específicas primeiro (evita conflito com :id)
-   ────────────────────────────────────────────────────────── */
+────────────────────────────────────────────────────────── */
 
 // 🔐 Turmas do instrutor autenticado (sem :id)
+// ✅ suporta filtro: ?filtro=ativos|encerrados  (default: ativos)
 router.get(
   "/minhas/turmas",
   requireAuth,
@@ -68,6 +76,13 @@ router.get(
   routeTag("instrutorRoute:GET /minhas/turmas"),
   handle(getMinhasTurmasInstrutor)
 );
+
+// (Opcional) aliases internos (se algum front chamar diferente)
+// router.get("/minhas-turmas", requireAuth, authorizeRoles("instrutor","administrador"), routeTag("instrutorRoute:GET /minhas-turmas"), handle(getMinhasTurmasInstrutor));
+
+/* ──────────────────────────────────────────────────────────
+   Admin
+────────────────────────────────────────────────────────── */
 
 // 📋 Listar todos os instrutores (apenas admin)
 router.get(

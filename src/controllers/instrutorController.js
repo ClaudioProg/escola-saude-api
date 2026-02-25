@@ -1,6 +1,20 @@
 /* eslint-disable no-console */
-// 📁 src/controllers/instrutorController.js — PREMIUM (robusto, date-only safe, SQL defensivo)
+// ✅ src/controllers/instrutorController.js — PREMIUM++ (2026) — ATUALIZADO COMPLETO
+// - Vínculo principal: turma_instrutor (por turma) ✅
+// - Date-only safe (sem Date JS para "YYYY-MM-DD") ✅
+// - Status por data+hora com fuso SP ✅
+// - SQL defensivo (sem multiplicar linhas indevidamente) ✅
+// - Rotas:
+//    • GET /api/instrutor (listarInstrutor)
+//    • GET /api/instrutor/:id/eventos-avaliacao
+//    • GET /api/instrutor/:id/turmas
+//    • GET /api/instrutor/minhas/turmas?filtro=ativos|encerrados
+
+"use strict";
+
 const dbMod = require("../db");
+
+const TZ = "America/Sao_Paulo";
 
 // Compat: alguns lugares exportam { pool, query }, outros exportam direto.
 const pool = dbMod.pool || dbMod.Pool || dbMod.pool?.pool || dbMod;
@@ -18,7 +32,7 @@ const IS_DEV = process.env.NODE_ENV !== "production";
 
 /* ────────────────────────────────────────────────────────────────
    Logger util (RID) — reduz ruído em produção
-   ──────────────────────────────────────────────────────────────── */
+──────────────────────────────────────────────────────────────── */
 function mkRid() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -32,7 +46,7 @@ function log(rid, level, msg, extra) {
 
 /* ────────────────────────────────────────────────────────────────
    Helpers
-   ──────────────────────────────────────────────────────────────── */
+──────────────────────────────────────────────────────────────── */
 const asPositiveInt = (v) => {
   const n = Number(v);
   return Number.isFinite(n) && Number.isInteger(n) && n > 0 ? n : null;
@@ -42,11 +56,25 @@ function getUsuarioId(req) {
   return req.user?.id ?? null;
 }
 
+/** normaliza filtro ?filtro=ativos|encerrados (default ativos) */
+function getFiltro(req) {
+  const raw = String(req.query?.filtro || req.query?.status || "ativos").toLowerCase().trim();
+  if (raw === "encerrados" || raw === "encerrado" || raw === "realizados") return "encerrados";
+  return "ativos";
+}
+
+/** status por data+hora (sem Date JS) — fuso SP */
+const SQL_STATUS_TURMA = `
+  CASE
+    WHEN (now() AT TIME ZONE '${TZ}') < (t.data_inicio::timestamp + COALESCE(t.horario_inicio,'00:00'::time)) THEN 'programado'
+    WHEN (now() AT TIME ZONE '${TZ}') BETWEEN (t.data_inicio::timestamp + COALESCE(t.horario_inicio,'00:00'::time))
+                                         AND (t.data_fim::timestamp + COALESCE(t.horario_fim,'23:59'::time)) THEN 'andamento'
+    ELSE 'encerrado'
+  END
+`;
+
 /**
  * 🔢 Helper SQL seguro p/ enum/text -> nota 1..5 (numeric)
- * - SEMPRE castea para text antes de comparar/converter
- * - Aceita "1..5" (com vírgula/ponto), e textos comuns (ótimo, bom, etc.)
- *
  * Observação: usa alias "a" (avaliacao) — mantenha o alias como "a" nas CTEs/joins.
  */
 const SQL_MAP_NOTA = `
@@ -65,9 +93,9 @@ const SQL_MAP_NOTA = `
 
 /* ────────────────────────────────────────────────────────────────
    📋 Lista instrutores com médias/contadores
-   - Liga por evento_instrutor → turmas → avaliacao (a.turma_id).
-   - Evita multiplicação indevida com LEFT JOIN (CTEs agregadas).
-   ──────────────────────────────────────────────────────────────── */
+   - Fonte principal: turma_instrutor (por turma)
+   - Evita multiplicação com agregações em CTE
+──────────────────────────────────────────────────────────────── */
 async function listarInstrutor(req, res) {
   const rid = mkRid();
   try {
@@ -77,25 +105,48 @@ async function listarInstrutor(req, res) {
         FROM usuarios u
         WHERE string_to_array(COALESCE(u.perfil,''), ',') && ARRAY['instrutor','administrador']
       ),
-      eventos_por_instrutor AS (
-        SELECT ei.instrutor_id, COUNT(DISTINCT ei.evento_id)::int AS eventos_ministrados
-        FROM evento_instrutor ei
-        GROUP BY ei.instrutor_id
+
+      -- 🔗 vínculos por turma (principal)
+      vinc_ti AS (
+        SELECT ti.instrutor_id, t.evento_id, ti.turma_id
+        FROM turma_instrutor ti
+        JOIN turmas t ON t.id = ti.turma_id
       ),
-      turmas_por_instrutor AS (
-        SELECT ei.instrutor_id, COUNT(*)::int AS turmas_vinculadas
+
+      -- 🔗 vínculos por evento (fallback)
+      vinc_ei AS (
+        SELECT ei.instrutor_id, ei.evento_id, t.id AS turma_id
         FROM evento_instrutor ei
         JOIN turmas t ON t.evento_id = ei.evento_id
-        GROUP BY ei.instrutor_id
       ),
+
+      -- ✅ conjunto final de vínculos sem duplicar (turma_id + instrutor_id)
+      vinculos AS (
+        SELECT DISTINCT instrutor_id, evento_id, turma_id FROM vinc_ti
+        UNION
+        SELECT DISTINCT instrutor_id, evento_id, turma_id FROM vinc_ei
+      ),
+
+      eventos_por_instrutor AS (
+        SELECT instrutor_id, COUNT(DISTINCT evento_id)::int AS eventos_ministrados
+        FROM vinculos
+        GROUP BY instrutor_id
+      ),
+
+      turmas_por_instrutor AS (
+        SELECT instrutor_id, COUNT(DISTINCT turma_id)::int AS turmas_vinculadas
+        FROM vinculos
+        GROUP BY instrutor_id
+      ),
+
       notas_por_instrutor AS (
         SELECT
-          ei.instrutor_id,
+          v.instrutor_id,
           ${SQL_MAP_NOTA} AS nota
-        FROM evento_instrutor ei
-        JOIN turmas t          ON t.evento_id = ei.evento_id
-        LEFT JOIN avaliacoes a ON a.turma_id = t.id
+        FROM vinculos v
+        LEFT JOIN avaliacoes a ON a.turma_id = v.turma_id
       ),
+
       agg_notas AS (
         SELECT
           instrutor_id,
@@ -104,17 +155,18 @@ async function listarInstrutor(req, res) {
         FROM notas_por_instrutor
         GROUP BY instrutor_id
       )
+
       SELECT
         i.id,
         i.nome,
         i.email,
-        COALESCE(ei.eventos_ministrados, 0) AS "eventosMinistrados",
+        COALESCE(ep.eventos_ministrados, 0) AS "eventosMinistrados",
         COALESCE(tp.turmas_vinculadas, 0)   AS "turmasVinculadas",
         COALESCE(an.total_respostas, 0)     AS "totalRespostas",
         an.media_avaliacao,
         CASE WHEN s.imagem_base64 IS NOT NULL THEN TRUE ELSE FALSE END AS "possuiAssinatura"
       FROM instrutores i
-      LEFT JOIN eventos_por_instrutor ei ON ei.instrutor_id = i.id
+      LEFT JOIN eventos_por_instrutor ep ON ep.instrutor_id = i.id
       LEFT JOIN turmas_por_instrutor  tp ON tp.instrutor_id = i.id
       LEFT JOIN agg_notas             an ON an.instrutor_id = i.id
       LEFT JOIN assinaturas            s ON s.usuario_id = i.id
@@ -133,9 +185,10 @@ async function listarInstrutor(req, res) {
 /* ────────────────────────────────────────────────────────────────
    📊 Eventos ministrados por instrutor (período, média e total)
    @route GET /api/instrutor/:id/eventos-avaliacao
+   - Fonte principal: turma_instrutor
    - Período calculado em DATE (sem Date JS)
-   - Média/contagem calculadas sem multiplicar linhas
-   ──────────────────────────────────────────────────────────────── */
+   - Média/contagem sem multiplicar linhas
+──────────────────────────────────────────────────────────────── */
 async function getEventosAvaliacaoPorInstrutor(req, res) {
   const rid = mkRid();
   const instrutorId = asPositiveInt(req.params?.id);
@@ -144,28 +197,44 @@ async function getEventosAvaliacaoPorInstrutor(req, res) {
 
   try {
     const sql = `
-      WITH turmas_evento AS (
+      WITH vinc_ti AS (
+        SELECT ti.instrutor_id, t.evento_id, ti.turma_id
+        FROM turma_instrutor ti
+        JOIN turmas t ON t.id = ti.turma_id
+        WHERE ti.instrutor_id = $1
+      ),
+      vinc_ei AS (
+        SELECT ei.instrutor_id, ei.evento_id, t.id AS turma_id
+        FROM evento_instrutor ei
+        JOIN turmas t ON t.evento_id = ei.evento_id
+        WHERE ei.instrutor_id = $1
+      ),
+      vinculos AS (
+        SELECT DISTINCT instrutor_id, evento_id, turma_id FROM vinc_ti
+        UNION
+        SELECT DISTINCT instrutor_id, evento_id, turma_id FROM vinc_ei
+      ),
+
+      turmas_evento AS (
         SELECT
           e.id AS evento_id,
           e.titulo AS evento,
           MIN(t.data_inicio)::date AS data_inicio,
           MAX(t.data_fim)::date    AS data_fim
-        FROM evento_instrutor ei
-        JOIN eventos e ON e.id = ei.evento_id
-        JOIN turmas  t ON t.evento_id = e.id
-        WHERE ei.instrutor_id = $1
+        FROM vinculos v
+        JOIN eventos e ON e.id = v.evento_id
+        JOIN turmas  t ON t.id = v.turma_id
         GROUP BY e.id, e.titulo
       ),
+
       notas_evento AS (
         SELECT
-          e.id AS evento_id,
+          v.evento_id,
           ${SQL_MAP_NOTA} AS nota
-        FROM evento_instrutor ei
-        JOIN eventos e         ON e.id = ei.evento_id
-        JOIN turmas  t         ON t.evento_id = e.id
-        LEFT JOIN avaliacoes a ON a.turma_id = t.id
-        WHERE ei.instrutor_id = $1
+        FROM vinculos v
+        LEFT JOIN avaliacoes a ON a.turma_id = v.turma_id
       ),
+
       agg AS (
         SELECT
           evento_id,
@@ -174,6 +243,7 @@ async function getEventosAvaliacaoPorInstrutor(req, res) {
         FROM notas_evento
         GROUP BY evento_id
       )
+
       SELECT
         te.evento_id,
         te.evento,
@@ -198,8 +268,10 @@ async function getEventosAvaliacaoPorInstrutor(req, res) {
 /* ────────────────────────────────────────────────────────────────
    📚 Turmas vinculadas ao instrutor (com dados do evento)
    @route GET /api/instrutor/:id/turmas
+   - Fonte principal: turma_instrutor;
    - Mantém date-only (YYYY-MM-DD) na saída
-   ──────────────────────────────────────────────────────────────── */
+   - ✅ inclui status calculado (data+hora)
+──────────────────────────────────────────────────────────────── */
 async function getTurmasComEventoPorInstrutor(req, res) {
   const rid = mkRid();
   const instrutorId = asPositiveInt(req.params?.id);
@@ -208,6 +280,22 @@ async function getTurmasComEventoPorInstrutor(req, res) {
 
   try {
     const sql = `
+      WITH vinc_ti AS (
+        SELECT ti.instrutor_id, ti.turma_id
+        FROM turma_instrutor ti
+        WHERE ti.instrutor_id = $1
+      ),
+      vinc_ei AS (
+        SELECT ei.instrutor_id, t.id AS turma_id
+        FROM evento_instrutor ei
+        JOIN turmas t ON t.evento_id = ei.evento_id
+        WHERE ei.instrutor_id = $1
+      ),
+      turmas_ids AS (
+        SELECT DISTINCT turma_id FROM vinc_ti
+        UNION
+        SELECT DISTINCT turma_id FROM vinc_ei
+      )
       SELECT 
         t.id AS id,
         t.nome AS nome,
@@ -215,13 +303,13 @@ async function getTurmasComEventoPorInstrutor(req, res) {
         to_char(t.data_fim::date,'YYYY-MM-DD')    AS data_fim,
         to_char(t.horario_inicio,'HH24:MI')       AS horario_inicio,
         to_char(t.horario_fim,'HH24:MI')          AS horario_fim,
+        ${SQL_STATUS_TURMA}                        AS status,
         e.id     AS evento_id,
         e.titulo AS evento_nome,
         e.local  AS evento_local
-      FROM evento_instrutor ei
-      JOIN eventos e ON ei.evento_id = e.id
-      JOIN turmas  t ON t.evento_id = e.id
-      WHERE ei.instrutor_id = $1
+      FROM turmas_ids x
+      JOIN turmas  t ON t.id = x.turma_id
+      JOIN eventos e ON e.id = t.evento_id
       ORDER BY t.data_inicio ASC NULLS LAST, t.id ASC
     `;
 
@@ -234,6 +322,7 @@ async function getTurmasComEventoPorInstrutor(req, res) {
       data_fim: t.data_fim,
       horario_inicio: t.horario_inicio,
       horario_fim: t.horario_fim,
+      status: t.status || "programado",
       evento: {
         id: t.evento_id,
         nome: t.evento_nome,
@@ -251,37 +340,90 @@ async function getTurmasComEventoPorInstrutor(req, res) {
 
 /* ────────────────────────────────────────────────────────────────
    👤 “Minhas turmas” (instrutor autenticado)
-   @route GET /api/instrutor/minhas/turmas
-   - Mantém date-only (YYYY-MM-DD) na saída
-   ──────────────────────────────────────────────────────────────── */
+   @route GET /api/instrutor/minhas/turmas?filtro=ativos|encerrados
+   - Default: ativos
+   - ativos = programado + andamento
+   - encerrados = encerrado
+   - ✅ fonte principal: turma_instrutor (se existir)
+──────────────────────────────────────────────────────────────── */
 async function getMinhasTurmasInstrutor(req, res) {
   const rid = mkRid();
   const usuarioId = asPositiveInt(getUsuarioId(req));
 
-  if (!usuarioId) {
-    return res.status(401).json({ erro: "Usuário não autenticado." });
-  }
+  if (!usuarioId) return res.status(401).json({ erro: "Usuário não autenticado." });
+
+  const filtro = getFiltro(req); // "ativos" | "encerrados"
+  const whereByFiltro =
+    filtro === "encerrados"
+      ? `WHERE base.status_calc = 'encerrado'`
+      : `WHERE base.status_calc IN ('programado','andamento')`;
 
   try {
-    const sql = `
-      SELECT 
-        t.id,
-        t.nome,
-        to_char(t.data_inicio::date,'YYYY-MM-DD') AS data_inicio,
-        to_char(t.data_fim::date,'YYYY-MM-DD')    AS data_fim,
-        to_char(t.horario_inicio,'HH24:MI')       AS horario_inicio,
-        to_char(t.horario_fim,'HH24:MI')          AS horario_fim,
-        e.id AS evento_id,
-        e.titulo AS evento_nome,
-        e.local  AS evento_local
-      FROM evento_instrutor ei
-      JOIN eventos e ON e.id = ei.evento_id
-      JOIN turmas  t ON t.evento_id = e.id
-      WHERE ei.instrutor_id = $1
-      ORDER BY t.data_inicio DESC NULLS LAST, t.id DESC
+    // ✅ Primeiro: turma_instrutor (tabela existe no seu cenário)
+    const sqlTurmaInstrutor = `
+      WITH base AS (
+        SELECT
+          t.id,
+          t.nome,
+          to_char(t.data_inicio::date,'YYYY-MM-DD') AS data_inicio,
+          to_char(t.data_fim::date,'YYYY-MM-DD')    AS data_fim,
+          to_char(t.horario_inicio,'HH24:MI')       AS horario_inicio,
+          to_char(t.horario_fim,'HH24:MI')          AS horario_fim,
+          ${SQL_STATUS_TURMA}                        AS status_calc,
+          e.id     AS evento_id,
+          e.titulo AS evento_nome,
+          e.local  AS evento_local
+        FROM turma_instrutor ti
+        JOIN turmas t  ON t.id = ti.turma_id
+        JOIN eventos e ON e.id = t.evento_id
+        WHERE ti.instrutor_id = $1
+      )
+      SELECT *
+      FROM base
+      ${whereByFiltro}
+      ORDER BY
+        (CASE WHEN status_calc='andamento' THEN 1 WHEN status_calc='programado' THEN 2 ELSE 3 END),
+        data_inicio DESC NULLS LAST,
+        id DESC
     `;
 
-    const { rows } = await query(sql, [usuarioId]);
+    let rows = [];
+    try {
+      const r1 = await query(sqlTurmaInstrutor, [usuarioId]);
+      rows = r1?.rows || [];
+    } catch (e) {
+      // 42P01 = undefined_table (turma_instrutor não existe) → fallback
+      if (e?.code !== "42P01") throw e;
+
+      const sqlFallbackEventoInstrutor = `
+        WITH base AS (
+          SELECT
+            t.id,
+            t.nome,
+            to_char(t.data_inicio::date,'YYYY-MM-DD') AS data_inicio,
+            to_char(t.data_fim::date,'YYYY-MM-DD')    AS data_fim,
+            to_char(t.horario_inicio,'HH24:MI')       AS horario_inicio,
+            to_char(t.horario_fim,'HH24:MI')          AS horario_fim,
+            ${SQL_STATUS_TURMA}                        AS status_calc,
+            e.id     AS evento_id,
+            e.titulo AS evento_nome,
+            e.local  AS evento_local
+          FROM evento_instrutor ei
+          JOIN eventos e ON e.id = ei.evento_id
+          JOIN turmas  t ON t.evento_id = e.id
+          WHERE ei.instrutor_id = $1
+        )
+        SELECT *
+        FROM base
+        ${whereByFiltro}
+        ORDER BY
+          (CASE WHEN status_calc='andamento' THEN 1 WHEN status_calc='programado' THEN 2 ELSE 3 END),
+          data_inicio DESC NULLS LAST,
+          id DESC
+      `;
+      const r2 = await query(sqlFallbackEventoInstrutor, [usuarioId]);
+      rows = r2?.rows || [];
+    }
 
     const turmas = (rows || []).map((r) => ({
       id: r.id,
@@ -290,10 +432,19 @@ async function getMinhasTurmasInstrutor(req, res) {
       data_fim: r.data_fim,
       horario_inicio: r.horario_inicio,
       horario_fim: r.horario_fim,
+      status: r.status_calc || r.status || "programado",
       evento: { id: r.evento_id, nome: r.evento_nome, local: r.evento_local },
     }));
 
-    log(rid, "info", "getMinhasTurmasInstrutor OK", { usuarioId, count: turmas.length });
+    log(rid, "info", "getMinhasTurmasInstrutor OK", { usuarioId, filtro, count: turmas.length });
+
+    try {
+      res.setHeader("X-Instrutor-Filtro", filtro);
+      res.setHeader("X-Instrutor-Turmas", String(turmas.length));
+    } catch {
+      /* noop */
+    }
+
     return res.json(turmas);
   } catch (err) {
     log(rid, "error", "Erro ao buscar minhas turmas (instrutor)", err);

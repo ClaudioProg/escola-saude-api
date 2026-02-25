@@ -269,8 +269,9 @@ async function criar(req, res) {
         carga_int,
       ]
     );
-
-    const turma_id = insTurma?.[0]?.id;
+    
+    const turma_id = insTurma?.[0]?.id ?? null;
+    assert(turma_id, "Falha ao criar turma (id não retornado).", 500);
     logT("criar -> turma_id:", turma_id);
 
     if (temDatas) {
@@ -455,21 +456,17 @@ async function obter(req, res) {
       req,
       `
       SELECT 
-        t.id,
-        t.evento_id,
-        t.nome,
-        to_char(t.data_inicio::date, 'YYYY-MM-DD') AS data_inicio,
-        to_char(t.data_fim::date,    'YYYY-MM-DD') AS data_fim,
-        to_char(t.horario_inicio, 'HH24:MI') AS horario_inicio,
-        to_char(t.horario_fim,    'HH24:MI') AS horario_fim,
-        t.vagas_total,
-        t.carga_horaria,
-
-        t.instrutor_assinante_id,
-        u.nome AS assinante_nome
-      FROM turmas t
-      LEFT JOIN usuarios u ON u.id = t.instrutor_assinante_id
-      WHERE t.id = $1
+  t.id,
+  t.evento_id,
+  t.nome,
+  to_char(t.data_inicio::date, 'YYYY-MM-DD') AS data_inicio,
+  to_char(t.data_fim::date,    'YYYY-MM-DD') AS data_fim,
+  to_char(t.horario_inicio, 'HH24:MI') AS horario_inicio,
+  to_char(t.horario_fim,    'HH24:MI') AS horario_fim,
+  t.vagas_total,
+  t.carga_horaria
+FROM turmas t
+WHERE t.id = $1
       `,
       [turma_id]
     );
@@ -527,8 +524,9 @@ async function obter(req, res) {
 
     return res.json({
       ...t,
-      assinante_id: t.instrutor_assinante_id ?? null,
-      instrutor_assinante_id: t.instrutor_assinante_id ?? null,
+      instrutor_assinante_id: assinante_por_vinculo?.id ?? null,
+      assinante_id: assinante_por_vinculo?.id ?? null,
+      assinante_nome: assinante_por_vinculo?.nome ?? null,
       assinante_por_vinculo,
       datas,
       instrutores: instrutoresResult.rows,
@@ -1057,60 +1055,59 @@ async function listarAdmin(req, res) {
 
   try {
     const sql = `
-      WITH instrutores_por_evento AS (
-        SELECT
-          ei.evento_id,
-          COALESCE(
-            json_agg(DISTINCT jsonb_build_object('id', u.id, 'nome', u.nome))
-              FILTER (WHERE u.id IS NOT NULL),
-            '[]'::json
-          ) AS instrutor
-        FROM evento_instrutor ei
-        LEFT JOIN usuarios u ON u.id = ei.instrutor_id
-        GROUP BY ei.evento_id
-      ),
-      inscricao_por_turma AS (
-        SELECT
-          i.turma_id,
-          COUNT(DISTINCT i.id)::int AS vagas_ocupadas
-        FROM inscricoes i
-        GROUP BY i.turma_id
-      )
-      SELECT
-        t.id,
-        t.nome,
+      WITH instrutores_por_turma AS (
+  SELECT
+    t.id AS turma_id,
+    COALESCE(
+      json_agg(DISTINCT jsonb_build_object('id', u.id, 'nome', u.nome))
+        FILTER (WHERE u.id IS NOT NULL),
+      '[]'::json
+    ) AS instrutores
+  FROM turmas t
+  LEFT JOIN turma_instrutor ti ON ti.turma_id = t.id
+  LEFT JOIN evento_instrutor ei ON ei.evento_id = t.evento_id
+  LEFT JOIN usuarios u ON u.id = COALESCE(ti.instrutor_id, ei.instrutor_id)
+  GROUP BY t.id
+),
+inscricao_por_turma AS (
+  SELECT i.turma_id, COUNT(DISTINCT i.id)::int AS vagas_ocupadas
+  FROM inscricoes i
+  GROUP BY i.turma_id
+)
+SELECT
+  t.id,
+  t.nome,
+  to_char(t.data_inicio, 'YYYY-MM-DD') AS data_inicio,
+  to_char(t.data_fim,    'YYYY-MM-DD') AS data_fim,
 
-        to_char(t.data_inicio, 'YYYY-MM-DD') AS data_inicio,
-        to_char(t.data_fim,    'YYYY-MM-DD') AS data_fim,
+  to_char(COALESCE(t.horario_inicio, '08:00'::time), 'HH24:MI') AS horario_inicio,
+  to_char(COALESCE(t.horario_fim,    '17:00'::time), 'HH24:MI') AS horario_fim,
 
-        to_char(COALESCE(t.horario_inicio, '08:00'::time), 'HH24:MI') AS horario_inicio,
-        to_char(COALESCE(t.horario_fim,    '17:00'::time), 'HH24:MI') AS horario_fim,
+  (
+    to_char(COALESCE(t.horario_inicio, '08:00'::time), 'HH24:MI')
+    || ' - ' ||
+    to_char(COALESCE(t.horario_fim,    '17:00'::time), 'HH24:MI')
+  ) AS horario,
 
-        (
-          to_char(COALESCE(t.horario_inicio, '08:00'::time), 'HH24:MI')
-          || ' - ' ||
-          to_char(COALESCE(t.horario_fim,    '17:00'::time), 'HH24:MI')
-        ) AS horario,
+  t.vagas_total::int AS vagas_total,
+  COALESCE(ip.vagas_ocupadas, 0) AS vagas_ocupadas,
 
-        t.vagas_total::int AS vagas_total,
-        COALESCE(ip.vagas_ocupadas, 0) AS vagas_ocupadas,
+  e.id     AS evento_id,
+  e.titulo AS evento_titulo,
 
-        e.id     AS evento_id,
-        e.titulo AS evento_titulo,
+  COALESCE(it.instrutores, '[]'::json) AS instrutores,
 
-        COALESCE(ie.instrutor, '[]'::json) AS instrutor,
+  CASE
+    WHEN now() < (t.data_inicio::timestamp + COALESCE(t.horario_inicio, '08:00'::time)) THEN 'programado'
+    WHEN now() > (t.data_fim::timestamp    + COALESCE(t.horario_fim,    '17:00'::time)) THEN 'encerrado'
+    ELSE 'andamento'
+  END AS status
 
-        CASE
-          WHEN now() < (t.data_inicio::timestamp + COALESCE(t.horario_inicio, '08:00'::time)) THEN 'programado'
-          WHEN now() > (t.data_fim::timestamp    + COALESCE(t.horario_fim,    '17:00'::time)) THEN 'encerrado'
-          ELSE 'em_andamento'
-        END AS status
-
-      FROM turmas t
-      JOIN eventos e ON e.id = t.evento_id
-      LEFT JOIN instrutores_por_evento ie ON ie.evento_id = e.id
-      LEFT JOIN inscricao_por_turma  ip ON ip.turma_id  = t.id
-      ORDER BY t.data_inicio ASC, COALESCE(t.horario_inicio, '08:00'::time) ASC, t.id ASC;
+FROM turmas t
+JOIN eventos e ON e.id = t.evento_id
+LEFT JOIN instrutores_por_turma it ON it.turma_id = t.id
+LEFT JOIN inscricao_por_turma ip ON ip.turma_id = t.id
+ORDER BY t.data_inicio ASC, COALESCE(t.horario_inicio, '08:00'::time) ASC, t.id ASC;
     `;
 
     const { rows } = await db.query(sql);

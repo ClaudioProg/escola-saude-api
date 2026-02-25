@@ -234,11 +234,9 @@ function normalizeTurma(t) {
 function statusTurma(di, df, hojeYmd) {
   const ini = ymd(di);
   const fim = ymd(df);
-  if (!ini || !fim) return "todos";
-  if (ini > hojeYmd) return "programados";
-  if (ini <= hojeYmd && fim >= hojeYmd) return "emAndamento";
-  if (fim < hojeYmd) return "realizados";
-  return "todos";
+  if (!ini || !fim) return "ativos";      // fallback seguro
+  if (fim < hojeYmd) return "encerrados"; // já terminou
+  return "ativos";                        // programado OU em andamento
 }
 
 /* ===================================================================== */
@@ -256,7 +254,7 @@ export default function InstrutorPresenca() {
   const [erro, setErro] = useState("");
   const [carregando, setCarregando] = useState(true);
 
-  const [filtro, setFiltro] = useState("todos");
+  const [filtro, setFiltro] = useState("ativos"); // ativos | encerrados
 
   const [inscritosPorTurma, setInscritosPorTurma] = useState({});
   const [avaliacaoPorTurma, setAvaliacaoPorTurma] = useState({});
@@ -486,24 +484,39 @@ export default function InstrutorPresenca() {
 
   const hoje = todayYMD();
 
-  const turmasComStatus = useMemo(() => {
-    return (turmas || []).map((t) => ({
-      ...t,
-      _statusUI: statusTurma(t.data_inicio, t.data_fim, hoje),
-    }));
-  }, [turmas, hoje]);
+// ✅ mantém o status de filtro em 2 estados (ativos/encerrados)
+const turmasComStatus = useMemo(() => {
+  return (turmas || []).map((t) => ({
+    ...t,
+    _statusUI: statusTurma(t.data_inicio, t.data_fim, hoje), // ativos | encerrados
+  }));
+}, [turmas, hoje]);
 
-  const turmasFiltradas = useMemo(() => {
-    return turmasComStatus.filter((t) => (filtro === "todos" ? true : t._statusUI === filtro));
-  }, [turmasComStatus, filtro]);
+// ✅ Lista final (2 filtros): ativos | encerrados
+const turmasFiltradas = useMemo(() => {
+  const list = Array.isArray(turmasComStatus) ? turmasComStatus : [];
+  return list.filter((t) => t?._statusUI === filtro);
+}, [turmasComStatus, filtro]);
 
-  const kpis = useMemo(() => {
-    const total = turmasComStatus.length;
-    const programadas = turmasComStatus.filter((t) => t._statusUI === "programados").length;
-    const andamento = turmasComStatus.filter((t) => t._statusUI === "emAndamento").length;
-    const realizadas = turmasComStatus.filter((t) => t._statusUI === "realizados").length;
-    return { total, programadas, andamento, realizadas };
-  }, [turmasComStatus]);
+// ✅ KPIs continuam detalhados (programadas / andamento / realizadas)
+const kpis = useMemo(() => {
+  const total = (turmas || []).length;
+  let programadas = 0;
+  let andamento = 0;
+  let realizadas = 0;
+
+  for (const t of turmas || []) {
+    const ini = ymd(t?.data_inicio);
+    const fim = ymd(t?.data_fim);
+    if (!ini || !fim) continue;
+
+    if (ini > hoje) programadas += 1;
+    else if (ini <= hoje && fim >= hoje) andamento += 1;
+    else if (fim < hoje) realizadas += 1;
+  }
+
+  return { total, programadas, andamento, realizadas };
+}, [turmas, hoje]);
 
   const normDataItem = (d, turma) => ({
     data: ymd(d?.data) || ymd(d),
@@ -746,30 +759,19 @@ export default function InstrutorPresenca() {
               <Filter className="w-4 h-4 text-zinc-500" aria-hidden="true" />
               <span className="text-xs font-semibold text-zinc-600 dark:text-zinc-300">Filtrar:</span>
               <div className="flex flex-wrap gap-2">
-                <ChipFiltro
-                  active={filtro === "todos"}
-                  onClick={() => setFiltro("todos")}
-                  label="Todos"
-                  count={kpis.total}
-                />
-                <ChipFiltro
-                  active={filtro === "programados"}
-                  onClick={() => setFiltro("programados")}
-                  label="Programadas"
-                  count={kpis.programadas}
-                />
-                <ChipFiltro
-                  active={filtro === "emAndamento"}
-                  onClick={() => setFiltro("emAndamento")}
-                  label="Em andamento"
-                  count={kpis.andamento}
-                />
-                <ChipFiltro
-                  active={filtro === "realizados"}
-                  onClick={() => setFiltro("realizados")}
-                  label="Realizadas"
-                  count={kpis.realizadas}
-                />
+              <ChipFiltro
+  active={filtro === "ativos"}
+  onClick={() => setFiltro("ativos")}
+  label="Ativos"
+  count={(kpis.programadas || 0) + (kpis.andamento || 0)}
+/>
+
+<ChipFiltro
+  active={filtro === "encerrados"}
+  onClick={() => setFiltro("encerrados")}
+  label="Encerrados"
+  count={kpis.realizadas || 0}
+/>
               </div>
             </div>
 

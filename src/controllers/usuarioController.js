@@ -98,23 +98,17 @@ function toPerfilArray(perfil) {
 function uniq(arr) {
   return Array.from(new Set(arr));
 }
-function toPerfilCsv(perfil) {
-  return uniq(toPerfilArray(perfil)).join(",");
-}
-function isAdmin(perfil) {
-  return toPerfilArray(perfil).includes("administrador");
+function normalizarPerfis(input) {
+  const arr = toPerfilArray(input).filter((p) => PERFIS_VALIDOS.includes(p));
+  // regra: se nada sobrou -> usuario
+  return arr.length ? uniq(arr) : ["usuario"];
 }
 
-/** Array -> CSV sem "usuario"; string/undefined -> "usuario" por padrão */
-function toPerfilString(perfil) {
-  if (Array.isArray(perfil)) {
-    const arr = perfil.map((p) => String(p || "").toLowerCase().trim()).filter(Boolean);
-    const semUsuario = arr.filter((p) => p !== "usuario");
-    const finalArr = semUsuario.length ? semUsuario : ["usuario"];
-    return finalArr.join(",");
-  }
-  return String(perfil || "usuario").toLowerCase().trim() || "usuario";
+function perfisToCsv(input) {
+  return normalizarPerfis(input).join(",");
 }
+
+
 /** CSV -> array minúsculo, sem vazios */
 function perfilToArray(perfilStr) {
   return String(perfilStr || "")
@@ -215,9 +209,26 @@ function traduzPgError(err) {
 }
 
 /** Verifica se um id existe em uma tabela (FK friendly) */
+const FK_TABLES = new Set([
+  "unidades",
+  "cargos",
+  "generos",
+  "orientacoes_sexuais",
+  "cores_racas",
+  "escolaridades",
+  "deficiencias",
+]);
+
 async function assertExists(table, id, field = "id") {
   if (id == null) return true;
-  const r = await db.query(`SELECT 1 FROM ${table} WHERE ${field} = $1 LIMIT 1`, [id]);
+
+  const t = String(table || "").trim();
+  const f = String(field || "id").trim();
+
+  if (!FK_TABLES.has(t)) throw new Error(`Tabela não permitida em assertExists: ${t}`);
+  if (f !== "id") throw new Error(`Campo não permitido em assertExists: ${f}`);
+
+  const r = await db.query(`SELECT 1 FROM ${t} WHERE id = $1 LIMIT 1`, [id]);
   return r.rowCount > 0;
 }
 
@@ -258,11 +269,13 @@ async function validarPerfilComplementar(payload) {
     if (!DATE_ONLY_RE.test(d)) {
       fieldErrors.data_nascimento = "Data inválida (use YYYY-MM-DD).";
     } else {
-      const hoje = new Date();
-      const dt = new Date(`${d}T00:00:00Z`);
-      if (isNaN(dt.getTime())) fieldErrors.data_nascimento = "Data inválida.";
-      else if (dt > hoje) fieldErrors.data_nascimento = "Data não pode ser futura.";
-      else if (dt.getUTCFullYear() < 1900) fieldErrors.data_nascimento = "Ano inválido.";
+      const now = new Date();
+const hojeUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+const dtUTC = Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate());
+
+if (Number.isNaN(dt.getTime())) fieldErrors.data_nascimento = "Data inválida.";
+else if (dtUTC > hojeUTC) fieldErrors.data_nascimento = "Data não pode ser futura.";
+else if (dt.getUTCFullYear() < 1900) fieldErrors.data_nascimento = "Ano inválido.";
     }
   }
 
@@ -907,7 +920,10 @@ async function login(req, res) {
   }
 
   try {
-    const result = await db.query("SELECT * FROM usuarios WHERE cpf = $1", [cpf]);
+    const result = await db.query(
+      "SELECT id, nome, cpf, email, senha, perfil, unidade_id, cargo_id, genero_id, orientacao_sexual_id, cor_raca_id, escolaridade_id, deficiencia_id, data_nascimento, registro FROM usuarios WHERE cpf = $1",
+      [cpf]
+    );
     const usuario = result.rows[0];
     if (!usuario) {
       return res.status(401).json({ message: "Usuário não encontrado.", fieldErrors: { cpf: "Verifique o CPF." } });
@@ -988,11 +1004,11 @@ if (result.rows.length === 0) {
     );
 
     const reqOrigin = String(req.headers.origin || "").trim();
-    const baseUrl =
-      String(process.env.FRONTEND_URL_STATIC || "").trim() ||
-      (process.env.NODE_ENV === "production" && /^https:\/\/.+/i.test(reqOrigin)
-        ? reqOrigin
-        : "http://localhost:5173"); // ✅ melhor default em DEV
+const baseUrl =
+  FRONTEND_URL_STATIC ||
+  (process.env.NODE_ENV === "production" && /^https:\/\/.+/i.test(reqOrigin)
+    ? reqOrigin
+    : "http://localhost:5173");
 
     const safeBase = String(baseUrl).replace(/\/+$/, "");
     const link = `${safeBase}/redefinir-senha/${encodeURIComponent(token)}`;
@@ -1074,7 +1090,8 @@ const decoded = jwt.verify(token, JWT_SECRET, verifyOpts);
 // ✅ compatível com tokens antigos (id) e novos (sub)
 const usuarioId = decoded?.id ?? decoded?.sub;
 
-if (decoded?.typ !== "pwd-reset" || !usuarioId) {
+const typ = decoded?.typ ?? "pwd-reset"; // compat: tokens antigos
+if (typ !== "pwd-reset" || !usuarioId) {
   return res.status(400).json({ message: "Token inválido." });
 }
 

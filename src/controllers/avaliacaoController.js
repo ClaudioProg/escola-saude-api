@@ -5,6 +5,7 @@ const dbMod = require("../db");
 const db = dbMod?.db ?? dbMod;
 
 const IS_DEV = process.env.NODE_ENV !== "production";
+const TZ = "America/Sao_Paulo";
 
 /* ────────────────────────────────────────────────────────────────
    Notificação de certificado — import resiliente
@@ -47,10 +48,11 @@ function getPerfis(user) {
 ─────────────────────────────────────────────────────────────── */
 const isYmd = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
 
-function ymdToLocalDate(ymd) {
+/** Date seguro p/ iterar dias (meio-dia evita pulo em algumas engines) */
+function ymdToSafeLocalDate(ymd) {
   const [y, m, d] = String(ymd).split("-").map(Number);
   if (!y || !m || !d) return null;
-  return new Date(y, m - 1, d, 0, 0, 0, 0);
+  return new Date(y, m - 1, d, 12, 0, 0, 0);
 }
 
 function toYMDLocal(dateLike) {
@@ -64,11 +66,14 @@ function toYMDLocal(dateLike) {
 }
 
 function gerarIntervaloYMD(inicioLike, fimLike) {
-  const ini = isYmd(inicioLike) ? ymdToLocalDate(inicioLike) : new Date(inicioLike);
-  const fim = isYmd(fimLike) ? ymdToLocalDate(fimLike) : new Date(fimLike);
+  const iniY = toYMDLocal(inicioLike);
+  const fimY = toYMDLocal(fimLike);
+  if (!isYmd(iniY) || !isYmd(fimY)) return [];
+
+  const ini = ymdToSafeLocalDate(iniY);
+  const fim = ymdToSafeLocalDate(fimY);
   if (!ini || !fim || Number.isNaN(ini.getTime()) || Number.isNaN(fim.getTime())) return [];
-  ini.setHours(0, 0, 0, 0);
-  fim.setHours(0, 0, 0, 0);
+
   const out = [];
   for (let d = new Date(ini); d <= fim; d.setDate(d.getDate() + 1)) out.push(toYMDLocal(d));
   return out;
@@ -190,7 +195,6 @@ async function queryFirstWorking(dbConn, variants, params) {
       return await dbConn.query(sql, params);
     } catch (e) {
       lastErr = e;
-      // tenta próximo em erros típicos de schema
       if (["42P01", "42703"].includes(e?.code)) continue; // table/column not found
       throw e;
     }
@@ -204,7 +208,10 @@ async function queryFirstWorking(dbConn, variants, params) {
 async function obterContextoTurma(dbConn, turmaId) {
   const { rows, rowCount } = await dbConn.query(
     `
-    SELECT t.id, t.evento_id, t.data_inicio, t.data_fim, t.horario_inicio, t.horario_fim,
+    SELECT t.id, t.evento_id,
+           to_char(t.data_inicio::date,'YYYY-MM-DD') AS data_inicio_ymd,
+           to_char(t.data_fim::date,'YYYY-MM-DD')    AS data_fim_ymd,
+           t.horario_inicio, t.horario_fim,
            e.tipo AS evento_tipo
       FROM turmas t
       JOIN eventos e ON e.id = t.evento_id
@@ -217,7 +224,6 @@ async function obterContextoTurma(dbConn, turmaId) {
 }
 
 async function usuarioTemPresenca(dbConn, usuarioId, turmaId) {
-  // conta apenas presente=true se existir, senão só existência
   const variants = [
     `SELECT 1 FROM presencas WHERE usuario_id=$1 AND turma_id=$2 AND presente=true LIMIT 1`,
     `SELECT 1 FROM presencas WHERE usuario_id=$1 AND turma_id=$2 LIMIT 1`,
@@ -227,18 +233,23 @@ async function usuarioTemPresenca(dbConn, usuarioId, turmaId) {
 }
 
 async function usuarioAtingiu75(dbConn, usuarioId, turmaId) {
-  // calcula mínimo pela janela data_inicio..data_fim e conta dias distintos com presença
   const variants = [
     `
     SELECT
       (
-        SELECT COUNT(DISTINCT p.data_presenca)::int
+        SELECT COUNT(DISTINCT p.data_presenca::date)::int
           FROM presencas p
          WHERE p.usuario_id = $1
            AND p.turma_id   = t.id
            AND p.presente   = true
       ) AS qtd_presencas,
-      CEIL(0.75 * ((t.data_fim - t.data_inicio) + 1))::int AS minimo_75
+      CEIL(0.75 * (
+        CASE
+          WHEN EXISTS (SELECT 1 FROM datas_turma dt WHERE dt.turma_id = t.id)
+            THEN (SELECT COUNT(*) FROM datas_turma dt WHERE dt.turma_id = t.id)
+          ELSE ((t.data_fim - t.data_inicio) + 1)
+        END
+      ))::int AS minimo_75
       FROM turmas t
      WHERE t.id = $2
      LIMIT 1
@@ -246,12 +257,18 @@ async function usuarioAtingiu75(dbConn, usuarioId, turmaId) {
     `
     SELECT
       (
-        SELECT COUNT(DISTINCT p.data_presenca)::int
+        SELECT COUNT(DISTINCT p.data_presenca::date)::int
           FROM presencas p
          WHERE p.usuario_id = $1
            AND p.turma_id   = t.id
       ) AS qtd_presencas,
-      CEIL(0.75 * ((t.data_fim - t.data_inicio) + 1))::int AS minimo_75
+      CEIL(0.75 * (
+        CASE
+          WHEN EXISTS (SELECT 1 FROM datas_turma dt WHERE dt.turma_id = t.id)
+            THEN (SELECT COUNT(*) FROM datas_turma dt WHERE dt.turma_id = t.id)
+          ELSE ((t.data_fim - t.data_inicio) + 1)
+        END
+      ))::int AS minimo_75
       FROM turmas t
      WHERE t.id = $2
      LIMIT 1
@@ -261,34 +278,6 @@ async function usuarioAtingiu75(dbConn, usuarioId, turmaId) {
   const r = await queryFirstWorking(dbConn, variants, [Number(usuarioId), Number(turmaId)]);
   const row = r.rows?.[0];
   return !!row && Number(row.qtd_presencas) >= Number(row.minimo_75);
-}
-
-
-async function fimRealTurmaTS(dbConn, turmaId) {
-  const r = await dbConn.query(
-    `
-    WITH base AS (
-      SELECT
-        (
-          SELECT (dt.data::date + COALESCE(dt.horario_fim::time, t.horario_fim::time, '23:59'::time))
-          FROM datas_turma dt
-          JOIN turmas t ON t.id = dt.turma_id
-          WHERE dt.turma_id = $1
-          ORDER BY dt.data DESC, COALESCE(dt.horario_fim, t.horario_fim) DESC
-          LIMIT 1
-        ) AS fim_dt,
-        (
-          SELECT (t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time))
-          FROM turmas t WHERE t.id = $1
-          LIMIT 1
-        ) AS fim_tb
-    )
-    SELECT COALESCE(fim_dt, fim_tb) AS fim_local
-    FROM base;
-    `,
-    [Number(turmaId)]
-  );
-  return r.rows?.[0]?.fim_local || null; // timestamp without tz (local)
 }
 
 async function fimRealTurmaTS(dbConn, turmaId) {
@@ -323,12 +312,11 @@ async function turmaEncerrada(dbConn, turmaId) {
   if (!fimLocal) return false;
 
   const r = await dbConn.query(
-    `SELECT (NOW() AT TIME ZONE 'America/Sao_Paulo') >= $1::timestamp AS encerrou`,
+    `SELECT (NOW() AT TIME ZONE '${TZ}') >= $1::timestamp AS encerrou`,
     [fimLocal]
   );
   return r.rows?.[0]?.encerrou === true;
 }
-
 
 /* ────────────────────────────────────────────────────────────────
    Endpoints — Usuário / Instrutor
@@ -369,7 +357,6 @@ async function enviarAvaliacao(req, res) {
     const atingiu75 = await usuarioAtingiu75(dbConn, usuario_id, turma_id);
     if (!atingiu75) return res.status(403).json({ erro: "Você ainda não atingiu a frequência mínima (75%) para avaliar." });
 
-    // já avaliou?
     const existeVariants = [
       `SELECT 1 FROM avaliacoes WHERE usuario_id=$1 AND turma_id=$2 LIMIT 1`,
       `SELECT 1 FROM avaliacao WHERE usuario_id=$1 AND turma_id=$2 LIMIT 1`,
@@ -456,10 +443,8 @@ async function enviarAvaliacao(req, res) {
       turma_id,
     });
 
-    // notifica/gera certificado (se existir função)
     if (typeof notifyCertFn === "function") {
       try {
-        // alguns códigos esperam (usuario_id, turma_id), outros só (usuario_id)
         const arity = notifyCertFn.length;
         if (arity >= 2) await notifyCertFn(usuario_id, turma_id);
         else await notifyCertFn(usuario_id);
@@ -503,9 +488,9 @@ async function listarAvaliacaoDisponiveis(req, res) {
         e.id     AS evento_id,
         e.titulo AS nome_evento,
         t.id     AS turma_id,
-        t.data_inicio,
-        t.data_fim,
-        t.horario_fim
+        to_char(t.data_inicio::date,'YYYY-MM-DD') AS data_inicio,
+        to_char(t.data_fim::date,'YYYY-MM-DD')    AS data_fim,
+        to_char(COALESCE(t.horario_fim,'23:59'::time),'HH24:MI') AS horario_fim
       FROM inscricoes i
       INNER JOIN turmas  t ON i.turma_id = t.id
       INNER JOIN eventos e ON t.evento_id = e.id
@@ -515,7 +500,7 @@ async function listarAvaliacaoDisponiveis(req, res) {
       WHERE i.usuario_id = $1
         AND a.id IS NULL
         AND (
-          (NOW() AT TIME ZONE 'America/Sao_Paulo') >=
+          (NOW() AT TIME ZONE '${TZ}') >=
           COALESCE(
             (
               SELECT (dt.data::date + COALESCE(dt.horario_fim::time, t.horario_fim::time, '23:59'::time))
@@ -529,24 +514,29 @@ async function listarAvaliacaoDisponiveis(req, res) {
         )
         AND (
           (
-            SELECT COUNT(DISTINCT p.data_presenca)::int
+            SELECT COUNT(DISTINCT p.data_presenca::date)::int
               FROM presencas p
              WHERE p.usuario_id = i.usuario_id
                AND p.turma_id   = t.id
                AND (p.presente = true)
-          ) >= CEIL(0.75 * ( (t.data_fim - t.data_inicio) + 1 ))
+          ) >= CEIL(0.75 * (
+            CASE
+              WHEN EXISTS (SELECT 1 FROM datas_turma dt WHERE dt.turma_id = t.id)
+                THEN (SELECT COUNT(*) FROM datas_turma dt WHERE dt.turma_id = t.id)
+              ELSE ((t.data_fim - t.data_inicio) + 1)
+            END
+          ))
         )
       ORDER BY t.data_fim DESC
       `,
-      // fallback: nomes antigos
       `
       SELECT 
         e.id     AS evento_id,
         e.titulo AS nome_evento,
         t.id     AS turma_id,
-        t.data_inicio,
-        t.data_fim,
-        t.horario_fim
+        to_char(t.data_inicio::date,'YYYY-MM-DD') AS data_inicio,
+        to_char(t.data_fim::date,'YYYY-MM-DD')    AS data_fim,
+        to_char(COALESCE(t.horario_fim,'23:59'::time),'HH24:MI') AS horario_fim
       FROM inscricao i
       INNER JOIN turmas  t ON i.turma_id = t.id
       INNER JOIN eventos e ON t.evento_id = e.id
@@ -556,7 +546,7 @@ async function listarAvaliacaoDisponiveis(req, res) {
       WHERE i.usuario_id = $1
         AND a.id IS NULL
         AND (
-          (NOW() AT TIME ZONE 'America/Sao_Paulo') >=
+          (NOW() AT TIME ZONE '${TZ}') >=
           COALESCE(
             (
               SELECT (dt.data::date + COALESCE(dt.horario_fim::time, t.horario_fim::time, '23:59'::time))
@@ -570,12 +560,18 @@ async function listarAvaliacaoDisponiveis(req, res) {
         )
         AND (
           (
-            SELECT COUNT(DISTINCT p.data_presenca)::int
+            SELECT COUNT(DISTINCT p.data_presenca::date)::int
               FROM presencas p
              WHERE p.usuario_id = i.usuario_id
                AND p.turma_id   = t.id
                AND (p.presente = true)
-          ) >= CEIL(0.75 * ( (t.data_fim - t.data_inicio) + 1 ))
+          ) >= CEIL(0.75 * (
+            CASE
+              WHEN EXISTS (SELECT 1 FROM datas_turma dt WHERE dt.turma_id = t.id)
+                THEN (SELECT COUNT(*) FROM datas_turma dt WHERE dt.turma_id = t.id)
+              ELSE ((t.data_fim - t.data_inicio) + 1)
+            END
+          ))
         )
       ORDER BY t.data_fim DESC
       `,
@@ -743,23 +739,45 @@ async function avaliacaoPorTurma(req, res) {
         comentarios_finais: a.comentarios_finais,
       }));
 
-    const inscritosRes = await dbConn.query(`SELECT COUNT(*)::int AS total FROM inscricoes WHERE turma_id = $1`, [turma_id]);
+    // inscritos (plural) com fallback sing.
+    const inscritosRes = await queryFirstWorking(
+      dbConn,
+      [
+        `SELECT COUNT(*)::int AS total FROM inscricoes WHERE turma_id = $1`,
+        `SELECT COUNT(*)::int AS total FROM inscricao  WHERE turma_id = $1`,
+      ],
+      [turma_id]
+    );
     const total_inscritos = inscritosRes.rows?.[0]?.total ?? 0;
 
-    const turmaRes = await dbConn.query(`SELECT data_inicio, data_fim FROM turmas WHERE id = $1`, [turma_id]);
+    const turmaRes = await dbConn.query(
+      `SELECT to_char(data_inicio::date,'YYYY-MM-DD') AS di,
+              to_char(data_fim::date,'YYYY-MM-DD')    AS df
+         FROM turmas
+        WHERE id = $1`,
+      [turma_id]
+    );
     if (!turmaRes.rowCount) return res.status(404).json({ erro: "Turma não encontrada." });
 
-    const { data_inicio, data_fim } = turmaRes.rows[0];
-    const datasTurma = gerarIntervaloYMD(data_inicio, data_fim);
+    const di = turmaRes.rows[0]?.di;
+    const df = turmaRes.rows[0]?.df;
+    const datasTurma = gerarIntervaloYMD(di, df);
     const totalDias = datasTurma.length;
 
-    const presencasRes = await dbConn.query(`SELECT usuario_id, data_presenca, presente FROM presencas WHERE turma_id = $1`, [turma_id]);
-    const mapaPresencas = Object.create(null);
+    const presencasRes = await dbConn.query(
+      `SELECT usuario_id,
+              to_char(data_presenca::date,'YYYY-MM-DD') AS data_ymd,
+              presente
+         FROM presencas
+        WHERE turma_id = $1`,
+      [turma_id]
+    );
 
+    const mapaPresencas = Object.create(null);
     for (const row of presencasRes.rows || []) {
       if (row.presente === false) continue;
-      const ymd = toYMDLocal(row.data_presenca);
-      if (!ymd) continue;
+      const ymd = row.data_ymd;
+      if (!isYmd(ymd)) continue;
       const uid = String(row.usuario_id);
       if (!mapaPresencas[uid]) mapaPresencas[uid] = new Set();
       mapaPresencas[uid].add(ymd);
@@ -870,7 +888,8 @@ async function avaliacaoPorEvento(req, res) {
 /** GET /api/admin/avaliacao/eventos  (admin) */
 async function listarEventosComAvaliacao(_req, res) {
   try {
-    const sql = `
+    const variants = [
+      `
       WITH turmas_com_count AS (
         SELECT t.id, t.evento_id,
                COUNT(a.id) AS total_respostas,
@@ -893,8 +912,34 @@ async function listarEventosComAvaliacao(_req, res) {
         FROM eventos_agreg
        WHERE total_respostas > 0
        ORDER BY di DESC NULLS LAST, id DESC;
-    `;
-    const { rows } = await db.query(sql, []);
+      `,
+      `
+      WITH turmas_com_count AS (
+        SELECT t.id, t.evento_id,
+               COUNT(a.id) AS total_respostas,
+               MIN(t.data_inicio) AS di, MAX(t.data_fim) AS df
+          FROM turmas t
+          LEFT JOIN avaliacao a ON a.turma_id = t.id
+         GROUP BY t.id
+      ),
+      eventos_agreg AS (
+        SELECT e.id,
+               e.titulo AS titulo,
+               MIN(t.di) AS di,
+               MAX(t.df) AS df,
+               SUM(t.total_respostas)::int AS total_respostas
+          FROM eventos e
+          JOIN turmas_com_count t ON t.evento_id = e.id
+         GROUP BY e.id, e.titulo
+      )
+      SELECT *
+        FROM eventos_agreg
+       WHERE total_respostas > 0
+       ORDER BY di DESC NULLS LAST, id DESC;
+      `,
+    ];
+
+    const { rows } = await queryFirstWorking(getDb(_req), variants, []);
     return res.json(rows || []);
   } catch (err) {
     console.error("[adminAvaliacao] listarEventosComAvaliacao:", err?.message || err);
@@ -904,11 +949,12 @@ async function listarEventosComAvaliacao(_req, res) {
 
 /** GET /api/admin/avaliacao/evento/:evento_id  (admin) */
 async function obterAvaliacaoDoEvento(req, res) {
+  const dbConn = getDb(req);
   const eventoId = Number(req.params.evento_id);
   if (!Number.isFinite(eventoId) || eventoId <= 0) return res.status(400).json({ error: "evento_id inválido" });
 
   try {
-    const { rows: turmas } = await db.query(
+    const turmasVariants = [
       `
       SELECT t.id, t.nome, COUNT(a.id)::int AS total_respostas
         FROM turmas t
@@ -917,10 +963,19 @@ async function obterAvaliacaoDoEvento(req, res) {
        GROUP BY t.id, t.nome
        ORDER BY t.id
       `,
-      [eventoId]
-    );
+      `
+      SELECT t.id, t.nome, COUNT(a.id)::int AS total_respostas
+        FROM turmas t
+        LEFT JOIN avaliacao a ON a.turma_id = t.id
+       WHERE t.evento_id = $1
+       GROUP BY t.id, t.nome
+       ORDER BY t.id
+      `,
+    ];
+    const turmasRes = await queryFirstWorking(dbConn, turmasVariants, [eventoId]);
+    const turmas = turmasRes.rows || [];
 
-    const { rows: respostasRaw } = await db.query(
+    const respostasVariants = [
       `
       SELECT 
         a.id,
@@ -937,8 +992,25 @@ async function obterAvaliacaoDoEvento(req, res) {
       WHERE t.evento_id = $1
       ORDER BY a.data_avaliacao DESC, a.id DESC
       `,
-      [eventoId]
-    );
+      `
+      SELECT 
+        a.id,
+        a.turma_id,
+        t.nome AS turma_nome,
+        a.usuario_id,
+        u.nome AS usuario_nome,
+        a.data_avaliacao AS criado_em,
+        ${CAMPOS_OBJETIVOS.map((c) => `a.${c} AS ${c}`).join(", ")},
+        ${CAMPOS_TEXTOS.map((c) => `a.${c} AS ${c}`).join(", ")}
+      FROM avaliacao a
+      JOIN turmas t ON t.id = a.turma_id
+      LEFT JOIN usuarios u ON u.id = a.usuario_id
+      WHERE t.evento_id = $1
+      ORDER BY a.data_avaliacao DESC, a.id DESC
+      `,
+    ];
+    const respostasRes = await queryFirstWorking(dbConn, respostasVariants, [eventoId]);
+    const respostasRaw = respostasRes.rows || [];
 
     const respostas = (respostasRaw || []).map((r) => ({
       ...r,
@@ -979,11 +1051,12 @@ async function obterAvaliacaoDoEvento(req, res) {
 
 /** GET /api/admin/avaliacao/turma/:turma_id  (admin) */
 async function obterAvaliacaoDaTurma(req, res) {
+  const dbConn = getDb(req);
   const turmaId = Number(req.params.turma_id);
   if (!Number.isFinite(turmaId) || turmaId <= 0) return res.status(400).json({ error: "turma_id inválido" });
 
   try {
-    const { rows } = await db.query(
+    const variants = [
       `
       SELECT 
         a.id,
@@ -1000,8 +1073,25 @@ async function obterAvaliacaoDaTurma(req, res) {
       WHERE a.turma_id = $1
       ORDER BY a.data_avaliacao DESC, a.id DESC
       `,
-      [turmaId]
-    );
+      `
+      SELECT 
+        a.id,
+        a.turma_id,
+        t.nome AS turma_nome,
+        a.usuario_id,
+        u.nome AS usuario_nome,
+        a.data_avaliacao AS criado_em,
+        ${CAMPOS_OBJETIVOS.map((c) => `a.${c} AS ${c}`).join(", ")},
+        ${CAMPOS_TEXTOS.map((c) => `a.${c} AS ${c}`).join(", ")}
+      FROM avaliacao a
+      JOIN turmas t ON t.id = a.turma_id
+      LEFT JOIN usuarios u ON u.id = a.usuario_id
+      WHERE a.turma_id = $1
+      ORDER BY a.data_avaliacao DESC, a.id DESC
+      `,
+    ];
+
+    const { rows } = await queryFirstWorking(dbConn, variants, [turmaId]);
     return res.json(rows || []);
   } catch (err) {
     console.error("[adminAvaliacao] obterAvaliacaoDaTurma:", err?.message || err);

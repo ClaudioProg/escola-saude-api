@@ -238,10 +238,17 @@ async function confirmarPresencaInstrutor(req, res) {
 
   try {
     const okInstrutor = await query(
-      `SELECT 1 FROM evento_instrutor ei JOIN turmas t ON t.evento_id = ei.evento_id WHERE t.id = $1 AND ei.instrutor_id = $2 LIMIT 1`,
+      `SELECT 1
+         FROM turma_instrutor ti
+        WHERE ti.turma_id = $1
+          AND ti.instrutor_id = $2
+        LIMIT 1`,
       [tid, instrutor_id]
     );
-    if ((okInstrutor?.rowCount ?? 0) === 0) return res.status(403).json({ erro: "Acesso negado. Você não é instrutor desta turma." });
+    
+    if ((okInstrutor?.rowCount ?? 0) === 0) {
+      return res.status(403).json({ erro: "Acesso negado. Você não é instrutor desta turma." });
+    }
 
     const hf = await horarioFimNaData(tid, dataISO);
     const fimAula = dateTimeSP(dataISO, hf);
@@ -435,6 +442,105 @@ async function confirmarHojeManual(req, res) {
 /* =====================================================================
    Relatórios / Listagens
 ===================================================================== */
+async function listarTurmasDoInstrutor(req, res) {
+  const rid = mkRid("PRSI");
+  const instrutor_id = Number(req.user?.id);
+
+  // filtro opcional: ?status=ativos | encerrados | todos
+  const statusFiltro = String(req.query?.status || "todos").toLowerCase();
+
+  if (!Number.isFinite(instrutor_id) || instrutor_id <= 0) {
+    return res.status(401).json({ erro: "Não autenticado." });
+  }
+
+  try {
+    const sql = `
+      WITH base AS (
+        SELECT
+          e.id AS evento_id,
+          e.titulo AS evento_titulo,
+          t.id AS turma_id,
+          COALESCE(t.nome, 'Turma') AS turma_nome,
+          to_char(t.data_inicio::date,'YYYY-MM-DD') AS data_inicio,
+          to_char(t.data_fim::date,'YYYY-MM-DD')    AS data_fim,
+          to_char(t.horario_inicio::time,'HH24:MI') AS horario_inicio,
+          to_char(t.horario_fim::time,'HH24:MI')    AS horario_fim,
+          ((t.data_inicio::date)::text || ' ' || COALESCE(to_char(t.horario_inicio::time,'HH24:MI'),'00:00'))::timestamp AS inicio_ts,
+          ((t.data_fim::date)::text    || ' ' || COALESCE(to_char(t.horario_fim::time,'HH24:MI'),'23:59'))::timestamp AS fim_ts,
+          COALESCE((SELECT COUNT(*) FROM inscricoes i WHERE i.turma_id = t.id), 0)::int AS inscritos_total
+        FROM turma_instrutor ti
+        JOIN turmas t  ON t.id = ti.turma_id
+        JOIN eventos e ON e.id = t.evento_id
+        WHERE ti.instrutor_id = $1
+      )
+      SELECT b.*, (NOW() AT TIME ZONE '${TZ}')::timestamp AS agora_sp
+      FROM base b
+      ORDER BY b.data_inicio DESC, b.turma_id DESC;
+    `;
+
+    const { rows } = await query(sql, [instrutor_id]);
+
+    const hhmm = (v, fallback = null) => {
+      if (!v) return fallback;
+      const s = String(v).trim();
+      const m = /^(\d{1,2}):(\d{2})/.exec(s);
+      if (!m) return fallback;
+      const hh = String(Math.min(Math.max(Number(m[1]), 0), 23)).padStart(2, "0");
+      const mm = String(Math.min(Math.max(Number(m[2]), 0), 59)).padStart(2, "0");
+      return `${hh}:${mm}`;
+    };
+
+    const turmas = (rows || []).map((r) => {
+      const inicioTs = r.inicio_ts;
+      const fimTs = r.fim_ts;
+      const agora = r.agora_sp;
+
+      let status = "programado";
+      if (agora >= inicioTs && agora <= fimTs) status = "andamento";
+      if (agora > fimTs) status = "encerrado";
+
+      return {
+        evento_id: Number(r.evento_id),
+        evento_titulo: r.evento_titulo,
+        turma_id: Number(r.turma_id),
+        turma_nome: r.turma_nome,
+        periodo: {
+          data_inicio: r.data_inicio,
+          horario_inicio: hhmm(r.horario_inicio, null),
+          data_fim: r.data_fim,
+          horario_fim: hhmm(r.horario_fim, null),
+        },
+        status,
+        inscritos_total: Number(r.inscritos_total || 0),
+      };
+    });
+
+    const filtradas =
+      statusFiltro === "ativos"
+        ? turmas.filter((t) => t.status !== "encerrado")
+        : statusFiltro === "encerrados"
+        ? turmas.filter((t) => t.status === "encerrado")
+        : turmas;
+
+    logInfo(rid, "OK listarTurmasDoInstrutor", {
+      instrutor_id,
+      total: turmas.length,
+      filtradas: filtradas.length,
+      statusFiltro,
+    });
+
+    return res.json({
+      instrutor_id,
+      total_turmas: turmas.length,
+      status_filtro: statusFiltro,
+      turmas: filtradas,
+    });
+  } catch (err) {
+    logError(rid, "listarTurmasDoInstrutor", err);
+    return res.status(500).json({ erro: "Erro ao listar turmas do instrutor." });
+  }
+}
+
 async function listaPresencasTurma(req, res) {
   const rid = mkRid();
   const turma_id = Number(req.params.turma_id);
@@ -792,6 +898,9 @@ module.exports = {
   relatorioPresencasPorTurma,
   exportarPresencasPDF,
   listarTodasPresencasParaAdmin,
+
+  // ✅ instrutor (por turma)
+  listarTurmasDoInstrutor,
 
   // minhas presenças (duas visões compatíveis)
   obterMinhasPresencas,

@@ -48,6 +48,9 @@ const required = [
   "exportarPresencasPDF",
   "obterMinhasPresencas",
   "listarMinhasPresencas",
+
+  // ✅ NOVO
+  "listarTurmasDoInstrutor",
 ];
 for (const fn of required) {
   if (typeof ctrl?.[fn] !== "function") {
@@ -100,7 +103,16 @@ async function ensureTurmaViewer(req, res, next) {
       return res.status(400).json({ erro: "turma_id inválido." });
     }
 
-    if (isAdmin || isInstr) return next();
+    if (isAdmin) return next();
+
+    if (isInstr) {
+      const ok = await query(
+        `SELECT 1 FROM turma_instrutor ti WHERE ti.turma_id = $1 AND ti.instrutor_id = $2 LIMIT 1`,
+        [turmaId, userId]
+      );
+      if ((ok?.rowCount ?? ok?.rows?.length ?? 0) > 0) return next();
+      return res.status(403).json({ erro: "Acesso negado à turma (sem vínculo de instrutor)." });
+    }
     if (!Number.isFinite(userId) || userId <= 0) return res.status(401).json({ erro: "Não autenticado." });
 
     const vinculos = await query(
@@ -209,6 +221,24 @@ router.get(
   requireAuth,
   routeTag("presencasRoute:GET /me"),
   handle(ctrl.listarMinhasPresencas)
+);
+
+// ✅ Instrutor: minhas turmas como instrutor (por turma_instrutor)
+router.get(
+  "/instrutor/turmas",
+  requireAuth,
+  routeTag("presencasRoute:GET /instrutor/turmas"),
+  permitirPerfis("instrutor", "administrador"),
+  handle(ctrl.listarTurmasDoInstrutor)
+);
+
+// aliases (opcional) p/ compat / legibilidade do front
+router.get(
+  "/turmas-instrutor",
+  requireAuth,
+  routeTag("presencasRoute:GET /turmas-instrutor"),
+  permitirPerfis("instrutor", "administrador"),
+  handle(ctrl.listarTurmasDoInstrutor)
 );
 
 // 📊 Resumo (cards simples)

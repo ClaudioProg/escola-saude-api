@@ -23,15 +23,15 @@ async function turmaEncerradaSP(db, turmaId) {
       (NOW() AT TIME ZONE 'America/Sao_Paulo') >=
       COALESCE(
         (
-          SELECT (dt.data::date + COALESCE(dt.horario_fim::time, t.horario_fim::time, '23:59'::time))
+          SELECT MAX(
+            dt.data::date + COALESCE(dt.horario_fim::time, t.horario_fim::time, '23:59'::time)
+          )
           FROM datas_turma dt
           JOIN turmas t ON t.id = dt.turma_id
           WHERE dt.turma_id = $1
-          ORDER BY dt.data DESC, COALESCE(dt.horario_fim, t.horario_fim) DESC
-          LIMIT 1
         ),
         (
-          SELECT (t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time))
+          SELECT t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time)
           FROM turmas t
           WHERE t.id = $1
           LIMIT 1
@@ -591,16 +591,18 @@ if (!encerrou) {
     const presencasDistintas = Number(resumo.presencas_distintas || 0);
 
     if (tipo === "usuario") {
-      const fimYmd = ymdFromAny(maxData || TURMA.data_fim);
-      const hf = typeof TURMA.horario_fim === "string" ? TURMA.horario_fim.slice(0, 5) : "23:59";
-      const fimDT = ymdToLocalDate(fimYmd, hf);
-      if (fimDT && new Date() < fimDT) {
-        return res.status(400).json({ erro: "A turma ainda não encerrou. O certificado só pode ser gerado após o término." });
+      const encerrou = await turmaEncerradaSP(db, turma_id);
+      if (!encerrou) {
+        return res.status(400).json({
+          erro: "A turma ainda não encerrou. O certificado só pode ser gerado após o término.",
+        });
       }
+    
       const taxa = totalAulas > 0 ? presencasDistintas / totalAulas : 0;
       if (!(taxa >= 0.75)) {
         return res.status(403).json({ erro: "Presença insuficiente (mínimo de 75%)." });
       }
+    
       const fez = await usuarioFezAvaliacao(usuario_id, turma_id, req);
       if (!fez) {
         return res.status(403).json({
@@ -992,7 +994,17 @@ async function listarInstrutorElegivel(req, res) {
        AND c.turma_id  = t.id
        AND c.tipo      = 'instrutor'
       WHERE ti.instrutor_id = $1
-        AND (now() > (t.data_fim::timestamp + COALESCE(t.horario_fim,'23:59'::time)))
+  AND (
+    (NOW() AT TIME ZONE 'America/Sao_Paulo') >=
+    COALESCE(
+      (
+        SELECT MAX(dt.data::date + COALESCE(dt.horario_fim::time, t.horario_fim::time, '23:59'::time))
+        FROM datas_turma dt
+        WHERE dt.turma_id = t.id
+      ),
+      (t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time))
+    )
+  )
       ORDER BY t.data_fim DESC
       `,
       [instrutor_id]

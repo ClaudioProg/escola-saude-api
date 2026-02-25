@@ -1,8 +1,15 @@
-// 📁 src/controllers/agendaController.js
+// 📁 src/controllers/agendaController.js — PREMIUM++ (2026)
+// - Atualizado COMPLETO (vínculo por TURMA: turma_instrutor)
+// - Date-only safe: SEM new Date("YYYY-MM-DD")
+// - ✅ Status por data+hora com fuso SP (now() AT TIME ZONE)
+// - ✅ Ocorrências por evento: datas_turma > presencas > fallback generate_series (data_inicio..data_fim)
+// - ✅ Minha agenda (inscrito): usa inscricoes (compat "inscricao" -> fallback automático)
 /* eslint-disable no-console */
 "use strict";
 
 const dbFallback = require("../db");
+
+const TZ = "America/Sao_Paulo";
 
 /* =========================
    Helpers (premium)
@@ -30,24 +37,47 @@ function toIntId(v) {
   return Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
 }
 
+/** tenta executar uma lista de SQLs (schemas/tabelas diferentes) */
+async function trySqlList(db, sqls, params) {
+  let last = null;
+  for (const s of sqls) {
+    try {
+      return await db.query(s, params);
+    } catch (e) {
+      last = e;
+      // tabelas/colunas inexistentes etc
+      if (["42P01", "42703", "42883"].includes(e?.code)) continue;
+      throw e;
+    }
+  }
+  throw last || new Error("Falha ao executar SQL.");
+}
+
+/* =========================
+   SQL snippets (premium)
+========================= */
+
 /**
- * SQL snippet: status por timestamp (data + hora) em agregação por evento
+ * Status por timestamp (data + hora) em agregação por evento
  * - Usa MIN(inicio_ts) e MAX(fim_ts) do conjunto de turmas do evento
+ * - Fuso SP: now() AT TIME ZONE
  */
 function sqlStatusFromTurmas(minInicioTsExpr, maxFimTsExpr) {
   return `
     CASE 
-      WHEN now() < ${minInicioTsExpr} THEN 'programado'
-      WHEN now() BETWEEN ${minInicioTsExpr} AND ${maxFimTsExpr} THEN 'andamento'
+      WHEN (now() AT TIME ZONE '${TZ}') < ${minInicioTsExpr} THEN 'programado'
+      WHEN (now() AT TIME ZONE '${TZ}') BETWEEN ${minInicioTsExpr} AND ${maxFimTsExpr} THEN 'andamento'
       ELSE 'encerrado'
     END
   `;
 }
 
 /**
- * SQL snippet: ocorrências reais do EVENTO
- * - prioridade: datas_turma; fallback: presencas; senão []
- * - sempre retorna json (array)
+ * Ocorrências reais do EVENTO (sempre json array)
+ * prioridade:
+ *  1) datas_turma
+ *  2) presencas
+ *  3) fallback: generate_series(MIN(data_inicio), MAX(data_fim)) (date-only)
  */
 function sqlOcorrenciasPorEvento(eventoIdExpr) {
   return `
@@ -82,23 +112,41 @@ function sqlOcorrenciasPorEvento(eventoIdExpr) {
            ORDER BY 1
         ) z2
       )
-      ELSE '[]'::json
+      ELSE (
+        SELECT COALESCE(json_agg(d ORDER BY d), '[]'::json)
+        FROM (
+          SELECT to_char(gs::date, 'YYYY-MM-DD') AS d
+            FROM (
+              SELECT MIN(t0.data_inicio::date) AS di, MAX(t0.data_fim::date) AS df
+                FROM turmas t0
+               WHERE t0.evento_id = ${eventoIdExpr}
+            ) r
+            CROSS JOIN LATERAL generate_series(r.di, r.df, interval '1 day') AS gs
+           WHERE r.di IS NOT NULL AND r.df IS NOT NULL
+           ORDER BY 1
+        ) z3
+      )
     END
   `;
 }
 
 /**
- * SQL snippet: ocorrências reais filtradas pelo usuário (minha agenda)
- * - prioridade: datas_turma vinculadas às turmas em que ele está inscrito
- * - fallback: presenças do usuário
+ * Ocorrências reais filtradas pelo usuário (minha agenda)
+ * prioridade:
+ *  1) datas_turma vinculadas às turmas em que ele está inscrito
+ *  2) presenças do usuário
+ *  3) fallback: generate_series do período das turmas em que ele está inscrito
+ *
+ * ⚠️ Atenção: tabela "inscricoes" (plural) é a oficial, mas mantemos fallback para "inscricao" (singular)
+ * via trySqlList na query principal (não aqui).
  */
-function sqlOcorrenciasPorEventoDoUsuario(eventoIdExpr) {
+function sqlOcorrenciasPorEventoDoUsuario(eventoIdExpr, inscrTable /* 'inscricoes'|'inscricao' */) {
   return `
     CASE
       WHEN EXISTS (
         SELECT 1
           FROM turmas tx
-          JOIN inscricao i2 ON i2.turma_id = tx.id AND i2.usuario_id = $1
+          JOIN ${inscrTable} i2 ON i2.turma_id = tx.id AND i2.usuario_id = $1
           JOIN datas_turma dt ON dt.turma_id = tx.id
          WHERE tx.evento_id = ${eventoIdExpr}
       ) THEN (
@@ -106,7 +154,7 @@ function sqlOcorrenciasPorEventoDoUsuario(eventoIdExpr) {
         FROM (
           SELECT DISTINCT to_char(dt.data::date, 'YYYY-MM-DD') AS d
             FROM turmas tx
-            JOIN inscricao i2 ON i2.turma_id = tx.id AND i2.usuario_id = $1
+            JOIN ${inscrTable} i2 ON i2.turma_id = tx.id AND i2.usuario_id = $1
             JOIN datas_turma dt ON dt.turma_id = tx.id
            WHERE tx.evento_id = ${eventoIdExpr}
            ORDER BY 1
@@ -129,8 +177,46 @@ function sqlOcorrenciasPorEventoDoUsuario(eventoIdExpr) {
            ORDER BY 1
         ) z2
       )
-      ELSE '[]'::json
+      ELSE (
+        SELECT COALESCE(json_agg(d ORDER BY d), '[]'::json)
+        FROM (
+          SELECT to_char(gs::date, 'YYYY-MM-DD') AS d
+            FROM (
+              SELECT MIN(tx.data_inicio::date) AS di, MAX(tx.data_fim::date) AS df
+                FROM turmas tx
+                JOIN ${inscrTable} i2 ON i2.turma_id = tx.id AND i2.usuario_id = $1
+               WHERE tx.evento_id = ${eventoIdExpr}
+            ) r
+            CROSS JOIN LATERAL generate_series(r.di, r.df, interval '1 day') AS gs
+           WHERE r.di IS NOT NULL AND r.df IS NOT NULL
+           ORDER BY 1
+        ) z3
+      )
     END
+  `;
+}
+
+/**
+ * Instrutores do evento (json array)
+ * prioridade:
+ *  1) turma_instrutor (vínculo por turma) dentro do evento
+ */
+function sqlInstrutoresPorEvento(eventoIdExpr) {
+  return `
+    COALESCE((
+      SELECT json_agg(DISTINCT jsonb_build_object('id', u.id, 'nome', u.nome))
+      FROM (
+        SELECT ti.instrutor_id AS id_ref
+          FROM turma_instrutor ti
+          JOIN turmas t2 ON t2.id = ti.turma_id
+         WHERE t2.evento_id = ${eventoIdExpr}
+        UNION
+        SELECT ei2.instrutor_id AS id_ref
+          FROM evento_instrutor ei2
+         WHERE ei2.evento_id = ${eventoIdExpr}
+      ) x
+      JOIN usuarios u ON u.id = x.id_ref
+    ), '[]'::json)
   `;
 }
 
@@ -155,14 +241,14 @@ async function buscarAgenda(req, res) {
     params.push(start);
     where += ` AND EXISTS (
       SELECT 1 FROM turmas tf
-      WHERE tf.evento_id = e.id AND tf.data_inicio >= $${params.length}
+      WHERE tf.evento_id = e.id AND tf.data_inicio >= $${params.length}::date
     )`;
   }
   if (end) {
     params.push(end);
     where += ` AND EXISTS (
       SELECT 1 FROM turmas tf
-      WHERE tf.evento_id = e.id AND tf.data_fim <= $${params.length}
+      WHERE tf.evento_id = e.id AND tf.data_fim <= $${params.length}::date
     )`;
   }
 
@@ -178,22 +264,16 @@ async function buscarAgenda(req, res) {
       MAX(t.horario_fim)    AS horario_fim,
 
       ${sqlStatusFromTurmas(
-        "MIN(t.data_inicio::timestamp + t.horario_inicio)",
-        "MAX(t.data_fim::timestamp + t.horario_fim)"
+        "MIN(t.data_inicio::timestamp + COALESCE(t.horario_inicio,'00:00'::time))",
+        "MAX(t.data_fim::timestamp + COALESCE(t.horario_fim,'23:59'::time))"
       )} AS status,
 
-      COALESCE(
-        json_agg(DISTINCT jsonb_build_object('id', u.id, 'nome', u.nome))
-          FILTER (WHERE u.id IS NOT NULL),
-        '[]'::json
-      ) AS instrutores,
+      ${sqlInstrutoresPorEvento("e.id")} AS instrutores,
 
       ${sqlOcorrenciasPorEvento("e.id")} AS ocorrencias
 
     FROM eventos e
-    LEFT JOIN turmas t             ON t.evento_id = e.id
-    LEFT JOIN evento_instrutor ei  ON ei.evento_id = e.id
-    LEFT JOIN usuarios u           ON u.id = ei.instrutor_id
+    LEFT JOIN turmas t ON t.evento_id = e.id
     ${where}
     GROUP BY e.id, e.titulo, e.local
     ORDER BY MIN(t.data_inicio)
@@ -201,23 +281,25 @@ async function buscarAgenda(req, res) {
 
   try {
     const resultado = await db.query(sql, params);
-    res.set("X-Agenda-Handler", "agendaController:buscarAgenda@premium");
+    res.set("X-Agenda-Handler", "agendaController:buscarAgenda@premium++");
 
     const rows = (resultado.rows || []).map((r) => ({
       ...r,
       ocorrencias: asArrayJson(r.ocorrencias),
+      instrutores: asArrayJson(r.instrutores),
     }));
 
     return res.status(200).json(rows);
   } catch (error) {
-    console.error("[agenda] Erro ao buscar agenda:", { rid: rid(req), msg: error?.message });
+    console.error("[agenda] Erro ao buscar agenda:", { rid: rid(req), code: error?.code, msg: error?.message });
     return res.status(500).json({ erro: "Erro ao carregar dados da agenda." });
   }
 }
 
 /* =========================
-   2) Agenda por EVENTO do instrutor (legado/compat)
+   2) Agenda por EVENTO do instrutor (compat)
    GET /api/agenda/instrutor?start=&end=
+   - Agora considera turma_instrutor (principal) 
 ========================= */
 async function buscarAgendaInstrutor(req, res) {
   const db = getDb(req);
@@ -232,59 +314,87 @@ async function buscarAgendaInstrutor(req, res) {
 
     if (start) {
       params.push(start);
-      whereExtra += ` AND t.data_inicio >= $${params.length}`;
+      whereExtra += ` AND t.data_inicio >= $${params.length}::date`;
     }
     if (end) {
       params.push(end);
-      whereExtra += ` AND t.data_fim <= $${params.length}`;
+      whereExtra += ` AND t.data_fim <= $${params.length}::date`;
     }
 
+    // estratégia:
+    // - base por turma_instrutor (vínculo por turma)
     const sql = `
+      WITH base_ti AS (
+        SELECT
+          e.id AS evento_id,
+          e.titulo,
+          e.local,
+          t.data_inicio,
+          t.data_fim,
+          t.horario_inicio,
+          t.horario_fim
+        FROM turma_instrutor ti
+        JOIN turmas t  ON t.id = ti.turma_id
+        JOIN eventos e ON e.id = t.evento_id
+        WHERE ti.instrutor_id = $1
+          ${whereExtra}
+      ),
+      base_ei AS (
+        SELECT
+          e.id AS evento_id,
+          e.titulo,
+          e.local,
+          t.data_inicio,
+          t.data_fim,
+          t.horario_inicio,
+          t.horario_fim
+        FROM evento_instrutor ei
+        JOIN eventos e ON e.id = ei.evento_id
+        JOIN turmas  t ON t.evento_id = e.id
+        WHERE ei.instrutor_id = $1
+          ${whereExtra}
+      ),
+      todas AS (
+        SELECT * FROM base_ti
+        UNION ALL
+        SELECT * FROM base_ei
+      )
       SELECT 
-        e.id,
-        e.titulo,
-        e.local,
+        tt.evento_id AS id,
+        tt.titulo,
+        tt.local,
 
-        MIN(t.data_inicio)    AS data_inicio,
-        MAX(t.data_fim)       AS data_fim,
-        MIN(t.horario_inicio) AS horario_inicio,
-        MAX(t.horario_fim)    AS horario_fim,
+        MIN(tt.data_inicio)    AS data_inicio,
+        MAX(tt.data_fim)       AS data_fim,
+        MIN(tt.horario_inicio) AS horario_inicio,
+        MAX(tt.horario_fim)    AS horario_fim,
 
         ${sqlStatusFromTurmas(
-          "MIN(t.data_inicio::timestamp + t.horario_inicio)",
-          "MAX(t.data_fim::timestamp + t.horario_fim)"
+          "MIN(tt.data_inicio::timestamp + COALESCE(tt.horario_inicio,'00:00'::time))",
+          "MAX(tt.data_fim::timestamp + COALESCE(tt.horario_fim,'23:59'::time))"
         )} AS status,
 
-        COALESCE(
-          json_agg(DISTINCT jsonb_build_object('id', u2.id, 'nome', u2.nome))
-            FILTER (WHERE u2.id IS NOT NULL),
-          '[]'::json
-        ) AS instrutores,
+        ${sqlInstrutoresPorEvento("tt.evento_id")} AS instrutores,
 
-        ${sqlOcorrenciasPorEvento("e.id")} AS ocorrencias
+        ${sqlOcorrenciasPorEvento("tt.evento_id")} AS ocorrencias
 
-      FROM eventos e
-      JOIN evento_instrutor ei ON ei.evento_id = e.id AND ei.instrutor_id = $1
-      JOIN turmas t            ON t.evento_id = e.id
-      LEFT JOIN evento_instrutor ei2 ON ei2.evento_id = e.id
-      LEFT JOIN usuarios u2          ON u2.id = ei2.instrutor_id
-      WHERE 1=1
-      ${whereExtra}
-      GROUP BY e.id, e.titulo, e.local
-      ORDER BY MIN(t.data_inicio) DESC
+      FROM todas tt
+      GROUP BY tt.evento_id, tt.titulo, tt.local
+      ORDER BY MIN(tt.data_inicio) DESC
     `;
 
     const resultado = await db.query(sql, params);
-    res.set("X-Agenda-Handler", "agendaController:buscarAgendaInstrutor@premium");
+    res.set("X-Agenda-Handler", "agendaController:buscarAgendaInstrutor@premium++");
 
     const eventos = (resultado.rows || []).map((r) => ({
       ...r,
       ocorrencias: asArrayJson(r.ocorrencias),
+      instrutores: asArrayJson(r.instrutores),
     }));
 
     return res.status(200).json(eventos);
   } catch (error) {
-    console.error("[agenda] Erro ao buscar agenda do instrutor:", { rid: rid(req), msg: error?.message });
+    console.error("[agenda] Erro ao buscar agenda do instrutor:", { rid: rid(req), code: error?.code, msg: error?.message });
     return res.status(500).json({ erro: "Erro ao buscar agenda do instrutor." });
   }
 }
@@ -292,6 +402,7 @@ async function buscarAgendaInstrutor(req, res) {
 /* =========================
    3) Minha agenda (inscrito)
    GET /api/agenda/minha?start=&end=
+   - Usa inscricoes (plural) com fallback "inscricao" (singular)
 ========================= */
 async function buscarAgendaMinha(req, res) {
   const db = getDb(req);
@@ -306,14 +417,14 @@ async function buscarAgendaMinha(req, res) {
 
     if (start) {
       params.push(start);
-      whereExtra += ` AND t.data_inicio >= $${params.length}`;
+      whereExtra += ` AND t.data_inicio >= $${params.length}::date`;
     }
     if (end) {
       params.push(end);
-      whereExtra += ` AND t.data_fim <= $${params.length}`;
+      whereExtra += ` AND t.data_fim <= $${params.length}::date`;
     }
 
-    const sql = `
+    const makeSql = (inscrTable) => `
       SELECT 
         e.id,
         e.titulo,
@@ -325,40 +436,40 @@ async function buscarAgendaMinha(req, res) {
         MAX(t.horario_fim)    AS horario_fim,
 
         ${sqlStatusFromTurmas(
-          "MIN(t.data_inicio::timestamp + t.horario_inicio)",
-          "MAX(t.data_fim::timestamp + t.horario_fim)"
+          "MIN(t.data_inicio::timestamp + COALESCE(t.horario_inicio,'00:00'::time))",
+          "MAX(t.data_fim::timestamp + COALESCE(t.horario_fim,'23:59'::time))"
         )} AS status,
 
-        COALESCE(
-          json_agg(DISTINCT jsonb_build_object('id', u.id, 'nome', u.nome))
-            FILTER (WHERE u.id IS NOT NULL),
-          '[]'::json
-        ) AS instrutores,
+        ${sqlInstrutoresPorEvento("e.id")} AS instrutores,
 
-        ${sqlOcorrenciasPorEventoDoUsuario("e.id")} AS ocorrencias
+        ${sqlOcorrenciasPorEventoDoUsuario("e.id", inscrTable)} AS ocorrencias
 
       FROM eventos e
       JOIN turmas t                  ON t.evento_id = e.id
-      JOIN inscricao i               ON i.turma_id = t.id AND i.usuario_id = $1
-      LEFT JOIN evento_instrutor ei  ON ei.evento_id = e.id
-      LEFT JOIN usuarios u           ON u.id = ei.instrutor_id
+      JOIN ${inscrTable} i           ON i.turma_id = t.id AND i.usuario_id = $1
       WHERE 1=1
       ${whereExtra}
       GROUP BY e.id, e.titulo, e.local
       ORDER BY MIN(t.data_inicio)
     `;
 
-    const resultado = await db.query(sql, params);
-    res.set("X-Agenda-Handler", "agendaController:buscarAgendaMinha@premium");
+    const sqls = [
+      makeSql("inscricoes"),
+      makeSql("inscricao"),
+    ];
+
+    const resultado = await trySqlList(db, sqls, params);
+    res.set("X-Agenda-Handler", "agendaController:buscarAgendaMinha@premium++");
 
     const rows = (resultado.rows || []).map((r) => ({
       ...r,
       ocorrencias: asArrayJson(r.ocorrencias),
+      instrutores: asArrayJson(r.instrutores),
     }));
 
     return res.status(200).json(rows);
   } catch (error) {
-    console.error("[agenda] Erro ao buscar minha agenda:", { rid: rid(req), msg: error?.message });
+    console.error("[agenda] Erro ao buscar minha agenda:", { rid: rid(req), code: error?.code, msg: error?.message });
     return res.status(500).json({ erro: "Erro ao carregar sua agenda." });
   }
 }
@@ -366,6 +477,7 @@ async function buscarAgendaMinha(req, res) {
 /* =========================
    4) Minha agenda como INSTRUTOR (novo)
    GET /api/agenda/minha-instrutor?start=&end=
+   - turma_instrutor first-class
 ========================= */
 async function buscarAgendaMinhaInstrutor(req, res) {
   const db = getDb(req);
@@ -380,11 +492,11 @@ async function buscarAgendaMinhaInstrutor(req, res) {
 
     if (start) {
       params.push(start);
-      filtroPeriodo += ` AND t.data_inicio >= $${params.length}`;
+      filtroPeriodo += ` AND t.data_inicio >= $${params.length}::date`;
     }
     if (end) {
       params.push(end);
-      filtroPeriodo += ` AND t.data_fim <= $${params.length}`;
+      filtroPeriodo += ` AND t.data_fim <= $${params.length}::date`;
     }
 
     const sql = `
@@ -400,9 +512,9 @@ async function buscarAgendaMinhaInstrutor(req, res) {
           t.horario_inicio,
           t.horario_fim,
           t.carga_horaria
-        FROM turmas t
+        FROM turma_instrutor ti
+        JOIN turmas t  ON t.id = ti.turma_id
         JOIN eventos e ON e.id = t.evento_id
-        JOIN turma_instrutor ti ON ti.turma_id = t.id
         WHERE ti.instrutor_id = $1
           ${filtroPeriodo}
       ),
@@ -418,10 +530,10 @@ async function buscarAgendaMinhaInstrutor(req, res) {
           t.horario_inicio,
           t.horario_fim,
           t.carga_horaria
-        FROM eventos e
-        JOIN evento_instrutor ei ON ei.evento_id = e.id AND ei.instrutor_id = $1
-        JOIN turmas t ON t.evento_id = e.id
-        WHERE 1=1
+        FROM evento_instrutor ei
+        JOIN eventos e ON e.id = ei.evento_id
+        JOIN turmas  t ON t.evento_id = e.id
+        WHERE ei.instrutor_id = $1
           ${filtroPeriodo}
       ),
       todas_turmas AS (
@@ -439,23 +551,11 @@ async function buscarAgendaMinhaInstrutor(req, res) {
         MAX(tt.horario_fim)                    AS horario_fim,
 
         ${sqlStatusFromTurmas(
-          "MIN(tt.data_inicio::timestamp + tt.horario_inicio)",
-          "MAX(tt.data_fim::timestamp + tt.horario_fim)"
+          "MIN(tt.data_inicio::timestamp + COALESCE(tt.horario_inicio,'00:00'::time))",
+          "MAX(tt.data_fim::timestamp + COALESCE(tt.horario_fim,'23:59'::time))"
         )} AS status,
 
-        COALESCE((
-          SELECT json_agg(DISTINCT jsonb_build_object('id', u.id, 'nome', u.nome))
-          FROM (
-            SELECT ei2.instrutor_id AS id_ref
-              FROM evento_instrutor ei2
-             WHERE ei2.evento_id = tt.evento_id
-            UNION
-            SELECT ti2.instrutor_id AS id_ref
-              FROM turma_instrutor ti2
-              JOIN turmas t2 ON t2.id = ti2.turma_id AND t2.evento_id = tt.evento_id
-          ) x
-          JOIN usuarios u ON u.id = x.id_ref
-        ), '[]'::json) AS instrutores,
+        ${sqlInstrutoresPorEvento("tt.evento_id")} AS instrutores,
 
         ${sqlOcorrenciasPorEvento("tt.evento_id")} AS ocorrencias
 
@@ -468,38 +568,23 @@ async function buscarAgendaMinhaInstrutor(req, res) {
     const eventos = (rows || []).map((r) => ({
       ...r,
       ocorrencias: asArrayJson(r.ocorrencias),
+      instrutores: asArrayJson(r.instrutores),
     }));
 
-    res.set("X-Agenda-Handler", "agendaController:buscarAgendaMinhaInstrutor@premium");
+    res.set("X-Agenda-Handler", "agendaController:buscarAgendaMinhaInstrutor@premium++");
     return res.status(200).json(eventos);
   } catch (error) {
-    console.error("[agenda] Erro ao buscar agenda do instrutor:", { rid: rid(req), msg: error?.message });
+    console.error("[agenda] Erro ao buscar agenda do instrutor:", { rid: rid(req), code: error?.code, msg: error?.message });
     return res.status(500).json({ erro: "Erro ao buscar agenda do instrutor." });
   }
 }
 
 /* =======================================================================
    ✅ 5) Calendário de Bloqueios/Feriados (Admin)
-   - resolve o 404 do POST /api/calendario
+   - resolve 404 do POST /api/calendario
    Payload do front:
      { data:'YYYY-MM-DD', tipo:'feriado_municipal', descricao:'...' }
 ======================================================================== */
-
-/** tenta executar uma lista de SQLs (schemas diferentes) */
-async function trySqlList(db, sqls, params) {
-  let last = null;
-  for (const s of sqls) {
-    try {
-      return await db.query(s, params);
-    } catch (e) {
-      last = e;
-      // tabelas/colunas inexistentes etc
-      if (["42P01", "42703", "42883"].includes(e?.code)) continue;
-      throw e;
-    }
-  }
-  throw last || new Error("Falha ao executar SQL.");
-}
 
 /** GET /api/calendario */
 async function listarBloqueios(req, res) {

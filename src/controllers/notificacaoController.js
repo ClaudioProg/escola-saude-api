@@ -399,7 +399,7 @@ async function gerarNotificacaoDeCertificado(usuario_id, turmaOrOpts = null) {
         t.id     AS turma_id
       FROM turmas t
       JOIN eventos e    ON e.id = t.evento_id
-      JOIN inscricao i ON i.turma_id = t.id AND i.usuario_id = $1
+      JOIN inscricoes i ON i.turma_id = t.id AND i.usuario_id = $1
       LEFT JOIN certificados c
         ON c.usuario_id = $1
        AND c.evento_id  = e.id

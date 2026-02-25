@@ -1,5 +1,11 @@
 /* eslint-disable no-console */
-// ✅ src/controllers/dashboardController.js
+// ✅ src/controllers/dashboardController.js — PREMIUM++ (2026)
+// - Instrutor por TURMA (turma_instrutor) + fallback evento_instrutor
+// - Avaliações: avaliacoes/avaliacao + fallback instrutor_id/palestrante_id
+// - Fuso SP (NOW() AT TIME ZONE) para status/tempo
+// - Inscrições: inscricoes/inscricao (fallback)
+// - SQL defensivo, sem duplicação indevida
+
 "use strict";
 
 const rawDb = require("../db");
@@ -7,6 +13,7 @@ const db = rawDb?.db ?? rawDb;
 const { formatarGrafico } = require("../utils/graficos");
 
 const IS_DEV = process.env.NODE_ENV !== "production";
+const TZ = "America/Sao_Paulo";
 
 /* =========================
    Helpers premium (comuns)
@@ -35,23 +42,42 @@ function safeJsonError(res, err, fallbackMsg = "Erro interno.") {
   });
 }
 
-// 1..5 para nota do instrutor (aceita enum/texto/num)
-function notaInstrutorTo5(valor) {
-  if (valor == null) return null;
-  const s = String(valor).trim().toLowerCase();
-  const map = {
-    "ótimo": 5, "otimo": 5, "excelente": 5, "muito bom": 5,
-    "bom": 4,
-    "regular": 3, "médio": 3, "medio": 3,
-    "ruim": 2,
-    "péssimo": 1, "pessimo": 1, "muito ruim": 1,
-  };
-  if (map[s] != null) return map[s];
+async function queryFirstWorking(dbConn, variants, params) {
+  let lastErr = null;
+  for (const sql of variants) {
+    try {
+      return await dbConn.query(sql, params);
+    } catch (e) {
+      lastErr = e;
+      if (["42P01", "42703"].includes(e?.code)) continue; // table/column not found
+      throw e;
+    }
+  }
+  throw lastErr || new Error("Nenhuma variante de SQL funcionou.");
+}
 
-  const num = Number(String(valor).replace(",", "."));
-  if (Number.isFinite(num) && num >= 1 && num <= 5) return num;
+/* =========================
+   Nota (SQL) — robusta
+========================= */
+function sqlNormText(expr) {
+  return `translate(lower(coalesce(${expr}, '')), 'áàãâéêíóôõúç', 'aaaaeeiooouc')`;
+}
 
-  return null;
+function sqlScore(colExpr) {
+  // aceita enum/text/num em string
+  const norm = sqlNormText(`(${colExpr})::text`);
+  return `
+    CASE
+      WHEN trim((${colExpr})::text) ~ '^[1-5](?:[\\.,]0+)?$'
+        THEN REPLACE(trim((${colExpr})::text), ',', '.')::numeric
+      WHEN ${norm} IN ('otimo','excelente','muito bom','muitobom') THEN 5
+      WHEN ${norm} = 'bom' THEN 4
+      WHEN ${norm} IN ('regular','medio','médio') THEN 3
+      WHEN ${norm} = 'ruim' THEN 2
+      WHEN ${norm} IN ('pessimo','péssimo','muito ruim','muitoruim') THEN 1
+      ELSE NULL
+    END
+  `;
 }
 
 function to10From5(v5) {
@@ -95,54 +121,83 @@ async function getEventosAvaliacaoPorInstrutor(req, res) {
     const turmaIds = (turmasMinistradas.rows || []).map((r) => Number(r.turma_id)).filter(Boolean);
     if (!turmaIds.length) return res.json([]);
 
-    // Cabeçalho: evento/turma + média de desempenho do instrutor (1..5)
-    const cabecalho = await db.query(
-      `
-      SELECT
-        e.id     AS evento_id,
-        e.titulo AS evento_titulo,
-        t.id     AS turma_id,
-        t.nome   AS turma_nome,
-        to_char(t.data_inicio::date, 'DD/MM/YYYY') AS data_inicio,
-        ROUND(AVG(
-          CASE a.desempenho_instrutor
-            WHEN 'Ótimo'   THEN 5
-            WHEN 'Bom'     THEN 4
-            WHEN 'Regular' THEN 3
-            WHEN 'Ruim'    THEN 2
-            WHEN 'Péssimo' THEN 1
-            ELSE NULL
-          END
-        )::numeric, 1) AS nota_media_5
-      FROM turmas t
-      JOIN eventos e ON e.id = t.evento_id
-      LEFT JOIN avaliacoes a ON a.turma_id = t.id
-      WHERE t.id = ANY($1::int[])
-      GROUP BY e.id, e.titulo, t.id, t.nome, t.data_inicio
-      ORDER BY e.titulo ASC, t.data_inicio DESC;
-      `,
+    // Cabeçalho: evento/turma + média do desempenho (1..5) — com fallback avaliacoes/avaliacao
+    const cabecalho = await queryFirstWorking(
+      db,
+      [
+        `
+        SELECT
+          e.id     AS evento_id,
+          e.titulo AS evento_titulo,
+          t.id     AS turma_id,
+          t.nome   AS turma_nome,
+          to_char(t.data_inicio::date, 'DD/MM/YYYY') AS data_inicio,
+          ROUND(AVG(${sqlScore("a.desempenho_instrutor")})::numeric, 1) AS nota_media_5
+        FROM turmas t
+        JOIN eventos e ON e.id = t.evento_id
+        LEFT JOIN avaliacoes a ON a.turma_id = t.id
+        WHERE t.id = ANY($1::int[])
+        GROUP BY e.id, e.titulo, t.id, t.nome, t.data_inicio
+        ORDER BY e.titulo ASC, t.data_inicio DESC;
+        `,
+        `
+        SELECT
+          e.id     AS evento_id,
+          e.titulo AS evento_titulo,
+          t.id     AS turma_id,
+          t.nome   AS turma_nome,
+          to_char(t.data_inicio::date, 'DD/MM/YYYY') AS data_inicio,
+          ROUND(AVG(${sqlScore("a.desempenho_instrutor")})::numeric, 1) AS nota_media_5
+        FROM turmas t
+        JOIN eventos e ON e.id = t.evento_id
+        LEFT JOIN avaliacao a ON a.turma_id = t.id
+        WHERE t.id = ANY($1::int[])
+        GROUP BY e.id, e.titulo, t.id, t.nome, t.data_inicio
+        ORDER BY e.titulo ASC, t.data_inicio DESC;
+        `,
+      ],
       [turmaIds]
     );
 
-    // Comentários de todas as turmas (sem N+1)
-    const comentariosQ = await db.query(
-      `
-      SELECT
-        a.turma_id,
-        a.desempenho_instrutor,
-        a.gostou_mais,
-        a.sugestoes_melhoria,
-        a.comentarios_finais,
-        a.data_avaliacao
-      FROM avaliacoes a
-      WHERE a.turma_id = ANY($1::int[])
-        AND (
-          a.gostou_mais IS NOT NULL OR
-          a.sugestoes_melhoria IS NOT NULL OR
-          a.comentarios_finais IS NOT NULL
-        )
-      ORDER BY a.data_avaliacao DESC NULLS LAST, a.id DESC;
-      `,
+    // Comentários (sem N+1) — fallback avaliacoes/avaliacao
+    const comentariosQ = await queryFirstWorking(
+      db,
+      [
+        `
+        SELECT
+          a.turma_id,
+          a.desempenho_instrutor,
+          a.gostou_mais,
+          a.sugestoes_melhoria,
+          a.comentarios_finais,
+          a.data_avaliacao
+        FROM avaliacoes a
+        WHERE a.turma_id = ANY($1::int[])
+          AND (
+            a.gostou_mais IS NOT NULL OR
+            a.sugestoes_melhoria IS NOT NULL OR
+            a.comentarios_finais IS NOT NULL
+          )
+        ORDER BY a.data_avaliacao DESC NULLS LAST, a.id DESC;
+        `,
+        `
+        SELECT
+          a.turma_id,
+          a.desempenho_instrutor,
+          a.gostou_mais,
+          a.sugestoes_melhoria,
+          a.comentarios_finais,
+          a.data_avaliacao
+        FROM avaliacao a
+        WHERE a.turma_id = ANY($1::int[])
+          AND (
+            a.gostou_mais IS NOT NULL OR
+            a.sugestoes_melhoria IS NOT NULL OR
+            a.comentarios_finais IS NOT NULL
+          )
+        ORDER BY a.data_avaliacao DESC NULLS LAST, a.id DESC;
+        `,
+      ],
       [turmaIds]
     );
 
@@ -170,8 +225,8 @@ async function getEventosAvaliacaoPorInstrutor(req, res) {
       eventosMap.get(eventoId).turmas.push({
         id: turmaId,
         nome: row.turma_nome,
-        data: row.data_inicio,                // DD/MM/YYYY
-        nota_media: nota5,                    // 1..5
+        data: row.data_inicio, // DD/MM/YYYY
+        nota_media: nota5, // 1..5
         nota_media_10: nota5 != null ? to10From5(nota5) : null,
         comentarios: comentariosPorTurma.get(turmaId) || [],
       });
@@ -192,30 +247,61 @@ async function getResumoDashboard(req, res) {
   try {
     const usuarioId = assertIntId(req.user?.id, "usuario_id");
 
+    // inscrições (plural) com fallback
+    const inscrTable = await (async () => {
+      try {
+        await db.query(`SELECT 1 FROM inscricoes LIMIT 1`);
+        return "inscricoes";
+      } catch (e) {
+        return "inscricao";
+      }
+    })();
+
+    const nowSP = `(NOW() AT TIME ZONE '${TZ}')`;
+
     const cursosQ = await db.query(
       `
       SELECT COUNT(DISTINCT e.id)::int AS eventos_concluidos
-      FROM inscricoes i
+      FROM ${inscrTable} i
       JOIN turmas t ON t.id = i.turma_id
       JOIN eventos e ON e.id = t.evento_id
       WHERE i.usuario_id = $1
-        AND (t.data_fim::date + COALESCE(t.horario_fim,'23:59')::time) < NOW()
+        AND (t.data_fim::date + COALESCE(t.horario_fim,'23:59'::time)) < ${nowSP}
       `,
       [usuarioId]
     );
 
+    // ✅ eventos como instrutor: turma_instrutor first-class + fallback evento_instrutor
     const eventosInstrutorQ = await db.query(
-      `SELECT COUNT(*)::int AS total FROM evento_instrutor WHERE instrutor_id = $1`,
+      `
+      WITH ev_ti AS (
+        SELECT DISTINCT t.evento_id
+        FROM turma_instrutor ti
+        JOIN turmas t ON t.id = ti.turma_id
+        WHERE ti.instrutor_id = $1
+      ),
+      ev_ei AS (
+        SELECT DISTINCT ei.evento_id
+        FROM evento_instrutor ei
+        WHERE ei.instrutor_id = $1
+      )
+      SELECT COUNT(*)::int AS total
+      FROM (
+        SELECT evento_id FROM ev_ti
+        UNION
+        SELECT evento_id FROM ev_ei
+      ) x
+      `,
       [usuarioId]
     );
 
     const inscricaoFuturasQ = await db.query(
       `
       SELECT COUNT(*)::int AS total
-      FROM inscricoes i
+      FROM ${inscrTable} i
       JOIN turmas t ON i.turma_id = t.id
       WHERE i.usuario_id = $1
-        AND (t.data_inicio::date + COALESCE(t.horario_inicio,'00:00')::time) > NOW()
+        AND (t.data_inicio::date + COALESCE(t.horario_inicio,'00:00'::time)) > ${nowSP}
       `,
       [usuarioId]
     );
@@ -223,11 +309,11 @@ async function getResumoDashboard(req, res) {
     const inscricaoAtuaisQ = await db.query(
       `
       SELECT COUNT(*)::int AS total
-      FROM inscricoes i
+      FROM ${inscrTable} i
       JOIN turmas t ON i.turma_id = t.id
       WHERE i.usuario_id = $1
-        AND NOW() BETWEEN (t.data_inicio::date + COALESCE(t.horario_inicio,'00:00')::time)
-                      AND (t.data_fim::date    + COALESCE(t.horario_fim,'23:59')::time)
+        AND ${nowSP} BETWEEN (t.data_inicio::date + COALESCE(t.horario_inicio,'00:00'::time))
+                        AND (t.data_fim::date    + COALESCE(t.horario_fim,'23:59'::time))
       `,
       [usuarioId]
     );
@@ -235,27 +321,42 @@ async function getResumoDashboard(req, res) {
     const proximosQ = await db.query(
       `
       SELECT COUNT(*)::int AS total
-      FROM inscricoes i
+      FROM ${inscrTable} i
       JOIN turmas t ON i.turma_id = t.id
       WHERE i.usuario_id = $1
-        AND (t.data_inicio::date + COALESCE(t.horario_inicio,'00:00')::time) > NOW()
+        AND (t.data_inicio::date + COALESCE(t.horario_inicio,'00:00'::time)) > ${nowSP}
       `,
       [usuarioId]
     );
 
-    const avalPendentesQ = await db.query(
-      `
-      SELECT COUNT(*)::int AS total
-      FROM inscricoes i
-      JOIN turmas t ON t.id = i.turma_id
-      WHERE i.usuario_id = $1
-        AND (t.data_fim::date + COALESCE(t.horario_fim,'23:59')::time) <= NOW()
-        AND NOT EXISTS (
-          SELECT 1 FROM avaliacoes a
-          WHERE a.usuario_id = i.usuario_id
-            AND a.turma_id = i.turma_id
-        )
-      `,
+    const avalPendentesQ = await queryFirstWorking(
+      db,
+      [
+        `
+        SELECT COUNT(*)::int AS total
+        FROM ${inscrTable} i
+        JOIN turmas t ON t.id = i.turma_id
+        WHERE i.usuario_id = $1
+          AND (t.data_fim::date + COALESCE(t.horario_fim,'23:59'::time)) <= ${nowSP}
+          AND NOT EXISTS (
+            SELECT 1 FROM avaliacoes a
+            WHERE a.usuario_id = i.usuario_id
+              AND a.turma_id = i.turma_id
+          )
+        `,
+        `
+        SELECT COUNT(*)::int AS total
+        FROM ${inscrTable} i
+        JOIN turmas t ON t.id = i.turma_id
+        WHERE i.usuario_id = $1
+          AND (t.data_fim::date + COALESCE(t.horario_fim,'23:59'::time)) <= ${nowSP}
+          AND NOT EXISTS (
+            SELECT 1 FROM avaliacao a
+            WHERE a.usuario_id = i.usuario_id
+              AND a.turma_id = i.turma_id
+          )
+        `,
+      ],
       [usuarioId]
     );
 
@@ -278,25 +379,23 @@ async function getResumoDashboard(req, res) {
       [usuarioId]
     );
 
-    // Presenças/Faltas e nota (0..10)
+    // Presenças/Faltas (date-only safe)
     const pfDash = await db.query(
       `
       WITH minhas_turmas AS (
         SELECT t.id AS turma_id,
                t.data_inicio::date AS di_raw,
                t.data_fim::date    AS df_raw
-        FROM inscricoes i
+        FROM ${inscrTable} i
         JOIN turmas t ON t.id = i.turma_id
         WHERE i.usuario_id = $1
       ),
       datas_base AS (
-        -- 1) Preferir datas_turma
         SELECT mt.turma_id, dt.data::date AS d
         FROM minhas_turmas mt
         JOIN datas_turma dt ON dt.turma_id = mt.turma_id
 
         UNION ALL
-        -- 2) Fallback: janela di..df quando NÃO existem datas_turma
         SELECT mt.turma_id, gs::date AS d
         FROM minhas_turmas mt
         LEFT JOIN datas_turma dt ON dt.turma_id = mt.turma_id
@@ -313,15 +412,15 @@ async function getResumoDashboard(req, res) {
       ),
       agregada AS (
         SELECT
-          db.turma_id,
-          MIN(db.d) AS di,
-          MAX(db.d) AS df,
-          COUNT(*) FILTER (WHERE db.d <= CURRENT_DATE) AS realizados,
-          COUNT(*) FILTER (WHERE db.d <= CURRENT_DATE AND p.presente IS TRUE) AS presentes_passados,
-          COUNT(*) FILTER (WHERE db.d <= CURRENT_DATE AND COALESCE(p.presente, FALSE) IS NOT TRUE) AS ausencias_passadas
-        FROM datas_base db
-        LEFT JOIN pres p ON p.turma_id = db.turma_id AND p.d = db.d
-        GROUP BY db.turma_id
+          dbx.turma_id,
+          MIN(dbx.d) AS di,
+          MAX(dbx.d) AS df,
+          COUNT(*) FILTER (WHERE dbx.d <= CURRENT_DATE) AS realizados,
+          COUNT(*) FILTER (WHERE dbx.d <= CURRENT_DATE AND p.presente IS TRUE) AS presentes_passados,
+          COUNT(*) FILTER (WHERE dbx.d <= CURRENT_DATE AND COALESCE(p.presente, FALSE) IS NOT TRUE) AS ausencias_passadas
+        FROM datas_base dbx
+        LEFT JOIN pres p ON p.turma_id = dbx.turma_id AND p.d = dbx.d
+        GROUP BY dbx.turma_id
       )
       SELECT
         COALESCE(SUM(presentes_passados), 0)::int AS presencas_total,
@@ -338,22 +437,15 @@ async function getResumoDashboard(req, res) {
     const nota_usuario =
       totalPF > 0 ? Math.max(0, Math.min(10, Math.round((10 - (faltas_total / totalPF) * 10) * 10) / 10)) : null;
 
-    // Média recebida como instrutor (0..10)
-    const mediaInstrutorQ = await db.query(
-      `
-      SELECT ROUND(AVG(
-        CASE a.desempenho_instrutor
-          WHEN 'Ótimo' THEN 5
-          WHEN 'Bom' THEN 4
-          WHEN 'Regular' THEN 3
-          WHEN 'Ruim' THEN 2
-          WHEN 'Péssimo' THEN 1
-          ELSE NULL
-        END
-      )::numeric, 2) AS media_5
-      FROM avaliacoes a
-      WHERE a.instrutor_id = $1
-      `,
+    // Média recebida como instrutor (0..10) — fallback: instrutor_id/palestrante_id + avaliacoes/avaliacao
+    const mediaInstrutorQ = await queryFirstWorking(
+      db,
+      [
+        `SELECT ROUND(AVG(${sqlScore("a.desempenho_instrutor")})::numeric, 2) AS media_5 FROM avaliacoes a WHERE a.instrutor_id = $1`,
+        `SELECT ROUND(AVG(${sqlScore("a.desempenho_instrutor")})::numeric, 2) AS media_5 FROM avaliacoes a WHERE a.palestrante_id = $1`,
+        `SELECT ROUND(AVG(${sqlScore("a.desempenho_instrutor")})::numeric, 2) AS media_5 FROM avaliacao  a WHERE a.instrutor_id = $1`,
+        `SELECT ROUND(AVG(${sqlScore("a.desempenho_instrutor")})::numeric, 2) AS media_5 FROM avaliacao  a WHERE a.palestrante_id = $1`,
+      ],
       [usuarioId]
     );
 
@@ -393,27 +485,67 @@ async function getAvaliacaoRecentesInstrutor(req, res) {
   try {
     const usuarioId = assertIntId(req.user?.id, "usuario_id");
 
-    const { rows } = await db.query(
-      `
-      SELECT
-        e.titulo AS evento,
-        a.desempenho_instrutor,
-        a.data_avaliacao
-      FROM avaliacoes a
-      JOIN turmas t  ON t.id = a.turma_id
-      JOIN eventos e ON e.id = t.evento_id
-      WHERE a.instrutor_id = $1
-      ORDER BY a.data_avaliacao DESC NULLS LAST, a.id DESC
-      LIMIT 10
-      `,
+    const { rows } = await queryFirstWorking(
+      db,
+      [
+        `
+        SELECT
+          e.titulo AS evento,
+          a.desempenho_instrutor,
+          a.data_avaliacao
+        FROM avaliacoes a
+        JOIN turmas t  ON t.id = a.turma_id
+        JOIN eventos e ON e.id = t.evento_id
+        WHERE a.instrutor_id = $1
+        ORDER BY a.data_avaliacao DESC NULLS LAST, a.id DESC
+        LIMIT 10
+        `,
+        `
+        SELECT
+          e.titulo AS evento,
+          a.desempenho_instrutor,
+          a.data_avaliacao
+        FROM avaliacoes a
+        JOIN turmas t  ON t.id = a.turma_id
+        JOIN eventos e ON e.id = t.evento_id
+        WHERE a.palestrante_id = $1
+        ORDER BY a.data_avaliacao DESC NULLS LAST, a.id DESC
+        LIMIT 10
+        `,
+        `
+        SELECT
+          e.titulo AS evento,
+          a.desempenho_instrutor,
+          a.data_avaliacao
+        FROM avaliacao a
+        JOIN turmas t  ON t.id = a.turma_id
+        JOIN eventos e ON e.id = t.evento_id
+        WHERE a.instrutor_id = $1
+        ORDER BY a.data_avaliacao DESC NULLS LAST, a.id DESC
+        LIMIT 10
+        `,
+        `
+        SELECT
+          e.titulo AS evento,
+          a.desempenho_instrutor,
+          a.data_avaliacao
+        FROM avaliacao a
+        JOIN turmas t  ON t.id = a.turma_id
+        JOIN eventos e ON e.id = t.evento_id
+        WHERE a.palestrante_id = $1
+        ORDER BY a.data_avaliacao DESC NULLS LAST, a.id DESC
+        LIMIT 10
+        `,
+      ],
       [usuarioId]
     );
 
     const out = (rows || []).map((r) => {
-      const v5 = notaInstrutorTo5(r.desempenho_instrutor);
+      const v5 = r.desempenho_instrutor != null ? Number(String(r.desempenho_instrutor).replace(",", ".")) : NaN;
+      const score5 = Number.isFinite(v5) ? v5 : null; // se vier texto, o front ainda consegue exibir, mas aqui usamos SQL robusto nos agregados
       return {
         evento: r.evento,
-        nota: v5 != null ? to10From5(v5) : null,
+        nota: score5 != null ? to10From5(score5) : null,
         data_avaliacao: r.data_avaliacao ?? null,
       };
     });
@@ -444,27 +576,6 @@ const NOTAS_EVENTO = [
   "inscricao_online",
 ];
 
-// Normaliza texto no SQL (remove acentos + lower) — funciona com enum via ::text
-function sqlNormText(expr) {
-  // expr deve ser algo como: a.campo::text
-  return `translate(lower(coalesce(${expr}, '')), 'áàãâéêíóôõúç', 'aaaaeeiooouc')`;
-}
-
-// Mapeia texto/enum para score (1..5) no SQL — robusto a Ótimo/Otimo/Péssimo/Pessimo etc.
-function sqlScore(colExpr) {
-  const norm = sqlNormText(`${colExpr}::text`);
-  return `
-    CASE
-      WHEN ${norm} IN ('otimo','excelente','muito bom','muitobom') THEN 5
-      WHEN ${norm} = 'bom' THEN 4
-      WHEN ${norm} = 'regular' THEN 3
-      WHEN ${norm} = 'ruim' THEN 2
-      WHEN ${norm} IN ('pessimo','pessima') THEN 1
-      ELSE NULL
-    END
-  `;
-}
-
 async function obterDashboard(req, res) {
   const { ano, mes, tipo } = req.query;
 
@@ -494,7 +605,10 @@ async function obterDashboard(req, res) {
     const r = await Promise.allSettled([promise]);
     const out = r[0];
     if (out.status === "fulfilled") return out.value;
-    console.error(`❌ [dashboard-analitico:${label}]`, IS_DEV ? (out.reason?.stack || out.reason) : (out.reason?.message || out.reason));
+    console.error(
+      `❌ [dashboard-analitico:${label}]`,
+      IS_DEV ? (out.reason?.stack || out.reason) : (out.reason?.message || out.reason)
+    );
     return { rows: fallbackRows, rowCount: fallbackRows.length };
   }
 
@@ -541,36 +655,22 @@ async function obterDashboard(req, res) {
       ${where}
     `;
 
-    // Presença ≥ 75%
-    const presencaSQL = `
+    // Presença ≥ 75% — corrigido: inscricoes (plural) e datas_turma > fallback
+    const presencaSQL_inscricoes = `
       WITH turmas_filtradas AS (
         SELECT t.id AS turma_id, t.evento_id, t.data_inicio::date AS di, t.data_fim::date AS df
         FROM turmas t
         JOIN eventos e ON e.id = t.evento_id
         ${where}
       ),
-      has_datas AS (
-        SELECT (to_regclass('public.datas_turma') IS NOT NULL) AS ok
-      ),
       encontros AS (
-        SELECT tf.turma_id, COUNT(*)::int AS total_encontros
-        FROM turmas_filtradas tf, has_datas hd
-        JOIN LATERAL (
-          SELECT dt.data::date AS d
-          FROM datas_turma dt
-          WHERE hd.ok = TRUE AND dt.turma_id = tf.turma_id
-
-          UNION ALL
-          SELECT DISTINCT p.data_presenca::date AS d
-          FROM presencas p
-          WHERE hd.ok = FALSE AND p.turma_id = tf.turma_id
-
-          UNION ALL
-          SELECT gs::date AS d
-          FROM generate_series(tf.di, tf.df, interval '1 day') gs
-        ) x ON TRUE
-        WHERE x.d <= NOW()::date
-        GROUP BY tf.turma_id
+        SELECT tf.turma_id,
+               CASE
+                 WHEN EXISTS (SELECT 1 FROM datas_turma dt WHERE dt.turma_id = tf.turma_id)
+                   THEN (SELECT COUNT(*)::int FROM datas_turma dt WHERE dt.turma_id = tf.turma_id)
+                 ELSE ((tf.df - tf.di) + 1)
+               END AS total_encontros
+        FROM turmas_filtradas tf
       ),
       presencas_usuario AS (
         SELECT i.usuario_id, i.turma_id,
@@ -597,7 +697,7 @@ async function obterDashboard(req, res) {
                COUNT(DISTINCT CASE WHEN ept.elegivel_75 THEN ept.usuario_id END)::int AS total_elegiveis_evento
         FROM eventos e
         JOIN turmas_filtradas tf ON tf.evento_id = e.id
-        JOIN inscricao i ON i.turma_id = tf.turma_id
+        JOIN inscricoes i ON i.turma_id = tf.turma_id
         LEFT JOIN elegiveis_por_turma ept
           ON ept.evento_id = e.id AND ept.usuario_id = i.usuario_id
         GROUP BY e.id, e.titulo
@@ -611,6 +711,9 @@ async function obterDashboard(req, res) {
       FROM resumo_evento re
       ORDER BY re.evento_titulo
     `;
+
+    const presencaSQL_inscricao = presencaSQL_inscricoes
+      .replaceAll("inscricoes", "inscricao");
 
     // Gráficos
     const eventosPorMesSQL = `
@@ -646,7 +749,11 @@ async function obterDashboard(req, res) {
       settled("inscritosUnicos", db.query(inscritosUnicosSQL, params), [{ total: 0 }]),
       settled("mediaAvaliacao", db.query(mediaAvaliacaoSQL, params), [{ media_evento: 0 }]),
       settled("mediaInstrutor", db.query(mediaInstrutorSQL, params), [{ media_instrutor: 0 }]),
-      settled("presenca", db.query(presencaSQL, params), []),
+      settled(
+        "presenca",
+        queryFirstWorking(db, [presencaSQL_inscricoes, presencaSQL_inscricao], params),
+        []
+      ),
       settled("eventosPorMes", db.query(eventosPorMesSQL, params), []),
       settled("eventosPorTipo", db.query(eventosPorTipoSQL, params), []),
     ]);
@@ -661,7 +768,7 @@ async function obterDashboard(req, res) {
     const percentualPresencaGlobal =
       totalInscritosGlobal > 0 ? (totalElegiveisGlobal / totalInscritosGlobal) * 100 : 0;
 
-    res.setHeader("X-Dashboard-Handler", "dashboardController@premium");
+    res.setHeader("X-Dashboard-Handler", "dashboardController@premium++");
     return res.json({
       totalEventos: Number(totalEventosQ.rows?.[0]?.total || 0),
       inscritosUnicos: Number(inscritosUnicosQ.rows?.[0]?.total || 0),
