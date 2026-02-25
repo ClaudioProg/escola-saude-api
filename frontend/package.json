@@ -17,7 +17,7 @@
     "check": "npm run lint && npm run format:check"
   },
   "engines": {
-    "node": ">=20.0.0",
+    "node": "22.x",
     "npm": ">=10.0.0"
   },
   "browserslist": {
