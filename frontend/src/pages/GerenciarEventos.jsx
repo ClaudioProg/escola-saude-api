@@ -742,32 +742,6 @@ function PosterThumb({ ev, title }) {
   );
 }
 
-  return (
-    <div
-      className="
-        w-[96px] h-[128px]
-        sm:w-[132px] sm:h-[176px]
-        md:w-[148px] md:h-[196px]
-        rounded-2xl border border-white/10 shadow-sm
-        bg-zinc-100 dark:bg-zinc-900
-        overflow-hidden grid place-items-center
-      "
-      aria-label={`Folder do evento ${title}`}
-    >
-      <img
-        src={src}
-        alt={`Folder do evento ${title}`}
-        className="w-full h-full object-contain"
-        loading="lazy"
-        referrerPolicy="no-referrer"
-        onError={() => {
-          setFailed(true);
-          setSrc("");
-        }}
-      />
-    </div>
-  );
-
 /* =============================
    Página
 ============================= */
