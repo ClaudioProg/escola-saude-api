@@ -178,10 +178,17 @@ async function listarOpcaoPerfil(req, res) {
       cargos: cargosRows,
       unidades: unidadesRows,
       generos: generosRows,
-      orientacaoSexuais: orientRows,
-      coresRacas: coresRows,
+
+      // ✅ padrão oficial (snake_case)
+      orientacoes_sexuais: orientRows,
+      cores_racas: coresRows,
+
       escolaridades: escolRows,
       deficiencias: defRows,
+
+      // ♻️ compat retro (camelCase), pode remover depois
+      orientacaoSexuais: orientRows,
+      coresRacas: coresRows,
     });
   } catch (err) {
     console.error("listarOpcaoPerfil:", err?.message || err);

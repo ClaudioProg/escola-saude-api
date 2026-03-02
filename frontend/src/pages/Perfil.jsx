@@ -487,8 +487,16 @@ useEffect(() => {
       ));
 
       setGeneros(opcoes?.generos || []);
-      setOrientacao(opcoes?.orientacoes_sexuais || opcoes?.orientacao_sexual || []);
-      setCoresRacas(opcoes?.cores_racas || []);
+      setOrientacao(
+        opcoes?.orientacoes_sexuais ||
+        opcoes?.orientacaoSexuais ||
+        []
+      );
+      setCoresRacas(
+        opcoes?.cores_racas ||
+        opcoes?.coresRacas ||
+        []
+      );
       setEscolaridades(opcoes?.escolaridades || []);
       setDeficiencias(opcoes?.deficiencias || []);
     } catch (e) {
