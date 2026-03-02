@@ -200,14 +200,22 @@ function withTimeout(promise, ms = FETCH_TIMEOUT_MS) {
 function normalizeTurma(t) {
   if (!t) return t;
 
+  // ✅ aceita id em vários formatos
+  const id = Number(t.id ?? t.turma_id ?? t.turmaId ?? t.turmaID);
+  const eventoId = Number(t.evento?.id ?? t.evento_id ?? t.eventoId);
+
   const data_inicio = ymd(t.data_inicio || t.dataInicio || t.inicio || t.data) || null;
   const data_fim =
     ymd(t.data_fim || t.dataFim || t.fim || t.data_termino || t.dataTermino || t.data) || null;
 
   const evento =
-    (t.evento && t.evento.id && t.evento) ||
-    (t.evento_id && {
-      id: t.evento_id,
+    (t.evento && (t.evento.id || t.evento.titulo || t.evento.nome) && {
+      id: Number(t.evento.id ?? eventoId) || undefined,
+      nome: t.evento.nome || t.evento.titulo || "Evento",
+      local: t.evento.local || undefined,
+    }) ||
+    (Number.isFinite(eventoId) && eventoId > 0 && {
+      id: eventoId,
       nome:
         t.evento_nome ||
         t.evento_titulo ||
@@ -226,9 +234,11 @@ function normalizeTurma(t) {
     ? t.datas
     : Array.isArray(t.encontros)
     ? t.encontros
-    : t.datas_turma || [];
+    : Array.isArray(t.datas_turma)
+    ? t.datas_turma
+    : [];
 
-  return { ...t, data_inicio, data_fim, evento, horario_inicio, horario_fim, datas };
+  return { ...t, id, evento_id: evento?.id ?? eventoId ?? null, data_inicio, data_fim, evento, horario_inicio, horario_fim, datas };
 }
 
 function statusTurma(di, df, hojeYmd) {
@@ -362,12 +372,12 @@ export default function InstrutorPresenca() {
 
       // se seu apiGet NÃO aceitar "signal", ele vai ignorar — ok.
       const data = await withTimeout(
-        apiGet("/api/instrutor/minhas/turmas", { on403: "silent", signal: ctrl.signal })
+        apiGet("/instrutor/minhas/turmas", { on403: "silent", signal: ctrl.signal })
       );
 
       const arr = Array.isArray(data) ? data : [];
       const normalizadas = ordenar(
-        arr.map(normalizeTurma).filter((t) => t && t.id && t.evento?.id)
+        arr.map(normalizeTurma).filter((t) => t && Number(t.id) > 0 && Number(t.evento?.id || t.evento_id) > 0)
       );
 
       setTurmas(normalizadas);

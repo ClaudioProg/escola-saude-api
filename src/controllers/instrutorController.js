@@ -58,9 +58,15 @@ function getUsuarioId(req) {
 
 /** normaliza filtro ?filtro=ativos|encerrados (default ativos) */
 function getFiltro(req) {
-  const raw = String(req.query?.filtro || req.query?.status || "ativos").toLowerCase().trim();
+  const hasParam = req.query?.filtro != null || req.query?.status != null; // ✅ só assume filtro se foi enviado
+  const raw = String(req.query?.filtro ?? req.query?.status ?? "").toLowerCase().trim();
+
+  if (!hasParam) return "todos"; // ✅ default premium: retorna tudo
+
   if (raw === "encerrados" || raw === "encerrado" || raw === "realizados") return "encerrados";
-  return "ativos";
+  if (raw === "ativos" || raw === "ativo") return "ativos";
+
+  return "todos";
 }
 
 /** status por data+hora (sem Date JS) — fuso SP */
@@ -352,11 +358,14 @@ async function getMinhasTurmasInstrutor(req, res) {
 
   if (!usuarioId) return res.status(401).json({ erro: "Usuário não autenticado." });
 
-  const filtro = getFiltro(req); // "ativos" | "encerrados"
+  const filtro = getFiltro(req); // "ativos" | "encerrados" | "todos"
+
   const whereByFiltro =
     filtro === "encerrados"
       ? `WHERE base.status_calc = 'encerrado'`
-      : `WHERE base.status_calc IN ('programado','andamento')`;
+      : filtro === "ativos"
+      ? `WHERE base.status_calc IN ('programado','andamento')`
+      : ``; // ✅ todos: sem WHERE (retorna tudo)
 
   try {
     // ✅ Primeiro: turma_instrutor (tabela existe no seu cenário)

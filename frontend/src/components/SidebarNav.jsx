@@ -296,6 +296,7 @@ export default function SidebarNav({
       { label: "Gestão de Instrutor", path: "/gestao-instrutor", icon: Presentation },
       { label: "Gestão de Eventos", path: "/gerenciar-eventos", icon: CalendarDays },
       { label: "Gestão de Presença", path: "/gestao-presenca", icon: QrCode },
+      { label: "Gestão de QR Codes", path: "/admin/qr-codes", icon: QrCode },
       { label: "Gestão de Avaliações", path: "/admin/avaliacao", icon: ClipboardList },
       { label: "Gestão de Certificados", path: "/gestao-certificados", icon: History },
       { label: "Gerenciar Submissões", path: "__open_submissions__", icon: FolderOpenDot },
@@ -366,7 +367,11 @@ export default function SidebarNav({
         onClose?.();
         return;
       }
-      navigate(path);
+  
+      const p = String(path || "");
+      const safe = p.startsWith("/") ? p : `/${p}`; // ✅ garante absoluto
+  
+      navigate(safe);
       onClose?.();
     },
     [navigate, onClose]

@@ -505,7 +505,7 @@ async function atualizar(req, res) {
 
   if (perfil !== undefined) {
     if (!ehAdmin) return res.status(403).json({ erro: "Apenas administradores podem alterar perfil." });
-    const csv = toPerfilCsv(toPerfilArray(perfil).filter((p) => PERFIS_VALIDOS.includes(p)));
+    const csv = perfisToCsv(perfil);
     if (!csv) return res.status(400).json({ erro: "Perfil inválido ou vazio." });
     updates.push(`perfil = $${i++}`);
     vals.push(csv);
@@ -645,8 +645,8 @@ async function atualizarPerfil(req, res) {
     return res.status(403).json({ erro: "Acesso negado." });
   }
 
-  const perfilCsv = toPerfilCsv(toPerfilArray(perfil).filter((p) => PERFIS_VALIDOS.includes(p)));
-  if (!perfilCsv) return res.status(400).json({ erro: "Perfil inválido ou vazio." });
+  const perfilCsv = perfisToCsv(perfil);
+  if (!perfilCsv) return res.status(400).json({ erro: "Perfil inválido ou vazio." }); 
 
   try {
     let rows;
@@ -852,7 +852,7 @@ async function cadastrar(req, res) {
     }
 
     const senhaCriptografada = await bcrypt.hash(senha, 10);
-    const perfilFinal = toPerfilString(perfil);
+    const perfilFinal = perfisToCsv(perfil);
 
     const insertSql = `
       INSERT INTO usuarios (
@@ -861,7 +861,7 @@ async function cadastrar(req, res) {
         cor_raca_id, escolaridade_id, deficiencia_id,
         data_nascimento, registro
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
       RETURNING
         id, nome, cpf, email, perfil,
         unidade_id, cargo_id, genero_id, orientacao_sexual_id,
