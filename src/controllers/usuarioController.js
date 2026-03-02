@@ -270,12 +270,14 @@ async function validarPerfilComplementar(payload) {
       fieldErrors.data_nascimento = "Data inválida (use YYYY-MM-DD).";
     } else {
       const now = new Date();
-const hojeUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-const dtUTC = Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate());
+      const dt = new Date(`${d}T00:00:00Z`); // ✅ data-only em UTC (sem pulo de fuso)
 
-if (Number.isNaN(dt.getTime())) fieldErrors.data_nascimento = "Data inválida.";
-else if (dtUTC > hojeUTC) fieldErrors.data_nascimento = "Data não pode ser futura.";
-else if (dt.getUTCFullYear() < 1900) fieldErrors.data_nascimento = "Ano inválido.";
+      const hojeUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+      const dtUTC = Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate());
+
+      if (Number.isNaN(dt.getTime())) fieldErrors.data_nascimento = "Data inválida.";
+      else if (dtUTC > hojeUTC) fieldErrors.data_nascimento = "Data não pode ser futura.";
+      else if (dt.getUTCFullYear() < 1900) fieldErrors.data_nascimento = "Ano inválido.";
     }
   }
 
@@ -861,7 +863,7 @@ async function cadastrar(req, res) {
         cor_raca_id, escolaridade_id, deficiencia_id,
         data_nascimento, registro
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
       RETURNING
         id, nome, cpf, email, perfil,
         unidade_id, cargo_id, genero_id, orientacao_sexual_id,
