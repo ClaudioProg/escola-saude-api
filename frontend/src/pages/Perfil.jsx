@@ -459,39 +459,46 @@ export default function Perfil() {
     })();
   }, []);
 
-  /* listas auxiliares — sem "/api" */
-  useEffect(() => {
-    (async () => {
-      try {
-        setCarregandoListas(true);
+  /* listas auxiliares — via /perfil/opcao */
+useEffect(() => {
+  (async () => {
+    try {
+      setCarregandoListas(true);
 
-        const [uni, car, gen, ori, cr, esc, def] = await Promise.all([
-          apiGet("/unidades", { on403: "silent" }),
-          apiGet("/cargos", { on403: "silent" }),
-          apiGet("/generos", { on403: "silent" }),
-          apiGet("/orientacao-sexuais", { on403: "silent" }),
-          apiGet("/cores-racas", { on403: "silent" }),
-          apiGet("/escolaridades", { on403: "silent" }),
-          apiGet("/deficiencias", { on403: "silent" }),
-        ]);
+      const opcoes = await apiGet("/perfil/opcao", {
+        on403: "silent",
+      });
 
-        setUnidades((uni || []).sort((a, b) => (a.sigla || a.nome || "").localeCompare(b.sigla || b.nome || "", "pt-BR", { sensitivity: "base" })));
-        setCargos((car || []).sort((a, b) => stripPrefixNum(a.nome).localeCompare(stripPrefixNum(b.nome), "pt-BR", { sensitivity: "base" })));
+      // 🔎 ajuste aqui caso algum nome venha diferente no backend
+      setUnidades((opcoes?.unidades || []).sort((a, b) =>
+        (a.sigla || a.nome || "").localeCompare(
+          b.sigla || b.nome || "",
+          "pt-BR",
+          { sensitivity: "base" }
+        )
+      ));
 
-        setGeneros(gen || []);
-        setOrientacao(ori || []);
-        setCoresRacas(cr || []);
-        setEscolaridades(esc || []);
-        setDeficiencias(def || []);
-      } catch (e) {
-        console.warn(e);
-        toast.error("Não foi possível carregar as listas auxiliares.");
-      } finally {
-        setCarregandoListas(false);
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+      setCargos((opcoes?.cargos || []).sort((a, b) =>
+        stripPrefixNum(a.nome).localeCompare(
+          stripPrefixNum(b.nome),
+          "pt-BR",
+          { sensitivity: "base" }
+        )
+      ));
+
+      setGeneros(opcoes?.generos || []);
+      setOrientacao(opcoes?.orientacoes_sexuais || opcoes?.orientacao_sexual || []);
+      setCoresRacas(opcoes?.cores_racas || []);
+      setEscolaridades(opcoes?.escolaridades || []);
+      setDeficiencias(opcoes?.deficiencias || []);
+    } catch (e) {
+      console.warn("Erro ao carregar opções:", e);
+      toast.error("Não foi possível carregar as listas auxiliares.");
+    } finally {
+      setCarregandoListas(false);
+    }
+  })();
+}, []);
 
   const podeGerenciarAssinatura = useMemo(() => {
     const perfis = Array.isArray(usuario?.perfil)
