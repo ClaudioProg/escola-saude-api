@@ -184,13 +184,39 @@ export default function CertificadosInstrutor() {
       setErro("");
       setLive("Carregando certificados de instrutor…");
 
+      const params = new URLSearchParams(window.location.search);
+      const usuarioIdDaUrl = params.get("usuario_id");
+
+      const perfisRaw = usuario?.perfis ?? usuario?.perfil ?? [];
+      const perfis = Array.isArray(perfisRaw)
+        ? perfisRaw.map((p) => String(p).trim().toLowerCase()).filter(Boolean)
+        : String(perfisRaw)
+            .split(",")
+            .map((p) => p.trim().toLowerCase())
+            .filter(Boolean);
+
+      const isAdmin = perfis.includes("administrador");
+
+      const querySuffix =
+        isAdmin && usuarioIdDaUrl
+          ? `?usuario_id=${encodeURIComponent(usuarioIdDaUrl)}`
+          : "";
+
       const paths = [
-        "certificados/elegiveis-instrutor",
-        "/api/certificados/elegiveis-instrutor",
-        "/api/certificado/instrutor/elegiveis",
+        `certificados/elegiveis-instrutor${querySuffix}`,
+        `/api/certificados/elegiveis-instrutor${querySuffix}`,
+        `/api/certificado/instrutor/elegiveis${querySuffix}`,
+        `/api/certificado/elegivel-instrutor${querySuffix}`,
+        `/api/certificados/elegivel-instrutor${querySuffix}`,
       ];
 
-      console.log("[certificados-instrutor:frontend] iniciando busca de elegíveis", { paths });
+      console.log("[certificados-instrutor:frontend] iniciando busca de elegíveis", {
+        paths,
+        usuarioLogado: usuario?.id ?? null,
+        usuarioIdDaUrl,
+        isAdmin,
+        querySuffix,
+      });
 
       const dadosInstrutor = await apiGetFirst(paths, {
         signal: ctrl.signal,
@@ -241,7 +267,8 @@ export default function CertificadosInstrutor() {
       );
 
       console.log("[certificados-instrutor:frontend] refresh concluído", {
-        usuarioId: usuario?.id ?? null,
+        usuarioLogado: usuario?.id ?? null,
+        usuarioIdDaUrl,
         total: unicos.length,
       });
     } catch (e) {
