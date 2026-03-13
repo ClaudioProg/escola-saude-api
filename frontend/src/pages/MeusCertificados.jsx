@@ -763,27 +763,45 @@ export default function Certificado() {
   }, []);
 
   const loadCerts = useCallback(async (signal) => {
-    const data = await apiGetFirst(
-      [
-        `/certificados/elegiveis`,
-        `/api/certificados/elegiveis`,
-        `/api/certificado/elegivel`,
-        `/api/certificados/elegivel`,
-      ],
-      { signal }
-    );
-    const lista = Array.isArray(data) ? data : Array.isArray(data?.lista) ? data.lista : [];
-    // participante apenas (tipo usuario)
+    const paths = [
+      `/certificados/elegiveis`,
+      `/api/certificados/elegiveis`,
+      `/api/certificado/elegivel`,
+      `/api/certificados/elegivel`,
+    ];
+  
+    console.log("[certificados:frontend] iniciando busca de elegíveis", {
+      paths,
+    });
+  
+    const data = await apiGetFirst(paths, { signal });
+  
+    console.log("[certificados:frontend] resposta bruta de elegíveis", data);
+  
+    const lista = Array.isArray(data)
+      ? data
+      : Array.isArray(data?.lista)
+        ? data.lista
+        : [];
+  
+    console.log("[certificados:frontend] lista normalizada", lista);
+  
     const only = lista.filter((c) => (c?.tipo ?? "usuario") === "usuario");
-    // dedupe por (tipo, evento_id, turma_id)
+  
+    console.log("[certificados:frontend] lista filtrada por tipo", only);
+  
     const seen = new Set();
     const out = [];
+  
     for (const it of only) {
       const k = `usuario-${it?.evento_id}-${it?.turma_id}`;
       if (seen.has(k)) continue;
       seen.add(k);
       out.push(it);
     }
+  
+    console.log("[certificados:frontend] lista final deduplicada", out);
+  
     return out;
   }, []);
 
@@ -809,6 +827,13 @@ export default function Certificado() {
         loadAvaliacao(uid, ctrl.signal),
         loadCerts(ctrl.signal),
       ]);
+      
+      console.log("[certificados:frontend] refreshAll concluído", {
+        usuarioId: uid,
+        quizzes: qz,
+        avaliacoes: av,
+        certificados: cs,
+      });
 
       if (!mountedRef.current) return;
 
@@ -1055,7 +1080,11 @@ export default function Certificado() {
         tipo: "usuario",
       };
 
-      const r = await apiPost("/certificados/gerar", body);
+      console.log("[certificados:frontend] gerando certificado", body);
+
+const r = await apiPost("/certificados/gerar", body);
+
+console.log("[certificados:frontend] resposta gerar certificado", r);
 
       toast.success("🎉 Certificado gerado com sucesso!");
 

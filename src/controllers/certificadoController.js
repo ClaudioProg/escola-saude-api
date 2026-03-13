@@ -896,23 +896,28 @@ async function listarElegivel(req, res) {
         WHERE usuario_id = $1
       ),
       base AS (
-        SELECT
-          e.id AS evento_id,
-          e.titulo AS evento,
-          en.turma_id,
-          en.nome_turma,
-          en.data_inicio,
-          en.data_fim,
-          en.horario_fim,
-          en.acabou,
-          COALESCE(f.dias_presentes,0) AS dias_presentes,
-          GREATEST(1, ((en.data_fim::date - en.data_inicio::date) + 1))::int AS dias_total,
-          (av.turma_id IS NOT NULL) AS fez_avaliacao
-        FROM encerrada en
-        JOIN eventos e ON e.id = en.evento_id
-        LEFT JOIN freq f ON f.turma_id = en.turma_id AND f.usuario_id = $1
-        LEFT JOIN aval av ON av.turma_id = en.turma_id
-      ),
+  SELECT
+    e.id AS evento_id,
+    e.titulo AS evento,
+    en.turma_id,
+    en.nome_turma,
+    en.data_inicio,
+    en.data_fim,
+    en.horario_fim,
+    en.acabou,
+    COALESCE(f.dias_presentes, 0) AS dias_presentes,
+    GREATEST(1, ((en.data_fim::date - en.data_inicio::date) + 1))::int AS dias_total,
+    (av.turma_id IS NOT NULL) AS fez_avaliacao
+  FROM inscricoes i
+  JOIN encerrada en ON en.turma_id = i.turma_id
+  JOIN eventos e ON e.id = en.evento_id
+  LEFT JOIN freq f
+    ON f.turma_id = en.turma_id
+   AND f.usuario_id = i.usuario_id
+  LEFT JOIN aval av
+    ON av.turma_id = en.turma_id
+  WHERE i.usuario_id = $1
+),
       elegivel AS (
         SELECT b.*
         FROM base b

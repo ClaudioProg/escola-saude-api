@@ -280,6 +280,16 @@ function CloseBtn({ closeToast }) {
 }
 
 /* ──────────────────────────────────────────────────────────────
+   PWA update hook
+   - Detecta nova versão disponível
+   - Dispara evento global para UI reagir
+────────────────────────────────────────────────────────────── */
+
+
+
+
+
+/* ──────────────────────────────────────────────────────────────
    Render
 ────────────────────────────────────────────────────────────── */
 const container = document.getElementById("root");

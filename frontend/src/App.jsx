@@ -21,6 +21,7 @@ import {
   Outlet,
 } from "react-router-dom";
 import { Suspense, lazy, useEffect, useState } from "react";
+import { RefreshCw, Smartphone } from "lucide-react";
 
 import PrivateRoute from "./components/PrivateRoute";
 import EscolaAppShell from "./layout/EscolaAppShell";
@@ -257,6 +258,77 @@ function NotFound() {
   return <Navigate to="/login" replace />;
 }
 
+/* Aviso global de atualização do PWA */
+function PwaUpdatePrompt() {
+  const [open, setOpen] = useState(false);
+  const [updating, setUpdating] = useState(false);
+
+  useEffect(() => {
+    const onUpdate = () => setOpen(true);
+    window.addEventListener("pwa-update-available", onUpdate);
+    return () => window.removeEventListener("pwa-update-available", onUpdate);
+  }, []);
+
+  const handleUpdate = async () => {
+    try {
+      setUpdating(true);
+
+      if (typeof window.__APP_UPDATE_SW__ === "function") {
+        await window.__APP_UPDATE_SW__(true);
+      }
+
+      window.location.reload();
+    } catch (error) {
+      console.error("[PWA] Erro ao atualizar app:", error);
+      window.location.reload();
+    }
+  };
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-x-0 bottom-4 z-[9999] px-4">
+      <div className="mx-auto max-w-md rounded-2xl border border-cyan-200 dark:border-cyan-900 bg-white dark:bg-zinc-950 shadow-2xl p-4">
+        <div className="flex items-start gap-3">
+          <div className="rounded-2xl p-2 bg-cyan-100 dark:bg-cyan-900/30">
+            <Smartphone className="w-5 h-5 text-cyan-700 dark:text-cyan-200" />
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <h3 className="text-sm font-extrabold text-zinc-900 dark:text-white">
+              Nova versão disponível
+            </h3>
+            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
+              Atualize o aplicativo para usar a versão mais recente e evitar falhas de funcionamento.
+            </p>
+
+            <div className="mt-3 flex gap-2">
+              <button
+                type="button"
+                onClick={handleUpdate}
+                disabled={updating}
+                className="inline-flex items-center gap-2 rounded-xl bg-cyan-700 hover:bg-cyan-800 text-white px-4 py-2 text-sm font-extrabold"
+              >
+                <RefreshCw className={`w-4 h-4 ${updating ? "animate-spin" : ""}`} />
+                {updating ? "Atualizando..." : "Atualizar agora"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                disabled={updating}
+                className="rounded-xl border border-zinc-200 dark:border-zinc-800 px-4 py-2 text-sm font-semibold text-zinc-800 dark:text-zinc-200"
+              >
+                Depois
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* Wrappers para rotas com :id (submissões) */
 function AdminChamadaFormWrapper() {
   const { id } = useParams();
@@ -284,12 +356,13 @@ export default function App() {
   const BASENAME =
     (import.meta.env.VITE_APP_BASENAME || import.meta.env.BASE_URL || "/").replace(/\/+$/, "") || "/";
 
-  return (
-    <BrowserRouter basename={BASENAME}>
-      <div className="min-h-screen">
-        <RouteChangeAnnouncer />
-        <ScrollUnlockOnRouteChange />
-        <ScrollToTop />
+    return (
+      <BrowserRouter basename={BASENAME}>
+        <div className="min-h-screen">
+          <RouteChangeAnnouncer />
+          <ScrollUnlockOnRouteChange />
+          <ScrollToTop />
+          <PwaUpdatePrompt />
 
         <Suspense
           fallback={

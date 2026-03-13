@@ -15,7 +15,8 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, root, ""); // expõe apenas VITE_* em runtime
 
   const IS_PROD = mode === "production";
-  const ENABLE_PWA = IS_PROD && !toBool(env.VITE_ENABLE_PWA === "false" || env.VITE_ENABLE_PWA === "0", false);
+const PWA_DISABLED = env.VITE_ENABLE_PWA === "false" || env.VITE_ENABLE_PWA === "0";
+const ENABLE_PWA = !PWA_DISABLED;
 
   // ▶ Proxy alvo no dev
   const proxyTarget =
@@ -66,41 +67,40 @@ export default defineConfig(({ mode }) => {
 
     plugins: [
       react({
-        // JSX dev: Fast Refresh já incluso
         babel: {
           // espaço para transforms específicos se precisar
         },
       }),
-
-      ENABLE_PWA &&
-        VitePWA({
-          injectRegister: "script",
-          registerType: "autoUpdate",
-          devOptions: { enabled: false },
-          manifest: {
-            name: "Escola da Saúde",
-            short_name: "SESA",
-            start_url: "/",
-            scope: "/",
-            display: "standalone",
-            background_color: "#ffffff",
-            theme_color: "#0f766e",
-            icons: [
-              { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
-              { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
-              { src: "/icons/maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
-            ],
-          },
-          workbox: {
-            clientsClaim: true,
-            skipWaiting: true,
-            cleanupOutdatedCaches: true,
-            globPatterns: ["**/*.{js,css,html,ico,png,svg,webp}"],
-            navigateFallback: "/index.html",
-            runtimeCaching,
-          },
-        }),
-    ].filter(Boolean),
+    
+      VitePWA({
+        disable: !ENABLE_PWA,
+        injectRegister: "script",
+        registerType: "autoUpdate",
+        devOptions: { enabled: false },
+        manifest: {
+          name: "Escola da Saúde",
+          short_name: "SESA",
+          start_url: "/",
+          scope: "/",
+          display: "standalone",
+          background_color: "#ffffff",
+          theme_color: "#0f766e",
+          icons: [
+            { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+            { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
+            { src: "/icons/maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+          ],
+        },
+        workbox: {
+          clientsClaim: true,
+          skipWaiting: true,
+          cleanupOutdatedCaches: true,
+          globPatterns: ["**/*.{js,css,html,ico,png,svg,webp}"],
+          navigateFallback: "/index.html",
+          runtimeCaching,
+        },
+      }),
+    ],
 
     server: {
       host: true,
