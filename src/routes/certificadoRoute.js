@@ -11,16 +11,21 @@ const router = express.Router();
 /* ───────────────── Auth resiliente ───────────────── */
 const _auth = require("../auth/authMiddleware");
 const requireAuth =
-  typeof _auth === "function" ? _auth : _auth?.default || _auth?.authMiddleware;
+  typeof _auth === "function"
+    ? _auth
+    : _auth?.default || _auth?.authMiddleware || _auth?.auth;
 
 if (typeof requireAuth !== "function") {
   console.error("[certificadoRoute] authMiddleware inválido:", _auth);
   throw new Error("authMiddleware não é função (verifique exports em src/auth/authMiddleware.js)");
 }
 
+/* ───────────────── Roles resiliente ───────────────── */
 const _roles = require("../middlewares/authorize");
 const authorizeRoles =
-  typeof _roles === "function" ? _roles : _roles?.default || _roles?.authorizeRoles;
+  typeof _roles === "function"
+    ? _roles
+    : _roles?.default || _roles?.authorizeRoles || _roles?.authorizeRole || _roles?.authorize;
 
 if (typeof authorizeRoles !== "function") {
   console.error("[certificadoRoute] authorizeRoles inválido:", _roles);
@@ -29,17 +34,17 @@ if (typeof authorizeRoles !== "function") {
 
 const { extrairPerfis } = require("../utils/perfil");
 
-// ✅ normaliza db (alguns módulos exportam { db }, outros exportam direto)
+/* ───────────────── DB resiliente ───────────────── */
 const dbMod = require("../db");
 const dbFallback = dbMod?.db ?? dbMod;
 
-/* ───────────────── Controllers (mantidos) ───────────────── */
+/* ───────────────── Controllers ───────────────── */
 const ctrl = require("../controllers/certificadoController");
 const avulsoCtrl = require("../controllers/certificadoAvulsoController");
 
 function assertFn(name, fn) {
   if (typeof fn !== "function") {
-    console.error(`[certificadoRoute] Handler ausente/ inválido: ${name}`, fn);
+    console.error(`[certificadoRoute] Handler ausente/inválido: ${name}`, fn);
     throw new Error(`[certificadoRoute] Controller não exporta função: ${name}`);
   }
 }
@@ -50,7 +55,6 @@ assertFn("listarElegivel", ctrl.listarElegivel);
 assertFn("listarInstrutorElegivel", ctrl.listarInstrutorElegivel);
 assertFn("gerarCertificado", ctrl.gerarCertificado);
 assertFn("revalidarCertificado", ctrl.revalidarCertificado);
-
 assertFn("listarArvore", ctrl.listarArvore);
 assertFn("resetTurma", ctrl.resetTurma);
 
@@ -66,7 +70,6 @@ const asyncHandler = (fn) => {
 };
 
 function getDb(req) {
-  // ✅ também normaliza req.db caso venha no mesmo padrão
   const fromReq = req?.db?.db ?? req?.db;
   return fromReq ?? dbFallback;
 }
@@ -76,94 +79,96 @@ function toIntId(v) {
   return Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
 }
 
-function validate(req, res, next) {
-  const errors = validationResult(req);
-  if (errors.isEmpty()) return next();
-  return res.status(400).json({
-    ok: false,
-    erro: "Parâmetros inválidos.",
-    detalhes: errors.array().map((e) => ({ campo: e.path, msg: e.msg })),
-    requestId: res.getHeader?.("X-Request-Id"),
-  });
-}
+function getUserId(req) {
+  const u = req.usuario ?? req.user ?? {};
+  const a = req.auth ?? {};
 
-/* ───────────────── Middlewares anti-IDOR ───────────────── */
-
-/** Permite admin; demais perfis só se req.body.usuario_id === id do token. */
-function ensureBodySelfOrAdmin(req, res, next) {
-  function getUserId(req) {
-    const u = req.usuario ?? req.user ?? {};
-    const a = req.auth ?? {};
-
-    return toIntId(
-      // ✅ mais comuns (várias bases usam isso)
-      req.userId ??
+  return toIntId(
+    req.userId ??
       req.usuario_id ??
       req.user?.id ??
       req.usuario?.id ??
-
-      // ✅ seus objetos normalizados
       u?.id ??
       u?.usuario_id ??
-
-      // ✅ auth context (muito comum em middleware JWT)
       a?.id ??
       a?.usuario_id ??
       a?.userId ??
       a?.sub ??
       a?.payload?.id ??
       a?.payload?.usuario_id
-    );
-  }
+  );
+}
 
+function getPerfis(req) {
+  try {
+    const uctx = req.usuario ?? req.user ?? null;
+    return extrairPerfis({ usuario: uctx, user: uctx }) || [];
+  } catch {
+    return [];
+  }
+}
+
+function isAdmin(req) {
+  return getPerfis(req).includes("administrador");
+}
+
+function validate(req, res, next) {
+  const errors = validationResult(req);
+  if (errors.isEmpty()) return next();
+
+  return res.status(400).json({
+    ok: false,
+    erro: "Parâmetros inválidos.",
+    detalhes: errors.array().map((e) => ({
+      campo: e.path || e.param,
+      msg: e.msg,
+    })),
+    requestId: res.getHeader?.("X-Request-Id"),
+  });
+}
+
+/* ───────────────── Middlewares anti-IDOR ───────────────── */
+
+/** Admin pode tudo; demais só se body.usuario_id === id do token */
+function ensureBodySelfOrAdmin(req, res, next) {
   const tokenId = getUserId(req);
-
-  // ✅ pega o usuário do req (compat)
-  const uctx = req.usuario ?? req.user ?? null;
-  const perfis = extrairPerfis({ usuario: uctx, user: uctx });
-  const isAdmin = perfis.includes("administrador");
-
+  const admin = isAdmin(req);
   const bodyId = toIntId(req.body?.usuario_id);
+
   if (!bodyId) {
-    return res.status(400).json({ erro: "Body inválido: 'usuario_id' numérico é obrigatório." });
+    return res.status(400).json({
+      erro: "Body inválido: 'usuario_id' numérico é obrigatório.",
+    });
   }
-  if (isAdmin || (tokenId && bodyId === tokenId)) return next();
+
+  if (admin || (tokenId && bodyId === tokenId)) return next();
+
   return res.status(403).json({ erro: "Acesso negado." });
 }
 
-
-// ✅ Middleware anti-IDOR: dono do certificado OU admin
+/** Admin pode tudo; demais só se o certificado pertencer ao usuário logado */
 async function ensureCertOwnerOrAdmin(req, res, next) {
   try {
     const rid = res.getHeader?.("X-Request-Id") || "no-rid";
-
-    const tokenId = toIntId(
-      req.userId ??
-      req.usuario_id ??
-      req.user?.id ??
-      req.usuario?.id ??
-      req.auth?.userId ??
-      req.auth?.id ??
-      req.auth?.sub
-    );
-
-    const perfis = extrairPerfis(req);         // ✅ sempre definido aqui
-    const isAdmin = perfis.includes("administrador");
-
+    const tokenId = getUserId(req);
+    const perfis = getPerfis(req);
+    const admin = perfis.includes("administrador");
     const certId = toIntId(req.params.id);
-    if (!certId) return res.status(400).json({ erro: "ID de certificado inválido." });
 
-    if (process.env.NODE_ENV !== "production") {
-      console.log("[CERT-AUTH]", { rid, certId, tokenId, perfis, isAdmin });
+    if (!certId) {
+      return res.status(400).json({ erro: "ID de certificado inválido." });
     }
 
-    if (isAdmin) return next();
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[CERT-AUTH]", { rid, certId, tokenId, perfis, admin });
+    }
+
+    if (admin) return next();
     if (!tokenId) return res.status(401).json({ erro: "Não autenticado." });
 
     const db = getDb(req);
-
     const q = await db.query(
-      "SELECT usuario_id FROM certificados WHERE id = $1 LIMIT 1",
+      `SELECT usuario_id FROM certificados WHERE id = $1 LIMIT 1`,
       [certId]
     );
 
@@ -171,7 +176,9 @@ async function ensureCertOwnerOrAdmin(req, res, next) {
       console.log("[CERT-AUTH] DB:", q.rows);
     }
 
-    if (q.rowCount === 0) return res.status(404).json({ erro: "Certificado não encontrado." });
+    if (q.rowCount === 0) {
+      return res.status(404).json({ erro: "Certificado não encontrado." });
+    }
 
     if (Number(q.rows[0].usuario_id) !== Number(tokenId)) {
       return res.status(403).json({ erro: "Acesso negado ao certificado." });
@@ -186,7 +193,6 @@ async function ensureCertOwnerOrAdmin(req, res, next) {
     });
   }
 }
-
 
 /* =========================
    Rate limits (premium)
@@ -255,26 +261,42 @@ router.get(
     const db = getDb(req);
     const q = await db.query(
       `
-      SELECT c.id, c.tipo, c.gerado_em, c.revalidado_em,
-             e.titulo,
-             t.nome AS turma,
-             t.data_inicio, t.data_fim
-        FROM certificados c
-        JOIN eventos e ON e.id = c.evento_id
-        JOIN turmas  t ON t.id = c.turma_id
-       WHERE c.usuario_id = $1 AND c.evento_id = $2 AND c.turma_id = $3
-       ORDER BY c.gerado_em DESC
-       LIMIT 1
+      SELECT
+        c.id,
+        c.tipo,
+        c.gerado_em,
+        c.revalidado_em,
+        e.titulo,
+        t.nome AS turma,
+        t.data_inicio,
+        t.data_fim
+      FROM certificados c
+      JOIN eventos e ON e.id = c.evento_id
+      JOIN turmas  t ON t.id = c.turma_id
+      WHERE c.usuario_id = $1
+        AND c.evento_id = $2
+        AND c.turma_id = $3
+      ORDER BY c.gerado_em DESC
+      LIMIT 1
       `,
       [uid, eid, tid]
     );
 
-    if (q.rowCount === 0) return res.json({ ok: true, valido: false });
-    return res.json({ ok: true, valido: true, certificado: q.rows[0] });
+    if (q.rowCount === 0) {
+      return res.json({ ok: true, valido: false });
+    }
+
+    return res.json({
+      ok: true,
+      valido: true,
+      certificado: q.rows[0],
+    });
   })
 );
 
-// ✅ Download passa a ser autenticado (evita vazamento)
+/* =========================
+   Download autenticado
+========================= */
 router.get(
   "/:id/download",
   requireAuth,
@@ -290,7 +312,7 @@ router.get(
 ========================= */
 router.use(requireAuth, privateLimiter);
 
-// ⚠️ dados pessoais/arquivos → sem cache
+// sem cache para dados pessoais/arquivos
 router.use((_req, res, next) => {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Pragma", "no-cache");
@@ -298,10 +320,7 @@ router.use((_req, res, next) => {
 });
 
 /* =========================
-   ✅ ENTRYPOINT /certificados-avulsos (LEGADO)
-   Front chama: GET /api/certificados-avulsos
-   Este router é montado em vários prefixes, então este GET "/"
-   só deve responder quando baseUrl for "certificados-avulsos".
+   ENTRYPOINT /certificados-avulsos (LEGADO)
 ========================= */
 router.get(
   "/",
@@ -313,50 +332,59 @@ router.get(
       base.endsWith("/certificados-avulsos") ||
       base.includes("/certificados-avulsos");
 
-    // não “rouba” /api/certificado nem /api/certificados
     if (!isAvulsosMount) return next();
 
     if (typeof avulsoCtrl?.listarCertificadosAvulsos === "function") {
       return avulsoCtrl.listarCertificadosAvulsos(req, res, next);
     }
 
-    // fallback dev
     return res.json([]);
   })
 );
 
-// 🧾 Listar certificados emitidos do usuário autenticado
+/* =========================
+   Rotas autenticadas
+========================= */
+
+// 🧾 certificados já emitidos do usuário autenticado
 router.get(
   "/usuario",
   authorizeRoles("administrador", "instrutor", "usuario"),
   asyncHandler(ctrl.listarCertificadoDoUsuario)
 );
 
-// 🆕 Elegíveis (participante)
+// 🎓 elegíveis (participante)
 router.get(
   "/elegivel",
   authorizeRoles("administrador", "instrutor", "usuario"),
   asyncHandler(ctrl.listarElegivel)
 );
 
-// 🆕 Elegíveis (instrutor)
+// 👩‍🏫 elegíveis (instrutor)
 router.get(
   "/elegivel-instrutor",
   authorizeRoles("administrador", "instrutor"),
   asyncHandler(ctrl.listarInstrutorElegivel)
 );
 
-// 🖨️ Gerar certificado
+// 🖨️ gerar certificado
 router.post(
   "/gerar",
   authorizeRoles("administrador", "instrutor", "usuario"),
-  [body("usuario_id").isInt({ min: 1 }).withMessage("usuario_id inválido.").toInt()],
+  [
+    body("usuario_id").isInt({ min: 1 }).withMessage("usuario_id inválido.").toInt(),
+    body("evento_id").isInt({ min: 1 }).withMessage("evento_id inválido.").toInt(),
+    body("turma_id").isInt({ min: 1 }).withMessage("turma_id inválido.").toInt(),
+    body("tipo")
+      .isIn(["usuario", "instrutor"])
+      .withMessage("tipo deve ser 'usuario' ou 'instrutor'."),
+  ],
   validate,
   ensureBodySelfOrAdmin,
   asyncHandler(ctrl.gerarCertificado)
 );
 
-// 🔁 Revalidar certificado
+// 🔁 revalidar certificado
 router.post(
   "/:id/revalidar",
   authorizeRoles("administrador", "instrutor", "usuario"),
@@ -367,7 +395,7 @@ router.post(
 );
 
 /* =========================
-   Admin (dentro do mesmo router)
+   Admin (subrouter)
    /api/certificado/admin/...
 ========================= */
 const admin = express.Router();
@@ -418,12 +446,7 @@ admin.post(
 router.use("/admin", admin);
 
 /* =========================
-   ✅ Aliases ADMIN "root" (compat)
-   Quando este router é montado em:
-   - /api/certificados-admin
-   o front chama:
-   - /api/certificados-admin/arvore
-   então precisamos mapear /arvore -> /admin/arvore
+   Aliases ADMIN "root" (compat)
 ========================= */
 router.get(
   "/arvore",
@@ -440,7 +463,7 @@ router.post(
   asyncHandler(ctrl.resetTurma)
 );
 
-// Avulsos em root (compat com /api/certificados-admin/avulso)
+// Avulsos root (compat)
 router.get(
   "/avulso",
   authorizeRoles("administrador"),
@@ -485,11 +508,21 @@ router.post(
 /* =========================
    Aliases retrocompat
 ========================= */
-router.get("/elegiveis", asyncHandler(ctrl.listarElegivel));
-router.get("/elegiveis-instrutor", asyncHandler(ctrl.listarInstrutorElegivel));
+router.get(
+  "/elegiveis",
+  authorizeRoles("administrador", "instrutor", "usuario"),
+  asyncHandler(ctrl.listarElegivel)
+);
+
+router.get(
+  "/elegiveis-instrutor",
+  authorizeRoles("administrador", "instrutor"),
+  asyncHandler(ctrl.listarInstrutorElegivel)
+);
 
 router.post(
   "/admin/turmas/:turmaId/reset",
+  authorizeRoles("administrador"),
   resetLimiter,
   [param("turmaId").isInt({ min: 1 }).withMessage("turmaId inválido.").toInt()],
   validate,
