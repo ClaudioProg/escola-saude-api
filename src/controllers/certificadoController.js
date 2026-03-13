@@ -1243,13 +1243,58 @@ async function listarElegivel(req, res) {
   }
 }
 
-/** 👩‍🏫 Elegível (instrutor) — considerando turma_instrutor OU evento_instrutor */
+/** 👩‍🏫 Elegível (instrutor) — considerando turma_instrutor OU evento_instrutor
+ *  - Admin pode testar outro usuário via ?usuario_id=2742
+ *  - Retorno padronizado com tipo/pode_gerar
+ *  - Logs estratégicos
+ */
 async function listarInstrutorElegivel(req, res) {
   const db = getDb(req);
 
   try {
-    const instrutor_id = toIntId(req?.usuario?.id ?? req?.user?.id);
-    if (!instrutor_id) return res.status(400).json({ erro: "usuario_id ausente" });
+    const authUserId = toIntId(
+      req?.usuario?.id ??
+      req?.user?.id ??
+      req?.usuario?.usuario_id ??
+      req?.user?.usuario_id ??
+      req?.auth?.userId ??
+      req?.auth?.id ??
+      req?.auth?.sub
+    );
+
+    const perfisRaw =
+      req?.usuario?.perfis ??
+      req?.usuario?.perfil ??
+      req?.user?.perfis ??
+      req?.user?.perfil ??
+      "";
+
+    const perfis = Array.isArray(perfisRaw)
+      ? perfisRaw.map((p) => String(p).trim().toLowerCase()).filter(Boolean)
+      : String(perfisRaw)
+          .split(",")
+          .map((p) => p.trim().toLowerCase())
+          .filter(Boolean);
+
+    const isAdmin = perfis.includes("administrador");
+
+    const queryUserId = toIntId(req?.query?.usuario_id);
+
+    const instrutor_id = isAdmin
+      ? (queryUserId || authUserId)
+      : authUserId;
+
+    if (!instrutor_id) {
+      return res.status(400).json({ erro: "usuario_id ausente" });
+    }
+
+    logDev("listarInstrutorElegivel:start", {
+      authUserId,
+      queryUserId,
+      instrutor_id,
+      isAdmin,
+      perfis,
+    });
 
     const result = await db.query(
       `
@@ -1273,16 +1318,19 @@ async function listarInstrutorElegivel(req, res) {
         WHERE ei.instrutor_id = $1
       )
       SELECT
+        'instrutor'::text AS tipo,
         t.id AS turma_id,
         e.id AS evento_id,
         e.titulo AS evento,
         t.nome AS nome_turma,
         t.data_inicio,
         t.data_fim,
+        t.horario_inicio,
         t.horario_fim,
         c.id AS certificado_id,
         c.arquivo_pdf,
-        (c.id IS NOT NULL AND c.arquivo_pdf IS NOT NULL) AS ja_gerado
+        (c.id IS NOT NULL AND c.arquivo_pdf IS NOT NULL) AS ja_gerado,
+        TRUE AS pode_gerar
       FROM vinculos v
       JOIN turmas t ON t.id = v.turma_id
       JOIN eventos e ON e.id = t.evento_id
@@ -1295,29 +1343,36 @@ async function listarInstrutorElegivel(req, res) {
         (NOW() AT TIME ZONE '${TZ}') >=
         COALESCE(
           (
-            SELECT MAX(dt.data::date + COALESCE(dt.horario_fim::time, t.horario_fim::time, '23:59'::time))
+            SELECT MAX(
+              dt.data::date + COALESCE(dt.horario_fim::time, t.horario_fim::time, '23:59'::time)
+            )
             FROM datas_turma dt
             WHERE dt.turma_id = t.id
           ),
-          (t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time))
+          (
+            t.data_fim::date + COALESCE(t.horario_fim::time, '23:59'::time)
+          )
         )
       )
       ORDER BY t.data_fim DESC, t.id DESC
-      `
-    , [instrutor_id]);
+      `,
+      [instrutor_id]
+    );
 
-    logDev("listarInstrutorElegivel", {
+    logDev("listarInstrutorElegivel:resultado", {
       instrutor_id,
       total: result.rows?.length || 0,
       itens: (result.rows || []).map((r) => ({
+        tipo: r.tipo,
         turma_id: r.turma_id,
         evento_id: r.evento_id,
         certificado_id: r.certificado_id || null,
         ja_gerado: r.ja_gerado,
+        pode_gerar: r.pode_gerar,
       })),
     });
 
-    return res.json(result.rows);
+    return res.json(result.rows || []);
   } catch (err) {
     logErr(
       "❌ Erro ao buscar certificado de instrutor elegível:",
@@ -1326,7 +1381,6 @@ async function listarInstrutorElegivel(req, res) {
     return res.status(500).json({ erro: "Erro ao buscar certificados de instrutor elegíveis." });
   }
 }
-
 /** ♻️ Reset PDFs/arquivos por turma */
 async function resetTurma(req, res) {
   const db = getDb(req);
