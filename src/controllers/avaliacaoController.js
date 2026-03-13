@@ -224,11 +224,15 @@ async function obterContextoTurma(dbConn, turmaId) {
 }
 
 async function usuarioTemPresenca(dbConn, usuarioId, turmaId) {
-  const variants = [
-    `SELECT 1 FROM presencas WHERE usuario_id=$1 AND turma_id=$2 AND presente=true LIMIT 1`,
-    `SELECT 1 FROM presencas WHERE usuario_id=$1 AND turma_id=$2 LIMIT 1`,
-  ];
-  const r = await queryFirstWorking(dbConn, variants, [Number(usuarioId), Number(turmaId)]);
+  const r = await dbConn.query(
+    `SELECT 1
+       FROM presencas
+      WHERE usuario_id = $1
+        AND turma_id   = $2
+        AND presente   = true
+      LIMIT 1`,
+    [Number(usuarioId), Number(turmaId)]
+  );
   return (r.rowCount || 0) > 0;
 }
 
@@ -342,20 +346,64 @@ async function enviarAvaliacao(req, res) {
 
   try {
     const ctx = await obterContextoTurma(dbConn, turma_id);
-    if (!ctx) return res.status(404).json({ erro: "Turma não encontrada." });
+if (!ctx) {
+  console.warn("[avaliacao] turma não encontrada", {
+    rid: rid(req),
+    usuario_id,
+    turma_id,
+    evento_id,
+  });
+  return res.status(404).json({ erro: "Turma não encontrada." });
+}
+
+console.log("[avaliacao] tentativa de envio", {
+  rid: rid(req),
+  usuario_id,
+  turma_id,
+  evento_id,
+  evento_id_turma: ctx.evento_id,
+  evento_tipo: ctx.evento_tipo,
+});
 
     if (evento_id != null && evento_id !== Number(ctx.evento_id)) {
       return res.status(400).json({ erro: "evento_id não corresponde à turma_id." });
     }
 
     const participou = await usuarioTemPresenca(dbConn, usuario_id, turma_id);
-    if (!participou) return res.status(403).json({ erro: "Você não participou desta turma." });
+console.log("[avaliacao] check participou", {
+  rid: rid(req),
+  usuario_id,
+  turma_id,
+  participou,
+});
 
-    const encerrada = await turmaEncerrada(dbConn, turma_id);
-    if (!encerrada) return res.status(403).json({ erro: "A avaliação só fica disponível após o encerramento da turma." });
+if (!participou) {
+  return res.status(403).json({ erro: "Você não participou desta turma." });
+}
 
-    const atingiu75 = await usuarioAtingiu75(dbConn, usuario_id, turma_id);
-    if (!atingiu75) return res.status(403).json({ erro: "Você ainda não atingiu a frequência mínima (75%) para avaliar." });
+const encerrada = await turmaEncerrada(dbConn, turma_id);
+console.log("[avaliacao] check turma encerrada", {
+  rid: rid(req),
+  usuario_id,
+  turma_id,
+  encerrada,
+});
+
+if (!encerrada) {
+  return res.status(403).json({ erro: "A avaliação só fica disponível após o encerramento da turma." });
+}
+
+const atingiu75 = await usuarioAtingiu75(dbConn, usuario_id, turma_id);
+console.log("[avaliacao] check frequencia", {
+  rid: rid(req),
+  usuario_id,
+  turma_id,
+  atingiu75,
+});
+
+if (!atingiu75) {
+  return res.status(403).json({ erro: "Você ainda não atingiu a frequência mínima (75%) para avaliar." });
+}
 
     const existeVariants = [
       `SELECT 1 FROM avaliacoes WHERE usuario_id=$1 AND turma_id=$2 LIMIT 1`,
@@ -475,10 +523,10 @@ async function enviarAvaliacao(req, res) {
 /** GET /api/avaliacao/disponiveis/:usuario_id */
 async function listarAvaliacaoDisponiveis(req, res) {
   const dbConn = getDb(req);
-  const usuario_id = Number(req.params.usuario_id);
+  const usuario_id = Number(getUserId(req));
 
-  if (!Number.isFinite(usuario_id) || usuario_id <= 0) {
-    return res.status(400).json({ erro: "usuario_id inválido." });
+  if (!usuario_id) {
+    return res.status(401).json({ erro: "Não autenticado." });
   }
 
   try {
