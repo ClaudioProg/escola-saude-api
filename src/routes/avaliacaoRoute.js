@@ -1,7 +1,7 @@
 /* eslint-disable no-console */
 "use strict";
 
-// ✅ src/routes/avaliacaoRoute.js — PREMIUM/UNIFICADO (singular + compat)
+// ✅ src/routes/avaliacaoRoute.js — PREMIUM/UNIFICADO (singular + compat + debug pós-curso)
 const express = require("express");
 const { param, validationResult } = require("express-validator");
 
@@ -27,8 +27,11 @@ if (typeof authorizeRoles !== "function") {
   throw new Error("authorizeRoles não exportado corretamente em src/middlewares/authorize.js");
 }
 
-// ✅ Controller (único)
+// ✅ Controller principal
 const avaliacaoCtrl = require("../controllers/avaliacaoController");
+
+// ✅ Controller de debug pós-curso
+const debugPosCursoCtrl = require("../controllers/debugPosCursoController");
 
 const router = express.Router();
 
@@ -70,7 +73,6 @@ function getPerfis(user) {
     .filter(Boolean);
 }
 
-// Admin pode ver qualquer usuário; demais perfis só se :usuario_id === id do token
 function getUserId(req) {
   const u = req.user || req.usuario || {};
   return (
@@ -83,6 +85,7 @@ function getUserId(req) {
   );
 }
 
+// Admin pode ver qualquer usuário; demais perfis só se :usuario_id === id do token
 function ensureSelfOrAdmin(req, res, next) {
   const user = req.user || req.usuario || {};
   const tokenId = Number(getUserId(req));
@@ -91,13 +94,17 @@ function ensureSelfOrAdmin(req, res, next) {
   const perfis = getPerfis(user);
   const isAdmin = perfis.includes("administrador");
 
-  if (!Number.isFinite(paramId) || paramId <= 0) return res.status(400).json({ erro: "usuario_id inválido." });
-  if (!Number.isFinite(tokenId) || tokenId <= 0) return res.status(401).json({ erro: "Não autenticado." });
+  if (!Number.isFinite(paramId) || paramId <= 0) {
+    return res.status(400).json({ erro: "usuario_id inválido." });
+  }
+
+  if (!Number.isFinite(tokenId) || tokenId <= 0) {
+    return res.status(401).json({ erro: "Não autenticado." });
+  }
 
   if (isAdmin || tokenId === paramId) return next();
   return res.status(403).json({ erro: "Acesso negado." });
 }
-
 
 /* =========================
    Middlewares do grupo
@@ -112,6 +119,19 @@ router.use((_req, res, next) => {
 });
 
 /* =========================================================
+   ✅ DEBUG PÓS-CURSO
+   Mantido dentro do módulo de avaliação, sem rota admin genérica
+   Final: GET /api/avaliacao/debug/pos-curso/:usuario_id
+========================================================= */
+router.get(
+  "/debug/pos-curso/:usuario_id",
+  authorizeRoles("administrador"),
+  [idParam("usuario_id")],
+  validate,
+  asyncHandler(debugPosCursoCtrl.debugPosCursoPorUsuario)
+);
+
+/* =========================================================
    ✅ ADMIN (subrotas dentro do mesmo router)
    Montado em /api/avaliacao -> /api/avaliacao/admin/...
    (e também funciona via alias do index: /api/admin/avaliacao -> /api/admin/avaliacao/...)
@@ -122,7 +142,7 @@ admin.use(authorizeRoles("administrador"));
 /**
  * ✅ LISTA de eventos com avaliações
  * Canon:   GET /api/avaliacao/admin/eventos
- * Compat:  GET /api/avaliacao/admin/evento   (antigo seu)
+ * Compat:  GET /api/avaliacao/admin/evento
  */
 admin.get("/eventos", asyncHandler(avaliacaoCtrl.listarEventosComAvaliacao));
 admin.get("/evento", asyncHandler(avaliacaoCtrl.listarEventosComAvaliacao)); // alias
@@ -130,7 +150,7 @@ admin.get("/evento", asyncHandler(avaliacaoCtrl.listarEventosComAvaliacao)); // 
 /**
  * ✅ Detalhe avaliações do evento
  * Canon:   GET /api/avaliacao/admin/evento/:evento_id
- * Compat:  GET /api/avaliacao/admin/eventos/:evento_id (alguns fronts chamam plural)
+ * Compat:  GET /api/avaliacao/admin/eventos/:evento_id
  */
 admin.get(
   ["/evento/:evento_id", "/eventos/:evento_id"],
