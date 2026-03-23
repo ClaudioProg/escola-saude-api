@@ -14,19 +14,6 @@ const usuarioController = require("../controllers/usuarioController");
 /* ───────────────── Auth / Authorization ───────────────── */
 const requireAuth = require("../auth/authMiddleware");
 
-const authorizeMod = require("../middlewares/authorize");
-const authorizeRoles =
-  (typeof authorizeMod === "function" ? authorizeMod : authorizeMod?.authorizeRoles) ||
-  authorizeMod?.authorizeRole ||
-  authorizeMod?.authorize?.any ||
-  authorizeMod?.authorize;
-
-if (typeof authorizeRoles !== "function") {
-  throw new Error("authorizeRoles não exportado corretamente em src/middlewares/authorize.js");
-}
-
-const requireAdmin = [requireAuth, authorizeRoles("administrador")];
-
 /* ─────────────────────────────────────────────────────────────
    Helpers “premium”
 ────────────────────────────────────────────────────────────── */
@@ -56,29 +43,100 @@ const statsLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+function toPerfisArray(value) {
+  if (!value) return [];
+
+  const arr = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(",")
+      : [];
+
+  return [...new Set(arr.map((p) => String(p).trim().toLowerCase()).filter(Boolean))];
+}
+
 /** ID numérico positivo (defensivo contra overflow e NaN) */
 function validarId(req, res, next) {
   const { id } = req.params;
-  if (!/^\d+$/.test(String(id))) return res.status(400).json({ erro: "ID inválido." });
+
+  if (!/^\d+$/.test(String(id))) {
+    return res.status(400).json({ erro: "ID inválido." });
+  }
 
   const n = Number(id);
-  if (!Number.isSafeInteger(n) || n <= 0) return res.status(400).json({ erro: "ID inválido." });
+  if (!Number.isSafeInteger(n) || n <= 0) {
+    return res.status(400).json({ erro: "ID inválido." });
+  }
 
   return next();
 }
 
 /** Registro condicional de rotas (log amigável quando faltar handler) */
 function registerIf(fn, registrar, rotaDescrita) {
-  if (typeof fn === "function") registrar();
-  else console.warn(`⚠️  Rota '${rotaDescrita || "rota"}' não registrada: handler ausente no controller.`);
+  if (typeof fn === "function") {
+    registrar();
+    return;
+  }
+
+  console.warn(
+    `⚠️  Rota '${rotaDescrita || "rota"}' não registrada: handler ausente no controller.`
+  );
 }
 
 /* =========================
    Estatísticas (ETag)
 ========================= */
 function buildEtag(data) {
-  const digest = crypto.createHash("sha1").update(JSON.stringify(data)).digest("base64");
+  const digest = crypto
+    .createHash("sha1")
+    .update(JSON.stringify(data))
+    .digest("base64");
+
   return `"stats-${digest}"`;
+}
+
+function buildRouteLog(req, extra = {}) {
+  return {
+    metodo: req.method,
+    url: req.originalUrl,
+    params: req.params,
+    query: req.query,
+    userId: req.user?.id ?? null,
+    perfilUsuarioLogado: req.user?.perfil ?? null,
+    ...extra,
+  };
+}
+
+const requireAdmin = [
+  requireAuth,
+  (req, res, next) => {
+    const perfis = toPerfisArray(req.user?.perfil);
+    const isAdmin = perfis.includes("administrador") || perfis.includes("admin");
+
+    if (!isAdmin) {
+      console.warn(
+        "[usuarioRoute.requireAdmin] acesso negado",
+        buildRouteLog(req, {
+          perfilBruto: req.user?.perfil ?? null,
+          perfisNormalizados: perfis,
+        })
+      );
+
+      return res.status(403).json({ erro: "Acesso negado." });
+    }
+
+    return next();
+  },
+];
+
+function logPerfilRoute(req, _res, next) {
+  console.log(
+    `[usuarioRoute] ${req.method} perfil`,
+    buildRouteLog(req, {
+      body: req.body,
+    })
+  );
+  return next();
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -88,7 +146,11 @@ function buildEtag(data) {
 registerIf(
   usuarioController?.cadastrarUsuario,
   function cadastroPublicoRoute() {
-    router.post("/cadastro", authLimiter, asyncHandler(usuarioController.cadastrarUsuario));
+    router.post(
+      "/cadastro",
+      authLimiter,
+      asyncHandler(usuarioController.cadastrarUsuario)
+    );
   },
   "POST /usuarios/cadastro"
 );
@@ -96,7 +158,11 @@ registerIf(
 registerIf(
   usuarioController?.loginUsuario,
   function loginPublicoRoute() {
-    router.post("/login", authLimiter, asyncHandler(usuarioController.loginUsuario));
+    router.post(
+      "/login",
+      authLimiter,
+      asyncHandler(usuarioController.loginUsuario)
+    );
   },
   "POST /usuarios/login"
 );
@@ -104,7 +170,11 @@ registerIf(
 registerIf(
   usuarioController?.recuperarSenha,
   function recuperarSenhaRoute() {
-    router.post("/recuperar-senha", authLimiter, asyncHandler(usuarioController.recuperarSenha));
+    router.post(
+      "/recuperar-senha",
+      authLimiter,
+      asyncHandler(usuarioController.recuperarSenha)
+    );
   },
   "POST /usuarios/recuperar-senha"
 );
@@ -112,7 +182,11 @@ registerIf(
 registerIf(
   usuarioController?.redefinirSenha,
   function redefinirSenhaRoute() {
-    router.post("/redefinir-senha", authLimiter, asyncHandler(usuarioController.redefinirSenha));
+    router.post(
+      "/redefinir-senha",
+      authLimiter,
+      asyncHandler(usuarioController.redefinirSenha)
+    );
   },
   "POST /usuarios/redefinir-senha"
 );
@@ -132,7 +206,11 @@ router.use(requireAuth);
 registerIf(
   usuarioController?.obterAssinatura,
   function obterAssinaturaRoute() {
-    router.get("/assinatura", authLimiter, asyncHandler(usuarioController.obterAssinatura));
+    router.get(
+      "/assinatura",
+      authLimiter,
+      asyncHandler(usuarioController.obterAssinatura)
+    );
   },
   "GET /usuarios/assinatura"
 );
@@ -145,7 +223,12 @@ registerIf(
 registerIf(
   usuarioController?.listarUsuarios,
   function listarUsuariosRoute() {
-    router.get("/", ...requireAdmin, adminLimiter, asyncHandler(usuarioController.listarUsuarios));
+    router.get(
+      "/",
+      ...requireAdmin,
+      adminLimiter,
+      asyncHandler(usuarioController.listarUsuarios)
+    );
   },
   "GET /usuarios"
 );
@@ -159,8 +242,19 @@ const listarInstrutoresHandler =
 registerIf(
   listarInstrutoresHandler,
   function listarInstrutoresRoute() {
-    router.get("/instrutor", ...requireAdmin, adminLimiter, asyncHandler(listarInstrutoresHandler)); // novo singular
-    router.get("/instrutores", ...requireAdmin, adminLimiter, asyncHandler(listarInstrutoresHandler)); // compat
+    router.get(
+      "/instrutor",
+      ...requireAdmin,
+      adminLimiter,
+      asyncHandler(listarInstrutoresHandler)
+    );
+
+    router.get(
+      "/instrutores",
+      ...requireAdmin,
+      adminLimiter,
+      asyncHandler(listarInstrutoresHandler)
+    );
   },
   "GET /usuarios/instrutores"
 );
@@ -169,8 +263,19 @@ registerIf(
 registerIf(
   usuarioController?.listarAvaliadoresElegiveis,
   function listarAvaliadoresElegiveisRoute() {
-    router.get("/avaliador", ...requireAdmin, adminLimiter, asyncHandler(usuarioController.listarAvaliadoresElegiveis)); // novo
-    router.get("/avaliadores", ...requireAdmin, adminLimiter, asyncHandler(usuarioController.listarAvaliadoresElegiveis)); // compat
+    router.get(
+      "/avaliador",
+      ...requireAdmin,
+      adminLimiter,
+      asyncHandler(usuarioController.listarAvaliadoresElegiveis)
+    );
+
+    router.get(
+      "/avaliadores",
+      ...requireAdmin,
+      adminLimiter,
+      asyncHandler(usuarioController.listarAvaliadoresElegiveis)
+    );
   },
   "GET /usuarios/avaliadores"
 );
@@ -189,14 +294,22 @@ registerIf(
       ...requireAdmin,
       statsLimiter,
       asyncHandler(async (req, res) => {
-        const data = await usuarioController.getEstatisticasUsuarios(req, res, { internal: true });
+        const data = await usuarioController.getEstatisticasUsuarios(req, res, {
+          internal: true,
+        });
+
         if (!data || res.headersSent) return;
 
         const etag = buildEtag(data);
         res.setHeader("ETag", etag);
-        res.setHeader("Cache-Control", "public, max-age=120, stale-while-revalidate=600");
+        res.setHeader(
+          "Cache-Control",
+          "public, max-age=120, stale-while-revalidate=600"
+        );
 
-        if (req.headers["if-none-match"] === etag) return res.status(304).end();
+        if (req.headers["if-none-match"] === etag) {
+          return res.status(304).end();
+        }
 
         return res.status(200).json({
           ok: true,
@@ -211,12 +324,19 @@ registerIf(
       ...requireAdmin,
       statsLimiter,
       asyncHandler(async (req, res) => {
-        const preview = await usuarioController.getEstatisticasUsuarios(req, res, { preview: true });
+        const preview = await usuarioController.getEstatisticasUsuarios(req, res, {
+          preview: true,
+        });
+
         if (!preview) return res.status(204).end();
 
         const etag = buildEtag(preview);
         res.setHeader("ETag", etag);
-        res.setHeader("Cache-Control", "public, max-age=120, stale-while-revalidate=600");
+        res.setHeader(
+          "Cache-Control",
+          "public, max-age=120, stale-while-revalidate=600"
+        );
+
         return res.status(200).end();
       })
     );
@@ -237,9 +357,14 @@ registerIf(
 
         const etag = buildEtag(data);
         res.setHeader("ETag", etag);
-        res.setHeader("Cache-Control", "public, max-age=120, stale-while-revalidate=600");
+        res.setHeader(
+          "Cache-Control",
+          "public, max-age=120, stale-while-revalidate=600"
+        );
 
-        if (req.headers["if-none-match"] === etag) return res.status(304).end();
+        if (req.headers["if-none-match"] === etag) {
+          return res.status(304).end();
+        }
 
         return res.status(200).json({
           ok: true,
@@ -260,7 +385,12 @@ registerIf(
 registerIf(
   usuarioController?.obterUsuarioPorId,
   function obterUsuarioPorIdRoute() {
-    router.get("/:id(\\d+)", authLimiter, validarId, asyncHandler(usuarioController.obterUsuarioPorId));
+    router.get(
+      "/:id(\\d+)",
+      authLimiter,
+      validarId,
+      asyncHandler(usuarioController.obterUsuarioPorId)
+    );
   },
   "GET /usuarios/:id"
 );
@@ -269,7 +399,12 @@ registerIf(
 registerIf(
   usuarioController?.atualizarUsuario,
   function atualizarUsuarioRoute() {
-    router.patch("/:id(\\d+)", authLimiter, validarId, asyncHandler(usuarioController.atualizarUsuario));
+    router.patch(
+      "/:id(\\d+)",
+      authLimiter,
+      validarId,
+      asyncHandler(usuarioController.atualizarUsuario)
+    );
   },
   "PATCH /usuarios/:id"
 );
@@ -278,7 +413,13 @@ registerIf(
 registerIf(
   usuarioController?.getResumoUsuario,
   function getResumoUsuarioRoute() {
-    router.get("/:id(\\d+)/resumo", ...requireAdmin, adminLimiter, validarId, asyncHandler(usuarioController.getResumoUsuario));
+    router.get(
+      "/:id(\\d+)/resumo",
+      ...requireAdmin,
+      adminLimiter,
+      validarId,
+      asyncHandler(usuarioController.getResumoUsuario)
+    );
   },
   "GET /usuarios/:id/resumo"
 );
@@ -292,8 +433,16 @@ const atualizarPerfilHandler =
 registerIf(
   atualizarPerfilHandler,
   function atualizarPerfilRoute() {
-    router.patch("/:id(\\d+)/perfil", ...requireAdmin, adminLimiter, validarId, asyncHandler(atualizarPerfilHandler));
-    router.put("/:id(\\d+)/perfil", ...requireAdmin, adminLimiter, validarId, asyncHandler(atualizarPerfilHandler));
+    const perfilMiddlewares = [
+      ...requireAdmin,
+      adminLimiter,
+      validarId,
+      logPerfilRoute,
+      asyncHandler(atualizarPerfilHandler),
+    ];
+
+    router.patch("/:id(\\d+)/perfil", ...perfilMiddlewares);
+    router.put("/:id(\\d+)/perfil", ...perfilMiddlewares);
   },
   "PATCH/PUT /usuarios/:id/perfil"
 );
@@ -302,7 +451,13 @@ registerIf(
 registerIf(
   usuarioController?.excluirUsuario,
   function excluirUsuarioRoute() {
-    router.delete("/:id(\\d+)", ...requireAdmin, adminLimiter, validarId, asyncHandler(usuarioController.excluirUsuario));
+    router.delete(
+      "/:id(\\d+)",
+      ...requireAdmin,
+      adminLimiter,
+      validarId,
+      asyncHandler(usuarioController.excluirUsuario)
+    );
   },
   "DELETE /usuarios/:id"
 );
@@ -316,18 +471,28 @@ router.get(
   ...requireAdmin,
   statsLimiter,
   asyncHandler(async (req, res) => {
-    // chama o mesmo handler do endpoint “oficial”
     if (typeof usuarioController.getEstatisticasUsuarios !== "function") {
-      return res.status(501).json({ erro: "Handler não implementado: usuarioController.getEstatisticasUsuarios" });
+      return res.status(501).json({
+        erro: "Handler não implementado: usuarioController.getEstatisticasUsuarios",
+      });
     }
-    const data = await usuarioController.getEstatisticasUsuarios(req, res, { internal: true });
+
+    const data = await usuarioController.getEstatisticasUsuarios(req, res, {
+      internal: true,
+    });
+
     if (!data || res.headersSent) return;
 
     const etag = buildEtag(data);
     res.setHeader("ETag", etag);
-    res.setHeader("Cache-Control", "public, max-age=120, stale-while-revalidate=600");
+    res.setHeader(
+      "Cache-Control",
+      "public, max-age=120, stale-while-revalidate=600"
+    );
 
-    if (req.headers["if-none-match"] === etag) return res.status(304).end();
+    if (req.headers["if-none-match"] === etag) {
+      return res.status(304).end();
+    }
 
     return res.status(200).json({
       ok: true,

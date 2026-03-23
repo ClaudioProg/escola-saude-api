@@ -82,32 +82,51 @@ function isEmail(v) {
   return EMAIL_RE.test(String(v || "").trim());
 }
 
-/** string CSV ou array -> array padronizado */
+/** remove duplicados (helper local) */
+function uniq(arr) {
+  return [...new Set(arr)];
+}
+
 function toPerfilArray(perfil) {
   if (Array.isArray(perfil)) {
-    return perfil.map((p) => String(p || "").toLowerCase().trim()).filter(Boolean);
+    return [...new Set(
+      perfil
+        .map((p) => String(p || "").toLowerCase().trim())
+        .filter(Boolean)
+    )];
   }
+
   if (typeof perfil === "string") {
-    return perfil
-      .split(",")
-      .map((p) => p.toLowerCase().trim())
-      .filter(Boolean);
+    return [...new Set(
+      perfil
+        .split(",")
+        .map((p) => p.toLowerCase().trim())
+        .filter(Boolean)
+    )];
   }
+
   return [];
 }
-function uniq(arr) {
-  return Array.from(new Set(arr));
-}
-function normalizarPerfis(input) {
-  const arr = toPerfilArray(input).filter((p) => PERFIS_VALIDOS.includes(p));
-  // regra: se nada sobrou -> usuario
-  return arr.length ? uniq(arr) : ["usuario"];
+
+function isAdmin(perfil) {
+  const perfis = toPerfilArray(perfil);
+  return perfis.includes("administrador") || perfis.includes("admin");
 }
 
-function perfisToCsv(input) {
-  return normalizarPerfis(input).join(",");
+function normalizarPerfis(input, { fallback = ["usuario"], strict = false } = {}) {
+  const recebidos = toPerfilArray(input);
+  const validos = uniq(recebidos.filter((p) => PERFIS_VALIDOS.includes(p)));
+
+  if (strict) {
+    return validos;
+  }
+
+  return validos.length ? validos : fallback;
 }
 
+function perfisToCsv(input, opts = {}) {
+  return normalizarPerfis(input, opts).join(",");
+}
 
 /** CSV -> array minúsculo, sem vazios */
 function perfilToArray(perfilStr) {
@@ -477,11 +496,22 @@ async function obter(req, res) {
    PATCH/PUT /api/usuario/:id
 ────────────────────────────────────────────────────────────── */
 async function atualizar(req, res) {
-  const { id } = req.params;
-  const { nome, email, perfil } = req.body;
+  const id = Number(req.params?.id);
+  const { nome, email, perfil } = req.body || {};
 
   const solicitante = req.user;
   const ehAdmin = isAdmin(solicitante?.perfil);
+
+  console.log("[usuarioController.atualizar] INICIO", {
+    params: req.params,
+    body: req.body,
+    solicitanteId: solicitante?.id ?? null,
+    solicitantePerfil: solicitante?.perfil ?? null,
+  });
+
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ erro: "ID de usuário inválido." });
+  }
 
   if (!ehAdmin && Number(id) !== Number(solicitante?.id)) {
     return res.status(403).json({ erro: "Acesso negado." });
@@ -499,16 +529,36 @@ async function atualizar(req, res) {
   }
 
   if (email !== undefined) {
-    const e = normStr(email);
+    const e = normEmail(email);
     if (!e || !isEmail(e)) return res.status(400).json({ erro: "E-mail inválido." });
     updates.push(`email = $${i++}`);
     vals.push(e);
   }
 
   if (perfil !== undefined) {
-    if (!ehAdmin) return res.status(403).json({ erro: "Apenas administradores podem alterar perfil." });
-    const csv = perfisToCsv(perfil);
-    if (!csv) return res.status(400).json({ erro: "Perfil inválido ou vazio." });
+    if (!ehAdmin) {
+      return res.status(403).json({ erro: "Apenas administradores podem alterar perfil." });
+    }
+
+    const perfisRecebidos = toPerfilArray(perfil);
+    const perfisInvalidos = perfisRecebidos.filter((p) => !PERFIS_VALIDOS.includes(p));
+
+    if (!perfisRecebidos.length) {
+      return res.status(400).json({ erro: "Perfil é obrigatório." });
+    }
+
+    if (perfisInvalidos.length) {
+      return res.status(400).json({
+        erro: "Perfil inválido.",
+        detalhes: {
+          recebidos: perfisRecebidos,
+          invalidos: perfisInvalidos,
+          permitidos: PERFIS_VALIDOS,
+        },
+      });
+    }
+
+    const csv = perfisToCsv(perfil, { strict: true });
     updates.push(`perfil = $${i++}`);
     vals.push(csv);
   }
@@ -520,26 +570,74 @@ async function atualizar(req, res) {
   vals.push(id);
 
   try {
-    const { rows } = await db.query(
-      `
-      UPDATE usuarios
-         SET ${updates.join(", ")}, atualizado_em = NOW()
-       WHERE id = $${i}
-       RETURNING id, nome, cpf, email, registro, data_nascimento, perfil,
-                 unidade_id, escolaridade_id, cargo_id, deficiencia_id
-      `,
-      vals
-    );
+    let rows;
 
-    if (!rows.length) return res.status(404).json({ erro: "Usuário não encontrado." });
+    try {
+      const result = await db.query(
+        `
+        UPDATE usuarios
+           SET ${updates.join(", ")}, atualizado_em = NOW()
+         WHERE id = $${i}
+         RETURNING id, nome, cpf, email, registro, data_nascimento, perfil,
+                   unidade_id, escolaridade_id, cargo_id, deficiencia_id
+        `,
+        vals
+      );
+      rows = result.rows;
+    } catch (err) {
+      if (err?.code === "42703") {
+        console.warn("[usuarioController.atualizar] coluna atualizado_em ausente, usando fallback", {
+          id,
+          solicitanteId: solicitante?.id ?? null,
+        });
+
+        const fallbackSql = `
+          UPDATE usuarios
+             SET ${updates.join(", ")}
+           WHERE id = $${i}
+           RETURNING id, nome, cpf, email, registro, data_nascimento, perfil,
+                     unidade_id, escolaridade_id, cargo_id, deficiencia_id
+        `;
+        const result = await db.query(fallbackSql, vals);
+        rows = result.rows;
+      } else {
+        throw err;
+      }
+    }
+
+    if (!rows?.length) {
+      return res.status(404).json({ erro: "Usuário não encontrado." });
+    }
 
     const u = rows[0];
+
+    console.log("[usuarioController.atualizar] SUCESSO", {
+      id: u.id,
+      nome: u.nome,
+      email: u.email,
+      perfil: u.perfil,
+      solicitanteId: solicitante?.id ?? null,
+    });
+
     return res.json({ ok: true, data: { ...u, perfil: toPerfilArray(u.perfil) } });
   } catch (err) {
-    console.error("❌ Erro ao atualizar usuário:", err);
+    console.error("[usuarioController.atualizar] ERRO", {
+      message: err?.message,
+      code: err?.code,
+      detail: err?.detail,
+      constraint: err?.constraint,
+      stack: err?.stack,
+      id,
+      body: req.body,
+      solicitanteId: solicitante?.id ?? null,
+    });
+
     const payload = traduzPgError(err);
     const isClientErr = ["23505", "23514", "23503", "23502", "22P02"].includes(err?.code);
-    return res.status(isClientErr ? 400 : 500).json(payload.erro ? payload : { erro: "Erro ao atualizar usuário." });
+
+    return res
+      .status(isClientErr ? 400 : 500)
+      .json(payload?.erro ? payload : { erro: "Erro ao atualizar usuário." });
   }
 }
 
@@ -640,31 +738,151 @@ async function listarInstrutor(req, res) {
    PATCH /api/usuario/:id/perfil
 ────────────────────────────────────────────────────────────── */
 async function atualizarPerfil(req, res) {
-  const { id } = req.params;
-  const { perfil } = req.body;
+  const id = Number(req.params?.id);
+  const perfilBruto = req.body?.perfil;
+  const adminId = req.user?.id ?? null;
+  const adminPerfil = req.user?.perfil ?? null;
 
-  if (!isAdmin(req.user?.perfil)) {
+  console.log("[usuarioController.atualizarPerfil] INICIO", {
+    params: req.params,
+    body: req.body,
+    adminId,
+    adminPerfil,
+  });
+
+  if (!isAdmin(adminPerfil)) {
+    console.warn("[usuarioController.atualizarPerfil] acesso negado", {
+      adminId,
+      adminPerfil,
+      alvoId: req.params?.id,
+    });
     return res.status(403).json({ erro: "Acesso negado." });
   }
 
-  const perfilCsv = perfisToCsv(perfil);
-  if (!perfilCsv) return res.status(400).json({ erro: "Perfil inválido ou vazio." }); 
+  if (!Number.isInteger(id) || id <= 0) {
+    console.warn("[usuarioController.atualizarPerfil] id inválido", {
+      idRecebido: req.params?.id,
+      adminId,
+    });
+    return res.status(400).json({ erro: "ID de usuário inválido." });
+  }
+
+  const perfisRecebidos = toPerfilArray(perfilBruto);
+  const perfisInvalidos = perfisRecebidos.filter((p) => !PERFIS_VALIDOS.includes(p));
+
+  if (!perfisRecebidos.length) {
+    console.warn("[usuarioController.atualizarPerfil] perfil vazio", {
+      id,
+      perfilBruto,
+      adminId,
+    });
+    return res.status(400).json({ erro: "Perfil é obrigatório." });
+  }
+
+  if (perfisInvalidos.length) {
+    console.warn("[usuarioController.atualizarPerfil] perfil inválido", {
+      id,
+      perfilBruto,
+      perfisRecebidos,
+      perfisInvalidos,
+      adminId,
+    });
+    return res.status(400).json({
+      erro: "Perfil inválido.",
+      detalhes: {
+        recebidos: perfisRecebidos,
+        invalidos: perfisInvalidos,
+        permitidos: PERFIS_VALIDOS,
+      },
+    });
+  }
+
+  const perfilCsv = perfisToCsv(perfilBruto, { strict: true });
+
+  console.log("[usuarioController.atualizarPerfil] payload normalizado", {
+    id,
+    perfilBruto,
+    perfilCsv,
+    adminId,
+  });
 
   try {
+    const usuarioAtualQ = await db.query(
+      `
+      SELECT id, nome, email, perfil
+      FROM usuarios
+      WHERE id = $1
+      LIMIT 1
+      `,
+      [id]
+    );
+
+    if (!usuarioAtualQ.rows?.length) {
+      console.warn("[usuarioController.atualizarPerfil] usuário não encontrado", {
+        id,
+        adminId,
+      });
+      return res.status(404).json({ erro: "Usuário não encontrado." });
+    }
+
+    const usuarioAtual = usuarioAtualQ.rows[0];
+    const perfilAtualCsv = uniq(toPerfilArray(usuarioAtual.perfil)).join(",");
+
+    console.log("[usuarioController.atualizarPerfil] usuário atual", {
+      id: usuarioAtual.id,
+      nome: usuarioAtual.nome,
+      email: usuarioAtual.email,
+      perfilAtual: usuarioAtual.perfil,
+      perfilAtualNormalizado: perfilAtualCsv,
+      novoPerfil: perfilCsv,
+      adminId,
+    });
+
+    if (perfilAtualCsv === perfilCsv) {
+      console.log("[usuarioController.atualizarPerfil] sem alteração", {
+        id,
+        perfil: perfilCsv,
+        adminId,
+      });
+
+      return res.status(200).json({
+        ok: true,
+        mensagem: "Perfil já estava atualizado.",
+        data: {
+          ...usuarioAtual,
+          perfil: toPerfilArray(usuarioAtual.perfil),
+        },
+      });
+    }
+
     let rows;
-  
+
     try {
-      // ✅ tenta com atualizado_em (se existir)
       const r1 = await db.query(
-        "UPDATE usuarios SET perfil = $1, atualizado_em = NOW() WHERE id = $2 RETURNING id, nome, email, perfil",
+        `
+        UPDATE usuarios
+           SET perfil = $1,
+               atualizado_em = NOW()
+         WHERE id = $2
+         RETURNING id, nome, email, perfil
+        `,
         [perfilCsv, id]
       );
       rows = r1.rows;
     } catch (err) {
-      // ✅ fallback: se a coluna não existir, tenta sem ela
       if (err?.code === "42703") {
+        console.warn("[usuarioController.atualizarPerfil] coluna atualizado_em ausente, usando fallback", {
+          id,
+          adminId,
+        });
+
         const r2 = await db.query(
-          "UPDATE usuarios SET perfil = $1 WHERE id = $2 RETURNING id, nome, email, perfil",
+          `
+          UPDATE usuarios
+             SET perfil = $1
+           WHERE id = $2
+           RETURNING id, nome, email, perfil
+          `,
           [perfilCsv, id]
         );
         rows = r2.rows;
@@ -672,16 +890,49 @@ async function atualizarPerfil(req, res) {
         throw err;
       }
     }
-  
-    if (!rows?.length) return res.status(404).json({ erro: "Usuário não encontrado." });
-  
+
+    if (!rows?.length) {
+      console.warn("[usuarioController.atualizarPerfil] update sem retorno", {
+        id,
+        perfilCsv,
+        adminId,
+      });
+      return res.status(404).json({ erro: "Usuário não encontrado." });
+    }
+
     const u = rows[0];
-    return res.json({ ok: true, data: { ...u, perfil: toPerfilArray(u.perfil) } });
+
+    console.log("[usuarioController.atualizarPerfil] SUCESSO", {
+      id: u.id,
+      nome: u.nome,
+      email: u.email,
+      perfilFinal: u.perfil,
+      adminId,
+    });
+
+    return res.status(200).json({
+      ok: true,
+      mensagem: "Perfil atualizado com sucesso.",
+      data: { ...u, perfil: toPerfilArray(u.perfil) },
+    });
   } catch (err) {
-    console.error("❌ Erro ao atualizar perfil:", err);
+    console.error("[usuarioController.atualizarPerfil] ERRO", {
+      message: err?.message,
+      code: err?.code,
+      detail: err?.detail,
+      constraint: err?.constraint,
+      stack: err?.stack,
+      id,
+      perfilBruto,
+      adminId,
+    });
+
     const payload = traduzPgError(err);
     const isClientErr = ["23505", "23514", "23503", "23502", "22P02"].includes(err?.code);
-    return res.status(isClientErr ? 400 : 500).json(payload.erro ? payload : { erro: "Erro ao atualizar perfil." });
+
+    return res
+      .status(isClientErr ? 400 : 500)
+      .json(payload?.erro ? payload : { erro: "Erro ao atualizar perfil." });
   }
 }
 
@@ -914,6 +1165,7 @@ async function cadastrar(req, res) {
 async function login(req, res) {
   const cpf = onlyDigits(req.body?.cpf);
   const senha = String(req.body?.senha || "");
+
   if (!cpf || !senha) {
     const fieldErrors = {};
     if (!cpf) fieldErrors.cpf = "Informe o CPF.";
@@ -923,22 +1175,41 @@ async function login(req, res) {
 
   try {
     const result = await db.query(
-      "SELECT id, nome, cpf, email, senha, perfil, unidade_id, cargo_id, genero_id, orientacao_sexual_id, cor_raca_id, escolaridade_id, deficiencia_id, data_nascimento, registro FROM usuarios WHERE cpf = $1",
+      `
+      SELECT
+        id, nome, cpf, email, senha, perfil,
+        unidade_id, cargo_id, genero_id, orientacao_sexual_id,
+        cor_raca_id, escolaridade_id, deficiencia_id,
+        data_nascimento, registro
+      FROM usuarios
+      WHERE cpf = $1
+      LIMIT 1
+      `,
       [cpf]
     );
+
     const usuario = result.rows[0];
+
     if (!usuario) {
-      return res.status(401).json({ message: "Usuário não encontrado.", fieldErrors: { cpf: "Verifique o CPF." } });
+      return res.status(401).json({
+        message: "Usuário não encontrado.",
+        fieldErrors: { cpf: "Verifique o CPF." },
+      });
     }
 
     const senhaCorreta = await bcrypt.compare(senha, usuario.senha);
     if (!senhaCorreta) {
-      return res.status(401).json({ message: "Senha incorreta.", fieldErrors: { senha: "Senha inválida." } });
+      return res.status(401).json({
+        message: "Senha incorreta.",
+        fieldErrors: { senha: "Senha inválida." },
+      });
     }
 
-    const perfilArray = perfilToArray(usuario.perfil);
-    if (!process.env.JWT_SECRET) {
-      console.error("⚠️ JWT_SECRET ausente no ambiente.");
+    const perfilArray = toPerfilArray(usuario.perfil);
+    const jwtSecret = String(process.env.JWT_SECRET || "").trim();
+
+    if (!jwtSecret) {
+      console.error("[usuarioController.login] JWT_SECRET ausente no ambiente.");
       return res.status(500).json({ message: "Configuração do servidor ausente." });
     }
 
@@ -946,21 +1217,50 @@ async function login(req, res) {
     const faltantes = camposFaltantes(usuario);
     res.set("X-Perfil-Incompleto", incompleto ? "1" : "0");
 
-    const token = jwt.sign({ id: usuario.id, perfil: perfilArray }, process.env.JWT_SECRET, {
-      expiresIn: "4h",
-      issuer: JWT_ISS,
-      audience: JWT_AUD,
+    const signOpts = { expiresIn: "4h" };
+    if (JWT_ISS) signOpts.issuer = JWT_ISS;
+    if (JWT_AUD) signOpts.audience = JWT_AUD;
+
+    const token = jwt.sign(
+      {
+        sub: String(usuario.id),
+        id: usuario.id,
+        nome: usuario.nome,
+        email: usuario.email,
+        perfil: perfilArray,
+      },
+      jwtSecret,
+      signOpts
+    );
+
+    console.log("[usuarioController.login] SUCESSO", {
+      usuarioId: usuario.id,
+      nome: usuario.nome,
+      perfis: perfilArray,
+      perfilIncompleto: incompleto,
     });
 
     return res.status(200).json({
       mensagem: "Login realizado com sucesso.",
       token,
-      usuario: { id: usuario.id, nome: usuario.nome, cpf: usuario.cpf, email: usuario.email, perfil: perfilArray },
+      usuario: {
+        id: usuario.id,
+        nome: usuario.nome,
+        cpf: usuario.cpf,
+        email: usuario.email,
+        perfil: perfilArray,
+      },
       perfilIncompleto: incompleto,
       camposFaltantes: faltantes,
     });
   } catch (err) {
-    console.error("❌ Erro ao realizar login:", err);
+    console.error("[usuarioController.login] ERRO", {
+      message: err?.message,
+      code: err?.code,
+      detail: err?.detail,
+      constraint: err?.constraint,
+      stack: err?.stack,
+    });
     return res.status(500).json({ message: "Erro ao realizar login." });
   }
 }
@@ -970,47 +1270,59 @@ async function login(req, res) {
 ────────────────────────────────────────────────────────────── */
 async function recuperarSenha(req, res) {
   const email = normEmail(req.body?.email);
-  if (!email) return res.status(422).json({ message: "Erros de validação.", fieldErrors: { email: "Informe o e-mail." } });
-  if (!EMAIL_RE.test(email)) return res.status(422).json({ message: "Erros de validação.", fieldErrors: { email: "Formato inválido." } });
+
+  if (!email) {
+    return res.status(422).json({
+      message: "Erros de validação.",
+      fieldErrors: { email: "Informe o e-mail." },
+    });
+  }
+
+  if (!EMAIL_RE.test(email)) {
+    return res.status(422).json({
+      message: "Erros de validação.",
+      fieldErrors: { email: "Formato inválido." },
+    });
+  }
+
+  const okMsg = {
+    mensagem: "Se o e-mail estiver cadastrado, enviaremos as instruções.",
+  };
 
   try {
-       // ✅ Segurança: não revela se o e-mail existe
-    const okMsg = { mensagem: "Se o e-mail estiver cadastrado, enviaremos as instruções." };
+    const result = await db.query(
+      "SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1) LIMIT 1",
+      [email]
+    );
 
-const result = await db.query("SELECT id FROM usuarios WHERE LOWER(email) = LOWER($1)", [email]);
-if (result.rows.length === 0) {
-  return res.status(200).json(okMsg);
-}
-
-    const usuarioId = result.rows[0].id;
-
-    const JWT_SECRET = String(process.env.JWT_SECRET || "").trim();
-    if (!JWT_SECRET) {
-      console.error("⚠️ JWT_SECRET ausente no ambiente.");
-      // Premium: ainda assim não revela nada ao usuário
+    if (result.rows.length === 0) {
       return res.status(200).json(okMsg);
     }
 
-    // ✅ Sanitiza issuer/audience (evita "must be a string")
-    const ISSUER = String((process.env.JWT_ISSUER ?? process.env.JWT_ISS ?? "") || "").trim();
-    const AUDIENCE = String((process.env.JWT_AUDIENCE ?? process.env.JWT_AUD ?? "") || "").trim();
+    const usuarioId = result.rows[0].id;
+    const jwtSecret = String(process.env.JWT_SECRET || "").trim();
+
+    if (!jwtSecret) {
+      console.error("[usuarioController.recuperarSenha] JWT_SECRET ausente no ambiente");
+      return res.status(200).json(okMsg);
+    }
 
     const signOpts = { expiresIn: "1h" };
-    if (ISSUER) signOpts.issuer = ISSUER;
-    if (AUDIENCE) signOpts.audience = AUDIENCE;
+    if (JWT_ISS) signOpts.issuer = JWT_ISS;
+    if (JWT_AUD) signOpts.audience = JWT_AUD;
 
     const token = jwt.sign(
-      { sub: String(usuarioId), typ: "pwd-reset" }, // payload mais padrão (sub)
-      JWT_SECRET,
+      { sub: String(usuarioId), typ: "pwd-reset" },
+      jwtSecret,
       signOpts
     );
 
     const reqOrigin = String(req.headers.origin || "").trim();
-const baseUrl =
-  FRONTEND_URL_STATIC ||
-  (process.env.NODE_ENV === "production" && /^https:\/\/.+/i.test(reqOrigin)
-    ? reqOrigin
-    : "http://localhost:5173");
+    const baseUrl =
+      FRONTEND_URL_STATIC ||
+      (process.env.NODE_ENV === "production" && /^https:\/\/.+/i.test(reqOrigin)
+        ? reqOrigin
+        : "http://localhost:5173");
 
     const safeBase = String(baseUrl).replace(/\/+$/, "");
     const link = `${safeBase}/redefinir-senha/${encodeURIComponent(token)}`;
@@ -1021,16 +1333,32 @@ const baseUrl =
         subject: "Recuperação de Senha - Escola da Saúde",
         text: `Você solicitou redefinição de senha. Acesse: ${link} (válido por 1h).`,
       });
+
+      console.log("[usuarioController.recuperarSenha] e-mail de recuperação enviado", {
+        usuarioId,
+        email,
+      });
     } catch (mailErr) {
-      // ✅ Premium: não quebra o fluxo do usuário (evita enumeração por falha de envio)
-      console.error("❌ Erro ao enviar e-mail de recuperação:", mailErr);
+      console.error("[usuarioController.recuperarSenha] erro ao enviar e-mail", {
+        message: mailErr?.message,
+        stack: mailErr?.stack,
+        email,
+        usuarioId,
+      });
     }
 
     return res.status(200).json(okMsg);
   } catch (err) {
-    console.error("❌ Erro ao solicitar recuperação de senha:", err);
-    // ✅ premium: não vaza e mantém UX
-    return res.status(200).json({ mensagem: "Se o e-mail estiver cadastrado, enviaremos as instruções." });
+    console.error("[usuarioController.recuperarSenha] ERRO", {
+      message: err?.message,
+      code: err?.code,
+      detail: err?.detail,
+      constraint: err?.constraint,
+      stack: err?.stack,
+      email,
+    });
+
+    return res.status(200).json(okMsg);
   }
 }
 
@@ -1038,19 +1366,16 @@ const baseUrl =
    (L) PÚBLICO — redefinir senha
 ────────────────────────────────────────────────────────────── */
 async function redefinirSenha(req, res) {
-  const tokenRaw =
-  req.body?.token ||
-  req.params?.token ||
-  req.query?.token ||
-  "";
-
-let token = String(tokenRaw || "").trim();
-try {
-  token = decodeURIComponent(token);
-} catch {
-  // se não estiver encoded, segue
-}
+  const tokenRaw = req.body?.token || req.params?.token || req.query?.token || "";
   const novaSenha = String(req.body?.novaSenha || "");
+
+  let token = String(tokenRaw || "").trim();
+  try {
+    token = decodeURIComponent(token);
+  } catch {
+    // segue com token bruto
+  }
+
   if (!token || !novaSenha) {
     return res.status(422).json({
       message: "Erros de validação.",
@@ -1060,49 +1385,64 @@ try {
       },
     });
   }
+
   if (!SENHA_FORTE_RE.test(novaSenha)) {
     return res.status(422).json({
       message: "Erros de validação.",
       fieldErrors: {
-        novaSenha: "A nova senha deve conter ao menos 8 caracteres, incluindo letra maiúscula, minúscula, número e símbolo.",
+        novaSenha:
+          "A nova senha deve conter ao menos 8 caracteres, incluindo letra maiúscula, minúscula, número e símbolo.",
       },
     });
   }
-  if (!process.env.JWT_SECRET) {
-    console.error("⚠️ JWT_SECRET ausente no ambiente.");
+
+  const jwtSecret = String(process.env.JWT_SECRET || "").trim();
+  if (!jwtSecret) {
+    console.error("[usuarioController.redefinirSenha] JWT_SECRET ausente no ambiente.");
     return res.status(500).json({ message: "Configuração do servidor ausente." });
   }
 
   try {
-    const JWT_SECRET = String(process.env.JWT_SECRET || "").trim();
-if (!JWT_SECRET) {
-  console.error("⚠️ JWT_SECRET ausente no ambiente.");
-  return res.status(500).json({ message: "Configuração do servidor ausente." });
-}
+    const verifyOpts = {};
+    if (JWT_ISS) verifyOpts.issuer = JWT_ISS;
+    if (JWT_AUD) verifyOpts.audience = JWT_AUD;
 
-const ISSUER = String((process.env.JWT_ISSUER ?? process.env.JWT_ISS ?? "") || "").trim();
-const AUDIENCE = String((process.env.JWT_AUDIENCE ?? process.env.JWT_AUD ?? "") || "").trim();
+    const decoded = jwt.verify(token, jwtSecret, verifyOpts);
+    const usuarioId = decoded?.id ?? decoded?.sub;
+    const typ = decoded?.typ ?? "pwd-reset";
 
-const verifyOpts = {};
-if (ISSUER) verifyOpts.issuer = ISSUER;
-if (AUDIENCE) verifyOpts.audience = AUDIENCE;
-
-const decoded = jwt.verify(token, JWT_SECRET, verifyOpts);
-
-// ✅ compatível com tokens antigos (id) e novos (sub)
-const usuarioId = decoded?.id ?? decoded?.sub;
-
-const typ = decoded?.typ ?? "pwd-reset"; // compat: tokens antigos
-if (typ !== "pwd-reset" || !usuarioId) {
-  return res.status(400).json({ message: "Token inválido." });
-}
+    if (typ !== "pwd-reset" || !usuarioId) {
+      return res.status(400).json({ message: "Token inválido." });
+    }
 
     const senhaCriptografada = await bcrypt.hash(novaSenha, 10);
-    await db.query("UPDATE usuarios SET senha = $1 WHERE id = $2", [senhaCriptografada, usuarioId]);
+
+    const result = await db.query(
+      `
+      UPDATE usuarios
+         SET senha = $1
+       WHERE id = $2
+       RETURNING id
+      `,
+      [senhaCriptografada, usuarioId]
+    );
+
+    if (!result.rows?.length) {
+      return res.status(404).json({ message: "Usuário não encontrado." });
+    }
+
+    console.log("[usuarioController.redefinirSenha] SUCESSO", {
+      usuarioId,
+    });
 
     return res.status(200).json({ mensagem: "Senha atualizada com sucesso." });
   } catch (err) {
-    console.error("❌ Erro ao redefinir senha:", err);
+    console.error("[usuarioController.redefinirSenha] ERRO", {
+      message: err?.message,
+      name: err?.name,
+      stack: err?.stack,
+    });
+
     return res.status(400).json({ message: "Token inválido ou expirado." });
   }
 }
@@ -1642,6 +1982,8 @@ module.exports = {
 
   listarInstrutores: listarInstrutor,
   listarinstrutor: listarInstrutor,
+
+  atualizarPerfilUsuario: atualizarPerfil,
 
   getResumoUsuario: obterResumo,
   listarAvaliadoresElegiveis: listarAvaliador,

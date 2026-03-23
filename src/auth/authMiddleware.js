@@ -1,30 +1,59 @@
 // src/auth/authMiddleware.js
 /* eslint-disable no-console */
+"use strict";
+
 const jwt = require("jsonwebtoken");
-const cookie = require("cookie"); // útil se não usa cookie-parser
+const cookie = require("cookie");
 
 // ✅ compatível com exports: module.exports = db  OU  module.exports = { db }
 const dbModule = require("../db");
 const db = dbModule?.db ?? dbModule;
 
-function toArrayLower(v) {
-  if (!v) return [];
-  const arr = Array.isArray(v)
-    ? v
-    : typeof v === "string"
-      ? v.split(",")
+const ADMIN_ROLES = ["administrador", "admin"];
+
+function uniq(arr) {
+  return [...new Set(arr)];
+}
+
+function toArrayLower(value) {
+  if (!value) return [];
+
+  const arr = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(",")
       : [];
-  return arr.map((s) => String(s).toLowerCase().trim()).filter(Boolean);
+
+  return uniq(
+    arr
+      .map((item) => String(item).trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
+
+function hasAnyRole(userOrRoles, allowedRoles = []) {
+  const roles = Array.isArray(userOrRoles)
+    ? toArrayLower(userOrRoles)
+    : toArrayLower(userOrRoles?.perfil);
+
+  const allowed = toArrayLower(allowedRoles);
+  return allowed.some((role) => roles.includes(role));
 }
 
 function normalizeUser(raw) {
-  const id = Number(raw?.sub ?? raw?.id ?? raw?.userId);
-  if (!Number.isFinite(id) || id <= 0) return null;
+  const id = Number(raw?.sub ?? raw?.id ?? raw?.userId ?? raw?.usuario_id);
+  if (!Number.isSafeInteger(id) || id <= 0) return null;
 
-  const roles = raw?.perfis ?? raw?.perfil ?? raw?.roles ?? [];
+  const roles =
+    raw?.perfis ??
+    raw?.perfil ??
+    raw?.roles ??
+    raw?.role ??
+    [];
+
   return {
     id,
-    nome: raw?.nome ?? null,
+    nome: raw?.nome ?? raw?.name ?? null,
     email: raw?.email ?? null,
     cpf: raw?.cpf ?? null,
     perfil: toArrayLower(roles),
@@ -32,60 +61,160 @@ function normalizeUser(raw) {
   };
 }
 
+function parseCookies(req) {
+  if (req.cookies && typeof req.cookies === "object") return req.cookies;
+
+  try {
+    return cookie.parse(req.headers?.cookie || "");
+  } catch (err) {
+    console.warn("[authMiddleware] falha ao parsear cookies", {
+      message: err?.message,
+      url: req.originalUrl,
+      method: req.method,
+    });
+    return {};
+  }
+}
+
 function extractToken(req) {
   // 1) Authorization: Bearer <token>
-  const h = req.headers.authorization || "";
-  const m = h.match(/^Bearer\s+(.+)$/i);
-  if (m?.[1]) return m[1].trim();
+  const authorization = req.headers?.authorization || "";
+  const bearerMatch = authorization.match(/^Bearer\s+(.+)$/i);
+
+  if (bearerMatch?.[1]?.trim()) {
+    return {
+      token: bearerMatch[1].trim(),
+      source: "authorization_bearer",
+    };
+  }
 
   // 2) Cookies (cookie-parser ou manual)
-  const c = req.cookies || cookie.parse(req.headers.cookie || "");
-  return (c.token || c.jwt || c.access_token || c.auth || null)?.trim?.() || null;
+  const cookies = parseCookies(req);
+  const token =
+    cookies.token ||
+    cookies.jwt ||
+    cookies.access_token ||
+    cookies.auth ||
+    null;
+
+  if (typeof token === "string" && token.trim()) {
+    return {
+      token: token.trim(),
+      source: "cookie",
+    };
+  }
+
+  return {
+    token: null,
+    source: null,
+  };
+}
+
+function attachUserContext(req, res, user) {
+  req.db = req.db ?? db;
+
+  // ✅ padrão principal
+  req.user = user;
+
+  // ✅ compat legado
+  req.usuario = user;
+
+  // ✅ facilita middlewares/logs
+  req.userId = user.id;
+
+  // ✅ compat adicional
+  req.auth = req.auth ?? {
+    userId: user.id,
+    perfil: user.perfil,
+  };
+
+  res.locals.user = user;
+}
+
+function buildAuthLog(req, extra = {}) {
+  return {
+    method: req.method,
+    url: req.originalUrl,
+    ip: req.ip,
+    userAgent: req.headers?.["user-agent"] || null,
+    ...extra,
+  };
 }
 
 function authMiddleware(req, res, next) {
   try {
     // ✅ Se outro middleware já setou req.user, só normaliza
-    if (req.user && (req.user.id || req.user.sub || req.user.userId)) {
+    if (req.user && (req.user.id || req.user.sub || req.user.userId || req.user.usuario_id)) {
       const user = normalizeUser(req.user);
-      if (!user) return res.status(401).json({ erro: "Sessão inválida." });
 
-      req.user = user;
-      res.locals.user = user;
-      req.db = req.db ?? db;
+      if (!user) {
+        console.warn(
+          "[authMiddleware] req.user prévio inválido",
+          buildAuthLog(req, { reqUser: req.user })
+        );
+        return res.status(401).json({ erro: "Sessão inválida." });
+      }
+
+      attachUserContext(req, res, user);
       return next();
     }
 
-    const token = extractToken(req);
-    if (!token) return res.status(401).json({ erro: "Não autenticado." });
+    const { token, source } = extractToken(req);
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    if (!token) {
+      console.warn(
+        "[authMiddleware] token ausente",
+        buildAuthLog(req, { tokenSource: source })
+      );
+      return res.status(401).json({ erro: "Não autenticado." });
+    }
+
+    const jwtSecret = process.env.JWT_SECRET;
+    if (!jwtSecret || typeof jwtSecret !== "string" || !jwtSecret.trim()) {
+      console.error(
+        "[authMiddleware] JWT_SECRET ausente ou inválido",
+        buildAuthLog(req, { tokenSource: source })
+      );
+      return res.status(500).json({ erro: "Falha de configuração de autenticação." });
+    }
+
+    const decoded = jwt.verify(token, jwtSecret);
     const user = normalizeUser(decoded);
 
     if (!user) {
+      console.warn(
+        "[authMiddleware] payload JWT sem usuário válido",
+        buildAuthLog(req, {
+          tokenSource: source,
+          decodedKeys: decoded ? Object.keys(decoded) : [],
+        })
+      );
       return res.status(401).json({ erro: "Sessão inválida." });
     }
 
-    req.db = req.db ?? db;
+    attachUserContext(req, res, user);
+    return next();
+  } catch (err) {
+    const isExpired = err?.name === "TokenExpiredError";
+    const isJwtError =
+      err?.name === "JsonWebTokenError" || err?.name === "NotBeforeError";
 
-// ✅ padrão principal
-req.user = user;
+    console.error(
+      "[authMiddleware] falha na autenticação",
+      buildAuthLog(req, {
+        errorName: err?.name,
+        errorMessage: err?.message,
+      })
+    );
 
-// ✅ compat com legado (muitos controllers/middlewares usam req.usuario)
-req.usuario = user;
+    if (isExpired) {
+      return res.status(401).json({ erro: "Token expirado." });
+    }
 
-// ✅ facilita logs/middlewares que procuram userId direto
-req.userId = user.id;
+    if (isJwtError) {
+      return res.status(401).json({ erro: "Token inválido." });
+    }
 
-// (opcional) se você usa req.auth em algum lugar
-req.auth = req.auth ?? { userId: user.id, perfil: user.perfil };
-
-res.locals.user = user;
-return next();
-
-  } catch (e) {
-    // ⚠️ Não vazar detalhes: log interno, resposta genérica
-    console.error("🔴 [authMiddleware] JWT inválido:", e?.message || e);
     return res.status(401).json({ erro: "Token inválido ou expirado." });
   }
 }
@@ -95,12 +224,20 @@ function authAny(req, res, next) {
 }
 
 function authAdmin(req, res, next) {
-  // chama authMiddleware e depois valida role
   return authMiddleware(req, res, () => {
     const perfis = req.user?.perfil ?? [];
-    if (!(perfis.includes("administrador") || perfis.includes("admin"))) {
+
+    if (!hasAnyRole(perfis, ADMIN_ROLES)) {
+      console.warn(
+        "[authAdmin] acesso negado",
+        buildAuthLog(req, {
+          userId: req.user?.id,
+          perfilBruto: req.user?.perfil,
+        })
+      );
       return res.status(403).json({ erro: "Acesso restrito a administradores." });
     }
+
     return next();
   });
 }
@@ -110,3 +247,6 @@ module.exports.default = authMiddleware;
 module.exports.authMiddleware = authMiddleware;
 module.exports.authAny = authAny;
 module.exports.authAdmin = authAdmin;
+module.exports.hasAnyRole = hasAnyRole;
+module.exports.toArrayLower = toArrayLower;
+module.exports.normalizeUser = normalizeUser;
