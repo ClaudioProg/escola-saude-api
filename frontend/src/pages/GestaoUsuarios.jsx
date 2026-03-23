@@ -230,6 +230,8 @@ export default function GestaoUsuarios() {
   const erroRef = useRef(null);
   const abortRef = useRef(null);
   const mountedRef = useRef(true);
+  const requestSeqRef = useRef(0);
+  const errorTimerRef = useRef(null);
 
   // cache de resumo sob demanda
   const [resumoCache, setResumoCache] = useState(() => new Map());
@@ -268,10 +270,11 @@ export default function GestaoUsuarios() {
   }, []);
 
   // mounted/abort
-  useEffect(() => {
+   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      window.clearTimeout(errorTimerRef.current);
       abortRef.current?.abort?.("unmount");
     };
   }, []);
@@ -366,11 +369,15 @@ export default function GestaoUsuarios() {
   }, [debouncedQ, fUnidade, fCargo, fPerfis, pageSize]);
 
   /* ---------- carregar usuários (SERVER-SIDE) ---------- */
-  const carregarUsuarios = useCallback(async () => {
+    const carregarUsuarios = useCallback(async () => {
+    const reqId = ++requestSeqRef.current;
+
     try {
       setCarregandoUsuarios(true);
       setErro("");
       setLive("Carregando usuários…");
+
+      window.clearTimeout(errorTimerRef.current);
 
       abortRef.current?.abort?.("new-request");
       const ctrl = new AbortController();
@@ -390,6 +397,8 @@ export default function GestaoUsuarios() {
 
       const resp = await apiGet(url, { on403: "silent", signal: ctrl.signal });
 
+      if (!mountedRef.current || reqId !== requestSeqRef.current) return;
+
       const metaResp = resp?.meta || resp?.data?.meta || null;
       const dataResp =
         (Array.isArray(resp?.data) ? resp.data : null) ||
@@ -406,7 +415,8 @@ export default function GestaoUsuarios() {
           u?.unidade_id && unidadesMap?.get?.(u.unidade_id)?.sigla
             ? String(unidadesMap.get(u.unidade_id).sigla).trim().toUpperCase()
             : "";
-        const unidade_sigla = (siglaJoin || siglaViaId) || null;
+
+        const unidade_sigla = siglaJoin || siglaViaId || null;
 
         const unidade_nome =
           String(u?.unidade_nome || "").trim() ||
@@ -429,10 +439,8 @@ export default function GestaoUsuarios() {
         };
       });
 
-      if (!mountedRef.current) return;
-
       setUsuarios(enriched);
-      setResumoCache((prev) => (prev?.size ? prev : new Map())); // mantém cache quando navega páginas
+      setResumoCache((prev) => (prev?.size ? prev : new Map()));
       setMeta({
         total: Number(metaResp?.total ?? 0),
         page: Number(metaResp?.page ?? page),
@@ -442,21 +450,40 @@ export default function GestaoUsuarios() {
 
       setLive(`Usuários carregados: ${enriched.length}.`);
     } catch (e) {
-      if (e?.name === "AbortError") return;
+      const msg = String(e?.message || "").trim();
+      const isAbortLike =
+        e?.name === "AbortError" ||
+        msg === "unmount" ||
+        msg === "new-request" ||
+        msg.toLowerCase().includes("aborted") ||
+        msg.toLowerCase().includes("abort");
 
-      const msg = e?.message || "Erro ao carregar usuários.";
-      console.error("❌ /api/usuarios falhou:", e);
+      if (isAbortLike) {
+        console.log("[GestaoUsuarios] /api/usuarios cancelada", {
+          reqId,
+          reason: msg || e?.name || "abort",
+        });
+        return;
+      }
 
-      if (!mountedRef.current) return;
+      console.error("[GestaoUsuarios] /api/usuarios falhou", e);
 
-      setErro(msg);
-      toast.error(msg);
-      setUsuarios([]);
-      setMeta({ total: 0, page, pageSize, pages: 1 });
-      setLive("Falha ao carregar usuários.");
-      setTimeout(() => erroRef.current?.focus?.(), 0);
+      if (!mountedRef.current || reqId !== requestSeqRef.current) return;
+
+      window.clearTimeout(errorTimerRef.current);
+      errorTimerRef.current = window.setTimeout(() => {
+        if (!mountedRef.current || reqId !== requestSeqRef.current) return;
+
+        const friendlyMsg = msg || "Erro ao carregar usuários.";
+        setErro(friendlyMsg);
+        toast.error(friendlyMsg);
+        setUsuarios([]);
+        setMeta({ total: 0, page, pageSize, pages: 1 });
+        setLive("Falha ao carregar usuários.");
+        setTimeout(() => erroRef.current?.focus?.(), 0);
+      }, 450);
     } finally {
-      if (mountedRef.current) {
+      if (mountedRef.current && reqId === requestSeqRef.current) {
         setCarregandoUsuarios(false);
         setHydrating(false);
       }
