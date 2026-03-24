@@ -1,5 +1,5 @@
 // ✅ src/pages/Login.jsx
-// premium + institucional + QR públicos + mobile-first + dark/light/system + a11y
+// premium + institucional + QR públicos + PWA + mobile-first + dark/light/system + a11y
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
@@ -28,6 +28,10 @@ import {
   Smartphone,
   HeartPulse,
   Landmark,
+  Info,
+  MonitorSmartphone,
+  BadgeCheck,
+  ArrowRight,
 } from "lucide-react";
 
 import BotaoPrimario from "../components/BotaoPrimario";
@@ -116,7 +120,7 @@ function useQrSize() {
   return size;
 }
 
-/* ---------------------- mini ui ---------------------- */
+/* ---------------------- ui blocks ---------------------- */
 function MiniStatLite({ title, value, isDark, icon: Icon }) {
   return (
     <div
@@ -183,6 +187,9 @@ function InstitutionalCard({
     amber: isDark
       ? "from-amber-500/35 via-amber-400/10 to-transparent"
       : "from-amber-500/30 via-amber-300/10 to-transparent",
+    rose: isDark
+      ? "from-rose-500/35 via-rose-400/10 to-transparent"
+      : "from-rose-500/30 via-rose-300/10 to-transparent",
   };
 
   return (
@@ -328,6 +335,21 @@ function ActionBtn({ onClick, icon: Icon, children, isDark }) {
   );
 }
 
+function FeaturePill({ children, isDark }) {
+  return (
+    <div
+      className={[
+        "rounded-2xl border px-3 py-2 text-xs font-bold",
+        isDark
+          ? "border-white/10 bg-zinc-950/35 text-zinc-200"
+          : "border-slate-200 bg-white text-slate-700 shadow-sm",
+      ].join(" ")}
+    >
+      {children}
+    </div>
+  );
+}
+
 export default function Login() {
   const [cpf, setCpf] = useState("");
   const [senha, setSenha] = useState("");
@@ -400,7 +422,6 @@ export default function Login() {
   const redirecionarPosLogin = useCallback(
     (payload) => {
       persistirSessao(payload);
-
       const destino = redirectPath || "/painel";
 
       setTimeout(() => {
@@ -560,7 +581,7 @@ export default function Login() {
             <div className="mt-5 flex flex-col items-center text-center gap-3">
               <div className="inline-flex items-center gap-2 text-white/90 text-xs font-semibold">
                 <Sparkles className="h-4 w-4" aria-hidden="true" />
-                <span>Portal oficial • acesso à plataforma institucional</span>
+                <span>Portal oficial • acesso público e autenticado</span>
               </div>
 
               <h1 className="text-2xl md:text-4xl font-extrabold text-white tracking-tight max-w-4xl">
@@ -569,9 +590,16 @@ export default function Login() {
 
               <p className="text-sm md:text-base text-white/90 max-w-3xl leading-relaxed">
                 Plataforma institucional criada em <strong>setembro de 2025</strong> para
-                apoiar inscrições, presenças, avaliações, certificados, submissões e o
-                acompanhamento das ações formativas da Escola da Saúde.
+                apoiar ações formativas, acadêmicas e administrativas da Escola da Saúde.
               </p>
+
+              <div className="mt-3 flex flex-wrap items-center justify-center gap-2 max-w-3xl">
+                <FeaturePill isDark={false}>Inscrições e eventos</FeaturePill>
+                <FeaturePill isDark={false}>Presenças</FeaturePill>
+                <FeaturePill isDark={false}>Avaliações</FeaturePill>
+                <FeaturePill isDark={false}>Certificados</FeaturePill>
+                <FeaturePill isDark={false}>Submissões e chamadas</FeaturePill>
+              </div>
 
               <div className="mt-2 sm:hidden">
                 <div className="rounded-3xl bg-white/20 backdrop-blur p-4 ring-1 ring-white/25 shadow-lg inline-flex">
@@ -607,43 +635,19 @@ export default function Login() {
         <section id="conteudo" className="mx-auto max-w-7xl px-4 sm:px-6 py-8 md:py-12">
           <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
             <aside className="xl:col-span-5 space-y-6">
-              <div
-                className={[
-                  "rounded-3xl border p-6 md:p-8 transition-colors",
-                  isDark
-                    ? "border-white/10 bg-zinc-900/50 shadow-none"
-                    : "border-slate-200 bg-white shadow-sm",
-                ].join(" ")}
+              <InstitutionalCard
+                icon={ShieldCheck}
+                title="Acesso seguro"
+                subtitle="Autenticação institucional da plataforma"
+                isDark={isDark}
+                accent="emerald"
               >
-                <div className="flex items-start gap-3">
-                  <div
-                    className={[
-                      "rounded-2xl p-3",
-                      isDark ? "bg-emerald-500/15" : "bg-emerald-100",
-                    ].join(" ")}
-                  >
-                    <ShieldCheck
-                      className={[
-                        "h-6 w-6",
-                        isDark ? "text-emerald-300" : "text-emerald-700",
-                      ].join(" ")}
-                    />
-                  </div>
+                <p>
+                  Entre com <strong>CPF e senha</strong> ou utilize o{" "}
+                  <strong>login com Google</strong> quando disponível.
+                </p>
 
-                  <div>
-                    <h2 className="text-lg font-extrabold">Acesso seguro</h2>
-                    <p
-                      className={[
-                        "mt-1 text-sm",
-                        isDark ? "text-zinc-300" : "text-slate-600",
-                      ].join(" ")}
-                    >
-                      Entre com CPF e senha. Você também pode usar o Google quando disponível.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-6 grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-3 pt-1">
                   <MiniStatLite
                     title="Sessão"
                     value="Token JWT"
@@ -651,14 +655,14 @@ export default function Login() {
                     icon={ShieldCheck}
                   />
                   <MiniStatLite
-                    title="Acesso"
-                    value="Perfis (RBAC)"
+                    title="Perfis"
+                    value="RBAC"
                     isDark={isDark}
                     icon={Landmark}
                   />
                   <MiniStatLite
                     title="Mobile"
-                    value="PWA ready"
+                    value="PWA Ready"
                     isDark={isDark}
                     icon={Smartphone}
                   />
@@ -670,17 +674,12 @@ export default function Login() {
                   />
                 </div>
 
-                <div
-                  className={[
-                    "mt-6 text-xs space-y-2",
-                    isDark ? "text-zinc-300" : "text-slate-600",
-                  ].join(" ")}
-                >
+                <div className="pt-1 text-xs space-y-2">
                   <p>• Navegação por teclado e alto contraste.</p>
                   <p>• Não compartilhe sua senha com terceiros.</p>
-                  <p>• Se o Caps Lock estiver ligado, atenção ao digitar a senha.</p>
+                  <p>• Use o link de recuperação caso não lembre sua senha.</p>
                 </div>
-              </div>
+              </InstitutionalCard>
 
               <InstitutionalCard
                 icon={Building2}
@@ -707,25 +706,22 @@ export default function Login() {
 
               <InstitutionalCard
                 icon={BookOpenCheck}
-                title="Para que serve a plataforma da Escola?"
-                subtitle="Criada em setembro/2025"
+                title="O que você encontra na plataforma?"
+                subtitle="Ambiente digital oficial da Escola da Saúde"
                 isDark={isDark}
                 accent="sky"
               >
                 <p>
-                  A plataforma foi criada em <strong>setembro de 2025</strong> com a
-                  finalidade de modernizar e organizar digitalmente os fluxos formativos,
-                  acadêmicos e administrativos da Escola da Saúde.
+                  Em um único ambiente, é possível realizar{" "}
+                  <strong>inscrições em cursos e eventos</strong>, acompanhar{" "}
+                  <strong>presenças</strong>, responder <strong>avaliações</strong>, emitir e
+                  baixar <strong>certificados</strong> e acessar outros módulos institucionais.
                 </p>
 
                 <p>
-                  Nela, é possível realizar <strong>inscrições em cursos e eventos</strong>,
-                  acompanhar <strong>presenças</strong>, responder{" "}
-                  <strong>avaliações</strong>, emitir e baixar{" "}
-                  <strong>certificados</strong>, acessar conteúdos e recursos de apoio,
-                  além de operar funcionalidades específicas ligadas a{" "}
-                  <strong>submissões, chamadas, votações e acompanhamento institucional</strong>,
-                  conforme o perfil do usuário.
+                  A disponibilidade de funcionalidades pode variar conforme o{" "}
+                  <strong>perfil de acesso</strong>, incluindo rotinas ligadas a{" "}
+                  <strong>submissões, chamadas, votações e acompanhamento institucional</strong>.
                 </p>
               </InstitutionalCard>
             </aside>
@@ -768,7 +764,7 @@ export default function Login() {
                           isDark ? "text-zinc-300" : "text-slate-500",
                         ].join(" ")}
                       >
-                        CPF + senha (ou Google). Use o link para recuperar se necessário.
+                        CPF + senha ou Google, com acesso rápido ao seu painel.
                       </p>
                     </div>
                   </div>
@@ -1118,140 +1114,201 @@ export default function Login() {
             </div>
           </div>
 
-          <section className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-6" aria-label="Informações institucionais">
+          <section className="mt-10 space-y-6" aria-label="Informações públicas da plataforma">
+            <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
+              <div>
+                <h2
+                  className={[
+                    "text-2xl font-extrabold tracking-tight",
+                    isDark ? "text-zinc-100" : "text-slate-900",
+                  ].join(" ")}
+                >
+                  Informações úteis antes de entrar
+                </h2>
+                <p
+                  className={[
+                    "mt-1 text-sm",
+                    isDark ? "text-zinc-400" : "text-slate-600",
+                  ].join(" ")}
+                >
+                  Saiba como a plataforma pode ajudar, como instalá-la como aplicativo e quais
+                  benefícios ela oferece ao usuário.
+                </p>
+              </div>
+
+              <div className="inline-flex items-center gap-2 text-xs font-bold text-emerald-700 dark:text-emerald-300">
+                <Info className="h-4 w-4" aria-hidden="true" />
+                Conteúdo público e institucional
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <InstitutionalCard
+                icon={ClipboardCheck}
+                title="Benefícios para o usuário"
+                subtitle="Mais clareza, autonomia e agilidade"
+                isDark={isDark}
+                accent="amber"
+              >
+                <p>
+                  A centralização das informações facilita o acompanhamento da vida acadêmica
+                  e formativa do usuário, reduz retrabalho e amplia a transparência sobre
+                  inscrições, pendências, presenças e certificações.
+                </p>
+
+                <div className="grid grid-cols-1 gap-2 pt-1">
+                  <FeaturePill isDark={isDark}>✔ Mais autonomia no acompanhamento</FeaturePill>
+                  <FeaturePill isDark={isDark}>✔ Menos retrabalho e mais organização</FeaturePill>
+                  <FeaturePill isDark={isDark}>✔ Acesso rápido a documentos e rotinas</FeaturePill>
+                </div>
+              </InstitutionalCard>
+
+              <InstitutionalCard
+                icon={FileText}
+                title="Finalidade institucional"
+                subtitle="Plataforma oficial da Escola da Saúde"
+                isDark={isDark}
+                accent="violet"
+              >
+                <p>
+                  A plataforma foi criada para reunir em um único ambiente digital os fluxos
+                  acadêmicos e administrativos da Escola da Saúde, tornando os processos mais
+                  claros, organizados e acessíveis.
+                </p>
+
+                <p>
+                  Isso fortalece a comunicação com os usuários e amplia a eficiência no
+                  acompanhamento das ações formativas da instituição.
+                </p>
+              </InstitutionalCard>
+
+              <InstitutionalCard
+                icon={MonitorSmartphone}
+                title="Instale como aplicativo (PWA)"
+                subtitle="Mais rápido, prático e fácil de acessar"
+                isDark={isDark}
+                accent="emerald"
+              >
+                <p>
+                  A plataforma pode ser instalada como um aplicativo em dispositivos
+                  compatíveis, sem precisar de loja, com acesso mais rápido e experiência mais
+                  fluida no dia a dia.
+                </p>
+
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  <FeaturePill isDark={isDark}>⚡ Acesso rápido</FeaturePill>
+                  <FeaturePill isDark={isDark}>📲 Tela cheia</FeaturePill>
+                  <FeaturePill isDark={isDark}>🚀 Mais fluidez</FeaturePill>
+                  <FeaturePill isDark={isDark}>🔔 Notificações</FeaturePill>
+                </div>
+              </InstitutionalCard>
+            </div>
+
             <InstitutionalCard
-              icon={GraduationCap}
-              title="Finalidade institucional da Escola da Saúde"
-              subtitle="Formação, integração ensino-serviço e qualificação do SUS"
+              icon={Smartphone}
+              title="Como instalar a plataforma como aplicativo"
+              subtitle="Passo a passo para celular, tablet e computador"
               isDark={isDark}
-              accent="violet"
+              accent="rose"
             >
-              <p>
-                A Escola da Saúde desenvolve e apoia ações de{" "}
-                <strong>qualificação dos trabalhadores</strong>, fomenta práticas de{" "}
-                <strong>Educação Permanente em Saúde</strong> e fortalece a integração entre
-                formação, serviço e gestão.
-              </p>
+              <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 font-extrabold">
+                    <span>🍎</span>
+                    <span>iPhone / iPad (Safari)</span>
+                  </div>
+                  <ul className="list-disc ml-5 space-y-1 text-sm">
+                    <li>Acesse <strong>{SITE_URL}</strong></li>
+                    <li>Toque em <strong>Compartilhar</strong></li>
+                    <li>Selecione <strong>Adicionar à Tela de Início</strong></li>
+                    <li>Confirme em <strong>Adicionar</strong></li>
+                  </ul>
+                </div>
 
-              <p>
-                Também atua na organização dos <strong>estágios das instituições de ensino</strong>{" "}
-                nas unidades de saúde via <strong>COAPES</strong>, no acompanhamento dos{" "}
-                <strong>Programas de Residência</strong> e no apoio aos fluxos do{" "}
-                <strong>Comitê de Ética em Pesquisa</strong>, entre outras atribuições
-                institucionais.
-              </p>
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 font-extrabold">
+                    <span>📱</span>
+                    <span>Android (Chrome)</span>
+                  </div>
+                  <ul className="list-disc ml-5 space-y-1 text-sm">
+                    <li>Acesse <strong>{SITE_URL}</strong></li>
+                    <li>Toque no menu <strong>⋮</strong></li>
+                    <li>Escolha <strong>Instalar app</strong> ou <strong>Adicionar à tela inicial</strong></li>
+                    <li>Confirme em <strong>Instalar</strong></li>
+                  </ul>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 font-extrabold">
+                    <span>💻</span>
+                    <span>Computador (Chrome / Edge)</span>
+                  </div>
+                  <ul className="list-disc ml-5 space-y-1 text-sm">
+                    <li>Acesse <strong>{SITE_URL}</strong></li>
+                    <li>Clique no ícone <strong>Instalar</strong> na barra de endereço</li>
+                    <li>Confirme em <strong>Instalar</strong></li>
+                    <li>Abra a plataforma em janela própria</li>
+                  </ul>
+                </div>
+              </div>
+
+              <div
+                className={[
+                  "mt-6 rounded-2xl border p-4",
+                  isDark
+                    ? "border-white/10 bg-zinc-950/35"
+                    : "border-slate-200 bg-slate-50",
+                ].join(" ")}
+              >
+                <div className="flex items-start gap-3">
+                  <div
+                    className={[
+                      "rounded-xl p-2",
+                      isDark ? "bg-white/5 text-zinc-100" : "bg-white text-slate-700",
+                    ].join(" ")}
+                  >
+                    <BadgeCheck className="h-5 w-5" aria-hidden="true" />
+                  </div>
+
+                  <div className="space-y-2 text-sm">
+                    <p className="font-extrabold">Como saber se instalou corretamente?</p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <FeaturePill isDark={isDark}>✔ O ícone aparece na tela inicial</FeaturePill>
+                      <FeaturePill isDark={isDark}>✔ A plataforma abre em janela própria</FeaturePill>
+                      <FeaturePill isDark={isDark}>✔ A navegação fica mais direta</FeaturePill>
+                      <FeaturePill isDark={isDark}>✔ O acesso fica mais prático no dia a dia</FeaturePill>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4 flex flex-wrap gap-2 text-sm">
+                  <div
+                    className={[
+                      "inline-flex items-center gap-2 rounded-2xl px-3 py-2 font-bold",
+                      isDark ? "bg-emerald-500/10 text-emerald-300" : "bg-emerald-50 text-emerald-700",
+                    ].join(" ")}
+                  >
+                    <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                    Android: ⋮ → Instalar app
+                  </div>
+
+                  <div
+                    className={[
+                      "inline-flex items-center gap-2 rounded-2xl px-3 py-2 font-bold",
+                      isDark ? "bg-sky-500/10 text-sky-300" : "bg-sky-50 text-sky-700",
+                    ].join(" ")}
+                  >
+                    <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                    iPhone: Compartilhar → Tela de Início
+                  </div>
+                </div>
+
+                <p className="mt-4 text-sm">
+                  📍 Em breve, após a finalização do processo de publicação, o aplicativo
+                  também estará disponível na <strong>Google Play Store</strong>.
+                </p>
+              </div>
             </InstitutionalCard>
-
-            <InstitutionalCard
-              icon={ClipboardCheck}
-              title="O que é possível fazer na plataforma?"
-              subtitle="Ambiente digital oficial da Escola da Saúde"
-              isDark={isDark}
-              accent="amber"
-            >
-              <p>
-                A plataforma foi criada em <strong>setembro de 2025</strong> para reunir em
-                um único ambiente digital os principais fluxos acadêmicos e administrativos da
-                Escola da Saúde.
-              </p>
-
-              <p>
-                Nela, é possível realizar <strong>inscrições em eventos e cursos</strong>,
-                acompanhar <strong>presenças</strong>, preencher{" "}
-                <strong>avaliações</strong>, emitir e baixar{" "}
-                <strong>certificados</strong>, acessar materiais e operar funcionalidades
-                relacionadas a <strong>submissões, chamadas, votações e outros módulos</strong>,
-                de acordo com o perfil de acesso.
-              </p>
-            </InstitutionalCard>
-
-            <InstitutionalCard
-              icon={FileText}
-              title="Benefícios para o usuário"
-              subtitle="Mais clareza, autonomia e agilidade"
-              isDark={isDark}
-              accent="sky"
-            >
-              <p>
-                A centralização das informações facilita o acompanhamento da vida acadêmica e
-                formativa do usuário, reduz retrabalho e amplia a transparência sobre
-                inscrições, pendências, presenças e certificações.
-              </p>
-
-              <p>
-                O acesso público a estas informações nesta tela de entrada permite que o
-                usuário conheça a finalidade institucional da Escola e compreenda melhor o
-                papel da plataforma antes mesmo de autenticar.
-              </p>
-            </InstitutionalCard>
-
-            <InstitutionalCard
-  icon={Smartphone}
-  title="Use a plataforma como aplicativo (PWA)"
-  subtitle="Instalação rápida em celular, tablet e computador"
-  isDark={isDark}
-  accent="emerald"
->
-  <p>
-    A plataforma da Escola da Saúde pode ser instalada como um aplicativo
-    (<strong>PWA</strong>) em dispositivos compatíveis, oferecendo acesso mais
-    rápido, visual em tela cheia e melhor experiência de uso no dia a dia.
-  </p>
-
-  <p>
-    Depois de instalada, ela pode funcionar como um app comum, facilitando o
-    acesso a inscrições, presenças, avaliações, certificados e outras rotinas
-    importantes da plataforma.
-  </p>
-
-  <div className="mt-4 space-y-1 text-sm">
-    <p>✔ Acesso direto pela tela inicial</p>
-    <p>✔ Abre sem a barra do navegador</p>
-    <p>✔ Navegação mais rápida e prática</p>
-    <p>✔ Melhor experiência em celular, tablet e computador</p>
-  </div>
-
-  <h4 className="font-extrabold mt-5">🍎 iPhone / iPad (Safari)</h4>
-  <ul className="list-disc ml-6 space-y-1">
-    <li>Acesse: <strong>https://escoladasaude.vercel.app</strong></li>
-    <li>Toque em <strong>Compartilhar</strong></li>
-    <li>Selecione <strong>Adicionar à Tela de Início</strong></li>
-    <li>Confirme em <strong>Adicionar</strong></li>
-  </ul>
-
-  <h4 className="font-extrabold mt-5">📱 Android (Chrome)</h4>
-  <ul className="list-disc ml-6 space-y-1">
-    <li>Acesse: <strong>https://escoladasaude.vercel.app</strong></li>
-    <li>Toque no menu <strong>⋮</strong></li>
-    <li>Selecione <strong>Instalar app</strong> ou <strong>Adicionar à tela inicial</strong></li>
-    <li>Confirme em <strong>Instalar</strong></li>
-  </ul>
-
-  <h4 className="font-extrabold mt-5">💻 Computador (Chrome / Edge)</h4>
-  <ul className="list-disc ml-6 space-y-1">
-    <li>Acesse: <strong>https://escoladasaude.vercel.app</strong></li>
-    <li>Clique no ícone <strong>Instalar</strong> na barra de endereço</li>
-    <li>Confirme em <strong>Instalar</strong></li>
-  </ul>
-
-  <h4 className="font-extrabold mt-5">✅ Como saber se instalou corretamente?</h4>
-  <ul className="list-disc ml-6 space-y-1">
-    <li>✔ O ícone aparece na tela inicial ou área de trabalho</li>
-    <li>✔ A plataforma abre em janela própria</li>
-    <li>✔ A navegação fica mais direta e prática</li>
-  </ul>
-
-  <div className="mt-5 rounded-2xl bg-slate-100 dark:bg-zinc-800 p-4">
-    <p className="font-extrabold text-sm mb-1">📌 Atalho rápido</p>
-    <p className="text-sm">Android → <strong>⋮ → Instalar app</strong></p>
-    <p className="text-sm">iPhone → <strong>Compartilhar → Adicionar à Tela de Início</strong></p>
-  </div>
-
-  <p className="mt-5">
-    📍 Em breve, após a finalização do processo de publicação, o aplicativo
-    também estará disponível na <strong>Google Play Store</strong>.
-  </p>
-</InstitutionalCard>
           </section>
         </section>
       </main>
