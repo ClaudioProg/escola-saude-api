@@ -51,12 +51,35 @@ if (isHttpUrl(API_BASE_URL) && !(typeof window !== "undefined" && isLocalHost(ne
   }
 })();
 
+export async function apiAuthMe(opts = {}) {
+  const me = await apiGet("/auth/me", {
+    auth: true,
+    on401: "silent",
+    on403: "silent",
+    suppressGlobalError: true,
+    ...opts,
+  });
+
+  if (me?.usuario) {
+    persistAuthSession(getToken(), me.usuario);
+  }
+
+  return me;
+}
+
 // ───────────────────────────────────────────────────────────────────
 // Token & headers
 // ───────────────────────────────────────────────────────────────────
+const AUTH_STORAGE_KEYS = ["token", "authToken", "access_token"];
+const USER_STORAGE_KEYS = ["usuario", "perfil"];
+
 const getTokenRaw = () => {
   try {
-    return localStorage.getItem("token");
+    for (const key of AUTH_STORAGE_KEYS) {
+      const value = localStorage.getItem(key);
+      if (value) return value;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -72,6 +95,59 @@ const getToken = () => {
     return null;
   }
 };
+
+export function clearAuthSession() {
+  try {
+    AUTH_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+    USER_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+    setPerfilIncompletoFlag(null);
+    window.dispatchEvent(new CustomEvent("auth:changed", { detail: { authenticated: false } }));
+  } catch {}
+}
+
+export function persistAuthSession(token, usuario = null) {
+  try {
+    if (token) {
+      localStorage.setItem("token", String(token).replace(/^Bearer\s+/i, "").trim());
+    }
+    if (usuario) {
+      localStorage.setItem("usuario", JSON.stringify(usuario));
+      if (usuario?.perfil) {
+        const perfis = Array.isArray(usuario.perfil)
+          ? usuario.perfil
+          : String(usuario.perfil).split(",").map((p) => p.trim()).filter(Boolean);
+        localStorage.setItem("perfil", perfis.join(","));
+      }
+    }
+    window.dispatchEvent(new CustomEvent("auth:changed", { detail: { authenticated: true, usuario } }));
+  } catch {}
+}
+
+function isPublicAppPath(pathname = "") {
+  const path = String(pathname || "");
+  return (
+    path === "/" ||
+    path.startsWith("/login") ||
+    path.startsWith("/cadastro") ||
+    path.startsWith("/recuperar-senha") ||
+    path.startsWith("/redefinir-senha") ||
+    path.startsWith("/validar") ||
+    path.startsWith("/presenca") ||
+    path.startsWith("/historico") ||
+    path.startsWith("/privacidade")
+  );
+}
+
+function redirectToLogin(nextPath = null) {
+  if (typeof window === "undefined") return;
+
+  const current = nextPath || currentPathWithQuery();
+
+  if (isPublicAppPath(window.location.pathname)) return;
+
+  const next = encodeURIComponent(current || "/");
+  window.location.replace(`/login?next=${next}`);
+}
 
 // 🆕 id de requisição (útil em logs/monitoramento)
 function newRequestId() {
@@ -373,32 +449,34 @@ async function handle(
   try { data = text ? JSON.parse(text) : null; } catch { data = null; }
 
   if (status === 401) {
-    if (on401 === "redirect") {
-      try {
-        // limpa apenas chaves de auth
-        localStorage.removeItem("token");
-        localStorage.removeItem("usuario");
-        localStorage.removeItem("perfil");
-        setPerfilIncompletoFlag(null);
-      } catch {}
-      if (typeof window !== "undefined" && !location.pathname.startsWith("/login")) {
-        const next = encodeURIComponent(currentPathWithQuery());
-        window.location.assign(`/login?next=${next}`);
-      }
-    }
-    throw new ApiError(data?.erro || data?.message || "Não autorizado (401)", {
-      status, url, data: data ?? text,
-    });
+  if (on401 === "redirect") {
+    clearAuthSession();
+    redirectToLogin();
   }
 
-  if (status === 403) {
-    if (on403 === "redirect" && typeof window !== "undefined" && location.pathname !== "/dashboard") {
-      window.location.assign("/dashboard");
-    }
-    throw new ApiError(data?.erro || data?.message || "Sem permissão (403)", {
-      status, url, data: data ?? text,
-    });
+  const err = new ApiError(data?.erro || data?.message || "Não autorizado (401)", {
+    status,
+    url,
+    data: data ?? text,
+  });
+  err.code = "AUTH_401";
+  err.sessionExpired = data?.sessionExpired === true;
+  throw err;
+}
+
+if (status === 403) {
+  if (on403 === "redirect" && typeof window !== "undefined" && !isPublicAppPath(window.location.pathname)) {
+    window.location.replace("/painel");
   }
+
+  const err = new ApiError(data?.erro || data?.message || "Sem permissão (403)", {
+    status,
+    url,
+    data: data ?? text,
+  });
+  err.code = "AUTH_403";
+  throw err;
+}
 
   if (!res.ok) {
     const msg = data?.erro || data?.message || text || `HTTP ${status}`;
@@ -799,26 +877,35 @@ export async function apiGetResponse(path, opts = {}) {
   syncPerfilHeader(res);
 
   if (res.status === 401) {
-    if (on401 === "redirect") {
-      try {
-        localStorage.removeItem("token");
-        localStorage.removeItem("usuario");
-        localStorage.removeItem("perfil");
-        setPerfilIncompletoFlag(null);
-      } catch {}
-      if (typeof window !== "undefined" && !location.pathname.startsWith("/login")) {
-        const next = encodeURIComponent(currentPathWithQuery());
-        window.location.assign(`/login?next=${next}`);
-      }
-    }
-    throw new Error("Não autorizado (401)");
+  if (on401 === "redirect") {
+    clearAuthSession();
+    redirectToLogin();
   }
-  if (res.status === 403) {
-    if (on403 === "redirect" && typeof window !== "undefined") {
-      window.location.assign("/dashboard");
-    }
-    throw new Error("Sem permissão (403)");
+
+  const err = new ApiError("Não autorizado (401)", {
+    status: 401,
+    url,
+  });
+  err.code = "AUTH_401";
+  throw err;
+}
+
+if (res.status === 403) {
+  if (
+    on403 === "redirect" &&
+    typeof window !== "undefined" &&
+    !isPublicAppPath(window.location.pathname)
+  ) {
+    window.location.replace("/painel");
   }
+
+  const err = new ApiError("Sem permissão (403)", {
+    status: 403,
+    url,
+  });
+  err.code = "AUTH_403";
+  throw err;
+}
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
     try {
@@ -905,26 +992,35 @@ export async function apiPostFile(path, body, opts = {}) {
   syncPerfilHeader(res);
 
   if (res.status === 401) {
-    if (on401 === "redirect") {
-      try {
-        localStorage.removeItem("token");
-        localStorage.removeItem("usuario");
-        localStorage.removeItem("perfil");
-        setPerfilIncompletoFlag(null);
-      } catch {}
-      if (typeof window !== "undefined" && !location.pathname.startsWith("/login")) {
-        const next = encodeURIComponent(currentPathWithQuery());
-        window.location.assign(`/login?next=${next}`);
-      }
-    }
-    throw new Error("Não autorizado (401)");
+  if (on401 === "redirect") {
+    clearAuthSession();
+    redirectToLogin();
   }
-  if (res.status === 403) {
-    if (on403 === "redirect" && typeof window !== "undefined") {
-      window.location.assign("/dashboard");
-    }
-    throw new Error("Sem permissão (403)");
+
+  const err = new ApiError("Não autorizado (401)", {
+    status: 401,
+    url,
+  });
+  err.code = "AUTH_401";
+  throw err;
+}
+
+if (res.status === 403) {
+  if (
+    on403 === "redirect" &&
+    typeof window !== "undefined" &&
+    !isPublicAppPath(window.location.pathname)
+  ) {
+    window.location.replace("/painel");
   }
+
+  const err = new ApiError("Sem permissão (403)", {
+    status: 403,
+    url,
+  });
+  err.code = "AUTH_403";
+  throw err;
+}
 
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
@@ -985,26 +1081,35 @@ export async function apiGetFile(path, opts = {}) {
   syncPerfilHeader(res);
 
   if (res.status === 401) {
-    if (on401 === "redirect") {
-      try {
-        localStorage.removeItem("token");
-        localStorage.removeItem("usuario");
-        localStorage.removeItem("perfil");
-        setPerfilIncompletoFlag(null);
-      } catch {}
-      if (typeof window !== "undefined" && !location.pathname.startsWith("/login")) {
-        const next = encodeURIComponent(currentPathWithQuery());
-        window.location.assign(`/login?next=${next}`);
-      }
-    }
-    throw new Error("Não autorizado (401)");
+  if (on401 === "redirect") {
+    clearAuthSession();
+    redirectToLogin();
   }
-  if (res.status === 403) {
-    if (on403 === "redirect" && typeof window !== "undefined") {
-      window.location.assign("/dashboard");
-    }
-    throw new Error("Sem permissão (403)");
+
+  const err = new ApiError("Não autorizado (401)", {
+    status: 401,
+    url,
+  });
+  err.code = "AUTH_401";
+  throw err;
+}
+
+if (res.status === 403) {
+  if (
+    on403 === "redirect" &&
+    typeof window !== "undefined" &&
+    !isPublicAppPath(window.location.pathname)
+  ) {
+    window.location.replace("/painel");
   }
+
+  const err = new ApiError("Sem permissão (403)", {
+    status: 403,
+    url,
+  });
+  err.code = "AUTH_403";
+  throw err;
+}
 
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
@@ -1213,7 +1318,9 @@ export async function apiChamadaModeloAdminMeta(chamadaId) {
 // Compat: facade estilo axios + default export
 // ───────────────────────────────────────────────────────────────────
 export { API_BASE_URL };
-export function isLoggedIn() { return !!getToken(); }  // ←🆕 exposto p/ o router
+export function isLoggedIn() {
+  return !!getToken();
+}
 
 export const api = {
   get: (path, opts) => apiGet(path, opts),
@@ -1225,7 +1332,9 @@ export const api = {
   uploadPoster: (submissaoId, fileOrFormData, opts) => apiUploadPoster(submissaoId, fileOrFormData, opts),
   request: ({ url, method = "GET", data, ...opts } = {}) =>
     doFetch(url, { method, body: data, ...opts }),
-  // 🆕 agrupamento semântico para o modelo de banner por chamada
+  authMe: (opts) => apiAuthMe(opts),
+  clearSession: () => clearAuthSession(),
+  persistSession: (token, usuario) => persistAuthSession(token, usuario),
   chamadaModelo: {
     exists: (id) => apiChamadaModeloExists(id),
     download: (id) => apiChamadaModeloDownload(id),

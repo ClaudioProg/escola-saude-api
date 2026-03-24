@@ -126,6 +126,10 @@ router.use("/public", lookupsPublicRoute);
 router.use("/login", loginRoute);
 router.use("/perfil", perfilRoute);
 
+const authGoogleRoute = require("../auth/authGoogle");
+
+router.use("/auth", authGoogleRoute);
+
 /* =========================
    Upload
 ========================= */

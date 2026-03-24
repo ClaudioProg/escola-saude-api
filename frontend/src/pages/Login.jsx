@@ -1,7 +1,4 @@
 // ✅ src/pages/Login.jsx (premium + mobile-first + dark/light/system + a11y + UX refinada)
-// - mantém: CPF + senha + GoogleLogin (quando houver), redirect seguro, validações, RBAC via storage
-// - melhora: layout/hero, logo mobile, acessibilidade (aria), feedbacks, “Enter” fluido, foco inteligente
-// - corrige: gradiente com “via” duplicado, imports não usados
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
@@ -21,7 +18,7 @@ import {
 
 import BotaoPrimario from "../components/BotaoPrimario";
 import CarregandoSkeleton from "../components/CarregandoSkeleton";
-import { apiPost } from "../services/api";
+import api, { apiPost } from "../services/api";
 
 import useEscolaTheme from "../hooks/useEscolaTheme";
 import ThemeTogglePills from "../components/ThemeTogglePills";
@@ -35,9 +32,11 @@ function aplicarMascaraCPF(valor) {
     .replace(/(\d{3})(\d)/, "$1.$2")
     .replace(/(\d{3})(\d{1,2})$/, "$1-$2");
 }
+
 function apenasDigitos(c) {
   return String(c || "").replace(/\D/g, "");
 }
+
 function cpfChecksumValido(cpf) {
   const s = apenasDigitos(cpf);
   if (s.length !== 11) return false;
@@ -54,12 +53,13 @@ function cpfChecksumValido(cpf) {
   const d2 = calc(s, 11);
   return d1 === parseInt(s[9], 10) && d2 === parseInt(s[10], 10);
 }
+
 function validarCPF(c) {
-  // aceita com máscara OU só dígitos (colagem sem pontuação)
   const digits = apenasDigitos(c);
   if (digits.length !== 11) return false;
   return cpfChecksumValido(digits);
 }
+
 function maskOkOuFormatar(value) {
   const digits = apenasDigitos(value);
   return aplicarMascaraCPF(digits);
@@ -101,18 +101,17 @@ export default function Login() {
 
   const hasGoogleClient = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID);
 
-  // ✅ theme (light/dark/system)
-  const { theme, setTheme, isDark } = useEscolaTheme();
+  const { isDark } = useEscolaTheme();
 
   const redirectPath = useMemo(() => {
     try {
       const sp = new URLSearchParams(location.search);
-      const raw = sp.get("redirect") || "";
-      if (!raw) return null;
+      const raw = sp.get("next") || sp.get("redirect") || "";
+      if (!raw) return "/painel";
       if (raw.startsWith("/") && !raw.startsWith("//")) return raw;
-      return null;
+      return "/painel";
     } catch {
-      return null;
+      return "/painel";
     }
   }, [location.search]);
 
@@ -122,10 +121,11 @@ export default function Login() {
 
   useEffect(() => {
     const token = localStorage.getItem("token");
-    if (location.pathname === "/login" && token) navigate("/", { replace: true });
-  }, [navigate, location]);
+    if (location.pathname === "/login" && token) {
+      navigate(redirectPath || "/painel", { replace: true });
+    }
+  }, [navigate, location.pathname, redirectPath]);
 
-  // atalho: "/" foca CPF
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -141,60 +141,78 @@ export default function Login() {
     const { token, usuario } = payload || {};
     if (!token || !usuario) throw new Error("Resposta de login inválida.");
 
-    const perfilArray = Array.isArray(usuario.perfil)
-      ? usuario.perfil
-      : typeof usuario.perfil === "string"
-      ? usuario.perfil.split(",").map((p) => p.trim()).filter(Boolean)
-      : [];
+    api.persistSession(token, usuario);
 
-    localStorage.setItem("token", token);
-    localStorage.setItem("nome", usuario.nome || "");
-    localStorage.setItem("perfil", JSON.stringify(perfilArray));
-    localStorage.setItem("usuario", JSON.stringify({ ...usuario, perfil: perfilArray }));
+    window.dispatchEvent(
+      new CustomEvent("auth:changed", {
+        detail: {
+          authenticated: true,
+          usuario,
+        },
+      })
+    );
   }, []);
+
+  const redirecionarPosLogin = useCallback(
+    (payload) => {
+      persistirSessao(payload);
+
+      const destino = redirectPath || "/painel";
+
+      setTimeout(() => {
+        navigate(destino, { replace: true });
+      }, 0);
+    },
+    [navigate, persistirSessao, redirectPath]
+  );
 
   const validarFormulario = useCallback(() => {
     setErroCpf("");
     setErroSenha("");
 
     const cpfDigits = apenasDigitos(cpf);
+
     if (!validarCPF(cpfDigits)) {
       setErroCpf("CPF inválido. Verifique os dígitos.");
       cpfRef.current?.focus();
       return false;
     }
+
     if (!senha) {
       setErroSenha("Digite sua senha.");
       senhaRef.current?.focus();
       return false;
     }
+
     if (senha.length < 8) {
       setErroSenha("A senha deve conter pelo menos 8 caracteres.");
       senhaRef.current?.focus();
       return false;
     }
+
     return true;
   }, [cpf, senha]);
 
   async function handleLogin(e) {
     e.preventDefault();
     if (loading || loadingGoogle) return;
-
     if (!validarFormulario()) return;
 
     setLoading(true);
+
     try {
       const payload = await apiPost(
         "/login",
         { cpf: apenasDigitos(cpf), senha },
         { auth: false, on401: "silent" }
       );
-      persistirSessao(payload);
+
       toast.success("✅ Login realizado com sucesso!");
-      navigate(redirectPath || "/", { replace: true });
+      redirecionarPosLogin(payload);
     } catch (err) {
       const serverMsg =
         err?.data?.erro || err?.data?.message || err?.message || "Erro ao fazer login.";
+
       setSenha("");
       setMostrarSenha(false);
       senhaRef.current?.focus();
@@ -212,18 +230,23 @@ export default function Login() {
     if (loadingGoogle || loading) return;
 
     setLoadingGoogle(true);
+
     try {
       const payload = await apiPost(
         "/auth/google",
         { credential: credentialResponse.credential },
         { auth: false, on401: "silent" }
       );
-      persistirSessao(payload);
+
       toast.success("✅ Login com Google realizado com sucesso!");
-      navigate(redirectPath || "/", { replace: true });
+      redirecionarPosLogin(payload);
     } catch (err) {
       const serverMsg =
-        err?.data?.erro || err?.data?.message || err?.message || "Erro ao fazer login com Google.";
+        err?.data?.erro ||
+        err?.data?.message ||
+        err?.message ||
+        "Erro ao fazer login com Google.";
+
       toast.error(serverMsg);
     } finally {
       setLoadingGoogle(false);
@@ -239,32 +262,25 @@ export default function Login() {
         isDark ? "bg-gradient-to-b from-zinc-950 to-zinc-900 text-zinc-100" : "bg-slate-50 text-slate-900",
       ].join(" ")}
     >
-      {/* Skip link (a11y) */}
       <a
         href="#conteudo"
-        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50
-                   rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow"
       >
         Pular para o conteúdo
       </a>
 
-      {/* Header hero */}
       <header className="relative overflow-hidden">
-        {/* Gradiente verde → azul → roxo (corrigido: apenas 1 via) */}
         <div className="absolute inset-0 bg-gradient-to-br from-emerald-600 via-sky-700 to-violet-600" />
         {isDark && <div className="absolute inset-0 bg-black/35" />}
 
-        {/* blobs decorativos */}
         <div className="absolute -top-24 -left-24 h-72 w-72 rounded-full bg-white/25 blur-3xl" />
         <div className="absolute -bottom-28 -right-28 h-80 w-80 rounded-full bg-white/20 blur-3xl" />
 
         <div className="relative max-w-7xl mx-auto px-4 sm:px-6 py-10 md:py-12">
-          {/* Toggle tema */}
           <div className="flex justify-end sm:justify-end">
             <ThemeTogglePills variant="glass" />
           </div>
 
-          {/* Header central */}
           <div className="mt-5 flex flex-col items-center text-center gap-3">
             <div className="inline-flex items-center gap-2 text-white/90 text-xs font-semibold">
               <Sparkles className="h-4 w-4" aria-hidden="true" />
@@ -279,7 +295,6 @@ export default function Login() {
               Acesse sua conta para inscrições, presenças, avaliações e certificados.
             </p>
 
-            {/* logo mobile */}
             <div className="mt-2 sm:hidden">
               <div className="rounded-3xl bg-white/20 backdrop-blur p-4 ring-1 ring-white/25 shadow-lg inline-flex">
                 <img
@@ -291,13 +306,11 @@ export default function Login() {
               </div>
             </div>
 
-            {/* dica atalho */}
             <p className="text-[11px] text-white/80">
               Dica: pressione <strong>/</strong> para focar o CPF.
             </p>
           </div>
 
-          {/* logo desktop à esquerda */}
           <div className="absolute left-4 sm:left-6 top-1/2 -translate-y-1/2 hidden sm:flex">
             <div className="rounded-3xl bg-white/25 backdrop-blur p-5 ring-1 ring-white/30 shadow-lg">
               <img
@@ -313,10 +326,8 @@ export default function Login() {
         <div className="h-px w-full bg-white/25" aria-hidden="true" />
       </header>
 
-      {/* Conteúdo */}
       <section id="conteudo" className="mx-auto max-w-6xl px-4 sm:px-6 py-8 md:py-12">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-          {/* Painel lateral (desktop) */}
           <aside className="hidden lg:block lg:col-span-5">
             <div
               className={[
@@ -336,7 +347,6 @@ export default function Login() {
                 </div>
               </div>
 
-              {/* Ministats */}
               <div className="mt-6 grid grid-cols-2 gap-3">
                 <MiniStatLite title="Sessão" value="Token JWT" isDark={isDark} />
                 <MiniStatLite title="Acesso" value="Perfis (RBAC)" isDark={isDark} />
@@ -352,7 +362,6 @@ export default function Login() {
             </div>
           </aside>
 
-          {/* Card login */}
           <div className="lg:col-span-7">
             <div
               className={[
@@ -360,7 +369,6 @@ export default function Login() {
                 isDark ? "border-white/10 bg-zinc-900/50 shadow-none" : "border-slate-200 bg-white shadow-xl",
               ].join(" ")}
             >
-              {/* topo */}
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0">
                   <div
@@ -398,7 +406,6 @@ export default function Login() {
                 aria-label="Formulário de Login"
                 aria-busy={loading || loadingGoogle ? "true" : "false"}
               >
-                {/* CPF */}
                 <div>
                   <label htmlFor="cpf" className="block text-sm font-semibold">
                     CPF
@@ -458,7 +465,6 @@ export default function Login() {
                   </div>
                 </div>
 
-                {/* Senha */}
                 <div>
                   <label htmlFor="senha" className="block text-sm font-semibold">
                     Senha
@@ -550,7 +556,6 @@ export default function Login() {
                   </div>
                 </div>
 
-                {/* CTA principal */}
                 <BotaoPrimario
                   type="submit"
                   className="w-full flex justify-center items-center gap-2"
@@ -563,7 +568,6 @@ export default function Login() {
                   {loading ? "Entrando..." : "Entrar"}
                 </BotaoPrimario>
 
-                {/* Google */}
                 <div className="pt-2">
                   <div className={["text-center text-xs font-bold", isDark ? "text-zinc-300" : "text-slate-600"].join(" ")}>
                     ou
@@ -605,7 +609,6 @@ export default function Login() {
                   presença e certificação, conforme diretrizes institucionais.
                 </p>
 
-                {/* SR status */}
                 <div className="sr-only" aria-live="polite">
                   {loading ? "Processando login" : ""}
                 </div>

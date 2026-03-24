@@ -1,4 +1,4 @@
-// ✅ src/App.jsx (premium, a11y, robusto e com aliases/guardas)
+// ✅ src/App.jsx (premium, robusto, a11y, auth-friendly)
 // - basename dinâmico (suporte a subpasta)
 // - announcer de rota (a11y)
 // - destrava scroll ao trocar de rota (fix modal)
@@ -8,6 +8,7 @@
 // - PrivateShell aplica AppShell + PrivateRoute
 // - Suspense fallback acessível
 // - aliases coerentes para HomeEscola (painel oficial)
+// - evita montar conteúdo privado sem sessão válida
 
 import {
   BrowserRouter,
@@ -21,7 +22,7 @@ import {
   Outlet,
 } from "react-router-dom";
 import { Suspense, lazy, useEffect, useState } from "react";
-import { RefreshCw, Smartphone } from "lucide-react";
+import { RefreshCw, Smartphone, ShieldCheck } from "lucide-react";
 
 import PrivateRoute from "./components/PrivateRoute";
 import EscolaAppShell from "./layout/EscolaAppShell";
@@ -86,23 +87,25 @@ const ManualUsuario = lazy(() => import("./pages/usuario/Manual"));
 // 🆕 Páginas públicas
 const Privacidade = lazy(() => import("./pages/Privacidade"));
 
-// ✅ Painel oficial pós-login (substitui “DashboardUsuario”)
+// ✅ Painel oficial pós-login
 const HomeEscola = lazy(() => import("./pages/HomeEscola"));
 
 // 🆕 Admin – Votações
 const AdminVotacao = lazy(() => import("./pages/AdminVotacao"));
 
-// ⚠️ AdminSubmissao (wrapper usa :chamadaId)
+// ⚠️ AdminSubmissao
 const AdminSubmissao = lazy(() => import("./pages/AdminSubmissao"));
 
 /* A11y: Announcer de mudanças de rota */
 function RouteChangeAnnouncer() {
   const location = useLocation();
   const [message, setMessage] = useState("Carregado");
+
   useEffect(() => {
     const path = location.pathname.replace(/^\/+/, "") || "início";
     setMessage(`Página carregada: ${path}`);
   }, [location]);
+
   return (
     <div aria-live="polite" aria-atomic="true" className="sr-only">
       {message}
@@ -113,6 +116,7 @@ function RouteChangeAnnouncer() {
 /* Hotfix global: destrava scroll preso ao trocar de rota */
 function ScrollUnlockOnRouteChange() {
   const location = useLocation();
+
   useEffect(() => {
     const unlock = () => {
       const html = document.documentElement;
@@ -129,6 +133,7 @@ function ScrollUnlockOnRouteChange() {
         const top = parseInt(body.style.top || "0", 10) || 0;
         body.style.position = "";
         body.style.top = "";
+
         try {
           window.scrollTo({ top: -top, behavior: "instant" });
         } catch {
@@ -139,14 +144,17 @@ function ScrollUnlockOnRouteChange() {
 
     unlock();
     const t = setTimeout(unlock, 0);
+
     return () => clearTimeout(t);
   }, [location.key]);
+
   return null;
 }
 
 /* UX: Scroll para o topo em cada navegação */
 function ScrollToTop() {
   const { pathname } = useLocation();
+
   useEffect(() => {
     try {
       window.scrollTo({ top: 0, behavior: "instant" });
@@ -154,22 +162,25 @@ function ScrollToTop() {
       window.scrollTo(0, 0);
     }
   }, [pathname]);
+
   return null;
 }
 
-// Mantém /validar
+/* Mantém /validar */
 function ValidarWrapper() {
   return <ValidarCertificado />;
 }
 
-/** Alias para URLs antigas .html */
+/* Alias para URLs antigas .html */
 function HtmlAliasRedirect() {
   const nav = useNavigate();
   const loc = useLocation();
+
   useEffect(() => {
     const semHtml = loc.pathname.replace(/\.html$/, "");
     nav(`${semHtml}${loc.search}`, { replace: true });
   }, [loc.pathname, loc.search, nav]);
+
   return (
     <div className="min-h-[60vh] flex items-center justify-center text-sm text-gray-600 dark:text-gray-300">
       Redirecionando…
@@ -177,7 +188,7 @@ function HtmlAliasRedirect() {
   );
 }
 
-/** Wrapper legado para QR antigo com ?codigo= */
+/* Wrapper legado para QR antigo com ?codigo= */
 function ValidarPresencaRouter() {
   const [sp] = useSearchParams();
   const navigate = useNavigate();
@@ -185,19 +196,24 @@ function ValidarPresencaRouter() {
   useEffect(() => {
     const codigoRaw = sp.get("codigo") || sp.get("c") || "";
     let raw = codigoRaw;
+
     try {
       raw = decodeURIComponent(codigoRaw);
-    } catch {}
+    } catch {
+      // noop
+    }
 
     let turmaId = null;
     let token = null;
 
     try {
       const u = new URL(raw);
+
       turmaId =
         u.searchParams.get("turma") ||
         u.searchParams.get("turma_id") ||
         u.searchParams.get("id");
+
       token = u.searchParams.get("t") || u.searchParams.get("token");
 
       if (!turmaId) {
@@ -205,14 +221,16 @@ function ValidarPresencaRouter() {
         const idx = parts.indexOf("presenca");
         if (idx >= 0 && parts[idx + 1]) turmaId = parts[idx + 1];
       }
+
       if (!turmaId) {
         const m = (u.pathname || "").match(/\/presenca\/(\d+)/);
-        if (m && m[1]) turmaId = m[1];
+        if (m?.[1]) turmaId = m[1];
       }
+
       if (!turmaId) {
         const decPath = decodeURIComponent(u.pathname || "");
         const m2 = decPath.match(/\/presenca\/(\d+)/);
-        if (m2 && m2[1]) turmaId = m2[1];
+        if (m2?.[1]) turmaId = m2[1];
       }
     } catch {
       const dec = (() => {
@@ -222,10 +240,16 @@ function ValidarPresencaRouter() {
           return raw;
         }
       })();
+
       const qs = dec.includes("?") ? dec.split("?")[1] : "";
       const qsp = new URLSearchParams(qs);
+
       token = qsp.get("t") || qsp.get("token") || token;
-      turmaId = qsp.get("turma") || qsp.get("turma_id") || qsp.get("id") || turmaId;
+      turmaId =
+        qsp.get("turma") ||
+        qsp.get("turma_id") ||
+        qsp.get("id") ||
+        turmaId;
 
       if (!turmaId) {
         const pathOnly = dec.split("?")[0] || "";
@@ -233,9 +257,10 @@ function ValidarPresencaRouter() {
         const idx = parts.indexOf("presenca");
         if (idx >= 0 && parts[idx + 1]) turmaId = parts[idx + 1];
       }
+
       if (!turmaId) {
         const m = dec.match(/\/presenca\/(\d+)/);
-        if (m && m[1]) turmaId = m[1];
+        if (m?.[1]) turmaId = m[1];
       }
     }
 
@@ -307,7 +332,7 @@ function PwaUpdatePrompt() {
                 type="button"
                 onClick={handleUpdate}
                 disabled={updating}
-                className="inline-flex items-center gap-2 rounded-xl bg-cyan-700 hover:bg-cyan-800 text-white px-4 py-2 text-sm font-extrabold"
+                className="inline-flex items-center gap-2 rounded-xl bg-cyan-700 hover:bg-cyan-800 text-white px-4 py-2 text-sm font-extrabold disabled:opacity-60"
               >
                 <RefreshCw className={`w-4 h-4 ${updating ? "animate-spin" : ""}`} />
                 {updating ? "Atualizando..." : "Atualizar agora"}
@@ -317,7 +342,7 @@ function PwaUpdatePrompt() {
                 type="button"
                 onClick={() => setOpen(false)}
                 disabled={updating}
-                className="rounded-xl border border-zinc-200 dark:border-zinc-800 px-4 py-2 text-sm font-semibold text-zinc-800 dark:text-zinc-200"
+                className="rounded-xl border border-zinc-200 dark:border-zinc-800 px-4 py-2 text-sm font-semibold text-zinc-800 dark:text-zinc-200 disabled:opacity-60"
               >
                 Depois
               </button>
@@ -329,20 +354,55 @@ function PwaUpdatePrompt() {
   );
 }
 
-/* Wrappers para rotas com :id (submissões) */
+/* Wrappers para rotas com :id */
 function AdminChamadaFormWrapper() {
   const { id } = useParams();
   return <AdminChamadaForm chamadaId={id} />;
 }
+
 function AdminSubmissaoRouteWrapper() {
   const { chamadaId } = useParams();
   return <AdminSubmissao chamadaId={chamadaId ? Number(chamadaId) : undefined} />;
 }
 
-/* ✅ Layout privado: autentica e envolve com EscolaAppShell */
+/* ✅ Splash elegante durante checagem auth */
+function AuthCheckingScreen() {
+  return (
+    <div className="min-h-screen grid place-items-center bg-gradient-to-br from-emerald-50 via-white to-teal-50 dark:from-zinc-950 dark:via-zinc-950 dark:to-emerald-950/30 px-6">
+      <div className="w-full max-w-md rounded-3xl border border-emerald-100 dark:border-emerald-900/40 bg-white/90 dark:bg-zinc-900/85 shadow-xl p-6">
+        <div className="flex items-center gap-4">
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-100 dark:bg-emerald-900/30">
+            <ShieldCheck className="h-7 w-7 text-emerald-700 dark:text-emerald-300" />
+          </div>
+
+          <div className="min-w-0">
+            <h1 className="text-base font-extrabold text-zinc-900 dark:text-white">
+              Verificando sua sessão
+            </h1>
+            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
+              Aguarde um instante enquanto validamos seu acesso.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-5 space-y-2">
+          <div className="h-2.5 w-full overflow-hidden rounded-full bg-emerald-100 dark:bg-zinc-800">
+            <div className="h-full w-1/2 animate-pulse rounded-full bg-emerald-600" />
+          </div>
+          <div className="grid gap-2 pt-2">
+            <div className="h-3 w-4/5 rounded bg-zinc-200/80 dark:bg-zinc-800 animate-pulse" />
+            <div className="h-3 w-3/5 rounded bg-zinc-200/80 dark:bg-zinc-800 animate-pulse" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ✅ Layout privado */
 function PrivateShell() {
   return (
-    <PrivateRoute>
+    <PrivateRoute fallback={<AuthCheckingScreen />}>
       <EscolaAppShell>
         <Outlet />
       </EscolaAppShell>
@@ -352,17 +412,19 @@ function PrivateShell() {
 
 /* App */
 export default function App() {
-  // basename opcional para deploy em subpath (ex.: /escola)
-  const BASENAME =
-    (import.meta.env.VITE_APP_BASENAME || import.meta.env.BASE_URL || "/").replace(/\/+$/, "") || "/";
+  const BASENAME = (
+    import.meta.env.VITE_APP_BASENAME ||
+    import.meta.env.BASE_URL ||
+    "/"
+  ).replace(/\/+$/, "") || "/";
 
-    return (
-      <BrowserRouter basename={BASENAME}>
-        <div className="min-h-screen">
-          <RouteChangeAnnouncer />
-          <ScrollUnlockOnRouteChange />
-          <ScrollToTop />
-          <PwaUpdatePrompt />
+  return (
+    <BrowserRouter basename={BASENAME}>
+      <div className="min-h-screen">
+        <RouteChangeAnnouncer />
+        <ScrollUnlockOnRouteChange />
+        <ScrollToTop />
+        <PwaUpdatePrompt />
 
         <Suspense
           fallback={
@@ -378,6 +440,7 @@ export default function App() {
                     Carregando…
                   </span>
                 </div>
+
                 <div className="mt-4 space-y-2">
                   <div className="h-3 w-3/5 rounded bg-slate-200/70 dark:bg-white/10 animate-pulse" />
                   <div className="h-3 w-4/5 rounded bg-slate-200/70 dark:bg-white/10 animate-pulse" />
@@ -413,21 +476,19 @@ export default function App() {
             <Route path="/recuperar-senha" element={<RecuperarSenha />} />
             <Route path="/redefinir-senha/:token" element={<RedefinirSenha />} />
 
-            {/* 🔐 protegidas (tudo aqui dentro ganha Topbar+Sidebar) */}
+            {/* 🔐 protegidas */}
             <Route element={<PrivateShell />}>
-              {/* ✅ Home pós-login (painel oficial) */}
               <Route index element={<HomeEscola />} />
 
-              {/* ✅ Scanner COM sidebar */}
               <Route path="scanner" element={<Scanner />} />
 
-              {/* ✅ Painel do Usuário — rota oficial + aliases */}
+              {/* ✅ Painel do Usuário */}
               <Route path="usuario/dashboard" element={<HomeEscola />} />
               <Route path="dashboard-usuario" element={<HomeEscola />} />
               <Route path="home-escola" element={<HomeEscola />} />
               <Route path="painel" element={<HomeEscola />} />
 
-              {/* mantém compatibilidade antiga */}
+              {/* compat legado */}
               <Route path="dashboard" element={<Navigate to="/usuario/dashboard" replace />} />
               <Route path="usuario" element={<Navigate to="/usuario/dashboard" replace />} />
 
@@ -441,19 +502,15 @@ export default function App() {
               <Route path="teste" element={<Teste />} />
               <Route path="solicitar-curso" element={<SolicitacaoCurso />} />
               <Route path="repositorio-trabalhos" element={<RepositorioTrabalhos />} />
-
-              {/* Manual do Usuário */}
               <Route path="usuario/manual" element={<ManualUsuario />} />
               <Route path="manual" element={<ManualUsuario />} />
-
-              {/* Submissões */}
               <Route path="submissao" element={<UsuarioSubmissao />} />
 
               {/* 🧑‍🏫 Instrutor / Avaliador */}
               <Route
                 path="instrutor"
                 element={
-                  <PrivateRoute permitido={["instrutor", "administrador"]}>
+                  <PrivateRoute permitido={["instrutor", "administrador"]} fallback={<AuthCheckingScreen />}>
                     <DashboardInstrutor />
                   </PrivateRoute>
                 }
@@ -461,7 +518,7 @@ export default function App() {
               <Route
                 path="agenda-instrutor"
                 element={
-                  <PrivateRoute permitido={["instrutor", "administrador"]}>
+                  <PrivateRoute permitido={["instrutor", "administrador"]} fallback={<AuthCheckingScreen />}>
                     <AgendaInstrutor />
                   </PrivateRoute>
                 }
@@ -469,7 +526,7 @@ export default function App() {
               <Route
                 path="turmas/presencas/:turmaId"
                 element={
-                  <PrivateRoute permitido={["instrutor", "administrador"]}>
+                  <PrivateRoute permitido={["instrutor", "administrador"]} fallback={<AuthCheckingScreen />}>
                     <PresencasPorTurma />
                   </PrivateRoute>
                 }
@@ -477,7 +534,7 @@ export default function App() {
               <Route
                 path="instrutor/presenca"
                 element={
-                  <PrivateRoute permitido={["instrutor", "administrador"]}>
+                  <PrivateRoute permitido={["instrutor", "administrador"]} fallback={<AuthCheckingScreen />}>
                     <InstrutorPresenca />
                   </PrivateRoute>
                 }
@@ -485,7 +542,7 @@ export default function App() {
               <Route
                 path="instrutor/certificados"
                 element={
-                  <PrivateRoute permitido={["instrutor", "administrador"]}>
+                  <PrivateRoute permitido={["instrutor", "administrador"]} fallback={<AuthCheckingScreen />}>
                     <CertificadosInstrutor />
                   </PrivateRoute>
                 }
@@ -493,7 +550,7 @@ export default function App() {
               <Route
                 path="instrutor/avaliacao"
                 element={
-                  <PrivateRoute permitido={["instrutor", "administrador"]}>
+                  <PrivateRoute permitido={["instrutor", "administrador"]} fallback={<AuthCheckingScreen />}>
                     <AvaliacaoInstrutor />
                   </PrivateRoute>
                 }
@@ -501,7 +558,7 @@ export default function App() {
               <Route
                 path="avaliador/submissao"
                 element={
-                  <PrivateRoute permitido={["instrutor", "administrador"]}>
+                  <PrivateRoute permitido={["instrutor", "administrador"]} fallback={<AuthCheckingScreen />}>
                     <AvaliadorSubmissao />
                   </PrivateRoute>
                 }
@@ -511,7 +568,7 @@ export default function App() {
               <Route
                 path="administrador"
                 element={
-                  <PrivateRoute permitido={["administrador"]}>
+                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
                     <DashboardAdministrador />
                   </PrivateRoute>
                 }
@@ -519,7 +576,7 @@ export default function App() {
               <Route
                 path="dashboard-analitico"
                 element={
-                  <PrivateRoute permitido={["administrador"]}>
+                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
                     <DashboardAnalitico />
                   </PrivateRoute>
                 }
@@ -527,7 +584,7 @@ export default function App() {
               <Route
                 path="gerenciar-eventos"
                 element={
-                  <PrivateRoute permitido={["administrador"]}>
+                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
                     <GerenciarEventos />
                   </PrivateRoute>
                 }
@@ -535,7 +592,7 @@ export default function App() {
               <Route
                 path="gestao-instrutor"
                 element={
-                  <PrivateRoute permitido={["administrador"]}>
+                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
                     <GestaoInstrutor />
                   </PrivateRoute>
                 }
@@ -543,7 +600,7 @@ export default function App() {
               <Route
                 path="gestao-usuarios"
                 element={
-                  <PrivateRoute permitido={["administrador"]}>
+                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
                     <GestaoUsuarios />
                   </PrivateRoute>
                 }
@@ -551,7 +608,7 @@ export default function App() {
               <Route
                 path="gestao-certificados"
                 element={
-                  <PrivateRoute permitido={["administrador"]}>
+                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
                     <GestaoCertificados />
                   </PrivateRoute>
                 }
@@ -559,7 +616,7 @@ export default function App() {
               <Route
                 path="lista-presencas-turma"
                 element={
-                  <PrivateRoute permitido={["administrador"]}>
+                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
                     <ListaPresencasTurma />
                   </PrivateRoute>
                 }
@@ -567,7 +624,7 @@ export default function App() {
               <Route
                 path="relatorios-customizados"
                 element={
-                  <PrivateRoute permitido={["administrador"]}>
+                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
                     <RelatoriosCustomizados />
                   </PrivateRoute>
                 }
@@ -575,7 +632,7 @@ export default function App() {
               <Route
                 path="agenda-administrador"
                 element={
-                  <PrivateRoute permitido={["administrador"]}>
+                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
                     <AgendaAdministrador />
                   </PrivateRoute>
                 }
@@ -583,7 +640,7 @@ export default function App() {
               <Route
                 path="certificados-avulsos"
                 element={
-                  <PrivateRoute permitido={["administrador"]}>
+                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
                     <CertificadosAvulsos />
                   </PrivateRoute>
                 }
@@ -591,7 +648,7 @@ export default function App() {
               <Route
                 path="gestao-presenca"
                 element={
-                  <PrivateRoute permitido={["administrador"]}>
+                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
                     <GestaoPresencas />
                   </PrivateRoute>
                 }
@@ -599,7 +656,7 @@ export default function App() {
               <Route
                 path="admin/qr-codes"
                 element={
-                  <PrivateRoute permitido={["administrador"]}>
+                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
                     <QRCodesEventosAdmin />
                   </PrivateRoute>
                 }
@@ -607,7 +664,7 @@ export default function App() {
               <Route
                 path="admin/cancelar-inscricao"
                 element={
-                  <PrivateRoute permitido={["administrador"]}>
+                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
                     <CancelarInscricaoAdmin />
                   </PrivateRoute>
                 }
@@ -615,7 +672,7 @@ export default function App() {
               <Route
                 path="admin/avaliacao"
                 element={
-                  <PrivateRoute permitido={["administrador"]}>
+                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
                     <AdminAvaliacao />
                   </PrivateRoute>
                 }
@@ -625,7 +682,7 @@ export default function App() {
               <Route
                 path="admin/solicitacao-curso"
                 element={
-                  <PrivateRoute permitido={["administrador"]}>
+                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
                     <SolicitacaoCursoAdmin />
                   </PrivateRoute>
                 }
@@ -633,7 +690,7 @@ export default function App() {
               <Route
                 path="admin/agenda-salas"
                 element={
-                  <PrivateRoute permitido={["administrador"]}>
+                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
                     <AgendaSalasAdmin />
                   </PrivateRoute>
                 }
@@ -641,7 +698,7 @@ export default function App() {
               <Route
                 path="agenda-salas"
                 element={
-                  <PrivateRoute permitido={["usuario", "instrutor", "administrador"]}>
+                  <PrivateRoute permitido={["usuario", "instrutor", "administrador"]} fallback={<AuthCheckingScreen />}>
                     <AgendaSalasUsuario />
                   </PrivateRoute>
                 }
@@ -649,7 +706,7 @@ export default function App() {
               <Route
                 path="admin/calendario-bloqueios"
                 element={
-                  <PrivateRoute permitido={["administrador"]}>
+                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
                     <CalendarioBloqueiosAdmin />
                   </PrivateRoute>
                 }
@@ -659,7 +716,7 @@ export default function App() {
               <Route
                 path="admin/votacao"
                 element={
-                  <PrivateRoute permitido={["administrador"]}>
+                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
                     <AdminVotacao />
                   </PrivateRoute>
                 }
@@ -670,7 +727,7 @@ export default function App() {
               <Route
                 path="admin/chamadas/new"
                 element={
-                  <PrivateRoute permitido={["administrador"]}>
+                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
                     <AdminChamadaForm />
                   </PrivateRoute>
                 }
@@ -678,7 +735,7 @@ export default function App() {
               <Route
                 path="admin/chamadas/:id"
                 element={
-                  <PrivateRoute permitido={["administrador"]}>
+                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
                     <AdminChamadaFormWrapper />
                   </PrivateRoute>
                 }
@@ -686,7 +743,7 @@ export default function App() {
               <Route
                 path="admin/submissao"
                 element={
-                  <PrivateRoute permitido={["administrador"]}>
+                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
                     <AdminSubmissaoRouteWrapper />
                   </PrivateRoute>
                 }
@@ -694,7 +751,7 @@ export default function App() {
               <Route
                 path="admin/chamadas/:chamadaId/submissao"
                 element={
-                  <PrivateRoute permitido={["administrador"]}>
+                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
                     <AdminSubmissaoRouteWrapper />
                   </PrivateRoute>
                 }
