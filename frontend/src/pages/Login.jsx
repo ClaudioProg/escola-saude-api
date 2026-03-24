@@ -1186,24 +1186,72 @@ export default function Login() {
             </InstitutionalCard>
 
             <InstitutionalCard
-              icon={Smartphone}
-              title="Plataforma responsiva e pronta para app"
-              subtitle="Uso em celular, tablet e computador"
-              isDark={isDark}
-              accent="emerald"
-            >
-              <p>
-                A plataforma foi pensada para funcionar com boa experiência em{" "}
-                <strong>desktop, tablet e celular</strong>, podendo ser utilizada como{" "}
-                <strong>PWA</strong> em dispositivos compatíveis.
-              </p>
+  icon={Smartphone}
+  title="Use a plataforma como aplicativo (PWA)"
+  subtitle="Instalação rápida em celular, tablet e computador"
+  isDark={isDark}
+  accent="emerald"
+>
+  <p>
+    A plataforma da Escola da Saúde pode ser instalada como um aplicativo
+    (<strong>PWA</strong>) em dispositivos compatíveis, oferecendo acesso mais
+    rápido, visual em tela cheia e melhor experiência de uso no dia a dia.
+  </p>
 
-              <p>
-                Isso facilita o acesso rápido a inscrições, certificados, avaliações e outras
-                rotinas do dia a dia, inclusive em contextos de trabalho e aprendizagem em
-                mobilidade.
-              </p>
-            </InstitutionalCard>
+  <p>
+    Depois de instalada, ela pode funcionar como um app comum, facilitando o
+    acesso a inscrições, presenças, avaliações, certificados e outras rotinas
+    importantes da plataforma.
+  </p>
+
+  <div className="mt-4 space-y-1 text-sm">
+    <p>✔ Acesso direto pela tela inicial</p>
+    <p>✔ Abre sem a barra do navegador</p>
+    <p>✔ Navegação mais rápida e prática</p>
+    <p>✔ Melhor experiência em celular, tablet e computador</p>
+  </div>
+
+  <h4 className="font-extrabold mt-5">🍎 iPhone / iPad (Safari)</h4>
+  <ul className="list-disc ml-6 space-y-1">
+    <li>Acesse: <strong>https://escoladasaude.vercel.app</strong></li>
+    <li>Toque em <strong>Compartilhar</strong></li>
+    <li>Selecione <strong>Adicionar à Tela de Início</strong></li>
+    <li>Confirme em <strong>Adicionar</strong></li>
+  </ul>
+
+  <h4 className="font-extrabold mt-5">📱 Android (Chrome)</h4>
+  <ul className="list-disc ml-6 space-y-1">
+    <li>Acesse: <strong>https://escoladasaude.vercel.app</strong></li>
+    <li>Toque no menu <strong>⋮</strong></li>
+    <li>Selecione <strong>Instalar app</strong> ou <strong>Adicionar à tela inicial</strong></li>
+    <li>Confirme em <strong>Instalar</strong></li>
+  </ul>
+
+  <h4 className="font-extrabold mt-5">💻 Computador (Chrome / Edge)</h4>
+  <ul className="list-disc ml-6 space-y-1">
+    <li>Acesse: <strong>https://escoladasaude.vercel.app</strong></li>
+    <li>Clique no ícone <strong>Instalar</strong> na barra de endereço</li>
+    <li>Confirme em <strong>Instalar</strong></li>
+  </ul>
+
+  <h4 className="font-extrabold mt-5">✅ Como saber se instalou corretamente?</h4>
+  <ul className="list-disc ml-6 space-y-1">
+    <li>✔ O ícone aparece na tela inicial ou área de trabalho</li>
+    <li>✔ A plataforma abre em janela própria</li>
+    <li>✔ A navegação fica mais direta e prática</li>
+  </ul>
+
+  <div className="mt-5 rounded-2xl bg-slate-100 dark:bg-zinc-800 p-4">
+    <p className="font-extrabold text-sm mb-1">📌 Atalho rápido</p>
+    <p className="text-sm">Android → <strong>⋮ → Instalar app</strong></p>
+    <p className="text-sm">iPhone → <strong>Compartilhar → Adicionar à Tela de Início</strong></p>
+  </div>
+
+  <p className="mt-5">
+    📍 Em breve, após a finalização do processo de publicação, o aplicativo
+    também estará disponível na <strong>Google Play Store</strong>.
+  </p>
+</InstitutionalCard>
           </section>
         </section>
       </main>
