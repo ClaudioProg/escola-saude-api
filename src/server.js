@@ -1,11 +1,15 @@
-// 📁 server.js — PREMIUM++ (CSP robusta DEV/PROD + nonce + uploads estáticos corretos + CORS + logs + rate limit)
-// - ✅ FIX: /uploads/eventos servindo corretamente (evita 404 no Render quando o arquivo existe)
-// - ✅ Rate limit aplicado ANTES das rotas
-// - ✅ Headers corretos p/ assets e no-store no dev
-// - ✅ SPA fallback com nonce
-
-"use strict";
 /* eslint-disable no-console */
+"use strict";
+
+// 📁 server.js — PREMIUM++
+// - CSP robusta DEV/PROD com nonce
+// - uploads estáticos corretos
+// - CORS resiliente
+// - logs com request id
+// - rate limit antes das rotas
+// - suporte ao novo módulo de informações
+// - fallback SPA seguro
+// - pronto para produção
 
 const express = require("express");
 const cors = require("cors");
@@ -28,12 +32,20 @@ const rawDb = require("./db");
 const db = rawDb?.db ?? rawDb;
 
 /* ───────── Paths ───────── */
-const { DATA_ROOT, UPLOADS_DIR, MODELOS_CHAMADAS_DIR, CERT_DIR, ensureDir } = require("./paths");
+const {
+  DATA_ROOT,
+  UPLOADS_DIR,
+  MODELOS_CHAMADAS_DIR,
+  CERT_DIR,
+  ensureDir
+} = require("./paths");
 
 /* ───────── Rotas (fonte única) ───────── */
-const apiRoutes = require("./routes"); // ✅ src/routes/index.js
+const apiRoutes = require("./routes");
 
 const IS_DEV = process.env.NODE_ENV !== "production";
+const PORT = process.env.PORT || 3000;
+const PUBLIC_DIR = path.join(__dirname, "public");
 
 const app = express();
 app.disable("x-powered-by");
@@ -53,6 +65,12 @@ function getClientIp(req) {
 
 function asyncHandler(fn) {
   return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+}
+
+function safeBooleanEnv(name, fallback = false) {
+  const raw = process.env[name];
+  if (raw == null) return fallback;
+  return ["1", "true", "yes", "on", "sim"].includes(String(raw).trim().toLowerCase());
 }
 
 /* ───────── PREMIUM: Request ID + response header ───────── */
@@ -108,7 +126,7 @@ app.use((req, res, next) => {
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "http://localhost:3000",
-        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3000"
       ]
     : [];
 
@@ -117,7 +135,7 @@ app.use((req, res, next) => {
     "https://accounts.google.com",
     "https://www.googleapis.com",
     ...(frontendFromEnv ? [frontendFromEnv] : []),
-    ...devConnect,
+    ...devConnect
   ];
 
   const scriptSrcBase = [
@@ -125,7 +143,7 @@ app.use((req, res, next) => {
     "https://accounts.google.com",
     "https://www.gstatic.com",
     "https://vercel.live",
-    `'nonce-${nonce}'`,
+    `'nonce-${nonce}'`
   ];
 
   const scriptSrcProd = [...scriptSrcBase, "'strict-dynamic'"];
@@ -136,7 +154,7 @@ app.use((req, res, next) => {
     "'self'",
     "'unsafe-inline'",
     "https://fonts.googleapis.com",
-    "https://accounts.google.com/gsi/style",
+    "https://accounts.google.com/gsi/style"
   ];
 
   const fontSrc = ["'self'", "data:", "https://fonts.gstatic.com"];
@@ -158,8 +176,8 @@ app.use((req, res, next) => {
         camera: [],
         payment: [],
         usb: [],
-        interestCohort: [],
-      },
+        interestCohort: []
+      }
     },
     contentSecurityPolicy: {
       useDefaults: true,
@@ -167,23 +185,19 @@ app.use((req, res, next) => {
         "default-src": ["'self'"],
         "base-uri": ["'self'"],
         "frame-ancestors": ["'none'"],
-
         "font-src": fontSrc,
         "img-src": imgSrc,
         "object-src": ["'none'"],
         "frame-src": frameSrc,
         "style-src": styleSrc,
-
         "script-src": scriptSrc,
         "script-src-elem": scriptSrc,
         "script-src-attr": scriptSrcAttr,
-
         "connect-src": connectSrc,
-
         "manifest-src": ["'self'"],
-        "worker-src": workerSrc,
-      },
-    },
+        "worker-src": workerSrc
+      }
+    }
   })(req, res, next);
 });
 
@@ -202,7 +216,7 @@ const defaultAllowed = [
   "http://localhost:4173",
   "http://127.0.0.1:4173",
   "https://escola-saude-api-frontend.vercel.app",
-  "https://escoladasaude.vercel.app",
+  "https://escoladasaude.vercel.app"
 ];
 
 const allowedOrigins = [...defaultAllowed, ...fromEnv];
@@ -212,6 +226,7 @@ const corsOptions = {
   origin(origin, cb) {
     if (!origin) return cb(null, true);
     if (allowedOrigins.includes(origin) || vercelRegex.test(origin)) return cb(null, true);
+
     const err = new Error("CORS bloqueado.");
     err.status = 403;
     err.code = "CORS_BLOCKED";
@@ -225,9 +240,9 @@ const corsOptions = {
     "Last-Modified",
     "ETag",
     "X-Perfil-Incompleto",
-    "X-Request-Id",
+    "X-Request-Id"
   ],
-  maxAge: 86400,
+  maxAge: 86400
 };
 
 app.use(cors(corsOptions));
@@ -239,6 +254,7 @@ app.use((req, res, next) => {
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+
   if (!list.includes("Origin")) list.push("Origin");
   res.setHeader("Vary", list.join(", "));
   next();
@@ -257,10 +273,11 @@ ensureDir(UPLOADS_DIR);
 ensureDir(MODELOS_CHAMADAS_DIR);
 ensureDir(CERT_DIR);
 
-// ✅ garante também subpastas essenciais (evita 404 por falta de dir)
+// ✅ garante também subpastas essenciais
 ensureDir(path.join(UPLOADS_DIR, "eventos"));
 ensureDir(path.join(UPLOADS_DIR, "posters"));
 ensureDir(path.join(UPLOADS_DIR, "modelos"));
+ensureDir(path.join(UPLOADS_DIR, "informacoes"));
 
 if (process.env.NODE_ENV !== "test") {
   console.log("[FILES] DATA_ROOT:", DATA_ROOT);
@@ -268,40 +285,50 @@ if (process.env.NODE_ENV !== "test") {
   console.log("[FILES] MODELOS_CHAMADAS_DIR:", MODELOS_CHAMADAS_DIR);
   console.log("[FILES] CERT_DIR:", CERT_DIR);
   console.log("[FILES] UPLOADS/eventos:", path.join(UPLOADS_DIR, "eventos"));
+  console.log("[FILES] UPLOADS/informacoes:", path.join(UPLOADS_DIR, "informacoes"));
 }
 
-/* ───────── Static uploads (FIX DEFINITIVO) ───────── */
-// ✅ helper de headers de asset
+/* ───────── Static uploads ───────── */
 function setUploadHeaders(res) {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
   res.setHeader("Cache-Control", IS_DEV ? "no-store" : "public, max-age=3600");
 }
 
-// ✅ (NOVO) Serve exatamente /uploads/eventos -> UPLOADS_DIR/eventos
+// ✅ específico /uploads/eventos
 app.use(
   "/uploads/eventos",
   cors(corsOptions),
   express.static(path.join(UPLOADS_DIR, "eventos"), {
-    fallthrough: false, // ✅ se não existir, 404 direto (sem cair em SPA)
+    fallthrough: false,
     maxAge: IS_DEV ? 0 : "1h",
-    setHeaders: setUploadHeaders,
+    setHeaders: setUploadHeaders
   })
 );
 
-// ✅ mantém /uploads geral (outras pastas)
+// ✅ específico /uploads/informacoes
+app.use(
+  "/uploads/informacoes",
+  cors(corsOptions),
+  express.static(path.join(UPLOADS_DIR, "informacoes"), {
+    fallthrough: false,
+    maxAge: IS_DEV ? 0 : "1h",
+    setHeaders: setUploadHeaders
+  })
+);
+
+// ✅ geral /uploads
 app.use(
   "/uploads",
   cors(corsOptions),
   express.static(UPLOADS_DIR, {
-    fallthrough: true, // deixa outras rotas continuarem se for necessário
+    fallthrough: true,
     maxAge: IS_DEV ? 0 : "1h",
-    setHeaders: setUploadHeaders,
+    setHeaders: setUploadHeaders
   })
 );
 
 /* ───────── Static (SPA) ───────── */
-const PUBLIC_DIR = path.join(__dirname, "public");
 if (fs.existsSync(PUBLIC_DIR)) {
   app.use(
     express.static(PUBLIC_DIR, {
@@ -309,7 +336,7 @@ if (fs.existsSync(PUBLIC_DIR)) {
       maxAge: IS_DEV ? 0 : "1h",
       setHeaders(res) {
         if (!IS_DEV) res.setHeader("Cache-Control", "public, max-age=3600");
-      },
+      }
     })
   );
 }
@@ -327,11 +354,11 @@ morgan.token("uid", (req) => (req.userId != null ? String(req.userId) : "-"));
 
 app.use(
   morgan(":date[iso] :ip :rid :uid :method :url :status :res[content-length] - :response-time ms", {
-    skip: () => process.env.LOG_HTTP === "false",
+    skip: () => process.env.LOG_HTTP === "false"
   })
 );
 
-if (IS_DEV) {
+if (IS_DEV && safeBooleanEnv("DEBUG_REQUESTS", true)) {
   app.use((req, _res, next) => {
     console.log("[DEV-REQ]", {
       rid: req.requestId,
@@ -339,7 +366,7 @@ if (IS_DEV) {
       url: req.url,
       hasAuth: Boolean(req.headers.authorization),
       hasCookie: Boolean(req.headers.cookie),
-      userId: req.userId ?? null,
+      userId: req.userId ?? null
     });
     next();
   });
@@ -351,7 +378,7 @@ const loginLimiter = rateLimit({
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { erro: "Muitas tentativas, tente novamente em alguns minutos." },
+  message: { erro: "Muitas tentativas, tente novamente em alguns minutos." }
 });
 
 const recuperarSenhaLimiter = rateLimit({
@@ -359,21 +386,20 @@ const recuperarSenhaLimiter = rateLimit({
   max: 5,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { erro: "Muitas solicitações, aguarde antes de tentar novamente." },
+  message: { erro: "Muitas solicitações, aguarde antes de tentar novamente." }
 });
 
-// ✅ agora pega de verdade
 app.use("/api/login", loginLimiter);
 app.use("/api/usuarios/recuperar-senha", recuperarSenhaLimiter);
 app.use("/api/usuario/recuperar-senha", recuperarSenhaLimiter);
 
-/* ───────── Helpers de resposta (premium) ───────── */
+/* ───────── Helpers de resposta ───────── */
 function sendError(res, status, message, extra = {}) {
   return res.status(status).json({
     ok: false,
     erro: message,
     requestId: res.getHeader("X-Request-Id"),
-    ...extra,
+    ...extra
   });
 }
 
@@ -382,7 +408,7 @@ function sendOk(res, data = {}, extra = {}) {
     ok: true,
     requestId: res.getHeader("X-Request-Id"),
     ...extra,
-    ...data,
+    ...data
   });
 }
 
@@ -397,18 +423,24 @@ app.get(
       env: process.env.NODE_ENV || "dev",
       uptime_s: Math.round(process.uptime()),
       now: new Date().toISOString(),
-      requestId: req.requestId,
+      requestId: req.requestId
     });
   })
 );
 
+app.head("/__version", (_req, res) => res.sendStatus(204));
+
 app.get(
   "/__ping",
   asyncHandler(async (req, res) => {
-    if (IS_DEV) console.log("[PING]", { rid: req.requestId, ip: getClientIp(req) });
+    if (IS_DEV) {
+      console.log("[PING]", { rid: req.requestId, ip: getClientIp(req) });
+    }
     return sendOk(res);
   })
 );
+
+app.head("/__ping", (_req, res) => res.sendStatus(204));
 
 /* ───────── API (fonte única) ───────── */
 app.use("/api", apiRoutes);
@@ -417,6 +449,8 @@ app.use("/api", apiRoutes);
 app.get("/api/health", (_req, res) =>
   res.status(200).json({ ok: true, env: process.env.NODE_ENV || "dev" })
 );
+
+app.head("/api/health", (_req, res) => res.sendStatus(204));
 
 function renderSpaIndex(res, next) {
   const indexPath = path.join(PUBLIC_DIR, "index.html");
@@ -441,7 +475,7 @@ app.get("/", (_req, res, next) => {
   return res.send("🟢 API da Escola da Saúde rodando!");
 });
 
-// ✅ SPA fallback NÃO deve capturar uploads
+// ✅ SPA fallback NÃO deve capturar api/uploads
 app.get(/^\/(?!api\/|uploads\/).+/, (_req, res, next) => {
   if (renderSpaIndex(res, next)) return;
   return next();
@@ -449,13 +483,25 @@ app.get(/^\/(?!api\/|uploads\/).+/, (_req, res, next) => {
 
 /* ───────── 404 / Errors ───────── */
 app.use((req, res) => {
-  if (req.url.startsWith("/uploads/") && req.method === "GET") return res.status(404).end();
+  if (req.url.startsWith("/uploads/") && req.method === "GET") {
+    return res.status(404).end();
+  }
+
+  if (req.url.startsWith("/uploads/") && req.method === "HEAD") {
+    return res.sendStatus(404);
+  }
+
   return sendError(res, 404, "Rota não encontrada");
 });
 
 app.use((err, req, res, _next) => {
-  if (err?.code === "LIMIT_FILE_SIZE") return sendError(res, 400, "Arquivo muito grande (máx. 15MB).");
-  if (err?.code === "CORS_BLOCKED") return sendError(res, 403, "Origem não autorizada.", { code: "CORS_BLOCKED" });
+  if (err?.code === "LIMIT_FILE_SIZE") {
+    return sendError(res, 400, "Arquivo muito grande (máx. 15MB).");
+  }
+
+  if (err?.code === "CORS_BLOCKED") {
+    return sendError(res, 403, "Origem não autorizada.", { code: "CORS_BLOCKED" });
+  }
 
   if (err?.name === "UnauthorizedError" || err?.code === "UNAUTHORIZED") {
     return sendError(res, 401, "Não autenticado.");
@@ -471,16 +517,15 @@ app.use((err, req, res, _next) => {
     userId: req?.userId ?? null,
     message: err?.message,
     code: err?.code,
-    stack: IS_DEV ? err?.stack : undefined,
+    stack: IS_DEV ? err?.stack : undefined
   });
 
   const message = IS_DEV ? err?.message || "Erro interno do servidor" : "Erro interno do servidor";
+
   return sendError(res, status, message, IS_DEV ? { details: err?.details } : undefined);
 });
 
 /* ───────── Start / Shutdown ───────── */
-const PORT = process.env.PORT || 3000;
-
 const server = app.listen(PORT, () => {
   console.log(`🟢🚀 Servidor rodando na porta ${PORT} 🟢`);
 });

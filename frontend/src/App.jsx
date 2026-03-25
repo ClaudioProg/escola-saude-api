@@ -71,6 +71,7 @@ const Ajuda = lazy(() => import("./pages/Ajuda"));
 const Notificacao = lazy(() => import("./pages/Notificacao"));
 const AgendaAdministrador = lazy(() => import("./pages/AgendaAdministrador"));
 const GestaoPresencas = lazy(() => import("./pages/GestaoPresenca"));
+const GestaoInformacoes = lazy(() => import("./pages/GestaoInformacoes"));
 const CancelarInscricaoAdmin = lazy(() => import("./pages/CancelarInscricaoAdmin"));
 const AdminAvaliacao = lazy(() => import("./pages/AdminAvaliacao"));
 const VotacaoUsuario = lazy(() => import("./pages/VotacaoUsuario"));
@@ -613,6 +614,14 @@ export default function App() {
                   </PrivateRoute>
                 }
               />
+              <Route
+  path="gestao-informacoes"
+  element={
+    <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
+      <GestaoInformacoes />
+    </PrivateRoute>
+  }
+/>
               <Route
                 path="lista-presencas-turma"
                 element={

@@ -40,6 +40,7 @@ const lookupsPublicRoute = require("./lookupsPublicRoute");
 // Auth / Perfil / Login
 const loginRoute = require("./loginRoute");
 const perfilRoute = require("./perfilRoute");
+const authGoogleRoute = require("../auth/authGoogle");
 
 // Upload
 const uploadRoute = require("./uploadRoute");
@@ -65,9 +66,10 @@ const unidadeRoute = require("./unidadeRoute");
 // Avaliação
 const avaliacaoRoute = require("./avaliacaoRoute");
 
-// Dashboard / Certificado
+// Dashboard / Certificado / Informações
 const dashboardRoute = require("./dashboardRoute");
 const certificadoRoute = require("./certificadoRoute");
+const informacoesRoute = require("./informacoesRoute");
 
 // ✅ Trabalhos (repositório / submissões / uploads)
 const trabalhoRoute = require("./trabalhoRoute");
@@ -114,6 +116,7 @@ try {
    Healthcheck
 ========================= */
 router.get("/health", (_req, res) => res.json({ ok: true }));
+router.head("/health", (_req, res) => res.sendStatus(204));
 
 /* =========================
    Público / Lookups
@@ -125,9 +128,6 @@ router.use("/public", lookupsPublicRoute);
 ========================= */
 router.use("/login", loginRoute);
 router.use("/perfil", perfilRoute);
-
-const authGoogleRoute = require("../auth/authGoogle");
-
 router.use("/auth", authGoogleRoute);
 
 /* =========================
@@ -216,14 +216,10 @@ if (submissaoCtrl) {
 ========================================================= */
 function forwardToChamadaRoute(prefixToAdd) {
   return (req, res, next) => {
-    // Ex.: chegou em /api/admin/submissao
-    // aqui req.url começa com "/" (ex.: "/")
-    // queremos que o chamadaRoute receba "/admin/submissao"
     const original = req.url;
     req._bridgedFrom = req.originalUrl || req.url;
 
-    // garante prefixo ("/admin") e mantém o sufixo
-    req.url = `${prefixToAdd}${original}`; // ex: "/admin/submissao" + "/"
+    req.url = `${prefixToAdd}${original}`;
     return chamadaRoute(req, res, (err) => {
       if (err) return next(err);
       if (res.headersSent) return;
@@ -247,7 +243,7 @@ router.use("/admin/chamadas", requireAuth, forwardToChamadaRoute("/admin/chamada
 ========================================================= */
 function forwardTryAvaliacao(makeCandidates) {
   return (req, res, next) => {
-    const originalUrl = req.url; // ex.: "/eventos"
+    const originalUrl = req.url;
     const candidates = makeCandidates(originalUrl);
 
     let i = 0;
@@ -284,14 +280,14 @@ router.use(
     const sSing = singularizeAdminSuffix(s);
 
     return [
-      `/admin${sSing}`,             // /admin/evento   ✅
-      `/admin${s}`,                 // /admin/eventos
+      `/admin${sSing}`,
+      `/admin${s}`,
       `/admin/avaliacao${sSing}`,
       `/admin/avaliacao${s}`,
       `/admin/avaliacoes${sSing}`,
       `/admin/avaliacoes${s}`,
       `${sSing}`,
-      `${s}`,
+      `${s}`
     ];
   })
 );
@@ -316,6 +312,14 @@ router.use("/certificado", certificadoRoute);
 router.use("/certificados", certificadoRoute);
 router.use("/certificados-admin", certificadoRoute);
 router.use("/certificados-avulsos", certificadoRoute);
+
+/* =========================
+   Informações institucionais
+========================= */
+router.use("/informacao", informacoesRoute);
+router.use("/informacoes", informacoesRoute);
+router.use("/informacao-institucional", informacoesRoute);
+router.use("/informacoes-institucionais", informacoesRoute);
 
 /* =========================
    Calendário / Datas (turma/evento)

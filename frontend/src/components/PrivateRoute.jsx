@@ -1,7 +1,7 @@
-// 📁 src/components/PrivateRoute.jsx — PREMIUM (compatível com api.js fetch façade)
+// 📁 src/components/PrivateRoute.jsx — PREMIUM (anti-loop + robusto + compatível com api.js fetch façade)
 
 import { Navigate, useLocation } from "react-router-dom";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import api from "../services/api";
 
 function getStoredToken() {
@@ -15,13 +15,29 @@ function getStoredToken() {
 
 function normalizePerfis(value) {
   if (!value) return [];
+
   if (Array.isArray(value)) {
-    return value.map((p) => String(p || "").trim().toLowerCase()).filter(Boolean);
+    return value
+      .map((p) => String(p || "").trim().toLowerCase())
+      .filter(Boolean);
   }
+
   return String(value)
     .split(",")
     .map((p) => String(p || "").trim().toLowerCase())
     .filter(Boolean);
+}
+
+function logDev(...args) {
+  if (import.meta.env.DEV) {
+    console.log("[PrivateRoute]", ...args);
+  }
+}
+
+function errorDev(...args) {
+  if (import.meta.env.DEV) {
+    console.error("[PrivateRoute]", ...args);
+  }
 }
 
 export default function PrivateRoute({
@@ -39,16 +55,40 @@ export default function PrivateRoute({
     [permitido]
   );
 
-  useEffect(() => {
-    let active = true;
+  const mountedRef = useRef(false);
+  const requestIdRef = useRef(0);
+  const inFlightRef = useRef(false);
+  const authChangedTimerRef = useRef(null);
 
-    async function verificarSessao() {
+  useEffect(() => {
+    mountedRef.current = true;
+
+    async function verificarSessao(origem = "init") {
+      if (!mountedRef.current) return;
+
       const token = getStoredToken();
 
       if (!token) {
-        if (active) setStatus("unauthenticated");
+        logDev("sem token → unauthenticated", { origem });
+        if (!mountedRef.current) return;
+        setUsuario(null);
+        setStatus("unauthenticated");
         return;
       }
+
+      if (inFlightRef.current) {
+        logDev("verificação ignorada porque já existe request em andamento", { origem });
+        return;
+      }
+
+      const currentRequestId = ++requestIdRef.current;
+      inFlightRef.current = true;
+
+      logDev("verificando sessão", {
+        origem,
+        currentRequestId,
+        pathname: location.pathname,
+      });
 
       try {
         const data = await api.authMe({
@@ -56,37 +96,77 @@ export default function PrivateRoute({
           on403: "silent",
         });
 
-        if (!active) return;
-
-        if (data?.usuario) {
-          setUsuario(data.usuario);
-          setStatus("authenticated");
+        if (!mountedRef.current) return;
+        if (currentRequestId !== requestIdRef.current) {
+          logDev("resposta antiga descartada", { origem, currentRequestId });
           return;
         }
 
-        api.clearSession();
+        const usuarioRecebido = data?.usuario || data?.user || null;
+
+        if (usuarioRecebido) {
+          setUsuario(usuarioRecebido);
+          setStatus("authenticated");
+
+          logDev("sessão válida", {
+            origem,
+            currentRequestId,
+            perfil: usuarioRecebido?.perfil,
+          });
+          return;
+        }
+
+        logDev("sessão inválida: payload sem usuário", { origem, currentRequestId });
+        setUsuario(null);
         setStatus("unauthenticated");
       } catch (error) {
-        if (!active) return;
+        if (!mountedRef.current) return;
+        if (currentRequestId !== requestIdRef.current) {
+          logDev("erro de request antiga descartado", { origem, currentRequestId });
+          return;
+        }
 
-        api.clearSession();
+        errorDev("falha ao verificar sessão", {
+          origem,
+          currentRequestId,
+          message: error?.message,
+        });
+
+        setUsuario(null);
         setStatus("unauthenticated");
+      } finally {
+        if (currentRequestId === requestIdRef.current) {
+          inFlightRef.current = false;
+        }
       }
     }
 
-    verificarSessao();
+    verificarSessao("mount");
 
     const handleAuthChanged = () => {
-      verificarSessao();
+      if (!mountedRef.current) return;
+
+      if (authChangedTimerRef.current) {
+        window.clearTimeout(authChangedTimerRef.current);
+      }
+
+      authChangedTimerRef.current = window.setTimeout(() => {
+        verificarSessao("auth:changed");
+      }, 80);
     };
 
     window.addEventListener("auth:changed", handleAuthChanged);
 
     return () => {
-      active = false;
+      mountedRef.current = false;
+
+      if (authChangedTimerRef.current) {
+        window.clearTimeout(authChangedTimerRef.current);
+      }
+
       window.removeEventListener("auth:changed", handleAuthChanged);
     };
-  }, []);
+  }, [location.pathname]);
 
   if (status === "checking") {
     return fallback || null;

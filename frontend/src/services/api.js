@@ -52,19 +52,13 @@ if (isHttpUrl(API_BASE_URL) && !(typeof window !== "undefined" && isLocalHost(ne
 })();
 
 export async function apiAuthMe(opts = {}) {
-  const me = await apiGet("/auth/me", {
+  return apiGet("/auth/me", {
     auth: true,
     on401: "silent",
     on403: "silent",
     suppressGlobalError: true,
     ...opts,
   });
-
-  if (me?.usuario) {
-    persistAuthSession(getToken(), me.usuario);
-  }
-
-  return me;
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -96,30 +90,76 @@ const getToken = () => {
   }
 };
 
-export function clearAuthSession() {
+export function clearAuthSession(options = {}) {
+  const { emitEvent = true } = options;
+
   try {
+    const hadSomething =
+      AUTH_STORAGE_KEYS.some((key) => !!localStorage.getItem(key)) ||
+      USER_STORAGE_KEYS.some((key) => !!localStorage.getItem(key));
+
     AUTH_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
     USER_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
     setPerfilIncompletoFlag(null);
-    window.dispatchEvent(new CustomEvent("auth:changed", { detail: { authenticated: false } }));
+
+    if (emitEvent && hadSomething) {
+      window.dispatchEvent(
+        new CustomEvent("auth:changed", {
+          detail: { authenticated: false },
+        })
+      );
+    }
   } catch {}
 }
 
-export function persistAuthSession(token, usuario = null) {
+export function persistAuthSession(token, usuario = null, options = {}) {
+  const { emitEvent = true } = options;
+
   try {
-    if (token) {
-      localStorage.setItem("token", String(token).replace(/^Bearer\s+/i, "").trim());
+    const normalizedToken = token
+      ? String(token).replace(/^Bearer\s+/i, "").trim()
+      : null;
+
+    const prevToken =
+      localStorage.getItem("token") ||
+      localStorage.getItem("authToken") ||
+      localStorage.getItem("access_token") ||
+      null;
+
+    const prevUsuarioRaw = localStorage.getItem("usuario");
+    const nextUsuarioRaw = usuario ? JSON.stringify(usuario) : null;
+
+    let changed = false;
+
+    if (normalizedToken && prevToken !== normalizedToken) {
+      localStorage.setItem("token", normalizedToken);
+      changed = true;
     }
-    if (usuario) {
-      localStorage.setItem("usuario", JSON.stringify(usuario));
-      if (usuario?.perfil) {
-        const perfis = Array.isArray(usuario.perfil)
-          ? usuario.perfil
-          : String(usuario.perfil).split(",").map((p) => p.trim()).filter(Boolean);
-        localStorage.setItem("perfil", perfis.join(","));
+
+    if (nextUsuarioRaw && prevUsuarioRaw !== nextUsuarioRaw) {
+      localStorage.setItem("usuario", nextUsuarioRaw);
+      changed = true;
+    }
+
+    if (usuario?.perfil) {
+      const perfis = Array.isArray(usuario.perfil)
+        ? usuario.perfil
+        : String(usuario.perfil).split(",").map((p) => p.trim()).filter(Boolean);
+
+      const perfisJoined = perfis.join(",");
+      if (localStorage.getItem("perfil") !== perfisJoined) {
+        localStorage.setItem("perfil", perfisJoined);
+        changed = true;
       }
     }
-    window.dispatchEvent(new CustomEvent("auth:changed", { detail: { authenticated: true, usuario } }));
+
+    if (emitEvent && changed) {
+      window.dispatchEvent(
+        new CustomEvent("auth:changed", {
+          detail: { authenticated: true, usuario },
+        })
+      );
+    }
   } catch {}
 }
 
