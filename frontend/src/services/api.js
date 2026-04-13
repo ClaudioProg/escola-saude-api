@@ -3,11 +3,24 @@
 // ───────────────────────────────────────────────────────────────────
 const IS_DEV = !!import.meta.env.DEV;
 
+function logDev(...args) {
+  if (IS_DEV) console.log("[api]", ...args);
+}
+
+function errorDev(...args) {
+  if (IS_DEV) console.error("[api]", ...args);
+}
+
 function isLocalHost(h) {
   return /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(h || "");
 }
+
 function isHttpUrl(u) {
   return /^http:\/\//i.test(u || "");
+}
+
+function isAbsoluteUrl(u) {
+  return /^https?:\/\//i.test(u || "");
 }
 
 // Decide a base automaticamente
@@ -36,12 +49,22 @@ function computeBase() {
   return "https://escola-saude-api.onrender.com";
 }
 
-
 let API_BASE_URL = computeBase();
 
 // 🔒 NÃO force https para localhost (apenas domínios externos)
-if (isHttpUrl(API_BASE_URL) && !(typeof window !== "undefined" && isLocalHost(new URL(API_BASE_URL).host))) {
-  API_BASE_URL = API_BASE_URL.replace(/^http:\/\//i, "https://");
+try {
+  if (
+    isHttpUrl(API_BASE_URL) &&
+    !(
+      typeof window !== "undefined" &&
+      isAbsoluteUrl(API_BASE_URL) &&
+      isLocalHost(new URL(API_BASE_URL).host)
+    )
+  ) {
+    API_BASE_URL = API_BASE_URL.replace(/^http:\/\//i, "https://");
+  }
+} catch {
+  // noop
 }
 
 // Validação de base (sem log)
@@ -65,7 +88,7 @@ export async function apiAuthMe(opts = {}) {
 // Token & headers
 // ───────────────────────────────────────────────────────────────────
 const AUTH_STORAGE_KEYS = ["token", "authToken", "access_token"];
-const USER_STORAGE_KEYS = ["usuario", "perfil"];
+const USER_STORAGE_KEYS = ["usuario", "perfil", "user"];
 
 const getTokenRaw = () => {
   try {
@@ -102,14 +125,18 @@ export function clearAuthSession(options = {}) {
     USER_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
     setPerfilIncompletoFlag(null);
 
-    if (emitEvent && hadSomething) {
+    if (emitEvent && hadSomething && typeof window !== "undefined") {
       window.dispatchEvent(
         new CustomEvent("auth:changed", {
           detail: { authenticated: false },
         })
       );
     }
-  } catch {}
+
+    logDev("sessão limpa", { emitEvent, hadSomething });
+  } catch (error) {
+    errorDev("erro ao limpar sessão", error);
+  }
 }
 
 export function persistAuthSession(token, usuario = null, options = {}) {
@@ -133,18 +160,24 @@ export function persistAuthSession(token, usuario = null, options = {}) {
 
     if (normalizedToken && prevToken !== normalizedToken) {
       localStorage.setItem("token", normalizedToken);
+      localStorage.setItem("authToken", normalizedToken);
+      localStorage.setItem("access_token", normalizedToken);
       changed = true;
     }
 
     if (nextUsuarioRaw && prevUsuarioRaw !== nextUsuarioRaw) {
       localStorage.setItem("usuario", nextUsuarioRaw);
+      localStorage.setItem("user", nextUsuarioRaw);
       changed = true;
     }
 
     if (usuario?.perfil) {
       const perfis = Array.isArray(usuario.perfil)
         ? usuario.perfil
-        : String(usuario.perfil).split(",").map((p) => p.trim()).filter(Boolean);
+        : String(usuario.perfil)
+            .split(",")
+            .map((p) => p.trim())
+            .filter(Boolean);
 
       const perfisJoined = perfis.join(",");
       if (localStorage.getItem("perfil") !== perfisJoined) {
@@ -153,14 +186,22 @@ export function persistAuthSession(token, usuario = null, options = {}) {
       }
     }
 
-    if (emitEvent && changed) {
+    if (emitEvent && changed && typeof window !== "undefined") {
       window.dispatchEvent(
         new CustomEvent("auth:changed", {
           detail: { authenticated: true, usuario },
         })
       );
     }
-  } catch {}
+
+    logDev("sessão persistida", {
+      changed,
+      hasToken: !!normalizedToken,
+      usuarioId: usuario?.id || usuario?.usuario_id || null,
+    });
+  } catch (error) {
+    errorDev("erro ao persistir sessão", error);
+  }
 }
 
 function isPublicAppPath(pathname = "") {
@@ -170,6 +211,7 @@ function isPublicAppPath(pathname = "") {
     path.startsWith("/login") ||
     path.startsWith("/cadastro") ||
     path.startsWith("/recuperar-senha") ||
+    path.startsWith("/esqueci-senha") ||
     path.startsWith("/redefinir-senha") ||
     path.startsWith("/validar") ||
     path.startsWith("/presenca") ||
@@ -178,15 +220,33 @@ function isPublicAppPath(pathname = "") {
   );
 }
 
+function currentPathWithQuery() {
+  if (typeof window === "undefined") return "/";
+  const { pathname, search, hash } = window.location;
+  return pathname + (search || "") + (hash || "");
+}
+
 function redirectToLogin(nextPath = null) {
   if (typeof window === "undefined") return;
 
   const current = nextPath || currentPathWithQuery();
 
-  if (isPublicAppPath(window.location.pathname)) return;
+  if (isPublicAppPath(window.location.pathname)) {
+    logDev("redirectToLogin ignorado em rota pública", {
+      pathname: window.location.pathname,
+    });
+    return;
+  }
 
   const next = encodeURIComponent(current || "/");
-  window.location.replace(`/login?next=${next}`);
+  const target = `/login?next=${next}`;
+
+  logDev("redirectToLogin executado", {
+    from: current,
+    to: target,
+  });
+
+  window.location.replace(target);
 }
 
 // 🆕 id de requisição (útil em logs/monitoramento)
@@ -194,7 +254,9 @@ function newRequestId() {
   try {
     const u = crypto.randomUUID?.();
     if (u) return u;
-  } catch {}
+  } catch {
+    // noop
+  }
   return `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
@@ -206,6 +268,7 @@ function getClientTZ() {
     return "UTC";
   }
 }
+
 function getClientOffsetMinutes() {
   try {
     // getTimezoneOffset(): minutos para converter LOCAL → UTC (ex.: São Paulo retorna 180)
@@ -215,39 +278,51 @@ function getClientOffsetMinutes() {
     return 0;
   }
 }
+
 function todayLocalYMD() {
   const d = new Date();
   const p = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
+
 function buildClientContextHeaders() {
-  // Convenção: o backend pode usar esses headers para resolver "date-only" como YMD local.
   return {
-    "X-Client-TZ": getClientTZ(),                      // e.g. America/Sao_Paulo
-    "X-Client-Offset-Minutes": String(getClientOffsetMinutes()), // e.g. -180 para UTC-3
-    "X-Client-Today": todayLocalYMD(),                 // e.g. 2025-11-03
-    "X-Client-Now-UTC": new Date().toISOString(),      // carimbo confiável
-    "X-Date-Only-Semantics": "YMD_LOCAL",              // dica semântica p/ o servidor
-    "X-Request-Id": newRequestId(),                    // rastreio ponta a ponta
+    "X-Client-TZ": getClientTZ(),
+    "X-Client-Offset-Minutes": String(getClientOffsetMinutes()),
+    "X-Client-Today": todayLocalYMD(),
+    "X-Client-Now-UTC": new Date().toISOString(),
+    "X-Date-Only-Semantics": "YMD_LOCAL",
+    "X-Request-Id": newRequestId(),
   };
 }
 
 // 🆕 Debug de conflitos (liga/desliga por sessão)
 const DEBUG_CONF_KEY = "debug_conflitos";
+
 export function setDebugConflitos(on = true) {
-  try { sessionStorage.setItem(DEBUG_CONF_KEY, on ? "1" : "0"); } catch {}
+  try {
+    sessionStorage.setItem(DEBUG_CONF_KEY, on ? "1" : "0");
+  } catch {
+    // noop
+  }
 }
+
 function getDebugConflitos() {
-  try { return sessionStorage.getItem(DEBUG_CONF_KEY) === "1"; } catch { return false; }
+  try {
+    return sessionStorage.getItem(DEBUG_CONF_KEY) === "1";
+  } catch {
+    return false;
+  }
 }
 
 function buildHeaders(auth = true, extra = {}) {
   const jwt = getToken();
   const base = {
     "Content-Type": "application/json",
-    ...buildClientContextHeaders(),                // 🆕 sempre manda contexto do cliente
-    ...(getDebugConflitos() ? { "X-Debug-Conflitos": "1" } : {}), // 🆕 opcional
+    ...buildClientContextHeaders(),
+    ...(getDebugConflitos() ? { "X-Debug-Conflitos": "1" } : {}),
   };
+
   return {
     ...base,
     ...(auth && jwt ? { Authorization: `Bearer ${jwt}` } : {}),
@@ -258,26 +333,26 @@ function buildHeaders(auth = true, extra = {}) {
 // ───────────────────────────────────────────────────────────────────
 // Querystring
 // ───────────────────────────────────────────────────────────────────
-// Valores inválidos para query (ex.: NaN) não devem ir para o backend
 function isBadParamValue(v) {
   if (v === null || v === undefined || v === "") return true;
-  // número NaN
   if (typeof v === "number" && Number.isNaN(v)) return true;
-  // string "NaN" (ou variantes com espaços)
   if (typeof v === "string" && v.trim().toLowerCase() === "nan") return true;
   return false;
 }
 
 export function qs(params = {}) {
   const q = new URLSearchParams();
+
   Object.entries(params || {}).forEach(([k, v]) => {
-    // suporta array: ?k=a&k=b
     if (Array.isArray(v)) {
-      v.forEach((vi) => { if (!isBadParamValue(vi)) q.append(k, vi); });
+      v.forEach((vi) => {
+        if (!isBadParamValue(vi)) q.append(k, vi);
+      });
     } else {
       if (!isBadParamValue(v)) q.append(k, v);
     }
   });
+
   const s = q.toString();
   return s ? `?${s}` : "";
 }
@@ -300,9 +375,9 @@ class ApiError extends Error {
 // ───────────────────────────────────────────────────────────────────
 function normalizePath(path) {
   if (!path) return "/";
-  if (/^https?:\/\//i.test(path)) return path; // absoluta
+  if (/^https?:\/\//i.test(path)) return path;
   let p = String(path).trim();
-  if (!p.startsWith("/")) p = "/" + p;
+  if (!p.startsWith("/")) p = `/${p}`;
   return p;
 }
 
@@ -310,7 +385,8 @@ function normalizePath(path) {
 function ensureApi(base, path) {
   const baseNoSlash = String(base || "").replace(/\/+$/, "");
   let p = String(path || "").trim();
-  if (!p.startsWith("/")) p = "/" + p;
+
+  if (!p.startsWith("/")) p = `/${p}`;
 
   const baseHasApi = /\/api$/i.test(baseNoSlash);
   const pathHasApi = /^\/api(\/|$)/i.test(p);
@@ -318,22 +394,25 @@ function ensureApi(base, path) {
   if (baseHasApi && pathHasApi) {
     p = p.replace(/^\/api(\/|$)/i, "/");
   } else if (!baseHasApi && !pathHasApi) {
-    p = "/api" + p;
+    p = `/api${p}`;
   }
 
   return baseNoSlash + p;
 }
 
-// 👉 Helper para montar URL pública
 export function makeApiUrl(path, query) {
   const safePath = normalizePath(path);
   const url = ensureApi(API_BASE_URL, safePath) + qs(query);
+
   try {
     if (isHttpUrl(url)) {
       const host = new URL(url).host;
       if (!isLocalHost(host)) return url.replace(/^http:\/\//i, "https://");
     }
-  } catch {}
+  } catch {
+    // noop
+  }
+
   return url;
 }
 
@@ -347,6 +426,7 @@ const PERFIL_EVENT = "perfil:flag";
 // Cross-tab (opcional): BroadcastChannel
 const PERFIL_BC_NAME = "perfil:bc";
 let perfilBC = null;
+
 function getPerfilBC() {
   try {
     if (typeof window === "undefined" || !("BroadcastChannel" in window)) return null;
@@ -366,37 +446,40 @@ export function getPerfilIncompletoFlag() {
   }
 }
 
-/** Atualiza a flag no sessionStorage e emite evento (mesma aba + outras abas). */
 export function setPerfilIncompletoFlag(val) {
   try {
     const prev = getPerfilIncompletoFlag();
+
     if (val === null || typeof val === "undefined") {
       sessionStorage.removeItem(PERFIL_FLAG_KEY);
     } else {
       sessionStorage.setItem(PERFIL_FLAG_KEY, val ? "1" : "0");
     }
-    // 🔔 notifica apenas se mudou
+
     const next = val === null ? null : !!val;
+
     if (prev !== next) {
-      // mesma aba
       if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent(PERFIL_EVENT, { detail: next }));
       }
-      // outras abas
+
       const bc = getPerfilBC();
       bc?.postMessage({ type: "perfil_flag", value: next });
     }
-  } catch {}
+  } catch {
+    // noop
+  }
 }
 
-/** Assina mudanças da flag de perfil (retorna função para desinscrever). */
 export function subscribePerfilFlag(cb) {
   if (typeof cb !== "function") return () => {};
+
   const handler = (e) => cb(e.detail);
+
   if (typeof window !== "undefined") {
     window.addEventListener(PERFIL_EVENT, handler);
   }
-  // cross-tab
+
   const bc = getPerfilBC();
   const bcHandler = (ev) => {
     if (ev?.data?.type === "perfil_flag") cb(ev.data.value);
@@ -417,17 +500,12 @@ function syncPerfilHeader(res) {
     if (val === "1") setPerfilIncompletoFlag(true);
     else if (val === "0") setPerfilIncompletoFlag(false);
     else setPerfilIncompletoFlag(null);
-  } catch {}
+  } catch {
+    // noop
+  }
 }
 
 // ───────────────────────────────────────────────────────────────────
-function currentPathWithQuery() {
-  if (typeof window === "undefined") return "/";
-  const { pathname, search } = window.location;
-  return pathname + (search || "");
-}
-
-// 🔒 Rota sensível (ex.: perfil) — mantida para futuros usos
 function isSensitiveUrl(u = "") {
   try {
     const path = new URL(u, API_BASE_URL).pathname;
@@ -447,82 +525,95 @@ async function warmup(authNeeded) {
   const path = authNeeded ? WARMUP_AUTH : WARMUP_PUBLIC;
   const url = ensureApi(API_BASE_URL, path);
   const jwt = getToken();
+
   try {
     const res = await fetch(url, {
       method: "GET",
       credentials: "include",
       mode: "cors",
       cache: "no-store",
-      headers: authNeeded && jwt ? { Authorization: `Bearer ${jwt}`, ...buildClientContextHeaders() } : buildClientContextHeaders(),
+      headers:
+        authNeeded && jwt
+          ? { Authorization: `Bearer ${jwt}`, ...buildClientContextHeaders() }
+          : buildClientContextHeaders(),
       redirect: "follow",
       referrerPolicy: "strict-origin-when-cross-origin",
       keepalive: true,
     });
-    // não importa o status — o objetivo é “acordar” sessão/CORS
+
     return res.ok;
   } catch {
     return false;
   }
 }
 
-// Handler centralizado — recebe contexto da requisição
+// Handler centralizado
 async function handle(
-     res,
-     { on401 = "silent", on403 = "silent", on404 = "throw", suppressGlobalError = false } = {}
-   ) {
+  res,
+  { on401 = "silent", on403 = "silent", on404 = "throw", suppressGlobalError = false } = {}
+) {
   const url = res?.url || "";
   const status = res?.status;
 
-  // 🧭 sincroniza flag de perfil (se o backend enviar)
   syncPerfilHeader(res);
 
   let text = "";
   let data = null;
 
-    // 404 silencioso quando solicitado (útil para fallbacks)
   if (status === 404 && on404 === "silent") {
-    // retorna null para o caller decidir (ex.: tentar outra rota)
     return null;
-    }
+  }
 
-  try { text = await res.text(); } catch {}
-  try { data = text ? JSON.parse(text) : null; } catch { data = null; }
+  try {
+    text = await res.text();
+  } catch {
+    // noop
+  }
+
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = null;
+  }
 
   if (status === 401) {
-  if (on401 === "redirect") {
-    clearAuthSession();
-    redirectToLogin();
+    if (on401 === "redirect") {
+      clearAuthSession();
+      redirectToLogin();
+    }
+
+    const err = new ApiError(data?.erro || data?.message || "Não autorizado (401)", {
+      status,
+      url,
+      data: data ?? text,
+    });
+    err.code = "AUTH_401";
+    err.sessionExpired = data?.sessionExpired === true;
+    throw err;
   }
 
-  const err = new ApiError(data?.erro || data?.message || "Não autorizado (401)", {
-    status,
-    url,
-    data: data ?? text,
-  });
-  err.code = "AUTH_401";
-  err.sessionExpired = data?.sessionExpired === true;
-  throw err;
-}
+  if (status === 403) {
+    if (
+      on403 === "redirect" &&
+      typeof window !== "undefined" &&
+      !isPublicAppPath(window.location.pathname)
+    ) {
+      window.location.replace("/painel");
+    }
 
-if (status === 403) {
-  if (on403 === "redirect" && typeof window !== "undefined" && !isPublicAppPath(window.location.pathname)) {
-    window.location.replace("/painel");
+    const err = new ApiError(data?.erro || data?.message || "Sem permissão (403)", {
+      status,
+      url,
+      data: data ?? text,
+    });
+    err.code = "AUTH_403";
+    throw err;
   }
-
-  const err = new ApiError(data?.erro || data?.message || "Sem permissão (403)", {
-    status,
-    url,
-    data: data ?? text,
-  });
-  err.code = "AUTH_403";
-  throw err;
-}
 
   if (!res.ok) {
     const msg = data?.erro || data?.message || text || `HTTP ${status}`;
     const err = new ApiError(msg, { status, url, data: data ?? text });
     if (suppressGlobalError) {
-      // deixa o caller decidir sem “barulho” global
       err.silenced = true;
     }
     throw err;
@@ -538,16 +629,16 @@ const DEFAULT_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 15000);
 function parseContentDispositionFilename(cd = "") {
   if (!cd) return undefined;
 
-  // 1) filename* (RFC 5987): filename*=UTF-8''nome%20com%20acento.pptx
   const star = cd.match(/filename\*=(?:UTF-8'')?([^;]+)/i);
   if (star) {
     try {
       const val = star[1].trim().replace(/^"(.*)"$/, "$1");
       return decodeURIComponent(val);
-    } catch {}
+    } catch {
+      // noop
+    }
   }
 
-  // 2) filename="..." (padrão)
   const normal = cd.match(/filename=(?:"([^"]+)"|([^;]+))/i);
   if (normal) {
     const raw = (normal[1] || normal[2] || "").trim().replace(/^"(.*)"$/, "$1");
@@ -557,7 +648,7 @@ function parseContentDispositionFilename(cd = "") {
   return undefined;
 }
 
-// Fetch centralizado (com timeout + retry com warm-up + backoff p/ 429/503)
+// Fetch centralizado
 async function doFetch(
   path,
   {
@@ -575,21 +666,19 @@ async function doFetch(
 ) {
   const safePath = normalizePath(path);
 
-  // Monta URL final
-  const isAbsolute = /^https?:\/\//i.test(safePath);
-  let url = isAbsolute
+  let url = /^https?:\/\//i.test(safePath)
     ? safePath + qs(query)
     : ensureApi(API_BASE_URL, safePath) + qs(query);
-  
-  // Upgrade http→https para hosts externos
+
   try {
     if (isHttpUrl(url)) {
       const host = new URL(url).host;
       if (!isLocalHost(host)) url = url.replace(/^http:\/\//i, "https://");
     }
-  } catch {}
+  } catch {
+    // noop
+  }
 
-  // Cabeçalhos e init
   const initBase = {
     method,
     credentials: "include",
@@ -607,10 +696,9 @@ async function doFetch(
   };
 
   if (body instanceof FormData) {
-    // Não setar Content-Type manualmente em FormData
     init.headers = {
       ...(auth && jwt ? { Authorization: `Bearer ${jwt}` } : {}),
-      ...buildClientContextHeaders(),                         // 🆕 também em multipart
+      ...buildClientContextHeaders(),
       ...(getDebugConflitos() ? { "X-Debug-Conflitos": "1" } : {}),
       ...headers,
     };
@@ -621,14 +709,17 @@ async function doFetch(
 
   const hadAuthHeader = !!init.headers?.Authorization;
 
-  // ⏱️ timeout com AbortController + ✅ merge com signal externo
   async function runOnce() {
     const controller = new AbortController();
 
-    // ✅ se vier signal externo, "encadeia" abort
     const abortFromOuter = () => {
-      try { controller.abort(signal?.reason || new Error("aborted")); } catch {}
+      try {
+        controller.abort(signal?.reason || new Error("aborted"));
+      } catch {
+        // noop
+      }
     };
+
     if (signal) {
       if (signal.aborted) abortFromOuter();
       else signal.addEventListener("abort", abortFromOuter, { once: true });
@@ -644,19 +735,20 @@ async function doFetch(
     } finally {
       clearTimeout(timeoutId);
       if (signal) {
-        try { signal.removeEventListener("abort", abortFromOuter); } catch {}
+        try {
+          signal.removeEventListener("abort", abortFromOuter);
+        } catch {
+          // noop
+        }
       }
     }
   }
 
-
   let res;
 
-  // 1ª tentativa
   try {
     res = await runOnce();
   } catch (e1) {
-    // ✅ CANCELAMENTO (AbortController) NÃO é erro: apenas propaga
     if (
       e1?.name === "AbortError" ||
       String(e1?.message || "").toLowerCase().includes("aborted") ||
@@ -665,15 +757,20 @@ async function doFetch(
       throw e1;
     }
 
-    // Erro de rede/timeout → warm-up e retry 1x
     const reason = e1?.message || e1?.name || String(e1);
+
+    logDev("falha na primeira tentativa, executando warmup", {
+      method,
+      path: safePath,
+      auth,
+      reason,
+    });
 
     await warmup(auth && hadAuthHeader);
 
     try {
       res = await runOnce();
     } catch (e2) {
-      // ✅ se o retry foi abortado, também propaga como abort
       if (
         e2?.name === "AbortError" ||
         String(e2?.message || "").toLowerCase().includes("aborted") ||
@@ -691,38 +788,43 @@ async function doFetch(
     }
   }
 
-  // 🆕 Backoff simples para 429/503, uma única vez
   if (res && (res.status === 429 || res.status === 503)) {
     const retryAfter = Number(res.headers?.get?.("Retry-After")) || 0;
     const waitMs = retryAfter ? retryAfter * 1000 : 500 + Math.floor(Math.random() * 600);
-    try { await new Promise((r) => setTimeout(r, waitMs)); } catch {}
+    try {
+      await new Promise((r) => setTimeout(r, waitMs));
+    } catch {
+      // noop
+    }
     res = await runOnce();
   }
 
-  // Passa o contexto (on401/on403) para o handler
   return handle(res, { on401, on403, on404, suppressGlobalError });
 }
 
 // ───────────────────────────────────────────────────────────────────
-// Métodos HTTP (exports nomeados)
+// Métodos HTTP
 // ───────────────────────────────────────────────────────────────────
 export async function apiGet(path, opts = {}) {
   return doFetch(path, { method: "GET", ...opts });
 }
+
 export async function apiPost(path, body, opts = {}) {
   return doFetch(path, { method: "POST", body, ...opts });
 }
+
 export async function apiPut(path, body, opts = {}) {
   return doFetch(path, { method: "PUT", body, ...opts });
 }
+
 export async function apiPatch(path, body, opts = {}) {
   return doFetch(path, { method: "PATCH", body, ...opts });
 }
+
 export async function apiDelete(path, opts = {}) {
   return doFetch(path, { method: "DELETE", ...opts });
 }
 
-// ✅ Atalhos “públicos” (sem Authorization + não redirecionar em 401)
 export const apiGetPublic = (path, opts = {}) =>
   apiGet(path, { auth: false, on401: "silent", ...opts });
 
@@ -730,18 +832,16 @@ export const apiPostPublic = (path, body, opts = {}) =>
   apiPost(path, body, { auth: false, on401: "silent", ...opts });
 
 // ───────────────────────────────────────────────────────────────────
-// HEAD cache/coalescing (evita spam e dupes em paralelo)
+// HEAD cache/coalescing
 // ───────────────────────────────────────────────────────────────────
-const HEAD_CACHE_TTL_MS = Number(import.meta.env.VITE_API_HEAD_TTL_MS || 120_000); // 2min
-const __headCache = new Map();    // key -> { value: boolean, expires: number }
-const __inflightHead = new Map(); // key -> Promise<boolean>
+const HEAD_CACHE_TTL_MS = Number(import.meta.env.VITE_API_HEAD_TTL_MS || 120_000);
+const __headCache = new Map();
+const __inflightHead = new Map();
 
-/** Cria a chave canônica do cache de HEAD (por path normalizado) */
 function headKeyFromPath(path) {
   return normalizePath(path);
 }
 
-/** Lê do cache se ainda válido */
 function headCacheGet(key) {
   const ent = __headCache.get(key);
   if (!ent) return undefined;
@@ -752,12 +852,10 @@ function headCacheGet(key) {
   return ent.value;
 }
 
-/** Grava no cache com TTL */
 function headCacheSet(key, value, ttlMs = HEAD_CACHE_TTL_MS) {
   __headCache.set(key, { value: !!value, expires: Date.now() + ttlMs });
 }
 
-/** Invalida entradas cujo key comece com um prefix específico */
 export function invalidateHeadPrefix(prefixPath) {
   const prefix = headKeyFromPath(prefixPath);
   for (const k of __headCache.keys()) {
@@ -765,19 +863,11 @@ export function invalidateHeadPrefix(prefixPath) {
   }
 }
 
-// 🆕 Detecta paths de modelo (banner/oral) — útil p/ suprimir HEAD em DEV
 function isModeloFilePath(p = "") {
   const s = String(p || "");
   return /\/chamadas\/\d+\/modelo-(banner|oral)(?:\/download)?$/i.test(s);
 }
 
-/**
- * HEAD simples e resiliente — retorna boolean (existe/não).
- * - Silencia 404/0 (considera false).
- * - Coalesce requisições em paralelo para mesma URL.
- * - TTL de cache configurável (VITE_API_HEAD_TTL_MS, default 120s).
- * - 🆕 Em DEV, opcionalmente não faz request para paths de modelo e assume false (config: VITE_API_SUPPRESS_HEAD_404)
- */
 export async function apiHead(path, opts = {}) {
   const {
     auth = true,
@@ -786,49 +876,53 @@ export async function apiHead(path, opts = {}) {
     on401 = "silent",
     on403 = "silent",
     ttlMs = HEAD_CACHE_TTL_MS,
-    quiet = true, // não loga warnings para estados esperados
+    quiet = true,
     devSuppressModelo404 = (import.meta.env.VITE_API_SUPPRESS_HEAD_404 ?? "1") !== "0",
   } = opts;
 
-  // 🆕 Dev-mode: evita flood de 404 no console para assets opcionais de modelo
   if (IS_DEV && devSuppressModelo404 && isModeloFilePath(path)) {
     const key = headKeyFromPath(path);
     const cached = headCacheGet(key);
-    if (typeof cached === "boolean") return cached;   // respeita cache
-    headCacheSet(key, false, ttlMs);                  // assume "não existe" e cacheia
-    return false;                                     // 🔇 nenhum request → nenhum 404 no console
+    if (typeof cached === "boolean") return cached;
+    headCacheSet(key, false, ttlMs);
+    return false;
   }
 
-  // chave canônica do cache (por PATH normalizado)
   const key = headKeyFromPath(path);
-
-  // 1) cache quente
   const cached = headCacheGet(key);
   if (typeof cached === "boolean") return cached;
 
-  // 2) coalescing
   if (__inflightHead.has(key)) return __inflightHead.get(key);
 
   const p = (async () => {
-    // Monta URL final (como os demais helpers)
     const safePath = normalizePath(path);
     const isAbsolute = /^https?:\/\//i.test(safePath);
     let url = isAbsolute ? safePath + qs(query) : ensureApi(API_BASE_URL, safePath) + qs(query);
+
     try {
       if (isHttpUrl(url)) {
         const host = new URL(url).host;
         if (!isLocalHost(host)) url = url.replace(/^http:\/\//i, "https://");
       }
-    } catch {}
+    } catch {
+      // noop
+    }
 
-    // Cabeçalhos
     const jwt = getToken();
     const hdrs =
       auth && jwt
-        ? { Authorization: `Bearer ${jwt}`, ...buildClientContextHeaders(), ...(getDebugConflitos() ? { "X-Debug-Conflitos": "1" } : {}), ...(headers || {}) }
-        : { ...buildClientContextHeaders(), ...(getDebugConflitos() ? { "X-Debug-Conflitos": "1" } : {}), ...(headers || {}) };
+        ? {
+            Authorization: `Bearer ${jwt}`,
+            ...buildClientContextHeaders(),
+            ...(getDebugConflitos() ? { "X-Debug-Conflitos": "1" } : {}),
+            ...(headers || {}),
+          }
+        : {
+            ...buildClientContextHeaders(),
+            ...(getDebugConflitos() ? { "X-Debug-Conflitos": "1" } : {}),
+            ...(headers || {}),
+          };
 
-    // Execução com timeout curto (HEAD deve ser rápido)
     const timeoutMs = Number(import.meta.env.VITE_API_HEAD_TIMEOUT_MS || 8000);
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(new Error("timeout")), timeoutMs);
@@ -846,37 +940,36 @@ export async function apiHead(path, opts = {}) {
         signal: controller.signal,
       });
     } catch (e) {
-      // Falha de rede/abort → trate como "não existe" silenciosamente
       if (!quiet) console.warn("[apiHead] erro de rede/abort:", e?.message || e);
       res = { status: 0, ok: false, headers: new Headers() };
     } finally {
       clearTimeout(t);
     }
 
-    // sincroniza flag de perfil
-    try { syncPerfilHeader(res); } catch {}
+    try {
+      syncPerfilHeader(res);
+    } catch {
+      // noop
+    }
 
     const st = res?.status ?? 0;
 
-    // auth/perm: respeita flags, mas por padrão silencioso
     if (st === 401 && on401 !== "silent" && !quiet) console.warn("[apiHead] 401 em", url);
     if (st === 403 && on403 !== "silent" && !quiet) console.warn("[apiHead] 403 em", url);
 
-    // ok → true; 404/410/0 → false; demais → false (sem exceção)
     const exists =
-      res?.ok || st === 200 || st === 204 ? true :
-      (st === 404 || st === 410 || st === 0) ? false :
-      false;
+      res?.ok || st === 200 || st === 204
+        ? true
+        : st === 404 || st === 410 || st === 0
+        ? false
+        : false;
 
-    // grava cache
     headCacheSet(key, exists, ttlMs);
-
     return exists;
   })();
 
   __inflightHead.set(key, p);
 
-  // limpa o inflight assim que resolver (não segura promises velhas)
   p.finally(() => {
     setTimeout(() => __inflightHead.delete(key), 0);
   });
@@ -885,8 +978,7 @@ export async function apiHead(path, opts = {}) {
 }
 
 /**
- * 🆕 GET que retorna a Response crua — para ler headers e então chamar .blob()
- * Útil quando você precisa do Content-Disposition (nome do arquivo).
+ * 🆕 GET que retorna a Response crua
  */
 export async function apiGetResponse(path, opts = {}) {
   const { auth = true, headers, query, on401 = "silent", on403 = "silent" } = opts;
@@ -894,19 +986,32 @@ export async function apiGetResponse(path, opts = {}) {
   const safePath = normalizePath(path);
   const isAbsolute = /^https?:\/\//i.test(safePath);
   let url = isAbsolute ? safePath + qs(query) : ensureApi(API_BASE_URL, safePath) + qs(query);
+
   try {
     if (isHttpUrl(url)) {
       const host = new URL(url).host;
       if (!isLocalHost(host)) url = url.replace(/^http:\/\//i, "https://");
     }
-  } catch {}
+  } catch {
+    // noop
+  }
 
   const jwt = getToken();
   const res = await fetch(url, {
     method: "GET",
-    headers: auth && jwt
-      ? { Authorization: `Bearer ${jwt}`, ...buildClientContextHeaders(), ...(getDebugConflitos() ? { "X-Debug-Conflitos": "1" } : {}), ...(headers || {}) }
-      : { ...buildClientContextHeaders(), ...(getDebugConflitos() ? { "X-Debug-Conflitos": "1" } : {}), ...(headers || {}) },
+    headers:
+      auth && jwt
+        ? {
+            Authorization: `Bearer ${jwt}`,
+            ...buildClientContextHeaders(),
+            ...(getDebugConflitos() ? { "X-Debug-Conflitos": "1" } : {}),
+            ...(headers || {}),
+          }
+        : {
+            ...buildClientContextHeaders(),
+            ...(getDebugConflitos() ? { "X-Debug-Conflitos": "1" } : {}),
+            ...(headers || {}),
+          },
     credentials: "include",
     mode: "cors",
     cache: "no-store",
@@ -917,35 +1022,36 @@ export async function apiGetResponse(path, opts = {}) {
   syncPerfilHeader(res);
 
   if (res.status === 401) {
-  if (on401 === "redirect") {
-    clearAuthSession();
-    redirectToLogin();
+    if (on401 === "redirect") {
+      clearAuthSession();
+      redirectToLogin();
+    }
+
+    const err = new ApiError("Não autorizado (401)", {
+      status: 401,
+      url,
+    });
+    err.code = "AUTH_401";
+    throw err;
   }
 
-  const err = new ApiError("Não autorizado (401)", {
-    status: 401,
-    url,
-  });
-  err.code = "AUTH_401";
-  throw err;
-}
+  if (res.status === 403) {
+    if (
+      on403 === "redirect" &&
+      typeof window !== "undefined" &&
+      !isPublicAppPath(window.location.pathname)
+    ) {
+      window.location.replace("/painel");
+    }
 
-if (res.status === 403) {
-  if (
-    on403 === "redirect" &&
-    typeof window !== "undefined" &&
-    !isPublicAppPath(window.location.pathname)
-  ) {
-    window.location.replace("/painel");
+    const err = new ApiError("Sem permissão (403)", {
+      status: 403,
+      url,
+    });
+    err.code = "AUTH_403";
+    throw err;
   }
 
-  const err = new ApiError("Sem permissão (403)", {
-    status: 403,
-    url,
-  });
-  err.code = "AUTH_403";
-  throw err;
-}
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
     try {
@@ -953,20 +1059,22 @@ if (res.status === 403) {
       msg = txt || msg;
       const json = JSON.parse(txt);
       msg = json?.erro || json?.message || msg;
-    } catch {}
+    } catch {
+      // noop
+    }
     throw new Error(msg);
   }
 
-  return res; // o chamador decide se usa .blob() / .arrayBuffer() / .text()
+  return res;
 }
 
-// Upload multipart (aceita FormData OU File/Blob)
+// Upload multipart
 export async function apiUpload(path, formDataOrFile, opts = {}) {
   let fd;
+
   if (formDataOrFile instanceof FormData) {
     fd = formDataOrFile;
   } else if (formDataOrFile instanceof Blob) {
-    // 🔧 nome do campo por padrão é "poster" para casar com upload.single("poster")
     const fieldName = opts.fieldName || "poster";
     fd = new FormData();
     const fallbackName =
@@ -976,11 +1084,10 @@ export async function apiUpload(path, formDataOrFile, opts = {}) {
   } else {
     throw new Error("apiUpload: passe um FormData ou File/Blob.");
   }
-  // usa doFetch com FormData (sem Content-Type manual)
+
   return doFetch(path, { method: "POST", body: fd, ...opts });
 }
 
-// 🆕 Atalho específico para pôster (.ppt/.pptx)
 export const apiUploadPoster = (submissaoId, fileOrFormData, opts = {}) => {
   if (!submissaoId) throw new Error("submissaoId é obrigatório");
   return apiUpload(`/submissao/${submissaoId}/poster`, fileOrFormData, {
@@ -989,7 +1096,6 @@ export const apiUploadPoster = (submissaoId, fileOrFormData, opts = {}) => {
   });
 };
 
-// POST que retorna arquivo (Blob)
 export async function apiPostFile(path, body, opts = {}) {
   const {
     auth = true,
@@ -1004,18 +1110,21 @@ export async function apiPostFile(path, body, opts = {}) {
   const safePath = normalizePath(path);
   const isAbsolute = /^https?:\/\//i.test(safePath);
   let url = isAbsolute ? safePath + qs(query) : ensureApi(API_BASE_URL, safePath) + qs(query);
+
   try {
     if (isHttpUrl(url)) {
       const host = new URL(url).host;
       if (!isLocalHost(host)) url = url.replace(/^http:\/\//i, "https://");
     }
-  } catch {}
+  } catch {
+    // noop
+  }
 
   const res = await fetch(url, {
     method: "POST",
     headers: {
       ...(auth && jwt ? { Authorization: `Bearer ${jwt}` } : {}),
-      ...buildClientContextHeaders(),                        // 🆕
+      ...buildClientContextHeaders(),
       ...(getDebugConflitos() ? { "X-Debug-Conflitos": "1" } : {}),
       "Content-Type": "application/json",
       Accept: "*/*",
@@ -1032,35 +1141,35 @@ export async function apiPostFile(path, body, opts = {}) {
   syncPerfilHeader(res);
 
   if (res.status === 401) {
-  if (on401 === "redirect") {
-    clearAuthSession();
-    redirectToLogin();
+    if (on401 === "redirect") {
+      clearAuthSession();
+      redirectToLogin();
+    }
+
+    const err = new ApiError("Não autorizado (401)", {
+      status: 401,
+      url,
+    });
+    err.code = "AUTH_401";
+    throw err;
   }
 
-  const err = new ApiError("Não autorizado (401)", {
-    status: 401,
-    url,
-  });
-  err.code = "AUTH_401";
-  throw err;
-}
+  if (res.status === 403) {
+    if (
+      on403 === "redirect" &&
+      typeof window !== "undefined" &&
+      !isPublicAppPath(window.location.pathname)
+    ) {
+      window.location.replace("/painel");
+    }
 
-if (res.status === 403) {
-  if (
-    on403 === "redirect" &&
-    typeof window !== "undefined" &&
-    !isPublicAppPath(window.location.pathname)
-  ) {
-    window.location.replace("/painel");
+    const err = new ApiError("Sem permissão (403)", {
+      status: 403,
+      url,
+    });
+    err.code = "AUTH_403";
+    throw err;
   }
-
-  const err = new ApiError("Sem permissão (403)", {
-    status: 403,
-    url,
-  });
-  err.code = "AUTH_403";
-  throw err;
-}
 
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
@@ -1069,7 +1178,9 @@ if (res.status === 403) {
       msg = txt || msg;
       const json = JSON.parse(txt);
       msg = json?.erro || json?.message || msg;
-    } catch {}
+    } catch {
+      // noop
+    }
     throw new Error(msg);
   }
 
@@ -1080,7 +1191,6 @@ if (res.status === 403) {
   return { blob, filename };
 }
 
-// GET que retorna arquivo (Blob)
 export async function apiGetFile(path, opts = {}) {
   const {
     auth = true,
@@ -1095,18 +1205,21 @@ export async function apiGetFile(path, opts = {}) {
   const safePath = normalizePath(path);
   const isAbsolute = /^https?:\/\//i.test(safePath);
   let url = isAbsolute ? safePath + qs(query) : ensureApi(API_BASE_URL, safePath) + qs(query);
+
   try {
     if (isHttpUrl(url)) {
       const host = new URL(url).host;
       if (!isLocalHost(host)) url = url.replace(/^http:\/\//i, "https://");
     }
-  } catch {}
+  } catch {
+    // noop
+  }
 
   const res = await fetch(url, {
     method: "GET",
     headers: {
       ...(auth && jwt ? { Authorization: `Bearer ${jwt}` } : {}),
-      ...buildClientContextHeaders(),                        // 🆕
+      ...buildClientContextHeaders(),
       ...(getDebugConflitos() ? { "X-Debug-Conflitos": "1" } : {}),
       Accept: "*/*",
       ...headers,
@@ -1121,35 +1234,35 @@ export async function apiGetFile(path, opts = {}) {
   syncPerfilHeader(res);
 
   if (res.status === 401) {
-  if (on401 === "redirect") {
-    clearAuthSession();
-    redirectToLogin();
+    if (on401 === "redirect") {
+      clearAuthSession();
+      redirectToLogin();
+    }
+
+    const err = new ApiError("Não autorizado (401)", {
+      status: 401,
+      url,
+    });
+    err.code = "AUTH_401";
+    throw err;
   }
 
-  const err = new ApiError("Não autorizado (401)", {
-    status: 401,
-    url,
-  });
-  err.code = "AUTH_401";
-  throw err;
-}
+  if (res.status === 403) {
+    if (
+      on403 === "redirect" &&
+      typeof window !== "undefined" &&
+      !isPublicAppPath(window.location.pathname)
+    ) {
+      window.location.replace("/painel");
+    }
 
-if (res.status === 403) {
-  if (
-    on403 === "redirect" &&
-    typeof window !== "undefined" &&
-    !isPublicAppPath(window.location.pathname)
-  ) {
-    window.location.replace("/painel");
+    const err = new ApiError("Sem permissão (403)", {
+      status: 403,
+      url,
+    });
+    err.code = "AUTH_403";
+    throw err;
   }
-
-  const err = new ApiError("Sem permissão (403)", {
-    status: 403,
-    url,
-  });
-  err.code = "AUTH_403";
-  throw err;
-}
 
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
@@ -1158,7 +1271,9 @@ if (res.status === 403) {
       msg = txt || msg;
       const json = JSON.parse(txt);
       msg = json?.erro || json?.message || msg;
-    } catch {}
+    } catch {
+      // noop
+    }
     throw new Error(msg);
   }
 
@@ -1170,7 +1285,7 @@ if (res.status === 403) {
 }
 
 // ───────────────────────────────────────────────────────────────────
-// Helpers específicos de turmas (datas reais)
+// Helpers específicos de turmas
 // ───────────────────────────────────────────────────────────────────
 export async function apiGetTurmaDatas(turmaId, via = "datas") {
   if (!turmaId) throw new Error("turmaId obrigatório");
@@ -1188,30 +1303,36 @@ export async function apiGetTurmaDatasAuto(turmaId) {
 }
 
 // ───────────────────────────────────────────────────────────────────
-// 🆕 APIs de Presenças (usuário / público)
+// APIs de Presenças
 // ───────────────────────────────────────────────────────────────────
 export async function apiGetMinhasPresencas(opts = {}) {
   return apiGet("/presencas/minhas", opts);
 }
+
 export async function apiGetMePresencas(opts = {}) {
   return apiGet("/presencas/me", opts);
 }
-export async function apiValidarPresencaPublico({ evento, usuario, evento_id, usuario_id } = {}) {
+
+export async function apiValidarPresencaPublico({
+  evento,
+  usuario,
+  evento_id,
+  usuario_id,
+} = {}) {
   const query = { evento: evento ?? evento_id, usuario: usuario ?? usuario_id };
-  // pública (sem token)
   return apiGet("/presencas/validar", { auth: false, on401: "silent", query });
 }
+
 export async function apiPresencasTurmaPDF(turmaId) {
   if (!turmaId) throw new Error("turmaId obrigatório");
   return apiGetFile(`/presencas/turma/${turmaId}/pdf`);
 }
 
 // ───────────────────────────────────────────────────────────────────
-// 🆕 Pequenos utilitários
+// Pequenos utilitários
 // ───────────────────────────────────────────────────────────────────
 export const onlyDigits = (s) => String(s ?? "").replace(/\D/g, "");
 
-/** 🆕 Helper para baixar um Blob com nome de arquivo. */
 export function downloadBlob(filename = "download", blob) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -1224,17 +1345,12 @@ export function downloadBlob(filename = "download", blob) {
 }
 
 // ───────────────────────────────────────────────────────────────────
-// 🆕 APIs de Assinaturas/Certificados Avulsos
+// APIs de Assinaturas/Certificados Avulsos
 // ───────────────────────────────────────────────────────────────────
-export async function apiGetAssinaturas(opts = {}) {         // 🆕 lista nomes com assinatura
+export async function apiGetAssinaturas(opts = {}) {
   return apiGet("/assinaturas", { on401: "silent", on403: "silent", ...opts });
 }
 
-/**
- * 🆕 Gera/baixa PDF de certificado avulso com flags:
- * - palestrante: boolean → rota de palestrante
- * - assinatura2_id: id da assinatura extra (se houver)
- */
 export async function apiCertAvulsoPDF(id, { palestrante = false, assinatura2_id } = {}) {
   if (!id) throw new Error("id do certificado obrigatório");
   const query = {
@@ -1245,11 +1361,15 @@ export async function apiCertAvulsoPDF(id, { palestrante = false, assinatura2_id
 }
 
 // ───────────────────────────────────────────────────────────────────
-// 🆕 APIs de Perfil (cadastro obrigatório) — ÚNICAS
+// APIs de Perfil
 // ───────────────────────────────────────────────────────────────────
 export async function apiPerfilOpcao(opts = {}) {
-  // sensível → 401 silencioso para não perder a sessão
-  return apiGet("/perfil/opcao", { auth: true, on401: "silent", on403: "silent", ...opts });
+  return apiGet("/perfil/opcao", {
+    auth: true,
+    on401: "silent",
+    on403: "silent",
+    ...opts,
+  });
 }
 
 function inferPerfilIncompleto(me) {
@@ -1273,20 +1393,25 @@ export async function apiPerfilMe(opts = {}) {
     on403: "silent",
     ...opts,
   });
+
   try {
-    const incompleto = typeof me?.perfil_incompleto === "boolean"
-      ? me.perfil_incompleto
-      : inferPerfilIncompleto(me);
+    const incompleto =
+      typeof me?.perfil_incompleto === "boolean"
+        ? me.perfil_incompleto
+        : inferPerfilIncompleto(me);
     setPerfilIncompletoFlag(!!incompleto);
-  } catch {}
+  } catch {
+    // noop
+  }
+
   return me;
 }
 
 export async function apiPerfilUpdate(payload, opts = {}) {
   return apiPut("/perfil/me", payload, {
     auth: true,
-    on401: "redirect", // token inválido → volta pro login
-    on403: "silent",   // sem permissão → deixa o caller tratar
+    on401: "redirect",
+    on403: "silent",
     ...opts,
   });
 }
@@ -1297,10 +1422,8 @@ export function apiResetCertificadosTurma(turmaId, body = {}) {
 }
 
 // ───────────────────────────────────────────────────────────────────
-// 🆕 Helpers de Modelo de Banner por Chamada
+// Helpers de Modelo de Banner por Chamada
 // ───────────────────────────────────────────────────────────────────
-
-/** HEAD: existe modelo para a chamada? (true/false) */
 export async function apiChamadaModeloExists(chamadaId) {
   if (!chamadaId && chamadaId !== 0) throw new Error("chamadaId é obrigatório");
   const idNum = Number(chamadaId);
@@ -1312,7 +1435,6 @@ export async function apiChamadaModeloExists(chamadaId) {
   });
 }
 
-/** GET (Response crua): baixar modelo da chamada (use .blob() e Content-Disposition) */
 export async function apiChamadaModeloDownload(chamadaId) {
   if (!chamadaId && chamadaId !== 0) throw new Error("chamadaId é obrigatório");
   const idNum = Number(chamadaId);
@@ -1324,7 +1446,6 @@ export async function apiChamadaModeloDownload(chamadaId) {
   });
 }
 
-/** POST (multipart): enviar/atualizar modelo (.ppt/.pptx) – campo `file` */
 export async function apiChamadaModeloUpload(chamadaId, fileOrFormData) {
   if (!chamadaId && chamadaId !== 0) throw new Error("chamadaId é obrigatório");
   const idNum = Number(chamadaId);
@@ -1334,15 +1455,15 @@ export async function apiChamadaModeloUpload(chamadaId, fileOrFormData) {
     fieldName: "file",
   });
 
-  // 🧼 depois do upload, limpe o cache/head dessa chamada
   try {
     invalidateHeadPrefix(`/chamadas/${chamadaId}/modelo-banner`);
-  } catch {}
+  } catch {
+    // noop
+  }
 
   return resp;
 }
 
-/** GET admin (JSON): meta para o painel (exists/filename/size/mtime/mime) */
 export async function apiChamadaModeloAdminMeta(chamadaId) {
   if (!chamadaId && chamadaId !== 0) throw new Error("chamadaId é obrigatório");
   const idNum = Number(chamadaId);
@@ -1358,6 +1479,7 @@ export async function apiChamadaModeloAdminMeta(chamadaId) {
 // Compat: facade estilo axios + default export
 // ───────────────────────────────────────────────────────────────────
 export { API_BASE_URL };
+
 export function isLoggedIn() {
   return !!getToken();
 }
@@ -1369,7 +1491,8 @@ export const api = {
   patch: (path, body, opts) => apiPatch(path, body, opts),
   delete: (path, opts) => apiDelete(path, opts),
   upload: (path, formDataOrFile, opts) => apiUpload(path, formDataOrFile, opts),
-  uploadPoster: (submissaoId, fileOrFormData, opts) => apiUploadPoster(submissaoId, fileOrFormData, opts),
+  uploadPoster: (submissaoId, fileOrFormData, opts) =>
+    apiUploadPoster(submissaoId, fileOrFormData, opts),
   request: ({ url, method = "GET", data, ...opts } = {}) =>
     doFetch(url, { method, body: data, ...opts }),
   authMe: (opts) => apiAuthMe(opts),

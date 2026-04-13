@@ -83,9 +83,6 @@ function registerIf(fn, registrar, rotaDescrita) {
   );
 }
 
-/* =========================
-   Estatísticas (ETag)
-========================= */
 function buildEtag(data) {
   const digest = crypto
     .createHash("sha1")
@@ -107,8 +104,13 @@ function buildRouteLog(req, extra = {}) {
   };
 }
 
+/**
+ * ✅ IMPORTANTE:
+ * Como já existe `router.use(requireAuth)` mais abaixo,
+ * este middleware verifica APENAS se o usuário autenticado é admin.
+ * Não repetir requireAuth aqui.
+ */
 const requireAdmin = [
-  requireAuth,
   (req, res, next) => {
     const perfis = toPerfisArray(req.user?.perfil);
     const isAdmin = perfis.includes("administrador") || perfis.includes("admin");
@@ -139,6 +141,18 @@ function logPerfilRoute(req, _res, next) {
   return next();
 }
 
+function logPublicAuthRoute(routeName) {
+  return (req, _res, next) => {
+    console.log(
+      `[usuarioRoute.public] ${routeName}`,
+      buildRouteLog(req, {
+        bodyKeys: Object.keys(req.body || {}),
+      })
+    );
+    return next();
+  };
+}
+
 /* ─────────────────────────────────────────────────────────────
    🔓 Rotas públicas (sem autenticação)
    Base: /api/usuario  (e alias /api/usuarios)
@@ -149,6 +163,7 @@ registerIf(
     router.post(
       "/cadastro",
       authLimiter,
+      logPublicAuthRoute("cadastro"),
       asyncHandler(usuarioController.cadastrarUsuario)
     );
   },
@@ -161,6 +176,7 @@ registerIf(
     router.post(
       "/login",
       authLimiter,
+      logPublicAuthRoute("login"),
       asyncHandler(usuarioController.loginUsuario)
     );
   },
@@ -170,11 +186,16 @@ registerIf(
 registerIf(
   usuarioController?.recuperarSenha,
   function recuperarSenhaRoute() {
-    router.post(
-      "/recuperar-senha",
+    const middlewares = [
       authLimiter,
-      asyncHandler(usuarioController.recuperarSenha)
-    );
+      logPublicAuthRoute("recuperar-senha"),
+      asyncHandler(usuarioController.recuperarSenha),
+    ];
+
+    router.post("/recuperar-senha", ...middlewares);
+
+    // alias retrocompatível / mais amigável
+    router.post("/esqueci-senha", ...middlewares);
   },
   "POST /usuarios/recuperar-senha"
 );
@@ -182,11 +203,16 @@ registerIf(
 registerIf(
   usuarioController?.redefinirSenha,
   function redefinirSenhaRoute() {
-    router.post(
-      "/redefinir-senha",
+    const middlewares = [
       authLimiter,
-      asyncHandler(usuarioController.redefinirSenha)
-    );
+      logPublicAuthRoute("redefinir-senha"),
+      asyncHandler(usuarioController.redefinirSenha),
+    ];
+
+    router.post("/redefinir-senha", ...middlewares);
+
+    // alias opcional com token na rota
+    router.post("/redefinir-senha/:token", ...middlewares);
   },
   "POST /usuarios/redefinir-senha"
 );
@@ -195,7 +221,7 @@ registerIf(
    🔒 Rotas protegidas (exigem token válido)
 ────────────────────────────────────────────────────────────── */
 
-// ✅ Tudo abaixo exige auth
+// ✅ Tudo abaixo exige auth uma única vez
 router.use(requireAuth);
 
 /* -------------------------
@@ -405,8 +431,16 @@ registerIf(
       validarId,
       asyncHandler(usuarioController.atualizarUsuario)
     );
+
+    // PUT retrocompatível
+    router.put(
+      "/:id(\\d+)",
+      authLimiter,
+      validarId,
+      asyncHandler(usuarioController.atualizarUsuario)
+    );
   },
-  "PATCH /usuarios/:id"
+  "PATCH/PUT /usuarios/:id"
 );
 
 // 📊 Resumo do usuário (admin)
@@ -464,7 +498,6 @@ registerIf(
 
 /* ─────────────────────────────────────────────────────────────
    ♻️ Aliases retrocompat
-   (se algum front chamava /usuarios/estatisticas como subpath)
 ────────────────────────────────────────────────────────────── */
 router.get(
   "/usuarios/estatisticas",

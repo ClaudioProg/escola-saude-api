@@ -1,7 +1,14 @@
-// 📁 src/components/PrivateRoute.jsx — PREMIUM (anti-loop + robusto + compatível com api.js fetch façade)
+// 📁 src/components/PrivateRoute.jsx — PREMIUM
+// - anti-loop
+// - verificação de sessão robusta
+// - compatível com api.js fetch façade
+// - evita revalidação desnecessária a cada pathname
+// - logs estratégicos
+// - redirect seguro com next
+// - controle de permissões mais previsível
 
 import { Navigate, useLocation } from "react-router-dom";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import api from "../services/api";
 
 function getStoredToken() {
@@ -26,6 +33,13 @@ function normalizePerfis(value) {
     .split(",")
     .map((p) => String(p || "").trim().toLowerCase())
     .filter(Boolean);
+}
+
+function buildNextFromLocation(location) {
+  const pathname = location?.pathname || "/painel";
+  const search = location?.search || "";
+  const hash = location?.hash || "";
+  return `${pathname}${search}${hash}`;
 }
 
 function logDev(...args) {
@@ -59,25 +73,56 @@ export default function PrivateRoute({
   const requestIdRef = useRef(0);
   const inFlightRef = useRef(false);
   const authChangedTimerRef = useRef(null);
+  const lastVerifiedTokenRef = useRef(null);
 
-  useEffect(() => {
-    mountedRef.current = true;
+  const aplicarSessaoInvalida = useCallback((origem, extra = {}) => {
+    if (!mountedRef.current) return;
 
-    async function verificarSessao(origem = "init") {
+    logDev("sessão inválida", { origem, ...extra });
+    setUsuario(null);
+    setStatus("unauthenticated");
+  }, []);
+
+  const aplicarSessaoValida = useCallback((usuarioRecebido, origem, extra = {}) => {
+    if (!mountedRef.current) return;
+
+    logDev("sessão válida", {
+      origem,
+      perfil: usuarioRecebido?.perfil,
+      usuarioId: usuarioRecebido?.id || usuarioRecebido?.usuario_id || null,
+      ...extra,
+    });
+
+    setUsuario(usuarioRecebido);
+    setStatus("authenticated");
+  }, []);
+
+  const verificarSessao = useCallback(
+    async (origem = "manual", options = {}) => {
       if (!mountedRef.current) return;
 
       const token = getStoredToken();
+      const force = Boolean(options?.force);
 
       if (!token) {
-        logDev("sem token → unauthenticated", { origem });
-        if (!mountedRef.current) return;
-        setUsuario(null);
-        setStatus("unauthenticated");
+        aplicarSessaoInvalida(origem, { reason: "sem_token" });
+        lastVerifiedTokenRef.current = null;
+        return;
+      }
+
+      if (!force && status === "authenticated" && lastVerifiedTokenRef.current === token) {
+        logDev("verificação reaproveitada", {
+          origem,
+          pathname: location.pathname,
+        });
         return;
       }
 
       if (inFlightRef.current) {
-        logDev("verificação ignorada porque já existe request em andamento", { origem });
+        logDev("verificação ignorada porque já existe request em andamento", {
+          origem,
+          pathname: location.pathname,
+        });
         return;
       }
 
@@ -88,6 +133,7 @@ export default function PrivateRoute({
         origem,
         currentRequestId,
         pathname: location.pathname,
+        force,
       });
 
       try {
@@ -97,32 +143,36 @@ export default function PrivateRoute({
         });
 
         if (!mountedRef.current) return;
+
         if (currentRequestId !== requestIdRef.current) {
-          logDev("resposta antiga descartada", { origem, currentRequestId });
+          logDev("resposta antiga descartada", {
+            origem,
+            currentRequestId,
+          });
           return;
         }
 
         const usuarioRecebido = data?.usuario || data?.user || null;
 
-        if (usuarioRecebido) {
-          setUsuario(usuarioRecebido);
-          setStatus("authenticated");
-
-          logDev("sessão válida", {
-            origem,
+        if (!usuarioRecebido || typeof usuarioRecebido !== "object") {
+          aplicarSessaoInvalida(origem, {
             currentRequestId,
-            perfil: usuarioRecebido?.perfil,
+            reason: "payload_sem_usuario",
           });
+          lastVerifiedTokenRef.current = null;
           return;
         }
 
-        logDev("sessão inválida: payload sem usuário", { origem, currentRequestId });
-        setUsuario(null);
-        setStatus("unauthenticated");
+        lastVerifiedTokenRef.current = token;
+        aplicarSessaoValida(usuarioRecebido, origem, { currentRequestId });
       } catch (error) {
         if (!mountedRef.current) return;
+
         if (currentRequestId !== requestIdRef.current) {
-          logDev("erro de request antiga descartado", { origem, currentRequestId });
+          logDev("erro de request antiga descartado", {
+            origem,
+            currentRequestId,
+          });
           return;
         }
 
@@ -130,18 +180,26 @@ export default function PrivateRoute({
           origem,
           currentRequestId,
           message: error?.message,
+          status: error?.status || error?.response?.status || null,
         });
 
-        setUsuario(null);
-        setStatus("unauthenticated");
+        lastVerifiedTokenRef.current = null;
+        aplicarSessaoInvalida(origem, {
+          currentRequestId,
+          reason: "auth_me_error",
+        });
       } finally {
         if (currentRequestId === requestIdRef.current) {
           inFlightRef.current = false;
         }
       }
-    }
+    },
+    [aplicarSessaoInvalida, aplicarSessaoValida, location.pathname, status]
+  );
 
-    verificarSessao("mount");
+  useEffect(() => {
+    mountedRef.current = true;
+    verificarSessao("mount", { force: true });
 
     const handleAuthChanged = () => {
       if (!mountedRef.current) return;
@@ -151,7 +209,7 @@ export default function PrivateRoute({
       }
 
       authChangedTimerRef.current = window.setTimeout(() => {
-        verificarSessao("auth:changed");
+        verificarSessao("auth:changed", { force: true });
       }, 80);
     };
 
@@ -166,16 +224,19 @@ export default function PrivateRoute({
 
       window.removeEventListener("auth:changed", handleAuthChanged);
     };
-  }, [location.pathname]);
+  }, [verificarSessao]);
 
   if (status === "checking") {
     return fallback || null;
   }
 
   if (status === "unauthenticated") {
-    const next = encodeURIComponent(
-      `${location.pathname || "/painel"}${location.search || ""}`
-    );
+    const next = encodeURIComponent(buildNextFromLocation(location));
+
+    logDev("redirect para login", {
+      pathname: location.pathname,
+      next,
+    });
 
     return (
       <Navigate
@@ -195,6 +256,12 @@ export default function PrivateRoute({
       permitidoNormalizado.some((perfil) => perfisUsuario.includes(perfil));
 
     if (!autorizado) {
+      logDev("acesso negado por perfil", {
+        pathname: location.pathname,
+        perfisUsuario,
+        permitido: permitidoNormalizado,
+      });
+
       return <Navigate to="/painel" replace />;
     }
   }

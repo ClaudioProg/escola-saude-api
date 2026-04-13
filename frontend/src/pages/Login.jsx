@@ -1,5 +1,6 @@
 // ✅ src/pages/Login.jsx
 // premium + institucional + QR públicos + PWA + mobile-first + dark/light/system + a11y
+// + login robusto + diagnóstico + redirect pós-login validado
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
@@ -20,7 +21,6 @@ import {
   Copy,
   Instagram,
   Share2,
-  GraduationCap,
   Building2,
   BookOpenCheck,
   FileText,
@@ -32,6 +32,7 @@ import {
   MonitorSmartphone,
   BadgeCheck,
   ArrowRight,
+  Loader2,
 } from "lucide-react";
 
 import BotaoPrimario from "../components/BotaoPrimario";
@@ -47,6 +48,40 @@ import ThemeTogglePills from "../components/ThemeTogglePills";
 const SITE_URL = "https://escoladasaude.vercel.app";
 const INSTAGRAM_URL =
   "https://www.instagram.com/escoladasaudesms?igsh=Zzd5M3MyazZ0aXRm&utm_source=qr";
+
+const IS_DEV =
+  typeof import.meta !== "undefined" &&
+  Boolean(import.meta.env?.DEV);
+
+/* ---------------------- utils/logs ---------------------- */
+function logDev(...args) {
+  if (IS_DEV) console.log("[Login]", ...args);
+}
+
+function errorDev(...args) {
+  if (IS_DEV) console.error("[Login]", ...args);
+}
+
+function getStoredToken() {
+  return (
+    localStorage.getItem("token") ||
+    localStorage.getItem("authToken") ||
+    localStorage.getItem("access_token") ||
+    null
+  );
+}
+
+function sanitizeRedirectPath(raw) {
+  const value = String(raw || "").trim();
+
+  if (!value) return "/painel";
+  if (!value.startsWith("/")) return "/painel";
+  if (value.startsWith("//")) return "/painel";
+  if (value.startsWith("/login")) return "/painel";
+  if (value.startsWith("/cadastro")) return "/painel";
+
+  return value;
+}
 
 /* ---------------------- utils CPF ---------------------- */
 function aplicarMascaraCPF(valor) {
@@ -69,7 +104,9 @@ function cpfChecksumValido(cpf) {
 
   const calc = (arr, len) => {
     let soma = 0;
-    for (let i = 0; i < len - 1; i += 1) soma += parseInt(arr[i], 10) * (len - i);
+    for (let i = 0; i < len - 1; i += 1) {
+      soma += parseInt(arr[i], 10) * (len - i);
+    }
     const resto = (soma * 10) % 11;
     return resto === 10 ? 0 : resto;
   };
@@ -356,6 +393,7 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [mostrarSenha, setMostrarSenha] = useState(false);
   const [loadingGoogle, setLoadingGoogle] = useState(false);
+  const [loadingSessionCheck, setLoadingSessionCheck] = useState(true);
   const [erroCpf, setErroCpf] = useState("");
   const [erroSenha, setErroSenha] = useState("");
   const [capsLockOn, setCapsLockOn] = useState(false);
@@ -364,6 +402,7 @@ export default function Login() {
   const location = useLocation();
   const cpfRef = useRef(null);
   const senhaRef = useRef(null);
+  const mountedRef = useRef(false);
   const qrSize = useQrSize();
 
   const hasGoogleClient = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID);
@@ -373,39 +412,120 @@ export default function Login() {
     try {
       const sp = new URLSearchParams(location.search);
       const raw = sp.get("next") || sp.get("redirect") || "";
-      if (!raw) return "/painel";
-      if (raw.startsWith("/") && !raw.startsWith("//")) return raw;
-      return "/painel";
+      return sanitizeRedirectPath(raw);
     } catch {
       return "/painel";
     }
   }, [location.search]);
 
   useEffect(() => {
+    mountedRef.current = true;
     document.title = "Entrar — Escola da Saúde";
+
+    return () => {
+      mountedRef.current = false;
+    };
   }, []);
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    if (location.pathname === "/login" && token) {
-      navigate(redirectPath || "/painel", { replace: true });
+    let cancelled = false;
+
+    async function validarSessaoExistente() {
+      const token = getStoredToken();
+
+      if (!token) {
+        logDev("sem token salvo, permanece na tela de login");
+        if (!cancelled && mountedRef.current) {
+          setLoadingSessionCheck(false);
+        }
+        return;
+      }
+
+      logDev("token encontrado no login, validando sessão antes de redirecionar", {
+        pathname: location.pathname,
+        redirectPath,
+      });
+
+      try {
+        const data = await api.authMe({
+          auth: true,
+          on401: "silent",
+          on403: "silent",
+        });
+
+        const usuarioRecebido = data?.usuario || data?.user || null;
+
+        if (!usuarioRecebido) {
+          throw new Error("Sessão inválida: payload sem usuário.");
+        }
+
+        if (!cancelled && mountedRef.current) {
+          logDev("sessão válida no login, redirecionando", {
+            redirectPath,
+            perfil: usuarioRecebido?.perfil,
+          });
+
+          navigate(redirectPath || "/painel", { replace: true });
+          return;
+        }
+      } catch (error) {
+        errorDev("sessão salva inválida no login", {
+          message: error?.message,
+          status: error?.status || error?.response?.status || null,
+        });
+
+        try {
+          api.clearSession?.();
+        } catch {
+          localStorage.removeItem("token");
+          localStorage.removeItem("authToken");
+          localStorage.removeItem("access_token");
+          localStorage.removeItem("usuario");
+          localStorage.removeItem("user");
+        }
+      } finally {
+        if (!cancelled && mountedRef.current) {
+          setLoadingSessionCheck(false);
+        }
+      }
     }
+
+    if (location.pathname === "/login") {
+      validarSessaoExistente();
+    } else {
+      setLoadingSessionCheck(false);
+    }
+
+    return () => {
+      cancelled = true;
+    };
   }, [navigate, location.pathname, redirectPath]);
 
   useEffect(() => {
     const onKey = (e) => {
+      const active = document.activeElement;
+      const tag = active?.tagName?.toLowerCase();
+
+      if (tag === "input" || tag === "textarea" || active?.isContentEditable) {
+        return;
+      }
+
       if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
         cpfRef.current?.focus();
       }
     };
+
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   const persistirSessao = useCallback((payload) => {
     const { token, usuario } = payload || {};
-    if (!token || !usuario) throw new Error("Resposta de login inválida.");
+
+    if (!token || !usuario) {
+      throw new Error("Resposta de login inválida.");
+    }
 
     api.persistSession(token, usuario);
 
@@ -417,6 +537,11 @@ export default function Login() {
         },
       })
     );
+
+    logDev("sessão persistida com sucesso", {
+      usuarioId: usuario?.id || usuario?.usuario_id || null,
+      perfil: usuario?.perfil || null,
+    });
   }, []);
 
   const redirecionarPosLogin = useCallback(
@@ -424,7 +549,9 @@ export default function Login() {
       persistirSessao(payload);
       const destino = redirectPath || "/painel";
 
-      setTimeout(() => {
+      logDev("redirecionando pós-login", { destino });
+
+      window.setTimeout(() => {
         navigate(destino, { replace: true });
       }, 0);
     },
@@ -460,10 +587,15 @@ export default function Login() {
 
   async function handleLogin(e) {
     e.preventDefault();
-    if (loading || loadingGoogle) return;
+    if (loading || loadingGoogle || loadingSessionCheck) return;
     if (!validarFormulario()) return;
 
     setLoading(true);
+
+    logDev("iniciando login por CPF", {
+      cpfLength: apenasDigitos(cpf).length,
+      redirectPath,
+    });
 
     try {
       const payload = await apiPost(
@@ -478,12 +610,19 @@ export default function Login() {
       const serverMsg =
         err?.data?.erro || err?.data?.message || err?.message || "Erro ao fazer login.";
 
+      errorDev("falha no login por CPF", {
+        message: serverMsg,
+        status: err?.status || err?.response?.status || null,
+      });
+
       setSenha("");
       setMostrarSenha(false);
       senhaRef.current?.focus();
       toast.error(serverMsg);
     } finally {
-      setLoading(false);
+      if (mountedRef.current) {
+        setLoading(false);
+      }
     }
   }
 
@@ -492,9 +631,14 @@ export default function Login() {
       toast.error("Credencial do Google ausente.");
       return;
     }
-    if (loadingGoogle || loading) return;
+    if (loadingGoogle || loading || loadingSessionCheck) return;
 
     setLoadingGoogle(true);
+
+    logDev("iniciando login com Google", {
+      redirectPath,
+      credentialPresent: true,
+    });
 
     try {
       const payload = await apiPost(
@@ -512,9 +656,16 @@ export default function Login() {
         err?.message ||
         "Erro ao fazer login com Google.";
 
+      errorDev("falha no login com Google", {
+        message: serverMsg,
+        status: err?.status || err?.response?.status || null,
+      });
+
       toast.error(serverMsg);
     } finally {
-      setLoadingGoogle(false);
+      if (mountedRef.current) {
+        setLoadingGoogle(false);
+      }
     }
   }
 
@@ -782,275 +933,289 @@ export default function Login() {
                   </span>
                 </div>
 
-                <form
-                  onSubmit={handleLogin}
-                  className="mt-6 space-y-4"
-                  aria-label="Formulário de Login"
-                  aria-busy={loading || loadingGoogle ? "true" : "false"}
-                >
-                  <div>
-                    <label htmlFor="cpf" className="block text-sm font-semibold">
-                      CPF
-                    </label>
+                {loadingSessionCheck ? (
+                  <div className="mt-6 rounded-2xl border border-emerald-200/30 bg-emerald-500/5 p-4">
+                    <div className="flex items-center gap-3">
+                      <Loader2 className="h-5 w-5 animate-spin text-emerald-600 dark:text-emerald-300" />
+                      <div className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">
+                        Verificando sua sessão...
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <form
+                    onSubmit={handleLogin}
+                    className="mt-6 space-y-4"
+                    aria-label="Formulário de Login"
+                    aria-busy={loading || loadingGoogle ? "true" : "false"}
+                  >
+                    <div>
+                      <label htmlFor="cpf" className="block text-sm font-semibold">
+                        CPF
+                      </label>
 
-                    <div className="mt-2 relative">
-                      <span
-                        className={[
-                          "absolute left-3 top-1/2 -translate-y-1/2",
-                          isDark ? "text-zinc-300" : "text-slate-500",
-                        ].join(" ")}
-                      >
-                        <IdentIcon className="h-5 w-5" aria-hidden="true" />
-                      </span>
+                      <div className="mt-2 relative">
+                        <span
+                          className={[
+                            "absolute left-3 top-1/2 -translate-y-1/2",
+                            isDark ? "text-zinc-300" : "text-slate-500",
+                          ].join(" ")}
+                        >
+                          <IdentIcon className="h-5 w-5" aria-hidden="true" />
+                        </span>
 
-                      <input
-                        id="cpf"
-                        name="cpf"
-                        ref={cpfRef}
-                        type="text"
-                        value={cpf}
-                        onChange={(e) => {
-                          setCpf(maskOkOuFormatar(e.target.value));
-                          if (erroCpf) setErroCpf("");
-                        }}
-                        onPaste={(e) => {
-                          e.preventDefault();
-                          const text = (e.clipboardData.getData("text") || "").trim();
-                          setCpf(maskOkOuFormatar(text));
-                          if (erroCpf) setErroCpf("");
-                        }}
-                        onBlur={() => {
-                          if (cpf && !validarCPF(cpf)) setErroCpf("CPF inválido.");
-                        }}
-                        placeholder="000.000.000-00"
-                        maxLength={14}
-                        autoFocus
-                        autoComplete="username"
-                        inputMode="numeric"
-                        className={[
-                          "w-full rounded-2xl border pl-11 pr-4 py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-500/70",
-                          isDark
-                            ? "border-white/10 bg-zinc-950/30 text-zinc-100 placeholder:text-zinc-500"
-                            : "border-slate-300 bg-white text-slate-900 placeholder:text-slate-400",
-                          erroCpf ? "ring-2 ring-red-500/60 border-red-500/60" : "",
-                        ].join(" ")}
-                        aria-invalid={!!erroCpf}
-                        aria-describedby={erroCpf ? "erro-cpf" : "dica-cpf"}
-                      />
+                        <input
+                          id="cpf"
+                          name="cpf"
+                          ref={cpfRef}
+                          type="text"
+                          value={cpf}
+                          onChange={(e) => {
+                            setCpf(maskOkOuFormatar(e.target.value));
+                            if (erroCpf) setErroCpf("");
+                          }}
+                          onPaste={(e) => {
+                            e.preventDefault();
+                            const text = (e.clipboardData.getData("text") || "").trim();
+                            setCpf(maskOkOuFormatar(text));
+                            if (erroCpf) setErroCpf("");
+                          }}
+                          onBlur={() => {
+                            if (cpf && !validarCPF(cpf)) setErroCpf("CPF inválido.");
+                          }}
+                          placeholder="000.000.000-00"
+                          maxLength={14}
+                          autoFocus
+                          autoComplete="username"
+                          inputMode="numeric"
+                          disabled={loading || loadingGoogle}
+                          className={[
+                            "w-full rounded-2xl border pl-11 pr-4 py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-500/70",
+                            isDark
+                              ? "border-white/10 bg-zinc-950/30 text-zinc-100 placeholder:text-zinc-500"
+                              : "border-slate-300 bg-white text-slate-900 placeholder:text-slate-400",
+                            erroCpf ? "ring-2 ring-red-500/60 border-red-500/60" : "",
+                          ].join(" ")}
+                          aria-invalid={!!erroCpf}
+                          aria-describedby={erroCpf ? "erro-cpf" : "dica-cpf"}
+                        />
+                      </div>
+
+                      <div className="min-h-[1rem]" aria-live="polite">
+                        {erroCpf ? (
+                          <p
+                            id="erro-cpf"
+                            className="text-red-500 dark:text-red-300 text-xs mt-1"
+                            role="alert"
+                          >
+                            {erroCpf}
+                          </p>
+                        ) : (
+                          <p
+                            id="dica-cpf"
+                            className={[
+                              "mt-2 text-xs",
+                              isDark ? "text-zinc-400" : "text-slate-500",
+                            ].join(" ")}
+                          >
+                            Você pode colar o CPF com ou sem pontuação.
+                          </p>
+                        )}
+                      </div>
                     </div>
 
-                    <div className="min-h-[1rem]" aria-live="polite">
-                      {erroCpf ? (
-                        <p
-                          id="erro-cpf"
-                          className="text-red-500 dark:text-red-300 text-xs mt-1"
-                          role="alert"
-                        >
-                          {erroCpf}
-                        </p>
-                      ) : (
-                        <p
-                          id="dica-cpf"
+                    <div>
+                      <label htmlFor="senha" className="block text-sm font-semibold">
+                        Senha
+                      </label>
+
+                      <div className="mt-2 relative">
+                        <span
                           className={[
-                            "mt-2 text-xs",
+                            "absolute left-3 top-1/2 -translate-y-1/2",
+                            isDark ? "text-zinc-300" : "text-slate-500",
+                          ].join(" ")}
+                        >
+                          <Lock className="h-5 w-5" aria-hidden="true" />
+                        </span>
+
+                        <input
+                          id="senha"
+                          name="senha"
+                          ref={senhaRef}
+                          type={mostrarSenha ? "text" : "password"}
+                          value={senha}
+                          onChange={(e) => {
+                            setSenha(e.target.value);
+                            if (erroSenha) setErroSenha("");
+                          }}
+                          onKeyUp={(e) => setCapsLockOn(e.getModifierState?.("CapsLock"))}
+                          onKeyDown={(e) => setCapsLockOn(e.getModifierState?.("CapsLock"))}
+                          placeholder="Digite sua senha"
+                          autoComplete="current-password"
+                          disabled={loading || loadingGoogle}
+                          className={[
+                            "w-full rounded-2xl border pl-11 pr-12 py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-500/70",
+                            isDark
+                              ? "border-white/10 bg-zinc-950/30 text-zinc-100 placeholder:text-zinc-500"
+                              : "border-slate-300 bg-white text-slate-900 placeholder:text-slate-400",
+                            erroSenha ? "ring-2 ring-red-500/60 border-red-500/60" : "",
+                          ].join(" ")}
+                          aria-invalid={!!erroSenha}
+                          aria-describedby={(erroSenha || capsLockOn) ? "senha-feedback" : undefined}
+                        />
+
+                        <button
+                          type="button"
+                          onClick={() => setMostrarSenha((prev) => !prev)}
+                          className={[
+                            "absolute right-2 top-1/2 -translate-y-1/2 rounded-xl px-2.5 py-2",
+                            "focus:outline-none focus:ring-2 focus:ring-emerald-500/70",
+                            isDark
+                              ? "text-zinc-300 hover:bg-white/10"
+                              : "text-slate-600 hover:bg-slate-100",
+                          ].join(" ")}
+                          aria-label={mostrarSenha ? "Ocultar senha" : "Mostrar senha"}
+                          title={mostrarSenha ? "Ocultar senha" : "Mostrar senha"}
+                          disabled={loading || loadingGoogle}
+                        >
+                          {mostrarSenha ? (
+                            <EyeOff className="h-5 w-5" aria-hidden="true" />
+                          ) : (
+                            <Eye className="h-5 w-5" aria-hidden="true" />
+                          )}
+                        </button>
+                      </div>
+
+                      <div id="senha-feedback" className="min-h-[1.25rem]" aria-live="polite">
+                        {erroSenha ? (
+                          <p className="text-red-500 dark:text-red-300 text-xs mt-1" role="alert">
+                            {erroSenha}
+                          </p>
+                        ) : null}
+
+                        {capsLockOn && !erroSenha ? (
+                          <p
+                            className={[
+                              "mt-1 text-[11px] flex items-center gap-1",
+                              isDark ? "text-amber-300" : "text-amber-700",
+                            ].join(" ")}
+                            role="status"
+                          >
+                            <AlertTriangle className="h-3 w-3" aria-hidden="true" /> Atenção:
+                            Caps Lock está ativado.
+                          </p>
+                        ) : null}
+                      </div>
+
+                      <div className="mt-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs">
+                        <button
+                          type="button"
+                          onClick={() => navigate("/recuperar-senha")}
+                          className={[
+                            "w-full sm:w-auto font-semibold hover:underline rounded-xl px-3 py-2",
+                            "focus:outline-none focus:ring-2 focus:ring-emerald-500/70",
+                            isDark ? "text-sky-300 hover:bg-white/5" : "text-sky-700",
+                          ].join(" ")}
+                        >
+                          Esqueci minha senha
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => navigate("/cadastro")}
+                          className={[
+                            "w-full sm:w-auto font-extrabold hover:underline rounded-xl px-3 py-2",
+                            "focus:outline-none focus:ring-2 focus:ring-emerald-500/70",
+                            isDark
+                              ? "text-emerald-300 hover:bg-white/5"
+                              : "text-emerald-700",
+                          ].join(" ")}
+                        >
+                          Criar cadastro
+                        </button>
+                      </div>
+                    </div>
+
+                    <BotaoPrimario
+                      type="submit"
+                      className="w-full flex justify-center items-center gap-2"
+                      aria-label="Entrar na plataforma"
+                      disabled={loading || loadingGoogle}
+                      loading={loading}
+                      cor="amareloOuro"
+                      leftIcon={<LogIn size={16} />}
+                    >
+                      {loading ? "Entrando..." : "Entrar"}
+                    </BotaoPrimario>
+
+                    <div className="pt-2">
+                      <div
+                        className={[
+                          "text-center text-xs font-bold",
+                          isDark ? "text-zinc-300" : "text-slate-600",
+                        ].join(" ")}
+                      >
+                        ou
+                      </div>
+
+                      <div className="flex justify-center mt-3">
+                        {loadingGoogle ? (
+                          <CarregandoSkeleton mensagem="Fazendo login com Google..." />
+                        ) : hasGoogleClient ? (
+                          <div className="scale-90 max-w-xs w-full flex justify-center">
+                            <GoogleLogin
+                              onSuccess={handleLoginGoogle}
+                              onError={() => toast.error("Erro no login com Google.")}
+                              theme={isDark ? "filled_black" : "outline"}
+                              size="large"
+                              shape="rectangular"
+                              text="signin_with"
+                              locale="pt-BR"
+                              useOneTap={false}
+                            />
+                          </div>
+                        ) : (
+                          <small
+                            className={[
+                              "text-center block",
+                              isDark ? "text-zinc-400" : "text-slate-500",
+                            ].join(" ")}
+                          >
+                            Login com Google indisponível no momento.
+                          </small>
+                        )}
+                      </div>
+
+                      {redirectPath ? (
+                        <p
+                          className={[
+                            "mt-3 text-[11px] text-center",
                             isDark ? "text-zinc-400" : "text-slate-500",
                           ].join(" ")}
                         >
-                          Você pode colar o CPF com ou sem pontuação.
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label htmlFor="senha" className="block text-sm font-semibold">
-                      Senha
-                    </label>
-
-                    <div className="mt-2 relative">
-                      <span
-                        className={[
-                          "absolute left-3 top-1/2 -translate-y-1/2",
-                          isDark ? "text-zinc-300" : "text-slate-500",
-                        ].join(" ")}
-                      >
-                        <Lock className="h-5 w-5" aria-hidden="true" />
-                      </span>
-
-                      <input
-                        id="senha"
-                        name="senha"
-                        ref={senhaRef}
-                        type={mostrarSenha ? "text" : "password"}
-                        value={senha}
-                        onChange={(e) => {
-                          setSenha(e.target.value);
-                          if (erroSenha) setErroSenha("");
-                        }}
-                        onKeyUp={(e) => setCapsLockOn(e.getModifierState?.("CapsLock"))}
-                        onKeyDown={(e) => setCapsLockOn(e.getModifierState?.("CapsLock"))}
-                        placeholder="Digite sua senha"
-                        autoComplete="current-password"
-                        className={[
-                          "w-full rounded-2xl border pl-11 pr-12 py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-500/70",
-                          isDark
-                            ? "border-white/10 bg-zinc-950/30 text-zinc-100 placeholder:text-zinc-500"
-                            : "border-slate-300 bg-white text-slate-900 placeholder:text-slate-400",
-                          erroSenha ? "ring-2 ring-red-500/60 border-red-500/60" : "",
-                        ].join(" ")}
-                        aria-invalid={!!erroSenha}
-                        aria-describedby={(erroSenha || capsLockOn) ? "senha-feedback" : undefined}
-                      />
-
-                      <button
-                        type="button"
-                        onClick={() => setMostrarSenha((prev) => !prev)}
-                        className={[
-                          "absolute right-2 top-1/2 -translate-y-1/2 rounded-xl px-2.5 py-2",
-                          "focus:outline-none focus:ring-2 focus:ring-emerald-500/70",
-                          isDark
-                            ? "text-zinc-300 hover:bg-white/10"
-                            : "text-slate-600 hover:bg-slate-100",
-                        ].join(" ")}
-                        aria-label={mostrarSenha ? "Ocultar senha" : "Mostrar senha"}
-                        title={mostrarSenha ? "Ocultar senha" : "Mostrar senha"}
-                      >
-                        {mostrarSenha ? (
-                          <EyeOff className="h-5 w-5" aria-hidden="true" />
-                        ) : (
-                          <Eye className="h-5 w-5" aria-hidden="true" />
-                        )}
-                      </button>
-                    </div>
-
-                    <div id="senha-feedback" className="min-h-[1.25rem]" aria-live="polite">
-                      {erroSenha ? (
-                        <p className="text-red-500 dark:text-red-300 text-xs mt-1" role="alert">
-                          {erroSenha}
-                        </p>
-                      ) : null}
-
-                      {capsLockOn && !erroSenha ? (
-                        <p
-                          className={[
-                            "mt-1 text-[11px] flex items-center gap-1",
-                            isDark ? "text-amber-300" : "text-amber-700",
-                          ].join(" ")}
-                          role="status"
-                        >
-                          <AlertTriangle className="h-3 w-3" aria-hidden="true" /> Atenção:
-                          Caps Lock está ativado.
+                          Após o login, você será levado para:{" "}
+                          <span className="font-semibold">{redirectPath}</span>
                         </p>
                       ) : null}
                     </div>
 
-                    <div className="mt-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs">
-                      <button
-                        type="button"
-                        onClick={() => navigate("/recuperar-senha")}
-                        className={[
-                          "w-full sm:w-auto font-semibold hover:underline rounded-xl px-3 py-2",
-                          "focus:outline-none focus:ring-2 focus:ring-emerald-500/70",
-                          isDark ? "text-sky-300 hover:bg-white/5" : "text-sky-700",
-                        ].join(" ")}
-                      >
-                        Esqueci minha senha
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => navigate("/cadastro")}
-                        className={[
-                          "w-full sm:w-auto font-extrabold hover:underline rounded-xl px-3 py-2",
-                          "focus:outline-none focus:ring-2 focus:ring-emerald-500/70",
-                          isDark
-                            ? "text-emerald-300 hover:bg-white/5"
-                            : "text-emerald-700",
-                        ].join(" ")}
-                      >
-                        Criar cadastro
-                      </button>
-                    </div>
-                  </div>
-
-                  <BotaoPrimario
-                    type="submit"
-                    className="w-full flex justify-center items-center gap-2"
-                    aria-label="Entrar na plataforma"
-                    disabled={loading || loadingGoogle}
-                    loading={loading}
-                    cor="amareloOuro"
-                    leftIcon={<LogIn size={16} />}
-                  >
-                    {loading ? "Entrando..." : "Entrar"}
-                  </BotaoPrimario>
-
-                  <div className="pt-2">
-                    <div
+                    <p
                       className={[
-                        "text-center text-xs font-bold",
-                        isDark ? "text-zinc-300" : "text-slate-600",
+                        "pt-2 text-[11px] text-center",
+                        isDark ? "text-zinc-400" : "text-slate-500",
                       ].join(" ")}
                     >
-                      ou
+                      Ao continuar, você concorda com o uso dos seus dados para fins de
+                      controle de eventos, presença e certificação, conforme diretrizes
+                      institucionais.
+                    </p>
+
+                    <div className="sr-only" aria-live="polite">
+                      {loading ? "Processando login" : ""}
                     </div>
-
-                    <div className="flex justify-center mt-3">
-                      {loadingGoogle ? (
-                        <CarregandoSkeleton mensagem="Fazendo login com Google..." />
-                      ) : hasGoogleClient ? (
-                        <div className="scale-90 max-w-xs w-full flex justify-center">
-                          <GoogleLogin
-                            onSuccess={handleLoginGoogle}
-                            onError={() => toast.error("Erro no login com Google.")}
-                            theme={isDark ? "filled_black" : "outline"}
-                            size="large"
-                            shape="rectangular"
-                            text="signin_with"
-                            locale="pt-BR"
-                            useOneTap={false}
-                          />
-                        </div>
-                      ) : (
-                        <small
-                          className={[
-                            "text-center block",
-                            isDark ? "text-zinc-400" : "text-slate-500",
-                          ].join(" ")}
-                        >
-                          Login com Google indisponível no momento.
-                        </small>
-                      )}
-                    </div>
-
-                    {redirectPath ? (
-                      <p
-                        className={[
-                          "mt-3 text-[11px] text-center",
-                          isDark ? "text-zinc-400" : "text-slate-500",
-                        ].join(" ")}
-                      >
-                        Após o login, você será levado para:{" "}
-                        <span className="font-semibold">{redirectPath}</span>
-                      </p>
-                    ) : null}
-                  </div>
-
-                  <p
-                    className={[
-                      "pt-2 text-[11px] text-center",
-                      isDark ? "text-zinc-400" : "text-slate-500",
-                    ].join(" ")}
-                  >
-                    Ao continuar, você concorda com o uso dos seus dados para fins de
-                    controle de eventos, presença e certificação, conforme diretrizes
-                    institucionais.
-                  </p>
-
-                  <div className="sr-only" aria-live="polite">
-                    {loading ? "Processando login" : ""}
-                  </div>
-                </form>
+                  </form>
+                )}
               </div>
 
               <section aria-label="Links oficiais">
@@ -1233,7 +1398,10 @@ export default function Login() {
                   <ul className="list-disc ml-5 space-y-1 text-sm">
                     <li>Acesse <strong>{SITE_URL}</strong></li>
                     <li>Toque no menu <strong>⋮</strong></li>
-                    <li>Escolha <strong>Instalar app</strong> ou <strong>Adicionar à tela inicial</strong></li>
+                    <li>
+                      Escolha <strong>Instalar app</strong> ou{" "}
+                      <strong>Adicionar à tela inicial</strong>
+                    </li>
                     <li>Confirme em <strong>Instalar</strong></li>
                   </ul>
                 </div>
@@ -1285,7 +1453,9 @@ export default function Login() {
                   <div
                     className={[
                       "inline-flex items-center gap-2 rounded-2xl px-3 py-2 font-bold",
-                      isDark ? "bg-emerald-500/10 text-emerald-300" : "bg-emerald-50 text-emerald-700",
+                      isDark
+                        ? "bg-emerald-500/10 text-emerald-300"
+                        : "bg-emerald-50 text-emerald-700",
                     ].join(" ")}
                   >
                     <ArrowRight className="h-4 w-4" aria-hidden="true" />

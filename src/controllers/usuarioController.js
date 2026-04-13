@@ -22,22 +22,21 @@ const { send: enviarEmail } = require("../services/mailer");
 /* ──────────────────────────────────────────────────────────────
    Config
 ────────────────────────────────────────────────────────────── */
-// Base do Frontend para links de e-mail (Vercel em prod; localhost no dev)
 const FRONTEND_URL_STATIC =
   (process.env.FRONTEND_URL && String(process.env.FRONTEND_URL).trim()) ||
   (process.env.NODE_ENV === "production" ? "" : "http://localhost:5173");
 
-// JWT extras opcionais (não quebra se ausentes)
 const JWT_ISS = process.env.JWT_ISSUER || undefined;
 const JWT_AUD = process.env.JWT_AUDIENCE || undefined;
 
 /* ──────────────────────────────────────────────────────────────
    Regex / Regras
 ────────────────────────────────────────────────────────────── */
-const SENHA_FORTE_RE = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{8,}$/;
+// ✅ alinhada ao frontend: mínimo 8, maiúscula, minúscula, número, símbolo e sem espaços
+const SENHA_FORTE_RE = /^(?=\S{8,}$)(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).*$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/; // YYYY-MM-DD
-const REGISTRO_MASK_RE = /^\d{2}\.\d{3}-\d$/; // ex.: 28.053-7 (opcional)
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const REGISTRO_MASK_RE = /^\d{2}\.\d{3}-\d$/;
 
 const PERFIS_VALIDOS = ["usuario", "instrutor", "administrador"];
 
@@ -81,10 +80,52 @@ function clamp(n, min, max) {
 function isEmail(v) {
   return EMAIL_RE.test(String(v || "").trim());
 }
-
-/** remove duplicados (helper local) */
 function uniq(arr) {
   return [...new Set(arr)];
+}
+function safePreview(value, start = 6, end = 4) {
+  const s = String(value || "");
+  if (!s) return "";
+  if (s.length <= start + end) return "***";
+  return `${s.slice(0, start)}...${s.slice(-end)}`;
+}
+function isHttpsUrl(v) {
+  return /^https:\/\/.+/i.test(String(v || "").trim());
+}
+function removeTrailingSlash(v) {
+  return String(v || "").replace(/\/+$/, "");
+}
+function normalizeFrontendBase(raw) {
+  const base = removeTrailingSlash(String(raw || "").trim());
+  if (!base) return "";
+  if (/^https?:\/\/.+/i.test(base)) return base;
+  return "";
+}
+function getFrontendBaseFromRequest(req) {
+  const reqOrigin = String(req.headers.origin || "").trim();
+  const forwardedProto = String(req.headers["x-forwarded-proto"] || "").trim().toLowerCase();
+  const forwardedHost = String(req.headers["x-forwarded-host"] || "").trim();
+  const host = String(req.headers.host || "").trim();
+
+  const staticBase = normalizeFrontendBase(FRONTEND_URL_STATIC);
+  if (staticBase) return staticBase;
+
+  if (process.env.NODE_ENV === "production") {
+    if (isHttpsUrl(reqOrigin)) return removeTrailingSlash(reqOrigin);
+    if (forwardedProto === "https" && forwardedHost) return `https://${removeTrailingSlash(forwardedHost)}`;
+    if (host && !/localhost|127\.0\.0\.1/i.test(host)) return `https://${removeTrailingSlash(host)}`;
+  }
+
+  if (isHttpsUrl(reqOrigin) || /^http:\/\/.+/i.test(reqOrigin)) {
+    return removeTrailingSlash(reqOrigin);
+  }
+
+  return "http://localhost:5173";
+}
+function buildPasswordResetLink(req, token) {
+  const base = getFrontendBaseFromRequest(req);
+  const encodedToken = encodeURIComponent(String(token || "").trim());
+  return `${base}/redefinir-senha/${encodedToken}`;
 }
 
 function toPerfilArray(perfil) {
@@ -128,7 +169,6 @@ function perfisToCsv(input, opts = {}) {
   return normalizarPerfis(input, opts).join(",");
 }
 
-/** CSV -> array minúsculo, sem vazios */
 function perfilToArray(perfilStr) {
   return String(perfilStr || "")
     .split(",")
@@ -136,7 +176,6 @@ function perfilToArray(perfilStr) {
     .filter(Boolean);
 }
 
-/** Sempre formata o registro como 00.000-0 (usa somente os 6 primeiros dígitos) */
 function toRegistroMasked(v) {
   const d = onlyDigits(v).slice(0, 6);
   if (d.length !== 6) return "";
@@ -150,16 +189,13 @@ function isPerfilIncompleto(u = {}) {
   return camposFaltantes(u).length > 0;
 }
 
-/** Mapeia constraint -> campo provável (para 23514) */
 const CHECK_TO_FIELD = {
   chk_cpf_valido: "cpf",
   chk_data_nascimento: "data_nascimento",
   chk_registro: "registro",
 };
 
-/** Erros PG -> mensagens amigáveis (unificado) */
 function traduzPgError(err) {
-  // (1) Variante simples (admin) + variante rica (público) — retorna sempre { message|erro, fieldErrors? }
   const base = { message: "Erro ao processar solicitação.", fieldErrors: {} };
   if (!err) return { ...base, erro: "Erro desconhecido." };
 
@@ -227,7 +263,6 @@ function traduzPgError(err) {
   return { ...base, erro: err.message || "Erro de banco de dados." };
 }
 
-/** Verifica se um id existe em uma tabela (FK friendly) */
 const FK_TABLES = new Set([
   "unidades",
   "cargos",
@@ -251,7 +286,6 @@ async function assertExists(table, id, field = "id") {
   return r.rowCount > 0;
 }
 
-/** Valida conjunto de campos do perfil complementar e retorna {ok, fieldErrors, message} */
 async function validarPerfilComplementar(payload) {
   const {
     unidade_id,
@@ -267,7 +301,6 @@ async function validarPerfilComplementar(payload) {
 
   const fieldErrors = {};
 
-  // obrigatórios
   const obrig = {
     unidade_id,
     cargo_id,
@@ -282,14 +315,13 @@ async function validarPerfilComplementar(payload) {
     if (v === null || v === undefined || v === "") fieldErrors[k] = "Campo obrigatório.";
   });
 
-  // data
   if (data_nascimento) {
     const d = toDateOnly(data_nascimento);
     if (!DATE_ONLY_RE.test(d)) {
       fieldErrors.data_nascimento = "Data inválida (use YYYY-MM-DD).";
     } else {
       const now = new Date();
-      const dt = new Date(`${d}T00:00:00Z`); // ✅ data-only em UTC (sem pulo de fuso)
+      const dt = new Date(`${d}T00:00:00Z`);
 
       const hojeUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
       const dtUTC = Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate());
@@ -300,7 +332,6 @@ async function validarPerfilComplementar(payload) {
     }
   }
 
-  // registro (opcional): aceita máscara 00.000-0 ou somente dígitos (6–7)
   if (registro) {
     const masked = String(registro).trim();
     const digits = onlyDigits(registro);
@@ -309,7 +340,6 @@ async function validarPerfilComplementar(payload) {
     }
   }
 
-  // FKs
   const checks = [
     ["unidades", "unidade_id", unidade_id],
     ["cargos", "cargo_id", cargo_id],
@@ -332,7 +362,6 @@ async function validarPerfilComplementar(payload) {
 
 /* ──────────────────────────────────────────────────────────────
    (A) ADMIN — listar (com filtros/paginação)
-   GET /api/usuario?q=&perfil=&unidade_id=&cargo_nome=&page=&pageSize=
 ────────────────────────────────────────────────────────────── */
 async function listar(req, res) {
   try {
@@ -441,7 +470,6 @@ async function listar(req, res) {
 
 /* ──────────────────────────────────────────────────────────────
    (B) ADMIN/SELF — obter por id
-   GET /api/usuario/:id
 ────────────────────────────────────────────────────────────── */
 async function obter(req, res) {
   const { id } = req.params;
@@ -493,7 +521,6 @@ async function obter(req, res) {
 
 /* ──────────────────────────────────────────────────────────────
    (C) ADMIN/SELF — atualizar (nome/email/perfil)
-   PATCH/PUT /api/usuario/:id
 ────────────────────────────────────────────────────────────── */
 async function atualizar(req, res) {
   const id = Number(req.params?.id);
@@ -643,7 +670,6 @@ async function atualizar(req, res) {
 
 /* ──────────────────────────────────────────────────────────────
    (D) ADMIN — excluir
-   DELETE /api/usuario/:id
 ────────────────────────────────────────────────────────────── */
 async function excluir(req, res) {
   const { id } = req.params;
@@ -735,7 +761,6 @@ async function listarInstrutor(req, res) {
 
 /* ──────────────────────────────────────────────────────────────
    (F) ADMIN — atualizar perfil (endpoint específico)
-   PATCH /api/usuario/:id/perfil
 ────────────────────────────────────────────────────────────── */
 async function atualizarPerfil(req, res) {
   const id = Number(req.params?.id);
@@ -937,8 +962,7 @@ async function atualizarPerfil(req, res) {
 }
 
 /* ──────────────────────────────────────────────────────────────
-   (G) ADMIN — resumo por usuário (cursos ≥75% e certificados)
-   GET /api/usuario/:id/resumo
+   (G) ADMIN — resumo por usuário
 ────────────────────────────────────────────────────────────── */
 async function obterResumo(req, res) {
   const id = Number(req.params.id);
@@ -1017,7 +1041,6 @@ async function obterResumo(req, res) {
 
 /* ──────────────────────────────────────────────────────────────
    (H) ADMIN — listar avaliador elegível
-   GET /api/usuario/avaliador?roles=instrutor,administrador
 ────────────────────────────────────────────────────────────── */
 async function listarAvaliador(req, res) {
   try {
@@ -1089,7 +1112,7 @@ async function cadastrar(req, res) {
   if (email && !EMAIL_RE.test(email)) fieldErrors.email = "E-mail inválido.";
   if (!senha) fieldErrors.senha = "Senha é obrigatória.";
   if (senha && !SENHA_FORTE_RE.test(senha)) {
-    fieldErrors.senha = "Mín. 8 caracteres com maiúscula, minúscula, número e símbolo.";
+    fieldErrors.senha = "Mín. 8 caracteres com maiúscula, minúscula, número, símbolo e sem espaços.";
   }
   if (Object.keys(fieldErrors).length) {
     return res.status(422).json({ message: "Erros de validação.", fieldErrors });
@@ -1296,6 +1319,9 @@ async function recuperarSenha(req, res) {
     );
 
     if (result.rows.length === 0) {
+      console.log("[usuarioController.recuperarSenha] e-mail não encontrado, resposta idempotente", {
+        email,
+      });
       return res.status(200).json(okMsg);
     }
 
@@ -1317,26 +1343,25 @@ async function recuperarSenha(req, res) {
       signOpts
     );
 
-    const reqOrigin = String(req.headers.origin || "").trim();
-    const baseUrl =
-      FRONTEND_URL_STATIC ||
-      (process.env.NODE_ENV === "production" && /^https:\/\/.+/i.test(reqOrigin)
-        ? reqOrigin
-        : "http://localhost:5173");
-
-    const safeBase = String(baseUrl).replace(/\/+$/, "");
-    const link = `${safeBase}/redefinir-senha/${encodeURIComponent(token)}`;
+    const link = buildPasswordResetLink(req, token);
 
     try {
       await enviarEmail({
         to: email,
         subject: "Recuperação de Senha - Escola da Saúde",
-        text: `Você solicitou redefinição de senha. Acesse: ${link} (válido por 1h).`,
+        text:
+          `Você solicitou redefinição de senha.\n\n` +
+          `Acesse o link abaixo para criar uma nova senha:\n` +
+          `${link}\n\n` +
+          `Este link é válido por 1 hora.\n` +
+          `Se você não fez essa solicitação, ignore esta mensagem.`,
       });
 
       console.log("[usuarioController.recuperarSenha] e-mail de recuperação enviado", {
         usuarioId,
         email,
+        frontendBase: getFrontendBaseFromRequest(req),
+        tokenPreview: safePreview(token),
       });
     } catch (mailErr) {
       console.error("[usuarioController.recuperarSenha] erro ao enviar e-mail", {
@@ -1344,6 +1369,7 @@ async function recuperarSenha(req, res) {
         stack: mailErr?.stack,
         email,
         usuarioId,
+        frontendBase: getFrontendBaseFromRequest(req),
       });
     }
 
@@ -1380,8 +1406,8 @@ async function redefinirSenha(req, res) {
     return res.status(422).json({
       message: "Erros de validação.",
       fieldErrors: {
-        token: !token ? "Token ausente." : undefined,
-        novaSenha: !novaSenha ? "Informe a nova senha." : undefined,
+        ...( !token ? { token: "Token ausente." } : {} ),
+        ...( !novaSenha ? { novaSenha: "Informe a nova senha." } : {} ),
       },
     });
   }
@@ -1391,7 +1417,7 @@ async function redefinirSenha(req, res) {
       message: "Erros de validação.",
       fieldErrors: {
         novaSenha:
-          "A nova senha deve conter ao menos 8 caracteres, incluindo letra maiúscula, minúscula, número e símbolo.",
+          "A nova senha deve conter ao menos 8 caracteres, incluindo letra maiúscula, minúscula, número, símbolo e sem espaços.",
       },
     });
   }
@@ -1412,6 +1438,11 @@ async function redefinirSenha(req, res) {
     const typ = decoded?.typ ?? "pwd-reset";
 
     if (typ !== "pwd-reset" || !usuarioId) {
+      console.warn("[usuarioController.redefinirSenha] token com tipo inválido", {
+        usuarioId,
+        typ,
+        tokenPreview: safePreview(token),
+      });
       return res.status(400).json({ message: "Token inválido." });
     }
 
@@ -1433,6 +1464,7 @@ async function redefinirSenha(req, res) {
 
     console.log("[usuarioController.redefinirSenha] SUCESSO", {
       usuarioId,
+      tokenPreview: safePreview(token),
     });
 
     return res.status(200).json({ mensagem: "Senha atualizada com sucesso." });
@@ -1441,6 +1473,7 @@ async function redefinirSenha(req, res) {
       message: err?.message,
       name: err?.name,
       stack: err?.stack,
+      tokenPreview: safePreview(token),
     });
 
     return res.status(400).json({ message: "Token inválido ou expirado." });
@@ -1527,7 +1560,7 @@ async function atualizarBasico(req, res) {
   const fieldErrors = {};
   if (email != null && email !== "" && !EMAIL_RE.test(email)) fieldErrors.email = "E-mail inválido.";
   if (senha != null && senha !== "" && !SENHA_FORTE_RE.test(senha)) {
-    fieldErrors.senha = "Mín. 8 caracteres com maiúscula, minúscula, número e símbolo.";
+    fieldErrors.senha = "Mín. 8 caracteres com maiúscula, minúscula, número, símbolo e sem espaços.";
   }
   if (Object.keys(fieldErrors).length) return res.status(422).json({ message: "Erros de validação.", fieldErrors });
 
@@ -1584,7 +1617,7 @@ async function atualizarBasico(req, res) {
 }
 
 /* ──────────────────────────────────────────────────────────────
-   (O) PÚBLICO/SELF — atualizar perfil completo (cadastro complementar)
+   (O) PÚBLICO/SELF — atualizar perfil completo
 ────────────────────────────────────────────────────────────── */
 async function atualizarPerfilCompleto(req, res) {
   const { id } = req.params;
@@ -1659,7 +1692,7 @@ async function atualizarPerfilCompleto(req, res) {
 }
 
 /* ──────────────────────────────────────────────────────────────
-   (P) PÚBLICO — obter assinatura (instrutor/admin)
+   (P) PÚBLICO — obter assinatura
 ────────────────────────────────────────────────────────────── */
 async function obterAssinatura(req, res) {
   const usuarioId = req.user?.id;
@@ -1682,7 +1715,6 @@ async function obterAssinatura(req, res) {
 
 /* ──────────────────────────────────────────────────────────────
    (Q) PÚBLICO — buscar (autocomplete)
-   GET /usuario/busca?search=...&roles=instrutor,administrador&unidade_id=#
 ────────────────────────────────────────────────────────────── */
 async function buscar(req, res) {
   const search = String(req.query.search || "").trim();
@@ -1745,11 +1777,8 @@ async function buscar(req, res) {
 }
 
 /* ──────────────────────────────────────────────────────────────
-   (R) ESTATÍSTICAS — (era usuarioController)
-   GET /usuario/estatistica
+   (R) ESTATÍSTICAS
 ────────────────────────────────────────────────────────────── */
-
-/* Compat com pg-promise (one/none/manyOrNone) e node-postgres (query) */
 async function dbOneCompat(dbx, sql, params) {
   if (typeof dbx.one === "function") return dbx.one(sql, params);
   const resx = await dbx.query(sql, params);
@@ -1947,34 +1976,32 @@ async function obterEstatisticaDetalhada(req, res) {
 }
 
 /* ──────────────────────────────────────────────────────────────
-   EXPORTS (singular) + retrocompat (nomes antigos)
+   EXPORTS
 ────────────────────────────────────────────────────────────── */
 module.exports = {
-  // ✅ singular (novo padrão)
   listar,
-  obter,                 // admin/self com joins de exibição
-  atualizar,             // admin/self (nome/email/perfil)
+  obter,
+  atualizar,
   excluir,
 
-  listarInstrutor,       // lista instrutores (métricas)
-  atualizarPerfil,       // patch perfil (admin)
-  obterResumo,           // resumo por usuário
-  listarAvaliador,       // avaliadores elegíveis
+  listarInstrutor,
+  atualizarPerfil,
+  obterResumo,
+  listarAvaliador,
 
   cadastrar,
   login,
   recuperarSenha,
   redefinirSenha,
-  obterPorId,            // público/self (fallback assinatura)
-  atualizarBasico,       // público/self (nome/email/senha)
+  obterPorId,
+  atualizarBasico,
   atualizarPerfilCompleto,
   obterAssinatura,
-  buscar,                // autocomplete
+  buscar,
 
   obterEstatistica,
   obterEstatisticaDetalhada,
 
-  // ♻️ aliases retrocompat (pra não quebrar rotas antigas)
   listarUsuarios: listar,
   buscarUsuarioPorId: obter,
   atualizarUsuario: atualizar,
@@ -1991,7 +2018,6 @@ module.exports = {
   cadastrarUsuario: cadastrar,
   loginUsuario: login,
   obterUsuarioPorId: obterPorId,
-  // (antigo) atualizarUsuario do público: mantém por alias separado
   atualizarUsuarioPublico: atualizarBasico,
   atualizarUsuarioBasico: atualizarBasico,
 

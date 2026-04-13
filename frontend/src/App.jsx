@@ -1,14 +1,15 @@
-// ✅ src/App.jsx (premium, robusto, a11y, auth-friendly)
-// - basename dinâmico (suporte a subpasta)
+// ✅ src/App.jsx (premium, robusto, a11y, auth-friendly, diagnóstico reforçado)
+// - basename dinâmico e normalizado
 // - announcer de rota (a11y)
-// - destrava scroll ao trocar de rota (fix modal)
+// - destrava scroll ao trocar de rota
 // - scroll-to-top por navegação
-// - redirecionos legados (.html e QR antigo)
-// - wrappers para rotas com :id
+// - redirecionos legados (.html e aliases antigos)
+// - wrappers para rotas com params
+// - logs estratégicos em rotas públicas críticas
+// - fallback 404 público real (não mascara bugs mandando tudo para login)
+// - rota pública explícita para redefinição de senha
 // - PrivateShell aplica AppShell + PrivateRoute
 // - Suspense fallback acessível
-// - aliases coerentes para HomeEscola (painel oficial)
-// - evita montar conteúdo privado sem sessão válida
 
 import {
   BrowserRouter,
@@ -20,9 +21,19 @@ import {
   Navigate,
   useParams,
   Outlet,
+  Link,
 } from "react-router-dom";
-import { Suspense, lazy, useEffect, useState } from "react";
-import { RefreshCw, Smartphone, ShieldCheck } from "lucide-react";
+import { Suspense, lazy, useEffect, useMemo, useState } from "react";
+import {
+  RefreshCw,
+  Smartphone,
+  ShieldCheck,
+  AlertTriangle,
+  ArrowLeft,
+  Home,
+  LogIn,
+  KeyRound,
+} from "lucide-react";
 
 import PrivateRoute from "./components/PrivateRoute";
 import EscolaAppShell from "./layout/EscolaAppShell";
@@ -97,14 +108,55 @@ const AdminVotacao = lazy(() => import("./pages/AdminVotacao"));
 // ⚠️ AdminSubmissao
 const AdminSubmissao = lazy(() => import("./pages/AdminSubmissao"));
 
+const IS_DEV =
+  typeof import.meta !== "undefined" &&
+  Boolean(import.meta.env?.DEV);
+
+function debugLog(scope, payload) {
+  if (!IS_DEV) return;
+  try {
+    console.log(scope, payload);
+  } catch {
+    // noop
+  }
+}
+
+function normalizeBasename(value) {
+  const raw = String(value || "/").trim();
+
+  if (!raw || raw === "/") return "/";
+
+  const cleaned = raw
+    .replace(/^https?:\/\/[^/]+/i, "")
+    .replace(/\/+$/, "")
+    .replace(/^([^/])/, "/$1");
+
+  return cleaned || "/";
+}
+
+function maskToken(token) {
+  const value = String(token || "");
+  if (!value) return { present: false, length: 0, preview: "" };
+
+  return {
+    present: true,
+    length: value.length,
+    preview:
+      value.length <= 10
+        ? "***"
+        : `${value.slice(0, 6)}...${value.slice(-4)}`,
+  };
+}
+
 /* A11y: Announcer de mudanças de rota */
 function RouteChangeAnnouncer() {
   const location = useLocation();
   const [message, setMessage] = useState("Carregado");
 
   useEffect(() => {
-    const path = location.pathname.replace(/^\/+/, "") || "início";
-    setMessage(`Página carregada: ${path}`);
+    const rawPath = location.pathname.replace(/^\/+/, "") || "início";
+    const safePath = rawPath.length > 120 ? `${rawPath.slice(0, 117)}...` : rawPath;
+    setMessage(`Página carregada: ${safePath}`);
   }, [location]);
 
   return (
@@ -112,6 +164,30 @@ function RouteChangeAnnouncer() {
       {message}
     </div>
   );
+}
+
+/* Logs estratégicos em rotas públicas críticas */
+function PublicRouteDiagnostics() {
+  const location = useLocation();
+
+  useEffect(() => {
+    const path = location.pathname || "/";
+    const isAuthPublicRoute =
+      path.startsWith("/login") ||
+      path.startsWith("/cadastro") ||
+      path.startsWith("/recuperar-senha") ||
+      path.startsWith("/redefinir-senha");
+
+    if (!isAuthPublicRoute) return;
+
+    debugLog("[APP][PUBLIC_ROUTE]", {
+      pathname: location.pathname,
+      search: location.search,
+      hash: location.hash,
+    });
+  }, [location]);
+
+  return null;
 }
 
 /* Hotfix global: destrava scroll preso ao trocar de rota */
@@ -136,7 +212,7 @@ function ScrollUnlockOnRouteChange() {
         body.style.top = "";
 
         try {
-          window.scrollTo({ top: -top, behavior: "instant" });
+          window.scrollTo({ top: -top, behavior: "auto" });
         } catch {
           window.scrollTo(0, -top);
         }
@@ -144,9 +220,9 @@ function ScrollUnlockOnRouteChange() {
     };
 
     unlock();
-    const t = setTimeout(unlock, 0);
+    const t = window.setTimeout(unlock, 0);
 
-    return () => clearTimeout(t);
+    return () => window.clearTimeout(t);
   }, [location.key]);
 
   return null;
@@ -158,7 +234,7 @@ function ScrollToTop() {
 
   useEffect(() => {
     try {
-      window.scrollTo({ top: 0, behavior: "instant" });
+      window.scrollTo({ top: 0, behavior: "auto" });
     } catch {
       window.scrollTo(0, 0);
     }
@@ -178,15 +254,40 @@ function HtmlAliasRedirect() {
   const loc = useLocation();
 
   useEffect(() => {
-    const semHtml = loc.pathname.replace(/\.html$/, "");
-    nav(`${semHtml}${loc.search}`, { replace: true });
-  }, [loc.pathname, loc.search, nav]);
+    const semHtml = loc.pathname.replace(/\.html$/i, "");
+    const destino = `${semHtml}${loc.search || ""}${loc.hash || ""}`;
+
+    debugLog("[APP][HTML_ALIAS_REDIRECT]", {
+      from: `${loc.pathname}${loc.search || ""}${loc.hash || ""}`,
+      to: destino,
+    });
+
+    nav(destino, { replace: true });
+  }, [loc.pathname, loc.search, loc.hash, nav]);
 
   return (
     <div className="min-h-[60vh] flex items-center justify-center text-sm text-gray-600 dark:text-gray-300">
       Redirecionando…
     </div>
   );
+}
+
+/* Alias simples de rota */
+function RouteAliasRedirect({ to }) {
+  const location = useLocation();
+  const destination = useMemo(
+    () => `${to}${location.search || ""}${location.hash || ""}`,
+    [to, location.search, location.hash]
+  );
+
+  useEffect(() => {
+    debugLog("[APP][ROUTE_ALIAS_REDIRECT]", {
+      from: `${location.pathname}${location.search || ""}${location.hash || ""}`,
+      to: destination,
+    });
+  }, [location.pathname, location.search, location.hash, destination]);
+
+  return <Navigate to={destination} replace />;
 }
 
 /* Wrapper legado para QR antigo com ?codigo= */
@@ -270,6 +371,13 @@ function ValidarPresencaRouter() {
     if (token) search.set("t", token);
 
     const dest = `/presenca${search.toString() ? `?${search.toString()}` : ""}`;
+
+    debugLog("[APP][QR_LEGACY_REDIRECT]", {
+      turmaId,
+      tokenPresent: Boolean(token),
+      dest,
+    });
+
     navigate(dest, { replace: true });
   }, [sp, navigate]);
 
@@ -280,8 +388,95 @@ function ValidarPresencaRouter() {
   );
 }
 
-function NotFound() {
-  return <Navigate to="/login" replace />;
+/* Página 404 pública real */
+function NotFoundPage() {
+  const location = useLocation();
+
+  useEffect(() => {
+    debugLog("[APP][NOT_FOUND]", {
+      pathname: location.pathname,
+      search: location.search,
+      hash: location.hash,
+    });
+  }, [location]);
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-cyan-50 dark:from-zinc-950 dark:via-zinc-950 dark:to-emerald-950/20 px-6 py-10">
+      <div className="mx-auto flex min-h-[80vh] max-w-3xl items-center justify-center">
+        <div className="w-full rounded-3xl border border-emerald-100 dark:border-emerald-900/40 bg-white/95 dark:bg-zinc-900/90 shadow-xl p-6 sm:p-8">
+          <div className="flex flex-col gap-6 sm:flex-row sm:items-start">
+            <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-amber-100 dark:bg-amber-900/30">
+              <AlertTriangle className="h-8 w-8 text-amber-700 dark:text-amber-300" />
+            </div>
+
+            <div className="min-w-0 flex-1">
+              <span className="inline-flex rounded-full border border-amber-200 dark:border-amber-800 px-3 py-1 text-xs font-bold uppercase tracking-wide text-amber-700 dark:text-amber-300">
+                Erro 404
+              </span>
+
+              <h1 className="mt-3 text-2xl sm:text-3xl font-black tracking-tight text-zinc-900 dark:text-white">
+                Página não encontrada
+              </h1>
+
+              <p className="mt-3 text-sm sm:text-base leading-6 text-zinc-600 dark:text-zinc-300">
+                O endereço acessado não corresponde a uma rota válida da plataforma.
+                Isso pode acontecer por link antigo, URL digitada incorretamente ou
+                redirecionamento inválido.
+              </p>
+
+              <div className="mt-5 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950/60 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                  Endereço acessado
+                </p>
+                <p className="mt-1 break-all text-sm font-medium text-zinc-800 dark:text-zinc-100">
+                  {location.pathname}
+                  {location.search}
+                  {location.hash}
+                </p>
+              </div>
+
+              <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+                <Link
+                  to="/login"
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-5 py-3 text-sm font-extrabold text-white shadow-sm transition hover:bg-emerald-800"
+                >
+                  <LogIn className="h-4 w-4" />
+                  Ir para login
+                </Link>
+
+                <Link
+                  to="/recuperar-senha"
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-zinc-200 dark:border-zinc-700 px-5 py-3 text-sm font-bold text-zinc-800 dark:text-zinc-100 transition hover:bg-zinc-50 dark:hover:bg-zinc-800/60"
+                >
+                  <KeyRound className="h-4 w-4" />
+                  Recuperar senha
+                </Link>
+
+                <button
+                  type="button"
+                  onClick={() => window.history.back()}
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-zinc-200 dark:border-zinc-700 px-5 py-3 text-sm font-bold text-zinc-800 dark:text-zinc-100 transition hover:bg-zinc-50 dark:hover:bg-zinc-800/60"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                  Voltar
+                </button>
+              </div>
+
+              <div className="mt-4">
+                <Link
+                  to="/"
+                  className="inline-flex items-center gap-2 text-sm font-semibold text-emerald-700 dark:text-emerald-300 hover:underline"
+                >
+                  <Home className="h-4 w-4" />
+                  Tentar página inicial
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /* Aviso global de atualização do PWA */
@@ -366,6 +561,31 @@ function AdminSubmissaoRouteWrapper() {
   return <AdminSubmissao chamadaId={chamadaId ? Number(chamadaId) : undefined} />;
 }
 
+/* Wrapper público para redefinição de senha */
+function RedefinirSenhaRouteWrapper() {
+  const { token } = useParams();
+
+  useEffect(() => {
+    const masked = maskToken(token);
+
+    debugLog("[AUTH][RESET_ROUTE_ACCESSED]", {
+      tokenPresent: masked.present,
+      tokenLength: masked.length,
+      tokenPreview: masked.preview,
+    });
+  }, [token]);
+
+  if (!token) {
+    debugLog("[AUTH][RESET_ROUTE_MISSING_TOKEN]", {
+      pathname: "/redefinir-senha/:token",
+    });
+
+    return <Navigate to="/recuperar-senha" replace />;
+  }
+
+  return <RedefinirSenha />;
+}
+
 /* ✅ Splash elegante durante checagem auth */
 function AuthCheckingScreen() {
   return (
@@ -413,16 +633,15 @@ function PrivateShell() {
 
 /* App */
 export default function App() {
-  const BASENAME = (
-    import.meta.env.VITE_APP_BASENAME ||
-    import.meta.env.BASE_URL ||
-    "/"
-  ).replace(/\/+$/, "") || "/";
+  const BASENAME = normalizeBasename(
+    import.meta.env.VITE_APP_BASENAME || import.meta.env.BASE_URL || "/"
+  );
 
   return (
     <BrowserRouter basename={BASENAME}>
       <div className="min-h-screen">
         <RouteChangeAnnouncer />
+        <PublicRouteDiagnostics />
         <ScrollUnlockOnRouteChange />
         <ScrollToTop />
         <PwaUpdatePrompt />
@@ -475,7 +694,11 @@ export default function App() {
             {/* Outras públicas */}
             <Route path="/historico" element={<HistoricoEventos />} />
             <Route path="/recuperar-senha" element={<RecuperarSenha />} />
-            <Route path="/redefinir-senha/:token" element={<RedefinirSenha />} />
+            <Route path="/esqueci-senha" element={<RouteAliasRedirect to="/recuperar-senha" />} />
+            <Route path="/recuperar-senha.html" element={<HtmlAliasRedirect />} />
+
+            <Route path="/redefinir-senha" element={<Navigate to="/recuperar-senha" replace />} />
+            <Route path="/redefinir-senha/:token" element={<RedefinirSenhaRouteWrapper />} />
 
             {/* 🔐 protegidas */}
             <Route element={<PrivateShell />}>
@@ -615,13 +838,13 @@ export default function App() {
                 }
               />
               <Route
-  path="gestao-informacoes"
-  element={
-    <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
-      <GestaoInformacoes />
-    </PrivateRoute>
-  }
-/>
+                path="gestao-informacoes"
+                element={
+                  <PrivateRoute permitido={["administrador"]} fallback={<AuthCheckingScreen />}>
+                    <GestaoInformacoes />
+                  </PrivateRoute>
+                }
+              />
               <Route
                 path="lista-presencas-turma"
                 element={
@@ -768,7 +991,7 @@ export default function App() {
             </Route>
 
             {/* 404 */}
-            <Route path="*" element={<NotFound />} />
+            <Route path="*" element={<NotFoundPage />} />
           </Routes>
         </Suspense>
       </div>
