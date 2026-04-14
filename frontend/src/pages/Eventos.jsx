@@ -702,13 +702,20 @@ export default function Eventos() {
           : extrairListaEventos(await apiGet("/api/eventos", { signal: ctrl.signal }).catch(() => []));
 
       const visiveis = (Array.isArray(lista) ? lista : []).filter((e) => {
-        const st = statusBackendOuFallback(e, turmasPorEvento[e.id]);
-        return st === "programado" || st === "andamento";
-      });
+  const st = statusBackendOuFallback(e, turmasPorEvento[e.id]);
+  return st === "programado" || st === "andamento";
+});
 
-      visiveis.sort((a, b) =>
-        tituloOrdenavel(a?.titulo).localeCompare(tituloOrdenavel(b?.titulo), "pt-BR")
-      );
+visiveis.sort((a, b) => {
+  const da = ymd(a?.data_inicio_geral || a?.data_inicio || "");
+  const db = ymd(b?.data_inicio_geral || b?.data_inicio || "");
+
+  if (da && db && da !== db) return da.localeCompare(db);
+  if (da && !db) return -1;
+  if (!da && db) return 1;
+
+  return tituloOrdenavel(a?.titulo).localeCompare(tituloOrdenavel(b?.titulo), "pt-BR");
+});
 
       if (!mountedRef.current) return;
 
