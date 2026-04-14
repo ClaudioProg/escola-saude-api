@@ -8,9 +8,11 @@
 // - ✅ Ministats: remove Restritos/Folder e adiciona Eventos 2025/2026
 // - Botões: cor contida (texto/ícone + hover suave), sem chapado
 // - A11y: live region, skip link, aria labels e estados
-// - ✅ PERF: poster direto por URL do backend (sem blob/objectURL)
+// - ✅ PERF: poster por URL do backend, liberado só depois dos dados
 // - ✅ PERF: content-visibility nos cards
-// - ✅ PERF: ordenação alfabética da lista filtrada
+// - ✅ PERF: ordenação por data de início (mais próximos primeiro) + título como desempate
+// - ✅ PERF: ModalEvento só monta quando realmente abre
+// - ✅ ROBUSTEZ: abort/unmount não gera falso erro visual
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { toast } from "react-toastify";
@@ -142,7 +144,6 @@ function getPosterUrl(ev) {
     "";
 
   if (!version) return resolved;
-
   return `${resolved}${resolved.includes("?") ? "&" : "?"}v=${encodeURIComponent(String(version))}`;
 }
 
@@ -210,6 +211,34 @@ function getEventYear(ev) {
   if (created) return created;
 
   return null;
+}
+
+/* =============================
+   Data de início para ordenação
+============================= */
+function getEventStartDate(ev) {
+  const candidatos = [];
+
+  const push = (valor) => {
+    const d = ymd(valor);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) candidatos.push(d);
+  };
+
+  push(ev?.data_inicio);
+  push(ev?.inicio);
+  push(ev?.data_inicio_geral);
+
+  const turmas = Array.isArray(ev?.turmas) ? ev.turmas : [];
+  for (const t of turmas) {
+    push(t?.data_inicio);
+    push(t?.inicio);
+
+    const datas = Array.isArray(t?.datas) ? t.datas : [];
+    for (const d of datas) push(d?.data);
+  }
+
+  if (!candidatos.length) return "9999-12-31";
+  return [...candidatos].sort()[0];
 }
 
 /* =============================
@@ -288,7 +317,9 @@ function normalizeTurmas(turmas = []) {
 
 /* ========= Restrição: normalização ========= */
 const normRegistros = (arr) =>
-  Array.from(new Set((arr || []).map((v) => String(v || "").replace(/\D/g, "")).filter((r) => /^\d{6}$/.test(r))));
+  Array.from(
+    new Set((arr || []).map((v) => String(v || "").replace(/\D/g, "")).filter((r) => /^\d{6}$/.test(r)))
+  );
 
 /* =============================
    Fetch auxiliares
@@ -300,6 +331,7 @@ async function fetchTurmasDoEvento(eventoId) {
     `/api/turmas/por-evento/${eventoId}`,
     `/api/turmas/evento/${eventoId}`,
   ];
+
   for (const url of urls) {
     try {
       const resp = await apiGet(url, { on403: "silent" });
@@ -311,6 +343,7 @@ async function fetchTurmasDoEvento(eventoId) {
       console.warn("[fetchTurmasDoEvento] Falha em", url, err?.message || err);
     }
   }
+
   return [];
 }
 
@@ -393,6 +426,7 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
     dadosDoModal?.restrito ??
       (typeof baseServidor?.restrito === "boolean" ? baseServidor.restrito : false)
   );
+
   body.restrito = restrito;
   body.restrito_modo = restrito
     ? dadosDoModal?.restrito_modo ?? baseServidor?.restrito_modo ?? null
@@ -529,7 +563,9 @@ function StatPill({ icon: Icon, label, value, tone = "zinc" }) {
         </span>
 
         <div className="min-w-0">
-          <div className="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">{label}</div>
+          <div className="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            {label}
+          </div>
           <div className="text-lg font-extrabold text-zinc-900 dark:text-white">{value}</div>
         </div>
       </div>
@@ -637,16 +673,18 @@ function statusLabel(status) {
 }
 
 /* =============================
-   ✅ Poster Thumb (URL direta do backend)
+   Poster Thumb
+   - Não compete com os dados
+   - Só recebe src quando liberado pelo budget
 ============================= */
-function PosterThumb({ ev, title }) {
+function PosterThumb({ ev, title, shouldLoad = false }) {
   const [failed, setFailed] = useState(false);
-
-  const src = useMemo(() => getPosterUrl(ev), [ev]);
+  const realSrc = useMemo(() => getPosterUrl(ev), [ev]);
+  const src = shouldLoad ? realSrc : "";
 
   useEffect(() => {
     setFailed(false);
-  }, [src]);
+  }, [realSrc]);
 
   if (!src || failed) {
     return (
@@ -663,7 +701,7 @@ function PosterThumb({ ev, title }) {
         aria-label={`Folder indisponível para ${title}`}
       >
         <CalendarDays className="w-5 h-5 opacity-70" />
-        Sem folder
+        {shouldLoad ? "Sem folder" : "Carregando folder..."}
       </div>
     );
   }
@@ -681,14 +719,14 @@ function PosterThumb({ ev, title }) {
       aria-label={`Folder do evento ${title}`}
     >
       <img
-  src={src}
-  alt={`Folder do evento ${title}`}
-  className="w-full h-full object-contain"
-  loading="lazy"
-  decoding="async"
-  referrerPolicy="no-referrer"
-  onError={() => setFailed(true)}
-/>
+        src={src}
+        alt={`Folder do evento ${title}`}
+        className="w-full h-full object-contain"
+        loading="lazy"
+        decoding="async"
+        referrerPolicy="no-referrer"
+        onError={() => setFailed(true)}
+      />
     </div>
   );
 }
@@ -706,6 +744,7 @@ export default function GerenciarEventos() {
   const [modalAberto, setModalAberto] = useState(false);
   const [publishingId, setPublishingId] = useState(null);
   const [salvando, setSalvando] = useState(false);
+  const [imageLoadBudget, setImageLoadBudget] = useState(0);
 
   const [filtroStatus, setFiltroStatus] = useState("ativos");
 
@@ -741,48 +780,49 @@ export default function GerenciarEventos() {
   };
 
   const recarregarEventos = useCallback(async () => {
-  try {
-    setErro("");
-    setLoading(true);
-    setLive("Carregando eventos…");
+    try {
+      setErro("");
+      setLoading(true);
+      setImageLoadBudget(0);
+      setLive("Carregando eventos…");
 
-    abortListRef.current?.abort?.("new-request");
-    const ctrl = new AbortController();
-    abortListRef.current = ctrl;
+      abortListRef.current?.abort?.("new-request");
+      const ctrl = new AbortController();
+      abortListRef.current = ctrl;
 
-    const data = await apiGet("/api/eventos", { on403: "silent", signal: ctrl.signal });
+      const data = await apiGet("/api/eventos", { on403: "silent", signal: ctrl.signal });
 
-    const lista = Array.isArray(data)
-      ? data
-      : Array.isArray(data?.eventos)
+      const lista = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.eventos)
         ? data.eventos
         : Array.isArray(data?.lista)
-          ? data.lista
-          : [];
+        ? data.lista
+        : [];
 
-    if (!mountedRef.current) return;
+      if (!mountedRef.current) return;
 
-    setEventos(lista);
-    setLive(`Eventos carregados: ${lista.length}.`);
-  } catch (err) {
-    if (isAbortLike(err)) {
-      if (IS_DEV) console.log("[GerenciarEventos] request cancelada/abortada:", err);
-      return;
+      setEventos(lista);
+      setLive(`Eventos carregados: ${lista.length}.`);
+    } catch (err) {
+      if (isAbortLike(err)) {
+        if (IS_DEV) console.log("[GerenciarEventos] request cancelada/abortada:", err);
+        return;
+      }
+
+      const msg = err?.message || "Erro ao carregar eventos";
+      console.error("/api/eventos erro:", err);
+
+      if (!mountedRef.current) return;
+
+      setErro(msg);
+      setEventos([]);
+      toast.error(`❌ ${msg}`);
+      setLive("Falha ao carregar eventos.");
+    } finally {
+      if (mountedRef.current) setLoading(false);
     }
-
-    const msg = err?.message || "Erro ao carregar eventos";
-    console.error("/api/eventos erro:", err);
-
-    if (!mountedRef.current) return;
-
-    setErro(msg);
-    setEventos([]);
-    toast.error(`❌ ${msg}`);
-    setLive("Falha ao carregar eventos.");
-  } finally {
-    if (mountedRef.current) setLoading(false);
-  }
-}, []);
+  }, []);
 
   useEffect(() => {
     recarregarEventos();
@@ -812,7 +852,9 @@ export default function GerenciarEventos() {
   }, [modalAberto]);
 
   const abrirModalCriar = () => {
-    logDev("[ACTION] abrirModalCriar()", { before: { modalAberto, eventoSelecionado: eventoSelecionado?.id ?? null } });
+    logDev("[ACTION] abrirModalCriar()", {
+      before: { modalAberto, eventoSelecionado: eventoSelecionado?.id ?? null },
+    });
     setEventoSelecionado(null);
     setModalAberto(true);
     setTimeout(() => {
@@ -820,50 +862,59 @@ export default function GerenciarEventos() {
     }, 0);
   };
 
-  const abrirModalEditar = useCallback(async (evento) => {
-    logDev("[ACTION] abrirModalEditar()", {
-      incoming: { id: evento?.id ?? null, titulo: evento?.titulo },
-      before: { modalAberto, eventoSelecionado: eventoSelecionado?.id ?? null },
-    });
+  const abrirModalEditar = useCallback(
+    async (evento) => {
+      logDev("[ACTION] abrirModalEditar()", {
+        incoming: { id: evento?.id ?? null, titulo: evento?.titulo },
+        before: { modalAberto, eventoSelecionado: eventoSelecionado?.id ?? null },
+      });
 
-    setEventoSelecionado(evento);
-    setModalAberto(true);
+      setEventoSelecionado(evento);
+      setModalAberto(true);
 
-    setTimeout(() => {
-      logDev("[AFTER] abrirModalEditar tick", { modalAberto: true, modalRoot: snapshotModalRoot() });
-    }, 0);
+      setTimeout(() => {
+        logDev("[AFTER] abrirModalEditar tick", { modalAberto: true, modalRoot: snapshotModalRoot() });
+      }, 0);
 
-    abortEditRef.current?.abort?.("new-edit");
-    const ctrl = new AbortController();
-    abortEditRef.current = ctrl;
+      abortEditRef.current?.abort?.("new-edit");
+      const ctrl = new AbortController();
+      abortEditRef.current = ctrl;
 
-    try {
-      let turmas = Array.isArray(evento.turmas) ? evento.turmas : [];
-      logDev("[EDIT] turmas iniciais", { len: turmas?.length ?? 0 });
+      try {
+        let turmas = Array.isArray(evento.turmas) ? evento.turmas : [];
+        logDev("[EDIT] turmas iniciais", { len: turmas?.length ?? 0 });
 
-      if ((!turmas || turmas.length === 0) && evento?.id) {
-        logDev("[EDIT] buscando turmas do evento...", { id: evento.id });
-        turmas = await fetchTurmasDoEvento(evento.id);
-        logDev("[EDIT] turmas carregadas", { len: turmas?.length ?? 0 });
+        if ((!turmas || turmas.length === 0) && evento?.id) {
+          logDev("[EDIT] buscando turmas do evento...", { id: evento.id });
+          turmas = await fetchTurmasDoEvento(evento.id);
+          logDev("[EDIT] turmas carregadas", { len: turmas?.length ?? 0 });
+        }
+
+        logDev("[EDIT] buscando evento completo...", { id: evento?.id });
+        const base = (await fetchEventoCompleto(evento.id)) || evento;
+        logDev("[EDIT] evento completo ok", { id: base?.id ?? null });
+
+        const combinado = { ...evento, ...base, turmas };
+        if (!mountedRef.current || ctrl.signal.aborted) {
+          warnDev("[EDIT] abortado/unmounted", {
+            aborted: ctrl.signal.aborted,
+            mounted: mountedRef.current,
+          });
+          return;
+        }
+
+        setEventoSelecionado(combinado);
+        logDev("[EDIT] setEventoSelecionado(combinado)", {
+          id: combinado?.id ?? null,
+          turmas: combinado?.turmas?.length ?? 0,
+        });
+      } catch (e) {
+        if (isAbortLike(e)) return;
+        warnDev("[abrirModalEditar] falha ao refinar:", e?.message || e);
       }
-
-      logDev("[EDIT] buscando evento completo...", { id: evento?.id });
-      const base = (await fetchEventoCompleto(evento.id)) || evento;
-      logDev("[EDIT] evento completo ok", { id: base?.id ?? null });
-
-      const combinado = { ...evento, ...base, turmas };
-      if (!mountedRef.current || ctrl.signal.aborted) {
-        warnDev("[EDIT] abortado/unmounted", { aborted: ctrl.signal.aborted, mounted: mountedRef.current });
-        return;
-      }
-
-      setEventoSelecionado(combinado);
-      logDev("[EDIT] setEventoSelecionado(combinado)", { id: combinado?.id ?? null, turmas: combinado?.turmas?.length ?? 0 });
-    } catch (e) {
-      if (e?.name === "AbortError") return;
-      warnDev("[abrirModalEditar] falha ao refinar:", e?.message || e);
-    }
-  }, [modalAberto, eventoSelecionado?.id]);
+    },
+    [modalAberto, eventoSelecionado?.id]
+  );
 
   const pedirExclusao = (ev) => {
     if (!ev?.id) return;
@@ -923,6 +974,7 @@ export default function GerenciarEventos() {
       const assinante = Number.isFinite(Number(t.assinante_id))
         ? Number(t.assinante_id)
         : Number(t.instrutor_assinante_id);
+
       if (Number.isFinite(assinante) && !instrs.includes(assinante)) {
         return `O assinante selecionado na turma "${t.nome}" precisa estar entre os instrutores da turma.`;
       }
@@ -1015,8 +1067,12 @@ export default function GerenciarEventos() {
                 vagas_total: 1,
                 carga_horaria: 1,
                 instrutores: extractIds(dadosDoModal?.instrutores) || [],
-                assinante_id: Number(dadosDoModal?.instrutor_assinante_id ?? dadosDoModal?.assinante_id),
-                instrutor_assinante_id: Number(dadosDoModal?.instrutor_assinante_id ?? dadosDoModal?.assinante_id),
+                assinante_id: Number(
+                  dadosDoModal?.instrutor_assinante_id ?? dadosDoModal?.assinante_id
+                ),
+                instrutor_assinante_id: Number(
+                  dadosDoModal?.instrutor_assinante_id ?? dadosDoModal?.assinante_id
+                ),
               },
             ]);
 
@@ -1034,7 +1090,8 @@ export default function GerenciarEventos() {
         (Array.isArray(dadosDoModal?.registros) && dadosDoModal.registros) ||
         [];
 
-      const registros = restrito && restrito_modo === "lista_registros" ? normRegistros(regsFonte) : undefined;
+      const registros =
+        restrito && restrito_modo === "lista_registros" ? normRegistros(regsFonte) : undefined;
 
       const cargos_permitidos =
         restrito && Array.isArray(dadosDoModal?.cargos_permitidos)
@@ -1115,6 +1172,7 @@ export default function GerenciarEventos() {
       if (st === "encerrado") encerrados += 1;
       else ativos += 1;
     }
+
     return { ativos, encerrados };
   }, [eventos]);
 
@@ -1124,10 +1182,65 @@ export default function GerenciarEventos() {
         ? eventos.filter((ev) => deduzStatus(ev) === "encerrado")
         : eventos.filter((ev) => deduzStatus(ev) !== "encerrado");
 
-    return [...filtrados].sort((a, b) =>
-      normalizeTitleSort(a?.titulo).localeCompare(normalizeTitleSort(b?.titulo), "pt-BR")
-    );
+    return [...filtrados].sort((a, b) => {
+      const da = getEventStartDate(a);
+      const db = getEventStartDate(b);
+
+      if (da !== db) return da.localeCompare(db);
+      return normalizeTitleSort(a?.titulo).localeCompare(normalizeTitleSort(b?.titulo), "pt-BR");
+    });
   }, [eventos, filtroStatus]);
+
+  /* =============================
+     Liberação progressiva das imagens
+     - dados primeiro
+     - imagens depois, em ondas
+  ============================= */
+  useEffect(() => {
+    if (loading) return;
+    if (!eventosFiltrados.length) return;
+
+    let cancelled = false;
+    let timeoutA = null;
+    let timeoutB = null;
+    let timeoutC = null;
+    let idleId = null;
+
+    const liberar = () => {
+      if (cancelled) return;
+
+      setImageLoadBudget(Math.min(2, eventosFiltrados.length));
+
+      timeoutA = window.setTimeout(() => {
+        if (cancelled) return;
+        setImageLoadBudget((prev) => Math.min(Math.max(prev, 4), eventosFiltrados.length));
+      }, 250);
+
+      timeoutB = window.setTimeout(() => {
+        if (cancelled) return;
+        setImageLoadBudget((prev) => Math.min(Math.max(prev, 8), eventosFiltrados.length));
+      }, 700);
+
+      timeoutC = window.setTimeout(() => {
+        if (cancelled) return;
+        setImageLoadBudget(eventosFiltrados.length);
+      }, 1400);
+    };
+
+    if ("requestIdleCallback" in window) {
+      idleId = window.requestIdleCallback(() => liberar(), { timeout: 500 });
+    } else {
+      timeoutA = window.setTimeout(() => liberar(), 120);
+    }
+
+    return () => {
+      cancelled = true;
+      if (idleId && "cancelIdleCallback" in window) window.cancelIdleCallback(idleId);
+      if (timeoutA) window.clearTimeout(timeoutA);
+      if (timeoutB) window.clearTimeout(timeoutB);
+      if (timeoutC) window.clearTimeout(timeoutC);
+    };
+  }, [loading, eventosFiltrados]);
 
   return (
     <main className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900 text-black dark:text-white overflow-x-hidden">
@@ -1139,14 +1252,15 @@ export default function GerenciarEventos() {
         onClose={() => setConfirmDelete(null)}
         onConfirm={confirmarExclusao}
         titulo="Excluir evento"
+        description={
+          confirmDelete?.titulo
+            ? `Tem certeza que deseja excluir "${confirmDelete.titulo}"?\n\nEssa ação não pode ser desfeita.`
+            : "Tem certeza que deseja excluir este evento?\n\nEssa ação não pode ser desfeita."
+        }
         confirmarTexto="Excluir"
         cancelarTexto="Cancelar"
-        danger
-      >
-        <p className="text-sm text-zinc-700 dark:text-zinc-300">
-          Tem certeza que deseja excluir <span className="font-semibold">{confirmDelete?.titulo}</span>? Essa ação não pode ser desfeita.
-        </p>
-      </ModalConfirmacao>
+        variant="danger"
+      />
 
       <ModalConfirmacao
         open={!!confirmPublish}
@@ -1154,21 +1268,15 @@ export default function GerenciarEventos() {
         onClose={() => setConfirmPublish(null)}
         onConfirm={confirmarTogglePublicacao}
         titulo={confirmPublish?.publicadoAtual ? "Ocultar evento" : "Publicar evento"}
+        description={
+          confirmPublish?.publicadoAtual
+            ? `Ocultar "${confirmPublish?.titulo}"?\n\nEle deixará de aparecer para os usuários.`
+            : `Publicar "${confirmPublish?.titulo}"?\n\nEle ficará visível para os usuários.`
+        }
         confirmarTexto={confirmPublish?.publicadoAtual ? "Ocultar" : "Publicar"}
         cancelarTexto="Cancelar"
-      >
-        <p className="text-sm text-zinc-700 dark:text-zinc-300">
-          {confirmPublish?.publicadoAtual ? (
-            <>
-              Ocultar <span className="font-semibold">{confirmPublish?.titulo}</span>? Ele deixará de aparecer para os usuários.
-            </>
-          ) : (
-            <>
-              Publicar <span className="font-semibold">{confirmPublish?.titulo}</span>? Ele ficará visível para os usuários.
-            </>
-          )}
-        </p>
-      </ModalConfirmacao>
+        variant={confirmPublish?.publicadoAtual ? "warning" : "primary"}
+      />
 
       <HeaderHero
         onCriar={abrirModalCriar}
@@ -1254,12 +1362,15 @@ export default function GerenciarEventos() {
         {loading ? (
           <SkeletonEvento />
         ) : eventosFiltrados.length === 0 ? (
-          <NenhumDado mensagem={filtroStatus === "encerrados" ? "Nenhum evento encerrado." : "Nenhum evento ativo."} />
+          <NenhumDado
+            mensagem={filtroStatus === "encerrados" ? "Nenhum evento encerrado." : "Nenhum evento ativo."}
+          />
         ) : (
           <ul className="space-y-4 sm:space-y-5">
-            {eventosFiltrados.map((ev) => {
+            {eventosFiltrados.map((ev, idx) => {
               const publicado = !!ev.publicado;
               const status = deduzStatus(ev);
+              const shouldLoadPoster = idx < imageLoadBudget;
 
               return (
                 <motion.li
@@ -1268,13 +1379,16 @@ export default function GerenciarEventos() {
                   animate={reduceMotion ? {} : { opacity: 1, y: 0 }}
                   className="relative bg-white dark:bg-zinc-950 rounded-3xl shadow-sm border border-gray-200 dark:border-zinc-800 overflow-hidden pointer-events-auto [content-visibility:auto] [contain-intrinsic-size:260px]"
                 >
-                  <div className="h-1 bg-gradient-to-r from-emerald-500/80 via-teal-500/70 to-indigo-500/70" aria-hidden="true" />
+                  <div
+                    className="h-1 bg-gradient-to-r from-emerald-500/80 via-teal-500/70 to-indigo-500/70"
+                    aria-hidden="true"
+                  />
 
                   <div className="p-4 sm:p-5 flex flex-col gap-4">
                     <div className="flex flex-col sm:flex-row gap-4 sm:items-start sm:justify-between">
                       <div className="flex gap-4 min-w-0">
                         <div className="shrink-0">
-                          <PosterThumb ev={ev} title={ev.titulo} />
+                          <PosterThumb ev={ev} title={ev.titulo} shouldLoad={shouldLoadPoster} />
                         </div>
 
                         <div className="min-w-0">
@@ -1318,6 +1432,7 @@ export default function GerenciarEventos() {
                                   </span>
                                 </span>
                               )}
+
                               {ev?.local && (
                                 <span className="inline-flex items-center gap-1">
                                   <MapPin className="w-4 h-4 opacity-70" />
@@ -1369,7 +1484,11 @@ export default function GerenciarEventos() {
                           onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            logDev("[CLICK] Editar", { id: ev?.id, titulo: ev?.titulo, fn: typeof abrirModalEditar });
+                            logDev("[CLICK] Editar", {
+                              id: ev?.id,
+                              titulo: ev?.titulo,
+                              fn: typeof abrirModalEditar,
+                            });
                             abrirModalEditar?.(ev);
                           }}
                           className="border border-sky-200 dark:border-sky-900/40 text-sky-700 dark:text-sky-200 bg-white dark:bg-zinc-950 hover:bg-sky-50 dark:hover:bg-sky-950/25"
@@ -1399,23 +1518,23 @@ export default function GerenciarEventos() {
       </div>
 
       {modalAberto && (
-  <ModalEvento
-    isOpen={modalAberto}
-    open={modalAberto}
-    onClose={() => {
-      warnDev("[ACTION] ModalEvento onClose()", {
-        before: { modalAberto, eventoSelecionado: eventoSelecionado?.id ?? null },
-        modalRoot: snapshotModalRoot(),
-        activeEl: document?.activeElement?.tagName || null,
-      });
-      setModalAberto(false);
-    }}
-    onSalvar={salvarEvento}
-    evento={eventoSelecionado}
-    salvando={salvando}
-    onTurmaRemovida={() => recarregarEventos()}
-  />
-)}
+        <ModalEvento
+          isOpen={modalAberto}
+          open={modalAberto}
+          onClose={() => {
+            warnDev("[ACTION] ModalEvento onClose()", {
+              before: { modalAberto, eventoSelecionado: eventoSelecionado?.id ?? null },
+              modalRoot: snapshotModalRoot(),
+              activeEl: document?.activeElement?.tagName || null,
+            });
+            setModalAberto(false);
+          }}
+          onSalvar={salvarEvento}
+          evento={eventoSelecionado}
+          salvando={salvando}
+          onTurmaRemovida={() => recarregarEventos()}
+        />
+      )}
 
       <Footer />
     </main>

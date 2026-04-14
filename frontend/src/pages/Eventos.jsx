@@ -1,12 +1,12 @@
 // ✅ src/pages/Eventos.jsx — Página ÚNICA (Eventos + Minhas inscrições) — PREMIUM
 // - Todos os eventos aparecem de uma vez
 // - Imagens (folders) carregam progressivamente
-// - Ordem alfabética por título
+// - Ordem por data de início (mais próximos primeiro) + título
 // - Eventos restritos visíveis para todos; inscrição apenas para elegíveis
 // - Mantém compatibilidade com backend atual e com backend novo
 // - ✅ date-only safe (sem new Date("YYYY-MM-DD"))
 // - ✅ poster por URL direta (sem blob/objectURL)
-// - ✅ loading progressivo real das imagens
+// - ✅ loading progressivo real das imagens, sem competir com os dados
 // - ✅ ações rápidas para inscrições ativas por turma
 
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
@@ -95,6 +95,36 @@ function hojeIsoLocal() {
 }
 
 const HOJE_ISO = hojeIsoLocal();
+
+function getEventStartDate(evento) {
+  const candidatos = [];
+
+  const push = (valor) => {
+    const d = ymd(typeof valor === "string" ? valor : valor?.data);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) candidatos.push(d);
+  };
+
+  push(evento?.data_inicio_geral);
+  push(evento?.data_inicio);
+  push(evento?.inicio);
+
+  if (Array.isArray(evento?.turmas)) {
+    for (const turma of evento.turmas) {
+      push(turma?.data_inicio);
+      push(turma?.inicio);
+
+      if (Array.isArray(turma?.datas)) {
+        turma.datas.forEach((d) => push(d?.data));
+      }
+      if (Array.isArray(turma?.encontros)) {
+        turma.encontros.forEach((d) => push(typeof d === "string" ? d : d?.data));
+      }
+    }
+  }
+
+  if (!candidatos.length) return "9999-12-31";
+  return [...candidatos].sort()[0];
+}
 
 /* ───────────────── Status ───────────────── */
 function statusText(dataInicioISO, dataFimISO, horarioInicio, horarioFim) {
@@ -528,7 +558,7 @@ export default function Eventos() {
   const [cancelandoId, setCancelandoId] = useState(null);
   const [carregandoTurmas, setCarregandoTurmas] = useState(null);
   const [carregandoEventos, setCarregandoEventos] = useState(true);
-  const [imageLoadBudget, setImageLoadBudget] = useState(4);
+  const [imageLoadBudget, setImageLoadBudget] = useState(0);
 
   const [confirmCancel, setConfirmCancel] = useState({
     open: false,
@@ -678,6 +708,7 @@ export default function Eventos() {
     setCarregandoEventos(true);
     setLive("Carregando eventos…");
     setErro("");
+    setImageLoadBudget(0);
 
     try {
       abortEventosRef.current?.abort?.("new-request");
@@ -697,15 +728,17 @@ export default function Eventos() {
         return st === "programado" || st === "andamento";
       });
 
-      visiveis.sort((a, b) =>
-        tituloOrdenavel(a?.titulo).localeCompare(tituloOrdenavel(b?.titulo), "pt-BR")
-      );
+      visiveis.sort((a, b) => {
+        const da = getEventStartDate(a);
+        const db = getEventStartDate(b);
+        if (da !== db) return da.localeCompare(db);
+        return tituloOrdenavel(a?.titulo).localeCompare(tituloOrdenavel(b?.titulo), "pt-BR");
+      });
 
       if (!mountedRef.current) return;
 
       setEventos(visiveis);
       setErro("");
-      setImageLoadBudget(4);
       setLive("Eventos atualizados.");
     } catch (e) {
       if (isAbortLike(e)) return;
@@ -734,6 +767,52 @@ export default function Eventos() {
     carregarInscricao();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (carregandoEventos) return;
+    if (!eventos.length) return;
+
+    let cancelled = false;
+    let timeoutA = null;
+    let timeoutB = null;
+    let timeoutC = null;
+    let idleId = null;
+
+    const liberar = () => {
+      if (cancelled) return;
+
+      setImageLoadBudget(Math.min(2, eventos.length));
+
+      timeoutA = window.setTimeout(() => {
+        if (cancelled) return;
+        setImageLoadBudget((prev) => Math.min(Math.max(prev, 4), eventos.length));
+      }, 250);
+
+      timeoutB = window.setTimeout(() => {
+        if (cancelled) return;
+        setImageLoadBudget((prev) => Math.min(Math.max(prev, 8), eventos.length));
+      }, 700);
+
+      timeoutC = window.setTimeout(() => {
+        if (cancelled) return;
+        setImageLoadBudget(eventos.length);
+      }, 1400);
+    };
+
+    if ("requestIdleCallback" in window) {
+      idleId = window.requestIdleCallback(() => liberar(), { timeout: 500 });
+    } else {
+      timeoutA = window.setTimeout(() => liberar(), 120);
+    }
+
+    return () => {
+      cancelled = true;
+      if (idleId && "cancelIdleCallback" in window) window.cancelIdleCallback(idleId);
+      if (timeoutA) window.clearTimeout(timeoutA);
+      if (timeoutB) window.clearTimeout(timeoutB);
+      if (timeoutC) window.clearTimeout(timeoutC);
+    };
+  }, [carregandoEventos, eventos]);
 
   const stats = useMemo(() => {
     const eventosDisponiveis = Array.isArray(eventos) ? eventos.length : 0;
@@ -878,7 +957,12 @@ export default function Eventos() {
           }));
         } catch {}
       } catch (err) {
-        const status = err?.status ?? err?.response?.status ?? err?.data?.status ?? err?.response?.data?.status;
+        const status =
+          err?.status ??
+          err?.response?.status ??
+          err?.data?.status ??
+          err?.response?.data?.status;
+
         const serverMsg =
           err?.data?.erro ??
           err?.response?.erro ??
@@ -887,6 +971,7 @@ export default function Eventos() {
           err?.response?.data?.message;
 
         const msg = serverMsg || err?.message || "Erro ao se inscrever.";
+
         if (status === 409) toast.warn(msg);
         else if (status === 400) toast.error(msg);
         else if (status === 403 && err?.response?.data?.motivo) {
@@ -1264,8 +1349,7 @@ export default function Eventos() {
         confirmarTexto="Sim, cancelar"
         cancelText="Não"
         cancelarTexto="Não"
-        danger
-        loading={!!isCancelModalLoading}
+        variant="danger"
         onClose={() => {
           if (cancelandoId) return;
           setConfirmCancel({ open: false, turmaId: null, inscricaoId: null, turmaNome: "" });
