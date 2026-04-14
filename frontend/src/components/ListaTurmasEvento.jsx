@@ -12,6 +12,8 @@ import {
   ArrowRight,
   ChevronDown,
   ChevronUp,
+  Lock,
+  Eye,
 } from "lucide-react";
 
 /* ========================== Helpers ========================== */
@@ -23,9 +25,6 @@ const toPct = (num, den) => {
   return d <= 0 ? 0 : clamp(Math.round((n / d) * 100));
 };
 
-const pad2 = (s) => String(s ?? "").padStart(2, "0");
-
-// "0800" → "08:00"; "8:0" → "08:00"; "08:00:00" → "08:00"
 const parseHora = (val) => {
   if (typeof val !== "string") return null;
   const s = val.trim();
@@ -51,7 +50,6 @@ const parseHora = (val) => {
 
 const isDateOnly = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
 
-// YYYY-MM-DD (LOCAL) a partir de Date (evita timezone shift)
 const ymdLocal = (d) => {
   if (!(d instanceof Date) || Number.isNaN(+d)) return "";
   const y = d.getFullYear();
@@ -60,33 +58,24 @@ const ymdLocal = (d) => {
   return `${y}-${m}-${day}`;
 };
 
-// Converte qualquer entrada em "YYYY-MM-DD" sem parse UTC perigoso
 const isoDiaLocal = (v) => {
   if (!v) return "";
 
-  // objetos {data: ...}
   if (typeof v === "object" && v?.data) {
     if (v.data instanceof Date) return ymdLocal(v.data);
     if (typeof v.data === "string") return v.data.slice(0, 10);
     return "";
   }
 
-  // Date
   if (v instanceof Date) return ymdLocal(v);
 
-  // string
   if (typeof v === "string") {
-    // se já for YYYY-MM-DD, usa direto
     if (isDateOnly(v)) return v;
-    // se for ISO completo, pega o dia sem depender do Date()
-    // ex: "2026-01-09T12:00:00Z" -> "2026-01-09"
     if (/^\d{4}-\d{2}-\d{2}T/.test(v)) return v.slice(0, 10);
-    // fallback conservador (se vier "2026/01/09", etc.)
     const m = v.match(/^(\d{4})[-/](\d{2})[-/](\d{2})/);
     return m ? `${m[1]}-${m[2]}-${m[3]}` : "";
   }
 
-  // número/qualquer outra coisa: NÃO faz new Date(v) (pode virar UTC shift)
   return "";
 };
 
@@ -96,7 +85,6 @@ const br = (iso) => {
   return `${d}/${m}/${y}`;
 };
 
-// Se todos os encontros tiverem o mesmo hi/hf, retorna; senão null
 const extrairHorasDeEncontros = (encontrosInline) => {
   const his = new Set();
   const hfs = new Set();
@@ -138,13 +126,11 @@ const getStatusPorJanela = ({ di, df, hi, hf, agora = new Date() }) => {
   return "Em andamento";
 };
 
-/* Normaliza números (aceita string/number) */
 const toInt = (v, fb = 0) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : fb;
 };
 
-/* Extrai vagas e preenchidas com múltiplos aliases */
 const getVagasTotal = (t) =>
   toInt(t?.vagas_total ?? t?.vagasTotais ?? t?.vagas ?? t?.capacidade, 0);
 
@@ -159,7 +145,6 @@ const getPreenchidas = (t) =>
     0
   );
 
-/* UI helpers */
 const barraClassPorPerc = (p) => {
   if (p >= 90) return "bg-gradient-to-r from-rose-600 to-red-600";
   if (p >= 70) return "bg-gradient-to-r from-amber-500 to-orange-500";
@@ -182,6 +167,8 @@ const chipStyles = {
     "bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-900/25 dark:text-indigo-200 dark:border-indigo-700",
   conflito:
     "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/25 dark:text-amber-200 dark:border-amber-800",
+  restrito:
+    "bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-900/25 dark:text-violet-200 dark:border-violet-800",
 };
 
 function statusChipClass(status) {
@@ -225,10 +212,11 @@ export default function ListaTurmasEvento({
   mostrarStatusTurma = true,
   exibirRealizadosTotal = false,
   turmasEmConflito = [],
+  podeSeInscreverNoEvento = true,
+  motivoBloqueioEvento = "",
 }) {
   const isCongresso = String(eventoTipo || "").toLowerCase() === "congresso";
 
-  // ✅ perf: sets memoizados
   const inscritosSet = useMemo(
     () => new Set((inscricaoConfirmadas || []).map((x) => Number(x))),
     [inscricaoConfirmadas]
@@ -239,9 +227,7 @@ export default function ListaTurmasEvento({
   );
 
   const HOJE_ISO = useMemo(() => ymdLocal(hoje), [hoje]);
-
-  // ✅ UX: controlar “mostrar mais” por turma
-  const [openMeetings, setOpenMeetings] = useState(() => ({})); // { [turmaId]: boolean }
+  const [openMeetings, setOpenMeetings] = useState(() => ({}));
 
   const toggleMeetings = (tid) =>
     setOpenMeetings((prev) => ({ ...prev, [tid]: !prev[tid] }));
@@ -252,10 +238,8 @@ export default function ListaTurmasEvento({
         const tid = Number(t?.id);
         const jaInscrito = inscritosSet.has(tid);
 
-        // bloquear outras turmas se não for congresso
         const bloquearOutras = !isCongresso && jaInscritoNoEvento && !jaInscrito;
 
-        // vagas / preenchidas
         const vagas = getVagasTotal(t);
         const preenchidasRaw = getPreenchidas(t);
         const inscritos = jaInscrito && preenchidasRaw === 0 ? 1 : preenchidasRaw;
@@ -266,7 +250,6 @@ export default function ListaTurmasEvento({
         const di = String(t?.data_inicio || "").slice(0, 10);
         const df = String(t?.data_fim || "").slice(0, 10);
 
-        // encontros
         const encontrosInline =
           (Array.isArray(t?.encontros) && t.encontros.length ? t.encontros : null) ||
           (Array.isArray(t?.datas) && t.datas.length ? t.datas : null) ||
@@ -277,26 +260,34 @@ export default function ListaTurmasEvento({
         const qtdEncontros = encontrosOrdenados.length;
         const realizados = encontrosOrdenados.filter((d) => d <= HOJE_ISO).length;
 
-        // horários
         const { hi: hiEncontros, hf: hfEncontros } = extrairHorasDeEncontros(encontrosInline);
         const hi = parseHora(t?.horario_inicio) || hiEncontros || null;
         const hf = parseHora(t?.horario_fim) || hfEncontros || null;
 
         const lotada = temLimiteVagas && inscritos >= vagas;
         const carregando = Number(inscrevendo) === tid;
-
         const statusTurma = getStatusPorJanela({ di, df, hi, hf, agora: hoje });
 
         const bloqueadoPorInstrutor = Boolean(jaInstrutorDoEvento);
+        const bloqueadoPorElegibilidadeEvento = !podeSeInscreverNoEvento;
         const emConflito = conflitosSet.has(tid);
+
         const disabled =
-          bloqueadoPorInstrutor || carregando || jaInscrito || lotada || bloquearOutras || emConflito;
+          bloqueadoPorInstrutor ||
+          carregando ||
+          jaInscrito ||
+          lotada ||
+          bloquearOutras ||
+          emConflito ||
+          bloqueadoPorElegibilidadeEvento;
 
         const motivo =
           (bloqueadoPorInstrutor && "Você é instrutor deste evento") ||
           (jaInscrito && "Você já está inscrito nesta turma") ||
-          (bloquearOutras && "Você já está inscrito em uma turma deste evento") ||
+          (bloqueadoPorElegibilidadeEvento &&
+            (motivoBloqueioEvento || "Inscrição indisponível para o seu perfil")) ||
           (emConflito && "Conflito de horário com outra turma já inscrita") ||
+          (bloquearOutras && "Você já está inscrito em uma turma deste evento") ||
           (lotada && "Turma lotada") ||
           "";
 
@@ -313,10 +304,25 @@ export default function ListaTurmasEvento({
 
         const horarioLabel = hi && hf ? `${hi} às ${hf}` : "a definir";
 
-        // ✅ encontros: colapsar se muitos
         const manyMeetings = qtdEncontros > 12;
         const isOpen = !!openMeetings[tid];
         const visibleMeetings = manyMeetings && !isOpen ? encontrosOrdenados.slice(0, 8) : encontrosOrdenados;
+
+        const ctaLabel = carregando
+          ? "Processando..."
+          : jaInstrutorDoEvento
+            ? "Instrutor do evento"
+            : jaInscrito
+              ? "Inscrito"
+              : bloqueadoPorElegibilidadeEvento
+                ? "Inscrição indisponível"
+                : emConflito
+                  ? "Conflito de horário"
+                  : bloquearOutras
+                    ? "Indisponível"
+                    : lotada
+                      ? "Sem vagas"
+                      : "Inscrever-se";
 
         return (
           <article
@@ -329,22 +335,18 @@ export default function ListaTurmasEvento({
               "transition-all",
             ].join(" ")}
           >
-            {/* Barra premium superior */}
             <div className="h-1.5 w-full bg-gradient-to-r from-fuchsia-500 via-indigo-500 to-emerald-500" />
 
-            {/* glow sutil */}
             <div className="pointer-events-none absolute -top-28 -right-28 w-72 h-72 rounded-full bg-fuchsia-500/10 blur-3xl" />
             <div className="pointer-events-none absolute -bottom-28 -left-28 w-72 h-72 rounded-full bg-emerald-500/10 blur-3xl" />
 
             <div className="relative p-4 sm:p-6">
-              {/* TOP: título + chips */}
               <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
                 <div className="min-w-0">
                   <h4 className="text-lg sm:text-xl font-extrabold tracking-tight text-zinc-900 dark:text-white break-words">
                     {t?.nome || "Turma"}
                   </h4>
 
-                  {/* ministats */}
                   <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <MiniStat icon={CalendarDays} label="Período" value={datasLabel} />
                     <MiniStat icon={Clock3} label="Horário" value={horarioLabel} />
@@ -367,7 +369,6 @@ export default function ListaTurmasEvento({
                   )}
                 </div>
 
-                {/* Chips à direita */}
                 <div className="flex flex-wrap gap-2 lg:justify-end">
                   {(lotada || mostrarStatusTurma) && (
                     <span
@@ -390,10 +391,18 @@ export default function ListaTurmasEvento({
                       <AlertTriangle className="w-3.5 h-3.5" /> Conflito
                     </span>
                   )}
+
+                  {bloqueadoPorElegibilidadeEvento && !jaInscrito && (
+                    <span
+                      className={`${chipBase} ${chipStyles.restrito}`}
+                      title={motivoBloqueioEvento || "Inscrição indisponível para o seu perfil"}
+                    >
+                      <Lock className="w-3.5 h-3.5" /> Restrita ao público elegível
+                    </span>
+                  )}
                 </div>
               </div>
 
-              {/* Encontros */}
               <div className="mt-4 rounded-2xl border border-zinc-200/70 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-900/40 p-3 sm:p-4">
                 {qtdEncontros > 0 ? (
                   <>
@@ -466,7 +475,6 @@ export default function ListaTurmasEvento({
                 )}
               </div>
 
-              {/* Barra de vagas */}
               {temLimiteVagas && (
                 <div className="mt-4">
                   <div className="flex justify-between items-center text-xs text-zinc-600 dark:text-zinc-400 mb-1">
@@ -488,13 +496,23 @@ export default function ListaTurmasEvento({
                 </div>
               )}
 
-              {/* CTA */}
+              {bloqueadoPorElegibilidadeEvento && !jaInscrito && (
+                <div className="mt-4 rounded-2xl border border-violet-200 dark:border-violet-800/50 bg-violet-50 dark:bg-violet-950/20 px-3 py-2 text-sm text-violet-900 dark:text-violet-200 flex items-start gap-2">
+                  <Eye className="w-4 h-4 mt-0.5 shrink-0" />
+                  <span>
+                    Esta turma está visível para você, mas a inscrição está restrita.{" "}
+                    <strong>{motivoBloqueioEvento || "Inscrição indisponível para o seu perfil."}</strong>
+                  </span>
+                </div>
+              )}
+
               <div className="mt-5 flex justify-center">
                 <button
                   type="button"
                   onClick={() => {
                     if (disabled) return;
                     if (jaInstrutorDoEvento) return;
+                    if (!podeSeInscreverNoEvento) return;
                     inscrever?.(t.id);
                   }}
                   disabled={disabled}
@@ -513,35 +531,24 @@ export default function ListaTurmasEvento({
                       ? "Você é instrutor do evento"
                       : jaInscrito
                         ? "Inscrito nesta turma"
-                        : emConflito
-                          ? "Conflito de horário com outra turma já inscrita"
-                          : lotada
-                            ? "Turma sem vagas"
-                            : bloquearOutras
-                              ? "Inscrição indisponível (já inscrito em outra turma do evento)"
-                              : "Inscrever-se na turma"
+                        : bloqueadoPorElegibilidadeEvento
+                          ? "Inscrição indisponível para o seu perfil"
+                          : emConflito
+                            ? "Conflito de horário com outra turma já inscrita"
+                            : lotada
+                              ? "Turma sem vagas"
+                              : bloquearOutras
+                                ? "Inscrição indisponível (já inscrito em outra turma do evento)"
+                                : "Inscrever-se na turma"
                   }
                 >
                   <span className="inline-flex items-center gap-2">
-                    {Number(inscrevendo) === Number(t.id)
-                      ? "Processando..."
-                      : jaInstrutorDoEvento
-                        ? "Instrutor do evento"
-                        : jaInscrito
-                          ? "Inscrito"
-                          : emConflito
-                            ? "Conflito de horário"
-                            : bloquearOutras
-                              ? "Indisponível"
-                              : lotada
-                                ? "Sem vagas"
-                                : "Inscrever-se"}
+                    {ctaLabel}
                     {!disabled && <ArrowRight className="w-4 h-4" />}
                   </span>
                 </button>
               </div>
 
-              {/* Motivo (microfeedback) */}
               {disabled && motivo && (
                 <div className="mt-2 text-center text-[12px] text-zinc-500 dark:text-zinc-400">
                   {motivo}
@@ -576,7 +583,7 @@ ListaTurmasEvento.propTypes = {
         PropTypes.object,
       ]),
       carga_horaria: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
-      encontros: PropTypes.array, // strings "YYYY-MM-DD" ou objetos {data,inicio/fim}
+      encontros: PropTypes.array,
       datas: PropTypes.array,
       _datas: PropTypes.array,
     })
@@ -596,4 +603,6 @@ ListaTurmasEvento.propTypes = {
   turmasEmConflito: PropTypes.arrayOf(
     PropTypes.oneOfType([PropTypes.number, PropTypes.string])
   ),
+  podeSeInscreverNoEvento: PropTypes.bool,
+  motivoBloqueioEvento: PropTypes.string,
 };

@@ -42,10 +42,17 @@ const IS_DEV = process.env.NODE_ENV !== "production";
 /* ───────────────────────────────────────────────────────────────
    🧰 Helpers “premium”
    ─────────────────────────────────────────────────────────────── */
-const routeTag = (tag) => (req, res, next) => {
+const routeTag = (tag, options = {}) => (req, res, next) => {
+  const {
+    cacheControl = "no-store",
+  } = options;
+
   res.set("X-Route-Handler", tag);
-  // Evita cache em rotas autenticadas (boa prática para dados sensíveis)
-  res.set("Cache-Control", "no-store");
+
+  if (cacheControl) {
+    res.set("Cache-Control", cacheControl);
+  }
+
   return next();
 };
 
@@ -53,17 +60,14 @@ const ensureNumericParam = (paramName) => (req, res, next) => {
   const raw = req.params?.[paramName];
   const n = Number(raw);
 
-  // aceita apenas inteiro positivo
   if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) {
     return res.status(400).json({ erro: `${paramName} inválido.` });
   }
 
-  // mantém como string (controllers geralmente esperam string), mas já validado
   req.params[paramName] = String(n);
   return next();
 };
 
-// Wrapper seguro para controllers (sincronos/async), evitando repetição de try/catch
 const handle =
   (fn) =>
   (req, res, next) => {
@@ -82,7 +86,7 @@ if (IS_DEV) {
   router.get(
     "/protegido",
     requireAuth,
-    routeTag("eventosRoute:/protegido@dev"),
+    routeTag("eventosRoute:/protegido@dev", { cacheControl: "no-store" }),
     (req, res) => {
       res.json({
         mensagem: `Acesso autorizado para o usuário ${
@@ -99,7 +103,9 @@ if (IS_DEV) {
 router.get(
   "/para-mim/lista",
   requireAuth,
-  routeTag("eventosRoute:/para-mim/lista"),
+  routeTag("eventosRoute:/para-mim/lista", {
+    cacheControl: "private, no-cache, must-revalidate",
+  }),
   handle(eventoController.listarEventosParaMim)
 );
 
@@ -109,34 +115,41 @@ router.get(
 router.get(
   "/agenda",
   requireAuth,
-  routeTag("eventosRoute:/agenda"),
+  routeTag("eventosRoute:/agenda", {
+    cacheControl: "private, no-cache, must-revalidate",
+  }),
   handle(eventoController.getAgendaEventos)
 );
 
 router.get(
   "/instrutor",
   requireAuth,
-  routeTag("eventosRoute:/instrutor"),
+  routeTag("eventosRoute:/instrutor", {
+    cacheControl: "private, no-cache, must-revalidate",
+  }),
   handle(eventoController.listarEventosDoinstrutor)
 );
 
 /* ───────────────────────────────────────────────────────────────
    🔎 Auto-complete de cargos (ANTES de '/:id')
    ─────────────────────────────────────────────────────────────── */
-   router.get(
-    "/cargos/sugerir",
-    requireAuth,
-    routeTag("eventosRoute:/cargos/sugerir"),
-    handle(eventoController.sugerirCargos)
-  );
-  
-  // ✅ NOVO — lista só instrutores/admins (para selects do modal)
-  router.get(
-    "/instrutores/disponiveis",
-    requireAuth,
-    routeTag("eventosRoute:/instrutores/disponiveis"),
-    handle(eventoController.listarInstrutoresDisponiveis)
-  );
+router.get(
+  "/cargos/sugerir",
+  requireAuth,
+  routeTag("eventosRoute:/cargos/sugerir", {
+    cacheControl: "private, no-cache, must-revalidate",
+  }),
+  handle(eventoController.sugerirCargos)
+);
+
+router.get(
+  "/instrutores/disponiveis",
+  requireAuth,
+  routeTag("eventosRoute:/instrutores/disponiveis", {
+    cacheControl: "private, no-cache, must-revalidate",
+  }),
+  handle(eventoController.listarInstrutoresDisponiveis)
+);
 
 /* ───────────────────────────────────────────────────────────────
    📅 CRUD principal de eventos
@@ -146,7 +159,9 @@ router.get(
 router.get(
   "/",
   requireAuth,
-  routeTag("eventosRoute:/"),
+  routeTag("eventosRoute:/", {
+    cacheControl: "private, no-cache, must-revalidate",
+  }),
   handle(eventoController.listarEventos)
 );
 
@@ -155,7 +170,9 @@ router.get(
   "/:id/turmas",
   requireAuth,
   ensureNumericParam("id"),
-  routeTag("eventosRoute:/:id/turmas"),
+  routeTag("eventosRoute:/:id/turmas", {
+    cacheControl: "private, no-cache, must-revalidate",
+  }),
   handle(eventoController.listarTurmasDoEvento)
 );
 
@@ -163,7 +180,9 @@ router.get(
   "/:id/turmas-simples",
   requireAuth,
   ensureNumericParam("id"),
-  routeTag("eventosRoute:/:id/turmas-simples"),
+  routeTag("eventosRoute:/:id/turmas-simples", {
+    cacheControl: "private, no-cache, must-revalidate",
+  }),
   handle(eventoController.listarTurmasSimples)
 );
 
@@ -174,7 +193,9 @@ router.get(
   "/turmas/:id/datas",
   requireAuth,
   ensureNumericParam("id"),
-  routeTag("eventosRoute:/turmas/:id/datas"),
+  routeTag("eventosRoute:/turmas/:id/datas", {
+    cacheControl: "private, no-cache, must-revalidate",
+  }),
   handle(turmaController.listarDatasDaTurma)
 );
 
@@ -186,7 +207,7 @@ router.post(
   requireAuth,
   authorizeRoles("administrador"),
   ensureNumericParam("id"),
-  routeTag("eventosRoute:/:id/publicar"),
+  routeTag("eventosRoute:/:id/publicar", { cacheControl: "no-store" }),
   handle(eventoController.publicarEvento)
 );
 
@@ -195,7 +216,7 @@ router.post(
   requireAuth,
   authorizeRoles("administrador"),
   ensureNumericParam("id"),
-  routeTag("eventosRoute:/:id/despublicar"),
+  routeTag("eventosRoute:/:id/despublicar", { cacheControl: "no-store" }),
   handle(eventoController.despublicarEvento)
 );
 
@@ -209,8 +230,8 @@ router.post(
   requireAuth,
   authorizeRoles("administrador"),
   ensureNumericParam("id"),
-  eventoController.uploadEventos, // aceita fields: folder, programacao (ou file)
-  routeTag("eventosRoute:/:id/arquivos"),
+  eventoController.uploadEventos,
+  routeTag("eventosRoute:/:id/arquivos", { cacheControl: "no-store" }),
   handle(eventoController.atualizarArquivosDoEvento)
 );
 
@@ -220,8 +241,8 @@ router.post(
   requireAuth,
   authorizeRoles("administrador"),
   ensureNumericParam("id"),
-  eventoController.uploadFolderOnly, // ✅ evita Unexpected end of form
-  routeTag("eventosRoute:/:id/folder"),
+  eventoController.uploadFolderOnly,
+  routeTag("eventosRoute:/:id/folder", { cacheControl: "no-store" }),
   handle(eventoController.atualizarArquivosDoEvento)
 );
 
@@ -230,8 +251,8 @@ router.post(
   requireAuth,
   authorizeRoles("administrador"),
   ensureNumericParam("id"),
-  eventoController.uploadProgramacaoOnly, // ✅ evita Unexpected end of form
-  routeTag("eventosRoute:/:id/programacao"),
+  eventoController.uploadProgramacaoOnly,
+  routeTag("eventosRoute:/:id/programacao", { cacheControl: "no-store" }),
   handle(eventoController.atualizarArquivosDoEvento)
 );
 
@@ -240,11 +261,10 @@ router.post(
    ─────────────────────────────────────────────────────────────── */
 router.get(
   "/:id/folder",
-  // ✅ recomendo público (sem requireAuth) para cards/listas
-  // se quiser protegido, é só descomentar:
-  // requireAuth,
   ensureNumericParam("id"),
-  routeTag("eventosRoute:/:id/folder@GET"),
+  routeTag("eventosRoute:/:id/folder@GET", {
+    cacheControl: null, // o controller define o cache ideal
+  }),
   handle(eventoController.obterFolderDoEvento)
 );
 
@@ -257,7 +277,9 @@ router.get(
   "/:id",
   requireAuth,
   ensureNumericParam("id"),
-  routeTag("eventosRoute:/:id"),
+  routeTag("eventosRoute:/:id", {
+    cacheControl: "private, no-cache, must-revalidate",
+  }),
   handle(eventoController.buscarEventoPorId)
 );
 
@@ -267,7 +289,7 @@ router.post(
   requireAuth,
   authorizeRoles("administrador"),
   eventoController.uploadEventos,
-  routeTag("eventosRoute:POST /"),
+  routeTag("eventosRoute:POST /", { cacheControl: "no-store" }),
   handle(eventoController.criarEvento)
 );
 
@@ -278,7 +300,7 @@ router.put(
   authorizeRoles("administrador"),
   ensureNumericParam("id"),
   eventoController.uploadEventos,
-  routeTag("eventosRoute:PUT /:id"),
+  routeTag("eventosRoute:PUT /:id", { cacheControl: "no-store" }),
   handle(eventoController.atualizarEvento)
 );
 
@@ -288,7 +310,7 @@ router.delete(
   requireAuth,
   authorizeRoles("administrador"),
   ensureNumericParam("id"),
-  routeTag("eventosRoute:DELETE /:id"),
+  routeTag("eventosRoute:DELETE /:id", { cacheControl: "no-store" }),
   handle(eventoController.excluirEvento)
 );
 

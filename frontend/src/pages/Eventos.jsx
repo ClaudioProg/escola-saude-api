@@ -1,26 +1,15 @@
 // ✅ src/pages/Eventos.jsx — Página ÚNICA (Eventos + Minhas inscrições) — PREMIUM
-// - Lista Programados/Em andamento (ASC por início)
-// - Card full width com banner (folder_url) + botão de programação (programacao_pdf_url)
-// - Após inscrição: Cancelar e Google Agenda
-// - Regras & Dicas em modal
-//
-// ✅ Fixes aplicados (mantidos):
-// 1) Banner /uploads -> resolve para VITE_API_URL (backend)
-// 2) PDF abre via window.open (não navega no SPA, não “reinicia”)
-// 3) Remove botão “pasta do evento”
-// 4) “Baixar programação (PDF)” + “Ver turmas” na mesma linha (responsivo)
-// 5) Premium UI: header + ministats + cards mais elegantes + estados de erro melhores
-//
-// ✅ Premium extra (sem mudar regras):
-// - AbortController + mountedRef (evita race conditions ao atualizar rápido)
-// - Reduced-motion (respeita acessibilidade)
-// - Progressbar sticky durante carregamentos
-// - Stats de “andamento” usando status real/fallback
-//
-// ✅ Alteração solicitada:
+// - Todos os eventos aparecem de uma vez
+// - Imagens (folders) carregam progressivamente
+// - Ordem alfabética por título
+// - Eventos restritos visíveis para todos; inscrição apenas para elegíveis
+// - Mantém compatibilidade com backend atual e com backend novo
+// - ✅ date-only safe (sem new Date("YYYY-MM-DD"))
+// - ✅ poster por URL direta (sem blob/objectURL)
+// - ✅ loading progressivo real das imagens
+// - ✅ ações rápidas para inscrições ativas por turma
 
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import { createAsyncQueue } from "../utils/asyncQueue";
 import { useInViewOnce } from "../hooks/useInViewOnce";
 import { toast } from "react-toastify";
 import Skeleton from "react-loading-skeleton";
@@ -41,6 +30,8 @@ import {
   Sparkles,
   ShieldCheck,
   AlertTriangle,
+  Lock,
+  Eye,
 } from "lucide-react";
 
 import Footer from "../components/Footer";
@@ -53,85 +44,75 @@ import { apiGet, apiPost, apiDelete } from "../services/api";
 import { gerarLinkGoogleAgenda } from "../utils/gerarLinkGoogleAgenda";
 import { resolveAssetUrl, openAsset } from "../utils/assets";
 
-/* =============================
-   ✅ Poster blob (cache + fetch com auth)
-   - Se NÃO existir folder_url (ou estiver vazio),
-     tenta GET /api/eventos/:id/folder com Authorization
-   - Cacheia objectURL pra não refazer download
-============================= */
-const posterBlobCache = new Map();
-const posterBlobPending = new Map();
-
-// 🆕 fila de downloads (evita burst)
-const posterDownloadQueue = createAsyncQueue(4); // 3..6 é um range bom
-
-function getAuthToken() {
-  try {
-    return localStorage.getItem("token") || localStorage.getItem("authToken") || "";
-  } catch {
-    return "";
-  }
-}
-
-async function authFetch(url, opts = {}) {
-  const token = getAuthToken();
-  const headers = new Headers(opts.headers || {});
-  if (token && !headers.has("Authorization")) headers.set("Authorization", `Bearer ${token}`);
-  return fetch(url, { ...opts, headers, credentials: "include" });
-}
-
-async function getPosterBlobUrl(eventoId) {
-  const id = Number(eventoId);
-  if (!Number.isFinite(id) || id <= 0) return "";
-
-  if (posterBlobCache.has(id)) return posterBlobCache.get(id);
-  if (posterBlobPending.has(id)) return posterBlobPending.get(id);
-
-  const p = posterDownloadQueue(async () => {
-    const apiPath = `/api/eventos/${id}/folder`;
-    const resp = await authFetch(apiPath, { method: "GET", cache: "no-store" });
-
-    if (resp.status === 404) return "";
-    if (resp.status === 401 || resp.status === 403) return "";
-    if (!resp.ok) return "";
-
-    const blob = await resp.blob();
-    if (!blob || !blob.size) return "";
-
-    const objectUrl = URL.createObjectURL(blob);
-    posterBlobCache.set(id, objectUrl);
-    return objectUrl;
-  })
-    .catch(() => "")
-    .finally(() => posterBlobPending.delete(id));
-
-  posterBlobPending.set(id, p);
-  return p;
-}
-
 /* ───────────────── Helpers globais ───────────────── */
 function isValidDate(d) {
   return d instanceof Date && !Number.isNaN(d.getTime());
 }
 
+function tituloOrdenavel(v) {
+  return String(v || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+
+function ymd(value) {
+  if (typeof value !== "string") return "";
+  return value.slice(0, 10);
+}
+
+function hhmm(value, fb = "") {
+  if (typeof value !== "string") return fb;
+  const s = value.trim();
+  if (!s) return fb;
+  if (/^\d{2}:\d{2}$/.test(s)) return s;
+  if (/^\d{2}:\d{2}:\d{2}$/.test(s)) return s.slice(0, 5);
+  return s.slice(0, 5) || fb;
+}
+
+function toLocalDateTime(dateOnly, timeOnly = "00:00") {
+  const d = ymd(dateOnly);
+  const t = hhmm(timeOnly, "00:00");
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
+  if (!/^\d{2}:\d{2}$/.test(t)) return null;
+
+  const [Y, M, D] = d.split("-").map(Number);
+  const [h, m] = t.split(":").map(Number);
+
+  const dt = new Date(Y, (M || 1) - 1, D || 1, h || 0, m || 0, 0, 0);
+  return isValidDate(dt) ? dt : null;
+}
+
+function hojeIsoLocal() {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+const HOJE_ISO = hojeIsoLocal();
 
 /* ───────────────── Status ───────────────── */
 function statusText(dataInicioISO, dataFimISO, horarioInicio, horarioFim) {
-  const fimISO = dataFimISO || dataInicioISO;
-  const di = String(dataInicioISO || "").slice(0, 10);
-  const df = String(fimISO || "").slice(0, 10);
-  const hi = String(horarioInicio || "00:00").slice(0, 5);
-  const hf = String(horarioFim || "23:59").slice(0, 5);
+  const di = ymd(dataInicioISO);
+  const df = ymd(dataFimISO || dataInicioISO);
+  const hi = hhmm(horarioInicio, "00:00");
+  const hf = hhmm(horarioFim, "23:59");
 
-  const inicio = di ? new Date(`${di}T${hi}:00`) : null;
-  const fim = df ? new Date(`${df}T${hf}:59`) : null;
+  const inicio = toLocalDateTime(di, hi);
+  const fim = toLocalDateTime(df, hf);
   const now = new Date();
 
-  if (inicio && fim && isValidDate(inicio) && isValidDate(fim)) {
+  if (inicio && fim) {
     if (now < inicio) return { status: "Programado", tone: "success" };
     if (now > fim) return { status: "Encerrado", tone: "danger" };
     return { status: "Em andamento", tone: "warning" };
   }
+
   return { status: "Programado", tone: "success" };
 }
 
@@ -162,29 +143,25 @@ const MESES_ABREV_PT = [
   "nov.",
   "dez.",
 ];
-const ymd = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
 
-function formatarDataCurtaSeguro(iso) {
-  if (!iso) return "";
-  const [data] = String(iso).split("T");
+function formatarDataCurtaSeguro(isoValue) {
+  const data = ymd(isoValue);
+  if (!data) return "";
+
   const partes = data.split("-");
   if (partes.length !== 3) return "";
+
   const [ano, mes, dia] = partes;
   const idx = Math.max(0, Math.min(11, Number(mes) - 1));
   return `${String(dia).padStart(2, "0")} de ${MESES_ABREV_PT[idx]} de ${ano}`;
 }
-
-const HOJE_ISO = (() => {
-  const d = new Date();
-  const p = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-})();
 
 const inRange = (di, df, dia) => !!di && !!df && di <= dia && dia <= df;
 
 function rangeDaTurma(t) {
   let di = null;
   let df = null;
+
   const push = (x) => {
     const d = ymd(typeof x === "string" ? x : x?.data);
     if (!d) return;
@@ -199,7 +176,41 @@ function rangeDaTurma(t) {
     push(t?.data_inicio);
     push(t?.data_fim);
   }
+
   return { di, df };
+}
+
+/* ------------------------------------------------------------------ */
+/*  URL do poster                                                     */
+/* ------------------------------------------------------------------ */
+function getPosterUrl(ev) {
+  const raw =
+    ev?.folder_blob_url ||
+    ev?.folder_url ||
+    ev?.folderUrl ||
+    ev?.folder ||
+    ev?.poster_url ||
+    ev?.posterUrl ||
+    ev?.capa_url ||
+    ev?.capaUrl ||
+    ev?.imagem_url ||
+    ev?.imagemUrl ||
+    ev?.arquivo_folder ||
+    ev?.arquivoFolder ||
+    (ev?.id ? `/api/eventos/${ev.id}/folder` : "");
+
+  if (!raw) return "";
+
+  const resolved = resolveAssetUrl(raw);
+  const version =
+    ev?.folder_updated_at ||
+    ev?.updated_at ||
+    ev?.atualizado_em ||
+    ev?.criado_em ||
+    "";
+
+  if (!version) return resolved;
+  return `${resolved}${resolved.includes("?") ? "&" : "?"}v=${encodeURIComponent(String(version))}`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -229,7 +240,7 @@ function EventosHero({ onRefresh, stats }) {
         </div>
 
         <p className="mt-2 text-sm sm:text-base text-white/90">
-          Inscreva-se em turmas abertas ou acompanhe suas inscrições ativas.
+          Veja todos os eventos disponíveis e inscreva-se nas turmas elegíveis ao seu perfil.
         </p>
 
         <div className="mt-5 flex flex-col sm:flex-row items-center justify-center gap-3">
@@ -244,11 +255,10 @@ function EventosHero({ onRefresh, stats }) {
           <RegrasDicasButton />
         </div>
 
-        {/* ministats */}
         <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-3">
           <MiniStat
             icon={<Sparkles className="w-4 h-4" />}
-            label="Eventos disponíveis"
+            label="Eventos visíveis"
             value={stats?.eventosDisponiveis ?? 0}
           />
           <MiniStat
@@ -333,21 +343,21 @@ function RegrasDicasButton() {
                 </div>
 
                 <div className="mt-4 grid grid-cols-1 gap-3">
-                  <Tip num="1" titulo="Como se inscrever">
+                  <Tip num="1" titulo="Todos os eventos ficam visíveis">
+                    Mesmo quando um evento possui público específico, ele continua aparecendo para todos
+                    os usuários.
+                  </Tip>
+                  <Tip num="2" titulo="Inscrição com elegibilidade">
+                    A visualização é ampla, mas a <strong>inscrição</strong> continua restrita ao público
+                    autorizado pelo evento.
+                  </Tip>
+                  <Tip num="3" titulo="Como se inscrever">
                     Abra o evento, clique em <strong>Ver turmas</strong>, escolha a turma e confirme em{" "}
-                    <strong>Inscrever-se</strong>. Se houver pré-requisito/registro, ajuste no seu{" "}
-                    <strong>Perfil</strong>.
+                    <strong>Inscrever-se</strong>.
                   </Tip>
-                  <Tip num="2" titulo="Como cancelar">
-                    Após a inscrição, surgem os botões <strong>Cancelar inscrição</strong> e{" "}
-                    <strong>Google Agenda</strong> (quando permitido).
-                  </Tip>
-                  <Tip num="3" titulo="Após o término do curso">
+                  <Tip num="4" titulo="Após o término do curso">
                     Preencha a <strong>avaliação</strong> em <em>Avaliações Pendentes</em> para liberar seu{" "}
-                    <strong>certificado</strong> em <em>Meus Certificados</em>.
-                  </Tip>
-                  <Tip num="4" titulo="Evite choque de horários">
-                    O sistema alerta sobre conflito entre turmas do mesmo horário.
+                    <strong>certificado</strong>.
                   </Tip>
                 </div>
               </div>
@@ -378,53 +388,64 @@ function Tip({ num, titulo, children }) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Indicador de restrição                                            */
+/* ------------------------------------------------------------------ */
+function RestricaoChip({ evento }) {
+  const restrito =
+    Boolean(evento?.restrito) ||
+    Boolean(evento?.restricao_inscricao) ||
+    Boolean(evento?.publico_especifico) ||
+    (Array.isArray(evento?.cargos_permitidos) && evento.cargos_permitidos.length > 0) ||
+    Boolean(String(evento?.motivo_bloqueio || "").trim());
+
+  if (!restrito) return null;
+
+  const descricao =
+    String(evento?.publico_alvo || "").trim() ||
+    (Array.isArray(evento?.cargos_permitidos) && evento.cargos_permitidos.length
+      ? evento.cargos_permitidos.join(", ")
+      : "público específico");
+
+  return (
+    <span
+      className="text-[11px] px-2 py-1 rounded-full font-extrabold
+                 bg-amber-100 text-amber-900 border border-amber-200
+                 dark:bg-amber-900/30 dark:text-amber-200 dark:border-amber-800/60
+                 inline-flex items-center gap-1"
+      title={`Evento com inscrição restrita para ${descricao}`}
+    >
+      <Lock className="w-3 h-3" />
+      Exclusivo para {descricao}
+    </span>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  Componentes de mídia/ações do card                                */
 /* ------------------------------------------------------------------ */
-function ThumbEvento({ ev, titulo, raw }) {
-  const [src, setSrc] = useState("");
+function ThumbEvento({ ev, titulo, canStartLoading }) {
+  const [shouldLoad, setShouldLoad] = useState(false);
   const [failed, setFailed] = useState(false);
-
-  const legacyHref = useMemo(() => {
-    const v = (raw ?? "").toString().trim();
-    return v ? resolveAssetUrl(v) : "";
-  }, [raw]);
-
+  const src = useMemo(() => getPosterUrl(ev), [ev]);
   const { ref: inViewRef, inView } = useInViewOnce({ rootMargin: "700px 0px", threshold: 0.01 });
 
   useEffect(() => {
-    let alive = true;
-
-    if (legacyHref) {
-      setSrc(legacyHref);
-      setFailed(false);
-      return () => { alive = false; };
+    if (canStartLoading && inView) {
+      setShouldLoad(true);
     }
+  }, [canStartLoading, inView]);
 
-    if (!inView) return () => { alive = false; };
-
-    (async () => {
-      const blobUrl = await getPosterBlobUrl(ev?.id);
-      if (!alive) return;
-
-      if (blobUrl) {
-        setSrc(blobUrl);
-        setFailed(false);
-      } else {
-        setSrc("");
-        setFailed(true);
-      }
-    })();
-
-    return () => { alive = false; };
-  }, [legacyHref, inView, ev?.id]);
+  useEffect(() => {
+    setFailed(false);
+  }, [src]);
 
   if (!src || failed) {
     return (
       <div ref={inViewRef} className="w-[120px] sm:w-[140px] md:w-[160px] shrink-0">
         <div className="aspect-[3/4] rounded-2xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-200/70 dark:border-zinc-800 flex items-center justify-center text-zinc-500 dark:text-zinc-400">
-          <div className="flex items-center gap-2 text-xs">
+          <div className="flex flex-col items-center justify-center gap-2 text-xs text-center px-2">
             <ImageIcon className="w-4 h-4" />
-            <span>Sem folder</span>
+            <span>{canStartLoading ? "Sem folder" : "Folder sob demanda"}</span>
           </div>
         </div>
       </div>
@@ -434,27 +455,27 @@ function ThumbEvento({ ev, titulo, raw }) {
   return (
     <div ref={inViewRef} className="w-[120px] sm:w-[140px] md:w-[160px] shrink-0">
       <div className="aspect-[3/4] rounded-2xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-200/70 dark:border-zinc-800 overflow-hidden flex items-center justify-center">
-        <img
-          src={src}
-          alt={`Folder do evento: ${titulo}`}
-          loading="lazy"
-          decoding="async"
-          className="w-full h-full object-contain"
-          referrerPolicy="no-referrer"
-          onError={() => {
-            try {
-              if (src?.startsWith?.("blob:")) URL.revokeObjectURL(src);
-            } catch {}
-            setFailed(true);
-            setSrc("");
-          }}
-        />
+        {shouldLoad ? (
+          <img
+            src={src}
+            alt={`Folder do evento: ${titulo}`}
+            loading="lazy"
+            decoding="async"
+            className="w-full h-full object-contain"
+            referrerPolicy="no-referrer"
+            onError={() => setFailed(true)}
+          />
+        ) : (
+          <div className="flex flex-col items-center justify-center gap-2 text-xs text-center px-2 text-zinc-500 dark:text-zinc-400">
+            <ImageIcon className="w-4 h-4" />
+            <span>Preparando folder...</span>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-// ✅ segue normal, sem nenhum return “solto”
 function BotaoProgramacao({ programacaoPdfUrl }) {
   const pdfHref = useMemo(() => resolveAssetUrl(programacaoPdfUrl), [programacaoPdfUrl]);
   if (!pdfHref) return null;
@@ -473,8 +494,26 @@ function BotaoProgramacao({ programacaoPdfUrl }) {
     </BotaoSecundario>
   );
 }
+
 /* ------------------------------------------------------------------ */
-/*  Página                                                             */
+/*  Sentinela para liberar imagens progressivamente                   */
+/* ------------------------------------------------------------------ */
+function ImageBatchSentinel({ onReach }) {
+  const firedRef = useRef(false);
+  const { ref, inView } = useInViewOnce({ rootMargin: "1200px 0px", threshold: 0.01 });
+
+  useEffect(() => {
+    if (inView && !firedRef.current) {
+      firedRef.current = true;
+      onReach?.();
+    }
+  }, [inView, onReach]);
+
+  return <div ref={ref} className="h-1 w-full" aria-hidden="true" />;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Página                                                            */
 /* ------------------------------------------------------------------ */
 export default function Eventos() {
   const reduceMotion = useReducedMotion();
@@ -489,8 +528,8 @@ export default function Eventos() {
   const [cancelandoId, setCancelandoId] = useState(null);
   const [carregandoTurmas, setCarregandoTurmas] = useState(null);
   const [carregandoEventos, setCarregandoEventos] = useState(true);
+  const [imageLoadBudget, setImageLoadBudget] = useState(4);
 
-  // ✅ Modal premium 
   const [confirmCancel, setConfirmCancel] = useState({
     open: false,
     turmaId: null,
@@ -513,13 +552,6 @@ export default function Eventos() {
       mountedRef.current = false;
       abortEventosRef.current?.abort?.("unmount");
       abortInscricaoRef.current?.abort?.("unmount");
-  
-      // ✅ evita leak de memória de objectURLs
-      for (const [, url] of posterBlobCache.entries()) {
-        try { URL.revokeObjectURL(url); } catch {}
-      }
-      posterBlobCache.clear();
-      posterBlobPending.clear();
     };
   }, []);
 
@@ -529,25 +561,11 @@ export default function Eventos() {
   } catch {}
   const usuarioId = Number(usuario?.id) || null;
 
-  /* -------------------- util de eventos -------------------- */
   const extrairListaEventos = useCallback((res) => {
     if (Array.isArray(res)) return res;
     if (Array.isArray(res?.eventos)) return res.eventos;
     if (Array.isArray(res?.data?.eventos)) return res.data.eventos;
     return [];
-  }, []);
-
-  const filtrarVisiveis = useCallback(async (lista) => {
-    const checks = (lista || []).map(async (e) => {
-      try {
-        const r = await apiGet(`/api/eventos/${e.id}/visivel`);
-        return r?.ok ? e : null;
-      } catch {
-        return null;
-      }
-    });
-    const arr = await Promise.all(checks);
-    return arr.filter(Boolean);
   }, []);
 
   const turmasDoEvento = useCallback(
@@ -597,47 +615,27 @@ export default function Eventos() {
 
   const statusBackendOuFallback = useCallback(
     (evento, turmasCarregadas) => {
-      if (typeof evento?.status === "string" && evento.status) return evento.status;
+      if (typeof evento?.status === "string" && evento.status) {
+        const raw = String(evento.status).toLowerCase();
+        if (raw === "programado" || raw === "andamento" || raw === "encerrado") return raw;
+      }
       return statusDoEvento(evento, turmasCarregadas);
     },
     [statusDoEvento]
   );
 
-  const keyInicio = useCallback((evento, mapaTurmas) => {
-    const ts = mapaTurmas[evento.id] || evento?.turmas || [];
-    let di = null;
-
-    if (Array.isArray(ts) && ts.length) {
-      for (const t of ts) {
-        const r = rangeDaTurma(t);
-        if (r.di && (!di || r.di < di)) di = r.di;
-      }
-    }
-
-    if (!di) di = ymd(evento?.data_inicio_geral) || "9999-12-31";
-
-    const h =
-      (typeof evento?.horario_inicio_geral === "string" &&
-        evento.horario_inicio_geral.slice(0, 5)) ||
-      "00:00";
-
-    return new Date(`${di}T${h}:00`).getTime();
-  }, []);
-
   function isAbortLike(err) {
     if (!err) return false;
-  
+
     const name = String(err?.name || "");
     const msg = String(err?.message || "");
     const dataMsg = String(err?.data?.message || err?.data?.erro || "");
     const full = `${name} ${msg} ${dataMsg}`.toLowerCase();
-  
-    // ✅ ApiError do seu api.js costuma vir com status 0
     const st = Number(err?.status ?? err?.response?.status ?? 0);
-  
+
     return (
       name === "AbortError" ||
-      st === 0 || // 👈 IMPORTANTÍSSIMO (canceled / network / warmup)
+      st === 0 ||
       full.includes("abort") ||
       full.includes("canceled") ||
       full.includes("cancelled") ||
@@ -649,7 +647,6 @@ export default function Eventos() {
     );
   }
 
-  /* -------------------- carregamentos -------------------- */
   const carregarInscricao = useCallback(async () => {
     try {
       abortInscricaoRef.current?.abort?.("new-request");
@@ -661,22 +658,23 @@ export default function Eventos() {
 
       const ativas = arr.filter((it) => {
         const { status } = statusText(it.data_inicio, it.data_fim, it.horario_inicio, it.horario_fim);
-        const fimISO = (it.data_fim || it.data_inicio || "").slice(0, 10);
-        const hojeISO = HOJE_ISO;
-const encerrado = fimISO && fimISO < hojeISO;
+        const fimISO = ymd(it.data_fim || it.data_inicio || "");
+        const encerrado = fimISO && fimISO < HOJE_ISO;
         return (status === "Programado" || status === "Em andamento") && !encerrado;
       });
 
       if (!mountedRef.current) return;
       setInscricao(ativas);
-      setInscricaoTurmaIds(ativas.map((i) => Number(i?.turma_id)).filter((n) => Number.isFinite(n)));
+      setInscricaoTurmaIds(
+        ativas.map((i) => Number(i?.turma_id)).filter((n) => Number.isFinite(n))
+      );
     } catch (e) {
       if (isAbortLike(e)) return;
       toast.error("Erro ao carregar suas inscrições ativas.");
     }
   }, []);
 
-    const carregarEventos = useCallback(async () => {
+  const carregarEventos = useCallback(async () => {
     setCarregandoEventos(true);
     setLive("Carregando eventos…");
     setErro("");
@@ -689,42 +687,43 @@ const encerrado = fimISO && fimISO < hojeISO;
       const res1 = await apiGet("/api/eventos/para-mim/lista", { signal: ctrl.signal }).catch(() => []);
       const lista1 = extrairListaEventos(res1);
 
-      let lista =
+      const lista =
         Array.isArray(lista1) && lista1.length
           ? lista1
-          : await filtrarVisiveis(extrairListaEventos(await apiGet("/api/eventos", { signal: ctrl.signal })));
+          : extrairListaEventos(await apiGet("/api/eventos", { signal: ctrl.signal }).catch(() => []));
 
-      const elegiveis = lista.filter((e) => {
+      const visiveis = (Array.isArray(lista) ? lista : []).filter((e) => {
         const st = statusBackendOuFallback(e, turmasPorEvento[e.id]);
         return st === "programado" || st === "andamento";
       });
 
-      elegiveis.sort((a, b) => keyInicio(a, turmasPorEvento) - keyInicio(b, turmasPorEvento));
+      visiveis.sort((a, b) =>
+        tituloOrdenavel(a?.titulo).localeCompare(tituloOrdenavel(b?.titulo), "pt-BR")
+      );
 
       if (!mountedRef.current) return;
-      setEventos(elegiveis);
+
+      setEventos(visiveis);
       setErro("");
+      setImageLoadBudget(4);
       setLive("Eventos atualizados.");
     } catch (e) {
-      if (isAbortLike(e)) {
-        if (import.meta.env.DEV) console.log("[Eventos] cancelado/abort (ok):", e?.message || e);
-        return;
-      }
-    
+      if (isAbortLike(e)) return;
+
       if (Array.isArray(eventos) && eventos.length > 0) {
         setErro("");
         toast.warn("⚠️ Não foi possível atualizar os eventos agora. Mantive a lista atual.");
         setLive("Falha ao atualizar eventos; mantendo lista atual.");
         return;
       }
-    
+
       setErro("Erro ao carregar eventos");
       toast.error("❌ Erro ao carregar eventos");
       setLive("Falha ao carregar eventos.");
     } finally {
       if (mountedRef.current) setCarregandoEventos(false);
     }
-  }, [extrairListaEventos, filtrarVisiveis, statusBackendOuFallback, turmasPorEvento, keyInicio]);
+  }, [extrairListaEventos, statusBackendOuFallback, turmasPorEvento, eventos]);
 
   useEffect(() => {
     carregarEventos();
@@ -740,7 +739,6 @@ const encerrado = fimISO && fimISO < hojeISO;
     const eventosDisponiveis = Array.isArray(eventos) ? eventos.length : 0;
     const inscricaoAtivas = Array.isArray(inscricaoTurmaIds) ? inscricaoTurmaIds.length : 0;
 
-    // premium: “andamento” usando o mesmo status real/fallback
     const eventosAndamento = (eventos || []).filter((e) => {
       const st = statusBackendOuFallback(e, turmasPorEvento[e.id]);
       return st === "andamento";
@@ -749,17 +747,15 @@ const encerrado = fimISO && fimISO < hojeISO;
     return { eventosDisponiveis, inscricaoAtivas, eventosAndamento };
   }, [eventos, inscricaoTurmaIds, statusBackendOuFallback, turmasPorEvento]);
 
-  /* -------------------- carregar turmas de um evento -------------------- */
   const carregarTurmas = useCallback(
     async (eventoId) => {
-      // toggle rápido (sem refetch)
       if (turmasVisiveis[eventoId]) {
         setTurmasVisiveis((prev) => ({ ...prev, [eventoId]: false }));
         return;
       }
+
       setTurmasVisiveis((prev) => ({ ...prev, [eventoId]: true }));
 
-      // se já tem turmas, não refaz chamada
       if (turmasPorEvento[eventoId] || carregandoTurmas) return;
 
       setCarregandoTurmas(eventoId);
@@ -767,7 +763,6 @@ const encerrado = fimISO && fimISO < hojeISO;
         let turmas = await apiGet(`/api/eventos/${eventoId}/turmas-simples`).catch(() => []);
         if (!Array.isArray(turmas)) turmas = [];
 
-        // fallback para endpoint full (mantém sua lógica)
         if (!turmas.length) {
           try {
             const full = await apiGet(`/api/eventos/${eventoId}/turmas`).catch(() => []);
@@ -778,10 +773,10 @@ const encerrado = fimISO && fimISO < hojeISO;
                   nome: t.nome,
                   vagas_total: t.vagas_total,
                   carga_horaria: t.carga_horaria,
-                  data_inicio: t.data_inicio?.slice(0, 10) || null,
-                  data_fim: t.data_fim?.slice(0, 10) || null,
-                  horario_inicio: t.horario_inicio?.slice(0, 5) || null,
-                  horario_fim: t.horario_fim?.slice(0, 5) || null,
+                  data_inicio: ymd(t.data_inicio) || null,
+                  data_fim: ymd(t.data_fim) || null,
+                  horario_inicio: hhmm(t.horario_inicio) || null,
+                  horario_fim: hhmm(t.horario_fim) || null,
                   _datas: Array.isArray(t.datas)
                     ? t.datas.map((d) => ({
                         data: d.data,
@@ -797,27 +792,16 @@ const encerrado = fimISO && fimISO < hojeISO;
         }
 
         if (!mountedRef.current) return;
-
         setTurmasPorEvento((prev) => ({ ...prev, [eventoId]: turmas }));
-
-        // reordena lista após carregar turmas (para ajustar “início” real)
-        setEventos((prev) =>
-          [...prev].sort(
-            (a, b) =>
-              keyInicio(a, { ...turmasPorEvento, [eventoId]: turmas }) -
-              keyInicio(b, { ...turmasPorEvento, [eventoId]: turmas })
-          )
-        );
       } catch {
         toast.error("Erro ao carregar turmas");
       } finally {
         if (mountedRef.current) setCarregandoTurmas(null);
       }
     },
-    [turmasVisiveis, turmasPorEvento, carregandoTurmas, keyInicio]
+    [turmasVisiveis, turmasPorEvento, carregandoTurmas]
   );
 
-  /* -------------------- Google Agenda (robusto) -------------------- */
   const buildAgendaHref = useCallback(
     ({ titulo, data_inicio, data_fim, horario_inicio, horario_fim, turma_nome, local }) => {
       try {
@@ -836,12 +820,38 @@ const encerrado = fimISO && fimISO < hojeISO;
     []
   );
 
-  /* -------------------- inscrever / cancelar -------------------- */
+  const getEventoElegibilidade = useCallback((evento) => {
+    const pode =
+      typeof evento?.pode_se_inscrever === "boolean" ? evento.pode_se_inscrever : true;
+
+    const motivo =
+      evento?.motivo_bloqueio ||
+      evento?.mensagem_bloqueio ||
+      evento?.motivo_restricao ||
+      "";
+
+    return {
+      podeSeInscrever: pode,
+      motivoBloqueio: String(motivo || "").trim(),
+    };
+  }, []);
+
   const inscrever = useCallback(
     async (turmaId, eventoId) => {
       if (inscrevendo) return;
 
       const eventoRef = eventos.find((e) => Number(e.id) === Number(eventoId));
+      if (!eventoRef) return;
+
+      const { podeSeInscrever, motivoBloqueio } = getEventoElegibilidade(eventoRef);
+      if (!podeSeInscrever) {
+        toast.warn(
+          motivoBloqueio ||
+            "Este evento está visível para você, mas a inscrição não está disponível para seu perfil."
+        );
+        return;
+      }
+
       const ehInstrutor =
         Boolean(eventoRef?.ja_instrutor) ||
         (Array.isArray(eventoRef?.instrutor) &&
@@ -854,12 +864,12 @@ const encerrado = fimISO && fimISO < hojeISO;
       }
 
       setInscrevendo(turmaId);
+
       try {
         await apiPost("/api/inscricao", { turma_id: turmaId });
         toast.success("✅ Inscrição realizada com sucesso!");
         await carregarInscricao();
 
-        // atualiza turmas do evento (para refletir vagas/inscrito)
         try {
           const turmasAtualizadas = await apiGet(`/api/eventos/${eventoId}/turmas-simples`).catch(() => []);
           setTurmasPorEvento((prev) => ({
@@ -881,19 +891,22 @@ const encerrado = fimISO && fimISO < hojeISO;
         else if (status === 400) toast.error(msg);
         else if (status === 403 && err?.response?.data?.motivo) {
           const motivo = err.response.data.motivo;
-          if (motivo === "SEM_REGISTRO") toast.error("Inscrição bloqueada: informe seu Registro no perfil.");
-          else if (motivo === "REGISTRO_NAO_AUTORIZADO")
+          if (motivo === "SEM_REGISTRO") {
+            toast.error("Inscrição bloqueada: informe seu Registro no perfil.");
+          } else if (motivo === "REGISTRO_NAO_AUTORIZADO") {
             toast.error("Inscrição bloqueada: seu Registro não está autorizado para este curso.");
-          else toast.error("Acesso negado para este curso.");
+          } else {
+            toast.error("Acesso negado para este curso.");
+          }
         } else {
-          console.error("❌ Erro inesperado:", err);
+          console.error("❌ [EVENTOS][INSCRICAO] Erro inesperado:", err);
           toast.error("❌ Erro ao se inscrever.");
         }
       } finally {
         setInscrevendo(null);
       }
     },
-    [inscrevendo, eventos, usuarioId, carregarInscricao]
+    [inscrevendo, eventos, usuarioId, carregarInscricao, getEventoElegibilidade]
   );
 
   const getInscricaoPorTurmaId = useCallback(
@@ -901,7 +914,6 @@ const encerrado = fimISO && fimISO < hojeISO;
     [inscricao]
   );
 
-  // ✅ agora só abre ModalConfirmacao 
   const cancelarInscricaoByTurmaId = useCallback(
     async (turmaId, turmaNome = "") => {
       const reg = getInscricaoPorTurmaId(turmaId);
@@ -922,7 +934,6 @@ const encerrado = fimISO && fimISO < hojeISO;
     [getInscricaoPorTurmaId]
   );
 
-  // ✅ executa cancelamento após confirmar no modal
   const executarCancelamento = useCallback(async () => {
     const inscricaoId = confirmCancel?.inscricaoId;
 
@@ -950,7 +961,10 @@ const encerrado = fimISO && fimISO < hojeISO;
 
   const isCancelModalLoading = cancelandoId && cancelandoId === confirmCancel?.inscricaoId;
 
-  /* -------------------- UI -------------------- */
+  const liberarMaisImagens = useCallback(() => {
+    setImageLoadBudget((prev) => prev + 4);
+  }, []);
+
   return (
     <div className="min-h-screen bg-gelo dark:bg-zinc-900">
       <p ref={liveRef} className="sr-only" aria-live="polite" aria-atomic="true" />
@@ -963,7 +977,6 @@ const encerrado = fimISO && fimISO < hojeISO;
         }}
       />
 
-      {/* progress bar sticky (premium) */}
       {carregandoEventos && (
         <div
           className="sticky top-0 left-0 w-full h-1 bg-fuchsia-100 dark:bg-fuchsia-950/30 z-40"
@@ -1010,259 +1023,257 @@ const encerrado = fimISO && fimISO < hojeISO;
             {eventos.map((evento, idx) => {
               const localEvento =
                 evento.local || evento.localizacao || evento.endereco || evento.localidade || null;
+
               const statusEvt = statusBackendOuFallback(evento, turmasPorEvento[evento.id]);
               const ehInstrutor = Boolean(evento.ja_instrutor);
 
-              // schema atual (banco): folder_url + folder_blob_url (quando blob) + programacao_pdf_url
-const programacaoPdfUrl =
-evento.programacao_pdf_url ||
-evento.programacao_pdf ||
-evento.programacao_url ||
-null;
+              const programacaoPdfUrl =
+                evento.programacao_pdf_url ||
+                evento.programacao_pdf ||
+                evento.programacao_url ||
+                null;
 
-// ✅ folder: prioriza blob_url quando backend indicar blob; fallback monta a rota
-const folderRaw =
-  String(evento?.folder_kind || "").toLowerCase() === "blob"
-    ? (evento.folder_blob_url || evento.folderBlobUrl || "")
-    : (evento.folder_url || evento.folder || "");
+              const { podeSeInscrever, motivoBloqueio } = getEventoElegibilidade(evento);
+              const mostrarAvisoRestricao = !podeSeInscrever && !!motivoBloqueio;
 
-return (
-<motion.article
-  key={evento.id ?? idx}
-  initial={reduceMotion ? false : { opacity: 0, y: 14 }}
-  animate={reduceMotion ? {} : { opacity: 1, y: 0 }}
-  transition={{ duration: 0.28 }}
-  className="group rounded-2xl overflow-hidden border border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-neutral-900 shadow-md hover:shadow-xl transition-shadow"
-  aria-labelledby={`evt-${evento.id}-titulo`}
->
-  {/* faixa destaque (mantida) */}
-  <div className="h-1 w-full bg-gradient-to-r from-rose-500 via-fuchsia-500 to-indigo-500" />
+              return (
+                <motion.article
+                  key={evento.id ?? idx}
+                  initial={reduceMotion ? false : { opacity: 0, y: 14 }}
+                  animate={reduceMotion ? {} : { opacity: 1, y: 0 }}
+                  transition={{ duration: 0.28 }}
+                  className="group rounded-2xl overflow-hidden border border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-neutral-900 shadow-md hover:shadow-xl transition-shadow [content-visibility:auto] [contain-intrinsic-size:420px]"
+                  aria-labelledby={`evt-${evento.id}-titulo`}
+                >
+                  <div className="h-1 w-full bg-gradient-to-r from-rose-500 via-fuchsia-500 to-indigo-500" />
 
-  <div className="p-5">
-  {/* ✅ topo: thumb + conteúdo */}
-  <div className="flex flex-col sm:flex-row gap-4">
-  <ThumbEvento ev={evento} titulo={evento.titulo} raw={folderRaw} />
+                  <div className="p-5">
+                    <div className="flex flex-col sm:flex-row gap-4">
+                      <ThumbEvento
+                        ev={evento}
+                        titulo={evento.titulo}
+                        canStartLoading={idx < imageLoadBudget}
+                      />
 
-      <div className="min-w-0 flex-1">
-  {/* Título + status */}
-  <div className="flex items-start justify-between gap-3">
-    <div className="min-w-0">
-      <div className="flex items-center gap-2 flex-wrap">
-        <h3
-          id={`evt-${evento.id}-titulo`}
-          className="text-xl font-extrabold text-zinc-900 dark:text-white"
-        >
-          {evento.titulo}
-        </h3>
-              </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h3
+                                id={`evt-${evento.id}-titulo`}
+                                className="text-xl font-extrabold text-zinc-900 dark:text-white"
+                              >
+                                {evento.titulo}
+                              </h3>
+                            </div>
 
-      {/* ✅ (NOVO) — Tipo + Público-alvo */}
-      <div className="mt-2 flex flex-wrap gap-2">
-        {String(evento?.tipo || "").trim() && (
-          <span
-            className="text-[11px] px-2 py-1 rounded-full font-extrabold
-                       bg-indigo-100 text-indigo-900 border border-indigo-200
-                       dark:bg-indigo-900/30 dark:text-indigo-200 dark:border-indigo-800/60"
-            title="Tipo do evento"
-          >
-            {evento.tipo}
-          </span>
-        )}
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {String(evento?.tipo || "").trim() && (
+                                <span
+                                  className="text-[11px] px-2 py-1 rounded-full font-extrabold
+                                             bg-indigo-100 text-indigo-900 border border-indigo-200
+                                             dark:bg-indigo-900/30 dark:text-indigo-200 dark:border-indigo-800/60"
+                                  title="Tipo do evento"
+                                >
+                                  {evento.tipo}
+                                </span>
+                              )}
 
-        {String(evento?.publico_alvo || "").trim() && (
-          <span
-            className="text-[11px] px-2 py-1 rounded-full font-extrabold
-                       bg-emerald-100 text-emerald-900 border border-emerald-200
-                       dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-800/60"
-            title="Público-alvo"
-          >
-            {evento.publico_alvo}
-          </span>
-        )}
+                              {String(evento?.publico_alvo || "").trim() && (
+                                <span
+                                  className="text-[11px] px-2 py-1 rounded-full font-extrabold
+                                             bg-emerald-100 text-emerald-900 border border-emerald-200
+                                             dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-800/60"
+                                  title="Público-alvo"
+                                >
+                                  {evento.publico_alvo}
+                                </span>
+                              )}
 
-        {/* ✅ (NOVO) — Inscrição no EVENTO */}
-        {!!evento.ja_inscrito && (
-          <span
-            className="text-[11px] px-2 py-1 rounded-full font-extrabold
-                       bg-sky-100 text-sky-900 border border-sky-200
-                       dark:bg-sky-900/30 dark:text-sky-200 dark:border-sky-800/60"
-            title="Você já está inscrito em alguma turma deste evento."
-          >
-            ✓ Inscrito
-          </span>
-        )}
-      </div>
-    </div>
+                              {!!evento.ja_inscrito && (
+                                <span
+                                  className="text-[11px] px-2 py-1 rounded-full font-extrabold
+                                             bg-sky-100 text-sky-900 border border-sky-200
+                                             dark:bg-sky-900/30 dark:text-sky-200 dark:border-sky-800/60"
+                                  title="Você já está inscrito em alguma turma deste evento."
+                                >
+                                  ✓ Inscrito
+                                </span>
+                              )}
 
-    <span
-      className={`text-xs px-2 py-1 rounded-full ${
-        statusEvt === "andamento"
-          ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200 border border-amber-200 dark:border-amber-800"
-          : "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800"
-      }`}
-      role="status"
-    >
-      {statusEvt === "andamento" ? "Em andamento" : "Programado"}
-    </span>
-  </div>
+                              <RestricaoChip evento={evento} />
+                            </div>
+                          </div>
 
-  {/* ✅ (mantém) descrição */}
-  {String(evento?.descricao || "").trim() && (
-    <p className="mt-2 text-[15px] text-zinc-700 dark:text-zinc-300 leading-relaxed">
-      {evento.descricao}
-    </p>
-  )}
+                          <span
+                            className={`text-xs px-2 py-1 rounded-full ${
+                              statusEvt === "andamento"
+                                ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200 border border-amber-200 dark:border-amber-800"
+                                : "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800"
+                            }`}
+                            role="status"
+                          >
+                            {statusEvt === "andamento" ? "Em andamento" : "Programado"}
+                          </span>
+                        </div>
 
-  {/* ✅ (NOVO) — Instrutores do EVENTO (se vier como 'instrutor' OU 'instrutores') */}
-  {(() => {
-    const lista =
-      (Array.isArray(evento?.instrutores) && evento.instrutores) ||
-      (Array.isArray(evento?.instrutor) && evento.instrutor) ||
-      [];
-    if (!lista.length) return null;
+                        {String(evento?.descricao || "").trim() && (
+                          <p className="mt-2 text-[15px] text-zinc-700 dark:text-zinc-300 leading-relaxed">
+                            {evento.descricao}
+                          </p>
+                        )}
 
-    return (
-      <div className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
-        <span className="font-extrabold">Instrutor{lista.length > 1 ? "es" : ""}:</span>{" "}
-        <span className="font-medium">
-          {lista.map((p) => p?.nome).filter(Boolean).join(", ")}
-        </span>
-      </div>
-    );
-  })()}
+                        {(() => {
+                          const lista =
+                            (Array.isArray(evento?.instrutores) && evento.instrutores) ||
+                            (Array.isArray(evento?.instrutor) && evento.instrutor) ||
+                            [];
+                          if (!lista.length) return null;
 
+                          return (
+                            <div className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
+                              <span className="font-extrabold">Instrutor{lista.length > 1 ? "es" : ""}:</span>{" "}
+                              <span className="font-medium">
+                                {lista.map((p) => p?.nome).filter(Boolean).join(", ")}
+                              </span>
+                            </div>
+                          );
+                        })()}
 
-      {/* Local */}
-      <div className="mt-3 flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
-        <MapPin className="w-4 h-4 text-rose-600 dark:text-rose-300" aria-hidden="true" />
-        <span>{localEvento || "Local a definir"}</span>
-      </div>
+                        <div className="mt-3 flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+                          <MapPin className="w-4 h-4 text-rose-600 dark:text-rose-300" aria-hidden="true" />
+                          <span>{localEvento || "Local a definir"}</span>
+                        </div>
 
-      {/* Datas gerais */}
-      <div className="mt-1 text-sm text-gray-500 dark:text-gray-400 flex items-center gap-2">
-        <CalendarDays className="w-4 h-4" aria-hidden="true" />
-        <span>
-          {evento.data_inicio_geral && evento.data_fim_geral
-            ? `${formatarDataCurtaSeguro(evento.data_inicio_geral)} até ${formatarDataCurtaSeguro(
-                evento.data_fim_geral
-              )}`
-            : "Datas a definir"}
-        </span>
-      </div>
+                        <div className="mt-1 text-sm text-gray-500 dark:text-gray-400 flex items-center gap-2">
+                          <CalendarDays className="w-4 h-4" aria-hidden="true" />
+                          <span>
+                            {evento.data_inicio_geral && evento.data_fim_geral
+                              ? `${formatarDataCurtaSeguro(evento.data_inicio_geral)} até ${formatarDataCurtaSeguro(
+                                  evento.data_fim_geral
+                                )}`
+                              : "Datas a definir"}
+                          </span>
+                        </div>
 
-      {ehInstrutor && (
-        <div className="mt-2 text-xs font-extrabold inline-flex items-center gap-2 px-2 py-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 border border-amber-200 dark:border-amber-800">
-          Você é instrutor deste evento
-        </div>
-      )}
+                        {ehInstrutor && (
+                          <div className="mt-2 text-xs font-extrabold inline-flex items-center gap-2 px-2 py-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 border border-amber-200 dark:border-amber-800">
+                            Você é instrutor deste evento
+                          </div>
+                        )}
 
-      {/* Ações principais */}
-      <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <BotaoProgramacao programacaoPdfUrl={programacaoPdfUrl} />
-        </div>
+                        {mostrarAvisoRestricao && (
+                          <div className="mt-3 rounded-2xl border border-amber-200 dark:border-amber-800/50 bg-amber-50 dark:bg-amber-950/20 px-3 py-2 text-sm text-amber-900 dark:text-amber-200 flex items-start gap-2">
+                            <Eye className="w-4 h-4 mt-0.5 shrink-0" />
+                            <span>
+                              Este evento está visível para você, mas a inscrição está restrita.{" "}
+                              <strong>{motivoBloqueio}</strong>
+                            </span>
+                          </div>
+                        )}
 
-        <BotaoPrimario
-          onClick={() => carregarTurmas(evento.id)}
-          disabled={carregandoTurmas === evento.id}
-          aria-expanded={!!turmasVisiveis[evento.id]}
-          aria-controls={`turmas-${evento.id}`}
-          className="sm:min-w-[160px]"
-        >
-          {carregandoTurmas === evento.id
-            ? "Carregando..."
-            : turmasVisiveis[evento.id]
-            ? "Ocultar turmas"
-            : "Ver turmas"}
-        </BotaoPrimario>
-      </div>
-    </div>
-  </div>
+                        <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <BotaoProgramacao programacaoPdfUrl={programacaoPdfUrl} />
+                          </div>
 
-  {/* ✅ FULL WIDTH: fora do flex acima */}
-  {turmasVisiveis[evento.id] && (
-    <div className="mt-5 w-full">
-      {turmasPorEvento[evento.id] && (
-        <div id={`turmas-${evento.id}`} className="w-full">
-          <ListaTurmasEvento
-            turmas={turmasPorEvento[evento.id]}
-            eventoId={evento.id}
-            eventoTipo={evento.tipo}
-            hoje={new Date()}
-            inscricaoConfirmadas={inscricaoTurmaIds}
-            inscrever={(tid) => inscrever(tid, evento.id)}
-            inscrevendo={inscrevendo}
-            jaInscritoNoEvento={(() => {
-              const ids = new Set(inscricaoTurmaIds);
-              return (turmasPorEvento[evento.id] || []).some((t) => ids.has(Number(t.id)));
-            })()}
-            jaInstrutorDoEvento={!!evento.ja_instrutor}
-            carregarInscritos={() => {}}
-            carregarAvaliacao={() => {}}
-            gerarRelatorioPDF={() => {}}
-            mostrarStatusTurma={false}
-            exibirRealizadosTotal
-            turmasEmConflito={[]}
-          />
-        </div>
-      )}
+                          <BotaoPrimario
+                            onClick={() => carregarTurmas(evento.id)}
+                            disabled={carregandoTurmas === evento.id}
+                            aria-expanded={!!turmasVisiveis[evento.id]}
+                            aria-controls={`turmas-${evento.id}`}
+                            className="sm:min-w-[160px]"
+                          >
+                            {carregandoTurmas === evento.id
+                              ? "Carregando..."
+                              : turmasVisiveis[evento.id]
+                              ? "Ocultar turmas"
+                              : "Ver turmas"}
+                          </BotaoPrimario>
+                        </div>
+                      </div>
+                    </div>
 
-      <InscricaoAcaoRapidas
-        evento={evento}
-        turmas={turmasPorEvento[evento.id] || []}
-        inscricao={inscricao}
-        cancelarInscricaoByTurmaId={cancelarInscricaoByTurmaId}
-        buildAgendaHref={buildAgendaHref}
-        cancelandoId={cancelandoId}
-      />
-    </div>
-  )}
-</div>
-</motion.article>
-);
+                    {turmasVisiveis[evento.id] && (
+                      <div className="mt-5 w-full">
+                        {turmasPorEvento[evento.id] && (
+                          <div id={`turmas-${evento.id}`} className="w-full">
+                            <ListaTurmasEvento
+                              turmas={turmasPorEvento[evento.id]}
+                              eventoId={evento.id}
+                              eventoTipo={evento.tipo}
+                              hoje={new Date()}
+                              inscricaoConfirmadas={inscricaoTurmaIds}
+                              inscrever={(tid) => inscrever(tid, evento.id)}
+                              inscrevendo={inscrevendo}
+                              jaInscritoNoEvento={(() => {
+                                const ids = new Set(inscricaoTurmaIds);
+                                return (turmasPorEvento[evento.id] || []).some((t) =>
+                                  ids.has(Number(t.id))
+                                );
+                              })()}
+                              jaInstrutorDoEvento={!!evento.ja_instrutor}
+                              carregarInscritos={() => {}}
+                              carregarAvaliacao={() => {}}
+                              gerarRelatorioPDF={() => {}}
+                              mostrarStatusTurma={false}
+                              exibirRealizadosTotal
+                              turmasEmConflito={[]}
+                            />
+                          </div>
+                        )}
+
+                        <InscricaoAcaoRapidas
+                          evento={evento}
+                          turmas={turmasPorEvento[evento.id] || []}
+                          inscricao={inscricao}
+                          cancelarInscricaoByTurmaId={cancelarInscricaoByTurmaId}
+                          buildAgendaHref={buildAgendaHref}
+                          cancelandoId={cancelandoId}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </motion.article>
+              );
             })}
+
+            <ImageBatchSentinel onReach={liberarMaisImagens} />
           </div>
         )}
       </main>
 
       <Footer />
 
-      {/* ✅ ModalConfirmacao */}
       <ModalConfirmacao
-        /* compat: alguns projetos usam 'open/titulo/descricao/confirmarTexto/cancelarTexto/onConfirmar/onCancelar' */
         isOpen={!!confirmCancel.open}
         open={!!confirmCancel.open}
-
-       title="Cancelar inscrição?"
+        title="Cancelar inscrição?"
         titulo="Cancelar inscrição?"
-
         description={
           confirmCancel?.turmaNome
             ? `Tem certeza que deseja cancelar sua inscrição na turma:\n\n“${confirmCancel.turmaNome}”?`
             : "Tem certeza que deseja cancelar sua inscrição nesta turma?"
-       }
+        }
         descricao={
           confirmCancel?.turmaNome
             ? `Tem certeza que deseja cancelar sua inscrição na turma:\n\n“${confirmCancel.turmaNome}”?`
             : "Tem certeza que deseja cancelar sua inscrição nesta turma?"
         }
-
         confirmText="Sim, cancelar"
-       confirmarTexto="Sim, cancelar"
+        confirmarTexto="Sim, cancelar"
         cancelText="Não"
         cancelarTexto="Não"
         danger
         loading={!!isCancelModalLoading}
-
         onClose={() => {
-         if (cancelandoId) return; // evita fechar durante requisição
+          if (cancelandoId) return;
           setConfirmCancel({ open: false, turmaId: null, inscricaoId: null, turmaNome: "" });
         }}
         onCancelar={() => {
           if (cancelandoId) return;
           setConfirmCancel({ open: false, turmaId: null, inscricaoId: null, turmaNome: "" });
         }}
-
         onConfirm={executarCancelamento}
         onConfirmar={executarCancelamento}
       />
@@ -1310,7 +1321,12 @@ function InscricaoAcaoRapidas({
             local: evento.local || evento.localizacao || evento.endereco || evento.localidade,
           });
 
-          const status = statusText(t.data_inicio, t.data_fim, t.horario_inicio, t.horario_fim).status;
+          const status = statusText(
+            t.data_inicio,
+            t.data_fim,
+            t.horario_inicio,
+            t.horario_fim
+          ).status;
 
           return (
             <li
@@ -1370,7 +1386,9 @@ function InscricaoAcaoRapidas({
                     disabled={status !== "Programado" || cancelandoId === (reg?.inscricao_id || reg?.id)}
                     icone={<XCircle className="w-4 h-4" />}
                   >
-                    {cancelandoId === (reg?.inscricao_id || reg?.id) ? "Cancelando..." : "Cancelar inscrição"}
+                    {cancelandoId === (reg?.inscricao_id || reg?.id)
+                      ? "Cancelando..."
+                      : "Cancelar inscrição"}
                   </BotaoPrimario>
                 </div>
               </div>

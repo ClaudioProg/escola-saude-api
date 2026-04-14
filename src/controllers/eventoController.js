@@ -449,57 +449,193 @@ async function limparFolderDoEvento(client, eventoId) {
 const MODO_TODOS = "todos_servidores";
 const MODO_LISTA = "lista_registros";
 
+async function getUsuarioContextoRestricao(client, usuarioId) {
+  if (!usuarioId) {
+    return {
+      registro: "",
+      registro_norm: "",
+      cargo_id: null,
+      unidade_id: null,
+    };
+  }
+
+  const { rows } = await client.query(
+    `SELECT registro, cargo_id, unidade_id
+       FROM usuarios
+      WHERE id = $1
+      LIMIT 1`,
+    [usuarioId]
+  );
+
+  const u = rows?.[0] || {};
+  return {
+    registro: u.registro || "",
+    registro_norm: normalizeRegistro(u.registro || ""),
+    cargo_id: Number(u.cargo_id) || null,
+    unidade_id: Number(u.unidade_id) || null,
+  };
+}
+
+function montarPublicoAlvoLabel(evento = {}) {
+  const publico = String(evento?.publico_alvo || "").trim();
+  if (publico) return publico;
+
+  const cargos = Array.isArray(evento?.cargos_permitidos) ? evento.cargos_permitidos : [];
+  const unidades = Array.isArray(evento?.unidades_permitidas) ? evento.unidades_permitidas : [];
+  const countRegs = Number(evento?.count_registros_permitidos || 0);
+
+  if (cargos.length) {
+    return cargos
+      .map((c) => normalizarTituloPtBr(c?.nome || c?.cargo || ""))
+      .filter(Boolean)
+      .join(", ");
+  }
+
+  if (unidades.length) {
+    return unidades.map((u) => u?.nome).filter(Boolean).join(", ");
+  }
+
+  if (countRegs > 0) {
+    return "lista específica de servidores";
+  }
+
+  if (evento?.restrito_modo === MODO_TODOS) {
+    return "servidores com registro válido";
+  }
+
+  return "público específico";
+}
+
+async function avaliarElegibilidadeInscricao({ client, usuarioId, evento }) {
+  if (!evento) {
+    return {
+      pode_se_inscrever: false,
+      motivo_bloqueio: "Evento não encontrado.",
+      publico_alvo_label: "",
+    };
+  }
+
+  if (!evento.publicado) {
+    return {
+      pode_se_inscrever: false,
+      motivo_bloqueio: "Evento ainda não publicado.",
+      publico_alvo_label: montarPublicoAlvoLabel(evento),
+    };
+  }
+
+  if (!evento.restrito) {
+    return {
+      pode_se_inscrever: true,
+      motivo_bloqueio: "",
+      publico_alvo_label: montarPublicoAlvoLabel(evento),
+    };
+  }
+
+  if (!usuarioId) {
+    return {
+      pode_se_inscrever: false,
+      motivo_bloqueio: "Faça login para verificar elegibilidade de inscrição.",
+      publico_alvo_label: montarPublicoAlvoLabel(evento),
+    };
+  }
+
+  const usuario = await getUsuarioContextoRestricao(client, usuarioId);
+
+  const cargosIdsPermitidos = Array.isArray(evento.cargos_permitidos_ids)
+    ? evento.cargos_permitidos_ids.map(Number).filter(Number.isFinite)
+    : [];
+
+  const unidadesIdsPermitidas = Array.isArray(evento.unidades_permitidas_ids)
+    ? evento.unidades_permitidas_ids.map(Number).filter(Number.isFinite)
+    : [];
+
+  if (evento.restrito_modo === MODO_TODOS) {
+    if (usuario.registro_norm) {
+      return {
+        pode_se_inscrever: true,
+        motivo_bloqueio: "",
+        publico_alvo_label: montarPublicoAlvoLabel(evento),
+      };
+    }
+
+    return {
+      pode_se_inscrever: false,
+      motivo_bloqueio: "Inscrição disponível apenas para servidores com registro válido.",
+      publico_alvo_label: montarPublicoAlvoLabel(evento),
+    };
+  }
+
+  if (evento.restrito_modo === MODO_LISTA) {
+    if (usuario.registro_norm) {
+      const hit = await client.query(
+        `SELECT 1
+           FROM evento_registros
+          WHERE evento_id = $1
+            AND registro_norm = $2
+          LIMIT 1`,
+        [evento.id, usuario.registro_norm]
+      );
+
+      if (hit.rowCount > 0) {
+        return {
+          pode_se_inscrever: true,
+          motivo_bloqueio: "",
+          publico_alvo_label: montarPublicoAlvoLabel(evento),
+        };
+      }
+    }
+
+    return {
+      pode_se_inscrever: false,
+      motivo_bloqueio: "Inscrição disponível apenas para servidores autorizados nesta lista.",
+      publico_alvo_label: montarPublicoAlvoLabel(evento),
+    };
+  }
+
+  if (usuario.cargo_id && cargosIdsPermitidos.includes(usuario.cargo_id)) {
+    return {
+      pode_se_inscrever: true,
+      motivo_bloqueio: "",
+      publico_alvo_label: montarPublicoAlvoLabel(evento),
+    };
+  }
+
+  if (usuario.unidade_id != null && unidadesIdsPermitidas.includes(Number(usuario.unidade_id))) {
+    return {
+      pode_se_inscrever: true,
+      motivo_bloqueio: "",
+      publico_alvo_label: montarPublicoAlvoLabel(evento),
+    };
+  }
+
+  return {
+    pode_se_inscrever: false,
+    motivo_bloqueio: `Inscrição disponível apenas para ${montarPublicoAlvoLabel(evento)}.`,
+    publico_alvo_label: montarPublicoAlvoLabel(evento),
+  };
+}
+
 /* ====================== ACL: podeVerEvento ====================== */
 async function podeVerEvento({ client, usuarioId, eventoId, req }) {
   const admin = isAdmin(req);
 
   const evQ = await client.query(
-    `SELECT id, restrito, restrito_modo, publicado,
-            COALESCE(cargos_permitidos_ids, '{}')   AS cargos_permitidos_ids,
-            COALESCE(unidades_permitidas_ids, '{}') AS unidades_permitidas_ids
+    `SELECT id, publicado
        FROM eventos
-      WHERE id=$1`,
+      WHERE id = $1`,
     [eventoId]
   );
+
   const evento = evQ.rows[0];
   if (!evento) return { ok: false, motivo: "EVENTO_NAO_ENCONTRADO" };
-  if (!admin && !evento.publicado) return { ok: false, motivo: "NAO_PUBLICADO" };
-  if (admin || !evento.restrito) return { ok: true };
+
+  if (admin) return { ok: true };
+  if (!evento.publicado) return { ok: false, motivo: "NAO_PUBLICADO" };
+
+  // ✅ Nova regra: evento publicado é visível para todos os usuários autenticados
   if (!usuarioId) return { ok: false, motivo: "NAO_AUTENTICADO" };
 
-  const uQ = await client.query(
-    `SELECT registro, cargo_id, unidade_id
-       FROM usuarios
-      WHERE id=$1`,
-    [usuarioId]
-  );
-  const usuario = uQ.rows?.[0] || {};
-  const regNorm = normalizeRegistro(usuario.registro || "");
-  const cargoId = Number(usuario.cargo_id) || null;
-  const unidadeId = Number(usuario.unidade_id) || null;
-
-  if (evento.restrito_modo === MODO_TODOS) {
-    if (regNorm) return { ok: true };
-  }
-
-  if (evento.restrito_modo === MODO_LISTA) {
-    if (regNorm) {
-      const hit = await client.query(
-        `SELECT 1 FROM evento_registros WHERE evento_id=$1 AND registro_norm=$2 LIMIT 1`,
-        [eventoId, regNorm]
-      );
-      if (hit.rowCount > 0) return { ok: true };
-    }
-  }
-
-  const cargosIdsPermitidos = Array.isArray(evento.cargos_permitidos_ids) ? evento.cargos_permitidos_ids : [];
-  const unidadesIdsPermitidas = Array.isArray(evento.unidades_permitidas_ids) ? evento.unidades_permitidas_ids : [];
-
-  if (cargoId && cargosIdsPermitidos.includes(cargoId)) return { ok: true };
-  if (unidadeId != null && unidadesIdsPermitidas.map(Number).includes(unidadeId)) return { ok: true };
-
-
-  return { ok: false, motivo: "SEM_PERMISSAO" };
+  return { ok: true };
 }
 
 /* =====================================================================
@@ -624,9 +760,26 @@ async function listarEventos(req, res) {
 `;
 
   try {
-    const r = await query(richSQL, [usuarioId, usuarioId]);
-    logInfo(rid, "listarEventos OK", { count: r.rowCount });
-    return res.json(r.rows);
+        const r = await query(richSQL, [usuarioId, usuarioId]);
+
+    const eventosComElegibilidade = [];
+    for (const evento of r.rows || []) {
+      const eleg = await avaliarElegibilidadeInscricao({
+        client: pool,
+        usuarioId,
+        evento,
+      });
+
+      eventosComElegibilidade.push({
+        ...evento,
+        pode_se_inscrever: eleg.pode_se_inscrever,
+        motivo_bloqueio: eleg.motivo_bloqueio,
+        publico_alvo_label: eleg.publico_alvo_label,
+      });
+    }
+
+    logInfo(rid, "listarEventos OK", { count: eventosComElegibilidade.length });
+    return res.json(eventosComElegibilidade);
   } catch (err) {
     const pgCode = err?.code;
     logWarn(rid, "listarEventos fallback", { pgCode });
@@ -652,13 +805,13 @@ async function listarEventosParaMim(req, res) {
   try {
     logStart(rid, "listarEventosParaMim", { usuarioId });
 
-    const { rows: base } = await client.query(`SELECT id FROM eventos WHERE publicado = TRUE`);
-    const visiveis = [];
+        const { rows: base } = await client.query(
+      `SELECT id
+         FROM eventos
+        WHERE publicado = TRUE`
+    );
 
-    for (const r of base) {
-      const pode = await podeVerEvento({ client, usuarioId, eventoId: r.id, req });
-      if (pode.ok) visiveis.push(r.id);
-    }
+    const visiveis = base.map((r) => Number(r.id)).filter(Number.isFinite);
 
     if (!visiveis.length) {
       logInfo(rid, "listarEventosParaMim vazio");
@@ -677,13 +830,34 @@ async function listarEventosParaMim(req, res) {
       ELSE 'none'
     END AS folder_kind,
 
-    -- Datas gerais
+    COALESCE((
+      SELECT array_agg(er.registro_norm ORDER BY er.registro_norm)
+      FROM evento_registros er
+      WHERE er.evento_id = e.id
+    ), '{}'::text[]) AS registros_permitidos,
+
+    (SELECT COUNT(*) FROM evento_registros er WHERE er.evento_id = e.id) AS count_registros_permitidos,
+
+    COALESCE(e.cargos_permitidos_ids, '{}'::int[]) AS cargos_permitidos_ids,
+    COALESCE(e.unidades_permitidas_ids, '{}'::int[]) AS unidades_permitidas_ids,
+
+    COALESCE((
+      SELECT json_agg(json_build_object('id', c.id, 'nome', c.nome) ORDER BY c.nome)
+      FROM cargos c
+      WHERE c.id = ANY(e.cargos_permitidos_ids)
+    ), '[]'::json) AS cargos_permitidos,
+
+    COALESCE((
+      SELECT json_agg(json_build_object('id', u2.id, 'nome', u2.nome) ORDER BY u2.nome)
+      FROM unidades u2
+      WHERE u2.id = ANY(e.unidades_permitidas_ids)
+    ), '[]'::json) AS unidades_permitidas,
+
     (SELECT MIN(t.data_inicio)    FROM turmas t WHERE t.evento_id = e.id) AS data_inicio_geral,
     (SELECT MAX(t.data_fim)       FROM turmas t WHERE t.evento_id = e.id) AS data_fim_geral,
     (SELECT MIN(t.horario_inicio) FROM turmas t WHERE t.evento_id = e.id) AS horario_inicio_geral,
     (SELECT MAX(t.horario_fim)    FROM turmas t WHERE t.evento_id = e.id) AS horario_fim_geral,
 
-    -- Status por data + hora
     CASE
       WHEN CURRENT_TIMESTAMP::timestamp < (
         SELECT MIN(t.data_inicio::date + COALESCE(t.horario_inicio::time,'00:00'::time))
@@ -696,7 +870,6 @@ async function listarEventosParaMim(req, res) {
       ELSE 'encerrado'
     END AS status,
 
-    -- ✅ JA INSCRITO
     (
       SELECT COUNT(*) > 0
       FROM inscricoes i
@@ -704,7 +877,6 @@ async function listarEventosParaMim(req, res) {
       WHERE i.usuario_id = $2 AND t.evento_id = e.id
     ) AS ja_inscrito,
 
-    -- ✅ JA INSTRUTOR
     (
       SELECT COUNT(*) > 0
       FROM turmas t
@@ -712,7 +884,6 @@ async function listarEventosParaMim(req, res) {
       WHERE t.evento_id = e.id AND ti.instrutor_id = $2
     ) AS ja_instrutor,
 
-    -- ✅ LISTA DE INSTRUTORES DO EVENTO
     COALESCE((
       SELECT json_agg(
         DISTINCT jsonb_build_object(
@@ -728,13 +899,29 @@ async function listarEventosParaMim(req, res) {
 
   FROM eventos e
   WHERE e.id = ANY($1::int[])
-  ORDER BY (SELECT MAX(t.data_fim::date + COALESCE(t.horario_fim::time,'23:59'::time))
-            FROM turmas t WHERE t.evento_id = e.id) DESC NULLS LAST,
-           e.id DESC;
+  ORDER BY e.titulo ASC, e.id DESC;
 `;
+
 const { rows } = await client.query(sql, [visiveis, usuarioId]);
-    logInfo(rid, "listarEventosParaMim OK", { count: rows.length });
-    return res.json({ ok: true, eventos: rows });
+
+const eventosComElegibilidade = [];
+for (const evento of rows || []) {
+  const eleg = await avaliarElegibilidadeInscricao({
+    client,
+    usuarioId,
+    evento,
+  });
+
+  eventosComElegibilidade.push({
+    ...evento,
+    pode_se_inscrever: eleg.pode_se_inscrever,
+    motivo_bloqueio: eleg.motivo_bloqueio,
+    publico_alvo_label: eleg.publico_alvo_label,
+  });
+}
+
+logInfo(rid, "listarEventosParaMim OK", { count: eventosComElegibilidade.length });
+return res.json({ ok: true, eventos: eventosComElegibilidade });
   } catch (err) {
     logError(rid, "listarEventosParaMim erro", err);
     return res.status(500).json({ ok: false, erro: "ERRO_INTERNO" });
@@ -1118,22 +1305,12 @@ async function buscarEventoPorId(req, res) {
     if (!admin && !evento.publicado) return res.status(404).json({ erro: "NAO_PUBLICADO" });
 
     // ACL (se não for instrutor do evento)
-    if (!admin && usuarioId) {
-      const isInstrutorEv =
-        (
-          await client.query(
-            `SELECT 1
-               FROM turmas t
-               JOIN turma_instrutor ti ON ti.turma_id = t.id
-              WHERE t.evento_id = $1 AND ti.instrutor_id = $2
-              LIMIT 1`,
-            [id, usuarioId]
-          )
-        ).rowCount > 0;
-
-      if (!isInstrutorEv) {
-        const can = await podeVerEvento({ client, usuarioId, eventoId: id, req });
-        if (!can.ok) return res.status(403).json({ erro: "Evento restrito." });
+       if (!admin) {
+      const can = await podeVerEvento({ client, usuarioId, eventoId: id, req });
+      if (!can.ok) {
+        return res.status(can.motivo === "NAO_PUBLICADO" ? 404 : 403).json({
+          erro: can.motivo === "NAO_PUBLICADO" ? "Evento não encontrado" : "Acesso negado.",
+        });
       }
     }
 
@@ -1306,18 +1483,11 @@ try {
   }
 }
     
-    logInfo(rid, "buscarEventoPorId OK", {
-      id,
-      turmas: turmas.length,
-      questionario_id: qz.rows?.[0]?.id ?? null,
-    });
-
-    const folder_blob_url = `/api/eventos/${id}/folder`;
-    
-    return res.json({
+        const payloadBase = {
       ...evento,
-      folder_blob_url,
+      folder_blob_url: `/api/eventos/${id}/folder`,
       registros_permitidos: regsQ.rows.map((r) => r.registro_norm),
+      count_registros_permitidos: regsQ.rows.length,
       cargos_permitidos_ids: Array.isArray(evento.cargos_permitidos_ids) ? evento.cargos_permitidos_ids : [],
       unidades_permitidas_ids: Array.isArray(evento.unidades_permitidas_ids) ? evento.unidades_permitidas_ids : [],
       cargos_permitidos: (cargosRows.rows || []).map((c) => ({
@@ -1325,6 +1495,26 @@ try {
         nome: normalizarTituloPtBr(c.nome),
       })),
       unidades_permitidas: unidadesRows.rows,
+    };
+
+    const eleg = await avaliarElegibilidadeInscricao({
+      client,
+      usuarioId,
+      evento: payloadBase,
+    });
+
+    logInfo(rid, "buscarEventoPorId OK", {
+      id,
+      turmas: turmas.length,
+      questionario_id: qz.rows?.[0]?.id ?? null,
+      pode_se_inscrever: eleg.pode_se_inscrever,
+    });
+
+    return res.json({
+      ...payloadBase,
+      pode_se_inscrever: eleg.pode_se_inscrever,
+      motivo_bloqueio: eleg.motivo_bloqueio,
+      publico_alvo_label: eleg.publico_alvo_label,
       
            // ✅ (NOVO)
       pos_curso: qz.rows?.[0]

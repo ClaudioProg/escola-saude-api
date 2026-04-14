@@ -7,6 +7,8 @@
  * - Upload flags seguras: remover_folder / remover_programacao só quando existe algo a remover
  * - Logger DEV only (sem spam)
  * - ModalConfirmacao compat (open/isOpen)
+ * - ✅ PERF: sem HEAD/GET extra para descobrir folder blob
+ * - ✅ PERF: usa diretamente folder_blob_url / rota /api/eventos/:id/folder
  */
 
 import { useEffect, useMemo, useRef, useState, useTransition, useId, useCallback } from "react";
@@ -56,29 +58,22 @@ function makeLogger(scope = "ModalEvento") {
   const info = (...a) => IS_DEV && console.info(tag, ...a);
   const warn = (...a) => IS_DEV && console.warn(tag, ...a);
   const error = (...a) => IS_DEV && console.error(tag, ...a);
-  const group = (label) => IS_DEV && console.groupCollapsed(`${tag} ${label}`);
-  const groupEnd = () => IS_DEV && console.groupEnd();
-  const time = (label) => IS_DEV && console.time(`${tag} ${label}`);
-  const timeEnd = (label) => IS_DEV && console.timeEnd(`${tag} ${label}`);
-  return { log, info, warn, error, group, groupEnd, time, timeEnd };
+  return { log, info, warn, error };
 }
 const L = makeLogger("ModalEvento");
 
 /* ========================= Constantes / Utils ========================= */
 const TIPOS_EVENTO = ["Congresso", "Curso", "Oficina", "Palestra", "Seminário", "Simpósio", "Outros"];
-
 const MAX_IMG_MB = 5;
 const MAX_PDF_MB = 10;
 
-/* ========================= Pós-curso (novo) ========================= */
-// ✅ Feedback do curso é SEMPRE obrigatório no sistema.
-// Aqui o admin decide somente se haverá TESTE para liberar certificado.
+/* ========================= Pós-curso ========================= */
 const TESTE_DEFAULT = {
   titulo: "",
   descricao: "",
-  nota_minima: 7, // 0..10
-  tentativas: 1, // 1..10
-  perguntas: [], // opcional (você pode evoluir depois)
+  nota_minima: 7,
+  tentativas: 1,
+  perguntas: [],
 };
 
 const hh = (s) => (typeof s === "string" ? s.slice(0, 5) : "");
@@ -96,13 +91,12 @@ function calcularCargaHorariaDatas(datas = []) {
       const start = h1 * 60 + (Number.isFinite(m1) ? m1 : 0);
       const end = h2 * 60 + (Number.isFinite(m2) ? m2 : 0);
       const diff = Math.max(0, (end - start) / 60);
-      total += diff >= 8 ? diff - 1 : diff; // pausa almoço
+      total += diff >= 8 ? diff - 1 : diff;
     }
   }
   return Math.round(total);
 }
 
-// ✅ helper numérico seguro — necessário p/ resumo do questionário + onConfigSaved
 function clamp(n, min, max) {
   const v = Number(n);
   if (!Number.isFinite(v)) return min;
@@ -125,13 +119,11 @@ const parseRegsBulk = (txt) => {
   return [...new Set(out)];
 };
 
-/* ========================= API helpers (normalização) ========================= */
+/* ========================= API helpers ========================= */
 function asArray(x) {
   if (!x) return [];
   if (Array.isArray(x)) return x;
   if (typeof x !== "object") return [];
-
-  // diretos
   if (Array.isArray(x.data)) return x.data;
   if (Array.isArray(x.rows)) return x.rows;
   if (Array.isArray(x.items)) return x.items;
@@ -139,13 +131,10 @@ function asArray(x) {
   if (Array.isArray(x.result)) return x.result;
   if (Array.isArray(x.unidades)) return x.unidades;
   if (Array.isArray(x.usuarios)) return x.usuarios;
-
-  // aninhados (muito comum com pg)
   if (x.data && Array.isArray(x.data.rows)) return x.data.rows;
   if (x.data && Array.isArray(x.data.items)) return x.data.items;
   if (x.data && Array.isArray(x.data.results)) return x.data.results;
   if (x.result && Array.isArray(x.result.rows)) return x.result.rows;
-
   return [];
 }
 
@@ -220,7 +209,6 @@ function normalizarCargo(v) {
   ]);
 
   const siglas = new Set(["SMS","SUS","CNPJ","CPF","RH","TI","UPA","UBS","SAMU"]);
-
   const roman = /^(i|ii|iii|iv|v|vi|vii|viii|ix|x)$/i;
 
   const words = s.split(" ").filter(Boolean);
@@ -229,14 +217,11 @@ function normalizarCargo(v) {
     .map((w, idx) => {
       const clean = w.replace(/[()]/g, "");
       const upper = clean.toUpperCase();
-
       if (siglas.has(upper)) return upper;
-      if (roman.test(clean)) return upper; // II, III...
+      if (roman.test(clean)) return upper;
 
       const lower = clean.toLocaleLowerCase("pt-BR");
-
       if (idx !== 0 && minusculas.has(lower)) return lower;
-
       return lower.charAt(0).toLocaleUpperCase("pt-BR") + lower.slice(1);
     })
     .join(" ");
@@ -274,6 +259,32 @@ function extrairCargoUsuario(u) {
 /* ========================= Cache simples ========================= */
 let cacheUnidades = null;
 let cacheUsuarios = null;
+
+/* ========================= Helpers folder/programação ========================= */
+function getFolderEndpointPath(eventoId) {
+  const idNum = Number(eventoId);
+  return Number.isFinite(idNum) ? `/api/eventos/${idNum}/folder` : "";
+}
+
+function getFolderPreviewUrl(evento) {
+  if (!evento) return "";
+  const raw =
+    evento?.folder_blob_url ||
+    evento?.folder_url ||
+    evento?.folder ||
+    getFolderEndpointPath(evento?.id);
+
+  return raw ? resolveAssetUrl(raw) : "";
+}
+
+function getProgramacaoUrl(evento) {
+  const raw =
+    evento?.programacao_pdf_url ||
+    evento?.programacao_url ||
+    evento?.programacao_pdf ||
+    "";
+  return raw ? resolveAssetUrl(raw) : "";
+}
 
 /* ========================= UI helpers ========================= */
 function Chip({ tone = "zinc", children, title }) {
@@ -326,15 +337,14 @@ function StatMini({ icon: Icon, label, value, tone = "zinc" }) {
   );
 }
 
-/* ========================= ActionButton (compat) ========================= */
 function ActionButton({
   children,
   onClick,
   type = "button",
   disabled = false,
   className = "",
-  tone = "neutral", // neutral | success | info | danger | warning
-  size = "md", // xs | sm | md
+  tone = "neutral",
+  size = "md",
   ...rest
 }) {
   const toneMap = {
@@ -376,7 +386,7 @@ function ActionButton({
 /* ========================= Componente ========================= */
 export default function ModalEvento({
   isOpen,
-  open, // ✅ compat
+  open,
   onClose,
   onSalvar,
   evento,
@@ -390,18 +400,15 @@ export default function ModalEvento({
   const descId = `modal-evento-desc-${uid}`;
 
   const dbgId = useRef(Math.random().toString(36).slice(2, 7)).current;
-  const closeBlocked = salvando; // bloqueia fechar durante salvamento
+  const closeBlocked = salvando;
 
   const lastCfgSigRef = useRef(null);
 
-  // ✅ logger de mount real
   useEffect(() => {
     L.info("MOUNT", { dbgId, eventoId: evento?.id ?? null });
     return () => L.info("UNMOUNT", { dbgId });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [dbgId, evento?.id]);
 
-  // Campos do evento
   const [titulo, setTitulo] = useState("");
   const [descricao, setDescricao] = useState("");
   const [local, setLocal] = useState("");
@@ -411,14 +418,11 @@ export default function ModalEvento({
 
   const [testeObrigatorio, setTesteObrigatorio] = useState(false);
 
-  // ✅ resumo rápido (mostra no ModalEvento)
   const [testeConfig, setTesteConfig] = useState({
     titulo: "",
-    nota_minima: 7, // UI 0..10
-    tentativas: 1, // UI 1..50
+    nota_minima: 7,
+    tentativas: 1,
     tempo_minutos: 30,
-
-    // ✅ extras do questionário
     questionario_id: null,
     questoes_count: 0,
     peso_total: 0,
@@ -427,21 +431,16 @@ export default function ModalEvento({
 
   const [modalQuestionarioAberto, setModalQuestionarioAberto] = useState(false);
 
-  // Auxiliares
   const [unidades, setUnidades] = useState([]);
   const [usuarios, setUsuarios] = useState([]);
   const [usuariosLoading, setUsuariosLoading] = useState(false);
-
-  // ✅ lista “curada” (instrutor/admin) — usada para resolver nomes no card de turmas
   const [instrutoresDisponiveis, setInstrutoresDisponiveis] = useState([]);
 
-  // Turmas
   const [turmas, setTurmas] = useState([]);
   const [editandoTurmaIndex, setEditandoTurmaIndex] = useState(null);
   const [modalTurmaAberto, setModalTurmaAberto] = useState(false);
   const [removendoId, setRemovendoId] = useState(null);
 
-  // ✅ Confirmação Premium
   const [confirm, setConfirm] = useState({
     open: false,
     turma: null,
@@ -450,13 +449,11 @@ export default function ModalEvento({
     description: "",
   });
 
-  // Restrição
   const [restrito, setRestrito] = useState(false);
   const [restritoModo, setRestritoModo] = useState("");
   const [registroInput, setRegistroInput] = useState("");
   const [registros, setRegistros] = useState([]);
 
-  // Filtros
   const [cargosPermitidos, setCargosPermitidos] = useState([]);
   const [cargoAdd, setCargoAdd] = useState("");
   const [fallbackCargos, setFallbackCargos] = useState([]);
@@ -464,42 +461,41 @@ export default function ModalEvento({
   const [unidadesPermitidas, setUnidadesPermitidas] = useState([]);
   const [unidadeAddId, setUnidadeAddId] = useState("");
 
-  // Uploads
   const [folderFile, setFolderFile] = useState(null);
   const [programacaoFile, setProgramacaoFile] = useState(null);
   const [folderPreview, setFolderPreview] = useState(null);
 
-  // ✅ URLs existentes + flags de remoção
   const [folderUrlExistente, setFolderUrlExistente] = useState(undefined);
-const [hasFolderServidor, setHasFolderServidor] = useState(false);
+  const [hasFolderServidor, setHasFolderServidor] = useState(false);
 
-function folderEndpointPath(eventoId) {
-  const idNum = Number(eventoId);
-  return Number.isFinite(idNum) ? `/api/eventos/${idNum}/folder` : null;
-}
   const [programacaoUrlExistente, setProgramacaoUrlExistente] = useState(undefined);
   const [programacaoNomeExistente, setProgramacaoNomeExistente] = useState(undefined);
 
   const [removerFolderExistente, setRemoverFolderExistente] = useState(false);
   const [removerProgramacaoExistente, setRemoverProgramacaoExistente] = useState(false);
 
-  // refs pra limpar input file
   const folderInputRef = useRef(null);
   const pdfInputRef = useRef(null);
 
-  // Controle
   const prevEventoKeyRef = useRef(null);
   const [isPending, startTransition] = useTransition();
 
-  /* ========= Carregamento paralelo + cache ========= */
+  const folderPreviewExistenteSrc = useMemo(
+    () => (folderUrlExistente ? resolveAssetUrl(folderUrlExistente) : ""),
+    [folderUrlExistente]
+  );
+
+  const programacaoExistenteSrc = useMemo(
+    () => (programacaoUrlExistente ? resolveAssetUrl(programacaoUrlExistente) : ""),
+    [programacaoUrlExistente]
+  );
+
   useEffect(() => {
     let mounted = true;
 
-    // mostra rápido via cache (boa UX)
     if (cacheUnidades) setUnidades(cacheUnidades);
     if (cacheUsuarios) setUsuarios(cacheUsuarios);
 
-    // ✅ regra: se cache parece incompleto, força refresh
     const CACHE_UNIDADES_MIN = 70;
     const precisaRefresh =
       !Array.isArray(cacheUnidades) ||
@@ -556,35 +552,31 @@ function folderEndpointPath(eventoId) {
     };
   }, []);
 
-    // ✅ Carrega lista “curada” de instrutores/admin (para resolver nomes no card sem depender do /usuarios)
-    useEffect(() => {
-      let alive = true;
-  
-      (async () => {
-        try {
-          const res = await apiGet("/eventos/instrutores/disponiveis");
-          const arr = asArray(res)
-            .filter(Boolean)
-            .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
-  
-          if (!alive) return;
-          setInstrutoresDisponiveis(arr);
-  
-          L.info("Instrutores disponíveis carregados", { total: arr.length });
-        } catch (e) {
-          // silencioso: não quebra UI
-          L.warn("Falha ao carregar instrutores disponíveis", e);
-          if (!alive) return;
-          setInstrutoresDisponiveis([]);
-        }
-      })();
-  
-      return () => {
-        alive = false;
-      };
-    }, []);
+  useEffect(() => {
+    let alive = true;
 
-  /* ========= Reidratar ao abrir/trocar id ========= */
+    (async () => {
+      try {
+        const res = await apiGet("/eventos/instrutores/disponiveis");
+        const arr = asArray(res)
+          .filter(Boolean)
+          .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
+
+        if (!alive) return;
+        setInstrutoresDisponiveis(arr);
+        L.info("Instrutores disponíveis carregados", { total: arr.length });
+      } catch (e) {
+        L.warn("Falha ao carregar instrutores disponíveis", e);
+        if (!alive) return;
+        setInstrutoresDisponiveis([]);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   useEffect(() => {
     if (!effectiveOpen) return;
 
@@ -592,21 +584,21 @@ function folderEndpointPath(eventoId) {
     if (prevEventoKeyRef.current === curKey) return;
 
     startTransition(() => {
-      // reset “sempre”
       setRegistroInput("");
       setCargoAdd("");
       setUnidadeAddId("");
-
-      // uploads
       setFolderFile(null);
       setProgramacaoFile(null);
       setFolderPreview(null);
       setRemoverFolderExistente(false);
       setRemoverProgramacaoExistente(false);
+      setModalQuestionarioAberto(false);
+      setModalTurmaAberto(false);
+      setEditandoTurmaIndex(null);
+
       if (folderInputRef.current) folderInputRef.current.value = "";
       if (pdfInputRef.current) pdfInputRef.current.value = "";
 
-      // confirmações pendentes: fecha ao trocar evento
       setConfirm((c) => ({ ...c, open: false, turma: null, idx: null }));
 
       if (!evento) {
@@ -636,10 +628,8 @@ function folderEndpointPath(eventoId) {
           publicado: false,
         });
 
-        setModalQuestionarioAberto(false);
-
-        // ✅ novo evento: sem “existentes”
         setFolderUrlExistente(undefined);
+        setHasFolderServidor(false);
         setProgramacaoUrlExistente(undefined);
         setProgramacaoNomeExistente(undefined);
       } else {
@@ -650,7 +640,6 @@ function folderEndpointPath(eventoId) {
         setUnidadeId(evento.unidade_id ? String(evento.unidade_id) : "");
         setPublicoAlvo(evento.publico_alvo || "");
 
-        // ✅ Pós-curso NÃO confia na listagem (evento vem “seco”)
         setTesteObrigatorio(false);
         setTesteConfig((prev) => ({
           ...prev,
@@ -661,15 +650,14 @@ function folderEndpointPath(eventoId) {
           publicado: false,
         }));
 
-        // ✅ anexos existentes vindos do backend
-        setHasFolderServidor(false);
-setFolderUrlExistente(evento.folder_url || evento.folder || undefined);
+        const folderSrc = getFolderPreviewUrl(evento);
+        setFolderUrlExistente(folderSrc || undefined);
+        setHasFolderServidor(Boolean(folderSrc));
 
-        setProgramacaoUrlExistente(evento.programacao_pdf_url || evento.programacao_url || evento.programacao_pdf || undefined);
-
+        const progSrc = getProgramacaoUrl(evento);
+        setProgramacaoUrlExistente(progSrc || undefined);
         setProgramacaoNomeExistente(evento.programacao_nome || evento.programacao_pdf_nome || undefined);
 
-        // turmas (rota leve)
         (async () => {
           try {
             const resp = await apiGet(`/eventos/${evento.id}/turmas-simples`);
@@ -696,7 +684,6 @@ setFolderUrlExistente(evento.folder_url || evento.folder || undefined);
           }
         })();
 
-        // restrição
         const restr = !!evento.restrito;
         setRestrito(restr);
 
@@ -707,30 +694,28 @@ setFolderUrlExistente(evento.folder_url || evento.folder || undefined);
         const lista =
           (Array.isArray(evento.registros_permitidos) ? evento.registros_permitidos : null) ??
           (Array.isArray(evento.registros) ? evento.registros : []);
-          const regs = [...new Set((lista || []).map(normReg).filter((r) => /^\d{6}$/.test(r)))];
-          setRegistros(regs);
-  
-          // ✅ aceita ["Enfermeiro"] OU [{id,nome}]
-          setCargosPermitidos(
-            Array.isArray(evento.cargos_permitidos)
-              ? [
-                  ...new Set(
-                    evento.cargos_permitidos
-                      .map((c) => String(c?.nome ?? c ?? "").trim())
-                      .filter(Boolean)
-                  ),
-                ]
-              : []
-          );
-  
-          setUnidadesPermitidas(Array.isArray(evento.unidades_permitidas) ? extractIds(evento.unidades_permitidas) : []);
+        const regs = [...new Set((lista || []).map(normReg).filter((r) => /^\d{6}$/.test(r)))];
+        setRegistros(regs);
+
+        setCargosPermitidos(
+          Array.isArray(evento.cargos_permitidos)
+            ? [
+                ...new Set(
+                  evento.cargos_permitidos
+                    .map((c) => String(c?.nome ?? c ?? "").trim())
+                    .filter(Boolean)
+                ),
+              ]
+            : []
+        );
+
+        setUnidadesPermitidas(Array.isArray(evento.unidades_permitidas) ? extractIds(evento.unidades_permitidas) : []);
       }
     });
 
     prevEventoKeyRef.current = curKey;
-  }, [effectiveOpen, evento?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [effectiveOpen, evento]);
 
-  /* ========= GET fresh detalhe (sob demanda) ========= */
   useEffect(() => {
     if (!effectiveOpen || !evento?.id) return;
 
@@ -741,7 +726,6 @@ setFolderUrlExistente(evento.folder_url || evento.folder || undefined);
         const det = await apiGet(`/eventos/${evento.id}`);
         if (!alive) return;
 
-        // ✅ FONTE DE VERDADE DO PÓS-CURSO
         const pc = det?.pos_curso || null;
         const hasTeste = !!pc?.questionario_id;
 
@@ -759,7 +743,7 @@ setFolderUrlExistente(evento.folder_url || evento.folder || undefined);
         } else {
           setTesteConfig((prev) => ({
             ...prev,
-            nota_minima: Number.isFinite(Number(pc?.min_nota)) ? clamp(Number(pc.min_nota) / 10, 0, 10) : prev.nota_minima, // 0..100 -> 0..10
+            nota_minima: Number.isFinite(Number(pc?.min_nota)) ? clamp(Number(pc.min_nota) / 10, 0, 10) : prev.nota_minima,
             tentativas: Number.isFinite(Number(pc?.tentativas_max)) ? clamp(Number(pc.tentativas_max), 1, 50) : prev.tentativas,
             tempo_minutos: Number.isFinite(Number(pc?.tempo_minutos)) ? clamp(Number(pc.tempo_minutos), 5, 240) : prev.tempo_minutos,
             questionario_id: pc?.questionario_id ?? prev.questionario_id,
@@ -767,51 +751,14 @@ setFolderUrlExistente(evento.folder_url || evento.folder || undefined);
           }));
         }
 
-        // anexos (opcional)
-        // anexos (opcional) — LEGADO
-if (det?.folder_url || det?.folder) {
-  setFolderUrlExistente(det.folder_url || det.folder);
-  setHasFolderServidor(true);
-} else {
-  // ✅ NOVO: tenta folder blob via endpoint
-  const p = folderEndpointPath(evento.id);
-  if (p) {
-    try {
-      const url = resolveAssetUrl(p);
+        const folderSrc = getFolderPreviewUrl(det || evento);
+        setFolderUrlExistente(folderSrc || undefined);
+        setHasFolderServidor(Boolean(folderSrc));
 
-      // HEAD primeiro (leve). Se não suportar, cai pro GET.
-      let ok = false;
-      try {
-        const head = await fetch(url, { method: "HEAD", cache: "no-store" });
-        ok = head.ok;
-      } catch {
-        ok = false;
-      }
-
-      if (!ok) {
-        const get = await fetch(url, { method: "GET", cache: "no-store" });
-        ok = get.ok;
-        // evita download inútil
-        try { get.body?.cancel?.(); } catch {}
-      }
-
-      if (ok) {
-        setFolderUrlExistente(p); // path relativo (resolveAssetUrl cuida)
-        setHasFolderServidor(true);
-      } else {
-        setFolderUrlExistente(undefined);
-        setHasFolderServidor(false);
-      }
-    } catch {
-      setFolderUrlExistente(undefined);
-      setHasFolderServidor(false);
-    }
-  }
-}
-
-        if (det?.programacao_pdf_url || det?.programacao_url || det?.programacao_pdf) {
-          setProgramacaoUrlExistente(det.programacao_pdf_url || det.programacao_url || det.programacao_pdf);
-          setProgramacaoNomeExistente(det.programacao_nome || det.programacao_pdf_nome);
+        const progSrc = getProgramacaoUrl(det || evento);
+        if (progSrc) {
+          setProgramacaoUrlExistente(progSrc);
+          setProgramacaoNomeExistente(det?.programacao_nome || det?.programacao_pdf_nome || programacaoNomeExistente);
         }
       } catch (e) {
         console.warn("[ModalEvento] Falha ao carregar detalhe do evento", e);
@@ -821,9 +768,8 @@ if (det?.folder_url || det?.folder) {
     return () => {
       alive = false;
     };
-  }, [effectiveOpen, evento?.id]);
+  }, [effectiveOpen, evento?.id, evento, programacaoNomeExistente]);
 
-  // ✅ Ao abrir o evento, tenta carregar o resumo REAL do questionário (se existir)
   useEffect(() => {
     if (!effectiveOpen || !evento?.id) return;
 
@@ -834,7 +780,6 @@ if (det?.folder_url || det?.folder) {
         const qz = await apiGet(`/questionarios/evento/${Number(evento.id)}`, { on404: "silent" });
         if (!alive) return;
 
-        // ✅ Se existe questionário, então o evento TEM teste obrigatório
         if (qz?.id) setTesteObrigatorio(true);
 
         setTesteConfig((prev) => ({
@@ -843,14 +788,12 @@ if (det?.folder_url || det?.folder) {
           nota_minima: Number.isFinite(Number(qz?.min_nota)) ? clamp(Number(qz.min_nota) / 10, 0, 10) : prev.nota_minima,
           tentativas: Number.isFinite(Number(qz?.tentativas_max)) ? clamp(Number(qz.tentativas_max), 1, 50) : prev.tentativas,
           tempo_minutos: Number.isFinite(Number(qz?.tempo_minutos)) ? clamp(Number(qz.tempo_minutos), 5, 240) : prev.tempo_minutos,
-
           questionario_id: qz?.id ?? prev.questionario_id,
           questoes_count: Array.isArray(qz?.questoes) ? qz.questoes.length : Number(qz?.questoes_count) || prev.questoes_count || 0,
           peso_total: Number.isFinite(Number(qz?.peso_total)) ? Number(qz.peso_total) : prev.peso_total,
           publicado: !!qz?.publicado,
         }));
       } catch (e) {
-        // ✅ Se não existe questionário, não liga teste automaticamente
         if (e?.status === 404) return;
         console.warn("[ModalEvento] Falha ao carregar questionário", e);
       }
@@ -861,7 +804,6 @@ if (det?.folder_url || det?.folder) {
     };
   }, [effectiveOpen, evento?.id]);
 
-  /* ========= Sugestões de cargos (on demand) ========= */
   useEffect(() => {
     (async () => {
       if (restritoModo !== "cargos") return;
@@ -874,33 +816,28 @@ if (det?.folder_url || det?.folder) {
           .map(normalizarCargo)
           .filter((s) => s && !jaUsados.has(s.toLowerCase()));
         setFallbackCargos(norm);
-      } catch {
-        // silencioso
-      }
+      } catch {}
     })();
   }, [restritoModo, fallbackCargos, cargosPermitidos]);
 
-  /* ========= Opções (memo) ========= */
   const cargosSugestoes = useMemo(() => {
     const dosUsuarios = (usuarios || []).map((u) => extrairCargoUsuario(u)).filter(Boolean);
     const todos = [...dosUsuarios, ...fallbackCargos]
       .map(normalizarCargo)
       .filter(Boolean);
-  
+
     const jaUsados = new Set(
       cargosPermitidos.map((c) => stripDiacritics(c).toLocaleLowerCase("pt-BR"))
     );
-  
-    // ✅ dedupe por chave sem acento
+
     const byKey = new Map();
     for (const c of todos) {
       const key = stripDiacritics(c).toLocaleLowerCase("pt-BR");
       if (!key) continue;
       if (jaUsados.has(key)) continue;
-      // mantém a “melhor” forma (com acento) se aparecer depois
       byKey.set(key, c);
     }
-  
+
     return [...byKey.values()].sort((a, b) => a.localeCompare(b, "pt-BR"));
   }, [usuarios, fallbackCargos, cargosPermitidos]);
 
@@ -912,7 +849,7 @@ if (det?.folder_url || det?.folder) {
       if (typeof v === "object") return String(v.nome || v.name || v.label || v.value || "");
       return String(v);
     };
-  
+
     return (usuarios || [])
       .filter((u) => {
         const texto = [
@@ -922,23 +859,20 @@ if (det?.folder_url || det?.folder) {
           toText(u.roles),
           toText(u.tipo),
         ].join(" ").toLowerCase();
-  
+
         return texto.includes("instrutor") || texto.includes("administrador") || texto.includes("admin");
       })
       .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
   }, [usuarios]);
 
-  // ✅ Mapa rápido (id -> nome) para evitar .find() toda hora e eliminar “15” na UI
   const usuariosById = useMemo(() => {
     const m = new Map();
 
-    // 1) instrutores (preferência: é a lista mais relevante pro card)
     for (const u of instrutoresDisponiveis || []) {
       const idNum = Number(u?.id);
       if (Number.isFinite(idNum) && !m.has(idNum)) m.set(idNum, String(u?.nome || "").trim());
     }
 
-    // 2) usuários gerais (completa o que faltar)
     for (const u of usuarios || []) {
       const idNum = Number(u?.id);
       if (Number.isFinite(idNum) && !m.has(idNum)) m.set(idNum, String(u?.nome || "").trim());
@@ -947,27 +881,23 @@ if (det?.folder_url || det?.folder) {
     return m;
   }, [instrutoresDisponiveis, usuarios]);
 
-  // ✅ Resolve nome por id com fallback inteligente
   const nomePorId = useCallback(
     (id, turmaMaybe = null) => {
       const idNum = Number(id);
       if (!Number.isFinite(idNum)) return "—";
 
-      // 1) lista global carregada
       const nome = usuariosById.get(idNum);
       if (nome) return nome;
 
-      // 2) fallback: se a turma trouxer objetos em instrutores
       const arr = Array.isArray(turmaMaybe?.instrutores) ? turmaMaybe.instrutores : [];
       const hit = arr.find((x) => Number(x?.id ?? x) === idNum);
       const nomeLocal = String(hit?.nome || "").trim();
       if (nomeLocal) return nomeLocal;
 
-      // 3) fallback final
       const carregando = usuariosLoading || (Array.isArray(instrutoresDisponiveis) && instrutoresDisponiveis.length === 0);
       return carregando ? "Carregando…" : "Usuário não encontrado";
     },
-    [usuariosById, usuariosLoading]
+    [usuariosById, usuariosLoading, instrutoresDisponiveis]
   );
 
   const unidadeNome = useMemo(() => {
@@ -975,7 +905,6 @@ if (det?.folder_url || det?.folder) {
     return u?.nome || "";
   }, [unidades, unidadeId]);
 
-  /* ================= Handlers de registros ================= */
   const addRegistro = () => {
     const novos = parseRegsBulk(registroInput);
     if (!novos.length) return toast.info("Informe/cole ao menos uma sequência de 6 dígitos.");
@@ -992,7 +921,6 @@ if (det?.folder_url || det?.folder) {
 
   const removeRegistro = (r) => setRegistros((prev) => prev.filter((x) => x !== r));
 
-  /* ================= Filtros: Cargos e Unidades ================= */
   const addCargo = () => {
     const v = normalizarCargo(String(cargoAdd || "").trim());
     if (!v) return;
@@ -1009,7 +937,6 @@ if (det?.folder_url || det?.folder) {
   };
   const removeUnidade = (id) => setUnidadesPermitidas((prev) => prev.filter((x) => x !== id));
 
-  /* ================= Uploads ================= */
   const validaTamanho = (file, maxMb) => file.size / (1024 * 1024) <= maxMb;
 
   const onChangeFolder = (e) => {
@@ -1049,7 +976,6 @@ if (det?.folder_url || det?.folder) {
     if (programacaoUrlExistente) setRemoverProgramacaoExistente(true);
   };
 
-  /* ================= Turma: criar / editar / remover ================= */
   function abrirCriarTurma() {
     setEditandoTurmaIndex(null);
     setModalTurmaAberto(true);
@@ -1102,12 +1028,10 @@ if (det?.folder_url || det?.folder) {
     });
   }
 
-   /* ================= Submit do formulário ================= */
   const handleSubmit = (e) => {
     e.preventDefault();
     if (salvando) return;
 
-    // Validações de topo
     if (!titulo || !tipo || !unidadeId || !local) {
       toast.warning("⚠️ Preencha todos os campos obrigatórios.");
       return;
@@ -1121,12 +1045,10 @@ if (det?.folder_url || det?.folder) {
       return;
     }
 
-    // ✅ teste obrigatório: aviso se ainda não há questionário
     if (testeObrigatorio && !testeConfig?.questionario_id) {
       toast.info("Teste obrigatório marcado, mas ainda sem questionário configurado. Você pode configurar depois.");
     }
 
-    // Validações por turma
     for (const t of turmas) {
       if (!t.nome || !Number(t.vagas_total) || !Number.isFinite(Number(t.carga_horaria))) {
         toast.error("❌ Preencha nome, vagas e carga horária de cada turma.");
@@ -1152,7 +1074,6 @@ if (det?.folder_url || det?.folder) {
       }
     }
 
-    // Validações de restrição
     if (restrito) {
       const modosValidos = ["todos_servidores", "lista_registros", "cargos", "unidades"];
       if (!modosValidos.includes(restritoModo)) return toast.error("Defina o modo de restrição do evento.");
@@ -1162,7 +1083,6 @@ if (det?.folder_url || det?.folder) {
       if (restritoModo === "unidades" && unidadesPermitidas.length === 0) return toast.error("Inclua ao menos uma unidade permitida.");
     }
 
-    // Montagem turmas
     const turmasCompletas = turmas.map((t) => {
       const n = normalizarDatasTurma(t);
       return {
@@ -1179,8 +1099,8 @@ if (det?.folder_url || det?.folder) {
         ...(Number.isFinite(Number(t.instrutor_assinante_id))
           ? { instrutor_assinante_id: Number(t.instrutor_assinante_id) }
           : Number.isFinite(Number(t.assinante_id))
-          ? { instrutor_assinante_id: Number(t.assinante_id) }
-          : {}),
+            ? { instrutor_assinante_id: Number(t.assinante_id) }
+            : {}),
       };
     });
 
@@ -1194,17 +1114,12 @@ if (det?.folder_url || det?.folder) {
       tipo,
       unidade_id: Number(unidadeId),
       publico_alvo: publicoAlvo,
-
-      // ✅ Pós-curso NÃO é coluna de eventos.
-      // Config do teste é feita no modal / endpoint próprio (ModalQuestionarioEvento).
       turmas: turmasCompletas,
       restrito: !!restrito,
       restrito_modo: restrito ? restritoModo || "todos_servidores" : null,
-
       ...(restrito && restritoModo === "lista_registros" && regs6.length > 0 ? { registros_permitidos: regs6 } : {}),
       ...(restrito && restritoModo === "cargos" && cargosPermitidos.length > 0 ? { cargos_permitidos: cargosPermitidos } : {}),
       ...(restrito && restritoModo === "unidades" && unidadesPermitidas.length > 0 ? { unidades_permitidas: unidadesPermitidas } : {}),
-
       ...(removerFolderExistente ? { remover_folder: true } : {}),
       ...(removerProgramacaoExistente ? { remover_programacao: true } : {}),
     };
@@ -1220,7 +1135,6 @@ if (det?.folder_url || det?.folder) {
 
   const regCount = registros.length;
 
-    /* ========================= Render Turmas (memo) ========================= */
   const turmasRender = useMemo(() => {
     return (turmas || []).map((t, i) => {
       const baseDatas = Array.isArray(t.datas) && t.datas.length ? t.datas : encontrosParaDatas(t);
@@ -1347,36 +1261,30 @@ if (det?.folder_url || det?.folder) {
     });
   }, [turmas, removendoId, nomePorId]);
 
-  /* ========================= Render ========================= */
   return (
     <>
       <Modal
-  open={effectiveOpen}
-  onClose={closeBlocked ? undefined : onClose}
-  padding={false}
-  scroll="content"
-  size="xl"
-  labelledBy={titleId}
-  describedBy={descId}
-  closeOnBackdrop={!closeBlocked}
-  closeOnEscape={!closeBlocked}
+        open={effectiveOpen}
+        onClose={closeBlocked ? undefined : onClose}
+        padding={false}
+        scroll="content"
+        size="xl"
+        labelledBy={titleId}
+        describedBy={descId}
+        closeOnBackdrop={!closeBlocked}
+        closeOnEscape={!closeBlocked}
       >
         <div
           className={[
             "grid grid-rows-[auto,1fr,auto]",
-            // ✅ MOBILE: tela cheia real (dvh evita bug da barra do navegador)
             "w-[100vw] max-w-[100vw] h-[100dvh] max-h-[100dvh]",
-            // ✅ DESKTOP: mantém comportamento atual
             "sm:w-auto sm:max-w-none sm:h-auto sm:max-h-[92vh]",
-            // ✅ MOBILE: sem bordas arredondadas pra não “cortar”
             "rounded-none sm:rounded-3xl overflow-hidden",
             "bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/10 shadow-2xl",
           ].join(" ")}
         >
-          {/* Top gradient bar */}
           <div className="h-1.5 bg-gradient-to-r from-emerald-600 via-indigo-600 to-fuchsia-600" />
 
-          {/* HEADER */}
           <div className="relative p-4 sm:p-6 border-b border-black/5 dark:border-white/10 bg-white/80 dark:bg-zinc-900/80 backdrop-blur">
             <div className="absolute inset-0 pointer-events-none">
               <div className="absolute -top-16 -left-24 w-56 h-56 rounded-full bg-emerald-500/12 blur-2xl" />
@@ -1471,10 +1379,8 @@ if (det?.folder_url || det?.folder) {
                 </button>
               </div>
             </div>
+          </div>
 
-            </div>
-
-          {/* BODY */}
           <div className="p-4 sm:p-6 overflow-y-auto overscroll-contain pb-[max(1rem,env(safe-area-inset-bottom))]">
             {isPending ? (
               <p className="text-center text-sm text-slate-500" role="status" aria-live="polite">
@@ -1482,7 +1388,6 @@ if (det?.folder_url || det?.folder) {
               </p>
             ) : (
               <form id={`form-evento-${uid}`} onSubmit={handleSubmit} className="space-y-5" aria-labelledby={titleId} noValidate>
-                {/* DADOS */}
                 <section
                   id={`sec-dados-${uid}`}
                   className="rounded-3xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 p-4 sm:p-5 shadow-sm scroll-mt-3"
@@ -1495,7 +1400,6 @@ if (det?.folder_url || det?.folder) {
                   </div>
 
                   <div className="grid gap-4 sm:grid-cols-2">
-                    {/* TÍTULO */}
                     <div className="grid gap-1 sm:col-span-2">
                       <label htmlFor={`evento-titulo-${uid}`} className="text-sm font-medium">
                         Título <span className="text-rose-600">*</span>
@@ -1513,7 +1417,6 @@ if (det?.folder_url || det?.folder) {
                       </div>
                     </div>
 
-                    {/* DESCRIÇÃO */}
                     <div className="grid gap-1 sm:col-span-2">
                       <label htmlFor={`evento-descricao-${uid}`} className="text-sm font-medium">
                         Descrição
@@ -1530,7 +1433,6 @@ if (det?.folder_url || det?.folder) {
                       </div>
                     </div>
 
-                    {/* PÚBLICO-ALVO */}
                     <div className="grid gap-1 sm:col-span-2">
                       <label htmlFor={`evento-publico-${uid}`} className="text-sm font-medium">
                         Público-alvo
@@ -1547,7 +1449,6 @@ if (det?.folder_url || det?.folder) {
                       </div>
                     </div>
 
-                    {/* LOCAL */}
                     <div className="grid gap-1">
                       <label htmlFor={`evento-local-${uid}`} className="text-sm font-medium">
                         Local <span className="text-rose-600">*</span>
@@ -1565,7 +1466,6 @@ if (det?.folder_url || det?.folder) {
                       </div>
                     </div>
 
-                    {/* TIPO */}
                     <div className="grid gap-1">
                       <label htmlFor={`evento-tipo-${uid}`} className="text-sm font-medium">
                         Tipo <span className="text-rose-600">*</span>
@@ -1589,7 +1489,6 @@ if (det?.folder_url || det?.folder) {
                       </div>
                     </div>
 
-                    {/* UNIDADE */}
                     <div className="grid gap-1 sm:col-span-2">
                       <label htmlFor={`evento-unidade-${uid}`} className="text-sm font-medium">
                         Unidade <span className="text-rose-600">*</span>
@@ -1615,7 +1514,6 @@ if (det?.folder_url || det?.folder) {
                   </div>
                 </section>
 
-                {/* PÓS-CURSO: TESTE */}
                 <section
                   id={`sec-pos-${uid}`}
                   className="rounded-3xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 p-4 sm:p-5 shadow-sm scroll-mt-3"
@@ -1688,7 +1586,6 @@ if (det?.folder_url || det?.folder) {
                   </div>
                 </section>
 
-                {/* VISIBILIDADE */}
                 <section
                   id={`sec-vis-${uid}`}
                   className="rounded-3xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 p-4 sm:p-5 shadow-sm scroll-mt-3"
@@ -1774,7 +1671,6 @@ if (det?.folder_url || det?.folder) {
                         <span>Restringir por unidades</span>
                       </label>
 
-                      {/* lista_registros */}
                       {restritoModo === "lista_registros" && (
                         <div className="mt-3 space-y-2">
                           <div className="flex gap-2">
@@ -1840,7 +1736,6 @@ if (det?.folder_url || det?.folder) {
                         </div>
                       )}
 
-                      {/* cargos */}
                       {restritoModo === "cargos" && (
                         <div className="mt-3 space-y-2">
                           <div className="flex gap-2">
@@ -1889,7 +1784,6 @@ if (det?.folder_url || det?.folder) {
                         </div>
                       )}
 
-                      {/* unidades */}
                       {restritoModo === "unidades" && (
                         <div className="mt-3 space-y-2">
                           <div className="flex gap-2">
@@ -1944,7 +1838,6 @@ if (det?.folder_url || det?.folder) {
                   )}
                 </section>
 
-                {/* ANEXOS */}
                 <section
                   id={`sec-anexos-${uid}`}
                   className="rounded-3xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 p-4 sm:p-5 shadow-sm scroll-mt-3"
@@ -1960,50 +1853,45 @@ if (det?.folder_url || det?.folder) {
                   </div>
 
                   <div className="grid gap-3 sm:grid-cols-2">
-                    {/* Folder */}
                     <div className="grid gap-2">
                       <label className="text-sm font-extrabold flex items-center gap-2">
                         <ImageIcon size={16} /> Folder do evento (PNG/JPG)
                       </label>
 
-                      {!folderFile && hasFolderServidor && !!folderUrlExistente && !removerFolderExistente && (
-  <div className="rounded-2xl border border-black/10 dark:border-white/10 p-2 bg-white/80 dark:bg-zinc-900/40">
-    <img
-      src={resolveAssetUrl(folderUrlExistente)}
-      alt="Folder atual do evento"
-      className="max-h-44 w-full object-cover rounded-xl border border-black/10 dark:border-white/10"
-      loading="lazy"
-      referrerPolicy="no-referrer"
-      onError={(e) => {
-        // ✅ se quebrar por qualquer motivo, some com o bloco
-        e.currentTarget.src = "";
-        e.currentTarget.alt = "Imagem indisponível";
-        setHasFolderServidor(false);
-        setFolderUrlExistente(undefined);
-      }}
-    />
+                      {!folderFile && hasFolderServidor && !!folderPreviewExistenteSrc && !removerFolderExistente && (
+                        <div className="rounded-2xl border border-black/10 dark:border-white/10 p-2 bg-white/80 dark:bg-zinc-900/40">
+                          <img
+                            src={folderPreviewExistenteSrc}
+                            alt="Folder atual do evento"
+                            className="max-h-44 w-full object-cover rounded-xl border border-black/10 dark:border-white/10"
+                            loading="lazy"
+                            referrerPolicy="no-referrer"
+                            onError={() => {
+                              setHasFolderServidor(false);
+                              setFolderUrlExistente(undefined);
+                            }}
+                          />
 
-    <div className="mt-2 flex items-center justify-between gap-3">
-      <button
-        type="button"
-        onClick={() => openAsset(folderUrlExistente)}
-        className="text-xs underline text-emerald-700 dark:text-emerald-300"
-      >
-        Abrir imagem
-      </button>
+                          <div className="mt-2 flex items-center justify-between gap-3">
+                            <button
+                              type="button"
+                              onClick={() => openAsset(folderPreviewExistenteSrc)}
+                              className="text-xs underline text-emerald-700 dark:text-emerald-300"
+                            >
+                              Abrir imagem
+                            </button>
 
-      <button
-        type="button"
-        onClick={limparFolder}
-        className="text-xs underline text-red-700 dark:text-red-300"
-        title="Remover imagem existente"
-      >
-        Remover
-      </button>
-    </div>
-  </div>
-)}
-
+                            <button
+                              type="button"
+                              onClick={limparFolder}
+                              className="text-xs underline text-red-700 dark:text-red-300"
+                              title="Remover imagem existente"
+                            >
+                              Remover
+                            </button>
+                          </div>
+                        </div>
+                      )}
 
                       <label className="flex items-center justify-between gap-2 px-3 py-2.5 rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900 cursor-pointer hover:border-emerald-400/60 transition-colors">
                         <span className="inline-flex items-center gap-2">
@@ -2041,17 +1929,16 @@ if (det?.folder_url || det?.folder) {
                       )}
                     </div>
 
-                    {/* Programação */}
                     <div className="grid gap-2">
                       <label className="text-sm font-extrabold flex items-center gap-2">
                         <FileIcon size={16} /> Programação (PDF)
                       </label>
 
-                      {!programacaoFile && !!programacaoUrlExistente && !removerProgramacaoExistente && (
+                      {!programacaoFile && !!programacaoExistenteSrc && !removerProgramacaoExistente && (
                         <div className="rounded-2xl border border-black/10 dark:border-white/10 p-3 bg-white/80 dark:bg-zinc-900/40 flex items-center justify-between gap-3">
                           <button
                             type="button"
-                            onClick={() => openAsset(programacaoUrlExistente)}
+                            onClick={() => openAsset(programacaoExistenteSrc)}
                             className="text-sm underline text-emerald-700 dark:text-emerald-300 break-words text-left"
                           >
                             {programacaoNomeExistente || "Baixar programação (PDF)"}
@@ -2098,7 +1985,6 @@ if (det?.folder_url || det?.folder) {
                   </div>
                 </section>
 
-                {/* TURMAS */}
                 <section
                   id={`sec-turmas-${uid}`}
                   className="rounded-3xl border border-black/10 dark:border-white/10 bg-white/70 dark:bg-zinc-900/40 p-4 sm:p-5 shadow-sm scroll-mt-3"
@@ -2137,8 +2023,7 @@ if (det?.folder_url || det?.folder) {
             )}
           </div>
 
-                    {/* FOOTER */}
-                    <div className="p-4 sm:p-5 border-t border-black/5 dark:border-white/10 bg-zinc-50 dark:bg-zinc-800 pb-[max(1rem,env(safe-area-inset-bottom))]">
+          <div className="p-4 sm:p-5 border-t border-black/5 dark:border-white/10 bg-zinc-50 dark:bg-zinc-800 pb-[max(1rem,env(safe-area-inset-bottom))]">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div className="text-xs text-zinc-600 dark:text-zinc-300">
                 Campos obrigatórios: <strong>Título</strong>, <strong>Local</strong>, <strong>Tipo</strong>, <strong>Unidade</strong> e
@@ -2173,7 +2058,6 @@ if (det?.folder_url || det?.folder) {
         </div>
       </Modal>
 
-      {/* ✅ MODAL CONFIRMAÇÃO (compat open/isOpen) */}
       <ModalConfirmacao
         isOpen={!!confirm.open}
         open={!!confirm.open}
@@ -2201,7 +2085,6 @@ if (det?.folder_url || det?.folder) {
         }}
       />
 
-      {/* ✅ MODAL QUESTIONÁRIO / TESTE (ADMIN) */}
       <ModalQuestionarioEvento
         open={modalQuestionarioAberto}
         onClose={() => setModalQuestionarioAberto(false)}
@@ -2210,7 +2093,6 @@ if (det?.folder_url || det?.folder) {
         onConfigSaved={(cfg) => {
           const c = cfg || {};
 
-          // ✅ Assinatura para evitar spam (se vier igual, não repete)
           const sig = JSON.stringify({
             titulo: String(c.titulo ?? ""),
             nota10: c.nota_minima_10 ?? null,
@@ -2233,14 +2115,14 @@ if (det?.folder_url || det?.folder) {
             const nota_minima = Number.isFinite(Number(c.nota_minima_10))
               ? clamp(Number(c.nota_minima_10), 0, 10)
               : Number.isFinite(Number(c.min_nota))
-              ? clamp(Number(c.min_nota) / 10, 0, 10)
-              : prev.nota_minima;
+                ? clamp(Number(c.min_nota) / 10, 0, 10)
+                : prev.nota_minima;
 
             const tentativas = Number.isFinite(Number(c.tentativas_max))
               ? clamp(Number(c.tentativas_max), 1, 50)
               : Number.isFinite(Number(c.tentativas))
-              ? clamp(Number(c.tentativas), 1, 50)
-              : prev.tentativas;
+                ? clamp(Number(c.tentativas), 1, 50)
+                : prev.tentativas;
 
             const tempo_minutos = Number.isFinite(Number(c.tempo_minutos)) ? clamp(Number(c.tempo_minutos), 5, 240) : prev.tempo_minutos;
 
@@ -2249,8 +2131,8 @@ if (det?.folder_url || det?.folder) {
             const questoes_count = Number.isFinite(Number(c.questoes_count))
               ? Number(c.questoes_count)
               : Array.isArray(c.questoes)
-              ? c.questoes.length
-              : prev.questoes_count;
+                ? c.questoes.length
+                : prev.questoes_count;
 
             const peso_total = Number.isFinite(Number(c.peso_total)) ? Number(c.peso_total) : prev.peso_total;
 
@@ -2271,9 +2153,6 @@ if (det?.folder_url || det?.folder) {
         }}
       />
 
-      
-
-      {/* MODAL TURMA */}
       <ModalTurma
         isOpen={modalTurmaAberto}
         open={modalTurmaAberto}

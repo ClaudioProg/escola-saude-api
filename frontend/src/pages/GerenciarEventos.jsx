@@ -8,10 +8,11 @@
 // - ✅ Ministats: remove Restritos/Folder e adiciona Eventos 2025/2026
 // - Botões: cor contida (texto/ícone + hover suave), sem chapado
 // - A11y: live region, skip link, aria labels e estados
+// - ✅ PERF: poster direto por URL do backend (sem blob/objectURL)
+// - ✅ PERF: content-visibility nos cards
+// - ✅ PERF: ordenação alfabética da lista filtrada
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
-import { createAsyncQueue } from "../utils/asyncQueue";
-import { useInViewOnce } from "../hooks/useInViewOnce";
 import { toast } from "react-toastify";
 import { motion, useReducedMotion } from "framer-motion";
 import {
@@ -33,7 +34,7 @@ import {
 } from "lucide-react";
 
 import { apiGet, apiPost, apiPut, apiDelete } from "../services/api";
-import { resolveAssetUrl, openAsset } from "../utils/assets";
+import { resolveAssetUrl } from "../utils/assets";
 import ModalEvento from "../components/ModalEvento";
 import ModalConfirmacao from "../components/ModalConfirmacao";
 import NenhumDado from "../components/NenhumDado";
@@ -46,7 +47,6 @@ import Footer from "../components/Footer";
 const IS_DEV = import.meta?.env?.MODE !== "production";
 const logDev = (...a) => IS_DEV && console.log("[GerenciarEventos]", ...a);
 const warnDev = (...a) => IS_DEV && console.warn("[GerenciarEventos]", ...a);
-const errDev = (...a) => IS_DEV && console.error("[GerenciarEventos]", ...a);
 
 function snapshotModalRoot() {
   try {
@@ -77,6 +77,7 @@ const clean = (obj) =>
   );
 
 const ymd = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
+const iso = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
 
 const hhmm = (s) => {
   if (typeof s !== "string") return "";
@@ -86,9 +87,13 @@ const hhmm = (s) => {
   return v ? v.slice(0, 5) : "";
 };
 
-const iso = (s) => (typeof s === "string" ? s.slice(0, 10) : "");
+const normalizeTitleSort = (v) =>
+  String(v || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
 
-// extrai ids numéricos
 const extractIds = (arr) => {
   if (!Array.isArray(arr)) return [];
   return arr
@@ -97,7 +102,6 @@ const extractIds = (arr) => {
     .filter((n) => Number.isFinite(n));
 };
 
-// extrai strings limpas (para cargos)
 const extractStrs = (arr) => {
   if (!Array.isArray(arr)) return [];
   return Array.from(
@@ -113,71 +117,59 @@ const extractStrs = (arr) => {
 
 function getPosterUrl(ev) {
   const raw =
-    ev?.folder_url ??
-    ev?.folderUrl ??
-    ev?.folder ??
-    ev?.poster_url ??
-    ev?.posterUrl ??
-    ev?.capa_url ??
-    ev?.capaUrl ??
-    ev?.imagem_url ??
-    ev?.imagemUrl ??
-    ev?.arquivo_folder ??
-    ev?.arquivoFolder ??
+    ev?.folder_blob_url ||
+    ev?.folder_url ||
+    ev?.folderUrl ||
+    ev?.folder ||
+    ev?.poster_url ||
+    ev?.posterUrl ||
+    ev?.capa_url ||
+    ev?.capaUrl ||
+    ev?.imagem_url ||
+    ev?.imagemUrl ||
+    ev?.arquivo_folder ||
+    ev?.arquivoFolder ||
+    (ev?.id ? `/api/eventos/${ev.id}/folder` : "");
+
+  if (!raw) return "";
+
+  const resolved = resolveAssetUrl(raw);
+  const version =
+    ev?.folder_updated_at ||
+    ev?.updated_at ||
+    ev?.atualizado_em ||
+    ev?.criado_em ||
     "";
 
-  return raw ? resolveAssetUrl(raw) : "";
+  if (!version) return resolved;
+
+  return `${resolved}${resolved.includes("?") ? "&" : "?"}v=${encodeURIComponent(String(version))}`;
 }
 
-/* =============================
-   ✅ Poster blob (novo) — cache + fetch com auth
-   - Se NÃO existir folder_url, tenta /api/eventos/:id/folder via authFetch (blob)
-   - Cacheia objectURL pra não refazer download
-============================= */
-const posterBlobCache = new Map(); // key: eventoId -> objectURL
-const posterBlobPending = new Map(); // key: eventoId -> Promise<string>
+function isAbortLike(err) {
+  if (!err) return false;
 
-// 🆕 fila de downloads (evita burst / 100 requests em paralelo)
-const posterDownloadQueue = createAsyncQueue(4); // <= ajuste fino: 3..6
+  const name = String(err?.name || "");
+  const msg = String(err?.message || err || "");
+  const dataMsg = String(err?.data?.message || err?.data?.erro || "");
+  const full = `${name} ${msg} ${dataMsg}`.toLowerCase();
+  const st = Number(err?.status ?? err?.response?.status ?? 0);
 
-async function getPosterBlobUrl(eventoId) {
-  const id = Number(eventoId);
-  if (!Number.isFinite(id) || id <= 0) return "";
-
-  if (posterBlobCache.has(id)) return posterBlobCache.get(id);
-
-  if (posterBlobPending.has(id)) return posterBlobPending.get(id);
-
-  const p = posterDownloadQueue(async () => {
-    const apiPath = `/api/eventos/${id}/folder`;
-    const resp = await authFetch(apiPath, { method: "GET", cache: "no-store" });
-  
-    // ✅ 404 = sem folder (silencioso)
-    if (resp.status === 404) return "";
-  
-    // ✅ 401/403 = sem permissão (silencioso)
-    if (resp.status === 401 || resp.status === 403) return "";
-  
-    // outros erros: também não quebra UI
-    if (!resp.ok) return "";
-  
-    const blob = await resp.blob();
-    if (!blob || !blob.size) return "";
-  
-    const objectUrl = URL.createObjectURL(blob);
-    posterBlobCache.set(id, objectUrl);
-    return objectUrl;
-  })
-    .catch(() => "")
-    .finally(() => posterBlobPending.delete(id));
-
-  posterBlobPending.set(id, p);
-  return p;
+  return (
+    name === "AbortError" ||
+    st === 0 ||
+    full.includes("abort") ||
+    full.includes("unmount") ||
+    full.includes("canceled") ||
+    full.includes("cancelled") ||
+    full.includes("failed to fetch") ||
+    full.includes("falha de rede") ||
+    full.includes("timeout")
+  );
 }
 
 /* =============================
    Ano do evento (para stats 2025/2026)
-   - tenta achar a primeira data disponível sem criar Date()
 ============================= */
 function yearFromYmd(s) {
   const v = String(s || "").slice(0, 10);
@@ -187,7 +179,6 @@ function yearFromYmd(s) {
 }
 
 function getEventYear(ev) {
-  // 1) campos diretos
   const direct =
     yearFromYmd(ev?.data_inicio) ??
     yearFromYmd(ev?.data_fim) ??
@@ -196,7 +187,6 @@ function getEventYear(ev) {
 
   if (direct) return direct;
 
-  // 2) turmas: data_inicio/data_fim
   const turmas = Array.isArray(ev?.turmas) ? ev.turmas : [];
   for (const t of turmas) {
     const y1 = yearFromYmd(t?.data_inicio);
@@ -204,7 +194,6 @@ function getEventYear(ev) {
     const y2 = yearFromYmd(t?.data_fim);
     if (y2) return y2;
 
-    // 3) turmas.datas[]
     const datas = Array.isArray(t?.datas) ? t.datas : [];
     for (const d of datas) {
       const y = yearFromYmd(d?.data);
@@ -212,7 +201,6 @@ function getEventYear(ev) {
     }
   }
 
-  // 4) fallback comum (alguns backends mandam "criado_em"/"created_at")
   const created =
     yearFromYmd(ev?.criado_em) ??
     yearFromYmd(ev?.created_at) ??
@@ -439,7 +427,6 @@ function buildUpdateBody(baseServidor, dadosDoModal) {
   const turmasPayload = normalizeTurmas(turmasFonte);
   if (turmasPayload.length > 0) body.turmas = turmasPayload;
 
-  // ✅ pós-curso (se veio do modal)
   if (dadosDoModal?.pos_curso_tipo) body.pos_curso_tipo = String(dadosDoModal.pos_curso_tipo);
 
   return clean(body);
@@ -506,7 +493,7 @@ function FilterChip({ active, onClick, label, count }) {
 }
 
 /* =============================
-   Ministats (ícone colorido contido)
+   Ministats
 ============================= */
 function StatPill({ icon: Icon, label, value, tone = "zinc" }) {
   const tones = {
@@ -525,10 +512,6 @@ function StatPill({ icon: Icon, label, value, tone = "zinc" }) {
     amber: {
       wrap: "bg-amber-100/80 dark:bg-amber-950/30",
       icon: "text-amber-700 dark:text-amber-200",
-    },
-    rose: {
-      wrap: "bg-rose-100/80 dark:bg-rose-950/30",
-      icon: "text-rose-700 dark:text-rose-200",
     },
     sky: {
       wrap: "bg-sky-100/80 dark:bg-sky-950/30",
@@ -560,18 +543,18 @@ function StatPill({ icon: Icon, label, value, tone = "zinc" }) {
 function HeaderHero({ onCriar, onAtualizar, atualizando, hint }) {
   return (
     <header className="relative isolate overflow-hidden" role="banner">
-  <div
-    className="absolute inset-0 bg-gradient-to-br from-emerald-700 via-teal-700 to-indigo-800 pointer-events-none"
-    aria-hidden="true"
-  />
-  <div
-    className="absolute -top-28 -left-28 w-80 h-80 rounded-full bg-white/10 blur-3xl pointer-events-none"
-    aria-hidden="true"
-  />
-  <div
-    className="absolute -bottom-28 -right-28 w-80 h-80 rounded-full bg-black/10 blur-3xl pointer-events-none"
-    aria-hidden="true"
-  />
+      <div
+        className="absolute inset-0 bg-gradient-to-br from-emerald-700 via-teal-700 to-indigo-800 pointer-events-none"
+        aria-hidden="true"
+      />
+      <div
+        className="absolute -top-28 -left-28 w-80 h-80 rounded-full bg-white/10 blur-3xl pointer-events-none"
+        aria-hidden="true"
+      />
+      <div
+        className="absolute -bottom-28 -right-28 w-80 h-80 rounded-full bg-black/10 blur-3xl pointer-events-none"
+        aria-hidden="true"
+      />
 
       <a
         href="#conteudo"
@@ -610,16 +593,16 @@ function HeaderHero({ onCriar, onAtualizar, atualizando, hint }) {
             </SoftButton>
 
             <SoftButton
-  type="button"
-  onClick={(e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    console.log("[CLICK] Criar evento", { onCriarType: typeof onCriar });
-    onCriar?.();
-  }}
-  className="bg-white text-zinc-900 hover:bg-white/90 border border-white/40 shadow-md"
-  aria-label="Criar novo evento"
->
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                logDev("[CLICK] Criar evento", { onCriarType: typeof onCriar });
+                onCriar?.();
+              }}
+              className="bg-white text-zinc-900 hover:bg-white/90 border border-white/40 shadow-md"
+              aria-label="Criar novo evento"
+            >
               <Plus className="w-4.5 h-4.5" aria-hidden="true" />
               Criar evento
             </SoftButton>
@@ -654,49 +637,20 @@ function statusLabel(status) {
 }
 
 /* =============================
-   ✅ Poster Thumb (folder_url OU blob)
+   ✅ Poster Thumb (URL direta do backend)
 ============================= */
 function PosterThumb({ ev, title }) {
-  const [src, setSrc] = useState("");
   const [failed, setFailed] = useState(false);
 
-  // 🆕 só carrega blob quando estiver perto da tela
-  const { ref: inViewRef, inView } = useInViewOnce({ rootMargin: "600px 0px", threshold: 0.01 });
+  const src = useMemo(() => getPosterUrl(ev), [ev]);
 
   useEffect(() => {
-    let alive = true;
-
-    // 1) legado (url direta)
-    const legacy = getPosterUrl(ev);
-    if (legacy) {
-      setSrc(legacy);
-      setFailed(false);
-      return () => { alive = false; };
-    }
-
-    // 2) blob (apenas quando entrar em view)
-    if (!inView) return () => { alive = false; };
-
-    (async () => {
-      const blobUrl = await getPosterBlobUrl(ev?.id);
-      if (!alive) return;
-
-      if (blobUrl) {
-        setSrc(blobUrl);
-        setFailed(false);
-      } else {
-        setSrc("");
-        setFailed(true);
-      }
-    })();
-
-    return () => { alive = false; };
-  }, [inView, ev?.id, ev?.folder_url, ev?.folderUrl, ev?.folder]);
+    setFailed(false);
+  }, [src]);
 
   if (!src || failed) {
     return (
       <div
-        ref={inViewRef}
         className="
           w-[96px] h-[128px]
           sm:w-[132px] sm:h-[176px]
@@ -716,7 +670,6 @@ function PosterThumb({ ev, title }) {
 
   return (
     <div
-      ref={inViewRef}
       className="
         w-[96px] h-[128px]
         sm:w-[132px] sm:h-[176px]
@@ -728,16 +681,14 @@ function PosterThumb({ ev, title }) {
       aria-label={`Folder do evento ${title}`}
     >
       <img
-        src={src}
-        alt={`Folder do evento ${title}`}
-        className="w-full h-full object-contain"
-        loading="lazy"
-        referrerPolicy="no-referrer"
-        onError={() => {
-          setFailed(true);
-          setSrc("");
-        }}
-      />
+  src={src}
+  alt={`Folder do evento ${title}`}
+  className="w-full h-full object-contain"
+  loading="lazy"
+  decoding="async"
+  referrerPolicy="no-referrer"
+  onError={() => setFailed(true)}
+/>
     </div>
   );
 }
@@ -746,7 +697,6 @@ function PosterThumb({ ev, title }) {
    Página
 ============================= */
 export default function GerenciarEventos() {
-
   const reduceMotion = useReducedMotion();
 
   const [eventos, setEventos] = useState([]);
@@ -757,14 +707,11 @@ export default function GerenciarEventos() {
   const [publishingId, setPublishingId] = useState(null);
   const [salvando, setSalvando] = useState(false);
 
-  // ✅ filtros (chips)
-  // "ativos" = programado + em_andamento | "encerrados" = encerrado
   const [filtroStatus, setFiltroStatus] = useState("ativos");
 
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [confirmPublish, setConfirmPublish] = useState(null);
 
-  // ✅ DEBUG: estados principais (quando mudar)
   useEffect(() => {
     logDev("[STATE]", {
       modalAberto,
@@ -786,63 +733,61 @@ export default function GerenciarEventos() {
       mountedRef.current = false;
       abortListRef.current?.abort?.("unmount");
       abortEditRef.current?.abort?.("unmount");
-  
-      // ✅ limpa objectURLs (evita leak)
-      for (const [, url] of posterBlobCache.entries()) {
-        try { URL.revokeObjectURL(url); } catch {}
-      }
-      posterBlobCache.clear();
-      posterBlobPending.clear();
     };
   }, []);
-  
 
   const setLive = (msg) => {
     if (liveRef.current) liveRef.current.textContent = msg;
   };
 
   const recarregarEventos = useCallback(async () => {
-    try {
-      setErro("");
-      setLoading(true);
-      setLive("Carregando eventos…");
+  try {
+    setErro("");
+    setLoading(true);
+    setLive("Carregando eventos…");
 
-      abortListRef.current?.abort?.("new-request");
-      const ctrl = new AbortController();
-      abortListRef.current = ctrl;
+    abortListRef.current?.abort?.("new-request");
+    const ctrl = new AbortController();
+    abortListRef.current = ctrl;
 
-      const data = await apiGet("/api/eventos", { on403: "silent", signal: ctrl.signal });
+    const data = await apiGet("/api/eventos", { on403: "silent", signal: ctrl.signal });
 
-      const lista = Array.isArray(data)
-        ? data
-        : Array.isArray(data?.eventos)
+    const lista = Array.isArray(data)
+      ? data
+      : Array.isArray(data?.eventos)
         ? data.eventos
         : Array.isArray(data?.lista)
-        ? data.lista
-        : [];
+          ? data.lista
+          : [];
 
-      if (!mountedRef.current) return;
-      setEventos(lista);
-      setLive(`Eventos carregados: ${lista.length}.`);
-    } catch (err) {
-      if (err?.name === "AbortError") return;
-      const msg = err?.message || "Erro ao carregar eventos";
-      console.error("/api/eventos erro:", err);
-      if (!mountedRef.current) return;
-      setErro(msg);
-      setEventos([]);
-      toast.error(`❌ ${msg}`);
-      setLive("Falha ao carregar eventos.");
-    } finally {
-      if (mountedRef.current) setLoading(false);
+    if (!mountedRef.current) return;
+
+    setEventos(lista);
+    setLive(`Eventos carregados: ${lista.length}.`);
+  } catch (err) {
+    if (isAbortLike(err)) {
+      if (IS_DEV) console.log("[GerenciarEventos] request cancelada/abortada:", err);
+      return;
     }
-  }, []);
+
+    const msg = err?.message || "Erro ao carregar eventos";
+    console.error("/api/eventos erro:", err);
+
+    if (!mountedRef.current) return;
+
+    setErro(msg);
+    setEventos([]);
+    toast.error(`❌ ${msg}`);
+    setLive("Falha ao carregar eventos.");
+  } finally {
+    if (mountedRef.current) setLoading(false);
+  }
+}, []);
 
   useEffect(() => {
     recarregarEventos();
   }, [recarregarEventos]);
 
-  // ✅ DEBUG: quando modal estiver aberto, monitora ESC/clicks globais (captura)
   useEffect(() => {
     if (!modalAberto) return;
 
@@ -870,7 +815,6 @@ export default function GerenciarEventos() {
     logDev("[ACTION] abrirModalCriar()", { before: { modalAberto, eventoSelecionado: eventoSelecionado?.id ?? null } });
     setEventoSelecionado(null);
     setModalAberto(true);
-    // dá 1 tick pra React aplicar e a gente ver se “desfaz”
     setTimeout(() => {
       logDev("[AFTER] abrirModalCriar tick", { modalAberto: true, modalRoot: snapshotModalRoot() });
     }, 0);
@@ -916,13 +860,11 @@ export default function GerenciarEventos() {
       setEventoSelecionado(combinado);
       logDev("[EDIT] setEventoSelecionado(combinado)", { id: combinado?.id ?? null, turmas: combinado?.turmas?.length ?? 0 });
     } catch (e) {
-
       if (e?.name === "AbortError") return;
       warnDev("[abrirModalEditar] falha ao refinar:", e?.message || e);
     }
-  }, []);
+  }, [modalAberto, eventoSelecionado?.id]);
 
-  /* -------- EXCLUIR -------- */
   const pedirExclusao = (ev) => {
     if (!ev?.id) return;
     setConfirmDelete({ id: Number(ev.id), titulo: ev.titulo || "Evento" });
@@ -943,7 +885,6 @@ export default function GerenciarEventos() {
     }
   };
 
-  /* -------- publicar/despublicar -------- */
   const pedirTogglePublicacao = (ev) => {
     if (!ev?.id) return;
     setConfirmPublish({
@@ -1118,8 +1059,12 @@ export default function GerenciarEventos() {
       const criado = await apiPost("/api/eventos", bodyCreate);
       const novoId = Number(criado?.id) || Number(criado?.evento?.id) || Number(criado?.dados?.id);
 
-      if (novoId && dadosDoModal?.folderFile instanceof File) await uploadFolder(novoId, dadosDoModal.folderFile);
-      if (novoId && dadosDoModal?.programacaoFile instanceof File) await uploadProgramacao(novoId, dadosDoModal.programacaoFile);
+      if (novoId && dadosDoModal?.folderFile instanceof File) {
+        await uploadFolder(novoId, dadosDoModal.folderFile);
+      }
+      if (novoId && dadosDoModal?.programacaoFile instanceof File) {
+        await uploadProgramacao(novoId, dadosDoModal.programacaoFile);
+      }
 
       await recarregarEventos();
       toast.success("✅ Evento salvo com sucesso.");
@@ -1138,7 +1083,6 @@ export default function GerenciarEventos() {
     return `${eventos.length} evento(s)`;
   }, [loading, eventos.length]);
 
-  // ✅ ministats (agora: total, publicados, rascunhos, andamento, 2025, 2026)
   const stats = useMemo(() => {
     const total = eventos.length;
     let publicados = 0;
@@ -1162,7 +1106,6 @@ export default function GerenciarEventos() {
     return { total, publicados, rascunhos, em_andamento, ano2025, ano2026 };
   }, [eventos]);
 
-  // ✅ contagens para chips
   const countsByChip = useMemo(() => {
     let ativos = 0;
     let encerrados = 0;
@@ -1170,17 +1113,20 @@ export default function GerenciarEventos() {
     for (const ev of eventos) {
       const st = deduzStatus(ev);
       if (st === "encerrado") encerrados += 1;
-      else ativos += 1; // programado + em_andamento + fallback
+      else ativos += 1;
     }
     return { ativos, encerrados };
   }, [eventos]);
 
-  // ✅ eventos filtrados (chips)
   const eventosFiltrados = useMemo(() => {
-    if (filtroStatus === "encerrados") {
-      return eventos.filter((ev) => deduzStatus(ev) === "encerrado");
-    }
-    return eventos.filter((ev) => deduzStatus(ev) !== "encerrado");
+    const filtrados =
+      filtroStatus === "encerrados"
+        ? eventos.filter((ev) => deduzStatus(ev) === "encerrado")
+        : eventos.filter((ev) => deduzStatus(ev) !== "encerrado");
+
+    return [...filtrados].sort((a, b) =>
+      normalizeTitleSort(a?.titulo).localeCompare(normalizeTitleSort(b?.titulo), "pt-BR")
+    );
   }, [eventos, filtroStatus]);
 
   return (
@@ -1224,7 +1170,12 @@ export default function GerenciarEventos() {
         </p>
       </ModalConfirmacao>
 
-      <HeaderHero onCriar={abrirModalCriar} onAtualizar={recarregarEventos} atualizando={loading} hint={headerHint} />
+      <HeaderHero
+        onCriar={abrirModalCriar}
+        onAtualizar={recarregarEventos}
+        atualizando={loading}
+        hint={headerHint}
+      />
 
       {loading && (
         <div
@@ -1250,7 +1201,6 @@ export default function GerenciarEventos() {
           </section>
         )}
 
-        {/* ✅ CHIPS FILTRO (Ativos x Encerrados) */}
         {!loading && eventos.length > 0 && (
           <section aria-label="Filtros por status" className="mb-4">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
@@ -1310,31 +1260,38 @@ export default function GerenciarEventos() {
             {eventosFiltrados.map((ev) => {
               const publicado = !!ev.publicado;
               const status = deduzStatus(ev);
-              
+
               return (
                 <motion.li
                   key={ev.id || ev.titulo}
                   initial={reduceMotion ? false : { opacity: 0, y: 10 }}
                   animate={reduceMotion ? {} : { opacity: 1, y: 0 }}
-                  className="relative bg-white dark:bg-zinc-950 rounded-3xl shadow-sm border border-gray-200 dark:border-zinc-800 overflow-hidden pointer-events-auto"
+                  className="relative bg-white dark:bg-zinc-950 rounded-3xl shadow-sm border border-gray-200 dark:border-zinc-800 overflow-hidden pointer-events-auto [content-visibility:auto] [contain-intrinsic-size:260px]"
                 >
                   <div className="h-1 bg-gradient-to-r from-emerald-500/80 via-teal-500/70 to-indigo-500/70" aria-hidden="true" />
 
                   <div className="p-4 sm:p-5 flex flex-col gap-4">
                     <div className="flex flex-col sm:flex-row gap-4 sm:items-start sm:justify-between">
-                    <div className="flex gap-4 min-w-0">
-  <div className="shrink-0">
-    <PosterThumb ev={ev} title={ev.titulo} />
-  </div>
+                      <div className="flex gap-4 min-w-0">
+                        <div className="shrink-0">
+                          <PosterThumb ev={ev} title={ev.titulo} />
+                        </div>
 
-  <div className="min-w-0">
+                        <div className="min-w-0">
                           <h3 className="text-base sm:text-lg font-extrabold text-zinc-900 dark:text-white break-words">
                             {ev.titulo}
                           </h3>
 
                           <div className="mt-2 flex flex-wrap gap-2">
-                            <Chip tone={publicado ? "indigo" : "zinc"} title={publicado ? "Visível aos usuários" : "Oculto aos usuários"}>
-                              {publicado ? <Eye className="w-3.5 h-3.5" aria-hidden="true" /> : <EyeOff className="w-3.5 h-3.5" aria-hidden="true" />}
+                            <Chip
+                              tone={publicado ? "indigo" : "zinc"}
+                              title={publicado ? "Visível aos usuários" : "Oculto aos usuários"}
+                            >
+                              {publicado ? (
+                                <Eye className="w-3.5 h-3.5" aria-hidden="true" />
+                              ) : (
+                                <EyeOff className="w-3.5 h-3.5" aria-hidden="true" />
+                              )}
                               {publicado ? "Publicado" : "Rascunho"}
                             </Chip>
 
@@ -1380,9 +1337,7 @@ export default function GerenciarEventos() {
                         </div>
                       </div>
 
-                      {/* ✅ Botões com cor contida (premium) */}
                       <div className="relative z-10 pointer-events-auto flex flex-wrap gap-2 justify-end">
-                        {/* Publicar/Ocultar */}
                         <SoftButton
                           type="button"
                           onClick={() => pedirTogglePublicacao(ev)}
@@ -1409,15 +1364,14 @@ export default function GerenciarEventos() {
                           )}
                         </SoftButton>
 
-                        {/* Editar */}
                         <SoftButton
-  type="button"
-  onClick={(e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    console.log("[CLICK] Editar", { id: ev?.id, titulo: ev?.titulo, fn: typeof abrirModalEditar });
-    abrirModalEditar?.(ev);
-  }}
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            logDev("[CLICK] Editar", { id: ev?.id, titulo: ev?.titulo, fn: typeof abrirModalEditar });
+                            abrirModalEditar?.(ev);
+                          }}
                           className="border border-sky-200 dark:border-sky-900/40 text-sky-700 dark:text-sky-200 bg-white dark:bg-zinc-950 hover:bg-sky-50 dark:hover:bg-sky-950/25"
                           aria-label={`Editar evento ${ev.titulo}`}
                         >
@@ -1425,7 +1379,6 @@ export default function GerenciarEventos() {
                           Editar
                         </SoftButton>
 
-                        {/* Excluir (perigo só no hover) */}
                         <SoftButton
                           type="button"
                           onClick={() => pedirExclusao(ev)}
@@ -1445,23 +1398,24 @@ export default function GerenciarEventos() {
         )}
       </div>
 
-      <ModalEvento
-              isOpen={modalAberto}
-              open={modalAberto} // ✅ compat
-              onClose={() => {
-                warnDev("[ACTION] ModalEvento onClose()", {
-                  before: { modalAberto, eventoSelecionado: eventoSelecionado?.id ?? null },
-                  modalRoot: snapshotModalRoot(),
-                  activeEl: document?.activeElement?.tagName || null,
-                });
-                setModalAberto(false);
-              }}
-      
-        onSalvar={salvarEvento}
-        evento={eventoSelecionado}
-        salvando={salvando}
-        onTurmaRemovida={() => recarregarEventos()}
-      />
+      {modalAberto && (
+  <ModalEvento
+    isOpen={modalAberto}
+    open={modalAberto}
+    onClose={() => {
+      warnDev("[ACTION] ModalEvento onClose()", {
+        before: { modalAberto, eventoSelecionado: eventoSelecionado?.id ?? null },
+        modalRoot: snapshotModalRoot(),
+        activeEl: document?.activeElement?.tagName || null,
+      });
+      setModalAberto(false);
+    }}
+    onSalvar={salvarEvento}
+    evento={eventoSelecionado}
+    salvando={salvando}
+    onTurmaRemovida={() => recarregarEventos()}
+  />
+)}
 
       <Footer />
     </main>

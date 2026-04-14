@@ -4,6 +4,7 @@
 // - ✅ inscricoes/inscricao (fallback automático)
 // - ✅ frequência por dia distinto (COUNT DISTINCT)
 // - ✅ logs com RID e transação com lock
+// - ✅ elegibilidade de inscrição separada da visibilidade do evento
 /* eslint-disable no-console */
 "use strict";
 
@@ -60,6 +61,12 @@ const safeYMD = (v, fb = null) => {
 };
 
 /* ────────────────────────────────────────────────────────────────
+   Constantes de restrição
+──────────────────────────────────────────────────────────────── */
+const MODO_TODOS = "todos_servidores";
+const MODO_LISTA = "lista_registros";
+
+/* ────────────────────────────────────────────────────────────────
    Resolve tabela de inscrição (inscricoes vs inscricao)
 ──────────────────────────────────────────────────────────────── */
 async function resolveInscricaoTable(q) {
@@ -69,6 +76,256 @@ async function resolveInscricaoTable(q) {
   } catch {
     return "inscricao";
   }
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Helpers de restrição / elegibilidade
+──────────────────────────────────────────────────────────────── */
+function normalizarTituloPtBr(input = "") {
+  const raw = String(input || "").trim();
+  if (!raw) return "";
+
+  const s = raw.replace(/\s+/g, " ");
+  const minusculas = new Set([
+    "de", "da", "do", "das", "dos",
+    "e", "em", "para", "por",
+    "a", "o", "as", "os",
+    "à", "às", "ao", "aos",
+  ]);
+  const siglas = new Set(["SMS", "SUS", "CNPJ", "CPF", "RH", "TI", "UPA", "UBS", "SAMU"]);
+  const roman = /^(i|ii|iii|iv|v|vi|vii|viii|ix|x)$/i;
+
+  return s
+    .split(" ")
+    .filter(Boolean)
+    .map((w, idx) => {
+      const clean = w.replace(/[()]/g, "");
+      const upper = clean.toUpperCase();
+      if (siglas.has(upper)) return upper;
+      if (roman.test(clean)) return upper;
+
+      const lower = clean.toLocaleLowerCase("pt-BR");
+      if (idx !== 0 && minusculas.has(lower)) return lower;
+
+      return lower.charAt(0).toLocaleUpperCase("pt-BR") + lower.slice(1);
+    })
+    .join(" ");
+}
+
+async function carregarCargosPermitidosDetalhe(q, cargosIds = []) {
+  const ids = Array.isArray(cargosIds)
+    ? cargosIds.map(Number).filter(Number.isFinite)
+    : [];
+
+  if (!ids.length) return [];
+
+  try {
+    const { rows } = await q(
+      `SELECT id, nome
+         FROM cargos
+        WHERE id = ANY($1::int[])
+        ORDER BY nome`,
+      [ids]
+    );
+    return rows || [];
+  } catch {
+    return [];
+  }
+}
+
+async function carregarUnidadesPermitidasDetalhe(q, unidadesIds = []) {
+  const ids = Array.isArray(unidadesIds)
+    ? unidadesIds.map(Number).filter(Number.isFinite)
+    : [];
+
+  if (!ids.length) return [];
+
+  try {
+    const { rows } = await q(
+      `SELECT id, nome
+         FROM unidades
+        WHERE id = ANY($1::int[])
+        ORDER BY nome`,
+      [ids]
+    );
+    return rows || [];
+  } catch {
+    return [];
+  }
+}
+
+function montarPublicoAlvoLabel(evento = {}) {
+  const publico = safeText(evento?.publico_alvo, "").trim();
+  if (publico) return publico;
+
+  const cargos = Array.isArray(evento?.cargos_permitidos) ? evento.cargos_permitidos : [];
+  const unidades = Array.isArray(evento?.unidades_permitidas) ? evento.unidades_permitidas : [];
+  const countRegs = Number(evento?.count_registros_permitidos || 0);
+
+  if (cargos.length) {
+    return cargos
+      .map((c) => normalizarTituloPtBr(c?.nome || c?.cargo || ""))
+      .filter(Boolean)
+      .join(", ");
+  }
+
+  if (unidades.length) {
+    return unidades.map((u) => u?.nome).filter(Boolean).join(", ");
+  }
+
+  if (countRegs > 0) return "lista específica de servidores";
+  if (evento?.restrito_modo === MODO_TODOS) return "servidores com registro válido";
+
+  return "público específico";
+}
+
+async function getUsuarioContextoRestricao(q, usuarioId) {
+  if (!usuarioId) {
+    return {
+      registro: "",
+      registro_norm: "",
+      cargo_id: null,
+      unidade_id: null,
+    };
+  }
+
+  const { rows } = await q(
+    `SELECT registro, cargo_id, unidade_id
+       FROM usuarios
+      WHERE id = $1
+      LIMIT 1`,
+    [usuarioId]
+  );
+
+  const u = rows?.[0] || {};
+  return {
+    registro: u.registro || "",
+    registro_norm: normalizeRegistro(u.registro || ""),
+    cargo_id: Number(u.cargo_id) || null,
+    unidade_id: Number(u.unidade_id) || null,
+  };
+}
+
+async function avaliarElegibilidadeInscricao(q, usuarioId, evento) {
+  if (!evento) {
+    return {
+      ok: false,
+      motivo: "EVENTO_NAO_ENCONTRADO",
+      mensagem: "Evento não encontrado.",
+      publico_alvo_label: "",
+    };
+  }
+
+  const cargos_permitidos = await carregarCargosPermitidosDetalhe(q, evento.cargos_permitidos_ids);
+  const unidades_permitidas = await carregarUnidadesPermitidasDetalhe(q, evento.unidades_permitidas_ids);
+
+  const eventoFull = {
+    ...evento,
+    cargos_permitidos,
+    unidades_permitidas,
+  };
+
+  const publico_alvo_label = montarPublicoAlvoLabel(eventoFull);
+
+  if (!evento.restrito) {
+    return {
+      ok: true,
+      motivo: null,
+      mensagem: "",
+      publico_alvo_label,
+    };
+  }
+
+  if (!usuarioId) {
+    return {
+      ok: false,
+      motivo: "NAO_AUTENTICADO",
+      mensagem: "Faça login para verificar elegibilidade de inscrição.",
+      publico_alvo_label,
+    };
+  }
+
+  const usuario = await getUsuarioContextoRestricao(q, usuarioId);
+
+  const cargosPermitidos = Array.isArray(evento.cargos_permitidos_ids)
+    ? evento.cargos_permitidos_ids.map(Number).filter(Number.isFinite)
+    : [];
+
+  const unidadesPermitidas = Array.isArray(evento.unidades_permitidas_ids)
+    ? evento.unidades_permitidas_ids.map(Number).filter(Number.isFinite)
+    : [];
+
+  if (evento.restrito_modo === MODO_TODOS) {
+    if (usuario.registro_norm) {
+      return {
+        ok: true,
+        motivo: null,
+        mensagem: "",
+        publico_alvo_label,
+      };
+    }
+
+    return {
+      ok: false,
+      motivo: "SEM_REGISTRO_VALIDO",
+      mensagem: "Inscrição disponível apenas para servidores com registro válido.",
+      publico_alvo_label,
+    };
+  }
+
+  if (evento.restrito_modo === MODO_LISTA) {
+    if (usuario.registro_norm) {
+      const hit = await q(
+        `SELECT 1
+           FROM evento_registros
+          WHERE evento_id = $1
+            AND registro_norm = $2
+          LIMIT 1`,
+        [evento.id, usuario.registro_norm]
+      );
+
+      if (hit.rowCount > 0) {
+        return {
+          ok: true,
+          motivo: null,
+          mensagem: "",
+          publico_alvo_label,
+        };
+      }
+    }
+
+    return {
+      ok: false,
+      motivo: "REGISTRO_NAO_AUTORIZADO",
+      mensagem: "Inscrição disponível apenas para servidores autorizados nesta lista.",
+      publico_alvo_label,
+    };
+  }
+
+  if (Number.isFinite(usuario.cargo_id) && cargosPermitidos.includes(usuario.cargo_id)) {
+    return {
+      ok: true,
+      motivo: null,
+      mensagem: "",
+      publico_alvo_label,
+    };
+  }
+
+  if (Number.isFinite(usuario.unidade_id) && unidadesPermitidas.includes(usuario.unidade_id)) {
+    return {
+      ok: true,
+      motivo: null,
+      mensagem: "",
+      publico_alvo_label,
+    };
+  }
+
+  return {
+    ok: false,
+    motivo: "PERFIL_NAO_ELEGIVEL",
+    mensagem: `Inscrição disponível apenas para ${publico_alvo_label}.`,
+    publico_alvo_label,
+  };
 }
 
 /* ────────────────────────────────────────────────────────────────
@@ -294,19 +551,20 @@ async function inscreverEmTurma(req, res) {
     // Resumo calculado (para exibição/e-mail)
     const resumo = await getResumoTurma(turmaId);
 
-    // 2) Evento (tipo + dados p/ notificação/e-mail)
+    // 2) Evento (tipo + dados p/ notificação/e-mail + elegibilidade)
     const { rows: evRows } = await q(
       `SELECT 
           id,
-          (tipo::text) AS tipo,
-          CASE WHEN tipo::text ILIKE 'congresso' THEN TRUE ELSE FALSE END AS is_congresso,
-          COALESCE(titulo, 'Evento') AS titulo,
-          COALESCE(local,  'A definir') AS local,
-
+          publicado,
+          titulo,
+          local,
+          publico_alvo,
           restrito,
           restrito_modo,
           COALESCE(cargos_permitidos_ids, '{}')   AS cargos_permitidos_ids,
-          COALESCE(unidades_permitidas_ids, '{}') AS unidades_permitidas_ids
+          COALESCE(unidades_permitidas_ids, '{}') AS unidades_permitidas_ids,
+          (tipo::text) AS tipo,
+          CASE WHEN tipo::text ILIKE 'congresso' THEN TRUE ELSE FALSE END AS is_congresso
        FROM eventos
        WHERE id = $1`,
       [turma.evento_id]
@@ -316,77 +574,81 @@ async function inscreverEmTurma(req, res) {
       await q("ROLLBACK");
       return res.status(404).json({ erro: "Evento da turma não encontrado." });
     }
+
     const evento = evRows[0];
     const isCongresso = !!evento.is_congresso;
 
-    // ✅ Permissão (evento restrito)
-    if (evento.restrito) {
-      const { rows: uRows } = await q(
-        `SELECT registro, cargo_id, unidade_id
-           FROM usuarios
-          WHERE id = $1`,
-        [usuarioId]
-      );
-      const u = uRows?.[0] || {};
-      const regNorm = normalizeRegistro(u.registro || "");
-      const cargoId = Number(u.cargo_id) || null;
-      const unidadeId = Number(u.unidade_id) || null;
+    // 2A) Evento precisa estar publicado para inscrição normal
+    if (!evento.publicado) {
+      await q("ROLLBACK");
+      return res.status(403).json({
+        erro: "Evento ainda não publicado.",
+        motivo: "NAO_PUBLICADO",
+        rid,
+      });
+    }
 
-      const cargosPermitidos = Array.isArray(evento.cargos_permitidos_ids)
-        ? evento.cargos_permitidos_ids.map(Number).filter(Number.isFinite)
-        : [];
+    // 2B) Elegibilidade de inscrição (nova regra)
+    const elegibilidade = await avaliarElegibilidadeInscricao(q, usuarioId, evento);
+    if (!elegibilidade.ok) {
+      await q("ROLLBACK");
 
-      const unidadesPermitidas = Array.isArray(evento.unidades_permitidas_ids)
-        ? evento.unidades_permitidas_ids.map(Number).filter(Number.isFinite)
-        : [];
+      log(rid, "warn", "inscreverEmTurma:bloqueado_elegibilidade", {
+        usuarioId,
+        turmaId,
+        eventoId: evento.id,
+        motivo: elegibilidade.motivo,
+        mensagem: elegibilidade.mensagem,
+        publico_alvo_label: elegibilidade.publico_alvo_label,
+      });
 
-      const okCargo = Number.isFinite(cargoId) && cargosPermitidos.includes(cargoId);
-      const okUnidade = Number.isFinite(unidadeId) && unidadesPermitidas.includes(unidadeId);
-
-      let okRegistro = false;
-      if (String(evento.restrito_modo || "") === "lista_registros" && regNorm) {
-        const hit = await q(
-          `SELECT 1 FROM evento_registros WHERE evento_id=$1 AND registro_norm=$2 LIMIT 1`,
-          [evento.id, regNorm]
-        );
-        okRegistro = hit.rowCount > 0;
-      }
-
-      if (!okCargo && !okUnidade && !okRegistro) {
-        await q("ROLLBACK");
-        log(rid, "warn", "inscreverEmTurma:403 restrito", {
-          usuarioId,
-          turmaId,
-          eventoId: evento.id,
-          cargoId,
-          unidadeId,
-          regNorm,
-          cargosPermitidos,
-          unidadesPermitidas,
-          restrito_modo: evento.restrito_modo,
-        });
-        return res.status(403).json({
-          erro: "Sem permissão (evento restrito).",
-          motivo: "EVENTO_RESTRITO",
-          rid,
-        });
-      }
+      return res.status(403).json({
+        erro: elegibilidade.mensagem || "Sem permissão para se inscrever neste evento.",
+        motivo: elegibilidade.motivo || "SEM_PERMISSAO",
+        mensagem: elegibilidade.mensagem || "Sem permissão para se inscrever neste evento.",
+        publico_alvo_label: elegibilidade.publico_alvo_label || "",
+        rid,
+      });
     }
 
     // 3) Bloqueio: instrutor da TURMA (ou do evento, como fallback)
-    const ehInstrutor = await q(
-      `
-      SELECT 1
-      FROM turmas t
-      WHERE t.id = $1
-        AND (
-          EXISTS (SELECT 1 FROM turma_instrutor ti WHERE ti.turma_id = t.id AND ti.instrutor_id = $2)
-          OR EXISTS (SELECT 1 FROM evento_instrutor ei WHERE ei.evento_id = t.evento_id AND ei.instrutor_id = $2)
-        )
-      LIMIT 1
-      `,
-      [turmaId, usuarioId]
-    );
+    let ehInstrutor;
+    try {
+      ehInstrutor = await q(
+        `
+        SELECT 1
+        FROM turmas t
+        WHERE t.id = $1
+          AND (
+            EXISTS (SELECT 1 FROM turma_instrutor ti WHERE ti.turma_id = t.id AND ti.instrutor_id = $2)
+            OR EXISTS (SELECT 1 FROM evento_instrutor ei WHERE ei.evento_id = t.evento_id AND ei.instrutor_id = $2)
+          )
+        LIMIT 1
+        `,
+        [turmaId, usuarioId]
+      );
+    } catch (e) {
+      if (e?.code === "42P01") {
+        ehInstrutor = await q(
+          `
+          SELECT 1
+          FROM turmas t
+          WHERE t.id = $1
+            AND EXISTS (
+              SELECT 1
+              FROM turma_instrutor ti
+              WHERE ti.turma_id = t.id
+                AND ti.instrutor_id = $2
+            )
+          LIMIT 1
+          `,
+          [turmaId, usuarioId]
+        );
+      } else {
+        throw e;
+      }
+    }
+
     if (ehInstrutor.rowCount > 0) {
       await q("ROLLBACK");
       return res.status(409).json({
@@ -511,7 +773,7 @@ async function inscreverEmTurma(req, res) {
         `- Período: ${periodoStr}`,
         `- Horário: ${hi && hf ? `${hi} às ${hf}` : "a definir"}`,
         `- Carga horária: ${turma.carga_horaria ?? "—"} horas`,
-        `- Local: ${evento.local}`,
+        `- Local: ${evento.local || "A definir"}`,
       ].join("\n");
 
       await criarNotificacao(usuarioId, mensagem, null);
@@ -534,7 +796,7 @@ async function inscreverEmTurma(req, res) {
             <strong>Período:</strong> ${periodoStr}<br/>
             <strong>Horário:</strong> ${hi && hf ? `${hi} às ${hf}` : "a definir"}<br/>
             <strong>Carga horária:</strong> ${carga} horas<br/>
-            <strong>Local:</strong> ${evento.local}
+            <strong>Local:</strong> ${evento.local || "A definir"}
           </p>
           <p>📍 Em caso de dúvidas, entre em contato com a equipe da Escola da Saúde.</p>
           <p>Atenciosamente,<br/><strong>Equipe da Escola da Saúde</strong></p>
@@ -548,7 +810,7 @@ Turma: ${turma.nome}
 Período: ${periodoStr}
 Horário: ${hi && hf ? `${hi} às ${hf}` : "a definir"}
 Carga horária: ${carga} horas
-Local: ${evento.local}
+Local: ${evento.local || "A definir"}
 
 Atenciosamente,
 Equipe da Escola da Saúde`;
@@ -566,8 +828,17 @@ Equipe da Escola da Saúde`;
       log(rid, "warn", "Falha ao enviar e-mail (não bloqueante)", { message: e?.message });
     }
 
-    log(rid, "info", "inscreverEmTurma:ok", { usuarioId, turmaId, eventoId: turma.evento_id });
-    return res.status(201).json({ mensagem: "Inscrição realizada com sucesso" });
+    log(rid, "info", "inscreverEmTurma:ok", {
+      usuarioId,
+      turmaId,
+      eventoId: turma.evento_id,
+      publico_alvo_label: elegibilidade.publico_alvo_label || "",
+    });
+
+    return res.status(201).json({
+      mensagem: "Inscrição realizada com sucesso",
+      publico_alvo_label: elegibilidade.publico_alvo_label || "",
+    });
   } catch (err) {
     try { await q("ROLLBACK"); } catch {}
 
