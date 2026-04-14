@@ -1,6 +1,7 @@
 // ✅ src/pages/Login.jsx
 // premium + institucional + QR públicos + PWA + mobile-first + dark/light/system + a11y
 // + login robusto + diagnóstico + redirect pós-login validado
+// + premiumrização estrutural, segurança e UX refinada
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
@@ -33,6 +34,7 @@ import {
   BadgeCheck,
   ArrowRight,
   Loader2,
+  KeyRound,
 } from "lucide-react";
 
 import BotaoPrimario from "../components/BotaoPrimario";
@@ -62,6 +64,10 @@ function errorDev(...args) {
   if (IS_DEV) console.error("[Login]", ...args);
 }
 
+function cx(...classes) {
+  return classes.filter(Boolean).join(" ");
+}
+
 function getStoredToken() {
   return (
     localStorage.getItem("token") ||
@@ -77,8 +83,18 @@ function sanitizeRedirectPath(raw) {
   if (!value) return "/painel";
   if (!value.startsWith("/")) return "/painel";
   if (value.startsWith("//")) return "/painel";
-  if (value.startsWith("/login")) return "/painel";
-  if (value.startsWith("/cadastro")) return "/painel";
+
+  const blockedPrefixes = [
+    "/login",
+    "/cadastro",
+    "/recuperar-senha",
+    "/esqueci-senha",
+    "/redefinir-senha",
+  ];
+
+  if (blockedPrefixes.some((prefix) => value.startsWith(prefix))) {
+    return "/painel";
+  }
 
   return value;
 }
@@ -161,28 +177,28 @@ function useQrSize() {
 function MiniStatLite({ title, value, isDark, icon: Icon }) {
   return (
     <div
-      className={[
+      className={cx(
         "rounded-2xl border px-4 py-3 transition-colors",
         isDark
           ? "border-white/10 bg-zinc-950/35"
-          : "border-slate-200 bg-white shadow-sm",
-      ].join(" ")}
+          : "border-slate-200 bg-white shadow-sm"
+      )}
     >
       <div className="flex items-start justify-between gap-3">
         <div>
           <div
-            className={[
+            className={cx(
               "text-[11px] font-bold uppercase tracking-wide",
-              isDark ? "text-zinc-300" : "text-slate-500",
-            ].join(" ")}
+              isDark ? "text-zinc-300" : "text-slate-500"
+            )}
           >
             {title}
           </div>
           <div
-            className={[
+            className={cx(
               "mt-1 text-sm font-extrabold",
-              isDark ? "text-zinc-100" : "text-slate-900",
-            ].join(" ")}
+              isDark ? "text-zinc-100" : "text-slate-900"
+            )}
           >
             {value}
           </div>
@@ -190,10 +206,10 @@ function MiniStatLite({ title, value, isDark, icon: Icon }) {
 
         {Icon ? (
           <div
-            className={[
+            className={cx(
               "rounded-xl p-2",
-              isDark ? "bg-white/5 text-zinc-200" : "bg-slate-100 text-slate-700",
-            ].join(" ")}
+              isDark ? "bg-white/5 text-zinc-200" : "bg-slate-100 text-slate-700"
+            )}
           >
             <Icon className="h-4 w-4" aria-hidden="true" />
           </div>
@@ -231,12 +247,12 @@ function InstitutionalCard({
 
   return (
     <article
-      className={[
+      className={cx(
         "overflow-hidden rounded-3xl border transition-colors",
         isDark
           ? "border-white/10 bg-zinc-900/55"
-          : "border-slate-200 bg-white shadow-sm",
-      ].join(" ")}
+          : "border-slate-200 bg-white shadow-sm"
+      )}
     >
       <div
         className={`h-1.5 w-full rounded-t-3xl bg-gradient-to-r ${
@@ -248,31 +264,31 @@ function InstitutionalCard({
       <div className="p-5 sm:p-6">
         <div className="flex items-start gap-3">
           <div
-            className={[
+            className={cx(
               "rounded-2xl border p-3",
               isDark
                 ? "border-white/10 bg-zinc-950/35 text-zinc-100"
-                : "border-slate-200 bg-slate-50 text-slate-800",
-            ].join(" ")}
+                : "border-slate-200 bg-slate-50 text-slate-800"
+            )}
           >
             <Icon className="h-5 w-5" aria-hidden="true" />
           </div>
 
           <div className="min-w-0">
             <h3
-              className={[
+              className={cx(
                 "text-lg font-extrabold tracking-tight",
-                isDark ? "text-zinc-100" : "text-slate-900",
-              ].join(" ")}
+                isDark ? "text-zinc-100" : "text-slate-900"
+              )}
             >
               {title}
             </h3>
             {subtitle ? (
               <p
-                className={[
+                className={cx(
                   "mt-1 text-sm font-semibold",
-                  isDark ? "text-emerald-300" : "text-emerald-700",
-                ].join(" ")}
+                  isDark ? "text-emerald-300" : "text-emerald-700"
+                )}
               >
                 {subtitle}
               </p>
@@ -281,10 +297,10 @@ function InstitutionalCard({
         </div>
 
         <div
-          className={[
+          className={cx(
             "mt-4 space-y-3 text-sm leading-relaxed",
-            isDark ? "text-zinc-300" : "text-slate-700",
-          ].join(" ")}
+            isDark ? "text-zinc-300" : "text-slate-700"
+          )}
         >
           {children}
         </div>
@@ -301,12 +317,12 @@ function QrCard({ title, subtitle, icon: Icon, url, qrSize, isDark, accent = "em
 
   return (
     <div
-      className={[
+      className={cx(
         "rounded-3xl border p-5 sm:p-6",
         isDark
           ? "border-white/10 bg-zinc-900/55"
-          : "border-slate-200 bg-white shadow-sm",
-      ].join(" ")}
+          : "border-slate-200 bg-white shadow-sm"
+      )}
     >
       <div
         className={`h-1.5 w-full rounded-full bg-gradient-to-r ${
@@ -317,30 +333,30 @@ function QrCard({ title, subtitle, icon: Icon, url, qrSize, isDark, accent = "em
 
       <div className="mt-4 flex items-start gap-3">
         <div
-          className={[
+          className={cx(
             "rounded-2xl border p-3",
             isDark
               ? "border-white/10 bg-zinc-950/35 text-zinc-100"
-              : "border-slate-200 bg-slate-50 text-slate-800",
-          ].join(" ")}
+              : "border-slate-200 bg-slate-50 text-slate-800"
+          )}
         >
           <Icon className="h-5 w-5" aria-hidden="true" />
         </div>
 
         <div className="min-w-0">
           <h3
-            className={[
+            className={cx(
               "text-sm font-extrabold",
-              isDark ? "text-zinc-100" : "text-slate-900",
-            ].join(" ")}
+              isDark ? "text-zinc-100" : "text-slate-900"
+            )}
           >
             {title}
           </h3>
           <p
-            className={[
+            className={cx(
               "mt-1 text-[12px] break-words",
-              isDark ? "text-zinc-400" : "text-slate-600",
-            ].join(" ")}
+              isDark ? "text-zinc-400" : "text-slate-600"
+            )}
           >
             {subtitle}
           </p>
@@ -359,12 +375,12 @@ function ActionBtn({ onClick, icon: Icon, children, isDark }) {
     <button
       type="button"
       onClick={onClick}
-      className={[
+      className={cx(
         "inline-flex items-center justify-center gap-2 rounded-2xl border px-3 py-2 text-xs font-extrabold transition",
         isDark
           ? "border-white/10 bg-zinc-900/35 text-zinc-200 hover:bg-white/5"
-          : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100",
-      ].join(" ")}
+          : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"
+      )}
     >
       <Icon className="h-4 w-4" aria-hidden="true" />
       {children}
@@ -375,14 +391,39 @@ function ActionBtn({ onClick, icon: Icon, children, isDark }) {
 function FeaturePill({ children, isDark }) {
   return (
     <div
-      className={[
+      className={cx(
         "rounded-2xl border px-3 py-2 text-xs font-bold",
         isDark
           ? "border-white/10 bg-zinc-950/35 text-zinc-200"
-          : "border-slate-200 bg-white text-slate-700 shadow-sm",
-      ].join(" ")}
+          : "border-slate-200 bg-white text-slate-700 shadow-sm"
+      )}
     >
       {children}
+    </div>
+  );
+}
+
+function SessionCheckBanner({ isDark }) {
+  return (
+    <div
+      className={cx(
+        "mt-6 rounded-2xl border p-4",
+        isDark
+          ? "border-emerald-500/20 bg-emerald-500/10"
+          : "border-emerald-200/40 bg-emerald-500/5"
+      )}
+    >
+      <div className="flex items-center gap-3">
+        <Loader2 className="h-5 w-5 animate-spin text-emerald-600 dark:text-emerald-300" />
+        <div>
+          <div className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">
+            Verificando sua sessão...
+          </div>
+          <div className="mt-0.5 text-xs text-emerald-700/80 dark:text-emerald-300/80">
+            Aguarde um instante para liberar o acesso com segurança.
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -417,6 +458,17 @@ export default function Login() {
       return "/painel";
     }
   }, [location.search]);
+
+  const inputBaseClass = useMemo(
+    () =>
+      cx(
+        "w-full rounded-2xl border py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-500/70",
+        isDark
+          ? "border-white/10 bg-zinc-950/30 text-zinc-100 placeholder:text-zinc-500"
+          : "border-slate-300 bg-white text-slate-900 placeholder:text-slate-400"
+      ),
+    [isDark]
+  );
 
   useEffect(() => {
     mountedRef.current = true;
@@ -703,12 +755,12 @@ export default function Login() {
   return (
     <>
       <main
-        className={[
+        className={cx(
           "min-h-screen transition-colors",
           isDark
             ? "bg-gradient-to-b from-zinc-950 to-zinc-900 text-zinc-100"
-            : "bg-slate-50 text-slate-900",
-        ].join(" ")}
+            : "bg-slate-50 text-slate-900"
+        )}
       >
         <a
           href="#conteudo"
@@ -879,22 +931,22 @@ export default function Login() {
 
             <div className="xl:col-span-7 space-y-6">
               <div
-                className={[
+                className={cx(
                   "rounded-3xl border p-6 transition-colors md:p-8",
                   isDark
                     ? "border-white/10 bg-zinc-900/50 shadow-none"
-                    : "border-slate-200 bg-white shadow-xl",
-                ].join(" ")}
+                    : "border-slate-200 bg-white shadow-xl"
+                )}
               >
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3 min-w-0">
                     <div
-                      className={[
+                      className={cx(
                         "h-12 w-12 rounded-2xl flex items-center justify-center border overflow-hidden",
                         isDark
                           ? "bg-emerald-500/10 border-white/10"
-                          : "bg-emerald-50 border-emerald-100",
-                      ].join(" ")}
+                          : "bg-emerald-50 border-emerald-100"
+                      )}
                       aria-hidden="true"
                     >
                       <img
@@ -910,10 +962,10 @@ export default function Login() {
                         Acesse sua conta
                       </h2>
                       <p
-                        className={[
+                        className={cx(
                           "text-xs",
-                          isDark ? "text-zinc-300" : "text-slate-500",
-                        ].join(" ")}
+                          isDark ? "text-zinc-300" : "text-slate-500"
+                        )}
                       >
                         CPF + senha ou Google, com acesso rápido ao seu painel.
                       </p>
@@ -921,12 +973,12 @@ export default function Login() {
                   </div>
 
                   <span
-                    className={[
+                    className={cx(
                       "hidden sm:inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-bold",
                       isDark
                         ? "border-white/10 bg-zinc-950/40 text-zinc-200"
-                        : "border-slate-200 bg-slate-50 text-slate-700",
-                    ].join(" ")}
+                        : "border-slate-200 bg-slate-50 text-slate-700"
+                    )}
                   >
                     <ShieldCheck className="h-4 w-4" aria-hidden="true" />
                     Ambiente autenticado
@@ -934,14 +986,7 @@ export default function Login() {
                 </div>
 
                 {loadingSessionCheck ? (
-                  <div className="mt-6 rounded-2xl border border-emerald-200/30 bg-emerald-500/5 p-4">
-                    <div className="flex items-center gap-3">
-                      <Loader2 className="h-5 w-5 animate-spin text-emerald-600 dark:text-emerald-300" />
-                      <div className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">
-                        Verificando sua sessão...
-                      </div>
-                    </div>
-                  </div>
+                  <SessionCheckBanner isDark={isDark} />
                 ) : (
                   <form
                     onSubmit={handleLogin}
@@ -956,10 +1001,10 @@ export default function Login() {
 
                       <div className="mt-2 relative">
                         <span
-                          className={[
+                          className={cx(
                             "absolute left-3 top-1/2 -translate-y-1/2",
-                            isDark ? "text-zinc-300" : "text-slate-500",
-                          ].join(" ")}
+                            isDark ? "text-zinc-300" : "text-slate-500"
+                          )}
                         >
                           <IdentIcon className="h-5 w-5" aria-hidden="true" />
                         </span>
@@ -989,13 +1034,11 @@ export default function Login() {
                           autoComplete="username"
                           inputMode="numeric"
                           disabled={loading || loadingGoogle}
-                          className={[
-                            "w-full rounded-2xl border pl-11 pr-4 py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-500/70",
-                            isDark
-                              ? "border-white/10 bg-zinc-950/30 text-zinc-100 placeholder:text-zinc-500"
-                              : "border-slate-300 bg-white text-slate-900 placeholder:text-slate-400",
-                            erroCpf ? "ring-2 ring-red-500/60 border-red-500/60" : "",
-                          ].join(" ")}
+                          className={cx(
+                            inputBaseClass,
+                            "pl-11 pr-4",
+                            erroCpf ? "ring-2 ring-red-500/60 border-red-500/60" : ""
+                          )}
                           aria-invalid={!!erroCpf}
                           aria-describedby={erroCpf ? "erro-cpf" : "dica-cpf"}
                         />
@@ -1013,10 +1056,10 @@ export default function Login() {
                         ) : (
                           <p
                             id="dica-cpf"
-                            className={[
+                            className={cx(
                               "mt-2 text-xs",
-                              isDark ? "text-zinc-400" : "text-slate-500",
-                            ].join(" ")}
+                              isDark ? "text-zinc-400" : "text-slate-500"
+                            )}
                           >
                             Você pode colar o CPF com ou sem pontuação.
                           </p>
@@ -1031,10 +1074,10 @@ export default function Login() {
 
                       <div className="mt-2 relative">
                         <span
-                          className={[
+                          className={cx(
                             "absolute left-3 top-1/2 -translate-y-1/2",
-                            isDark ? "text-zinc-300" : "text-slate-500",
-                          ].join(" ")}
+                            isDark ? "text-zinc-300" : "text-slate-500"
+                          )}
                         >
                           <Lock className="h-5 w-5" aria-hidden="true" />
                         </span>
@@ -1054,13 +1097,11 @@ export default function Login() {
                           placeholder="Digite sua senha"
                           autoComplete="current-password"
                           disabled={loading || loadingGoogle}
-                          className={[
-                            "w-full rounded-2xl border pl-11 pr-12 py-3 text-sm outline-none focus:ring-2 focus:ring-emerald-500/70",
-                            isDark
-                              ? "border-white/10 bg-zinc-950/30 text-zinc-100 placeholder:text-zinc-500"
-                              : "border-slate-300 bg-white text-slate-900 placeholder:text-slate-400",
-                            erroSenha ? "ring-2 ring-red-500/60 border-red-500/60" : "",
-                          ].join(" ")}
+                          className={cx(
+                            inputBaseClass,
+                            "pl-11 pr-12",
+                            erroSenha ? "ring-2 ring-red-500/60 border-red-500/60" : ""
+                          )}
                           aria-invalid={!!erroSenha}
                           aria-describedby={(erroSenha || capsLockOn) ? "senha-feedback" : undefined}
                         />
@@ -1068,13 +1109,13 @@ export default function Login() {
                         <button
                           type="button"
                           onClick={() => setMostrarSenha((prev) => !prev)}
-                          className={[
+                          className={cx(
                             "absolute right-2 top-1/2 -translate-y-1/2 rounded-xl px-2.5 py-2",
                             "focus:outline-none focus:ring-2 focus:ring-emerald-500/70",
                             isDark
                               ? "text-zinc-300 hover:bg-white/10"
-                              : "text-slate-600 hover:bg-slate-100",
-                          ].join(" ")}
+                              : "text-slate-600 hover:bg-slate-100"
+                          )}
                           aria-label={mostrarSenha ? "Ocultar senha" : "Mostrar senha"}
                           title={mostrarSenha ? "Ocultar senha" : "Mostrar senha"}
                           disabled={loading || loadingGoogle}
@@ -1096,14 +1137,14 @@ export default function Login() {
 
                         {capsLockOn && !erroSenha ? (
                           <p
-                            className={[
+                            className={cx(
                               "mt-1 text-[11px] flex items-center gap-1",
-                              isDark ? "text-amber-300" : "text-amber-700",
-                            ].join(" ")}
+                              isDark ? "text-amber-300" : "text-amber-700"
+                            )}
                             role="status"
                           >
-                            <AlertTriangle className="h-3 w-3" aria-hidden="true" /> Atenção:
-                            Caps Lock está ativado.
+                            <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+                            Atenção: Caps Lock está ativado.
                           </p>
                         ) : null}
                       </div>
@@ -1112,25 +1153,26 @@ export default function Login() {
                         <button
                           type="button"
                           onClick={() => navigate("/recuperar-senha")}
-                          className={[
-                            "w-full sm:w-auto font-semibold hover:underline rounded-xl px-3 py-2",
+                          className={cx(
+                            "w-full sm:w-auto font-semibold hover:underline rounded-xl px-3 py-2 inline-flex items-center justify-center gap-2",
                             "focus:outline-none focus:ring-2 focus:ring-emerald-500/70",
-                            isDark ? "text-sky-300 hover:bg-white/5" : "text-sky-700",
-                          ].join(" ")}
+                            isDark ? "text-sky-300 hover:bg-white/5" : "text-sky-700"
+                          )}
                         >
+                          <KeyRound className="h-4 w-4" />
                           Esqueci minha senha
                         </button>
 
                         <button
                           type="button"
                           onClick={() => navigate("/cadastro")}
-                          className={[
+                          className={cx(
                             "w-full sm:w-auto font-extrabold hover:underline rounded-xl px-3 py-2",
                             "focus:outline-none focus:ring-2 focus:ring-emerald-500/70",
                             isDark
                               ? "text-emerald-300 hover:bg-white/5"
-                              : "text-emerald-700",
-                          ].join(" ")}
+                              : "text-emerald-700"
+                          )}
                         >
                           Criar cadastro
                         </button>
@@ -1151,10 +1193,10 @@ export default function Login() {
 
                     <div className="pt-2">
                       <div
-                        className={[
+                        className={cx(
                           "text-center text-xs font-bold",
-                          isDark ? "text-zinc-300" : "text-slate-600",
-                        ].join(" ")}
+                          isDark ? "text-zinc-300" : "text-slate-600"
+                        )}
                       >
                         ou
                       </div>
@@ -1177,10 +1219,10 @@ export default function Login() {
                           </div>
                         ) : (
                           <small
-                            className={[
+                            className={cx(
                               "text-center block",
-                              isDark ? "text-zinc-400" : "text-slate-500",
-                            ].join(" ")}
+                              isDark ? "text-zinc-400" : "text-slate-500"
+                            )}
                           >
                             Login com Google indisponível no momento.
                           </small>
@@ -1189,10 +1231,10 @@ export default function Login() {
 
                       {redirectPath ? (
                         <p
-                          className={[
+                          className={cx(
                             "mt-3 text-[11px] text-center",
-                            isDark ? "text-zinc-400" : "text-slate-500",
-                          ].join(" ")}
+                            isDark ? "text-zinc-400" : "text-slate-500"
+                          )}
                         >
                           Após o login, você será levado para:{" "}
                           <span className="font-semibold">{redirectPath}</span>
@@ -1201,10 +1243,10 @@ export default function Login() {
                     </div>
 
                     <p
-                      className={[
+                      className={cx(
                         "pt-2 text-[11px] text-center",
-                        isDark ? "text-zinc-400" : "text-slate-500",
-                      ].join(" ")}
+                        isDark ? "text-zinc-400" : "text-slate-500"
+                      )}
                     >
                       Ao continuar, você concorda com o uso dos seus dados para fins de
                       controle de eventos, presença e certificação, conforme diretrizes
@@ -1222,18 +1264,18 @@ export default function Login() {
                 <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-4">
                   <div>
                     <h2
-                      className={[
+                      className={cx(
                         "text-xl font-extrabold",
-                        isDark ? "text-zinc-100" : "text-slate-900",
-                      ].join(" ")}
+                        isDark ? "text-zinc-100" : "text-slate-900"
+                      )}
                     >
                       Links oficiais
                     </h2>
                     <p
-                      className={[
+                      className={cx(
                         "mt-1 text-sm",
-                        isDark ? "text-zinc-400" : "text-slate-600",
-                      ].join(" ")}
+                        isDark ? "text-zinc-400" : "text-slate-600"
+                      )}
                     >
                       Acesse a plataforma e o Instagram oficial da Escola da Saúde.
                     </p>
@@ -1283,18 +1325,18 @@ export default function Login() {
             <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
               <div>
                 <h2
-                  className={[
+                  className={cx(
                     "text-2xl font-extrabold tracking-tight",
-                    isDark ? "text-zinc-100" : "text-slate-900",
-                  ].join(" ")}
+                    isDark ? "text-zinc-100" : "text-slate-900"
+                  )}
                 >
                   Informações úteis antes de entrar
                 </h2>
                 <p
-                  className={[
+                  className={cx(
                     "mt-1 text-sm",
-                    isDark ? "text-zinc-400" : "text-slate-600",
-                  ].join(" ")}
+                    isDark ? "text-zinc-400" : "text-slate-600"
+                  )}
                 >
                   Saiba como a plataforma pode ajudar, como instalá-la como aplicativo e quais
                   benefícios ela oferece ao usuário.
@@ -1421,19 +1463,19 @@ export default function Login() {
               </div>
 
               <div
-                className={[
+                className={cx(
                   "mt-6 rounded-2xl border p-4",
                   isDark
                     ? "border-white/10 bg-zinc-950/35"
-                    : "border-slate-200 bg-slate-50",
-                ].join(" ")}
+                    : "border-slate-200 bg-slate-50"
+                )}
               >
                 <div className="flex items-start gap-3">
                   <div
-                    className={[
+                    className={cx(
                       "rounded-xl p-2",
-                      isDark ? "bg-white/5 text-zinc-100" : "bg-white text-slate-700",
-                    ].join(" ")}
+                      isDark ? "bg-white/5 text-zinc-100" : "bg-white text-slate-700"
+                    )}
                   >
                     <BadgeCheck className="h-5 w-5" aria-hidden="true" />
                   </div>
@@ -1451,22 +1493,22 @@ export default function Login() {
 
                 <div className="mt-4 flex flex-wrap gap-2 text-sm">
                   <div
-                    className={[
+                    className={cx(
                       "inline-flex items-center gap-2 rounded-2xl px-3 py-2 font-bold",
                       isDark
                         ? "bg-emerald-500/10 text-emerald-300"
-                        : "bg-emerald-50 text-emerald-700",
-                    ].join(" ")}
+                        : "bg-emerald-50 text-emerald-700"
+                    )}
                   >
                     <ArrowRight className="h-4 w-4" aria-hidden="true" />
                     Android: ⋮ → Instalar app
                   </div>
 
                   <div
-                    className={[
+                    className={cx(
                       "inline-flex items-center gap-2 rounded-2xl px-3 py-2 font-bold",
-                      isDark ? "bg-sky-500/10 text-sky-300" : "bg-sky-50 text-sky-700",
-                    ].join(" ")}
+                      isDark ? "bg-sky-500/10 text-sky-300" : "bg-sky-50 text-sky-700"
+                    )}
                   >
                     <ArrowRight className="h-4 w-4" aria-hidden="true" />
                     iPhone: Compartilhar → Tela de Início

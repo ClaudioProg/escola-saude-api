@@ -1,4 +1,5 @@
 // ✅ src/components/Topbar.jsx
+// premium + logout robusto + sync de sessão + quick actions + tema + notificações
 import { useEffect, useMemo, useCallback, useState, useRef } from "react";
 import { useLocation, useNavigate, Link } from "react-router-dom";
 import {
@@ -16,17 +17,25 @@ import {
   Monitor,
 } from "lucide-react";
 
-import { apiGet } from "../services/api";
+import api, { apiGet } from "../services/api";
 import useEscolaTheme from "../hooks/useEscolaTheme";
 
 /* ────────────────────────────────────────────────────────────── */
-/* Helpers robustos de sessão / perfil                             */
+/* Helpers robustos de sessão / perfil                           */
 /* ────────────────────────────────────────────────────────────── */
 
 const DEBUG =
   typeof import.meta !== "undefined" && import.meta.env?.VITE_DEBUG_TOPBAR
     ? String(import.meta.env.VITE_DEBUG_TOPBAR) === "true"
     : false;
+
+function logDev(...args) {
+  if (DEBUG) console.log("[Topbar]", ...args);
+}
+
+function errorDev(...args) {
+  if (DEBUG) console.error("[Topbar]", ...args);
+}
 
 function safeAtob(b64) {
   try {
@@ -35,35 +44,53 @@ function safeAtob(b64) {
     return "";
   }
 }
+
 function decodeJwtPayload(token) {
   try {
     const [, payloadB64Url] = String(token || "").split(".");
     if (!payloadB64Url) return null;
+
     let b64 = payloadB64Url.replace(/-/g, "+").replace(/_/g, "/");
     while (b64.length % 4 !== 0) b64 += "=";
+
     const json = safeAtob(b64);
     return json ? JSON.parse(json) : null;
   } catch {
     return null;
   }
 }
+
+function clearLegacyAuthKeys() {
+  [
+    "token",
+    "authToken",
+    "access_token",
+    "refresh_token",
+    "perfil",
+    "usuario",
+    "user",
+  ].forEach((k) => localStorage.removeItem(k));
+
+  sessionStorage.removeItem("perfil_incompleto");
+}
+
 function getValidToken() {
-  let token = localStorage.getItem("token");
+  let token =
+    localStorage.getItem("token") ||
+    localStorage.getItem("authToken") ||
+    localStorage.getItem("access_token");
+
   if (!token) return null;
 
-  // aceita "Bearer x.y.z"
   if (token.startsWith("Bearer ")) token = token.slice(7).trim();
 
   const payload = decodeJwtPayload(token);
   const now = Date.now() / 1000;
 
-  // nbf/exp (se expirar, limpa chaves de auth)
   if (payload?.nbf && now < payload.nbf) return null;
+
   if (payload?.exp && now >= payload.exp) {
-    ["token", "refresh_token", "perfil", "usuario"].forEach((k) =>
-      localStorage.removeItem(k)
-    );
-    sessionStorage.removeItem("perfil_incompleto");
+    clearLegacyAuthKeys();
     return null;
   }
 
@@ -85,18 +112,23 @@ function getPerfisRobusto() {
   if (rawPerfil) {
     try {
       const parsed = JSON.parse(rawPerfil);
-      if (Array.isArray(parsed))
+      if (Array.isArray(parsed)) {
         parsed.forEach((p) => out.add(String(p).toLowerCase()));
-      else normPerfilStr(rawPerfil).forEach((p) => out.add(p));
+      } else {
+        normPerfilStr(rawPerfil).forEach((p) => out.add(p));
+      }
     } catch {
       normPerfilStr(rawPerfil).forEach((p) => out.add(p));
     }
   }
 
   try {
-    const rawUser = localStorage.getItem("usuario");
+    const rawUser =
+      localStorage.getItem("usuario") || localStorage.getItem("user");
+
     if (rawUser) {
       const u = JSON.parse(rawUser);
+
       const pushAll = (val) =>
         normPerfilStr(Array.isArray(val) ? val.join(",") : val).forEach((p) =>
           out.add(p)
@@ -106,7 +138,9 @@ function getPerfisRobusto() {
       if (u?.perfis) pushAll(u.perfis);
       if (u?.roles) pushAll(u.roles);
     }
-  } catch {}
+  } catch {
+    // noop
+  }
 
   if (out.size === 0) out.add("usuario");
   return Array.from(out).filter(Boolean);
@@ -114,27 +148,35 @@ function getPerfisRobusto() {
 
 function getUsuarioLS() {
   try {
-    return JSON.parse(localStorage.getItem("usuario") || "null");
+    return JSON.parse(
+      localStorage.getItem("usuario") || localStorage.getItem("user") || "null"
+    );
   } catch {
     return null;
   }
 }
+
 function getNomeUsuario() {
   return getUsuarioLS()?.nome || "";
 }
+
 function getEmailUsuario() {
   return getUsuarioLS()?.email || "";
 }
+
 function getIniciais(nome, email) {
   const n = String(nome || "").trim();
   if (n) {
     const parts = n.split(/\s+/).filter(Boolean);
-    if (parts.length >= 2)
+    if (parts.length >= 2) {
       return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    }
     return parts[0].slice(0, 2).toUpperCase();
   }
+
   const e = String(email || "").trim();
   if (e) return (e.split("@")[0].slice(0, 2) || "?").toUpperCase();
+
   return "?";
 }
 
@@ -172,7 +214,9 @@ function nextTheme(t) {
 function ThemeCycleButton() {
   const { theme, setTheme, isDark } = useEscolaTheme();
 
-  const label = theme === "light" ? "Claro" : theme === "dark" ? "Escuro" : "Sistema";
+  const label =
+    theme === "light" ? "Claro" : theme === "dark" ? "Escuro" : "Sistema";
+
   const Icon = theme === "light" ? Sun : theme === "dark" ? Moon : Monitor;
 
   return (
@@ -222,7 +266,6 @@ export default function Topbar({
     const tk = getValidToken();
     if (!tk || document.hidden) return;
 
-    // cancela request anterior
     abortNotifRef.current?.abort?.();
     const ac = new AbortController();
     abortNotifRef.current = ac;
@@ -233,10 +276,15 @@ export default function Topbar({
         on403: "silent",
         signal: ac.signal,
       });
+
       if (ac.signal.aborted) return;
+
       setTotalNaoLidas(Number(data?.totalNaoLidas ?? data?.total ?? 0) || 0);
     } catch (e) {
-      if (e?.name !== "AbortError") setTotalNaoLidas(0);
+      if (e?.name !== "AbortError") {
+        setTotalNaoLidas(0);
+        errorDev("erro ao atualizar notificações", e);
+      }
     }
   }, []);
 
@@ -255,8 +303,6 @@ export default function Topbar({
     };
 
     document.addEventListener("visibilitychange", onVisibility);
-
-    // compat com chamadas externas existentes
     window.atualizarContadorNotificacao = tick;
 
     return () => {
@@ -267,7 +313,7 @@ export default function Topbar({
     };
   }, [token, atualizarContadorNotificacao]);
 
-  /* ───────────────── Sync de sessão (storage + auth:changed) ───────────────── */
+  /* ───────────────── Sync de sessão ───────────────── */
   const refreshFromLS = useCallback(() => {
     setToken(getValidToken());
     setPerfis(getPerfisRobusto());
@@ -277,13 +323,24 @@ export default function Topbar({
 
   useEffect(() => {
     const onStorage = (e) => {
-      if (!e.key || ["perfil", "usuario", "token"].includes(e.key)) {
-        DEBUG && console.log("[Topbar] storage → refresh");
+      if (
+        !e.key ||
+        [
+          "perfil",
+          "usuario",
+          "user",
+          "token",
+          "authToken",
+          "access_token",
+        ].includes(e.key)
+      ) {
+        logDev("storage → refresh");
         refreshFromLS();
       }
     };
+
     const onAuthChanged = () => {
-      DEBUG && console.log("[Topbar] auth:changed → refresh");
+      logDev("auth:changed → refresh");
       refreshFromLS();
     };
 
@@ -297,7 +354,6 @@ export default function Topbar({
   }, [refreshFromLS]);
 
   useEffect(() => {
-    // em troca de rota, refresh (caso login/perfil tenha sido atualizado)
     refreshFromLS();
   }, [location.pathname, refreshFromLS]);
 
@@ -306,44 +362,104 @@ export default function Topbar({
     perfis.includes("instrutor") ||
     perfis.includes("administrador");
 
-  const isInstrutor = perfis.includes("instrutor") || perfis.includes("administrador");
+  const isInstrutor =
+    perfis.includes("instrutor") || perfis.includes("administrador");
+
   const isAdmin = perfis.includes("administrador");
 
-  const sair = () => {
-    ["token", "refresh_token", "perfil", "usuario"].forEach((k) =>
-      localStorage.removeItem(k)
-    );
-    sessionStorage.removeItem("perfil_incompleto");
-    window.dispatchEvent(new Event("auth:changed"));
-    navigate("/login");
-  };
+  const sair = useCallback(() => {
+    logDev("logout iniciado", {
+      pathname: location.pathname,
+      perfis,
+      hasTokenBefore: !!getValidToken(),
+    });
+
+    try {
+      if (typeof api.clearSession === "function") {
+        api.clearSession();
+      } else {
+        clearLegacyAuthKeys();
+        window.dispatchEvent(
+          new CustomEvent("auth:changed", {
+            detail: { authenticated: false },
+          })
+        );
+      }
+    } catch (error) {
+      errorDev("falha ao limpar sessão via api.clearSession", error);
+      clearLegacyAuthKeys();
+      window.dispatchEvent(
+        new CustomEvent("auth:changed", {
+          detail: { authenticated: false },
+        })
+      );
+    }
+
+    refreshFromLS();
+
+    logDev("logout concluído", {
+      hasTokenAfter: !!getValidToken(),
+    });
+
+    // ✅ replace evita voltar para painel pelo histórico
+    navigate("/login", { replace: true });
+
+    // fallback extra: se algo interceptar a navegação SPA, força a rota
+    window.setTimeout(() => {
+      if (window.location.pathname !== "/login") {
+        window.location.replace("/login");
+      }
+    }, 80);
+  }, [location.pathname, navigate, perfis, refreshFromLS]);
 
   const month = new Date().getMonth() + 1;
-  const accent = getNavThemeForMonth(month) || "from-emerald-600 via-teal-600 to-sky-700";
+  const accent =
+    getNavThemeForMonth(month) || "from-emerald-600 via-teal-600 to-sky-700";
 
   const routeName = useMemo(() => {
     const path = location.pathname;
-    if (path.startsWith("/admin") || path.startsWith("/administrador")) return "Admin";
-    if (path.startsWith("/instrutor")) return "Instrutor";
-    if (path.startsWith("/usuario")) return "Usuário";
-    if (path.startsWith("/eventos")) return "Eventos";
-    if (path.startsWith("/minhas-presencas")) return "Presenças";
-    if (path.startsWith("/certificados")) return "Certificados";
-    if (path.startsWith("/agenda")) return "Agenda";
-    if (path.startsWith("/avaliacao")) return "Avaliações";
+
+    if (path.startsWith("/admin") || path.startsWith("/administrador")) {
+      return "Admin";
+    }
+    if (path.startsWith("/instrutor")) {
+      return "Instrutor";
+    }
+    if (path.startsWith("/usuario")) {
+      return "Usuário";
+    }
+    if (path.startsWith("/eventos")) {
+      return "Eventos";
+    }
+    if (path.startsWith("/minhas-presencas")) {
+      return "Presenças";
+    }
+    if (path.startsWith("/certificados")) {
+      return "Certificados";
+    }
+    if (path.startsWith("/agenda")) {
+      return "Agenda";
+    }
+    if (path.startsWith("/avaliacao")) {
+      return "Avaliações";
+    }
+    if (path.startsWith("/notificacao")) {
+      return "Notificações";
+    }
+    if (path.startsWith("/perfil")) {
+      return "Perfil";
+    }
     return "";
   }, [location.pathname]);
 
   const safeOpenMenu = () => {
     if (typeof onOpenMenu === "function") onOpenMenu();
     else {
-      // fallback melhor: tenta focar no drawer se existir
       const el = document.getElementById(drawerId);
       el?.focus?.();
     }
   };
 
-  // quick actions (mais coerente)
   const quickActions = useMemo(() => {
     if (!showQuickActions) return null;
 
@@ -369,14 +485,19 @@ export default function Topbar({
         )}
 
         {(isInstrutor || isAdmin) && (
-          <ChipLink to="/agenda" title="Agenda">
+          <ChipLink
+            to={isAdmin ? "/agenda-administrador" : "/agenda-instrutor"}
+            title="Agenda"
+          >
             <CalendarDays className="w-4 h-4 opacity-80" />
             Agenda
           </ChipLink>
         )}
 
-        {/* atalho “Dashboard” é útil quando o usuário está em áreas profundas */}
-        <ChipLink to={isAdmin ? "/administrador" : isInstrutor ? "/instrutor" : "/usuario/dashboard"} title="Dashboard">
+        <ChipLink
+          to={isAdmin ? "/administrador" : isInstrutor ? "/instrutor" : "/usuario/dashboard"}
+          title="Dashboard"
+        >
           <LayoutDashboard className="w-4 h-4 opacity-80" />
           Painel
         </ChipLink>
@@ -386,7 +507,6 @@ export default function Topbar({
 
   return (
     <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/70 dark:border-white/10 dark:bg-zinc-950/60 backdrop-blur-xl shadow-sm">
-      {/* linha premium + glow */}
       <div className="relative">
         <div className={`h-[3px] w-full bg-gradient-to-r ${accent}`} />
         <div
@@ -395,7 +515,6 @@ export default function Topbar({
         />
       </div>
 
-      {/* skip link */}
       <a
         href="#conteudo"
         className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[60] rounded-xl bg-emerald-600 px-4 py-2 text-sm font-extrabold text-white shadow-lg"
@@ -404,7 +523,6 @@ export default function Topbar({
       </a>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
-        {/* ESQUERDA */}
         <div className="flex items-center gap-3 min-w-0">
           <button
             type="button"
@@ -435,14 +553,11 @@ export default function Topbar({
           )}
         </div>
 
-        {/* DIREITA */}
         <div className="flex items-center gap-2">
           {quickActions}
 
-          {/* Tema (ciclo) — Claro → Escuro → Sistema */}
           <ThemeCycleButton />
 
-          {/* Notificações */}
           <button
             type="button"
             onClick={() => navigate("/notificacao")}
@@ -461,7 +576,6 @@ export default function Topbar({
             )}
           </button>
 
-          {/* Conta */}
           <button
             type="button"
             onClick={() => navigate("/perfil")}
@@ -475,7 +589,6 @@ export default function Topbar({
             <UserCog className="w-4 h-4 opacity-90" />
           </button>
 
-          {/* Sair */}
           <button
             type="button"
             onClick={sair}

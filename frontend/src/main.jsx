@@ -5,6 +5,8 @@
 // - Logs DEV estratégicos
 // - ErrorBoundary premium
 // - PWA update safe
+// - Correção: /redefinir-senha é rota pública real
+// - Premiumrização do bootstrap e da organização geral
 
 import React from "react";
 import ReactDOM from "react-dom/client";
@@ -32,6 +34,29 @@ const IS_DEV = !!import.meta.env.DEV;
 const IS_PROD = !!import.meta.env.PROD;
 const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
+const PUBLIC_AUTH_ROUTES = [
+  "/login",
+  "/cadastro",
+  "/recuperar-senha",
+  "/esqueci-senha",
+  "/redefinir-senha",
+];
+
+const PUBLIC_ALWAYS_ALLOWED_PREFIXES = [
+  "/validar",
+  "/presenca",
+  "/historico",
+  "/privacidade",
+];
+
+function logDev(...args) {
+  if (IS_DEV) console.log(...args);
+}
+
+function warnDev(...args) {
+  if (IS_DEV) console.warn(...args);
+}
+
 function maskClientId(id) {
   if (!id) return "(vazio)";
   const p = String(id);
@@ -56,17 +81,20 @@ function getStoredToken() {
 }
 
 function isAuthRoute(pathname) {
-  return ["/login", "/cadastro", "/recuperar-senha"].some((route) =>
-    pathname.startsWith(route)
+  const path = String(pathname || "");
+  return PUBLIC_AUTH_ROUTES.some((route) => path.startsWith(route));
+}
+
+function isAlwaysPublicRoute(pathname) {
+  const path = String(pathname || "");
+  return PUBLIC_ALWAYS_ALLOWED_PREFIXES.some((route) =>
+    path.startsWith(route)
   );
 }
 
 function canSilentlyRedirectToLogin(pathname) {
-  return (
-    !isAuthRoute(pathname) &&
-    !pathname.startsWith("/validar") &&
-    !pathname.startsWith("/presenca")
-  );
+  const path = String(pathname || "");
+  return !isAuthRoute(path) && !isAlwaysPublicRoute(path);
 }
 
 /* ──────────────────────────────────────────────────────────────
@@ -197,67 +225,67 @@ if (!clientId) {
    ✅ Bootstrap global de sessão
    - Não mostra toast de erro ao validar sessão
    - Só redireciona quando necessário
+   - Respeita rotas públicas reais, incluindo redefinição de senha
 ────────────────────────────────────────────────────────────── */
 async function bootstrapAuthSession() {
   const pathname = window.location.pathname;
   const token = getStoredToken();
 
-  if (IS_DEV) {
-    console.log("[AUTH] bootstrap iniciado", {
-      pathname,
-      hasToken: !!token,
-    });
-  }
+  logDev("[AUTH] bootstrap iniciado", {
+    pathname,
+    hasToken: !!token,
+    isAuthRoute: isAuthRoute(pathname),
+    isAlwaysPublicRoute: isAlwaysPublicRoute(pathname),
+  });
 
   if (!token) {
     if (canSilentlyRedirectToLogin(pathname)) {
-      if (IS_DEV) {
-        console.log("[AUTH] sem token -> redirecionando para /login");
-      }
+      logDev("[AUTH] sem token -> redirecionando para /login", { pathname });
       window.location.replace("/login");
       return;
     }
 
-    if (IS_DEV) {
-      console.log("[AUTH] rota pública sem token -> seguindo normalmente");
-    }
+    logDev("[AUTH] rota pública sem token -> seguindo normalmente", {
+      pathname,
+    });
     return;
   }
 
   try {
-    const data = await api.authMe();
+    const data = await api.authMe({
+      auth: true,
+      on401: "silent",
+      on403: "silent",
+    });
 
-    if (data?.usuario) {
-      if (IS_DEV) {
-        console.log("[AUTH] sessão válida", {
-          userId: data.usuario?.id,
-          email: data.usuario?.email,
-          perfil: data.usuario?.perfil,
-        });
-      }
+    const usuario = data?.usuario || data?.user || null;
+
+    if (usuario) {
+      logDev("[AUTH] sessão válida", {
+        userId: usuario?.id,
+        email: usuario?.email,
+        perfil: usuario?.perfil,
+      });
       return;
     }
 
-    if (IS_DEV) {
-      console.warn("[AUTH] authMe respondeu sem usuário válido");
-    }
+    warnDev("[AUTH] authMe respondeu sem usuário válido", { pathname });
 
     api.clearSession();
 
     if (canSilentlyRedirectToLogin(pathname)) {
-      if (IS_DEV) {
-        console.log("[AUTH] sessão sem usuário -> redirecionando para /login");
-      }
+      logDev("[AUTH] sessão sem usuário -> redirecionando para /login", {
+        pathname,
+      });
       window.location.replace("/login");
     }
   } catch (error) {
-    if (IS_DEV) {
-      console.warn("[AUTH] falha no bootstrap", {
-        message: error?.message,
-        status: error?.status,
-        code: error?.code,
-      });
-    }
+    warnDev("[AUTH] falha no bootstrap", {
+      message: error?.message,
+      status: error?.status,
+      code: error?.code,
+      pathname,
+    });
 
     api.clearSession();
 
