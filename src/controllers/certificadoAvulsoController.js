@@ -15,7 +15,8 @@ function getDb(req) {
 }
 
 const onlyDigits = (v = "") => String(v).replace(/\D+/g, "");
-const safeFilename = (s = "") => String(s).replace(/[^a-z0-9._-]+/gi, "_").replace(/_+/g, "_");
+const safeFilename = (s = "") =>
+  String(s).replace(/[^a-z0-9._-]+/gi, "_").replace(/_+/g, "_");
 
 function validarEmail(email) {
   if (!email) return false;
@@ -39,13 +40,12 @@ function isYmd(s) {
 function ymdToLocalDate(ymd) {
   if (!isYmd(ymd)) return null;
   const [y, m, d] = ymd.split("-").map(Number);
-  return new Date(y, m - 1, d, 12, 0, 0, 0); // meio-dia ajuda a evitar edge cases
+  return new Date(y, m - 1, d, 12, 0, 0, 0);
 }
 
 function formatarDataCurtaBR(data) {
   if (!data) return "";
 
-  // ✅ se vier "YYYY-MM-DD", não usar new Date("YYYY-MM-DD")
   const s = String(data).trim();
   const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (m) return `${m[3]}/${m[2]}/${m[1]}`;
@@ -59,13 +59,19 @@ function formatarDataCurtaBR(data) {
 }
 
 function dataHojePorExtenso() {
-  const hoje = new Date();
-  const meses = [
-    "janeiro", "fevereiro", "março", "abril", "maio", "junho",
-    "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
-  ];
-  const dd = String(hoje.getDate()).padStart(2, "0");
-  return `${dd} de ${meses[hoje.getMonth()]} de ${hoje.getFullYear()}`;
+  const agora = new Date();
+  const partes = new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  }).formatToParts(agora);
+
+  const dd = partes.find((p) => p.type === "day")?.value || "";
+  const mes = partes.find((p) => p.type === "month")?.value || "";
+  const ano = partes.find((p) => p.type === "year")?.value || "";
+
+  return `${dd} de ${mes} de ${ano}`;
 }
 
 function formatarPeriodo(dataInicio, dataFim) {
@@ -84,17 +90,43 @@ function formatarIdentificador(valor) {
   const onlyNum = onlyDigits(valor);
 
   if (/^\d{11}$/.test(onlyNum)) {
-    return `CPF: ${onlyNum.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4")}`;
+    return `CPF: ${onlyNum.replace(
+      /(\d{3})(\d{3})(\d{3})(\d{2})/,
+      "$1.$2.$3-$4"
+    )}`;
   }
 
   if (/^\d{6}$/.test(onlyNum)) {
     const corpo = onlyNum.slice(0, 5);
     const digito = onlyNum.slice(5);
-    const registroFormatado = corpo.replace(/(\d{2})(\d{3})/, "$1.$2") + "-" + digito;
+    const registroFormatado =
+      corpo.replace(/(\d{2})(\d{3})/, "$1.$2") + "-" + digito;
     return `Registro: ${registroFormatado}`;
   }
 
   return "";
+}
+
+function escapeHtml(value = "") {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function logCert(scope, payload = {}) {
+  console.log(`[CERT_AVULSO][${scope}]`, payload);
+}
+
+function logCertError(scope, error, extra = {}) {
+  console.error(`[CERT_AVULSO][${scope}][ERRO]`, {
+    ...extra,
+    message: error?.message || String(error),
+    code: error?.code || null,
+    stack: IS_DEV ? error?.stack || null : undefined,
+  });
 }
 
 /* ========================= Modalidades ========================= */
@@ -131,7 +163,10 @@ function normalizarModalidade(v) {
 }
 
 function modalidadeNaoTemCarga(modalidade) {
-  return modalidade === "banca_avaliadora" || modalidade === "comissao_organizadora";
+  return (
+    modalidade === "banca_avaliadora" ||
+    modalidade === "comissao_organizadora"
+  );
 }
 
 function modalidadeExigeTitulo(modalidade) {
@@ -146,10 +181,10 @@ function modalidadeExigeTitulo(modalidade) {
 
 /* ========================= Fundo / Fontes ========================= */
 
-function getFundoPath({ temAssinatura2 = false }) {
-  const nomeArquivo = temAssinatura2 ? "fundo_certificado.png" : "fundo_certificado_instrutor.png";
-  const roots = [
+function getCandidateRoots() {
+  return [
     ...(process.env.CERT_FUNDO_DIR ? [process.env.CERT_FUNDO_DIR] : []),
+    ...(process.env.CERT_ASSETS_DIR ? [process.env.CERT_ASSETS_DIR] : []),
     path.resolve(__dirname, "../../certificados"),
     path.resolve(__dirname, "../../assets"),
     path.resolve(__dirname, "../../public"),
@@ -157,45 +192,132 @@ function getFundoPath({ temAssinatura2 = false }) {
     path.resolve(process.cwd(), "assets"),
     path.resolve(process.cwd(), "public"),
   ];
-  const candidates = roots.map((root) => path.join(root, nomeArquivo));
-  for (const p of candidates) {
-    try {
-      if (fs.existsSync(p)) return p;
-    } catch {}
+}
+
+function getFundoPath({ temAssinatura2 = false } = {}) {
+  const roots = getCandidateRoots();
+
+  const orderedNames = temAssinatura2
+    ? [
+        "fundo_certificado.png",
+        "fundo_certificado_instrutor.png",
+        "fundo-certificado.png",
+        "fundo-certificado-instrutor.png",
+      ]
+    : [
+        "fundo_certificado_instrutor.png",
+        "fundo_certificado.png",
+        "fundo-certificado-instrutor.png",
+        "fundo-certificado.png",
+      ];
+
+  for (const root of roots) {
+    for (const nome of orderedNames) {
+      const candidate = path.join(root, nome);
+      try {
+        if (fs.existsSync(candidate)) {
+          if (IS_DEV) {
+            logCert("FUNDO_ENCONTRADO", {
+              temAssinatura2,
+              arquivo: candidate,
+            });
+          }
+          return candidate;
+        }
+      } catch {}
+    }
   }
-  if (IS_DEV) console.warn("⚠️ Fundo não encontrado:", candidates);
+
+  console.warn("[CERT_AVULSO][FUNDO_AUSENTE]", {
+    temAssinatura2,
+    roots,
+    nomes: orderedNames,
+  });
+
   return null;
 }
 
+function getFontCandidates() {
+  return [
+    path.resolve(__dirname, "../../fonts"),
+    path.resolve(process.cwd(), "fonts"),
+    path.resolve(process.cwd(), "assets/fonts"),
+    path.resolve(__dirname, "../../assets/fonts"),
+  ];
+}
+
 function registerFonts(doc) {
-  const fontsDir = path.join(__dirname, "..", "..", "fonts");
-  const fontes = {
-    "AlegreyaSans-Bold": path.join(fontsDir, "AlegreyaSans-Bold.ttf"),
-    "AlegreyaSans-Regular": path.join(fontsDir, "AlegreyaSans-Regular.ttf"),
-    BreeSerif: path.join(fontsDir, "BreeSerif-Regular.ttf"),
-    AlexBrush: path.join(fontsDir, "AlexBrush-Regular.ttf"),
+  const fontRoots = getFontCandidates();
+
+  const fontFiles = {
+    "AlegreyaSans-Bold": "AlegreyaSans-Bold.ttf",
+    "AlegreyaSans-Regular": "AlegreyaSans-Regular.ttf",
+    BreeSerif: "BreeSerif-Regular.ttf",
+    AlexBrush: "AlexBrush-Regular.ttf",
   };
-  for (const [nome, caminhoFonte] of Object.entries(fontes)) {
-    if (fs.existsSync(caminhoFonte)) {
-      try {
-        doc.registerFont(nome, caminhoFonte);
-      } catch (e) {
-        if (IS_DEV) console.warn(`(certificados) Erro fonte ${nome}:`, e.message);
+
+  const registered = new Set();
+
+  for (const [fontName, fileName] of Object.entries(fontFiles)) {
+    let foundPath = null;
+
+    for (const root of fontRoots) {
+      const candidate = path.join(root, fileName);
+      if (fs.existsSync(candidate)) {
+        foundPath = candidate;
+        break;
       }
-    } else if (IS_DEV) {
-      console.warn(`(certificados) Fonte ausente: ${caminhoFonte}`);
+    }
+
+    if (!foundPath) {
+      console.warn("[CERT_AVULSO][FONTE_AUSENTE]", {
+        fonte: fontName,
+        arquivo: fileName,
+        roots: fontRoots,
+      });
+      continue;
+    }
+
+    try {
+      doc.registerFont(fontName, foundPath);
+      registered.add(fontName);
+      if (IS_DEV) {
+        logCert("FONTE_REGISTRADA", { fonte: fontName, caminho: foundPath });
+      }
+    } catch (e) {
+      console.warn("[CERT_AVULSO][FONTE_FALHOU]", {
+        fonte: fontName,
+        caminho: foundPath,
+        message: e?.message || String(e),
+      });
     }
   }
+
+  return registered;
+}
+
+function pickFont(registeredFonts, desired, fallback = "Helvetica") {
+  return registeredFonts?.has(desired) ? desired : fallback;
 }
 
 /* ========================= Texto por modalidade ========================= */
 
-function montarTextoModalidade({ modalidade, tituloEvento, dataInicio, dataFim, carga, tituloTrabalho }) {
+function montarTextoModalidade({
+  modalidade,
+  tituloEvento,
+  dataInicio,
+  dataFim,
+  carga,
+  tituloTrabalho,
+}) {
   const periodo = formatarPeriodo(dataInicio, dataFim);
   const ev = tituloEvento || "";
 
-  const temCarga = !!(carga && Number(carga) > 0) && !modalidadeNaoTemCarga(modalidade);
-  const trechoCarga = temCarga ? `, com carga horária total de ${Number(carga)} horas.` : ".";
+  const temCarga =
+    !!(carga && Number(carga) > 0) && !modalidadeNaoTemCarga(modalidade);
+  const trechoCarga = temCarga
+    ? `, com carga horária total de ${Number(carga)} horas.`
+    : ".";
 
   switch (modalidade) {
     case "instrutor":
@@ -276,8 +398,8 @@ function montarTextoModalidade({ modalidade, tituloEvento, dataInicio, dataFim, 
 
 async function carregarAssinatura2(req, assinatura2_id) {
   const db = getDb(req);
-
   const id = toIntId(assinatura2_id);
+
   if (!id) return null;
 
   try {
@@ -294,7 +416,10 @@ async function carregarAssinatura2(req, assinatura2_id) {
       [id]
     );
 
-    if (!a.rowCount) return null;
+    if (!a.rowCount) {
+      logCert("ASSINATURA2_NAO_ENCONTRADA", { assinatura2_id: id });
+      return null;
+    }
 
     const row = a.rows[0];
     let imgBuffer = null;
@@ -302,7 +427,9 @@ async function carregarAssinatura2(req, assinatura2_id) {
     if (row.imagem_base64 && row.imagem_base64.startsWith("data:image")) {
       try {
         imgBuffer = Buffer.from(row.imagem_base64.split(",")[1], "base64");
-      } catch {}
+      } catch (e) {
+        logCertError("ASSINATURA2_BASE64", e, { assinatura2_id: id });
+      }
     }
 
     return {
@@ -312,7 +439,7 @@ async function carregarAssinatura2(req, assinatura2_id) {
       imgBuffer,
     };
   } catch (e) {
-    if (IS_DEV) console.warn("⚠️ Falha ao obter 2ª assinatura:", e.message);
+    logCertError("ASSINATURA2_QUERY", e, { assinatura2_id: id });
     return null;
   }
 }
@@ -320,44 +447,74 @@ async function carregarAssinatura2(req, assinatura2_id) {
 /* ========================= PDF ========================= */
 
 function desenharCertificado(doc, certificado, opts = {}) {
-  const temAssinatura2 = Boolean(opts.assinatura2);
+  const { assinatura2 = null, registeredFonts = new Set() } = opts;
+  const temAssinatura2 = Boolean(assinatura2);
+
+  const FONT_BREE = pickFont(registeredFonts, "BreeSerif", "Helvetica-Bold");
+  const FONT_REG = pickFont(
+    registeredFonts,
+    "AlegreyaSans-Regular",
+    "Helvetica"
+  );
+  const FONT_BOLD = pickFont(
+    registeredFonts,
+    "AlegreyaSans-Bold",
+    "Helvetica-Bold"
+  );
+  const FONT_SCRIPT = pickFont(registeredFonts, "AlexBrush", "Times-Italic");
 
   const fundo = getFundoPath({ temAssinatura2 });
   if (fundo) {
-    doc.image(fundo, 0, 0, { width: doc.page.width, height: doc.page.height });
+    try {
+      doc.image(fundo, 0, 0, {
+        width: doc.page.width,
+        height: doc.page.height,
+      });
+    } catch (e) {
+      logCertError("FUNDO_RENDER", e, { fundo });
+      doc.save().rect(0, 0, doc.page.width, doc.page.height).fill("#ffffff").restore();
+    }
   } else {
     doc.save().rect(0, 0, doc.page.width, doc.page.height).fill("#ffffff").restore();
   }
 
-  doc.fillColor("#0b3d2e").font("BreeSerif").fontSize(63).text("CERTIFICADO", { align: "center" });
+  doc.fillColor("#0b3d2e").font(FONT_BREE).fontSize(63).text("CERTIFICADO", {
+    align: "center",
+  });
 
   doc.fillColor("black");
-  doc
-    .font("AlegreyaSans-Bold")
-    .fontSize(20)
-    .text("SECRETARIA MUNICIPAL DE SAÚDE", { align: "center", lineGap: 4 });
-  doc
-    .font("AlegreyaSans-Regular")
-    .fontSize(15)
-    .text("A Escola Municipal de Saúde Pública certifica que:", { align: "center" });
+  doc.font(FONT_BOLD).fontSize(20).text("SECRETARIA MUNICIPAL DE SAÚDE", {
+    align: "center",
+    lineGap: 4,
+  });
+
+  doc.font(FONT_REG).fontSize(15).text(
+    "A Escola Municipal de Saúde Pública certifica que:",
+    { align: "center" }
+  );
 
   doc.moveDown(2.5);
 
-  // Nome (ajuste dinâmico)
   const nome = certificado.nome || "";
   const nomeMaxWidth = 680;
   let nomeFontSize = 45;
-  doc.font("AlexBrush").fontSize(nomeFontSize);
+
+  doc.font(FONT_SCRIPT).fontSize(nomeFontSize);
   while (doc.widthOfString(nome) > nomeMaxWidth && nomeFontSize > 20) {
     nomeFontSize -= 1;
     doc.fontSize(nomeFontSize);
   }
   doc.text(nome, { align: "center" });
 
-  // Identificador
-  const idFmt = formatarIdentificador(certificado.cpf || certificado.registro || "");
+  const idFmt = formatarIdentificador(
+    certificado.cpf || certificado.registro || ""
+  );
+
   if (idFmt) {
-    doc.font("BreeSerif").fontSize(16).text(idFmt, 0, doc.y - 5, { align: "center", width: doc.page.width });
+    doc.font(FONT_BREE).fontSize(16).text(idFmt, 0, doc.y - 5, {
+      align: "center",
+      width: doc.page.width,
+    });
   }
 
   const texto = montarTextoModalidade({
@@ -370,61 +527,109 @@ function desenharCertificado(doc, certificado, opts = {}) {
   });
 
   doc.moveDown(1);
-  doc.font("AlegreyaSans-Regular").fontSize(15).text(texto, 70, doc.y, {
+  doc.font(FONT_REG).fontSize(15).text(texto, 70, doc.y, {
     align: "justify",
     lineGap: 4,
     width: 680,
   });
 
   doc.moveDown(1);
-  doc.font("AlegreyaSans-Regular").fontSize(14).text(`Santos, ${dataHojePorExtenso()}.`, 100, doc.y + 10, {
-    align: "right",
-    width: 680,
-  });
+  doc.font(FONT_REG).fontSize(14).text(
+    `Santos, ${dataHojePorExtenso()}.`,
+    100,
+    doc.y + 10,
+    {
+      align: "right",
+      width: 680,
+    }
+  );
 
-  // Assinaturas
   const baseY = 470;
   const assinatura1X = temAssinatura2 ? 120 : 270;
   const assinatura1W = 300;
 
-  doc.font("AlegreyaSans-Bold").fontSize(20).text("Rafaella Pitol Corrêa", assinatura1X, baseY, { align: "center", width: assinatura1W });
-  doc.font("AlegreyaSans-Regular").fontSize(14).text("Chefe da Escola da Saúde", assinatura1X, baseY + 25, { align: "center", width: assinatura1W });
+  doc.font(FONT_BOLD).fontSize(20).text(
+    "Rafaella Pitol Corrêa",
+    assinatura1X,
+    baseY,
+    {
+      align: "center",
+      width: assinatura1W,
+    }
+  );
+
+  doc.font(FONT_REG).fontSize(14).text(
+    "Chefe da Escola da Saúde",
+    assinatura1X,
+    baseY + 25,
+    {
+      align: "center",
+      width: assinatura1W,
+    }
+  );
 
   if (temAssinatura2) {
     const areaX = 440;
     const areaW = 300;
 
-    if (opts.assinatura2.imgBuffer) {
+    if (assinatura2.imgBuffer) {
       try {
         const assinaturaWidth = 150;
         const assinaturaX = areaX + (areaW - assinaturaWidth) / 2;
         const assinaturaY = baseY - 50;
-        doc.image(opts.assinatura2.imgBuffer, assinaturaX, assinaturaY, { width: assinaturaWidth });
+        doc.image(assinatura2.imgBuffer, assinaturaX, assinaturaY, {
+          width: assinaturaWidth,
+        });
       } catch (e) {
-        if (IS_DEV) console.warn("⚠️ Erro ao desenhar 2ª assinatura:", e.message);
+        logCertError("ASSINATURA2_RENDER", e, {
+          assinatura2_id: assinatura2.id,
+        });
       }
     }
 
-    const nome2 = opts.assinatura2.nome || "—";
-    const cargo2 = opts.assinatura2.cargo || "Instrutor(a)";
+    const nome2 = assinatura2.nome || "—";
+    const cargo2 = assinatura2.cargo || "Instrutor(a)";
 
-    doc.font("AlegreyaSans-Bold").fontSize(20).text(nome2, areaX, baseY, { align: "center", width: areaW });
-    doc.font("AlegreyaSans-Regular").fontSize(14).text(cargo2, areaX, baseY + 25, { align: "center", width: areaW });
+    doc.font(FONT_BOLD).fontSize(20).text(nome2, areaX, baseY, {
+      align: "center",
+      width: areaW,
+    });
+
+    doc.font(FONT_REG).fontSize(14).text(cargo2, areaX, baseY + 25, {
+      align: "center",
+      width: areaW,
+    });
   }
 }
 
-// ✅ atomic write também aqui
 async function gerarPdfTemporario(certificado, filenamePrefix = "certificado", opts = {}) {
   const tempDir = path.join(__dirname, "..", "..", "temp");
   await ensureDir(tempDir);
 
-  const filename = `${filenamePrefix}_${safeFilename(String(certificado.id || Date.now()))}.pdf`;
+  const filename = `${filenamePrefix}_${safeFilename(
+    String(certificado.id || Date.now())
+  )}.pdf`;
+
   const caminho = path.join(tempDir, filename);
   const tmpPath = caminho + ".tmp";
 
+  logCert("PDF_INICIO", {
+    certificado_id: certificado?.id || null,
+    caminho,
+    modalidade: certificado?.modalidade || null,
+    assinatura2: Boolean(opts?.assinatura2),
+  });
+
   await new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: "A4", margin: 50, layout: "landscape" });
+    const doc = new PDFDocument({
+      size: "A4",
+      margin: 50,
+      layout: "landscape",
+      bufferPages: false,
+    });
+
     const stream = fs.createWriteStream(tmpPath);
+    const registeredFonts = registerFonts(doc);
 
     const onError = (err) => {
       try {
@@ -437,9 +642,18 @@ async function gerarPdfTemporario(certificado, filenamePrefix = "certificado", o
     doc.on("error", onError);
 
     doc.pipe(stream);
-    registerFonts(doc);
-    desenharCertificado(doc, certificado, opts);
-    doc.end();
+
+    try {
+      desenharCertificado(doc, certificado, {
+        ...opts,
+        registeredFonts,
+      });
+      doc.end();
+    } catch (e) {
+      onError(e);
+      return;
+    }
+
     stream.on("finish", resolve);
   });
 
@@ -448,7 +662,49 @@ async function gerarPdfTemporario(certificado, filenamePrefix = "certificado", o
     await fsp.unlink(tmpPath).catch(() => {});
   });
 
+  logCert("PDF_OK", {
+    certificado_id: certificado?.id || null,
+    caminho,
+  });
+
   return caminho;
+}
+
+/* ========================= Email ========================= */
+
+function montarTransporter() {
+  if (process.env.SMTP_HOST) {
+    if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+      throw new Error(
+        "Configuração SMTP incompleta: SMTP_HOST definido sem SMTP_USER/SMTP_PASS."
+      );
+    }
+
+    return nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT || 587),
+      secure:
+        String(process.env.SMTP_SECURE || "").toLowerCase() === "true",
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS,
+      },
+    });
+  }
+
+  if (!process.env.EMAIL_REMETENTE || !process.env.EMAIL_SENHA) {
+    throw new Error(
+      "Configuração de e-mail ausente: defina SMTP_* ou EMAIL_REMETENTE/EMAIL_SENHA."
+    );
+  }
+
+  return nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+      user: process.env.EMAIL_REMETENTE,
+      pass: process.env.EMAIL_SENHA,
+    },
+  });
 }
 
 /* ========================= Handlers ========================= */
@@ -460,61 +716,113 @@ async function criarCertificadoAvulso(req, res) {
   const db = getDb(req);
 
   try {
-    let { nome, cpf, email, curso, carga_horaria, data_inicio, data_fim, modalidade, titulo_trabalho } = req.body || {};
+    let {
+      nome,
+      cpf,
+      email,
+      curso,
+      carga_horaria,
+      data_inicio,
+      data_fim,
+      modalidade,
+      titulo_trabalho,
+    } = req.body || {};
 
     nome = (nome || "").trim();
     curso = (curso || "").trim();
     email = (email || "").trim();
     cpf = onlyDigits(cpf || "");
     modalidade = normalizarModalidade(modalidade);
+    titulo_trabalho =
+      titulo_trabalho && String(titulo_trabalho).trim() !== ""
+        ? String(titulo_trabalho).trim()
+        : null;
 
     let carga = null;
-    if (carga_horaria !== undefined && String(carga_horaria).trim() !== "") {
+    if (
+      carga_horaria !== undefined &&
+      String(carga_horaria).trim() !== ""
+    ) {
       const n = Number(carga_horaria);
       if (Number.isFinite(n) && n > 0) carga = n;
     }
+
     if (modalidadeNaoTemCarga(modalidade)) carga = null;
 
     if (!nome || !curso || !email) {
-      return res.status(400).json({ erro: "Campos obrigatórios: nome, e-mail e curso." });
+      return res.status(400).json({
+        erro: "Campos obrigatórios: nome, e-mail e curso.",
+      });
     }
+
     if (!validarEmail(email)) {
       return res.status(400).json({ erro: "E-mail inválido." });
     }
-    if (modalidadeExigeTitulo(modalidade)) {
-      if (!titulo_trabalho || String(titulo_trabalho).trim() === "") {
-        return res.status(400).json({ erro: "Título do trabalho é obrigatório para a modalidade selecionada." });
-      }
+
+    if (modalidadeExigeTitulo(modalidade) && !titulo_trabalho) {
+      return res.status(400).json({
+        erro: "Título do trabalho é obrigatório para a modalidade selecionada.",
+      });
     }
 
-    // ✅ datas: se vierem em YYYY-MM-DD, mantém como string (date-only safe)
     const di = data_inicio ? String(data_inicio).trim() : null;
-    const df = data_fim && String(data_fim).trim() !== "" ? String(data_fim).trim() : di;
+    const df =
+      data_fim && String(data_fim).trim() !== ""
+        ? String(data_fim).trim()
+        : di;
 
-    // valida formato (se informado)
-    if (di && !isYmd(di)) return res.status(400).json({ erro: "data_inicio inválida. Use AAAA-MM-DD." });
-    if (df && !isYmd(df)) return res.status(400).json({ erro: "data_fim inválida. Use AAAA-MM-DD." });
+    if (di && !isYmd(di)) {
+      return res.status(400).json({
+        erro: "data_inicio inválida. Use AAAA-MM-DD.",
+      });
+    }
 
-    // opcional: garante ordem di<=df
+    if (df && !isYmd(df)) {
+      return res.status(400).json({
+        erro: "data_fim inválida. Use AAAA-MM-DD.",
+      });
+    }
+
     if (di && df) {
       const d1 = ymdToLocalDate(di);
       const d2 = ymdToLocalDate(df);
       if (d1 && d2 && d1.getTime() > d2.getTime()) {
-        return res.status(400).json({ erro: "data_fim deve ser maior ou igual a data_inicio." });
+        return res.status(400).json({
+          erro: "data_fim deve ser maior ou igual a data_inicio.",
+        });
       }
     }
 
+    logCert("CRIAR_INICIO", {
+      nome,
+      email,
+      curso,
+      modalidade,
+      possuiCpf: Boolean(cpf),
+      possuiCarga: Boolean(carga),
+      data_inicio: di,
+      data_fim: df,
+    });
+
     const { rows } = await db.query(
-      `INSERT INTO certificados_avulsos
+      `
+      INSERT INTO certificados_avulsos
         (nome, cpf, email, curso, carga_horaria, data_inicio, data_fim, enviado, modalidade, titulo_trabalho)
-       VALUES ($1,   $2,  $3,   $4,    $5,            $6::date,   $7::date,  false,    $8,         $9)
-       RETURNING *`,
-      [nome, cpf, email, curso, carga, di, df, modalidade, titulo_trabalho || null]
+      VALUES
+        ($1,   $2,  $3,   $4,    $5,            $6::date,   $7::date,  false,    $8,         $9)
+      RETURNING *
+      `,
+      [nome, cpf || null, email, curso, carga, di, df, modalidade, titulo_trabalho]
     );
+
+    logCert("CRIAR_OK", {
+      certificado_id: rows?.[0]?.id || null,
+      modalidade,
+    });
 
     return res.status(201).json(rows[0]);
   } catch (erro) {
-    console.error("❌ Erro ao criar certificado avulso:", IS_DEV ? erro : erro?.message);
+    logCertError("CRIAR", erro);
     return res.status(500).json({ erro: "Erro ao criar certificado avulso." });
   }
 }
@@ -526,10 +834,15 @@ async function listarCertificadosAvulsos(req, res) {
   const db = getDb(req);
 
   try {
-    const { rows } = await db.query("SELECT * FROM certificados_avulsos ORDER BY id DESC");
+    const { rows } = await db.query(
+      "SELECT * FROM certificados_avulsos ORDER BY id DESC"
+    );
+
+    logCert("LISTAR_OK", { total: rows.length });
+
     return res.json(rows);
   } catch (erro) {
-    console.error("❌ Erro ao listar certificados avulsos:", IS_DEV ? erro : erro?.message);
+    logCertError("LISTAR", erro);
     return res.status(500).json({ erro: "Erro ao listar certificados avulsos." });
   }
 }
@@ -547,7 +860,8 @@ async function listarAssinaturas(req, res) {
       SELECT a.usuario_id AS id, u.nome, u.cargo
       FROM assinaturas a
       JOIN usuarios u ON u.id = a.usuario_id
-      WHERE a.imagem_base64 IS NOT NULL AND a.imagem_base64 <> ''
+      WHERE a.imagem_base64 IS NOT NULL
+        AND a.imagem_base64 <> ''
       ORDER BY u.nome ASC
       `
     );
@@ -559,9 +873,11 @@ async function listarAssinaturas(req, res) {
       tem_assinatura: true,
     }));
 
+    logCert("ASSINATURAS_OK", { total: lista.length });
+
     return res.json(lista);
   } catch (erro) {
-    console.error("❌ Erro ao listar assinaturas:", IS_DEV ? erro : erro?.message);
+    logCertError("ASSINATURAS_LISTAR", erro);
     return res.status(500).json({ erro: "Erro ao listar assinaturas." });
   }
 }
@@ -575,20 +891,35 @@ async function gerarPdfCertificado(req, res) {
   const id = toIntId(req.params.id);
   const assinatura2_id = toIntId(req.query.assinatura2_id);
 
-  let caminhoTemp;
+  let caminhoTemp = null;
 
   try {
-    if (!id) return res.status(400).json({ erro: "ID inválido." });
+    if (!id) {
+      return res.status(400).json({ erro: "ID inválido." });
+    }
 
-    const { rows } = await db.query("SELECT * FROM certificados_avulsos WHERE id = $1", [id]);
-    if (!rows.length) return res.status(404).json({ erro: "Certificado não encontrado." });
+    logCert("PDF_ROUTE_INICIO", {
+      certificado_id: id,
+      assinatura2_id,
+      modalidade_override: req.query.modalidade || null,
+    });
+
+    const { rows } = await db.query(
+      "SELECT * FROM certificados_avulsos WHERE id = $1",
+      [id]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ erro: "Certificado não encontrado." });
+    }
 
     const certificado = { ...rows[0] };
 
-    // Override opcional (debug)
     if (req.query.modalidade) {
       certificado.modalidade = normalizarModalidade(req.query.modalidade);
-      if (modalidadeNaoTemCarga(certificado.modalidade)) certificado.carga_horaria = null;
+      if (modalidadeNaoTemCarga(certificado.modalidade)) {
+        certificado.carga_horaria = null;
+      }
     }
 
     const assinatura2 = await carregarAssinatura2(req, assinatura2_id);
@@ -598,25 +929,46 @@ async function gerarPdfCertificado(req, res) {
 
     const outName = safeFilename(`certificado_${id}.pdf`);
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename="${outName}"`);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${outName}"`
+    );
     res.setHeader("Cache-Control", "no-store");
 
     const stream = fs.createReadStream(caminhoTemp);
-    stream.on("close", async () => {
-      await fsp.unlink(caminhoTemp).catch(() => {});
-    });
+
+    const cleanup = async () => {
+      if (caminhoTemp) {
+        await fsp.unlink(caminhoTemp).catch(() => {});
+      }
+    };
+
+    stream.on("close", cleanup);
     stream.on("error", async (err) => {
-      console.error("❌ Erro ao ler PDF:", err);
-      await fsp.unlink(caminhoTemp).catch(() => {});
+      logCertError("PDF_STREAM", err, { certificado_id: id, caminhoTemp });
+      await cleanup();
       if (!res.headersSent) res.status(500).end();
+    });
+
+    res.on("close", cleanup);
+
+    logCert("PDF_ROUTE_OK", {
+      certificado_id: id,
+      caminhoTemp,
     });
 
     return stream.pipe(res);
   } catch (erro) {
-    console.error("❌ Erro no gerarPdfCertificado:", IS_DEV ? erro : erro?.message);
+    logCertError("PDF_ROUTE", erro, {
+      certificado_id: id,
+      assinatura2_id,
+      caminhoTemp,
+    });
+
     try {
       if (caminhoTemp) await fsp.unlink(caminhoTemp).catch(() => {});
     } catch {}
+
     return res.status(500).json({ erro: "Erro ao gerar PDF." });
   }
 }
@@ -630,30 +982,91 @@ async function enviarPorEmail(req, res) {
   const id = toIntId(req.params.id);
   const assinatura2_id = toIntId(req.query.assinatura2_id);
 
-  let caminhoTemp;
+  let caminhoTemp = null;
 
   try {
-    if (!id) return res.status(400).json({ erro: "ID inválido." });
+    if (!id) {
+      console.error("[CERT_AVULSO][EMAIL][VALIDACAO] ID inválido:", req.params.id);
+      return res.status(400).json({ erro: "ID inválido." });
+    }
 
-    const { rows } = await db.query("SELECT * FROM certificados_avulsos WHERE id = $1", [id]);
-    if (!rows.length) return res.status(404).json({ erro: "Certificado não encontrado." });
+    console.log("[CERT_AVULSO][EMAIL][INICIO]", {
+      id,
+      assinatura2_id,
+      query: req.query,
+    });
+
+    const { rows } = await db.query(
+      "SELECT * FROM certificados_avulsos WHERE id = $1",
+      [id]
+    );
+
+    console.log("[CERT_AVULSO][EMAIL][BUSCA_CERTIFICADO]", {
+      id,
+      encontrados: rows.length,
+    });
+
+    if (!rows.length) {
+      return res.status(404).json({ erro: "Certificado não encontrado." });
+    }
 
     const certificado = { ...rows[0] };
 
+    console.log("[CERT_AVULSO][EMAIL][CERTIFICADO]", {
+      id: certificado.id,
+      nome: certificado.nome,
+      email: certificado.email,
+      modalidade: certificado.modalidade,
+      data_inicio: certificado.data_inicio,
+      data_fim: certificado.data_fim,
+      carga_horaria: certificado.carga_horaria,
+    });
+
     if (!validarEmail(certificado.email)) {
-      return res.status(400).json({ erro: "O registro possui e-mail inválido." });
+      console.error("[CERT_AVULSO][EMAIL][EMAIL_INVALIDO]", {
+        id,
+        email: certificado.email,
+      });
+      return res.status(400).json({
+        erro: "O registro possui e-mail inválido.",
+      });
     }
 
-    // Override opcional (debug)
     if (req.query.modalidade) {
       certificado.modalidade = normalizarModalidade(req.query.modalidade);
-      if (modalidadeNaoTemCarga(certificado.modalidade)) certificado.carga_horaria = null;
+      if (modalidadeNaoTemCarga(certificado.modalidade)) {
+        certificado.carga_horaria = null;
+      }
     }
 
+    console.log("[CERT_AVULSO][EMAIL][ASSINATURA2][ANTES]", {
+      assinatura2_id,
+    });
+
     const assinatura2 = await carregarAssinatura2(req, assinatura2_id);
+
+    console.log("[CERT_AVULSO][EMAIL][ASSINATURA2][DEPOIS]", {
+      assinatura2_id,
+      encontrada: !!assinatura2,
+      nome: assinatura2?.nome || null,
+      cargo: assinatura2?.cargo || null,
+      temImgBuffer: !!assinatura2?.imgBuffer,
+    });
+
     const opts = assinatura2 ? { assinatura2 } : {};
 
+    console.log("[CERT_AVULSO][EMAIL][PDF][INICIO]", {
+      id,
+      assinatura2: !!assinatura2,
+    });
+
     caminhoTemp = await gerarPdfTemporario(certificado, "certificado", opts);
+
+    console.log("[CERT_AVULSO][EMAIL][PDF][OK]", {
+      id,
+      caminhoTemp,
+      exists: !!caminhoTemp,
+    });
 
     const textoPrincipal = montarTextoModalidade({
       modalidade: certificado.modalidade || "participante",
@@ -664,34 +1077,92 @@ async function enviarPorEmail(req, res) {
       tituloTrabalho: certificado.titulo_trabalho,
     });
 
-    // Transport
-    let transporter;
-    if (process.env.SMTP_HOST) {
-      transporter = nodemailer.createTransport({
-        host: process.env.SMTP_HOST,
-        port: Number(process.env.SMTP_PORT || 587),
-        secure: String(process.env.SMTP_SECURE || "").toLowerCase() === "true",
-        auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-      });
-    } else {
-      transporter = nodemailer.createTransport({
-        service: "gmail",
-        auth: { user: process.env.EMAIL_REMETENTE, pass: process.env.EMAIL_SENHA },
-      });
-    }
+    console.log("[CERT_AVULSO][EMAIL][SMTP][CONFIG]", {
+      usandoSMTPHost: !!process.env.SMTP_HOST,
+      smtpHost: process.env.SMTP_HOST || null,
+      smtpPort: process.env.SMTP_PORT || null,
+      smtpUserPresent: !!process.env.SMTP_USER,
+      smtpPassPresent: !!process.env.SMTP_PASS,
+      emailRemetentePresent: !!process.env.EMAIL_REMETENTE,
+      emailSenhaPresent: !!process.env.EMAIL_SENHA,
+      emailFrom: process.env.EMAIL_FROM || null,
+    });
 
-    if (IS_DEV) {
-      transporter.verify().then(
-        () => console.log("[email] SMTP OK"),
-        (e) => console.warn("[email] SMTP verify falhou:", e?.message || e)
-      );
+    const SMTP_HOST = process.env.SMTP_HOST || process.env.EMAIL_SMTP_HOST;
+const SMTP_PORT = process.env.SMTP_PORT || process.env.EMAIL_SMTP_PORT || 587;
+const SMTP_SECURE =
+  (process.env.SMTP_SECURE || process.env.EMAIL_SMTP_SECURE || "false")
+    .toString()
+    .toLowerCase() === "true";
+const SMTP_USER = process.env.SMTP_USER || process.env.EMAIL_SMTP_USER;
+const SMTP_PASS = process.env.SMTP_PASS || process.env.EMAIL_SMTP_PASS;
+
+const EMAIL_FROM =
+  process.env.EMAIL_FROM ||
+  (
+    process.env.EMAIL_FROM_NAME && process.env.EMAIL_FROM_ADDR
+      ? `"${process.env.EMAIL_FROM_NAME}" <${process.env.EMAIL_FROM_ADDR}>`
+      : null
+  ) ||
+  (SMTP_USER ? `"Escola da Saúde" <${SMTP_USER}>` : null);
+
+const EMAIL_REMETENTE =
+  process.env.EMAIL_REMETENTE || process.env.EMAIL_FROM_ADDR || SMTP_USER;
+const EMAIL_SENHA =
+  process.env.EMAIL_SENHA || process.env.EMAIL_SMTP_PASS || SMTP_PASS;
+
+if (SMTP_HOST) {
+  if (!SMTP_USER || !SMTP_PASS) {
+    throw new Error("SMTP configurado sem usuário/senha. Verifique SMTP_USER/SMTP_PASS ou EMAIL_SMTP_USER/EMAIL_SMTP_PASS.");
+  }
+
+  transporter = nodemailer.createTransport({
+    host: SMTP_HOST,
+    port: Number(SMTP_PORT),
+    secure: SMTP_SECURE,
+    auth: {
+      user: SMTP_USER,
+      pass: SMTP_PASS,
+    },
+  });
+} else {
+  if (!EMAIL_REMETENTE || !EMAIL_SENHA) {
+    throw new Error("Envio por Gmail sem credenciais. Verifique EMAIL_REMETENTE/EMAIL_SENHA.");
+  }
+
+  transporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+      user: EMAIL_REMETENTE,
+      pass: EMAIL_SENHA,
+    },
+  });
+}
+
+    try {
+      await transporter.verify();
+      console.log("[CERT_AVULSO][EMAIL][SMTP][VERIFY_OK]", { id });
+    } catch (smtpErr) {
+      console.error("[CERT_AVULSO][EMAIL][SMTP][VERIFY_ERRO]", {
+        id,
+        message: smtpErr?.message,
+        code: smtpErr?.code,
+        command: smtpErr?.command,
+        response: smtpErr?.response,
+        responseCode: smtpErr?.responseCode,
+      });
+      throw smtpErr;
     }
 
     const remetente =
       process.env.EMAIL_FROM ||
-      (process.env.EMAIL_REMETENTE ? `"Escola da Saúde" <${process.env.EMAIL_REMETENTE}>` : "Escola da Saúde <no-reply@escolasaude.local>");
+      (process.env.EMAIL_REMETENTE
+        ? `"Escola da Saúde" <${process.env.EMAIL_REMETENTE}>`
+        : "Escola da Saúde <no-reply@escolasaude.local>");
 
-    const subject = process.env.CERT_AVULSO_SUBJECT || "Seu Certificado — Escola Municipal de Saúde";
+    const subject =
+      process.env.CERT_AVULSO_SUBJECT ||
+      "Seu Certificado — Escola Municipal de Saúde";
 
     const html = `
       <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; line-height:1.6; color:#111;">
@@ -705,7 +1176,15 @@ async function enviarPorEmail(req, res) {
       </div>
     `;
 
-    await transporter.sendMail({
+    console.log("[CERT_AVULSO][EMAIL][SENDMAIL][INICIO]", {
+      id,
+      to: certificado.email,
+      from: remetente,
+      subject,
+      caminhoTemp,
+    });
+
+    const info = await transporter.sendMail({
       from: remetente,
       to: certificado.email,
       subject,
@@ -721,20 +1200,62 @@ Atenciosamente,
 Equipe da Escola da Saúde
 `,
       html,
-      attachments: [{ filename: "certificado.pdf", path: caminhoTemp, contentType: "application/pdf" }],
+      attachments: [
+        {
+          filename: "certificado.pdf",
+          path: caminhoTemp,
+          contentType: "application/pdf",
+        },
+      ],
     });
 
-    await db.query("UPDATE certificados_avulsos SET enviado = true WHERE id = $1", [id]);
+    console.log("[CERT_AVULSO][EMAIL][SENDMAIL][OK]", {
+      id,
+      messageId: info?.messageId || null,
+      accepted: info?.accepted || [],
+      rejected: info?.rejected || [],
+      response: info?.response || null,
+    });
 
-    return res.status(200).json({ mensagem: "Certificado enviado com sucesso." });
+    await db.query(
+      "UPDATE certificados_avulsos SET enviado = true WHERE id = $1",
+      [id]
+    );
+
+    console.log("[CERT_AVULSO][EMAIL][UPDATE_OK]", { id });
+
+    return res.status(200).json({
+      mensagem: "Certificado enviado com sucesso.",
+    });
   } catch (erro) {
-    console.error("❌ Erro ao enviar certificado por e-mail:", IS_DEV ? erro : erro?.message);
-    return res.status(500).json({ erro: "Erro ao enviar certificado." });
+    console.error("[CERT_AVULSO][EMAIL][ERRO_FINAL]", {
+      id,
+      assinatura2_id,
+      caminhoTemp,
+      message: erro?.message || String(erro),
+      code: erro?.code || null,
+      command: erro?.command || null,
+      response: erro?.response || null,
+      responseCode: erro?.responseCode || null,
+      stack: IS_DEV ? erro?.stack || null : undefined,
+    });
+
+    return res.status(500).json({
+      erro: IS_DEV
+        ? `Erro ao enviar certificado: ${erro?.message || "falha desconhecida"}`
+        : "Erro ao enviar certificado.",
+    });
   } finally {
     if (caminhoTemp) {
       try {
         await fsp.unlink(caminhoTemp).catch(() => {});
-      } catch {}
+        console.log("[CERT_AVULSO][EMAIL][CLEANUP_OK]", { caminhoTemp });
+      } catch (cleanupErr) {
+        console.error("[CERT_AVULSO][EMAIL][CLEANUP_ERRO]", {
+          caminhoTemp,
+          message: cleanupErr?.message || String(cleanupErr),
+        });
+      }
     }
   }
 }

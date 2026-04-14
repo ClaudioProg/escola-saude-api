@@ -202,7 +202,7 @@ export default function Footer() {
               Atendimento e suporte
             </p>
             <p className="mt-1 leading-relaxed">
-              Em caso de dúvidas sobre inscrições, certificados e acesso, utilize os contatos acima.
+              Segunda a sexta-feira das 08h às 18h Via Whatsapp (13) 99618-2615
             </p>
           </div>
         </div>

@@ -10,6 +10,9 @@
 // - rota pública explícita para redefinição de senha
 // - PrivateShell aplica AppShell + PrivateRoute
 // - Suspense fallback acessível
+// - lazy loading também para páginas admin pesadas
+// - alias explícito para certificados avulsos
+// - diagnóstico reforçado para rota crítica de certificados avulsos
 
 import {
   BrowserRouter,
@@ -37,9 +40,6 @@ import {
 
 import PrivateRoute from "./components/PrivateRoute";
 import EscolaAppShell from "./layout/EscolaAppShell";
-
-import CertificadosAvulsos from "./pages/CertificadosAvulsos";
-import QRCodesEventosAdmin from "./pages/QRCodesEventosAdmin";
 
 /* 🔄 Lazy loading das páginas */
 const Login = lazy(() => import("./pages/Login"));
@@ -89,6 +89,8 @@ const VotacaoUsuario = lazy(() => import("./pages/VotacaoUsuario"));
 const AgendaSalasAdmin = lazy(() => import("./pages/AgendaSalasAdmin"));
 const AdminChamadaForm = lazy(() => import("./pages/AdminChamadaForm"));
 const CalendarioBloqueiosAdmin = lazy(() => import("./pages/CalendarioBloqueiosAdmin"));
+const CertificadosAvulsos = lazy(() => import("./pages/CertificadosAvulsos"));
+const QRCodesEventosAdmin = lazy(() => import("./pages/QRCodesEventosAdmin"));
 
 // ✅ Confirmação via QR
 const ConfirmarPresenca = lazy(() => import("./pages/ConfirmarPresenca"));
@@ -155,7 +157,8 @@ function RouteChangeAnnouncer() {
 
   useEffect(() => {
     const rawPath = location.pathname.replace(/^\/+/, "") || "início";
-    const safePath = rawPath.length > 120 ? `${rawPath.slice(0, 117)}...` : rawPath;
+    const safePath =
+      rawPath.length > 120 ? `${rawPath.slice(0, 117)}...` : rawPath;
     setMessage(`Página carregada: ${safePath}`);
   }, [location]);
 
@@ -181,6 +184,29 @@ function PublicRouteDiagnostics() {
     if (!isAuthPublicRoute) return;
 
     debugLog("[APP][PUBLIC_ROUTE]", {
+      pathname: location.pathname,
+      search: location.search,
+      hash: location.hash,
+    });
+  }, [location]);
+
+  return null;
+}
+
+/* Logs estratégicos para telas críticas */
+function CriticalRouteDiagnostics() {
+  const location = useLocation();
+
+  useEffect(() => {
+    const path = location.pathname || "/";
+    const isCriticalRoute =
+      path.startsWith("/certificados-avulsos") ||
+      path.startsWith("/admin/certificados-avulsos") ||
+      path.startsWith("/gestao-certificados");
+
+    if (!isCriticalRoute) return;
+
+    debugLog("[APP][CRITICAL_ROUTE]", {
       pathname: location.pathname,
       search: location.search,
       hash: location.hash,
@@ -383,7 +409,9 @@ function ValidarPresencaRouter() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-zinc-900">
-      <div className="text-sm text-gray-600 dark:text-gray-200">Redirecionando…</div>
+      <div className="text-sm text-gray-600 dark:text-gray-200">
+        Redirecionando…
+      </div>
     </div>
   );
 }
@@ -642,6 +670,7 @@ export default function App() {
       <div className="min-h-screen">
         <RouteChangeAnnouncer />
         <PublicRouteDiagnostics />
+        <CriticalRouteDiagnostics />
         <ScrollUnlockOnRouteChange />
         <ScrollToTop />
         <PwaUpdatePrompt />
@@ -876,6 +905,10 @@ export default function App() {
                     <CertificadosAvulsos />
                   </PrivateRoute>
                 }
+              />
+              <Route
+                path="admin/certificados-avulsos"
+                element={<Navigate to="/certificados-avulsos" replace />}
               />
               <Route
                 path="gestao-presenca"

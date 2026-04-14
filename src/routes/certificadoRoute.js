@@ -17,7 +17,9 @@ const requireAuth =
 
 if (typeof requireAuth !== "function") {
   console.error("[certificadoRoute] authMiddleware inválido:", _auth);
-  throw new Error("authMiddleware não é função (verifique exports em src/auth/authMiddleware.js)");
+  throw new Error(
+    "authMiddleware não é função (verifique exports em src/auth/authMiddleware.js)"
+  );
 }
 
 /* ───────────────── Roles resiliente ───────────────── */
@@ -25,11 +27,16 @@ const _roles = require("../middlewares/authorize");
 const authorizeRoles =
   typeof _roles === "function"
     ? _roles
-    : _roles?.default || _roles?.authorizeRoles || _roles?.authorizeRole || _roles?.authorize;
+    : _roles?.default ||
+      _roles?.authorizeRoles ||
+      _roles?.authorizeRole ||
+      _roles?.authorize;
 
 if (typeof authorizeRoles !== "function") {
   console.error("[certificadoRoute] authorizeRoles inválido:", _roles);
-  throw new Error("authorizeRoles não é função (verifique exports em src/middlewares/authorize.js)");
+  throw new Error(
+    "authorizeRoles não é função (verifique exports em src/middlewares/authorize.js)"
+  );
 }
 
 const { extrairPerfis } = require("../utils/perfil");
@@ -58,13 +65,20 @@ assertFn("revalidarCertificado", ctrl.revalidarCertificado);
 assertFn("listarArvore", ctrl.listarArvore);
 assertFn("resetTurma", ctrl.resetTurma);
 
+assertFn("criarCertificadoAvulso", avulsoCtrl.criarCertificadoAvulso);
+assertFn("listarCertificadosAvulsos", avulsoCtrl.listarCertificadosAvulsos);
+assertFn("gerarPdfCertificado", avulsoCtrl.gerarPdfCertificado);
+assertFn("enviarPorEmail", avulsoCtrl.enviarPorEmail);
+
 /* =========================
    Helpers (premium)
 ========================= */
 const asyncHandler = (fn) => {
   if (typeof fn !== "function") {
     const got = fn === null ? "null" : Array.isArray(fn) ? "array" : typeof fn;
-    throw new TypeError(`[certificadoRoute] asyncHandler recebeu ${got}, esperado function.`);
+    throw new TypeError(
+      `[certificadoRoute] asyncHandler recebeu ${got}, esperado function.`
+    );
   }
   return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 };
@@ -77,6 +91,22 @@ function getDb(req) {
 function toIntId(v) {
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
+}
+
+function getRequestId(res) {
+  return res.getHeader?.("X-Request-Id") || "no-rid";
+}
+
+function logRoute(scope, req, res, extra = {}) {
+  if (process.env.NODE_ENV === "production") return;
+  console.log(`[CERT_ROUTE][${scope}]`, {
+    rid: getRequestId(res),
+    method: req.method,
+    originalUrl: req.originalUrl,
+    baseUrl: req.baseUrl,
+    path: req.path,
+    ...extra,
+  });
 }
 
 function getUserId(req) {
@@ -116,6 +146,14 @@ function validate(req, res, next) {
   const errors = validationResult(req);
   if (errors.isEmpty()) return next();
 
+  logRoute("VALIDATION_ERROR", req, res, {
+    detalhes: errors.array().map((e) => ({
+      campo: e.path || e.param,
+      msg: e.msg,
+      valor: e.value,
+    })),
+  });
+
   return res.status(400).json({
     ok: false,
     erro: "Parâmetros inválidos.",
@@ -123,8 +161,17 @@ function validate(req, res, next) {
       campo: e.path || e.param,
       msg: e.msg,
     })),
-    requestId: res.getHeader?.("X-Request-Id"),
+    requestId: getRequestId(res),
   });
+}
+
+function isAvulsosLegacyMount(req) {
+  const base = String(req.baseUrl || "");
+  return (
+    base === "/certificados-avulsos" ||
+    base.endsWith("/certificados-avulsos") ||
+    base.includes("/certificados-avulsos")
+  );
 }
 
 /* ───────────────── Middlewares anti-IDOR ───────────────── */
@@ -135,36 +182,57 @@ function ensureBodySelfOrAdmin(req, res, next) {
   const admin = isAdmin(req);
   const bodyId = toIntId(req.body?.usuario_id);
 
+  logRoute("BODY_SELF_OR_ADMIN", req, res, {
+    tokenId,
+    admin,
+    bodyId,
+  });
+
   if (!bodyId) {
     return res.status(400).json({
       erro: "Body inválido: 'usuario_id' numérico é obrigatório.",
+      requestId: getRequestId(res),
     });
   }
 
   if (admin || (tokenId && bodyId === tokenId)) return next();
 
-  return res.status(403).json({ erro: "Acesso negado." });
+  return res.status(403).json({
+    erro: "Acesso negado.",
+    requestId: getRequestId(res),
+  });
 }
 
 /** Admin pode tudo; demais só se o certificado pertencer ao usuário logado */
 async function ensureCertOwnerOrAdmin(req, res, next) {
   try {
-    const rid = res.getHeader?.("X-Request-Id") || "no-rid";
+    const rid = getRequestId(res);
     const tokenId = getUserId(req);
     const perfis = getPerfis(req);
     const admin = perfis.includes("administrador");
     const certId = toIntId(req.params.id);
 
     if (!certId) {
-      return res.status(400).json({ erro: "ID de certificado inválido." });
+      return res.status(400).json({
+        erro: "ID de certificado inválido.",
+        requestId: rid,
+      });
     }
 
-    if (process.env.NODE_ENV !== "production") {
-      console.log("[CERT-AUTH]", { rid, certId, tokenId, perfis, admin });
-    }
+    logRoute("CERT_OWNER_CHECK_INICIO", req, res, {
+      certId,
+      tokenId,
+      perfis,
+      admin,
+    });
 
     if (admin) return next();
-    if (!tokenId) return res.status(401).json({ erro: "Não autenticado." });
+    if (!tokenId) {
+      return res.status(401).json({
+        erro: "Não autenticado.",
+        requestId: rid,
+      });
+    }
 
     const db = getDb(req);
     const q = await db.query(
@@ -172,24 +240,34 @@ async function ensureCertOwnerOrAdmin(req, res, next) {
       [certId]
     );
 
-    if (process.env.NODE_ENV !== "production") {
-      console.log("[CERT-AUTH] DB:", q.rows);
-    }
+    logRoute("CERT_OWNER_CHECK_DB", req, res, {
+      certId,
+      rowCount: q.rowCount,
+    });
 
     if (q.rowCount === 0) {
-      return res.status(404).json({ erro: "Certificado não encontrado." });
+      return res.status(404).json({
+        erro: "Certificado não encontrado.",
+        requestId: rid,
+      });
     }
 
     if (Number(q.rows[0].usuario_id) !== Number(tokenId)) {
-      return res.status(403).json({ erro: "Acesso negado ao certificado." });
+      return res.status(403).json({
+        erro: "Acesso negado ao certificado.",
+        requestId: rid,
+      });
     }
 
     return next();
   } catch (e) {
-    console.error("[CERT-AUTH-ERRO]", e?.stack || e);
+    console.error("[CERT_ROUTE][CERT_OWNER_CHECK][ERRO]", e?.stack || e);
     return res.status(500).json({
-      erro: process.env.NODE_ENV !== "production" ? e.message : "Erro de autorização.",
-      requestId: res.getHeader?.("X-Request-Id"),
+      erro:
+        process.env.NODE_ENV !== "production"
+          ? e.message
+          : "Erro de autorização.",
+      requestId: getRequestId(res),
     });
   }
 }
@@ -218,7 +296,9 @@ const resetLimiter = rateLimit({
   max: 30,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { erro: "Muitas operações sensíveis. Aguarde antes de tentar novamente." },
+  message: {
+    erro: "Muitas operações sensíveis. Aguarde antes de tentar novamente.",
+  },
 });
 
 const pdfLimiter = rateLimit({
@@ -234,7 +314,9 @@ const emailLimiter = rateLimit({
   max: 30,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { erro: "Muitas solicitações de e-mail. Aguarde antes de tentar novamente." },
+  message: {
+    erro: "Muitas solicitações de e-mail. Aguarde antes de tentar novamente.",
+  },
 });
 
 /* =========================
@@ -248,15 +330,30 @@ router.get(
   "/validar",
   publicLimiter,
   [
-    query("usuario_id").isInt({ min: 1 }).withMessage("usuario_id inválido.").toInt(),
-    query("evento_id").isInt({ min: 1 }).withMessage("evento_id inválido.").toInt(),
-    query("turma_id").isInt({ min: 1 }).withMessage("turma_id inválido.").toInt(),
+    query("usuario_id")
+      .isInt({ min: 1 })
+      .withMessage("usuario_id inválido.")
+      .toInt(),
+    query("evento_id")
+      .isInt({ min: 1 })
+      .withMessage("evento_id inválido.")
+      .toInt(),
+    query("turma_id")
+      .isInt({ min: 1 })
+      .withMessage("turma_id inválido.")
+      .toInt(),
   ],
   validate,
   asyncHandler(async (req, res) => {
     const uid = req.query.usuario_id;
     const eid = req.query.evento_id;
     const tid = req.query.turma_id;
+
+    logRoute("VALIDAR_PUBLICO", req, res, {
+      usuario_id: uid,
+      evento_id: eid,
+      turma_id: tid,
+    });
 
     const db = getDb(req);
     const q = await db.query(
@@ -313,9 +410,13 @@ router.get(
 router.use(requireAuth, privateLimiter);
 
 // sem cache para dados pessoais/arquivos
-router.use((_req, res, next) => {
+router.use((req, res, next) => {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Pragma", "no-cache");
+  logRoute("AUTH_AREA", req, res, {
+    userId: getUserId(req),
+    perfis: getPerfis(req),
+  });
   next();
 });
 
@@ -326,19 +427,118 @@ router.get(
   "/",
   authorizeRoles("administrador"),
   asyncHandler(async (req, res, next) => {
-    const base = String(req.baseUrl || "");
-    const isAvulsosMount =
-      base === "/certificados-avulsos" ||
-      base.endsWith("/certificados-avulsos") ||
-      base.includes("/certificados-avulsos");
+    const legacy = isAvulsosLegacyMount(req);
 
-    if (!isAvulsosMount) return next();
+    logRoute("ROOT_ENTRYPOINT_GET", req, res, { legacy });
 
-    if (typeof avulsoCtrl?.listarCertificadosAvulsos === "function") {
-      return avulsoCtrl.listarCertificadosAvulsos(req, res, next);
-    }
+    if (!legacy) return next();
 
-    return res.json([]);
+    return avulsoCtrl.listarCertificadosAvulsos(req, res, next);
+  })
+);
+
+router.post(
+  "/",
+  authorizeRoles("administrador"),
+  [
+    body("nome")
+      .trim()
+      .notEmpty()
+      .withMessage("nome é obrigatório."),
+    body("email")
+      .trim()
+      .notEmpty()
+      .withMessage("e-mail é obrigatório.")
+      .isEmail()
+      .withMessage("e-mail inválido."),
+    body("curso")
+      .trim()
+      .notEmpty()
+      .withMessage("curso é obrigatório."),
+    body("data_inicio")
+      .optional({ nullable: true, checkFalsy: true })
+      .matches(/^\d{4}-\d{2}-\d{2}$/)
+      .withMessage("data_inicio deve estar em AAAA-MM-DD."),
+    body("data_fim")
+      .optional({ nullable: true, checkFalsy: true })
+      .matches(/^\d{4}-\d{2}-\d{2}$/)
+      .withMessage("data_fim deve estar em AAAA-MM-DD."),
+    body("modalidade")
+      .optional({ nullable: true, checkFalsy: true })
+      .isString()
+      .withMessage("modalidade inválida."),
+  ],
+  validate,
+  asyncHandler(async (req, res, next) => {
+    const legacy = isAvulsosLegacyMount(req);
+
+    logRoute("ROOT_ENTRYPOINT_POST", req, res, { legacy });
+
+    if (!legacy) return next();
+
+    return avulsoCtrl.criarCertificadoAvulso(req, res, next);
+  })
+);
+
+router.get(
+  "/:id/pdf",
+  authorizeRoles("administrador"),
+  pdfLimiter,
+  [
+    param("id").isInt({ min: 1 }).withMessage("id inválido.").toInt(),
+    query("assinatura2_id")
+      .optional()
+      .isInt({ min: 1 })
+      .withMessage("assinatura2_id deve ser inteiro >= 1.")
+      .toInt(),
+    query("modalidade")
+      .optional()
+      .isString()
+      .withMessage("modalidade inválida."),
+  ],
+  validate,
+  asyncHandler(async (req, res, next) => {
+    const legacy = isAvulsosLegacyMount(req);
+
+    logRoute("ROOT_ENTRYPOINT_PDF", req, res, {
+      legacy,
+      id: req.params.id,
+    });
+
+    if (!legacy) return next();
+
+    return avulsoCtrl.gerarPdfCertificado(req, res, next);
+  })
+);
+
+router.post(
+  "/:id/enviar",
+  authorizeRoles("administrador"),
+  emailLimiter,
+  [
+    param("id").isInt({ min: 1 }).withMessage("id inválido.").toInt(),
+    query("assinatura2_id")
+      .optional()
+      .isInt({ min: 1 })
+      .withMessage("assinatura2_id deve ser inteiro >= 1.")
+      .toInt(),
+    query("modalidade")
+      .optional()
+      .isString()
+      .withMessage("modalidade inválida."),
+  ],
+  validate,
+  asyncHandler(async (req, res, next) => {
+    const legacy = isAvulsosLegacyMount(req);
+
+    logRoute("ROOT_ENTRYPOINT_EMAIL", req, res, {
+      legacy,
+      id: req.params.id,
+    });
+
+    if (!legacy) return next();
+
+    return avulsoCtrl.enviarPorEmail(req, res, next);
   })
 );
 
@@ -372,9 +572,18 @@ router.post(
   "/gerar",
   authorizeRoles("administrador", "instrutor", "usuario"),
   [
-    body("usuario_id").isInt({ min: 1 }).withMessage("usuario_id inválido.").toInt(),
-    body("evento_id").isInt({ min: 1 }).withMessage("evento_id inválido.").toInt(),
-    body("turma_id").isInt({ min: 1 }).withMessage("turma_id inválido.").toInt(),
+    body("usuario_id")
+      .isInt({ min: 1 })
+      .withMessage("usuario_id inválido.")
+      .toInt(),
+    body("evento_id")
+      .isInt({ min: 1 })
+      .withMessage("evento_id inválido.")
+      .toInt(),
+    body("turma_id")
+      .isInt({ min: 1 })
+      .withMessage("turma_id inválido.")
+      .toInt(),
     body("tipo")
       .isIn(["usuario", "instrutor"])
       .withMessage("tipo deve ser 'usuario' ou 'instrutor'."),
@@ -399,6 +608,15 @@ router.post(
    /api/certificado/admin/...
 ========================= */
 const admin = express.Router();
+
+admin.use((req, res, next) => {
+  logRoute("ADMIN_AREA", req, res, {
+    userId: getUserId(req),
+    perfis: getPerfis(req),
+  });
+  next();
+});
+
 admin.use(authorizeRoles("administrador"));
 
 // 🌳 árvore: eventos → turmas → participantes
@@ -413,7 +631,40 @@ admin.post(
 );
 
 // Avulsos (admin)
-admin.post("/avulso", asyncHandler(avulsoCtrl.criarCertificadoAvulso));
+admin.post(
+  "/avulso",
+  [
+    body("nome")
+      .trim()
+      .notEmpty()
+      .withMessage("nome é obrigatório."),
+    body("email")
+      .trim()
+      .notEmpty()
+      .withMessage("e-mail é obrigatório.")
+      .isEmail()
+      .withMessage("e-mail inválido."),
+    body("curso")
+      .trim()
+      .notEmpty()
+      .withMessage("curso é obrigatório."),
+    body("data_inicio")
+      .optional({ nullable: true, checkFalsy: true })
+      .matches(/^\d{4}-\d{2}-\d{2}$/)
+      .withMessage("data_inicio deve estar em AAAA-MM-DD."),
+    body("data_fim")
+      .optional({ nullable: true, checkFalsy: true })
+      .matches(/^\d{4}-\d{2}-\d{2}$/)
+      .withMessage("data_fim deve estar em AAAA-MM-DD."),
+    body("modalidade")
+      .optional({ nullable: true, checkFalsy: true })
+      .isString()
+      .withMessage("modalidade inválida."),
+  ],
+  validate,
+  asyncHandler(avulsoCtrl.criarCertificadoAvulso)
+);
+
 admin.get("/avulso", asyncHandler(avulsoCtrl.listarCertificadosAvulsos));
 
 admin.get(
@@ -421,15 +672,15 @@ admin.get(
   pdfLimiter,
   [
     param("id").isInt({ min: 1 }).withMessage("id inválido.").toInt(),
-    query("palestrante")
-      .optional()
-      .isIn(["1", "0", "true", "false"])
-      .withMessage("palestrante deve ser 1/0/true/false."),
     query("assinatura2_id")
       .optional()
       .isInt({ min: 1 })
       .withMessage("assinatura2_id deve ser inteiro >= 1.")
       .toInt(),
+    query("modalidade")
+      .optional()
+      .isString()
+      .withMessage("modalidade inválida."),
   ],
   validate,
   asyncHandler(avulsoCtrl.gerarPdfCertificado)
@@ -438,7 +689,18 @@ admin.get(
 admin.post(
   "/avulso/:id/enviar",
   emailLimiter,
-  [param("id").isInt({ min: 1 }).withMessage("id inválido.").toInt()],
+  [
+    param("id").isInt({ min: 1 }).withMessage("id inválido.").toInt(),
+    query("assinatura2_id")
+      .optional()
+      .isInt({ min: 1 })
+      .withMessage("assinatura2_id deve ser inteiro >= 1.")
+      .toInt(),
+    query("modalidade")
+      .optional()
+      .isString()
+      .withMessage("modalidade inválida."),
+  ],
   validate,
   asyncHandler(avulsoCtrl.enviarPorEmail)
 );
@@ -473,6 +735,35 @@ router.get(
 router.post(
   "/avulso",
   authorizeRoles("administrador"),
+  [
+    body("nome")
+      .trim()
+      .notEmpty()
+      .withMessage("nome é obrigatório."),
+    body("email")
+      .trim()
+      .notEmpty()
+      .withMessage("e-mail é obrigatório.")
+      .isEmail()
+      .withMessage("e-mail inválido."),
+    body("curso")
+      .trim()
+      .notEmpty()
+      .withMessage("curso é obrigatório."),
+    body("data_inicio")
+      .optional({ nullable: true, checkFalsy: true })
+      .matches(/^\d{4}-\d{2}-\d{2}$/)
+      .withMessage("data_inicio deve estar em AAAA-MM-DD."),
+    body("data_fim")
+      .optional({ nullable: true, checkFalsy: true })
+      .matches(/^\d{4}-\d{2}-\d{2}$/)
+      .withMessage("data_fim deve estar em AAAA-MM-DD."),
+    body("modalidade")
+      .optional({ nullable: true, checkFalsy: true })
+      .isString()
+      .withMessage("modalidade inválida."),
+  ],
+  validate,
   asyncHandler(avulsoCtrl.criarCertificadoAvulso)
 );
 
@@ -482,15 +773,15 @@ router.get(
   pdfLimiter,
   [
     param("id").isInt({ min: 1 }).withMessage("id inválido.").toInt(),
-    query("palestrante")
-      .optional()
-      .isIn(["1", "0", "true", "false"])
-      .withMessage("palestrante deve ser 1/0/true/false."),
     query("assinatura2_id")
       .optional()
       .isInt({ min: 1 })
       .withMessage("assinatura2_id deve ser inteiro >= 1.")
       .toInt(),
+    query("modalidade")
+      .optional()
+      .isString()
+      .withMessage("modalidade inválida."),
   ],
   validate,
   asyncHandler(avulsoCtrl.gerarPdfCertificado)
@@ -500,7 +791,18 @@ router.post(
   "/avulso/:id/enviar",
   authorizeRoles("administrador"),
   emailLimiter,
-  [param("id").isInt({ min: 1 }).withMessage("id inválido.").toInt()],
+  [
+    param("id").isInt({ min: 1 }).withMessage("id inválido.").toInt(),
+    query("assinatura2_id")
+      .optional()
+      .isInt({ min: 1 })
+      .withMessage("assinatura2_id deve ser inteiro >= 1.")
+      .toInt(),
+    query("modalidade")
+      .optional()
+      .isString()
+      .withMessage("modalidade inválida."),
+  ],
   validate,
   asyncHandler(avulsoCtrl.enviarPorEmail)
 );
