@@ -428,18 +428,7 @@ export default function Topbar({
     if (path.startsWith("/usuario")) {
       return "Usuário";
     }
-    if (path.startsWith("/eventos")) {
-      return "Eventos";
-    }
-    if (path.startsWith("/minhas-presencas")) {
-      return "Presenças";
-    }
-    if (path.startsWith("/certificados")) {
-      return "Certificados";
-    }
-    if (path.startsWith("/agenda")) {
-      return "Agenda";
-    }
+
     if (path.startsWith("/avaliacao")) {
       return "Avaliações";
     }
@@ -467,41 +456,10 @@ export default function Topbar({
       <div className="hidden sm:flex items-center gap-2">
         {isUsuario && (
           <>
-            <ChipLink to="/eventos" title="Eventos">
-              <CalendarDays className="w-4 h-4 opacity-80" />
-              Eventos
-            </ChipLink>
-
-            <ChipLink to="/minhas-presencas" title="Minhas presenças">
-              <ListChecks className="w-4 h-4 opacity-80" />
-              Presenças
-            </ChipLink>
-
-            <ChipLink to="/certificados" title="Meus certificados">
-              <FileText className="w-4 h-4 opacity-80" />
-              Certificados
-            </ChipLink>
-          </>
+              </>
         )}
 
-        {(isInstrutor || isAdmin) && (
-          <ChipLink
-            to={isAdmin ? "/agenda-administrador" : "/agenda-instrutor"}
-            title="Agenda"
-          >
-            <CalendarDays className="w-4 h-4 opacity-80" />
-            Agenda
-          </ChipLink>
-        )}
-
-        <ChipLink
-          to={isAdmin ? "/administrador" : isInstrutor ? "/instrutor" : "/usuario/dashboard"}
-          title="Dashboard"
-        >
-          <LayoutDashboard className="w-4 h-4 opacity-80" />
-          Painel
-        </ChipLink>
-      </div>
+              </div>
     );
   }, [showQuickActions, isUsuario, isInstrutor, isAdmin]);
 

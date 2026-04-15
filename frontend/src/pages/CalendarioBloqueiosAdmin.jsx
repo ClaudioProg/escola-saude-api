@@ -194,14 +194,27 @@ export default function CalendarioBloqueiosAdmin() {
         data: toISO(item.data),
         tipo: normTipo(item.tipo),
       })));
-    } catch (err) {
-      if (err?.name === "CanceledError" || err?.code === "ERR_CANCELED") return;
-      console.error("[CalendarioBloqueiosAdmin] erro ao carregar:", err);
-      toast.error("Erro ao carregar calendário de bloqueios.");
+      } catch (err) {
+    const isAbort =
+      err?.name === "AbortError" ||
+      err?.name === "CanceledError" ||
+      err?.code === "ERR_CANCELED" ||
+      String(err?.message || "").toLowerCase().includes("aborted") ||
+      String(err?.message || "").toLowerCase().includes("canceled");
+
+    if (isAbort) {
+      console.log("[CalendarioBloqueiosAdmin] requisição cancelada com segurança.");
+      return;
+    }
+
+    console.error("[CalendarioBloqueiosAdmin] erro ao carregar:", err);
+    toast.error("Erro ao carregar calendário de bloqueios.");
     } finally {
+    if (!signal?.aborted) {
       setLoading(false);
     }
   }
+}
 
   function mudarMes(delta) {
     let novoMes = mesIndex + delta;
@@ -346,8 +359,7 @@ export default function CalendarioBloqueiosAdmin() {
 
   const anosDisponiveis = useMemo(() => {
     const y = new Date().getFullYear();
-    const size = 7;
-    return Array.from({ length: size }, (_, i) => y - 3 + i);
+    return Array.from({ length: 9 }, (_, i) => y - 3 + i);
   }, []);
 
   function prefillDia(dateISO) {

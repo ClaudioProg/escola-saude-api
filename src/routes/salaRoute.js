@@ -32,7 +32,7 @@ const wrapAsync =
     }
   };
 
-// Helper: usa o handler do controller se existir; senão, 501 (premium)
+// Helper: usa o handler do controller se existir; senão, 501
 function safeHandler(fnName) {
   const fn = salaController?.[fnName];
 
@@ -66,7 +66,6 @@ function ensureIdParam(param = "id") {
       });
     }
 
-    // deixa disponível normalizado (opcional p/ controllers)
     req.params[param] = String(id);
     return next();
   };
@@ -79,6 +78,7 @@ function ensureIdParam(param = "id") {
 // =================== Agenda ===================
 // Admin (visão ampla)
 router.get("/agenda-admin", auth, safeHandler("listarAgendaAdmin"));
+
 // Usuário (visão pessoal)
 router.get("/agenda-usuario", auth, safeHandler("listarAgendaUsuario"));
 
@@ -105,12 +105,14 @@ router.delete(
 // =================== Admin ===================
 // CRUD admin de reservas
 router.post("/admin/reservas", auth, safeHandler("criarReservaAdmin"));
+
 router.put(
   "/admin/reservas/:id",
   auth,
   ensureIdParam("id"),
   safeHandler("atualizarReservaAdmin")
 );
+
 router.delete(
   "/admin/reservas/:id",
   auth,
@@ -118,11 +120,24 @@ router.delete(
   safeHandler("excluirReservaAdmin")
 );
 
-// ===== PDFs (Admin) =====
+// =================== PDFs (Admin) ===================
 // Relatório mensal (todas as salas) — query: ?ano=YYYY&mes=1-12
 router.get("/admin/relatorio-mensal", auth, safeHandler("pdfRelatorioMensal"));
 
+// ✅ Termo da reserva assinado — visualização sob demanda
+router.get(
+  "/admin/reservas/:id/termo-pdf",
+  auth,
+  ensureIdParam("id"),
+  safeHandler("visualizarTermoReservaAdmin")
+);
+
 // Cartaz do evento (paisagem) com título em até 3 linhas
-router.get("/admin/cartaz/:id.pdf", auth, ensureIdParam("id"), safeHandler("pdfCartazEvento"));
+router.get(
+  "/admin/cartaz/:id.pdf",
+  auth,
+  ensureIdParam("id"),
+  safeHandler("pdfCartazEvento")
+);
 
 module.exports = router;
