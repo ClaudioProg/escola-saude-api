@@ -74,6 +74,9 @@ try {
   }
 })();
 
+// ✅ Base raiz já pronta no padrão do backend (sempre com /api)
+const API_BASE_ROOT = ensureApi(API_BASE_URL, "/").replace(/\/+$/, "");
+
 export async function apiAuthMe(opts = {}) {
   return apiGet("/auth/me", {
     auth: true,
@@ -1478,13 +1481,18 @@ export async function apiChamadaModeloAdminMeta(chamadaId) {
 // ───────────────────────────────────────────────────────────────────
 // Compat: facade estilo axios + default export
 // ───────────────────────────────────────────────────────────────────
-export { API_BASE_URL };
+export { API_BASE_URL, API_BASE_ROOT };
 
 export function isLoggedIn() {
   return !!getToken();
 }
 
 export const api = {
+  // ✅ compat estilo axios
+  defaults: {
+    baseURL: API_BASE_ROOT,
+  },
+
   get: (path, opts) => apiGet(path, opts),
   post: (path, body, opts) => apiPost(path, body, opts),
   put: (path, body, opts) => apiPut(path, body, opts),

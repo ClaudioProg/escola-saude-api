@@ -313,37 +313,42 @@ function ModalDiaUsuario({
 
                     <div className="grid grid-cols-1 gap-3">
                       {minhasReservas.map((reserva) => {
-                        const ehPendente = reserva.slotStatus === "minha_pendente";
-                        const disabledDelete = deletingId === reserva.id;
+  const ehPendente = reserva.slotStatus === "minha_pendente";
+const ehNegada = reserva.slotStatus === "minha_negada";
+const disabledDelete = deletingId === reserva.id;
 
-                        return (
-                          <div
-                            key={reserva.id}
-                            className={cls(
-                              "rounded-2xl border p-4",
-                              ehPendente
-                                ? "border-amber-200 bg-amber-50 dark:border-amber-900/50 dark:bg-amber-950/15"
-                                : "border-sky-200 bg-sky-50 dark:border-sky-900/50 dark:bg-sky-950/15"
-                            )}
-                          >
-                            <div className="flex items-start justify-between gap-3 flex-wrap">
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="text-[11px] uppercase tracking-wide text-slate-500 dark:text-zinc-400 font-bold">
-                                    {reserva.salaLabel} • {reserva.periodoLabel}
-                                  </span>
+  return (
+    <div
+      key={reserva.id}
+      className={cls(
+        "rounded-2xl border p-4",
+        ehPendente
+          ? "border-amber-200 bg-amber-50 dark:border-amber-900/50 dark:bg-amber-950/15"
+          : ehNegada
+            ? "border-rose-200 bg-rose-50 dark:border-rose-900/50 dark:bg-rose-950/15"
+            : "border-sky-200 bg-sky-50 dark:border-sky-900/50 dark:bg-sky-950/15"
+      )}
+    >
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[11px] uppercase tracking-wide text-slate-500 dark:text-zinc-400 font-bold">
+              {reserva.salaLabel} • {reserva.periodoLabel}
+            </span>
 
-                                  <span
-                                    className={cls(
-                                      "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-extrabold",
-                                      ehPendente
-                                        ? "bg-amber-100 text-amber-800 border-amber-200"
-                                        : "bg-sky-100 text-sky-800 border-sky-200"
-                                    )}
-                                  >
-                                    {ehPendente ? "Em análise" : "Aprovada"}
-                                  </span>
-                                </div>
+            <span
+              className={cls(
+                "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-extrabold",
+                ehPendente
+                  ? "bg-amber-100 text-amber-800 border-amber-200"
+                  : ehNegada
+                    ? "bg-rose-100 text-rose-800 border-rose-200"
+                    : "bg-sky-100 text-sky-800 border-sky-200"
+              )}
+            >
+              {ehPendente ? "Em análise" : ehNegada ? "Negada / cancelada" : "Aprovada"}
+            </span>
+          </div>
 
                                 <p className="mt-2 text-sm font-extrabold text-slate-900 dark:text-white break-words">
                                   {String(reserva.finalidade || "Sem finalidade").trim()}
@@ -363,27 +368,27 @@ function ModalDiaUsuario({
                               </div>
 
                               {ehPendente && (
-                                <div className="flex items-center gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => onEditarMinhaReserva(reserva)}
-                                    className="inline-flex items-center justify-center p-2 rounded-xl border border-amber-300 text-amber-700 hover:bg-amber-100"
-                                    title="Editar solicitação"
-                                  >
-                                    <Pencil className="w-4 h-4" />
-                                  </button>
+  <div className="flex items-center gap-2">
+    <button
+      type="button"
+      onClick={() => onEditarMinhaReserva(reserva)}
+      className="inline-flex items-center justify-center p-2 rounded-xl border border-amber-300 text-amber-700 hover:bg-amber-100"
+      title="Editar solicitação"
+    >
+      <Pencil className="w-4 h-4" />
+    </button>
 
-                                  <button
-                                    type="button"
-                                    onClick={() => onExcluirMinhaReserva(reserva)}
-                                    disabled={disabledDelete}
-                                    className="inline-flex items-center justify-center p-2 rounded-xl border border-rose-300 text-rose-700 hover:bg-rose-50 disabled:opacity-60"
-                                    title="Excluir solicitação"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
-                                </div>
-                              )}
+    <button
+      type="button"
+      onClick={() => onExcluirMinhaReserva(reserva)}
+      disabled={disabledDelete}
+      className="inline-flex items-center justify-center p-2 rounded-xl border border-rose-300 text-rose-700 hover:bg-rose-50 disabled:opacity-60"
+      title="Excluir solicitação"
+    >
+      <Trash2 className="w-4 h-4" />
+    </button>
+  </div>
+)}
                             </div>
                           </div>
                         );
@@ -613,23 +618,35 @@ function AgendaSalasUsuario() {
     return reservasMap[dataISO]?.[salaValue]?.[periodo] || null;
   }
 
-  function getSlotStatus(reserva) {
-    if (!reserva) return "livre";
+ function getSlotStatus(reserva) {
+  if (!reserva) return "livre";
 
-    if (reserva?.minha === false) return "ocupado_por_outro";
-    if (reserva?.status === "bloqueado") return "ocupado_por_outro";
-    if (reserva?.status === "cancelado" || reserva?.status === "rejeitado") return "livre";
-
-    if (["pendente", "em_analise", "solicitado"].includes(reserva?.status)) {
-      return reserva?.minha === true ? "minha_pendente" : "ocupado_por_outro";
+  if (reserva?.minha === false) {
+    if (["cancelado", "rejeitado", "negado", "excluido", "excluído"].includes(String(reserva?.status || "").toLowerCase())) {
+      return "livre";
     }
 
-    if (["aprovado", "confirmado"].includes(reserva?.status)) {
-      return reserva?.minha === true ? "minha_aprovada" : "ocupado_por_outro";
-    }
-
-    return reserva?.minha === true ? "minha_pendente" : "ocupado_por_outro";
+    return "ocupado_por_outro";
   }
+
+  if (reserva?.status === "bloqueado") return "ocupado_por_outro";
+
+  const status = String(reserva?.status || "").toLowerCase();
+
+  if (["pendente", "em_analise", "solicitado"].includes(status)) {
+    return "minha_pendente";
+  }
+
+  if (["aprovado", "confirmado"].includes(status)) {
+    return "minha_aprovada";
+  }
+
+  if (["rejeitado", "cancelado", "negado", "excluido", "excluído"].includes(status)) {
+    return "minha_negada";
+  }
+
+  return "minha_pendente";
+}
 
   function getMinhasReservasDoDia(dataISO) {
     const minhas = [];

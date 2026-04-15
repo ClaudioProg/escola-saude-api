@@ -210,6 +210,18 @@ function sanitizeBase64(v) {
   return cleaned;
 }
 
+function isStatusAprovado(status) {
+  return ["aprovado", "confirmado"].includes(String(status || "").toLowerCase());
+}
+
+function isStatusPendente(status) {
+  return ["pendente", "em_analise", "solicitado"].includes(String(status || "").toLowerCase());
+}
+
+function isStatusFinalNaoDisponivel(status) {
+  return ["cancelado", "rejeitado"].includes(String(status || "").toLowerCase());
+}
+
 /* ======================================================================= */
 /* Helper para ano/mês com fallback seguro                                  */
 /* ======================================================================= */
@@ -408,6 +420,8 @@ async function listarAgendaAdmin(req, res) {
         rs.termo_aceito,
         rs.termo_assinado_em,
         rs.assinatura_id,
+        rs.created_at,
+        rs.updated_at,
         us.nome AS solicitante_nome,
         ua.nome AS aprovador_nome
       FROM reservas_salas rs
@@ -424,7 +438,14 @@ async function listarAgendaAdmin(req, res) {
 
     sqlReservas += ` ORDER BY rs.data ASC, rs.sala ASC, rs.periodo ASC`;
 
-    const { rows: reservas } = await query(sqlReservas, params);
+    const { rows: reservasRaw } = await query(sqlReservas, params);
+
+    const reservas = reservasRaw.map((row) => ({
+      ...row,
+      pendente_aprovacao: isStatusPendente(row.status),
+      aprovado_confirmado: isStatusAprovado(row.status),
+      rejeitado_ou_cancelado: isStatusFinalNaoDisponivel(row.status),
+    }));
 
     const { rows: bloqueios } = await query(
       `
@@ -456,6 +477,8 @@ async function listarAgendaAdmin(req, res) {
 /* ======================================================================= */
 /* GET /api/salas/agenda-usuario                                            */
 /* Query params: ano, mes (1-12), sala (opcional)                           */
+/* - mostra reservas de outros apenas se ainda ocuparem slot                */
+/* - mostra as do próprio usuário inclusive canceladas/rejeitadas           */
 /* ======================================================================= */
 async function listarAgendaUsuario(req, res) {
   const r = rid();
@@ -486,7 +509,7 @@ async function listarAgendaUsuario(req, res) {
       whereSala = ` AND rs.sala = $${params.length}`;
     }
 
-    const { rows: reservas } = await query(
+    const { rows: reservasRaw } = await query(
       `
       SELECT
         rs.id,
@@ -499,19 +522,36 @@ async function listarAgendaUsuario(req, res) {
         rs.termo_aceito,
         rs.termo_assinado_em,
         rs.assinatura_id,
+        rs.created_at,
+        rs.updated_at,
 
-        CASE WHEN rs.solicitante_id = $3 THEN rs.finalidade ELSE NULL END AS finalidade,
+        CASE
+          WHEN rs.solicitante_id = $3 THEN rs.finalidade
+          ELSE NULL
+        END AS finalidade,
+
         rs.solicitante_id,
         (rs.solicitante_id = $3) AS minha
       FROM reservas_salas rs
       WHERE EXTRACT(YEAR FROM rs.data) = $1
         AND EXTRACT(MONTH FROM rs.data) = $2
-        AND (rs.status IS NULL OR rs.status NOT IN ('cancelado'::status_reserva_sala, 'rejeitado'::status_reserva_sala))
+        AND (
+          rs.solicitante_id = $3
+          OR rs.status IS NULL
+          OR rs.status NOT IN ('cancelado'::status_reserva_sala, 'rejeitado'::status_reserva_sala)
+        )
         ${whereSala}
-      ORDER BY rs.data, rs.sala, rs.periodo
+      ORDER BY rs.data, rs.sala, rs.periodo, rs.created_at DESC NULLS LAST, rs.id DESC
       `,
       params
     );
+
+    const reservas = reservasRaw.map((row) => ({
+      ...row,
+      pendente_aprovacao: isStatusPendente(row.status),
+      aprovado_confirmado: isStatusAprovado(row.status),
+      rejeitado_ou_cancelado: isStatusFinalNaoDisponivel(row.status),
+    }));
 
     const { rows: bloqueios } = await query(
       `
@@ -718,11 +758,19 @@ async function atualizarReservaUsuario(req, res) {
     }
 
     if (Number(atual.solicitante_id) !== Number(userId)) {
-      return res.status(403).json({ ok: false, erro: "Você não pode alterar esta reserva.", requestId: r });
+      return res.status(403).json({
+        ok: false,
+        erro: "Você não pode alterar esta reserva.",
+        requestId: r,
+      });
     }
 
     if (String(atual.status) !== "pendente") {
-      return res.status(403).json({ ok: false, erro: "Edição permitida apenas enquanto pendente.", requestId: r });
+      return res.status(403).json({
+        ok: false,
+        erro: "Edição permitida apenas enquanto pendente.",
+        requestId: r,
+      });
     }
 
     const sala = normSala(req.body?.sala) ?? String(atual.sala);
@@ -800,6 +848,7 @@ async function atualizarReservaUsuario(req, res) {
          AND data = $2
          AND periodo = $3
          AND id <> $4
+         AND (status IS NULL OR status NOT IN ('cancelado'::status_reserva_sala, 'rejeitado'::status_reserva_sala))
        LIMIT 1
       `,
       [sala, data, periodo, id]
@@ -848,7 +897,8 @@ async function atualizarReservaUsuario(req, res) {
 }
 
 /* ======================================================================= */
-/* DELETE /api/salas/minhas/:id (usuário exclui a própria solicitação)      */
+/* DELETE /api/salas/minhas/:id (usuário cancela a própria solicitação)     */
+/* - soft delete: preserva histórico para o calendário                      */
 /* ======================================================================= */
 async function excluirReservaUsuario(req, res) {
   const r = rid();
@@ -863,7 +913,10 @@ async function excluirReservaUsuario(req, res) {
       return res.status(401).json({ ok: false, erro: "Não autenticado.", requestId: r });
     }
 
-    const sel = await query(`SELECT status, solicitante_id FROM reservas_salas WHERE id = $1`, [id]);
+    const sel = await query(
+      `SELECT id, status, solicitante_id FROM reservas_salas WHERE id = $1`,
+      [id]
+    );
     const row = sel.rows?.[0];
 
     if (!row) {
@@ -871,19 +924,42 @@ async function excluirReservaUsuario(req, res) {
     }
 
     if (Number(row.solicitante_id) !== Number(userId)) {
-      return res.status(403).json({ ok: false, erro: "Você não pode excluir esta reserva.", requestId: r });
+      return res.status(403).json({
+        ok: false,
+        erro: "Você não pode excluir esta reserva.",
+        requestId: r,
+      });
     }
 
     if (String(row.status) !== "pendente") {
-      return res.status(403).json({ ok: false, erro: "Exclusão permitida apenas enquanto pendente.", requestId: r });
+      return res.status(403).json({
+        ok: false,
+        erro: "Exclusão permitida apenas enquanto pendente.",
+        requestId: r,
+      });
     }
 
-    const del = await query(`DELETE FROM reservas_salas WHERE id = $1`, [id]);
-    if (!del.rowCount) {
+    const { rows } = await query(
+      `
+      UPDATE reservas_salas
+         SET status = 'cancelado',
+             updated_at = NOW()
+       WHERE id = $1
+       RETURNING *;
+      `,
+      [id]
+    );
+
+    if (!rows?.[0]) {
       return res.status(404).json({ ok: false, erro: "Reserva não encontrada.", requestId: r });
     }
 
-    return res.status(204).end();
+    return res.status(200).json({
+      ok: true,
+      mensagem: "Solicitação cancelada com sucesso.",
+      reserva: rows[0],
+      requestId: r,
+    });
   } catch (e) {
     errlog(r, "[excluirReservaUsuario] erro:", e?.message);
     return res.status(500).json({
@@ -1170,7 +1246,7 @@ async function criarReservaAdmin(req, res) {
     for (const dt of datasValidas) {
       await client.query("SAVEPOINT sp_reserva");
       try {
-        const aprovadorId = ["aprovado", "confirmado"].includes(status) ? adminId : null;
+        const aprovadorId = isStatusAprovado(status) ? adminId : null;
 
         const { rows } = await client.query(insertSql, [
           sala,
@@ -1251,7 +1327,7 @@ async function atualizarReservaAdmin(req, res) {
     const finalidade =
       req.body?.finalidade != null ? normStr(req.body.finalidade, { max: 500 }) : null;
 
-    const aprovaAgora = ["aprovado", "confirmado"].includes(String(status || "").toLowerCase());
+    const aprovaAgora = isStatusAprovado(status);
     const aprovadorId = aprovaAgora ? adminId : null;
 
     const { rows } = await query(
@@ -1264,6 +1340,7 @@ async function atualizarReservaAdmin(req, res) {
              finalidade       = COALESCE($6, finalidade),
              aprovador_id     = CASE
                                   WHEN $7::bigint IS NOT NULL THEN $7
+                                  WHEN $2 IN ('rejeitado', 'cancelado') THEN NULL
                                   ELSE aprovador_id
                                 END,
              updated_at       = NOW()
@@ -1290,6 +1367,7 @@ async function atualizarReservaAdmin(req, res) {
 
 /* ======================================================================= */
 /* DELETE /api/salas/admin/reservas/:id                                     */
+/* - soft delete: preserva histórico para o calendário                      */
 /* ======================================================================= */
 async function excluirReservaAdmin(req, res) {
   const r = rid();
@@ -1299,13 +1377,28 @@ async function excluirReservaAdmin(req, res) {
       return res.status(400).json({ ok: false, erro: "ID inválido.", requestId: r });
     }
 
-    const del = await query(`DELETE FROM reservas_salas WHERE id = $1`, [id]);
+    const { rows } = await query(
+      `
+      UPDATE reservas_salas
+         SET status = 'cancelado',
+             aprovador_id = NULL,
+             updated_at = NOW()
+       WHERE id = $1
+       RETURNING *;
+      `,
+      [id]
+    );
 
-    if (!del.rowCount) {
+    if (!rows?.[0]) {
       return res.status(404).json({ ok: false, erro: "Reserva não encontrada.", requestId: r });
     }
 
-    return res.status(204).end();
+    return res.status(200).json({
+      ok: true,
+      mensagem: "Reserva cancelada com sucesso.",
+      reserva: rows[0],
+      requestId: r,
+    });
   } catch (e) {
     errlog(r, "[excluirReservaAdmin] erro:", e?.message);
     return res.status(500).json({

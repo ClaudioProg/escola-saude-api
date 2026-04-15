@@ -1,9 +1,12 @@
 /* eslint-disable no-console */
 // ✅ src/pages/AgendaSalasAdmin.jsx — PREMIUM CALENDÁRIO MENSAL ADMIN
 // - Calendário mensal real, responsivo e orientado ao DIA
+// - Visual mais clean, no mesmo padrão do usuário
 // - Dias bloqueados em cinza
 // - Dias totalmente ocupados em lilás suave
 // - Dias com disponibilidade em branco
+// - Badge com quantidade de salas disponíveis
+// - Bolinha amarela quando houver solicitação pendente no dia
 // - Clique no dia abre modal com visão completa do dia
 // - Auditório + Sala de Reunião / Manhã + Tarde / solicitante / aprovador / termo
 // - Integração com ModalReservaAdmin para edição do slot
@@ -166,6 +169,19 @@ function keySlot(dataISO, periodo, sala) {
 /* ─────────────────── Normalização de reservas ─────────────────── */
 function normalizeReserva(r) {
   const dataISO = (r.data || r.dataISO || r.dia || "").slice(0, 10);
+  const status = String(r.status || "pendente").toLowerCase();
+
+  const pendenteAprovacao =
+    r.pendente_aprovacao === true ||
+    ["pendente", "em_analise", "solicitado"].includes(status);
+
+  const aprovadoConfirmado =
+    r.aprovado_confirmado === true ||
+    ["aprovado", "confirmado"].includes(status);
+
+  const rejeitadoOuCancelado =
+    r.rejeitado_ou_cancelado === true ||
+    ["rejeitado", "cancelado"].includes(status);
 
   return {
     id: r.id ?? r.reserva_id ?? r.uuid ?? null,
@@ -173,7 +189,7 @@ function normalizeReserva(r) {
     data: dataISO,
     dataISO,
     periodo: r.periodo || r.turno || r.slot || "manha",
-    status: r.status || "pendente",
+    status,
     qtd_pessoas: r.qtd_pessoas ?? r.qtdPessoas ?? r.qtd ?? r.capacidade ?? null,
     coffee_break: r.coffee_break ?? r.coffeeBreak ?? r.coffee ?? false,
     observacao: r.observacao ?? r.obs ?? r.observacao_admin ?? "",
@@ -196,6 +212,10 @@ function normalizeReserva(r) {
     assinatura_id: r.assinatura_id ?? null,
     criado_em: r.criado_em ?? r.created_at ?? r.createdAt ?? null,
     atualizado_em: r.atualizado_em ?? r.updated_at ?? r.updatedAt ?? null,
+
+    pendente_aprovacao: pendenteAprovacao,
+    aprovado_confirmado: aprovadoConfirmado,
+    rejeitado_ou_cancelado: rejeitadoOuCancelado,
   };
 }
 
@@ -360,7 +380,7 @@ function SoftIconButton({ title, ariaLabel, onClick, disabled = false, children 
 }
 
 function CalendarDayCell({ dia, dataISO, diaInfo, eHoje, onClick }) {
-  const { estado, motivo, ocupados, totalSlots, labelResumo } = diaInfo;
+  const { estado, motivo, labelResumo, salasDisponiveis, temPendencia } = diaInfo;
 
   const HOJE_BG = "bg-sky-100/70 dark:bg-sky-950/25";
   const HOJE_RING = "ring-2 ring-sky-500/70 dark:ring-sky-700/60";
@@ -411,19 +431,34 @@ function CalendarDayCell({ dia, dataISO, diaInfo, eHoje, onClick }) {
           </div>
         </div>
 
-        {eHoje && (
-          <span
-            className={cx(
-              "text-[10px] font-extrabold px-2 py-0.5 rounded-full whitespace-nowrap",
-              HOJE_BADGE
-            )}
-          >
-            Hoje
-          </span>
-        )}
+        <div className="flex flex-col items-end gap-1">
+          {eHoje && (
+            <span
+              className={cx(
+                "text-[10px] font-extrabold px-2 py-0.5 rounded-full whitespace-nowrap",
+                HOJE_BADGE
+              )}
+            >
+              Hoje
+            </span>
+          )}
+
+          {temPendencia && (
+            <span
+              className="w-2.5 h-2.5 rounded-full bg-amber-400 border border-amber-500"
+              title="Há solicitação pendente neste dia"
+            />
+          )}
+        </div>
       </div>
 
       <div className="mt-3 flex flex-col gap-2">
+        {(estado === "parcial" || estado === "vazio") && salasDisponiveis > 0 && (
+          <span className="inline-flex w-fit items-center rounded-full border px-2 py-0.5 text-[10px] sm:text-[11px] font-extrabold bg-sky-50 text-sky-700 border-sky-200">
+            {salasDisponiveis} sala{salasDisponiveis === 1 ? "" : "s"}
+          </span>
+        )}
+
         <span
           className={cx(
             "inline-flex w-fit items-center rounded-full border px-2 py-1 text-[10px] sm:text-[11px] font-extrabold",
@@ -437,25 +472,10 @@ function CalendarDayCell({ dia, dataISO, diaInfo, eHoje, onClick }) {
               : "Disponível"}
         </span>
 
-        {estado === "bloqueado" ? (
+        {estado === "bloqueado" && (
           <p className="text-[11px] sm:text-xs leading-snug text-slate-600 dark:text-zinc-300 line-clamp-3">
             {motivo}
           </p>
-        ) : (
-          <div className="space-y-1">
-            <p className="text-[11px] sm:text-xs text-slate-600 dark:text-zinc-300">
-              {ocupados}/{totalSlots} horários ocupados
-            </p>
-            <div className="h-2 rounded-full bg-slate-100 dark:bg-zinc-800 overflow-hidden">
-              <div
-                className={cx(
-                  "h-full rounded-full transition-all",
-                  estado === "lotado" ? "bg-violet-400" : "bg-sky-500"
-                )}
-                style={{ width: `${Math.max(0, Math.min(100, (ocupados / totalSlots) * 100))}%` }}
-              />
-            </div>
-          </div>
         )}
       </div>
     </button>
@@ -480,16 +500,16 @@ function SlotCardDia({ slot, baseURL, onEditar, onExcluir }) {
     Boolean(slot?.reserva?.assinatura_id);
 
   function abrirPdfTermo() {
-  if (!slot?.reserva?.id) return;
+    if (!slot?.reserva?.id) return;
 
-  const url = `${baseURL}/salas/admin/reservas/${slot.reserva.id}/termo-pdf`;
-  console.log("[AgendaSalasAdmin][PDF_TERMO] Abrindo termo:", {
-    reservaId: slot.reserva.id,
-    url,
-  });
+    const url = `${baseURL}/salas/admin/reservas/${slot.reserva.id}/termo-pdf`;
+    console.log("[AgendaSalasAdmin][PDF_TERMO] Abrindo termo:", {
+      reservaId: slot.reserva.id,
+      url,
+    });
 
-  window.open(url, "_blank", "noopener,noreferrer");
-}
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
 
   return (
     <div
@@ -979,7 +999,13 @@ function AgendaSalasAdmin() {
     return reservasMap[keySlot(dataISO, periodo, salaKey)] || null;
   }
 
-  function getDiaInfo(dataISO) {
+  function reservaOcupaSlot(reserva) {
+    if (!reserva) return false;
+    if (reserva.rejeitado_ou_cancelado) return false;
+    return true;
+  }
+
+    function getDiaInfo(dataISO) {
     const diaSemana = getDayOfWeekFromISO(dataISO);
     const ehFeriado = !!feriadosMap[dataISO];
     const ehBloqueada = !!datasBloqueadasMap[dataISO];
@@ -997,12 +1023,17 @@ function AgendaSalasAdmin() {
       : null;
 
     let ocupados = 0;
+    let temPendencia = false;
+    let salasDisponiveis = 0;
     const totalSlots = SALAS_ORDEM.length * PERIODOS.length;
 
     const salas = SALAS_ORDEM.map((salaKey) => {
       const slots = PERIODOS.map((p) => {
         const reserva = getReservaSlot(dataISO, p.value, salaKey);
-        if (reserva) ocupados += 1;
+        const ocupa = reservaOcupaSlot(reserva);
+
+        if (ocupa) ocupados += 1;
+        if (reserva?.pendente_aprovacao) temPendencia = true;
 
         return {
           dataISO,
@@ -1014,11 +1045,16 @@ function AgendaSalasAdmin() {
         };
       });
 
+      const ocupadosSala = slots.filter((s) => reservaOcupaSlot(s.reserva)).length;
+      const temAlgumLivreNaSala = ocupadosSala < PERIODOS.length;
+
+      if (temAlgumLivreNaSala) salasDisponiveis += 1;
+
       return {
         sala: salaKey,
         label: CAPACIDADES_SALA[salaKey].labelCurta,
         capacidade: CAPACIDADES_SALA[salaKey],
-        ocupados: slots.filter((s) => !!s.reserva).length,
+        ocupados: ocupadosSala,
         slots,
       };
     });
@@ -1026,14 +1062,15 @@ function AgendaSalasAdmin() {
     let estado = "vazio";
     if (bloqueado) estado = "bloqueado";
     else if (ocupados >= totalSlots) estado = "lotado";
-    else estado = "parcial";
+    else if (ocupados > 0) estado = "parcial";
+    else estado = "vazio";
 
     const labelResumo =
       estado === "bloqueado"
         ? `Bloqueado. ${motivo || ""}`
         : estado === "lotado"
           ? "Sem horário disponível"
-          : `${totalSlots - ocupados} horários disponíveis`;
+          : `${salasDisponiveis} sala(s) com disponibilidade`;
 
     return {
       dataISO,
@@ -1043,6 +1080,8 @@ function AgendaSalasAdmin() {
       totalSlots,
       estado,
       salas,
+      salasDisponiveis,
+      temPendencia,
       labelResumo,
     };
   }
@@ -1366,6 +1405,7 @@ function AgendaSalasAdmin() {
             },
             { c: "bg-violet-100 border-violet-300", t: "Dia totalmente ocupado" },
             { c: "bg-slate-200 border-slate-300", t: "Bloqueado / fim de semana / feriado" },
+            { c: "bg-amber-400 border-amber-500", t: "Há pendência no dia" },
           ].map((it) => (
             <span
               key={it.t}
