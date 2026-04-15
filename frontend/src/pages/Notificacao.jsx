@@ -1,12 +1,13 @@
 // ✅ src/pages/Notificacao.jsx (premium + mobile-first + a11y + anti-fuso + filtros + paginação)
-// - ✅ Mantém seu HeaderHero (3 cores) e melhora UX
-// - ✅ Adiciona: busca, filtro por tipo, “somente não lidas”, ordenação, paginação client-side
-// - ✅ Anti-fuso: não usa Date para "YYYY-MM-DD"; para datetime tenta parse seguro; fallback mantém texto
-// - ✅ Marca todas: usa Promise.allSettled com limite de concorrência (evita ficar lento com muitas)
-// - ✅ "Ver mais": se tiver link, marca como lida e navega (preserva seu comportamento)
+// - ✅ Mantém HeaderHero premium e adiciona integração com resumo do backend
+// - ✅ Busca, filtro por tipo, “somente não lidas”, ordenação e paginação
+// - ✅ Anti-fuso: não usa Date para "YYYY-MM-DD"; para datetime tenta parse seguro
+// - ✅ Marca todas usando rota dedicada do backend
+// - ✅ "Ver mais": se tiver link, marca como lida e navega
 // - ✅ Acessibilidade: live region, aria-busy, foco, estados e labels
+// - ✅ Mais performática e pronta para integrar com sino/sidebar/painel inicial
 
-import { useState, useMemo, useCallback, useRef } from "react";
+import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import {
   Bell,
   CalendarDays,
@@ -16,11 +17,10 @@ import {
   Check,
   Search,
   Filter,
-  ArrowDownAZ,
-  ArrowUpAZ,
   ChevronLeft,
   ChevronRight,
   Sparkles,
+  RefreshCw,
 } from "lucide-react";
 import { toast } from "react-toastify";
 import { motion, AnimatePresence } from "framer-motion";
@@ -35,19 +35,15 @@ function formatarDataLocalLegivel(s) {
   if (!s) return "";
   const str = String(s).trim();
 
-  // date-only
   const mDate = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (mDate) return `${mDate[3]}/${mDate[2]}/${mDate[1]}`;
 
-  // datetime-like
   const mDateTime = str.match(/^(\d{4})-(\d{2})-(\d{2})[T\s]?(\d{2}):(\d{2})(?::(\d{2}))?/);
   if (mDateTime) {
     const [, y, mo, d, hh, mm] = mDateTime;
     return `${d}/${mo}/${y} ${hh}:${mm}`;
   }
 
-  // fallback: tenta Date (para strings com timezone, ex: "2026-01-08T10:22:00.000Z")
-  // se falhar, devolve o original.
   const dt = new Date(str);
   if (Number.isNaN(dt.getTime())) return str;
   const y = dt.getFullYear();
@@ -93,10 +89,9 @@ function HeaderHero({ total = 0, naoLidas = 0, onMarcarTodas, marcandoTodas }) {
           </div>
 
           <p className="text-sm sm:text-base text-white/90 max-w-2xl">
-            Acompanhe avisos, certificados e atualizações da Escola da Saúde.
+            Acompanhe avisos, certificados, avaliações e atualizações da Escola da Saúde.
           </p>
 
-          {/* ministats */}
           <div className="mt-2 sm:mt-3 flex flex-wrap items-center justify-center gap-2">
             <span className="inline-flex items-center rounded-full bg-white/10 px-3 py-2 text-xs">
               {total} notificação{total === 1 ? "" : "s"}
@@ -109,8 +104,11 @@ function HeaderHero({ total = 0, naoLidas = 0, onMarcarTodas, marcandoTodas }) {
               type="button"
               onClick={onMarcarTodas}
               disabled={marcandoTodas || naoLidas === 0}
-              className={`inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition
-                ${marcandoTodas || naoLidas === 0 ? "opacity-60 cursor-not-allowed bg-white/20" : "bg-white/15 hover:bg-white/25"} text-white`}
+              className={`inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition ${
+                marcandoTodas || naoLidas === 0
+                  ? "opacity-60 cursor-not-allowed bg-white/20"
+                  : "bg-white/15 hover:bg-white/25"
+              } text-white`}
               aria-label="Marcar todas como lidas"
               aria-busy={marcandoTodas ? "true" : "false"}
             >
@@ -133,39 +131,62 @@ const sLower = (v) => String(v ?? "").toLowerCase();
 
 function normalizarTipo(tipo) {
   const t = sLower(tipo).trim();
+
   if (t === "evento") return "evento";
   if (t === "certificado") return "certificado";
-  if (t === "aviso") return "aviso";
+  if (t === "aviso" || t === "sistema") return "aviso";
   if (t === "avaliacao" || t === "avaliação") return "avaliacao";
+  if (t === "reserva_aprovada" || t === "reserva_rejeitada") return "aviso";
   return "outros";
 }
 
+function labelTipo(tipo) {
+  const t = sLower(tipo).trim();
+
+  if (t === "evento") return "evento";
+  if (t === "certificado") return "certificado";
+  if (t === "avaliacao" || t === "avaliação") return "avaliação";
+  if (t === "aviso" || t === "sistema") return "aviso";
+  if (t === "reserva_aprovada") return "reserva aprovada";
+  if (t === "reserva_rejeitada") return "reserva rejeitada";
+  if (t === "submissao") return "submissão";
+  return t || "outros";
+}
+
 function getDataMs(n) {
-  const raw = n?.data || n?.criada_em || n?.criadaEm || n?.created_at || n?.createdAt || 0;
+  const raw = n?.criado_em || n?.data || n?.criada_em || n?.criadaEm || n?.created_at || n?.createdAt || 0;
 
-  // Se vier date-only YYYY-MM-DD, não use Date(UTC). Ordena lexicograficamente como ymd -> ms aproximado por string.
   const mDate = String(raw).match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (mDate) return Number(`${mDate[1]}${mDate[2]}${mDate[3]}0000`); // chave ordenável
+  if (mDate) return Number(`${mDate[1]}${mDate[2]}${mDate[3]}0000`);
 
-  // Se vier datetime no formato ISO, Date é ok apenas p/ ordenação (existe tz)
   const dt = new Date(raw);
   const ms = dt.getTime();
   return Number.isFinite(ms) ? ms : 0;
 }
 
 function obterIcone(tipo) {
-  switch (normalizarTipo(tipo)) {
-    case "evento":
-      return <CalendarDays className="text-sky-600 dark:text-sky-400" aria-hidden="true" />;
-    case "certificado":
-      return <CheckCircle className="text-emerald-600 dark:text-emerald-400" aria-hidden="true" />;
-    case "aviso":
-      return <Info className="text-amber-600 dark:text-amber-400" aria-hidden="true" />;
-    case "avaliacao":
-      return <Star className="text-violet-600 dark:text-violet-400" aria-hidden="true" />;
-    default:
-      return <Bell className="text-zinc-600 dark:text-zinc-400" aria-hidden="true" />;
+  const raw = sLower(tipo).trim();
+
+  if (raw === "evento") {
+    return <CalendarDays className="text-sky-600 dark:text-sky-400" aria-hidden="true" />;
   }
+  if (raw === "certificado") {
+    return <CheckCircle className="text-emerald-600 dark:text-emerald-400" aria-hidden="true" />;
+  }
+  if (raw === "avaliacao" || raw === "avaliação") {
+    return <Star className="text-violet-600 dark:text-violet-400" aria-hidden="true" />;
+  }
+  if (raw === "reserva_aprovada") {
+    return <CheckCircle className="text-emerald-600 dark:text-emerald-400" aria-hidden="true" />;
+  }
+  if (raw === "reserva_rejeitada") {
+    return <Info className="text-rose-600 dark:text-rose-400" aria-hidden="true" />;
+  }
+  if (raw === "aviso" || raw === "sistema" || raw === "submissao") {
+    return <Info className="text-amber-600 dark:text-amber-400" aria-hidden="true" />;
+  }
+
+  return <Bell className="text-zinc-600 dark:text-zinc-400" aria-hidden="true" />;
 }
 
 function isNaoLida(n) {
@@ -183,26 +204,6 @@ function classesCartao(n) {
 }
 
 /* =======================
-   Concurrency limiter (marcar todas)
-   ======================= */
-async function runLimited(tasks, limit = 6) {
-  const results = [];
-  let i = 0;
-  const workers = new Array(Math.min(limit, tasks.length)).fill(0).map(async () => {
-    while (i < tasks.length) {
-      const idx = i++;
-      try {
-        results[idx] = await tasks[idx]();
-      } catch (e) {
-        results[idx] = e;
-      }
-    }
-  });
-  await Promise.all(workers);
-  return results;
-}
-
-/* =======================
    Página
    ======================= */
 export default function Notificacao() {
@@ -210,13 +211,13 @@ export default function Notificacao() {
   const [loading, setLoading] = useState(true);
   const [marcando, setMarcando] = useState(null);
   const [marcandoTodas, setMarcandoTodas] = useState(false);
+  const [resumo, setResumo] = useState({ total: 0, naoLidas: 0, porTipo: {} });
   const liveRef = useRef(null);
 
-  // filtros/UX
   const [busca, setBusca] = useState("");
-  const [fTipo, setFTipo] = useState("todos"); // todos | evento | certificado | aviso | avaliacao | outros
+  const [fTipo, setFTipo] = useState("todos");
   const [somenteNaoLidas, setSomenteNaoLidas] = useState(false);
-  const [ordenacao, setOrdenacao] = useState("recentes"); // recentes | antigos | titulo_az | titulo_za
+  const [ordenacao, setOrdenacao] = useState("recentes");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
@@ -224,31 +225,63 @@ export default function Notificacao() {
     if (liveRef.current) liveRef.current.textContent = msg;
   }, []);
 
-  async function carregarNotificacao(signal) {
-    try {
-      setLoading(true);
-      setLive("Carregando notificações…");
-      const data = await apiGet("/api/notificacao", { signal });
-      setNotificacao(Array.isArray(data) ? data : []);
-      setLive("Notificações carregadas.");
-    } catch (error) {
-      if (error?.name !== "AbortError") {
-        toast.error("❌ Erro ao carregar notificações.");
-        console.error("Erro:", error);
-        setNotificacao([]);
-        setLive("Falha ao carregar notificações.");
-      }
-    } finally {
-      setLoading(false);
-    }
-  }
+  const carregarNotificacao = useCallback(
+    async (signal) => {
+      try {
+        setLoading(true);
+        setLive("Carregando notificações…");
 
-  // ✅ evita duplo carregamento (StrictMode)
+        const [lista, resumoApi] = await Promise.all([
+          apiGet("/api/notificacao", {
+            signal,
+            query: {
+              apenasNaoLidas: somenteNaoLidas ? 1 : undefined,
+              tipo: fTipo !== "todos" ? fTipo : undefined,
+              limit: 100,
+              offset: 0,
+            },
+          }),
+          apiGet("/api/notificacao/resumo", { signal }),
+        ]);
+
+        setNotificacao(Array.isArray(lista) ? lista : []);
+        setResumo(
+          resumoApi && typeof resumoApi === "object"
+            ? resumoApi
+            : { total: 0, naoLidas: 0, porTipo: {} }
+        );
+
+        setLive("Notificações carregadas.");
+      } catch (error) {
+        if (error?.name !== "AbortError") {
+          toast.error("❌ Erro ao carregar notificações.");
+          console.error("Erro:", error);
+          setNotificacao([]);
+          setResumo({ total: 0, naoLidas: 0, porTipo: {} });
+          setLive("Falha ao carregar notificações.");
+        }
+      } finally {
+        setLoading(false);
+      }
+    },
+    [fTipo, somenteNaoLidas, setLive]
+  );
+
   useOnceEffect(() => {
     const ac = new AbortController();
     carregarNotificacao(ac.signal);
     return () => ac.abort();
   }, []);
+
+  useEffect(() => {
+    const ac = new AbortController();
+    carregarNotificacao(ac.signal);
+    return () => ac.abort();
+  }, [carregarNotificacao]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [busca, fTipo, somenteNaoLidas, ordenacao, pageSize]);
 
   async function handleMarcarLida(id, link) {
     try {
@@ -257,9 +290,21 @@ export default function Notificacao() {
 
       setNotificacao((prev) =>
         prev.map((n) =>
-          n.id === id ? { ...n, lida: true, lido: true, lida_em: n.lida_em ?? new Date().toISOString() } : n
+          n.id === id
+            ? {
+                ...n,
+                lida: true,
+                lido: true,
+                lida_em: n.lida_em ?? new Date().toISOString(),
+              }
+            : n
         )
       );
+
+      setResumo((prev) => ({
+        ...prev,
+        naoLidas: Math.max(0, (Number(prev?.naoLidas) || 0) - 1),
+      }));
 
       if (typeof window.atualizarContadorNotificacao === "function") {
         window.atualizarContadorNotificacao();
@@ -275,18 +320,14 @@ export default function Notificacao() {
   }
 
   async function marcarTodas() {
-    const ids = notificacao.filter(isNaoLida).map((n) => n.id).filter(Boolean);
-    if (!ids.length) return;
+    const totalNaoLidas = notificacao.filter(isNaoLida).length;
+    if (!totalNaoLidas) return;
 
     try {
       setMarcandoTodas(true);
 
-      // 🔥 mais rápido e mais "seguro" p/ API: concorrência limitada
-      const tasks = ids.map((id) => () => apiPatch(`/api/notificacao/${id}/lida`));
-      const results = await runLimited(tasks, 6);
+      await apiPatch("/api/notificacao/lidas/todas");
 
-      const falhas = results.filter((r) => r instanceof Error).length;
-      if (falhas) toast.warn(`⚠️ ${falhas} notificação(ões) não puderam ser marcadas agora.`);
       toast.success("✅ Notificações marcadas como lidas.");
 
       setNotificacao((prev) =>
@@ -298,15 +339,22 @@ export default function Notificacao() {
         }))
       );
 
+      setResumo((prev) => ({
+        ...prev,
+        naoLidas: 0,
+      }));
+
       if (typeof window.atualizarContadorNotificacao === "function") {
         window.atualizarContadorNotificacao();
       }
+    } catch (error) {
+      toast.error("❌ Erro ao marcar todas como lidas.");
+      console.error(error);
     } finally {
       setMarcandoTodas(false);
     }
   }
 
-  // lista “base” (unread primeiro + data desc)
   const listaOrdenadaBase = useMemo(() => {
     return [...notificacao].sort((a, b) => {
       const unreadDelta = (isNaoLida(b) ? 1 : 0) - (isNaoLida(a) ? 1 : 0);
@@ -315,10 +363,9 @@ export default function Notificacao() {
     });
   }, [notificacao]);
 
-  const total = listaOrdenadaBase.length;
-  const naoLidas = useMemo(() => listaOrdenadaBase.filter(isNaoLida).length, [listaOrdenadaBase]);
+  const total = Number(resumo?.total) || listaOrdenadaBase.length;
+  const naoLidas = Number(resumo?.naoLidas) || listaOrdenadaBase.filter(isNaoLida).length;
 
-  // filtros + ordenação custom
   const listaFiltrada = useMemo(() => {
     const q = sLower(busca).trim();
 
@@ -334,13 +381,18 @@ export default function Notificacao() {
       base = base.filter((n) => {
         const t = sLower(n?.titulo);
         const m = sLower(n?.mensagem);
-        const tipo = normalizarTipo(n?.tipo);
-        return t.includes(q) || m.includes(q) || tipo.includes(q);
+        const tipoRaw = labelTipo(n?.tipo);
+        const tipoNorm = normalizarTipo(n?.tipo);
+        return (
+          t.includes(q) ||
+          m.includes(q) ||
+          tipoRaw.includes(q) ||
+          tipoNorm.includes(q)
+        );
       });
     }
 
     const sorted = base.slice().sort((a, b) => {
-      // mantém unread primeiro sempre
       const unreadDelta = (isNaoLida(b) ? 1 : 0) - (isNaoLida(a) ? 1 : 0);
       if (unreadDelta !== 0) return unreadDelta;
 
@@ -357,36 +409,37 @@ export default function Notificacao() {
     return sorted;
   }, [listaOrdenadaBase, busca, fTipo, somenteNaoLidas, ordenacao]);
 
-  // paginação
   const totalItems = listaFiltrada.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
   const pageClamped = Math.min(page, totalPages);
 
-  // reset página quando filtros mudam
-  useMemo(() => {
-    setPage(1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [busca, fTipo, somenteNaoLidas, ordenacao, pageSize]);
-
   const sliceStart = (pageClamped - 1) * pageSize;
   const sliceEnd = sliceStart + pageSize;
-  const pagina = useMemo(() => listaFiltrada.slice(sliceStart, sliceEnd), [listaFiltrada, sliceStart, sliceEnd]);
+  const pagina = useMemo(
+    () => listaFiltrada.slice(sliceStart, sliceEnd),
+    [listaFiltrada, sliceStart, sliceEnd]
+  );
 
-  // ───────── Render ─────────
   return (
     <div className="flex flex-col min-h-screen bg-gelo dark:bg-zinc-900">
-      <HeaderHero total={total} naoLidas={naoLidas} onMarcarTodas={marcarTodas} marcandoTodas={marcandoTodas} />
+      <HeaderHero
+        total={total}
+        naoLidas={naoLidas}
+        onMarcarTodas={marcarTodas}
+        marcandoTodas={marcandoTodas}
+      />
 
       <main role="main" id="conteudo" className="flex-1">
         <section className="p-4 sm:p-6 md:p-8 max-w-5xl mx-auto">
           <p ref={liveRef} className="sr-only" aria-live="polite" />
 
-          {/* Toolbar sticky (busca + filtros) */}
           <div className="sticky top-1 z-30 mb-4 rounded-2xl border border-zinc-200 bg-white/80 p-3 backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/70">
             <div className="flex flex-col gap-3">
-              {/* Busca */}
               <div className="relative">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" aria-hidden="true" />
+                <Search
+                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500"
+                  aria-hidden="true"
+                />
                 <input
                   value={busca}
                   onChange={(e) => setBusca(e.target.value)}
@@ -396,7 +449,6 @@ export default function Notificacao() {
                 />
               </div>
 
-              {/* Filtros */}
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="inline-flex items-center gap-1 text-xs text-zinc-500">
@@ -420,12 +472,11 @@ export default function Notificacao() {
                   <button
                     type="button"
                     onClick={() => setSomenteNaoLidas((v) => !v)}
-                    className={`inline-flex items-center gap-2 rounded-full px-3 py-2 text-xs font-extrabold transition border
-                      ${
-                        somenteNaoLidas
-                          ? "bg-amber-700 text-white border-amber-700 hover:bg-amber-800"
-                          : "bg-zinc-100 text-zinc-700 border-zinc-200 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:border-zinc-700 dark:hover:bg-zinc-700"
-                      }`}
+                    className={`inline-flex items-center gap-2 rounded-full px-3 py-2 text-xs font-extrabold transition border ${
+                      somenteNaoLidas
+                        ? "bg-amber-700 text-white border-amber-700 hover:bg-amber-800"
+                        : "bg-zinc-100 text-zinc-700 border-zinc-200 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:border-zinc-700 dark:hover:bg-zinc-700"
+                    }`}
                     aria-pressed={somenteNaoLidas ? "true" : "false"}
                     aria-label="Mostrar somente não lidas"
                   >
@@ -446,7 +497,6 @@ export default function Notificacao() {
                   </select>
                 </div>
 
-                {/* Paginação / page size */}
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs text-zinc-500">
                     {totalItems} resultado{totalItems === 1 ? "" : "s"}
@@ -470,7 +520,6 @@ export default function Notificacao() {
             </div>
           </div>
 
-          {/* Cabeçalho da lista */}
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-base sm:text-lg font-extrabold flex items-center gap-2 text-lousa dark:text-white">
               <Bell aria-hidden="true" /> Notificações
@@ -487,7 +536,9 @@ export default function Notificacao() {
             </p>
           ) : totalItems === 0 ? (
             <div className="rounded-2xl border border-zinc-200 bg-white p-6 text-center dark:border-zinc-800 dark:bg-zinc-900">
-              <p className="text-sm text-zinc-600 dark:text-zinc-400">Nenhuma notificação para os filtros selecionados.</p>
+              <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                Nenhuma notificação para os filtros selecionados.
+              </p>
               <button
                 type="button"
                 onClick={() => {
@@ -499,7 +550,7 @@ export default function Notificacao() {
                 }}
                 className="mt-3 inline-flex items-center gap-2 rounded-xl bg-violet-700 px-4 py-2 text-sm font-extrabold text-white hover:bg-violet-800"
               >
-                <RefreshCw className="h-4 w-4" />
+                <RefreshCw className="h-4 w-4" aria-hidden="true" />
                 Limpar filtros
               </button>
             </div>
@@ -509,14 +560,13 @@ export default function Notificacao() {
                 <AnimatePresence>
                   {pagina.map((n, index) => {
                     const naoLida = isNaoLida(n);
-                    const tipoNorm = normalizarTipo(n?.tipo);
+                    const tipoExibicao = labelTipo(n?.tipo);
 
-                    const ctaLabel =
-                      naoLida
-                        ? n.link
-                          ? "Ver mais"
-                          : "Marcar como lida"
-                        : "Lida";
+                    const ctaLabel = naoLida
+                      ? n.link
+                        ? "Ver mais"
+                        : "Marcar como lida"
+                      : "Lida";
 
                     return (
                       <motion.div
@@ -526,7 +576,9 @@ export default function Notificacao() {
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: 8 }}
                         transition={{ duration: 0.22, delay: Math.min(0.12, index * 0.03) }}
-                        className={`rounded-2xl shadow-sm p-4 border transition-all duration-200 ${classesCartao(n)}`}
+                        className={`rounded-2xl shadow-sm p-4 border transition-all duration-200 ${classesCartao(
+                          n
+                        )}`}
                       >
                         <div className="flex items-start gap-3">
                           <div className="shrink-0 mt-0.5">{obterIcone(n.tipo)}</div>
@@ -538,7 +590,7 @@ export default function Notificacao() {
                               </p>
 
                               <span className="text-[11px] px-2 py-0.5 rounded-full bg-white/60 text-zinc-700 border border-zinc-200 dark:bg-zinc-950/30 dark:text-zinc-200 dark:border-zinc-700">
-                                {tipoNorm}
+                                {tipoExibicao}
                               </span>
 
                               {naoLida && (
@@ -554,9 +606,12 @@ export default function Notificacao() {
                               </p>
                             ) : null}
 
-                            {(n.data || n.criada_em || n.criadaEm) && (
+                            {(n.data || n.criado_em || n.criada_em || n.criadaEm) && (
                               <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
-                                📅 {formatarDataLocalLegivel(n.data || n.criada_em || n.criadaEm)}
+                                📅{" "}
+                                {formatarDataLocalLegivel(
+                                  n.criado_em || n.data || n.criada_em || n.criadaEm
+                                )}
                               </p>
                             )}
 
@@ -599,10 +654,10 @@ export default function Notificacao() {
                 </AnimatePresence>
               </div>
 
-              {/* Paginação */}
               <div className="mt-4 flex flex-col items-center justify-between gap-3 sm:flex-row">
                 <div className="text-xs text-zinc-600 dark:text-zinc-400">
-                  Mostrando <strong>{pagina.length}</strong> de <strong>{totalItems}</strong> resultado(s)
+                  Mostrando <strong>{pagina.length}</strong> de <strong>{totalItems}</strong>{" "}
+                  resultado(s)
                 </div>
 
                 <div className="flex items-center gap-2">

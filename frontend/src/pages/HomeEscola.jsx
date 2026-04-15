@@ -12,6 +12,11 @@
   - Mobile-first / PWA-ready
   - Mantém sanitização com DOMPurify
   - Mantém navegação leve e segura
+
+  NOVO:
+  - Área premium de notificações não lidas no painel inicial
+  - Integração com resumo e marcação de leitura
+  - CTA para central de notificações
 */
 
 import { useEffect, useMemo, useCallback, useState } from "react";
@@ -31,19 +36,23 @@ import {
   AlertTriangle,
   Image as ImageIcon,
   BellRing,
+  Bell,
   ShieldCheck,
   Activity,
   BadgeCheck,
   Clock3,
   LayoutPanelTop,
   ArrowUpRight,
+  Check,
+  ExternalLink,
+  Info,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
 
 import Footer from "../components/Footer";
 import HeaderHero from "../components/HeaderHero";
-import { apiGet } from "../services/api";
+import { apiGet, apiPatch } from "../services/api";
 
 /* ────────────────────────────────────────────────────────────── */
 /* Utils                                                          */
@@ -59,6 +68,30 @@ function fmtData(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return "—";
   const [y, m, d] = v.split("-");
   return `${d}/${m}/${y}`;
+}
+
+function formatarDataNotificacao(s) {
+  if (!s) return "";
+  const str = String(s).trim();
+
+  const mDate = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (mDate) return `${mDate[3]}/${mDate[2]}/${mDate[1]}`;
+
+  const mDateTime = str.match(/^(\d{4})-(\d{2})-(\d{2})[T\s]?(\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (mDateTime) {
+    const [, y, mo, d, hh, mm] = mDateTime;
+    return `${d}/${mo}/${y} ${hh}:${mm}`;
+  }
+
+  const dt = new Date(str);
+  if (Number.isNaN(dt.getTime())) return str;
+
+  const y = dt.getFullYear();
+  const mo = String(dt.getMonth() + 1).padStart(2, "0");
+  const d = String(dt.getDate()).padStart(2, "0");
+  const hh = String(dt.getHours()).padStart(2, "0");
+  const mm = String(dt.getMinutes()).padStart(2, "0");
+  return `${d}/${mo}/${y} ${hh}:${mm}`;
 }
 
 function getHojeLocalYMD() {
@@ -115,8 +148,7 @@ function getTipoConfig(tipo) {
       accent: "from-sky-500 via-cyan-500 to-teal-500",
       soft:
         "bg-sky-500/10 text-sky-700 dark:bg-sky-400/10 dark:text-sky-200 border-sky-200/70 dark:border-sky-400/20",
-      glow:
-        "shadow-[0_0_0_1px_rgba(14,165,233,0.10)]",
+      glow: "shadow-[0_0_0_1px_rgba(14,165,233,0.10)]",
     };
   }
 
@@ -126,8 +158,7 @@ function getTipoConfig(tipo) {
     accent: "from-emerald-500 via-teal-500 to-cyan-500",
     soft:
       "bg-emerald-500/10 text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-200 border-emerald-200/70 dark:border-emerald-400/20",
-    glow:
-      "shadow-[0_0_0_1px_rgba(16,185,129,0.10)]",
+    glow: "shadow-[0_0_0_1px_rgba(16,185,129,0.10)]",
   };
 }
 
@@ -174,6 +205,74 @@ function getPeriodoExibicao(item) {
   }
 
   return `Até ${fmtData(item.data_fim_exibicao)}`;
+}
+
+function normalizarTipoNotificacao(tipo) {
+  const t = String(tipo || "").trim().toLowerCase();
+
+  if (t === "evento") return "evento";
+  if (t === "certificado") return "certificado";
+  if (t === "avaliacao" || t === "avaliação") return "avaliacao";
+  if (t === "reserva_aprovada") return "reserva_aprovada";
+  if (t === "reserva_rejeitada") return "reserva_rejeitada";
+  if (t === "submissao") return "submissao";
+  if (t === "aviso" || t === "sistema") return "aviso";
+  return "outros";
+}
+
+function labelTipoNotificacao(tipo) {
+  const t = normalizarTipoNotificacao(tipo);
+
+  if (t === "evento") return "Evento";
+  if (t === "certificado") return "Certificado";
+  if (t === "avaliacao") return "Avaliação";
+  if (t === "reserva_aprovada") return "Reserva aprovada";
+  if (t === "reserva_rejeitada") return "Reserva não aprovada";
+  if (t === "submissao") return "Submissão";
+  if (t === "aviso") return "Aviso";
+  return "Atualização";
+}
+
+function NotificationMiniIcon({ tipo }) {
+  const t = normalizarTipoNotificacao(tipo);
+
+  if (t === "evento") {
+    return (
+      <span className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-sky-100 text-sky-700 dark:bg-sky-950/30 dark:text-sky-300">
+        <CalendarDays className="h-5 w-5" />
+      </span>
+    );
+  }
+
+  if (t === "certificado" || t === "reserva_aprovada") {
+    return (
+      <span className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">
+        <CheckCircle2 className="h-5 w-5" />
+      </span>
+    );
+  }
+
+  if (t === "avaliacao") {
+    return (
+      <span className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-violet-100 text-violet-700 dark:bg-violet-950/30 dark:text-violet-300">
+        <Star className="h-5 w-5" />
+      </span>
+    );
+  }
+
+  if (t === "reserva_rejeitada" || t === "aviso" || t === "submissao") {
+    return (
+      <span className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-amber-100 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+        <Info className="h-5 w-5" />
+      </span>
+    );
+  }
+
+  return (
+    <span className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+      <Bell className="h-5 w-5" />
+    </span>
+  );
 }
 
 /* ────────────────────────────────────────────────────────────── */
@@ -235,8 +334,9 @@ function InfoRibbon() {
             Ambiente institucional, seguro e orientado por dados
           </p>
           <p className="mt-1 text-sm leading-relaxed text-slate-600 dark:text-zinc-400">
-            Acompanhe seus principais indicadores de participação e acesse as publicações
-            oficiais disponibilizadas pela administração da plataforma.
+            Acompanhe seus principais indicadores de participação, suas notificações não
+            lidas e acesse as publicações oficiais disponibilizadas pela administração da
+            plataforma.
           </p>
         </div>
       </div>
@@ -623,6 +723,114 @@ function EmptyPublicacoes() {
   );
 }
 
+function EmptyNotificacoes() {
+  return (
+    <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm dark:border-white/10 dark:bg-zinc-900/55 sm:p-8">
+      <div className="flex flex-col items-center text-center">
+        <div className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-violet-600/10 text-violet-700 dark:bg-violet-400/10 dark:text-violet-200">
+          <Sparkles className="h-7 w-7" />
+        </div>
+
+        <h3 className="mt-4 text-lg font-extrabold text-slate-900 dark:text-zinc-100">
+          Você está em dia
+        </h3>
+
+        <p className="mt-2 max-w-xl text-sm text-slate-600 dark:text-zinc-400">
+          Nenhuma notificação não lida no momento.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function NotificacoesSkeleton() {
+  return (
+    <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      {[1, 2, 3, 4].map((n) => (
+        <div
+          key={n}
+          className="overflow-hidden rounded-[26px] border border-slate-200/80 bg-white shadow-sm dark:border-white/10 dark:bg-zinc-900/55"
+        >
+          <div className="h-1.5 w-full bg-zinc-200 dark:bg-zinc-800" />
+          <div className="p-4 sm:p-5">
+            <div className="flex items-start gap-3">
+              <div className="h-10 w-10 shrink-0 animate-pulse rounded-2xl bg-zinc-200 dark:bg-zinc-800" />
+              <div className="min-w-0 flex-1 space-y-2">
+                <div className="h-4 w-40 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                <div className="h-3 w-full animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                <div className="h-3 w-5/6 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                <div className="h-3 w-24 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+              </div>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function NotificationCard({ item, onMarcarLida }) {
+  const tipoLabel = labelTipoNotificacao(item?.tipo);
+
+  return (
+    <motion.article
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.28 }}
+      className="overflow-hidden rounded-[26px] border border-amber-200/80 bg-amber-50/80 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-lg dark:border-amber-900/40 dark:bg-amber-950/15"
+    >
+      <div className="h-1.5 w-full bg-gradient-to-r from-amber-400 via-orange-400 to-rose-400" />
+
+      <div className="p-4 sm:p-5">
+        <div className="flex items-start gap-3">
+          <NotificationMiniIcon tipo={item?.tipo} />
+
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-sm font-extrabold leading-tight text-slate-900 dark:text-zinc-100">
+                {item?.titulo || "Notificação"}
+              </p>
+
+              <MetaBadge className="border-slate-200 bg-white/80 text-slate-700 backdrop-blur-sm dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
+                {tipoLabel}
+              </MetaBadge>
+
+              <MetaBadge className="border-amber-200 bg-amber-100 text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/30 dark:text-amber-200">
+                não lida
+              </MetaBadge>
+            </div>
+
+            {item?.mensagem ? (
+              <p className="mt-2 text-sm leading-relaxed text-slate-700 dark:text-zinc-300">
+                {String(item.mensagem)}
+              </p>
+            ) : null}
+
+            {(item?.criado_em || item?.data) && (
+              <p className="mt-3 text-[12px] text-slate-500 dark:text-zinc-400">
+                {formatarDataNotificacao(item.criado_em || item.data)}
+              </p>
+            )}
+
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <GhostAction icon={Check} onClick={() => onMarcarLida(item)}>
+                Marcar como lida
+              </GhostAction>
+
+              <GhostAction
+                icon={ExternalLink}
+                onClick={() => onMarcarLida(item, true)}
+              >
+                Ver mais
+              </GhostAction>
+            </div>
+          </div>
+        </div>
+      </div>
+    </motion.article>
+  );
+}
+
 /* ────────────────────────────────────────────────────────────── */
 /* Página                                                          */
 /* ────────────────────────────────────────────────────────────── */
@@ -640,6 +848,17 @@ export default function HomeEscola() {
   const [publicacoes, setPublicacoes] = useState([]);
   const [loadingPublicacoes, setLoadingPublicacoes] = useState(true);
   const [erroPublicacoes, setErroPublicacoes] = useState("");
+
+  const [notificacoesNaoLidas, setNotificacoesNaoLidas] = useState([]);
+  const [loadingNotificacoes, setLoadingNotificacoes] = useState(true);
+  const [erroNotificacoes, setErroNotificacoes] = useState("");
+  const [resumoNotificacoes, setResumoNotificacoes] = useState({
+    total: 0,
+    naoLidas: 0,
+    porTipo: {},
+  });
+  const [marcandoNotifId, setMarcandoNotifId] = useState(null);
+  const [marcandoTodasNotifs, setMarcandoTodasNotifs] = useState(false);
 
   const carregarResumo = useCallback(async () => {
     try {
@@ -675,10 +894,43 @@ export default function HomeEscola() {
     }
   }, []);
 
+  const carregarNotificacoesNaoLidas = useCallback(async () => {
+    try {
+      setLoadingNotificacoes(true);
+      setErroNotificacoes("");
+
+      const [lista, resumoApi] = await Promise.all([
+        apiGet("/api/notificacao", {
+          query: {
+            apenasNaoLidas: 1,
+            limit: 5,
+            offset: 0,
+          },
+        }),
+        apiGet("/api/notificacao/resumo"),
+      ]);
+
+      setNotificacoesNaoLidas(Array.isArray(lista) ? lista : []);
+      setResumoNotificacoes(
+        resumoApi && typeof resumoApi === "object"
+          ? resumoApi
+          : { total: 0, naoLidas: 0, porTipo: {} }
+      );
+    } catch (err) {
+      console.error("❌ Erro ao carregar notificações:", err);
+      setNotificacoesNaoLidas([]);
+      setResumoNotificacoes({ total: 0, naoLidas: 0, porTipo: {} });
+      setErroNotificacoes("Não foi possível carregar suas notificações.");
+    } finally {
+      setLoadingNotificacoes(false);
+    }
+  }, []);
+
   useEffect(() => {
     carregarResumo();
     carregarPublicacoes();
-  }, [carregarResumo, carregarPublicacoes]);
+    carregarNotificacoesNaoLidas();
+  }, [carregarResumo, carregarPublicacoes, carregarNotificacoesNaoLidas]);
 
   const stats = useMemo(() => {
     const inscricao = Number(resumo?.inscricaoFuturas ?? resumo?.proximosEventos ?? 0) || 0;
@@ -702,12 +954,69 @@ export default function HomeEscola() {
     [navigate]
   );
 
+  const handleMarcarNotificacaoLida = useCallback(
+    async (item, abrirCentral = false) => {
+      if (!item?.id) return;
+
+      try {
+        setMarcandoNotifId(item.id);
+        await apiPatch(`/api/notificacao/${item.id}/lida`);
+
+        setNotificacoesNaoLidas((prev) => prev.filter((n) => n.id !== item.id));
+        setResumoNotificacoes((prev) => ({
+          ...prev,
+          naoLidas: Math.max(0, Number(prev?.naoLidas || 0) - 1),
+        }));
+
+        if (typeof window.atualizarContadorNotificacao === "function") {
+          window.atualizarContadorNotificacao();
+        }
+
+        if (abrirCentral) {
+          navigate("/notificacao");
+        }
+      } catch (err) {
+        console.error("❌ Erro ao marcar notificação como lida:", err);
+        toast.error("Não foi possível atualizar a notificação.");
+      } finally {
+        setMarcandoNotifId(null);
+      }
+    },
+    [navigate]
+  );
+
+  const handleMarcarTodasNotificacoes = useCallback(async () => {
+    if (!resumoNotificacoes?.naoLidas) return;
+
+    try {
+      setMarcandoTodasNotifs(true);
+      await apiPatch("/api/notificacao/lidas/todas");
+
+      setNotificacoesNaoLidas([]);
+      setResumoNotificacoes((prev) => ({
+        ...prev,
+        naoLidas: 0,
+      }));
+
+      if (typeof window.atualizarContadorNotificacao === "function") {
+        window.atualizarContadorNotificacao();
+      }
+
+      toast.success("Notificações marcadas como lidas.");
+    } catch (err) {
+      console.error("❌ Erro ao marcar todas notificações:", err);
+      toast.error("Não foi possível marcar todas as notificações.");
+    } finally {
+      setMarcandoTodasNotifs(false);
+    }
+  }, [resumoNotificacoes?.naoLidas]);
+
   return (
     <>
       <div className="mx-auto max-w-7xl p-4 md:p-6">
         <HeaderHero
           title="Painel do Usuário"
-          subtitle="Seu resumo de inscrições, presenças, certificados e publicações institucionais."
+          subtitle="Seu resumo de inscrições, presenças, certificados, notificações e publicações institucionais."
           badge="Escola da Saúde • Oficial • Ambiente Seguro"
           icon={Sparkles}
           gradient="from-emerald-700 via-teal-600 to-sky-700"
@@ -773,6 +1082,90 @@ export default function HomeEscola() {
 
             <NotaUsuarioCard nota={stats.nota} loading={loadingResumo} />
           </div>
+        </SectionShell>
+
+        <SectionShell
+          title="Notificações não lidas"
+          subtitle="Acompanhe rapidamente suas aprovações, certificados, avaliações e demais avisos importantes."
+          icon={Bell}
+          gradient="from-violet-600 via-fuchsia-500 to-pink-500"
+          action={
+            <div className="flex flex-wrap items-center gap-2.5">
+              <MetaBadge className="border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-400/20 dark:bg-violet-400/10 dark:text-violet-200">
+                <Bell className="h-3.5 w-3.5" />
+                {Number(resumoNotificacoes?.naoLidas || 0)} não lida(s)
+              </MetaBadge>
+
+              <GhostAction
+                icon={RefreshCw}
+                onClick={carregarNotificacoesNaoLidas}
+                loading={loadingNotificacoes}
+              >
+                {loadingNotificacoes ? "Atualizando…" : "Recarregar"}
+              </GhostAction>
+
+              <GhostAction icon={ExternalLink} onClick={() => go("/notificacao")}>
+                Ver todas
+              </GhostAction>
+
+              <GhostAction
+                icon={Check}
+                onClick={handleMarcarTodasNotificacoes}
+                loading={marcandoTodasNotifs}
+              >
+                {marcandoTodasNotifs ? "Marcando…" : "Marcar todas"}
+              </GhostAction>
+            </div>
+          }
+        >
+          {loadingNotificacoes ? <NotificacoesSkeleton /> : null}
+
+          {!loadingNotificacoes && erroNotificacoes ? (
+            <div
+              className="mt-1 rounded-[26px] border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/40 dark:bg-amber-950/20"
+              role="alert"
+            >
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="mt-0.5 h-5 w-5 text-amber-700 dark:text-amber-300" />
+                <div className="min-w-0">
+                  <p className="font-extrabold text-amber-800 dark:text-amber-200">
+                    Não foi possível carregar as notificações
+                  </p>
+                  <p className="mt-1 text-sm text-amber-700 dark:text-amber-300">
+                    {erroNotificacoes}
+                  </p>
+
+                  <div className="mt-3">
+                    <GhostAction icon={RefreshCw} onClick={carregarNotificacoesNaoLidas}>
+                      Tentar novamente
+                    </GhostAction>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {!loadingNotificacoes && !erroNotificacoes && notificacoesNaoLidas.length > 0 ? (
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+              {notificacoesNaoLidas.map((item) => (
+                <div
+                  key={item.id}
+                  className={marcandoNotifId === item.id ? "opacity-70 pointer-events-none" : ""}
+                >
+                  <NotificationCard
+                    item={item}
+                    onMarcarLida={handleMarcarNotificacaoLida}
+                  />
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {!loadingNotificacoes &&
+          !erroNotificacoes &&
+          notificacoesNaoLidas.length === 0 ? (
+            <EmptyNotificacoes />
+          ) : null}
         </SectionShell>
 
         <SectionShell

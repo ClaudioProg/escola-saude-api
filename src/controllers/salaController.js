@@ -1,6 +1,10 @@
 // 📁 src/controllers/salaController.js
 /* eslint-disable no-console */
 const { query, getClient } = require("../db");
+const {
+  gerarNotificacaoDeReservaAprovada,
+  gerarNotificacaoDeReservaRejeitada,
+} = require("./notificacaoController");
 
 const IS_PROD = process.env.NODE_ENV === "production";
 const IS_DEV = !IS_PROD;
@@ -1326,6 +1330,30 @@ async function atualizarReservaAdmin(req, res) {
       return res.status(401).json({ ok: false, erro: "Não autenticado.", requestId: r });
     }
 
+    const selAtual = await query(
+      `
+      SELECT
+        rs.id,
+        rs.sala,
+        rs.data::date AS data,
+        rs.periodo,
+        rs.finalidade,
+        rs.observacao_admin,
+        rs.solicitante_id,
+        rs.aprovador_id,
+        rs.status
+      FROM reservas_salas rs
+      WHERE rs.id = $1
+      LIMIT 1
+      `,
+      [id]
+    );
+
+    const reservaAtual = selAtual?.rows?.[0];
+    if (!reservaAtual) {
+      return res.status(404).json({ ok: false, erro: "Reserva não encontrada.", requestId: r });
+    }
+
     const status = normStr(req.body?.status, { max: 20 });
     const qtd_pessoas = req.body?.qtd_pessoas != null ? asInt(req.body.qtd_pessoas) : null;
     const coffee_break =
@@ -1335,9 +1363,28 @@ async function atualizarReservaAdmin(req, res) {
     const finalidade =
       req.body?.finalidade != null ? normStr(req.body.finalidade, { max: 500 }) : null;
 
-    const statusNorm = String(status || "").trim().toLowerCase();
+        const statusNorm = String(status || "").trim().toLowerCase();
 
     if (["cancelado", "rejeitado"].includes(statusNorm)) {
+      if (statusNorm === "rejeitado") {
+        await gerarNotificacaoDeReservaRejeitada({
+          usuario_id: reservaAtual.solicitante_id,
+          reserva_id: reservaAtual.id,
+          sala: reservaAtual.sala,
+          data:
+            typeof reservaAtual.data === "string"
+              ? reservaAtual.data.slice(0, 10)
+              : toISODateString(
+                  reservaAtual.data instanceof Date
+                    ? reservaAtual.data
+                    : new Date(reservaAtual.data)
+                ),
+          periodo: reservaAtual.periodo,
+          finalidade: reservaAtual.finalidade,
+          observacao: observacao ?? reservaAtual.observacao_admin ?? null,
+        });
+      }
+
       const { rows: deletedRows } = await query(
         `
         DELETE FROM reservas_salas
@@ -1357,6 +1404,7 @@ async function atualizarReservaAdmin(req, res) {
         sala: deletedRows[0]?.sala,
         data: deletedRows[0]?.data,
         periodo: deletedRows[0]?.periodo,
+        notificouSolicitante: statusNorm === "rejeitado",
       });
 
       return res.json({
@@ -1390,8 +1438,23 @@ async function atualizarReservaAdmin(req, res) {
       [id, status || null, qtd_pessoas, coffee_break, observacao, finalidade, aprovadorId]
     );
 
-    if (!rows?.[0]) {
+        if (!rows?.[0]) {
       return res.status(404).json({ ok: false, erro: "Reserva não encontrada.", requestId: r });
+    }
+
+    if (["aprovado", "confirmado"].includes(String(rows[0]?.status || "").toLowerCase())) {
+      await gerarNotificacaoDeReservaAprovada({
+        usuario_id: rows[0].solicitante_id,
+        reserva_id: rows[0].id,
+        sala: rows[0].sala,
+        data:
+          typeof rows[0].data === "string"
+            ? rows[0].data.slice(0, 10)
+            : toISODateString(rows[0].data instanceof Date ? rows[0].data : new Date(rows[0].data)),
+        periodo: rows[0].periodo,
+        finalidade: rows[0].finalidade,
+        observacao: rows[0].observacao_admin ?? null,
+      });
     }
 
     return res.json(rows[0]);
