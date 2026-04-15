@@ -169,7 +169,23 @@ function keySlot(dataISO, periodo, sala) {
 /* ─────────────────── Normalização de reservas ─────────────────── */
 function normalizeReserva(r) {
   const dataISO = (r.data || r.dataISO || r.dia || "").slice(0, 10);
-  const status = String(r.status || "pendente").toLowerCase();
+  const statusRaw = String(r.status || "pendente").trim().toLowerCase();
+
+  const statusMap = {
+    excluido: "excluido",
+    excluida: "excluido",
+    "excluída": "excluido",
+    removido: "excluido",
+    removida: "excluido",
+    deletado: "excluido",
+    deletada: "excluido",
+    rejeitada: "rejeitado",
+    cancelada: "cancelado",
+    aprovada: "aprovado",
+    confirmada: "confirmado",
+  };
+
+  const status = statusMap[statusRaw] || statusRaw;
 
   const pendenteAprovacao =
     r.pendente_aprovacao === true ||
@@ -181,7 +197,7 @@ function normalizeReserva(r) {
 
   const rejeitadoOuCancelado =
     r.rejeitado_ou_cancelado === true ||
-    ["rejeitado", "cancelado"].includes(status);
+    ["rejeitado", "cancelado", "excluido"].includes(status);
 
   return {
     id: r.id ?? r.reserva_id ?? r.uuid ?? null,
@@ -1051,9 +1067,14 @@ for (const r of dataSalaReuniao.reservas || []) {
 
   function prioridadeReservaAdmin(reserva) {
   if (!reserva) return 0;
+
+  const status = String(reserva.status || "").trim().toLowerCase();
+
   if (reserva.pendente_aprovacao) return 50;
   if (reserva.aprovado_confirmado) return 40;
-  if (reserva.rejeitado_ou_cancelado) return 10;
+  if (["rejeitado", "cancelado", "excluido"].includes(status)) return 0;
+  if (reserva.rejeitado_ou_cancelado) return 0;
+
   return 20;
 }
 
@@ -1067,12 +1088,25 @@ function getReservaSlot(dataISO, periodo, salaKey) {
   const reservas = getReservasSlot(dataISO, periodo, salaKey);
   if (!reservas.length) return null;
 
-  return [...reservas].sort((a, b) => prioridadeReservaAdmin(b) - prioridadeReservaAdmin(a))[0];
+  const reservasAtivas = reservas.filter((r) => !["rejeitado", "cancelado", "excluido"].includes(
+    String(r?.status || "").trim().toLowerCase()
+  ));
+
+  if (!reservasAtivas.length) return null;
+
+  return [...reservasAtivas].sort(
+    (a, b) => prioridadeReservaAdmin(b) - prioridadeReservaAdmin(a)
+  )[0];
 }
 
 function reservaOcupaSlot(reserva) {
   if (!reserva) return false;
+
+  const status = String(reserva.status || "").trim().toLowerCase();
+
   if (reserva.rejeitado_ou_cancelado) return false;
+  if (["rejeitado", "cancelado", "excluido"].includes(status)) return false;
+
   return true;
 }
 
