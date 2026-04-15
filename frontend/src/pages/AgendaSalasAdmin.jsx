@@ -37,7 +37,7 @@ import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
 import { toast } from "react-toastify";
 import { useNavigate } from "react-router-dom";
-import api from "../services/api";
+import api, { apiGetFile } from "../services/api";
 import Footer from "../components/Footer";
 import ModalReservaAdmin from "../components/ModalReservaAdmin";
 
@@ -516,67 +516,58 @@ function SlotCardDia({ slot, baseURL, onEditar, onExcluir }) {
     Boolean(slot?.reserva?.assinatura_id);
 
   async function abrirPdfTermo() {
-    if (!slot?.reserva?.id) return;
+  if (!slot?.reserva?.id) return;
 
-    try {
-      console.log("[AgendaSalasAdmin][PDF_TERMO] Baixando termo com autenticação:", {
-        reservaId: slot.reserva.id,
-      });
+  try {
+    console.log("[AgendaSalasAdmin][PDF_TERMO] Baixando termo com autenticação:", {
+      reservaId: slot.reserva.id,
+    });
 
-    const response = await api.get(
-  `/salas/admin/reservas/${slot.reserva.id}/termo-pdf`,
-  {
-    responseType: "blob",
-  }
-);
+    const { blob, filename } = await apiGetFile(
+      `/salas/admin/reservas/${slot.reserva.id}/termo-pdf`
+    );
 
-const blob = response?.data ?? response;
-const contentType =
-  response?.headers?.["content-type"] || response?.type || blob?.type || "";
+    console.log("[AgendaSalasAdmin][PDF_TERMO][RESPONSE]", {
+      blobType: blob?.type,
+      blobSize: blob?.size,
+      filename: filename || null,
+    });
 
-console.log("[AgendaSalasAdmin][PDF_TERMO][RESPONSE]", {
-  ehAxiosResponse: !!response?.headers || typeof response?.status !== "undefined",
-  status: response?.status,
-  contentType,
-  dataType: Object.prototype.toString.call(blob),
-  blobType: blob?.type,
-  blobSize: blob?.size,
-});
-
-if (!blob || typeof blob.size !== "number") {
-  throw new Error("Resposta inválida ao gerar o PDF do termo.");
-}
-
-if (
-  contentType &&
-  !String(contentType).includes("pdf") &&
-  !String(contentType).includes("octet-stream")
-) {
-  const textoErro = typeof blob?.text === "function" ? await blob.text().catch(() => "") : "";
-  console.error("[AgendaSalasAdmin][PDF_TERMO][CONTEUDO_NAO_PDF]", textoErro);
-  throw new Error("A rota retornou um conteúdo que não é PDF.");
-}
-
-const blobUrl = URL.createObjectURL(blob);
-const novaAba = window.open(blobUrl, "_blank", "noopener,noreferrer");
-
-      if (!novaAba) {
-        const a = document.createElement("a");
-        a.href = blobUrl;
-        a.download = `termo-reserva-${slot.reserva.id}.pdf`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      }
-
-      setTimeout(() => {
-        URL.revokeObjectURL(blobUrl);
-      }, 60_000);
-    } catch (err) {
-      console.error("[AgendaSalasAdmin][PDF_TERMO][ERRO]", err);
-      toast.error("Não foi possível abrir o PDF do termo.");
+    if (!blob || typeof blob.size !== "number" || blob.size <= 0) {
+      throw new Error("Resposta inválida ao gerar o PDF do termo.");
     }
+
+    if (
+      blob?.type &&
+      !String(blob.type).includes("pdf") &&
+      !String(blob.type).includes("octet-stream")
+    ) {
+      const textoErro =
+        typeof blob?.text === "function" ? await blob.text().catch(() => "") : "";
+      console.error("[AgendaSalasAdmin][PDF_TERMO][CONTEUDO_NAO_PDF]", textoErro);
+      throw new Error("A rota retornou um conteúdo que não é PDF.");
+    }
+
+    const blobUrl = URL.createObjectURL(blob);
+    const novaAba = window.open(blobUrl, "_blank", "noopener,noreferrer");
+
+    if (!novaAba) {
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = filename || `termo-reserva-${slot.reserva.id}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
+
+    setTimeout(() => {
+      URL.revokeObjectURL(blobUrl);
+    }, 60_000);
+  } catch (err) {
+    console.error("[AgendaSalasAdmin][PDF_TERMO][ERRO]", err);
+    toast.error("Não foi possível abrir o PDF do termo.");
   }
+}
 
   return (
     <div
