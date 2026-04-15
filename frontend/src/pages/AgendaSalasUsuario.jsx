@@ -554,21 +554,23 @@ function AgendaSalasUsuario() {
       if (liveRef.current) liveRef.current.textContent = "Carregando disponibilidade...";
 
       const resp = await api.get("/salas/agenda-usuario", {
-        params: { ano, mes: mesIndex + 1 },
-      });
+  query: { ano, mes: mesIndex + 1 },
+});
 
       const data = resp?.data ?? resp ?? {};
       const map = {};
 
       for (const r of data.reservas || []) {
-        const dataISO = (r.data || "").slice(0, 10);
-        const salaKey = r.sala;
-        const periodoKey = r.periodo;
-        if (!dataISO || !salaKey || !periodoKey) continue;
-        (map[dataISO] ??= {});
-        (map[dataISO][salaKey] ??= {});
-        map[dataISO][salaKey][periodoKey] = r;
-      }
+  const dataISO = (r.data || "").slice(0, 10);
+  const salaKey = r.sala;
+  const periodoKey = r.periodo;
+  if (!dataISO || !salaKey || !periodoKey) continue;
+
+  (map[dataISO] ??= {});
+  (map[dataISO][salaKey] ??= {});
+  (map[dataISO][salaKey][periodoKey] ??= []);
+  map[dataISO][salaKey][periodoKey].push(r);
+}
 
       const ferMap = {};
       for (const f of data.feriados || []) {
@@ -614,24 +616,58 @@ function AgendaSalasUsuario() {
     setMesIndex(hojeParts.mesIndex);
   }
 
-  function getReservaDoSlot(salaValue, dataISO, periodo) {
-    return reservasMap[dataISO]?.[salaValue]?.[periodo] || null;
+  function prioridadeReserva(reserva) {
+  const status = String(reserva?.status || "").toLowerCase();
+  const minha = reserva?.minha === true;
+
+  if (minha && ["pendente", "em_analise", "solicitado"].includes(status)) return 70;
+  if (minha && ["aprovado", "confirmado"].includes(status)) return 60;
+  if (!minha && ["aprovado", "confirmado", "pendente", "em_analise", "solicitado", "bloqueado"].includes(status)) return 50;
+  if (minha && ["rejeitado", "cancelado", "negado", "excluido", "excluído"].includes(status)) return 40;
+  return 10;
+}
+
+function getReservasDoSlot(salaValue, dataISO, periodo) {
+  const raw = reservasMap[dataISO]?.[salaValue]?.[periodo];
+  if (!raw) return [];
+  return Array.isArray(raw) ? raw : [raw];
+}
+
+function getReservaDoSlot(salaValue, dataISO, periodo) {
+  const reservas = getReservasDoSlot(salaValue, dataISO, periodo);
+  if (!reservas.length) return null;
+
+  return [...reservas].sort((a, b) => prioridadeReserva(b) - prioridadeReserva(a))[0];
+}
+
+function statusNormalizado(reserva) {
+  return String(reserva?.status || "").toLowerCase();
+}
+
+function reservaOcupaSlot(reserva) {
+  if (!reserva) return false;
+
+  const status = statusNormalizado(reserva);
+
+  if (["cancelado", "rejeitado", "negado", "excluido", "excluído"].includes(status)) {
+    return false;
   }
 
- function getSlotStatus(reserva) {
+  if (["pendente", "em_analise", "solicitado", "aprovado", "confirmado", "bloqueado"].includes(status)) {
+    return true;
+  }
+
+  return false;
+}
+
+function getSlotStatus(reserva) {
   if (!reserva) return "livre";
 
+  const status = statusNormalizado(reserva);
+
   if (reserva?.minha === false) {
-    if (["cancelado", "rejeitado", "negado", "excluido", "excluído"].includes(String(reserva?.status || "").toLowerCase())) {
-      return "livre";
-    }
-
-    return "ocupado_por_outro";
+    return reservaOcupaSlot(reserva) ? "ocupado_por_outro" : "livre";
   }
-
-  if (reserva?.status === "bloqueado") return "ocupado_por_outro";
-
-  const status = String(reserva?.status || "").toLowerCase();
 
   if (["pendente", "em_analise", "solicitado"].includes(status)) {
     return "minha_pendente";
@@ -645,32 +681,36 @@ function AgendaSalasUsuario() {
     return "minha_negada";
   }
 
-  return "minha_pendente";
+  return reservaOcupaSlot(reserva) ? "minha_pendente" : "livre";
 }
 
   function getMinhasReservasDoDia(dataISO) {
-    const minhas = [];
+  const minhas = [];
 
-    SALAS.forEach((salaItem) => {
-      PERIODOS.forEach((periodo) => {
-        const reserva = getReservaDoSlot(salaItem.value, dataISO, periodo.value);
-        if (!reserva || reserva.minha !== true) return;
+  SALAS.forEach((salaItem) => {
+    PERIODOS.forEach((periodo) => {
+      const reservas = getReservasDoSlot(salaItem.value, dataISO, periodo.value);
 
-        const status = getSlotStatus(reserva);
+      reservas
+        .filter((reserva) => reserva?.minha === true)
+        .sort((a, b) => prioridadeReserva(b) - prioridadeReserva(a))
+        .forEach((reserva) => {
+          const status = getSlotStatus(reserva);
 
-        minhas.push({
-          ...reserva,
-          sala: salaItem.value,
-          salaLabel: salaItem.label,
-          periodo: periodo.value,
-          periodoLabel: periodo.label,
-          slotStatus: status,
+          minhas.push({
+            ...reserva,
+            sala: salaItem.value,
+            salaLabel: salaItem.label,
+            periodo: periodo.value,
+            periodoLabel: periodo.label,
+            slotStatus: status,
+          });
         });
-      });
     });
+  });
 
-    return minhas;
-  }
+  return minhas;
+}
 
   function getDiaInfo(dataISO) {
     const diaSemana = getDayOfWeekFromISO(dataISO);
@@ -701,25 +741,29 @@ function AgendaSalasUsuario() {
       const slotsDisponiveis = [];
 
       PERIODOS.forEach((periodo) => {
-        totalSlots += 1;
-        const reserva = getReservaDoSlot(salaItem.value, dataISO, periodo.value);
-        const slotStatus = getSlotStatus(reserva);
+  totalSlots += 1;
 
-        if (slotStatus !== "livre") ocupados += 1;
-        if (slotStatus === "minha_pendente") minhasPendentes += 1;
-        if (slotStatus === "minha_aprovada") minhasAprovadas += 1;
+  const reservasDoSlot = getReservasDoSlot(salaItem.value, dataISO, periodo.value);
+  const reservaPrincipal = getReservaDoSlot(salaItem.value, dataISO, periodo.value);
+  const slotStatus = getSlotStatus(reservaPrincipal);
 
-        if (slotStatus === "livre") {
-          slotsDisponiveis.push({
-            dataISO,
-            sala: salaItem.value,
-            salaLabel: salaItem.label,
-            periodo: periodo.value,
-            periodoLabel: periodo.label,
-            capacidadeSala: salaItem,
-          });
-        }
-      });
+  const slotOcupado = reservasDoSlot.some((item) => reservaOcupaSlot(item));
+
+  if (slotOcupado) ocupados += 1;
+  if (slotStatus === "minha_pendente") minhasPendentes += 1;
+  if (slotStatus === "minha_aprovada") minhasAprovadas += 1;
+
+  if (!slotOcupado) {
+    slotsDisponiveis.push({
+      dataISO,
+      sala: salaItem.value,
+      salaLabel: salaItem.label,
+      periodo: periodo.value,
+      periodoLabel: periodo.label,
+      capacidadeSala: salaItem,
+    });
+  }
+});
 
       if (slotsDisponiveis.length > 0) {
         disponibilidade.push({

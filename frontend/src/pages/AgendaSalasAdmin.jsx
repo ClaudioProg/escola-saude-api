@@ -499,17 +499,27 @@ function SlotCardDia({ slot, baseURL, onEditar, onExcluir }) {
     Boolean(slot?.reserva?.termo_assinado_em) &&
     Boolean(slot?.reserva?.assinatura_id);
 
-  function abrirPdfTermo() {
-    if (!slot?.reserva?.id) return;
+  async function abrirPdfTermo() {
+  if (!slot?.reserva?.id) return;
 
-    const url = `${baseURL}/salas/admin/reservas/${slot.reserva.id}/termo-pdf`;
-    console.log("[AgendaSalasAdmin][PDF_TERMO] Abrindo termo:", {
+  try {
+    console.log("[AgendaSalasAdmin][PDF_TERMO] Baixando termo com autenticação:", {
       reservaId: slot.reserva.id,
-      url,
     });
 
-    window.open(url, "_blank", "noopener,noreferrer");
+    const { blob } = await apiGetFile(`/salas/admin/reservas/${slot.reserva.id}/termo-pdf`);
+    const blobUrl = URL.createObjectURL(blob);
+
+    window.open(blobUrl, "_blank", "noopener,noreferrer");
+
+    setTimeout(() => {
+      URL.revokeObjectURL(blobUrl);
+    }, 60_000);
+  } catch (err) {
+    console.error("[AgendaSalasAdmin][PDF_TERMO][ERRO]", err);
+    toast.error("Não foi possível abrir o PDF do termo.");
   }
+}
 
   return (
     <div
@@ -929,16 +939,22 @@ function AgendaSalasAdmin() {
       const novoMapaReservas = {};
 
       for (const r of dataAuditorio.reservas || []) {
-        const nr = normalizeReserva(r);
-        if (!nr.dataISO || !nr.sala) continue;
-        novoMapaReservas[keySlot(nr.dataISO, nr.periodo, nr.sala)] = nr;
-      }
+  const nr = normalizeReserva(r);
+  if (!nr.dataISO || !nr.sala) continue;
 
-      for (const r of dataSalaReuniao.reservas || []) {
-        const nr = normalizeReserva(r);
-        if (!nr.dataISO || !nr.sala) continue;
-        novoMapaReservas[keySlot(nr.dataISO, nr.periodo, nr.sala)] = nr;
-      }
+  const k = keySlot(nr.dataISO, nr.periodo, nr.sala);
+  (novoMapaReservas[k] ??= []);
+  novoMapaReservas[k].push(nr);
+}
+
+for (const r of dataSalaReuniao.reservas || []) {
+  const nr = normalizeReserva(r);
+  if (!nr.dataISO || !nr.sala) continue;
+
+  const k = keySlot(nr.dataISO, nr.periodo, nr.sala);
+  (novoMapaReservas[k] ??= []);
+  novoMapaReservas[k].push(nr);
+}
 
       const ferMap = {};
       const feriadosBase = dataAuditorio.feriados?.length
@@ -995,15 +1011,32 @@ function AgendaSalasAdmin() {
     setDiaSelecionadoISO(null);
   }
 
-  function getReservaSlot(dataISO, periodo, salaKey) {
-    return reservasMap[keySlot(dataISO, periodo, salaKey)] || null;
-  }
+  function prioridadeReservaAdmin(reserva) {
+  if (!reserva) return 0;
+  if (reserva.pendente_aprovacao) return 50;
+  if (reserva.aprovado_confirmado) return 40;
+  if (reserva.rejeitado_ou_cancelado) return 10;
+  return 20;
+}
 
-  function reservaOcupaSlot(reserva) {
-    if (!reserva) return false;
-    if (reserva.rejeitado_ou_cancelado) return false;
-    return true;
-  }
+function getReservasSlot(dataISO, periodo, salaKey) {
+  const raw = reservasMap[keySlot(dataISO, periodo, salaKey)];
+  if (!raw) return [];
+  return Array.isArray(raw) ? raw : [raw];
+}
+
+function getReservaSlot(dataISO, periodo, salaKey) {
+  const reservas = getReservasSlot(dataISO, periodo, salaKey);
+  if (!reservas.length) return null;
+
+  return [...reservas].sort((a, b) => prioridadeReservaAdmin(b) - prioridadeReservaAdmin(a))[0];
+}
+
+function reservaOcupaSlot(reserva) {
+  if (!reserva) return false;
+  if (reserva.rejeitado_ou_cancelado) return false;
+  return true;
+}
 
     function getDiaInfo(dataISO) {
     const diaSemana = getDayOfWeekFromISO(dataISO);
@@ -1106,20 +1139,22 @@ function AgendaSalasAdmin() {
     return diaInfosMap[diaSelecionadoISO] || null;
   }, [diaSelecionadoISO, diaInfosMap]);
 
-  const totalMes = useMemo(() => Object.keys(reservasMap).length, [reservasMap]);
+  const reservasFlat = useMemo(
+  () => Object.values(reservasMap).flatMap((item) => (Array.isArray(item) ? item : [item])),
+  [reservasMap]
+);
 
-  const totalAprovados = useMemo(
-    () =>
-      Object.values(reservasMap).filter(
-        (r) => r?.status === "aprovado" || r?.status === "confirmado"
-      ).length,
-    [reservasMap]
-  );
+const totalMes = useMemo(() => reservasFlat.length, [reservasFlat]);
 
-  const totalPendentes = useMemo(
-    () => Object.values(reservasMap).filter((r) => r?.status === "pendente").length,
-    [reservasMap]
-  );
+const totalAprovados = useMemo(
+  () => reservasFlat.filter((r) => r?.status === "aprovado" || r?.status === "confirmado").length,
+  [reservasFlat]
+);
+
+const totalPendentes = useMemo(
+  () => reservasFlat.filter((r) => r?.pendente_aprovacao).length,
+  [reservasFlat]
+);
 
   const totalDiasBloqueados = useMemo(
     () => Object.values(diaInfosMap).filter((d) => d?.estado === "bloqueado").length,
