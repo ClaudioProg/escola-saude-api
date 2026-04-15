@@ -239,15 +239,31 @@ function normalizeReserva(r) {
 function classesStatusSlot(status) {
   switch (status) {
     case "pendente":
-      return "bg-amber-50 text-amber-900 border border-amber-200";
+      return [
+        "bg-amber-50 text-amber-900 border border-amber-200",
+        "dark:bg-amber-950/20 dark:text-amber-100 dark:border-amber-900/60",
+      ].join(" ");
+
     case "aprovado":
     case "confirmado":
-      return "bg-emerald-50 text-emerald-900 border border-emerald-200";
+      return [
+        "bg-emerald-50 text-emerald-900 border border-emerald-200",
+        "dark:bg-emerald-950/20 dark:text-emerald-100 dark:border-emerald-900/60",
+      ].join(" ");
+
     case "rejeitado":
     case "cancelado":
-      return "bg-rose-50 text-rose-900 border border-rose-200";
+      return [
+        "bg-rose-50 text-rose-900 border border-rose-200",
+        "dark:bg-rose-950/20 dark:text-rose-100 dark:border-rose-900/60",
+      ].join(" ");
+
     case "bloqueado":
-      return "bg-sky-50 text-sky-900 border border-sky-200";
+      return [
+        "bg-sky-50 text-sky-900 border border-sky-200",
+        "dark:bg-sky-950/20 dark:text-sky-100 dark:border-sky-900/60",
+      ].join(" ");
+
     default:
       return "bg-white text-slate-800 border border-slate-200 dark:bg-zinc-900 dark:text-zinc-100 dark:border-zinc-700";
   }
@@ -581,9 +597,9 @@ function SlotCardDia({ slot, baseURL, onEditar, onExcluir }) {
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[11px] uppercase tracking-wide text-slate-500 dark:text-zinc-400 font-bold">
-              {slot.periodoLabel}
-            </span>
+            <span className="text-[11px] uppercase tracking-wide text-slate-500 dark:text-zinc-300 font-bold">
+  {slot.periodoLabel}
+</span>
             <span
               className={cx(
                 "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-extrabold",
@@ -600,12 +616,12 @@ function SlotCardDia({ slot, baseURL, onEditar, onExcluir }) {
             )}
           </div>
 
-          <p className="mt-2 text-sm sm:text-base font-extrabold leading-snug break-words text-slate-900 dark:text-white">
-            {titulo}
-          </p>
+          <p className="mt-2 text-sm sm:text-base font-extrabold leading-snug break-words text-slate-900 dark:text-zinc-50">
+  {titulo}
+</p>
 
           {slot?.reserva ? (
-            <div className="mt-3 space-y-1.5 text-[12px] sm:text-[13px] text-slate-700 dark:text-zinc-300">
+            <div className="mt-3 space-y-1.5 text-[12px] sm:text-[13px] text-slate-700 dark:text-zinc-200">
               <p>
                 <span className="font-semibold">Solicitante:</span> {solicitante}
               </p>
@@ -640,9 +656,9 @@ function SlotCardDia({ slot, baseURL, onEditar, onExcluir }) {
               )}
             </div>
           ) : (
-            <p className="mt-3 text-[12px] sm:text-[13px] text-slate-600 dark:text-zinc-400">
-              Horário disponível para edição/criação.
-            </p>
+            <p className="mt-3 text-[12px] sm:text-[13px] text-slate-600 dark:text-zinc-300">
+  Horário disponível para edição/criação.
+</p>
           )}
         </div>
       </div>
