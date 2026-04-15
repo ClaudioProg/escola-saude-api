@@ -500,26 +500,45 @@ function SlotCardDia({ slot, baseURL, onEditar, onExcluir }) {
     Boolean(slot?.reserva?.assinatura_id);
 
   async function abrirPdfTermo() {
-  if (!slot?.reserva?.id) return;
+    if (!slot?.reserva?.id) return;
 
-  try {
-    console.log("[AgendaSalasAdmin][PDF_TERMO] Baixando termo com autenticação:", {
-      reservaId: slot.reserva.id,
-    });
+    try {
+      console.log("[AgendaSalasAdmin][PDF_TERMO] Baixando termo com autenticação:", {
+        reservaId: slot.reserva.id,
+      });
 
-    const { blob } = await apiGetFile(`/salas/admin/reservas/${slot.reserva.id}/termo-pdf`);
-    const blobUrl = URL.createObjectURL(blob);
+      const response = await api.get(
+        `/salas/admin/reservas/${slot.reserva.id}/termo-pdf`,
+        {
+          responseType: "blob",
+        }
+      );
 
-    window.open(blobUrl, "_blank", "noopener,noreferrer");
+      const blob = response?.data;
+      if (!(blob instanceof Blob)) {
+        throw new Error("Resposta do termo não veio em formato Blob.");
+      }
 
-    setTimeout(() => {
-      URL.revokeObjectURL(blobUrl);
-    }, 60_000);
-  } catch (err) {
-    console.error("[AgendaSalasAdmin][PDF_TERMO][ERRO]", err);
-    toast.error("Não foi possível abrir o PDF do termo.");
+      const blobUrl = URL.createObjectURL(blob);
+      const novaAba = window.open(blobUrl, "_blank", "noopener,noreferrer");
+
+      if (!novaAba) {
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = `termo-reserva-${slot.reserva.id}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }
+
+      setTimeout(() => {
+        URL.revokeObjectURL(blobUrl);
+      }, 60_000);
+    } catch (err) {
+      console.error("[AgendaSalasAdmin][PDF_TERMO][ERRO]", err);
+      toast.error("Não foi possível abrir o PDF do termo.");
+    }
   }
-}
 
   return (
     <div
