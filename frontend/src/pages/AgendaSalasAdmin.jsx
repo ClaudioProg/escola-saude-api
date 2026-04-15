@@ -507,20 +507,39 @@ function SlotCardDia({ slot, baseURL, onEditar, onExcluir }) {
         reservaId: slot.reserva.id,
       });
 
-      const response = await api.get(
-        `/salas/admin/reservas/${slot.reserva.id}/termo-pdf`,
-        {
-          responseType: "blob",
-        }
-      );
+     const response = await api.get(
+  `/salas/admin/reservas/${slot.reserva.id}/termo-pdf`,
+  {
+    responseType: "blob",
+  }
+);
 
-      const blob = response?.data;
-      if (!(blob instanceof Blob)) {
-        throw new Error("Resposta do termo não veio em formato Blob.");
-      }
+const blob = response?.data;
 
-      const blobUrl = URL.createObjectURL(blob);
-      const novaAba = window.open(blobUrl, "_blank", "noopener,noreferrer");
+console.log("[AgendaSalasAdmin][PDF_TERMO][RESPONSE]", {
+  status: response?.status,
+  contentType: response?.headers?.["content-type"],
+  dataType: Object.prototype.toString.call(blob),
+  blobType: blob?.type,
+  blobSize: blob?.size,
+});
+
+if (!blob || typeof blob.size !== "number") {
+  throw new Error("Resposta inválida ao gerar o PDF do termo.");
+}
+
+if (
+  blob?.type &&
+  !blob.type.includes("pdf") &&
+  !blob.type.includes("octet-stream")
+) {
+  const textoErro = await blob.text().catch(() => "");
+  console.error("[AgendaSalasAdmin][PDF_TERMO][CONTEUDO_NAO_PDF]", textoErro);
+  throw new Error("A rota retornou um conteúdo que não é PDF.");
+}
+
+const blobUrl = URL.createObjectURL(blob);
+const novaAba = window.open(blobUrl, "_blank", "noopener,noreferrer");
 
       if (!novaAba) {
         const a = document.createElement("a");
