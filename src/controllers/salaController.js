@@ -1335,6 +1335,39 @@ async function atualizarReservaAdmin(req, res) {
     const finalidade =
       req.body?.finalidade != null ? normStr(req.body.finalidade, { max: 500 }) : null;
 
+    const statusNorm = String(status || "").trim().toLowerCase();
+
+    if (["cancelado", "rejeitado"].includes(statusNorm)) {
+      const { rows: deletedRows } = await query(
+        `
+        DELETE FROM reservas_salas
+         WHERE id = $1
+         RETURNING *;
+        `,
+        [id]
+      );
+
+      if (!deletedRows?.[0]) {
+        return res.status(404).json({ ok: false, erro: "Reserva não encontrada.", requestId: r });
+      }
+
+      log(r, "[atualizarReservaAdmin] reserva removida por status final", {
+        id,
+        status: statusNorm,
+        sala: deletedRows[0]?.sala,
+        data: deletedRows[0]?.data,
+        periodo: deletedRows[0]?.periodo,
+      });
+
+      return res.json({
+        ok: true,
+        removida: true,
+        motivo: statusNorm,
+        reserva: deletedRows[0],
+        requestId: r,
+      });
+    }
+
     const aprovaAgora = isStatusAprovado(status);
     const aprovadorId = aprovaAgora ? adminId : null;
 
@@ -1348,7 +1381,6 @@ async function atualizarReservaAdmin(req, res) {
              finalidade       = COALESCE($6, finalidade),
              aprovador_id     = CASE
                                   WHEN $7::bigint IS NOT NULL THEN $7
-                                  WHEN $2 IN ('rejeitado', 'cancelado') THEN NULL
                                   ELSE aprovador_id
                                 END,
              updated_at       = NOW()
