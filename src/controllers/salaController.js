@@ -1375,7 +1375,7 @@ async function atualizarReservaAdmin(req, res) {
 
 /* ======================================================================= */
 /* DELETE /api/salas/admin/reservas/:id                                     */
-/* - delete real: libera completamente o slot para novo agendamento         */
+/* - delete real: remove do banco e libera o slot                           */
 /* ======================================================================= */
 async function excluirReservaAdmin(req, res) {
   const r = rid();
@@ -1397,6 +1397,14 @@ async function excluirReservaAdmin(req, res) {
     if (!rows?.[0]) {
       return res.status(404).json({ ok: false, erro: "Reserva não encontrada.", requestId: r });
     }
+
+    log(r, "[excluirReservaAdmin] reserva removida do banco", {
+      id,
+      sala: rows[0]?.sala,
+      data: rows[0]?.data,
+      periodo: rows[0]?.periodo,
+      status: rows[0]?.status,
+    });
 
     return res.status(200).json({
       ok: true,
