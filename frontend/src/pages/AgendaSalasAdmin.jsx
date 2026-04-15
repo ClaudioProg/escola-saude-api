@@ -523,18 +523,21 @@ function SlotCardDia({ slot, baseURL, onEditar, onExcluir }) {
         reservaId: slot.reserva.id,
       });
 
-     const response = await api.get(
+    const response = await api.get(
   `/salas/admin/reservas/${slot.reserva.id}/termo-pdf`,
   {
     responseType: "blob",
   }
 );
 
-const blob = response?.data;
+const blob = response?.data ?? response;
+const contentType =
+  response?.headers?.["content-type"] || response?.type || blob?.type || "";
 
 console.log("[AgendaSalasAdmin][PDF_TERMO][RESPONSE]", {
+  ehAxiosResponse: !!response?.headers || typeof response?.status !== "undefined",
   status: response?.status,
-  contentType: response?.headers?.["content-type"],
+  contentType,
   dataType: Object.prototype.toString.call(blob),
   blobType: blob?.type,
   blobSize: blob?.size,
@@ -545,11 +548,11 @@ if (!blob || typeof blob.size !== "number") {
 }
 
 if (
-  blob?.type &&
-  !blob.type.includes("pdf") &&
-  !blob.type.includes("octet-stream")
+  contentType &&
+  !String(contentType).includes("pdf") &&
+  !String(contentType).includes("octet-stream")
 ) {
-  const textoErro = await blob.text().catch(() => "");
+  const textoErro = typeof blob?.text === "function" ? await blob.text().catch(() => "") : "";
   console.error("[AgendaSalasAdmin][PDF_TERMO][CONTEUDO_NAO_PDF]", textoErro);
   throw new Error("A rota retornou um conteúdo que não é PDF.");
 }
