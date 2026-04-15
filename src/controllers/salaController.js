@@ -219,9 +219,10 @@ function isStatusPendente(status) {
 }
 
 function isStatusFinalNaoDisponivel(status) {
-  return ["cancelado", "rejeitado"].includes(String(status || "").toLowerCase());
+  return ["cancelado", "rejeitado", "excluido", "excluída", "excluida"].includes(
+    String(status || "").toLowerCase()
+  );
 }
-
 /* ======================================================================= */
 /* Helper para ano/mês com fallback seguro                                  */
 /* ======================================================================= */
@@ -404,32 +405,36 @@ async function listarAgendaAdmin(req, res) {
     log(r, "[listarAgendaAdmin] query:", { ano, mes, sala });
 
     const params = [ano, mes];
-    let sqlReservas = `
-      SELECT
-        rs.id,
-        rs.sala,
-        rs.data::date AS data,
-        rs.periodo,
-        rs.qtd_pessoas,
-        rs.coffee_break,
-        rs.status,
-        rs.observacao_admin AS observacao,
-        rs.finalidade,
-        rs.solicitante_id,
-        rs.aprovador_id,
-        rs.termo_aceito,
-        rs.termo_assinado_em,
-        rs.assinatura_id,
-        rs.created_at,
-        rs.updated_at,
-        us.nome AS solicitante_nome,
-        ua.nome AS aprovador_nome
-      FROM reservas_salas rs
-      LEFT JOIN usuarios us ON us.id = rs.solicitante_id
-      LEFT JOIN usuarios ua ON ua.id = rs.aprovador_id
-      WHERE EXTRACT(YEAR FROM rs.data) = $1
-        AND EXTRACT(MONTH FROM rs.data) = $2
-    `;
+   let sqlReservas = `
+  SELECT
+    rs.id,
+    rs.sala,
+    rs.data::date AS data,
+    rs.periodo,
+    rs.qtd_pessoas,
+    rs.coffee_break,
+    rs.status,
+    rs.observacao_admin AS observacao,
+    rs.finalidade,
+    rs.solicitante_id,
+    rs.aprovador_id,
+    rs.termo_aceito,
+    rs.termo_assinado_em,
+    rs.assinatura_id,
+    rs.created_at,
+    rs.updated_at,
+    us.nome AS solicitante_nome,
+    ua.nome AS aprovador_nome
+  FROM reservas_salas rs
+  LEFT JOIN usuarios us ON us.id = rs.solicitante_id
+  LEFT JOIN usuarios ua ON ua.id = rs.aprovador_id
+  WHERE EXTRACT(YEAR FROM rs.data) = $1
+    AND EXTRACT(MONTH FROM rs.data) = $2
+    AND (
+      rs.status IS NULL
+      OR LOWER(rs.status::text) NOT IN ('cancelado', 'rejeitado', 'excluido', 'excluída', 'excluida')
+    )
+`;
 
     if (sala) {
       params.push(sala);
@@ -841,18 +846,21 @@ async function atualizarReservaUsuario(req, res) {
     }
 
     const conflito = await query(
-      `
-      SELECT 1
-        FROM reservas_salas
-       WHERE sala = $1
-         AND data = $2
-         AND periodo = $3
-         AND id <> $4
-         AND (status IS NULL OR status NOT IN ('cancelado'::status_reserva_sala, 'rejeitado'::status_reserva_sala))
-       LIMIT 1
-      `,
-      [sala, data, periodo, id]
-    );
+  `
+  SELECT 1
+    FROM reservas_salas
+   WHERE sala = $1
+     AND data = $2
+     AND periodo = $3
+     AND id <> $4
+     AND (
+       status IS NULL
+       OR LOWER(status::text) NOT IN ('cancelado', 'rejeitado', 'excluido', 'excluída', 'excluida')
+     )
+   LIMIT 1
+  `,
+  [sala, data, periodo, id]
+);
 
     if (conflito.rowCount > 0) {
       return res.status(409).json({
@@ -1367,7 +1375,7 @@ async function atualizarReservaAdmin(req, res) {
 
 /* ======================================================================= */
 /* DELETE /api/salas/admin/reservas/:id                                     */
-/* - soft delete: preserva histórico para o calendário                      */
+/* - delete real: libera completamente o slot para novo agendamento         */
 /* ======================================================================= */
 async function excluirReservaAdmin(req, res) {
   const r = rid();
@@ -1379,10 +1387,7 @@ async function excluirReservaAdmin(req, res) {
 
     const { rows } = await query(
       `
-      UPDATE reservas_salas
-         SET status = 'cancelado',
-             aprovador_id = NULL,
-             updated_at = NOW()
+      DELETE FROM reservas_salas
        WHERE id = $1
        RETURNING *;
       `,
@@ -1395,7 +1400,7 @@ async function excluirReservaAdmin(req, res) {
 
     return res.status(200).json({
       ok: true,
-      mensagem: "Reserva cancelada com sucesso.",
+      mensagem: "Reserva excluída com sucesso.",
       reserva: rows[0],
       requestId: r,
     });
